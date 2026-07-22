@@ -61,8 +61,11 @@ const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_RELATIVE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,511}$/;
 const SOURCE_REFERENCE_ROLES = new Set([
-  "instrument_calibration", "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
+  "instrument_calibration", "product_owner_attestation", "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
 ]);
+const REQUIRED_NON_INSTRUMENT_REFERENCE_ROLES = [
+  "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
+] as const;
 const RIG_MEMBER_SPECS = Object.freeze([
   { role: "target_metrology", fileName: "target-metrology-authority-v1.json" },
   { role: "camera_lens", fileName: "camera-lens-authority-v1.json" },
@@ -235,12 +238,116 @@ function exactTimestamp(value: unknown, label: string): string {
   return value;
 }
 
+function exactText(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 191 || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error(`${label} must be canonical non-empty text without control characters.`);
+  }
+  return value;
+}
+
 function finite(value: unknown, label: string, minimum?: number, maximum?: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) ||
       (minimum !== undefined && value < minimum) || (maximum !== undefined && value > maximum)) {
     throw new Error(`${label} is outside its finite allowed range.`);
   }
   return value;
+}
+
+function validateOwnerAttestedInstrument(value: JsonObject): void {
+  if (value.kind !== "product_owner_attested_device") return;
+  exactKeys(value, [
+    "instrumentId", "kind", "ownerAttestationVersion", "ownerAttestationSha256", "manufacturer", "model", "serialNumber",
+    "maximumRangeMm", "accuracyMm", "resolutionMm", "statedU95Mm", "ownerAttestationId", "authorityStatement",
+  ], "product-owner-attested measurement instrument");
+  exactId(value.instrumentId, "owner-attested instrumentId");
+  if (value.ownerAttestationVersion !== "1") throw new Error("Owner-attested instrument requires ownerAttestationVersion 1.");
+  exactSha(value.ownerAttestationSha256, "owner-attested authority sha256");
+  exactText(value.manufacturer, "owner-attested manufacturer");
+  exactText(value.model, "owner-attested model");
+  exactId(value.serialNumber, "owner-attested serialNumber");
+  exactId(value.ownerAttestationId, "owner-attested ownerAttestationId");
+  finite(value.maximumRangeMm, "owner-attested maximumRangeMm", Number.EPSILON);
+  const accuracyMm = finite(value.accuracyMm, "owner-attested accuracyMm", Number.EPSILON);
+  finite(value.resolutionMm, "owner-attested resolutionMm", Number.EPSILON);
+  const statedU95Mm = finite(value.statedU95Mm, "owner-attested statedU95Mm", Number.EPSILON);
+  if (statedU95Mm < accuracyMm) throw new Error("Owner-attested statedU95Mm cannot be less than accuracyMm.");
+  if (value.authorityStatement !== "product_owner_attested_non_traceable_measurement_v1") {
+    throw new Error("Owner-attested instrument has the wrong authority statement.");
+  }
+}
+
+function validateOwnerAttestationBytes(bytes: Buffer, instrument: JsonObject): void {
+  const attestation = parseCanonical<JsonObject>(bytes, "product-owner metrology attestation");
+  exactKeys(attestation, [
+    "accuracyMm", "attestedAt", "authorityStatement", "instrumentId", "manufacturer", "maximumRangeMm", "model",
+    "ownerAttestationId", "productOwnerId", "resolutionMm", "schemaVersion", "serialNumber", "statedU95Mm",
+    "traceabilityStatement",
+  ], "product-owner metrology attestation");
+  if (attestation.schemaVersion !== "ten-kings-product-owner-metrology-attestation-v1") {
+    throw new Error("Product-owner metrology attestation schema mismatch.");
+  }
+  if (attestation.authorityStatement !== "product_owner_attested_non_traceable_measurement_v1" ||
+      attestation.traceabilityStatement !== "not_traceably_calibrated") {
+    throw new Error("Product-owner metrology attestation must explicitly remain non-traceable.");
+  }
+  exactTimestamp(attestation.attestedAt, "product-owner attestedAt");
+  exactId(attestation.productOwnerId, "product-owner productOwnerId");
+  for (const key of ["instrumentId", "serialNumber", "ownerAttestationId"] as const) {
+    exactId(attestation[key], `product-owner ${key}`);
+    if (attestation[key] !== instrument[key]) throw new Error(`Product-owner attestation ${key} does not match the measurement instrument.`);
+  }
+  for (const key of ["manufacturer", "model"] as const) {
+    exactText(attestation[key], `product-owner ${key}`);
+    if (attestation[key] !== instrument[key]) throw new Error(`Product-owner attestation ${key} does not match the measurement instrument.`);
+  }
+  for (const key of ["maximumRangeMm", "accuracyMm", "resolutionMm", "statedU95Mm"] as const) {
+    finite(attestation[key], `product-owner ${key}`, Number.EPSILON);
+    if (attestation[key] !== instrument[key]) throw new Error(`Product-owner attestation ${key} does not match the measurement instrument.`);
+  }
+  if (attestation.statedU95Mm as number < (attestation.accuracyMm as number)) {
+    throw new Error("Product-owner attestation statedU95Mm cannot be less than accuracyMm.");
+  }
+}
+
+function validateOwnerAttestedMeasurement(measurement: JsonObject, instrument: JsonObject): void {
+  if (instrument.kind !== "product_owner_attested_device") return;
+  if (measurement.measurementMethod !== "product_owner_attested_measurement_v1") {
+    throw new Error("Materialized owner-attested measurement has the wrong measurement method.");
+  }
+  const maximumRangeMm = finite(instrument.maximumRangeMm, "owner-attested maximumRangeMm", Number.EPSILON);
+  const statedU95Mm = finite(instrument.statedU95Mm, "owner-attested statedU95Mm", 0);
+  let requiredRangeMm: number;
+  let measurementU95Mm: number;
+  if (measurement.schemaVersion === "ten-kings-calibration-print-scale-measurement-v1") {
+    requiredRangeMm = Math.max(
+      finite(measurement.nominalSpanMm, "owner-attested nominalSpanMm", Number.EPSILON),
+      finite(measurement.measuredSpanMm, "owner-attested measuredSpanMm", Number.EPSILON),
+    );
+    measurementU95Mm = finite(measurement.measurementU95Mm, "owner-attested measurementU95Mm", 0);
+  } else if (measurement.schemaVersion === "ten-kings-calibration-target-cut-dimension-measurement-v1") {
+    requiredRangeMm = Math.max(
+      finite(measurement.nominalDimensionMm, "owner-attested nominalDimensionMm", Number.EPSILON),
+      finite(measurement.measuredDimensionMm, "owner-attested measuredDimensionMm", Number.EPSILON),
+    );
+    measurementU95Mm = finite(measurement.measurementU95Mm, "owner-attested measurementU95Mm", 0);
+  } else if (measurement.schemaVersion === "ten-kings-calibration-direction-measurement-v1") {
+    const source = measurement.sourcePointMm as JsonObject;
+    const center = measurement.cardCenterPointMm as JsonObject;
+    if (!source || !center) throw new Error("Owner-attested direction measurement lacks exact points.");
+    const sourceX = finite(source.x, "owner-attested sourcePointMm.x");
+    const sourceY = finite(source.y, "owner-attested sourcePointMm.y");
+    const centerX = finite(center.x, "owner-attested cardCenterPointMm.x");
+    const centerY = finite(center.y, "owner-attested cardCenterPointMm.y");
+    requiredRangeMm = Math.max(
+      Math.abs(sourceX), Math.abs(sourceY), Math.abs(centerX), Math.abs(centerY),
+      Math.hypot(sourceX - centerX, sourceY - centerY),
+    );
+    measurementU95Mm = finite(measurement.pointU95Mm, "owner-attested pointU95Mm", 0);
+  } else {
+    throw new Error("Owner-attested device is not accepted for this measurement schema.");
+  }
+  if (requiredRangeMm > maximumRangeMm) throw new Error("Owner-attested measurement exceeds the attested device range.");
+  if (measurementU95Mm < statedU95Mm) throw new Error("Owner-attested measurement understates the attested device uncertainty.");
 }
 
 function safeRelative(value: unknown, label: string): string {
@@ -302,8 +409,11 @@ function validateInputManifest(value: FastCalibrationRigMaterializationInputMani
     hashes.add(entry.sha256);
     roles.add(entry.role);
   }
-  for (const role of SOURCE_REFERENCE_ROLES) {
+  for (const role of REQUIRED_NON_INSTRUMENT_REFERENCE_ROLES) {
     if (!roles.has(role)) throw new Error(`Rig materialization requires explicit ${role} evidence.`);
+  }
+  if (!roles.has("instrument_calibration") && !roles.has("product_owner_attestation")) {
+    throw new Error("Rig materialization requires explicit instrument calibration or product-owner-attestation evidence.");
   }
 }
 
@@ -398,6 +508,7 @@ async function loadCaptureAuthority(input: {
   liveProbe: FastCalibrationProtectedLiveProbeEvidenceV1_2;
   physicalAnalyzerSha256: string;
   referencesByHash: Map<string, ReferencedEvidence>;
+  referencedBytes: Map<string, Buffer>;
   consumedReferenceHashes: Set<string>;
 }): Promise<{ captureManifestBytes: Buffer; capturePackageBytes: Buffer; capturePackageSha256: string; artifacts: CapturedArtifact[]; packageValue: JsonObject }> {
   const captureManifestPath = contained(input.root, input.captureManifestRef.fileName);
@@ -475,12 +586,25 @@ async function loadCaptureAuthority(input: {
       const measurement = parseCanonical<JsonObject>(bytes, `measurement artifact ${evidenceId}`);
       const instrument = measurement.instrument as JsonObject;
       if (!instrument) throw new Error("Measurement artifact lacks exact instrument authority.");
-      const instrumentHash = exactSha(instrument.calibrationSha256, "measurement instrument calibration sha256");
+      validateOwnerAttestedInstrument(instrument);
+      validateOwnerAttestedMeasurement(measurement, instrument);
+      const instrumentHash = exactSha(
+        instrument.kind === "product_owner_attested_device" ? instrument.ownerAttestationSha256 : instrument.calibrationSha256,
+        "measurement instrument authority sha256",
+      );
       if (instrument.kind === "fixed_rig_geometry") {
         if (instrumentHash !== input.physicalAnalyzerSha256) throw new Error("Repeatability measurement does not bind the loaded physical analyzer bytes.");
       } else {
         const reference = input.referencesByHash.get(instrumentHash);
-        if (!reference || reference.role !== "instrument_calibration") throw new Error("Measurement instrument calibration hash is not dereferenced to exact bytes.");
+        const expectedRole = instrument.kind === "product_owner_attested_device"
+          ? "product_owner_attestation"
+          : "instrument_calibration";
+        if (!reference || reference.role !== expectedRole) throw new Error("Measurement instrument authority hash is not dereferenced to exact purpose-bound bytes.");
+        if (instrument.kind === "product_owner_attested_device") {
+          const attestationBytes = input.referencedBytes.get(instrumentHash);
+          if (!attestationBytes) throw new Error("Product-owner attestation bytes are unavailable.");
+          validateOwnerAttestationBytes(attestationBytes, instrument);
+        }
         input.consumedReferenceHashes.add(instrumentHash);
       }
       if (measurement.sourceMetrologyArtifactSha256 !== undefined) {
@@ -847,11 +971,24 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
       const measurement = parseCanonical<JsonObject>(measurementBytes, `materialized measurement ${artifactEntry.evidenceId}`);
       const instrument = measurement.instrument as JsonObject;
       if (!instrument) throw new Error("Materialized measurement lacks instrument authority.");
-      const instrumentSha256 = exactSha(instrument.calibrationSha256, "materialized measurement instrument sha256");
+      validateOwnerAttestedInstrument(instrument);
+      validateOwnerAttestedMeasurement(measurement, instrument);
+      const instrumentSha256 = exactSha(
+        instrument.kind === "product_owner_attested_device" ? instrument.ownerAttestationSha256 : instrument.calibrationSha256,
+        "materialized measurement instrument sha256",
+      );
       if (instrument.kind === "fixed_rig_geometry") {
         if (instrumentSha256 !== evidence.physicalAnalyzerSha256) throw new Error("Materialized repeatability measurement does not bind the shipped physical analyzer.");
       } else {
-        consumeSourceReference(instrumentSha256, "instrument_calibration");
+        const role = instrument.kind === "product_owner_attested_device" ? "product_owner_attestation" : "instrument_calibration";
+        consumeSourceReference(instrumentSha256, role);
+        if (instrument.kind === "product_owner_attested_device") {
+          const attestationEntry = evidence.files.find((entry) => entry.kind === "referenced_evidence" &&
+            entry.sourceRole === role && entry.sha256 === instrumentSha256);
+          const attestationBytes = attestationEntry ? evidenceBytes.get(attestationEntry.evidenceId) : undefined;
+          if (!attestationBytes) throw new Error("Materialized product-owner attestation bytes are unavailable.");
+          validateOwnerAttestationBytes(attestationBytes, instrument);
+        }
       }
       if (measurement.sourceMetrologyArtifactSha256 !== undefined) {
         consumeSourceReference(exactSha(measurement.sourceMetrologyArtifactSha256, "materialized measurement metrology sha256"), "metrology_source");
@@ -968,7 +1105,7 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
   const physicalAnalyzerSha256 = hash(analyzerScriptBytes);
   const capture = await loadCaptureAuthority({
     root: sourceRoot, captureManifestRef: manifest.captureManifest, liveProbe: live.value,
-    physicalAnalyzerSha256, referencesByHash, consumedReferenceHashes,
+    physicalAnalyzerSha256, referencesByHash, referencedBytes, consumedReferenceHashes,
   });
   if (consumedReferenceHashes.size !== manifest.referencedEvidence.length ||
       manifest.referencedEvidence.some((entry) => !consumedReferenceHashes.has(entry.sha256))) {

@@ -147,6 +147,41 @@ test("materializes deterministic write-once authority and reopens through the re
   }
 });
 
+test("materializes explicitly non-traceable product-owner-attested metrology with purpose-bound evidence", async () => {
+  const root = await temporary("rig-materializer-owner-attested");
+  try {
+    const prepared = await prepareFastCalibrationRigMaterializationFixtureV1_2(root, { ownerAttested: true });
+    const result = await materializeFastCalibrationRigAuthorityV1_2(prepared.materializerInput);
+    const directory = path.join(prepared.acceptanceRoot, result.directoryName);
+    const evidence = JSON.parse(await fs.readFile(path.join(directory, "rig-characterization-source-evidence-v1.json"), "utf8"));
+    assert.ok(evidence.files.some((entry) => entry.sourceRole === "product_owner_attestation"));
+    assert.equal(evidence.files.some((entry) => entry.sourceRole === "instrument_calibration"), false);
+
+    const wrongRoot = await temporary("rig-materializer-owner-attested-wrong-role");
+    try {
+      const wrong = await prepareFastCalibrationRigMaterializationFixtureV1_2(wrongRoot, { ownerAttested: true });
+      wrong.inputManifest.referencedEvidence.find((entry) => entry.role === "product_owner_attestation").role = "instrument_calibration";
+      await rewriteInput(wrong);
+      await assert.rejects(
+        () => materializeFastCalibrationRigAuthorityV1_2(wrong.materializerInput),
+        /purpose-bound bytes|product-owner-attestation/i,
+      );
+    } finally { await fs.rm(wrongRoot, { recursive: true, force: true }); }
+
+    const mismatchRoot = await temporary("rig-materializer-owner-attested-mismatch");
+    try {
+      const mismatch = await prepareFastCalibrationRigMaterializationFixtureV1_2(mismatchRoot, {
+        ownerAttested: true,
+        ownerAttestationMismatch: true,
+      });
+      await assert.rejects(
+        () => materializeFastCalibrationRigAuthorityV1_2(mismatch.materializerInput),
+        /attestation model does not match the measurement instrument/i,
+      );
+    } finally { await fs.rm(mismatchRoot, { recursive: true, force: true }); }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test("rejects missing, extra, tampered, wrong-hash, relabelled, and duplicate source evidence", async (t) => {
   const cases = [
     ["missing", async (prepared) => fs.rm(path.join(prepared.sourceRoot, prepared.inputManifest.liveProbe.fileName))],

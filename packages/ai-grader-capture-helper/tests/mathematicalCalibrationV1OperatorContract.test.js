@@ -32,3 +32,17 @@ test("V1.0.1 runbook distinguishes ordinary retry from hard stop without weakeni
   assert.match(runbook, /does not begin the camera\/lighting lifecycle/);
   assert.match(runbook, /hard-stops the session and is not retryable/);
 });
+
+test("owner-attested metrology is explicitly non-traceable and preserves numerical, range, and U95 gates", () => {
+  const runbook = fs.readFileSync(path.join(repositoryRoot, "docs", "runbooks", "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md"), "utf8");
+  const generator = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "new-mathematical-calibration-owner-attestation-v1.ps1"), "utf8");
+  assert.match(runbook, /abs\(measuredSpanMm - nominalSpanMm\) \+ measurementU95Mm <= 0\.20 mm/);
+  assert.match(runbook, /152\.4 mm\/6-inch device cannot authorize the 200\.00 mm bar/);
+  assert.match(runbook, /product_owner_attested_non_traceable_measurement_v1/);
+  assert.match(runbook, /product_owner_attested_measurement_v1/);
+  assert.match(runbook, /describe it as calibrated\/traceable/);
+  assert.match(generator, /traceabilityStatement = 'not_traceably_calibrated'/);
+  assert.match(generator, /StatedU95Mm cannot be less than AccuracyMm/);
+  assert.match(generator, /ConfirmProductOwnerAttestation/);
+  assert.doesNotMatch(generator, /instrument_calibration/);
+});

@@ -54,6 +54,15 @@ function Assert-ExactSha256 {
   return $text
 }
 
+function Assert-SafeText {
+  param([object]$Value, [string]$Label)
+  $text = [string]$Value
+  if ($text.Length -lt 1 -or $text.Length -gt 191 -or $text.Trim() -ne $text -or $text -match '[\x00-\x1f\x7f]') {
+    throw ($Label + ' must be canonical non-empty text without control characters.')
+  }
+  return $text
+}
+
 function Get-ExactFileSha256 {
   param([string]$Path, [string]$Label)
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
@@ -87,17 +96,43 @@ function Get-Instrument {
   param([object]$Value, [string]$Label)
   if ($null -eq $Value) { throw ($Label + ' instrument is required.') }
   $kind = [string]$Value.kind
-  if ($kind -notin @('traceable_ruler', 'caliper', 'fixed_rig_geometry')) {
+  if ($kind -notin @('traceable_ruler', 'caliper', 'fixed_rig_geometry', 'product_owner_attested_device')) {
     throw ($Label + ' instrument kind is not allowlisted.')
   }
   $instrumentId = Assert-SafeIdentifier -Value $Value.instrumentId -Label ($Label + '.instrumentId')
-  $calibrationVersionValue = Assert-SafeIdentifier -Value $Value.calibrationVersion -Label ($Label + '.calibrationVersion')
-  $calibrationSha256Value = Assert-ExactSha256 -Value $Value.calibrationSha256 -Label ($Label + '.calibrationSha256')
+  if ($kind -eq 'product_owner_attested_device') {
+    if ([string]$Value.authorityStatement -ne 'product_owner_attested_non_traceable_measurement_v1') {
+      throw ($Label + ' owner-attested device requires the exact non-traceable authority statement.')
+    }
+    $accuracyMm = Get-FiniteNumber -Value $Value.accuracyMm -Label ($Label + '.accuracyMm') -Minimum 0.000000000001
+    $statedU95Mm = Get-FiniteNumber -Value $Value.statedU95Mm -Label ($Label + '.statedU95Mm') -Minimum 0.000000000001
+    if ($statedU95Mm -lt $accuracyMm) {
+      throw ($Label + ' statedU95Mm cannot be less than accuracyMm.')
+    }
+    if ([string]$Value.ownerAttestationVersion -ne '1') {
+      throw ($Label + ' ownerAttestationVersion must be 1.')
+    }
+    return @{
+      instrumentId = $instrumentId
+      kind = $kind
+      ownerAttestationVersion = '1'
+      ownerAttestationSha256 = Assert-ExactSha256 -Value $Value.ownerAttestationSha256 -Label ($Label + '.ownerAttestationSha256')
+      manufacturer = Assert-SafeText -Value $Value.manufacturer -Label ($Label + '.manufacturer')
+      model = Assert-SafeText -Value $Value.model -Label ($Label + '.model')
+      serialNumber = Assert-SafeIdentifier -Value $Value.serialNumber -Label ($Label + '.serialNumber')
+      maximumRangeMm = Get-FiniteNumber -Value $Value.maximumRangeMm -Label ($Label + '.maximumRangeMm') -Minimum 0.001
+      accuracyMm = $accuracyMm
+      resolutionMm = Get-FiniteNumber -Value $Value.resolutionMm -Label ($Label + '.resolutionMm') -Minimum 0.001
+      statedU95Mm = $statedU95Mm
+      ownerAttestationId = Assert-SafeIdentifier -Value $Value.ownerAttestationId -Label ($Label + '.ownerAttestationId')
+      authorityStatement = 'product_owner_attested_non_traceable_measurement_v1'
+    }
+  }
   return @{
     instrumentId = $instrumentId
     kind = $kind
-    calibrationVersion = $calibrationVersionValue
-    calibrationSha256 = $calibrationSha256Value
+    calibrationVersion = Assert-SafeIdentifier -Value $Value.calibrationVersion -Label ($Label + '.calibrationVersion')
+    calibrationSha256 = Assert-ExactSha256 -Value $Value.calibrationSha256 -Label ($Label + '.calibrationSha256')
   }
 }
 
@@ -323,6 +358,17 @@ function New-MetrologyInputTemplate {
     kind = $null
     calibrationVersion = $null
     calibrationSha256 = $null
+    ownerAttestationVersion = $null
+    ownerAttestationSha256 = $null
+    manufacturer = $null
+    model = $null
+    serialNumber = $null
+    maximumRangeMm = $null
+    accuracyMm = $null
+    resolutionMm = $null
+    statedU95Mm = $null
+    ownerAttestationId = $null
+    authorityStatement = $null
   }
   $directions = [System.Collections.Generic.List[object]]::new()
   foreach ($channel in 1..8) {
@@ -348,7 +394,8 @@ function New-MetrologyInputTemplate {
       submission = 'Replace every null with the independently observed value or immutable instrument identity, then compute the exact file SHA-256 and use SubmitMetrology with -ConfirmMetrologySubmission.'
       printAcceptance = [string]$targetManifest.requiredPrintScaleVerification.acceptanceFormula
       cutAcceptance = 'abs(measuredDimensionMm - nominalDimensionMm) + measurementU95Mm <= 0.20'
-      permittedInstrumentKinds = @('traceable_ruler', 'caliper', 'fixed_rig_geometry')
+      permittedInstrumentKinds = @('traceable_ruler', 'caliper', 'fixed_rig_geometry', 'product_owner_attested_device')
+      ownerAttestedDevice = 'Uses an exact product-owner attestation artifact, preserves the unchanged numerical acceptance gate, requires stated U95 at least the accuracy bound and sufficient physical range, and must not be described as traceably calibrated.'
     }
     instruments = [ordered]@{
       printScale = $instrumentTemplate.Clone()

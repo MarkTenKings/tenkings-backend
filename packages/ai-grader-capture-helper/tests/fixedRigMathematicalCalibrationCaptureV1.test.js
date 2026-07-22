@@ -220,6 +220,73 @@ function startRequest(targetSha256, sessionId = "calibration-session-001") {
   };
 }
 
+test("product-owner-attested metrology preserves range and uncertainty gates without claiming traceable calibration", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-owner-attested-metrology-"));
+  const fixture = await producerFixture(root);
+  const sessionId = "calibration-owner-attested-metrology";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  const instrument = {
+    instrumentId: "owner-device-200mm-01",
+    kind: "product_owner_attested_device",
+    ownerAttestationVersion: "1",
+    ownerAttestationSha256: "d".repeat(64),
+    manufacturer: "owner_verified_manufacturer",
+    model: "owner_verified_200mm_device",
+    serialNumber: "owner-device-serial-01",
+    maximumRangeMm: 250,
+    accuracyMm: 0.03,
+    resolutionMm: 0.01,
+    statedU95Mm: 0.035,
+    ownerAttestationId: "mark-owner-attestation-20260722-01",
+    authorityStatement: "product_owner_attested_non_traceable_measurement_v1",
+  };
+  const request = {
+    sessionId,
+    operationId: "owner-attested-print-y",
+    measurementType: "print_scale",
+    axis: "y",
+    nominalSpanMm: 200,
+    measuredSpanMm: 200,
+    measurementU95Mm: 0.035,
+    measurementMethod: "product_owner_attested_measurement_v1",
+    sourceMetrologyArtifactSha256: "e".repeat(64),
+    instrument,
+  };
+  const accepted = await fixture.producer.recordMeasurement(request);
+  assert.equal(accepted.measurementCount, 1);
+  const state = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  const measurementArtifact = state.artifacts.find((artifact) => artifact.role === "print_scale_verification_y");
+  const measurement = JSON.parse(await fsp.readFile(path.join(started.sessionDir, ...measurementArtifact.path.split("/")), "utf8"));
+  assert.equal(measurement.instrument.kind, "product_owner_attested_device");
+  assert.equal(measurement.instrument.authorityStatement, "product_owner_attested_non_traceable_measurement_v1");
+
+  await assert.rejects(
+    fixture.producer.recordMeasurement({
+      ...request, operationId: "owner-attested-short-range", instrument: { ...instrument, maximumRangeMm: 152.4 },
+    }),
+    /exceeds the attested device range/i,
+  );
+  await assert.rejects(
+    fixture.producer.recordMeasurement({
+      ...request, operationId: "owner-attested-understated-u95", measurementU95Mm: 0.03,
+    }),
+    /cannot understate the attested device uncertainty/i,
+  );
+  await assert.rejects(
+    fixture.producer.recordMeasurement({
+      ...request, operationId: "owner-attested-wrong-method", measurementMethod: "traceable_ruler_direct_v1",
+    }),
+    /require product_owner_attested_measurement_v1/i,
+  );
+  await assert.rejects(
+    fixture.producer.recordMeasurement({
+      ...request, operationId: "owner-attested-wrong-statement",
+      instrument: { ...instrument, authorityStatement: "traceable_calibration" },
+    }),
+    /exact non-traceable authority statement/i,
+  );
+});
+
 test("calibration producer binds the protected target, resumes explicitly, and rejects slot overwrite", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-producer-"));
   const fixture = await producerFixture(root);

@@ -28,7 +28,7 @@ The heatmap is a visualization derived from source evidence. It is never an inde
 
 ## Measurement uncertainty and Grade-10 meaning
 
-Every physical measurement carries a versioned certified `U95` composed by root-sum-square propagation from the applicable sources:
+Every physical measurement carries a versioned `U95` authority composed by root-sum-square propagation from the applicable sources:
 
 - pixel/mm scale uncertainty;
 - lens/distortion residual;
@@ -37,6 +37,8 @@ Every physical measurement carries a versioned certified `U95` composed by root-
 - segmentation-boundary uncertainty;
 - repeated-measurement variation; and
 - lighting/channel confidence.
+
+One-time rig-characterization metrology prefers a traceably calibrated instrument with its exact certificate bytes. The product owner may instead authorize an explicitly non-traceable device through canonical, content-addressed `product_owner_attested_non_traceable_measurement_v1` evidence. That alternative binds exact device identity, manufacturer/model/serial, maximum range, positive accuracy/resolution/stated U95, owner identity, and timestamp. Its stated U95 cannot be less than its accuracy bound, a measurement cannot understate that U95 or exceed the device range, and it must never be described as certified or traceable. This changes the evidence authority class, not any numerical acceptance formula or centralized threshold.
 
 The required calculations are:
 
@@ -152,7 +154,7 @@ Fast calibration contract '1.2.0' is a distinct Production-compatible producer c
 
 V1.2 separates two hash-bound authority layers:
 
-- one-time rig characterization: target metrology, camera/lens identity and authority, physical light directions, component identities and channel wiring, measurement repeatability, protected algorithms, and the centralized threshold manifest; and
+- one-time rig characterization: target metrology with exact traceable-instrument or explicitly non-traceable product-owner-attestation authority, camera/lens identity and authority, physical light directions, component identities and channel wiring, measurement repeatability, protected algorithms, and the centralized threshold manifest; and
 - quick site/lighting calibration: exact location and lighting configuration, live camera/controller settings and identities, four capture-time checkerboard placements, one blank-reverse flip, geometry verification, dark response, eight per-channel flat fields, and illumination response.
 
 The quick capture contract is exactly '4' checkerboard images plus '72' automated photometric images ('24' dark, '24' flat-field, and '24' illumination-pattern), for '76' images and '0' new quick physical measurements. Physical metrology, direction, and repeatability evidence are inherited only through the exact immutable rig-characterization hashes; they are never fabricated or inferred from the quick images.
@@ -169,7 +171,7 @@ Completed analysis is not trusted merely because its serialization and ledger ha
 The geometry/photometric identity is content-addressed from the complete shipped V1.2 executable module-byte set, exact checkerboard detector bytes, reviewed pinned Python/OpenCV dependency-manifest bytes, and exact Node/Sharp/libvips runtime versions. It does not rely on a selected function list. Protected runtime and component-identity authority must bind those manifest hashes. Any top-level or transitive implementation-byte or dependency drift therefore fails before session authority can be created or resumed.
 The Production finalizer identity is independently content-addressed from the complete shipped finalization executable/module and dependency-byte ledger plus its exact runtime dependency version. Runtime context and component authority must bind that exact finalizer hash alongside geometry, photometric, and threshold hashes; transitive finalizer drift invalidates previously materialized authority rather than silently reusing it.
 
-One-time V1.2 rig authority is created only by the protected local operator materializer from exact supervised raw-capture, metrology/instrument, lens, stage-transform, component, controller, and wiring evidence. It rereads every referenced byte, verifies all source hashes, reruns the existing physical acceptance calculation, and atomically emits canonical runtime context, five ordered authority members, their rig-source bundle, a complete copied source-evidence ledger, a reproducible physical-analysis receipt, and a redacted hash-only handoff. The Production loader reopens every emitted file, checks the shipped analyzer/dependency/finalizer identities, reconstructs all source links and physical acceptance, and rejects missing, extra, partial, duplicate, relabelled, corrupt, changed, old-profile, or synthetic-fixture inputs. Identical restaging is idempotent by exact rig-source bundle hash; conflicting bytes fail closed. This operator-only path has no browser route and performs no activation, import, trust, or hosted mutation.
+One-time V1.2 rig authority is created only by the protected local operator materializer from exact supervised raw-capture, metrology/instrument-or-owner-attestation, lens, stage-transform, component, controller, and wiring evidence. Product-owner attestation is a purpose-bound non-traceable authority class, never a relabelled calibration certificate. The materializer rereads every referenced byte, verifies the canonical attestation and exact instrument fields when that class is used, verifies all source hashes, reruns the existing physical acceptance calculation, and atomically emits canonical runtime context, five ordered authority members, their rig-source bundle, a complete copied source-evidence ledger, a reproducible physical-analysis receipt, and a redacted hash-only handoff. The Production loader reopens every emitted file, checks the shipped analyzer/dependency/finalizer identities, reconstructs all source links and physical acceptance, and rejects missing, extra, partial, duplicate, relabelled, corrupt, changed, old-profile, or synthetic-fixture inputs. Identical restaging is idempotent by exact rig-source bundle hash; conflicting bytes fail closed. This operator-only path has no browser route and performs no activation, import, trust, or hosted mutation.
 
 The authoritative local helper route family is '/calibration/mathematical-v1.2': read-only 'GET /sessions' and 'GET /status'; 'POST /start'; server-owned expected-step 'POST /capture' and 'POST /retry'; acknowledged 'POST /replace-pose'; and exact 'POST /analyze' and 'POST /finalize'. Mutations use a server-issued revision token. The browser cannot supply operation/role/channel/sample identity, runtime or rig authority, acceptance booleans, analysis/bundle bytes, or trusted hashes. There is no activation mutation in this route family.
 

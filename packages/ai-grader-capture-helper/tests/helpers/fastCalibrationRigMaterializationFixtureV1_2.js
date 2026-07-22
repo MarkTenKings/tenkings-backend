@@ -31,13 +31,39 @@ function evidenceReference(artifact) {
   return { evidenceId: artifact.evidenceId, sha256: artifact.sha256, role: artifact.role };
 }
 
-async function prepareFastCalibrationRigMaterializationFixtureV1_2(root) {
+async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options = {}) {
   const sourceRoot = path.join(root, "source");
   const acceptanceRoot = path.join(root, "acceptance");
   await fs.mkdir(sourceRoot, { recursive: true });
   const analyzerScriptPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
   const analyzerScriptSha256 = digest(await fs.readFile(analyzerScriptPath));
-  const instrument = await write(sourceRoot, "references/instrument-calibration.bin", Buffer.from("traceable-instrument-calibration-v1"));
+  const ownerAttested = options.ownerAttested === true;
+  const ownerInstrumentFields = {
+    instrumentId: "owner-device-250mm-1", kind: "product_owner_attested_device",
+    manufacturer: "owner_verified_manufacturer", model: "owner_verified_250mm_device", serialNumber: "owner-device-serial-1",
+    maximumRangeMm: 250, accuracyMm: 0.05, resolutionMm: 0.01, statedU95Mm: 0.1,
+    ownerAttestationId: "mark-owner-attestation-1", authorityStatement: "product_owner_attested_non_traceable_measurement_v1",
+  };
+  const instrument = await write(
+    sourceRoot,
+    ownerAttested ? "references/product-owner-attestation.json" : "references/instrument-calibration.bin",
+    ownerAttested
+      ? canonicalBytes({
+        accuracyMm: ownerInstrumentFields.accuracyMm, attestedAt: "2026-07-22T12:00:00.000Z",
+        authorityStatement: ownerInstrumentFields.authorityStatement, instrumentId: ownerInstrumentFields.instrumentId,
+        manufacturer: ownerInstrumentFields.manufacturer, maximumRangeMm: ownerInstrumentFields.maximumRangeMm,
+        model: options.ownerAttestationMismatch === true ? "different_owner_verified_device" : ownerInstrumentFields.model,
+        ownerAttestationId: ownerInstrumentFields.ownerAttestationId,
+        productOwnerId: "mark", resolutionMm: ownerInstrumentFields.resolutionMm,
+        schemaVersion: "ten-kings-product-owner-metrology-attestation-v1", serialNumber: ownerInstrumentFields.serialNumber,
+        statedU95Mm: ownerInstrumentFields.statedU95Mm, traceabilityStatement: "not_traceably_calibrated",
+      })
+      : Buffer.from("traceable-instrument-calibration-v1"),
+  );
+  const physicalInstrument = ownerAttested ? {
+    ...ownerInstrumentFields, ownerAttestationVersion: "1", ownerAttestationSha256: instrument.sha256,
+  } : { instrumentId: "instrument-1", kind: "caliper", calibrationVersion: "cert-v1", calibrationSha256: instrument.sha256 };
+  const physicalMeasurementMethod = ownerAttested ? "product_owner_attested_measurement_v1" : "traceable-physical-metrology-v1";
   const metrology = await write(sourceRoot, "references/metrology-source.bin", Buffer.from("supervised-metrology-worksheet-v1"));
   const lensEvidence = await write(sourceRoot, "references/lens-authority.bin", Buffer.from("lens-asset-and-mount-authority-v1"));
   const wiringEvidence = await write(sourceRoot, "references/component-wiring.bin", Buffer.from("supervised-eight-channel-wiring-v1"));
@@ -142,15 +168,15 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root) {
   for (const axis of ["x", "y"]) {
     measurementArtifacts.print.push(await measurement(`print_scale_verification_${axis}`, {
       schemaVersion: "ten-kings-calibration-print-scale-measurement-v1", operatorId: componentEvidence.operatorId,
-      recordedAt: "2026-07-21T13:00:00.000Z", measurementMethod: "traceable-physical-metrology-v1",
-      instrument: { instrumentId: "instrument-1", kind: "caliper", calibrationVersion: "cert-v1", calibrationSha256: instrument.sha256 },
+      recordedAt: "2026-07-21T13:00:00.000Z", measurementMethod: physicalMeasurementMethod,
+      instrument: physicalInstrument,
       axis, nominalSpanMm: axis === "x" ? 100 : 200, measuredSpanMm: axis === "x" ? 100 : 200,
       measurementU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
     }, `print-scale-${axis}`));
     measurementArtifacts.cut.push(await measurement(`target_cut_dimension_${axis}`, {
       schemaVersion: "ten-kings-calibration-target-cut-dimension-measurement-v1", operatorId: componentEvidence.operatorId,
-      recordedAt: "2026-07-21T13:01:00.000Z", measurementMethod: "traceable-physical-metrology-v1",
-      instrument: { instrumentId: "instrument-1", kind: "caliper", calibrationVersion: "cert-v1", calibrationSha256: instrument.sha256 },
+      recordedAt: "2026-07-21T13:01:00.000Z", measurementMethod: physicalMeasurementMethod,
+      instrument: physicalInstrument,
       axis, nominalDimensionMm: axis === "x" ? 63.5 : 88.9, measuredDimensionMm: axis === "x" ? 63.5 : 88.9,
       measurementU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
     }, `target-cut-${axis}`));
@@ -160,8 +186,8 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root) {
     for (let sample = 1; sample <= 3; sample += 1) {
       measurementArtifacts.direction.push(await measurement(`direction_geometry_channel_${channel}`, {
         schemaVersion: "ten-kings-calibration-direction-measurement-v1", operatorId: componentEvidence.operatorId,
-        recordedAt: "2026-07-21T13:02:00.000Z", measurementMethod: "fixed_ring_segment_geometry_with_ruler_v1",
-        instrument: { instrumentId: "instrument-1", kind: "caliper", calibrationVersion: "cert-v1", calibrationSha256: instrument.sha256 },
+        recordedAt: "2026-07-21T13:02:00.000Z", measurementMethod: physicalMeasurementMethod,
+        instrument: physicalInstrument,
         channelIndex: channel, sampleIndex: sample,
         sourcePointMm: { x: 100 * Math.cos(angle), y: 100 * Math.sin(angle) }, cardCenterPointMm: { x: 0, y: 0 },
         pointU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
@@ -269,7 +295,7 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root) {
     schemaVersion: "ten-kings-mathematical-calibration-v1.2-rig-materialization-input-v1",
     captureManifest: captureManifestRef, liveProbe: liveRef, componentEvidence: componentRef, stageTransformEvidence: stageRef,
     referencedEvidence: [
-      { role: "instrument_calibration", ...instrument }, { role: "metrology_source", ...metrology },
+      { role: ownerAttested ? "product_owner_attestation" : "instrument_calibration", ...instrument }, { role: "metrology_source", ...metrology },
       { role: "lens_authority", ...lensEvidence }, { role: "component_wiring", ...wiringEvidence },
       ...stageEvidence.map((entry) => ({ role: "stage_transform_measurement", ...entry })),
     ],
