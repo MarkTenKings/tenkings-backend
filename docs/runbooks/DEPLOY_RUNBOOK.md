@@ -101,50 +101,62 @@ Execution remains separately authorized. Capture a fresh token-gated helper stat
 
 Only for this fixed 2026-07-22 incident, bridge `physicalState=unverified` may instead be composed with one separately authorized, out-of-process `leimac-idmu-safe-off` receipt. Both optional receipt arguments are required together. The receipt must be exact canonical JSON with its caller-supplied SHA-256; bind this incident and owner authorization; reproduce the exact configured `169.254.191.156:1000` controller, unit-one `W86`/`W85`/`W11` zero frames, successful `W86ACK0`/`W85ACK0`/`W11ACK0` responses, all eight output/asynchronous-output/PWM channels at zero, `lightsCommanded=false`, and `persistentSaved=false`; and precede the fresh status capture and transaction by no more than five minutes. The authenticated status must remain otherwise idle and must contain no post-command lighting apply, safety event, persistent controller session, or conflicting state. A native `safe_off_verified` status never accepts the exception receipt. The verified receipt bytes, identity, timing, controller, ACKs, zero-channel summary, and safety result become immutable archive-ledger and transaction-receipt members.
 
-Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the command; do not stop NFC. Use one new archive root outside the station output directory. The following is the exact exceptional one-time sequence after the hotfix is independently reviewed, merged, installed, and a new exact hardware authorization is obtained. It issues exactly one hardware command: the guarded `leimac-idmu-safe-off` invocation.
+Receipt creation must use the incident-only `tk-ai-grader-capture-stale-review-safe-off-receipt` executable. Its `capture` mode requires the exact fixed confirmation and may spawn at most one guarded `leimac-idmu-safe-off` child. Before interpreting the child result, it writes the exact raw stdout, raw stderr, and canonical child exit/timing/argv/file-identity evidence to fixed create-new files. It then uses the same verifier as the archive transaction to atomically create the canonical receipt and SHA file. Its `regenerate` mode never spawns a child and recreates only the derived receipt/SHA from exact preserved raw evidence. If capture post-processing fails after raw evidence exists, run only `regenerate`; never repeat the hardware command merely because parsing, canonicalization, receipt installation, or SHA installation failed.
+
+Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the archive command; do not stop NFC. Use one new archive root outside the station output directory. The following is the exact exceptional one-time sequence after the executable is independently reviewed, merged, installed, and a new exact hardware authorization is obtained. Only the executable's `capture` mode can issue hardware I/O, and it issues at most one guarded safe-off child.
 
 ```powershell
 $queueOutput = 'C:\TenKings\capture-data\ai-grader-station'
 $archiveRoot = 'C:\TenKings\capture-data\ai-grader-queue-quarantine\owner-removed-stale-invalid-review-20260722-v1'
 $idleStatus = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\idle-status.json'
-$externalSafeOffReceipt = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt.json'
+$receiptCaptureRoot = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt-capture-v1'
+$externalSafeOffReceipt = Join-Path $receiptCaptureRoot 'external-safe-off-receipt.json'
+$externalSafeOffReceiptShaFile = Join-Path $receiptCaptureRoot 'external-safe-off-receipt.sha256'
+$rawReceiptMembers = @(
+  (Join-Path $receiptCaptureRoot 'safe-off-child.stdout.json'),
+  (Join-Path $receiptCaptureRoot 'safe-off-child.stderr.txt'),
+  (Join-Path $receiptCaptureRoot 'safe-off-child-execution.json')
+)
 $installedRepo = 'C:\TenKings\repos\tenkings-rip-it-live'
-$config = Get-Content -LiteralPath 'C:\TenKings\config\ai-grader-local-bridge.json' -Raw | ConvertFrom-Json
+$configPath = 'C:\TenKings\config\ai-grader-local-bridge.json'
+$receiptTool = Join-Path $installedRepo 'packages\ai-grader-capture-helper\dist\staleInvalidRapidCaptureSafeOffReceiptCli.js'
+$config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 $configuredLeimacHost = [string]$config.leimacHost
 $configuredLeimacPort = [int]$config.leimacPort
 if ($configuredLeimacHost -ne '169.254.191.156' -or $configuredLeimacPort -ne 1000) {
   throw 'Configured Leimac controller does not match the fixed incident endpoint; do not issue a hardware command.'
 }
-if (Test-Path -LiteralPath $externalSafeOffReceipt) {
-  throw 'External safe-off receipt path already exists; preserve it and stop rather than replacing evidence.'
-}
-[System.IO.Directory]::CreateDirectory((Split-Path -Parent $externalSafeOffReceipt)) | Out-Null
-
-# Exactly one bounded hardware command. A fresh explicit Mark authorization is required before this invocation.
-Push-Location $installedRepo
-try {
-  $safeOffOutput = & node packages\ai-grader-capture-helper\dist\cli.js leimac-idmu-safe-off `
-    --host $configuredLeimacHost --port $configuredLeimacPort --timeout-ms 1500 --unit 1 `
-    --apply --confirm 'APPLY LEIMAC SAFE OFF'
-  if ($LASTEXITCODE -ne 0) { throw 'Guarded Leimac safe-off command failed; preserve output and stop.' }
-} finally {
-  Pop-Location
-}
-$safeOffOperation = ($safeOffOutput -join [Environment]::NewLine) | ConvertFrom-Json
-$safeOffEnvelope = [ordered]@{
-  schemaVersion = 'ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1'
-  incidentId = 'ten-kings-stale-invalid-review-removal-20260722-v1'
-  purpose = 'stale_invalid_review_archive_preflight'
-  authorization = [ordered]@{
-    owner = 'Mark / Ten Kings'
-    source = 'explicit_product_owner_instruction_2026-07-22'
+$existingReceiptMembers = @($rawReceiptMembers + $externalSafeOffReceipt + $externalSafeOffReceiptShaFile | Where-Object { Test-Path -LiteralPath $_ })
+if ($existingReceiptMembers.Count -gt 0) {
+  if (@($rawReceiptMembers | Where-Object { -not (Test-Path -LiteralPath $_) }).Count -ne 0) {
+    throw 'Partial pre-existing receipt evidence is missing one raw member; preserve all files and stop without hardware.'
   }
-  operation = $safeOffOperation
+  # Hardware-free recovery only. This mode has no child-process boundary.
+  $receiptResultText = & node $receiptTool regenerate --output-dir $receiptCaptureRoot
+  if ($LASTEXITCODE -ne 0) { throw 'Hardware-free receipt regeneration failed; preserve raw evidence and do not repeat safe-off.' }
+} else {
+  # Requires fresh exact Mark authorization. Capture mode spawns at most one guarded safe-off child.
+  $receiptResultText = & node $receiptTool capture `
+    --output-dir $receiptCaptureRoot `
+    --config-path $configPath `
+    --confirm 'CAPTURE TEN KINGS STALE REVIEW SAFE OFF RECEIPT'
+  $captureExit = $LASTEXITCODE
+  if ($captureExit -ne 0) {
+    if (@($rawReceiptMembers | Where-Object { -not (Test-Path -LiteralPath $_) }).Count -ne 0) {
+      throw 'Capture did not preserve the complete raw evidence set; stop and do not repeat safe-off.'
+    }
+    # The child already ran. Regenerate from raw evidence without spawning any child.
+    $receiptResultText = & node $receiptTool regenerate --output-dir $receiptCaptureRoot
+    if ($LASTEXITCODE -ne 0) { throw 'Hardware-free receipt regeneration failed; preserve raw evidence and do not repeat safe-off.' }
+  }
 }
-$canonicalizer = 'const fs=require("fs");let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const k=v=>Array.isArray(v)?v.map(k):v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(x=>[x,k(v[x])])):v;fs.writeFileSync(process.argv[1],JSON.stringify(k(JSON.parse(s)))+"\n",{encoding:"utf8",flag:"wx"});});'
-$safeOffEnvelope | ConvertTo-Json -Depth 100 -Compress | & node -e $canonicalizer $externalSafeOffReceipt
-if ($LASTEXITCODE -ne 0) { throw 'Canonical safe-off receipt creation failed; preserve command output and stop.' }
-$externalSafeOffReceiptSha = (Get-FileHash -LiteralPath $externalSafeOffReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+$receiptResult = ($receiptResultText -join [Environment]::NewLine) | ConvertFrom-Json
+$externalSafeOffReceiptSha = (Get-Content -LiteralPath $externalSafeOffReceiptShaFile -Raw).Trim().ToLowerInvariant()
+if ($externalSafeOffReceiptSha -notmatch '^[a-f0-9]{64}$') { throw 'Receipt SHA file is malformed.' }
+$rehashedExternalSafeOffReceipt = (Get-FileHash -LiteralPath $externalSafeOffReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($rehashedExternalSafeOffReceipt -ne $externalSafeOffReceiptSha -or $receiptResult.receiptSha256 -ne $externalSafeOffReceiptSha) {
+  throw 'Executable result, SHA file, and canonical receipt bytes do not agree exactly.'
+}
 
 # Capture authenticated idle status after the acknowledged command; its file identity/time binds command ordering.
 $headers = @{ 'x-ai-grader-station-token' = [string]$config.stationToken }
@@ -153,7 +165,7 @@ $statusJson = ($status | ConvertTo-Json -Depth 100) + [Environment]::NewLine
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $idleStatus)) | Out-Null
 [System.IO.File]::WriteAllText($idleStatus, $statusJson, $utf8NoBom)
-Remove-Variable headers, config, status, statusJson, safeOffOperation, safeOffEnvelope, safeOffOutput
+Remove-Variable headers, config, status, statusJson, receiptResult, receiptResultText
 $idleStatusSha = (Get-FileHash -LiteralPath $idleStatus -Algorithm SHA256).Hash.ToLowerInvariant()
 
 # Run from the installed/current checkout so the approved stop script targets the installed helper.
