@@ -40,7 +40,7 @@ DIRECTION_INSTRUMENT_ID = (
     'ten-kings-illumination-centroid-direction-analyzer-v1')
 SHA256_RE = __import__('re').compile(r'^[0-9a-f]{64}$')
 UTC_TIMESTAMP_RE = __import__('re').compile(
-    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?Z$')
+    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,7})?Z$')
 cv2.setNumThreads(1)
 cv2.ocl.setUseOpenCL(False)
 cv2.setRNGSeed(0)

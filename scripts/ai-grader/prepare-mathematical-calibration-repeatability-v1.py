@@ -618,7 +618,8 @@ def verify_existing_derived_authority(
     return observed_operations
 
 
-def derive(session_dir_value: str) -> dict[str, Any]:
+def derive(session_dir_value: str,
+           incident_analyzer_authority_rebind: bool = False) -> dict[str, Any]:
     session_dir = Path(session_dir_value).resolve()
     state_path = session_dir / 'capture-session.json'
     state, state_bytes = read_json_object(
@@ -627,8 +628,10 @@ def derive(session_dir_value: str) -> dict[str, Any]:
         raise ValueError(f'capture session schema must be {SESSION_SCHEMA}')
     if state.get('purpose') != 'mathematical_calibration_v1':
         raise ValueError('capture session purpose is not mathematical_calibration_v1')
-    if state.get('sealedAt') is not None:
+    if state.get('sealedAt') is not None and not incident_analyzer_authority_rebind:
         raise ValueError('authority preparation requires an unsealed session')
+    if incident_analyzer_authority_rebind and state.get('sealedAt') is None:
+        raise ValueError('incident analyzer-authority rebind requires a sealed session')
     session_id = safe_id(state.get('sessionId'), 'sessionId')
     safe_id(state.get('operatorId'), 'operatorId')
     subject = one_object(state.get('subject'), 'capture session subject')
@@ -685,10 +688,13 @@ def derive(session_dir_value: str) -> dict[str, Any]:
         float(coverage_factor))
     derived_requests = [*target_requests, *derived_direction_requests]
     requests = [*derived_requests, *repeatability_requests]
-    existing = verify_existing_derived_authority(
-        session_dir, state, derived_requests)
-    existing.update(verify_existing_measurements(
-        session_dir, state, repeatability_requests, bindings))
+    if incident_analyzer_authority_rebind:
+        existing: set[str] = set()
+    else:
+        existing = verify_existing_derived_authority(
+            session_dir, state, derived_requests)
+        existing.update(verify_existing_measurements(
+            session_dir, state, repeatability_requests, bindings))
     return {
         'sessionDir': session_dir,
         'state': state,
@@ -772,12 +778,21 @@ def parse_arguments(argv: list[str]) -> argparse.Namespace:
     parser.add_argument('--bridge-url')
     parser.add_argument(
         '--station-token-env', default='AI_GRADER_STATION_BRIDGE_TOKEN')
+    parser.add_argument(
+        '--incident-analyzer-authority-rebind', action='store_true',
+        help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_arguments(sys.argv[1:] if argv is None else argv)
-    result = derive(args.session_dir)
+    if args.incident_analyzer_authority_rebind and args.bridge_url:
+        raise ValueError(
+            'incident analyzer-authority rebind derivation cannot submit records')
+    result = derive(
+        args.session_dir,
+        incident_analyzer_authority_rebind=
+        args.incident_analyzer_authority_rebind)
     submitted: list[str] = []
     if args.bridge_url:
         submitted = submit_requests(

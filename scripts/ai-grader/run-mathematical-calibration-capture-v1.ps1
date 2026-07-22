@@ -3,7 +3,7 @@ param(
   [ValidateSet(
     'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry',
     'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline', 'PrepareRigInput',
-    'RecoverBlankTimestampFalseStop'
+    'RecoverBlankTimestampFalseStop', 'RebindSealedAnalyzerAuthority'
   )]
   [string]$Action = 'Worksheet',
   [string]$BridgeUrl = 'http://127.0.0.1:47653',
@@ -455,6 +455,22 @@ function Invoke-CalibrationFinalization {
 
 if ($Action -eq 'Worksheet') {
   Show-Worksheet
+  exit 0
+}
+
+if ($Action -eq 'RebindSealedAnalyzerAuthority') {
+  $result = (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/rebind-sealed-analyzer-authority-20260722' -Body @{}).result
+  if ($null -eq $result -or
+      [string]$result.status.sessionId -ne 'math-cal-v1-20260722-4cfa410c-01' -or
+      [string]$result.receipt.rebindId -ne 'sealed-analyzer-authority-rebind-20260722-v1' -or
+      [string]$result.receipt.correctedAnalyzerSha256 -ne '4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201' -or
+      [int]$result.receipt.correctedAuthority.count -ne 74 -or
+      -not [bool]$result.status.sealed) {
+    throw 'The protected bridge did not return the exact incident-bound analyzer-authority rebind receipt.'
+  }
+  $result
+  Write-Host ('Analyzer-authority rebind receipt: ' + $result.receipt.receiptPath)
+  Write-Host ('Corrected analyzer SHA-256: ' + $result.receipt.correctedAnalyzerSha256)
   exit 0
 }
 

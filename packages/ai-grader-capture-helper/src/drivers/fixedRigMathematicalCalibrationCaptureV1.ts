@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   detectAndNormalizeCardImage,
   normalizeCardImageWithGeometry,
@@ -72,6 +72,28 @@ const BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1 =
   "ten-kings-mathematical-calibration-blank-reverse-timestamp-false-stop-recovery-receipt-v1" as const;
 const BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_STATE_V1 =
   "ten-kings-mathematical-calibration-blank-reverse-timestamp-false-stop-recovery-state-v1" as const;
+
+const ANALYZER_AUTHORITY_REBIND_INCIDENT_V1 = {
+  rebindId: "sealed-analyzer-authority-rebind-20260722-v1",
+  sessionId: "math-cal-v1-20260722-4cfa410c-01",
+  expectedPreStateSha256: "72dace5828ac13fefd1a67ea738eafe11e54f5478c15eba4dd3c9d9326fa7a1f",
+  oldAnalyzerSha256: "8cee9c2d3a9829fe196982616dcdb33b3872ce5dd2f15dd2e99cf9d08e21384b",
+  correctedAnalyzerSha256: "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201",
+  oldCaptureManifestSha256: "43765b77888c0185a3189895a74c9d1305699d1be8103a58d0697df5288cd8c9",
+  oldSourcePackageSha256: "27bd94d8e3b72bf7e77dc891eb7da0d395a7d051addf546280a7b938a0328321",
+  captureCount: 102,
+  captureArtifactCount: 204,
+  authorityCount: 78,
+  analyzerAuthorityCount: 74,
+  protectedTargetAuthorityCount: 4,
+  failureCount: 2,
+  manifestReferenceCount: 182,
+} as const;
+
+const ANALYZER_AUTHORITY_REBIND_RECEIPT_V1 =
+  "ten-kings-mathematical-calibration-analyzer-authority-rebind-receipt-v1" as const;
+const ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1 =
+  "ten-kings-mathematical-calibration-superseded-analyzer-authority-ledger-v1" as const;
 
 export type FixedRigMathematicalCalibrationCaptureRoleV1 = (typeof CAPTURE_ROLES)[number];
 export type FixedRigMathematicalCalibrationMeasurementClassV1 = (typeof MEASUREMENT_CLASSES)[number];
@@ -173,6 +195,9 @@ export interface FixedRigMathematicalCalibrationCaptureProducerConfigV1 {
   detectCheckerboard?: (imageBuffer: Buffer) => Promise<MathematicalCalibrationPreviewCheckerboard>;
   now?: () => Date;
   contractVersion?: "v1.0.1" | "v1.1";
+  deriveAnalyzerAuthorityRebindRequests?: (
+    sessionDir: string,
+  ) => Promise<RecordFixedRigMathematicalCalibrationMeasurementV1Request[]>;
 }
 
 export interface StartFixedRigMathematicalCalibrationCaptureV1Request {
@@ -448,6 +473,40 @@ interface BlankReverseTimestampFalseStopRecoveryReceiptV1 {
   verifiedBlankReverseAuthority: VerifiedBlankReverseGeometryAuthorityV1["provenance"];
 }
 
+interface AnalyzerAuthorityRebindStateV1 {
+  schemaVersion: typeof ANALYZER_AUTHORITY_REBIND_RECEIPT_V1;
+  rebindId: string;
+  reboundAt: string;
+  oldAnalyzerSha256: string;
+  correctedAnalyzerSha256: string;
+  preStateSha256: string;
+  oldCaptureManifestSha256: string;
+  oldSourcePackageSha256: string;
+  newCaptureManifestSha256: string;
+  newSourcePackageSha256: string;
+  supersededAuthorityLedgerPath: string;
+  supersededAuthorityLedgerSha256: string;
+  receiptPath: string;
+  receiptSha256: string;
+}
+
+type AnalyzerAuthorityRebindReceiptV1 = Omit<AnalyzerAuthorityRebindStateV1, "receiptSha256"> & {
+  sessionId: string;
+  preservedEvidence: {
+    capturesSha256: string;
+    captureArtifactsSha256: string;
+    failuresSha256: string;
+    protectedTargetAuthoritySha256: string;
+    protectedTargetArtifactsSha256: string;
+  };
+  correctedAuthority: {
+    count: number;
+    recordsSha256: string;
+    artifactsSha256: string;
+  };
+  sealOperationId: string;
+};
+
 interface MeasurementRecordV1 {
   operationId: string;
   measurementType: RecordFixedRigMathematicalCalibrationMeasurementV1Request["measurementType"];
@@ -483,6 +542,7 @@ interface CaptureSessionStateV1 {
   failedOperations: FailedCaptureOperationV1[];
   hardStop?: { operationId: string; stoppedAt: string; reason: string };
   recoveryReceipts?: BlankReverseTimestampFalseStopRecoveryStateV1[];
+  analyzerAuthorityRebind?: AnalyzerAuthorityRebindStateV1;
   blankReverseFlipRecorded?: boolean;
 }
 
@@ -571,6 +631,12 @@ export interface SealedFixedRigMathematicalCalibrationCaptureV1 {
 export interface FixedRigMathematicalCalibrationFalseStopRecoveryV1 {
   status: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
   recovery: BlankReverseTimestampFalseStopRecoveryStateV1;
+  idempotent: boolean;
+}
+
+export interface FixedRigMathematicalCalibrationAnalyzerAuthorityRebindV1 {
+  status: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+  receipt: AnalyzerAuthorityRebindReceiptV1;
   idempotent: boolean;
 }
 
@@ -1037,11 +1103,111 @@ function assertPhysicalMeasurementTargetAuthority(input: {
   }
 }
 
+function safeSessionMember(sessionDir: string, relativePath: unknown, label: string): string {
+  if (typeof relativePath !== "string" || relativePath.length === 0 || path.isAbsolute(relativePath)) {
+    throw new Error(`${label} must be a relative session path.`);
+  }
+  const root = path.resolve(sessionDir);
+  const resolved = path.resolve(root, ...relativePath.split("/"));
+  if (!resolved.startsWith(`${root}${path.sep}`)) throw new Error(`${label} escapes the isolated session.`);
+  return resolved;
+}
+
+function manifestReferences(value: unknown): Array<{ path: string; sha256: string }> {
+  const references: Array<{ path: string; sha256: string }> = [];
+  const visit = (candidate: unknown): void => {
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!candidate || typeof candidate !== "object") return;
+    const object = candidate as Record<string, unknown>;
+    if (typeof object.path === "string" && typeof object.sha256 === "string") {
+      references.push({ path: object.path, sha256: object.sha256 });
+    }
+    Object.values(object).forEach(visit);
+  };
+  visit(value);
+  return references;
+}
+
+function isProtectedTargetAuthorityRecord(record: MeasurementRecordV1): boolean {
+  return (record.payload.instrument as { kind?: unknown } | undefined)?.kind === "protected_target_geometry";
+}
+
+function isAnalyzerAuthorityRecord(record: MeasurementRecordV1): boolean {
+  const instrument = record.payload.instrument as { kind?: unknown; calibrationSha256?: unknown } | undefined;
+  return (record.measurementType === "direction_geometry" || record.measurementType === "measurement_repeatability") &&
+    instrument?.kind === "fixed_rig_geometry";
+}
+
+function measurementArtifactBody(record: MeasurementRecordV1): Record<string, unknown> {
+  const schemaVersion = record.measurementType === "direction_geometry"
+    ? "ten-kings-calibration-direction-measurement-v1"
+    : record.measurementType === "measurement_repeatability"
+      ? "ten-kings-calibration-repeatability-measurement-v1"
+      : record.measurementType === "print_scale"
+        ? "ten-kings-calibration-print-scale-authority-v1"
+        : "ten-kings-calibration-target-cut-dimension-authority-v1";
+  return { schemaVersion, ...record.payload };
+}
+
+function expectedAnalyzerPayloadFromRequest(
+  request: RecordFixedRigMathematicalCalibrationMeasurementV1Request,
+  oldRecord: MeasurementRecordV1,
+  state: CaptureSessionStateV1,
+): Record<string, unknown> {
+  if (request.measurementType === "direction_geometry" && "measurementAlgorithmVersion" in request) {
+    return {
+      operatorId: state.operatorId,
+      recordedAt: oldRecord.recordedAt,
+      measurementMethod: request.measurementMethod,
+      instrument: request.instrument,
+      channelIndex: request.channelIndex,
+      sampleIndex: request.sampleIndex,
+      sourcePointMm: request.sourcePointMm,
+      cardCenterPointMm: request.cardCenterPointMm,
+      pointU95Mm: request.pointU95Mm,
+      sourceCaptureOperationId: request.sourceCaptureOperationId,
+      sourceEvidenceId: request.sourceEvidenceId,
+      sourceSha256: request.sourceSha256,
+      sourceRole: `illumination_pattern_channel_${request.channelIndex}`,
+      measurementAlgorithmVersion: request.measurementAlgorithmVersion,
+    };
+  }
+  if (request.measurementType === "measurement_repeatability") {
+    const sourceCapture = state.captures.find((capture) => capture.operationId === request.sourceCaptureOperationId);
+    const sourceArtifact = sourceCapture && state.artifacts.find((artifact) => artifact.evidenceId === sourceCapture.rawEvidenceId);
+    if (!sourceCapture || sourceCapture.role !== "repeated_placement" || !sourceArtifact) {
+      throw new Error("Corrected analyzer request does not bind an exact immutable repeated-placement capture.");
+    }
+    return {
+      operatorId: state.operatorId,
+      recordedAt: oldRecord.recordedAt,
+      measurementMethod: request.measurementMethod,
+      instrument: request.instrument,
+      measurementClass: request.measurementClass,
+      sampleIndex: request.sampleIndex,
+      referenceFeatureId: request.referenceFeatureId,
+      measuredValue: request.measuredValue,
+      sourceCaptureOperationId: request.sourceCaptureOperationId,
+      sourceEvidenceId: sourceArtifact.evidenceId,
+      sourceSha256: sourceArtifact.sha256,
+      sourceRole: "repeated_placement",
+      measurementAlgorithmVersion: request.measurementAlgorithmVersion,
+      fixedRoiDefinition: "registered_checkerboard_center_cell_and_grid_spacing_v1",
+    };
+  }
+  throw new Error("Incident rebind received a non-analyzer authority request in the corrected 74-record set.");
+}
+
 export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private readonly config: FixedRigMathematicalCalibrationCaptureProducerConfigV1;
   private chain: Promise<unknown> = Promise.resolve();
   private readonly verifiedBlankReverseGeometry = new Map<string, VerifiedBlankReverseGeometryAuthorityV1>();
   private readonly blankReverseTimestampFalseStopRecovery = BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_V1;
+  private readonly analyzerAuthorityRebindIncident = ANALYZER_AUTHORITY_REBIND_INCIDENT_V1;
+  private analyzerAuthorityRebindTestFailpoint?: "after-stage" | "after-backup-rename";
 
   constructor(config: FixedRigMathematicalCalibrationCaptureProducerConfigV1) {
     this.config = config;
@@ -1554,6 +1720,393 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       state.updatedAt = receipt.recoveredAt;
       await this.persist(state);
       return { status: statusFor(state, this.sessionDir(state.sessionId)), recovery, idempotent: false };
+    });
+  }
+
+  async rebindKnownSealedAnalyzerAuthority(): Promise<FixedRigMathematicalCalibrationAnalyzerAuthorityRebindV1> {
+    return this.serialized(async () => {
+      const incident = this.analyzerAuthorityRebindIncident;
+      if (this.config.contractVersion === "v1.1") {
+        throw new Error("The incident-bound analyzer-authority rebind is unavailable to V1.1 producers.");
+      }
+      const sessionDir = this.sessionDir(incident.sessionId);
+      const stageRoot = path.join(this.config.outputRoot, ".analyzer-authority-rebind-stage-v1");
+      const stageSessionDir = path.join(stageRoot, incident.sessionId);
+      const backupDir = `${sessionDir}.analyzer-authority-rebind-backup-v1`;
+      const journalPath = path.join(this.config.outputRoot, `.${incident.sessionId}.analyzer-authority-rebind-journal-v1.json`);
+      if (existsSync(journalPath)) {
+        if (!existsSync(sessionDir) && existsSync(backupDir)) await rename(backupDir, sessionDir);
+        if (!existsSync(sessionDir)) throw new Error("Incident rebind recovery could not restore the original sealed session.");
+        await rm(stageRoot, { recursive: true, force: true });
+        if (existsSync(backupDir)) await rm(backupDir, { recursive: true, force: true });
+        await rm(journalPath, { force: true });
+      }
+
+      const readCompleted = async (state: CaptureSessionStateV1): Promise<AnalyzerAuthorityRebindReceiptV1 | null> => {
+        const binding = state.analyzerAuthorityRebind;
+        if (!binding) return null;
+        if (
+          binding.schemaVersion !== ANALYZER_AUTHORITY_REBIND_RECEIPT_V1 ||
+          binding.rebindId !== incident.rebindId ||
+          binding.preStateSha256 !== incident.expectedPreStateSha256 ||
+          binding.oldAnalyzerSha256 !== incident.oldAnalyzerSha256 ||
+          binding.correctedAnalyzerSha256 !== incident.correctedAnalyzerSha256 ||
+          binding.oldCaptureManifestSha256 !== incident.oldCaptureManifestSha256 ||
+          binding.oldSourcePackageSha256 !== incident.oldSourcePackageSha256 ||
+          !SHA256.test(binding.receiptSha256)
+        ) throw new Error("Completed incident rebind state does not match the exact product-bound contract.");
+        const receiptPath = safeSessionMember(sessionDir, binding.receiptPath, "rebind receipt path");
+        const bytes = await readFile(receiptPath);
+        const receipt = JSON.parse(bytes.toString("utf-8")) as AnalyzerAuthorityRebindReceiptV1;
+        if (!bytes.equals(canonicalBytes(receipt)) || hash(bytes) !== binding.receiptSha256) {
+          throw new Error("Completed incident rebind receipt is not exact canonical content-addressed evidence.");
+        }
+        const { receiptSha256: _ignored, ...expectedReceiptBinding } = binding;
+        for (const [key, value] of Object.entries(expectedReceiptBinding)) {
+          if (hash(canonicalBytes((receipt as unknown as Record<string, unknown>)[key])) !== hash(canonicalBytes(value))) {
+            throw new Error("Completed incident rebind receipt and state linkage differ.");
+          }
+        }
+        return receipt;
+      };
+
+      const statePath = this.statePath(incident.sessionId);
+      const initialStateBytes = await readFile(statePath);
+      const initialState = JSON.parse(initialStateBytes.toString("utf-8")) as CaptureSessionStateV1;
+      const completed = await readCompleted(initialState);
+      if (completed) {
+        return { status: statusFor(initialState, sessionDir), receipt: completed, idempotent: true };
+      }
+
+      const analyzerPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
+      const analyzerSha256 = hash(await readFile(analyzerPath));
+      if (analyzerSha256 !== incident.correctedAnalyzerSha256) {
+        throw new Error("Portable corrected analyzer bytes do not match the exact incident-bound SHA-256.");
+      }
+      if (!initialStateBytes.equals(canonicalBytes(initialState)) || hash(initialStateBytes) !== incident.expectedPreStateSha256) {
+        throw new Error("Incident rebind requires the exact canonical sealed pre-state SHA-256.");
+      }
+      const state = initialState;
+      const captureArtifacts = state.artifacts.filter((artifact) =>
+        artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative");
+      const measurementArtifacts = state.artifacts.filter((artifact) => artifact.artifactClass === "measurement");
+      if (
+        state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
+        state.sessionId !== incident.sessionId || state.purpose !== "mathematical_calibration_v1" ||
+        typeof state.sealedAt !== "string" || state.hardStop !== undefined ||
+        state.captures.length !== incident.captureCount || captureArtifacts.length !== incident.captureArtifactCount ||
+        state.measurements.length !== incident.authorityCount || measurementArtifacts.length !== incident.authorityCount ||
+        state.failedOperations.length !== incident.failureCount
+      ) throw new Error("Incident rebind pre-state counts, schema, seal, failures, or hard-stop status differ.");
+
+      for (const artifact of state.artifacts) {
+        const artifactPath = safeSessionMember(sessionDir, artifact.path, `artifact ${artifact.evidenceId} path`);
+        const bytes = await readFile(artifactPath);
+        const metadata = await stat(artifactPath);
+        if (hash(bytes) !== artifact.sha256 || bytes.length !== artifact.byteSize || metadata.size !== artifact.byteSize) {
+          throw new Error(`Incident rebind rejected changed artifact ${artifact.evidenceId}.`);
+        }
+      }
+      const packagePath = path.join(sessionDir, "source-capture-package.json");
+      const manifestPath = path.join(sessionDir, "capture-manifest.json");
+      const packageBytes = await readFile(packagePath);
+      const manifestBytes = await readFile(manifestPath);
+      if (hash(packageBytes) !== incident.oldSourcePackageSha256 || hash(manifestBytes) !== incident.oldCaptureManifestSha256) {
+        throw new Error("Incident rebind requires the exact old source package and capture manifest hashes.");
+      }
+      const manifest = JSON.parse(manifestBytes.toString("utf-8")) as Record<string, unknown>;
+      if (!manifestBytes.equals(canonicalBytes(manifest))) throw new Error("Old capture manifest is not canonical JSON.");
+      const references = manifestReferences(manifest);
+      if (references.length !== incident.manifestReferenceCount) {
+        throw new Error("Old capture manifest does not contain exactly 182 protected references.");
+      }
+      for (const reference of references) {
+        assertSha256(reference.sha256, "manifest reference SHA-256");
+        const referencedPath = safeSessionMember(sessionDir, reference.path, "manifest reference path");
+        if (hash(await readFile(referencedPath)) !== reference.sha256) {
+          throw new Error(`Manifest reference ${reference.path} failed exact byte/hash verification.`);
+        }
+      }
+
+      const eventFiles = (await readdir(path.join(sessionDir, "events"))).filter((name) => name.endsWith(".json"));
+      const sealEvents: Array<{ name: string; body: Record<string, unknown>; bytes: Buffer }> = [];
+      for (const name of eventFiles) {
+        const bytes = await readFile(path.join(sessionDir, "events", name));
+        const body = JSON.parse(bytes.toString("utf-8")) as Record<string, unknown>;
+        if (!bytes.equals(canonicalBytes(body))) throw new Error(`Event ${name} is not canonical immutable JSON.`);
+        if (body.operation === "seal") sealEvents.push({ name, body, bytes });
+      }
+      if (sealEvents.length !== 1) throw new Error("Incident rebind requires exactly one canonical original seal event.");
+      const oldSealRequest = sealEvents[0]!.body.request as SealFixedRigMathematicalCalibrationCaptureV1Request;
+      if (
+        oldSealRequest?.sessionId !== incident.sessionId ||
+        sealEvents[0]!.body.packageSha256 !== incident.oldSourcePackageSha256 ||
+        sealEvents[0]!.body.captureManifestSha256 !== incident.oldCaptureManifestSha256
+      ) throw new Error("Original seal event does not reproduce the exact old sealed files.");
+
+      const analyzerRecords = state.measurements.filter(isAnalyzerAuthorityRecord);
+      const protectedTargetRecords = state.measurements.filter(isProtectedTargetAuthorityRecord);
+      if (
+        analyzerRecords.length !== incident.analyzerAuthorityCount ||
+        protectedTargetRecords.length !== incident.protectedTargetAuthorityCount ||
+        analyzerRecords.length + protectedTargetRecords.length !== state.measurements.length
+      ) throw new Error("Incident rebind requires exactly 74 old-analyzer and four protected-target authority records.");
+      for (const record of analyzerRecords) {
+        const instrument = record.payload.instrument as { calibrationSha256?: unknown };
+        if (instrument.calibrationSha256 !== incident.oldAnalyzerSha256) {
+          throw new Error("Old analyzer authority is not uniformly bound to the exact sealed analyzer SHA-256.");
+        }
+      }
+      const protectedTargetRecordsSha256 = hash(canonicalBytes(protectedTargetRecords));
+      const protectedTargetEvidenceIds = new Set(protectedTargetRecords.map((record) => record.evidenceId));
+      const protectedTargetArtifacts = state.artifacts.filter((artifact) =>
+        artifact.artifactClass === "target" || protectedTargetEvidenceIds.has(artifact.evidenceId));
+      const derive = this.config.deriveAnalyzerAuthorityRebindRequests;
+      if (!derive) throw new Error("The protected corrected-analyzer authority derivation is unavailable.");
+      const requests = await derive(sessionDir);
+      if (!Array.isArray(requests) || requests.length !== incident.authorityCount) {
+        throw new Error("Corrected analyzer derivation did not produce exactly 78 authority requests.");
+      }
+      const analyzerRequests = requests.filter((request) =>
+        request.measurementType === "direction_geometry" || request.measurementType === "measurement_repeatability");
+      const targetRequests = requests.filter((request) =>
+        request.measurementType === "print_scale" || request.measurementType === "target_cut_dimension");
+      if (analyzerRequests.length !== incident.analyzerAuthorityCount || targetRequests.length !== incident.protectedTargetAuthorityCount) {
+        throw new Error("Corrected derivation has missing, extra, or misclassified authority requests.");
+      }
+      const requestOperations = requests.map((request) => request.operationId);
+      if (new Set(requestOperations).size !== requests.length) throw new Error("Corrected authority derivation contains duplicate operations.");
+
+      const oldByOperation = new Map(state.measurements.map((record) => [record.operationId, record]));
+      for (const request of targetRequests) {
+        const old = oldByOperation.get(request.operationId);
+        if (!old || !isProtectedTargetAuthorityRecord(old)) throw new Error("Protected-target authority request identity changed.");
+        const requestWithoutEnvelope = structuredClone(request) as unknown as Record<string, unknown>;
+        delete requestWithoutEnvelope.sessionId;
+        delete requestWithoutEnvelope.operationId;
+        delete requestWithoutEnvelope.measurementType;
+        const oldComparable = structuredClone(old.payload);
+        delete oldComparable.operatorId;
+        delete oldComparable.recordedAt;
+        delete oldComparable.sourceTargetSha256;
+        if (hash(canonicalBytes(oldComparable)) !== hash(canonicalBytes(requestWithoutEnvelope))) {
+          throw new Error("Four protected-target authority records are not byte-semantically unchanged.");
+        }
+      }
+
+      const correctedRecordsByOperation = new Map<string, MeasurementRecordV1>();
+      const correctedArtifactsByOperation = new Map<string, CaptureArtifactV1>();
+      const supersededEntries: Record<string, unknown>[] = [];
+      const supersededCopies = new Map<string, Buffer>();
+      for (const request of analyzerRequests) {
+        const old = oldByOperation.get(request.operationId);
+        if (!old || !isAnalyzerAuthorityRecord(old) || old.measurementType !== request.measurementType) {
+          throw new Error("Corrected analyzer request is missing or does not match one exact old authority operation.");
+        }
+        const expectedNewPayload = expectedAnalyzerPayloadFromRequest(request, old, state);
+        const expectedOldPayload = structuredClone(expectedNewPayload);
+        const oldInstrument = structuredClone(expectedOldPayload.instrument as Record<string, unknown>);
+        if (oldInstrument.calibrationSha256 !== incident.correctedAnalyzerSha256) {
+          throw new Error("Corrected authority request does not bind the exact portable analyzer SHA-256.");
+        }
+        oldInstrument.calibrationSha256 = incident.oldAnalyzerSha256;
+        expectedOldPayload.instrument = oldInstrument;
+        if (hash(canonicalBytes(old.payload)) !== hash(canonicalBytes(expectedOldPayload))) {
+          throw new Error("Corrected analyzer changed numeric, U95, source provenance, method, algorithm, or another non-analyzer field.");
+        }
+        const oldArtifact = state.artifacts.find((artifact) => artifact.evidenceId === old.evidenceId);
+        if (!oldArtifact || oldArtifact.artifactClass !== "measurement" || oldArtifact.operationId !== old.operationId) {
+          throw new Error("Old analyzer authority artifact declaration is missing or mismatched.");
+        }
+        const oldFilePath = safeSessionMember(sessionDir, oldArtifact.path, "old analyzer authority path");
+        const oldFileBytes = await readFile(oldFilePath);
+        if (!oldFileBytes.equals(canonicalBytes(measurementArtifactBody(old)))) {
+          throw new Error("Old analyzer authority file does not reproduce its immutable record.");
+        }
+        const oldEventPath = path.join(sessionDir, "events", `${safeSegment(old.operationId)}.json`);
+        const oldEventBytes = await readFile(oldEventPath);
+        const expectedOldEventBytes = canonicalBytes({
+          operation: "record-measurement",
+          request: measurementArtifactBody(old),
+          artifact: oldArtifact,
+        });
+        if (!oldEventBytes.equals(expectedOldEventBytes)) {
+          throw new Error("Old analyzer authority event does not reproduce its immutable record and artifact.");
+        }
+        const preservedAuthorityPath = portable(
+          "rebind", incident.rebindId, "superseded-authority", "files", `${hash(oldFileBytes)}.json`);
+        const preservedEventPath = portable(
+          "rebind", incident.rebindId, "superseded-authority", "events", `${hash(oldEventBytes)}.json`);
+        supersededCopies.set(preservedAuthorityPath, oldFileBytes);
+        supersededCopies.set(preservedEventPath, oldEventBytes);
+        const correctedRecord: MeasurementRecordV1 = { ...structuredClone(old), payload: expectedNewPayload };
+        const correctedBytes = canonicalBytes(measurementArtifactBody(correctedRecord));
+        const correctedArtifact: CaptureArtifactV1 = {
+          ...structuredClone(oldArtifact), sha256: hash(correctedBytes), byteSize: correctedBytes.length,
+        };
+        correctedRecordsByOperation.set(old.operationId, correctedRecord);
+        correctedArtifactsByOperation.set(old.operationId, correctedArtifact);
+        supersededEntries.push({
+          operationId: old.operationId,
+          record: old,
+          artifact: oldArtifact,
+          authorityFile: {
+            path: oldArtifact.path, preservedPath: preservedAuthorityPath,
+            sha256: hash(oldFileBytes), byteSize: oldFileBytes.length,
+          },
+          eventFile: {
+            path: portable("events", `${safeSegment(old.operationId)}.json`), preservedPath: preservedEventPath,
+            sha256: hash(oldEventBytes), byteSize: oldEventBytes.length,
+          },
+        });
+      }
+      if (correctedRecordsByOperation.size !== incident.analyzerAuthorityCount) {
+        throw new Error("Corrected analyzer authority is missing or duplicates one of the 74 exact operations.");
+      }
+
+      const preservedEvidence = {
+        capturesSha256: hash(canonicalBytes(state.captures)),
+        captureArtifactsSha256: hash(canonicalBytes(captureArtifacts)),
+        failuresSha256: hash(canonicalBytes(state.failedOperations)),
+        protectedTargetAuthoritySha256: protectedTargetRecordsSha256,
+        protectedTargetArtifactsSha256: hash(canonicalBytes(protectedTargetArtifacts)),
+      };
+      const supersededLedgerBody = {
+        schemaVersion: ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1,
+        rebindId: incident.rebindId,
+        sessionId: incident.sessionId,
+        oldAnalyzerSha256: incident.oldAnalyzerSha256,
+        oldCaptureManifestSha256: incident.oldCaptureManifestSha256,
+        oldSourcePackageSha256: incident.oldSourcePackageSha256,
+        authorityCount: supersededEntries.length,
+        entries: supersededEntries,
+      };
+      const supersededLedgerBytes = canonicalBytes(supersededLedgerBody);
+      const supersededLedgerRelativePath = portable("rebind", incident.rebindId, "superseded-analyzer-authority-ledger.json");
+
+      await rm(stageRoot, { recursive: true, force: true });
+      await mkdir(stageRoot, { recursive: true });
+      await cp(sessionDir, stageSessionDir, { recursive: true, errorOnExist: true, force: false });
+      for (const [relativePath, bytes] of supersededCopies) {
+        await writeExclusive(safeSessionMember(stageSessionDir, relativePath, "superseded authority copy path"), bytes);
+      }
+      const stagedState = structuredClone(state);
+      stagedState.measurements = stagedState.measurements.map((record) => correctedRecordsByOperation.get(record.operationId) ?? record);
+      stagedState.artifacts = stagedState.artifacts.map((artifact) => correctedArtifactsByOperation.get(artifact.operationId) ?? artifact);
+      delete stagedState.sealedAt;
+      delete stagedState.analyzerAuthorityRebind;
+      for (const record of analyzerRecords) {
+        const correctedRecord = correctedRecordsByOperation.get(record.operationId)!;
+        const correctedArtifact = correctedArtifactsByOperation.get(record.operationId)!;
+        const correctedBytes = canonicalBytes(measurementArtifactBody(correctedRecord));
+        await writeFile(safeSessionMember(stageSessionDir, correctedArtifact.path, "staged corrected authority path"), correctedBytes);
+        await writeFile(
+          path.join(stageSessionDir, "events", `${safeSegment(record.operationId)}.json`),
+          canonicalBytes({ operation: "record-measurement", request: measurementArtifactBody(correctedRecord), artifact: correctedArtifact }),
+        );
+      }
+      await writeExclusive(safeSessionMember(stageSessionDir, supersededLedgerRelativePath, "superseded authority ledger path"), supersededLedgerBytes);
+      await rm(path.join(stageSessionDir, "source-capture-package.json"), { force: true });
+      await rm(path.join(stageSessionDir, "capture-manifest.json"), { force: true });
+      await rm(path.join(stageSessionDir, "events", sealEvents[0]!.name), { force: true });
+      await writeJsonAtomic(path.join(stageSessionDir, "capture-session.json"), stagedState);
+
+      const stagedProducer = new FixedRigMathematicalCalibrationCaptureProducerV1({
+        ...this.config,
+        outputRoot: stageRoot,
+      });
+      const sealOperationId = "cal-seal-analyzer-rebind-20260722-v1";
+      const resealed = await stagedProducer.seal({
+        sessionId: incident.sessionId,
+        operationId: sealOperationId,
+        profileId: oldSealRequest.profileId,
+        calibrationVersion: oldSealRequest.calibrationVersion,
+        artifactId: oldSealRequest.artifactId,
+      });
+      const resealedStatePath = path.join(stageSessionDir, "capture-session.json");
+      const resealedState = JSON.parse((await readFile(resealedStatePath)).toString("utf-8")) as CaptureSessionStateV1;
+      if (
+        hash(canonicalBytes(resealedState.captures)) !== preservedEvidence.capturesSha256 ||
+        hash(canonicalBytes(resealedState.failedOperations)) !== preservedEvidence.failuresSha256 ||
+        hash(canonicalBytes(resealedState.artifacts.filter((artifact) =>
+          artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative"))) !== preservedEvidence.captureArtifactsSha256 ||
+        hash(canonicalBytes(resealedState.measurements.filter(isProtectedTargetAuthorityRecord))) !== preservedEvidence.protectedTargetAuthoritySha256
+        || hash(canonicalBytes(resealedState.artifacts.filter((artifact) =>
+          artifact.artifactClass === "target" || protectedTargetEvidenceIds.has(artifact.evidenceId)))) !== preservedEvidence.protectedTargetArtifactsSha256
+      ) throw new Error("Staged reseal changed preserved capture, artifact, failure, or protected-target authority evidence.");
+      const correctedRecords = resealedState.measurements.filter(isAnalyzerAuthorityRecord);
+      const correctedArtifacts = resealedState.artifacts.filter((artifact) =>
+        artifact.artifactClass === "measurement" && correctedRecords.some((record) => record.evidenceId === artifact.evidenceId));
+      const reboundAt = resealedState.sealedAt!;
+      const receiptRelativePath = portable("rebind", incident.rebindId, "analyzer-authority-rebind-receipt.json");
+      const receiptWithoutSha: AnalyzerAuthorityRebindReceiptV1 = {
+        schemaVersion: ANALYZER_AUTHORITY_REBIND_RECEIPT_V1,
+        rebindId: incident.rebindId,
+        reboundAt,
+        oldAnalyzerSha256: incident.oldAnalyzerSha256,
+        correctedAnalyzerSha256: incident.correctedAnalyzerSha256,
+        preStateSha256: incident.expectedPreStateSha256,
+        oldCaptureManifestSha256: incident.oldCaptureManifestSha256,
+        oldSourcePackageSha256: incident.oldSourcePackageSha256,
+        newCaptureManifestSha256: resealed.captureManifest.sha256,
+        newSourcePackageSha256: resealed.sourceCapturePackage.sha256,
+        supersededAuthorityLedgerPath: supersededLedgerRelativePath,
+        supersededAuthorityLedgerSha256: hash(supersededLedgerBytes),
+        receiptPath: receiptRelativePath,
+        sessionId: incident.sessionId,
+        preservedEvidence,
+        correctedAuthority: {
+          count: correctedRecords.length,
+          recordsSha256: hash(canonicalBytes(correctedRecords)),
+          artifactsSha256: hash(canonicalBytes(correctedArtifacts)),
+        },
+        sealOperationId,
+      };
+      const receiptBytes = canonicalBytes(receiptWithoutSha);
+      await writeExclusive(safeSessionMember(stageSessionDir, receiptRelativePath, "rebind receipt path"), receiptBytes);
+      resealedState.analyzerAuthorityRebind = {
+        schemaVersion: ANALYZER_AUTHORITY_REBIND_RECEIPT_V1,
+        rebindId: incident.rebindId,
+        reboundAt,
+        oldAnalyzerSha256: incident.oldAnalyzerSha256,
+        correctedAnalyzerSha256: incident.correctedAnalyzerSha256,
+        preStateSha256: incident.expectedPreStateSha256,
+        oldCaptureManifestSha256: incident.oldCaptureManifestSha256,
+        oldSourcePackageSha256: incident.oldSourcePackageSha256,
+        newCaptureManifestSha256: resealed.captureManifest.sha256,
+        newSourcePackageSha256: resealed.sourceCapturePackage.sha256,
+        supersededAuthorityLedgerPath: supersededLedgerRelativePath,
+        supersededAuthorityLedgerSha256: hash(supersededLedgerBytes),
+        receiptPath: receiptRelativePath,
+        receiptSha256: hash(receiptBytes),
+      };
+      await writeJsonAtomic(resealedStatePath, resealedState);
+      await writeJsonAtomic(journalPath, {
+        schemaVersion: "ten-kings-mathematical-calibration-analyzer-authority-rebind-journal-v1",
+        rebindId: incident.rebindId,
+        sessionId: incident.sessionId,
+        expectedPreStateSha256: incident.expectedPreStateSha256,
+      });
+      if (this.analyzerAuthorityRebindTestFailpoint === "after-stage") {
+        throw new Error("TEST_ONLY_ANALYZER_REBIND_FAILPOINT_AFTER_STAGE");
+      }
+      await rename(sessionDir, backupDir);
+      if (this.analyzerAuthorityRebindTestFailpoint === "after-backup-rename") {
+        throw new Error("TEST_ONLY_ANALYZER_REBIND_FAILPOINT_AFTER_BACKUP_RENAME");
+      }
+      try {
+        await rename(stageSessionDir, sessionDir);
+      } catch (error) {
+        await rename(backupDir, sessionDir);
+        throw error;
+      }
+      await rm(backupDir, { recursive: true, force: true });
+      await rm(stageRoot, { recursive: true, force: true });
+      await rm(journalPath, { force: true });
+      const finalState = JSON.parse((await readFile(this.statePath(incident.sessionId))).toString("utf-8")) as CaptureSessionStateV1;
+      const finalReceipt = await readCompleted(finalState);
+      if (!finalReceipt) throw new Error("Completed incident rebind is missing its exact receipt linkage.");
+      return { status: statusFor(finalState, sessionDir), receipt: finalReceipt, idempotent: false };
     });
   }
 

@@ -37,6 +37,7 @@ async function v1BridgeFixture(root, options = {}) {
   const hardStops = [];
   const captures = [];
   const falseStopRecoveries = [];
+  let analyzerAuthorityRebinds = 0;
   let orphanReleaseCalls = 0;
   let status = {
     schemaVersion: "ten-kings-mathematical-calibration-capture-session-v1",
@@ -85,6 +86,18 @@ async function v1BridgeFixture(root, options = {}) {
         },
       };
     },
+    rebindKnownSealedAnalyzerAuthority: async () => {
+      analyzerAuthorityRebinds += 1;
+      return {
+        status: { ...status, sealed: true, captureCount: 102, measurementCount: 78 },
+        idempotent: false,
+        receipt: {
+          rebindId: "sealed-analyzer-authority-rebind-20260722-v1",
+          correctedAnalyzerSha256: "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201",
+          correctedAuthority: { count: 74 },
+        },
+      };
+    },
     captureStep: async (request) => {
       captures.push(request);
       if (options.captureFailure) throw new Error(options.captureFailure);
@@ -126,6 +139,7 @@ async function v1BridgeFixture(root, options = {}) {
     hardStops,
     captures,
     falseStopRecoveries,
+    analyzerAuthorityRebinds: () => analyzerAuthorityRebinds,
     sessionSnapshot: () => structuredClone(status),
     lifecycleSnapshot: () => ({
       captures: captures.length,
@@ -405,6 +419,24 @@ test("V1.0.1 exposes only the incident-bound local recovery service without hard
   assert.equal(result.recovery.pendingSlotKey, "dark_control:1:3");
   assert.deepEqual(fixture.falseStopRecoveries, [fixture.sessionId]);
   assert.deepEqual(fixture.lifecycleSnapshot(), before, "recovery wiring must not touch preview, camera, lighting, or safe-off lifecycle work");
+});
+
+test("V1.0.1 sealed analyzer-authority rebind service is hardware-free and exposes only the exact incident endpoint", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-analyzer-rebind-bridge-"));
+  const fixture = await v1BridgeFixture(root);
+  const endpoint = fixture.service.status().bridgeContract.endpoints.find(
+    (candidate) => candidate.path === "/calibration/mathematical-v1/rebind-sealed-analyzer-authority-20260722",
+  );
+  assert.deepEqual(
+    { method: endpoint?.method, action: endpoint?.action, hardwareAccess: endpoint?.hardwareAccess },
+    { method: "POST", action: "mathematical-calibration-analyzer-authority-rebind", hardwareAccess: false },
+  );
+  const before = fixture.lifecycleSnapshot();
+  const result = await fixture.service.rebindKnownMathematicalCalibrationAnalyzerAuthority();
+  assert.equal(result.receipt.rebindId, "sealed-analyzer-authority-rebind-20260722-v1");
+  assert.equal(result.receipt.correctedAuthority.count, 74);
+  assert.equal(fixture.analyzerAuthorityRebinds(), 1);
+  assert.deepEqual(fixture.lifecycleSnapshot(), before, "rebind wiring must not touch preview, camera, lighting, safe-off, or capture lifecycle work");
 });
 
 test("V1.0.1 rejects browser-supplied normalization geometry before preview or hardware lifecycle work", async () => {

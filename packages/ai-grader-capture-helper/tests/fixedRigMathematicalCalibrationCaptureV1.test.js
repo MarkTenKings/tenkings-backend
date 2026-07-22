@@ -85,6 +85,7 @@ async function producerFixture(root, options = {}) {
     targetPath,
     targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
     targetSha256: sha256(targetBytes),
+    ...(options.now ? { now: options.now } : {}),
     ...(options.v11 ? { contractVersion: "v1.1" } : {}),
     ...(options.v11 ? {
       detectCheckerboard: options.detectCheckerboard ?? (async () => ({
@@ -101,6 +102,9 @@ async function producerFixture(root, options = {}) {
       })),
     } : {}),
     protectedSettings,
+    ...(options.deriveAnalyzerAuthorityRebindRequests
+      ? { deriveAnalyzerAuthorityRebindRequests: options.deriveAnalyzerAuthorityRebindRequests }
+      : {}),
     capture: async (request) => {
       captureCounter += 1;
       requests.set(request.operationId, request);
@@ -342,6 +346,303 @@ async function auditedFalseStopFixture(root) {
   fixture.producer.blankReverseTimestampFalseStopRecovery = recoveryContract;
   return { fixture, requestRegistry, sessionId, started, statePath, preStateSha256, recoveryContract };
 }
+
+function countManifestReferences(value) {
+  let count = 0;
+  const visit = (candidate) => {
+    if (Array.isArray(candidate)) return candidate.forEach(visit);
+    if (!candidate || typeof candidate !== "object") return;
+    if (typeof candidate.path === "string" && typeof candidate.sha256 === "string") count += 1;
+    Object.values(candidate).forEach(visit);
+  };
+  visit(value);
+  return count;
+}
+
+async function sealedAnalyzerRebindFixture(root) {
+  const oldAnalyzerSha256 = "8cee9c2d3a9829fe196982616dcdb33b3872ce5dd2f15dd2e99cf9d08e21384b";
+  const correctedAnalyzerSha256 = "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201";
+  let derivedRequests = [];
+  const fixture = await producerFixture(root, {
+    deriveAnalyzerAuthorityRebindRequests: async () => structuredClone(derivedRequests),
+    now: () => new Date("2026-07-22T12:00:00.000Z"),
+  });
+  const sessionId = "synthetic-analyzer-rebind-session";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"]) {
+    for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+      await fixture.producer.captureStep({
+        sessionId, operationId: `${role}-operation-${sampleIndex}`, role, sampleIndex,
+        targetFace: "checkerboard",
+        ...(role === "repeated_placement" ? { removeReseatCycleId: `rebind-reseat-${sampleIndex}` } : {}),
+      });
+    }
+  }
+  for (const role of ["dark_control", "flat_field", "illumination_pattern"]) {
+    for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+      for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+        await fixture.producer.captureStep({
+          sessionId, operationId: `${role}-${channelIndex}-${sampleIndex}`, role,
+          sampleIndex, channelIndex, targetFace: "blank_reverse",
+        });
+      }
+    }
+  }
+  const targetInstrument = {
+    instrumentId: "protected-calibration-target-geometry-v1",
+    kind: "protected_target_geometry",
+    targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
+    targetSha256: fixture.targetSha256,
+    authorityStatement: "product_owner_confirmed_exact_target_geometry_v1",
+  };
+  const requests = [];
+  for (const axis of ["x", "y"]) {
+    requests.push({
+      sessionId, operationId: `target-authority-print-${axis}`, measurementType: "print_scale", axis,
+      protectedSpanMm: axis === "x" ? 100 : 200, authorityBasis: "protected_checkerboard_geometry",
+      measurementMethod: "protected_checkerboard_geometry_authority_v1",
+      sourceTargetEvidenceId: "print-verified-calibration-target", instrument: targetInstrument,
+    });
+    requests.push({
+      sessionId, operationId: `target-authority-cut-${axis}`, measurementType: "target_cut_dimension", axis,
+      protectedDimensionMm: axis === "x" ? 63.5 : 88.9, authorityBasis: "protected_checkerboard_geometry",
+      measurementMethod: "protected_checkerboard_geometry_authority_v1",
+      sourceTargetEvidenceId: "print-verified-calibration-target", instrument: targetInstrument,
+    });
+  }
+  const captureState = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+    for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+      const operationId = `illumination_pattern-${channelIndex}-${sampleIndex}`;
+      const capture = captureState.captures.find((entry) => entry.operationId === operationId);
+      const artifact = captureState.artifacts.find((entry) => entry.evidenceId === capture.normalizedEvidenceId);
+      requests.push({
+        sessionId, operationId: `direction-derived-${channelIndex}-${sampleIndex}`,
+        measurementType: "direction_geometry", channelIndex, sampleIndex,
+        sourcePointMm: { x: 20 + channelIndex + sampleIndex / 100, y: 30 + channelIndex + sampleIndex / 100 },
+        cardCenterPointMm: { x: 31.75, y: 44.45 }, pointU95Mm: 0.02 + sampleIndex / 1000,
+        sourceCaptureOperationId: operationId, sourceEvidenceId: artifact.evidenceId, sourceSha256: artifact.sha256,
+        measurementAlgorithmVersion: "opencv_illumination_centroid_checkerboard_v1",
+        measurementMethod: "illumination_centroid_checkerboard_repeatability_v1",
+        instrument: {
+          instrumentId: "ten-kings-illumination-centroid-direction-analyzer-v1", kind: "fixed_rig_geometry",
+          calibrationVersion: "opencv_illumination_centroid_checkerboard_v1", calibrationSha256: oldAnalyzerSha256,
+        },
+      });
+    }
+  }
+  for (const measurementClass of ["linear_mm", "area_mm2", "relief_index", "roughness_index", "color_delta_e"]) {
+    for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+      requests.push({
+        sessionId, operationId: `repeatability-derived-${measurementClass}-${String(sampleIndex).padStart(2, "0")}`,
+        measurementType: "measurement_repeatability", measurementClass, sampleIndex,
+        referenceFeatureId: `checkerboard-repeatability-${measurementClass}-v1`,
+        measuredValue: 1 + sampleIndex / 1000,
+        sourceCaptureOperationId: `repeated_placement-operation-${sampleIndex}`,
+        measurementAlgorithmVersion: "opencv_checkerboard_repeatability_measurement_v1",
+        measurementMethod: "fixed_reference_repeatability_v1",
+        instrument: {
+          instrumentId: "ten-kings-fixed-rig-repeatability-analyzer-v1", kind: "fixed_rig_geometry",
+          calibrationVersion: "opencv_checkerboard_repeatability_measurement_v1", calibrationSha256: oldAnalyzerSha256,
+        },
+      });
+    }
+  }
+  assert.equal(requests.length, 78);
+  for (const request of requests) await fixture.producer.recordMeasurement(request);
+  const sealed = await fixture.producer.seal({
+    sessionId, operationId: "synthetic-old-seal", profileId: "synthetic-profile-v1",
+    calibrationVersion: "synthetic-calibration-v1", artifactId: "synthetic-artifact-v1",
+  });
+  const statePath = path.join(started.sessionDir, "capture-session.json");
+  const state = JSON.parse(await fsp.readFile(statePath, "utf8"));
+  state.failedOperations.push(
+    { operationId: "historical-failure-1", failedAt: "2026-07-22T01:00:00.000Z", error: "ordinary rejected pose", slotKey: "lens_geometry:none:1" },
+    { operationId: "historical-failure-2", failedAt: "2026-07-22T02:00:00.000Z", error: "ordinary rejected blank", slotKey: "dark_control:1:3" },
+  );
+  await fsp.writeFile(statePath, canonicalBytes(state));
+  derivedRequests = requests.map((request) => {
+    const value = structuredClone(request);
+    if (value.instrument.kind === "fixed_rig_geometry") value.instrument.calibrationSha256 = correctedAnalyzerSha256;
+    return value;
+  });
+  const manifestBytes = await fsp.readFile(sealed.captureManifest.path);
+  const packageBytes = await fsp.readFile(sealed.sourceCapturePackage.path);
+  const manifest = JSON.parse(manifestBytes.toString("utf8"));
+  const incident = {
+    rebindId: "sealed-analyzer-authority-rebind-20260722-v1",
+    sessionId,
+    expectedPreStateSha256: sha256(canonicalBytes(state)),
+    oldAnalyzerSha256,
+    correctedAnalyzerSha256,
+    oldCaptureManifestSha256: sha256(manifestBytes),
+    oldSourcePackageSha256: sha256(packageBytes),
+    captureCount: 102,
+    captureArtifactCount: 204,
+    authorityCount: 78,
+    analyzerAuthorityCount: 74,
+    protectedTargetAuthorityCount: 4,
+    failureCount: 2,
+    manifestReferenceCount: countManifestReferences(manifest),
+  };
+  fixture.producer.analyzerAuthorityRebindIncident = incident;
+  return {
+    fixture, sessionId, started, statePath, incident, requests,
+    get derivedRequests() { return derivedRequests; },
+    set derivedRequests(value) { derivedRequests = value; },
+    preState: structuredClone(state),
+    preStateBytes: canonicalBytes(state),
+  };
+}
+
+test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe, and idempotent", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-analyzer-rebind-"));
+  const fx = await sealedAnalyzerRebindFixture(root);
+  const producer = fx.fixture.producer;
+  const originalIncident = structuredClone(fx.incident);
+  const originalRequests = structuredClone(fx.derivedRequests);
+  const analyzerPath = path.resolve(__dirname, "../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
+  assert.equal(sha256(await fsp.readFile(analyzerPath)), originalIncident.correctedAnalyzerSha256);
+
+  for (const [field, replacement, pattern] of [
+    ["sessionId", "wrong-session", /pre-state|ENOENT|session/i],
+    ["expectedPreStateSha256", "1".repeat(64), /pre-state/i],
+    ["oldCaptureManifestSha256", "2".repeat(64), /manifest/i],
+    ["oldSourcePackageSha256", "3".repeat(64), /source package/i],
+    ["oldAnalyzerSha256", "4".repeat(64), /old analyzer/i],
+    ["correctedAnalyzerSha256", "5".repeat(64), /portable corrected analyzer/i],
+  ]) {
+    producer.analyzerAuthorityRebindIncident = { ...originalIncident, [field]: replacement };
+    await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), pattern);
+    assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  }
+  producer.analyzerAuthorityRebindIncident = originalIncident;
+
+  const state = JSON.parse(fx.preStateBytes.toString("utf8"));
+  const captureArtifact = state.artifacts.find((artifact) => artifact.artifactClass === "raw_capture");
+  const captureArtifactPath = path.join(fx.started.sessionDir, ...captureArtifact.path.split("/"));
+  const captureArtifactBytes = await fsp.readFile(captureArtifactPath);
+  await fsp.writeFile(captureArtifactPath, Buffer.concat([captureArtifactBytes, Buffer.from("tamper")]));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /changed artifact/i);
+  await fsp.writeFile(captureArtifactPath, captureArtifactBytes);
+
+  const analyzerRecord = state.measurements.find((record) => record.measurementType === "direction_geometry");
+  const analyzerArtifact = state.artifacts.find((artifact) => artifact.evidenceId === analyzerRecord.evidenceId);
+  const analyzerArtifactPath = path.join(fx.started.sessionDir, ...analyzerArtifact.path.split("/"));
+  const analyzerArtifactBytes = await fsp.readFile(analyzerArtifactPath);
+  await fsp.writeFile(analyzerArtifactPath, Buffer.from("{}\n"));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /changed artifact/i);
+  await fsp.writeFile(analyzerArtifactPath, analyzerArtifactBytes);
+  const analyzerEventPath = path.join(fx.started.sessionDir, "events", `${analyzerRecord.operationId}.json`);
+  const analyzerEventBytes = await fsp.readFile(analyzerEventPath);
+  const alteredAnalyzerEvent = JSON.parse(analyzerEventBytes.toString("utf8"));
+  alteredAnalyzerEvent.request.pointU95Mm += 0.001;
+  await fsp.writeFile(analyzerEventPath, canonicalBytes(alteredAnalyzerEvent));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /authority event/i);
+  await fsp.writeFile(analyzerEventPath, analyzerEventBytes);
+  const targetRecord = state.measurements.find((record) => record.payload.instrument.kind === "protected_target_geometry");
+  const targetAuthorityArtifact = state.artifacts.find((artifact) => artifact.evidenceId === targetRecord.evidenceId);
+  const targetAuthorityPath = path.join(fx.started.sessionDir, ...targetAuthorityArtifact.path.split("/"));
+  const targetAuthorityBytes = await fsp.readFile(targetAuthorityPath);
+  await fsp.writeFile(targetAuthorityPath, Buffer.from("{}\n"));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /changed artifact/i);
+  await fsp.writeFile(targetAuthorityPath, targetAuthorityBytes);
+
+  for (const [name, pattern] of [
+    ["capture-manifest.json", /manifest/i],
+    ["source-capture-package.json", /source package/i],
+  ]) {
+    const filePath = path.join(fx.started.sessionDir, name);
+    const bytes = await fsp.readFile(filePath);
+    await fsp.writeFile(filePath, Buffer.concat([bytes, Buffer.from(" ")]));
+    await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), pattern);
+    await fsp.writeFile(filePath, bytes);
+  }
+
+  const alteredState = structuredClone(state);
+  alteredState.failedOperations[0].error = "tampered failure";
+  await fsp.writeFile(fx.statePath, canonicalBytes(alteredState));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /pre-state/i);
+  await fsp.writeFile(fx.statePath, fx.preStateBytes);
+
+  const mutations = [
+    (requests) => { requests.find((request) => request.measurementType === "direction_geometry").pointU95Mm += 0.001; },
+    (requests) => { requests.find((request) => request.measurementType === "measurement_repeatability").measuredValue += 0.001; },
+    (requests) => { requests.find((request) => request.measurementType === "direction_geometry").sourceSha256 = "6".repeat(64); },
+    (requests) => { requests.find((request) => request.measurementType === "direction_geometry").measurementMethod = "fabricated_method"; },
+    (requests) => { requests.find((request) => request.measurementType === "measurement_repeatability").measurementAlgorithmVersion = "fabricated_algorithm"; },
+    (requests) => { requests.find((request) => request.measurementType === "measurement_repeatability").instrument.instrumentId = "manual-authority"; },
+    (requests) => { requests.pop(); },
+    (requests) => { requests.push(structuredClone(requests[0])); },
+    (requests) => { requests[1] = structuredClone(requests[0]); },
+    (requests) => { requests.find((request) => request.measurementType === "print_scale").protectedSpanMm += 1; },
+  ];
+  for (const mutate of mutations) {
+    const changed = structuredClone(originalRequests);
+    mutate(changed);
+    fx.derivedRequests = changed;
+    await assert.rejects(
+      producer.rebindKnownSealedAnalyzerAuthority(),
+      /78 authority|duplicate|missing|changed|unchanged|non-analyzer field|identity/i,
+    );
+    assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  }
+  fx.derivedRequests = originalRequests;
+
+  producer.analyzerAuthorityRebindTestFailpoint = "after-stage";
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_STAGE/);
+  assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  producer.analyzerAuthorityRebindTestFailpoint = "after-backup-rename";
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_BACKUP_RENAME/);
+  assert.equal(fs.existsSync(fx.started.sessionDir), false);
+  producer.analyzerAuthorityRebindTestFailpoint = undefined;
+
+  const result = await producer.rebindKnownSealedAnalyzerAuthority();
+  assert.equal(result.idempotent, false);
+  assert.equal(result.status.sealed, true);
+  assert.equal(result.status.captureCount, 102);
+  assert.equal(result.status.measurementCount, 78);
+  assert.equal(result.status.failedOperationCount, 2);
+  assert.equal(result.receipt.correctedAuthority.count, 74);
+  assert.equal(result.receipt.correctedAnalyzerSha256, originalIncident.correctedAnalyzerSha256);
+  const finalState = JSON.parse(await fsp.readFile(fx.statePath, "utf8"));
+  assert.equal(sha256(canonicalBytes(finalState.captures)), sha256(canonicalBytes(state.captures)));
+  assert.equal(sha256(canonicalBytes(finalState.failedOperations)), sha256(canonicalBytes(state.failedOperations)));
+  assert.equal(
+    sha256(canonicalBytes(finalState.artifacts.filter((artifact) => ["raw_capture", "normalized_derivative"].includes(artifact.artifactClass)))),
+    sha256(canonicalBytes(state.artifacts.filter((artifact) => ["raw_capture", "normalized_derivative"].includes(artifact.artifactClass)))),
+  );
+  const oldTargetRecords = state.measurements.filter((record) => record.payload.instrument.kind === "protected_target_geometry");
+  const newTargetRecords = finalState.measurements.filter((record) => record.payload.instrument.kind === "protected_target_geometry");
+  assert.deepEqual(newTargetRecords, oldTargetRecords);
+  assert.ok(finalState.measurements.filter((record) => record.payload.instrument.kind === "fixed_rig_geometry")
+    .every((record) => record.payload.instrument.calibrationSha256 === originalIncident.correctedAnalyzerSha256));
+  const ledgerPath = path.join(fx.started.sessionDir, ...result.receipt.supersededAuthorityLedgerPath.split("/"));
+  const ledgerBytes = await fsp.readFile(ledgerPath);
+  assert.equal(sha256(ledgerBytes), result.receipt.supersededAuthorityLedgerSha256);
+  const ledger = JSON.parse(ledgerBytes);
+  assert.equal(ledger.authorityCount, 74);
+  for (const entry of ledger.entries) {
+    const authorityCopy = await fsp.readFile(path.join(fx.started.sessionDir, ...entry.authorityFile.preservedPath.split("/")));
+    const eventCopy = await fsp.readFile(path.join(fx.started.sessionDir, ...entry.eventFile.preservedPath.split("/")));
+    assert.equal(sha256(authorityCopy), entry.authorityFile.sha256);
+    assert.equal(sha256(eventCopy), entry.eventFile.sha256);
+  }
+  const replay = await producer.rebindKnownSealedAnalyzerAuthority();
+  assert.equal(replay.idempotent, true);
+  assert.deepEqual(replay.receipt, result.receipt);
+  assert.equal(replay.status.sessionStateSha256, result.status.sessionStateSha256);
+  console.log(`synthetic analyzer-rebind evidence ${JSON.stringify({
+    oldStateSha256: originalIncident.expectedPreStateSha256,
+    oldManifestSha256: originalIncident.oldCaptureManifestSha256,
+    oldSourcePackageSha256: originalIncident.oldSourcePackageSha256,
+    newStateSha256: result.status.sessionStateSha256,
+    newManifestSha256: result.receipt.newCaptureManifestSha256,
+    newSourcePackageSha256: result.receipt.newSourcePackageSha256,
+    supersededAuthorityLedgerSha256: result.receipt.supersededAuthorityLedgerSha256,
+    receiptSha256: finalState.analyzerAuthorityRebind.receiptSha256,
+  })}`);
+});
 
 test("product-owner-confirmed target geometry is derived from and bound to the active target", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-protected-target-metrology-"));

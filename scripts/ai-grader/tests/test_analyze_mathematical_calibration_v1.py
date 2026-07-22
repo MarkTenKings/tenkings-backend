@@ -1223,9 +1223,28 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 if artifact['role'] == 'repeated_placement')
             placement_path = session_dir.joinpath(
                 *placement_source['path'].split('/'))
-            placement_path.write_bytes(placement_path.read_bytes() + b'tamper')
+            placement_bytes = placement_path.read_bytes()
+            placement_path.write_bytes(placement_bytes + b'tamper')
             with self.assertRaisesRegex(ValueError, 'SHA-256 mismatch'):
                 PRESEAL.derive(str(session_dir))
+            placement_path.write_bytes(placement_bytes)
+            recorded_state['sealedAt'] = '2026-07-22T12:00:00.000Z'
+            recorded_state['updatedAt'] = recorded_state['sealedAt']
+            state_path.write_text(
+                json.dumps(recorded_state, indent=2, sort_keys=True) + '\n',
+                encoding='utf-8')
+            rebound = PRESEAL.derive(
+                str(session_dir),
+                incident_analyzer_authority_rebind=True)
+            self.assertEqual(len(rebound['requests']), 78)
+            self.assertEqual(len(rebound['existing']), 0)
+            self.assertEqual(
+                rebound['analyzerSourceSha256'], digest(SCRIPT))
+            self.assertTrue(all(
+                request['instrument']['calibrationSha256'] == digest(SCRIPT)
+                for request in rebound['requests']
+                if request['measurementType'] in {
+                    'direction_geometry', 'measurement_repeatability'}))
 
     def test_hash_mismatch_fails_before_analysis(self):
         with tempfile.TemporaryDirectory() as directory:

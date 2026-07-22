@@ -46,6 +46,18 @@ test("the one-time blank timestamp recovery is local token-gated, fieldless, and
   assert.doesNotMatch(v101Page, /recover-blank-reverse-timestamp-false-stop|RecoverBlankTimestampFalseStop/);
 });
 
+test("the sealed analyzer-authority rebind is local token-gated, fieldless, and absent from both browser pages", () => {
+  const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
+  const bridge = fs.readFileSync(path.join(repositoryRoot, "packages", "ai-grader-capture-helper", "src", "drivers", "aiGraderLocalStationBridge.ts"), "utf8");
+  const pages = fs.readFileSync(path.join(repositoryRoot, "packages", "ai-grader-capture-helper", "src", "drivers", "mathematicalCalibrationV1_1Page.ts"), "utf8");
+  assert.match(runner, /'RebindSealedAnalyzerAuthority'/);
+  assert.match(runner, /rebind-sealed-analyzer-authority-20260722' -Body @\{\}/);
+  assert.match(bridge, /rebind-sealed-analyzer-authority-20260722[\s\S]*tokenMatches\(req, config\)/);
+  assert.match(bridge, /incident-bound analyzer-authority rebind is fieldless/);
+  assert.match(bridge, /hardwareAccess: false/);
+  assert.doesNotMatch(pages, /rebind-sealed-analyzer-authority|RebindSealedAnalyzerAuthority|analyzer-authority-rebind/);
+});
+
 test("normal V1.0.1 flow derives all authority from protected target and immutable capture evidence without manual questions", () => {
   const runbook = fs.readFileSync(path.join(repositoryRoot, "docs", "runbooks", "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md"), "utf8");
   const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
