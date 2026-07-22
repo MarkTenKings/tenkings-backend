@@ -65,7 +65,7 @@ export interface StaleInvalidRapidCaptureQueueArchivalOptionsV1 {
   now?: string;
   helperPort?: number;
   requireHelperPortReleased?: () => Promise<void>;
-  failpoint?: "after_archive" | "after_journal" | "after_backup_rename" | "after_install";
+  failpoint?: "after_archive" | "after_journal" | "after_backup_rename" | "after_install" | "after_backup_cleanup_before_journal_cleanup";
 }
 
 export interface StaleInvalidRapidCaptureQueueArchivalResultV1 {
@@ -589,6 +589,23 @@ function archivePointerPath(outputDir: string): string {
   return path.join(outputDir, "rapid-capture-queue.owner-removal-v1.archive-pointer.json");
 }
 
+function assertVerifiedArchiveMatchesIncident(
+  verified: ReturnType<typeof verifyArchive>,
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+): void {
+  const ledger = verified.ledger;
+  if (
+    ledger.incidentId !== incident.incidentId || ledger.queue.beforeSha256 !== incident.expectedBeforeQueueSha256 ||
+    ledger.queue.beforeCount !== 5 || ledger.queue.afterCount !== 3 || ledger.queue.unfinishedBeforeCount !== 2 || ledger.queue.unfinishedAfterCount !== 0 ||
+    ledger.authorization.owner !== incident.owner || ledger.authorization.reason !== incident.reason || ledger.authorization.source !== incident.authorizationSource ||
+    ledger.removedEntries.length !== 2 || !sameJson(ledger.removedEntries.map(targetIdentity), incident.targetItems) ||
+    ledger.removedEntries.some((entry) => entry.findingValidation.status !== "invalid" || entry.findingValidation.sourceCandidateCount !== 16 || entry.findingValidation.publishedFindingCount !== 0 || entry.findingValidation.issueCount !== 32 || entry.publication.storageUpload !== "pending_not_uploaded" || entry.publication.cardLinkage !== "not_linked") ||
+    ledger.retainedTerminalEntries.length !== 3 || ledger.retainedTerminalEntries.some((entry) => entry.state !== "failed") ||
+    ledger.preservation.referencedFilesRemainInPlace !== true || ledger.preservation.reportManifestArtifactDeletionPerformed !== false ||
+    ledger.preservation.reportBytesRewritten !== false || ledger.preservation.terminalEntryPayloadsUnchanged !== true
+  ) throw new Error("Immutable stale-review archive does not match the exact fixed incident authority.");
+}
+
 function verifyArchivePointer(
   pointerPath: string,
   queuePath: string,
@@ -602,25 +619,21 @@ function verifyArchivePointer(
     !sameJson(pointer.removedItems, incident.targetItems) || !SHA256.test(pointer.archiveId) || !SHA256.test(pointer.afterQueueSha256)
   ) throw new Error("Rapid queue archive pointer is not the exact fixed incident authority.");
   const verified = verifyArchive(pointer.archiveDir);
-  const ledger = verified.ledger;
-  const currentQueueBytes = readFileSync(queuePath);
-  const currentQueue = queueObject(currentQueueBytes);
-  const archivedAfterQueue = queueObject(verified.afterBytes, pointer.afterQueueSha256);
-  const currentQueueMatchesTransaction = sha256(currentQueueBytes) === pointer.afterQueueSha256;
-  const currentQueueMatchesAllowedTimestampRefresh = !currentQueueMatchesTransaction && (
-    typeof currentQueue.updatedAt === "string" && Number.isFinite(Date.parse(currentQueue.updatedAt)) &&
-    sameJson({ ...currentQueue, updatedAt: archivedAfterQueue.updatedAt }, archivedAfterQueue)
-  );
+  assertVerifiedArchiveMatchesIncident(verified, incident);
+  const currentQueue = queueObject(readFileSync(queuePath));
+  for (const item of currentQueue.items) {
+    if (
+      !isRecord(item) || typeof item.queueItemId !== "string" || typeof item.sessionId !== "string" ||
+      typeof item.reportId !== "string" || typeof item.state !== "string"
+    ) throw new Error("Active Rapid queue contains a malformed item after the archive transaction.");
+    if (incident.targetItems.some((target) =>
+      item.queueItemId === target.queueItemId ||
+      (item.sessionId === target.sessionId && item.reportId === target.reportId)
+    )) throw new Error("An owner-removed stale review identity was reintroduced into the active Rapid queue.");
+  }
   if (
     pointer.archiveId !== verified.archiveId || pointer.afterQueueSha256 !== verified.ledger.queue.afterSha256 ||
-    (!currentQueueMatchesTransaction && !currentQueueMatchesAllowedTimestampRefresh) ||
-    !sameJson(pointer, archivePointer(verified, pointer.archiveDir)) ||
-    ledger.incidentId !== incident.incidentId || ledger.queue.beforeSha256 !== incident.expectedBeforeQueueSha256 ||
-    ledger.queue.beforeCount !== 5 || ledger.queue.afterCount !== 3 || ledger.queue.unfinishedBeforeCount !== 2 || ledger.queue.unfinishedAfterCount !== 0 ||
-    ledger.authorization.owner !== incident.owner || ledger.authorization.reason !== incident.reason || ledger.authorization.source !== incident.authorizationSource ||
-    ledger.removedEntries.length !== 2 || !sameJson(ledger.removedEntries.map(targetIdentity), incident.targetItems) ||
-    ledger.removedEntries.some((entry) => entry.findingValidation.status !== "invalid" || entry.findingValidation.sourceCandidateCount !== 16 || entry.findingValidation.publishedFindingCount !== 0 || entry.findingValidation.issueCount !== 32 || entry.publication.storageUpload !== "pending_not_uploaded" || entry.publication.cardLinkage !== "not_linked") ||
-    ledger.retainedTerminalEntries.length !== 3 || ledger.retainedTerminalEntries.some((entry) => entry.state !== "failed")
+    !sameJson(pointer, archivePointer(verified, pointer.archiveDir))
   ) throw new Error("Rapid queue archive pointer, active queue, and immutable archive do not agree exactly.");
   return { pointer, pointerSha256: sha256(pointerBytes), verified };
 }
@@ -650,12 +663,14 @@ export function archivedRapidCaptureQueueTriplesForTestV1(
 
 function archiveCandidates(archiveRoot: string, incidentId: string): string[] {
   if (!existsSync(archiveRoot)) return [];
-  return readdirSync(archiveRoot, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && SHA256.test(entry.name))
-    .map((entry) => path.join(archiveRoot, entry.name))
-    .filter((candidate) => {
-      try { return verifyArchive(candidate).ledger.incidentId === incidentId; } catch { return false; }
-    });
+  const candidates: string[] = [];
+  for (const entry of readdirSync(archiveRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !SHA256.test(entry.name)) continue;
+    const candidate = path.join(archiveRoot, entry.name);
+    const verified = verifyArchive(candidate);
+    if (verified.ledger.incidentId === incidentId) candidates.push(candidate);
+  }
+  return candidates;
 }
 
 function resultFromArchive(
@@ -767,10 +782,28 @@ async function execute(
         queueObject(readFileSync(queuePath));
         try {
           const pointer = verifyArchivePointer(paths.pointerPath, queuePath, incident);
+          if (existsSync(paths.backupPath)) {
+            if (sha256(readFileSync(paths.backupPath)) !== incident.expectedBeforeQueueSha256) {
+              throw new Error("Completed transaction backup does not reproduce the exact original queue.");
+            }
+            rmSync(paths.backupPath);
+          }
           return resultFromArchive(verified, completed[0], paths.pointerPath, pointer.pointerSha256, true);
         } catch {
           // Continue into fail-closed preflight/recovery so a changed active item cannot be masked as replay.
         }
+      } else {
+        const liveBytes = readFileSync(queuePath);
+        assertVerifiedArchiveMatchesIncident(verified, incident);
+        if (
+          sha256(liveBytes) !== incident.expectedBeforeQueueSha256 ||
+          verified.ledger.queue.beforeSha256 !== incident.expectedBeforeQueueSha256 ||
+          !verified.beforeBytes.equals(liveBytes) ||
+          existsSync(paths.stagePath) || existsSync(paths.backupPath) || existsSync(paths.pointerStagePath)
+        ) {
+          throw new Error("A pointerless incident archive is not a proven pre-transaction incomplete attempt; it remains preserved for review.");
+        }
+        rmSync(completed[0], { recursive: true });
       }
     }
   }
@@ -808,6 +841,13 @@ async function execute(
       verifyArchive(journal.archiveDir);
       const pointer = installOrVerifyPointer();
       rmSync(paths.backupPath);
+      rmSync(paths.journalPath);
+      return resultFromArchive(verifiedArchive, journal.archiveDir, paths.pointerPath, pointer.pointerSha256, false);
+    }
+    if (liveHash === journal.expectedAfterQueueSha256 && backupHash === undefined) {
+      queueObject(readFileSync(queuePath), journal.expectedAfterQueueSha256);
+      verifyArchive(journal.archiveDir);
+      const pointer = installOrVerifyPointer();
       rmSync(paths.journalPath);
       return resultFromArchive(verifiedArchive, journal.archiveDir, paths.pointerPath, pointer.pointerSha256, false);
     }
@@ -926,6 +966,9 @@ async function execute(
     );
   }
   rmSync(paths.backupPath);
+  if (options.failpoint === "after_backup_cleanup_before_journal_cleanup") {
+    throw new Error("Injected failure after exact original backup cleanup and before transaction journal cleanup.");
+  }
   rmSync(paths.journalPath);
   const installedPointer = verifyArchivePointer(paths.pointerPath, queuePath, incident);
   return resultFromArchive(verifyArchive(archive.archiveDir), archive.archiveDir, paths.pointerPath, installedPointer.pointerSha256, false);

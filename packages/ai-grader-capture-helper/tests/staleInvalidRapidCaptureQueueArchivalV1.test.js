@@ -264,9 +264,6 @@ test("exact transaction archives full entries and evidence identities, removes o
     refreshed.updatedAt = "2026-07-22T18:01:00.000Z";
     writeJson(fixture.queuePath, refreshed);
     assert.equal(archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident).size, 2);
-    refreshed.items[0].immutablePayload.reason = "tampered terminal";
-    writeJson(fixture.queuePath, refreshed);
-    assert.throws(() => archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident), /do not agree exactly/);
   } finally { cleanup(fixture); }
 });
 
@@ -336,6 +333,77 @@ test("crash after original backup rename resumes from authenticated journal and 
     assert.equal(fs.existsSync(`${fixture.queuePath}.owner-removal-v1.backup`), false);
     assert.equal(fs.existsSync(`${fixture.queuePath}.owner-removal-v1.journal.json`), false);
     assert.equal(fs.existsSync(fixture.first.manifestPath), true);
+  } finally { cleanup(fixture); }
+});
+
+test("crash after backup cleanup but before journal cleanup safely finalizes and then replays idempotently", async () => {
+  const fixture = makeFixture();
+  try {
+    const evidenceBefore = fs.readFileSync(fixture.first.reportBundlePath);
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1({ ...fixture.options, failpoint: "after_backup_cleanup_before_journal_cleanup" }, fixture.incident),
+      /Injected failure/,
+    );
+    assert.equal(fs.existsSync(fixture.queuePath), true);
+    assert.equal(fs.existsSync(`${fixture.queuePath}.owner-removal-v1.backup`), false);
+    assert.equal(fs.existsSync(`${fixture.queuePath}.owner-removal-v1.journal.json`), true);
+    const liveBeforeRecovery = fs.readFileSync(fixture.queuePath);
+    const recovered = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    assert.equal(recovered.idempotent, false);
+    assert.deepEqual(fs.readFileSync(fixture.queuePath), liveBeforeRecovery);
+    assert.deepEqual(fs.readFileSync(fixture.first.reportBundlePath), evidenceBefore);
+    assert.equal(fs.existsSync(`${fixture.queuePath}.owner-removal-v1.journal.json`), false);
+    fs.rmSync(fixture.options.idleStatusPath);
+    const replayed = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    assert.equal(replayed.idempotent, true);
+    assert.equal(replayed.receiptSha256, recovered.receiptSha256);
+    assert.deepEqual(fs.readFileSync(fixture.queuePath), liveBeforeRecovery);
+  } finally { cleanup(fixture); }
+});
+
+test("changed-timestamp retry after archive-only crash replaces the proven incomplete attempt with one authoritative archive", async () => {
+  const fixture = makeFixture();
+  try {
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1({ ...fixture.options, failpoint: "after_archive" }, fixture.incident),
+      /Injected failure/,
+    );
+    const firstCandidates = fs.readdirSync(fixture.archiveRoot).filter((name) => /^[a-f0-9]{64}$/.test(name));
+    assert.equal(firstCandidates.length, 1);
+    assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
+    const completed = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(
+      { ...fixture.options, now: "2026-07-22T18:01:00.000Z" },
+      fixture.incident,
+    );
+    const finalCandidates = fs.readdirSync(fixture.archiveRoot).filter((name) => /^[a-f0-9]{64}$/.test(name));
+    assert.deepEqual(finalCandidates, [completed.archiveId]);
+    assert.notEqual(completed.archiveId, firstCandidates[0]);
+    const replay = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(
+      { ...fixture.options, now: "2026-07-22T18:02:00.000Z" },
+      fixture.incident,
+    );
+    assert.equal(replay.idempotent, true);
+    assert.equal(replay.archiveId, completed.archiveId);
+    assert.deepEqual(fs.readdirSync(fixture.archiveRoot).filter((name) => /^[a-f0-9]{64}$/.test(name)), [completed.archiveId]);
+  } finally { cleanup(fixture); }
+});
+
+test("tampered archive-only attempt is preserved and rejects changed-timestamp retry", async () => {
+  const fixture = makeFixture();
+  try {
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1({ ...fixture.options, failpoint: "after_archive" }, fixture.incident),
+      /Injected failure/,
+    );
+    const [candidate] = fs.readdirSync(fixture.archiveRoot).filter((name) => /^[a-f0-9]{64}$/.test(name));
+    const candidatePath = path.join(fixture.archiveRoot, candidate);
+    fs.appendFileSync(path.join(candidatePath, "archive-ledger.json"), "tamper");
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1({ ...fixture.options, now: "2026-07-22T18:01:00.000Z" }, fixture.incident),
+      /canonical|archive/i,
+    );
+    assert.equal(fs.existsSync(candidatePath), true);
+    assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
   } finally { cleanup(fixture); }
 });
 
@@ -414,6 +482,56 @@ test("tampered archive pointer, ledger, queue copy, or in-place report evidence 
           : fixture.first.reportBundlePath;
       fs.appendFileSync(target, "tamper");
       await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident));
+    } finally { cleanup(fixture); }
+  }
+});
+
+test("verified archive pointer permits future queue evolution but rejects orphan claims and target reintroduction", async () => {
+  const fixture = makeFixture();
+  try {
+    await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    const future = makeTarget(fixture.outputDir, "2026-07-22T190000000Z");
+    const evolved = JSON.parse(fs.readFileSync(fixture.queuePath, "utf8"));
+    evolved.updatedAt = "2026-07-22T19:00:00.000Z";
+    evolved.items.push(future.item);
+    writeJson(fixture.queuePath, evolved);
+    const archivedTriples = archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident);
+    assert.equal(archivedTriples.size, 2);
+    assert.doesNotThrow(() => assertNoUnqueuedRapidSessionManifest({ outputDir: fixture.outputDir }, evolved, archivedTriples));
+
+    const orphan = makeTarget(fixture.outputDir, "2026-07-22T191500000Z");
+    assert.throws(
+      () => assertNoUnqueuedRapidSessionManifest({ outputDir: fixture.outputDir }, evolved, archivedTriples),
+      new RegExp(orphan.target.sessionId),
+    );
+    fs.rmSync(orphan.sessionDir, { recursive: true });
+
+    evolved.items.push(structuredClone(fixture.first.item));
+    writeJson(fixture.queuePath, evolved);
+    assert.throws(
+      () => archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident),
+      /reintroduced/,
+    );
+  } finally { cleanup(fixture); }
+});
+
+test("future queue evolution does not weaken pointer, archive, or referenced-evidence tamper rejection", async () => {
+  for (const mode of ["pointer", "archive", "evidence"]) {
+    const fixture = makeFixture();
+    try {
+      const result = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+      const future = makeTarget(fixture.outputDir, `2026-07-22T20${mode.length}0000000Z`);
+      const evolved = JSON.parse(fs.readFileSync(fixture.queuePath, "utf8"));
+      evolved.updatedAt = "2026-07-22T20:00:00.000Z";
+      evolved.items.push(future.item);
+      writeJson(fixture.queuePath, evolved);
+      const tamperPath = mode === "pointer"
+        ? result.archivePointerPath
+        : mode === "archive"
+          ? path.join(result.archiveDir, "archive-ledger.json")
+          : fixture.first.reportBundlePath;
+      fs.appendFileSync(tamperPath, "tamper");
+      assert.throws(() => archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident));
     } finally { cleanup(fixture); }
   }
 });
