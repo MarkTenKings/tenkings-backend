@@ -15,7 +15,11 @@ const {
   FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2,
   loadMaterializedFastCalibrationRigAuthorityV1_2,
   materializeFastCalibrationRigAuthorityV1_2,
+  readVerifiedPhysicalAnalysisOutputV1_2,
 } = require("../dist/drivers/fixedRigFastMathematicalCalibrationRigMaterializerV1_2");
+const {
+  runMaterializeMathematicalCalibrationV1_2RigAuthorityCli,
+} = require("../dist/materializeMathematicalCalibrationV1_2RigAuthorityCli");
 const {
   buildMathematicalCalibrationV1_2ProductionAuthorityConfig,
 } = require("../dist/drivers/fixedRigFastMathematicalCalibrationProductionAuthorityV1_2");
@@ -48,6 +52,46 @@ async function rewriteBoundJson(prepared, referenceName, mutate) {
   await fs.writeFile(filePath, bytes);
   reference.sha256 = digest(bytes);
   await rewriteInput(prepared);
+}
+
+async function writePhysicalAnalyzerEnvelope(root, mutate = () => {}) {
+  const outputDir = path.join(root, "analysis-output");
+  await fs.mkdir(outputDir, { recursive: true });
+  const flatBytes = canonicalBytes({ artifact: "flat-1" });
+  const illuminationBytes = canonicalBytes({ artifact: "illumination" });
+  await fs.writeFile(path.join(outputDir, "flat-1.json"), flatBytes);
+  await fs.writeFile(path.join(outputDir, "illumination-pattern-v1.json"), illuminationBytes);
+  const captureManifestSha256 = digest(Buffer.from("capture-manifest"));
+  const payload = {
+    schemaVersion: "ten-kings-mathematical-calibration-analysis-v1",
+    algorithmVersion: "opencv_physical_calibration_analysis_v1",
+    sourceManifestSha256: captureManifestSha256,
+    sourceCapturePackage: {},
+    captureEvidenceAudit: {},
+    builderInput: { trustedPayload: true },
+    flatFieldArtifacts: [{
+      channelIndex: 1,
+      artifactFileName: "flat-1.json",
+      artifactFileSha256: digest(flatBytes),
+      contentSha256: digest(Buffer.from("flat-content")),
+      maximumResidualDeviationFraction: 0.01,
+    }],
+    illuminationPatternArtifact: {
+      artifactFileName: "illumination-pattern-v1.json",
+      artifactFileSha256: digest(illuminationBytes),
+      contentSha256: digest(Buffer.from("illumination-content")),
+    },
+  };
+  const payloadJson = canonicalBytes(payload).subarray(0, -1).toString("utf8");
+  const envelope = {
+    ...structuredClone(payload),
+    hashPolicy: "sha256-exact-utf8-analysisPayloadJson",
+    analysisPayloadJson: payloadJson,
+    analysisSha256: digest(Buffer.from(payloadJson, "utf8")),
+  };
+  mutate(envelope);
+  await fs.writeFile(path.join(outputDir, "mathematical-calibration-analysis-v1.json"), canonicalBytes(envelope));
+  return { outputDir, captureManifestSha256 };
 }
 
 test("materializes deterministic write-once authority and reopens through the real Production loader", async () => {
@@ -196,6 +240,43 @@ test("rejects old-profile conversion and synthetic-fixture analysis on the real 
       await assert.rejects(() => materializeFastCalibrationRigAuthorityV1_2(productionInput), /analyzer failed closed|not valid|capture-evidence/i);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
+});
+
+test("default analyzer boundary consumes only the exact hash-bound payload", async (t) => {
+  const root = await temporary("rig-materializer-analyzer-envelope");
+  try {
+    const baseline = await writePhysicalAnalyzerEnvelope(root);
+    const verified = await readVerifiedPhysicalAnalysisOutputV1_2(baseline);
+    assert.deepEqual(verified.builderInput, { trustedPayload: true });
+    const cases = [
+      ["mutated top-level builder", (value) => { value.builderInput = { trustedPayload: false }; }],
+      ["mutated top-level derived reference", (value) => { value.flatFieldArtifacts[0].artifactFileSha256 = "0".repeat(64); }],
+      ["extra envelope field", (value) => { value.untrustedAcceptance = true; }],
+      ["missing envelope field", (value) => { delete value.builderInput; }],
+    ];
+    for (const [name, mutate] of cases) {
+      await t.test(name, async () => {
+        const caseRoot = path.join(root, name.replace(/ /g, "-"));
+        const input = await writePhysicalAnalyzerEnvelope(caseRoot, mutate);
+        await assert.rejects(
+          () => readVerifiedPhysicalAnalysisOutputV1_2(input),
+          /differs from its hash-bound payload|missing or extra fields/i,
+        );
+      });
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("Production materializer CLI rejects unverified analyzer executable selection", async () => {
+  const stdout = [];
+  const stderr = [];
+  const code = await runMaterializeMathematicalCalibrationV1_2RigAuthorityCli(
+    ["--python-executable", "unverified-wrapper"],
+    { stdout: (value) => stdout.push(value), stderr: (value) => stderr.push(value) },
+  );
+  assert.equal(code, 1);
+  assert.equal(stdout.length, 0);
+  assert.match(stderr.join(""), /Unknown materializer option: --python-executable/);
 });
 
 test("finalizer identity changes on transitive bytes and old finalizer authority fails closed", async () => {

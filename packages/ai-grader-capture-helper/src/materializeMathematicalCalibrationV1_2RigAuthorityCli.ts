@@ -15,7 +15,6 @@ type Parsed = {
   inputManifestSha256?: string;
   acceptanceRoot?: string;
   confirmation?: string;
-  pythonExecutable?: string;
 };
 
 const HELP = `Protected one-time Mathematical Calibration V1.2 rig authority materializer
@@ -26,9 +25,6 @@ Usage:
     --input-manifest-sha256 <exact lowercase sha256> \\
     --acceptance-root <absolute protected write-once root> \\
     --confirm "${FAST_CALIBRATION_RIG_MATERIALIZATION_CONFIRMATION_V1_2}"
-
-Optional:
-  --python-executable <python executable; default: python>
 
 This command reruns the pinned physical analyzer from exact supervised capture/measurement
 bytes, writes no browser/hosted state, performs no activation, and opens no hardware.
@@ -54,8 +50,6 @@ function parse(args: string[]): Parsed {
       parsed.acceptanceRoot = readValue(args, index, option); index += 1;
     } else if (option === "--confirm") {
       parsed.confirmation = readValue(args, index, option); index += 1;
-    } else if (option === "--python-executable") {
-      parsed.pythonExecutable = readValue(args, index, option); index += 1;
     } else {
       throw new Error(`Unknown materializer option: ${option}`);
     }
@@ -83,7 +77,6 @@ export async function runMaterializeMathematicalCalibrationV1_2RigAuthorityCli(
       inputManifestSha256: parsed.inputManifestSha256,
       acceptanceRoot: parsed.acceptanceRoot,
       confirmation: parsed.confirmation,
-      ...(parsed.pythonExecutable ? { pythonExecutable: parsed.pythonExecutable } : {}),
     });
     stdout(`${JSON.stringify({
       ok: true,

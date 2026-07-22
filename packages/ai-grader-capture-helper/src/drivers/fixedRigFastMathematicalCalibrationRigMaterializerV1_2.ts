@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
@@ -172,7 +173,6 @@ export interface MaterializeFastCalibrationRigAuthorityV1_2Input {
   inputManifestSha256: string;
   acceptanceRoot: string;
   confirmation: string;
-  pythonExecutable?: string;
   analyzePhysicalEvidence?: (input: {
     captureManifestPath: string;
     captureManifestSha256: string;
@@ -540,51 +540,115 @@ function validateBuilderInput(builder: BuildFixedRigPhysicalCalibrationV1Input, 
   }
 }
 
-function runProcess(executable: string, args: string[], timeoutMs: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-4000); });
-    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Physical calibration analyzer timed out.")); }, timeoutMs);
-    child.once("error", (error) => { clearTimeout(timer); reject(error); });
-    child.once("close", (code) => {
-      clearTimeout(timer);
-      if (code === 0) resolve();
-      else reject(new Error(`Physical calibration analyzer failed closed (${code ?? "no-exit"}): ${stderr}`));
-    });
+type AnalyzerProcessExit = { code: number | null; signal: NodeJS.Signals | null };
+
+async function terminateAnalyzerProcess(input: {
+  child: ReturnType<typeof spawn>;
+  exit: Promise<AnalyzerProcessExit>;
+  timeoutMs: number;
+}): Promise<void> {
+  if (input.child.exitCode === null && input.child.signalCode === null) {
+    try { input.child.kill("SIGKILL"); } catch { /* bounded exit wait below remains authoritative */ }
+  }
+  let timer: NodeJS.Timeout | undefined;
+  const closed = await Promise.race([
+    input.exit.then(() => true),
+    new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), input.timeoutMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (!closed) throw new Error("Physical calibration analyzer cleanup timed out before process exit.");
+}
+
+async function runProcess(executable: string, args: string[], timeoutMs: number, terminationTimeoutMs = 5_000): Promise<void> {
+  const child = spawn(executable, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-4000); });
+  const exit = new Promise<AnalyzerProcessExit>((resolve) => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
   });
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const outcome = await Promise.race([
+      exit.then((value) => ({ kind: "exit" as const, value })),
+      new Promise<{ kind: "error"; error: Error }>((resolve) => {
+        child.once("error", (error) => resolve({ kind: "error", error }));
+      }),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: "timeout" }), timeoutMs);
+      }),
+    ]);
+    if (outcome.kind === "timeout") {
+      await terminateAnalyzerProcess({ child, exit, timeoutMs: terminationTimeoutMs });
+      throw new Error("Physical calibration analyzer timed out after bounded process cleanup.");
+    }
+    if (outcome.kind === "error") {
+      await terminateAnalyzerProcess({ child, exit, timeoutMs: terminationTimeoutMs });
+      throw outcome.error;
+    }
+    if (outcome.value.code !== 0) {
+      throw new Error(`Physical calibration analyzer failed closed (${outcome.value.code ?? outcome.value.signal ?? "no-exit"}): ${stderr}`);
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+const PHYSICAL_ANALYSIS_PAYLOAD_KEYS = [
+  "schemaVersion", "algorithmVersion", "sourceManifestSha256", "sourceCapturePackage",
+  "captureEvidenceAudit", "builderInput", "flatFieldArtifacts", "illuminationPatternArtifact",
+] as const;
+
+export async function readVerifiedPhysicalAnalysisOutputV1_2(input: {
+  outputDir: string;
+  captureManifestSha256: string;
+}): Promise<FastCalibrationRigMaterializationAnalysisResultV1_2> {
+  const resultBytes = await readFile(path.join(input.outputDir, "mathematical-calibration-analysis-v1.json"));
+  let result: JsonObject;
+  try { result = JSON.parse(resultBytes.toString("utf8")) as JsonObject; } catch { throw new Error("Physical analyzer result is not valid JSON."); }
+  exactKeys(result, [...PHYSICAL_ANALYSIS_PAYLOAD_KEYS, "hashPolicy", "analysisPayloadJson", "analysisSha256"], "physical analyzer result envelope");
+  if (result.hashPolicy !== "sha256-exact-utf8-analysisPayloadJson") throw new Error("Physical analyzer result hash policy mismatch.");
+  const payloadJson = result.analysisPayloadJson;
+  const analysisSha256 = exactSha(result.analysisSha256, "physical analyzer analysisSha256");
+  if (typeof payloadJson !== "string" || hash(Buffer.from(payloadJson, "utf8")) !== analysisSha256) {
+    throw new Error("Physical analyzer result hash does not bind its exact payload.");
+  }
+  let payload: JsonObject;
+  try { payload = JSON.parse(payloadJson) as JsonObject; } catch { throw new Error("Physical analyzer canonical payload is not valid JSON."); }
+  exactKeys(payload, PHYSICAL_ANALYSIS_PAYLOAD_KEYS, "physical analyzer canonical payload");
+  if (payload.schemaVersion !== PHYSICAL_ANALYSIS_SCHEMA || payload.algorithmVersion !== PHYSICAL_ANALYSIS_ALGORITHM ||
+      payload.sourceManifestSha256 !== input.captureManifestSha256) throw new Error("Physical analyzer payload identity mismatch.");
+  for (const key of PHYSICAL_ANALYSIS_PAYLOAD_KEYS) {
+    if (!isDeepStrictEqual(result[key], payload[key])) throw new Error(`Physical analyzer envelope ${key} differs from its hash-bound payload.`);
+  }
+  const flat = Array.isArray(payload.flatFieldArtifacts) ? payload.flatFieldArtifacts as JsonObject[] : [];
+  const illumination = payload.illuminationPatternArtifact as JsonObject;
+  const derivedArtifacts: FastCalibrationRigMaterializationAnalysisResultV1_2["derivedArtifacts"] = [];
+  for (const entry of flat) {
+    exactKeys(entry, ["channelIndex", "artifactFileName", "artifactFileSha256", "contentSha256", "maximumResidualDeviationFraction"], "physical analyzer flat-field reference");
+    const fileName = safeRelative(entry.artifactFileName, "physical analyzer flat-field fileName");
+    const bytes = await readExact(contained(input.outputDir, fileName), exactSha(entry.artifactFileSha256, "physical analyzer flat-field sha256"), "physical analyzer flat-field artifact");
+    derivedArtifacts.push({ kind: "derived_flat_field", sourceRole: fileName.replace(/\.json$/, ""), bytes });
+  }
+  if (!illumination) throw new Error("Physical analyzer did not emit an illumination-pattern artifact.");
+  exactKeys(illumination, ["artifactFileName", "artifactFileSha256", "contentSha256"], "physical analyzer illumination reference");
+  const illuminationName = safeRelative(illumination.artifactFileName, "physical analyzer illumination fileName");
+  const illuminationBytes = await readExact(contained(input.outputDir, illuminationName), exactSha(illumination.artifactFileSha256, "physical analyzer illumination sha256"), "physical analyzer illumination artifact");
+  derivedArtifacts.push({ kind: "derived_illumination_pattern", sourceRole: "illumination-pattern-v1", bytes: illuminationBytes });
+  return { builderInput: payload.builderInput as unknown as BuildFixedRigPhysicalCalibrationV1Input, derivedArtifacts };
 }
 
 async function defaultAnalyzePhysicalEvidence(input: {
   captureManifestPath: string;
   captureManifestSha256: string;
   outputDir: string;
-  pythonExecutable: string;
   analyzerScriptPath: string;
 }): Promise<FastCalibrationRigMaterializationAnalysisResultV1_2> {
   await mkdir(input.outputDir, { recursive: true });
-  await runProcess(input.pythonExecutable, [input.analyzerScriptPath, "--manifest", input.captureManifestPath, "--output-dir", input.outputDir], 10 * 60_000);
-  const resultBytes = await readFile(path.join(input.outputDir, "mathematical-calibration-analysis-v1.json"));
-  const result = JSON.parse(resultBytes.toString("utf8")) as JsonObject;
-  if (result.schemaVersion !== PHYSICAL_ANALYSIS_SCHEMA || result.algorithmVersion !== PHYSICAL_ANALYSIS_ALGORITHM ||
-      result.sourceManifestSha256 !== input.captureManifestSha256) throw new Error("Physical analyzer result identity mismatch.");
-  const payloadJson = result.analysisPayloadJson;
-  if (typeof payloadJson !== "string" || hash(Buffer.from(payloadJson, "utf8")) !== result.analysisSha256) {
-    throw new Error("Physical analyzer result hash does not bind its exact payload.");
-  }
-  const flat = Array.isArray(result.flatFieldArtifacts) ? result.flatFieldArtifacts as JsonObject[] : [];
-  const illumination = result.illuminationPatternArtifact as JsonObject;
-  const derivedArtifacts: FastCalibrationRigMaterializationAnalysisResultV1_2["derivedArtifacts"] = [];
-  for (const entry of flat) {
-    const fileName = safeRelative(entry.artifactFileName, "physical analyzer flat-field fileName");
-    const bytes = await readExact(contained(input.outputDir, fileName), exactSha(entry.artifactFileSha256, "physical analyzer flat-field sha256"), "physical analyzer flat-field artifact");
-    derivedArtifacts.push({ kind: "derived_flat_field", sourceRole: fileName.replace(/\.json$/, ""), bytes });
-  }
-  if (!illumination) throw new Error("Physical analyzer did not emit an illumination-pattern artifact.");
-  const illuminationName = safeRelative(illumination.artifactFileName, "physical analyzer illumination fileName");
-  const illuminationBytes = await readExact(contained(input.outputDir, illuminationName), exactSha(illumination.artifactFileSha256, "physical analyzer illumination sha256"), "physical analyzer illumination artifact");
-  derivedArtifacts.push({ kind: "derived_illumination_pattern", sourceRole: "illumination-pattern-v1", bytes: illuminationBytes });
-  return { builderInput: result.builderInput as unknown as BuildFixedRigPhysicalCalibrationV1Input, derivedArtifacts };
+  await runProcess("python", [input.analyzerScriptPath, "--manifest", input.captureManifestPath, "--output-dir", input.outputDir], 10 * 60_000);
+  return readVerifiedPhysicalAnalysisOutputV1_2({
+    outputDir: input.outputDir,
+    captureManifestSha256: input.captureManifestSha256,
+  });
 }
 
 function sourceEntry(kind: string, evidenceId: string, sourceRole: string, bytes: Buffer, index: number): { manifest: FastCalibrationRigSourceEvidenceEntryV1_2; bytes: Buffer } {
@@ -917,7 +981,7 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
     const analysisWorking = path.join(temporary, ".physical-analysis-working");
     const analysis = input.analyzePhysicalEvidence
       ? await input.analyzePhysicalEvidence({ captureManifestPath: contained(sourceRoot, manifest.captureManifest.fileName), captureManifestSha256: manifest.captureManifest.sha256, outputDir: analysisWorking })
-      : await defaultAnalyzePhysicalEvidence({ captureManifestPath: contained(sourceRoot, manifest.captureManifest.fileName), captureManifestSha256: manifest.captureManifest.sha256, outputDir: analysisWorking, pythonExecutable: input.pythonExecutable ?? "python", analyzerScriptPath });
+      : await defaultAnalyzePhysicalEvidence({ captureManifestPath: contained(sourceRoot, manifest.captureManifest.fileName), captureManifestSha256: manifest.captureManifest.sha256, outputDir: analysisWorking, analyzerScriptPath });
     validateBuilderInput(analysis.builderInput, capture.artifacts, analysis.derivedArtifacts);
     const builder = analysis.builderInput;
     const physical = buildFixedRigPhysicalCalibrationV1(builder);
