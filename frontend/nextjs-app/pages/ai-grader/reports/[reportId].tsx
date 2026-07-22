@@ -1,8 +1,11 @@
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { AiGraderReportBundleV03 } from "@tenkings/shared";
 import AiGraderDefectOverlay from "../../../components/ai-grader/AiGraderDefectOverlay";
+import AiGraderReportAdminEditor, {
+  type AiGraderReportAdminEditorState,
+} from "../../../components/ai-grader/AiGraderReportAdminEditor";
 import AiGraderMathematicalReportV1, {
   type AiGraderMathematicalPublicEnrichment,
 } from "../../../components/ai-grader/AiGraderMathematicalReportV1";
@@ -24,11 +27,22 @@ import {
   type AiGraderRenderableReportImage,
 } from "../../../lib/aiGraderReportImages";
 import { defectFindingsForExactImage } from "../../../lib/aiGraderDefectFindings";
+import {
+  parseAiGraderReportEditorialRevisionV1,
+  type AiGraderReportEditorialContent,
+  type AiGraderReportEditorialRevisionV1,
+} from "../../../lib/aiGraderReportRevision";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
 const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"] as const;
 type LabMode = (typeof LAB_MODES)[number];
 type LabSide = "front" | "back";
+type FailedMachineReportShell = {
+  reportId: string;
+  title?: string;
+  generatedAt?: string;
+  sourceSchemaVersion: string;
+};
 type PublicNfcRegistration = {
   status: "active";
   registrationKind: "registered_link";
@@ -125,6 +139,135 @@ function scoreText(score?: number) {
   return typeof score === "number" ? score.toFixed(score % 1 === 0 ? 0 : 2) : "Pending";
 }
 
+const ELEMENT_EXPLANATION_FIELD: Record<
+  (typeof ELEMENT_LABELS)[number],
+  keyof AiGraderReportEditorialContent
+> = {
+  centering: "centeringExplanation",
+  corners: "cornersExplanation",
+  edges: "edgesExplanation",
+  surface: "surfaceExplanation",
+};
+
+function ComingSoonReportWall({
+  reportId,
+  onAdminEditorStateChange,
+}: {
+  reportId: string;
+  onAdminEditorStateChange: (state: AiGraderReportAdminEditorState) => void;
+}) {
+  return (
+    <>
+      <Head>
+        <title>Ten Kings Grading Report — Coming Soon</title>
+        <meta name="robots" content="noindex" />
+      </Head>
+      <main className="grid min-h-screen place-items-center bg-[#11100e] px-6 py-16 text-[#f8f1df]">
+        <section className="w-full max-w-2xl rounded-2xl border border-amber-200/25 bg-gradient-to-b from-amber-100/10 to-black/10 p-10 text-center shadow-2xl">
+          <p className="text-xs font-black uppercase tracking-[.28em] text-amber-300">Ten Kings AI Grader</p>
+          <h1 className="mt-5 text-5xl font-black sm:text-7xl">Coming Soon</h1>
+          <p className="mx-auto mt-5 max-w-lg text-base leading-7 text-stone-300">
+            This grading report is not public yet. Its permanent report URL and linked NFC identity stay unchanged.
+          </p>
+          <p className="mt-7 break-all font-mono text-xs text-stone-500">Report {reportId}</p>
+        </section>
+      </main>
+      <AiGraderReportAdminEditor reportId={reportId} onStateChange={onAdminEditorStateChange} />
+    </>
+  );
+}
+
+function HumanAdjudicatedMachineFailureReport({
+  shell,
+  failure,
+  revision,
+  onAdminEditorStateChange,
+}: {
+  shell: FailedMachineReportShell;
+  failure: string;
+  revision: AiGraderReportEditorialRevisionV1 | null;
+  onAdminEditorStateChange: (state: AiGraderReportAdminEditorState) => void;
+}) {
+  const content = revision?.content ?? {};
+  return (
+    <>
+      <Head>
+        <title>{content.cardTitle ?? shell.title ?? "Ten Kings AI Grader Report"}</title>
+        <meta name="robots" content="noindex" />
+      </Head>
+      <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">
+        <AiGraderReportAdminEditor reportId={shell.reportId} onStateChange={onAdminEditorStateChange} />
+        <header className="mx-auto flex max-w-5xl flex-wrap items-start justify-between gap-5 border-b border-black/15 pb-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-800">Ten Kings AI Grader</p>
+            <h1 className="mt-2 text-4xl font-bold">{content.cardTitle ?? shell.title ?? "AI Grader Report"}</h1>
+            <p className="mt-2 text-sm text-zinc-600">Report {shell.reportId}{shell.generatedAt ? ` · ${new Date(shell.generatedAt).toLocaleString()}` : ""}</p>
+          </div>
+          {revision ? (
+            <div className="text-right">
+              <strong className="block text-6xl tabular-nums">{revision.calculation.overall.toFixed(2)}</strong>
+              <span className="text-sm font-bold uppercase tracking-widest">Label {revision.calculation.labelGrade.toFixed(1)}</span>
+            </div>
+          ) : null}
+        </header>
+
+        {revision ? (
+          <>
+            <section className="mx-auto mt-6 max-w-5xl rounded border border-emerald-800/25 bg-emerald-50 p-5">
+              <strong className="text-lg text-emerald-950">Completed — human reviewed/admin adjudicated</strong>
+              <p className="mt-2 leading-6 text-emerald-950">
+                An authenticated administrator explicitly completed all four required scores. This is not a calibrated machine-V1 completion; the original failed machine result remains preserved below.
+              </p>
+              {content.reportSummary ? <p className="mt-4 border-t border-emerald-900/15 pt-4 leading-7">{content.reportSummary}</p> : null}
+            </section>
+
+            <section className="mx-auto mt-6 grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Human-reviewed element scores">
+              {ELEMENT_LABELS.map((element) => (
+                <article className="rounded border border-black/15 bg-white/80 p-5" key={element}>
+                  <span className="text-xs font-bold uppercase tracking-widest text-amber-800">{element}</span>
+                  <strong className="mt-2 block text-4xl tabular-nums">{revision.scores[element].toFixed(2)}</strong>
+                  <small className="mt-1 block font-bold text-emerald-800">Human reviewed/admin adjudicated</small>
+                  {content[ELEMENT_EXPLANATION_FIELD[element]] ? <p className="mt-3 text-sm leading-6">{content[ELEMENT_EXPLANATION_FIELD[element]]}</p> : null}
+                </article>
+              ))}
+            </section>
+
+            <section className="mx-auto mt-6 max-w-5xl rounded border border-black/15 bg-white/80 p-6">
+              <h2 className="text-2xl font-bold">Effective overall formula</h2>
+              <p className="mt-3 font-mono text-sm">{revision.calculation.weightedFormula}</p>
+              <p className="mt-2 font-mono text-sm">{revision.calculation.finalFormula}</p>
+              <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-4">
+                <div><dt>Weighted</dt><dd className="font-bold">{revision.calculation.weightedGrade.toFixed(2)}</dd></div>
+                <div><dt>Weakest element</dt><dd className="font-bold">{revision.calculation.weakestElement} {revision.calculation.weakestScore.toFixed(2)}</dd></div>
+                <div><dt>Weakest cap</dt><dd className="font-bold">{revision.calculation.weakestElementCap.toFixed(2)}</dd></div>
+                <div><dt>Severe-defect cap</dt><dd className="font-bold">{revision.calculation.applicableSevereDefectCap?.toFixed(2) ?? "none in source"}</dd></div>
+              </dl>
+            </section>
+
+            {content.strongestPositive || content.strongestWarning || content.whyNot10 ? (
+              <section className="mx-auto mt-6 grid max-w-5xl gap-4 sm:grid-cols-2">
+                {content.strongestPositive ? <article className="rounded border border-black/15 bg-white/80 p-5"><strong>Strongest positive</strong><p className="mt-2">{content.strongestPositive}</p></article> : null}
+                {content.strongestWarning ? <article className="rounded border border-black/15 bg-white/80 p-5"><strong>Strongest warning</strong><p className="mt-2">{content.strongestWarning}</p></article> : null}
+                {content.whyNot10 ? <article className="rounded border border-black/15 bg-white/80 p-5 sm:col-span-2"><strong>Why not 10?</strong><p className="mt-2">{content.whyNot10}</p></article> : null}
+              </section>
+            ) : null}
+          </>
+        ) : null}
+
+        <section className="mx-auto mt-6 max-w-5xl rounded border border-red-900/25 bg-red-50 p-6" role={revision ? undefined : "alert"}>
+          <strong>{revision ? "Immutable original machine failure" : "Mathematical machine report incomplete"}</strong>
+          <p className="mt-2 leading-6">{failure}</p>
+          <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+            <div><dt>Source contract</dt><dd className="font-mono">{shell.sourceSchemaVersion}</dd></div>
+            <div><dt>Machine status</dt><dd className="font-bold">failed — preserved</dd></div>
+          </dl>
+          {revision?.adjudicatedMachineFailures.length ? <p className="mt-3 text-sm">Adjudicated machine failures: {revision.adjudicatedMachineFailures.join(", ")}.</p> : null}
+        </section>
+      </main>
+    </>
+  );
+}
+
 function sourceChannelsText(candidate: unknown) {
   const channels =
     typeof candidate === "object" && candidate !== null && "sourceChannels" in candidate && Array.isArray(candidate.sourceChannels)
@@ -170,10 +313,18 @@ function labImageForMode(
 
 export default function AiGraderReportViewerPage() {
   const router = useRouter();
+  const requestedReportId = Array.isArray(router.query.reportId)
+    ? router.query.reportId[0] ?? ""
+    : router.query.reportId ?? "";
   const fallbackBundle = getAiGraderReportBundle(router.query.reportId);
   const [persistedBundle, setPersistedBundle] = useState<AiGraderCompatibleReportBundle | null>(null);
   const [persistedMathematicalBundle, setPersistedMathematicalBundle] = useState<AiGraderReportBundleV03 | null>(null);
   const [strictMathematicalFailure, setStrictMathematicalFailure] = useState<string | null>(null);
+  const [failedMachineShell, setFailedMachineShell] = useState<FailedMachineReportShell | null>(null);
+  const [editorialRevision, setEditorialRevision] = useState<AiGraderReportEditorialRevisionV1 | null>(null);
+  const [comingSoon, setComingSoon] = useState(false);
+  const [publicReportResolved, setPublicReportResolved] = useState(false);
+  const [publicRefreshToken, setPublicRefreshToken] = useState(0);
   const [publicLookupError, setPublicLookupError] = useState<string | null>(null);
   const [publicNfcRegistration, setPublicNfcRegistration] = useState<PublicNfcRegistration | null>(null);
   const [publicEnrichment, setPublicEnrichment] = useState<AiGraderMathematicalPublicEnrichment | null>(null);
@@ -182,6 +333,10 @@ export default function AiGraderReportViewerPage() {
   const [selectedFindingId, setSelectedFindingId] = useState<string | undefined>();
   const bundle = persistedBundle ?? fallbackBundle;
   const mathematicalBundle = persistedMathematicalBundle ?? parseAiGraderMathematicalReportV1(bundle);
+  const reviewedRevision = editorialRevision?.reportId === requestedReportId
+    ? editorialRevision
+    : null;
+  const reviewedContent = reviewedRevision?.content ?? {};
   const story = bundle.provisionalGrade;
   const productionRelease = bundle.productionRelease;
   const finalGrade = productionRelease?.finalGrade;
@@ -235,28 +390,136 @@ export default function AiGraderReportViewerPage() {
       : labImageForMode(images, selectedLabMode, selectedLabSide, impactCandidate);
   const selectedLabModeAvailable = Boolean(selectedLabAsset?.renderUrl);
 
+  const handleAdminEditorStateChange = useCallback((state: AiGraderReportAdminEditorState) => {
+    const currentRevisionIdentity = editorialRevision
+      ? `${editorialRevision.sourceBundleSha256}:${editorialRevision.revision}`
+      : null;
+    const incomingRevisionIdentity = state.editorialRevision
+      ? `${state.editorialRevision.sourceBundleSha256}:${state.editorialRevision.revision}`
+      : null;
+    const revisionChanged = incomingRevisionIdentity !== null &&
+      incomingRevisionIdentity !== currentRevisionIdentity;
+    setEditorialRevision(state.editorialRevision);
+    if (state.visibilityStatus === "coming_soon") {
+      setComingSoon(true);
+      setPublicReportResolved(true);
+      return;
+    }
+    if (revisionChanged) {
+      setComingSoon(false);
+      setPublicReportResolved(false);
+      setPublicRefreshToken((current) => current + 1);
+      return;
+    }
+    if (comingSoon) {
+      setComingSoon(false);
+      setPublicReportResolved(false);
+      setPublicRefreshToken((current) => current + 1);
+    }
+  }, [comingSoon, editorialRevision]);
+
   useEffect(() => {
     if (!router.isReady) return;
     const reportId = Array.isArray(router.query.reportId) ? router.query.reportId[0] : router.query.reportId;
     if (!reportId) return;
-    if (isExplicitAiGraderSampleReportId(reportId)) {
-      setPersistedBundle(null);
-      setPersistedMathematicalBundle(null);
-      setStrictMathematicalFailure(null);
-      setPublicLookupError(null);
-      setPublicNfcRegistration(null);
-      setPublicEnrichment(null);
-      return;
-    }
-    setPublicLookupError(null);
-    setStrictMathematicalFailure(null);
+    const controller = new AbortController();
+    setPublicReportResolved(false);
+    setPersistedBundle(null);
     setPersistedMathematicalBundle(null);
+    setStrictMathematicalFailure(null);
+    setFailedMachineShell(null);
+    setEditorialRevision(null);
+    setComingSoon(false);
+    setPublicLookupError(null);
     setPublicNfcRegistration(null);
     setPublicEnrichment(null);
-    fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`)
+    if (isExplicitAiGraderSampleReportId(reportId)) {
+      setPublicReportResolved(true);
+      return;
+    }
+    fetch(`/api/ai-grader/reports/${encodeURIComponent(reportId)}`, {
+      signal: controller.signal,
+    })
       .then(async (response) => {
         const payload = await response.json().catch(() => ({}));
+        if (
+          response.ok &&
+          payload.ok === true &&
+          payload.reportId === reportId &&
+          payload.reportVisibility === "coming_soon" &&
+          payload.comingSoon === true &&
+          !("bundle" in payload)
+        ) {
+          setComingSoon(true);
+          setPublicReportResolved(true);
+          return;
+        }
+        if (
+          response.ok &&
+          payload.ok === true &&
+          payload.reportId === reportId &&
+          payload.reportVisibility === "public" &&
+          payload.comingSoon === false &&
+          payload.machineFailure &&
+          typeof payload.machineFailure === "object" &&
+          !Array.isArray(payload.machineFailure) &&
+          payload.machineFailure.failed === true &&
+          !("bundle" in payload)
+        ) {
+          const failure = payload.machineFailure as Record<string, unknown>;
+          const parsedEditorialRevision = parseAiGraderReportEditorialRevisionV1(
+            payload.editorialRevision,
+            reportId,
+          );
+          const failureCodes = Array.isArray(failure.codes) && failure.codes.every(
+            (code) => typeof code === "string" && code.length > 0 && code.length <= 160,
+          )
+            ? failure.codes as string[]
+            : null;
+          const revisionFailureCodes = parsedEditorialRevision
+            ? [...parsedEditorialRevision.adjudicatedMachineFailures].sort()
+            : [];
+          if (
+            !parsedEditorialRevision ||
+            typeof failure.sourceReportSchemaVersion !== "string" ||
+            failure.sourceReportSchemaVersion !== parsedEditorialRevision.sourceReportSchemaVersion ||
+            !failureCodes ||
+            JSON.stringify([...failureCodes].sort()) !== JSON.stringify(revisionFailureCodes) ||
+            typeof failure.message !== "string" ||
+            !failure.message.trim() ||
+            failure.message.length > 1_000
+          ) {
+            setStrictMathematicalFailure("The machine report is incomplete and no exact source-bound human adjudication is available. The failed Mathematical V1 result remains unavailable.");
+            setPublicReportResolved(true);
+            return;
+          }
+          setEditorialRevision(parsedEditorialRevision);
+          setFailedMachineShell({
+            reportId,
+            ...(parsedEditorialRevision.content.cardTitle
+              ? { title: parsedEditorialRevision.content.cardTitle }
+              : {}),
+            sourceSchemaVersion: failure.sourceReportSchemaVersion,
+          });
+          setStrictMathematicalFailure(failure.message.trim());
+          setPublicReportResolved(true);
+          return;
+        }
         if (response.ok && payload.ok === true && payload.bundle) {
+          if (payload.reportVisibility !== "public" || payload.comingSoon !== false) {
+            setPublicLookupError("This report returned an invalid public visibility contract.");
+            setPublicReportResolved(true);
+            return;
+          }
+          const parsedEditorialRevision = payload.editorialRevision === null
+            ? null
+            : parseAiGraderReportEditorialRevisionV1(payload.editorialRevision, reportId);
+          if (payload.editorialRevision !== null && !parsedEditorialRevision) {
+            setStrictMathematicalFailure("The saved human-reviewed report revision failed its exact formula or source-binding contract. The machine report will not be substituted as the effective result.");
+            setPublicReportResolved(true);
+            return;
+          }
+          setEditorialRevision(parsedEditorialRevision);
           if (payload.bundle.schemaVersion === "ai-grader-report-bundle-v0.3") {
             const strictBundle = parseAiGraderMathematicalReportV1(payload.bundle);
             if (!strictBundle) {
@@ -265,6 +528,7 @@ export default function AiGraderReportViewerPage() {
               setPublicNfcRegistration(null);
               setPublicEnrichment(null);
               setStrictMathematicalFailure("This Mathematical Grading V1 report failed its strict formula, calibration, deduction, or evidence contract. A legacy V0 report will not be substituted.");
+              setPublicReportResolved(true);
               return;
             }
             setPersistedBundle(null);
@@ -281,10 +545,26 @@ export default function AiGraderReportViewerPage() {
             setPublicNfcRegistration(null);
             setPublicEnrichment(null);
             setStrictMathematicalFailure("This report declares an unsupported schema version. No legacy or sample report will be substituted.");
+            setPublicReportResolved(true);
             return;
           }
           setPublicNfcRegistration(safePublicNfcRegistration(payload.nfcRegistration));
           setPublicEnrichment(safePublicEnrichment(payload.enrichment));
+          setPublicReportResolved(true);
+          return;
+        }
+        if (
+          !response.ok &&
+          typeof payload.code === "string" &&
+          (payload.code === "AI_GRADER_MACHINE_REPORT_INVALID" ||
+            payload.code.startsWith("AI_GRADER_OPERATOR_REVIEW_"))
+        ) {
+          setStrictMathematicalFailure(
+            typeof payload.message === "string" && payload.message.length <= 1_000
+              ? payload.message
+              : "The machine report is incomplete and no valid human-reviewed completion is available.",
+          );
+          setPublicReportResolved(true);
           return;
         }
         setPersistedBundle(null);
@@ -292,26 +572,66 @@ export default function AiGraderReportViewerPage() {
         setPublicNfcRegistration(null);
         setPublicEnrichment(null);
         setPublicLookupError(payload.message ?? "This report was not resolved from persisted production storage.");
+        setPublicReportResolved(true);
       })
       .catch(() => {
+        if (controller.signal.aborted) return;
         setPersistedBundle(null);
         setPersistedMathematicalBundle(null);
         setPublicNfcRegistration(null);
         setPublicEnrichment(null);
         setPublicLookupError("Persisted production report lookup failed.");
+        setPublicReportResolved(true);
       });
-    return;
-  }, [router.isReady, router.query.reportId]);
+    return () => controller.abort();
+  }, [publicRefreshToken, router.isReady, router.query.reportId]);
+
+  if (!publicReportResolved) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f3f0e9] p-8 text-[#171512]">
+        <p className="text-sm font-bold uppercase tracking-widest text-amber-800">Loading exact report state…</p>
+        {requestedReportId ? <AiGraderReportAdminEditor reportId={requestedReportId} onStateChange={handleAdminEditorStateChange} /> : null}
+      </main>
+    );
+  }
+
+  if (comingSoon && requestedReportId) {
+    return (
+      <ComingSoonReportWall
+        reportId={requestedReportId}
+        onAdminEditorStateChange={handleAdminEditorStateChange}
+      />
+    );
+  }
 
   if (mathematicalBundle) {
-    return <AiGraderMathematicalReportV1 bundle={mathematicalBundle} nfc={publicNfcRegistration} enrichment={publicEnrichment} />;
+    return (
+      <AiGraderMathematicalReportV1
+        bundle={mathematicalBundle}
+        nfc={publicNfcRegistration}
+        enrichment={publicEnrichment}
+        editorialRevision={reviewedRevision}
+        onAdminEditorStateChange={handleAdminEditorStateChange}
+      />
+    );
   }
 
   if (strictMathematicalFailure) {
+    if (failedMachineShell) {
+      return (
+        <HumanAdjudicatedMachineFailureReport
+          shell={failedMachineShell}
+          failure={strictMathematicalFailure}
+          revision={reviewedRevision}
+          onAdminEditorStateChange={handleAdminEditorStateChange}
+        />
+      );
+    }
     return (
       <main className="report-shell">
+        {requestedReportId ? <AiGraderReportAdminEditor reportId={requestedReportId} onStateChange={handleAdminEditorStateChange} /> : null}
         <section className="local-status warn" role="alert">
-          <strong>Mathematical Grading V1 report unavailable</strong>
+          <strong>AI Grader report unavailable</strong>
           <p>{strictMathematicalFailure}</p>
         </section>
       </main>
@@ -321,14 +641,16 @@ export default function AiGraderReportViewerPage() {
   return (
     <>
       <Head>
-        <title>Ten Kings AI Grader Report</title>
+        <title>{reviewedContent.cardTitle ?? bundle.cardIdentity.title ?? "Ten Kings AI Grader Report"}</title>
         <meta name="robots" content="noindex" />
       </Head>
       <main className="report-shell">
+        {requestedReportId ? <AiGraderReportAdminEditor reportId={requestedReportId} onStateChange={handleAdminEditorStateChange} /> : null}
         <header className="topbar">
           <div>
             <p className="eyebrow">Ten Kings AI Grader</p>
-            <h1>{bundle.cardIdentity.title ?? "AI Grader Report"}</h1>
+            <h1>{reviewedContent.cardTitle ?? bundle.cardIdentity.title ?? "AI Grader Report"}</h1>
+            {reviewedRevision ? <span className="human-reviewed-badge">Completed — human reviewed/admin adjudicated · revision {reviewedRevision.revision}</span> : null}
           </div>
           <div className="meta">
             <span>Report {bundle.reportId}</span>
@@ -349,13 +671,14 @@ export default function AiGraderReportViewerPage() {
 
         <section className="hero">
           <div className="grade-panel">
-            <p className="eyebrow">{reportIsFinal ? "Final AI-Grader Grade V0" : "Provisional Diagnostic Grade"}</p>
-            <strong>{scoreText(finalGrade?.overall ?? story?.overall)}</strong>
-            <span>Confidence {finalGrade?.confidence.band ?? story?.confidence?.band ?? "pending"}</span>
+            <p className="eyebrow">{reviewedRevision ? "Effective Human-Reviewed Grade" : reportIsFinal ? "Final AI-Grader Grade V0" : "Provisional Diagnostic Grade"}</p>
+            <strong>{scoreText(reviewedRevision?.calculation.overall ?? finalGrade?.overall ?? story?.overall)}</strong>
+            <span>{reviewedRevision ? "Admin adjudicated" : `Confidence ${finalGrade?.confidence.band ?? story?.confidence?.band ?? "pending"}`}</span>
+            {reviewedRevision ? <small className="machine-value">Immutable machine overall: {scoreText(finalGrade?.overall ?? story?.overall)}</small> : null}
             <p>
-              {reportIsFinal
+              {reviewedContent.reportSummary ?? (reportIsFinal
                 ? "This is the Ten Kings AI-Grader final report V0. It creates label-ready data and a QR report URL, but it is not a certified grading claim."
-                : "This is a controlled provisional diagnostic output. It is not a certified Ten Kings grade and it does not create a label, QR certificate, or final certificate."}
+                : "This is a controlled provisional diagnostic output. It is not a certified Ten Kings grade and it does not create a label, QR certificate, or final certificate.")}
             </p>
           </div>
           <section className="vision-lab hero-lab">
@@ -498,7 +821,8 @@ export default function AiGraderReportViewerPage() {
               </article>
               <article>
                 <span>Label Grade</span>
-                <strong>{productionRelease.label.labelGradeText}</strong>
+                <strong>{reviewedRevision ? reviewedRevision.calculation.labelGrade.toFixed(1) : productionRelease.label.labelGradeText}</strong>
+                {reviewedRevision ? <small>Immutable machine label: {productionRelease.label.labelGradeText}</small> : null}
               </article>
               <article>
                 <span>Certified Claim</span>
@@ -595,11 +919,13 @@ export default function AiGraderReportViewerPage() {
         <section className="summary">
           <article>
             <span>Strongest Positive</span>
-            <p>{story?.gradeStory?.strongestPositiveFinding ?? "No positive finding computed."}</p>
+            <p>{reviewedContent.strongestPositive ?? story?.gradeStory?.strongestPositiveFinding ?? "No positive finding computed."}</p>
+            {reviewedContent.strongestPositive ? <small>Human-reviewed text; immutable machine narrative remains in report provenance.</small> : null}
           </article>
           <article>
             <span>Strongest Warning</span>
-            <p>{story?.gradeStory?.strongestWarning ?? bundle.warnings?.[0]}</p>
+            <p>{reviewedContent.strongestWarning ?? story?.gradeStory?.strongestWarning ?? bundle.warnings?.[0]}</p>
+            {reviewedContent.strongestWarning ? <small>Human-reviewed text; immutable machine narrative remains in report provenance.</small> : null}
           </article>
           <article>
             <span>Top Candidate</span>
@@ -636,11 +962,20 @@ export default function AiGraderReportViewerPage() {
             {ELEMENT_LABELS.map((element) => {
               const result = story?.elementScores?.[element];
               const finalResult = finalGrade?.elements?.[element];
+              const machineScore = finalResult?.score ?? result?.score;
+              const reviewedExplanation = reviewedContent[ELEMENT_EXPLANATION_FIELD[element]];
               return (
                 <article key={element}>
                   <span>{element}</span>
-                  <strong>{scoreText(finalResult?.score ?? result?.score)}</strong>
-                  <p>{finalResult?.explanation ?? result?.explanation ?? "Insufficient evidence."}</p>
+                  <strong>{scoreText(reviewedRevision?.scores[element] ?? machineScore)}</strong>
+                  {reviewedRevision ? <small className="effective-value">Human reviewed · immutable machine {scoreText(machineScore)}</small> : null}
+                  <p>{reviewedExplanation ?? finalResult?.explanation ?? result?.explanation ?? "Insufficient evidence."}</p>
+                  {reviewedExplanation ? (
+                    <details>
+                      <summary>Immutable machine explanation</summary>
+                      <p>{finalResult?.explanation ?? result?.explanation ?? "Insufficient machine evidence."}</p>
+                    </details>
+                  ) : null}
                   <em>{finalResult?.confidence ?? result?.confidence ?? "pending"} confidence</em>
                 </article>
               );
@@ -648,11 +983,40 @@ export default function AiGraderReportViewerPage() {
           </div>
         </section>
 
+        {reviewedRevision ? (
+          <section className="production reviewed-calculation">
+            <div className="section-head">
+              <p className="eyebrow">Effective Human-Reviewed Calculation</p>
+              <h2>Four required scores update the overall grade dynamically</h2>
+              <p>{reviewedRevision.calculation.weightedFormula}</p>
+            </div>
+            <div className="production-grid">
+              <article><span>Effective overall</span><strong>{scoreText(reviewedRevision.calculation.overall)}</strong></article>
+              <article><span>Weighted grade</span><strong>{scoreText(reviewedRevision.calculation.weightedGrade)}</strong></article>
+              <article><span>Weakest element</span><strong>{reviewedRevision.calculation.weakestElement} {scoreText(reviewedRevision.calculation.weakestScore)}</strong></article>
+              <article><span>Weakest-element cap</span><strong>{scoreText(reviewedRevision.calculation.weakestElementCap)}</strong></article>
+            </div>
+            <p className="formula">{reviewedRevision.calculation.finalFormula}</p>
+            <details className="machine-provenance">
+              <summary>Immutable original machine result and adjudicated failures</summary>
+              <p>Machine overall: {scoreText(finalGrade?.overall ?? story?.overall)}. The source report and all evidence remain unchanged.</p>
+              {reviewedRevision.adjudicatedMachineFailures.length ? <p>Adjudicated failures: {reviewedRevision.adjudicatedMachineFailures.join(", ")}.</p> : null}
+            </details>
+          </section>
+        ) : null}
+
         <section className="why">
           <div className="section-head">
             <p className="eyebrow">Why Not 10?</p>
             <h2>Grade-impact reasons</h2>
           </div>
+          {reviewedContent.whyNot10 ? (
+            <article className="effective-why">
+              <strong>Effective human-reviewed explanation</strong>
+              <p>{reviewedContent.whyNot10}</p>
+            </article>
+          ) : null}
+          {reviewedRevision ? <p className="machine-reasons-label">Immutable machine reasons</p> : null}
           <div className="why-list">
             {(story?.whyNot10 ?? []).map((reason) => (
               <article key={reason.id}>
@@ -734,6 +1098,19 @@ export default function AiGraderReportViewerPage() {
           justify-content: space-between;
           gap: 20px;
           align-items: flex-start;
+        }
+        .human-reviewed-badge {
+          display: inline-block;
+          margin-top: 10px;
+          border: 1px solid rgba(27, 111, 63, 0.28);
+          border-radius: 999px;
+          background: #e9f7ed;
+          color: #18562d;
+          padding: 6px 10px;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
         }
         .local-status {
           max-width: 1260px;
@@ -829,6 +1206,12 @@ export default function AiGraderReportViewerPage() {
           margin-top: 18px;
           color: #5c574f;
           line-height: 1.6;
+        }
+        .grade-panel .machine-value {
+          display: block;
+          margin-top: 8px;
+          color: #6d665b;
+          font-size: 12px;
         }
         .card-stage {
           position: relative;
@@ -1013,6 +1396,12 @@ export default function AiGraderReportViewerPage() {
           color: #35312b;
           line-height: 1.5;
         }
+        .summary small {
+          display: block;
+          margin-top: 8px;
+          color: #267044;
+          font-size: 11px;
+        }
         .vision-lab,
         .elements,
         .why,
@@ -1188,6 +1577,25 @@ export default function AiGraderReportViewerPage() {
           margin-top: 8px;
           font-size: 36px;
         }
+        .element-grid .effective-value {
+          display: block;
+          margin-top: 2px;
+          color: #267044;
+          font-size: 11px;
+          font-weight: 900;
+        }
+        .element-grid details {
+          margin-top: 10px;
+          border-top: 1px solid rgba(20, 20, 20, 0.1);
+          padding-top: 9px;
+          color: #625c52;
+          font-size: 11px;
+        }
+        .element-grid summary,
+        .machine-provenance summary {
+          cursor: pointer;
+          font-weight: 900;
+        }
         .element-grid p,
         .why-list p {
           margin-top: 8px;
@@ -1205,6 +1613,44 @@ export default function AiGraderReportViewerPage() {
         .why-list {
           display: grid;
           gap: 12px;
+        }
+        .reviewed-calculation {
+          border-color: rgba(27, 111, 63, 0.24);
+          background: rgba(233, 247, 237, 0.78);
+        }
+        .reviewed-calculation .formula {
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 12px;
+        }
+        .machine-provenance {
+          margin-top: 16px;
+          border: 1px solid rgba(20, 20, 20, 0.12);
+          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.6);
+          padding: 12px 14px;
+          font-size: 12px;
+        }
+        .machine-provenance p {
+          margin-top: 8px;
+        }
+        .effective-why {
+          margin-bottom: 14px;
+          border: 1px solid rgba(27, 111, 63, 0.24);
+          border-radius: 8px;
+          background: #e9f7ed;
+          padding: 16px;
+        }
+        .effective-why p {
+          margin-top: 8px;
+          line-height: 1.55;
+        }
+        .machine-reasons-label {
+          margin: 0 0 10px;
+          color: #71695d;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.12em;
+          text-transform: uppercase;
         }
         .appendix dl {
           display: grid;

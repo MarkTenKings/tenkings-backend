@@ -1,6 +1,8 @@
 # Ten Kings AI Grader Mathematical Calibration V1
 
-Status: implementation candidate; a finalized physical calibration bundle and independent Mac architecture/calibration review are required before any protected rollout.
+last_verified_at: 2026-07-22
+
+Status: implementation candidate; an exact reviewed calibration authority and independent Mac architecture/calibration review are required before any protected rollout.
 
 ## Purpose
 
@@ -28,7 +30,7 @@ The heatmap is a visualization derived from source evidence. It is never an inde
 
 ## Measurement uncertainty and Grade-10 meaning
 
-Every physical measurement carries a versioned certified `U95` composed by root-sum-square propagation from the applicable sources:
+Every physical measurement carries a versioned `U95` authority composed by root-sum-square propagation from the applicable sources:
 
 - pixel/mm scale uncertainty;
 - lens/distortion residual;
@@ -37,6 +39,8 @@ Every physical measurement carries a versioned certified `U95` composed by root-
 - segmentation-boundary uncertainty;
 - repeated-measurement variation; and
 - lighting/channel confidence.
+
+One-time rig-characterization target authority uses `product_owner_confirmed_exact_target_geometry_v1`, derived automatically from the active session's exact protected target version/SHA-256 and immutable captured target bytes. Its four records are explicitly protected nominal checkerboard geometry, never physical measurements. The 24 physical-direction records and their U95 values are derived deterministically from the exact three-per-channel immutable illumination captures and the ten-capture checkerboard repeatability evidence under the centralized uncertainty coverage factor. The operator contract has no measuring-device, certificate, coordinate, or U95 questions. No scoring formula, centralized threshold, capture count, or grading/subgrading algorithm changes.
 
 The required calculations are:
 
@@ -83,6 +87,14 @@ cornerPenalty = 0.65 * worstLocationPenalty
 cornerScore = clamp(10 - cornerPenalty, 1, 10)
 ```
 
+### Standard Pokémon corner authority
+
+`pokemon_tcg_standard` version `1.0.0` is the single Mark/Ten Kings owner-approved Production operational contour for trusted standard-size Pokémon TCG identities. Its canonical UTF-8 artifact binds 63.50 mm x 88.90 mm physical dimensions, a circular 3.18 mm corner radius, the exact contour generator, applicable standard variants, the Mathematical threshold-set ID/hash, provenance, and canonical profile SHA-256. It covers standard-size Japanese, international, Wizards-era, vintage, modern, foil, and promo cards. It explicitly excludes jumbo, oversize, nonstandard, unresolved, contradictory, or untrusted formats.
+
+The hosted resolver signs the immutable set-card/taxonomy source identity and its trusted physical-format claim. The browser supplies only the exact lookup and centering choice; it cannot supply the profile, signature, contour, tolerance, or measurements. The local bridge verifies the resolver HMAC and exact card identity before the station adapter can select the profile. The report builder separately signs the analyzer-created eight-corner measurement artifact, and publication verifies both authentications again. A replayed valid card identity therefore cannot authorize caller-created measurements. There is no nearest-profile fallback.
+
+Each front/back top-left, top-right, bottom-right, and bottom-left observation reports the analyzer-created contour deviation, calibrated U95, threshold decision, deduction, source image/contour hashes, calibration bundle, profile authority, and analyzer versions. Contour deviation remains distinct from whitening, chipping/material loss, deformation, delamination, and other visible damage. This profile is a Ten Kings operational grading standard, not an official Pokémon manufacturer specification.
+
 ## Edges V1
 
 All eight front/back edge observations are independently measured. Supported physical features include damaged length, longest continuous span, chip/indentation depth, whitening/chipping area, roughness, fraying/fiber exposure, delamination/lift, and directional deformation.
@@ -128,7 +140,7 @@ Internal and report scores round to two decimals with the manifest rounding poli
 
 ## Immutable calibration authority
 
-A finalized calibration is one hash-protected `ten-kings-mathematical-calibration-bundle-v1`. Its ordered 12-member ledger contains:
+Under normal mathematical acceptance, a finalized calibration is one hash-protected `ten-kings-mathematical-calibration-bundle-v1`. Its ordered 12-member ledger contains:
 
 - finalized mathematical calibration profile;
 - physical calibration artifact;
@@ -136,7 +148,52 @@ A finalized calibration is one hash-protected `ten-kings-mathematical-calibratio
 - eight ordered channel flat-field artifacts; and
 - illumination-pattern/direction artifact.
 
-The bundle binds the non-production capture package, exact rig/camera/profile/settings, printable target hash, ruler evidence, distortion/normalization models, scale, repeated placement/measurement, boundary uncertainty, channel response/direction, algorithms, threshold set, and every member byte. `isCalibrated=true` is emitted only by the finalizer after all centralized acceptance gates pass.
+The bundle binds the non-production capture package, exact rig/camera/profile/settings, printable target hash, protected target-geometry and physical-direction evidence, distortion/normalization models, scale, repeated placement/measurement, boundary uncertainty, channel response/direction, algorithms, threshold set, and every member byte. `isCalibrated=true` is emitted only by the finalizer after all centralized acceptance gates pass.
+
+### Incident-bound product-owner operational acceptance
+
+Normal mathematical acceptance is unchanged. The centralized formulas and thresholds remain authoritative, and an ordinary rejected or incomplete run cannot produce or use a finalized/trusted bundle. The normal V1.2 result remains a 12-member bundle whose profile is `status=finalized` and `isCalibrated=true`.
+
+One exact session, `math-cal-v1-20260722-4cfa410c-01`, has a separately versioned, hash-bound product-owner operational policy path. It does not alter or replace the mathematical result: the profile remains `status=rejected` and `isCalibrated=false`, every measurement remains unchanged, and the complete 36-entry rejection/issue ledger remains present. The resulting transparent bundle has exactly 13 members, with the exact product-owner operational-acceptance record as its thirteenth member. That record is content-addressed decision metadata for Mark / Ten Kings, including the decision timestamp and exact reason; its unkeyed canonical hash does not independently authenticate Mark.
+
+Operational Production use requires exact loader and registry verification and a fresh-human-admin ECDSA-signed `ACTIVE` calibration activation authority. The signed statement must bind the exact containing bundle manifest, 13-member ledger, runtime context, rig characterization, rig ID, and operating context. The existing hosted activation signature boundary authenticates and authorizes operational use of the owner decision. A browser boolean, caller-authored authority/hash, threshold-pass claim, cross-session/context reuse, fallback, newest/closest/LKG selection, or automatic rollback cannot authorize it.
+
+Every owner-accepted report must carry that exact activation authority and visibly disclose `Owner accepted with recorded exceptions`, mathematical status `REJECTED`, `isCalibrated=false`, Mark / Ten Kings, the decision timestamp and reason, all 36 exception path/message entries, the owner-authority and exception-ledger hashes, and the activation ID, hosted key/signature metadata, and exact bundle/context bindings. Revocation and supersession remain explicit and append-only. This incident policy does not change V1.2's normal 12-member mathematical acceptance and cannot authorize any other rejected calibration.
+
+### Fast calibration V1.2 authority composition
+
+Fast calibration contract '1.2.0' is a distinct Production-compatible producer contract. It is not the incomplete V1.1 profile contract and it does not convert, relabel, or fall back to V0, V1.1, a provisional artifact, or an older profile.
+
+V1.2 separates two hash-bound authority layers:
+
+- one-time rig characterization: target metrology with exact product-owner-confirmed protected-target authority, camera/lens identity and authority, physical light directions, component identities and channel wiring, measurement repeatability, protected algorithms, and the centralized threshold manifest; and
+- quick site/lighting calibration: exact location and lighting configuration, live camera/controller settings and identities, four capture-time checkerboard placements, one blank-reverse flip, geometry verification, dark response, eight per-channel flat fields, and illumination response.
+
+The quick capture contract is exactly '4' checkerboard images plus '72' automated photometric images ('24' dark, '24' flat-field, and '24' illumination-pattern), for '76' images and '0' new quick physical measurements. Physical metrology, direction, and repeatability evidence are inherited only through the exact immutable rig-characterization hashes; they are never fabricated or inferred from the quick images.
+
+The V1.2 state is an append-only event chain. Every accepted image is checkpointed and hashed immediately. A failed operation retains its immutable operation ID and leaves only its exact slot pending. Retry uses a new operation ID. Explicit accepted-pose replacement preserves the superseded evidence and lineage. Pose four cannot be accepted unless the active four-pose set satisfies unchanged minimum coverage, safe-margin, X span, Y span, rotation span, residual, and U95 gates.
+
+Analysis retains the centralized Mathematical V1/V1.0.1 acceptance thresholds. Successful finalization emits the same complete Production 'ten-kings-mathematical-calibration-bundle-v1' outer schema and exact ordered 12-member ledger, with additional exact '1.2.0' capture-contract, runtime-context, and rig-characterization authority hashes. The canonical loader requires the exact V1.2 source contract and, at the local Start New Card boundary, the exact live camera, rig, controller, wiring, settings, target, component, algorithm, location, and lighting context.
+
+V1.2 authority is reconstructable rather than self-attested. Session creation and every resume reread and hash-verify an exact canonical five-member one-time rig source. The trusted local analyzer reruns the checkerboard detector against each exact active checkpoint and requires the rederived pose to equal the accepted event geometry. It applies the immutable Brown-Conrady model, fits the target homography from a deterministic training partition of the 11-by-16 internal lattice, and records actual held-out undistorted reprojection residuals. A separately detected target outer contour is fit against the extrapolated target boundary and produces the independently named outer-boundary residual vector; one statistic is never copied into both authority classes.
+
+Photometric analysis decodes exact unnormalized Mono8 evidence, rejects color-converted samples, uses the accepted pose-four lens/homography authority to isolate and warp only the blank target ROI, masks all background/fixture pixels, and reduces that normalized-card coordinate frame to fixed 8-by-8 grids. Dark subtraction, relative response, response scale, directional centroids/errors, residual patterns, and artifact bytes are computed locally. Evidence-derived light vectors from normalized illumination captures are already authoritative in `canonical_normalized_target_v1` and are compared there without a stage matrix. Legacy physical-coordinate inputs retain their measured stage-to-undistorted-sensor transform and inverse-homography conversion. The public analysis mutation accepts no builder values, artifact bytes, acceptance booleans, or hashes.
+
+Completed analysis is not trusted merely because its serialization and ledger hashes are valid. Every session reopen reruns the same evidence analyzer from the checkpointed image bytes and requires byte-for-byte equality with the stored deterministic analysis before canonical finalization/member verification can pass. The camera/lens normalization transform remains one-time authority, while its current-site sample residual vector is evidence-derived quick geometry and is hash-bound in the quick authority layer.
+The geometry/photometric identity is content-addressed from the complete shipped V1.2 executable module-byte set, exact checkerboard detector bytes, reviewed pinned Python/OpenCV dependency-manifest bytes, and exact Node/Sharp/libvips runtime versions. It does not rely on a selected function list. Protected runtime and component-identity authority must bind those manifest hashes. Any top-level or transitive implementation-byte or dependency drift therefore fails before session authority can be created or resumed.
+The Production finalizer identity is independently content-addressed from the complete shipped finalization executable/module and dependency-byte ledger plus its exact runtime dependency version. Runtime context and component authority must bind that exact finalizer hash alongside geometry, photometric, and threshold hashes; transitive finalizer drift invalidates previously materialized authority rather than silently reusing it.
+
+One-time V1.2 rig authority is created only by the protected local operator materializer from exact supervised raw-capture, protected target, lens, component, controller, wiring, analyzer, and evidence-derived direction authority. The protected producer accepts only the sealed session ID, obtains the exact Basler/Leimac live probe with safe-off acknowledgements, and writes a canonical hash-bound materialization manifest; it accepts no browser/operator-authored authority values. Component and direction IDs are Ten Kings content-addressed operational identities over the exact rig/controller unit/output/channel and immutable response/direction evidence hashes, not manufacturer serial numbers. The canonical target-frame path contains no stage matrix and rejects legacy, manual, fabricated, mismatched, duplicate, or unreferenced authority. Legacy physical-coordinate input retains the existing measured-stage contract but is never generated by the evidence-derived producer. The materializer requires each protected-target geometry authority to match the source capture's exact target version/SHA-256 and exact captured target bytes; it asks for and consumes no measuring-device or calibration-certificate authority for that path. It verifies all source hashes, reruns the existing physical acceptance calculation, and atomically emits canonical runtime context, five ordered authority members, their rig-source bundle, a complete copied source-evidence ledger, a reproducible physical-analysis receipt, and a redacted hash-only handoff. The Production loader reopens every emitted file, checks the shipped analyzer/dependency/finalizer identities, reconstructs all source links and physical acceptance, and rejects missing, extra, partial, duplicate, relabelled, corrupt, changed, old-profile, or synthetic-fixture inputs. Identical restaging is idempotent by exact rig-source bundle hash; conflicting bytes fail closed. Production activation, import, trust, and hosted mutation remain outside this path.
+
+The authoritative local helper route family is '/calibration/mathematical-v1.2': read-only 'GET /sessions' and 'GET /status'; 'POST /start'; server-owned expected-step 'POST /capture' and 'POST /retry'; acknowledged 'POST /replace-pose'; and exact 'POST /analyze' and 'POST /finalize'. Mutations use a server-issued revision token. The browser cannot supply operation/role/channel/sample identity, runtime or rig authority, acceptance booleans, analysis/bundle bytes, or trusted hashes. There is no activation mutation in this route family.
+
+
+The real 'ai-grader-station-bridge' CLI constructs this authority from seven all-or-none protected local settings: exact runtime-context path/hash, exact rig-source bundle path/hash, exact five-member directory, exact Agent 4 finalizer-staging root, and operator ID. Partial, absent, relative-path, corrupt, algorithm-mismatched, rig-mismatched, or live-context-mismatched authority fails closed. Construction is inert and exposes no protected paths through the route DTOs. Start/resume performs an exact live Basler/Leimac identity/settings probe; capture owns exact-still acquisition; and the automated sweep uses one long-lived PowerShell process with one opened Pylon camera and one opened Leimac TCP session, exact per-command ACK validation, safe-off before/after each frame, and final safe-off/close. Close success is not returned until the child exits and releases resources; probe/open/request timeout, malformed output, or unexpected exit performs bounded termination before rejection.
+The public driver barrel does not export the raw V1.2 analysis/finalizer builder seam. Production callers receive authority only through the durable local session and its canonical finalized result.
+Successful local finalization atomically stages '<protected-root>/<bundleManifestSha256>/' with the exact bundle manifest, all twelve hash-verified members, and the exact nine-key 'mathematical-calibration-finalizer-handoff-v1.json' consumed by Agent 4. Repeated staging of the same exact bundle is idempotent; any conflicting, extra, missing, or corrupt byte fails closed. The browser supplies neither the staging root nor any path, and staging does not activate or mutate hosted state.
+Core completion is only 'ready_for_explicit_activation'. It means the exact local bundle is eligible for the separate Agent 4 activation transaction; it does not mean active. The core's Start New Card assertion always fails until that explicit activation receipt exists. The activation boundary must then require the exact live camera, rig, controller, wiring, settings, target, component, algorithm, location, and lighting context.
+
+The under-ten-minute target is a Dell physical acceptance objective only. Repository tests establish deterministic behavior and contract integrity; they do not establish physical capture time, controller latency, image-transfer latency, checkerboard handling time, analyzer time on Dell, thermal stability, or repeatability.
 
 Database trust is a separate admin lifecycle. Publication requires one exact current TRUSTED CalibrationSnapshot whose complete bundle authority equals the report. Import, trust, revoke, and supersede reread the current private bundle/member bytes. A loose profile or structural self-attestation is insufficient.
 
@@ -149,7 +206,7 @@ Rejected or unreviewed findings cannot enter a final V0.3 report. Confirmed/adju
 Publication independently verifies:
 
 - strict V0.3 schema and all four element formulas;
-- exact finalized calibration bundle and current TRUSTED snapshot;
+- exact normal finalized 12-member calibration bundle and current TRUSTED snapshot, or the exact incident-bound 13-member owner-operational bundle and its signed ACTIVE activation authority;
 - exact APPROVED design-reference rows and current artifact bytes;
 - complete immutable Publish authority, including calibration and condition observations;
 - exact Mathematical V1 release schema and statuses;

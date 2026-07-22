@@ -122,6 +122,34 @@ def _detect_with_local_contrast(gray: np.ndarray) -> tuple[np.ndarray, int, int,
     return None
 
 
+def detect_outer_boundary(gray: np.ndarray, internal: np.ndarray) -> list[dict[str, float]]:
+    """Return independently segmented target-boundary samples in sensor pixels."""
+    height, width = gray.shape[:2]
+    internal_polygon = cv2.convexHull(internal.reshape(-1, 2).astype(np.float32))
+    internal_area = cv2.contourArea(internal_polygon)
+    candidates: list[tuple[float, np.ndarray]] = []
+    for threshold in range(24, 208, 8):
+        _, mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area <= internal_area * 1.05 or area >= width * height * 0.95:
+                continue
+            if all(cv2.pointPolygonTest(contour, tuple(map(float, point)), False) >= 0 for point in internal.reshape(-1, 2)[::11]):
+                candidates.append((area, contour))
+    if not candidates:
+        raise RuntimeError("independent target outer-boundary segmentation failed closed")
+    contour = min(candidates, key=lambda value: value[0])[1].reshape(-1, 2)
+    if len(contour) < 8:
+        raise RuntimeError("segmented target outer boundary has insufficient support")
+    sample_count = min(256, len(contour))
+    indices = np.linspace(0, len(contour) - 1, sample_count, dtype=np.int32)
+    sampled = contour[indices].astype(np.float64)
+    if not all(_finite_in_frame(point, width, height) for point in sampled):
+        raise RuntimeError("segmented target outer boundary is non-finite or outside the sensor frame")
+    return [_point(point) for point in sampled]
+
+
 def detect_preview(encoded: bytes) -> dict:
     image = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
     if image is None or image.size == 0:
@@ -144,11 +172,13 @@ def detect_preview(encoded: bytes) -> dict:
     rotation = math.degrees(math.atan2(outer[1]["y"] - outer[0]["y"], outer[1]["x"] - outer[0]["x"]))
     if not math.isfinite(rotation):
         raise RuntimeError("checkerboard rotation is not finite")
+    segmentation_boundary = detect_outer_boundary(image, detected)
     return {
         "imageWidth": width,
         "imageHeight": height,
         "internalCorners": [_point(point) for point in grid.reshape(-1, 2)],
         "outerCorners": outer,
+        "segmentationBoundary": segmentation_boundary,
         "rotationDegrees": rotation,
         "detectorMethod": detector_method,
     }

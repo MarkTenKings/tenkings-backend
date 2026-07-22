@@ -5,7 +5,6 @@ import {
   grade10BufferV1,
   mathematicalDesignReferenceV1Schema,
   mathematicalEvidenceReferenceV1Schema,
-  validateMathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalMeasurementV1,
 } from "@tenkings/shared";
@@ -25,6 +24,7 @@ import type {
   FixedRigSurfaceChannelSupportV1,
 } from "./fixedRigSurfaceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_CONDITION_SEGMENTATION_V1_VERSION =
   "fixed_rig_condition_segmentation_v1.2.0" as const;
@@ -275,7 +275,7 @@ function validateInput(input: BuildFixedRigConditionSegmentationV1Input): string
     reasons.push("Photometric evidence is insufficient; condition segmentation has no alternate capture fallback.");
   }
   const calibration = input.measurementCalibration;
-  const profileValidation = validateMathematicalCalibrationProfileV1(calibration.profile);
+  const profileValidation = validateMathematicalCalibrationForOperationalUseV1(calibration.profile);
   const profile = profileValidation.profile;
   if (
     calibration.calibrationProfileId !== photometric.calibration.profileId ||
@@ -286,7 +286,7 @@ function validateInput(input: BuildFixedRigConditionSegmentationV1Input): string
   }
   if (
     !profileValidation.valid ||
-    !profileValidation.isCalibrated ||
+    (!profileValidation.isCalibrated && !profileValidation.isOperationallyAccepted) ||
     !profile ||
     profile.profileId !== calibration.calibrationProfileId ||
     profile.calibrationVersion !== calibration.calibrationVersion ||

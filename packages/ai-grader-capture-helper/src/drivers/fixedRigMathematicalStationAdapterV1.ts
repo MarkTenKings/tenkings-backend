@@ -2,7 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignReferenceV1';
-import { MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST } from '@tenkings/shared';
+import {
+  MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  type AiGraderCalibrationActivationAuthorityV1,
+  type TrustedPokemonCardFormatAuthorityV1,
+} from '@tenkings/shared';
 import {
   buildFixedRigMathematicalCalibrationReportPackageV1,
   FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
@@ -18,7 +22,13 @@ import {
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
 } from './fixedRigStandardCardFormatV1';
 import { loadFixedRigMathematicalCalibrationBundleV1 } from './fixedRigMathematicalCalibrationBundleV1';
+import type { FastCalibrationRuntimeContextV1_2 } from './fixedRigFastMathematicalCalibrationV1_2';
 import { buildFixedRigAutomaticDesignRegistrationV1 } from './fixedRigAutomaticDesignRegistrationV1';
+import {
+  buildFixedRigPokemonTcgStandardBoundaryV1,
+  FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
+  verifyTrustedPokemonCardFormatAuthorityV1,
+} from './fixedRigPokemonStandardCornerProfileV1';
 
 export const FIXED_RIG_MATHEMATICAL_STATION_ADAPTER_V1_VERSION =
   'fixed_rig_mathematical_station_adapter_v1' as const;
@@ -36,10 +46,9 @@ export type FixedRigMathematicalStationCenteringAuthorityV1 =
       approvedDesignArtifact: FixedRigExactReportEvidenceFileV1;
     };
 
-export interface FixedRigMathematicalStationGradingAuthorityV1 {
+type FixedRigMathematicalStationGradingAuthorityBaseV1 = {
   schemaVersion: typeof FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION;
   cardIdentity: FixedRigMathematicalCardIdentityV1;
-  cardFormatId: typeof FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID;
   sides: {
     front: { centering: FixedRigMathematicalStationCenteringAuthorityV1 };
     back: { centering: FixedRigMathematicalStationCenteringAuthorityV1 };
@@ -49,7 +58,16 @@ export interface FixedRigMathematicalStationGradingAuthorityV1 {
     publicReportUrl: string;
     qrPayloadUrl: string;
   };
-}
+};
+
+export type FixedRigMathematicalStationGradingAuthorityV1 =
+  | FixedRigMathematicalStationGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID;
+    }
+  | FixedRigMathematicalStationGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID;
+      trustedCardFormatAuthority: TrustedPokemonCardFormatAuthorityV1;
+    };
 
 export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
   authority: FixedRigMathematicalStationGradingAuthorityV1;
@@ -62,12 +80,18 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
     bundlePath: string;
     bundleSha256: string;
     expectedRigId: string;
+    expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+    activationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   };
   warmSides: {
     front: { manifestPath: string; manifestSha256: string };
     back: { manifestPath: string; manifestSha256: string };
   };
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
+  cardFormatAuthorityVerification?: {
+    hmacKey: string;
+    keyId: string;
+  };
 }
 
 export type BuildFixedRigMathematicalCalibrationStationPackageV1Result =
@@ -415,9 +439,30 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
 ): Promise<BuildFixedRigMathematicalCalibrationStationPackageV1Result> {
   if (input.authority.schemaVersion !==
       FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION ||
-      input.authority.cardFormatId !== FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID) {
+      (input.authority.cardFormatId !== FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID &&
+        input.authority.cardFormatId !== FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID)) {
     return adapterInsufficient('input_contract', [
-      'Station authority must select the exact supported standard-card format contract.',
+      'Station authority must select one exact supported card-format contract.',
+    ], { requiresImplementationCorrection: true });
+  }
+  let trustedPokemonAuthority: TrustedPokemonCardFormatAuthorityV1 | undefined;
+  if (input.authority.cardFormatId === FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID) {
+    try {
+      trustedPokemonAuthority = verifyTrustedPokemonCardFormatAuthorityV1({
+        authority: input.authority.trustedCardFormatAuthority,
+        hmacKey: input.cardFormatAuthorityVerification?.hmacKey,
+        expectedKeyId: input.cardFormatAuthorityVerification?.keyId,
+        expectedCardIdentity: input.authority.cardIdentity,
+      });
+    } catch (error) {
+      return adapterInsufficient('input_contract', [
+        error instanceof Error ? error.message :
+          'Trusted Pokémon physical-format authority could not be verified.',
+      ], { requiresImplementationCorrection: true });
+    }
+  } else if ('trustedCardFormatAuthority' in input.authority) {
+    return adapterInsufficient('input_contract', [
+      'Generic standard-card authority cannot carry a Pokémon profile artifact.',
     ], { requiresImplementationCorrection: true });
   }
   let loaded: ReturnType<typeof loadFixedRigMathematicalCalibrationBundleV1>;
@@ -426,6 +471,9 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       bundlePath: input.calibration.bundlePath,
       bundleSha256: input.calibration.bundleSha256,
       expectedRigId: input.calibration.expectedRigId,
+      ...(input.calibration.expectedRuntimeContext
+        ? { expectedRuntimeContext: input.calibration.expectedRuntimeContext }
+        : {}),
     });
   } catch (error) {
     return adapterInsufficient('calibration_ingestion', [
@@ -455,10 +503,16 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       error instanceof Error ? error.message : 'Warm front/back evidence could not be verified.',
     ], { requiresRecapture: true });
   }
-  const intendedOuterBoundary = buildFixedRigStandardTradingCardBoundaryV1({
-    normalizedWidthPx: loaded.profile.normalizedWidthPx,
-    normalizedHeightPx: loaded.profile.normalizedHeightPx,
-  });
+  const intendedOuterBoundary = input.authority.cardFormatId ===
+      FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID
+    ? buildFixedRigPokemonTcgStandardBoundaryV1({
+        normalizedWidthPx: loaded.profile.normalizedWidthPx,
+        normalizedHeightPx: loaded.profile.normalizedHeightPx,
+      })
+    : buildFixedRigStandardTradingCardBoundaryV1({
+        normalizedWidthPx: loaded.profile.normalizedWidthPx,
+        normalizedHeightPx: loaded.profile.normalizedHeightPx,
+      });
   const resolvedCentering = await Promise.all((['front', 'back'] as const).map((side) =>
     resolveCenteringAuthorityV1({
       side,
@@ -513,9 +567,14 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     outputDir: input.outputDir,
     captureProfileVersion: input.captureProfileVersion,
     cardIdentity: input.authority.cardIdentity,
+    ...(trustedPokemonAuthority ? {
+      pokemonStandardCornerAuthority: trustedPokemonAuthority,
+      pokemonStandardCornerAuthorityVerification: input.cardFormatAuthorityVerification,
+    } : {}),
     calibration: {
       finalizedProfile: loaded.profile,
       bundleAuthority: loaded.authority,
+      activationAuthority: input.calibration.activationAuthority,
       physicalArtifact: {
         filePath: loaded.files.physicalArtifact.path,
         sha256: loaded.files.physicalArtifact.sha256,

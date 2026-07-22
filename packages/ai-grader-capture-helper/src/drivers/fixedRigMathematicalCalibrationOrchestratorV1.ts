@@ -5,10 +5,12 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   mathematicalDesignReferenceV1Schema,
   type AiGraderReportBundleV03,
-  type MathematicalCalibrationProfileV1,
+  type AiGraderCalibrationActivationAuthorityV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
   type MathematicalMeasurementV1,
+  type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import {
   buildAiGraderMathematicalReportBundleV1,
@@ -234,10 +236,15 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   outputDir: string;
   captureProfileVersion: string;
   cardIdentity: FixedRigMathematicalCardIdentityV1;
+  /** Verified by the station adapter before the Pokémon contour can reach this seam. */
+  pokemonStandardCornerAuthority?: TrustedPokemonCardFormatAuthorityV1;
+  /** Bridge-private verifier configuration; never serialized into the report. */
+  pokemonStandardCornerAuthorityVerification?: { hmacKey: string; keyId: string };
   calibration: {
     finalizedProfile: MathematicalCalibrationProfileV1;
     /** Must come from the verified finalized-bundle loader; never caller-authored metadata. */
     bundleAuthority: AiGraderReportBundleV03["calibrationBundleAuthority"];
+    activationAuthority?: AiGraderCalibrationActivationAuthorityV1;
     physicalArtifact: FixedRigExactInputFileV1;
     flatFieldArtifacts: FixedRigExactInputFileV1[];
     illuminationPatternArtifact: FixedRigExactInputFileV1;
@@ -2692,10 +2699,15 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
     try {
       reportArtifact = await buildAiGraderMathematicalReportBundleV1({
         generatedAt: input.generatedAt,
+        gradingSessionId: input.gradingSessionId,
         reportId: input.reportId,
         cardIdentity: input.cardIdentity,
+        pokemonStandardCornerAuthority: input.pokemonStandardCornerAuthority,
+        pokemonStandardCornerAuthorityVerification:
+          input.pokemonStandardCornerAuthorityVerification,
         calibrationProfile: input.calibration.finalizedProfile,
         calibrationBundleAuthority: input.calibration.bundleAuthority,
+        calibrationActivationAuthority: input.calibration.activationAuthority,
         designReferences: [front.input.designReference, back.input.designReference]
           .filter((reference): reference is MathematicalDesignReferenceV1 => Boolean(reference)),
         centering,

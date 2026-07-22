@@ -1,7 +1,12 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
+  type AiGraderCalibrationActivationAuthorityV1,
+} from "@tenkings/shared";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   AI_GRADER_STATION_STEPS,
@@ -45,6 +50,7 @@ import {
   buildAiGraderMathematicalAuthorityBindingRequest,
   buildAiGraderMathematicalFindingReviewSubmission,
   buildAiGraderMathematicalGradingAuthorityV1,
+  buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1,
   buildAiGraderQueuedOcrClaimRequest,
   buildAiGraderQueuedOcrCompletionRequest,
   buildAiGraderQueuedOcrFailureRequest,
@@ -63,6 +69,7 @@ import {
   initializeAiGraderQueuedOcrAttemptOwner,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
+  resolveAiGraderTrustedPokemonCardFormatAuthorityV1,
   stageAiGraderMathematicalDesignReference,
   type AiGraderMathematicalCardIdentityDraftV1,
   type AiGraderMathematicalCenteringProfileV1,
@@ -235,6 +242,7 @@ type LocalReportState = {
 };
 
 type MathematicalAuthorityDraftState = {
+  cardFormatProfile: "generic_standard" | "pokemon_tcg_standard";
   title: string;
   tenantId: string;
   setId: string;
@@ -590,6 +598,7 @@ const defaultIdentityDraft: IdentityDraftState = {
 };
 
 const defaultMathematicalAuthorityDraft: MathematicalAuthorityDraftState = {
+  cardFormatProfile: "generic_standard",
   title: "",
   tenantId: "",
   setId: "",
@@ -761,6 +770,7 @@ function lightingPositioningCompletelyAcknowledged(lighting: AiGraderLiveLightin
 
 export default function AiGraderStationPage() {
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
+  const calibrationAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
@@ -829,7 +839,7 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "OCR prefill starts after normalized front and back images are ready.",
   });
-  const [selectedGradingContract, setSelectedGradingContract] = useState<AiGraderGradingContract>("legacy_v0");
+  const selectedGradingContract: AiGraderGradingContract = "mathematical_calibration_v1";
   const [mathematicalAuthorityDraft, setMathematicalAuthorityDraft] =
     useState<MathematicalAuthorityDraftState>(defaultMathematicalAuthorityDraft);
   const [mathematicalAuthorityStatus, setMathematicalAuthorityStatus] = useState<StepState>({
@@ -1854,13 +1864,6 @@ export default function AiGraderStationPage() {
   const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 10);
   const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) =>
     RAPID_PROCESSING_STATES.has(item.state) || item.ocr.state === "eligible" || item.ocr.state === "in_flight");
-  const stationSettingsLocked =
-    status.sessionManifest.frontCaptured ||
-    status.sessionManifest.backCaptured ||
-    Boolean(status.rapidCaptureQueue.activeQueueItemId) ||
-    Boolean(status.gradingContract &&
-      status.currentStep !== "start_new_card" &&
-      status.currentStep !== "session_complete");
   const mathematicalCalibrationReady = status.mathematicalCalibration?.ready === true;
   const mathematicalCalibrationBlocked =
     selectedGradingContract === "mathematical_calibration_v1" &&
@@ -2624,27 +2627,41 @@ export default function AiGraderStationPage() {
       variantId: mathematicalAuthorityDraft.variantId.trim() || null,
       parallelId: mathematicalAuthorityDraft.parallelId.trim() || null,
     };
-    buildAiGraderMathematicalGradingAuthorityV1({
-      identity,
-      profiles: { front: "printed_border_v1", back: "printed_border_v1" },
-    });
+    const pokemonProfile =
+      mathematicalAuthorityDraft.cardFormatProfile === "pokemon_tcg_standard";
     const registeredSides = (["front", "back"] as const).filter(
       (side) => mathematicalAuthorityDraft.profiles[side] === "registered_design_template_v1",
     );
     const registeredDesignReferences: Partial<
       Record<"front" | "back", AiGraderPreparedRegisteredDesignReferenceV1>
     > = {};
-    const authHeaders = registeredSides.length
+    const authHeaders = registeredSides.length || pokemonProfile
       ? await productionAuthHeaders({}, "resolve exact approved Mathematical V1 design references")
       : {};
+    const trustedCardFormatAuthority = pokemonProfile
+      ? await resolveAiGraderTrustedPokemonCardFormatAuthorityV1({
+          identity,
+          headers: authHeaders,
+        })
+      : undefined;
+    const exactCardIdentity = trustedCardFormatAuthority?.artifact.cardIdentity ?? {
+      title: identity.title.trim(),
+      sideCount: 2 as const,
+      tenantId: identity.tenantId.trim(),
+      setId: identity.setId.trim(),
+      programId: identity.programId.trim(),
+      cardNumber: identity.cardNumber.trim(),
+      variantId: identity.variantId,
+      parallelId: identity.parallelId,
+    };
     for (const side of registeredSides) {
       const referenceIdentity: AiGraderExactDesignReferenceIdentity = {
-        tenantId: identity.tenantId.trim(),
-        setId: identity.setId.trim(),
-        programId: identity.programId.trim(),
-        cardNumber: identity.cardNumber.trim(),
-        variantId: identity.variantId,
-        parallelId: identity.parallelId,
+        tenantId: exactCardIdentity.tenantId,
+        setId: exactCardIdentity.setId,
+        programId: exactCardIdentity.programId,
+        cardNumber: exactCardIdentity.cardNumber,
+        variantId: exactCardIdentity.variantId,
+        parallelId: exactCardIdentity.parallelId,
         side,
         profile: "registered_design_template_v1",
       };
@@ -2660,11 +2677,17 @@ export default function AiGraderStationPage() {
       registeredDesignReferences[side] = { operatorAuthority, artifact };
     }
     return {
-      authority: buildAiGraderMathematicalGradingAuthorityV1({
-        identity,
-        profiles: mathematicalAuthorityDraft.profiles,
-        registeredDesignReferences,
-      }),
+      authority: trustedCardFormatAuthority
+        ? buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1({
+            trustedCardFormatAuthority,
+            profiles: mathematicalAuthorityDraft.profiles,
+            registeredDesignReferences,
+          })
+        : buildAiGraderMathematicalGradingAuthorityV1({
+            identity,
+            profiles: mathematicalAuthorityDraft.profiles,
+            registeredDesignReferences,
+          }),
       registeredDesignReferences,
     };
   };
@@ -2782,30 +2805,48 @@ export default function AiGraderStationPage() {
     setCaptureBusy("start");
     setError(null);
     try {
-      const prepared = selectedGradingContract === "mathematical_calibration_v1"
-        ? await prepareMathematicalAuthority()
-        : undefined;
+      const prepared = await prepareMathematicalAuthority();
+      if (!prepared?.authority) {
+        throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
+      }
+      const calibrationRigId = status.mathematicalCalibration?.rigId;
+      if (!calibrationRigId) {
+        throw new Error("Start New Card requires the exact local calibration rig identity.");
+      }
+      const activationResponse = await fetch(AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1, {
+        method: "POST",
+        headers: await productionAuthHeaders({ "content-type": "application/json" }, "verify exact calibration activation"),
+        body: JSON.stringify({
+          tenantId: prepared.authority.cardIdentity.tenantId,
+          rigId: calibrationRigId,
+        }),
+      });
+      const activationPayload = await activationResponse.json() as {
+        ok?: boolean;
+        authority?: AiGraderCalibrationActivationAuthorityV1;
+        message?: string;
+      };
+      if (!activationResponse.ok || !activationPayload.ok || !activationPayload.authority) {
+        throw new Error(activationPayload.message || "Start New Card requires one exact hosted ACTIVE calibration activation.");
+      }
       const started = await runAction(
         "start-session",
         buildAiGraderCaptureProfileRequest(
           "production_fast",
           selectedGradingContract,
           prepared?.authority,
+          activationPayload.authority,
         ),
       );
-      if (prepared) {
-        await stagePreparedMathematicalDesignReferences(prepared, started);
-        setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
-        setMathematicalAuthorityStatus({
-          status: "completed",
-          message: "Exact Mathematical V1 identity and per-side centering authority are bound before capture.",
-        });
-      }
+      await stagePreparedMathematicalDesignReferences(prepared, started);
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "completed",
+        message: "Exact Mathematical V1 identity and per-side centering authority are bound before capture.",
+      });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
-      if (selectedGradingContract === "mathematical_calibration_v1") {
-        setMathematicalAuthorityStatus({ status: "failed", message });
-      }
+      setMathematicalAuthorityStatus({ status: "failed", message });
       await runAction("status").catch(() => undefined);
       setError(message);
     } finally {
@@ -2886,7 +2927,6 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
-    setSelectedGradingContract(next.gradingContract ?? "legacy_v0");
     setHistory(await fetchAiGraderStationReportHistory({
       baseUrl: targetBridgeUrl,
       stationToken: targetStationToken,
@@ -2962,7 +3002,6 @@ export default function AiGraderStationPage() {
         throw new Error("Rapid Capture review activation returned a different queue/session/report identity.");
       }
       resetReviewUiState();
-      setSelectedGradingContract(next.gradingContract ?? selectedGradingContract);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
@@ -5144,7 +5183,10 @@ export default function AiGraderStationPage() {
               <span>Ten Kings</span>
               <strong>AI Grader Station</strong>
             </div>
-            <Link href="/ai-grader/finish">Finish Cards</Link>
+            <div className="brand-links">
+              {calibrationAdmin ? <Link href="/ai-grader/calibration">Calibration / Recalibrate</Link> : null}
+              <Link href="/ai-grader/finish">Finish Cards</Link>
+            </div>
           </div>
 
           {error ? <div className="error">{error}</div> : null}
@@ -5186,17 +5228,10 @@ export default function AiGraderStationPage() {
               </div>
               <strong>production_fast / Detected Geometry</strong>
             </div>
-            <label>
-              Grading contract
-              <select
-                value={selectedGradingContract}
-                onChange={(event) => setSelectedGradingContract(event.target.value as AiGraderGradingContract)}
-                disabled={!bridgeConnected || busy !== null || stationSettingsLocked}
-              >
-                <option value="legacy_v0">Legacy V0</option>
-                <option value="mathematical_calibration_v1" disabled={!mathematicalCalibrationReady}>Mathematical Calibration V1</option>
-              </select>
-            </label>
+            <div className="grading-contract-fixed" aria-label="Required grading contract">
+              <span>Grading contract</span>
+              <strong>Mathematical Calibration V1 (required)</strong>
+            </div>
             <div className={`grading-contract-readiness ${mathematicalCalibrationReady ? "ready" : "blocked"}`} role="status">
               <strong>{mathematicalCalibrationReady ? "Mathematical V1 ready" : "Mathematical V1 unavailable"}</strong>
               <p>
@@ -5205,7 +5240,7 @@ export default function AiGraderStationPage() {
                   : status.mathematicalCalibration?.reason ?? "The bridge has not verified a finalized physical calibration profile."}
               </p>
               {status.mathematicalCalibration?.artifactSha256 ? <code>{status.mathematicalCalibration.artifactSha256}</code> : null}
-              <p>{selectedGradingContract === "mathematical_calibration_v1" ? "Start New Card will require strict V0.3 Mathematical V1 output; V0 fallback is prohibited." : "Start New Card will use the explicitly selected Legacy V0 contract."}</p>
+              <p>Start New Card requires strict V0.3 Mathematical V1 output. Legacy V0, provisional scoring, and omitted-contract fallback are prohibited.</p>
             </div>
             {selectedGradingContract === "mathematical_calibration_v1" ||
             status.gradingContract === "mathematical_calibration_v1" ? (
@@ -5227,12 +5262,27 @@ export default function AiGraderStationPage() {
                       {" "}{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.cardNumber}
                     </span>
                     <small>
+                      Format {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.cardFormatId)} ·{" "}
                       Front {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.front.centering.profile)} ·
                       {" "}Back {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.back.centering.profile)}
                     </small>
                   </div>
                 ) : null}
                 <div className="mathematical-identity-grid">
+                  <label>
+                    Physical format authority
+                    <select
+                      value={mathematicalAuthorityDraft.cardFormatProfile}
+                      onChange={(event) => setMathematicalAuthorityDraft((current) => ({
+                        ...current,
+                        cardFormatProfile: event.target.value as MathematicalAuthorityDraftState["cardFormatProfile"],
+                      }))}
+                      disabled={mathematicalAuthorityBound || busy !== null}
+                    >
+                      <option value="generic_standard">Existing standard trading card</option>
+                      <option value="pokemon_tcg_standard">Trusted Pokémon TCG standard</option>
+                    </select>
+                  </label>
                   {([
                     ["title", "Card title"],
                     ["tenantId", "Tenant ID"],
@@ -5278,6 +5328,12 @@ export default function AiGraderStationPage() {
                     </label>
                   ))}
                 </div>
+                <p>
+                  Pokémon TCG standard selection is unlocked only by the hosted immutable set-card and
+                  taxonomy-source artifact. The browser cannot self-declare Pokémon format, dimensions,
+                  radius, verification status, or tolerances. Jumbo, oversize, nonstandard, contradictory,
+                  and unresolved records fail without choosing the generic or nearest profile.
+                </p>
                 <p>
                   Registered-template sides resolve the active approved artifact for this exact identity,
                   download and SHA-256 verify its bytes, then stage those bytes to the paired session.
@@ -6510,12 +6566,18 @@ export default function AiGraderStationPage() {
           margin-bottom: 20px;
         }
         .brand button,
-        .brand > a {
+        .brand-links > a {
           min-height: 36px;
           padding: 8px 10px;
           white-space: nowrap;
         }
-        .brand > a {
+        .brand-links {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+          gap: 7px;
+        }
+        .brand-links > a {
           display: inline-flex;
           align-items: center;
           justify-content: center;

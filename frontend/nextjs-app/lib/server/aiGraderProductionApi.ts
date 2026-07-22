@@ -46,6 +46,7 @@ import {
   createClassificationPayloadFromAttributes,
   type CardAttributes,
   type NormalizedClassification,
+  type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
 import type { UserSession } from "./session";
@@ -95,6 +96,11 @@ import {
   aiGraderMathematicalReleaseEnvelopeIssue,
   parseAiGraderMathematicalBoundaryBundle,
 } from "./aiGraderMathematicalReleaseBoundary";
+import type { AiGraderReportEditorialRevisionV1 } from "../aiGraderReportRevision";
+import {
+  parseTrustedPokemonCardLookupBody,
+  type TrustedPokemonCardLookupV1,
+} from "./aiGraderTrustedCardFormatAuthority";
 
 export const AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV = "AI_GRADER_PRODUCTION_PUBLISH_ENABLED";
 export const AI_GRADER_PRODUCTION_TENANT_ID_ENV = "AI_GRADER_PRODUCTION_TENANT_ID";
@@ -342,6 +348,12 @@ export type AiGraderProductionApiDependencies = {
     admin?: AdminSession | null;
     actor: AiGraderProductionActor;
   }): Promise<AiGraderCardItemSearchResult[]>;
+  resolveMathematicalCardAuthority?(input: {
+    tenantId: string;
+    lookup: TrustedPokemonCardLookupV1;
+    admin?: AdminSession | null;
+    actor: AiGraderProductionActor;
+  }): Promise<TrustedPokemonCardFormatAuthorityV1>;
   createCardFromReport?(input: {
     queueItemId: string;
     tenantId: string;
@@ -571,6 +583,17 @@ type AiGraderFinishCardsQueueBuildOptions = {
 
 export type AiGraderPublicReportApiDependencies = {
   env?: EnvLike;
+  readPresentation(reportId: string): Promise<
+    | {
+        reportVisibility: "public";
+        editorialRevision: AiGraderReportEditorialRevisionV1 | null;
+      }
+    | {
+        reportVisibility: "coming_soon";
+        editorialRevision: null;
+      }
+    | null
+  >;
   readPublishedBundle(reportId: string): Promise<AiGraderProductionReportBundleLike | null>;
   readNfcRegistration?(reportId: string): Promise<AiGraderPublicNfcRegistration | null>;
   readEnrichment?(reportId: string): Promise<unknown>;
@@ -2607,6 +2630,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "prepare-label-sheet-print",
           "mark-label-sheet-printed",
           "card-search",
+          "mathematical-card-authority",
           "slabbed-photo-init",
           "slabbed-photo-finalize",
           "upload-slab-photo",
@@ -2650,6 +2674,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "prepare-label-sheet-print",
       "mark-label-sheet-printed",
       "card-search",
+      "mathematical-card-authority",
       "slabbed-photo-init",
       "slabbed-photo-finalize",
       "upload-slab-photo",
@@ -2695,6 +2720,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "mark-label-sheet-printed" ||
         key === "add-to-inventory"
           ? "publish"
+          : key === "mathematical-card-authority"
+            ? "card-search"
           : key === "finish-queue" || key === "label-sheets"
             ? "history"
             : key === "slabbed-photo-init" || key === "slabbed-photo-finalize" || key === "upload-slab-photo"
@@ -2787,6 +2814,25 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             manualDraftAllowed: false,
             createCardFromReportRequired: true,
           },
+        });
+      }
+      if (key === "mathematical-card-authority") {
+        if (!deps.resolveMathematicalCardAuthority) {
+          throw new Error("Trusted Mathematical card-format authority resolution is not configured.");
+        }
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const lookup = parseTrustedPokemonCardLookupBody(req.body);
+        const authority = await deps.resolveMathematicalCardAuthority({
+          tenantId,
+          lookup,
+          admin,
+          actor: authorizedActor,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderTrustedMathematicalCardAuthority",
+          result: { authority },
         });
       }
       if (key === "ocr-prefill-init") {
@@ -3484,6 +3530,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
 export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportApiDependencies) {
   const env = deps.env ?? process.env;
   return async function aiGraderPublicReportApiHandler(req: NextApiRequest, res: NextApiResponse) {
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
     if (req.method !== "GET") {
       res.setHeader("Allow", "GET");
       return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -3498,13 +3545,77 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
     }
     const reportId = Array.isArray(req.query.reportId) ? req.query.reportId[0] : req.query.reportId;
     if (!reportId) return res.status(400).json({ ok: false, message: "reportId is required." });
+    let presentation: Awaited<ReturnType<typeof deps.readPresentation>>;
+    try {
+      presentation = await deps.readPresentation(reportId);
+    } catch (error) {
+      const code = isRecord(error) && typeof error.code === "string"
+        ? error.code
+        : "AI_GRADER_REPORT_PRESENTATION_INVALID";
+      return res.status(500).json({
+        ok: false,
+        code,
+        message: error instanceof Error
+          ? error.message
+          : "Published AI Grader report presentation state is invalid.",
+      });
+    }
+    if (!presentation) {
+      return res.status(404).json({ ok: false, message: "Published AI Grader report not found." });
+    }
+    if (presentation.reportVisibility === "coming_soon") {
+      return res.status(200).json({
+        ok: true,
+        reportId,
+        reportVisibility: "coming_soon",
+        comingSoon: true,
+        readOnly: true,
+        noHardwareControls: true,
+      });
+    }
+    if (presentation.reportVisibility !== "public") {
+      return res.status(500).json({
+        ok: false,
+        code: "AI_GRADER_REPORT_VISIBILITY_INVALID",
+        message: "Published AI Grader report visibility is invalid.",
+      });
+    }
     const bundle = await deps.readPublishedBundle(reportId);
     if (!bundle) return res.status(404).json({ ok: false, message: "Published AI Grader report not found." });
     const publicBundle = sanitizeAiGraderPublicReportBundleForRead(bundle, {
       expectedReportId: reportId,
       publicUrlFor: deps.publicUrlFor,
     });
-    if (!publicBundle) return res.status(500).json({ ok: false, message: "Published AI Grader report is invalid." });
+    if (!publicBundle) {
+      const revision = presentation.editorialRevision;
+      if (
+        !revision ||
+        revision.reportId !== reportId ||
+        revision.effectiveReportStatus !== "completed_human_reviewed" ||
+        revision.completionAuthority !== "authenticated_admin_adjudication"
+      ) {
+        return res.status(500).json({
+          ok: false,
+          code: "AI_GRADER_MACHINE_REPORT_INVALID",
+          message: "Published AI Grader machine report is invalid or incomplete. No alternate machine grade was substituted.",
+        });
+      }
+      return res.status(200).json({
+        ok: true,
+        reportId,
+        reportVisibility: "public",
+        comingSoon: false,
+        machineFailure: {
+          failed: true,
+          sourceReportSchemaVersion: revision.sourceReportSchemaVersion,
+          codes: revision.adjudicatedMachineFailures,
+          message: "The immutable machine result failed. An authenticated administrator explicitly supplied and confirmed all four effective sub-grades.",
+        },
+        editorialRevision: revision,
+        readOnly: true,
+        noHardwareControls: true,
+      });
+    }
     const nfcRegistration = deps.readNfcRegistration
       ? await deps.readNfcRegistration(reportId).catch(() => null)
       : null;
@@ -3515,7 +3626,10 @@ export function createAiGraderPublicReportApiHandler(deps: AiGraderPublicReportA
     return res.status(200).json({
       ok: true,
       reportId,
+      reportVisibility: "public",
+      comingSoon: false,
       bundle: publicBundle,
+      editorialRevision: presentation.editorialRevision,
       readOnly: true,
       noHardwareControls: true,
       ...(nfcRegistration ? { nfcRegistration } : {}),

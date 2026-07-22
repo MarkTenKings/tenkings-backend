@@ -37,6 +37,19 @@ function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {
   return { config, service: new AiGraderLocalStationBridgeService(config, undefined, warmRunner, dependencies) };
 }
 
+// These low-level fixtures preserve coverage for already-written Legacy V0 station
+// manifests and queues. Production's public action boundary must never call this
+// private constructor; focused Mathematical V1 tests prove that start-session
+// rejects both Legacy V0 and an omitted contract.
+async function startHistoricalLegacyFixtureSession(service, request) {
+  await service.createFreshSession({
+    ...request,
+    captureProfile: "production_fast",
+    gradingContract: "legacy_v0",
+  });
+  return service.status();
+}
+
 function rawRoles(seed) {
   return RAW_ROLES.map((role, index) => ({
     role,
@@ -373,7 +386,7 @@ async function createEligibleQueuedFixture(outputDir, seed = "ocr", configOverri
   const { config, service } = configFor(outputDir, {}, configOverrides);
   await new Promise((resolve) => setImmediate(resolve));
   await service.rapidMutationChain;
-  await service.action("start-session", { captureProfile: "production_fast", reportId: `${seed}-report` });
+  await startHistoricalLegacyFixtureSession(service, { reportId: `${seed}-report` });
   const queuedManifest = service.manifest;
   prepareExactCapturedCard(service, seed);
   const frontDir = queuedManifest.outputs.frontPackageDir;
@@ -470,7 +483,7 @@ test("Start New Card applies configured lighting and returns Capture Front light
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-start-lighting-"));
   try {
     const { service } = configFor(outputDir);
-    const started = await service.action("start-session", { captureProfile: "production_fast", reportId: "lighting-ready-report" });
+    const started = await startHistoricalLegacyFixtureSession(service, { reportId: "lighting-ready-report" });
     assert.equal(started.liveLighting.status, "on");
     assert.equal(started.liveLighting.physicalState.state, "positioning_light_verified");
     assert.equal(started.liveLighting.applied.verificationComplete, true);
@@ -498,7 +511,7 @@ test("failed configured lighting durably rolls back to sessionless Start New Car
       },
     });
     await assert.rejects(
-      service.action("start-session", { captureProfile: "production_fast", reportId: "lighting-failed-report" }),
+      startHistoricalLegacyFixtureSession(service, { reportId: "lighting-failed-report" }),
       /Retry Start New Card/,
     );
     const failed = service.status();
@@ -509,7 +522,7 @@ test("failed configured lighting durably rolls back to sessionless Start New Car
     assert.equal(persistedClean.sessionId, undefined);
     assert.equal(persistedClean.currentStep, "start_new_card");
     assert.equal(new AiGraderLocalStationBridgeService(config).status().currentStep, "start_new_card");
-    const retried = await service.action("start-session", { captureProfile: "production_fast", reportId: "lighting-retried-report" });
+    const retried = await startHistoricalLegacyFixtureSession(service, { reportId: "lighting-retried-report" });
     assert.equal(retried.liveLighting.physicalState.state, "positioning_light_verified");
     assert.equal(bindLiveFrontPreview(service).frontCaptureReadiness.ready, true);
     assert.ok(writeCall >= 3);
@@ -537,7 +550,7 @@ test("atomic Back queue commit persists exact TIFF hashes and queue before captu
       },
     });
     service.enqueueRapidFinalization = () => {};
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "atomic-order-report" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "atomic-order-report" });
     prepareExactCapturedCard(service, "atomic-order");
     service.acquireCaptureLock("atomic-test-owner");
     await service.commitCurrentCardToRapidQueueUnderCaptureLock("atomic-test-owner");
@@ -668,8 +681,7 @@ test("atomic Back waits for both exact warm-side admissions before queue commit 
       return originalReleaseCaptureLock(owner);
     };
 
-    await service.action("start-session", {
-      captureProfile: "production_fast",
+    await startHistoricalLegacyFixtureSession(service, {
       reportId: "atomic-admission-report",
     });
     const frontRequest = bindReadyPreview(service, "front", "admission");
@@ -736,7 +748,7 @@ test("queue persistence failure rolls back exact card commit and cannot report c
   try {
     const { service } = configFor(outputDir, { writeRapidQueueAtomic: async () => { throw new Error("intentional queue disk failure"); } });
     service.enqueueRapidFinalization = () => {};
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "rollback-report" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "rollback-report" });
     prepareExactCapturedCard(service, "rollback");
     service.acquireCaptureLock("rollback-owner");
     await assert.rejects(service.commitCurrentCardToRapidQueueUnderCaptureLock("rollback-owner"), /capture ownership was not released/i);
@@ -761,7 +773,7 @@ test("ten public Start New Card -> Front -> Back actions create ten identities a
       currentStep: service.manifest.currentStep,
     });
     for (let index = 0; index < 10; index += 1) {
-      const started = await service.action("start-session", { captureProfile: "production_fast", reportId: `ten-card-report-${index}` });
+      const started = await startHistoricalLegacyFixtureSession(service, { reportId: `ten-card-report-${index}` });
       assert.equal(started.currentStep, "capture_front", `Card ${index + 1} starts while older background items are held`);
       const frontRequest = bindReadyPreview(service, "front", index);
       const front = await service.action("capture-front", frontRequest);
@@ -800,12 +812,12 @@ test("Card 2 reaches Capture Front while Card 1 exact TIFF-to-PNG promises are d
         held[side] = async () => resolve(await processedNormalizedSide(side, packageDir));
       }),
     });
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "held-card-1" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "held-card-1" });
     await service.action("capture-front", bindReadyPreview(service, "front", "held-1"));
     await service.action("capture-back", bindReadyPreview(service, "back", "held-1"));
     assert.equal(service.status().currentStep, "start_new_card");
     assert.ok(service.rapidOcrEligibilityObservers.size > 0, "Card 1 normalized-pair observer remains pending");
-    const card2 = await service.action("start-session", { captureProfile: "production_fast", reportId: "held-card-2" });
+    const card2 = await startHistoricalLegacyFixtureSession(service, { reportId: "held-card-2" });
     assert.equal(card2.currentStep, "capture_front");
     assert.equal(card2.reportId, "held-card-2");
     await held.front();
@@ -827,7 +839,7 @@ test("Front-before-Back and immediate Back processing failures fail only the exa
           ? Promise.reject(new Error(`intentional ${side} TIFF-to-PNG failure`))
           : processedNormalizedSide(side, packageDir),
       });
-      await service.action("start-session", { captureProfile: "production_fast", reportId: `${failedSide}-failure-card` });
+      await startHistoricalLegacyFixtureSession(service, { reportId: `${failedSide}-failure-card` });
       await service.action("capture-front", bindReadyPreview(service, "front", `${failedSide}-failure`));
       assert.equal(service.manifest.captureFailure, undefined, "background side processing never owns capture validity");
       await service.action("capture-back", bindReadyPreview(service, "back", `${failedSide}-failure`));
@@ -836,7 +848,7 @@ test("Front-before-Back and immediate Back processing failures fail only the exa
       assert.equal(failed.state, "failed");
       assert.match(failed.error, new RegExp(`intentional ${failedSide}`, "i"));
       assert.equal(service.status().sessionId, undefined);
-      const next = await service.action("start-session", { captureProfile: "production_fast", reportId: `${failedSide}-next-card` });
+      const next = await startHistoricalLegacyFixtureSession(service, { reportId: `${failedSide}-next-card` });
       assert.equal(next.currentStep, "capture_front");
     } finally {
       fs.rmSync(outputDir, { recursive: true, force: true });
@@ -857,7 +869,7 @@ test("Rapid OCR eligibility reconstructs normalized PNG paths from the productio
           releaseBackProcessing = async () => resolve(await processedNormalizedSide(side, packageDir));
         }),
     });
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "production-normalized-path-card" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "production-normalized-path-card" });
     await service.action("capture-front", bindReadyPreview(service, "front", "production-normalized-path"));
     await Promise.all([...service.warmProcessingJobs.values()]);
     await service.action("capture-back", bindReadyPreview(service, "back", "production-normalized-path"));
@@ -899,7 +911,7 @@ test("front/back TIFF-to-PNG run exactly once and reload reuses durable normaliz
         return processedNormalizedSide(side, packageDir);
       },
     });
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "reload-once-card" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "reload-once-card" });
     await service.action("capture-front", bindReadyPreview(service, "front", "reload-once"));
     await service.action("capture-back", bindReadyPreview(service, "back", "reload-once"));
     await Promise.all([...service.warmProcessingJobs.values()]);
@@ -948,7 +960,7 @@ test("queued OCR executes once, enforces exact request/result identity, and comp
     assert.equal(failed.ocr.state, "failed");
     assert.equal(failed.ocr.attemptCount, 1);
     await assert.rejects(service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) }), /cannot rerun/i);
-    const next = await service.action("start-session", { captureProfile: "production_fast", reportId: "next-after-ocr-failure" });
+    const next = await startHistoricalLegacyFixtureSession(service, { reportId: "next-after-ocr-failure" });
     assert.equal(next.currentStep, "capture_front", "one item OCR failure never blocks new capture");
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
@@ -1300,7 +1312,7 @@ test("restart refuses an orphaned queued claim or unqueued Back failure but igno
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-orphan-session-"));
   try {
     const { config, service } = configFor(outputDir);
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "orphan-report" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "orphan-report" });
     const manifest = prepareExactCapturedCard(service, "orphan");
     fs.writeFileSync(manifest.outputs.manifestPath, JSON.stringify(manifest, null, 2));
     fs.writeFileSync(path.join(outputDir, "rapid-capture-queue.json"), JSON.stringify({
@@ -1407,7 +1419,7 @@ test("Atomic Back rejects malformed private assertion identities before capture 
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-back-request-validation-"));
   try {
     const { service } = configFor(outputDir);
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "back-validation-report" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "back-validation-report" });
     await service.action("capture-front", bindReadyPreview(service, "front", "validation"));
     const request = bindReadyPreview(service, "back", "validation");
     request.idempotencyKey = "../private-assertion";
@@ -1422,7 +1434,7 @@ test("active review projection strips every local Path/Dir/Folder and filesystem
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-review-redaction-"));
   try {
     const { service } = configFor(outputDir);
-    await service.action("start-session", { captureProfile: "production_fast", reportId: "review-report" });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "review-report" });
     const manifest = service.manifest;
     const now = new Date().toISOString();
     const succeededOcr = {
@@ -1558,7 +1570,7 @@ test('Start New Card rejects an active caller-supplied report identity before ch
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenkings-active-duplicate-report-'));
   try {
     const { service } = configFor(outputDir);
-    await service.action('start-session', { captureProfile: 'production_fast', reportId: 'active-live-report' });
+    await startHistoricalLegacyFixtureSession(service, { reportId: 'active-live-report' });
     const activeManifest = service.manifest;
     const activeSnapshot = structuredClone(activeManifest);
     const persistedManifestBytes = fs.readFileSync(activeManifest.outputs.manifestPath);
@@ -1584,14 +1596,14 @@ test('Start New Card rejects a duplicate caller-supplied report identity before 
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tenkings-duplicate-report-'));
   try {
     const { service } = configFor(outputDir);
-    await service.action('start-session', { captureProfile: 'production_fast', reportId: 'duplicate-live-report' });
+    await startHistoricalLegacyFixtureSession(service, { reportId: 'duplicate-live-report' });
     const firstManifest = service.manifest;
     const firstItem = queueItemFor(firstManifest);
     service.rapidQueue.items = [firstItem];
     service.committedRapidQueue = structuredClone(service.rapidQueue);
     service.manifest = service.cleanStartNewCardManifest(firstManifest);
     await assert.rejects(
-      service.action('start-session', { captureProfile: 'production_fast', reportId: 'DUPLICATE-LIVE-REPORT' }),
+      startHistoricalLegacyFixtureSession(service, { reportId: 'DUPLICATE-LIVE-REPORT' }),
       /rejects caller-supplied report ID.*already belongs to exact queue item/i,
     );
     assert.equal(service.status().currentStep, 'start_new_card');

@@ -9,6 +9,10 @@ import {
 } from "@tenkings/shared";
 import { mergeAiGraderPublishedReportReadData } from "./aiGraderPublicReportRead";
 import { publicUrlFor, readStorageBuffer } from "./storage";
+import {
+  aiGraderReportEditorialRevisionFromGradeStory,
+  type AiGraderReportEditorialRevisionV1,
+} from "../aiGraderReportRevision";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -40,8 +44,43 @@ export type AiGraderPublicOpaqueEvidence = {
   checksumSha256: string;
 };
 
+export type AiGraderPublicReportPresentation =
+  | {
+      reportVisibility: "public";
+      editorialRevision: AiGraderReportEditorialRevisionV1 | null;
+    }
+  | {
+      reportVisibility: "coming_soon";
+      editorialRevision: null;
+    };
+
+export class AiGraderPublicReportPresentationError extends Error {
+  readonly code: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = "AiGraderPublicReportPresentationError";
+    this.code = code;
+  }
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function hasValidOperatorRevisionAuditHead(
+  value: unknown,
+  revision: AiGraderReportEditorialRevisionV1,
+) {
+  return isRecord(value) &&
+    value.schemaVersion === "ten-kings-ai-grader-report-editor-audit-head-v1" &&
+    Number.isSafeInteger(value.sequence) &&
+    Number(value.sequence) >= revision.revision &&
+    typeof value.headEventId === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,254}$/.test(value.headEventId) &&
+    typeof value.headChecksum === "string" &&
+    /^[a-f0-9]{64}$/.test(value.headChecksum) &&
+    value.sourceBundleSha256 === revision.sourceBundleSha256;
 }
 
 function parseStoredJson(value: Buffer | null) {
@@ -57,6 +96,69 @@ function parseStoredJson(value: Buffer | null) {
 export function safeAiGraderPublicReportUrl(value: unknown): string | undefined {
   const parsed = aiGraderSafePublishedUrlSchema.safeParse(value);
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * Resolves the one persisted presentation state before any report bytes are
+ * exposed. An invalid active operator revision is an error, never permission
+ * to silently serve the original machine result.
+ */
+export async function readAiGraderPublicReportPresentation(
+  reportId: string,
+): Promise<AiGraderPublicReportPresentation | null> {
+  const { prisma } = await import("@tenkings/database");
+  const db = prisma as any;
+  const report = await db.aiGraderReport?.findUnique?.({
+    where: { reportId },
+    select: {
+      publicationStatus: true,
+      visibilityStatus: true,
+      gradeStory: true,
+      reportBundleStorageKey: true,
+    },
+  });
+  if (!report || report.publicationStatus !== "published") return null;
+  if (report.visibilityStatus === "coming_soon") {
+    return { reportVisibility: "coming_soon", editorialRevision: null };
+  }
+  if (report.visibilityStatus !== "public") return null;
+  const story = isRecord(report.gradeStory) ? report.gradeStory : {};
+  if (!Object.prototype.hasOwnProperty.call(story, "manualReportRevision")) {
+    return { reportVisibility: "public", editorialRevision: null };
+  }
+  const editorialRevision = aiGraderReportEditorialRevisionFromGradeStory(
+    story,
+    reportId,
+  );
+  if (!editorialRevision) {
+    throw new AiGraderPublicReportPresentationError(
+      "AI_GRADER_OPERATOR_REVIEW_INVALID",
+      "The active human-reviewed report revision is invalid. The original machine grade was not substituted.",
+    );
+  }
+  if (!hasValidOperatorRevisionAuditHead(
+    story.manualReportRevisionAudit,
+    editorialRevision,
+  )) {
+    throw new AiGraderPublicReportPresentationError(
+      "AI_GRADER_OPERATOR_REVIEW_AUDIT_INVALID",
+      "The active human-reviewed report revision has no valid audit authority. The original machine grade was not substituted.",
+    );
+  }
+  if (!safeStorageKey(report.reportBundleStorageKey)) {
+    throw new AiGraderPublicReportPresentationError(
+      "AI_GRADER_OPERATOR_REVIEW_SOURCE_UNAVAILABLE",
+      "The active human-reviewed report revision cannot be bound to its source report bundle.",
+    );
+  }
+  const sourceBytes = await readStorageBuffer(report.reportBundleStorageKey).catch(() => null);
+  if (!sourceBytes || aiGraderSha256(sourceBytes) !== editorialRevision.sourceBundleSha256) {
+    throw new AiGraderPublicReportPresentationError(
+      "AI_GRADER_OPERATOR_REVIEW_SOURCE_MISMATCH",
+      "The active human-reviewed report revision does not match the immutable source report bundle.",
+    );
+  }
+  return { reportVisibility: "public", editorialRevision };
 }
 
 function safePublicText(value: unknown, maximum = 500): string | undefined {
@@ -112,6 +214,7 @@ export async function readAiGraderPublishedBundle(reportId: string): Promise<Jso
     select: {
       reportId: true,
       publicationStatus: true,
+      visibilityStatus: true,
       reportBundleStorageKey: true,
       productionReleaseStorageKey: true,
       labelDataStorageKey: true,
@@ -144,7 +247,12 @@ export async function readAiGraderPublishedBundle(reportId: string): Promise<Jso
       },
     },
   });
-  if (!report || report.publicationStatus !== "published" || !report.reportBundleStorageKey) return null;
+  if (
+    !report ||
+    report.publicationStatus !== "published" ||
+    report.visibilityStatus !== "public" ||
+    !report.reportBundleStorageKey
+  ) return null;
 
   const bundle = parseStoredJson(await readStorageBuffer(report.reportBundleStorageKey).catch(() => null));
   if (!bundle) return null;
@@ -196,6 +304,7 @@ export async function readAiGraderPublicReportEnrichment(
     where: { reportId },
     select: {
       publicationStatus: true,
+      visibilityStatus: true,
       cardAssetId: true,
       itemId: true,
       evidenceAssets: {
@@ -225,7 +334,11 @@ export async function readAiGraderPublicReportEnrichment(
       },
     },
   });
-  if (!report || report.publicationStatus !== "published") return null;
+  if (
+    !report ||
+    report.publicationStatus !== "published" ||
+    report.visibilityStatus !== "public"
+  ) return null;
   const slabbedPhotos = (Array.isArray(report.evidenceAssets)
     ? report.evidenceAssets
     : []).flatMap((asset: JsonRecord) => {
@@ -322,12 +435,14 @@ export async function readAiGraderPublicOpaqueEvidence(
     where: { reportId },
     select: {
       publicationStatus: true,
+      visibilityStatus: true,
       reportBundleStorageKey: true,
     },
   });
   if (
     !report ||
     report.publicationStatus !== "published" ||
+    report.visibilityStatus !== "public" ||
     !safeStorageKey(report.reportBundleStorageKey)
   ) return null;
   const bundle = parseStoredJson(

@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from "react";
 import type { AiGraderPublishedDefectFindingV2, AiGraderReportBundleV03 } from "@tenkings/shared";
+import AiGraderReportAdminEditor, {
+  type AiGraderReportAdminEditorState,
+} from "./AiGraderReportAdminEditor";
+import type {
+  AiGraderReportEditorialContent,
+  AiGraderReportEditorialRevisionV1,
+} from "../../lib/aiGraderReportRevision";
 
 const ELEMENTS = ["centering", "corners", "edges", "surface"] as const;
 
@@ -79,10 +86,14 @@ export default function AiGraderMathematicalReportV1({
   bundle,
   nfc,
   enrichment,
+  editorialRevision,
+  onAdminEditorStateChange,
 }: {
   bundle: AiGraderReportBundleV03;
   nfc?: AiGraderMathematicalPublicNfc | null;
   enrichment?: AiGraderMathematicalPublicEnrichment | null;
+  editorialRevision?: AiGraderReportEditorialRevisionV1 | null;
+  onAdminEditorStateChange?: (state: AiGraderReportAdminEditorState) => void;
 }) {
   const [selectedSide, setSelectedSide] = useState<"front" | "back">("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string>();
@@ -94,6 +105,27 @@ export default function AiGraderMathematicalReportV1({
   >("true_view");
   const [replayChannelIndex, setReplayChannelIndex] = useState(0);
   const finalGrade = bundle.productionRelease.finalGrade;
+  const ownerAcceptance = "operationalAcceptance" in bundle.calibrationProfile
+    ? bundle.calibrationProfile.operationalAcceptance
+    : undefined;
+  const ownerActivation = ownerAcceptance ? bundle.calibrationActivationAuthority : undefined;
+  const pokemonCornerAuthority = bundle.pokemonStandardCornerAuthority;
+  const pokemonCornerMeasurements = pokemonCornerAuthority
+    ?.productionMeasurementAuthority.artifact;
+  const reviewedRevision = editorialRevision?.reportId === bundle.reportId
+    ? editorialRevision
+    : null;
+  const reviewedContent = reviewedRevision?.content ?? {};
+  const effectiveOverall = reviewedRevision?.calculation.overall ?? finalGrade.overall;
+  const effectiveLabelGrade = reviewedRevision
+    ? reviewedRevision.calculation.labelGrade.toFixed(1)
+    : bundle.productionRelease.label.labelGradeText;
+  const explanationField: Record<(typeof ELEMENTS)[number], keyof AiGraderReportEditorialContent> = {
+    centering: "centeringExplanation",
+    corners: "cornersExplanation",
+    edges: "edgesExplanation",
+    surface: "surfaceExplanation",
+  };
   const assets = useMemo(() => new Map(bundle.publicAssets.map((asset) => [asset.id.toLowerCase(), asset])), [bundle.publicAssets]);
   const sideFindings = bundle.defectFindings.filter((finding) => finding.side === selectedSide);
   const selectedFinding = sideFindings.find((finding) => finding.findingId === selectedFindingId) ?? sideFindings[0];
@@ -142,17 +174,83 @@ export default function AiGraderMathematicalReportV1({
 
   return (
     <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">
+      <AiGraderReportAdminEditor
+        reportId={bundle.reportId}
+        onStateChange={onAdminEditorStateChange}
+      />
       <header className="mx-auto flex max-w-7xl flex-wrap items-start justify-between gap-5 border-b border-black/15 pb-6">
         <div>
           <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-800">Ten Kings Mathematical Grading V1</p>
-          <h1 className="mt-2 text-4xl font-bold">{bundle.cardIdentity.title}</h1>
+          <h1 className="mt-2 text-4xl font-bold">{reviewedContent.cardTitle ?? bundle.cardIdentity.title}</h1>
           <p className="mt-2 text-sm text-zinc-600">Report {bundle.reportId} · {new Date(bundle.generatedAt).toLocaleString()}</p>
+          {reviewedRevision ? (
+            <p className="mt-3 inline-flex rounded-full border border-emerald-700/30 bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-900">
+              Completed — human reviewed/admin adjudicated · revision {reviewedRevision.revision}
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
-          <strong className="block text-6xl tabular-nums">{score(finalGrade.overall)}</strong>
-          <span className="text-sm font-bold uppercase tracking-widest">Label {bundle.productionRelease.label.labelGradeText}</span>
+          <strong className="block text-6xl tabular-nums">{score(effectiveOverall)}</strong>
+          <span className="text-sm font-bold uppercase tracking-widest">Label {effectiveLabelGrade}</span>
+          {reviewedRevision ? <small className="mt-2 block text-zinc-600">Immutable machine overall: {score(finalGrade.overall)}</small> : null}
         </div>
       </header>
+
+      {ownerAcceptance ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border-2 border-red-800 bg-red-50 p-6" aria-label="Owner operational acceptance with mathematical exceptions">
+          <p className="text-xs font-bold uppercase tracking-[.18em] text-red-900">Operational policy exception</p>
+          <h2 className="mt-2 text-2xl font-bold">Owner accepted with recorded exceptions</h2>
+          <p className="mt-3 font-bold text-red-950">
+            Mathematical status REJECTED · isCalibrated=false. This is not a mathematical threshold pass.
+          </p>
+          <p className="mt-2 text-sm leading-6">
+            The owner record is content-addressed decision metadata. Its Production operational use is authenticated and authorized by the existing fresh-human-admin ECDSA-signed ACTIVE hosted calibration activation bound to this exact bundle and rig.
+          </p>
+          <dl className="mt-5 grid gap-3 text-sm md:grid-cols-2">
+            <div><dt>Product owner</dt><dd>{ownerAcceptance.owner.name} / {ownerAcceptance.owner.organization}</dd></div>
+            <div><dt>Decision timestamp</dt><dd>{ownerAcceptance.decisionAt}</dd></div>
+            <div className="md:col-span-2"><dt>Exact decision reason</dt><dd>{ownerAcceptance.reason}</dd></div>
+            <div><dt>Owner authority ID</dt><dd className="break-all font-mono">{ownerAcceptance.authorityId}</dd></div>
+            <div><dt>Owner authority SHA-256</dt><dd className="break-all font-mono">{fullHash(ownerAcceptance.authoritySha256)}</dd></div>
+            <div><dt>Exception-ledger SHA-256</dt><dd className="break-all font-mono">{fullHash(ownerAcceptance.exceptionLedgerSha256)}</dd></div>
+            <div><dt>Activation ID / phase</dt><dd>{ownerActivation ? `${ownerActivation.activationId} / ${ownerActivation.authorityPhase}` : "MISSING — REPORT INVALID"}</dd></div>
+            {ownerActivation ? (
+              <>
+                <div><dt>Hosted authority key ID</dt><dd className="break-all font-mono">{fullHash(ownerActivation.hostedAuthorityKeyId)}</dd></div>
+                <div><dt>Hosted signature algorithm</dt><dd>{ownerActivation.hostedAuthoritySignatureAlgorithm}</dd></div>
+                <div className="md:col-span-2"><dt>Hosted authority signature</dt><dd className="break-all font-mono">{ownerActivation.hostedAuthoritySignature}</dd></div>
+                <div><dt>Hosted authority issued / expires</dt><dd>{ownerActivation.hostedAuthorityIssuedAt} / {ownerActivation.hostedAuthorityExpiresAt}</dd></div>
+                <div><dt>Activation hash / revision</dt><dd className="break-all font-mono">{fullHash(ownerActivation.activationHash)}<br />{fullHash(ownerActivation.activationRevision)}</dd></div>
+                <div><dt>Bundle manifest binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.bundleManifestSha256)}</dd></div>
+                <div><dt>Member-ledger binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.memberLedgerSha256)}</dd></div>
+                <div><dt>Rig / characterization binding</dt><dd>{ownerActivation.rigId}<br /><span className="break-all font-mono">{fullHash(ownerActivation.rigCharacterizationSha256)}</span></dd></div>
+                <div><dt>Runtime / operating-context binding</dt><dd className="break-all font-mono">{fullHash(ownerActivation.runtimeContextHash)}<br />{fullHash(ownerActivation.operatingContextHash)}</dd></div>
+                <div><dt>Workstation receipt</dt><dd className="break-all font-mono">{fullHash(ownerActivation.workstationReceiptSha256)}</dd></div>
+              </>
+            ) : null}
+          </dl>
+          <h3 className="mt-6 font-bold">Complete mathematical exception ledger ({ownerAcceptance.exceptionLedger.length})</h3>
+          <ol className="mt-3 grid gap-2 text-sm">
+            {ownerAcceptance.exceptionLedger.map((issue, index) => (
+              <li className="rounded border border-red-900/20 bg-white p-3" key={`${index}:${issue.path}:${issue.message}`}>
+                <strong>{index + 1}. {issue.path}</strong>
+                <p className="mt-1">{issue.message}</p>
+              </li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {reviewedContent.reportSummary || reviewedContent.strongestPositive || reviewedContent.strongestWarning ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-emerald-800/20 bg-emerald-50/80 p-5">
+          <p className="text-xs font-bold uppercase tracking-[.16em] text-emerald-900">Effective human-reviewed report text</p>
+          {reviewedContent.reportSummary ? <p className="mt-3 text-base leading-7">{reviewedContent.reportSummary}</p> : null}
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {reviewedContent.strongestPositive ? <div><strong>Strongest positive</strong><p className="mt-1 text-sm">{reviewedContent.strongestPositive}</p></div> : null}
+            {reviewedContent.strongestWarning ? <div><strong>Strongest warning</strong><p className="mt-1 text-sm">{reviewedContent.strongestWarning}</p></div> : null}
+          </div>
+        </section>
+      ) : null}
 
       <section className="mx-auto mt-6 grid max-w-7xl gap-4 rounded border border-black/15 bg-white/80 p-5 text-sm md:grid-cols-2 lg:grid-cols-4" aria-label="Publication and collection linkages">
         <div>
@@ -214,10 +312,14 @@ export default function AiGraderMathematicalReportV1({
       <section className="mx-auto mt-6 grid max-w-7xl gap-4 md:grid-cols-4" aria-label="Required calibrated element scores">
         {ELEMENTS.map((element) => {
           const result = finalGrade.elements[element];
+          const effectiveScore = reviewedRevision?.scores[element] ?? result.score;
+          const reviewedExplanation = reviewedContent[explanationField[element]];
           return (
             <article className="rounded border border-black/15 bg-white/80 p-5" key={element}>
               <span className="text-xs font-bold uppercase tracking-widest text-amber-800">{element}</span>
-              <strong className="mt-2 block text-4xl tabular-nums">{score(result.score)}</strong>
+              <strong className="mt-2 block text-4xl tabular-nums">{score(effectiveScore)}</strong>
+              {reviewedRevision ? <small className="mt-1 block font-bold text-emerald-800">Human reviewed · machine {score(result.score)}</small> : null}
+              {reviewedExplanation ? <p className="mt-3 rounded bg-emerald-50 p-3 text-sm text-emerald-950">{reviewedExplanation}</p> : null}
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt>Start</dt><dd className="text-right">{score(result.startingScore)}</dd>
                 <dt>Front</dt><dd className="text-right">{score(result.frontScore)}</dd>
@@ -231,18 +333,27 @@ export default function AiGraderMathematicalReportV1({
       </section>
 
       <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
-        <h2 className="text-2xl font-bold">Overall calculation</h2>
-        <p className="mt-2 font-mono text-sm">{finalGrade.weightedFormula}</p>
+        <h2 className="text-2xl font-bold">{reviewedRevision ? "Effective human-reviewed overall calculation" : "Overall calculation"}</h2>
+        <p className="mt-2 font-mono text-sm">{reviewedRevision?.calculation.weightedFormula ?? finalGrade.weightedFormula}</p>
         <p className="mt-1 text-sm">
-          Weights: centering {finalGrade.weights.centering.toFixed(2)}; corners {finalGrade.weights.corners.toFixed(2)}; edges {finalGrade.weights.edges.toFixed(2)}; surface {finalGrade.weights.surface.toFixed(2)}.
+          Weights: centering {(reviewedRevision?.calculation.weights.centering ?? finalGrade.weights.centering).toFixed(2)}; corners {(reviewedRevision?.calculation.weights.corners ?? finalGrade.weights.corners).toFixed(2)}; edges {(reviewedRevision?.calculation.weights.edges ?? finalGrade.weights.edges).toFixed(2)}; surface {(reviewedRevision?.calculation.weights.surface ?? finalGrade.weights.surface).toFixed(2)}.
         </p>
-        <p className="mt-2 font-mono text-sm">{finalGrade.formula}</p>
+        <p className="mt-2 font-mono text-sm">{reviewedRevision?.calculation.finalFormula ?? finalGrade.formula}</p>
         <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
-          <div><dt>Weighted grade</dt><dd className="font-bold">{score(finalGrade.weightedGrade)}</dd></div>
-          <div><dt>Weakest element</dt><dd className="font-bold">{finalGrade.weakestElement} {score(finalGrade.weakestScore)}</dd></div>
-          <div><dt>Weakest cap</dt><dd className="font-bold">{score(finalGrade.weakestElementCap)}</dd></div>
-          <div><dt>Severe-defect cap</dt><dd className="font-bold">{finalGrade.applicableSevereDefectCap === undefined ? "none" : score(finalGrade.applicableSevereDefectCap)}</dd></div>
+          <div><dt>Weighted grade</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weightedGrade ?? finalGrade.weightedGrade)}</dd></div>
+          <div><dt>Weakest element</dt><dd className="font-bold">{reviewedRevision?.calculation.weakestElement ?? finalGrade.weakestElement} {score(reviewedRevision?.calculation.weakestScore ?? finalGrade.weakestScore)}</dd></div>
+          <div><dt>Weakest cap</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weakestElementCap ?? finalGrade.weakestElementCap)}</dd></div>
+          <div><dt>Severe-defect cap</dt><dd className="font-bold">{(reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) === undefined ? "none" : score((reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) as number)}</dd></div>
         </dl>
+        {reviewedRevision ? (
+          <details className="mt-5 rounded border border-black/15 bg-zinc-50 p-4 text-sm">
+            <summary className="cursor-pointer font-bold">Immutable machine calculation and original status</summary>
+            <p className="mt-3 font-mono">{finalGrade.weightedFormula}</p>
+            <p className="mt-2 font-mono">{finalGrade.formula}</p>
+            <p className="mt-2">Machine overall {score(finalGrade.overall)}; weighted {score(finalGrade.weightedGrade)}; weakest {finalGrade.weakestElement} {score(finalGrade.weakestScore)}.</p>
+            {reviewedRevision.adjudicatedMachineFailures.length ? <p className="mt-2">Adjudicated machine failures: {reviewedRevision.adjudicatedMachineFailures.join(", ")}.</p> : null}
+          </details>
+        ) : null}
       </section>
 
       <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
@@ -275,6 +386,48 @@ export default function AiGraderMathematicalReportV1({
           </table>
         </div>
       </section>
+
+      {pokemonCornerAuthority ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-amber-900/25 bg-amber-50 p-6">
+          <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Trusted physical-format authority</p>
+          <h2 className="mt-2 text-2xl font-bold">Pokémon TCG standard corner contour</h2>
+          <p className="mt-2 text-sm">
+            Ten Kings owner-approved operational grading standard; this is not an official Pokémon manufacturer specification.
+          </p>
+          <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div><dt>Profile</dt><dd>{pokemonCornerAuthority.profile.profileId} / {pokemonCornerAuthority.profile.semanticVersion}</dd></div>
+            <div><dt>Physical geometry</dt><dd>{pokemonCornerAuthority.profile.physicalDimensionsMm.width.toFixed(2)} x {pokemonCornerAuthority.profile.physicalDimensionsMm.height.toFixed(2)} mm; circular R{pokemonCornerAuthority.profile.cornerRadiusMm.toFixed(2)} mm</dd></div>
+            <div><dt>Canonical profile SHA-256</dt><dd className="break-all font-mono">{fullHash(pokemonCornerAuthority.profileArtifactSha256)}</dd></div>
+            <div><dt>Hosted identity source</dt><dd>{pokemonCornerAuthority.trustedCardFormatAuthority.artifact.sourceRecord.recordId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerAuthority.trustedCardFormatAuthority.artifact.sourceRecord.recordSha256)}</span></dd></div>
+            <div><dt>Taxonomy authority</dt><dd>{pokemonCornerAuthority.trustedCardFormatAuthority.artifact.identitySourceArtifact.artifactId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerAuthority.trustedCardFormatAuthority.artifact.identitySourceArtifact.artifactSha256)}</span></dd></div>
+            <div><dt>Contour generator</dt><dd>{pokemonCornerAuthority.profile.contourGeneration.version}</dd></div>
+            <div><dt>Analyzer</dt><dd>{pokemonCornerMeasurements?.analyzerVersions.cornerMeasurement}</dd></div>
+            <div><dt>Threshold authority</dt><dd>{pokemonCornerMeasurements?.thresholdSetId}<br /><span className="break-all font-mono">{fullHash(pokemonCornerMeasurements?.thresholdSetHash ?? "")}</span></dd></div>
+          </dl>
+          <div className="mt-5 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead><tr><th>Side / corner</th><th>Deviation</th><th>U95</th><th>Effective</th><th>Decision</th><th>Deduction</th><th>Separate visible damage</th><th>Source contour</th></tr></thead>
+              <tbody>
+                {pokemonCornerMeasurements?.measurements.map((measurement) => {
+                  const damage = measurement.damageFindingIds;
+                  return (
+                    <tr className="border-t border-amber-900/15" key={`${measurement.side}:${measurement.location}`}>
+                      <td>{measurement.side} / {label(measurement.location)}</td>
+                      <td>{measurement.measuredContourDeviationMm} mm</td>
+                      <td>{measurement.calibratedU95Mm} mm</td>
+                      <td>{measurement.effectiveContourDeviationMm} mm</td>
+                      <td>{label(measurement.thresholdDecision)}</td>
+                      <td>-{score(measurement.appliedContourDeduction)}</td>
+                      <td>whitening {damage.whitening.length}; chip/loss {damage.chippingOrMaterialLoss.length}; deformation {damage.deformation.length}; delamination {damage.delamination.length}; other {damage.otherVisibleDamage.length}</td>
+                      <td className="break-all font-mono">{fullHash(measurement.observedContourSha256)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       <section id="v1-observation-inspector" className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
         <p className="text-xs font-bold uppercase tracking-widest text-amber-800">Independent corner and edge observations</p>
@@ -420,6 +573,13 @@ export default function AiGraderMathematicalReportV1({
       <section className="mx-auto mt-6 grid max-w-7xl gap-5 lg:grid-cols-2">
         <article className="rounded border border-red-900/25 bg-red-50 p-6">
           <h2 className="text-2xl font-bold">Why Not 10?</h2>
+          {reviewedContent.whyNot10 ? (
+            <div className="mt-3 rounded border border-emerald-800/20 bg-emerald-50 p-4">
+              <strong>Effective human-reviewed explanation</strong>
+              <p className="mt-2 text-sm leading-6">{reviewedContent.whyNot10}</p>
+            </div>
+          ) : null}
+          {reviewedRevision ? <p className="mt-4 text-xs font-bold uppercase tracking-wider text-zinc-600">Immutable machine reasons</p> : null}
           <div className="mt-3 grid gap-3">
             {finalGrade.whyNot10.length ? finalGrade.whyNot10.map((reason) => (
               <div className="rounded border border-red-900/20 bg-white p-3" key={reason.id}>
@@ -472,8 +632,34 @@ export default function AiGraderMathematicalReportV1({
               reference.artifactSha256 === side.registration.designReferenceSha256 &&
               reference.side === side.side
             );
+            const measurementOverlay = assets.get(side.measurementOverlayAssetId.toLowerCase());
+            const normalizedSource = assets.get(
+              side.outerCutGeometryEvidence.normalizedAllOnAssetId.toLowerCase(),
+            );
             return (
             <article className="rounded border border-black/10 p-4" key={side.side}>
+              {measurementOverlay?.publicUrl ? (
+                <figure className="mb-4 mt-3">
+                  <a
+                    className="block overflow-hidden rounded border border-black/20 bg-black"
+                    href={measurementOverlay.publicUrl}
+                    style={{
+                      aspectRatio: measurementOverlay.widthPx && measurementOverlay.heightPx
+                        ? `${measurementOverlay.widthPx}/${measurementOverlay.heightPx}`
+                        : "5/7",
+                    }}
+                  >
+                    <span className="relative block h-full w-full">
+                      {normalizedSource?.publicUrl ? <img className="absolute inset-0 h-full w-full object-contain" src={normalizedSource.publicUrl} alt="" /> : null}
+                      <img className="absolute inset-0 h-full w-full object-contain" src={measurementOverlay.publicUrl} alt={`${side.side} centering registration QA overlay`} />
+                    </span>
+                  </a>
+                  <figcaption className="mt-2 text-xs text-zinc-600">
+                    Yellow outer cut, green printed-design contour, shaded centering mask, calibrated 10 mm axes, and measured margins.
+                    {side.registrationEvidence ? " Registered-template QA also shows approved-design orientation and every expected-to-observed landmark residual vector; green points are accepted inliers and red points are rejected." : " Printed-border authority contains no template landmarks."}
+                  </figcaption>
+                </figure>
+              ) : null}
               <strong>{side.side} · {side.profile} · {score(side.score)}</strong>
               {[side.horizontal, side.vertical].map((axis) => (
                 <dl className="mt-3 grid grid-cols-2 gap-1 text-sm" key={axis.axis}>
@@ -481,6 +667,8 @@ export default function AiGraderMathematicalReportV1({
                   <dt>Balance / score</dt><dd>{axis.balanceRatio.toFixed(2)}% / {score(axis.score)}</dd>
                   <dt>Difference / U95 / tolerance</dt><dd>{axis.measuredDifferenceMm} / {axis.u95Mm} / {axis.grade10ToleranceMm} mm</dd>
                   <dt>U95 components</dt><dd>{Object.entries(axis.u95Components).map(([name, value]) => `${label(name)} ${value}`).join("; ")}{axis.boundaryFitU95Mm === undefined ? "" : `; boundary fit ${axis.boundaryFitU95Mm}`}</dd>
+                  {axis.expectedMarginAMm === undefined ? null : <><dt>Approved expected margins</dt><dd>{axis.expectedMarginAMm} / {axis.expectedMarginBMm} mm</dd></>}
+                  {axis.observedMarginAMm === undefined ? null : <><dt>Registered observed margins</dt><dd>{axis.observedMarginAMm} / {axis.observedMarginBMm} mm; axis error {axis.axisErrorMm} mm across {axis.physicalAxisSpanMm} mm</dd></>}
                 </dl>
               ))}
               <dl className="mt-3 grid grid-cols-2 gap-1 text-sm">

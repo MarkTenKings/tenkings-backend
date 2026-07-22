@@ -1,11 +1,11 @@
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   combineMeasurementUncertaintyU95,
-  validateMathematicalCalibrationProfileV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalMeasurementKindV1,
   type MathematicalMeasurementUncertaintyComponentsV1,
 } from "@tenkings/shared";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_MEASUREMENT_UNCERTAINTY_V1_VERSION =
   "fixed_rig_profile_derived_measurement_uncertainty_v1" as const;
@@ -51,8 +51,8 @@ function round(value: number): number {
 }
 
 function validatedProfile(value: MathematicalCalibrationProfileV1): MathematicalCalibrationProfileV1 {
-  const validation = validateMathematicalCalibrationProfileV1(value);
-  if (!validation.valid || !validation.isCalibrated || !validation.profile) {
+  const validation = validateMathematicalCalibrationForOperationalUseV1(value);
+  if (!validation.valid || (!validation.isCalibrated && !validation.isOperationallyAccepted) || !validation.profile) {
     throw new Error(
       "Measurement uncertainty requires one finalized calibration profile satisfying every V1 acceptance gate.",
     );

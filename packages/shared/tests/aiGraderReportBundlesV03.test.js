@@ -13,10 +13,24 @@ const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV03Schema,
   buildMathematicalMeasurementV1,
   calculateFindingDeductionV1,
+  canonicalProductOwnerOperationalAcceptanceIssueLedgerV1,
+  canonicalProductOwnerOperationalAcceptancePayloadV1,
+  validateMathematicalCalibrationProfileV1,
 } = require("../dist");
 
 const SHA = "c".repeat(64);
@@ -430,6 +444,240 @@ function cleanV03Bundle(overrides = {}) {
   };
 }
 
+function ownerAcceptedV03Bundle() {
+  const bundle = cleanV03Bundle();
+  const profile = {
+    ...bundle.calibrationProfile,
+    rigId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.rigId,
+    artifactSha256: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.physicalArtifactSha256,
+    isCalibrated: false,
+    status: "rejected",
+    lensResidualPx: 0.8,
+  };
+  bundle.centeringEvidence.front.outerCutGeometryEvidence.observedArtifact.calibrationSha256 =
+    profile.artifactSha256;
+  bundle.centeringEvidence.back.outerCutGeometryEvidence.observedArtifact.calibrationSha256 =
+    profile.artifactSha256;
+  const mathematical = validateMathematicalCalibrationProfileV1({
+    ...profile,
+    isCalibrated: true,
+    status: "finalized",
+  });
+  assert.equal(mathematical.valid, false);
+  const exceptionLedger = [
+    ...Array.from({ length: 36 - mathematical.issues.length }, (_, index) => ({
+      path: `certifiedAnalysis.exception${index + 1}`,
+      message: `Recorded certified-analysis exception ${index + 1}.`,
+    })),
+    ...mathematical.issues,
+  ];
+  const subject = {
+    ...PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+    mathematicalAcceptanceStatus: "rejected",
+    mathematicalIsCalibrated: false,
+    profileId: profile.profileId,
+    calibrationVersion: profile.calibrationVersion,
+    finalizedAt: profile.finalizedAt,
+    artifactId: profile.artifactId,
+  };
+  delete subject.exceptionCount;
+  const withoutHash = {
+    schemaVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+    authorityId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+    authorityStatus: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
+    hashPolicy: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+    owner: {
+      name: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+      organization: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+      role: "product_owner",
+    },
+    decisionAt: "2026-07-22T12:05:00.000Z",
+    reason: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+    subject,
+    exceptionLedger,
+    exceptionLedgerSha256: crypto.createHash("sha256")
+      .update(canonicalProductOwnerOperationalAcceptanceIssueLedgerV1(exceptionLedger), "utf8")
+      .digest("hex"),
+    implementation: {
+      contractVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+      implementationGitSha: "1".repeat(40),
+      finalizerSha256: "2".repeat(64),
+      authorityProducerSha256: "3".repeat(64),
+      nodeRuntimeVersion: process.version,
+    },
+    lifecycle: {
+      sequence: 1,
+      priorAuthoritySha256: null,
+      revokedByAuthoritySha256: null,
+      supersededByAuthoritySha256: null,
+    },
+  };
+  const authority = { ...withoutHash, authoritySha256: "0".repeat(64) };
+  authority.authoritySha256 = crypto.createHash("sha256")
+    .update(canonicalProductOwnerOperationalAcceptancePayloadV1(authority), "utf8")
+    .digest("hex");
+  profile.operationalAcceptance = authority;
+  bundle.calibrationProfile = profile;
+  bundle.calibrationBundleAuthority.members.splice(3, 0, {
+    role: "product_owner_operational_acceptance",
+    fileName: "product-owner-operational-acceptance-v1.json",
+    sha256: crypto.createHash("sha256").update(JSON.stringify(authority), "utf8").digest("hex"),
+  });
+  bundle.calibrationBundleAuthority.memberLedgerSha256 = crypto.createHash("sha256")
+    .update(JSON.stringify(canonical(bundle.calibrationBundleAuthority.members)), "utf8")
+    .digest("hex");
+  bundle.calibrationActivationAuthority = {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "owner-accepted-activation-v1",
+    activationHash: "1".repeat(64),
+    activationRevision: "2".repeat(64),
+    snapshotId: "owner-accepted-snapshot-v1",
+    rigId: profile.rigId,
+    bundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+    memberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+    runtimeContextHash: "3".repeat(64),
+    rigCharacterizationSha256: profile.artifactSha256,
+    operatingContextHash: "4".repeat(64),
+    workstationReceiptSha256: "5".repeat(64),
+    activatedAt: "2026-07-22T13:00:00.000Z",
+    hostedAuthorityKeyId: "6".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T13:00:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T13:00:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+  return bundle;
+}
+
+function pokemonStandardV03Bundle() {
+  const bundle = cleanV03Bundle();
+  for (const side of ["front", "back"]) {
+    const geometry = bundle.centeringEvidence[side].outerCutGeometryEvidence;
+    geometry.intendedBoundaryProfileId = "pokemon_tcg_standard";
+    geometry.intendedBoundaryProfileVersion = "1.0.0";
+    geometry.observedArtifact.intendedBoundaryProfileId = "pokemon_tcg_standard";
+    geometry.observedArtifact.intendedBoundaryProfileVersion = "1.0.0";
+  }
+  const trustedCardFormatAuthority = {
+    schemaVersion: "ten-kings-trusted-card-format-authority-v1",
+    artifact: {
+      resolverVersion: "ten-kings-hosted-card-format-resolver-v1",
+      cardIdentity: {
+        title: bundle.cardIdentity.title,
+        sideCount: 2,
+        tenantId: bundle.cardIdentity.tenantId,
+        setId: bundle.cardIdentity.setId,
+        programId: bundle.cardIdentity.programId,
+        cardNumber: bundle.cardIdentity.cardNumber,
+        variantId: null,
+        parallelId: null,
+      },
+      formatSelection: {
+        game: "pokemon_tcg",
+        physicalFormat: "standard",
+        widthMm: 63.5,
+        heightMm: 88.9,
+        profileId: "pokemon_tcg_standard",
+        profileVersion: "1.0.0",
+        profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      },
+      sourceRecord: {
+        recordType: "hosted_set_card",
+        recordId: "hosted-card-42",
+        recordUpdatedAt: "2026-07-18T18:30:00.000Z",
+        recordSha256: "a".repeat(64),
+      },
+      identitySourceArtifact: {
+        artifactType: "set_taxonomy_source",
+        artifactId: "taxonomy-source-42",
+        artifactSha256: "b".repeat(64),
+        trustStatus: "trusted",
+      },
+      provenance: {
+        authority: "ten_kings_hosted_immutable_card_identity",
+        physicalFormatAuthority: "ten_kings_owner_approved_card_format_record",
+        browserSelfDeclarationAccepted: false,
+      },
+    },
+    artifactSha256: "d".repeat(64),
+    authentication: {
+      algorithm: "hmac-sha256",
+      keyId: "pokemon-authority-v1",
+      signature: "e".repeat(64),
+    },
+  };
+  const tolerance = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST
+    .findings.corner_shape_deviation.grade10Tolerance;
+  const measurements = ["front", "back"].flatMap((side) =>
+    ["top_left", "top_right", "bottom_right", "bottom_left"].map((corner) => ({
+      side,
+      location: corner,
+      profileId: "pokemon_tcg_standard",
+      profileVersion: "1.0.0",
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      expectedRadiusMm: 3.18,
+      measuredContourDeviationMm: 0,
+      calibratedU95Mm: 0.02,
+      effectiveContourDeviationMm: 0,
+      grade10ToleranceMm: tolerance,
+      thresholdDecision: "within_grade_10_buffer",
+      thresholdDeduction: 0,
+      appliedContourDeduction: 0,
+      measurementId: `${side}-${corner}-contour-deviation`,
+      sourceImageAssetId: `${side}/raw-all-on.png`,
+      sourceImageSha256: SHA,
+      observedContourSha256: SHA,
+      intendedContourSha256: SHA,
+      contourFindingIds: [],
+      damageFindingIds: {
+        whitening: [],
+        chippingOrMaterialLoss: [],
+        deformation: [],
+        delamination: [],
+        otherVisibleDamage: [],
+      },
+    })),
+  );
+  bundle.pokemonStandardCornerAuthority = {
+    profile: structuredClone(POKEMON_TCG_STANDARD_CORNER_PROFILE),
+    profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    trustedCardFormatAuthority,
+    productionMeasurementAuthority: {
+      schemaVersion: "ten-kings-pokemon-standard-corner-measurement-authority-v1",
+      artifact: {
+        gradingSessionId: "grading-session-pokemon-42",
+        reportId: bundle.reportId,
+        analyzerVersions: {
+          conditionSegmentation: "fixed_rig_condition_segmentation_v1.2.0",
+          cornerMeasurement: "fixed_rig_corner_edge_v1",
+          stationAdapter: "fixed_rig_mathematical_station_adapter_v1",
+        },
+        thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+        thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+        calibration: {
+          profileId: bundle.calibrationProfile.profileId,
+          version: bundle.calibrationProfile.calibrationVersion,
+          artifactSha256: bundle.calibrationProfile.artifactSha256,
+          bundleManifestSha256: bundle.calibrationBundleAuthority.bundleManifestSha256,
+          sourceCaptureManifestSha256: bundle.calibrationBundleAuthority.sourceCaptureManifestSha256,
+          memberLedgerSha256: bundle.calibrationBundleAuthority.memberLedgerSha256,
+        },
+        callerCreatedProfilesAccepted: false,
+        callerCreatedMeasurementsAccepted: false,
+        measurements,
+      },
+      artifactSha256: "f".repeat(64),
+      authentication: {
+        algorithm: "hmac-sha256",
+        keyId: "pokemon-authority-v1",
+        signature: "9".repeat(64),
+      },
+    },
+  };
+  return bundle;
+}
+
 function addReviewedZeroDeductionSurfaceFinding(bundle) {
   const findingId = "surface-clean-buffer-finding-1";
   const physicalDefectId = "surface-clean-buffer-physical-1";
@@ -714,6 +962,115 @@ test("calibrated v0.3 requires all four exact element scores and complete overla
     false,
     "calibration bundle member hashes must remain bound to the finalized profile",
   );
+});
+
+test("v0.3 accepts the exact V1.2 calibration authority only as an all-or-nothing contract", () => {
+  const bundle = cleanV03Bundle();
+  Object.assign(bundle.calibrationBundleAuthority, {
+    captureContractVersion: "1.2.0",
+    runtimeContextSha256: "d".repeat(64),
+    rigCharacterizationSha256: "e".repeat(64),
+  });
+  const accepted = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(accepted.success, true, accepted.success ? "" : JSON.stringify(accepted.error.issues));
+
+  for (const field of ["runtimeContextSha256", "rigCharacterizationSha256"]) {
+    const partial = structuredClone(bundle);
+    delete partial.calibrationBundleAuthority[field];
+    assert.equal(
+      aiGraderReportBundleV03Schema.safeParse(partial).success,
+      false,
+      "V1.2 authority missing " + field + " must fail closed",
+    );
+  }
+  const wrongContract = structuredClone(bundle);
+  wrongContract.calibrationBundleAuthority.captureContractVersion = "1.1.0";
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(wrongContract).success, false);
+});
+
+test("v0.3 exposes owner acceptance and the complete mathematical exception ledger", () => {
+  const bundle = ownerAcceptedV03Bundle();
+  const parsed = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(parsed.success, true, parsed.success ? "" : JSON.stringify(parsed.error.issues));
+  assert.equal(parsed.data.calibrationProfile.isCalibrated, false);
+  assert.equal(parsed.data.calibrationProfile.status, "rejected");
+  assert.equal(
+    parsed.data.calibrationProfile.operationalAcceptance.authorityStatus,
+    "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+  );
+  assert.equal(parsed.data.calibrationProfile.operationalAcceptance.exceptionLedger.length, 36);
+  assert.equal(
+    parsed.data.calibrationBundleAuthority.members[3].role,
+    "product_owner_operational_acceptance",
+  );
+  assert.equal(parsed.data.calibrationActivationAuthority.authorityPhase, "ACTIVE");
+
+  const missingActivation = structuredClone(bundle);
+  delete missingActivation.calibrationActivationAuthority;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingActivation).success, false);
+
+  for (const [field, value] of [
+    ["bundleManifestSha256", "7".repeat(64)],
+    ["memberLedgerSha256", "8".repeat(64)],
+    ["rigCharacterizationSha256", "9".repeat(64)],
+    ["rigId", "another-rig"],
+  ]) {
+    const mismatchedActivation = structuredClone(bundle);
+    mismatchedActivation.calibrationActivationAuthority[field] = value;
+    assert.equal(
+      aiGraderReportBundleV03Schema.safeParse(mismatchedActivation).success,
+      false,
+      `owner activation ${field} mismatch must fail closed`,
+    );
+  }
+
+  const missingIssue = structuredClone(bundle);
+  missingIssue.calibrationProfile.operationalAcceptance.exceptionLedger.pop();
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingIssue).success, false);
+
+  const missingAuthorityMember = structuredClone(bundle);
+  missingAuthorityMember.calibrationBundleAuthority.members.splice(3, 1);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingAuthorityMember).success, false);
+
+  const substitutedTwelveMember = structuredClone(bundle);
+  substitutedTwelveMember.calibrationBundleAuthority = cleanV03Bundle().calibrationBundleAuthority;
+  substitutedTwelveMember.calibrationActivationAuthority.bundleManifestSha256 =
+    substitutedTwelveMember.calibrationBundleAuthority.bundleManifestSha256;
+  substitutedTwelveMember.calibrationActivationAuthority.memberLedgerSha256 =
+    substitutedTwelveMember.calibrationBundleAuthority.memberLedgerSha256;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(substitutedTwelveMember).success, false);
+
+  const replayed = structuredClone(bundle);
+  replayed.calibrationProfile.profileId = "another-profile";
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(replayed).success, false);
+});
+
+test("Pokemon standard reports preserve the exact profile, eight independent contours, and source hashes", () => {
+  const bundle = pokemonStandardV03Bundle();
+  const parsed = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(parsed.success, true, parsed.success ? "" : JSON.stringify(parsed.error.issues));
+  assert.equal(parsed.data.pokemonStandardCornerAuthority.profile.cornerRadiusMm, 3.18);
+  assert.deepEqual(
+    parsed.data.pokemonStandardCornerAuthority.profile.physicalDimensionsMm,
+    { height: 88.9, width: 63.5 },
+  );
+  assert.equal(
+    parsed.data.pokemonStandardCornerAuthority.profile.provenance.claimBoundary,
+    "not_an_official_pokemon_manufacturer_specification",
+  );
+  const measurements = parsed.data.pokemonStandardCornerAuthority
+    .productionMeasurementAuthority.artifact.measurements;
+  assert.equal(new Set(measurements.map((entry) => `${entry.side}:${entry.location}`)).size, 8);
+  assert.equal(measurements.every((entry) => entry.sourceImageSha256 === SHA), true);
+
+  const callerProfile = pokemonStandardV03Bundle();
+  callerProfile.pokemonStandardCornerAuthority.profile.cornerRadiusMm = 4;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(callerProfile).success, false);
+
+  const callerMeasurement = pokemonStandardV03Bundle();
+  callerMeasurement.pokemonStandardCornerAuthority.productionMeasurementAuthority
+    .artifact.measurements[0].effectiveContourDeviationMm = 1;
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(callerMeasurement).success, false);
 });
 
 test("v0.3 final findings require confirmed or adjusted review and an exact deduction formula", () => {

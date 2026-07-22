@@ -21,6 +21,10 @@ const {
 const {
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
 } = require("../dist/drivers/fixedRigStandardCardFormatV1");
+const {
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  canonicalJsonV1,
+} = require("@tenkings/shared");
 
 const BUNDLE_SHA256 = "a".repeat(64);
 const CALIBRATION_ARTIFACT_SHA256 = "c".repeat(64);
@@ -100,6 +104,74 @@ function registeredAuthority(referenceBytes, includeCallerPath = false) {
   return authority;
 }
 
+const CARD_FORMAT_HMAC_KEY = "test-only-bridge-card-format-hmac-key-0001";
+const CARD_FORMAT_HMAC_KEY_ID = "bridge-card-format-v1";
+
+function pokemonAuthority() {
+  const cardIdentity = {
+    title: "Trusted Pokemon station fixture",
+    sideCount: 2,
+    tenantId: "tenant-fixture",
+    setId: "pokemon-set-fixture",
+    programId: "pokemon",
+    cardNumber: "25/102",
+    variantId: null,
+    parallelId: null,
+  };
+  const artifact = {
+    resolverVersion: "ten-kings-hosted-card-format-resolver-v1",
+    cardIdentity,
+    formatSelection: {
+      game: "pokemon_tcg",
+      physicalFormat: "standard",
+      widthMm: 63.5,
+      heightMm: 88.9,
+      profileId: "pokemon_tcg_standard",
+      profileVersion: "1.0.0",
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    },
+    sourceRecord: {
+      recordType: "hosted_set_card",
+      recordId: "hosted-pokemon-card-25",
+      recordUpdatedAt: "2026-07-21T12:00:00.000Z",
+      recordSha256: "1".repeat(64),
+    },
+    identitySourceArtifact: {
+      artifactType: "set_taxonomy_source",
+      artifactId: "pokemon-taxonomy-source",
+      artifactSha256: "2".repeat(64),
+      trustStatus: "trusted",
+    },
+    provenance: {
+      authority: "ten_kings_hosted_immutable_card_identity",
+      physicalFormatAuthority: "ten_kings_owner_approved_card_format_record",
+      browserSelfDeclarationAccepted: false,
+    },
+  };
+  const bytes = canonicalJsonV1(artifact);
+  return {
+    schemaVersion: FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
+    cardIdentity,
+    cardFormatId: "pokemon_tcg_standard",
+    trustedCardFormatAuthority: {
+      schemaVersion: "ten-kings-trusted-card-format-authority-v1",
+      artifact,
+      artifactSha256: sha256(Buffer.from(bytes, "utf8")),
+      authentication: {
+        algorithm: "hmac-sha256",
+        keyId: CARD_FORMAT_HMAC_KEY_ID,
+        signature: crypto.createHmac("sha256", CARD_FORMAT_HMAC_KEY)
+          .update(bytes, "utf8")
+          .digest("hex"),
+      },
+    },
+    sides: {
+      front: { centering: { profile: "printed_border_v1" } },
+      back: { centering: { profile: "printed_border_v1" } },
+    },
+  };
+}
+
 function calibrationLoader() {
   return {
     bundlePath: "fixture-bundle",
@@ -118,7 +190,7 @@ function calibrationLoader() {
   };
 }
 
-function createService(outputDir, builder) {
+function createService(outputDir, builder, configOverrides = {}) {
   const config = buildAiGraderLocalStationBridgeConfig({
     enabled: true,
     mode: "mock",
@@ -134,6 +206,7 @@ function createService(outputDir, builder) {
       "fixed-rig-mathematical-calibration-bundle-v1.json",
     ),
     mathematicalCalibrationBundleSha256: BUNDLE_SHA256,
+    ...configOverrides,
   });
   return new AiGraderLocalStationBridgeService(config, undefined, undefined, {
     loadMathematicalCalibrationBundle: calibrationLoader,
@@ -791,6 +864,134 @@ function postWithoutToken(server, body) {
     request.end(body);
   });
 }
+
+test("local station accepts only the exact hosted-signed Pokemon profile authority", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "ten-kings-pokemon-authority-"));
+  const services = [];
+  t.after(async () => {
+    await Promise.allSettled(services.map((service) =>
+      service.shutdown("Pokemon authority parser test complete")));
+    fs.rmSync(outputDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  });
+  const config = {
+    cardFormatAuthorityHmacKey: CARD_FORMAT_HMAC_KEY,
+    cardFormatAuthorityHmacKeyId: CARD_FORMAT_HMAC_KEY_ID,
+  };
+  const validService = createService(path.join(outputDir, "valid"), async () => {
+    throw new Error("not invoked");
+  }, config);
+  services.push(validService);
+  await startMathematicalSession(validService, pokemonAuthority(), "pokemon-authority-valid");
+  assert.equal(
+    validService.manifest.mathematicalV1.gradingAuthority.cardFormatId,
+    "pokemon_tcg_standard",
+  );
+
+  const forged = pokemonAuthority();
+  forged.trustedCardFormatAuthority.authentication.signature = "0".repeat(64);
+  const forgedService = createService(path.join(outputDir, "forged"), async () => {
+    throw new Error("not invoked");
+  }, config);
+  services.push(forgedService);
+  await assert.rejects(
+    () => startMathematicalSession(forgedService, forged, "pokemon-authority-forged"),
+    /signature is invalid/,
+  );
+
+  const callerMeasured = { ...pokemonAuthority(), measurements: [] };
+  const callerService = createService(path.join(outputDir, "caller"), async () => {
+    throw new Error("not invoked");
+  }, config);
+  services.push(callerService);
+  await assert.rejects(
+    () => startMathematicalSession(callerService, callerMeasured, "pokemon-authority-caller"),
+    /exact station contract/,
+  );
+});
+
+test("Production Start New Card accepts only an explicit ready Mathematical V1 contract", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-only-start-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const service = createService(path.join(outputDir, "ready"), completedResult);
+  t.after(() => service.shutdown("mathematical-only start test complete"));
+
+  assert.equal(service.status().gradingContract, "mathematical_calibration_v1");
+  assert.deepEqual(service.status().bridgeContract.gradingContracts, ["mathematical_calibration_v1"]);
+  await assert.rejects(
+    () => service.action("start-session", {
+      reportId: "omitted-contract-report",
+      captureProfile: "production_fast",
+    }),
+    /requires the explicit mathematical_calibration_v1 grading contract.*omitted grading contract.*prohibited/i,
+  );
+  await assert.rejects(
+    () => service.action("start-session", {
+      reportId: "legacy-contract-report",
+      captureProfile: "production_fast",
+      gradingContract: "legacy_v0",
+    }),
+    /requires the explicit mathematical_calibration_v1 grading contract.*Legacy V0.*prohibited/i,
+  );
+  assert.equal(service.manifest.sessionId, undefined);
+  assert.equal(service.manifest.currentStep, "start_new_card");
+  assert.equal(service.manifest.gradingContract, "mathematical_calibration_v1");
+
+  const unavailableConfig = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 47652,
+    stationToken: "StationTokenStationTokenStationToken1234",
+    outputDir: path.join(outputDir, "unavailable"),
+    captureProfile: "production_fast",
+  });
+  const unavailable = new AiGraderLocalStationBridgeService(unavailableConfig);
+  t.after(() => unavailable.shutdown("mathematical unavailable start test complete"));
+  await assert.rejects(
+    () => unavailable.action("start-session", {
+      reportId: "unavailable-contract-report",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      mathematicalGradingAuthority: printedAuthority(),
+    }),
+    /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,
+  );
+  assert.equal(unavailable.manifest.sessionId, undefined);
+  assert.equal(unavailable.manifest.currentStep, "start_new_card");
+  assert.equal(unavailable.manifest.gradingContract, "mathematical_calibration_v1");
+
+  const runtimeContext = { schemaVersion: "fast-mathematical-calibration-runtime-context-v1.2", marker: "exact-live-context" };
+  const mismatchConfig = buildAiGraderLocalStationBridgeConfig({
+    enabled: true,
+    mode: "mock",
+    host: "127.0.0.1",
+    port: 47652,
+    stationToken: "StationTokenStationTokenStationToken1234",
+    outputDir: path.join(outputDir, "context-mismatch"),
+    captureProfile: "production_fast",
+    mathematicalCalibrationRigId: "fixture-rig",
+    mathematicalCalibrationBundlePath: path.join(outputDir, "context-mismatch", "mathematical-calibration-bundle-v1.json"),
+    mathematicalCalibrationBundleSha256: BUNDLE_SHA256,
+    mathematicalCalibrationRuntimeContext: runtimeContext,
+  });
+  const mismatch = new AiGraderLocalStationBridgeService(mismatchConfig, undefined, undefined, {
+    loadMathematicalCalibrationBundle(input) {
+      assert.deepEqual(input.expectedRuntimeContext, runtimeContext);
+      throw new Error("Live camera, rig, controller, wiring, settings, target, component, algorithm, location, or lighting context differs from the active calibration.");
+    },
+  });
+  t.after(() => mismatch.shutdown("mathematical context mismatch test complete"));
+  await assert.rejects(
+    () => mismatch.action("start-session", {
+      reportId: "context-mismatch-report",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      mathematicalGradingAuthority: printedAuthority(),
+    }),
+    /Mathematical Calibration V1 is not ready:.*Live camera, rig, controller.*No V0 fallback is permitted/i,
+  );
+  assert.equal(mismatch.manifest.sessionId, undefined);
+});
 
 test("ordinary Mathematical V1 no-finding completion uses station-derived publication and no V0 fallback", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-station-complete-"));

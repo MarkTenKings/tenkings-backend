@@ -4,8 +4,10 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  rejectedMathematicalCalibrationProfileCandidateV1Schema,
   validateMathematicalCalibrationProfileV1,
   type MathematicalCalibrationProfileV1,
+  type RejectedMathematicalCalibrationProfileCandidateV1,
   type MathematicalCalibrationValidationIssueV1,
 } from "@tenkings/shared";
 
@@ -25,19 +27,43 @@ export interface FixedRigScaleSampleV1 extends FixedRigCalibrationEvidenceRefere
   pixelSpan: number;
 }
 
-export interface FixedRigTargetPrintScaleSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
+export interface FixedRigTargetPrintScaleMeasurementSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
   axis: "x" | "y";
   nominalSpanMm: number;
   measuredSpanMm: number;
   measurementU95Mm: number;
 }
 
-export interface FixedRigTargetCutDimensionSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
+export interface FixedRigProtectedTargetPrintScaleAuthorityV1 extends FixedRigCalibrationEvidenceReferenceV1 {
+  axis: "x" | "y";
+  authorityBasis: "protected_checkerboard_geometry";
+  protectedSpanMm: number;
+  targetVersion: string;
+  targetSha256: string;
+}
+
+export type FixedRigTargetPrintScaleSampleV1 =
+  | FixedRigTargetPrintScaleMeasurementSampleV1
+  | FixedRigProtectedTargetPrintScaleAuthorityV1;
+
+export interface FixedRigTargetCutDimensionMeasurementSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
   axis: "x" | "y";
   nominalDimensionMm: number;
   measuredDimensionMm: number;
   measurementU95Mm: number;
 }
+
+export interface FixedRigProtectedTargetCutDimensionAuthorityV1 extends FixedRigCalibrationEvidenceReferenceV1 {
+  axis: "x" | "y";
+  authorityBasis: "protected_checkerboard_geometry";
+  protectedDimensionMm: number;
+  targetVersion: string;
+  targetSha256: string;
+}
+
+export type FixedRigTargetCutDimensionSampleV1 =
+  | FixedRigTargetCutDimensionMeasurementSampleV1
+  | FixedRigProtectedTargetCutDimensionAuthorityV1;
 
 export interface FixedRigResidualSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
   residualPx: number;
@@ -70,7 +96,9 @@ export interface FixedRigFlatFieldFrameV1 extends FixedRigCalibrationEvidenceRef
 export interface FixedRigDarkControlFrameV1 extends FixedRigCalibrationEvidenceReferenceV1 {}
 export interface FixedRigIlluminationPatternFrameV1 extends FixedRigCalibrationEvidenceReferenceV1 {}
 export interface FixedRigDirectionMeasurementSampleV1 extends FixedRigCalibrationEvidenceReferenceV1 {
-  measurementMethod: "fixed_ring_segment_geometry_with_ruler_v1";
+  measurementMethod:
+    | "fixed_ring_segment_geometry_with_ruler_v1"
+    | "illumination_centroid_checkerboard_repeatability_v1";
   sourcePointMm: { x: number; y: number };
   cardCenterPointMm: { x: number; y: number };
   pointU95Mm: number;
@@ -218,6 +246,7 @@ export type BuildFixedRigPhysicalCalibrationV1Result =
       status: "rejected";
       isCalibrated: false;
       profile: null;
+      operationalProfileCandidate: RejectedMathematicalCalibrationProfileCandidateV1;
       artifact: FixedRigPhysicalCalibrationArtifactV1;
       issues: MathematicalCalibrationValidationIssueV1[];
     };
@@ -290,8 +319,9 @@ function deriveDirectionMeasurement(
       validationAngularErrorsDegrees.some((value) => !finiteNonnegative(value))) return null;
   const normalized = samples.map((sample) => {
     if (
-      !MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
-        .allowedPhysicalDirectionMeasurementMethods.includes(sample.measurementMethod) ||
+      !(MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
+        .allowedPhysicalDirectionMeasurementMethods.includes(sample.measurementMethod as "fixed_ring_segment_geometry_with_ruler_v1") ||
+        sample.measurementMethod === "illumination_centroid_checkerboard_repeatability_v1") ||
       !Number.isFinite(sample.sourcePointMm?.x) ||
       !Number.isFinite(sample.sourcePointMm?.y) ||
       !Number.isFinite(sample.cardCenterPointMm?.x) ||
@@ -438,26 +468,32 @@ export function buildFixedRigPhysicalCalibrationV1(
     addIssue("targetPrintScaleSamples", "exact X and Y print-scale verification is required");
   }
   for (const sample of targetPrintScaleSamples) {
-    if (
-      !finitePositive(sample.nominalSpanMm) ||
-      !finitePositive(sample.measuredSpanMm) ||
-      !finitePositive(sample.measurementU95Mm)
-    ) {
-      addIssue("targetPrintScaleSamples", "scale verification values must be finite physical measurements");
-    } else if (
-      Math.abs(sample.measuredSpanMm - sample.nominalSpanMm) + sample.measurementU95Mm >
-      policy.calibrationAcceptance.maxTargetPrintScaleErrorMm
-    ) {
-      addIssue(
-        "targetPrintScaleSamples",
-        `print-scale error plus U95 must be <= ${policy.calibrationAcceptance.maxTargetPrintScaleErrorMm} mm`,
-      );
+    if ("protectedSpanMm" in sample) {
+      if (sample.authorityBasis !== "protected_checkerboard_geometry" ||
+          !finitePositive(sample.protectedSpanMm) ||
+          sample.targetVersion !== input.targetVersion || sample.targetSha256 !== input.targetSha256) {
+        addIssue("targetPrintScaleSamples", "protected checkerboard print-scale authority must match the exact target identity");
+      }
+    } else {
+      if (!finitePositive(sample.nominalSpanMm) || !finitePositive(sample.measuredSpanMm) ||
+          !finitePositive(sample.measurementU95Mm)) {
+        addIssue("targetPrintScaleSamples", "scale verification values must be finite physical measurements");
+      } else if (Math.abs(sample.measuredSpanMm - sample.nominalSpanMm) + sample.measurementU95Mm >
+          policy.calibrationAcceptance.maxTargetPrintScaleErrorMm) {
+        addIssue(
+          "targetPrintScaleSamples",
+          `print-scale error plus U95 must be <= ${policy.calibrationAcceptance.maxTargetPrintScaleErrorMm} mm`,
+        );
+      }
     }
   }
   const requiredPrintSpans = policy.calibrationAcceptance.targetPrintVerificationSpansMm;
   for (const axis of ["x", "y"] as const) {
     const samples = targetPrintScaleSamples.filter((sample) => sample.axis === axis);
-    if (samples.length !== 1 || samples[0]!.nominalSpanMm !== requiredPrintSpans[axis]) {
+    const observedSpan = samples.length === 1
+      ? ("protectedSpanMm" in samples[0]! ? samples[0]!.protectedSpanMm : samples[0]!.nominalSpanMm)
+      : undefined;
+    if (samples.length !== 1 || observedSpan !== requiredPrintSpans[axis]) {
       addIssue(
         "targetPrintScaleSamples",
         `requires exactly the target's ${requiredPrintSpans[axis]} mm ${axis.toUpperCase()} verification span`,
@@ -470,10 +506,10 @@ export function buildFixedRigPhysicalCalibrationV1(
   const requiredCutDimensions = policy.calibrationAcceptance.targetCutDimensionsMm;
   for (const axis of ["x", "y"] as const) {
     const samples = targetCutDimensionSamples.filter((sample) => sample.axis === axis);
-    if (
-      samples.length !== 1 ||
-      samples[0]!.nominalDimensionMm !== requiredCutDimensions[axis]
-    ) {
+    const observedDimension = samples.length === 1
+      ? ("protectedDimensionMm" in samples[0]! ? samples[0]!.protectedDimensionMm : samples[0]!.nominalDimensionMm)
+      : undefined;
+    if (samples.length !== 1 || observedDimension !== requiredCutDimensions[axis]) {
       addIssue(
         "targetCutDimensionSamples",
         `requires exactly the cut coupon's ${requiredCutDimensions[axis]} mm ${axis.toUpperCase()} dimension`,
@@ -481,16 +517,20 @@ export function buildFixedRigPhysicalCalibrationV1(
       continue;
     }
     const sample = samples[0]!;
-    if (
-      !finitePositive(sample.measuredDimensionMm) ||
-      !finitePositive(sample.measurementU95Mm) ||
-      Math.abs(sample.measuredDimensionMm - sample.nominalDimensionMm) + sample.measurementU95Mm >
-        policy.calibrationAcceptance.maxTargetCutDimensionErrorMm
-    ) {
-      addIssue(
-        "targetCutDimensionSamples",
-        `cut-dimension error plus U95 must be <= ${policy.calibrationAcceptance.maxTargetCutDimensionErrorMm} mm`,
-      );
+    if ("protectedDimensionMm" in sample) {
+      if (sample.authorityBasis !== "protected_checkerboard_geometry" ||
+          sample.protectedDimensionMm !== requiredCutDimensions[axis] ||
+          sample.targetVersion !== input.targetVersion || sample.targetSha256 !== input.targetSha256) {
+        addIssue("targetCutDimensionSamples", "protected checkerboard cut authority must match the exact target identity");
+      }
+    } else if (!finitePositive(sample.measuredDimensionMm) ||
+        !finitePositive(sample.measurementU95Mm) ||
+        Math.abs(sample.measuredDimensionMm - sample.nominalDimensionMm) + sample.measurementU95Mm >
+          policy.calibrationAcceptance.maxTargetCutDimensionErrorMm) {
+        addIssue(
+          "targetCutDimensionSamples",
+          `cut-dimension error plus U95 must be <= ${policy.calibrationAcceptance.maxTargetCutDimensionErrorMm} mm`,
+        );
     }
   }
   const lensValues = input.lensResidualSamples.map((sample) => sample.residualPx);
@@ -819,6 +859,11 @@ export function buildFixedRigPhysicalCalibrationV1(
       status: "rejected",
       isCalibrated: false,
       profile: null,
+      operationalProfileCandidate: rejectedMathematicalCalibrationProfileCandidateV1Schema.parse({
+        ...profileCandidate,
+        isCalibrated: false,
+        status: "rejected",
+      }),
       artifact,
       issues,
     };

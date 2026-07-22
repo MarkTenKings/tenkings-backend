@@ -13,12 +13,24 @@ const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV03Schema,
   buildMathematicalMeasurementV1,
   calculateFindingDeductionV1,
   calculateOverallGradeV1,
+  canonicalProductOwnerOperationalAcceptanceIssueLedgerV1,
+  canonicalProductOwnerOperationalAcceptancePayloadV1,
   roundMathematicalScoreV1,
+  validateMathematicalCalibrationProfileV1,
 } = require("../../shared/dist");
 const {
   AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
@@ -850,8 +862,14 @@ function outerCutGeometryEvidence(calibration) {
   return { front: sideEvidence("front"), back: sideEvidence("back") };
 }
 
-function reportInput({ scratch = false, publication } = {}) {
-  const calibration = calibrationProfile();
+function reportInput({
+  scratch = false,
+  publication,
+  calibration: suppliedCalibration,
+  calibrationAuthority,
+  activationAuthority,
+} = {}) {
+  const calibration = suppliedCalibration ?? calibrationProfile();
   const sourceFinding = scratch ? surfaceFinding(calibration) : undefined;
   const grade = gradeResult(calibration, sourceFinding);
   const corners = conditionResult("corners");
@@ -899,7 +917,8 @@ function reportInput({ scratch = false, publication } = {}) {
       parallelId: null,
     },
     calibrationProfile: calibration,
-    calibrationBundleAuthority: calibrationBundleAuthority(),
+    calibrationBundleAuthority: calibrationAuthority ?? calibrationBundleAuthority(),
+    ...(activationAuthority ? { calibrationActivationAuthority: activationAuthority } : {}),
     designReferences: [],
     centering: centering(calibration),
     corners,
@@ -962,6 +981,112 @@ function reportInput({ scratch = false, publication } = {}) {
       explanation: "The calibrated illumination response was excluded and valid alternate directional channels resolved this region without a condition deduction.",
     }] : [],
   };
+}
+
+function ownerAcceptedReportInput() {
+  const profile = {
+    ...calibrationProfile(),
+    rigId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.rigId,
+    artifactSha256: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.physicalArtifactSha256,
+    isCalibrated: false,
+    status: "rejected",
+    lensResidualPx: 100,
+  };
+  const mathematical = validateMathematicalCalibrationProfileV1({
+    ...profile,
+    isCalibrated: true,
+    status: "finalized",
+  });
+  assert.equal(mathematical.valid, false);
+  const exceptionLedger = [
+    ...Array.from({ length: 36 - mathematical.issues.length }, (_, index) => ({
+      path: `certifiedAnalysis.exception${index + 1}`,
+      message: `Recorded certified-analysis exception ${index + 1}.`,
+    })),
+    ...mathematical.issues,
+  ];
+  const subject = {
+    ...PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+    mathematicalAcceptanceStatus: "rejected",
+    mathematicalIsCalibrated: false,
+    profileId: profile.profileId,
+    calibrationVersion: profile.calibrationVersion,
+    finalizedAt: profile.finalizedAt,
+    artifactId: profile.artifactId,
+  };
+  delete subject.exceptionCount;
+  const withoutHash = {
+    schemaVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+    authorityId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+    authorityStatus: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
+    hashPolicy: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+    owner: {
+      name: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+      organization: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+      role: "product_owner",
+    },
+    decisionAt: "2026-07-22T14:00:00.000Z",
+    reason: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+    subject,
+    exceptionLedger,
+    exceptionLedgerSha256: crypto.createHash("sha256")
+      .update(canonicalProductOwnerOperationalAcceptanceIssueLedgerV1(exceptionLedger), "utf8")
+      .digest("hex"),
+    implementation: {
+      contractVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+      implementationGitSha: "1".repeat(40),
+      finalizerSha256: "2".repeat(64),
+      authorityProducerSha256: "3".repeat(64),
+      nodeRuntimeVersion: process.version,
+    },
+    lifecycle: {
+      sequence: 1,
+      priorAuthoritySha256: null,
+      revokedByAuthoritySha256: null,
+      supersededByAuthoritySha256: null,
+    },
+  };
+  const ownerAuthority = { ...withoutHash, authoritySha256: "0".repeat(64) };
+  ownerAuthority.authoritySha256 = crypto.createHash("sha256")
+    .update(canonicalProductOwnerOperationalAcceptancePayloadV1(ownerAuthority), "utf8")
+    .digest("hex");
+  profile.operationalAcceptance = ownerAuthority;
+
+  const bundleAuthority = calibrationBundleAuthority();
+  bundleAuthority.members.splice(3, 0, {
+    role: "product_owner_operational_acceptance",
+    fileName: "product-owner-operational-acceptance-v1.json",
+    sha256: crypto.createHash("sha256").update(JSON.stringify(ownerAuthority), "utf8").digest("hex"),
+  });
+  bundleAuthority.memberLedgerSha256 = crypto.createHash("sha256")
+    .update(JSON.stringify(canonical(bundleAuthority.members)), "utf8")
+    .digest("hex");
+  const activationAuthority = {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "owner-report-activation-v1",
+    activationHash: "4".repeat(64),
+    activationRevision: "5".repeat(64),
+    snapshotId: "owner-report-snapshot-v1",
+    rigId: profile.rigId,
+    bundleManifestSha256: bundleAuthority.bundleManifestSha256,
+    memberLedgerSha256: bundleAuthority.memberLedgerSha256,
+    runtimeContextHash: "6".repeat(64),
+    rigCharacterizationSha256: profile.artifactSha256,
+    operatingContextHash: "7".repeat(64),
+    workstationReceiptSha256: "8".repeat(64),
+    activatedAt: "2026-07-22T14:05:00.000Z",
+    hostedAuthorityKeyId: "9".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T14:05:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T14:05:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+  return reportInput({
+    calibration: profile,
+    calibrationAuthority: bundleAuthority,
+    activationAuthority,
+  });
 }
 
 function stationConfig(outputDir, { mathematicalReady = false } = {}) {
@@ -1031,6 +1156,42 @@ test("strict V0.3 adapter generates deterministic centering evidence without a V
     artifact.assetPayloads.map(({ id, sha256 }) => ({ id, sha256 })),
     "measurement overlay hashes are deterministic",
   );
+});
+
+test("owner-accepted report builder requires the exact signed ACTIVE 13-member activation binding", async (t) => {
+  const accepted = await buildAiGraderMathematicalReportBundleV1(ownerAcceptedReportInput());
+  assert.equal(
+    accepted.bundle.calibrationProfile.operationalAcceptance.authorityStatus,
+    "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+  );
+  assert.equal(accepted.bundle.calibrationActivationAuthority.authorityPhase, "ACTIVE");
+  assert.equal(accepted.bundle.calibrationBundleAuthority.members.length, 13);
+
+  const cases = [
+    ["missing activation", (input) => { delete input.calibrationActivationAuthority; }],
+    ["wrong bundle", (input) => { input.calibrationActivationAuthority.bundleManifestSha256 = "a".repeat(64); }],
+    ["wrong member ledger", (input) => { input.calibrationActivationAuthority.memberLedgerSha256 = "b".repeat(64); }],
+    ["wrong rig", (input) => { input.calibrationActivationAuthority.rigId = "another-rig"; }],
+    ["wrong artifact", (input) => { input.calibrationActivationAuthority.rigCharacterizationSha256 = "d".repeat(64); }],
+    ["fake twelve-member substitution", (input) => {
+      input.calibrationBundleAuthority.members.splice(3, 1);
+      input.calibrationBundleAuthority.memberLedgerSha256 = crypto.createHash("sha256")
+        .update(JSON.stringify(canonical(input.calibrationBundleAuthority.members)), "utf8")
+        .digest("hex");
+      input.calibrationActivationAuthority.memberLedgerSha256 =
+        input.calibrationBundleAuthority.memberLedgerSha256;
+    }],
+  ];
+  for (const [name, mutate] of cases) {
+    await t.test(name, async () => {
+      const input = ownerAcceptedReportInput();
+      mutate(input);
+      await assert.rejects(
+        () => buildAiGraderMathematicalReportBundleV1(input),
+        /signed ACTIVE hosted activation|product-owner authority/i,
+      );
+    });
+  }
 });
 
 test("report confidence bands are derived from centralized thresholds rather than caller labels", async () => {
@@ -1360,7 +1521,7 @@ test("explicit Mathematical V1 Rapid background preparation fails not-ready inst
     }),
     /Mathematical Calibration V1 is not ready:.*No V0 fallback is permitted/i,
   );
-  assert.equal(service.manifest.gradingContract, "legacy_v0");
+  assert.equal(service.manifest.gradingContract, "mathematical_calibration_v1");
   assert.equal(service.manifest.reportBundle, undefined);
   assert.equal(service.manifest.safety.finalGradeComputed, false);
   assert.equal(service.manifest.rapidCapture.autoPublish, false);

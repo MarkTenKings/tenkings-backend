@@ -22,13 +22,62 @@ import {
   assertDinoLiteSdkRuntimeDirAllowed,
 } from "./drivers";
 import { startCaptureHelperHttpServer } from "./transport";
+import type { AiGraderLocalStationBridgeConfigInput } from "./drivers/aiGraderLocalStationBridge";
+import {
+  buildMathematicalCalibrationV1_2ProductionAuthorityConfig,
+  type MathematicalCalibrationV1_2ProductionLowLevelBoundary,
+} from "./drivers/fixedRigFastMathematicalCalibrationProductionAuthorityV1_2";
 
 export interface CaptureHelperCliIO {
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
   env?: CaptureHelperEnv;
+  mathematicalCalibrationV1_2ProductionBoundary?: MathematicalCalibrationV1_2ProductionLowLevelBoundary;
 }
 
+function optionalInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+export function buildAiGraderStationBridgeCliConfigInputV1_2(
+  input: AiGraderLocalStationBridgeConfigInput,
+  env: CaptureHelperEnv = process.env,
+  lowLevelBoundary?: MathematicalCalibrationV1_2ProductionLowLevelBoundary,
+): AiGraderLocalStationBridgeConfigInput {
+  const outputDir = input.outputDir ?? env.AI_GRADER_STATION_OUTPUT_DIR ??
+    "C:\\TenKings\\capture-data\\ai-grader-station";
+  const mathematicalCalibrationOutputDir = input.mathematicalCalibrationOutputDir ??
+    env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR ??
+    path.join(outputDir, "mathematical-calibration-v1");
+  const localAuthorityConfig = buildMathematicalCalibrationV1_2ProductionAuthorityConfig({
+    env,
+    outputRoot: path.join(mathematicalCalibrationOutputDir, "sessions-v1.2"),
+    hardware: {
+      outputDir,
+      ...(input.cameraIndex === undefined ? {} : { cameraIndex: input.cameraIndex }),
+      ...(input.pylonRoot ? { pylonRoot: input.pylonRoot } : {}),
+      ...(input.baslerBridgeScript ? { bridgeScriptPath: input.baslerBridgeScript } : {}),
+      ...(input.pylonTimeoutMs ? { timeoutMs: input.pylonTimeoutMs } : {}),
+      ...(input.leimacHost ?? env.AI_GRADER_STATION_LEIMAC_HOST
+        ? { leimacHost: input.leimacHost ?? env.AI_GRADER_STATION_LEIMAC_HOST }
+        : {}),
+      ...(input.leimacPort ?? optionalInteger(env.AI_GRADER_STATION_LEIMAC_PORT)
+        ? { leimacPort: input.leimacPort ?? optionalInteger(env.AI_GRADER_STATION_LEIMAC_PORT) }
+        : {}),
+      ...(input.leimacUnit ?? optionalInteger(env.AI_GRADER_STATION_LEIMAC_UNIT)
+        ? { leimacUnit: input.leimacUnit ?? optionalInteger(env.AI_GRADER_STATION_LEIMAC_UNIT) }
+        : {}),
+    },
+    ...(lowLevelBoundary ? { lowLevelBoundary } : {}),
+  });
+  return {
+    ...input,
+    mathematicalCalibrationOutputDir,
+    ...(localAuthorityConfig ? { mathematicalCalibrationV1_2LocalAuthorityConfig: localAuthorityConfig } : {}),
+  };
+}
 const sleep = (ms: number) => new Promise<void>((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -5651,7 +5700,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     if (parsed.command === "ai-grader-station-bridge") {
       const { startAiGraderLocalStationBridgeHttpServer } = await import("./drivers/aiGraderLocalStationBridge");
       const started = await startAiGraderLocalStationBridgeHttpServer(
-        {
+        buildAiGraderStationBridgeCliConfigInputV1_2({
           enabled: parsed.enableLocalStation,
           host: parsed.host,
           port: parsed.port,
@@ -5689,7 +5738,9 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           verticalStartPx: parsed.verticalStartPx,
           verticalEndPx: parsed.verticalEndPx,
           cardBoundaryRect: parsed.cardBoundaryRect,
-        },
+        }, io.env ?? process.env,
+        io.mathematicalCalibrationV1_2ProductionBoundary,
+        ),
         io.env ?? process.env
       );
       writeJson(stdout, {

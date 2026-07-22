@@ -4,7 +4,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   assertFixedRigOutputDirAllowed,
   buildFixedRigActiveLightingProfile,
@@ -92,6 +92,10 @@ import {
 } from "./aiGraderMathematicalReportBundleV1";
 import {
   type AiGraderReportBundleV03,
+  type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderCalibrationPendingAuthorityV1,
+  type AiGraderCalibrationWorkstationReceiptV1,
+  type AiGraderOperatingContextV1,
 } from "@tenkings/shared";
 import {
   detectCardGeometryFromBuffer,
@@ -119,6 +123,8 @@ import {
   type SealedFixedRigMathematicalCalibrationCaptureV1,
   type StartFixedRigMathematicalCalibrationCaptureV1Request,
   type FixedRigMathematicalCalibrationCaptureSessionStatusV1,
+  type FixedRigMathematicalCalibrationFalseStopRecoveryV1,
+  type FixedRigMathematicalCalibrationAnalyzerAuthorityRebindV1,
 } from "./fixedRigMathematicalCalibrationCaptureV1";
 import {
   assessMathematicalCalibrationV1_1Preview,
@@ -129,10 +135,51 @@ import {
   type MathematicalCalibrationPreviewCheckerboard,
 } from "./mathematicalCalibrationPreviewCheckerboard";
 import {
+  MATHEMATICAL_CALIBRATION_V1_PAGE_HTML,
+  MATHEMATICAL_CALIBRATION_V1_PAGE_PATH,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
+import type { FastCalibrationRuntimeContextV1_2 } from "./fixedRigFastMathematicalCalibrationV1_2";
+import {
+  BaslerLeimacMathematicalCalibrationSessionV1_2,
+  type BaslerMathematicalCalibrationLiveContextV1_2,
+} from "./baslerLeimacMathematicalCalibrationSessionV1_2";
+import {
+  produceFastCalibrationRigMaterializationInputV1_2,
+  type ProducedFastCalibrationRigMaterializationInputV1_2,
+} from "./fixedRigFastMathematicalCalibrationRigInputProducerV1_2";
+import {
+  DurableMathematicalCalibrationV1_2LocalSessionAuthority,
+  type DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig,
+} from "./fixedRigFastMathematicalCalibrationLocalAuthorityV1_2";
+import {
+  MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS,
+  parseMathematicalCalibrationV1_2SessionMutationRequestDto,
+  parseReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  parseStartMathematicalCalibrationV1_2SessionRequestDto,
+  validateMathematicalCalibrationV1_2SessionListResponseDto,
+  validateMathematicalCalibrationV1_2SessionStatusDto,
+  type MathematicalCalibrationV1_2BridgeAction,
+  type MathematicalCalibrationV1_2LocalSessionAuthority,
+  type MathematicalCalibrationV1_2SessionListResponseDto,
+  type MathematicalCalibrationV1_2SessionMutationRequestDto,
+  type MathematicalCalibrationV1_2SessionStatusDto,
+  type ReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  type StartMathematicalCalibrationV1_2SessionRequestDto,
+} from "./mathematicalCalibrationV1_2Contract";
+import {
+  createMathematicalCalibrationActivationRegistryV1,
+  parseMathematicalCalibrationHostedAuthorityPublicKeysV1,
+} from "./mathematicalCalibrationActivationRegistryV1";
+import {
+  MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_SOURCE_V1,
+  MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_V1,
+  createMathematicalCalibrationOperatingContextRuntimeV1,
+  type MathematicalCalibrationRuntimeObservationV1,
+} from "./mathematicalCalibrationOperatingContextRuntimeV1";
+
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
   buildFixedRigMathematicalCalibrationStationPackageV1,
@@ -145,6 +192,11 @@ import type {
   FixedRigMathematicalFindingReviewRequestV1,
   FixedRigMathematicalFindingReviewV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
+import {
+  FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
+  verifyTrustedPokemonCardFormatAuthorityV1,
+} from "./fixedRigPokemonStandardCornerProfileV1";
+import { FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID } from "./fixedRigStandardCardFormatV1";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -159,6 +211,8 @@ const BACK_POSITIONING_EVENT_LIMIT = 20;
 const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
 const ATOMIC_CAPTURE_AUTHORIZATION_MS = 10000;
 const PREVIEW_OBSERVATION_LIMIT = 8;
+const MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS = 10000;
+const MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT = 16;
 const ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT = 64;
 const ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const ATOMIC_CAPTURE_ASSERTION_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
@@ -195,15 +249,26 @@ export type AiGraderLocalStationMathematicalCenteringAuthorityV1 =
       approvedDesignArtifact: Omit<RegisteredMathematicalCenteringAuthority["approvedDesignArtifact"], "filePath">;
     };
 
-export interface AiGraderLocalStationMathematicalGradingAuthorityV1 {
+type AiGraderLocalStationMathematicalGradingAuthorityBaseV1 = {
   schemaVersion: typeof FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION;
   cardIdentity: FixedRigMathematicalStationGradingAuthorityV1["cardIdentity"];
-  cardFormatId: FixedRigMathematicalStationGradingAuthorityV1["cardFormatId"];
   sides: {
     front: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
     back: { centering: AiGraderLocalStationMathematicalCenteringAuthorityV1 };
   };
-}
+};
+
+export type AiGraderLocalStationMathematicalGradingAuthorityV1 =
+  | AiGraderLocalStationMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID;
+    }
+  | AiGraderLocalStationMathematicalGradingAuthorityBaseV1 & {
+      cardFormatId: typeof FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID;
+      trustedCardFormatAuthority: Extract<
+        FixedRigMathematicalStationGradingAuthorityV1,
+        { cardFormatId: typeof FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID }
+      >["trustedCardFormatAuthority"];
+    };
 
 export interface AiGraderLocalStationStagedDesignReferenceV1 {
   side: "front" | "back";
@@ -284,6 +349,7 @@ export interface AiGraderLocalStationMathematicalV1State {
   generatedAt: string;
   gradingAuthority: AiGraderLocalStationMathematicalGradingAuthorityV1;
   stagedDesignReferences: Partial<Record<"front" | "back", AiGraderLocalStationStagedDesignReferenceV1>>;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   reviewAssets?: Record<string, AiGraderLocalStationMathematicalReviewAssetV1>;
   submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   execution?: AiGraderLocalStationMathematicalExecutionV1;
@@ -292,6 +358,9 @@ export interface AiGraderLocalStationMathematicalV1State {
 export type AiGraderLocalStationBridgeAction =
   | "status"
   | "start-session"
+  | "prepare-calibration-activation"
+  | "ingest-finalized-calibration-bundle"
+  | "confirm-calibration-activation"
   | "capture-front"
   | "capture-back"
   | "publish-report"
@@ -303,7 +372,8 @@ export type AiGraderLocalStationBridgeAction =
   | "submit-mathematical-finding-reviews"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
-  | "fail-queued-ocr";
+  | "fail-queued-ocr"
+  | "mathematical-calibration-rig-input";
 
 export type AiGraderRapidCaptureWorkflowState =
   | "front_captured"
@@ -641,8 +711,14 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+  mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
+  mathematicalCalibrationV1_2LocalAuthorityConfig?:
+    Omit<DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig, "outputRoot"> & { outputRoot?: string };
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
+  cardFormatAuthorityHmacKey?: string;
+  cardFormatAuthorityHmacKeyId?: string;
 }
 
 export interface AiGraderLocalStationBridgeConfig {
@@ -693,8 +769,12 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+  mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
+  cardFormatAuthorityHmacKey?: string;
+  cardFormatAuthorityHmacKeyId?: string;
 }
 
 export interface AiGraderLocalStationBridgeManifest {
@@ -811,6 +891,20 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rigId?: string;
     artifactSha256?: string;
     bundleSha256?: string;
+    operationalAcceptanceStatus?: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS";
+    operationalAcceptanceAuthorityId?: string;
+    operationalAcceptanceAuthoritySha256?: string;
+    operationalAcceptanceExceptionLedgerSha256?: string;
+    operationalAcceptanceExceptionCount?: number;
+    captureContractVersion?: "1.2.0";
+    runtimeContextSha256?: string;
+    rigCharacterizationSha256?: string;
+  };
+  calibrationActivation: {
+    configured: boolean;
+    state: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+    receipt?: AiGraderCalibrationWorkstationReceiptV1;
+    authority?: AiGraderCalibrationActivationAuthorityV1;
   };
   provisionalGeometry: {
     active: boolean;
@@ -839,7 +933,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     provisionalDiagnosticsRun: boolean;
   };
   bridgeContract: {
-    gradingContracts: ["legacy_v0", "mathematical_calibration_v1"];
+    gradingContracts: ["mathematical_calibration_v1"];
     mathematicalV1: {
       reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3";
       envelopeVersion: typeof AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION;
@@ -853,10 +947,12 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       method: "GET" | "POST";
       path: string;
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
-        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
+        | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-false-stop-recovery" | "mathematical-calibration-analyzer-authority-rebind" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
+        | MathematicalCalibrationV1_2BridgeAction
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -1009,14 +1105,33 @@ export interface AiGraderLocalStationPreviewStatus {
     previewFramesPersisted: false;
   };
   mathematicalCalibrationPreview?: {
-    contractVersion: "1.1.0";
+    contractVersion: "1.0.1" | "1.1.0";
     sessionId: string;
     active: boolean;
-    overlay: MathematicalCalibrationV1_1PreviewAssessment;
+    overlay: MathematicalCalibrationV1_1PreviewAssessment & {
+      guidance?: string[];
+      prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
+    };
+    sessionStatus?: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
     lastFrameId?: string;
     lastFrameAt?: string;
     cameraOwnership: "preview_stream" | "capture_action" | "released";
     reconnectAllowed: true;
+    displayedFrame?: {
+      sessionId: string;
+      epoch: string;
+      frameId: string;
+      capturedAt: string;
+      acknowledgedAt: string;
+      frameSha256: string;
+      assessmentReady: boolean;
+    };
+    captureAuthorization?: {
+      frameId: string;
+      capturedAt: string;
+      slotKey: string;
+      expiresAt: string;
+    };
   };
   safety: {
     publicRouteExposed: false;
@@ -1029,6 +1144,48 @@ export interface AiGraderLocalStationPreviewStatus {
   };
   note: string;
 }
+
+export interface MathematicalCalibrationDisplayedFrameV1 {
+  sessionId: string;
+  epoch: string;
+  frameId: string;
+  capturedAt: string;
+}
+
+export interface MathematicalCalibrationCaptureAuthorizationV1 {
+  authorizationId: string;
+  sessionId: string;
+  epoch: string;
+  frameId: string;
+  capturedAt: string;
+  frameSha256: string;
+  detectorAssessmentSha256: string;
+  slotKey: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+type MathematicalCalibrationPreviewOverlayV1 = MathematicalCalibrationV1_1PreviewAssessment & {
+  guidance?: string[];
+  prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
+};
+
+interface RetainedMathematicalCalibrationPreviewFrameV1 extends MathematicalCalibrationDisplayedFrameV1 {
+  bytes: Buffer;
+  frameSha256: string;
+  retainedAt: string;
+  assessment?: MathematicalCalibrationPreviewOverlayV1;
+  assessmentSha256?: string;
+  sessionStatus?: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+  assessmentPromise?: Promise<void>;
+}
+
+interface AcknowledgedMathematicalCalibrationDisplayedFrameV1 extends MathematicalCalibrationDisplayedFrameV1 {
+  acknowledgedAt: string;
+  frameSha256: string;
+}
+
+type ActiveMathematicalCalibrationCaptureAuthorizationV1 = MathematicalCalibrationCaptureAuthorizationV1;
 
 type AiGraderPreviewGeometryStatus = AiGraderLocalStationPreviewStatus["cardGeometry"];
 
@@ -1265,6 +1422,10 @@ export interface AiGraderLocalStationBridgeActionRequest {
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
   mathematicalReviewRequestSha256?: string;
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
+  calibrationPendingAuthority?: AiGraderCalibrationPendingAuthorityV1;
+  bundleManifestSha256?: string;
+  hostedCalibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   mathematicalFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   mathematicalReportEnvelope?: AiGraderMathematicalReportEnvelopeV1;
   mathematicalReportPackagePath?: string;
@@ -1336,6 +1497,8 @@ export interface AiGraderLocalStationBridgeDependencies {
   onRealHardwareBoundary?: (boundary: AiGraderLocalStationRealHardwareBoundary) => void;
   mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  produceFastCalibrationRigMaterializationInputV1_2?: typeof produceFastCalibrationRigMaterializationInputV1_2;
+  probeFastCalibrationRigMaterializationContextV1_2?: () => Promise<BaslerMathematicalCalibrationLiveContextV1_2>;
   loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
   buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
   captureMathematicalCalibrationFrame?: (
@@ -1343,6 +1506,17 @@ export interface AiGraderLocalStationBridgeDependencies {
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
   /** Test-only queue persistence boundary; production uses the same atomic JSON writer as manifests. */
   writeRapidQueueAtomic?: (filePath: string, value: unknown) => Promise<void>;
+  /** Hardware-free test seam; Production uses the concrete opened Basler/Leimac adapter. */
+  observeCalibrationActivationRuntime?: (
+    expected: AiGraderOperatingContextV1,
+  ) => Promise<MathematicalCalibrationRuntimeObservationV1>;
+  calibrationActivationRegistry?: {
+    ingestFinalizedBundle(value: unknown): Promise<{ bundlePath: string }>;
+    prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1>;
+    confirmHostedActivation(value: unknown): Promise<unknown>;
+    assertStartAuthority(value: unknown): Promise<{ bundlePath: string }>;
+    assertBoundSessionAuthority(value: unknown): Promise<{ bundlePath: string }>;
+  };
 }
 
 export function requireAppliedMathematicalCalibrationCameraSettings(
@@ -1556,11 +1730,17 @@ function exactStationString(value: unknown, label: string): string {
 
 function validateLocalMathematicalGradingAuthorityV1(
   value: unknown,
+  verification: {
+    hmacKey?: string;
+    keyId?: string;
+  } = {},
 ): AiGraderLocalStationMathematicalGradingAuthorityV1 {
   const authority = stationContractObject(value, "Mathematical V1 grading authority");
   assertStationContractKeys(
     authority,
-    ["schemaVersion", "cardIdentity", "cardFormatId", "sides"],
+    authority.cardFormatId === FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID
+      ? ["schemaVersion", "cardIdentity", "cardFormatId", "trustedCardFormatAuthority", "sides"]
+      : ["schemaVersion", "cardIdentity", "cardFormatId", "sides"],
     "Mathematical V1 grading authority",
   );
   if (authority.schemaVersion !== FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION) {
@@ -1647,18 +1827,30 @@ function validateLocalMathematicalGradingAuthorityV1(
     exactStationString(reference.referenceId, "Mathematical V1 approved reference ID");
     exactStationString(artifact.assetId, "Mathematical V1 design-reference asset ID");
   }
+  if (authority.cardFormatId === FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID) {
+    verifyTrustedPokemonCardFormatAuthorityV1({
+      authority: authority.trustedCardFormatAuthority,
+      hmacKey: verification.hmacKey,
+      expectedKeyId: verification.keyId,
+      expectedCardIdentity: cardIdentity as FixedRigMathematicalStationGradingAuthorityV1["cardIdentity"],
+    });
+  } else if (authority.cardFormatId !== FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID) {
+    throw new Error("Mathematical V1 card-format profile is not supported.");
+  }
   return structuredClone(value) as AiGraderLocalStationMathematicalGradingAuthorityV1;
 }
 
 function newLocalMathematicalV1State(
   authority: AiGraderLocalStationMathematicalGradingAuthorityV1,
   generatedAt: string,
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
 ): AiGraderLocalStationMathematicalV1State {
   return {
     schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
     generatedAt,
     gradingAuthority: structuredClone(authority),
     stagedDesignReferences: {},
+    ...(calibrationActivationAuthority ? { calibrationActivationAuthority: structuredClone(calibrationActivationAuthority) } : {}),
   };
 }
 
@@ -2062,6 +2254,21 @@ export function buildAiGraderLocalStationBridgeConfig(
     env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR,
   ) ?? path.join(outputDir, "mathematical-calibration-v1");
   assertFixedRigOutputDirAllowed(mathematicalCalibrationOutputDir);
+  if (input.mathematicalCalibrationV1_2Authority && input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    throw new Error("Mathematical Calibration V1.2 authority must be either prebuilt or helper-constructed, never both.");
+  }
+  const localAuthorityOutputRoot = input.mathematicalCalibrationV1_2LocalAuthorityConfig?.outputRoot ??
+    path.join(mathematicalCalibrationOutputDir, "sessions-v1.2");
+  if (input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    assertFixedRigOutputDirAllowed(localAuthorityOutputRoot);
+  }
+  const mathematicalCalibrationV1_2Authority = input.mathematicalCalibrationV1_2Authority ??
+    (input.mathematicalCalibrationV1_2LocalAuthorityConfig
+      ? new DurableMathematicalCalibrationV1_2LocalSessionAuthority({
+        ...input.mathematicalCalibrationV1_2LocalAuthorityConfig,
+        outputRoot: localAuthorityOutputRoot,
+      })
+      : undefined);
   const provisionalGeometryArtifactPath = firstNonEmpty(
     input.provisionalGeometryArtifactPath,
     env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH,
@@ -2078,6 +2285,20 @@ export function buildAiGraderLocalStationBridgeConfig(
   }
   if (provisionalGeometryArtifactSha256 && !/^[a-f0-9]{64}$/.test(provisionalGeometryArtifactSha256)) {
     throw new Error("AI Grader provisional geometry artifact SHA-256 must be exact lowercase hexadecimal.");
+  }
+  const cardFormatAuthorityHmacKey = firstNonEmpty(
+    input.cardFormatAuthorityHmacKey,
+    env.AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY,
+  );
+  const cardFormatAuthorityHmacKeyId = firstNonEmpty(
+    input.cardFormatAuthorityHmacKeyId,
+    env.AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ID,
+  );
+  if (Boolean(cardFormatAuthorityHmacKey) !== Boolean(cardFormatAuthorityHmacKeyId) ||
+      (cardFormatAuthorityHmacKey && Buffer.byteLength(cardFormatAuthorityHmacKey, "utf8") < 32) ||
+      (cardFormatAuthorityHmacKeyId &&
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(cardFormatAuthorityHmacKeyId))) {
+    throw new Error("AI Grader card-format authority HMAC key and key ID must be configured together and valid.");
   }
   return {
     enabled,
@@ -2142,8 +2363,12 @@ export function buildAiGraderLocalStationBridgeConfig(
       env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH,
     ),
     mathematicalCalibrationBundleSha256,
+    mathematicalCalibrationRuntimeContext: input.mathematicalCalibrationRuntimeContext,
+    mathematicalCalibrationV1_2Authority,
     provisionalGeometryArtifactPath,
     provisionalGeometryArtifactSha256,
+    cardFormatAuthorityHmacKey,
+    cardFormatAuthorityHmacKeyId,
   };
 }
 
@@ -2159,7 +2384,7 @@ function newManifest(
     mode: config.mode,
     updatedAt: startedAt,
     acceptedProfile: defaultProfile(config),
-    gradingContract: "legacy_v0",
+    gradingContract: "mathematical_calibration_v1",
     captureProfile,
     captureProfileGuard: {
       oneRoadProductionFastRequired: true,
@@ -2683,6 +2908,9 @@ function mathematicalCalibrationReadiness(
       bundlePath: config.mathematicalCalibrationBundlePath,
       bundleSha256: config.mathematicalCalibrationBundleSha256,
       expectedRigId: config.mathematicalCalibrationRigId,
+      ...(config.mathematicalCalibrationRuntimeContext
+        ? { expectedRuntimeContext: config.mathematicalCalibrationRuntimeContext }
+        : {}),
     });
     return {
       ready: true,
@@ -2691,6 +2919,20 @@ function mathematicalCalibrationReadiness(
       rigId: loaded.profile.rigId,
       artifactSha256: loaded.profile.artifactSha256,
       bundleSha256: loaded.bundleSha256,
+      ...(loaded.operationalAcceptance ? {
+        operationalAcceptanceStatus: loaded.operationalAcceptance.authorityStatus,
+        operationalAcceptanceAuthorityId: loaded.operationalAcceptance.authorityId,
+        operationalAcceptanceAuthoritySha256: loaded.operationalAcceptance.authoritySha256,
+        operationalAcceptanceExceptionLedgerSha256:
+          loaded.operationalAcceptance.exceptionLedgerSha256,
+        operationalAcceptanceExceptionCount:
+          loaded.operationalAcceptance.exceptionLedger.length,
+      } : {}),
+      ...(loaded.authority.captureContractVersion ? {
+        captureContractVersion: loaded.authority.captureContractVersion,
+        runtimeContextSha256: loaded.authority.runtimeContextSha256,
+        rigCharacterizationSha256: loaded.authority.rigCharacterizationSha256,
+      } : {}),
     };
   } catch (error) {
     return { ready: false, reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established." };
@@ -2771,10 +3013,12 @@ function bridgeEndpoints() {
     const actions: Array<{
       method: "GET" | "POST";
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
-        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
+        | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-false-stop-recovery" | "mathematical-calibration-analyzer-authority-rebind" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
+        | MathematicalCalibrationV1_2BridgeAction
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2788,19 +3032,36 @@ function bridgeEndpoints() {
     { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply an explicit bounded Leimac duty for preview tuning." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
     { method: "POST", action: "mathematical-calibration-start", path: "/calibration/mathematical-v1/start", hardwareAccess: false, description: "Start or explicitly resume a purpose-bound non-production calibration capture session." },
+    { method: "GET", action: "mathematical-calibration-v1-page", path: MATHEMATICAL_CALIBRATION_V1_PAGE_PATH, hardwareAccess: false, description: "Serve the isolated token-paired V1.0.1 102-capture positioning page on the protected bridge." },
     { method: "GET", action: "mathematical-calibration-status", path: "/calibration/mathematical-v1/status", hardwareAccess: false, description: "Read one exact calibration capture-session status." },
+    { method: "POST", action: "mathematical-calibration-displayed-frame", path: "/calibration/mathematical-v1/displayed-frame", hardwareAccess: false, description: "Acknowledge the exact immutable MJPEG frame actually displayed by the session-bound operator page." },
+    { method: "POST", action: "mathematical-calibration-capture-authorization", path: "/calibration/mathematical-v1/capture-authorization", hardwareAccess: true, description: "Verify the displayed frame and detector assessment, atomically drain preview, and issue one short-lived server capture authorization." },
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
+    { method: "POST", action: "mathematical-calibration-false-stop-recovery", path: "/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop", hardwareAccess: false, description: "Execute the single incident-bound, audited V1.0.1 blank-reverse timestamp false-stop recovery with no caller-authored recovery fields." },
+    { method: "POST", action: "mathematical-calibration-analyzer-authority-rebind", path: "/calibration/mathematical-v1/rebind-sealed-analyzer-authority-20260722", hardwareAccess: false, description: "Execute the fieldless, one-time, exact-incident sealed analyzer-authority supersession and canonical same-session reseal." },
+    { method: "POST", action: "mathematical-calibration-rig-input", path: "/calibration/mathematical-v1/materialization-input", hardwareAccess: true, description: "Probe the protected rig and derive one exact canonical-target-frame V1.2 materialization input from sealed immutable evidence." },
     { method: "POST", action: "mathematical-calibration-v1.1-start", path: "/calibration/mathematical-v1.1/start", hardwareAccess: false, description: "Start the isolated four-placement Mathematical Calibration V1.1 session; no Production station session is created." },
     { method: "GET", action: "mathematical-calibration-v1.1-page", path: MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH, hardwareAccess: false, description: "Serve the same-origin protected calibration-only preview page; no Production station page is opened." },
     { method: "GET", action: "mathematical-calibration-v1.1-status", path: "/calibration/mathematical-v1.1/status", hardwareAccess: false, description: "Read the active four-placement V1.1 calibration session." },
     { method: "POST", action: "mathematical-calibration-v1.1-capture", path: "/calibration/mathematical-v1.1/capture", hardwareAccess: true, description: "Capture one overlay-approved V1.1 placement/channel step under sole camera ownership and verified safe-off." },
     { method: "POST", action: "mathematical-calibration-v1.1-measurement", path: "/calibration/mathematical-v1.1/measurement", hardwareAccess: false, description: "Record one immutable V1.1 physical/metrology measurement." },
     { method: "POST", action: "mathematical-calibration-v1.1-seal", path: "/calibration/mathematical-v1.1/seal", hardwareAccess: false, description: "Seal only the exact four-placement, one-flip, eight-channel V1.1 source package." },
+    { method: "GET", action: "mathematical-calibration-v1.2-sessions", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.sessions, hardwareAccess: false, description: "List saved or incomplete V1.2 sessions from trusted local state." },
+    { method: "POST", action: "mathematical-calibration-v1.2-start", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.start, hardwareAccess: false, description: "Start or resume V1.2 using locally derived protected runtime and rig authority." },
+    { method: "GET", action: "mathematical-calibration-v1.2-status", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.status, hardwareAccess: false, description: "Read the exact rich server-owned V1.2 session projection." },
+    { method: "POST", action: "mathematical-calibration-v1.2-capture", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.capture, hardwareAccess: true, description: "Execute only the server-owned current expected capture or flip/cleanup step." },
+    { method: "POST", action: "mathematical-calibration-v1.2-retry", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.retry, hardwareAccess: true, description: "Retry only the current server-owned expected step using a new local operation ID." },
+    { method: "POST", action: "mathematical-calibration-v1.2-replace-pose", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.replacePose, hardwareAccess: true, description: "Explicitly replace one accepted pose while preserving superseded evidence and lineage." },
+    { method: "POST", action: "mathematical-calibration-v1.2-analyze", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.analyze, hardwareAccess: false, description: "Run deterministic analysis from exact trusted local session evidence." },
+    { method: "POST", action: "mathematical-calibration-v1.2-finalize", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.finalize, hardwareAccess: false, description: "Run canonical V1.2 finalization and loader verification from the accepted analysis." },
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
     { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
+    { method: "POST", action: "ingest-finalized-calibration-bundle", hardwareAccess: false, description: "Import one exact trusted-finalizer handoff by bundle hash from the fixed local staging root; caller paths are prohibited." },
+    { method: "POST", action: "prepare-calibration-activation", hardwareAccess: true, description: "Verify exact bundle bytes and opened Basler/acknowledged Leimac runtime state, then return a signed workstation receipt." },
+    { method: "POST", action: "confirm-calibration-activation", hardwareAccess: true, description: "Reverify opened Basler/acknowledged Leimac state and atomically confirm exact hosted/local ACTIVE activation agreement." },
     { method: "POST", action: "capture-front", hardwareAccess: true, description: "Validate the exact front preview snapshot, drain preview, and capture front evidence." },
     { method: "POST", action: "capture-back", hardwareAccess: true, description: "Validate the exact back preview snapshot, drain preview, and capture back evidence." },
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
@@ -4331,6 +4592,47 @@ function nestedTimingDuration(value: unknown, seen = new Set<object>()): number 
   return durations.length ? durations.reduce((sum, item) => sum + item, 0) : undefined;
 }
 
+async function deriveIncidentAnalyzerAuthorityRequests(
+  sessionDir: string,
+): Promise<RecordFixedRigMathematicalCalibrationMeasurementV1Request[]> {
+  const scriptPath = path.resolve(
+    __dirname,
+    "../../../../scripts/ai-grader/prepare-mathematical-calibration-repeatability-v1.py",
+  );
+  const outputPath = path.join(
+    path.dirname(sessionDir),
+    `.analyzer-authority-rebind-derive-${process.pid}-${crypto.randomUUID()}.json`,
+  );
+  try {
+    const result = spawnSync("python", [
+      scriptPath,
+      "--session-dir", sessionDir,
+      "--output", outputPath,
+      "--incident-analyzer-authority-rebind",
+    ], {
+      cwd: path.resolve(__dirname, "../../../.."),
+      encoding: "utf-8",
+      windowsHide: true,
+      timeout: 10 * 60 * 1000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(`Protected corrected-analyzer derivation failed: ${result.stderr || result.error?.message || "unknown error"}`);
+    }
+    const output = JSON.parse((await readFile(outputPath)).toString("utf-8")) as {
+      analyzerSourceSha256?: unknown;
+      requests?: unknown;
+    };
+    if (
+      output.analyzerSourceSha256 !== "7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439" ||
+      !Array.isArray(output.requests) || output.requests.length !== 78
+    ) throw new Error("Protected corrected-analyzer derivation output identity or 78-record contract is invalid.");
+    return output.requests as RecordFixedRigMathematicalCalibrationMeasurementV1Request[];
+  } finally {
+    await rm(outputPath, { force: true });
+  }
+}
+
 export class AiGraderLocalStationBridgeService {
   readonly config: AiGraderLocalStationBridgeConfig;
   readonly runner: AiGraderStationCommandRunner;
@@ -4390,9 +4692,19 @@ export class AiGraderLocalStationBridgeService {
   private lightingLifecyclePending = 0;
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private mathematicalCalibrationV1SessionId?: string;
   private mathematicalCalibrationV1_1SessionId?: string;
+  private mathematicalCalibrationV1_2MutationPending = false;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
   private mathematicalCalibrationPreviewDetectionInFlight = false;
+  private mathematicalCalibrationPreviewDetectionPromise?: Promise<void>;
+  private retainedMathematicalCalibrationPreviewFrames = new Map<string, RetainedMathematicalCalibrationPreviewFrameV1>();
+  private acknowledgedMathematicalCalibrationDisplayedFrame?: AcknowledgedMathematicalCalibrationDisplayedFrameV1;
+  private mathematicalCalibrationCaptureAuthorization?: ActiveMathematicalCalibrationCaptureAuthorizationV1;
+  private mathematicalCalibrationCaptureAuthorizationExpiryTimer?: ReturnType<typeof setTimeout>;
+  private calibrationActivationState: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+  private calibrationActivationReceipt?: AiGraderCalibrationWorkstationReceiptV1;
+  private calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
 
   constructor(
     config: AiGraderLocalStationBridgeConfig,
@@ -4403,6 +4715,7 @@ export class AiGraderLocalStationBridgeService {
     this.config = config;
     this.runner = runner;
     this.warmRunner = warmRunner;
+    this.calibrationActivationState = dependencies.calibrationActivationRegistry ? "IDLE" : "UNAVAILABLE";
     this.dependencies = dependencies;
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.rapidQueue = readRapidCaptureQueueSync(config);
@@ -4433,6 +4746,7 @@ export class AiGraderLocalStationBridgeService {
               checkerboard: { internalColumns: 11, internalRows: 16, cellMm: 5 },
             },
             capture: (input) => this.captureMathematicalCalibrationHardwareBoundary(input),
+            deriveAnalyzerAuthorityRebindRequests: deriveIncidentAnalyzerAuthorityRequests,
           })
         : undefined
     );
@@ -4622,6 +4936,12 @@ export class AiGraderLocalStationBridgeService {
         this.dependencies.loadMathematicalCalibrationBundle ??
           loadFixedRigMathematicalCalibrationBundleV1,
       ),
+      calibrationActivation: {
+        configured: Boolean(this.dependencies.calibrationActivationRegistry),
+        state: this.calibrationActivationState,
+        ...(this.calibrationActivationReceipt ? { receipt: this.calibrationActivationReceipt } : {}),
+        ...(this.calibrationActivationAuthority ? { authority: this.calibrationActivationAuthority } : {}),
+      },
       provisionalGeometry: {
         active: Boolean(this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256),
         status: this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256
@@ -4652,7 +4972,7 @@ export class AiGraderLocalStationBridgeService {
         provisionalDiagnosticsRun: reportReady,
       },
       bridgeContract: {
-        gradingContracts: ["legacy_v0", "mathematical_calibration_v1"],
+        gradingContracts: ["mathematical_calibration_v1"],
         mathematicalV1: {
           reportBundleSchemaVersion: "ai-grader-report-bundle-v0.3",
           envelopeVersion: AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
@@ -4688,57 +5008,279 @@ export class AiGraderLocalStationBridgeService {
 
   previewStatus(): AiGraderLocalStationPreviewStatus {
     this.refreshPreviewGeometryActiveSide();
+    const mathematicalPreview = this.mathematicalCalibrationPreviewStatus
+      ? structuredClone(this.mathematicalCalibrationPreviewStatus)
+      : undefined;
+    if (mathematicalPreview && this.acknowledgedMathematicalCalibrationDisplayedFrame) {
+      const displayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+      const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+      mathematicalPreview.displayedFrame = {
+        ...displayed,
+        assessmentReady: Boolean(retained?.assessment && retained.assessmentSha256),
+      };
+    }
+    if (mathematicalPreview && this.mathematicalCalibrationCaptureAuthorization) {
+      const authorization = this.mathematicalCalibrationCaptureAuthorization;
+      mathematicalPreview.captureAuthorization = {
+        frameId: authorization.frameId,
+        capturedAt: authorization.capturedAt,
+        slotKey: authorization.slotKey,
+        expiresAt: authorization.expiresAt,
+      };
+    }
     return {
       ...this.manifest.previewStatus,
-      ...(this.mathematicalCalibrationPreviewStatus ? {
-        mathematicalCalibrationPreview: structuredClone(this.mathematicalCalibrationPreviewStatus),
-      } : {}),
+      ...(mathematicalPreview ? { mathematicalCalibrationPreview: mathematicalPreview } : {}),
     };
   }
 
-  private updateMathematicalCalibrationPreviewOverlay(
+  private mathematicalCalibrationFrameKey(frame: MathematicalCalibrationDisplayedFrameV1): string {
+    return `${frame.sessionId}\n${frame.epoch}\n${frame.frameId}`;
+  }
+
+  private invalidateMathematicalCalibrationCaptureAuthorization(
+    reason: string,
+    options: { preservePreviewState?: boolean } = {},
+  ): void {
+    if (this.mathematicalCalibrationCaptureAuthorizationExpiryTimer) {
+      clearTimeout(this.mathematicalCalibrationCaptureAuthorizationExpiryTimer);
+      this.mathematicalCalibrationCaptureAuthorizationExpiryTimer = undefined;
+    }
+    const hadAuthorization = Boolean(this.mathematicalCalibrationCaptureAuthorization);
+    this.mathematicalCalibrationCaptureAuthorization = undefined;
+    if (
+      hadAuthorization
+      && !options.preservePreviewState
+      && !this.captureLock
+      && this.manifest.previewStatus.status === "paused_for_capture"
+    ) {
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: reason,
+      });
+      if (this.mathematicalCalibrationPreviewStatus) {
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          active: false,
+          cameraOwnership: "released",
+        };
+      }
+    }
+  }
+
+  private resetMathematicalCalibrationDisplayedFrameAuthority(reason: string): void {
+    this.invalidateMathematicalCalibrationCaptureAuthorization(reason);
+    this.acknowledgedMathematicalCalibrationDisplayedFrame = undefined;
+    this.retainedMathematicalCalibrationPreviewFrames.clear();
+  }
+
+  private retainMathematicalCalibrationPreviewFrame(
     frame: Buffer,
+    binding: { sessionId: string; sideEpoch: string },
     frameId: string,
     capturedAt: string,
+  ): RetainedMathematicalCalibrationPreviewFrameV1 {
+    const retained: RetainedMathematicalCalibrationPreviewFrameV1 = {
+      sessionId: binding.sessionId,
+      epoch: binding.sideEpoch,
+      frameId,
+      capturedAt,
+      bytes: Buffer.from(frame),
+      frameSha256: crypto.createHash("sha256").update(frame).digest("hex"),
+      retainedAt: new Date().toISOString(),
+    };
+    const key = this.mathematicalCalibrationFrameKey(retained);
+    this.retainedMathematicalCalibrationPreviewFrames.set(key, retained);
+    while (this.retainedMathematicalCalibrationPreviewFrames.size > MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT) {
+      const protectedKeys = new Set([
+        this.acknowledgedMathematicalCalibrationDisplayedFrame
+          ? this.mathematicalCalibrationFrameKey(this.acknowledgedMathematicalCalibrationDisplayedFrame)
+          : "",
+        this.mathematicalCalibrationCaptureAuthorization
+          ? this.mathematicalCalibrationFrameKey(this.mathematicalCalibrationCaptureAuthorization)
+          : "",
+      ]);
+      const removable = [...this.retainedMathematicalCalibrationPreviewFrames.keys()].find((candidate) => !protectedKeys.has(candidate));
+      if (!removable) break;
+      this.retainedMathematicalCalibrationPreviewFrames.delete(removable);
+    }
+    return retained;
+  }
+
+  acknowledgeMathematicalCalibrationDisplayedFrame(
+    frame: MathematicalCalibrationDisplayedFrameV1,
+  ): AiGraderLocalStationPreviewStatus {
+    if (this.mathematicalCalibrationV1SessionId !== frame.sessionId) {
+      throw new Error("Displayed Mathematical Calibration frame requires the exact active V1.0.1 session.");
+    }
+    const preview = this.previewStatus();
+    if (
+      preview.status !== "live"
+      || preview.cameraOwnership !== "preview_stream"
+      || preview.sideEpoch !== frame.epoch
+      || preview.mathematicalCalibrationPreview?.contractVersion !== "1.0.1"
+      || preview.mathematicalCalibrationPreview.sessionId !== frame.sessionId
+      || !preview.mathematicalCalibrationPreview.active
+    ) {
+      throw new Error("Displayed Mathematical Calibration frame does not match the active session and preview epoch.");
+    }
+    const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(frame));
+    if (!retained || retained.capturedAt !== frame.capturedAt) {
+      throw new Error("Displayed Mathematical Calibration frame is not one exact immutable bridge-retained frame.");
+    }
+    const capturedAtMs = Date.parse(frame.capturedAt);
+    const ageMs = Date.now() - capturedAtMs;
+    if (!Number.isFinite(capturedAtMs) || ageMs < -1000 || ageMs > PREVIEW_GEOMETRY_MAX_AGE_MS) {
+      throw new Error("Displayed Mathematical Calibration frame is stale or future-dated.");
+    }
+    this.acknowledgedMathematicalCalibrationDisplayedFrame = {
+      ...frame,
+      acknowledgedAt: new Date().toISOString(),
+      frameSha256: retained.frameSha256,
+    };
+    return this.previewStatus();
+  }
+
+  private async assessRetainedMathematicalCalibrationPreviewFrame(
+    retained: RetainedMathematicalCalibrationPreviewFrameV1,
+  ): Promise<void> {
+    if (retained.assessment && retained.assessmentSha256 && retained.sessionStatus) return;
+    if (retained.assessmentPromise) return retained.assessmentPromise;
+    retained.assessmentPromise = (async () => {
+      const current = this.mathematicalCalibrationPreviewStatus;
+      if (!current || current.sessionId !== retained.sessionId) {
+        throw new Error("Mathematical Calibration detector assessment lost its exact session binding.");
+      }
+      const detectCheckerboard = this.dependencies.detectMathematicalCalibrationPreviewCheckerboard
+        ?? (this.config.mode === "mock"
+          ? async (): Promise<MathematicalCalibrationPreviewCheckerboard> => {
+            throw new Error("mock calibration preview has no checkerboard frame");
+          }
+          : detectMathematicalCalibrationPreviewCheckerboard);
+      const v1 = current.contractVersion === "1.0.1";
+      const nextRole = current.sessionStatus?.nextCaptureSlot?.role;
+      const acceptedPoses = v1
+        ? this.mathematicalCalibrationCaptureProducer?.previewPoses(
+            current.sessionId,
+            nextRole === "lens_geometry" || nextRole === "normalization_registration" || nextRole === "repeated_placement"
+              ? nextRole
+              : undefined,
+          ) ?? Promise.resolve([])
+        : this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
+      const sessionStatusPromise = v1
+        ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
+        : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId);
+      let assessment: MathematicalCalibrationPreviewOverlayV1;
+      let status: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+      try {
+        const [geometry, previousPoses, sessionStatus] = await Promise.all([
+          detectCheckerboard(retained.bytes),
+          acceptedPoses,
+          sessionStatusPromise,
+        ]);
+        status = sessionStatus;
+        const baseAssessment = assessMathematicalCalibrationV1_1Preview({
+          corners: geometry.outerCorners,
+          imageWidth: geometry.imageWidth,
+          imageHeight: geometry.imageHeight,
+          rotationDegrees: geometry.rotationDegrees,
+          acceptedPoses: previousPoses,
+        });
+        assessment = baseAssessment;
+        if (v1) {
+          const role = status.nextCaptureSlot?.role;
+          const progress = status.poseProgress.find((entry) => entry.role === role);
+          const prospectivePoses = baseAssessment.center && baseAssessment.rotationDegrees !== null
+            ? [...previousPoses, {
+                evidenceId: retained.frameId,
+                centerXFraction: baseAssessment.center.xFraction,
+                centerYFraction: baseAssessment.center.yFraction,
+                coverageFraction: baseAssessment.coverageFraction ?? 0,
+                rotationDegrees: baseAssessment.rotationDegrees,
+                cornerSignature: [],
+                imageWidth: geometry.imageWidth,
+                imageHeight: geometry.imageHeight,
+                corners: geometry.outerCorners,
+              }]
+            : previousPoses;
+          const span = (values: readonly number[]) => values.length === 0 ? 0 : Math.max(...values) - Math.min(...values);
+          const prospectiveAggregate = {
+            x: Number(span(prospectivePoses.map((pose) => pose.centerXFraction)).toFixed(6)),
+            y: Number(span(prospectivePoses.map((pose) => pose.centerYFraction)).toFixed(6)),
+            rotationDegrees: Number(span(prospectivePoses.map((pose) => pose.rotationDegrees)).toFixed(6)),
+          };
+          const tenthAggregateSatisfied = !progress || progress.acceptedCount < 9 || (
+            prospectiveAggregate.x >= progress.requiredAggregate.x
+            && prospectiveAggregate.y >= progress.requiredAggregate.y
+            && prospectiveAggregate.rotationDegrees >= progress.requiredAggregate.rotationDegrees
+          );
+          const guidance = [...baseAssessment.reasons];
+          if (role === "lens_geometry" || role === "normalization_registration") {
+            guidance.push(
+              `prospective ${role} spans X ${prospectiveAggregate.x.toFixed(4)}/${progress?.requiredAggregate.x.toFixed(4) ?? "-"}, `
+              + `Y ${prospectiveAggregate.y.toFixed(4)}/${progress?.requiredAggregate.y.toFixed(4) ?? "-"}, `
+              + `rotation ${prospectiveAggregate.rotationDegrees.toFixed(2)}/${progress?.requiredAggregate.rotationDegrees.toFixed(2) ?? "-"} degrees`,
+            );
+            if (progress?.acceptedCount === 9 && !tenthAggregateSatisfied) {
+              guidance.push("move or rotate the target until every prospective tenth-pose span reaches its centralized minimum");
+            }
+          } else if (role === "repeated_placement") {
+            guidance.push("remove and reseat the checkerboard for the exact pending repeated-placement slot");
+          } else if (status.nextCaptureSlot?.targetFace === "blank_reverse") {
+            guidance.push("stop preview, confirm camera release, then flip to the blank reverse");
+          }
+          assessment = {
+            ...baseAssessment,
+            sufficientlyDistinct: baseAssessment.valid && tenthAggregateSatisfied,
+            placementIndex: previousPoses.length + 1,
+            nextPlacementIndex: previousPoses.length + 2,
+            guidance,
+            prospectiveAggregate,
+          };
+        }
+      } catch {
+        status = await (v1
+          ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
+          : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId));
+        assessment = assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] });
+      }
+      retained.assessment = structuredClone(assessment);
+      retained.assessmentSha256 = crypto.createHash("sha256").update(JSON.stringify(retained.assessment)).digest("hex");
+      retained.sessionStatus = structuredClone(status);
+      if (
+        this.mathematicalCalibrationPreviewStatus?.sessionId === retained.sessionId
+        && this.manifest.previewStatus.sideEpoch === retained.epoch
+      ) {
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          overlay: structuredClone(assessment),
+          sessionStatus: structuredClone(status),
+          lastFrameId: retained.frameId,
+          lastFrameAt: retained.capturedAt,
+        };
+      }
+    })().finally(() => {
+      retained.assessmentPromise = undefined;
+    });
+    return retained.assessmentPromise;
+  }
+
+  private updateMathematicalCalibrationPreviewOverlay(
+    retained: RetainedMathematicalCalibrationPreviewFrameV1,
   ): void {
     const current = this.mathematicalCalibrationPreviewStatus;
     if (!current || !current.active) return;
     if (this.mathematicalCalibrationPreviewDetectionInFlight) return;
     this.mathematicalCalibrationPreviewDetectionInFlight = true;
-    const detectCheckerboard = this.dependencies.detectMathematicalCalibrationPreviewCheckerboard
-      ?? (this.config.mode === "mock"
-        ? async (): Promise<MathematicalCalibrationPreviewCheckerboard> => {
-          throw new Error("mock calibration preview has no checkerboard frame");
-        }
-        : detectMathematicalCalibrationPreviewCheckerboard);
-    const acceptedPoses = this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
-    void Promise.all([detectCheckerboard(frame), acceptedPoses]).then(([geometry, previousPoses]) => {
-      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId || !this.mathematicalCalibrationPreviewStatus.active) return;
-      const assessment = assessMathematicalCalibrationV1_1Preview({
-        corners: geometry.outerCorners,
-        imageWidth: geometry.imageWidth,
-        imageHeight: geometry.imageHeight,
-        rotationDegrees: geometry.rotationDegrees,
-        acceptedPoses: previousPoses,
-      });
-      this.mathematicalCalibrationPreviewStatus = {
-        ...this.mathematicalCalibrationPreviewStatus,
-        overlay: assessment,
-        lastFrameId: frameId,
-        lastFrameAt: capturedAt,
-      };
-    }).catch((error) => {
-      if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId) return;
-      this.mathematicalCalibrationPreviewStatus = {
-        ...this.mathematicalCalibrationPreviewStatus,
-        overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
-        lastFrameId: frameId,
-        lastFrameAt: capturedAt,
-      };
-      void error;
-    }).finally(() => {
+    const promise = this.assessRetainedMathematicalCalibrationPreviewFrame(retained).finally(() => {
       this.mathematicalCalibrationPreviewDetectionInFlight = false;
+      if (this.mathematicalCalibrationPreviewDetectionPromise === promise) {
+        this.mathematicalCalibrationPreviewDetectionPromise = undefined;
+      }
     });
+    this.mathematicalCalibrationPreviewDetectionPromise = promise;
+    void promise;
   }
 
   liveLightingStatus(): AiGraderLiveLightingStatus {
@@ -6353,6 +6895,7 @@ export class AiGraderLocalStationBridgeService {
   private bindMathematicalGradingAuthority(
     manifest: AiGraderLocalStationBridgeManifest,
     value: unknown,
+    calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
   ): void {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
       throw new Error("Mathematical grading authority can bind only to an explicit Mathematical V1 session.");
@@ -6368,8 +6911,12 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical grading authority is already bound to this exact session.");
     }
     manifest.mathematicalV1 = newLocalMathematicalV1State(
-      validateLocalMathematicalGradingAuthorityV1(value),
+      validateLocalMathematicalGradingAuthorityV1(value, {
+        hmacKey: this.config.cardFormatAuthorityHmacKey,
+        keyId: this.config.cardFormatAuthorityHmacKeyId,
+      }),
       manifest.createdAt,
+      calibrationActivationAuthority,
     );
     manifest.progressLog.push(
       new Date().toISOString() +
@@ -6849,9 +7396,23 @@ export class AiGraderLocalStationBridgeService {
         !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
       throw new Error("Mathematical V1 processing requires one exact authority-bound station session.");
     }
-    if (!this.config.mathematicalCalibrationBundlePath ||
-        !this.config.mathematicalCalibrationBundleSha256) {
-      throw new Error("Mathematical V1 processing requires one protected finalized calibration bundle.");
+    const activationAuthority = manifest.mathematicalV1.calibrationActivationAuthority;
+    let calibrationBundlePath = this.config.mathematicalCalibrationBundlePath;
+    let calibrationBundleSha256 = this.config.mathematicalCalibrationBundleSha256;
+    if (this.config.mode === "real") {
+      if (!this.dependencies.calibrationActivationRegistry || !activationAuthority) {
+        throw new Error("Mathematical V1 processing requires the exact session-bound calibration activation; configured bundle fallback is prohibited.");
+      }
+      const activationBinding = await this.dependencies.calibrationActivationRegistry.assertBoundSessionAuthority(
+        activationAuthority,
+      );
+      calibrationBundlePath = activationBinding.bundlePath;
+      calibrationBundleSha256 = activationAuthority.bundleManifestSha256;
+    } else if (!calibrationBundlePath || !calibrationBundleSha256) {
+      throw new Error(
+        "Mathematical V1 mock processing requires one explicit finalized calibration fixture. " +
+        "Production configured-bundle fallback remains prohibited.",
+      );
     }
     const prior = manifest.mathematicalV1.execution;
     const attempt = (prior?.attempt ?? 0) + 1;
@@ -6890,11 +7451,22 @@ export class AiGraderLocalStationBridgeService {
         outputDir: mathematicalPublishPackageDir(this.config, manifest.reportId),
         captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
         calibration: {
-          bundlePath: this.config.mathematicalCalibrationBundlePath,
-          bundleSha256: this.config.mathematicalCalibrationBundleSha256,
+          activationAuthority,
+          bundlePath: calibrationBundlePath,
+          bundleSha256: calibrationBundleSha256,
           expectedRigId: this.config.mathematicalCalibrationRigId,
+          ...(this.config.mathematicalCalibrationRuntimeContext
+            ? { expectedRuntimeContext: this.config.mathematicalCalibrationRuntimeContext }
+            : {}),
         },
         warmSides: { front, back },
+        ...(this.config.cardFormatAuthorityHmacKey &&
+          this.config.cardFormatAuthorityHmacKeyId ? {
+            cardFormatAuthorityVerification: {
+              hmacKey: this.config.cardFormatAuthorityHmacKey,
+              keyId: this.config.cardFormatAuthorityHmacKeyId,
+            },
+          } : {}),
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
@@ -8329,6 +8901,7 @@ export class AiGraderLocalStationBridgeService {
       reportId?: string;
       captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
+      calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
@@ -8344,6 +8917,7 @@ export class AiGraderLocalStationBridgeService {
       reportId?: string;
       captureProfile: "production_fast";
       gradingContract?: AiGraderGradingContract;
+      calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
     },
     now = new Date().toISOString(),
@@ -8376,7 +8950,7 @@ export class AiGraderLocalStationBridgeService {
     this.releaseFullForensicPreviewHold("new station session started");
     this.clearLiveLightingWatchdog();
     const manifest = newManifest(this.config, now);
-    manifest.gradingContract = request.gradingContract ?? "legacy_v0";
+    manifest.gradingContract = request.gradingContract ?? "mathematical_calibration_v1";
     manifest.captureProfile = "production_fast";
     manifest.captureTiming = createAiGraderCaptureTimingMetadata({
       captureProfile: manifest.captureProfile,
@@ -8391,7 +8965,7 @@ export class AiGraderLocalStationBridgeService {
     manifest.outputs.manifestPath = path.join(packageDir, "station-session.json");
     manifest.currentStep = "capture_front";
     if (manifest.gradingContract === "mathematical_calibration_v1" && request.mathematicalGradingAuthority) {
-      this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority);
+      this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority, request.calibrationActivationAuthority);
     }
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
@@ -8809,6 +9383,125 @@ export class AiGraderLocalStationBridgeService {
       if (!result.ok) throw new Error(result.error ?? `Leimac live lighting write ${frame.name} failed.`);
     }
     return writes;
+  }
+
+  async observeMathematicalCalibrationActivationRuntime(
+    expected: AiGraderOperatingContextV1,
+    helperInstanceId: string,
+    helperVersion: string,
+  ): Promise<MathematicalCalibrationRuntimeObservationV1> {
+    if (this.dependencies.observeCalibrationActivationRuntime) {
+      return this.dependencies.observeCalibrationActivationRuntime(expected);
+    }
+    if (this.config.mode !== "real") {
+      throw new Error(
+        "Calibration activation runtime observation requires the concrete opened-device adapter in real mode or an injected hardware-free test boundary.",
+      );
+    }
+    assertRealBridgeArmed(this.config);
+    if (this.manifest.sessionId || this.captureLock || this.frontCaptureTransition ||
+        this.manifest.previewStatus.intentionalTransition.active ||
+        this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+      throw new Error("Calibration activation runtime observation requires an exactly idle, sessionless helper.");
+    }
+    if (!this.config.leimacHost) {
+      throw new Error("Calibration activation runtime observation requires one configured Leimac controller endpoint.");
+    }
+
+    const owner = `calibration-activation-runtime:${crypto.randomUUID()}`;
+    const previousWarmRunnerStatus = this.manifest.warmRunnerStatus.status;
+    const previousWarmRunnerActiveSide = this.manifest.warmRunnerStatus.activeSide;
+    this.acquireCaptureLock(owner);
+    try {
+      const safeOffBefore = await this.runTerminalSafeOff("calibration activation runtime preflight");
+      if (!safeOffBefore.ok) {
+      throw new Error(
+        safeOffBefore.directError?.message ?? safeOffBefore.guardedCleanupError?.message ??
+        "Calibration activation runtime preflight safe-off could not be confirmed.",
+      );
+    }
+    const profile: AiGraderLiveLightingProfile = {
+      enabled: expected.lighting.dutyPercent > 0 && expected.lighting.selectedChannels.length > 0,
+      dutyPercent: expected.lighting.dutyPercent,
+      actualLeimacPwmStep: leimacIdmuDutyPercentToSteps(expected.lighting.dutyPercent),
+      channels: expected.lighting.selectedChannels,
+      source: "accepted_station_profile",
+      acceptedForCapture: true,
+    };
+    const frames = this.liveLightingFrames(profile);
+    let verification: ReturnType<AiGraderLocalStationBridgeService["strictLightingAcknowledgements"]> | undefined;
+    let captureResult: Awaited<ReturnType<BaslerPylonClient["captureStill"]>> | undefined;
+    let operationError: Error | undefined;
+    let safeOffAfter: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>> | undefined;
+    try {
+      verification = this.strictLightingAcknowledgements(
+        frames,
+        await this.executeLiveLightingFrames(frames),
+      );
+      const outputDir = path.join(this.config.outputDir, "calibration-activation-runtime-probes");
+      await mkdir(outputDir, { recursive: true });
+      this.dependencies.onRealHardwareBoundary?.("calibration_camera_capture");
+      const client = new BaslerPylonClient({
+        pylonRoot: this.config.pylonRoot,
+        bridgeScriptPath: this.config.baslerBridgeScript,
+        timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
+      });
+      captureResult = await client.captureStill({
+        outputDir,
+        label: `calibration-activation-runtime-${Date.now()}`,
+        cameraIndex: this.config.cameraIndex ?? 0,
+        savedFormat: "png",
+        exposureUs: expected.capture.exposureUs,
+        gain: expected.capture.gain,
+      });
+    } catch (error) {
+      operationError = error instanceof Error ? error : new Error("Calibration activation runtime observation failed.");
+    } finally {
+      safeOffAfter = await this.runTerminalSafeOff("calibration activation runtime completion");
+    }
+    if (!safeOffAfter.ok) {
+      const message = safeOffAfter.directError?.message ?? safeOffAfter.guardedCleanupError?.message ??
+        "Calibration activation runtime completion safe-off could not be confirmed.";
+      throw new Error(operationError ? `${operationError.message} Runtime safe-off also failed: ${message}` : message);
+    }
+    if (operationError) throw operationError;
+    if (!captureResult || !verification) {
+      throw new Error("Calibration activation runtime observation did not return exact camera/controller evidence.");
+    }
+    const cameraSerial = captureResult.camera.serialNumber?.trim();
+    const cameraModel = captureResult.camera.modelName?.trim() ?? captureResult.camera.friendlyName?.trim();
+    if (!cameraSerial || !cameraModel || !captureResult.sourcePixelFormat ||
+        !Number.isInteger(captureResult.imageWidth) || !Number.isInteger(captureResult.imageHeight)) {
+      throw new Error("Opened Basler runtime observation lacks exact camera identity, pixel format, or resolution.");
+    }
+    const applied = requireAppliedMathematicalCalibrationCameraSettings(captureResult);
+    return {
+      schemaVersion: MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_V1,
+      source: MATHEMATICAL_CALIBRATION_RUNTIME_OBSERVATION_SOURCE_V1,
+      camera: { serial: cameraSerial, model: cameraModel },
+      capture: {
+        exposureUs: applied.exposureUs,
+        gain: applied.gain,
+        pixelFormat: captureResult.sourcePixelFormat,
+        widthPx: captureResult.imageWidth,
+        heightPx: captureResult.imageHeight,
+      },
+      controller: {
+        controllerTransportIdentity:
+          `leimac-idmu-tcp:${this.config.leimacHost}:${this.config.leimacPort ?? 502}:unit:${this.config.leimacUnit ?? 1}`,
+        selectedChannels: [...expected.lighting.selectedChannels],
+        dutyPercent: expected.lighting.dutyPercent,
+        expectedWriteCount: verification.expectedWriteCount,
+        acknowledgedWriteCount: verification.acknowledgedWriteCount,
+        allWritesAcknowledged: true,
+      },
+      software: { helperInstanceId, helperVersion },
+    };
+    } finally {
+      this.releaseCaptureLock(owner);
+      this.manifest.warmRunnerStatus.status = previousWarmRunnerStatus;
+      this.manifest.warmRunnerStatus.activeSide = previousWarmRunnerActiveSide;
+    }
   }
 
   private async captureMathematicalCalibrationHardwareBoundary(
@@ -10595,9 +11288,29 @@ export class AiGraderLocalStationBridgeService {
     const calibrationPreviewSessionId = calibrationPreviewHeader === undefined
       ? undefined
       : exactRequestHeader(req, "X-AI-Grader-Mathematical-Calibration-Session-Id");
-    const calibrationPreviewBound = Boolean(
-      calibrationPreviewSessionId && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId,
-    );
+    const calibrationPreviewContractVersion = calibrationPreviewSessionId !== undefined
+      && calibrationPreviewSessionId === this.mathematicalCalibrationV1SessionId
+      ? "1.0.1" as const
+      : calibrationPreviewSessionId !== undefined
+        && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId
+        ? "1.1.0" as const
+        : undefined;
+    const calibrationPreviewBound = calibrationPreviewContractVersion !== undefined;
+    if (calibrationPreviewSessionId && !calibrationPreviewBound) {
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_CALIBRATION_PREVIEW_SESSION_MISMATCH",
+          message: "Mathematical Calibration preview requires the exact active bridge-bound session.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config,
+      );
+      return Promise.resolve();
+    }
     if (calibrationPreviewBound && this.config.port !== MATHEMATICAL_CALIBRATION_PREVIEW_PORT) {
       sendJson(
         res,
@@ -10605,7 +11318,7 @@ export class AiGraderLocalStationBridgeService {
         {
           ok: false,
           code: "AI_GRADER_CALIBRATION_PREVIEW_PROTECTED_PORT_REQUIRED",
-          message: `Mathematical Calibration V1.1 preview requires protected bridge port ${MATHEMATICAL_CALIBRATION_PREVIEW_PORT}.`,
+          message: `Mathematical Calibration preview requires protected bridge port ${MATHEMATICAL_CALIBRATION_PREVIEW_PORT}.`,
           result: this.previewStatus(),
         },
         origin,
@@ -10724,6 +11437,9 @@ export class AiGraderLocalStationBridgeService {
       );
       return Promise.resolve();
     }
+    if (calibrationPreviewContractVersion === "1.0.1") {
+      this.resetMathematicalCalibrationDisplayedFrameAuthority("V1.0.1 preview reconnect invalidated displayed-frame capture authority.");
+    }
     const previewReservation = ++this.previewStreamRequestSequence;
     this.previewStreamReservation = previewReservation;
     try {
@@ -10737,7 +11453,7 @@ export class AiGraderLocalStationBridgeService {
       ? {
           sessionId: calibrationPreviewSessionId!,
           side: "front" as const,
-          sideEpoch: `mathematical-calibration-v1.1-${calibrationPreviewSessionId}`,
+          sideEpoch: `mathematical-calibration-${calibrationPreviewContractVersion}-${calibrationPreviewSessionId}-${previewReservation}`,
         }
       : {
           sessionId: this.manifest.sessionId!,
@@ -10774,11 +11490,15 @@ export class AiGraderLocalStationBridgeService {
       lastStopReason: undefined,
     });
     if (calibrationPreviewBound) {
+      const sessionStatus = calibrationPreviewContractVersion === "1.0.1"
+        ? await this.requireMathematicalCalibrationCaptureProducer().status(binding.sessionId)
+        : await this.requireMathematicalCalibrationCaptureProducerV1_1().status(binding.sessionId);
       this.mathematicalCalibrationPreviewStatus = {
-        contractVersion: "1.1.0",
+        contractVersion: calibrationPreviewContractVersion!,
         sessionId: binding.sessionId,
         active: true,
         overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
+        sessionStatus,
         cameraOwnership: this.config.mode === "real" ? "preview_stream" : "released",
         reconnectAllowed: true,
       };
@@ -10848,7 +11568,8 @@ export class AiGraderLocalStationBridgeService {
           frameCount += 1;
           const generatedAt = new Date().toISOString();
           const frameId = `frame-${streamSequence}-${frameCount}`;
-          writeMjpegFrame(res, "image/svg+xml", mockPreviewSvg(frameCount, generatedAt), frameCount, generatedAt, binding, frameId);
+          const frameBytes = mockPreviewSvg(frameCount, generatedAt);
+          writeMjpegFrame(res, "image/svg+xml", frameBytes, frameCount, generatedAt, binding, frameId);
           if (!calibrationPreviewBound) {
             this.notePreviewFrame(frameCount, binding, frameId, generatedAt);
             this.noteMockPreviewGeometry(frameCount, frameId);
@@ -10861,12 +11582,8 @@ export class AiGraderLocalStationBridgeService {
               firstFrameAt: this.manifest.previewStatus.firstFrameAt ?? generatedAt,
               lastFrameAt: generatedAt,
             });
-            this.mathematicalCalibrationPreviewStatus = {
-              ...this.mathematicalCalibrationPreviewStatus,
-              lastFrameId: frameId,
-              lastFrameAt: generatedAt,
-            };
-            this.updateMathematicalCalibrationPreviewOverlay(Buffer.from(mockPreviewSvg(frameCount, generatedAt)), frameId, generatedAt);
+            const retained = this.retainMathematicalCalibrationPreviewFrame(frameBytes, binding, frameId, generatedAt);
+            this.updateMathematicalCalibrationPreviewOverlay(retained);
           }
         };
         send();
@@ -10932,12 +11649,13 @@ export class AiGraderLocalStationBridgeService {
               });
             }
             if (calibrationPreviewBound && this.mathematicalCalibrationPreviewStatus) {
-              this.mathematicalCalibrationPreviewStatus = {
-                ...this.mathematicalCalibrationPreviewStatus,
-                lastFrameId: frameId,
-                lastFrameAt: frame.capturedAt ?? frame.receivedAt,
-              };
-              this.updateMathematicalCalibrationPreviewOverlay(frame.bytes, frameId, frame.capturedAt ?? frame.receivedAt);
+              const retained = this.retainMathematicalCalibrationPreviewFrame(
+                frame.bytes,
+                binding,
+                frameId,
+                frame.capturedAt ?? frame.receivedAt,
+              );
+              this.updateMathematicalCalibrationPreviewOverlay(retained);
             }
             if (!calibrationPreviewBound) this.queuePreviewGeometryAnalysis(
               frame.bytes,
@@ -11720,7 +12438,14 @@ export class AiGraderLocalStationBridgeService {
     request: StartFixedRigMathematicalCalibrationCaptureV1Request,
   ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     this.assertCalibrationSessionIsolated();
-    return this.requireMathematicalCalibrationCaptureProducer().start(request);
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== request.sessionId) {
+      throw new Error("Only one active Mathematical Calibration V1.0.1 session may be bound to the protected bridge.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducer().start(request).then((status) => {
+      this.resetMathematicalCalibrationDisplayedFrameAuthority("V1.0.1 session start or resume invalidated displayed-frame capture authority.");
+      this.mathematicalCalibrationV1SessionId = request.sessionId;
+      return status;
+    });
   }
 
   startMathematicalCalibrationV1_1Capture(
@@ -11737,7 +12462,248 @@ export class AiGraderLocalStationBridgeService {
   }
 
   mathematicalCalibrationCaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Mathematical Calibration V1.0.1 status is bound to the active calibration session only.");
+    }
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
+  }
+
+  recoverKnownMathematicalCalibrationBlankReverseTimestampFalseStop(): Promise<FixedRigMathematicalCalibrationFalseStopRecoveryV1> {
+    this.assertCalibrationSessionIsolated();
+    if (!this.mathematicalCalibrationV1SessionId) {
+      throw new Error("The incident-bound V1.0.1 false-stop recovery requires its exact session to be explicitly resumed and bridge-bound first.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducer()
+      .recoverKnownBlankReverseTimestampFalseStop(this.mathematicalCalibrationV1SessionId)
+      .then((result) => {
+        this.resetMathematicalCalibrationDisplayedFrameAuthority(
+          "Incident-bound V1.0.1 false-stop recovery invalidated all displayed-frame authority.",
+        );
+        return result;
+      });
+  }
+
+  rebindKnownMathematicalCalibrationAnalyzerAuthority(): Promise<FixedRigMathematicalCalibrationAnalyzerAuthorityRebindV1> {
+    this.assertCalibrationSessionIsolated();
+    return this.requireMathematicalCalibrationCaptureProducer().rebindKnownSealedAnalyzerAuthority();
+  }
+
+  async authorizeMathematicalCalibrationDisplayedFrame(
+    sessionId: string,
+  ): Promise<MathematicalCalibrationCaptureAuthorizationV1> {
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    if (!ATOMIC_CAPTURE_ASSERTION_RE.test(sessionId) || this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Displayed-frame capture authorization requires the exact active V1.0.1 session.");
+    }
+    if (this.mathematicalCalibrationCaptureAuthorization) {
+      const expiresAtMs = Date.parse(this.mathematicalCalibrationCaptureAuthorization.expiresAt);
+      if (Number.isFinite(expiresAtMs) && expiresAtMs > Date.now()) {
+        throw new Error("A displayed-frame capture authorization is already active and must be consumed or expire before another is issued.");
+      }
+      this.invalidateMathematicalCalibrationCaptureAuthorization("Expired V1.0.1 displayed-frame capture authorization was discarded.");
+    }
+    const producer = this.requireMathematicalCalibrationCaptureProducer();
+    const displayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+    const preview = this.previewStatus();
+    const durable = await producer.status(sessionId);
+    if (
+      !displayed
+      || displayed.sessionId !== sessionId
+      || preview.status !== "live"
+      || preview.cameraOwnership !== "preview_stream"
+      || preview.sideEpoch !== displayed.epoch
+      || preview.mathematicalCalibrationPreview?.contractVersion !== "1.0.1"
+      || preview.mathematicalCalibrationPreview.sessionId !== sessionId
+      || !preview.mathematicalCalibrationPreview.active
+    ) {
+      throw new Error("Displayed-frame capture authorization requires one exact page-acknowledged frame in the active session and preview epoch.");
+    }
+    const retained = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+    const frameAt = Date.parse(displayed.capturedAt);
+    const frameAgeMs = Date.now() - frameAt;
+    if (
+      !retained
+      || retained.capturedAt !== displayed.capturedAt
+      || retained.frameSha256 !== displayed.frameSha256
+      || !Number.isFinite(frameAt)
+      || frameAgeMs < -1000
+      || frameAgeMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+    ) {
+      throw new Error("Displayed-frame capture authorization rejected missing, changed, stale, or future-dated immutable frame evidence.");
+    }
+    const nextSlot = durable.nextCaptureSlot;
+    if (!nextSlot || nextSlot.targetFace !== "checkerboard") {
+      throw new Error("Displayed-frame capture authorization is available only for the exact pending checkerboard slot.");
+    }
+    const authorizationId = `math-cal-auth-${crypto.randomUUID().replace(/-/g, "")}`;
+    const hardStopPhysicalLifecycle = async (reason: string): Promise<never> => {
+      await producer.recordHardStop(sessionId, authorizationId, reason);
+      let cleanupError: string | undefined;
+      try {
+        await this.stopPreviewStream("V1.0.1 displayed-frame authorization physical lifecycle failure", {
+          waitForRelease: true,
+          requireRelease: true,
+          settleMs: PREVIEW_CAMERA_SETTLE_MS,
+        });
+      } catch (error) {
+        cleanupError = error instanceof Error ? error.message : "Calibration preview cleanup failed.";
+      }
+      try {
+        const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${authorizationId} authorization failure`);
+        if (!safeOff.ok) {
+          cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration authorization safe-off could not be confirmed."]
+            .filter(Boolean).join(" ");
+        }
+      } catch (error) {
+        cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration authorization safe-off failed."]
+          .filter(Boolean).join(" ");
+      }
+      this.resetMathematicalCalibrationDisplayedFrameAuthority(reason);
+      throw new Error(cleanupError ? `${reason} Cleanup also failed: ${cleanupError}` : reason);
+    };
+    return this.serializeTerminalLifecycle(async () => {
+      const durableAtPause = await producer.status(sessionId);
+      const currentDisplayed = this.acknowledgedMathematicalCalibrationDisplayedFrame;
+      const currentPreview = this.previewStatus();
+      if (
+        !currentDisplayed
+        || this.mathematicalCalibrationFrameKey(currentDisplayed) !== this.mathematicalCalibrationFrameKey(displayed)
+        || currentDisplayed.capturedAt !== displayed.capturedAt
+        || currentDisplayed.frameSha256 !== displayed.frameSha256
+        || currentPreview.status !== "live"
+        || currentPreview.cameraOwnership !== "preview_stream"
+        || currentPreview.sideEpoch !== displayed.epoch
+        || durableAtPause.nextCaptureSlot?.slotKey !== nextSlot.slotKey
+      ) {
+        throw new Error("Displayed-frame capture authorization changed before preview pause; reconnect and display a fresh frame.");
+      }
+      try {
+        await this.awaitLightingLifecycleIdle();
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
+      }
+      try {
+        await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1 displayed-frame authorization");
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before displayed-frame authorization.");
+      }
+      try {
+        if (this.mathematicalCalibrationPreviewDetectionPromise) {
+          await this.mathematicalCalibrationPreviewDetectionPromise;
+        }
+        await this.assessRetainedMathematicalCalibrationPreviewFrame(retained);
+        const retainedAfterPause = this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(displayed));
+        const durableAfterPause = await producer.status(sessionId);
+        if (
+          retainedAfterPause !== retained
+          || crypto.createHash("sha256").update(retained.bytes).digest("hex") !== retained.frameSha256
+          || !retained.assessment
+          || !retained.assessmentSha256
+          || retained.sessionStatus?.sessionStateSha256 !== durableAfterPause.sessionStateSha256
+          || durableAfterPause.nextCaptureSlot?.slotKey !== nextSlot.slotKey
+        ) {
+          this.resetMathematicalCalibrationDisplayedFrameAuthority("Displayed-frame evidence or exact pending slot changed during authorization.");
+          throw new Error("Displayed-frame evidence or exact pending slot changed during authorization; no capture was authorized.");
+        }
+        const issuedAtMs = Date.now();
+        const authorization: ActiveMathematicalCalibrationCaptureAuthorizationV1 = {
+          authorizationId,
+          sessionId,
+          epoch: displayed.epoch,
+          frameId: displayed.frameId,
+          capturedAt: displayed.capturedAt,
+          frameSha256: retained.frameSha256,
+          detectorAssessmentSha256: retained.assessmentSha256,
+          slotKey: nextSlot.slotKey,
+          issuedAt: new Date(issuedAtMs).toISOString(),
+          expiresAt: new Date(issuedAtMs + MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS).toISOString(),
+        };
+        this.mathematicalCalibrationCaptureAuthorization = authorization;
+        this.mathematicalCalibrationCaptureAuthorizationExpiryTimer = setTimeout(() => {
+          if (this.mathematicalCalibrationCaptureAuthorization?.authorizationId === authorizationId) {
+            this.invalidateMathematicalCalibrationCaptureAuthorization("V1.0.1 displayed-frame capture authorization expired unused.");
+          }
+        }, MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS);
+        this.mathematicalCalibrationCaptureAuthorizationExpiryTimer.unref?.();
+        return structuredClone(authorization);
+      } catch (error) {
+        if (this.mathematicalCalibrationCaptureAuthorization?.authorizationId === authorizationId) {
+          this.invalidateMathematicalCalibrationCaptureAuthorization("V1.0.1 displayed-frame authorization failed.");
+        } else if (this.manifest.previewStatus.status === "paused_for_capture") {
+          this.updatePreviewStatus({
+            status: "stopped",
+            cameraOwnership: "released",
+            lastStopReason: "V1.0.1 displayed-frame authorization failed before an authorization was issued.",
+          });
+        }
+        throw error;
+      }
+    });
+  }
+
+  prepareMathematicalCalibrationRigMaterializationInput(
+    sessionId: string,
+  ): Promise<ProducedFastCalibrationRigMaterializationInputV1_2> {
+    if (!ATOMIC_CAPTURE_ASSERTION_RE.test(sessionId)) throw new Error("Mathematical Calibration V1.0.1 materialization sessionId is invalid.");
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Rig materialization input is bound to the active V1.0.1 session only.");
+    }
+    const producer = this.requireMathematicalCalibrationCaptureProducer();
+    return producer.status(sessionId).then((status) => {
+      if (!status.sealed || status.hardStop || !status.captureManifestPath) {
+        throw new Error("Rig materialization input requires one exact sealed, healthy V1.0.1 capture session.");
+      }
+      return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction("mathematical calibration V1.2 rig-authority probe");
+      const owner = `mathematical-calibration-rig-input:${sessionId}`;
+      this.acquireCaptureLock(owner);
+      try {
+        const current = await producer.status(sessionId);
+        if (!current.sealed || current.hardStop || !current.captureManifestPath || current.captureManifestPath !== status.captureManifestPath || current.sessionStateSha256 !== status.sessionStateSha256) {
+          throw new Error("Rig materialization input requires one exact sealed, healthy V1.0.1 capture session.");
+        }
+        const captureManifestBytes = await readFile(current.captureManifestPath);
+        const liveContext = this.dependencies.probeFastCalibrationRigMaterializationContextV1_2
+          ? await this.dependencies.probeFastCalibrationRigMaterializationContextV1_2()
+          : await this.probeFastCalibrationRigMaterializationContextV1_2(current.sessionDir);
+        return await (this.dependencies.produceFastCalibrationRigMaterializationInputV1_2 ??
+          produceFastCalibrationRigMaterializationInputV1_2)({
+          captureManifestPath: current.captureManifestPath,
+          captureManifestSha256: crypto.createHash("sha256").update(captureManifestBytes).digest("hex"),
+          liveContext,
+          observedAt: new Date().toISOString(),
+        });
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      });
+    });
+  }
+
+  private async probeFastCalibrationRigMaterializationContextV1_2(
+    sessionDir: string,
+  ): Promise<BaslerMathematicalCalibrationLiveContextV1_2> {
+    if (!this.config.leimacHost || !this.config.leimacPort || !this.config.leimacUnit) {
+      throw new Error("Protected rig materialization probe requires the configured Leimac endpoint and unit.");
+    }
+    const session = new BaslerLeimacMathematicalCalibrationSessionV1_2({
+      outputDir: path.join(sessionDir, "rig-materialization-probe"),
+      cameraIndex: this.config.cameraIndex ?? 0,
+      ...(this.config.pylonRoot ? { pylonRoot: this.config.pylonRoot } : {}),
+      ...(this.config.baslerBridgeScript ? { bridgeScriptPath: this.config.baslerBridgeScript } : {}),
+      timeoutMs: this.config.pylonTimeoutMs,
+      exposureUs: this.config.exposureUs,
+      gain: this.config.gain,
+      leimacHost: this.config.leimacHost,
+      leimacPort: this.config.leimacPort,
+      leimacUnit: this.config.leimacUnit,
+      dutyPercent: this.config.duty,
+    });
+    return session.probeContext();
   }
 
   mathematicalCalibrationV1_1CaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
@@ -11753,27 +12719,169 @@ export class AiGraderLocalStationBridgeService {
     this.assertCalibrationSessionIsolated();
     assertRealBridgeArmed(this.config);
     return this.serializeTerminalLifecycle(async () => {
-      await this.awaitLightingLifecycleIdle();
-      await this.stopPreviewForHardwareAction("mathematical calibration");
+      const producer = this.requireMathematicalCalibrationCaptureProducer();
+      const rejectPreflight = (reason: string): never => {
+        if (
+          request.captureAuthorizationId
+          && request.captureAuthorizationId === this.mathematicalCalibrationCaptureAuthorization?.authorizationId
+        ) {
+          this.invalidateMathematicalCalibrationCaptureAuthorization(reason);
+        }
+        throw new Error(reason);
+      };
+      const hardStopPhysicalLifecycle = async (reason: string): Promise<never> => {
+        const authoritySessionId = this.mathematicalCalibrationV1SessionId ?? request.sessionId;
+        await producer.recordHardStop(authoritySessionId, request.operationId, reason);
+        let cleanupError: string | undefined;
+        try {
+          await this.stopPreviewStream("V1.0.1 calibration physical lifecycle failure", {
+            waitForRelease: true,
+            requireRelease: true,
+            settleMs: PREVIEW_CAMERA_SETTLE_MS,
+          });
+        } catch (error) {
+          cleanupError = error instanceof Error ? error.message : "Calibration preview cleanup failed.";
+        }
+        try {
+          const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${request.operationId} physical lifecycle failure`);
+          if (!safeOff.ok) {
+            cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration physical-failure safe-off could not be confirmed."]
+              .filter(Boolean).join(" ");
+          }
+        } catch (error) {
+          cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration physical-failure safe-off failed."]
+            .filter(Boolean).join(" ");
+        }
+        if (!cleanupError) {
+          this.updatePreviewStatus({ status: "stopped", cameraOwnership: "released", lastStopReason: reason });
+          if (this.mathematicalCalibrationPreviewStatus?.sessionId === authoritySessionId) {
+            this.mathematicalCalibrationPreviewStatus = {
+              ...this.mathematicalCalibrationPreviewStatus,
+              active: false,
+              cameraOwnership: "released",
+              sessionStatus: await producer.status(authoritySessionId),
+            };
+          }
+        }
+        throw new Error(cleanupError ? `${reason} Cleanup also failed: ${cleanupError}` : reason);
+      };
+      if (this.mathematicalCalibrationV1SessionId !== request.sessionId) {
+        return rejectPreflight("Mathematical Calibration V1.0.1 capture requires the exact active bridge-bound session.");
+      }
+      const durableBeforeCapture = await producer.status(request.sessionId);
+      const requestedSlotKey = `${request.role}:${request.channelIndex ?? "none"}:${request.sampleIndex}`;
+      if (
+        !durableBeforeCapture.nextCaptureSlot ||
+        durableBeforeCapture.nextCaptureSlot.slotKey !== requestedSlotKey ||
+        durableBeforeCapture.nextCaptureSlot.targetFace !== request.targetFace
+      ) {
+        return rejectPreflight(
+          `Mathematical Calibration V1.0.1 request ${requestedSlotKey} does not match exact next slot ${durableBeforeCapture.nextCaptureSlot?.slotKey ?? "none"}.`,
+        );
+      }
+      const checkerboardRole = request.role === "lens_geometry" || request.role === "normalization_registration" || request.role === "repeated_placement";
+      if (request.normalizationSourceOperationId !== undefined) {
+        return rejectPreflight("V1.0.1 normalization geometry is server-owned and may not be supplied by a browser or operator.");
+      }
+      const preview = this.previewStatus();
+      const mathematicalPreview = preview.mathematicalCalibrationPreview;
+      if (checkerboardRole) {
+        const authorization = this.mathematicalCalibrationCaptureAuthorization;
+        const retained = authorization
+          ? this.retainedMathematicalCalibrationPreviewFrames.get(this.mathematicalCalibrationFrameKey(authorization))
+          : undefined;
+        const expiresAtMs = Date.parse(authorization?.expiresAt ?? "");
+        if (
+          request.previewBinding !== undefined
+          || !request.captureAuthorizationId
+          || !authorization
+          || request.captureAuthorizationId !== authorization.authorizationId
+          || authorization.sessionId !== request.sessionId
+          || authorization.slotKey !== requestedSlotKey
+          || !Number.isFinite(expiresAtMs)
+          || expiresAtMs <= Date.now()
+          || !retained
+          || retained.frameSha256 !== authorization.frameSha256
+          || retained.assessmentSha256 !== authorization.detectorAssessmentSha256
+          || crypto.createHash("sha256").update(retained.bytes).digest("hex") !== authorization.frameSha256
+          || preview.status !== "paused_for_capture"
+          || preview.cameraOwnership !== "capture_action"
+          || this.previewProcess !== undefined
+          || this.previewStop !== undefined
+          || mathematicalPreview?.active === true
+        ) {
+          return rejectPreflight("Mathematical Calibration V1.0.1 capture rejected a missing, expired, replayed, mismatched, or changed displayed-frame authorization.");
+        }
+        this.invalidateMathematicalCalibrationCaptureAuthorization(
+          `V1.0.1 displayed-frame authorization ${authorization.authorizationId} was consumed exactly once.`,
+          { preservePreviewState: true },
+        );
+      } else if (
+        request.previewBinding ||
+        request.captureAuthorizationId ||
+        mathematicalPreview?.active ||
+        preview.status === "starting" ||
+        preview.status === "live" ||
+        (preview.cameraOwnership !== "idle" && preview.cameraOwnership !== "released")
+      ) {
+        return rejectPreflight("Mathematical Calibration V1.0.1 blank-reverse capture requires preview stopped and camera ownership released.");
+      }
+      try {
+        await this.awaitLightingLifecycleIdle();
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
+      }
+      if (!checkerboardRole) {
+        try {
+          await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1");
+        } catch (error) {
+          return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
+        }
+      }
       const owner = `mathematical-calibration:${request.sessionId}:${request.operationId}`;
-      this.acquireCaptureLock(owner);
+      try {
+        this.acquireCaptureLock(owner);
+      } catch (error) {
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration capture ownership could not be acquired.");
+      }
       let result: FixedRigMathematicalCalibrationCaptureSessionStatusV1 | undefined;
       let operationError: Error | undefined;
       try {
-        result = await this.requireMathematicalCalibrationCaptureProducer().captureStep(request);
+        result = await producer.captureStep(request);
       } catch (error) {
         operationError = error instanceof Error ? error : new Error("Mathematical calibration capture failed.");
       }
-      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>> | undefined;
+      let safeOffError: Error | undefined;
       try {
         safeOff = await this.runTerminalSafeOff(`mathematical calibration ${request.operationId} bridge lifecycle end`);
+      } catch (error) {
+        safeOffError = error instanceof Error ? error : new Error("Calibration lifecycle safe-off threw before acknowledgement.");
       } finally {
         if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
       }
-      if (!safeOff.ok) {
-        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+      if (safeOffError || !safeOff?.ok) {
+        const message = safeOffError?.message ?? safeOff?.directError?.message ?? safeOff?.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+        await producer.recordHardStop(request.sessionId, request.operationId, message);
         throw new Error(operationError ? `${operationError.message} ${message}` : message);
       }
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: `mathematical calibration V1.0.1 ${request.operationId} capture lifecycle released camera ownership`,
+      });
+      if (this.mathematicalCalibrationPreviewStatus?.sessionId === request.sessionId) {
+        const durableStatus = result ?? await producer.status(request.sessionId);
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          active: false,
+          cameraOwnership: "released",
+          sessionStatus: durableStatus,
+        };
+      }
+      this.resetMathematicalCalibrationDisplayedFrameAuthority(
+        `V1.0.1 ${request.operationId} capture attempt completed and requires a fresh displayed-frame authorization for retry or next slot.`,
+      );
       if (operationError) throw operationError;
       if (!result) throw new Error("Mathematical calibration capture did not return a durable session status.");
       return result;
@@ -11878,6 +12986,164 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducerV1_1().seal(request);
   }
 
+  private requireMathematicalCalibrationV1_2Authority(): MathematicalCalibrationV1_2LocalSessionAuthority {
+    if (!this.config.mathematicalCalibrationV1_2Authority) {
+      throw new Error("Mathematical Calibration V1.2 local session authority is not configured.");
+    }
+    return this.config.mathematicalCalibrationV1_2Authority;
+  }
+
+  async listMathematicalCalibrationV1_2Sessions(): Promise<MathematicalCalibrationV1_2SessionListResponseDto> {
+    return validateMathematicalCalibrationV1_2SessionListResponseDto(
+      await this.requireMathematicalCalibrationV1_2Authority().listSessions(),
+    );
+  }
+
+  async mathematicalCalibrationV1_2Status(sessionId: string): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(sessionId)) {
+      throw new Error("Mathematical Calibration V1.2 status requires one exact safe sessionId.");
+    }
+    const status = validateMathematicalCalibrationV1_2SessionStatusDto(
+      await this.requireMathematicalCalibrationV1_2Authority().status(sessionId),
+    );
+    if (status.sessionId !== sessionId) throw new Error("V1.2 local authority returned cross-session status.");
+    return status;
+  }
+
+  async startMathematicalCalibrationV1_2(
+    request: StartMathematicalCalibrationV1_2SessionRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_2MutationPending) {
+      throw new Error("Another Mathematical Calibration V1.2 mutation is already serialized.");
+    }
+    this.mathematicalCalibrationV1_2MutationPending = true;
+    try {
+      const authority = this.requireMathematicalCalibrationV1_2Authority();
+      if (request.resumeSessionId) {
+        const before = validateMathematicalCalibrationV1_2SessionStatusDto(
+          await authority.status(request.resumeSessionId),
+        );
+        if (before.sessionId !== request.resumeSessionId || before.revision !== request.expectedRevision) {
+          throw new Error("Mathematical Calibration V1.2 resume revision conflict; refresh exact local status.");
+        }
+      }
+      const status = validateMathematicalCalibrationV1_2SessionStatusDto(
+        await authority.startOrResume(request),
+      );
+      if (request.resumeSessionId && status.sessionId !== request.resumeSessionId) {
+        throw new Error("V1.2 local authority returned cross-session resume status.");
+      }
+      return status;
+    } finally {
+      this.mathematicalCalibrationV1_2MutationPending = false;
+    }
+  }
+
+  private async runMathematicalCalibrationV1_2Mutation(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+    mutation: (authority: MathematicalCalibrationV1_2LocalSessionAuthority) => Promise<MathematicalCalibrationV1_2SessionStatusDto>,
+    assertIsolation = true,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    if (assertIsolation) this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_2MutationPending) {
+      throw new Error("Another Mathematical Calibration V1.2 mutation is already serialized.");
+    }
+    this.mathematicalCalibrationV1_2MutationPending = true;
+    try {
+      const authority = this.requireMathematicalCalibrationV1_2Authority();
+      const before = validateMathematicalCalibrationV1_2SessionStatusDto(await authority.status(request.sessionId));
+      if (before.sessionId !== request.sessionId || before.revision !== request.expectedRevision) {
+        throw new Error("Mathematical Calibration V1.2 revision conflict; refresh exact local status before retrying.");
+      }
+      const after = validateMathematicalCalibrationV1_2SessionStatusDto(await mutation(authority));
+      if (after.sessionId !== request.sessionId || after.revision === request.expectedRevision) {
+        throw new Error("Mathematical Calibration V1.2 mutation returned stale or cross-session authority.");
+      }
+      return after;
+    } finally {
+      this.mathematicalCalibrationV1_2MutationPending = false;
+    }
+  }
+
+  private runMathematicalCalibrationV1_2HardwareMutation(
+    label: string,
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+    mutation: (authority: MathematicalCalibrationV1_2LocalSessionAuthority) => Promise<MathematicalCalibrationV1_2SessionStatusDto>,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction(`mathematical calibration V1.2 ${label}`);
+      const owner = `mathematical-calibration-v1.2:${request.sessionId}:${request.expectedRevision.slice(0, 16)}`;
+      this.acquireCaptureLock(owner);
+      let result: MathematicalCalibrationV1_2SessionStatusDto | undefined;
+      let operationError: Error | undefined;
+      try {
+        result = await this.runMathematicalCalibrationV1_2Mutation(request, mutation, false);
+      } catch (error) {
+        operationError = error instanceof Error ? error : new Error(`Mathematical Calibration V1.2 ${label} failed.`);
+      }
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      try {
+        safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.2 ${label} bridge lifecycle end`);
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      if (!safeOff.ok) {
+        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ??
+          "Mathematical Calibration V1.2 lifecycle safe-off could not be confirmed.";
+        throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      if (operationError) throw operationError;
+      if (!result) throw new Error("Mathematical Calibration V1.2 mutation did not return exact durable status.");
+      return result;
+    });
+  }
+
+  captureMathematicalCalibrationV1_2ExpectedStep(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      "expected-step",
+      request,
+      (authority) => authority.executeExpectedStep(request),
+    );
+  }
+
+  retryMathematicalCalibrationV1_2ExpectedStep(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      "retry",
+      request,
+      (authority) => authority.retryExpectedStep(request),
+    );
+  }
+
+  replaceMathematicalCalibrationV1_2Pose(
+    request: ReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      `replace-pose-${request.acceptedSlot}`,
+      request,
+      (authority) => authority.replaceAcceptedPose(request),
+    );
+  }
+
+  analyzeMathematicalCalibrationV1_2(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2Mutation(request, (authority) => authority.analyze(request));
+  }
+
+  finalizeMathematicalCalibrationV1_2(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2Mutation(request, (authority) => authority.finalize(request));
+  }
+
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
     if (action === "capture-front") {
       this.assertMathematicalCaptureAuthority(this.manifest, "front");
@@ -11890,7 +13156,46 @@ export class AiGraderLocalStationBridgeService {
     if (action === "status" || action === "latest-report" || action === "session-manifest") {
       return this.status();
     }
-    if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+    if (action === "ingest-finalized-calibration-bundle") {
+      assertExactActionRequestKeys(request, action, ["bundleManifestSha256"]);
+      if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      if (this.manifest.sessionId || this.captureLock || this.frontCaptureTransition ||
+          this.manifest.previewStatus.intentionalTransition.active ||
+          this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+        throw new Error("Local helper must be exactly idle and sessionless before finalized calibration ingestion.");
+      }
+      await this.dependencies.calibrationActivationRegistry.ingestFinalizedBundle({
+        bundleManifestSha256: request.bundleManifestSha256,
+      });
+      return this.status();
+    }
+    if (action === "prepare-calibration-activation") {
+      assertExactActionRequestKeys(request, action, ["calibrationPendingAuthority"]);
+      if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      if (this.manifest.sessionId || this.captureLock || this.terminalLifecyclePending > 0 || this.lightingLifecyclePending > 0) {
+        throw new Error("Local helper must be exactly idle and sessionless before calibration activation.");
+      }
+      this.calibrationActivationState = "PENDING";
+      this.calibrationActivationAuthority = undefined;
+      this.calibrationActivationReceipt = await this.dependencies.calibrationActivationRegistry.prepareActivation(request.calibrationPendingAuthority);
+      return this.status();
+    }
+    if (action === "confirm-calibration-activation") {
+      assertExactActionRequestKeys(request, action, ["hostedCalibrationActivationAuthority"]);
+      if (!this.dependencies.calibrationActivationRegistry) {
+        throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
+      }
+      await this.dependencies.calibrationActivationRegistry.confirmHostedActivation(request.hostedCalibrationActivationAuthority);
+      this.calibrationActivationAuthority = request.hostedCalibrationActivationAuthority;
+      this.calibrationActivationState = "ACTIVE";
+      return this.status();
+    }
     if (action === "activate-queue-item") {
       assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
       await this.activateRapidQueueItem(request);
@@ -11961,12 +13266,18 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("Start New Card is blocked because the current Back TIFF was not durably committed to its exact Rapid queue item.");
       }
       assertRealBridgeArmed(this.config);
-      if (request.gradingContract !== undefined &&
-          request.gradingContract !== "legacy_v0" &&
-          request.gradingContract !== "mathematical_calibration_v1") {
-        throw new Error("AI Grader start-session gradingContract must be legacy_v0 or mathematical_calibration_v1.");
+      if (request.gradingContract !== "mathematical_calibration_v1") {
+        throw new Error(
+          "Start New Card requires the explicit mathematical_calibration_v1 grading contract. " +
+          "Legacy V0 and an omitted grading contract are prohibited.",
+        );
       }
-      if (request.gradingContract === "mathematical_calibration_v1") {
+      if (this.config.mode === "real") {
+        if (!this.dependencies.calibrationActivationRegistry || !request.calibrationActivationAuthority) {
+          throw new Error("Start New Card requires exact hosted/local calibration activation authority; configured bundle fallback is prohibited.");
+        }
+        await this.dependencies.calibrationActivationRegistry.assertStartAuthority(request.calibrationActivationAuthority);
+      } else {
         const readiness = mathematicalCalibrationReadiness(
           this.config,
           this.dependencies.loadMathematicalCalibrationBundle ??
@@ -11975,16 +13286,15 @@ export class AiGraderLocalStationBridgeService {
         if (!readiness.ready) {
           throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
         }
-        if (!request.mathematicalGradingAuthority) {
-          throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
-        }
-      } else if (request.mathematicalGradingAuthority) {
-        throw new Error("Legacy V0 Start New Card cannot accept Mathematical V1 grading authority.");
+      }
+      if (!request.mathematicalGradingAuthority) {
+        throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
       }
       await this.createFreshSession({
         reportId: request.reportId,
         captureProfile: request.captureProfile,
-        gradingContract: request.gradingContract ?? "legacy_v0",
+        calibrationActivationAuthority: request.calibrationActivationAuthority,
+        gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
       }, now);
       return this.status();
@@ -12059,6 +13369,9 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
   return [
     "status",
     "start-session",
+    "prepare-calibration-activation",
+    "ingest-finalized-calibration-bundle",
+    "confirm-calibration-activation",
     "capture-front",
     "capture-back",
     "publish-report",
@@ -12242,11 +13555,87 @@ export function createAiGraderLocalStationBridgeHttpServer(
   dependencies: AiGraderLocalStationBridgeDependencies = {}
 ): http.Server {
   const config = buildAiGraderLocalStationBridgeConfig(input, env);
-  const service = new AiGraderLocalStationBridgeService(
+  let service: AiGraderLocalStationBridgeService;
+  const runtimeDependencies = { ...dependencies };
+  const workstationPrivateKeyPath = env.AI_GRADER_CALIBRATION_WORKSTATION_PRIVATE_KEY_PATH?.trim();
+  const workstationKeyId = env.AI_GRADER_CALIBRATION_WORKSTATION_KEY_ID?.trim();
+  const protectedRigInventoryPath = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_PATH?.trim();
+  const protectedRigInventorySha256 = env.AI_GRADER_CALIBRATION_RIG_INVENTORY_SHA256?.trim();
+  const finalizedBundleStagingRoot = env.AI_GRADER_CALIBRATION_FINALIZER_STAGING_ROOT?.trim();
+  const hostedAuthorityPublicKeysJson =
+    env.AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_PUBLIC_KEYS_JSON?.trim();
+  const legacyLiveOperatingContextPath = env.AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH?.trim();
+  const activationConfigurationRequested = Boolean(
+    workstationPrivateKeyPath || workstationKeyId || protectedRigInventoryPath ||
+    protectedRigInventorySha256 || finalizedBundleStagingRoot ||
+    hostedAuthorityPublicKeysJson ||
+    env.AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR?.trim(),
+  );
+  if (config.mode === "real" && legacyLiveOperatingContextPath) {
+    throw new Error(
+      "AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH is prohibited in real mode: editable JSON is not live device authority.",
+    );
+  }
+  if (!runtimeDependencies.calibrationActivationRegistry && config.mode === "real" && activationConfigurationRequested) {
+    if (!workstationPrivateKeyPath || !workstationKeyId || !protectedRigInventoryPath ||
+        !protectedRigInventorySha256 || !finalizedBundleStagingRoot ||
+        !hostedAuthorityPublicKeysJson) {
+      throw new Error(
+        "Real calibration activation requires the workstation key, key ID, SHA-pinned rig inventory, trusted finalizer staging root, and pinned hosted authority public keys.",
+      );
+    }
+    if (!path.isAbsolute(workstationPrivateKeyPath) ||
+        !path.isAbsolute(protectedRigInventoryPath) ||
+        !path.isAbsolute(finalizedBundleStagingRoot)) {
+      throw new Error("Calibration activation key, protected inventory, and finalizer staging paths must be absolute.");
+    }
+    const helperInstanceId =
+      env.AI_GRADER_CALIBRATION_HELPER_INSTANCE_ID?.trim() || "local-dell-ai-grader-station";
+    const trustedLiveOperatingContext = createMathematicalCalibrationOperatingContextRuntimeV1({
+      protectedInventoryBytes: readFileSync(protectedRigInventoryPath),
+      protectedInventorySha256: protectedRigInventorySha256,
+      helperInstanceId,
+      helperVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      observeRuntime: (expected) => {
+        if (!service) {
+          throw new Error("Local bridge service is not initialized for calibration runtime observation.");
+        }
+        return service.observeMathematicalCalibrationActivationRuntime(
+          expected,
+          helperInstanceId,
+          AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+        );
+      },
+    });
+    runtimeDependencies.calibrationActivationRegistry = createMathematicalCalibrationActivationRegistryV1({
+      rootDir: path.resolve(
+        env.AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR?.trim() ||
+        path.join(config.outputDir, "mathematical-calibration-activation-registry-v1"),
+      ),
+      finalizedBundleStagingRoot,
+      expectedRigId: config.mathematicalCalibrationRigId,
+      helperInstanceId,
+      helperVersion: AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
+      workstationKeyId,
+      workstationPrivateKey: crypto.createPrivateKey(readFileSync(workstationPrivateKeyPath)),
+      hostedAuthorityPublicKeys: parseMathematicalCalibrationHostedAuthorityPublicKeysV1(
+        hostedAuthorityPublicKeysJson,
+        config.mathematicalCalibrationRigId,
+      ),
+      liveOperatingContext: trustedLiveOperatingContext,
+      isIdle: () => {
+        if (!service) return false;
+        const status = service.status();
+        return !status.sessionId && status.currentStep === "start_new_card" &&
+          !status.previewStatus.intentionalTransition.active;
+      },
+    });
+  }
+  service = new AiGraderLocalStationBridgeService(
     config,
     runner,
     warmRunner ?? createDefaultWarmForensicRunner(config),
-    dependencies,
+    runtimeDependencies,
   );
   let pairingCodeConsumed = false;
 
@@ -12311,6 +13700,11 @@ export function createAiGraderLocalStationBridgeHttpServer(
       if (url.pathname === MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH) {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the calibration-only page." }, origin, config);
         return sendText(res, 200, MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, origin, config, "text/html; charset=utf-8");
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_PAGE_PATH) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the V1.0.1 calibration-only page." }, origin, config);
+        return sendText(res, 200, MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, origin, config, "text/html; charset=utf-8");
       }
 
       const statusRoutes = new Set(["/status", "/latest-report", "/session-manifest"]);
@@ -12413,11 +13807,124 @@ export function createAiGraderLocalStationBridgeHttpServer(
         }, origin, config);
       }
 
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.sessions) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the V1.2 session list." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 session list does not accept query authority.");
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-sessions",
+          result: await service.listMathematicalCalibrationV1_2Sessions(),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.status) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for V1.2 session status." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if ([...url.searchParams.keys()].some((key) => key !== "sessionId") ||
+            url.searchParams.getAll("sessionId").length !== 1) {
+          throw new Error("V1.2 status accepts exactly one sessionId query and no browser authority fields.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-status",
+          result: await service.mathematicalCalibrationV1_2Status(url.searchParams.get("sessionId") ?? ""),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.start) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.2 start or resume." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 start does not accept query authority.");
+        const body = parseStartMathematicalCalibrationV1_2SessionRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-start",
+          result: await service.startMathematicalCalibrationV1_2(body),
+        }, origin, config);
+      }
+
+      const v1_2MutationRoutes = new Map<string, {
+        operation: MathematicalCalibrationV1_2BridgeAction;
+        run(request: MathematicalCalibrationV1_2SessionMutationRequestDto): Promise<MathematicalCalibrationV1_2SessionStatusDto>;
+      }>([
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.capture, {
+          operation: "mathematical-calibration-v1.2-capture",
+          run: (request) => service.captureMathematicalCalibrationV1_2ExpectedStep(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.retry, {
+          operation: "mathematical-calibration-v1.2-retry",
+          run: (request) => service.retryMathematicalCalibrationV1_2ExpectedStep(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.analyze, {
+          operation: "mathematical-calibration-v1.2-analyze",
+          run: (request) => service.analyzeMathematicalCalibrationV1_2(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.finalize, {
+          operation: "mathematical-calibration-v1.2-finalize",
+          run: (request) => service.finalizeMathematicalCalibrationV1_2(request),
+        }],
+      ]);
+      const v1_2MutationRoute = v1_2MutationRoutes.get(url.pathname);
+      if (v1_2MutationRoute) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.2 mutation routes." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 mutation routes do not accept query authority.");
+        const body = parseMathematicalCalibrationV1_2SessionMutationRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: v1_2MutationRoute.operation,
+          result: await v1_2MutationRoute.run(body),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.replacePose) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for explicit V1.2 pose replacement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 pose replacement does not accept query authority.");
+        const body = parseReplaceMathematicalCalibrationV1_2PoseRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-replace-pose",
+          result: await service.replaceMathematicalCalibrationV1_2Pose(body),
+        }, origin, config);
+      }
+
       if (url.pathname === "/calibration/mathematical-v1/status") {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the calibration status route." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const sessionId = url.searchParams.get("sessionId") ?? "";
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-status", result: await service.mathematicalCalibrationCaptureStatus(sessionId) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for the incident-bound calibration false-stop recovery." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("The incident-bound calibration false-stop recovery accepts no query or caller-authored authority.");
+        const body = await readJsonBody(req);
+        if (Object.keys(body).length !== 0) {
+          throw new Error("The incident-bound calibration false-stop recovery accepts no browser/operator-authored recovery fields.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-false-stop-recovery",
+          result: await service.recoverKnownMathematicalCalibrationBlankReverseTimestampFalseStop(),
+        }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/rebind-sealed-analyzer-authority-20260722") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for the incident-bound analyzer-authority rebind." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("The incident-bound analyzer-authority rebind accepts no query or caller-authored authority.");
+        const body = await readJsonBody(req);
+        if (Object.keys(body).length !== 0) {
+          throw new Error("The incident-bound analyzer-authority rebind is fieldless and rejects browser/operator-authored authority.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-analyzer-authority-rebind",
+          result: await service.rebindKnownMathematicalCalibrationAnalyzerAuthority(),
+        }, origin, config);
       }
 
       if (url.pathname === "/calibration/mathematical-v1.1/status") {
@@ -12462,6 +13969,32 @@ export function createAiGraderLocalStationBridgeHttpServer(
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-start", result: await service.startMathematicalCalibrationCapture(body as unknown as StartFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
       }
 
+      if (url.pathname === "/calibration/mathematical-v1/displayed-frame") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for displayed-frame acknowledgement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = stationContractObject(await readJsonBody(req), "Mathematical Calibration displayed-frame acknowledgement");
+        assertStationContractKeys(body, ["sessionId", "epoch", "frameId", "capturedAt"], "Mathematical Calibration displayed-frame acknowledgement");
+        const displayedFrame: MathematicalCalibrationDisplayedFrameV1 = {
+          sessionId: exactStationString(body.sessionId, "Displayed-frame sessionId"),
+          epoch: exactStationString(body.epoch, "Displayed-frame preview epoch"),
+          frameId: exactStationString(body.frameId, "Displayed-frame frameId"),
+          capturedAt: exactStationString(body.capturedAt, "Displayed-frame capturedAt"),
+        };
+        return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-displayed-frame", result: service.acknowledgeMathematicalCalibrationDisplayedFrame(displayedFrame) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/capture-authorization") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for displayed-frame capture authorization." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        const body = stationContractObject(await readJsonBody(req), "Mathematical Calibration capture authorization");
+        assertStationContractKeys(body, ["sessionId"], "Mathematical Calibration capture authorization");
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-capture-authorization",
+          result: await service.authorizeMathematicalCalibrationDisplayedFrame(exactStationString(body.sessionId, "Capture-authorization sessionId")),
+        }, origin, config);
+      }
+
       if (url.pathname === "/calibration/mathematical-v1/capture") {
         if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for calibration capture." }, origin, config);
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
@@ -12481,6 +14014,21 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-seal", result: await service.sealMathematicalCalibrationCapture(body as unknown as SealFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/materialization-input") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for rig materialization input production." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("Rig materialization input production does not accept query authority.");
+        const body = await readJsonBody(req);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1 || typeof (body as Record<string, unknown>).sessionId !== "string") {
+          throw new Error("Rig materialization input production accepts only one exact sessionId and no browser-authored authority.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-rig-input",
+          result: await service.prepareMathematicalCalibrationRigMaterializationInput((body as Record<string, unknown>).sessionId as string),
+        }, origin, config);
       }
 
       if (url.pathname === "/mathematical-v1/review-assets") {

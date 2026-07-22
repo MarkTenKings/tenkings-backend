@@ -180,18 +180,17 @@ def build(pdf_path, manifest_path):
         'pdfSha256': pdf_sha256,
         'pageSize': {'name': 'LETTER', 'widthMm': 215.9, 'heightMm': 279.4},
         'printScale': 1.0,
-        'maximumPrintScaleErrorMm': 0.2,
         'requiredPrintScaleVerification': {
-            'x': {'nominalSpanMm': 100.0, 'measurementU95Required': True},
-            'y': {'nominalSpanMm': 200.0, 'measurementU95Required': True},
-            'maximumErrorPlusU95Mm': 0.2,
-            'acceptanceFormula':
-                'abs(measuredSpanMm - nominalSpanMm) + measurementU95Mm <= 0.20',
+            'x': {'nominalSpanMm': 100.0},
+            'y': {'nominalSpanMm': 200.0},
+            'authorityBasis': 'protected_checkerboard_geometry',
+            'operatorInputRequired': False,
         },
         'requiredCutDimensionVerification': {
-            'x': {'nominalDimensionMm': 63.5, 'measurementU95Required': True},
-            'y': {'nominalDimensionMm': 88.9, 'measurementU95Required': True},
-            'maximumErrorPlusU95Mm': 0.2,
+            'x': {'nominalDimensionMm': 63.5},
+            'y': {'nominalDimensionMm': 88.9},
+            'authorityBasis': 'protected_checkerboard_geometry',
+            'operatorInputRequired': False,
         },
         'uniformFlatFieldPolicy': {
             'preferred': 'blank_matte_neutral_reverse_without_print_showthrough',

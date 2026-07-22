@@ -6,9 +6,8 @@ import {
   calculateApplicableSevereDefectCapV1,
   calculateFindingDeductionV1,
   roundMathematicalScoreV1,
-  validateMathematicalCalibrationProfileV1,
   type FindingDeductionCalculationV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalFindingCategoryV1,
   type MathematicalMeasurementKindV1,
   type MathematicalMeasurementUnitV1,
@@ -22,6 +21,7 @@ import {
   type FixedRigSurfaceEvidenceThresholdsV1,
 } from "./fixedRigPhotometricEvidenceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 type MathematicalEvidenceReferenceV1 = MathematicalMeasurementV1["evidence"][number];
 
@@ -273,11 +273,11 @@ function validateInput(
   ) {
     throw new Error("Surface measurement calibration must exactly match photometric calibration identity.");
   }
-  const profileValidation = validateMathematicalCalibrationProfileV1(input.calibration.profile);
+  const profileValidation = validateMathematicalCalibrationForOperationalUseV1(input.calibration.profile);
   const profile = profileValidation.profile;
   if (
     !profileValidation.valid ||
-    !profileValidation.isCalibrated ||
+    (!profileValidation.isCalibrated && !profileValidation.isOperationallyAccepted) ||
     !profile ||
     profile.profileId !== input.calibration.calibrationProfileId ||
     profile.calibrationVersion !== input.calibration.calibrationVersion ||

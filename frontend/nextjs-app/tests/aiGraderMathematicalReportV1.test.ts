@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { AiGraderReportBundleV03 } from "@tenkings/shared";
 import AiGraderMathematicalReportV1 from "../components/ai-grader/AiGraderMathematicalReportV1";
 import { parseAiGraderMathematicalReportV1 } from "../lib/aiGraderMathematicalReportV1";
+import { buildAiGraderReportEditorialRevisionV1 } from "../lib/aiGraderReportRevision";
 
 const confidence = { score: 0.98, band: "high", validEvidenceCoverage: 0.99, warnings: [] };
 const location = { side: "front", location: "top_left", score: 9.75, penalty: 0.25, findingIds: [], confidence };
@@ -293,6 +294,64 @@ function displayBundle() {
   } as unknown as AiGraderReportBundleV03;
 }
 
+function ownerAcceptedDisplayBundle() {
+  const bundle = displayBundle() as any;
+  const exceptionLedger = Array.from({ length: 36 }, (_, index) => ({
+    path: `certifiedAnalysis.exception${index + 1}`,
+    message: `Recorded mathematical exception message ${index + 1}.`,
+  }));
+  bundle.calibrationProfile = {
+    ...bundle.calibrationProfile,
+    rigId: "fixed-rig-dell-v1",
+    isCalibrated: false,
+    status: "rejected",
+    operationalAcceptance: {
+      authorityId: "ten-kings-owner-operational-acceptance-math-cal-v1-20260722-4cfa410c-01-v1",
+      authorityStatus: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+      authoritySha256: sha("a"),
+      owner: { name: "Mark", organization: "Ten Kings", role: "product_owner" },
+      decisionAt: "2026-07-22T14:00:00.000Z",
+      reason: "Product owner directs operational use of the preserved calibration exactly as captured; all measurements, threshold exceptions, evidence hashes, and provenance must remain unchanged and visible.",
+      exceptionLedger,
+      exceptionLedgerSha256: sha("b"),
+    },
+  };
+  bundle.calibrationBundleAuthority.bundleManifestSha256 = sha("c");
+  bundle.calibrationBundleAuthority.memberLedgerSha256 = sha("d");
+  bundle.calibrationBundleAuthority.members = [
+    { role: "calibration_profile", fileName: "mathematical-calibration-profile-v1.json", sha256: sha("1") },
+    { role: "physical_calibration_artifact", fileName: "mathematical-calibration-artifact-v1.json", sha256: sha("2") },
+    { role: "calibration_acceptance", fileName: "mathematical-calibration-acceptance-v1.json", sha256: sha("3") },
+    { role: "product_owner_operational_acceptance", fileName: "product-owner-operational-acceptance-v1.json", sha256: sha("4") },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      role: "flat_field",
+      channelIndex: index + 1,
+      fileName: `flat-field-channel-${index + 1}-v1.json`,
+      sha256: sha("5"),
+    })),
+    { role: "illumination_pattern", fileName: "illumination-pattern-v1.json", sha256: sha("6") },
+  ];
+  bundle.calibrationActivationAuthority = {
+    authorityPhase: "ACTIVE",
+    activationId: "owner-accepted-activation-v1",
+    activationHash: sha("7"),
+    activationRevision: sha("8"),
+    rigId: "fixed-rig-dell-v1",
+    bundleManifestSha256: sha("c"),
+    memberLedgerSha256: sha("d"),
+    runtimeContextHash: sha("e"),
+    rigCharacterizationSha256: bundle.calibrationProfile.artifactSha256,
+    operatingContextHash: sha("f"),
+    workstationReceiptSha256: sha("0"),
+    hostedAuthorityKeyId: sha("9"),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T14:05:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T14:05:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+  return bundle as AiGraderReportBundleV03;
+}
+
 test("V1 report renders exact scores, subscores, formulas, and evidence limitations separately", () => {
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle: displayBundle() }));
   assert.match(html, /9\.58/);
@@ -315,6 +374,60 @@ test("V1 report renders exact scores, subscores, formulas, and evidence limitati
   assert.match(html, /href="\/api\/evidence\/segmentation-mask"/);
   assert.match(html, /Calibration bundle manifest/);
   assert.match(html, /Exact calibration bundle members/);
+});
+
+test("owner-accepted report visibly preserves rejection, all exceptions, and signed activation provenance", () => {
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle: ownerAcceptedDisplayBundle(),
+  }));
+  assert.match(html, /Owner accepted with recorded exceptions/);
+  assert.match(html, /Mathematical status REJECTED/);
+  assert.match(html, /isCalibrated=false/);
+  assert.match(html, /This is not a mathematical threshold pass/);
+  assert.match(html, /Mark \/ Ten Kings/);
+  assert.match(html, /Product owner directs operational use of the preserved calibration exactly as captured/);
+  assert.match(html, /Complete mathematical exception ledger \(36\)/);
+  assert.equal((html.match(/Recorded mathematical exception message/g) ?? []).length, 36);
+  assert.match(html, /certifiedAnalysis\.exception36/);
+  assert.match(html, /owner-accepted-activation-v1 \/ ACTIVE/);
+  assert.match(html, /ecdsa-p256-sha256-ieee-p1363/);
+  assert.match(html, new RegExp("A".repeat(86)));
+  assert.match(html, /Bundle manifest binding/);
+  assert.match(html, /Member-ledger binding/);
+  assert.match(html, /Runtime \/ operating-context binding/);
+});
+
+test("V1 report renders human-reviewed values as effective while retaining immutable machine values", () => {
+  const bundle = displayBundle();
+  const editorialRevision = buildAiGraderReportEditorialRevisionV1({
+    reportId: bundle.reportId,
+    sourceReportSchemaVersion: bundle.schemaVersion,
+    sourceBundleSha256: sha("a"),
+    revision: 2,
+    editedAt: "2026-07-21T18:00:00.000Z",
+    scores: { centering: 8.25, corners: 8.5, edges: 8.75, surface: 9 },
+    content: {
+      cardTitle: "Human Reviewed Display Card",
+      reportSummary: "An administrator reviewed every required grading element.",
+      cornersExplanation: "Corner evidence was adjudicated at 8.50.",
+      whyNot10: "The effective reviewed report records visible corner wear.",
+    },
+    adjudicatedMachineFailures: ["MACHINE_CORNER_REVIEW_REQUIRED"],
+  });
+
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle,
+    editorialRevision,
+  }));
+  assert.match(html, /Human Reviewed Display Card/);
+  assert.match(html, /Completed — human reviewed\/admin adjudicated · revision 2/);
+  assert.match(html, new RegExp(editorialRevision.calculation.overall.toFixed(2)));
+  assert.match(html, /Immutable machine overall: 9\.58/);
+  assert.match(html, /Human reviewed · machine 9\.75/);
+  assert.match(html, /Corner evidence was adjudicated at 8\.50/);
+  assert.match(html, /Effective human-reviewed explanation/);
+  assert.match(html, /visible corner wear/);
+  assert.match(html, /Adjudicated machine failures: MACHINE_CORNER_REVIEW_REQUIRED/);
 });
 
 test("registered-template centering renders exact approved reference and correspondence provenance", () => {
@@ -374,6 +487,8 @@ test("registered-template centering renders exact approved reference and corresp
   };
   bundle.publicAssets.push(
     { id: "front/registered/correspondence-ledger.json", kind: "report-data", fileName: "correspondence-ledger.json", publicUrl: "/api/evidence/correspondence-ledger", sha256: sha("8"), side: "front", evidenceRole: "other_evidence", contentType: "application/json" },
+    { id: "front/center.png", kind: "report-image", fileName: "centering-overlay.png", publicUrl: "/api/evidence/centering-overlay", sha256: sha("6"), side: "front", evidenceRole: "centering_overlay", contentType: "image/png", widthPx: 1000, heightPx: 1400 },
+    { id: bundle.centeringEvidence.front.outerCutGeometryEvidence.normalizedAllOnAssetId, kind: "report-image", fileName: "normalized-all-on.png", publicUrl: "/api/evidence/normalized-all-on", sha256: bundle.centeringEvidence.front.outerCutGeometryEvidence.normalizedAllOnAssetSha256, side: "front", evidenceRole: "normalized_card", contentType: "image/png", widthPx: 1000, heightPx: 1400 },
     { id: "front/registered/design-reference.png", kind: "report-image", fileName: "design-reference.png", publicUrl: "/api/evidence/design-reference", sha256: referenceSha256, side: "front", evidenceRole: "design_reference", contentType: "image/png" },
   );
 
@@ -389,6 +504,10 @@ test("registered-template centering renders exact approved reference and corresp
   assert.match(html, /Transform matrix/);
   assert.match(html, /Correspondence ledger/);
   assert.match(html, /href="\/api\/evidence\/correspondence-ledger"/);
+  assert.match(html, /src="\/api\/evidence\/normalized-all-on"/);
+  assert.match(html, /src="\/api\/evidence\/centering-overlay"/);
+  assert.match(html, /approved-design orientation/);
+  assert.match(html, /expected-to-observed landmark residual vector/);
 });
 
 test("an incomplete v0.3 payload is rejected instead of silently displayed as V0", () => {

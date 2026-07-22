@@ -70,6 +70,8 @@ test("public NFC active projection is DB-backed, exact-linkage-only, and honest 
     nfcTagUrl: `https://collect.tenkings.co/nfc/${PUBLIC_TAG_ID}`,
     reportId: "report-1",
     reportUrl: "/ai-grader/reports/report-1",
+    reportVisibility: "public",
+    comingSoon: false,
     certId: "TK-AIG-1",
     cardTitle: "2025 Test Player #7",
     cardSet: "Test Set",
@@ -107,6 +109,29 @@ test("public NFC exposes a Feiju F8215 only as a write-protected registered stat
   for (const forbidden of ["uid", "workstation", "GoToTags", "adapter", "localPath", "cryptographically_verified"]) {
     assert.equal(serialized.toLowerCase().includes(forbidden.toLowerCase()), false);
   }
+});
+
+test("public NFC keeps the same registration and report URL behind Coming Soon", async () => {
+  const base = publicRow();
+  const db = {
+    aiGraderNfcTag: {
+      async findUnique() {
+        return publicRow({
+          report: {
+            ...(base.report as Record<string, unknown>),
+            visibilityStatus: "coming_soon",
+          },
+        });
+      },
+      async findFirst() { return null; },
+    },
+  };
+  const tap = await readAiGraderNfcPublicTap(PUBLIC_TAG_ID, { dbClient: db });
+  assert.equal(tap.state, "active");
+  if (tap.state !== "active") return;
+  assert.equal(tap.comingSoon, true);
+  assert.equal(tap.reportVisibility, "coming_soon");
+  assert.equal(tap.reportUrl, "/ai-grader/reports/report-1");
 });
 
 test("public NFC revoked/missing/unpublished/mismatched states never resolve a report", async () => {

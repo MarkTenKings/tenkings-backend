@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import {
-  validateMathematicalCalibrationProfileV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
 } from "@tenkings/shared";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 import type { FixedRigPhysicalCalibrationArtifactV1 } from "./fixedRigPhysicalCalibrationV1";
 import type {
   FixedRigPhotometricCalibrationProfileV1,
@@ -297,8 +297,8 @@ function responsePlaneFromGain(
 export function buildFixedRigPhotometricCalibrationProfileV1(
   input: BuildFixedRigPhotometricCalibrationV1Input,
 ): FixedRigPhotometricCalibrationProfileV1 {
-  const validation = validateMathematicalCalibrationProfileV1(input.calibrationProfile);
-  if (!validation.valid || !validation.isCalibrated || !validation.profile) {
+  const validation = validateMathematicalCalibrationForOperationalUseV1(input.calibrationProfile);
+  if (!validation.valid || (!validation.isCalibrated && !validation.isOperationallyAccepted) || !validation.profile) {
     throw new Error("Photometric V1 requires a finalized physical calibration profile.");
   }
   const profile = validation.profile;

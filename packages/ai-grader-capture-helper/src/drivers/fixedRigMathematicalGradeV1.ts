@@ -12,13 +12,13 @@ import {
   mathematicalDeductionLedgerV1Schema,
   mathematicalFindingV1Schema,
   roundMathematicalScoreV1,
-  validateMathematicalCalibrationProfileV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDeductionLedgerV1,
   type MathematicalFindingCategoryV1,
   type MathematicalGradingElementV1,
   type MathematicalMeasurementV1,
 } from "@tenkings/shared";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 import type {
   FixedRigCenteringElementResultV1,
 } from "./fixedRigCenteringV1";
@@ -1273,7 +1273,7 @@ function validateCandidateCalibration(
 export function buildFixedRigMathematicalGradeV1(
   input: BuildFixedRigMathematicalGradeV1Input,
 ): FixedRigMathematicalGradeV1Result {
-  const calibrationValidation = validateMathematicalCalibrationProfileV1(input.calibration);
+  const calibrationValidation = validateMathematicalCalibrationForOperationalUseV1(input.calibration);
   if (!calibrationValidation.valid || !calibrationValidation.profile) {
     return insufficient([{
       code: "invalid_calibration",

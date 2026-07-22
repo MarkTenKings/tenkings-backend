@@ -9,6 +9,7 @@ the TypeScript acceptance/finalization authority.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -33,9 +34,14 @@ REPEATABILITY_ALGORITHM = (
     'opencv_checkerboard_repeatability_measurement_v1')
 REPEATABILITY_INSTRUMENT_ID = (
     'ten-kings-fixed-rig-repeatability-analyzer-v1')
+TARGET_AUTHORITY_METHOD = 'protected_checkerboard_geometry_authority_v1'
+DIRECTION_ALGORITHM = 'opencv_illumination_centroid_checkerboard_v1'
+DIRECTION_METHOD = 'illumination_centroid_checkerboard_repeatability_v1'
+DIRECTION_INSTRUMENT_ID = (
+    'ten-kings-illumination-centroid-direction-analyzer-v1')
 SHA256_RE = __import__('re').compile(r'^[0-9a-f]{64}$')
 UTC_TIMESTAMP_RE = __import__('re').compile(
-    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,6})?Z$')
+    r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3,7})?Z$')
 cv2.setNumThreads(1)
 cv2.ocl.setUseOpenCL(False)
 cv2.setRNGSeed(0)
@@ -100,8 +106,18 @@ def exact_sha256(value: Any, name: str) -> str:
 
 
 def exact_utc_timestamp(value: Any, name: str) -> str:
-    if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
+    match = (UTC_TIMESTAMP_RE.fullmatch(value)
+             if isinstance(value, str) else None)
+    if match is None:
         raise ValueError(f'{name} must be an exact UTC timestamp')
+    try:
+        datetime.datetime(
+            int(value[0:4]), int(value[5:7]), int(value[8:10]),
+            int(value[11:13]), int(value[14:16]), int(value[17:19]),
+            tzinfo=datetime.timezone.utc)
+    except ValueError as error:
+        raise ValueError(
+            f'{name} must be an exact UTC timestamp') from error
     return value
 
 
@@ -111,8 +127,9 @@ def exact_bool(value: Any, expected: bool, name: str) -> bool:
     return expected
 
 
-def require_measurement_provenance(value: dict[str, Any], label: str
-                                   ) -> dict[str, Any]:
+def require_measurement_provenance(
+        value: dict[str, Any], label: str,
+        expected_target: dict[str, Any] | None = None) -> dict[str, Any]:
     operator_id = safe_identifier(value.get('operatorId'),
                                   f'{label}.operatorId')
     recorded_at = exact_utc_timestamp(value.get('recordedAt'),
@@ -125,8 +142,39 @@ def require_measurement_provenance(value: dict[str, Any], label: str
     instrument_id = safe_identifier(
         instrument.get('instrumentId'), f'{label}.instrument.instrumentId')
     kind = instrument.get('kind')
-    if kind not in {'traceable_ruler', 'caliper', 'fixed_rig_geometry'}:
+    if kind not in {'traceable_ruler', 'caliper', 'fixed_rig_geometry',
+                    'protected_target_geometry'}:
         raise ValueError(f'{label}.instrument.kind is not allowlisted')
+    if kind == 'protected_target_geometry':
+        if (instrument_id != 'protected-calibration-target-geometry-v1' or
+                instrument.get('authorityStatement') !=
+                'product_owner_confirmed_exact_target_geometry_v1'):
+            raise ValueError(
+                f'{label}.instrument protected target authority is invalid')
+        target_version = safe_identifier(
+            instrument.get('targetVersion'),
+            f'{label}.instrument.targetVersion')
+        target_sha256 = exact_sha256(
+            instrument.get('targetSha256'),
+            f'{label}.instrument.targetSha256')
+        if (not isinstance(expected_target, dict) or
+                target_version != expected_target.get('targetVersion') or
+                target_sha256 != expected_target.get('targetSha256')):
+            raise ValueError(
+                f'{label}.instrument protected target identity mismatch')
+        return {
+            'operatorId': operator_id,
+            'recordedAt': recorded_at,
+            'measurementMethod': measurement_method,
+            'instrument': {
+                'instrumentId': instrument_id,
+                'kind': kind,
+                'targetVersion': target_version,
+                'targetSha256': target_sha256,
+                'authorityStatement':
+                    'product_owner_confirmed_exact_target_geometry_v1',
+            },
+        }
     calibration_version = safe_identifier(
         instrument.get('calibrationVersion'),
         f'{label}.instrument.calibrationVersion')
@@ -192,6 +240,20 @@ def load_capture_package_authority(
         raise ValueError('source capture-package thresholdSetId mismatch')
     threshold_set_hash = exact_sha256(
         package.get('thresholdSetHash'), 'source capture-package thresholdSetHash')
+    evidence_derived_authority = package.get('evidenceDerivedAuthority')
+    if (not isinstance(evidence_derived_authority, dict) or
+            set(evidence_derived_authority) != {
+                'thresholdSetId', 'thresholdSetHash',
+                'uncertaintyCoverageFactor'} or
+            evidence_derived_authority.get('thresholdSetId') !=
+            package.get('thresholdSetId') or
+            evidence_derived_authority.get('thresholdSetHash') !=
+            threshold_set_hash):
+        raise ValueError(
+            'source capture-package evidence-derived authority does not bind the threshold set')
+    uncertainty_coverage_factor = finite_number(
+        evidence_derived_authority.get('uncertaintyCoverageFactor'),
+        'evidence-derived uncertainty coverage factor', positive=True)
     capture_evidence_acceptance = package.get('captureEvidenceAcceptance')
     if not isinstance(capture_evidence_acceptance, dict):
         raise ValueError(
@@ -530,6 +592,11 @@ def load_capture_package_authority(
         'purpose': CAPTURE_PACKAGE_PURPOSE,
         'thresholdSetId': package.get('thresholdSetId'),
         'thresholdSetHash': threshold_set_hash,
+        'evidenceDerivedAuthority': {
+            'thresholdSetId': package.get('thresholdSetId'),
+            'thresholdSetHash': threshold_set_hash,
+            'uncertaintyCoverageFactor': uncertainty_coverage_factor,
+        },
         'captureEvidenceAcceptance': capture_evidence_acceptance,
         'stationAuthority': {
             'stationId': station_id,
@@ -630,14 +697,16 @@ def verify_evidence(authority: dict[str, Any], entry: dict[str, Any],
 
 def verify_measurement_artifact(file_path: Path, expected: dict[str, Any],
                                 label: str,
-                                declaration: dict[str, Any]) -> None:
+                                declaration: dict[str, Any],
+                                target_identity: dict[str, Any]) -> None:
     try:
         observed = json.loads(file_path.read_text(encoding='utf-8'))
     except (UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError(f'{label} must be valid UTF-8 JSON') from None
     expected_with_provenance = {
         **expected,
-        **require_measurement_provenance(declaration, label),
+        **require_measurement_provenance(
+            declaration, label, target_identity),
     }
     if observed != expected_with_provenance:
         raise ValueError(
@@ -659,18 +728,86 @@ def object_points(columns: int, rows: int, cell_mm: float) -> np.ndarray:
     return points
 
 
-def detect_checkerboard(image: np.ndarray, columns: int,
-                        rows: int) -> np.ndarray:
+def valid_checkerboard_points(points: np.ndarray, columns: int, rows: int,
+                              width: int, height: int) -> bool:
+    return bool(
+        points.shape == (columns * rows, 2)
+        and np.isfinite(points).all()
+        and (points[:, 0] >= 0.0).all()
+        and (points[:, 0] <= float(width - 1)).all()
+        and (points[:, 1] >= 0.0).all()
+        and (points[:, 1] <= float(height - 1)).all()
+    )
+
+
+def find_checkerboard_sb(image: np.ndarray, columns: int,
+                         rows: int) -> np.ndarray | None:
     flags = (cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY |
              cv2.CALIB_CB_NORMALIZE_IMAGE)
-    found, corners = cv2.findChessboardCornersSB(image, (columns, rows),
-                                                  flags=flags)
-    if not found or corners is None or len(corners) != columns * rows:
+    found, corners = cv2.findChessboardCornersSB(
+        image, (columns, rows), flags=flags)
+    if not found or corners is None or corners.shape != (
+            columns * rows, 1, 2):
+        return None
+    points = corners.reshape(-1, 2).astype(np.float32)
+    if not valid_checkerboard_points(
+            points, columns, rows, image.shape[1], image.shape[0]):
+        return None
+    return points
+
+
+def find_checkerboard_sb_with_local_contrast(
+        image: np.ndarray, columns: int, rows: int) -> np.ndarray | None:
+    if (columns, rows) != (11, 16):
+        return None
+    height, width = image.shape[:2]
+    for threshold in (40, 60, 80, 100, 120, 140):
+        _, mask = cv2.threshold(
+            image, threshold, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contour = max(contours, key=cv2.contourArea)
+        x, y, roi_width, roi_height = cv2.boundingRect(contour)
+        if roi_width * roi_height < width * height * 0.10:
+            continue
+        for inset_fraction in (0.0, 0.03, 0.04, 0.05):
+            inset_x = round(roi_width * inset_fraction)
+            inset_y = round(roi_height * inset_fraction)
+            crop_x = x + inset_x
+            crop_y = y + inset_y
+            crop_width = roi_width - 2 * inset_x
+            crop_height = roi_height - 2 * inset_y
+            if crop_width <= 0 or crop_height <= 0:
+                continue
+            roi = cv2.equalizeHist(
+                image[crop_y:crop_y + crop_height,
+                      crop_x:crop_x + crop_width])
+            points = find_checkerboard_sb(roi, columns, rows)
+            if points is None:
+                continue
+            source_points = points + np.array(
+                [crop_x, crop_y], dtype=np.float32)
+            if valid_checkerboard_points(
+                    source_points, columns, rows, width, height):
+                return source_points
+    return None
+
+
+def detect_checkerboard(image: np.ndarray, columns: int,
+                        rows: int) -> np.ndarray:
+    points = find_checkerboard_sb(image, columns, rows)
+    if points is None and (columns, rows) == (11, 16):
+        points = find_checkerboard_sb_with_local_contrast(
+            image, columns, rows)
+    if points is None:
         raise ValueError(
             f'checkerboard detection failed: expected {columns}x{rows} internal corners')
-    points = corners.reshape(-1, 2).astype(np.float32)
-    if not np.isfinite(points).all():
-        raise ValueError('checkerboard detector produced non-finite coordinates')
+    if not valid_checkerboard_points(
+            points, columns, rows, image.shape[1], image.shape[0]):
+        raise ValueError(
+            'checkerboard detector produced non-finite or out-of-frame coordinates')
     return points
 
 
@@ -1095,25 +1232,108 @@ def irradiance_centroid(image: np.ndarray) -> tuple[float, float]:
     )
 
 
+def sample_standard_deviation(values: list[float]) -> float:
+    if len(values) < 2 or not all(math.isfinite(value) for value in values):
+        raise ValueError('uncertainty derivation requires at least two finite samples')
+    return float(np.std(np.asarray(values, dtype=np.float64), ddof=1))
+
+
+def compute_illumination_direction_authority(
+        images: list[np.ndarray], coupon_width_mm: float,
+        coupon_height_mm: float, linear_repeatability_mm: list[float],
+        coverage_factor: float
+        ) -> list[dict[str, Any]]:
+    if len(images) != 3:
+        raise ValueError(
+            'direction authority requires exactly three illumination captures')
+    if len(linear_repeatability_mm) != 10:
+        raise ValueError(
+            'direction uncertainty requires exactly ten checkerboard repeatability samples')
+    shapes = {image.shape for image in images}
+    if len(shapes) != 1:
+        raise ValueError('direction illumination captures must share dimensions')
+    height, width = next(iter(shapes))
+    if height <= 1 or width <= 1:
+        raise ValueError('direction illumination captures are undersized')
+    points: list[dict[str, float]] = []
+    for image in images:
+        centroid_x, centroid_y = irradiance_centroid(image)
+        points.append({
+            'x': round_number(centroid_x * coupon_width_mm / (width - 1)),
+            'y': round_number(centroid_y * coupon_height_mm / (height - 1)),
+        })
+    center = {
+        'x': round_number(coupon_width_mm / 2),
+        'y': round_number(coupon_height_mm / 2),
+    }
+    vectors = [parse_direction({
+        'x': point['x'] - center['x'],
+        'y': point['y'] - center['y'],
+    }, 'illumination-centroid direction sample') for point in points]
+    mean_direction = parse_direction({
+        'x': float(np.mean([value['x'] for value in vectors])),
+        'y': float(np.mean([value['y'] for value in vectors])),
+    }, 'mean illumination-centroid direction')
+    validation_errors = []
+    for index, vector in enumerate(vectors):
+        holdout = [value for position, value in enumerate(vectors)
+                   if position != index]
+        holdout_direction = parse_direction({
+            'x': float(np.mean([value['x'] for value in holdout])),
+            'y': float(np.mean([value['y'] for value in holdout])),
+        }, 'leave-one-out illumination-centroid direction')
+        validation_errors.append(round_number(
+            angular_error_degrees(holdout_direction, vector)))
+    checkerboard_u95_mm = coverage_factor * sample_standard_deviation(
+        linear_repeatability_mm)
+    centroid_u95_mm = coverage_factor * math.hypot(
+        sample_standard_deviation([point['x'] for point in points]),
+        sample_standard_deviation([point['y'] for point in points]),
+    )
+    point_u95_mm = round_number(math.hypot(
+        checkerboard_u95_mm, centroid_u95_mm))
+    if not math.isfinite(point_u95_mm) or point_u95_mm <= 0:
+        raise ValueError(
+            'evidence-derived direction point U95 must be finite and positive')
+    return [{
+        'sampleIndex': index + 1,
+        'sourcePointMm': point,
+        'cardCenterPointMm': center,
+        'pointU95Mm': point_u95_mm,
+        'directionValidationErrorDegrees': validation_errors[index],
+        'meanDirection': mean_direction,
+    } for index, point in enumerate(points)]
+
+
 def analyze_flat_field_channel(
         authority: dict[str, Any], entry: dict[str, Any],
         output_dir: Path, coupon_width_mm: float,
-        coupon_height_mm: float) -> tuple[
+        coupon_height_mm: float,
+        linear_repeatability_mm: list[float]) -> tuple[
             dict[str, Any], dict[str, Any], np.ndarray, list[dict[str, str]]]:
     channel_index = int(entry.get('channelIndex'))
     if channel_index < 1 or channel_index > 8:
         raise ValueError('flat-field channelIndex must be from 1 to 8')
     direction_measurements: list[dict[str, Any]] = []
     direction_vectors: list[dict[str, float]] = []
+    direction_methods: set[str] = set()
     for measurement_entry in entry.get('directionMeasurements', []):
         evidence, measurement_path = verify_evidence(
             authority, measurement_entry,
             f'direction_geometry_channel_{channel_index}', channel_index)
-        if (measurement_entry.get('measurementMethod') !=
-                'fixed_ring_segment_geometry_with_ruler_v1'):
+        measurement_method = measurement_entry.get('measurementMethod')
+        if measurement_method not in {
+                'fixed_ring_segment_geometry_with_ruler_v1',
+                DIRECTION_METHOD}:
             raise ValueError(
-                'V1 channel direction requires fixed ring-segment geometry '
-                'measured with the fixed ruler')
+                'V1 channel direction method is not allowlisted')
+        direction_methods.add(str(measurement_method))
+        if (measurement_method != DIRECTION_METHOD and
+                isinstance(measurement_entry.get('instrument'), dict) and
+                measurement_entry['instrument'].get('kind') ==
+                'protected_target_geometry'):
+            raise ValueError(
+                'protected target geometry cannot authorize physical light-direction coordinates')
         source_point_raw = measurement_entry.get('sourcePointMm')
         card_center_raw = measurement_entry.get('cardCenterPointMm')
         if not isinstance(source_point_raw, dict) or not isinstance(
@@ -1138,18 +1358,44 @@ def analyze_flat_field_channel(
         if (isinstance(sample_index, bool) or
                 not isinstance(sample_index, int) or sample_index <= 0):
             raise ValueError('direction sampleIndex must be a positive integer')
-        verify_measurement_artifact(measurement_path, {
+        expected_measurement = {
             'schemaVersion':
                 'ten-kings-calibration-direction-measurement-v1',
             'channelIndex': channel_index,
             'sampleIndex': sample_index,
-            'measurementMethod':
-                'fixed_ring_segment_geometry_with_ruler_v1',
+            'measurementMethod': measurement_method,
             'sourcePointMm': source_point,
             'cardCenterPointMm': card_center,
             'pointU95Mm': round_number(point_u95_mm),
-        }, f'channel {channel_index} direction measurement',
-            measurement_entry)
+        }
+        derived_binding: dict[str, Any] = {}
+        if measurement_method == DIRECTION_METHOD:
+            if measurement_entry.get('measurementAlgorithmVersion') != DIRECTION_ALGORITHM:
+                raise ValueError('direction measurement algorithm identity mismatch')
+            source_capture_operation_id = safe_identifier(
+                measurement_entry.get('sourceCaptureOperationId'),
+                'direction sourceCaptureOperationId')
+            source_evidence_id = safe_identifier(
+                measurement_entry.get('sourceEvidenceId'),
+                'direction sourceEvidenceId')
+            source_sha256 = exact_sha256(
+                measurement_entry.get('sourceSha256'),
+                'direction sourceSha256')
+            source_role = (
+                f'illumination_pattern_channel_{channel_index}')
+            if measurement_entry.get('sourceRole') != source_role:
+                raise ValueError('direction source role mismatch')
+            derived_binding = {
+                'sourceCaptureOperationId': source_capture_operation_id,
+                'sourceEvidenceId': source_evidence_id,
+                'sourceSha256': source_sha256,
+                'sourceRole': source_role,
+                'measurementAlgorithmVersion': DIRECTION_ALGORITHM,
+            }
+            expected_measurement.update(derived_binding)
+        verify_measurement_artifact(measurement_path, expected_measurement,
+            f'channel {channel_index} direction measurement',
+            measurement_entry, authority['subject'])
         vector = parse_direction({
             'x': source_point['x'] - card_center['x'],
             'y': source_point['y'] - card_center['y'],
@@ -1157,15 +1403,21 @@ def analyze_flat_field_channel(
         direction_vectors.append(vector)
         direction_measurements.append({
             **evidence,
-            'measurementMethod': 'fixed_ring_segment_geometry_with_ruler_v1',
+            **({'sampleIndex': sample_index}
+               if measurement_method == DIRECTION_METHOD else {}),
+            'measurementMethod': measurement_method,
             'sourcePointMm': source_point,
             'cardCenterPointMm': card_center,
             'pointU95Mm': round_number(point_u95_mm),
+            **derived_binding,
         })
     if len(direction_measurements) < 3:
         raise ValueError(
             f'channel {channel_index} requires at least three immutable '
-            'fixed-geometry direction measurements')
+            'direction authority measurements')
+    if len(direction_methods) != 1:
+        raise ValueError(
+            f'channel {channel_index} cannot mix direction authority methods')
     mean_geometry_x = float(np.mean(
         [sample['x'] for sample in direction_vectors]))
     mean_geometry_y = float(np.mean(
@@ -1210,23 +1462,23 @@ def analyze_flat_field_channel(
     if shape[0] <= 1 or shape[1] <= 1:
         raise ValueError('flat-field frames must be at least 2x2 pixels')
     direction_validation_errors: list[float] = []
-    for image, evidence in zip(corrected_source, frame_records):
-        centroid_x, centroid_y = irradiance_centroid(image)
-        source_point = {
-            'x': round_number(centroid_x * coupon_width_mm / (image.shape[1] - 1)),
-            'y': round_number(centroid_y * coupon_height_mm / (image.shape[0] - 1)),
-        }
-        card_center = {
-            'x': round_number(coupon_width_mm / 2),
-            'y': round_number(coupon_height_mm / 2),
-        }
-        x_direction = source_point['x'] - card_center['x']
-        y_direction = source_point['y'] - card_center['y']
-        irradiance_direction = parse_direction(
-            {'x': x_direction, 'y': y_direction},
-            f'channel {channel_index} measured irradiance direction')
-        direction_validation_errors.append(round_number(
-            angular_error_degrees(direction, irradiance_direction)))
+    if DIRECTION_METHOD not in direction_methods:
+        for image, evidence in zip(corrected_source, frame_records):
+            centroid_x, centroid_y = irradiance_centroid(image)
+            source_point = {
+                'x': round_number(centroid_x * coupon_width_mm / (image.shape[1] - 1)),
+                'y': round_number(centroid_y * coupon_height_mm / (image.shape[0] - 1)),
+            }
+            card_center = {
+                'x': round_number(coupon_width_mm / 2),
+                'y': round_number(coupon_height_mm / 2),
+            }
+            irradiance_direction = parse_direction({
+                'x': source_point['x'] - card_center['x'],
+                'y': source_point['y'] - card_center['y'],
+            }, f'channel {channel_index} measured irradiance direction')
+            direction_validation_errors.append(round_number(
+                angular_error_degrees(direction, irradiance_direction)))
     response_scale = float(np.mean([image.mean() for image in corrected_source]))
     normalized = [image / float(image.mean()) for image in corrected_source]
     response = np.mean(normalized, axis=0)
@@ -1254,6 +1506,52 @@ def analyze_flat_field_channel(
         abs(value / corrected_residual_mean - 1.0)
         for value in corrected_residual_samples)
     sampled_gain = downsample_mean(gain)
+    pattern_records: list[dict[str, str]] = []
+    pattern_frames: list[np.ndarray] = []
+    pattern_authority_images: list[np.ndarray] = []
+    for pattern_entry in entry.get('illuminationPatternFrames', []):
+        evidence, file_path = verify_evidence(
+            authority, pattern_entry,
+            f'illumination_pattern_channel_{channel_index}', channel_index)
+        image = load_gray(file_path).astype(np.float32)
+        if image.shape != shape:
+            raise ValueError(
+                'illumination-pattern and flat-field frames must share dimensions')
+        pattern_authority_images.append(image)
+        corrected = np.maximum(image - dark, 1.0) * gain
+        pattern_frames.append(corrected / float(corrected.mean()))
+        pattern_records.append(evidence)
+    if len(pattern_frames) != 3:
+        raise ValueError(
+            f'channel {channel_index} requires exactly three illumination-pattern frames')
+    if DIRECTION_METHOD in direction_methods:
+        derived = compute_illumination_direction_authority(
+            pattern_authority_images, coupon_width_mm, coupon_height_mm,
+            linear_repeatability_mm,
+            authority['evidenceDerivedAuthority'][
+                'uncertaintyCoverageFactor'])
+        measurements_by_sample = {
+            int(sample.get('sampleIndex', 0)): sample
+            for sample in direction_measurements
+        }
+        for expected, source in zip(derived, pattern_records):
+            sample_index = expected['sampleIndex']
+            observed = measurements_by_sample.get(sample_index)
+            source_declaration = authority['artifactsById'][
+                source['evidenceId']]
+            if (observed is None or
+                    observed['sourcePointMm'] != expected['sourcePointMm'] or
+                    observed['cardCenterPointMm'] != expected['cardCenterPointMm'] or
+                    observed['pointU95Mm'] != expected['pointU95Mm'] or
+                    observed.get('sourceEvidenceId') != source['evidenceId'] or
+                    observed.get('sourceSha256') != source['sha256'] or
+                    observed.get('sourceCaptureOperationId') !=
+                    source_declaration['operationId']):
+                raise ValueError(
+                    f'channel {channel_index} direction authority does not match deterministic illumination/repeatability derivation')
+        direction = derived[0]['meanDirection']
+        direction_validation_errors = [
+            sample['directionValidationErrorDegrees'] for sample in derived]
     flat_artifact_without_hash = {
         'schemaVersion': 'ten-kings-flat-field-artifact-v1',
         'algorithmVersion': ALGORITHM,
@@ -1297,22 +1595,6 @@ def analyze_flat_field_channel(
         'flatFieldFrames': frame_records,
         'darkControlFrames': dark_records,
     }
-    pattern_records: list[dict[str, str]] = []
-    pattern_frames: list[np.ndarray] = []
-    for pattern_entry in entry.get('illuminationPatternFrames', []):
-        evidence, file_path = verify_evidence(
-            authority, pattern_entry,
-            f'illumination_pattern_channel_{channel_index}', channel_index)
-        image = load_gray(file_path).astype(np.float32)
-        if image.shape != shape:
-            raise ValueError(
-                'illumination-pattern and flat-field frames must share dimensions')
-        corrected = np.maximum(image - dark, 1.0) * gain
-        pattern_frames.append(corrected / float(corrected.mean()))
-        pattern_records.append(evidence)
-    if len(pattern_frames) < 3:
-        raise ValueError(
-            f'channel {channel_index} requires at least three illumination-pattern frames')
     pattern_response = downsample_mean(np.mean(pattern_frames, axis=0))
     return builder_channel, {
         'channelIndex': channel_index,
@@ -1395,37 +1677,73 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
         evidence, measurement_path = verify_evidence(
             capture_package_authority, entry,
             f'target_cut_dimension_{axis}')
-        nominal = finite_number(
-            entry.get('nominalDimensionMm'),
-            f'target.cutDimensionVerification.{axis}.nominalDimensionMm',
-            positive=True)
-        measured = finite_number(
-            entry.get('measuredDimensionMm'),
-            f'target.cutDimensionVerification.{axis}.measuredDimensionMm',
-            positive=True)
-        measurement_u95 = finite_number(
-            entry.get('measurementU95Mm'),
-            f'target.cutDimensionVerification.{axis}.measurementU95Mm',
-            positive=True)
-        if round_number(nominal) != required_nominal:
-            raise ValueError(
-                f'V1 {axis.upper()} cut dimension must use the '
-                f'{required_nominal:.2f} mm nominal target dimension')
-        verify_measurement_artifact(measurement_path, {
-            'schemaVersion':
-                'ten-kings-calibration-target-cut-dimension-measurement-v1',
-            'axis': axis,
-            'nominalDimensionMm': round_number(nominal),
-            'measuredDimensionMm': round_number(measured),
-            'measurementU95Mm': round_number(measurement_u95),
-        }, f'{axis.upper()} target cut-dimension measurement', entry)
-        target_cut_dimension_samples.append({
-            **evidence,
-            'axis': axis,
-            'nominalDimensionMm': round_number(nominal),
-            'measuredDimensionMm': round_number(measured),
-            'measurementU95Mm': round_number(measurement_u95),
-        })
+        if entry.get('authorityBasis') == 'protected_checkerboard_geometry':
+            protected = finite_number(
+                entry.get('protectedDimensionMm'),
+                f'target.cutDimensionVerification.{axis}.protectedDimensionMm',
+                positive=True)
+            if (round_number(protected) != required_nominal or
+                    entry.get('measurementMethod') != TARGET_AUTHORITY_METHOD or
+                    entry.get('sourceTargetEvidenceId') != target.get('evidenceId') or
+                    entry.get('sourceTargetSha256') != target.get('sha256')):
+                raise ValueError(
+                    f'V1 {axis.upper()} cut authority does not match the exact protected checkerboard target')
+            verify_measurement_artifact(measurement_path, {
+                'schemaVersion':
+                    'ten-kings-calibration-target-cut-dimension-authority-v1',
+                'axis': axis,
+                'protectedDimensionMm': round_number(protected),
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'sourceTargetEvidenceId': target.get('evidenceId'),
+                'sourceTargetSha256': target.get('sha256'),
+            }, f'{axis.upper()} protected target cut authority', entry,
+                capture_package_authority['subject'])
+            target_cut_dimension_samples.append({
+                **evidence,
+                'axis': axis,
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'protectedDimensionMm': round_number(protected),
+                'targetVersion': target.get('version'),
+                'targetSha256': target.get('sha256'),
+            })
+        else:
+            if (isinstance(entry.get('instrument'), dict) and
+                    entry['instrument'].get('kind') ==
+                    'protected_target_geometry'):
+                raise ValueError(
+                    'protected target geometry must use nominal target-cut authority')
+            nominal = finite_number(
+                entry.get('nominalDimensionMm'),
+                f'target.cutDimensionVerification.{axis}.nominalDimensionMm',
+                positive=True)
+            measured = finite_number(
+                entry.get('measuredDimensionMm'),
+                f'target.cutDimensionVerification.{axis}.measuredDimensionMm',
+                positive=True)
+            measurement_u95 = finite_number(
+                entry.get('measurementU95Mm'),
+                f'target.cutDimensionVerification.{axis}.measurementU95Mm',
+                positive=True)
+            if round_number(nominal) != required_nominal:
+                raise ValueError(
+                    f'V1 {axis.upper()} cut dimension must use the '
+                    f'{required_nominal:.2f} mm nominal target dimension')
+            verify_measurement_artifact(measurement_path, {
+                'schemaVersion':
+                    'ten-kings-calibration-target-cut-dimension-measurement-v1',
+                'axis': axis,
+                'nominalDimensionMm': round_number(nominal),
+                'measuredDimensionMm': round_number(measured),
+                'measurementU95Mm': round_number(measurement_u95),
+            }, f'{axis.upper()} target cut-dimension measurement', entry,
+                capture_package_authority['subject'])
+            target_cut_dimension_samples.append({
+                **evidence,
+                'axis': axis,
+                'nominalDimensionMm': round_number(nominal),
+                'measuredDimensionMm': round_number(measured),
+                'measurementU95Mm': round_number(measurement_u95),
+            })
     print_scale = target.get('printScaleVerification')
     if not isinstance(print_scale, dict):
         raise ValueError('target.printScaleVerification is required')
@@ -1439,38 +1757,91 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
         evidence, measurement_path = verify_evidence(
             capture_package_authority, entry,
             f'print_scale_verification_{axis}')
-        nominal = finite_number(
-            entry.get('nominalSpanMm'),
-            f'target.printScaleVerification.{axis}.nominalSpanMm', positive=True)
-        measured = finite_number(
-            entry.get('measuredSpanMm'),
-            f'target.printScaleVerification.{axis}.measuredSpanMm', positive=True)
-        measurement_u95 = finite_number(
-            entry.get('measurementU95Mm'),
-            f'target.printScaleVerification.{axis}.measurementU95Mm')
-        if measurement_u95 <= 0:
-            raise ValueError('print-scale measurement U95 must be positive')
-        if round_number(nominal) != required_nominal:
-            raise ValueError(
-                f'V1 {axis.upper()} print-scale verification must use the '
-                f'{required_nominal:.2f} mm bar')
-        verify_measurement_artifact(measurement_path, {
-            'schemaVersion':
-                'ten-kings-calibration-print-scale-measurement-v1',
-            'axis': axis,
-            'nominalSpanMm': round_number(nominal),
-            'measuredSpanMm': round_number(measured),
-            'measurementU95Mm': round_number(measurement_u95),
-        }, f'{axis.upper()} print-scale measurement', entry)
-        target_print_scale_samples.append({
-            **evidence,
-            'axis': axis,
-            'nominalSpanMm': round_number(nominal),
-            'measuredSpanMm': round_number(measured),
-            'measurementU95Mm': round_number(measurement_u95),
-        })
-        actual_cell_mm[axis] = cell_mm * measured / nominal
-        cell_u95_mm[axis] = cell_mm * measurement_u95 / nominal
+        if entry.get('authorityBasis') == 'protected_checkerboard_geometry':
+            protected = finite_number(
+                entry.get('protectedSpanMm'),
+                f'target.printScaleVerification.{axis}.protectedSpanMm',
+                positive=True)
+            if (round_number(protected) != required_nominal or
+                    entry.get('measurementMethod') != TARGET_AUTHORITY_METHOD or
+                    entry.get('sourceTargetEvidenceId') != target.get('evidenceId') or
+                    entry.get('sourceTargetSha256') != target.get('sha256')):
+                raise ValueError(
+                    f'V1 {axis.upper()} print-scale authority does not match the exact protected checkerboard target')
+            verify_measurement_artifact(measurement_path, {
+                'schemaVersion':
+                    'ten-kings-calibration-print-scale-authority-v1',
+                'axis': axis,
+                'protectedSpanMm': round_number(protected),
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'sourceTargetEvidenceId': target.get('evidenceId'),
+                'sourceTargetSha256': target.get('sha256'),
+            }, f'{axis.upper()} protected target print-scale authority', entry,
+                capture_package_authority['subject'])
+            target_print_scale_samples.append({
+                **evidence,
+                'axis': axis,
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'protectedSpanMm': round_number(protected),
+                'targetVersion': target.get('version'),
+                'targetSha256': target.get('sha256'),
+            })
+            actual_cell_mm[axis] = cell_mm
+        else:
+            if (isinstance(entry.get('instrument'), dict) and
+                    entry['instrument'].get('kind') ==
+                    'protected_target_geometry'):
+                raise ValueError(
+                    'protected target geometry must use nominal print-scale authority')
+            nominal = finite_number(
+                entry.get('nominalSpanMm'),
+                f'target.printScaleVerification.{axis}.nominalSpanMm', positive=True)
+            measured = finite_number(
+                entry.get('measuredSpanMm'),
+                f'target.printScaleVerification.{axis}.measuredSpanMm', positive=True)
+            measurement_u95 = finite_number(
+                entry.get('measurementU95Mm'),
+                f'target.printScaleVerification.{axis}.measurementU95Mm')
+            if measurement_u95 <= 0:
+                raise ValueError('print-scale measurement U95 must be positive')
+            if round_number(nominal) != required_nominal:
+                raise ValueError(
+                    f'V1 {axis.upper()} print-scale verification must use the '
+                    f'{required_nominal:.2f} mm bar')
+            verify_measurement_artifact(measurement_path, {
+                'schemaVersion':
+                    'ten-kings-calibration-print-scale-measurement-v1',
+                'axis': axis,
+                'nominalSpanMm': round_number(nominal),
+                'measuredSpanMm': round_number(measured),
+                'measurementU95Mm': round_number(measurement_u95),
+            }, f'{axis.upper()} print-scale measurement', entry,
+                capture_package_authority['subject'])
+            target_print_scale_samples.append({
+                **evidence,
+                'axis': axis,
+                'nominalSpanMm': round_number(nominal),
+                'measuredSpanMm': round_number(measured),
+                'measurementU95Mm': round_number(measurement_u95),
+            })
+            actual_cell_mm[axis] = cell_mm * measured / nominal
+            cell_u95_mm[axis] = cell_mm * measurement_u95 / nominal
+    protected_target_authority = all(
+        sample.get('authorityBasis') == 'protected_checkerboard_geometry'
+        for sample in target_print_scale_samples)
+    if protected_target_authority != any(
+            sample.get('authorityBasis') == 'protected_checkerboard_geometry'
+            for sample in target_print_scale_samples):
+        raise ValueError('print-scale authority cannot mix protected and measured sources')
+    protected_cut_authority = all(
+        sample.get('authorityBasis') == 'protected_checkerboard_geometry'
+        for sample in target_cut_dimension_samples)
+    if protected_cut_authority != any(
+            sample.get('authorityBasis') == 'protected_checkerboard_geometry'
+            for sample in target_cut_dimension_samples):
+        raise ValueError('target-cut authority cannot mix protected and measured sources')
+    if protected_target_authority != protected_cut_authority:
+        raise ValueError('target geometry authority must use one consistent source contract')
     calibration_object_grid = object_grid.copy()
     calibration_object_grid[:, 0] *= actual_cell_mm['x'] / cell_mm
     calibration_object_grid[:, 1] *= actual_cell_mm['y'] / cell_mm
@@ -1499,6 +1870,16 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
     recomputed_repeatability = (
         compute_checkerboard_repeatability_measurements(
             placement, columns, rows))
+    if protected_target_authority:
+        checkerboard_linear_u95_mm = (
+            capture_package_authority['evidenceDerivedAuthority'][
+                'uncertaintyCoverageFactor'] * sample_standard_deviation(
+                    recomputed_repeatability['linear_mm']))
+        if not math.isfinite(checkerboard_linear_u95_mm) or checkerboard_linear_u95_mm <= 0:
+            raise ValueError(
+                'protected checkerboard scale uncertainty requires positive repeatability U95')
+        cell_u95_mm['x'] = checkerboard_linear_u95_mm
+        cell_u95_mm['y'] = checkerboard_linear_u95_mm
     shapes = {view['shape'] for view in geometry + normalization + placement}
     if len(shapes) != 1:
         raise ValueError('every calibration image must share exact source dimensions')
@@ -1664,7 +2045,8 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
     for channel_entry in raw.get('flatFieldChannels', []):
         channel, artifact, pattern_response, pattern_records = analyze_flat_field_channel(
             capture_package_authority, channel_entry, output_dir,
-            coupon_width_mm, coupon_height_mm)
+            coupon_width_mm, coupon_height_mm,
+            recomputed_repeatability['linear_mm'])
         if channel['channelIndex'] in seen_channels:
             raise ValueError('flatFieldChannels must have unique channelIndex values')
         seen_channels.add(channel['channelIndex'])
@@ -1823,7 +2205,8 @@ def analyze(manifest_path: Path, output_dir: Path) -> dict[str, Any]:
                 'opencv_checkerboard_repeatability_measurement_v1',
             'fixedRoiDefinition':
                 'registered_checkerboard_center_cell_and_grid_spacing_v1',
-        }, f'{measurement_class} repeatability measurement', entry)
+        }, f'{measurement_class} repeatability measurement', entry,
+            capture_package_authority['subject'])
         measurement_repeatability_samples.append({
             **evidence,
             'measurementClass': measurement_class,

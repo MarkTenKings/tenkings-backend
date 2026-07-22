@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import sharp from "sharp";
 import {
   AI_GRADER_DEFECT_FINDING_V2_VERSION,
@@ -8,22 +8,33 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+  POKEMON_TCG_STANDARD_MEASUREMENT_AUTHENTICATION_DOMAIN,
+  POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION,
   aiGraderReportBundleV03Schema,
   aiGraderPublishedDefectFindingV2Schema,
-  validateMathematicalCalibrationProfileV1,
+  canonicalJsonV1,
   type AiGraderPublishedDefectFindingV2,
+  type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderReportBundleV03,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
   type RegisteredDesignTemplateAxisCalculationV1,
+  type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import type { FixedRigCenteringElementResultV1, FixedRigPointV1 } from "./fixedRigCenteringV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 import type { FixedRigConditionElementResultV1 } from "./fixedRigCornerEdgeV1";
 import type {
   FixedRigMathematicalGradeV1Result,
 } from "./fixedRigMathematicalGradeV1";
 import type { FixedRigSurfaceV1Result } from "./fixedRigSurfaceV1";
+import { verifyTrustedPokemonCardFormatAuthorityV1 } from "./fixedRigPokemonStandardCornerProfileV1";
 
 export const AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION =
   "ai_grader_mathematical_report_adapter_v1" as const;
@@ -144,10 +155,14 @@ export interface AiGraderMathematicalEvidenceQualityLimitationV1 {
 
 export interface BuildAiGraderMathematicalReportBundleV1Input {
   generatedAt: string;
+  gradingSessionId?: string;
   reportId: string;
   cardIdentity: AiGraderReportBundleV03["cardIdentity"];
+  pokemonStandardCornerAuthority?: TrustedPokemonCardFormatAuthorityV1;
+  pokemonStandardCornerAuthorityVerification?: { hmacKey: string; keyId: string };
   calibrationProfile: MathematicalCalibrationProfileV1;
   calibrationBundleAuthority: AiGraderReportBundleV03["calibrationBundleAuthority"];
+  calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   designReferences: MathematicalDesignReferenceV1[];
   centering: FixedRigCenteringElementResultV1;
   corners: FixedRigConditionElementResultV1;
@@ -408,11 +423,84 @@ function contourSvg(
   );
 }
 
+function projectDesignReferencePoint(
+  point: FixedRigPointV1,
+  transformType: "affine" | "homography",
+  matrix: readonly number[],
+): FixedRigPointV1 | null {
+  if (transformType === "affine") {
+    const x = matrix[0]! * point.x + matrix[1]! * point.y + matrix[2]!;
+    const y = matrix[3]! * point.x + matrix[4]! * point.y + matrix[5]!;
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  }
+  const denominator = matrix[6]! * point.x + matrix[7]! * point.y + matrix[8]!;
+  if (!Number.isFinite(denominator) || Math.abs(denominator) <= Number.EPSILON) return null;
+  const x = (matrix[0]! * point.x + matrix[1]! * point.y + matrix[2]!) / denominator;
+  const y = (matrix[3]! * point.x + matrix[4]! * point.y + matrix[5]!) / denominator;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function closedContourPath(points: readonly FixedRigPointV1[]): string {
+  if (points.length < 4) throw new Error("A centering mask contour requires at least four points.");
+  return `M ${points.map((point) => `${svgNumber(point.x)} ${svgNumber(point.y)}`).join(" L ")} Z`;
+}
+
 function centeringOverlaySvg(
   width: number,
   height: number,
   side: ComputedCenteringV1["front"],
+  calibration: MathematicalCalibrationProfileV1,
 ): Buffer {
+  const binding = side.registrationBinding;
+  const inlierIds = new Set(binding?.inlierCorrespondenceIds ?? []);
+  const correspondenceQa = binding
+    ? binding.correspondenceLedger.correspondences.map((correspondence) => {
+        const projected = projectDesignReferencePoint(
+          correspondence.designReferencePointPx,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        if (!projected) {
+          throw new Error(`${side.side} design-reference correspondence ${correspondence.correspondenceId} cannot be projected for its QA overlay.`);
+        }
+        const observed = correspondence.normalizedSourcePointPx;
+        const residual = Math.hypot(projected.x - observed.x, projected.y - observed.y);
+        const color = inlierIds.has(correspondence.correspondenceId) ? "#00ff8c" : "#ff476f";
+        return `<g data-correspondence-id="${xmlText(correspondence.correspondenceId)}">` +
+          `<title>${xmlText(correspondence.correspondenceId)} residual ${residual.toFixed(4)} px</title>` +
+          `<line x1="${svgNumber(projected.x)}" y1="${svgNumber(projected.y)}" x2="${svgNumber(observed.x)}" y2="${svgNumber(observed.y)}" stroke="${color}" stroke-width="3"/>` +
+          `<circle cx="${svgNumber(projected.x)}" cy="${svgNumber(projected.y)}" r="5" fill="none" stroke="#ffffff" stroke-width="2"/>` +
+          `<circle cx="${svgNumber(observed.x)}" cy="${svgNumber(observed.y)}" r="4" fill="${color}" stroke="#000000" stroke-width="1"/>` +
+          `<text x="${svgNumber(observed.x + 7)}" y="${svgNumber(observed.y - 7)}" font-family="Arial,sans-serif" font-size="13" fill="#ffffff" stroke="#000000" stroke-width="0.5">${xmlText(correspondence.correspondenceId)} ${residual.toFixed(2)}px</text></g>`;
+      }).join("")
+    : "";
+  const orientationQa = binding
+    ? (() => {
+        const referenceCenter = {
+          x: binding.correspondenceLedger.designReferenceWidthPx / 2,
+          y: binding.correspondenceLedger.designReferenceHeightPx / 2,
+        };
+        const referenceTop = { x: referenceCenter.x, y: 0 };
+        const center = projectDesignReferencePoint(
+          referenceCenter,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        const top = projectDesignReferencePoint(
+          referenceTop,
+          binding.correspondenceLedger.transformType,
+          side.registration.transformMatrix,
+        );
+        if (!center || !top) throw new Error(`${side.side} design-reference orientation cannot be projected for its QA overlay.`);
+        return `<g data-registration-orientation="design-reference-top">` +
+          `<line x1="${svgNumber(center.x)}" y1="${svgNumber(center.y)}" x2="${svgNumber(top.x)}" y2="${svgNumber(top.y)}" stroke="#ff4dff" stroke-width="4" marker-end="url(#orientation-arrow)"/>` +
+          `<text x="${svgNumber(top.x + 10)}" y="${svgNumber(top.y + 20)}" font-family="Arial,sans-serif" font-size="16" fill="#ffb3ff" stroke="#000000" stroke-width="0.5">APPROVED DESIGN TOP</text></g>`;
+      })()
+    : "";
+  const tenMillimetersX = 10 / calibration.mmPerPixelX;
+  const tenMillimetersY = 10 / calibration.mmPerPixelY;
+  const physicalOrigin = { x: 22, y: Math.max(130, height - 118) };
+  const maskPath = `${closedContourPath(side.outerCutContour)} ${closedContourPath(side.printedDesignContour)}`;
   const lines = side.measurementLines.map((line, index) => {
     const y = 34 + index * 24;
     return `<g data-measurement-id="${xmlText(line.id)}">` +
@@ -427,17 +515,28 @@ function centeringOverlaySvg(
     `V ${side.vertical.balanceRatio.toFixed(2)}% / ${side.vertical.score.toFixed(2)}; ` +
     `U95 H ${side.u95Mm.horizontal.toFixed(4)} mm V ${side.u95Mm.vertical.toFixed(4)} mm; ` +
     `Grade-10 tolerance ${side.grade10ToleranceMm.toFixed(4)} mm`;
+  const authority = binding
+    ? `registered exact reference ${binding.designReferenceId} v${binding.designReferenceVersion}; residual ${side.registration.registrationResidualPx.toFixed(4)} px; inliers ${side.registration.inlierCount}/${side.registration.inlierFraction.toFixed(4)}; confidence ${side.registration.confidence.toFixed(4)}`
+    : `detected printed border; robust fit residual ${side.registration.registrationResidualPx.toFixed(4)} px; confidence ${side.registration.confidence.toFixed(4)}`;
   return svgDocument(
     width,
     height,
-    `<rect width="100%" height="100%" fill="#000000" fill-opacity="0.18"/>` +
+    `<defs><marker id="orientation-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ff4dff"/></marker></defs>` +
+      `<rect width="100%" height="100%" fill="#000000" fill-opacity="0.12"/>` +
+      `<path d="${maskPath}" fill="#ff9f1c" fill-opacity="0.22" fill-rule="evenodd" data-mask="outer-cut-minus-printed-design"/>` +
       `<polygon points="${contourPoints(side.outerCutContour)}" fill="none" stroke="#ffcc00" stroke-width="3"/>` +
       `<polygon points="${contourPoints(side.printedDesignContour)}" fill="none" stroke="#00ff8c" stroke-width="3"/>` +
       lines +
+      correspondenceQa +
+      orientationQa +
+      `<g data-physical-coordinate-mapping="calibrated-millimeters">` +
+      `<line x1="${physicalOrigin.x}" y1="${physicalOrigin.y}" x2="${svgNumber(physicalOrigin.x + tenMillimetersX)}" y2="${physicalOrigin.y}" stroke="#00e5ff" stroke-width="4"/>` +
+      `<line x1="${physicalOrigin.x}" y1="${physicalOrigin.y}" x2="${physicalOrigin.x}" y2="${svgNumber(physicalOrigin.y - tenMillimetersY)}" stroke="#00e5ff" stroke-width="4"/>` +
+      `<text x="${physicalOrigin.x + 6}" y="${physicalOrigin.y - 8}" font-family="Arial,sans-serif" font-size="14" fill="#ffffff">10 mm X / 10 mm Y (calibrated)</text></g>` +
       `<rect x="4" y="${summaryY - 24}" width="${width - 8}" height="72" fill="#000000" fill-opacity="0.75"/>` +
       `<text x="12" y="${summaryY}" font-family="Arial,sans-serif" font-size="16" fill="#ffffff">${xmlText(summary)}</text>` +
       `<text x="12" y="${summaryY + 24}" font-family="Arial,sans-serif" font-size="16" fill="#ffffff">` +
-      `${xmlText(side.profile)} side score ${side.score.toFixed(2)}; exact deduction ${side.centeringDeduction.toFixed(2)}</text>`,
+      `${xmlText(side.profile)} side score ${side.score.toFixed(2)}; exact deduction ${side.centeringDeduction.toFixed(2)}; ${xmlText(authority)}</text>`,
   );
 }
 
@@ -563,6 +662,7 @@ async function addCenteringAssetsAndEvidence(
           calibration.normalizedWidthPx,
           calibration.normalizedHeightPx,
           side,
+          calibration,
         ),
         calibration.normalizedWidthPx,
         calibration.normalizedHeightPx,
@@ -956,13 +1056,38 @@ function assertFinalSourceContract(
   grade: FinalMathematicalGradeV1;
   centering: ComputedCenteringV1;
 } {
-  const calibration = validateMathematicalCalibrationProfileV1(input.calibrationProfile);
-  if (!calibration.valid || !calibration.isCalibrated) {
+  const calibration = validateMathematicalCalibrationForOperationalUseV1(input.calibrationProfile);
+  if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
     throw new Error(
       `Calibrated V1 report rejected: ${calibration.issues
         .map((issue) => `${issue.path}: ${issue.message}`)
-        .join("; ") || "the physical calibration is not finalized"}.`,
+      .join("; ") || "the physical calibration is not finalized"}.`,
     );
+  }
+  if (calibration.isOperationallyAccepted) {
+    const activation = input.calibrationActivationAuthority;
+    const ownerMembers = input.calibrationBundleAuthority.members.filter((member) =>
+      member.role === "product_owner_operational_acceptance");
+    // Binding is checked here; the existing Start New Card authority boundary
+    // remains responsible for cryptographically verifying the hosted ECDSA signature.
+    if (
+      !activation || ownerMembers.length !== 1 ||
+      input.calibrationBundleAuthority.members.length !== 13 ||
+      ownerMembers[0]?.fileName !== "product-owner-operational-acceptance-v1.json" ||
+      activation.bundleManifestSha256 !== input.calibrationBundleAuthority.bundleManifestSha256 ||
+      activation.memberLedgerSha256 !== input.calibrationBundleAuthority.memberLedgerSha256 ||
+      activation.rigCharacterizationSha256 !== input.calibrationProfile.artifactSha256 ||
+      activation.rigId !== input.calibrationProfile.rigId ||
+      (input.calibrationBundleAuthority.rigCharacterizationSha256 !== undefined &&
+        activation.rigCharacterizationSha256 !==
+          input.calibrationBundleAuthority.rigCharacterizationSha256) ||
+      (input.calibrationBundleAuthority.runtimeContextSha256 !== undefined &&
+        activation.runtimeContextHash !== input.calibrationBundleAuthority.runtimeContextSha256)
+    ) {
+      throw new Error(
+        "Owner-accepted report requires the exact signed ACTIVE hosted activation bound to its 13-member bundle, runtime, rig, and physical calibration artifact.",
+      );
+    }
   }
   if (input.grade.status !== "final_mathematical_grade_v1") {
     throw new Error(
@@ -1248,6 +1373,101 @@ function verifySurfaceSourceEvidence(
   }
 }
 
+function buildPokemonStandardCornerAuthorityV1(
+  input: BuildAiGraderMathematicalReportBundleV1Input & { grade: FinalMathematicalGradeV1 },
+): AiGraderReportBundleV03["pokemonStandardCornerAuthority"] | undefined {
+  if (!input.pokemonStandardCornerAuthority) return undefined;
+  const verification = input.pokemonStandardCornerAuthorityVerification;
+  const verifiedAuthority = verifyTrustedPokemonCardFormatAuthorityV1({
+    authority: input.pokemonStandardCornerAuthority,
+    hmacKey: verification?.hmacKey,
+    expectedKeyId: verification?.keyId,
+  });
+  if (!input.gradingSessionId) {
+    throw new Error("The trusted Pokémon standard profile requires the exact grading session ID.");
+  }
+  if (input.corners.status !== "computed") {
+    throw new Error("The trusted Pokémon standard profile requires eight computed physical corner observations.");
+  }
+  const measurements = input.corners.observations.map((observation) => {
+    const contour = observation.cornerContourDeviation;
+    if (!contour) {
+      throw new Error(`${observation.side} ${observation.location} has no analyzer-created contour result.`);
+    }
+    const geometry = input.outerCutGeometryEvidence[observation.side];
+    const observed = geometry.observedArtifact;
+    return {
+      side: observation.side,
+      location: observation.location as "top_left" | "top_right" | "bottom_right" | "bottom_left",
+      profileId: POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+      profileVersion: POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+      expectedRadiusMm: POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
+      measuredContourDeviationMm: contour.measurement.measuredMeasurement,
+      calibratedU95Mm: contour.measurement.u95,
+      effectiveContourDeviationMm: contour.measurement.effectiveMeasurement,
+      grade10ToleranceMm: contour.measurement.explicitGrade10Tolerance,
+      thresholdDecision: contour.thresholdDecision,
+      thresholdDeduction: contour.thresholdDeduction,
+      appliedContourDeduction: contour.appliedContourDeduction,
+      measurementId: contour.measurement.measurementId,
+      sourceImageAssetId: observed.rawAllOnAssetId,
+      sourceImageSha256: observed.rawAllOnAssetSha256,
+      observedContourSha256: observed.artifactSha256,
+      intendedContourSha256: observed.intendedBoundaryArtifactSha256,
+      contourFindingIds: [...contour.contourFindingIds],
+      damageFindingIds: {
+        whitening: [...contour.damageFindingIds.whitening],
+        chippingOrMaterialLoss: [...contour.damageFindingIds.chippingOrMaterialLoss],
+        deformation: [...contour.damageFindingIds.deformation],
+        delamination: [...contour.damageFindingIds.delamination],
+        otherVisibleDamage: [...contour.damageFindingIds.otherVisibleDamage],
+      },
+    };
+  });
+  const measurementArtifact = {
+    gradingSessionId: input.gradingSessionId,
+    reportId: input.reportId,
+    analyzerVersions: {
+      conditionSegmentation: "fixed_rig_condition_segmentation_v1.2.0" as const,
+      cornerMeasurement: "fixed_rig_corner_edge_v1" as const,
+      stationAdapter: "fixed_rig_mathematical_station_adapter_v1" as const,
+    },
+    thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    calibration: {
+      profileId: input.calibrationProfile.profileId,
+      version: input.calibrationProfile.calibrationVersion,
+      artifactSha256: input.calibrationProfile.artifactSha256,
+      bundleManifestSha256: input.calibrationBundleAuthority.bundleManifestSha256,
+      sourceCaptureManifestSha256: input.calibrationBundleAuthority.sourceCaptureManifestSha256,
+      memberLedgerSha256: input.calibrationBundleAuthority.memberLedgerSha256,
+    },
+    callerCreatedProfilesAccepted: false as const,
+    callerCreatedMeasurementsAccepted: false as const,
+    measurements,
+  };
+  const measurementArtifactBytes = canonicalJsonV1(measurementArtifact);
+  return {
+    profile: POKEMON_TCG_STANDARD_CORNER_PROFILE,
+    profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    trustedCardFormatAuthority: verifiedAuthority,
+    productionMeasurementAuthority: {
+      schemaVersion: POKEMON_TCG_STANDARD_MEASUREMENT_AUTHORITY_SCHEMA_VERSION,
+      artifact: measurementArtifact,
+      artifactSha256: sha256(Buffer.from(measurementArtifactBytes, "utf8")),
+      authentication: {
+        algorithm: "hmac-sha256",
+        keyId: verification!.keyId,
+        signature: createHmac("sha256", verification!.hmacKey)
+          .update(POKEMON_TCG_STANDARD_MEASUREMENT_AUTHENTICATION_DOMAIN, "utf8")
+          .update(measurementArtifactBytes, "utf8")
+          .digest("hex"),
+      },
+    },
+  };
+}
+
 /**
  * Builds the public Mathematical Grading V1 artifact only from finalized,
  * physically calibrated evidence. The function intentionally has no V0 path:
@@ -1279,6 +1499,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
   );
   const whyNot10 = publicWhyNot10(input.grade, centeringEvidence, overlayAssetIdByFindingId);
   const overallConfidence = validateConfidence(input.confidence.overall, "overall");
+  const pokemonStandardCornerAuthority = buildPokemonStandardCornerAuthorityV1(input);
   const rawBundle = {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_V03_VERSION,
     generatedAt: input.generatedAt,
@@ -1293,6 +1514,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
       defectFindingSchemaVersion: AI_GRADER_DEFECT_FINDING_V2_VERSION,
       designReferenceSchemaVersion: MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
     },
+    ...(pokemonStandardCornerAuthority ? { pokemonStandardCornerAuthority } : {}),
     productionRelease: {
       finalGrade: {
         status: "final_mathematical_grade_v1",
@@ -1346,6 +1568,7 @@ export async function buildAiGraderMathematicalReportBundleV1(
       publication: { publicReportUrl: input.publication.publicReportUrl },
     },
     calibrationProfile: input.calibrationProfile,
+    ...(input.calibrationActivationAuthority ? { calibrationActivationAuthority: input.calibrationActivationAuthority } : {}),
     calibrationBundleAuthority: input.calibrationBundleAuthority,
     designReferences: input.designReferences,
     centeringEvidence,

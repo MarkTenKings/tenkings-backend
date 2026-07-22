@@ -27,6 +27,9 @@ export type AiGraderMathematicalCalibrationIdentity = {
   sourceCaptureManifestSha256: string;
   memberLedgerSha256: string;
   calibrationBundleAuthority: JsonRecord;
+  captureContractVersion?: "1.2.0";
+  runtimeContextSha256?: string;
+  rigCharacterizationSha256?: string;
 };
 
 export type AiGraderMathematicalCalibrationReadinessCode =
@@ -122,6 +125,13 @@ function identityFromBundle(reportBundle: unknown):
       memberLedgerSha256: parsed.data.calibrationBundleAuthority.memberLedgerSha256,
       calibrationBundleAuthority:
         parsed.data.calibrationBundleAuthority as unknown as JsonRecord,
+      ...(parsed.data.calibrationBundleAuthority.captureContractVersion ? {
+        captureContractVersion: parsed.data.calibrationBundleAuthority.captureContractVersion,
+        runtimeContextSha256:
+          parsed.data.calibrationBundleAuthority.runtimeContextSha256,
+        rigCharacterizationSha256:
+          parsed.data.calibrationBundleAuthority.rigCharacterizationSha256,
+      } : {}),
     },
   };
 }

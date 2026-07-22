@@ -7,10 +7,9 @@ import {
   fuseCenteringFrontBackV1,
   fuseCenteringSideAxesV1,
   mathematicalCenteringRegistrationV1Schema,
-  validateMathematicalCalibrationProfileV1,
   validateMathematicalDesignReferenceV1,
   type CenteringAxisCalculationV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalMeasurementUncertaintyComponentsV1,
   type MathematicalMeasurementV1,
@@ -21,6 +20,7 @@ import {
   type FixedRigDesignReferenceRegistrationBindingV1,
 } from "./fixedRigDesignReferenceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_CENTERING_V1_VERSION = "fixed_rig_centering_v1" as const;
 
@@ -798,8 +798,8 @@ function buildRegisteredTemplateResult(
 export function buildFixedRigCenteringSideV1(
   input: FixedRigCenteringSideInputV1,
 ): FixedRigCenteringSideResultV1 {
-  const calibration = validateMathematicalCalibrationProfileV1(input.calibration);
-  if (!calibration.valid || !calibration.isCalibrated) {
+  const calibration = validateMathematicalCalibrationForOperationalUseV1(input.calibration);
+  if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
     return insufficient(input, [
       ...calibration.issues.map((issue) => `Calibration ${issue.path}: ${issue.message}`),
       "A finalized calibration profile satisfying every manifest acceptance gate is mandatory.",

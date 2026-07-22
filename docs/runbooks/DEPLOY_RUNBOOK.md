@@ -1,6 +1,6 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-last_verified_at: 2026-03-02
+last_verified_at: 2026-07-22
 owner: Mark
 
 ## Rules
@@ -77,11 +77,13 @@ Any AI Grader release that makes `x-amz-checksum-sha256` a required signed brows
 Mathematical Calibration V1 must remain unavailable until all of these identities agree exactly:
 
 - the reviewed source commit and centralized threshold-manifest SHA-256;
-- one physically accepted finalized calibration bundle and its complete member ledger;
+- one exact eligible calibration bundle and complete ledger: normally the physically and mathematically accepted 12-member finalized bundle, or only for session `math-cal-v1-20260722-4cfa410c-01` the exact 13-member owner-operational bundle with its unchanged rejected profile and owner authority;
 - one current `TRUSTED` hosted `CalibrationSnapshot` for the same rig, profile, version, artifact, source-capture manifest, bundle manifest, member ledger, and threshold set;
 - the strict V0.3 report and Mathematical V1 release envelope; and
 - the exact Label V1 report/certificate/grade/link authority.
 
-Never create or trust a snapshot merely to unlock measurements. A rejected or incomplete physical run may retain its evidence and acceptance record, but it must not produce a finalized profile or trusted bundle. Historical V0 reports remain readable; a V1 session with missing calibration/reference/review/evidence authority stops explicitly and never falls back to V0 or a manual grade.
+Never create or trust a snapshot merely to unlock measurements. Under the normal Mathematical V1 contract, a rejected or incomplete physical run may retain its evidence and acceptance record, but it must not produce or use a finalized/trusted bundle. The centralized thresholds and formulas remain authoritative, and ordinary accepted V1.2 calibration remains the exact 12-member `status=finalized` / `isCalibrated=true` path. Historical V0 reports remain readable; a V1 session with missing calibration/reference/review/evidence authority stops explicitly and never falls back automatically to V0 or a manual score. A source-bound, authenticated admin adjudication of a persisted failed report is a separate human-reviewed completion authority and must never be represented as a successful machine-V1 result.
+
+The sole policy exception is the separately versioned product-owner operational acceptance for exact session `math-cal-v1-20260722-4cfa410c-01`. Its profile and mathematical acceptance remain `status=rejected` and `isCalibrated=false`, with the original measurements and all 36 rejection issues unchanged. Its transparent 13-member bundle may become operationally usable only when the exact owner authority, loader result, registry identity, bundle manifest, member ledger, runtime context, rig characterization, rig ID, and operating context all verify, followed by a fresh-human-admin ECDSA-signed `ACTIVE` activation that binds those exact identities. The content-addressed owner record is decision metadata; it is not independently authenticated and cannot replace the signed activation. Owner-accepted reports require that activation and must display the rejected status, owner/reason/timestamp, every exception, and signature/bundle provenance. A browser boolean, caller-authored hash, threshold-pass label, cross-session replay, fallback, newest/closest/LKG selection, or automatic rollback is prohibited. Revocation and supersession are explicit and append-only. This exception neither changes the normal 12-member V1.2 mathematical-acceptance gate nor authorizes another rejected calibration.
 
 Before any protected rollout, require the complete disposable PostgreSQL migration chain plus second-deploy no-op, all normal GitHub/Docker/Vercel checks, and the separately required independent Mac architecture/calibration review. Apply the additive migration, import/trust a real bundle, install/update a Dell helper, deploy, or enable V1 only under a separately authorized rollout; none is an ordinary consequence of merging the implementation PR.

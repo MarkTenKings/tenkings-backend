@@ -1020,6 +1020,10 @@ export default function AiGraderAdminPage() {
             </>
           }
           actions={
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Link className="rounded-full border border-amber-400/40 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-amber-200 transition hover:border-amber-300 hover:text-white" href="/admin/ai-grader-design-references">
+                Exact Design References
+              </Link>
             <button
               type="button"
               onClick={() => refreshStatus().catch(() => undefined)}
@@ -1027,6 +1031,7 @@ export default function AiGraderAdminPage() {
             >
               Refresh Status
             </button>
+            </div>
           }
         />
 
