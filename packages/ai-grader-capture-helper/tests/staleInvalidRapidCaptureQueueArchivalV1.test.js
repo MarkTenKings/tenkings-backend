@@ -8,6 +8,7 @@ const {
   STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722,
   archiveStaleInvalidRapidCaptureQueueItemsForTestV1,
   archivedRapidCaptureQueueTriplesForTestV1,
+  defectFindingsRepresentationForTestV1,
   evaluateRapidCaptureQueueMaintenanceGateV1,
 } = require("../dist/drivers/staleInvalidRapidCaptureQueueArchivalV1");
 const { assertNoUnqueuedRapidSessionManifest } = require("../dist/drivers/aiGraderLocalStationBridge");
@@ -230,20 +231,25 @@ function makeTarget(root, timestamp, overrides = {}) {
   const reportBundlePath = path.join(sessionDir, "report-bundle.json");
   const productionReleasePath = path.join(sessionDir, "production-release.json");
   const manifestPath = path.join(sessionDir, "station-session.json");
+  const defectFindingsMode = overrides.defectFindingsRepresentation ?? "explicit_empty_array";
+  const visionLab = {
+    findingValidation: {
+      status: "invalid",
+      sourceCandidateCount: overrides.sourceCandidateCount ?? 16,
+      publishedFindingCount: overrides.publishedFindingCount ?? 0,
+      issues: Array.from({ length: overrides.issueCount ?? 32 }, (_, index) => ({ path: `candidate.${index}`, message: "fingerprint mismatch" })),
+    },
+  };
+  if (defectFindingsMode === "explicit_empty_array") visionLab.defectFindings = [];
+  if (defectFindingsMode === "null") visionLab.defectFindings = null;
+  if (defectFindingsMode === "object") visionLab.defectFindings = {};
+  if (defectFindingsMode === "nonempty") visionLab.defectFindings = [{ id: "must-not-materialize" }];
   const bundle = {
     schemaVersion: "ai-grader-report-bundle-v0.1",
     gradingSessionId: sessionId,
     reportId,
     cardIdentity: overrides.linked ? { sideCount: 2, cardAssetId: "published-card", itemId: "published-item" } : { sideCount: 2 },
-    visionLab: {
-      defectFindings: [],
-      findingValidation: {
-        status: "invalid",
-        sourceCandidateCount: 16,
-        publishedFindingCount: 0,
-        issues: Array.from({ length: 32 }, (_, index) => ({ path: `candidate.${index}`, message: "fingerprint mismatch" })),
-      },
-    },
+    visionLab,
     assets: images.map((image) => ({ id: image.side, localPath: image.localPath, sha256: image.checksumSha256, byteSize: image.byteSize })),
   };
   const release = {
@@ -296,7 +302,27 @@ function makeTarget(root, timestamp, overrides = {}) {
     },
     manifestPath,
   };
-  return { item, target: { queueItemId, sessionId, reportId }, manifestPath, reportBundlePath, productionReleasePath, sessionDir };
+  return {
+    item,
+    target: { queueItemId, sessionId, reportId },
+    expectedDefectFindingsRepresentation: defectFindingsMode === "absent" ? "absent" : "explicit_empty_array",
+    manifestPath,
+    reportBundlePath,
+    productionReleasePath,
+    sessionDir,
+  };
+}
+
+function pinnedTarget(target) {
+  return {
+    ...target.target,
+    evidence: {
+      manifestSha256: hash(fs.readFileSync(target.manifestPath)),
+      reportBundleSha256: hash(fs.readFileSync(target.reportBundlePath)),
+      productionReleaseSha256: hash(fs.readFileSync(target.productionReleasePath)),
+      defectFindingsRepresentation: target.expectedDefectFindingsRepresentation,
+    },
+  };
 }
 
 function makeFixture(overrides = {}) {
@@ -325,7 +351,7 @@ function makeFixture(overrides = {}) {
   const incident = {
     incidentId: "synthetic-stale-invalid-review-removal-v1",
     expectedBeforeQueueSha256: hash(beforeBytes),
-    targetItems: [first.target, second.target],
+    targetItems: [pinnedTarget(first), pinnedTarget(second)],
     owner: "Mark / Ten Kings",
     reason: "owner_removed_stale_invalid_finding_review_v1",
     authorizationSource: "synthetic_test_authority",
@@ -351,18 +377,45 @@ function cleanup(fixture) {
   fs.rmSync(fixture.root, { recursive: true, force: true });
 }
 
-test("fixed production incident exposes only the exact two owner-authorized queue/session/report triples and before SHA", () => {
+test("fixed production incident pins the exact queue, target triples, evidence hashes, and absent legacy representation", () => {
   assert.equal(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.expectedBeforeQueueSha256, "3bdb4118245ee92406280f74bb45ed43c56e279f5d2cad37c2c6b444d256e05f");
   assert.deepEqual(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.targetItems.map((entry) => entry.queueItemId), [
     "ai-grader-browser-station-session-2026-07-21T042424764Z-session-rapid-card",
     "ai-grader-browser-station-session-2026-07-21T035440224Z-session-rapid-card",
   ]);
   assert.equal(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.reason, "owner_removed_stale_invalid_finding_review_v1");
+  assert.deepEqual(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.targetItems.map((entry) => entry.evidence), [
+    {
+      manifestSha256: "0fe9a33bb0057fa4b57aa184df099711609b504ad56ccc641ec4cb4ca7638979",
+      reportBundleSha256: "2cc1ba76cb854c68359000ecf95f42718c90de2a4d4a5b8d8dce5f73c0eb331d",
+      productionReleaseSha256: "b124003d436b3a7e0e2b4963a7f00656f1c17ae31ed5ea96c2aafbffe611d3c5",
+      defectFindingsRepresentation: "absent",
+    },
+    {
+      manifestSha256: "5d5b21bf1b2d3d419114f5e9374d54b418828964d3af1344610061ec998a4003",
+      reportBundleSha256: "8d6fefee97bc3ecd53be35f71555d1c940b22dd3fe3f04bfd1cb9dc248e0dc70",
+      productionReleaseSha256: "46016f6a4ed4f72e9869128fa31a051c0788358ae177f42c5e7b3ec9c512d70f",
+      defectFindingsRepresentation: "absent",
+    },
+  ]);
   assert.deepEqual(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.safeOffController, {
     identity: "leimac-idmu-tcp:169.254.191.156:1000",
     host: "169.254.191.156",
     port: 1000,
   });
+});
+
+test("absent defectFindings is accepted only for an exact hash-pinned fixed legacy target", () => {
+  const incident = STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722;
+  const target = incident.targetItems[0];
+  assert.equal(defectFindingsRepresentationForTestV1({}, target, incident), "absent");
+  const wrongIncident = structuredClone(incident);
+  wrongIncident.incidentId = "not-the-fixed-incident";
+  assert.throws(() => defectFindingsRepresentationForTestV1({}, wrongIncident.targetItems[0], wrongIncident), /exact hash-pinned/);
+  const wrongHash = structuredClone(incident);
+  wrongHash.targetItems[0].evidence.reportBundleSha256 = "f".repeat(64);
+  assert.throws(() => defectFindingsRepresentationForTestV1({}, wrongHash.targetItems[0], wrongHash), /exact hash-pinned/);
+  assert.equal(defectFindingsRepresentationForTestV1({ defectFindings: [] }, wrongIncident.targetItems[0], wrongIncident), "explicit_empty_array");
 });
 
 test("exact transaction archives full entries and evidence identities, removes only two, and replays read-only", async () => {
@@ -397,7 +450,11 @@ test("exact transaction archives full entries and evidence identities, removes o
     assert.deepEqual(ledger.safeOffEvidence, { source: "bridge_status", bridgePhysicalState: "safe_off_verified", physicalComplete: true });
     assert.deepEqual(receipt.safeOffEvidence, ledger.safeOffEvidence);
     assert.equal(ledger.removedEntries.length, 2);
-    assert.equal(ledger.removedEntries.every((entry) => entry.findingValidation.status === "invalid" && entry.findingValidation.sourceCandidateCount === 16 && entry.findingValidation.publishedFindingCount === 0 && entry.findingValidation.issueCount === 32), true);
+    assert.equal(ledger.removedEntries.every((entry) => entry.findingValidation.status === "invalid" && entry.findingValidation.sourceCandidateCount === 16 && entry.findingValidation.publishedFindingCount === 0 && entry.findingValidation.issueCount === 32 && entry.findingValidation.defectFindingsRepresentation === "explicit_empty_array"), true);
+    assert.deepEqual(receipt.removedDefectFindingsRepresentations, ledger.removedEntries.map((entry) => ({
+      queueItemId: entry.queueItemId,
+      representation: "explicit_empty_array",
+    })));
     assert.equal(ledger.removedEntries.every((entry) => entry.publication.storageUpload === "pending_not_uploaded" && entry.publication.cardLinkage === "not_linked"), true);
     const treeBeforeReplay = hash(Buffer.from(fs.readdirSync(first.archiveDir).sort().map((name) => `${name}:${hash(fs.readFileSync(path.join(first.archiveDir, name)))}`).join("\n")));
     fs.rmSync(fixture.options.idleStatusPath);
@@ -411,6 +468,50 @@ test("exact transaction archives full entries and evidence identities, removes o
     writeJson(fixture.queuePath, refreshed);
     assert.equal(archivedRapidCaptureQueueTriplesForTestV1(fixture.outputDir, fixture.incident).size, 2);
   } finally { cleanup(fixture); }
+});
+
+test("absent legacy representation is rejected for every synthetic or non-fixed incident before mutation", async () => {
+  const fixture = makeFixture({ first: { defectFindingsRepresentation: "absent" } });
+  try {
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident),
+      /Absent defectFindings is accepted only for the exact hash-pinned/,
+    );
+    assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
+    assert.equal(fs.readdirSync(fixture.archiveRoot).length, 0);
+  } finally { cleanup(fixture); }
+});
+
+test("null, object, nonempty, wrong counters, and wrong issue count reject before archive or queue mutation", async () => {
+  const cases = [
+    { defectFindingsRepresentation: "null" },
+    { defectFindingsRepresentation: "object" },
+    { defectFindingsRepresentation: "nonempty" },
+    { sourceCandidateCount: 15 },
+    { publishedFindingCount: 1 },
+    { issueCount: 31 },
+  ];
+  for (const first of cases) {
+    const fixture = makeFixture({ first });
+    try {
+      await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident));
+      assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
+      assert.equal(fs.readdirSync(fixture.archiveRoot).length, 0);
+    } finally { cleanup(fixture); }
+  }
+});
+
+test("wrong pinned manifest, report-bundle, or production-release hash rejects before mutation", async () => {
+  for (const field of ["manifestSha256", "reportBundleSha256", "productionReleaseSha256"]) {
+    const fixture = makeFixture();
+    try {
+      const incident = structuredClone(fixture.incident);
+      incident.targetItems[0].evidence[field] = "f".repeat(64);
+      await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, incident), /linkage changed|Pinned manifest\/report\/release/);
+      assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
+      assert.equal(fs.readdirSync(fixture.archiveRoot).length, 0);
+    } finally { cleanup(fixture); }
+  }
 });
 
 test("wrong queue hash or wrong exact target identity refuses before archive or mutation", async () => {

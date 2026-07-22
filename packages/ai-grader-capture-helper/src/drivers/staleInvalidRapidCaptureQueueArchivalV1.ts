@@ -58,10 +58,24 @@ const SAFE_OFF_FRAME_EXPECTATIONS = [
 
 type JsonRecord = Record<string, any>;
 
+type DefectFindingsRepresentationV1 = "absent" | "explicit_empty_array";
+
+interface StaleInvalidRapidCaptureQueueIncidentTargetV1 {
+  queueItemId: string;
+  sessionId: string;
+  reportId: string;
+  evidence: {
+    manifestSha256: string;
+    reportBundleSha256: string;
+    productionReleaseSha256: string;
+    defectFindingsRepresentation: DefectFindingsRepresentationV1;
+  };
+}
+
 export interface StaleInvalidRapidCaptureQueueIncidentV1 {
   incidentId: string;
   expectedBeforeQueueSha256: string;
-  targetItems: readonly [{ queueItemId: string; sessionId: string; reportId: string }, { queueItemId: string; sessionId: string; reportId: string }];
+  targetItems: readonly [StaleInvalidRapidCaptureQueueIncidentTargetV1, StaleInvalidRapidCaptureQueueIncidentTargetV1];
   owner: "Mark / Ten Kings";
   reason: typeof REASON;
   authorizationSource: string;
@@ -80,11 +94,23 @@ export const STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722: StaleInvalidRa
       queueItemId: "ai-grader-browser-station-session-2026-07-21T042424764Z-session-rapid-card",
       sessionId: "ai-grader-browser-station-session-2026-07-21T042424764Z-session",
       reportId: "ai-grader-browser-station-session-2026-07-21T042424764Z-report",
+      evidence: {
+        manifestSha256: "0fe9a33bb0057fa4b57aa184df099711609b504ad56ccc641ec4cb4ca7638979",
+        reportBundleSha256: "2cc1ba76cb854c68359000ecf95f42718c90de2a4d4a5b8d8dce5f73c0eb331d",
+        productionReleaseSha256: "b124003d436b3a7e0e2b4963a7f00656f1c17ae31ed5ea96c2aafbffe611d3c5",
+        defectFindingsRepresentation: "absent",
+      },
     },
     {
       queueItemId: "ai-grader-browser-station-session-2026-07-21T035440224Z-session-rapid-card",
       sessionId: "ai-grader-browser-station-session-2026-07-21T035440224Z-session",
       reportId: "ai-grader-browser-station-session-2026-07-21T035440224Z-report",
+      evidence: {
+        manifestSha256: "5d5b21bf1b2d3d419114f5e9374d54b418828964d3af1344610061ec998a4003",
+        reportBundleSha256: "8d6fefee97bc3ecd53be35f71555d1c940b22dd3fe3f04bfd1cb9dc248e0dc70",
+        productionReleaseSha256: "46016f6a4ed4f72e9869128fa31a051c0788358ae177f42c5e7b3ec9c512d70f",
+        defectFindingsRepresentation: "absent",
+      },
     },
   ],
   owner: "Mark / Ten Kings",
@@ -194,6 +220,7 @@ interface ArchiveLedgerV1 {
       sourceCandidateCount: 16;
       publishedFindingCount: 0;
       issueCount: 32;
+      defectFindingsRepresentation: DefectFindingsRepresentationV1;
     };
     publication: {
       storageUpload: "pending_not_uploaded";
@@ -230,6 +257,10 @@ interface ArchiveReceiptV1 {
   afterCount: number;
   unfinishedAfterCount: 0;
   removedQueueItemIds: string[];
+  removedDefectFindingsRepresentations: Array<{
+    queueItemId: string;
+    representation: DefectFindingsRepresentationV1;
+  }>;
   archiveLedgerSha256: string;
   safeOffEvidence: SafeOffEvidenceV1;
 }
@@ -685,9 +716,51 @@ function targetIdentity(item: JsonRecord): { queueItemId: string; sessionId: str
   return { queueItemId: item.queueItemId, sessionId: item.sessionId, reportId: item.reportId };
 }
 
+function isExactFixedLegacyAbsentTarget(
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+  target: StaleInvalidRapidCaptureQueueIncidentTargetV1,
+): boolean {
+  const fixed = STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722;
+  const fixedTarget = fixed.targetItems.find((candidate) => sameJson(targetIdentity(candidate), targetIdentity(target)));
+  return (
+    incident.incidentId === fixed.incidentId && incident.expectedBeforeQueueSha256 === fixed.expectedBeforeQueueSha256 &&
+    incident.owner === fixed.owner && incident.reason === fixed.reason && incident.authorizationSource === fixed.authorizationSource &&
+    sameJson(incident.safeOffController, fixed.safeOffController) && sameJson(incident.targetItems, fixed.targetItems) &&
+    fixedTarget !== undefined && sameJson(target, fixedTarget) &&
+    target.evidence.defectFindingsRepresentation === "absent"
+  );
+}
+
+function defectFindingsRepresentation(
+  visionLab: JsonRecord,
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+  target: StaleInvalidRapidCaptureQueueIncidentTargetV1,
+): DefectFindingsRepresentationV1 {
+  if (!Object.prototype.hasOwnProperty.call(visionLab, "defectFindings")) {
+    if (!isExactFixedLegacyAbsentTarget(incident, target)) {
+      throw new Error("Absent defectFindings is accepted only for the exact hash-pinned 2026-07-22 legacy incident targets.");
+    }
+    return "absent";
+  }
+  if (!Array.isArray(visionLab.defectFindings) || visionLab.defectFindings.length !== 0) {
+    throw new Error("Persisted defectFindings must be an explicit empty array when the property is present.");
+  }
+  return "explicit_empty_array";
+}
+
+/** Test seam only: runtime validation reaches this through the fixed incident transaction. */
+export function defectFindingsRepresentationForTestV1(
+  visionLab: unknown,
+  target: StaleInvalidRapidCaptureQueueIncidentTargetV1,
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+): DefectFindingsRepresentationV1 {
+  if (!isRecord(visionLab)) throw new Error("Vision Lab evidence must be one object.");
+  return defectFindingsRepresentation(visionLab, incident, target);
+}
+
 function exactTargetItem(queue: JsonRecord, target: StaleInvalidRapidCaptureQueueIncidentV1["targetItems"][number]): JsonRecord {
   const matches = queue.items.filter((item: unknown) => isRecord(item) && item.queueItemId === target.queueItemId);
-  if (matches.length !== 1 || !sameJson(targetIdentity(matches[0]), target)) throw new Error(`Exact queue/session/report linkage is absent for ${target.queueItemId}.`);
+  if (matches.length !== 1 || !sameJson(targetIdentity(matches[0]), targetIdentity(target))) throw new Error(`Exact queue/session/report linkage is absent for ${target.queueItemId}.`);
   const item = matches[0];
   if (item.state !== "report_ready_needs_confirm" || !isRecord(item.ocr) || item.ocr.state !== "succeeded" || typeof item.manifestPath !== "string") {
     throw new Error(`Target ${target.queueItemId} is no longer one succeeded-OCR report_ready_needs_confirm item.`);
@@ -707,13 +780,18 @@ function readJsonFile(filePath: string, label: string): { body: JsonRecord; iden
   return { body: parsed, identity };
 }
 
-function verifyTargetEvidence(item: JsonRecord): {
+function verifyTargetEvidence(
+  item: JsonRecord,
+  target: StaleInvalidRapidCaptureQueueIncidentTargetV1,
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+): {
   removed: ArchiveLedgerV1["removedEntries"][number];
   referenced: FileIdentityV1[];
 } {
   const manifestResult = readJsonFile(item.manifestPath, "Target station manifest");
   const manifest = manifestResult.body;
   if (
+    manifestResult.identity.sha256 !== target.evidence.manifestSha256 ||
     manifest.sessionId !== item.sessionId || manifest.reportId !== item.reportId || !isRecord(manifest.rapidCapture) ||
     manifest.rapidCapture.queueItemId !== item.queueItemId || manifest.rapidCapture.workflowState !== item.state ||
     !isRecord(manifest.outputs) || typeof manifest.outputs.reportBundlePath !== "string" || typeof manifest.outputs.productionReleasePath !== "string"
@@ -723,13 +801,21 @@ function verifyTargetEvidence(item: JsonRecord): {
   const releaseResult = readJsonFile(manifest.outputs.productionReleasePath, "Target production release");
   const bundle = bundleResult.body;
   const release = releaseResult.body;
-  const validation = isRecord(bundle.visionLab) && isRecord(bundle.visionLab.findingValidation) ? bundle.visionLab.findingValidation : {};
+  if (
+    bundleResult.identity.sha256 !== target.evidence.reportBundleSha256 ||
+    releaseResult.identity.sha256 !== target.evidence.productionReleaseSha256
+  ) throw new Error(`Pinned manifest/report/release evidence identity changed for ${item.queueItemId}.`);
+  const visionLab = isRecord(bundle.visionLab) ? bundle.visionLab : {};
+  const validation = isRecord(visionLab.findingValidation) ? visionLab.findingValidation : {};
   if (
     bundle.reportId !== item.reportId || bundle.gradingSessionId !== item.sessionId ||
     validation.status !== "invalid" || validation.sourceCandidateCount !== TARGET_SOURCE_CANDIDATES || validation.publishedFindingCount !== 0 ||
-    !Array.isArray(validation.issues) || validation.issues.length !== TARGET_VALIDATION_ISSUES ||
-    !Array.isArray(bundle.visionLab.defectFindings) || bundle.visionLab.defectFindings.length !== 0
+    !Array.isArray(validation.issues) || validation.issues.length !== TARGET_VALIDATION_ISSUES
   ) throw new Error(`Persisted finding extraction is not the exact invalid 16/0/32 unpublished contract for ${item.queueItemId}.`);
+  const findingRepresentation = defectFindingsRepresentation(visionLab, incident, target);
+  if (findingRepresentation !== target.evidence.defectFindingsRepresentation) {
+    throw new Error(`Persisted defectFindings representation changed for ${item.queueItemId}.`);
+  }
 
   const publication = isRecord(release.publication) ? release.publication : {};
   const storage = isRecord(release.storageIntegration) ? release.storageIntegration : {};
@@ -770,7 +856,13 @@ function verifyTargetEvidence(item: JsonRecord): {
       manifestSha256: manifestResult.identity.sha256,
       reportBundleSha256: bundleResult.identity.sha256,
       productionReleaseSha256: releaseResult.identity.sha256,
-      findingValidation: { status: "invalid", sourceCandidateCount: 16, publishedFindingCount: 0, issueCount: 32 },
+      findingValidation: {
+        status: "invalid",
+        sourceCandidateCount: 16,
+        publishedFindingCount: 0,
+        issueCount: 32,
+        defectFindingsRepresentation: findingRepresentation,
+      },
       publication: { storageUpload: "pending_not_uploaded", cardLinkage: "not_linked" },
     },
     referenced,
@@ -808,6 +900,10 @@ function expectedReceipt(ledger: ArchiveLedgerV1, archiveId: string): ArchiveRec
     afterCount: ledger.queue.afterCount,
     unfinishedAfterCount: 0,
     removedQueueItemIds: ledger.removedEntries.map((entry) => entry.queueItemId),
+    removedDefectFindingsRepresentations: ledger.removedEntries.map((entry) => ({
+      queueItemId: entry.queueItemId,
+      representation: entry.findingValidation.defectFindingsRepresentation,
+    })),
     archiveLedgerSha256: archiveId,
     safeOffEvidence: ledger.safeOffEvidence,
   };
@@ -945,8 +1041,15 @@ function assertVerifiedArchiveMatchesIncident(
       ledger.safeOffEvidence.controllerHost !== incident.safeOffController.host ||
       ledger.safeOffEvidence.controllerPort !== incident.safeOffController.port
     )) ||
-    ledger.removedEntries.length !== 2 || !sameJson(ledger.removedEntries.map(targetIdentity), incident.targetItems) ||
-    ledger.removedEntries.some((entry) => entry.findingValidation.status !== "invalid" || entry.findingValidation.sourceCandidateCount !== 16 || entry.findingValidation.publishedFindingCount !== 0 || entry.findingValidation.issueCount !== 32 || entry.publication.storageUpload !== "pending_not_uploaded" || entry.publication.cardLinkage !== "not_linked") ||
+    ledger.removedEntries.length !== 2 || !sameJson(ledger.removedEntries.map(targetIdentity), incident.targetItems.map(targetIdentity)) ||
+    ledger.removedEntries.some((entry, index) => {
+      const expected = incident.targetItems[index]?.evidence;
+      return !expected || entry.manifestSha256 !== expected.manifestSha256 || entry.reportBundleSha256 !== expected.reportBundleSha256 ||
+        entry.productionReleaseSha256 !== expected.productionReleaseSha256 || entry.findingValidation.status !== "invalid" ||
+        entry.findingValidation.sourceCandidateCount !== 16 || entry.findingValidation.publishedFindingCount !== 0 ||
+        entry.findingValidation.issueCount !== 32 || entry.findingValidation.defectFindingsRepresentation !== expected.defectFindingsRepresentation ||
+        entry.publication.storageUpload !== "pending_not_uploaded" || entry.publication.cardLinkage !== "not_linked";
+    }) ||
     ledger.retainedTerminalEntries.length !== 3 || ledger.retainedTerminalEntries.some((entry) => entry.state !== "failed") ||
     ledger.preservation.referencedFilesRemainInPlace !== true || ledger.preservation.reportManifestArtifactDeletionPerformed !== false ||
     ledger.preservation.reportBytesRewritten !== false || ledger.preservation.terminalEntryPayloadsUnchanged !== true
@@ -963,7 +1066,7 @@ function verifyArchivePointer(
   if (
     pointer.schemaVersion !== POINTER_SCHEMA || pointer.incidentId !== incident.incidentId ||
     pointer.beforeQueueSha256 !== incident.expectedBeforeQueueSha256 || pointer.removedItems.length !== 2 ||
-    !sameJson(pointer.removedItems, incident.targetItems) || !SHA256.test(pointer.archiveId) || !SHA256.test(pointer.afterQueueSha256)
+    !sameJson(pointer.removedItems, incident.targetItems.map(targetIdentity)) || !SHA256.test(pointer.archiveId) || !SHA256.test(pointer.afterQueueSha256)
   ) throw new Error("Rapid queue archive pointer is not the exact fixed incident authority.");
   const verified = verifyArchive(pointer.archiveDir);
   assertVerifiedArchiveMatchesIncident(verified, incident);
@@ -1256,7 +1359,7 @@ async function execute(
   if (retained.length !== 3 || retained.some((item: JsonRecord) => item.state !== "failed")) {
     throw new Error("Fixed incident requires exactly three pre-existing terminal failed entries to remain active and unchanged.");
   }
-  const evidence = targets.map(verifyTargetEvidence);
+  const evidence = incident.targetItems.map((target, index) => verifyTargetEvidence(targets[index], target, incident));
   const referencedEvidence = mergeReferencedEvidence(evidence.map((entry) => entry.referenced));
   const after = afterQueueBytes(queue, targets, executedAt);
   const gate = evaluateRapidCaptureQueueMaintenanceGateV1(after.queue);
