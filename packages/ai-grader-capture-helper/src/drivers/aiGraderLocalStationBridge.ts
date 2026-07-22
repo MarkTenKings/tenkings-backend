@@ -133,6 +133,26 @@ import {
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
+import type { FastCalibrationRuntimeContextV1_2 } from "./fixedRigFastMathematicalCalibrationV1_2";
+import {
+  DurableMathematicalCalibrationV1_2LocalSessionAuthority,
+  type DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig,
+} from "./fixedRigFastMathematicalCalibrationLocalAuthorityV1_2";
+import {
+  MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS,
+  parseMathematicalCalibrationV1_2SessionMutationRequestDto,
+  parseReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  parseStartMathematicalCalibrationV1_2SessionRequestDto,
+  validateMathematicalCalibrationV1_2SessionListResponseDto,
+  validateMathematicalCalibrationV1_2SessionStatusDto,
+  type MathematicalCalibrationV1_2BridgeAction,
+  type MathematicalCalibrationV1_2LocalSessionAuthority,
+  type MathematicalCalibrationV1_2SessionListResponseDto,
+  type MathematicalCalibrationV1_2SessionMutationRequestDto,
+  type MathematicalCalibrationV1_2SessionStatusDto,
+  type ReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  type StartMathematicalCalibrationV1_2SessionRequestDto,
+} from "./mathematicalCalibrationV1_2Contract";
 import {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
   buildFixedRigMathematicalCalibrationStationPackageV1,
@@ -641,6 +661,10 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+  mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
+  mathematicalCalibrationV1_2LocalAuthorityConfig?:
+    Omit<DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig, "outputRoot"> & { outputRoot?: string };
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
 }
@@ -693,6 +717,8 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationProfileSha256?: string;
   mathematicalCalibrationBundlePath?: string;
   mathematicalCalibrationBundleSha256?: string;
+  mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
+  mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
   provisionalGeometryArtifactPath?: string;
   provisionalGeometryArtifactSha256?: string;
 }
@@ -811,6 +837,9 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rigId?: string;
     artifactSha256?: string;
     bundleSha256?: string;
+    captureContractVersion?: "1.2.0";
+    runtimeContextSha256?: string;
+    rigCharacterizationSha256?: string;
   };
   provisionalGeometry: {
     active: boolean;
@@ -857,6 +886,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
+        | MathematicalCalibrationV1_2BridgeAction
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2062,6 +2092,21 @@ export function buildAiGraderLocalStationBridgeConfig(
     env.AI_GRADER_MATHEMATICAL_CALIBRATION_OUTPUT_DIR,
   ) ?? path.join(outputDir, "mathematical-calibration-v1");
   assertFixedRigOutputDirAllowed(mathematicalCalibrationOutputDir);
+  if (input.mathematicalCalibrationV1_2Authority && input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    throw new Error("Mathematical Calibration V1.2 authority must be either prebuilt or helper-constructed, never both.");
+  }
+  const localAuthorityOutputRoot = input.mathematicalCalibrationV1_2LocalAuthorityConfig?.outputRoot ??
+    path.join(mathematicalCalibrationOutputDir, "sessions-v1.2");
+  if (input.mathematicalCalibrationV1_2LocalAuthorityConfig) {
+    assertFixedRigOutputDirAllowed(localAuthorityOutputRoot);
+  }
+  const mathematicalCalibrationV1_2Authority = input.mathematicalCalibrationV1_2Authority ??
+    (input.mathematicalCalibrationV1_2LocalAuthorityConfig
+      ? new DurableMathematicalCalibrationV1_2LocalSessionAuthority({
+        ...input.mathematicalCalibrationV1_2LocalAuthorityConfig,
+        outputRoot: localAuthorityOutputRoot,
+      })
+      : undefined);
   const provisionalGeometryArtifactPath = firstNonEmpty(
     input.provisionalGeometryArtifactPath,
     env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH,
@@ -2142,6 +2187,8 @@ export function buildAiGraderLocalStationBridgeConfig(
       env.AI_GRADER_MATHEMATICAL_CALIBRATION_BUNDLE_PATH,
     ),
     mathematicalCalibrationBundleSha256,
+    mathematicalCalibrationRuntimeContext: input.mathematicalCalibrationRuntimeContext,
+    mathematicalCalibrationV1_2Authority,
     provisionalGeometryArtifactPath,
     provisionalGeometryArtifactSha256,
   };
@@ -2683,6 +2730,9 @@ function mathematicalCalibrationReadiness(
       bundlePath: config.mathematicalCalibrationBundlePath,
       bundleSha256: config.mathematicalCalibrationBundleSha256,
       expectedRigId: config.mathematicalCalibrationRigId,
+      ...(config.mathematicalCalibrationRuntimeContext
+        ? { expectedRuntimeContext: config.mathematicalCalibrationRuntimeContext }
+        : {}),
     });
     return {
       ready: true,
@@ -2691,6 +2741,11 @@ function mathematicalCalibrationReadiness(
       rigId: loaded.profile.rigId,
       artifactSha256: loaded.profile.artifactSha256,
       bundleSha256: loaded.bundleSha256,
+      ...(loaded.authority.captureContractVersion ? {
+        captureContractVersion: loaded.authority.captureContractVersion,
+        runtimeContextSha256: loaded.authority.runtimeContextSha256,
+        rigCharacterizationSha256: loaded.authority.rigCharacterizationSha256,
+      } : {}),
     };
   } catch (error) {
     return { ready: false, reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established." };
@@ -2775,6 +2830,7 @@ function bridgeEndpoints() {
         | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
+        | MathematicalCalibrationV1_2BridgeAction
         | "mathematical-design-reference-stage" | "mathematical-review-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
@@ -2798,6 +2854,14 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-v1.1-capture", path: "/calibration/mathematical-v1.1/capture", hardwareAccess: true, description: "Capture one overlay-approved V1.1 placement/channel step under sole camera ownership and verified safe-off." },
     { method: "POST", action: "mathematical-calibration-v1.1-measurement", path: "/calibration/mathematical-v1.1/measurement", hardwareAccess: false, description: "Record one immutable V1.1 physical/metrology measurement." },
     { method: "POST", action: "mathematical-calibration-v1.1-seal", path: "/calibration/mathematical-v1.1/seal", hardwareAccess: false, description: "Seal only the exact four-placement, one-flip, eight-channel V1.1 source package." },
+    { method: "GET", action: "mathematical-calibration-v1.2-sessions", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.sessions, hardwareAccess: false, description: "List saved or incomplete V1.2 sessions from trusted local state." },
+    { method: "POST", action: "mathematical-calibration-v1.2-start", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.start, hardwareAccess: false, description: "Start or resume V1.2 using locally derived protected runtime and rig authority." },
+    { method: "GET", action: "mathematical-calibration-v1.2-status", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.status, hardwareAccess: false, description: "Read the exact rich server-owned V1.2 session projection." },
+    { method: "POST", action: "mathematical-calibration-v1.2-capture", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.capture, hardwareAccess: true, description: "Execute only the server-owned current expected capture or flip/cleanup step." },
+    { method: "POST", action: "mathematical-calibration-v1.2-retry", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.retry, hardwareAccess: true, description: "Retry only the current server-owned expected step using a new local operation ID." },
+    { method: "POST", action: "mathematical-calibration-v1.2-replace-pose", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.replacePose, hardwareAccess: true, description: "Explicitly replace one accepted pose while preserving superseded evidence and lineage." },
+    { method: "POST", action: "mathematical-calibration-v1.2-analyze", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.analyze, hardwareAccess: false, description: "Run deterministic analysis from exact trusted local session evidence." },
+    { method: "POST", action: "mathematical-calibration-v1.2-finalize", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.finalize, hardwareAccess: false, description: "Run canonical V1.2 finalization and loader verification from the accepted analysis." },
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
     { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
@@ -4391,6 +4455,7 @@ export class AiGraderLocalStationBridgeService {
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private mathematicalCalibrationV1_1SessionId?: string;
+  private mathematicalCalibrationV1_2MutationPending = false;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
   private mathematicalCalibrationPreviewDetectionInFlight = false;
 
@@ -6893,6 +6958,9 @@ export class AiGraderLocalStationBridgeService {
           bundlePath: this.config.mathematicalCalibrationBundlePath,
           bundleSha256: this.config.mathematicalCalibrationBundleSha256,
           expectedRigId: this.config.mathematicalCalibrationRigId,
+          ...(this.config.mathematicalCalibrationRuntimeContext
+            ? { expectedRuntimeContext: this.config.mathematicalCalibrationRuntimeContext }
+            : {}),
         },
         warmSides: { front, back },
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
@@ -11878,6 +11946,164 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducerV1_1().seal(request);
   }
 
+  private requireMathematicalCalibrationV1_2Authority(): MathematicalCalibrationV1_2LocalSessionAuthority {
+    if (!this.config.mathematicalCalibrationV1_2Authority) {
+      throw new Error("Mathematical Calibration V1.2 local session authority is not configured.");
+    }
+    return this.config.mathematicalCalibrationV1_2Authority;
+  }
+
+  async listMathematicalCalibrationV1_2Sessions(): Promise<MathematicalCalibrationV1_2SessionListResponseDto> {
+    return validateMathematicalCalibrationV1_2SessionListResponseDto(
+      await this.requireMathematicalCalibrationV1_2Authority().listSessions(),
+    );
+  }
+
+  async mathematicalCalibrationV1_2Status(sessionId: string): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(sessionId)) {
+      throw new Error("Mathematical Calibration V1.2 status requires one exact safe sessionId.");
+    }
+    const status = validateMathematicalCalibrationV1_2SessionStatusDto(
+      await this.requireMathematicalCalibrationV1_2Authority().status(sessionId),
+    );
+    if (status.sessionId !== sessionId) throw new Error("V1.2 local authority returned cross-session status.");
+    return status;
+  }
+
+  async startMathematicalCalibrationV1_2(
+    request: StartMathematicalCalibrationV1_2SessionRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_2MutationPending) {
+      throw new Error("Another Mathematical Calibration V1.2 mutation is already serialized.");
+    }
+    this.mathematicalCalibrationV1_2MutationPending = true;
+    try {
+      const authority = this.requireMathematicalCalibrationV1_2Authority();
+      if (request.resumeSessionId) {
+        const before = validateMathematicalCalibrationV1_2SessionStatusDto(
+          await authority.status(request.resumeSessionId),
+        );
+        if (before.sessionId !== request.resumeSessionId || before.revision !== request.expectedRevision) {
+          throw new Error("Mathematical Calibration V1.2 resume revision conflict; refresh exact local status.");
+        }
+      }
+      const status = validateMathematicalCalibrationV1_2SessionStatusDto(
+        await authority.startOrResume(request),
+      );
+      if (request.resumeSessionId && status.sessionId !== request.resumeSessionId) {
+        throw new Error("V1.2 local authority returned cross-session resume status.");
+      }
+      return status;
+    } finally {
+      this.mathematicalCalibrationV1_2MutationPending = false;
+    }
+  }
+
+  private async runMathematicalCalibrationV1_2Mutation(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+    mutation: (authority: MathematicalCalibrationV1_2LocalSessionAuthority) => Promise<MathematicalCalibrationV1_2SessionStatusDto>,
+    assertIsolation = true,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    if (assertIsolation) this.assertCalibrationSessionIsolated();
+    if (this.mathematicalCalibrationV1_2MutationPending) {
+      throw new Error("Another Mathematical Calibration V1.2 mutation is already serialized.");
+    }
+    this.mathematicalCalibrationV1_2MutationPending = true;
+    try {
+      const authority = this.requireMathematicalCalibrationV1_2Authority();
+      const before = validateMathematicalCalibrationV1_2SessionStatusDto(await authority.status(request.sessionId));
+      if (before.sessionId !== request.sessionId || before.revision !== request.expectedRevision) {
+        throw new Error("Mathematical Calibration V1.2 revision conflict; refresh exact local status before retrying.");
+      }
+      const after = validateMathematicalCalibrationV1_2SessionStatusDto(await mutation(authority));
+      if (after.sessionId !== request.sessionId || after.revision === request.expectedRevision) {
+        throw new Error("Mathematical Calibration V1.2 mutation returned stale or cross-session authority.");
+      }
+      return after;
+    } finally {
+      this.mathematicalCalibrationV1_2MutationPending = false;
+    }
+  }
+
+  private runMathematicalCalibrationV1_2HardwareMutation(
+    label: string,
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+    mutation: (authority: MathematicalCalibrationV1_2LocalSessionAuthority) => Promise<MathematicalCalibrationV1_2SessionStatusDto>,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction(`mathematical calibration V1.2 ${label}`);
+      const owner = `mathematical-calibration-v1.2:${request.sessionId}:${request.expectedRevision.slice(0, 16)}`;
+      this.acquireCaptureLock(owner);
+      let result: MathematicalCalibrationV1_2SessionStatusDto | undefined;
+      let operationError: Error | undefined;
+      try {
+        result = await this.runMathematicalCalibrationV1_2Mutation(request, mutation, false);
+      } catch (error) {
+        operationError = error instanceof Error ? error : new Error(`Mathematical Calibration V1.2 ${label} failed.`);
+      }
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      try {
+        safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.2 ${label} bridge lifecycle end`);
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      if (!safeOff.ok) {
+        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ??
+          "Mathematical Calibration V1.2 lifecycle safe-off could not be confirmed.";
+        throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      if (operationError) throw operationError;
+      if (!result) throw new Error("Mathematical Calibration V1.2 mutation did not return exact durable status.");
+      return result;
+    });
+  }
+
+  captureMathematicalCalibrationV1_2ExpectedStep(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      "expected-step",
+      request,
+      (authority) => authority.executeExpectedStep(request),
+    );
+  }
+
+  retryMathematicalCalibrationV1_2ExpectedStep(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      "retry",
+      request,
+      (authority) => authority.retryExpectedStep(request),
+    );
+  }
+
+  replaceMathematicalCalibrationV1_2Pose(
+    request: ReplaceMathematicalCalibrationV1_2PoseRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2HardwareMutation(
+      `replace-pose-${request.acceptedSlot}`,
+      request,
+      (authority) => authority.replaceAcceptedPose(request),
+    );
+  }
+
+  analyzeMathematicalCalibrationV1_2(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2Mutation(request, (authority) => authority.analyze(request));
+  }
+
+  finalizeMathematicalCalibrationV1_2(
+    request: MathematicalCalibrationV1_2SessionMutationRequestDto,
+  ): Promise<MathematicalCalibrationV1_2SessionStatusDto> {
+    return this.runMathematicalCalibrationV1_2Mutation(request, (authority) => authority.finalize(request));
+  }
+
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
     if (action === "capture-front") {
       this.assertMathematicalCaptureAuthority(this.manifest, "front");
@@ -12407,6 +12633,89 @@ export function createAiGraderLocalStationBridgeHttpServer(
             stagedAt: staged.stagedAt,
             createNew: true,
           },
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.sessions) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the V1.2 session list." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 session list does not accept query authority.");
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-sessions",
+          result: await service.listMathematicalCalibrationV1_2Sessions(),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.status) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for V1.2 session status." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if ([...url.searchParams.keys()].some((key) => key !== "sessionId") ||
+            url.searchParams.getAll("sessionId").length !== 1) {
+          throw new Error("V1.2 status accepts exactly one sessionId query and no browser authority fields.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-status",
+          result: await service.mathematicalCalibrationV1_2Status(url.searchParams.get("sessionId") ?? ""),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.start) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.2 start or resume." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 start does not accept query authority.");
+        const body = parseStartMathematicalCalibrationV1_2SessionRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-start",
+          result: await service.startMathematicalCalibrationV1_2(body),
+        }, origin, config);
+      }
+
+      const v1_2MutationRoutes = new Map<string, {
+        operation: MathematicalCalibrationV1_2BridgeAction;
+        run(request: MathematicalCalibrationV1_2SessionMutationRequestDto): Promise<MathematicalCalibrationV1_2SessionStatusDto>;
+      }>([
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.capture, {
+          operation: "mathematical-calibration-v1.2-capture",
+          run: (request) => service.captureMathematicalCalibrationV1_2ExpectedStep(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.retry, {
+          operation: "mathematical-calibration-v1.2-retry",
+          run: (request) => service.retryMathematicalCalibrationV1_2ExpectedStep(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.analyze, {
+          operation: "mathematical-calibration-v1.2-analyze",
+          run: (request) => service.analyzeMathematicalCalibrationV1_2(request),
+        }],
+        [MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.finalize, {
+          operation: "mathematical-calibration-v1.2-finalize",
+          run: (request) => service.finalizeMathematicalCalibrationV1_2(request),
+        }],
+      ]);
+      const v1_2MutationRoute = v1_2MutationRoutes.get(url.pathname);
+      if (v1_2MutationRoute) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for V1.2 mutation routes." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 mutation routes do not accept query authority.");
+        const body = parseMathematicalCalibrationV1_2SessionMutationRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: v1_2MutationRoute.operation,
+          result: await v1_2MutationRoute.run(body),
+        }, origin, config);
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.replacePose) {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for explicit V1.2 pose replacement." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("V1.2 pose replacement does not accept query authority.");
+        const body = parseReplaceMathematicalCalibrationV1_2PoseRequestDto(await readJsonBody(req));
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-v1.2-replace-pose",
+          result: await service.replaceMathematicalCalibrationV1_2Pose(body),
         }, origin, config);
       }
 

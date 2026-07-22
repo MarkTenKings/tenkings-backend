@@ -12,16 +12,72 @@ The executable acceptance and scoring authority is `packages/shared/src/aiGrader
 
 Use one exact reviewed checkout pinned to the intended source commit. Do not install it over the Dell helper, change the Scheduled Task, rotate or print a station token, or persist new driver/firmware/controller settings. If another process already owns the camera or the requested loopback port, stop and obtain direction rather than changing the installed helper.
 
-## Current four-pose V1.1 compatibility stop
+## V1.1 compatibility stop and V1.2 software candidate
 
-As of `origin/main` commit `9f63691d792847d13f47e2df02b137cdb317ae2a`, the newer four-pose/one-flip V1.1 capture prototype is **not** a Production activation path. Do not spend physical calibration time on it until the following software gap is closed and verified without hardware:
+The four-pose/one-flip V1.1 profile prototype remains **not** a Production activation path:
 
-- V1.1 seals `76` captures and `48` measurements, but its checked-in finalizer emits only `ten-kings-mathematical-calibration-profile-v1.1`.
+- V1.1 seals '76' captures and '48' measurements, but its finalizer emits only 'ten-kings-mathematical-calibration-profile-v1.1'.
 - Production accepts the pinned V1.0.1 authority and the complete outer bundle plus its exact 12 members. The current V1.1 finalizer does not create the physical artifact, acceptance artifact, eight flat-field artifacts, illumination-pattern artifact, or outer bundle.
-- `open-mathematical-calibration-v1-1.ps1` only opens the protected preview page. That page has reconnect/stop preview controls; it is not an end-to-end start/capture/measure/seal/analyze/finalize operator runner.
-- The per-pose preview `Distinct` indicator does not by itself prove the final aggregate X/Y/rotation diversity gates. A future V1.1 runner must display and enforce the final aggregate spans before sealing.
+- 'open-mathematical-calibration-v1-1.ps1' only opens the protected preview page. It is not an end-to-end operator runner.
+- A per-pose Distinct indicator does not prove the final aggregate X/Y/rotation diversity gates.
 
-Until a tested V1.1 runner/analyzer/finalizer produces a bundle accepted by the real Production loader, the only checked-in deployable workflow is the `102`-capture/`78`-measurement V1.0.1 process documented below. There is no conversion fallback between these contracts.
+The hardware-free V1.2 core is a separate contract, not a reinterpretation of V1.1. Its quick session is exactly four capture-time checkerboard placements, one explicit blank-reverse flip, and 72 automated photometric images: 24 dark, 24 flat-field, and 24 illumination-pattern. That is 76 images and zero new quick physical measurements. It consumes one exact immutable rig-characterization authority for target metrology, camera/lens, physical directions, component identities, and repeatability.
+
+V1.2 persists an append-only event/hash chain, retains successful poses across failures and restart, permits explicit lineage-preserving pose supersession, resumes a persistent camera/controller batch at the first missing frame, enforces exact safe-off/controller acknowledgement, and produces the complete Production outer bundle and ordered 12-member ledger. The canonical loader accepts V1.2 only when its exact source, threshold, runtime-context, and rig-characterization contracts verify. Local Start New Card remains blocked if exact live context is absent or differs.
+
+The frozen local-helper contract is:
+
+- 'GET /calibration/mathematical-v1.2/sessions' and 'GET /calibration/mathematical-v1.2/status?sessionId=...';
+- 'POST /calibration/mathematical-v1.2/start';
+- 'POST /calibration/mathematical-v1.2/capture' and '/retry', each meaning execute only the current server-owned expected step;
+- 'POST /calibration/mathematical-v1.2/replace-pose' with an accepted slot and the exact history-preservation acknowledgement; and
+- 'POST /calibration/mathematical-v1.2/analyze' and '/finalize'.
+
+Use the server-issued revision token for every resume or mutation. Never supply a browser operation ID, role/slot/channel/sample, runtime context, rig authority, acceptance boolean, analysis bytes, bundle bytes, or trusted hash. The route family has no activation endpoint. Successful finalization stops at 'ready_for_explicit_activation'; Start New Card remains hard-blocked until the separate Agent 4 activation receipt and exact live-context check succeed.
+
+Session creation/resume rereads the exact five-member rig source. The local 'analyze' action has no result payload: it rereads the four active checkerboard bytes and all 72 active photometric bytes, reruns exact-still geometry, and locally derives every quick numeric result and artifact. Geometry applies the immutable Brown-Conrady lens model, fits a deterministic target homography, records true held-out reprojection residuals, and separately fits the independently segmented outer boundary. Photometry rejects color-converted evidence, samples only the undistorted and pose-four-warped blank-target ROI into normalized-card 8-by-8 grids, and excludes the fixture/background. Physical directions are transformed through the immutable stage-to-sensor mapping and the current inverse homography Jacobian before angular comparison. A valid source hash attached to a browser-authored number is never accepted as measurement authority. Reopening a completed session reruns the same byte-derived analysis and requires the exact stored analysis bytes/hashes before the outer bundle and all 12 members are canonical-loader verified.
+
+The installed 'ai-grader-station-bridge' CLI now has one inert Production construction path. Configure all seven values together or none; partial configuration is a hard error:
+
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH';
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SHA256';
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_PATH';
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_SHA256';
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_MEMBER_DIR';
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT'; and
+- 'AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID'.
+
+The exact canonical runtime file must bind the complete shipped executable-module-byte geometry, photometric, and finalizer manifests. The rig source must contain the exact five ordered member bytes, including the controller unit-information identity, channel wiring, stage-to-undistorted-sensor transform, target/lens authority, and algorithm hashes. The helper reads these files locally; routes never return their paths. Construction and read-only list/status do not open hardware. Start/resume probes live camera/controller context. Checkerboard capture and the 72-frame sweep open only through the serialized Basler/Leimac seam; the sweep keeps one camera and controller connection open, validates protocol-recognized ACKs, and safe-offs before/after every frame plus final close. Successful close waits for actual child exit/resource release; all protocol timeouts and malformed/unexpected output paths perform bounded cleanup before returning failure.
+
+### Protected one-time V1.2 rig-authority materialization
+
+Do this once on the protected Dell acceptance path before any 76-image quick V1.2 session. It is a one-time physical characterization, not a quick calibration, profile conversion, browser action, activation, or hosted mutation.
+
+1. Complete the supervised V1.0.1 physical procedure below and retain its exact canonical capture manifest, source package, 102 raw captures, 102 normalized derivatives, 78 measurement artifacts, and target artifact. The materializer consumes those raw bytes and reruns the checked-in physical analyzer; it never consumes acceptance from a V1.0.1/V1.1 profile.
+2. Record one canonical protected-live-probe evidence file from the existing protected `mathematical-calibration-context` result after it has closed the Basler/Leimac probe. Bind its exact observed camera serial/model, exposure, gain, pixel format/resolution, controller unit-information identity/unit and ACK response kinds. Add the supervised station ID, rig ID, duty, location label, and lighting-configuration ID; every observable value must equal the raw-capture ledger.
+3. Record canonical supervised component and stage-transform evidence. Component evidence binds operator, rig, controller identity, component configuration, exact channels 1-8/controller outputs/component IDs/physical-direction IDs, target identity, lens-authority evidence hash, and wiring-evidence hash. Stage evidence binds operator, rig, camera/lens identity, the measured non-singular stage-to-undistorted-sensor matrix, and at least three exact stage-measurement hashes.
+4. Place exact external evidence bytes beside the input manifest for every required role: `instrument_calibration`, `metrology_source`, `lens_authority`, `component_wiring`, and `stage_transform_measurement`. Every hash named by a measurement/component/stage artifact must dereference one of these exact files. No duplicate bytes, duplicate paths, unused reference, extra source-package artifact, or missing reference is permitted.
+5. Write canonical `ten-kings-mathematical-calibration-v1.2-rig-materialization-input-v1` JSON with exactly `schemaVersion`, `captureManifest`, `liveProbe`, `componentEvidence`, `stageTransformEvidence`, and `referencedEvidence`. Each file reference has only `fileName` and lowercase `sha256`; each referenced-evidence entry has only `role`, `fileName`, and lowercase `sha256`. All names are safe paths relative to the input manifest directory. Compute the exact canonical input-manifest SHA-256.
+6. From the exact built/reviewed helper checkout, invoke only the protected operator CLI:
+
+   ```powershell
+   tk-ai-grader-materialize-mathematical-calibration-v1-2-rig-authority `
+     --input-manifest '<absolute-protected-input-root>\rig-materialization-input-v1.json' `
+     --input-manifest-sha256 '<exact-lowercase-sha256>' `
+     --acceptance-root '<absolute-protected-write-once-acceptance-root>' `
+     --confirm 'MATERIALIZE MATHEMATICAL CALIBRATION V1.2 RIG AUTHORITY'
+   ```
+
+7. The command reruns physical acceptance and atomically creates exactly one `<acceptance-root>/<rigSourceBundleSha256>/` directory. It contains canonical `mathematical-calibration-runtime-context-v1.2.json`; `target-metrology-authority-v1.json`; `camera-lens-authority-v1.json`; `physical-light-directions-authority-v1.json`; `component-identities-authority-v1.json`; `repeatability-authority-v1.json`; `rig-characterization-source-v1.2.json`; `rig-characterization-source-evidence-v1.json`; `rig-characterization-physical-analysis-v1.json`; `rig-characterization-materializer-handoff-v1.json`; and the exact `source-evidence/` byte ledger. The redacted CLI/handoff output contains hashes and the bundle-directory name, never a token or absolute path. Same exact evidence is idempotent; partial or conflicting destination bytes fail closed.
+8. Set the seven protected helper values above from the runtime/bundle hashes and the single materialized directory, independently reopen it through the Production loader, and preserve the handoff hashes. Only after that one-time authority is accepted may the separate quick V1.2 flow collect exactly four checkerboard plus 72 photometric images. The quick flow does not repeat or weaken target metrology, lens, direction, component, or repeatability authority.
+
+A changed shipped geometry, photometric, finalizer, Python analyzer, dependency manifest, target, camera/controller/wiring identity, or source byte invalidates the old authority. Create a new supervised one-time characterization; never edit, relabel, copy forward, or fall back to an older authority.
+
+Finalization writes only through the protected staging root. The exact destination is '<root>/<bundleManifestSha256>/' and contains exactly fourteen files: 'mathematical-calibration-bundle-v1.json', all twelve verified members, and 'mathematical-calibration-finalizer-handoff-v1.json'. Reopen verifies these exact bytes. Same-hash restaging is idempotent; conflicting or incomplete staging fails closed. Do not supply a staging path through the browser or invoke Agent 4 activation in this workflow.
+
+This software candidate does **not** authorize a Dell run, activation, helper install/restart, Production port use, database import/trust, or deployment. The checked-in CLI/controller seam remains physically unexercised and unapproved; Dell timing, optical/coordinate validation, thermal/repeatability evidence, and explicit activation remain required. The V1.0.1 '102'-capture/'78'-measurement process below remains the established physical procedure until those V1.2 Dell gates pass. There is no conversion or automatic fallback among V1.0.1, V1.1, V1.2, provisional geometry, or V0.
+
+Under ten minutes is an acceptance target, not a present claim. Measure wall time on the Dell from session creation through ready-for-explicit-activation, including operator moves, controller acknowledgements, image transfer/checkpointing, four OpenCV checkerboard/outer-contour reruns, 72 full-resolution Sharp decodes and normalized-ROI grid reductions, analysis, finalization, and safe-off. On real frames verify Brown-Conrady inversion, held-out homography residuals, independent outer-boundary residuals, pose-four blank-flip registration, background exclusion, and the stage-to-sensor-to-normalized-card direction orientation under rotation/mirroring/perspective. Never lower pose, residual, U95, repeatability, or threshold-manifest gates to meet the target.
 
 The Basler transport is not the unresolved blocker. Prior protected sessions received real frame streams, including sessions with successful valid overlays/captures. Pylon Viewer may be used only for coarse physical positioning and must then be closed completely. The protected bridge must be the sole camera owner for preview and capture. A black browser canvas, invalid checkerboard contour, missing lighting-controller acknowledgement, or disagreement between preview and capture-time geometry is an explicit stop, not authority to use Pylon Viewer frames or another image source.
 

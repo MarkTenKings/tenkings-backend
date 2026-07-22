@@ -26,7 +26,7 @@ test("checkerboard detector default timeout allows ten-second bounded detection"
   await fs.writeFile(scriptPath, [
     "import json, time",
     "time.sleep(3.5)",
-    "print(json.dumps({'imageWidth': 1000, 'imageHeight': 1000, 'internalCorners': [{'x': 10, 'y': 10}] * 176, 'outerCorners': [{'x': 10, 'y': 10}, {'x': 990, 'y': 10}, {'x': 990, 'y': 990}, {'x': 10, 'y': 990}], 'rotationDegrees': 0}))",
+    "print(json.dumps({'imageWidth': 1000, 'imageHeight': 1000, 'internalCorners': [{'x': 10, 'y': 10}] * 176, 'outerCorners': [{'x': 10, 'y': 10}, {'x': 990, 'y': 10}, {'x': 990, 'y': 990}, {'x': 10, 'y': 990}], 'segmentationBoundary': [{'x': 10, 'y': 10}, {'x': 500, 'y': 10}, {'x': 990, 'y': 10}, {'x': 990, 'y': 500}, {'x': 990, 'y': 990}, {'x': 500, 'y': 990}, {'x': 10, 'y': 990}, {'x': 10, 'y': 500}], 'rotationDegrees': 0}))",
   ].join("\n"));
   const result = await detectMathematicalCalibrationPreviewCheckerboard(Buffer.from("delayed-fixture"), { scriptPath });
   assert.equal(result.internalCorners.length, 176);

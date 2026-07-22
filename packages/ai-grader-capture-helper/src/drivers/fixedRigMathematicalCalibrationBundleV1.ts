@@ -13,6 +13,17 @@ import {
   FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
 } from "./fixedRigMathematicalCalibrationCaptureV1";
 import { FIXED_RIG_PHYSICAL_CALIBRATION_V1_VERSION } from "./fixedRigPhysicalCalibrationV1";
+import {
+  FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_ANALYSIS_ALGORITHM,
+  validateFastCalibrationSourceCapturePackageV1_2,
+  type FastCalibrationSourceCapturePackageV1_2,
+} from "./fixedRigFastMathematicalCalibrationBundleV1_2";
+import {
+  FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PACKAGE_SCHEMA,
+  FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+  assertFastCalibrationRuntimeContextMatchV1_2,
+  type FastCalibrationRuntimeContextV1_2,
+} from "./fixedRigFastMathematicalCalibrationV1_2";
 
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_BUNDLE_V1 =
   "ten-kings-mathematical-calibration-bundle-v1" as const;
@@ -62,6 +73,9 @@ export interface FixedRigMathematicalCalibrationBundleAuthorityV1 {
   sourceCaptureManifestSha256: string;
   memberLedgerSha256: string;
   members: FixedRigMathematicalCalibrationBundleAuthorityMemberV1[];
+  captureContractVersion?: typeof FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT;
+  runtimeContextSha256?: string;
+  rigCharacterizationSha256?: string;
 }
 
 export interface LoadedFixedRigMathematicalCalibrationBundleV1 {
@@ -85,6 +99,7 @@ export interface LoadFixedRigMathematicalCalibrationBundleV1Input {
   bundlePath: string;
   bundleSha256: string;
   expectedRigId: string;
+  expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
 }
 
 export interface VerifyFixedRigMathematicalCalibrationBundleBytesV1Input {
@@ -92,6 +107,7 @@ export interface VerifyFixedRigMathematicalCalibrationBundleBytesV1Input {
   bundleSha256: string;
   expectedRigId: string;
   bundleBytes: Uint8Array;
+  expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   readMemberBytes(fileName: string): {
     path: string;
     bytes: Uint8Array;
@@ -103,6 +119,7 @@ export interface LoadFixedRigMathematicalCalibrationBundleFromStorageV1Input {
   bundleSha256: string;
   expectedRigId: string;
   readArtifactBytes(storageKey: string): Promise<Uint8Array>;
+  expectedRuntimeContext?: FastCalibrationRuntimeContextV1_2;
 }
 
 const EXACT_MEMBER_FILE_NAMES = [
@@ -234,11 +251,8 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
   ) {
     throw new Error("Calibration bundle threshold authority does not match the compiled Mathematical Grading V1 manifest.");
   }
-  if (
-    bundle.algorithmVersion !== FIXED_RIG_PHYSICAL_CALIBRATION_V1_VERSION ||
-    bundle.analysisAlgorithmVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_ANALYSIS_ALGORITHM_V1
-  ) {
-    throw new Error("Calibration bundle algorithm authority does not match the exact production V1 algorithms.");
+  if (bundle.algorithmVersion !== FIXED_RIG_PHYSICAL_CALIBRATION_V1_VERSION) {
+    throw new Error("Calibration bundle physical algorithm authority does not match the exact Production V1 algorithm.");
   }
   const rigId = exactString(bundle.rigId, "Calibration bundle rigId");
   if (rigId !== input.expectedRigId) {
@@ -251,22 +265,45 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
   );
 
   const sourcePackage = record(bundle.sourceCapturePackage, "Calibration bundle sourceCapturePackage");
-  exactKeys(sourcePackage, [
-    "schemaVersion", "packageId", "manifestSha256", "rigId", "captureProfileVersion", "purpose",
-    "thresholdSetId", "thresholdSetHash", "captureEvidenceAcceptance", "stationAuthority", "subject",
-  ], "Calibration bundle sourceCapturePackage");
-  if (
-    sourcePackage.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1 ||
-    sourcePackage.captureProfileVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1 ||
-    sourcePackage.purpose !== "mathematical_calibration_v1" || sourcePackage.rigId !== rigId ||
-    sourcePackage.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
-    sourcePackage.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
-    !sameJson(
-      sourcePackage.captureEvidenceAcceptance,
-      MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence,
-    )
-  ) {
-    throw new Error("Calibration bundle source capture package does not use the exact protected V1 producer and threshold contract.");
+  const isFastV1_2 = sourcePackage.schemaVersion === FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CAPTURE_PACKAGE_SCHEMA;
+  if (isFastV1_2) {
+    exactKeys(sourcePackage, [
+      "schemaVersion", "contractVersion", "packageId", "manifestSha256", "rigId", "captureProfileVersion", "purpose",
+      "thresholdSetId", "thresholdSetHash", "captureEvidenceAcceptance", "stationAuthority", "subject",
+      "rigCharacterizationAuthority", "rigCharacterizationSha256", "runtimeContext", "runtimeContextSha256",
+      "captureCounts", "sourceArtifactLedgerSha256",
+    ], "Calibration bundle V1.2 sourceCapturePackage");
+    if (bundle.analysisAlgorithmVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_ANALYSIS_ALGORITHM) {
+      throw new Error("Calibration bundle V1.2 analysis algorithm authority is not exact.");
+    }
+    const fastSourcePackage = sourcePackage as unknown as FastCalibrationSourceCapturePackageV1_2;
+    validateFastCalibrationSourceCapturePackageV1_2(fastSourcePackage);
+    if (!input.expectedRuntimeContext) {
+      throw new Error("Calibration bundle V1.2 requires the exact live runtime context; no implicit or old-profile fallback is allowed.");
+    }
+    assertFastCalibrationRuntimeContextMatchV1_2(input.expectedRuntimeContext, fastSourcePackage.runtimeContext);
+    if (fastSourcePackage.rigId !== rigId) {
+      throw new Error("Calibration bundle V1.2 source package rigId does not match the bundle authority.");
+    }
+  } else {
+    exactKeys(sourcePackage, [
+      "schemaVersion", "packageId", "manifestSha256", "rigId", "captureProfileVersion", "purpose",
+      "thresholdSetId", "thresholdSetHash", "captureEvidenceAcceptance", "stationAuthority", "subject",
+    ], "Calibration bundle sourceCapturePackage");
+    if (
+      bundle.analysisAlgorithmVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_ANALYSIS_ALGORITHM_V1 ||
+      sourcePackage.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1 ||
+      sourcePackage.captureProfileVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1 ||
+      sourcePackage.purpose !== "mathematical_calibration_v1" || sourcePackage.rigId !== rigId ||
+      sourcePackage.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      sourcePackage.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
+      !sameJson(
+        sourcePackage.captureEvidenceAcceptance,
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence,
+      )
+    ) {
+      throw new Error("Calibration bundle source capture package does not use the exact protected V1 producer and threshold contract.");
+    }
   }
   exactString(sourcePackage.packageId, "Calibration bundle source packageId");
   const sourceCaptureManifestSha256 = exactSha256(
@@ -290,6 +327,7 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
     throw new Error("Calibration bundle station authority must explicitly prohibit Production mutation.");
   }
   const protectedSettings = record(stationAuthority.protectedSettings, "Calibration bundle protectedSettings");
+  if (!isFastV1_2) {
   exactKeys(protectedSettings, [
     "stationId", "rigId", "captureProfileVersion", "cameraIndex", "exposureUs", "gain", "dutyPercent",
     "leimacUnit", "selectedChannels", "normalizedWidthPx", "normalizedHeightPx", "checkerboard",
@@ -316,6 +354,7 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
     typeof checkerboard.cellMm !== "number" || !Number.isFinite(checkerboard.cellMm) || (checkerboard.cellMm as number) <= 0
   ) {
     throw new Error("Calibration bundle protected checkerboard settings are invalid.");
+  }
   }
   const subject = record(sourcePackage.subject, "Calibration bundle calibration subject");
   exactKeys(subject, ["designation", "productionCard", "targetVersion", "targetSha256"], "Calibration bundle calibration subject");
@@ -388,6 +427,20 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
   }
 
   const acceptance = acceptanceFile.artifact;
+  exactKeys(acceptance, isFastV1_2 ? [
+    "schemaVersion", "captureContractVersion", "analysisSha256", "sourceManifestSha256", "sourceCapturePackage",
+    "sourceArtifactLedgerSha256", "rigCharacterizationSha256", "runtimeContextSha256", "status", "isCalibrated",
+    "issues", "artifactId", "artifactSha256", "profileId", "calibrationVersion",
+  ] : [
+    "schemaVersion", "analysisSha256", "sourceManifestSha256", "sourceCapturePackage", "status", "isCalibrated",
+    "issues", "artifactId", "artifactSha256", "profileId", "calibrationVersion",
+  ], "Calibration acceptance artifact");
+  const fastAcceptanceBound = !isFastV1_2 || (
+    acceptance.captureContractVersion === FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT &&
+    acceptance.sourceArtifactLedgerSha256 === sourcePackage.sourceArtifactLedgerSha256 &&
+    acceptance.rigCharacterizationSha256 === sourcePackage.rigCharacterizationSha256 &&
+    acceptance.runtimeContextSha256 === sourcePackage.runtimeContextSha256
+  );
   if (
     acceptance.schemaVersion !== "ten-kings-mathematical-calibration-acceptance-v1" ||
     acceptance.status !== "finalized" || acceptance.isCalibrated !== true ||
@@ -396,7 +449,8 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
     acceptance.sourceManifestSha256 !== sourceAnalysisManifestSha256 ||
     !sameJson(acceptance.sourceCapturePackage, sourcePackage) ||
     acceptance.artifactId !== physical.artifactId || acceptance.artifactSha256 !== physical.artifactSha256 ||
-    acceptance.profileId !== profile.profileId || acceptance.calibrationVersion !== profile.calibrationVersion
+    acceptance.profileId !== profile.profileId || acceptance.calibrationVersion !== profile.calibrationVersion ||
+    !fastAcceptanceBound
   ) {
     throw new Error("Calibration acceptance artifact is not exactly bound to the finalized bundle evidence.");
   }
@@ -492,6 +546,11 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
     bundleManifestSha256: observedBundleSha256,
     sourceCaptureManifestSha256,
     memberLedgerSha256: sha256(Buffer.from(JSON.stringify(canonical(members)), "utf-8")),
+    ...(isFastV1_2 ? {
+      captureContractVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_CONTRACT,
+      runtimeContextSha256: exactSha256(sourcePackage.runtimeContextSha256, "V1.2 runtimeContextSha256"),
+      rigCharacterizationSha256: exactSha256(sourcePackage.rigCharacterizationSha256, "V1.2 rigCharacterizationSha256"),
+    } : {}),
     members,
   };
 
@@ -519,6 +578,7 @@ export function loadFixedRigMathematicalCalibrationBundleV1(
     bundlePath,
     bundleSha256: input.bundleSha256,
     expectedRigId: input.expectedRigId,
+    expectedRuntimeContext: input.expectedRuntimeContext,
     bundleBytes: readFileSync(bundlePath),
     readMemberBytes(fileName) {
       const memberPath = safeMemberPath(bundleDirectory, fileName, fileName, `${fileName} path`);
@@ -573,6 +633,7 @@ export async function loadFixedRigMathematicalCalibrationBundleFromStorageV1(
     bundlePath: bundleStorageKey,
     bundleSha256: input.bundleSha256,
     expectedRigId: input.expectedRigId,
+    expectedRuntimeContext: input.expectedRuntimeContext,
     bundleBytes,
     readMemberBytes(fileName) {
       const member = members.get(fileName as (typeof EXACT_MEMBER_FILE_NAMES)[number]);

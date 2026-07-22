@@ -5,7 +5,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "tk-ai-grader-capture-helper": "dist/cli.js"
+    "tk-ai-grader-capture-helper": "dist/cli.js",
+    "tk-ai-grader-materialize-mathematical-calibration-v1-2-rig-authority": "dist/materializeMathematicalCalibrationV1_2RigAuthorityCli.js"
   },
   "exports": {
     ".": {

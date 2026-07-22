@@ -20,6 +20,7 @@ export interface MathematicalCalibrationPreviewCheckerboard {
     MathematicalCalibrationPreviewPoint,
     MathematicalCalibrationPreviewPoint,
   ];
+  segmentationBoundary: readonly MathematicalCalibrationPreviewPoint[];
   rotationDegrees: number;
 }
 
@@ -38,6 +39,7 @@ function parseResult(stdout: string): MathematicalCalibrationPreviewCheckerboard
   const imageHeight = parsed.imageHeight;
   const internalCorners = parsed.internalCorners;
   const outerCorners = parsed.outerCorners;
+  const segmentationBoundary = parsed.segmentationBoundary;
   if (typeof imageWidth !== "number" || typeof imageHeight !== "number"
     || !Number.isInteger(imageWidth) || !Number.isInteger(imageHeight)
     || imageWidth <= 0 || imageHeight <= 0
@@ -45,6 +47,8 @@ function parseResult(stdout: string): MathematicalCalibrationPreviewCheckerboard
     || !Array.isArray(outerCorners) || outerCorners.length !== 4
     || !outerCorners.every(finitePoint)
     || !internalCorners.every(finitePoint)
+    || !Array.isArray(segmentationBoundary) || segmentationBoundary.length < 8
+    || !segmentationBoundary.every(finitePoint)
     || typeof parsed.rotationDegrees !== "number" || !Number.isFinite(parsed.rotationDegrees)) {
     throw new Error("calibration preview checkerboard detector returned invalid geometry");
   }
@@ -54,6 +58,7 @@ function parseResult(stdout: string): MathematicalCalibrationPreviewCheckerboard
     internalCorners,
     outerCorners: outerCorners as MathematicalCalibrationPreviewCheckerboard["outerCorners"],
     rotationDegrees: parsed.rotationDegrees,
+    segmentationBoundary,
   };
 }
 
