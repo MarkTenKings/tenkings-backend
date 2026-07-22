@@ -2,7 +2,8 @@
 param(
   [ValidateSet(
     'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry',
-    'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline', 'PrepareRigInput'
+    'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline', 'PrepareRigInput',
+    'RecoverBlankTimestampFalseStop'
   )]
   [string]$Action = 'Worksheet',
   [string]$BridgeUrl = 'http://127.0.0.1:47653',
@@ -458,6 +459,23 @@ if ($Action -eq 'Worksheet') {
 }
 
 Assert-BridgeInput
+
+if ($Action -eq 'RecoverBlankTimestampFalseStop') {
+  $result = (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop' -Body @{}).result
+  if ($null -eq $result -or
+      [string]$result.status.sessionId -ne $SessionId -or
+      [string]$result.recovery.recoveryId -ne 'blank-reverse-geometry-timestamp-false-stop-20260722-v1' -or
+      [string]$result.recovery.pendingSlotKey -ne 'dark_control:1:3' -or
+      [string]$result.recovery.receiptSha256 -notmatch '^[a-f0-9]{64}$' -or
+      $null -ne $result.status.hardStop) {
+    throw 'The protected bridge did not return the exact audited incident recovery and healthy pending slot.'
+  }
+  $result
+  Write-Host ('Audited one-time false-stop recovery receipt: ' + $result.recovery.receiptPath)
+  Write-Host ('Recovery receipt SHA-256: ' + $result.recovery.receiptSha256)
+  Write-Host 'Only dark_control:1:3 remains pending; Retry must use a new operation ID.'
+  exit 0
+}
 
 if ($Action -in @('Start', 'Resume')) {
   if ($Action -eq 'Start' -and -not $ConfirmInitialCheckerboardPositioned) {

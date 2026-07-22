@@ -34,6 +34,18 @@ test("V1.0.1 runbook distinguishes ordinary retry from hard stop without weakeni
   assert.match(runbook, /hard-stops the session and is not retryable/);
 });
 
+test("the one-time blank timestamp recovery is local token-gated, fieldless, and absent from browser pages", () => {
+  const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
+  const bridge = fs.readFileSync(path.join(repositoryRoot, "packages", "ai-grader-capture-helper", "src", "drivers", "aiGraderLocalStationBridge.ts"), "utf8");
+  const v101Page = fs.readFileSync(path.join(repositoryRoot, "packages", "ai-grader-capture-helper", "src", "drivers", "mathematicalCalibrationV1_1Page.ts"), "utf8");
+  assert.match(runner, /'RecoverBlankTimestampFalseStop'/);
+  assert.match(runner, /recover-blank-reverse-timestamp-false-stop' -Body @\{\}/);
+  assert.match(bridge, /recover-blank-reverse-timestamp-false-stop[\s\S]*tokenMatches\(req, config\)/);
+  assert.match(bridge, /Object\.keys\(body\)\.length !== 0/);
+  assert.match(bridge, /accepts no browser\/operator-authored recovery fields/);
+  assert.doesNotMatch(v101Page, /recover-blank-reverse-timestamp-false-stop|RecoverBlankTimestampFalseStop/);
+});
+
 test("normal V1.0.1 flow derives all authority from protected target and immutable capture evidence without manual questions", () => {
   const runbook = fs.readFileSync(path.join(repositoryRoot, "docs", "runbooks", "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md"), "utf8");
   const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");

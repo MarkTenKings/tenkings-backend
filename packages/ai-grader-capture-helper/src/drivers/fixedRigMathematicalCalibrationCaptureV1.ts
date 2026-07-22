@@ -57,6 +57,22 @@ const CAPTURE_ROLES = [
   "illumination_pattern",
 ] as const;
 
+const BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_V1 = {
+  recoveryId: "blank-reverse-geometry-timestamp-false-stop-20260722-v1",
+  sessionId: "math-cal-v1-20260722-4cfa410c-01",
+  expectedPreStateSha256: "f9defc6bf72f88ae8b34c922cf84abbdbdcbcc778c09ae10bf0dbff07b401726",
+  operationId: "cal-capture-3690b0b8c44a4dabaebe6a2705e5f14a",
+  reason: "Accepted blank-reverse geometry record does not reproduce its immutable accepted pose and detection authority.",
+  pendingSlotKey: "dark_control:1:3",
+  acceptedCaptureCount: 32,
+  acceptedArtifactCount: 64,
+} as const;
+
+const BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1 =
+  "ten-kings-mathematical-calibration-blank-reverse-timestamp-false-stop-recovery-receipt-v1" as const;
+const BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_STATE_V1 =
+  "ten-kings-mathematical-calibration-blank-reverse-timestamp-false-stop-recovery-state-v1" as const;
+
 export type FixedRigMathematicalCalibrationCaptureRoleV1 = (typeof CAPTURE_ROLES)[number];
 export type FixedRigMathematicalCalibrationMeasurementClassV1 = (typeof MEASUREMENT_CLASSES)[number];
 export type FixedRigMathematicalCalibrationTargetFaceV1 = "checkerboard" | "blank_reverse";
@@ -399,6 +415,39 @@ interface FailedCaptureOperationV1 {
   prospectiveAggregate?: FixedRigMathematicalCalibrationAggregateV1;
 }
 
+interface BlankReverseTimestampFalseStopRecoveryStateV1 {
+  schemaVersion: typeof BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_STATE_V1;
+  recoveryId: string;
+  recoveredAt: string;
+  preRecoveryStateSha256: string;
+  receiptPath: string;
+  receiptSha256: string;
+  recoveredHardStop: { operationId: string; stoppedAt: string; reason: string };
+  preservedFailedOperation: FailedCaptureOperationV1;
+  pendingSlotKey: string;
+  acceptedCaptureCount: number;
+  acceptedArtifactCount: number;
+}
+
+interface BlankReverseTimestampFalseStopRecoveryReceiptV1 {
+  schemaVersion: typeof BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1;
+  recoveryId: string;
+  recoveredAt: string;
+  preRecoveryStateSha256: string;
+  sessionId: string;
+  recoveredHardStop: { operationId: string; stoppedAt: string; reason: string };
+  preservedFailedOperation: FailedCaptureOperationV1;
+  pendingSlotKey: string;
+  acceptedEvidence: {
+    captureCount: number;
+    artifactCount: number;
+    capturesSha256: string;
+    artifactsSha256: string;
+    eventsSha256: string;
+  };
+  verifiedBlankReverseAuthority: VerifiedBlankReverseGeometryAuthorityV1["provenance"];
+}
+
 interface MeasurementRecordV1 {
   operationId: string;
   measurementType: RecordFixedRigMathematicalCalibrationMeasurementV1Request["measurementType"];
@@ -433,6 +482,7 @@ interface CaptureSessionStateV1 {
   measurements: MeasurementRecordV1[];
   failedOperations: FailedCaptureOperationV1[];
   hardStop?: { operationId: string; stoppedAt: string; reason: string };
+  recoveryReceipts?: BlankReverseTimestampFalseStopRecoveryStateV1[];
   blankReverseFlipRecorded?: boolean;
 }
 
@@ -516,6 +566,12 @@ export interface SealedFixedRigMathematicalCalibrationCaptureV1 {
     path: string;
     sha256: string;
   };
+}
+
+export interface FixedRigMathematicalCalibrationFalseStopRecoveryV1 {
+  status: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
+  recovery: BlankReverseTimestampFalseStopRecoveryStateV1;
+  idempotent: boolean;
 }
 
 function assertSafeId(value: unknown, name: string): string {
@@ -672,6 +728,47 @@ class FixedRigMathematicalCalibrationHardStopV1 extends Error {
 
 function hardStop(message: string): never {
   throw new FixedRigMathematicalCalibrationHardStopV1(message);
+}
+
+const UTC_CAPTURE_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
+const ECMASCRIPT_MILLISECOND_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function canonicalEcmaTimestampForCapturedAt(value: unknown): string {
+  if (typeof value !== "string") {
+    hardStop("Accepted blank-reverse source capturedAt is not a valid UTC timestamp.");
+  }
+  const match = UTC_CAPTURE_TIMESTAMP.exec(value);
+  const parsed = new Date(value);
+  if (!match || !Number.isFinite(parsed.getTime())) {
+    hardStop("Accepted blank-reverse source capturedAt is not a valid UTC timestamp.");
+  }
+  const expectedUtcFields = match.slice(1, 7).map(Number);
+  const observedUtcFields = [
+    parsed.getUTCFullYear(),
+    parsed.getUTCMonth() + 1,
+    parsed.getUTCDate(),
+    parsed.getUTCHours(),
+    parsed.getUTCMinutes(),
+    parsed.getUTCSeconds(),
+  ];
+  if (expectedUtcFields.some((field, index) => field !== observedUtcFields[index])) {
+    hardStop("Accepted blank-reverse source capturedAt is not a valid UTC timestamp.");
+  }
+  return parsed.toISOString();
+}
+
+function assertCanonicalGeometryTimestamp(geometryTimestamp: unknown, sourceCapturedAt: unknown): void {
+  const expected = canonicalEcmaTimestampForCapturedAt(sourceCapturedAt);
+  if (
+    typeof geometryTimestamp !== "string" ||
+    !ECMASCRIPT_MILLISECOND_TIMESTAMP.test(geometryTimestamp) ||
+    !Number.isFinite(new Date(geometryTimestamp).getTime()) ||
+    new Date(geometryTimestamp).toISOString() !== geometryTimestamp ||
+    geometryTimestamp !== expected
+  ) {
+    hardStop("Accepted blank-reverse geometry timestamp is not the exact canonical millisecond timestamp for its immutable source capture.");
+  }
 }
 
 function posePolicyForV1(role: "lens_geometry" | "normalization_registration") {
@@ -944,6 +1041,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private readonly config: FixedRigMathematicalCalibrationCaptureProducerConfigV1;
   private chain: Promise<unknown> = Promise.resolve();
   private readonly verifiedBlankReverseGeometry = new Map<string, VerifiedBlankReverseGeometryAuthorityV1>();
+  private readonly blankReverseTimestampFalseStopRecovery = BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_V1;
 
   constructor(config: FixedRigMathematicalCalibrationCaptureProducerConfigV1) {
     this.config = config;
@@ -1091,12 +1189,12 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     if (!geometry! || !geometryBytes.equals(canonicalBytes(geometry))) {
       hardStop("Accepted blank-reverse geometry record is not canonical immutable geometry.");
     }
+    assertCanonicalGeometryTimestamp(geometry.timestamp, source.capturedAt);
     const geometryPose = poseFromGeometry(geometry);
     if (
       geometry.version !== normalizedArtifact.normalization!.algorithmVersion ||
       geometry.sourceImageId !== rawArtifact.evidenceId ||
       geometry.sourceFrameId !== rawArtifact.evidenceId ||
-      geometry.timestamp !== source.capturedAt ||
       geometry.placementState !== "ready" ||
       geometry.geometrySource !== "detected" ||
       geometry.captureMode !== "automatic_detection" ||
@@ -1199,6 +1297,264 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     for (const artifact of state.artifacts) {
       await this.readAcceptedArtifactBytes(state, artifact);
     }
+  }
+
+  private async acceptedCaptureEvidenceLedger(state: CaptureSessionStateV1): Promise<{
+    captureCount: number;
+    artifactCount: number;
+    capturesSha256: string;
+    artifactsSha256: string;
+    eventsSha256: string;
+  }> {
+    const acceptedArtifacts = state.artifacts
+      .filter((artifact) => artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative")
+      .sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
+    const eventLedger: Array<{ operationId: string; path: string; sha256: string; byteSize: number }> = [];
+    for (const capture of state.captures) {
+      const rawMatches = acceptedArtifacts.filter((artifact) => artifact.evidenceId === capture.rawEvidenceId);
+      const normalizedMatches = acceptedArtifacts.filter((artifact) => artifact.evidenceId === capture.normalizedEvidenceId);
+      if (rawMatches.length !== 1 || normalizedMatches.length !== 1) {
+        throw new Error(`Accepted capture ${capture.operationId} does not bind exactly one raw and normalized artifact.`);
+      }
+      const relativePath = portable("events", `${safeSegment(capture.operationId)}.json`);
+      const eventPath = path.join(this.sessionDir(state.sessionId), ...relativePath.split("/"));
+      const eventBytes = await readFile(eventPath);
+      let event: Record<string, unknown>;
+      try {
+        event = JSON.parse(eventBytes.toString("utf-8")) as Record<string, unknown>;
+      } catch {
+        throw new Error(`Accepted capture ${capture.operationId} event is not valid canonical JSON.`);
+      }
+      if (!eventBytes.equals(canonicalBytes(event))) {
+        throw new Error(`Accepted capture ${capture.operationId} event is not canonical immutable JSON.`);
+      }
+      const request = event.request as Record<string, unknown> | undefined;
+      if (
+        event.operation !== "capture-step" ||
+        !request ||
+        request.sessionId !== state.sessionId ||
+        request.operationId !== capture.operationId ||
+        request.role !== capture.role ||
+        request.sampleIndex !== capture.sampleIndex ||
+        (request.channelIndex ?? null) !== (capture.channelIndex ?? null) ||
+        request.targetFace !== capture.targetFace ||
+        (request.removeReseatCycleId ?? null) !== (capture.removeReseatCycleId ?? null) ||
+        hash(canonicalBytes(event.rawArtifact)) !== hash(canonicalBytes(rawMatches[0])) ||
+        hash(canonicalBytes(event.normalizedArtifact)) !== hash(canonicalBytes(normalizedMatches[0]))
+      ) {
+        throw new Error(`Accepted capture ${capture.operationId} event does not reproduce its immutable request and artifact authority.`);
+      }
+      eventLedger.push({
+        operationId: capture.operationId,
+        path: relativePath,
+        sha256: hash(eventBytes),
+        byteSize: eventBytes.length,
+      });
+    }
+    eventLedger.sort((left, right) => left.operationId.localeCompare(right.operationId));
+    return {
+      captureCount: state.captures.length,
+      artifactCount: acceptedArtifacts.length,
+      capturesSha256: hash(canonicalBytes(state.captures)),
+      artifactsSha256: hash(canonicalBytes(acceptedArtifacts)),
+      eventsSha256: hash(canonicalBytes(eventLedger)),
+    };
+  }
+
+  private async readAndValidateFalseStopRecoveryReceipt(
+    state: CaptureSessionStateV1,
+    recovery: BlankReverseTimestampFalseStopRecoveryStateV1,
+  ): Promise<BlankReverseTimestampFalseStopRecoveryReceiptV1> {
+    const contract = this.blankReverseTimestampFalseStopRecovery;
+    const expectedReceiptPath = portable("events", `${contract.recoveryId}.json`);
+    if (recovery.receiptPath !== expectedReceiptPath || !SHA256.test(recovery.receiptSha256)) {
+      throw new Error("The incident-bound false-stop recovery state does not bind the exact canonical receipt path and SHA-256.");
+    }
+    const receiptPath = path.join(this.sessionDir(state.sessionId), ...recovery.receiptPath.split("/"));
+    const receiptBytes = await readFile(receiptPath);
+    let receipt: BlankReverseTimestampFalseStopRecoveryReceiptV1;
+    try {
+      receipt = JSON.parse(receiptBytes.toString("utf-8")) as BlankReverseTimestampFalseStopRecoveryReceiptV1;
+    } catch {
+      throw new Error("The incident-bound false-stop recovery receipt is not valid canonical JSON.");
+    }
+    if (
+      !receiptBytes.equals(canonicalBytes(receipt)) ||
+      hash(receiptBytes) !== recovery.receiptSha256 ||
+      receipt.schemaVersion !== BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1 ||
+      receipt.recoveryId !== contract.recoveryId ||
+      receipt.recoveredAt !== recovery.recoveredAt ||
+      !ECMASCRIPT_MILLISECOND_TIMESTAMP.test(receipt.recoveredAt) ||
+      !Number.isFinite(new Date(receipt.recoveredAt).getTime()) ||
+      new Date(receipt.recoveredAt).toISOString() !== receipt.recoveredAt ||
+      receipt.preRecoveryStateSha256 !== contract.expectedPreStateSha256 ||
+      receipt.sessionId !== contract.sessionId ||
+      hash(canonicalBytes(receipt.recoveredHardStop)) !== hash(canonicalBytes(recovery.recoveredHardStop)) ||
+      hash(canonicalBytes(receipt.preservedFailedOperation)) !== hash(canonicalBytes(recovery.preservedFailedOperation)) ||
+      receipt.pendingSlotKey !== contract.pendingSlotKey ||
+      receipt.acceptedEvidence.captureCount !== contract.acceptedCaptureCount ||
+      receipt.acceptedEvidence.artifactCount !== contract.acceptedArtifactCount
+    ) {
+      throw new Error("The incident-bound false-stop recovery receipt failed exact canonical identity verification.");
+    }
+    return receipt;
+  }
+
+  async recoverKnownBlankReverseTimestampFalseStop(
+    bridgeBoundSessionId: string,
+  ): Promise<FixedRigMathematicalCalibrationFalseStopRecoveryV1> {
+    return this.serialized(async () => {
+      const contract = this.blankReverseTimestampFalseStopRecovery;
+      if (bridgeBoundSessionId !== contract.sessionId) {
+        throw new Error("The one-time blank-reverse timestamp recovery is bound only to its exact audited V1.0.1 session.");
+      }
+      const state = await this.load(contract.sessionId);
+      const recoveries = state.recoveryReceipts ?? [];
+      const matchingRecoveries = recoveries.filter((recovery) => recovery.recoveryId === contract.recoveryId);
+      if (matchingRecoveries.length > 0) {
+        if (matchingRecoveries.length !== 1 || recoveries.length !== 1 || state.hardStop) {
+          throw new Error("The incident-bound recovery history or current hard-stop state is not the exact idempotent recovered state.");
+        }
+        const recovery = matchingRecoveries[0]!;
+        if (
+          recovery.schemaVersion !== BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_STATE_V1 ||
+          recovery.preRecoveryStateSha256 !== contract.expectedPreStateSha256 ||
+          recovery.recoveredHardStop.operationId !== contract.operationId ||
+          recovery.recoveredHardStop.reason !== contract.reason ||
+          recovery.preservedFailedOperation.operationId !== contract.operationId ||
+          recovery.preservedFailedOperation.error !== contract.reason ||
+          recovery.pendingSlotKey !== contract.pendingSlotKey ||
+          recovery.acceptedCaptureCount !== contract.acceptedCaptureCount ||
+          recovery.acceptedArtifactCount !== contract.acceptedArtifactCount
+        ) {
+          throw new Error("The incident-bound recovery state record failed exact identity verification.");
+        }
+        await this.readAndValidateFalseStopRecoveryReceipt(state, recovery);
+        return { status: statusFor(state, this.sessionDir(state.sessionId)), recovery, idempotent: true };
+      }
+      if (recoveries.length !== 0) {
+        throw new Error("An unrelated recovery record is present; the one-time incident recovery is unavailable.");
+      }
+      const preRecoveryStateSha256 = hash(canonicalBytes(state));
+      if (preRecoveryStateSha256 !== contract.expectedPreStateSha256) {
+        throw new Error("The one-time incident recovery pre-state SHA-256 does not match the exact audited state.");
+      }
+      const acceptedArtifacts = state.artifacts.filter(
+        (artifact) => artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative",
+      );
+      const matchingFailures = state.failedOperations.filter((failure) => failure.operationId === contract.operationId);
+      const latestFailure = state.failedOperations.at(-1);
+      const completedKeys = new Set(state.captures.map(captureKey));
+      const pendingSlot = capturePlan("v1.0.1").find((slot) => !completedKeys.has(slot.slotKey));
+      const failedOperationWorkingDir = path.join(this.sessionDir(state.sessionId), "working", safeSegment(contract.operationId));
+      const failedOperationEventPath = path.join(this.sessionDir(state.sessionId), "events", `${safeSegment(contract.operationId)}.json`);
+      if (
+        state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
+        state.purpose !== "mathematical_calibration_v1" ||
+        state.sessionId !== contract.sessionId ||
+        state.sealedAt !== undefined ||
+        state.captures.length !== contract.acceptedCaptureCount ||
+        acceptedArtifacts.length !== contract.acceptedArtifactCount ||
+        state.measurements.length !== 0 ||
+        state.hardStop?.operationId !== contract.operationId ||
+        state.hardStop.reason !== contract.reason ||
+        matchingFailures.length !== 1 ||
+        latestFailure !== matchingFailures[0] ||
+        latestFailure.operationId !== contract.operationId ||
+        latestFailure.error !== contract.reason ||
+        latestFailure.slotKey !== contract.pendingSlotKey ||
+        latestFailure.role !== "dark_control" ||
+        latestFailure.channelIndex !== 1 ||
+        latestFailure.sampleIndex !== 3 ||
+        latestFailure.targetFace !== "blank_reverse" ||
+        latestFailure.candidateRawSha256 !== undefined ||
+        latestFailure.candidateCapturedAt !== undefined ||
+        latestFailure.candidatePose !== undefined ||
+        latestFailure.prospectiveAggregate !== undefined ||
+        state.captures.some((capture) => capture.operationId === contract.operationId) ||
+        state.artifacts.some((artifact) => artifact.operationId === contract.operationId) ||
+        existsSync(failedOperationWorkingDir) ||
+        existsSync(failedOperationEventPath) ||
+        pendingSlot?.slotKey !== contract.pendingSlotKey ||
+        pendingSlot.targetFace !== "blank_reverse"
+      ) {
+        throw new Error("The one-time incident recovery state does not match the exact false-stop operation, pending slot, or preserved evidence counts.");
+      }
+      await this.verifyAcceptedArtifactIntegrity(state);
+      const acceptedEvidence = await this.acceptedCaptureEvidenceLedger(state);
+      this.verifiedBlankReverseGeometry.delete(state.sessionId);
+      const blankAuthority = await this.resolveBlankReverseGeometryAuthority(state);
+      if (!blankAuthority) {
+        throw new Error("The one-time incident recovery could not verify an accepted same-session blank-reverse geometry authority.");
+      }
+      const receiptRelativePath = portable("events", `${contract.recoveryId}.json`);
+      const receiptPath = path.join(this.sessionDir(state.sessionId), ...receiptRelativePath.split("/"));
+      let receipt: BlankReverseTimestampFalseStopRecoveryReceiptV1;
+      let receiptBytes: Buffer;
+      if (existsSync(receiptPath)) {
+        receiptBytes = await readFile(receiptPath);
+        try {
+          receipt = JSON.parse(receiptBytes.toString("utf-8")) as BlankReverseTimestampFalseStopRecoveryReceiptV1;
+        } catch {
+          throw new Error("The pre-existing incident recovery receipt is not valid canonical JSON.");
+        }
+      } else {
+        const recoveredAt = (this.config.now?.() ?? new Date()).toISOString();
+        receipt = {
+          schemaVersion: BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1,
+          recoveryId: contract.recoveryId,
+          recoveredAt,
+          preRecoveryStateSha256,
+          sessionId: state.sessionId,
+          recoveredHardStop: structuredClone(state.hardStop),
+          preservedFailedOperation: structuredClone(latestFailure),
+          pendingSlotKey: contract.pendingSlotKey,
+          acceptedEvidence,
+          verifiedBlankReverseAuthority: structuredClone(blankAuthority.provenance),
+        };
+        receiptBytes = canonicalBytes(receipt);
+        await writeExclusive(receiptPath, receiptBytes);
+      }
+      const expectedReceipt: BlankReverseTimestampFalseStopRecoveryReceiptV1 = {
+        schemaVersion: BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_RECEIPT_V1,
+        recoveryId: contract.recoveryId,
+        recoveredAt: receipt.recoveredAt,
+        preRecoveryStateSha256,
+        sessionId: state.sessionId,
+        recoveredHardStop: structuredClone(state.hardStop),
+        preservedFailedOperation: structuredClone(latestFailure),
+        pendingSlotKey: contract.pendingSlotKey,
+        acceptedEvidence,
+        verifiedBlankReverseAuthority: structuredClone(blankAuthority.provenance),
+      };
+      if (
+        !ECMASCRIPT_MILLISECOND_TIMESTAMP.test(receipt.recoveredAt) ||
+        !Number.isFinite(new Date(receipt.recoveredAt).getTime()) ||
+        new Date(receipt.recoveredAt).toISOString() !== receipt.recoveredAt ||
+        !receiptBytes.equals(canonicalBytes(expectedReceipt))
+      ) {
+        throw new Error("The incident-bound false-stop recovery receipt does not reproduce the exact audited pre-state evidence.");
+      }
+      receipt = expectedReceipt;
+      const recovery: BlankReverseTimestampFalseStopRecoveryStateV1 = {
+        schemaVersion: BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_STATE_V1,
+        recoveryId: contract.recoveryId,
+        recoveredAt: receipt.recoveredAt,
+        preRecoveryStateSha256,
+        receiptPath: receiptRelativePath,
+        receiptSha256: hash(receiptBytes),
+        recoveredHardStop: structuredClone(state.hardStop),
+        preservedFailedOperation: structuredClone(latestFailure),
+        pendingSlotKey: contract.pendingSlotKey,
+        acceptedCaptureCount: acceptedEvidence.captureCount,
+        acceptedArtifactCount: acceptedEvidence.artifactCount,
+      };
+      state.recoveryReceipts = [recovery];
+      delete state.hardStop;
+      state.updatedAt = receipt.recoveredAt;
+      await this.persist(state);
+      return { status: statusFor(state, this.sessionDir(state.sessionId)), recovery, idempotent: false };
+    });
   }
 
   async recordHardStop(sessionId: string, operationId: string, reason: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {

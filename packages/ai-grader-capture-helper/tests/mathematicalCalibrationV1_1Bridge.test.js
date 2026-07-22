@@ -36,6 +36,7 @@ async function v1BridgeFixture(root, options = {}) {
   const sessionId = options.sessionId ?? "calibration-v1-bridge-session";
   const hardStops = [];
   const captures = [];
+  const falseStopRecoveries = [];
   let orphanReleaseCalls = 0;
   let status = {
     schemaVersion: "ten-kings-mathematical-calibration-capture-session-v1",
@@ -62,6 +63,27 @@ async function v1BridgeFixture(root, options = {}) {
       hardStops.push({ operationId, reason });
       status = { ...status, hardStop: { operationId, stoppedAt: new Date().toISOString(), reason } };
       return status;
+    },
+    recoverKnownBlankReverseTimestampFalseStop: async (requestedSessionId) => {
+      assert.equal(requestedSessionId, sessionId);
+      falseStopRecoveries.push(requestedSessionId);
+      return {
+        status,
+        idempotent: false,
+        recovery: {
+          schemaVersion: "ten-kings-mathematical-calibration-blank-reverse-timestamp-false-stop-recovery-state-v1",
+          recoveryId: "blank-reverse-geometry-timestamp-false-stop-20260722-v1",
+          recoveredAt: "2026-07-22T11:00:00.000Z",
+          preRecoveryStateSha256: "f".repeat(64),
+          receiptPath: "events/blank-reverse-geometry-timestamp-false-stop-20260722-v1.json",
+          receiptSha256: "e".repeat(64),
+          recoveredHardStop: { operationId: "incident", stoppedAt: "2026-07-22T10:59:00.000Z", reason: "incident" },
+          preservedFailedOperation: { operationId: "incident", failedAt: "2026-07-22T10:59:00.000Z", error: "incident" },
+          pendingSlotKey: "dark_control:1:3",
+          acceptedCaptureCount: 32,
+          acceptedArtifactCount: 64,
+        },
+      };
     },
     captureStep: async (request) => {
       captures.push(request);
@@ -103,6 +125,7 @@ async function v1BridgeFixture(root, options = {}) {
     sessionId,
     hardStops,
     captures,
+    falseStopRecoveries,
     sessionSnapshot: () => structuredClone(status),
     lifecycleSnapshot: () => ({
       captures: captures.length,
@@ -364,6 +387,24 @@ test("V1.0.1 displayed-frame preflight rejects wrong session, epoch, and slot wi
   assert.equal(fixture.service.previewStatus().sideEpoch, displayed.epoch);
   first.request.emit("close");
   await firstStream;
+});
+
+test("V1.0.1 exposes only the incident-bound local recovery service without hardware lifecycle work", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-false-stop-recovery-bridge-"));
+  const fixture = await v1BridgeFixture(root);
+  const endpoint = fixture.service.status().bridgeContract.endpoints.find(
+    (candidate) => candidate.path === "/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop",
+  );
+  assert.deepEqual(
+    { method: endpoint?.method, action: endpoint?.action, hardwareAccess: endpoint?.hardwareAccess },
+    { method: "POST", action: "mathematical-calibration-false-stop-recovery", hardwareAccess: false },
+  );
+  const before = fixture.lifecycleSnapshot();
+  const result = await fixture.service.recoverKnownMathematicalCalibrationBlankReverseTimestampFalseStop();
+  assert.equal(result.recovery.recoveryId, "blank-reverse-geometry-timestamp-false-stop-20260722-v1");
+  assert.equal(result.recovery.pendingSlotKey, "dark_control:1:3");
+  assert.deepEqual(fixture.falseStopRecoveries, [fixture.sessionId]);
+  assert.deepEqual(fixture.lifecycleSnapshot(), before, "recovery wiring must not touch preview, camera, lighting, or safe-off lifecycle work");
 });
 
 test("V1.0.1 rejects browser-supplied normalization geometry before preview or hardware lifecycle work", async () => {

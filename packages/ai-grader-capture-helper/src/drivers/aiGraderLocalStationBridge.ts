@@ -123,6 +123,7 @@ import {
   type SealedFixedRigMathematicalCalibrationCaptureV1,
   type StartFixedRigMathematicalCalibrationCaptureV1Request,
   type FixedRigMathematicalCalibrationCaptureSessionStatusV1,
+  type FixedRigMathematicalCalibrationFalseStopRecoveryV1,
 } from "./fixedRigMathematicalCalibrationCaptureV1";
 import {
   assessMathematicalCalibrationV1_1Preview,
@@ -942,7 +943,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
         | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-false-stop-recovery" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
@@ -2999,7 +3000,7 @@ function bridgeEndpoints() {
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-displayed-frame"
         | "mathematical-calibration-capture-authorization" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-false-stop-recovery" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
@@ -3023,6 +3024,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
+    { method: "POST", action: "mathematical-calibration-false-stop-recovery", path: "/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop", hardwareAccess: false, description: "Execute the single incident-bound, audited V1.0.1 blank-reverse timestamp false-stop recovery with no caller-authored recovery fields." },
     { method: "POST", action: "mathematical-calibration-rig-input", path: "/calibration/mathematical-v1/materialization-input", hardwareAccess: true, description: "Probe the protected rig and derive one exact canonical-target-frame V1.2 materialization input from sealed immutable evidence." },
     { method: "POST", action: "mathematical-calibration-v1.1-start", path: "/calibration/mathematical-v1.1/start", hardwareAccess: false, description: "Start the isolated four-placement Mathematical Calibration V1.1 session; no Production station session is created." },
     { method: "GET", action: "mathematical-calibration-v1.1-page", path: MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH, hardwareAccess: false, description: "Serve the same-origin protected calibration-only preview page; no Production station page is opened." },
@@ -12408,6 +12410,21 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
   }
 
+  recoverKnownMathematicalCalibrationBlankReverseTimestampFalseStop(): Promise<FixedRigMathematicalCalibrationFalseStopRecoveryV1> {
+    this.assertCalibrationSessionIsolated();
+    if (!this.mathematicalCalibrationV1SessionId) {
+      throw new Error("The incident-bound V1.0.1 false-stop recovery requires its exact session to be explicitly resumed and bridge-bound first.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducer()
+      .recoverKnownBlankReverseTimestampFalseStop(this.mathematicalCalibrationV1SessionId)
+      .then((result) => {
+        this.resetMathematicalCalibrationDisplayedFrameAuthority(
+          "Incident-bound V1.0.1 false-stop recovery invalidated all displayed-frame authority.",
+        );
+        return result;
+      });
+  }
+
   async authorizeMathematicalCalibrationDisplayedFrame(
     sessionId: string,
   ): Promise<MathematicalCalibrationCaptureAuthorizationV1> {
@@ -13815,6 +13832,21 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const sessionId = url.searchParams.get("sessionId") ?? "";
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-status", result: await service.mathematicalCalibrationCaptureStatus(sessionId) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/recover-blank-reverse-timestamp-false-stop") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for the incident-bound calibration false-stop recovery." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("The incident-bound calibration false-stop recovery accepts no query or caller-authored authority.");
+        const body = await readJsonBody(req);
+        if (Object.keys(body).length !== 0) {
+          throw new Error("The incident-bound calibration false-stop recovery accepts no browser/operator-authored recovery fields.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-false-stop-recovery",
+          result: await service.recoverKnownMathematicalCalibrationBlankReverseTimestampFalseStop(),
+        }, origin, config);
       }
 
       if (url.pathname === "/calibration/mathematical-v1.1/status") {

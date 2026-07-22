@@ -21,6 +21,21 @@ function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([, candidate]) => candidate !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, candidate]) => [key, canonical(candidate)]));
+  }
+  return value;
+}
+
+function canonicalBytes(value) {
+  return Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
+}
+
 test("real calibration camera evidence requires exact applied exposure and gain telemetry", () => {
   assert.deepEqual(
     requireAppliedMathematicalCalibrationCameraSettings({ exposureTime: 6200, gain: 0 }),
@@ -89,7 +104,10 @@ async function producerFixture(root, options = {}) {
     capture: async (request) => {
       captureCounter += 1;
       requests.set(request.operationId, request);
-      const capturedAt = new Date(Date.UTC(2026, 6, 18, 20, 0, 0, captureCounter)).toISOString();
+      const defaultCapturedAt = new Date(Date.UTC(2026, 6, 18, 20, 0, 0, captureCounter)).toISOString();
+      const capturedAt = options.capturedAtForRequest
+        ? options.capturedAtForRequest({ request, captureCounter, defaultCapturedAt })
+        : defaultCapturedAt;
       return {
         rawBytes: options.rawBytes ?? Buffer.from(`raw:${request.operationId}:${captureCounter}`),
         mimeType: "image/png",
@@ -168,7 +186,9 @@ async function producerFixture(root, options = {}) {
         confidence: 1,
         sourceImageId: input.sourceImageId,
         sourceFrameId: input.sourceImageId,
-        timestamp: input.capturedAt,
+        timestamp: options.geometryTimestampForRequest
+          ? options.geometryTimestampForRequest({ request, capturedAt: input.capturedAt })
+          : input.capturedAt,
         image: { width: 1000, height: 1400, coordinateFrame: "source_image_pixels" },
         semanticOrientation: {
           canonicalOrientation: "portrait",
@@ -255,6 +275,72 @@ function startRequest(targetSha256, sessionId = "calibration-session-001") {
     targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
     targetSha256,
   };
+}
+
+async function auditedFalseStopFixture(root) {
+  const requestRegistry = new Map();
+  const fixture = await producerFixture(root, {
+    requestRegistry,
+    capturedAtForRequest: ({ request, defaultCapturedAt }) => request.operationId === "dark-control-1-1-accepted"
+      ? "2026-07-22T10:55:23.4175556Z"
+      : defaultCapturedAt,
+    geometryTimestampForRequest: ({ capturedAt }) => new Date(capturedAt).toISOString(),
+  });
+  const sessionId = "math-cal-v1-20260722-false-stop-fixture";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"]) {
+    for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+      await fixture.producer.captureStep({
+        sessionId,
+        operationId: `${role}-accepted-${sampleIndex}`,
+        role,
+        sampleIndex,
+        targetFace: "checkerboard",
+        ...(role === "repeated_placement" ? { removeReseatCycleId: `preserved-reseat-${sampleIndex}` } : {}),
+      });
+    }
+  }
+  for (const sampleIndex of [1, 2]) {
+    await fixture.producer.captureStep({
+      sessionId,
+      operationId: `dark-control-1-${sampleIndex}-accepted`,
+      role: "dark_control",
+      channelIndex: 1,
+      sampleIndex,
+      targetFace: "blank_reverse",
+    });
+  }
+  const statePath = path.join(started.sessionDir, "capture-session.json");
+  const state = JSON.parse(await fsp.readFile(statePath, "utf8"));
+  const operationId = "cal-capture-false-stop-fixture";
+  const reason = "Accepted blank-reverse geometry record does not reproduce its immutable accepted pose and detection authority.";
+  const failedAt = "2026-07-22T11:00:00.000Z";
+  state.failedOperations.push({
+    operationId,
+    failedAt,
+    error: reason,
+    role: "dark_control",
+    sampleIndex: 3,
+    channelIndex: 1,
+    targetFace: "blank_reverse",
+    slotKey: "dark_control:1:3",
+  });
+  state.hardStop = { operationId, stoppedAt: failedAt, reason };
+  state.updatedAt = failedAt;
+  await fsp.writeFile(statePath, canonicalBytes(state));
+  const preStateSha256 = sha256(canonicalBytes(state));
+  const recoveryContract = {
+    recoveryId: "blank-reverse-geometry-timestamp-false-stop-20260722-v1",
+    sessionId,
+    expectedPreStateSha256: preStateSha256,
+    operationId,
+    reason,
+    pendingSlotKey: "dark_control:1:3",
+    acceptedCaptureCount: 32,
+    acceptedArtifactCount: 64,
+  };
+  fixture.producer.blankReverseTimestampFalseStopRecovery = recoveryContract;
+  return { fixture, requestRegistry, sessionId, started, statePath, preStateSha256, recoveryContract };
 }
 
 test("product-owner-confirmed target geometry is derived from and bound to the active target", async () => {
@@ -614,6 +700,103 @@ test("V1.0.1 blank-reverse normalization establishes one exact source, then reus
   );
 });
 
+test("V1.0.1 blank authority preserves high-precision capturedAt while requiring exact ECMAScript-millisecond geometry time", async (t) => {
+  const acceptedRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-blank-time-canonical-"));
+  const acceptedFixture = await producerFixture(acceptedRoot, {
+    capturedAtForRequest: ({ request, defaultCapturedAt }) => request.operationId === "blank-time-source"
+      ? "2026-07-22T10:55:23.4175556Z"
+      : defaultCapturedAt,
+    geometryTimestampForRequest: ({ capturedAt }) => new Date(capturedAt).toISOString(),
+  });
+  const acceptedSessionId = "calibration-v1-blank-time-canonical";
+  const acceptedStarted = await acceptedFixture.producer.start(startRequest(acceptedFixture.targetSha256, acceptedSessionId));
+  await acceptedFixture.producer.captureStep({
+    sessionId: acceptedSessionId,
+    operationId: "blank-time-source",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 1,
+    targetFace: "blank_reverse",
+  });
+  const accepted = await acceptedFixture.producer.captureStep({
+    sessionId: acceptedSessionId,
+    operationId: "blank-time-reuse",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 2,
+    targetFace: "blank_reverse",
+  });
+  assert.equal(accepted.captureCount, 2);
+  const acceptedState = JSON.parse(await fsp.readFile(path.join(acceptedStarted.sessionDir, "capture-session.json"), "utf8"));
+  const source = acceptedState.captures[0];
+  assert.equal(source.capturedAt, "2026-07-22T10:55:23.4175556Z");
+  assert.equal(acceptedState.artifacts.find((artifact) => artifact.evidenceId === source.rawEvidenceId).capturedAt, source.capturedAt);
+  assert.equal(acceptedState.artifacts.find((artifact) => artifact.evidenceId === source.normalizedEvidenceId).capturedAt, source.capturedAt);
+  const acceptedGeometry = JSON.parse(await fsp.readFile(
+    path.join(acceptedStarted.sessionDir, "working", `${source.normalizedEvidenceId}-geometry.json`),
+    "utf8",
+  ));
+  assert.equal(acceptedGeometry.timestamp, "2026-07-22T10:55:23.417Z");
+
+  const rejectionCases = [
+    ["one-millisecond mismatch", async ({ geometryPath }) => {
+      const geometry = JSON.parse(await fsp.readFile(geometryPath, "utf8"));
+      geometry.timestamp = "2026-07-22T10:55:23.418Z";
+      await fsp.writeFile(geometryPath, `${JSON.stringify(geometry)}\n`);
+    }],
+    ["noncanonical equivalent geometry time", async ({ geometryPath }) => {
+      const geometry = JSON.parse(await fsp.readFile(geometryPath, "utf8"));
+      geometry.timestamp = "2026-07-22T10:55:23.4170Z";
+      await fsp.writeFile(geometryPath, `${JSON.stringify(geometry)}\n`);
+    }],
+    ["invalid source time", async ({ state, statePath }) => {
+      state.captures[0].capturedAt = "2026-02-30T10:55:23.4175556Z";
+      for (const artifact of state.artifacts.filter((candidate) => candidate.operationId === state.captures[0].operationId)) {
+        artifact.capturedAt = state.captures[0].capturedAt;
+      }
+      await fsp.writeFile(statePath, `${JSON.stringify(state)}\n`);
+    }],
+  ];
+  for (const [label, tamper] of rejectionCases) {
+    await t.test(label, async () => {
+      const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-v1-blank-time-${label.replaceAll(" ", "-")}-`));
+      const fixture = await producerFixture(root, {
+        capturedAtForRequest: ({ request, defaultCapturedAt }) => request.operationId === "blank-time-source"
+          ? "2026-07-22T10:55:23.4175556Z"
+          : defaultCapturedAt,
+        geometryTimestampForRequest: ({ capturedAt }) => new Date(capturedAt).toISOString(),
+      });
+      const sessionId = `calibration-v1-blank-time-${crypto.randomUUID()}`;
+      const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+      await fixture.producer.captureStep({
+        sessionId,
+        operationId: "blank-time-source",
+        role: "dark_control",
+        channelIndex: 1,
+        sampleIndex: 1,
+        targetFace: "blank_reverse",
+      });
+      const statePath = path.join(started.sessionDir, "capture-session.json");
+      const state = JSON.parse(await fsp.readFile(statePath, "utf8"));
+      const geometryPath = path.join(started.sessionDir, "working", `${state.captures[0].normalizedEvidenceId}-geometry.json`);
+      await tamper({ state, statePath, geometryPath });
+      await assert.rejects(
+        fixture.producer.captureStep({
+          sessionId,
+          operationId: "blank-time-rejected-reuse",
+          role: "dark_control",
+          channelIndex: 1,
+          sampleIndex: 2,
+          targetFace: "blank_reverse",
+        }),
+        /blank-reverse.*timestamp|capturedAt.*valid UTC timestamp/i,
+      );
+      assert.equal(fixture.captureCount, 1, "timestamp rejection must occur before capture lifecycle work");
+      assert.ok((await fixture.producer.status(sessionId)).hardStop);
+    });
+  }
+});
+
 test("V1.0.1 rejects blank-geometry tamper and browser-selected, cross-session, or wrong-settings authority before capture", async (t) => {
   const tamperCases = [
     ["geometry-file", async ({ state, sessionDir }) => {
@@ -802,6 +985,217 @@ test("V1.0.1 resumes the preserved 32-capture blank failure at the exact pending
     const artifact = stateAfter.artifacts.find((candidate) => candidate.evidenceId === evidenceId);
     assert.deepEqual(await fsp.readFile(path.join(started.sessionDir, ...artifact.path.split("/"))), bytes);
   }
+});
+
+test("V1.0.1 incident-bound recovery preserves all 32 accepted captures, writes one receipt, and resumes only dark_control:1:3", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-false-stop-recovery-"));
+  const incident = await auditedFalseStopFixture(root);
+  const stateBefore = JSON.parse(await fsp.readFile(incident.statePath, "utf8"));
+  const acceptedCapturesBefore = structuredClone(stateBefore.captures);
+  const acceptedArtifactsBefore = stateBefore.artifacts
+    .filter((artifact) => artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative")
+    .map((artifact) => structuredClone(artifact));
+  const acceptedBytesBefore = new Map(await Promise.all(acceptedArtifactsBefore.map(async (artifact) => [
+    artifact.evidenceId,
+    await fsp.readFile(path.join(incident.started.sessionDir, ...artifact.path.split("/"))),
+  ])));
+  const acceptedEventBytesBefore = new Map(await Promise.all(acceptedCapturesBefore.map(async (capture) => [
+    capture.operationId,
+    await fsp.readFile(path.join(incident.started.sessionDir, "events", `${capture.operationId}.json`)),
+  ])));
+
+  const recovered = await incident.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(incident.sessionId);
+  assert.equal(recovered.idempotent, false);
+  assert.equal(recovered.status.captureCount, 32);
+  assert.equal(recovered.status.hardStop, null);
+  assert.equal(recovered.status.retryAllowed, true);
+  assert.equal(recovered.status.nextCaptureSlot.slotKey, "dark_control:1:3");
+  assert.equal(recovered.recovery.preRecoveryStateSha256, incident.preStateSha256);
+  assert.match(recovered.recovery.receiptSha256, /^[a-f0-9]{64}$/);
+  const receiptPath = path.join(incident.started.sessionDir, ...recovered.recovery.receiptPath.split("/"));
+  const receiptBytes = await fsp.readFile(receiptPath);
+  assert.equal(sha256(receiptBytes), recovered.recovery.receiptSha256);
+  const receipt = JSON.parse(receiptBytes.toString("utf8"));
+  assert.equal(receipt.acceptedEvidence.captureCount, 32);
+  assert.equal(receipt.acceptedEvidence.artifactCount, 64);
+  assert.equal(receipt.verifiedBlankReverseAuthority.sourceOperationId, "dark-control-1-1-accepted");
+
+  const recoveredState = JSON.parse(await fsp.readFile(incident.statePath, "utf8"));
+  assert.equal(recoveredState.hardStop, undefined);
+  assert.equal(recoveredState.failedOperations.at(-1).operationId, incident.recoveryContract.operationId);
+  assert.equal(recoveredState.failedOperations.at(-1).error, incident.recoveryContract.reason);
+  assert.deepEqual(recoveredState.captures, acceptedCapturesBefore);
+  assert.deepEqual(
+    recoveredState.artifacts.filter((artifact) => artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative"),
+    acceptedArtifactsBefore,
+  );
+  for (const [evidenceId, bytes] of acceptedBytesBefore) {
+    const artifact = recoveredState.artifacts.find((candidate) => candidate.evidenceId === evidenceId);
+    assert.deepEqual(await fsp.readFile(path.join(incident.started.sessionDir, ...artifact.path.split("/"))), bytes);
+  }
+  for (const [operationId, bytes] of acceptedEventBytesBefore) {
+    assert.deepEqual(await fsp.readFile(path.join(incident.started.sessionDir, "events", `${operationId}.json`)), bytes);
+  }
+
+  const stateAfterFirstRecovery = await fsp.readFile(incident.statePath);
+  const receiptAfterFirstRecovery = await fsp.readFile(receiptPath);
+  const secondRecovery = await incident.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(incident.sessionId);
+  assert.equal(secondRecovery.idempotent, true);
+  assert.deepEqual(await fsp.readFile(incident.statePath), stateAfterFirstRecovery);
+  assert.deepEqual(await fsp.readFile(receiptPath), receiptAfterFirstRecovery);
+
+  const restarted = await producerFixture(root, {
+    requestRegistry: incident.requestRegistry,
+    geometryTimestampForRequest: ({ capturedAt }) => new Date(capturedAt).toISOString(),
+  });
+  const resumed = await restarted.producer.start({ ...startRequest(restarted.targetSha256, incident.sessionId), resume: true });
+  assert.equal(resumed.captureCount, 32);
+  assert.equal(resumed.nextCaptureSlot.slotKey, "dark_control:1:3");
+  const retried = await restarted.producer.captureStep({
+    sessionId: incident.sessionId,
+    operationId: "dark-control-1-3-after-audited-recovery",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 3,
+    targetFace: "blank_reverse",
+  });
+  assert.equal(retried.captureCount, 33);
+  assert.equal(retried.acceptedCaptureHistory.at(-1).operationId, "dark-control-1-3-after-audited-recovery");
+  assert.equal(retried.failedAttempts.at(-1).operationId, incident.recoveryContract.operationId);
+  assert.equal(restarted.captureCount, 1, "recovery and restart must not execute hardware before the new exact retry");
+});
+
+test("V1.0.1 incident-bound recovery rejects wrong identity, state, failure, slot, candidate evidence, and accepted-authority tamper", async (t) => {
+  const baselineRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-false-stop-adversarial-baseline-"));
+  const baseline = await auditedFalseStopFixture(baselineRoot);
+
+  async function isolatedCase(label) {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-v1-false-stop-${label}-`));
+    await fsp.cp(baselineRoot, root, { recursive: true });
+    const fixture = await producerFixture(root, {
+      requestRegistry: baseline.requestRegistry,
+      geometryTimestampForRequest: ({ capturedAt }) => new Date(capturedAt).toISOString(),
+    });
+    const statePath = path.join(root, "calibration-sessions", baseline.sessionId, "capture-session.json");
+    const sessionDir = path.dirname(statePath);
+    const contract = structuredClone(baseline.recoveryContract);
+    fixture.producer.blankReverseTimestampFalseStopRecovery = contract;
+    return { fixture, statePath, sessionDir, contract };
+  }
+
+  await t.test("wrong bridge-bound session", async () => {
+    const item = await isolatedCase("wrong-session");
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop("wrong-session"),
+      /bound only to its exact audited V1\.0\.1 session/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
+
+  const stateMutationCases = [
+    ["wrong-state-sha", (state) => { state.updatedAt = "2026-07-22T11:00:00.001Z"; }, false, /pre-state SHA-256/i],
+    ["wrong-operation", (state) => {
+      state.hardStop.operationId = "wrong-hard-stop-operation";
+      state.failedOperations.at(-1).operationId = "wrong-hard-stop-operation";
+    }, true, /exact false-stop operation/i],
+    ["wrong-reason", (state) => {
+      state.hardStop.reason = "unrelated hard stop";
+      state.failedOperations.at(-1).error = "unrelated hard stop";
+    }, true, /exact false-stop operation/i],
+    ["wrong-slot", (state) => { state.failedOperations.at(-1).slotKey = "dark_control:1:2"; }, true, /pending slot/i],
+    ["candidate-evidence", (state) => { state.failedOperations.at(-1).candidateRawSha256 = "a".repeat(64); }, true, /preserved evidence counts/i],
+  ];
+  for (const [label, mutate, rebindStateSha, expectedError] of stateMutationCases) {
+    await t.test(label, async () => {
+      const item = await isolatedCase(label);
+      const state = JSON.parse(await fsp.readFile(item.statePath, "utf8"));
+      mutate(state);
+      await fsp.writeFile(item.statePath, canonicalBytes(state));
+      if (rebindStateSha) item.contract.expectedPreStateSha256 = sha256(canonicalBytes(state));
+      const before = await fsp.readFile(item.statePath);
+      await assert.rejects(
+        item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+        expectedError,
+      );
+      assert.deepEqual(await fsp.readFile(item.statePath), before);
+      assert.equal(fs.existsSync(path.join(item.sessionDir, "events", `${item.contract.recoveryId}.json`)), false);
+    });
+  }
+
+  await t.test("accepted artifact byte tamper", async () => {
+    const item = await isolatedCase("artifact-tamper");
+    const state = JSON.parse(await fsp.readFile(item.statePath, "utf8"));
+    const raw = state.artifacts.find((artifact) => artifact.artifactClass === "raw_capture");
+    await fsp.writeFile(path.join(item.sessionDir, ...raw.path.split("/")), Buffer.from("tampered accepted bytes"));
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+      /immutable SHA-256\/size verification/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
+
+  await t.test("unreferenced candidate operation evidence", async () => {
+    const item = await isolatedCase("candidate-file");
+    const candidateDir = path.join(item.sessionDir, "working", item.contract.operationId);
+    await fsp.mkdir(candidateDir, { recursive: true });
+    await fsp.writeFile(path.join(candidateDir, "unexpected-raw.png"), Buffer.from("unexpected candidate"));
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+      /exact false-stop operation.*preserved evidence counts/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
+
+  await t.test("accepted capture event tamper", async () => {
+    const item = await isolatedCase("event-tamper");
+    const state = JSON.parse(await fsp.readFile(item.statePath, "utf8"));
+    const capture = state.captures[0];
+    const eventPath = path.join(item.sessionDir, "events", `${capture.operationId}.json`);
+    const event = JSON.parse(await fsp.readFile(eventPath, "utf8"));
+    event.request.targetFace = "blank_reverse";
+    await fsp.writeFile(eventPath, canonicalBytes(event));
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+      /event does not reproduce its immutable request/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
+
+  await t.test("manually fabricated pre-existing recovery receipt", async () => {
+    const item = await isolatedCase("fabricated-receipt");
+    const receiptPath = path.join(item.sessionDir, "events", `${item.contract.recoveryId}.json`);
+    await fsp.writeFile(receiptPath, canonicalBytes({
+      schemaVersion: "manual-fabrication",
+      recoveryId: item.contract.recoveryId,
+      recoveredAt: "2026-07-22T11:00:00.000Z",
+    }));
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+      /does not reproduce the exact audited pre-state evidence/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
+
+  await t.test("accepted blank geometry timestamp tamper", async () => {
+    const item = await isolatedCase("geometry-tamper");
+    const state = JSON.parse(await fsp.readFile(item.statePath, "utf8"));
+    const source = state.captures.find((capture) => capture.operationId === "dark-control-1-1-accepted");
+    const geometryPath = path.join(item.sessionDir, "working", `${source.normalizedEvidenceId}-geometry.json`);
+    const geometry = JSON.parse(await fsp.readFile(geometryPath, "utf8"));
+    geometry.timestamp = "2026-07-22T10:55:23.418Z";
+    await fsp.writeFile(geometryPath, `${JSON.stringify(geometry)}\n`);
+    const before = await fsp.readFile(item.statePath);
+    await assert.rejects(
+      item.fixture.producer.recoverKnownBlankReverseTimestampFalseStop(baseline.sessionId),
+      /canonical millisecond timestamp/i,
+    );
+    assert.deepEqual(await fsp.readFile(item.statePath), before);
+  });
 });
 
 test("V1.0.1 lens and normalization tenth-pose aggregate rejection leaves nine hashes unchanged and accepts a corrected retry", async (t) => {
