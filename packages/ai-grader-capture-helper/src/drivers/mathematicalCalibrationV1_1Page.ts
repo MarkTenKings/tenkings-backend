@@ -54,7 +54,8 @@ body{margin:0;background:#10130f;color:#f4f0df;font:15px system-ui,sans-serif}ma
     el("failures").textContent=failures.length?failures.map(x=>x.operationId+" | "+(x.slotKey||"-")+" | "+(x.candidateRawSha256||"no still hash")+" | "+x.error).join("\\n"):"none";
     if(!bound&&math)message("Wrong calibration session or contract binding; this frame cannot authorize capture.","bad"); drawOverlay(overlay);
   }
-  async function pair(){ if(localStorage.getItem(tokenKey))return true; const m=location.hash.match(/(?:^|[#&])aiGraderBridgePair=([^&]+)/); if(!m){message("Pairing code required; use the protected V1.0.1 launcher.","bad");return false;} const r=await fetch("/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairingCode:decodeURIComponent(m[1])})}); if(!r.ok)throw new Error("Protected bridge pairing failed."); const b=await r.json(); if(!b.result||typeof b.result.stationToken!=="string")throw new Error("Pairing returned no station token."); localStorage.setItem(tokenKey,b.result.stationToken); history.replaceState(null,"",location.pathname+location.search); return true; }
+  async function validateToken(token){const r=await fetch("/preview/status",{headers:{"X-AI-Grader-Station-Token":token},cache:"no-store"});if(r.ok)return true;if(r.status===401)return false;throw new Error("Protected bridge token validation failed.");}
+  async function pair(){const m=location.hash.match(/(?:^|[#&])aiGraderBridgePair=([^&]+)/);const stored=localStorage.getItem(tokenKey);if(stored){if(await validateToken(stored)){if(m)history.replaceState(null,"",location.pathname+location.search);return true;}if(!m){message("Saved calibration pairing is no longer authorized; use the protected V1.0.1 launcher.","bad");return false;}localStorage.removeItem(tokenKey);}else if(!m){message("Pairing code required; use the protected V1.0.1 launcher.","bad");return false;}const r=await fetch("/pair",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({pairingCode:decodeURIComponent(m[1])})});if(!r.ok)throw new Error("Protected bridge pairing failed.");const b=await r.json();const token=b.result&&b.result.stationToken;if(typeof token!=="string"||!token)throw new Error("Pairing returned no station token.");if(!await validateToken(token))throw new Error("Protected bridge pairing returned an unauthorized token.");localStorage.setItem(tokenKey,token);history.replaceState(null,"",location.pathname+location.search);return true;}
   async function refreshStatus(){ if(!localStorage.getItem(tokenKey))return; const [p,s]=await Promise.all([fetch("/preview/status",{headers:tokenHeaders(),cache:"no-store"}),fetch("/calibration/mathematical-v1/status?sessionId="+encodeURIComponent(sessionId),{headers:tokenHeaders(),cache:"no-store"})]); if(p.ok&&s.ok){const preview=(await p.json()).result;setStatus(preview,(await s.json()).result);return preview;} }
   function exactHeader(header,name){const prefix=name.toLowerCase()+":";const values=header.split(String.fromCharCode(13,10)).filter(line=>line.toLowerCase().startsWith(prefix)).map(line=>line.slice(prefix.length).trim());if(values.length!==1||!values[0])throw new Error("MJPEG frame requires exactly one "+name+" header.");return values[0];}
   function parseDisplayedFrame(header){const frame={sessionId:exactHeader(header,"X-AI-Grader-Session-Id"),epoch:exactHeader(header,"X-AI-Grader-Preview-Epoch"),frameId:exactHeader(header,"X-AI-Grader-Frame-Id"),capturedAt:exactHeader(header,"X-AI-Grader-Captured-At")};if(frame.sessionId!==sessionId)throw new Error("Displayed MJPEG frame has the wrong calibration session.");if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(frame.epoch)||!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(frame.frameId)||!Number.isFinite(Date.parse(frame.capturedAt)))throw new Error("Displayed MJPEG frame identity is invalid.");return frame;}
@@ -133,15 +134,32 @@ body{margin:0;background:#10130f;color:#f4f0df;font:16px system-ui,sans-serif}ma
     const margin = (overlay.safetyMarginFraction || 0.01) * Math.min(canvas.width, canvas.height);
     context.strokeStyle = "rgba(255,211,109,.85)"; context.setLineDash([12,10]); context.strokeRect(margin, margin, canvas.width - margin * 2, canvas.height - margin * 2); context.restore();
   }
+  async function validateToken(token) {
+    const response = await fetch("/preview/status", {headers:{"X-AI-Grader-Station-Token":token}, cache:"no-store"});
+    if (response.ok) return true;
+    if (response.status === 401) return false;
+    throw new Error("Protected bridge token validation failed.");
+  }
   async function pair() {
-    if (localStorage.getItem(tokenKey)) return true;
     const match = location.hash.match(/(?:^|[#&])aiGraderBridgePair=([^&]+)/);
-    if (!match) { message("Pairing code is required. Open this page from the protected calibration launcher.", "bad"); return false; }
+    const storedToken = localStorage.getItem(tokenKey);
+    if (storedToken) {
+      if (await validateToken(storedToken)) {
+        if (match) history.replaceState(null, "", location.pathname + location.search);
+        return true;
+      }
+      if (!match) { message("Saved calibration pairing is no longer authorized. Open this page from the protected calibration launcher.", "bad"); return false; }
+      localStorage.removeItem(tokenKey);
+    } else if (!match) {
+      message("Pairing code is required. Open this page from the protected calibration launcher.", "bad"); return false;
+    }
     const response = await fetch("/pair", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({pairingCode:decodeURIComponent(match[1])})});
     if (!response.ok) throw new Error("Protected bridge pairing failed.");
     const body = await response.json();
-    if (!body.result || typeof body.result.stationToken !== "string") throw new Error("Protected bridge pairing returned no token.");
-    localStorage.setItem(tokenKey, body.result.stationToken);
+    const token = body.result && body.result.stationToken;
+    if (typeof token !== "string" || !token) throw new Error("Protected bridge pairing returned no token.");
+    if (!await validateToken(token)) throw new Error("Protected bridge pairing returned an unauthorized token.");
+    localStorage.setItem(tokenKey, token);
     history.replaceState(null, "", location.pathname + location.search);
     return true;
   }
