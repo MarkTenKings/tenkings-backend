@@ -95,7 +95,7 @@ The incident-bound command `tk-ai-grader-archive-stale-invalid-reviews` may remo
 - `ai-grader-browser-station-session-2026-07-21T042424764Z-session-rapid-card` / session `ai-grader-browser-station-session-2026-07-21T042424764Z-session` / report `ai-grader-browser-station-session-2026-07-21T042424764Z-report`;
 - `ai-grader-browser-station-session-2026-07-21T035440224Z-session-rapid-card` / session `ai-grader-browser-station-session-2026-07-21T035440224Z-session` / report `ai-grader-browser-station-session-2026-07-21T035440224Z-report`.
 
-This is not a general queue/FSM action. It is hard-bound to queue SHA-256 `3bdb4118245ee92406280f74bb45ed43c56e279f5d2cad37c2c6b444d256e05f`, exactly five entries, exactly those two unfinished items, and exactly three retained terminal failed items. It refuses unless each target still has succeeded OCR, `findingValidation=invalid`, `16` source candidates, `0` published findings, `32` issues, local upload not performed, no production DB write, and no CardAsset/Item linkage. It hashes every referenced local report/manifest/artifact, preserves those files in place, writes exact before/after queue bytes plus both complete removed entries into a content-addressed archive, and records reason `owner_removed_stale_invalid_finding_review_v1` with owner `Mark / Ten Kings`. It atomically replaces only `rapid-capture-queue.json` and installs a canonical non-active archive pointer that lets the orphan-manifest startup guard verify those two unchanged session manifests against the complete archive; the three retained terminal entries must reproduce unchanged. A canonical journal/backup provides bounded restore or idempotent completion after interruption.
+This is not a general queue/FSM action. It is hard-bound to queue SHA-256 `3bdb4118245ee92406280f74bb45ed43c56e279f5d2cad37c2c6b444d256e05f`, exactly five entries, exactly those two unfinished items, and exactly three retained terminal failed items. It also pins, in target order, manifest/report-bundle/production-release SHA-256 triples `0fe9a33bb0057fa4b57aa184df099711609b504ad56ccc641ec4cb4ca7638979` / `2cc1ba76cb854c68359000ecf95f42718c90de2a4d4a5b8d8dce5f73c0eb331d` / `b124003d436b3a7e0e2b4963a7f00656f1c17ae31ed5ea96c2aafbffe611d3c5` and `5d5b21bf1b2d3d419114f5e9374d54b418828964d3af1344610061ec998a4003` / `8d6fefee97bc3ecd53be35f71555d1c940b22dd3fe3f04bfd1cb9dc248e0dc70` / `46016f6a4ed4f72e9869128fa31a051c0788358ae177f42c5e7b3ec9c512d70f`. Only those exact legacy bundles may represent zero materialized findings by omitting `visionLab.defectFindings`; the immutable ledger and receipt record `absent`. The ordinary explicit `[]` representation remains accepted when its incident authority and evidence hashes match. Null, object, nonempty, wrong-hash, or wrong-counter representations fail closed. Every other guard remains: succeeded OCR, `findingValidation=invalid`, `16` source candidates, `0` published findings, `32` issues, local upload not performed, no production DB write, and no CardAsset/Item linkage. The command hashes every referenced local report/manifest/artifact, preserves those files in place, writes exact before/after queue bytes plus both complete removed entries into a content-addressed archive, and records reason `owner_removed_stale_invalid_finding_review_v1` with owner `Mark / Ten Kings`. It atomically replaces only `rapid-capture-queue.json` and installs a canonical non-active archive pointer that lets the orphan-manifest startup guard verify those two unchanged session manifests against the complete archive; the three retained terminal entries must reproduce unchanged. A canonical journal/backup provides bounded restore or idempotent completion after interruption.
 
 Execution remains separately authorized. Capture a fresh token-gated helper status response outside the station output root and hash it. It must prove `start_new_card`, no active session, preview stopped/not-started, camera idle/released, no transition or capture lock, and all worker queues empty. The normal path also requires a no-more-than-five-minute-old bridge-native `safe_off_verified` physical lighting state.
 
@@ -103,13 +103,16 @@ Only for this fixed 2026-07-22 incident, bridge `physicalState=unverified` may i
 
 Receipt creation must use the incident-only `tk-ai-grader-capture-stale-review-safe-off-receipt` executable. Its `capture` mode requires the exact fixed confirmation and may spawn at most one guarded `leimac-idmu-safe-off` child. Before interpreting the child result, it writes the exact raw stdout, raw stderr, and canonical child exit/timing/argv/file-identity evidence to fixed create-new files. It then uses the same verifier as the archive transaction to atomically create the canonical receipt and SHA file. Its `regenerate` mode never spawns a child and recreates only the derived receipt/SHA from exact preserved raw evidence. If capture post-processing fails after raw evidence exists, run only `regenerate`; never repeat the hardware command merely because parsing, canonicalization, receipt installation, or SHA installation failed.
 
-Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the archive command; do not stop NFC. Use one new archive root outside the station output directory. The following is the exact exceptional one-time sequence after the executable is independently reviewed, merged, installed, and a new exact hardware authorization is obtained. Only the executable's `capture` mode can issue hardware I/O, and it issues at most one guarded safe-off child.
+The successful first capture under `external-safe-off-receipt-capture-v1` is immutable evidence of the failed pre-transaction attempt. Preserve and reverify it only with hardware-free `regenerate`; never delete, replace, or select it as fresh transaction authority after its five-minute window. A later separately authorized safety capture, if still required, uses the create-new `external-safe-off-receipt-capture-v2` root. That is a new physical-state recency gate, not a retry for receipt post-processing. Never issue it automatically. The live archive root may already exist empty because the prior validator stopped before archive creation. Preserve that directory; the transaction accepts the proven empty root and creates its first content-addressed member inside it. Any unexpected existing member stops for review.
+
+Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the archive command; do not stop NFC. Use the one fixed incident archive root outside the station output directory; an already-existing empty directory from the failed pre-transaction validation is the expected next state and must not be deleted or replaced. The following is the exact exceptional one-time sequence after the executable is independently reviewed, merged, installed, and a new exact hardware authorization is obtained. Only the executable's `capture` mode can issue hardware I/O, and it issues at most one guarded safe-off child.
 
 ```powershell
 $queueOutput = 'C:\TenKings\capture-data\ai-grader-station'
 $archiveRoot = 'C:\TenKings\capture-data\ai-grader-queue-quarantine\owner-removed-stale-invalid-review-20260722-v1'
 $idleStatus = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\idle-status.json'
-$receiptCaptureRoot = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt-capture-v1'
+$preservedReceiptCaptureRoot = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt-capture-v1'
+$receiptCaptureRoot = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt-capture-v2'
 $externalSafeOffReceipt = Join-Path $receiptCaptureRoot 'external-safe-off-receipt.json'
 $externalSafeOffReceiptShaFile = Join-Path $receiptCaptureRoot 'external-safe-off-receipt.sha256'
 $rawReceiptMembers = @(
@@ -120,7 +123,30 @@ $rawReceiptMembers = @(
 $installedRepo = 'C:\TenKings\repos\tenkings-rip-it-live'
 $configPath = 'C:\TenKings\config\ai-grader-local-bridge.json'
 $receiptTool = Join-Path $installedRepo 'packages\ai-grader-capture-helper\dist\staleInvalidRapidCaptureSafeOffReceiptCli.js'
-$config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+$preservedRawReceiptMembers = @(
+  (Join-Path $preservedReceiptCaptureRoot 'safe-off-child.stdout.json'),
+  (Join-Path $preservedReceiptCaptureRoot 'safe-off-child.stderr.txt'),
+  (Join-Path $preservedReceiptCaptureRoot 'safe-off-child-execution.json')
+)
+if (@($preservedRawReceiptMembers | Where-Object { -not (Test-Path -LiteralPath $_) }).Count -ne 0) {
+  throw 'Preserved v1 safe-off evidence is incomplete; stop without hardware.'
+}
+$preservedReceiptResultText = & node $receiptTool regenerate --output-dir $preservedReceiptCaptureRoot
+if ($LASTEXITCODE -ne 0) { throw 'Preserved v1 safe-off evidence failed hardware-free verification; do not repeat safe-off.' }
+Remove-Variable preservedReceiptResultText
+
+if (Test-Path -LiteralPath $archiveRoot) {
+  $unexpectedArchiveMembers = @(Get-ChildItem -LiteralPath $archiveRoot -Force)
+  if ($unexpectedArchiveMembers.Count -ne 0) {
+    throw 'The pre-transaction live archive root is not empty; preserve every member and stop for review.'
+  }
+}
+
+$configText = [System.IO.File]::ReadAllText($configPath, [System.Text.Encoding]::UTF8)
+if ($configText.StartsWith([char]0xFEFF)) { $configText = $configText.Substring(1) }
+if ($configText.Contains([char]0xFEFF)) { throw 'Configured bridge JSON contains an unexpected additional BOM.' }
+$config = $configText | ConvertFrom-Json
+Remove-Variable configText
 $configuredLeimacHost = [string]$config.leimacHost
 $configuredLeimacPort = [int]$config.leimacPort
 if ($configuredLeimacHost -ne '169.254.191.156' -or $configuredLeimacPort -ne 1000) {
