@@ -9,6 +9,7 @@ the TypeScript acceptance/finalization authority.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import math
@@ -105,8 +106,18 @@ def exact_sha256(value: Any, name: str) -> str:
 
 
 def exact_utc_timestamp(value: Any, name: str) -> str:
-    if not isinstance(value, str) or not UTC_TIMESTAMP_RE.fullmatch(value):
+    match = (UTC_TIMESTAMP_RE.fullmatch(value)
+             if isinstance(value, str) else None)
+    if match is None:
         raise ValueError(f'{name} must be an exact UTC timestamp')
+    try:
+        datetime.datetime(
+            int(value[0:4]), int(value[5:7]), int(value[8:10]),
+            int(value[11:13]), int(value[14:16]), int(value[17:19]),
+            tzinfo=datetime.timezone.utc)
+    except ValueError as error:
+        raise ValueError(
+            f'{name} must be an exact UTC timestamp') from error
     return value
 
 

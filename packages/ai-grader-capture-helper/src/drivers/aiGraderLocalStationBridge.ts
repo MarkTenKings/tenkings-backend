@@ -4610,7 +4610,7 @@ async function deriveIncidentAnalyzerAuthorityRequests(
       requests?: unknown;
     };
     if (
-      output.analyzerSourceSha256 !== "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201" ||
+      output.analyzerSourceSha256 !== "7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439" ||
       !Array.isArray(output.requests) || output.requests.length !== 78
     ) throw new Error("Protected corrected-analyzer derivation output identity or 78-record contract is invalid.");
     return output.requests as RecordFixedRigMathematicalCalibrationMeasurementV1Request[];

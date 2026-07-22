@@ -78,7 +78,7 @@ const ANALYZER_AUTHORITY_REBIND_INCIDENT_V1 = {
   sessionId: "math-cal-v1-20260722-4cfa410c-01",
   expectedPreStateSha256: "72dace5828ac13fefd1a67ea738eafe11e54f5478c15eba4dd3c9d9326fa7a1f",
   oldAnalyzerSha256: "8cee9c2d3a9829fe196982616dcdb33b3872ce5dd2f15dd2e99cf9d08e21384b",
-  correctedAnalyzerSha256: "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201",
+  correctedAnalyzerSha256: "7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439",
   oldCaptureManifestSha256: "43765b77888c0185a3189895a74c9d1305699d1be8103a58d0697df5288cd8c9",
   oldSourcePackageSha256: "27bd94d8e3b72bf7e77dc891eb7da0d395a7d051addf546280a7b938a0328321",
   captureCount: 102,
@@ -88,12 +88,50 @@ const ANALYZER_AUTHORITY_REBIND_INCIDENT_V1 = {
   protectedTargetAuthorityCount: 4,
   failureCount: 2,
   manifestReferenceCount: 182,
+  reboundManifestReferenceCount: 183,
 } as const;
 
 const ANALYZER_AUTHORITY_REBIND_RECEIPT_V1 =
   "ten-kings-mathematical-calibration-analyzer-authority-rebind-receipt-v1" as const;
 const ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1 =
   "ten-kings-mathematical-calibration-superseded-analyzer-authority-ledger-v1" as const;
+const ANALYZER_AUTHORITY_REBIND_JOURNAL_V1 =
+  "ten-kings-mathematical-calibration-analyzer-authority-rebind-journal-v1" as const;
+
+interface PreservedIncidentFileV1 {
+  originalPath: string;
+  preservedPath: string;
+  sha256: string;
+  byteSize: number;
+}
+
+interface SupersededSealedEnvelopeV1 {
+  captureSession: PreservedIncidentFileV1;
+  sourceCapturePackage: PreservedIncidentFileV1;
+  captureManifest: PreservedIncidentFileV1;
+  sealEvent: PreservedIncidentFileV1;
+}
+
+interface AnalyzerAuthoritySupersessionLedgerReferenceV1 {
+  schemaVersion: typeof ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1;
+  rebindId: string;
+  path: string;
+  sha256: string;
+  byteSize: number;
+}
+
+interface AnalyzerAuthorityRebindJournalV1 {
+  schemaVersion: typeof ANALYZER_AUTHORITY_REBIND_JOURNAL_V1;
+  rebindId: string;
+  sessionId: string;
+  expectedPreStateSha256: string;
+  oldAnalyzerSha256: string;
+  correctedAnalyzerSha256: string;
+  oldCaptureManifestSha256: string;
+  oldSourcePackageSha256: string;
+  expectedInstalledStateSha256: string;
+  expectedReceiptSha256: string;
+}
 
 export type FixedRigMathematicalCalibrationCaptureRoleV1 = (typeof CAPTURE_ROLES)[number];
 export type FixedRigMathematicalCalibrationMeasurementClassV1 = (typeof MEASUREMENT_CLASSES)[number];
@@ -486,6 +524,7 @@ interface AnalyzerAuthorityRebindStateV1 {
   newSourcePackageSha256: string;
   supersededAuthorityLedgerPath: string;
   supersededAuthorityLedgerSha256: string;
+  supersededEnvelope: SupersededSealedEnvelopeV1;
   receiptPath: string;
   receiptSha256: string;
 }
@@ -495,9 +534,11 @@ type AnalyzerAuthorityRebindReceiptV1 = Omit<AnalyzerAuthorityRebindStateV1, "re
   preservedEvidence: {
     capturesSha256: string;
     captureArtifactsSha256: string;
+    captureEventsSha256: string;
     failuresSha256: string;
     protectedTargetAuthoritySha256: string;
     protectedTargetArtifactsSha256: string;
+    protectedTargetEventsSha256: string;
   };
   correctedAuthority: {
     count: number;
@@ -1207,7 +1248,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private readonly verifiedBlankReverseGeometry = new Map<string, VerifiedBlankReverseGeometryAuthorityV1>();
   private readonly blankReverseTimestampFalseStopRecovery = BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_V1;
   private readonly analyzerAuthorityRebindIncident = ANALYZER_AUTHORITY_REBIND_INCIDENT_V1;
-  private analyzerAuthorityRebindTestFailpoint?: "after-stage" | "after-backup-rename";
+  private analyzerAuthorityRebindTestFailpoint?: "after-stage" | "after-backup-rename" | "after-stage-to-live";
+  private analyzerAuthoritySupersessionLedgerForSeal?: AnalyzerAuthoritySupersessionLedgerReferenceV1;
 
   constructor(config: FixedRigMathematicalCalibrationCaptureProducerConfigV1) {
     this.config = config;
@@ -1465,7 +1507,10 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     }
   }
 
-  private async acceptedCaptureEvidenceLedger(state: CaptureSessionStateV1): Promise<{
+  private async acceptedCaptureEvidenceLedger(
+    state: CaptureSessionStateV1,
+    verifiedSessionDir = this.sessionDir(state.sessionId),
+  ): Promise<{
     captureCount: number;
     artifactCount: number;
     capturesSha256: string;
@@ -1483,7 +1528,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         throw new Error(`Accepted capture ${capture.operationId} does not bind exactly one raw and normalized artifact.`);
       }
       const relativePath = portable("events", `${safeSegment(capture.operationId)}.json`);
-      const eventPath = path.join(this.sessionDir(state.sessionId), ...relativePath.split("/"));
+      const eventPath = path.join(verifiedSessionDir, ...relativePath.split("/"));
       const eventBytes = await readFile(eventPath);
       let event: Record<string, unknown>;
       try {
@@ -1523,6 +1568,53 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       artifactCount: acceptedArtifacts.length,
       capturesSha256: hash(canonicalBytes(state.captures)),
       artifactsSha256: hash(canonicalBytes(acceptedArtifacts)),
+      eventsSha256: hash(canonicalBytes(eventLedger)),
+    };
+  }
+
+  private async protectedTargetEvidenceLedger(
+    state: CaptureSessionStateV1,
+    verifiedSessionDir = this.sessionDir(state.sessionId),
+  ): Promise<{
+    authoritySha256: string;
+    artifactsSha256: string;
+    eventsSha256: string;
+  }> {
+    const records = state.measurements.filter(isProtectedTargetAuthorityRecord);
+    if (records.length !== this.analyzerAuthorityRebindIncident.protectedTargetAuthorityCount) {
+      throw new Error("Protected-target authority ledger does not contain exactly four records.");
+    }
+    const evidenceIds = new Set(records.map((record) => record.evidenceId));
+    const artifacts = state.artifacts.filter((artifact) =>
+      artifact.artifactClass === "target" || evidenceIds.has(artifact.evidenceId));
+    const eventLedger: Array<{ operationId: string; path: string; sha256: string; byteSize: number }> = [];
+    for (const record of records) {
+      const matches = artifacts.filter((artifact) => artifact.evidenceId === record.evidenceId);
+      if (matches.length !== 1 || matches[0]!.artifactClass !== "measurement" || matches[0]!.operationId !== record.operationId) {
+        throw new Error(`Protected-target authority ${record.operationId} does not bind exactly one immutable measurement artifact.`);
+      }
+      const artifact = matches[0]!;
+      const relativePath = portable("events", `${safeSegment(record.operationId)}.json`);
+      const eventBytes = await readFile(path.join(verifiedSessionDir, ...relativePath.split("/")));
+      const expectedEventBytes = canonicalBytes({
+        operation: "record-measurement",
+        request: measurementArtifactBody(record),
+        artifact,
+      });
+      if (!eventBytes.equals(expectedEventBytes)) {
+        throw new Error(`Protected-target authority event ${record.operationId} does not reproduce its immutable record and artifact.`);
+      }
+      eventLedger.push({
+        operationId: record.operationId,
+        path: relativePath,
+        sha256: hash(eventBytes),
+        byteSize: eventBytes.length,
+      });
+    }
+    eventLedger.sort((left, right) => left.operationId.localeCompare(right.operationId));
+    return {
+      authoritySha256: hash(canonicalBytes(records)),
+      artifactsSha256: hash(canonicalBytes(artifacts)),
       eventsSha256: hash(canonicalBytes(eventLedger)),
     };
   }
@@ -1723,6 +1815,382 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     });
   }
 
+  private async readCanonicalIncidentJson<T>(
+    filePath: string,
+    label: string,
+  ): Promise<{ body: T; bytes: Buffer }> {
+    const bytes = await readFile(filePath);
+    let body: T;
+    try {
+      body = JSON.parse(bytes.toString("utf-8")) as T;
+    } catch {
+      throw new Error(`${label} is not valid canonical JSON.`);
+    }
+    if (!bytes.equals(canonicalBytes(body))) throw new Error(`${label} is not canonical JSON.`);
+    return { body, bytes };
+  }
+
+  private async verifyIncidentStateArtifacts(
+    state: CaptureSessionStateV1,
+    verifiedSessionDir: string,
+  ): Promise<void> {
+    for (const artifact of state.artifacts) {
+      const artifactPath = safeSessionMember(verifiedSessionDir, artifact.path, `artifact ${artifact.evidenceId} path`);
+      const bytes = await readFile(artifactPath);
+      const metadata = await stat(artifactPath);
+      if (hash(bytes) !== artifact.sha256 || bytes.length !== artifact.byteSize || metadata.size !== artifact.byteSize) {
+        throw new Error(`Incident rebind rejected changed artifact ${artifact.evidenceId}.`);
+      }
+    }
+  }
+
+  private async verifyAnalyzerAuthorityRecordsAndEvents(
+    state: CaptureSessionStateV1,
+    verifiedSessionDir: string,
+    expectedAnalyzerSha256: string,
+  ): Promise<{ records: MeasurementRecordV1[]; artifacts: CaptureArtifactV1[] }> {
+    const records = state.measurements.filter(isAnalyzerAuthorityRecord);
+    if (records.length !== this.analyzerAuthorityRebindIncident.analyzerAuthorityCount) {
+      throw new Error("Analyzer authority ledger does not contain exactly 74 records.");
+    }
+    const artifacts: CaptureArtifactV1[] = [];
+    for (const record of records) {
+      const instrument = record.payload.instrument as { calibrationSha256?: unknown };
+      if (instrument.calibrationSha256 !== expectedAnalyzerSha256) {
+        throw new Error("Analyzer authority is not uniformly bound to the exact expected analyzer SHA-256.");
+      }
+      const matches = state.artifacts.filter((artifact) => artifact.evidenceId === record.evidenceId);
+      if (matches.length !== 1 || matches[0]!.artifactClass !== "measurement" || matches[0]!.operationId !== record.operationId) {
+        throw new Error(`Analyzer authority ${record.operationId} does not bind exactly one immutable measurement artifact.`);
+      }
+      const artifact = matches[0]!;
+      const authorityBytes = await readFile(safeSessionMember(verifiedSessionDir, artifact.path, "analyzer authority file path"));
+      if (!authorityBytes.equals(canonicalBytes(measurementArtifactBody(record)))) {
+        throw new Error(`Analyzer authority file ${record.operationId} does not reproduce its immutable record.`);
+      }
+      const eventBytes = await readFile(path.join(verifiedSessionDir, "events", `${safeSegment(record.operationId)}.json`));
+      if (!eventBytes.equals(canonicalBytes({
+        operation: "record-measurement",
+        request: measurementArtifactBody(record),
+        artifact,
+      }))) {
+        throw new Error(`Analyzer authority event ${record.operationId} does not reproduce its immutable record and artifact.`);
+      }
+      artifacts.push(artifact);
+    }
+    return { records, artifacts };
+  }
+
+  private async verifyOriginalAnalyzerAuthorityIncidentSession(verifiedSessionDir: string): Promise<{
+    state: CaptureSessionStateV1;
+    stateBytes: Buffer;
+    packageBytes: Buffer;
+    manifestBytes: Buffer;
+    sealEvent: { name: string; body: Record<string, unknown>; bytes: Buffer };
+    oldSealRequest: SealFixedRigMathematicalCalibrationCaptureV1Request;
+    captureArtifacts: CaptureArtifactV1[];
+    analyzerRecords: MeasurementRecordV1[];
+    protectedTargetRecords: MeasurementRecordV1[];
+    captureEvidence: Awaited<ReturnType<FixedRigMathematicalCalibrationCaptureProducerV1["acceptedCaptureEvidenceLedger"]>>;
+    targetEvidence: Awaited<ReturnType<FixedRigMathematicalCalibrationCaptureProducerV1["protectedTargetEvidenceLedger"]>>;
+  }> {
+    const incident = this.analyzerAuthorityRebindIncident;
+    const { body: state, bytes: stateBytes } = await this.readCanonicalIncidentJson<CaptureSessionStateV1>(
+      path.join(verifiedSessionDir, "capture-session.json"), "Original incident capture state");
+    const captureArtifacts = state.artifacts.filter((artifact) =>
+      artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative");
+    const measurementArtifacts = state.artifacts.filter((artifact) => artifact.artifactClass === "measurement");
+    if (
+      hash(stateBytes) !== incident.expectedPreStateSha256 ||
+      state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
+      state.sessionId !== incident.sessionId || state.purpose !== "mathematical_calibration_v1" ||
+      typeof state.sealedAt !== "string" || state.hardStop !== undefined || state.analyzerAuthorityRebind !== undefined ||
+      state.captures.length !== incident.captureCount || captureArtifacts.length !== incident.captureArtifactCount ||
+      state.measurements.length !== incident.authorityCount || measurementArtifacts.length !== incident.authorityCount ||
+      state.artifacts.length !== incident.captureArtifactCount + incident.authorityCount + 1 ||
+      state.failedOperations.length !== incident.failureCount
+    ) throw new Error("Incident rebind requires the exact canonical original sealed pre-state and ledgers.");
+    await this.verifyIncidentStateArtifacts(state, verifiedSessionDir);
+
+    const packageResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      path.join(verifiedSessionDir, "source-capture-package.json"), "Original source capture package");
+    const manifestResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      path.join(verifiedSessionDir, "capture-manifest.json"), "Original capture manifest");
+    if (
+      hash(packageResult.bytes) !== incident.oldSourcePackageSha256 ||
+      hash(manifestResult.bytes) !== incident.oldCaptureManifestSha256
+    ) throw new Error("Incident rebind requires the exact old source package and capture manifest hashes.");
+    const references = manifestReferences(manifestResult.body);
+    if (references.length !== incident.manifestReferenceCount) {
+      throw new Error("Old capture manifest does not contain exactly 182 protected references.");
+    }
+    for (const reference of references) {
+      assertSha256(reference.sha256, "manifest reference SHA-256");
+      if (hash(await readFile(safeSessionMember(verifiedSessionDir, reference.path, "manifest reference path"))) !== reference.sha256) {
+        throw new Error(`Manifest reference ${reference.path} failed exact byte/hash verification.`);
+      }
+    }
+
+    const captureEvidence = await this.acceptedCaptureEvidenceLedger(state, verifiedSessionDir);
+    const targetEvidence = await this.protectedTargetEvidenceLedger(state, verifiedSessionDir);
+    const { records: analyzerRecords } = await this.verifyAnalyzerAuthorityRecordsAndEvents(
+      state, verifiedSessionDir, incident.oldAnalyzerSha256);
+    const protectedTargetRecords = state.measurements.filter(isProtectedTargetAuthorityRecord);
+    if (analyzerRecords.length + protectedTargetRecords.length !== state.measurements.length) {
+      throw new Error("Original authority set contains a record outside the exact 74 analyzer and four protected-target records.");
+    }
+
+    const eventFiles = (await readdir(path.join(verifiedSessionDir, "events"))).filter((name) => name.endsWith(".json"));
+    const sealEvents: Array<{ name: string; body: Record<string, unknown>; bytes: Buffer }> = [];
+    for (const name of eventFiles) {
+      const event = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+        path.join(verifiedSessionDir, "events", name), `Original event ${name}`);
+      if (event.body.operation === "seal") sealEvents.push({ name, ...event });
+    }
+    if (sealEvents.length !== 1) throw new Error("Incident rebind requires exactly one canonical original seal event.");
+    const sealEvent = sealEvents[0]!;
+    const oldSealRequest = sealEvent.body.request as SealFixedRigMathematicalCalibrationCaptureV1Request;
+    const expectedSealBytes = canonicalBytes({
+      operation: "seal",
+      request: oldSealRequest,
+      packageSha256: incident.oldSourcePackageSha256,
+      captureManifestSha256: incident.oldCaptureManifestSha256,
+      finalizedAt: state.sealedAt,
+    });
+    if (
+      oldSealRequest?.sessionId !== incident.sessionId ||
+      sealEvent.name !== `${safeSegment(oldSealRequest.operationId)}.json` ||
+      !sealEvent.bytes.equals(expectedSealBytes)
+    ) throw new Error("Original seal event does not exactly reproduce the old sealed envelope.");
+    return {
+      state,
+      stateBytes,
+      packageBytes: packageResult.bytes,
+      manifestBytes: manifestResult.bytes,
+      sealEvent,
+      oldSealRequest,
+      captureArtifacts,
+      analyzerRecords,
+      protectedTargetRecords,
+      captureEvidence,
+      targetEvidence,
+    };
+  }
+
+  private async verifyCompletedAnalyzerAuthorityIncidentSession(
+    verifiedSessionDir: string,
+    expectedJournal?: AnalyzerAuthorityRebindJournalV1,
+  ): Promise<{ state: CaptureSessionStateV1; stateBytes: Buffer; receipt: AnalyzerAuthorityRebindReceiptV1 } | null> {
+    const incident = this.analyzerAuthorityRebindIncident;
+    const stateResult = await this.readCanonicalIncidentJson<CaptureSessionStateV1>(
+      path.join(verifiedSessionDir, "capture-session.json"), "Completed incident capture state");
+    const state = stateResult.body;
+    const binding = state.analyzerAuthorityRebind;
+    if (!binding) return null;
+    const captureArtifacts = state.artifacts.filter((artifact) =>
+      artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative");
+    const measurementArtifacts = state.artifacts.filter((artifact) => artifact.artifactClass === "measurement");
+    if (
+      state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
+      state.sessionId !== incident.sessionId || state.purpose !== "mathematical_calibration_v1" ||
+      typeof state.sealedAt !== "string" || state.hardStop !== undefined ||
+      state.captures.length !== incident.captureCount || captureArtifacts.length !== incident.captureArtifactCount ||
+      state.measurements.length !== incident.authorityCount || measurementArtifacts.length !== incident.authorityCount ||
+      state.artifacts.length !== incident.captureArtifactCount + incident.authorityCount + 1 ||
+      state.failedOperations.length !== incident.failureCount
+    ) throw new Error("Completed incident rebind state schema, seal, counts, or hard-stop status is invalid.");
+    if (
+      binding.schemaVersion !== ANALYZER_AUTHORITY_REBIND_RECEIPT_V1 ||
+      binding.rebindId !== incident.rebindId || binding.preStateSha256 !== incident.expectedPreStateSha256 ||
+      binding.oldAnalyzerSha256 !== incident.oldAnalyzerSha256 ||
+      binding.correctedAnalyzerSha256 !== incident.correctedAnalyzerSha256 ||
+      binding.oldCaptureManifestSha256 !== incident.oldCaptureManifestSha256 ||
+      binding.oldSourcePackageSha256 !== incident.oldSourcePackageSha256 ||
+      !SHA256.test(binding.newCaptureManifestSha256) || !SHA256.test(binding.newSourcePackageSha256) ||
+      !SHA256.test(binding.supersededAuthorityLedgerSha256) || !SHA256.test(binding.receiptSha256)
+    ) throw new Error("Completed incident rebind state does not match the exact product-bound contract.");
+    const receiptResult = await this.readCanonicalIncidentJson<AnalyzerAuthorityRebindReceiptV1>(
+      safeSessionMember(verifiedSessionDir, binding.receiptPath, "rebind receipt path"), "Completed incident rebind receipt");
+    if (hash(receiptResult.bytes) !== binding.receiptSha256) {
+      throw new Error("Completed incident rebind receipt SHA-256 does not match state linkage.");
+    }
+    const receipt = receiptResult.body;
+    const { receiptSha256: _ignored, ...expectedReceiptBinding } = binding;
+    for (const [key, value] of Object.entries(expectedReceiptBinding)) {
+      if (hash(canonicalBytes((receipt as unknown as Record<string, unknown>)[key])) !== hash(canonicalBytes(value))) {
+        throw new Error("Completed incident rebind receipt and state linkage differ.");
+      }
+    }
+    if (
+      receipt.sessionId !== incident.sessionId || receipt.reboundAt !== state.sealedAt ||
+      receipt.correctedAuthority.count !== incident.analyzerAuthorityCount ||
+      receipt.sealOperationId !== "cal-seal-analyzer-rebind-20260722-v1"
+    ) throw new Error("Completed incident rebind receipt identity, time, authority count, or seal operation is invalid.");
+    if (expectedJournal && (
+      expectedJournal.expectedInstalledStateSha256 !== hash(stateResult.bytes) ||
+      expectedJournal.expectedReceiptSha256 !== binding.receiptSha256
+    )) throw new Error("Installed completed state does not match the authenticated incident journal.");
+
+    await this.verifyIncidentStateArtifacts(state, verifiedSessionDir);
+    const captureEvidence = await this.acceptedCaptureEvidenceLedger(state, verifiedSessionDir);
+    const targetEvidence = await this.protectedTargetEvidenceLedger(state, verifiedSessionDir);
+    if (
+      captureEvidence.capturesSha256 !== receipt.preservedEvidence.capturesSha256 ||
+      captureEvidence.artifactsSha256 !== receipt.preservedEvidence.captureArtifactsSha256 ||
+      captureEvidence.eventsSha256 !== receipt.preservedEvidence.captureEventsSha256 ||
+      hash(canonicalBytes(state.failedOperations)) !== receipt.preservedEvidence.failuresSha256 ||
+      targetEvidence.authoritySha256 !== receipt.preservedEvidence.protectedTargetAuthoritySha256 ||
+      targetEvidence.artifactsSha256 !== receipt.preservedEvidence.protectedTargetArtifactsSha256 ||
+      targetEvidence.eventsSha256 !== receipt.preservedEvidence.protectedTargetEventsSha256
+    ) throw new Error("Completed incident rebind no longer reproduces its preserved capture, failure, or protected-target ledgers.");
+    const corrected = await this.verifyAnalyzerAuthorityRecordsAndEvents(
+      state, verifiedSessionDir, incident.correctedAnalyzerSha256);
+    if (
+      hash(canonicalBytes(corrected.records)) !== receipt.correctedAuthority.recordsSha256 ||
+      hash(canonicalBytes(corrected.artifacts)) !== receipt.correctedAuthority.artifactsSha256
+    ) throw new Error("Completed corrected analyzer authority aggregate no longer matches its receipt.");
+
+    const packageResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      path.join(verifiedSessionDir, "source-capture-package.json"), "Completed source capture package");
+    const manifestResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      path.join(verifiedSessionDir, "capture-manifest.json"), "Completed capture manifest");
+    if (
+      hash(packageResult.bytes) !== receipt.newSourcePackageSha256 ||
+      hash(manifestResult.bytes) !== receipt.newCaptureManifestSha256
+    ) throw new Error("Completed new source package or capture manifest no longer matches its receipt.");
+    const references = manifestReferences(manifestResult.body);
+    if (references.length !== incident.reboundManifestReferenceCount) {
+      throw new Error("Completed capture manifest does not contain the exact 183 protected references.");
+    }
+    for (const reference of references) {
+      assertSha256(reference.sha256, "completed manifest reference SHA-256");
+      if (hash(await readFile(safeSessionMember(verifiedSessionDir, reference.path, "completed manifest reference path"))) !== reference.sha256) {
+        throw new Error(`Completed manifest reference ${reference.path} failed exact byte/hash verification.`);
+      }
+    }
+
+    const ledgerResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      safeSessionMember(verifiedSessionDir, receipt.supersededAuthorityLedgerPath, "superseded authority ledger path"),
+      "Superseded analyzer-authority ledger");
+    if (hash(ledgerResult.bytes) !== receipt.supersededAuthorityLedgerSha256) {
+      throw new Error("Superseded analyzer-authority ledger no longer matches its receipt.");
+    }
+    const ledger = ledgerResult.body as {
+      schemaVersion?: unknown;
+      rebindId?: unknown;
+      sessionId?: unknown;
+      oldAnalyzerSha256?: unknown;
+      authorityCount?: unknown;
+      sealedEnvelope?: SupersededSealedEnvelopeV1;
+      entries?: Array<{
+        operationId: string;
+        record: MeasurementRecordV1;
+        artifact: CaptureArtifactV1;
+        authorityFile: PreservedIncidentFileV1;
+        eventFile: PreservedIncidentFileV1;
+      }>;
+    };
+    if (
+      ledger.schemaVersion !== ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1 ||
+      ledger.rebindId !== incident.rebindId || ledger.sessionId !== incident.sessionId ||
+      ledger.oldAnalyzerSha256 !== incident.oldAnalyzerSha256 ||
+      ledger.authorityCount !== incident.analyzerAuthorityCount ||
+      !ledger.sealedEnvelope || !Array.isArray(ledger.entries) ||
+      ledger.entries.length !== incident.analyzerAuthorityCount ||
+      hash(canonicalBytes(ledger.sealedEnvelope)) !== hash(canonicalBytes(receipt.supersededEnvelope))
+    ) throw new Error("Superseded analyzer-authority ledger identity, envelope, or entry count is invalid.");
+
+    const verifyPreservedCopy = async (descriptor: PreservedIncidentFileV1, label: string): Promise<Buffer> => {
+      if (
+        typeof descriptor.originalPath !== "string" || typeof descriptor.preservedPath !== "string" ||
+        !SHA256.test(descriptor.sha256) || !Number.isInteger(descriptor.byteSize) || descriptor.byteSize < 1
+      ) throw new Error(`${label} descriptor is invalid.`);
+      const copyPath = safeSessionMember(verifiedSessionDir, descriptor.preservedPath, `${label} preserved path`);
+      const bytes = await readFile(copyPath);
+      const metadata = await stat(copyPath);
+      if (hash(bytes) !== descriptor.sha256 || bytes.length !== descriptor.byteSize || metadata.size !== descriptor.byteSize) {
+        throw new Error(`${label} preserved copy failed exact byte/hash/size verification.`);
+      }
+      return bytes;
+    };
+    const envelope = ledger.sealedEnvelope;
+    const preservedStateBytes = await verifyPreservedCopy(envelope.captureSession, "superseded capture state");
+    const preservedPackageBytes = await verifyPreservedCopy(envelope.sourceCapturePackage, "superseded source package");
+    const preservedManifestBytes = await verifyPreservedCopy(envelope.captureManifest, "superseded capture manifest");
+    const preservedSealEventBytes = await verifyPreservedCopy(envelope.sealEvent, "superseded seal event");
+    if (
+      envelope.captureSession.originalPath !== "capture-session.json" ||
+      envelope.sourceCapturePackage.originalPath !== "source-capture-package.json" ||
+      envelope.captureManifest.originalPath !== "capture-manifest.json" ||
+      !envelope.sealEvent.originalPath.startsWith("events/") ||
+      hash(preservedStateBytes) !== incident.expectedPreStateSha256 ||
+      hash(preservedPackageBytes) !== incident.oldSourcePackageSha256 ||
+      hash(preservedManifestBytes) !== incident.oldCaptureManifestSha256
+    ) throw new Error("Superseded complete sealed envelope does not reproduce the exact original incident.");
+    const preservedState = JSON.parse(preservedStateBytes.toString("utf-8")) as CaptureSessionStateV1;
+    if (!preservedStateBytes.equals(canonicalBytes(preservedState))) {
+      throw new Error("Superseded capture state copy is not canonical JSON.");
+    }
+    const preservedSeal = JSON.parse(preservedSealEventBytes.toString("utf-8")) as Record<string, unknown>;
+    const preservedSealRequest = preservedSeal.request as SealFixedRigMathematicalCalibrationCaptureV1Request;
+    if (!preservedSealEventBytes.equals(canonicalBytes({
+      operation: "seal",
+      request: preservedSealRequest,
+      packageSha256: incident.oldSourcePackageSha256,
+      captureManifestSha256: incident.oldCaptureManifestSha256,
+      finalizedAt: preservedState.sealedAt,
+    }))) throw new Error("Superseded seal event copy does not reproduce the original complete sealed envelope.");
+
+    const seenOperations = new Set<string>();
+    for (const entry of ledger.entries) {
+      if (seenOperations.has(entry.operationId) || entry.operationId !== entry.record.operationId || entry.artifact.operationId !== entry.operationId) {
+        throw new Error("Superseded analyzer-authority ledger contains a duplicate or mismatched operation.");
+      }
+      seenOperations.add(entry.operationId);
+      const oldInstrument = entry.record.payload.instrument as { calibrationSha256?: unknown };
+      if (oldInstrument.calibrationSha256 !== incident.oldAnalyzerSha256 || entry.artifact.evidenceId !== entry.record.evidenceId) {
+        throw new Error("Superseded analyzer-authority entry is not bound to the exact old analyzer record and artifact.");
+      }
+      const authorityBytes = await verifyPreservedCopy(entry.authorityFile, `superseded authority ${entry.operationId}`);
+      const eventBytes = await verifyPreservedCopy(entry.eventFile, `superseded event ${entry.operationId}`);
+      if (
+        entry.authorityFile.originalPath !== entry.artifact.path ||
+        !authorityBytes.equals(canonicalBytes(measurementArtifactBody(entry.record))) ||
+        !eventBytes.equals(canonicalBytes({
+          operation: "record-measurement",
+          request: measurementArtifactBody(entry.record),
+          artifact: entry.artifact,
+        }))
+      ) throw new Error(`Superseded analyzer-authority copy ${entry.operationId} does not reproduce its ledger entry.`);
+    }
+
+    const expectedLedgerReference: AnalyzerAuthoritySupersessionLedgerReferenceV1 = {
+      schemaVersion: ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1,
+      rebindId: incident.rebindId,
+      path: receipt.supersededAuthorityLedgerPath,
+      sha256: receipt.supersededAuthorityLedgerSha256,
+      byteSize: ledgerResult.bytes.length,
+    };
+    if (
+      hash(canonicalBytes(packageResult.body.analyzerAuthoritySupersession)) !== hash(canonicalBytes(expectedLedgerReference)) ||
+      hash(canonicalBytes(manifestResult.body.analyzerAuthoritySupersession)) !== hash(canonicalBytes(expectedLedgerReference))
+    ) throw new Error("New sealed package and manifest do not reference the exact pre-seal supersession ledger.");
+    const currentSealResult = await this.readCanonicalIncidentJson<Record<string, unknown>>(
+      path.join(verifiedSessionDir, "events", `${safeSegment(receipt.sealOperationId)}.json`), "Current incident seal event");
+    const currentSealRequest = currentSealResult.body.request as SealFixedRigMathematicalCalibrationCaptureV1Request;
+    if (
+      currentSealRequest?.sessionId !== incident.sessionId || currentSealRequest.operationId !== receipt.sealOperationId ||
+      !currentSealResult.bytes.equals(canonicalBytes({
+      operation: "seal",
+      request: currentSealRequest,
+      packageSha256: receipt.newSourcePackageSha256,
+      captureManifestSha256: receipt.newCaptureManifestSha256,
+      finalizedAt: state.sealedAt,
+    }))
+    ) throw new Error("Current incident seal event does not reproduce the completed sealed envelope.");
+    return { state, stateBytes: stateResult.bytes, receipt };
+  }
+
   async rebindKnownSealedAnalyzerAuthority(): Promise<FixedRigMathematicalCalibrationAnalyzerAuthorityRebindV1> {
     return this.serialized(async () => {
       const incident = this.analyzerAuthorityRebindIncident;
@@ -1733,49 +2201,94 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       const stageRoot = path.join(this.config.outputRoot, ".analyzer-authority-rebind-stage-v1");
       const stageSessionDir = path.join(stageRoot, incident.sessionId);
       const backupDir = `${sessionDir}.analyzer-authority-rebind-backup-v1`;
+      const quarantineDir = `${sessionDir}.analyzer-authority-rebind-quarantine-v1`;
       const journalPath = path.join(this.config.outputRoot, `.${incident.sessionId}.analyzer-authority-rebind-journal-v1.json`);
-      if (existsSync(journalPath)) {
-        if (!existsSync(sessionDir) && existsSync(backupDir)) await rename(backupDir, sessionDir);
-        if (!existsSync(sessionDir)) throw new Error("Incident rebind recovery could not restore the original sealed session.");
+      const readAuthenticatedJournal = async (): Promise<AnalyzerAuthorityRebindJournalV1> => {
+        const result = await this.readCanonicalIncidentJson<AnalyzerAuthorityRebindJournalV1>(
+          journalPath, "Incident analyzer-authority rebind journal");
+        const journal = result.body;
+        if (
+          journal.schemaVersion !== ANALYZER_AUTHORITY_REBIND_JOURNAL_V1 ||
+          journal.rebindId !== incident.rebindId || journal.sessionId !== incident.sessionId ||
+          journal.expectedPreStateSha256 !== incident.expectedPreStateSha256 ||
+          journal.oldAnalyzerSha256 !== incident.oldAnalyzerSha256 ||
+          journal.correctedAnalyzerSha256 !== incident.correctedAnalyzerSha256 ||
+          journal.oldCaptureManifestSha256 !== incident.oldCaptureManifestSha256 ||
+          journal.oldSourcePackageSha256 !== incident.oldSourcePackageSha256 ||
+          !SHA256.test(journal.expectedInstalledStateSha256) || !SHA256.test(journal.expectedReceiptSha256)
+        ) throw new Error("Incident analyzer-authority rebind journal is not the exact authenticated fixed-incident contract.");
+        return journal;
+      };
+      const restoreOriginalBackup = async (reason: unknown): Promise<never> => {
+        await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
+        if (!existsSync(sessionDir) || !existsSync(backupDir)) {
+          throw new Error("Incident rollback requires both the failed installed replacement and exact original backup.");
+        }
+        if (existsSync(quarantineDir)) {
+          throw new Error("Incident rollback refused to overwrite an existing quarantined replacement; live and backup remain preserved.");
+        }
+        await rename(sessionDir, quarantineDir);
+        try {
+          await rename(backupDir, sessionDir);
+        } catch (restoreError) {
+          await rename(quarantineDir, sessionDir);
+          throw restoreError;
+        }
+        await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
         await rm(stageRoot, { recursive: true, force: true });
-        if (existsSync(backupDir)) await rm(backupDir, { recursive: true, force: true });
         await rm(journalPath, { force: true });
+        throw new Error(`Installed incident rebind failed full verification; the exact original was restored and the replacement quarantined: ${String(reason)}`);
+      };
+      if (existsSync(journalPath)) {
+        const journal = await readAuthenticatedJournal();
+        const liveExists = existsSync(sessionDir);
+        const backupExists = existsSync(backupDir);
+        if (!liveExists && backupExists) {
+          await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
+          if (!existsSync(stageSessionDir)) throw new Error("Journal-bound backup recovery is missing its staged replacement.");
+          const staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
+          if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
+          await rename(backupDir, sessionDir);
+          await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
+          await rm(stageRoot, { recursive: true, force: true });
+          await rm(journalPath, { force: true });
+        } else if (liveExists && backupExists) {
+          await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
+          let installed;
+          try {
+            installed = await this.verifyCompletedAnalyzerAuthorityIncidentSession(sessionDir, journal);
+            if (!installed) throw new Error("Installed replacement is not a completed incident rebind.");
+          } catch (error) {
+            return restoreOriginalBackup(error);
+          }
+          await rm(backupDir, { recursive: true, force: true });
+          await rm(stageRoot, { recursive: true, force: true });
+          await rm(journalPath, { force: true });
+          return { status: statusFor(installed.state, sessionDir), receipt: installed.receipt, idempotent: true };
+        } else if (liveExists && !backupExists) {
+          const liveBytes = await readFile(path.join(sessionDir, "capture-session.json"));
+          if (hash(liveBytes) === incident.expectedPreStateSha256) {
+            await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
+            if (!existsSync(stageSessionDir)) throw new Error("Journal-bound original session is missing its staged replacement.");
+            const staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
+            if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
+            await rm(stageRoot, { recursive: true, force: true });
+            await rm(journalPath, { force: true });
+          } else {
+            const installed = await this.verifyCompletedAnalyzerAuthorityIncidentSession(sessionDir, journal);
+            if (!installed) throw new Error("Journal-bound live session is neither the exact original nor a completed replacement.");
+            await rm(stageRoot, { recursive: true, force: true });
+            await rm(journalPath, { force: true });
+            return { status: statusFor(installed.state, sessionDir), receipt: installed.receipt, idempotent: true };
+          }
+        } else {
+          throw new Error("Incident rebind recovery found neither a live session nor its exact original backup.");
+        }
       }
 
-      const readCompleted = async (state: CaptureSessionStateV1): Promise<AnalyzerAuthorityRebindReceiptV1 | null> => {
-        const binding = state.analyzerAuthorityRebind;
-        if (!binding) return null;
-        if (
-          binding.schemaVersion !== ANALYZER_AUTHORITY_REBIND_RECEIPT_V1 ||
-          binding.rebindId !== incident.rebindId ||
-          binding.preStateSha256 !== incident.expectedPreStateSha256 ||
-          binding.oldAnalyzerSha256 !== incident.oldAnalyzerSha256 ||
-          binding.correctedAnalyzerSha256 !== incident.correctedAnalyzerSha256 ||
-          binding.oldCaptureManifestSha256 !== incident.oldCaptureManifestSha256 ||
-          binding.oldSourcePackageSha256 !== incident.oldSourcePackageSha256 ||
-          !SHA256.test(binding.receiptSha256)
-        ) throw new Error("Completed incident rebind state does not match the exact product-bound contract.");
-        const receiptPath = safeSessionMember(sessionDir, binding.receiptPath, "rebind receipt path");
-        const bytes = await readFile(receiptPath);
-        const receipt = JSON.parse(bytes.toString("utf-8")) as AnalyzerAuthorityRebindReceiptV1;
-        if (!bytes.equals(canonicalBytes(receipt)) || hash(bytes) !== binding.receiptSha256) {
-          throw new Error("Completed incident rebind receipt is not exact canonical content-addressed evidence.");
-        }
-        const { receiptSha256: _ignored, ...expectedReceiptBinding } = binding;
-        for (const [key, value] of Object.entries(expectedReceiptBinding)) {
-          if (hash(canonicalBytes((receipt as unknown as Record<string, unknown>)[key])) !== hash(canonicalBytes(value))) {
-            throw new Error("Completed incident rebind receipt and state linkage differ.");
-          }
-        }
-        return receipt;
-      };
-
-      const statePath = this.statePath(incident.sessionId);
-      const initialStateBytes = await readFile(statePath);
-      const initialState = JSON.parse(initialStateBytes.toString("utf-8")) as CaptureSessionStateV1;
-      const completed = await readCompleted(initialState);
+      const completed = await this.verifyCompletedAnalyzerAuthorityIncidentSession(sessionDir);
       if (completed) {
-        return { status: statusFor(initialState, sessionDir), receipt: completed, idempotent: true };
+        return { status: statusFor(completed.state, sessionDir), receipt: completed.receipt, idempotent: true };
       }
 
       const analyzerPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
@@ -1783,81 +2296,21 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       if (analyzerSha256 !== incident.correctedAnalyzerSha256) {
         throw new Error("Portable corrected analyzer bytes do not match the exact incident-bound SHA-256.");
       }
-      if (!initialStateBytes.equals(canonicalBytes(initialState)) || hash(initialStateBytes) !== incident.expectedPreStateSha256) {
-        throw new Error("Incident rebind requires the exact canonical sealed pre-state SHA-256.");
-      }
-      const state = initialState;
-      const captureArtifacts = state.artifacts.filter((artifact) =>
-        artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative");
-      const measurementArtifacts = state.artifacts.filter((artifact) => artifact.artifactClass === "measurement");
-      if (
-        state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
-        state.sessionId !== incident.sessionId || state.purpose !== "mathematical_calibration_v1" ||
-        typeof state.sealedAt !== "string" || state.hardStop !== undefined ||
-        state.captures.length !== incident.captureCount || captureArtifacts.length !== incident.captureArtifactCount ||
-        state.measurements.length !== incident.authorityCount || measurementArtifacts.length !== incident.authorityCount ||
-        state.failedOperations.length !== incident.failureCount
-      ) throw new Error("Incident rebind pre-state counts, schema, seal, failures, or hard-stop status differ.");
-
-      for (const artifact of state.artifacts) {
-        const artifactPath = safeSessionMember(sessionDir, artifact.path, `artifact ${artifact.evidenceId} path`);
-        const bytes = await readFile(artifactPath);
-        const metadata = await stat(artifactPath);
-        if (hash(bytes) !== artifact.sha256 || bytes.length !== artifact.byteSize || metadata.size !== artifact.byteSize) {
-          throw new Error(`Incident rebind rejected changed artifact ${artifact.evidenceId}.`);
-        }
-      }
-      const packagePath = path.join(sessionDir, "source-capture-package.json");
-      const manifestPath = path.join(sessionDir, "capture-manifest.json");
-      const packageBytes = await readFile(packagePath);
-      const manifestBytes = await readFile(manifestPath);
-      if (hash(packageBytes) !== incident.oldSourcePackageSha256 || hash(manifestBytes) !== incident.oldCaptureManifestSha256) {
-        throw new Error("Incident rebind requires the exact old source package and capture manifest hashes.");
-      }
-      const manifest = JSON.parse(manifestBytes.toString("utf-8")) as Record<string, unknown>;
-      if (!manifestBytes.equals(canonicalBytes(manifest))) throw new Error("Old capture manifest is not canonical JSON.");
-      const references = manifestReferences(manifest);
-      if (references.length !== incident.manifestReferenceCount) {
-        throw new Error("Old capture manifest does not contain exactly 182 protected references.");
-      }
-      for (const reference of references) {
-        assertSha256(reference.sha256, "manifest reference SHA-256");
-        const referencedPath = safeSessionMember(sessionDir, reference.path, "manifest reference path");
-        if (hash(await readFile(referencedPath)) !== reference.sha256) {
-          throw new Error(`Manifest reference ${reference.path} failed exact byte/hash verification.`);
-        }
-      }
-
-      const eventFiles = (await readdir(path.join(sessionDir, "events"))).filter((name) => name.endsWith(".json"));
-      const sealEvents: Array<{ name: string; body: Record<string, unknown>; bytes: Buffer }> = [];
-      for (const name of eventFiles) {
-        const bytes = await readFile(path.join(sessionDir, "events", name));
-        const body = JSON.parse(bytes.toString("utf-8")) as Record<string, unknown>;
-        if (!bytes.equals(canonicalBytes(body))) throw new Error(`Event ${name} is not canonical immutable JSON.`);
-        if (body.operation === "seal") sealEvents.push({ name, body, bytes });
-      }
-      if (sealEvents.length !== 1) throw new Error("Incident rebind requires exactly one canonical original seal event.");
-      const oldSealRequest = sealEvents[0]!.body.request as SealFixedRigMathematicalCalibrationCaptureV1Request;
-      if (
-        oldSealRequest?.sessionId !== incident.sessionId ||
-        sealEvents[0]!.body.packageSha256 !== incident.oldSourcePackageSha256 ||
-        sealEvents[0]!.body.captureManifestSha256 !== incident.oldCaptureManifestSha256
-      ) throw new Error("Original seal event does not reproduce the exact old sealed files.");
-
-      const analyzerRecords = state.measurements.filter(isAnalyzerAuthorityRecord);
-      const protectedTargetRecords = state.measurements.filter(isProtectedTargetAuthorityRecord);
-      if (
-        analyzerRecords.length !== incident.analyzerAuthorityCount ||
-        protectedTargetRecords.length !== incident.protectedTargetAuthorityCount ||
-        analyzerRecords.length + protectedTargetRecords.length !== state.measurements.length
-      ) throw new Error("Incident rebind requires exactly 74 old-analyzer and four protected-target authority records.");
-      for (const record of analyzerRecords) {
-        const instrument = record.payload.instrument as { calibrationSha256?: unknown };
-        if (instrument.calibrationSha256 !== incident.oldAnalyzerSha256) {
-          throw new Error("Old analyzer authority is not uniformly bound to the exact sealed analyzer SHA-256.");
-        }
-      }
-      const protectedTargetRecordsSha256 = hash(canonicalBytes(protectedTargetRecords));
+      const original = await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
+      const {
+        state,
+        stateBytes: initialStateBytes,
+        packageBytes,
+        manifestBytes,
+        sealEvent,
+        oldSealRequest,
+        captureArtifacts,
+        analyzerRecords,
+        protectedTargetRecords,
+        captureEvidence,
+        targetEvidence,
+      } = original;
+      const protectedTargetRecordsSha256 = targetEvidence.authoritySha256;
       const protectedTargetEvidenceIds = new Set(protectedTargetRecords.map((record) => record.evidenceId));
       const protectedTargetArtifacts = state.artifacts.filter((artifact) =>
         artifact.artifactClass === "target" || protectedTargetEvidenceIds.has(artifact.evidenceId));
@@ -1951,11 +2404,11 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           record: old,
           artifact: oldArtifact,
           authorityFile: {
-            path: oldArtifact.path, preservedPath: preservedAuthorityPath,
+            originalPath: oldArtifact.path, preservedPath: preservedAuthorityPath,
             sha256: hash(oldFileBytes), byteSize: oldFileBytes.length,
           },
           eventFile: {
-            path: portable("events", `${safeSegment(old.operationId)}.json`), preservedPath: preservedEventPath,
+            originalPath: portable("events", `${safeSegment(old.operationId)}.json`), preservedPath: preservedEventPath,
             sha256: hash(oldEventBytes), byteSize: oldEventBytes.length,
           },
         });
@@ -1964,12 +2417,30 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         throw new Error("Corrected analyzer authority is missing or duplicates one of the 74 exact operations.");
       }
 
+      const preservedEnvelopeFile = (
+        originalPath: string,
+        className: string,
+        bytes: Buffer,
+      ): PreservedIncidentFileV1 => {
+        const preservedPath = portable(
+          "rebind", incident.rebindId, "superseded-envelope", className, `${hash(bytes)}.json`);
+        supersededCopies.set(preservedPath, bytes);
+        return { originalPath, preservedPath, sha256: hash(bytes), byteSize: bytes.length };
+      };
+      const supersededEnvelope: SupersededSealedEnvelopeV1 = {
+        captureSession: preservedEnvelopeFile("capture-session.json", "capture-session", initialStateBytes),
+        sourceCapturePackage: preservedEnvelopeFile("source-capture-package.json", "source-package", packageBytes),
+        captureManifest: preservedEnvelopeFile("capture-manifest.json", "capture-manifest", manifestBytes),
+        sealEvent: preservedEnvelopeFile(portable("events", sealEvent.name), "seal-event", sealEvent.bytes),
+      };
       const preservedEvidence = {
-        capturesSha256: hash(canonicalBytes(state.captures)),
-        captureArtifactsSha256: hash(canonicalBytes(captureArtifacts)),
+        capturesSha256: captureEvidence.capturesSha256,
+        captureArtifactsSha256: captureEvidence.artifactsSha256,
+        captureEventsSha256: captureEvidence.eventsSha256,
         failuresSha256: hash(canonicalBytes(state.failedOperations)),
         protectedTargetAuthoritySha256: protectedTargetRecordsSha256,
-        protectedTargetArtifactsSha256: hash(canonicalBytes(protectedTargetArtifacts)),
+        protectedTargetArtifactsSha256: targetEvidence.artifactsSha256,
+        protectedTargetEventsSha256: targetEvidence.eventsSha256,
       };
       const supersededLedgerBody = {
         schemaVersion: ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1,
@@ -1978,11 +2449,19 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         oldAnalyzerSha256: incident.oldAnalyzerSha256,
         oldCaptureManifestSha256: incident.oldCaptureManifestSha256,
         oldSourcePackageSha256: incident.oldSourcePackageSha256,
+        sealedEnvelope: supersededEnvelope,
         authorityCount: supersededEntries.length,
         entries: supersededEntries,
       };
       const supersededLedgerBytes = canonicalBytes(supersededLedgerBody);
       const supersededLedgerRelativePath = portable("rebind", incident.rebindId, "superseded-analyzer-authority-ledger.json");
+      const supersessionLedgerReference: AnalyzerAuthoritySupersessionLedgerReferenceV1 = {
+        schemaVersion: ANALYZER_AUTHORITY_SUPERSEDED_LEDGER_V1,
+        rebindId: incident.rebindId,
+        path: supersededLedgerRelativePath,
+        sha256: hash(supersededLedgerBytes),
+        byteSize: supersededLedgerBytes.length,
+      };
 
       await rm(stageRoot, { recursive: true, force: true });
       await mkdir(stageRoot, { recursive: true });
@@ -2008,13 +2487,14 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       await writeExclusive(safeSessionMember(stageSessionDir, supersededLedgerRelativePath, "superseded authority ledger path"), supersededLedgerBytes);
       await rm(path.join(stageSessionDir, "source-capture-package.json"), { force: true });
       await rm(path.join(stageSessionDir, "capture-manifest.json"), { force: true });
-      await rm(path.join(stageSessionDir, "events", sealEvents[0]!.name), { force: true });
+      await rm(path.join(stageSessionDir, "events", sealEvent.name), { force: true });
       await writeJsonAtomic(path.join(stageSessionDir, "capture-session.json"), stagedState);
 
       const stagedProducer = new FixedRigMathematicalCalibrationCaptureProducerV1({
         ...this.config,
         outputRoot: stageRoot,
       });
+      stagedProducer.analyzerAuthoritySupersessionLedgerForSeal = supersessionLedgerReference;
       const sealOperationId = "cal-seal-analyzer-rebind-20260722-v1";
       const resealed = await stagedProducer.seal({
         sessionId: incident.sessionId,
@@ -2029,7 +2509,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         hash(canonicalBytes(resealedState.captures)) !== preservedEvidence.capturesSha256 ||
         hash(canonicalBytes(resealedState.failedOperations)) !== preservedEvidence.failuresSha256 ||
         hash(canonicalBytes(resealedState.artifacts.filter((artifact) =>
-          artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative"))) !== preservedEvidence.captureArtifactsSha256 ||
+          artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative")
+          .sort((left, right) => left.evidenceId.localeCompare(right.evidenceId)))) !== preservedEvidence.captureArtifactsSha256 ||
         hash(canonicalBytes(resealedState.measurements.filter(isProtectedTargetAuthorityRecord))) !== preservedEvidence.protectedTargetAuthoritySha256
         || hash(canonicalBytes(resealedState.artifacts.filter((artifact) =>
           artifact.artifactClass === "target" || protectedTargetEvidenceIds.has(artifact.evidenceId)))) !== preservedEvidence.protectedTargetArtifactsSha256
@@ -2052,6 +2533,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         newSourcePackageSha256: resealed.sourceCapturePackage.sha256,
         supersededAuthorityLedgerPath: supersededLedgerRelativePath,
         supersededAuthorityLedgerSha256: hash(supersededLedgerBytes),
+        supersededEnvelope,
         receiptPath: receiptRelativePath,
         sessionId: incident.sessionId,
         preservedEvidence,
@@ -2077,16 +2559,26 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         newSourcePackageSha256: resealed.sourceCapturePackage.sha256,
         supersededAuthorityLedgerPath: supersededLedgerRelativePath,
         supersededAuthorityLedgerSha256: hash(supersededLedgerBytes),
+        supersededEnvelope,
         receiptPath: receiptRelativePath,
         receiptSha256: hash(receiptBytes),
       };
       await writeJsonAtomic(resealedStatePath, resealedState);
-      await writeJsonAtomic(journalPath, {
-        schemaVersion: "ten-kings-mathematical-calibration-analyzer-authority-rebind-journal-v1",
+      const stagedCompleted = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir);
+      if (!stagedCompleted) throw new Error("Staged incident rebind is missing its completed-state authority.");
+      const journal: AnalyzerAuthorityRebindJournalV1 = {
+        schemaVersion: ANALYZER_AUTHORITY_REBIND_JOURNAL_V1,
         rebindId: incident.rebindId,
         sessionId: incident.sessionId,
         expectedPreStateSha256: incident.expectedPreStateSha256,
-      });
+        oldAnalyzerSha256: incident.oldAnalyzerSha256,
+        correctedAnalyzerSha256: incident.correctedAnalyzerSha256,
+        oldCaptureManifestSha256: incident.oldCaptureManifestSha256,
+        oldSourcePackageSha256: incident.oldSourcePackageSha256,
+        expectedInstalledStateSha256: hash(stagedCompleted.stateBytes),
+        expectedReceiptSha256: stagedCompleted.state.analyzerAuthorityRebind!.receiptSha256,
+      };
+      await writeJsonAtomic(journalPath, journal);
       if (this.analyzerAuthorityRebindTestFailpoint === "after-stage") {
         throw new Error("TEST_ONLY_ANALYZER_REBIND_FAILPOINT_AFTER_STAGE");
       }
@@ -2100,13 +2592,21 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         await rename(backupDir, sessionDir);
         throw error;
       }
+      if (this.analyzerAuthorityRebindTestFailpoint === "after-stage-to-live") {
+        throw new Error("TEST_ONLY_ANALYZER_REBIND_FAILPOINT_AFTER_STAGE_TO_LIVE");
+      }
+      let installed;
+      try {
+        installed = await this.verifyCompletedAnalyzerAuthorityIncidentSession(sessionDir, journal);
+        if (!installed) throw new Error("Installed incident rebind is missing its completed-state authority.");
+      } catch (error) {
+        return restoreOriginalBackup(error);
+      }
+      await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
       await rm(backupDir, { recursive: true, force: true });
       await rm(stageRoot, { recursive: true, force: true });
       await rm(journalPath, { force: true });
-      const finalState = JSON.parse((await readFile(this.statePath(incident.sessionId))).toString("utf-8")) as CaptureSessionStateV1;
-      const finalReceipt = await readCompleted(finalState);
-      if (!finalReceipt) throw new Error("Completed incident rebind is missing its exact receipt linkage.");
-      return { status: statusFor(finalState, sessionDir), receipt: finalReceipt, idempotent: false };
+      return { status: statusFor(installed.state, sessionDir), receipt: installed.receipt, idempotent: false };
     });
   }
 
@@ -2887,6 +3387,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         throw new Error("Repeated-placement evidence requires unique operation IDs, timestamps, raw hashes, and explicit remove/reseat cycle IDs.");
       }
       const finalizedAt = (this.config.now?.() ?? new Date()).toISOString();
+      const analyzerAuthoritySupersession = this.analyzerAuthoritySupersessionLedgerForSeal
+        ? structuredClone(this.analyzerAuthoritySupersessionLedgerForSeal)
+        : undefined;
       const packageBody = {
         schemaVersion: v11 ? MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PACKAGE_SCHEMA : FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
         packageId: state.packageId,
@@ -2917,6 +3420,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         },
         subject: state.subject,
         artifacts: state.artifacts,
+        ...(analyzerAuthoritySupersession ? { analyzerAuthoritySupersession } : {}),
       };
       const packageBytes = canonicalBytes(packageBody);
       await writeExclusive(packagePath, packageBytes);
@@ -3010,6 +3514,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           .sort((left, right) => `${left.payload.measurementClass}:${left.payload.sampleIndex}`.localeCompare(`${right.payload.measurementClass}:${right.payload.sampleIndex}`))
           .map((record) => ({ ...artifactFor(record.evidenceId), ...record.payload })),
         flatFieldChannels,
+        ...(analyzerAuthoritySupersession ? { analyzerAuthoritySupersession } : {}),
       };
       const captureManifestBytes = canonicalBytes(captureManifestBody);
       await writeExclusive(captureManifestPath, captureManifestBytes);

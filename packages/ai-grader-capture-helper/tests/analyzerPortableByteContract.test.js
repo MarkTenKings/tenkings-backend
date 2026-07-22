@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 
 const repositoryRoot = path.resolve(__dirname, "..", "..", "..");
 const analyzerRelativePath = "scripts/ai-grader/analyze-mathematical-calibration-v1.py";
-const expectedSha256 = "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201";
+const expectedSha256 = "7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439";
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");

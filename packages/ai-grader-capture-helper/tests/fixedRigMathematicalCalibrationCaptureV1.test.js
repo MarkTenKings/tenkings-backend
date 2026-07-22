@@ -36,6 +36,25 @@ function canonicalBytes(value) {
   return Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
 }
 
+async function directoryTreeSha256(root) {
+  const ledger = [];
+  const visit = async (directory, relative = "") => {
+    const entries = await fsp.readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const relativePath = relative ? `${relative}/${entry.name}` : entry.name;
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(absolutePath, relativePath);
+      else {
+        const bytes = await fsp.readFile(absolutePath);
+        ledger.push({ path: relativePath, sha256: sha256(bytes), byteSize: bytes.length });
+      }
+    }
+  };
+  await visit(root);
+  return sha256(canonicalBytes(ledger));
+}
+
 test("real calibration camera evidence requires exact applied exposure and gain telemetry", () => {
   assert.deepEqual(
     requireAppliedMathematicalCalibrationCameraSettings({ exposureTime: 6200, gain: 0 }),
@@ -361,7 +380,7 @@ function countManifestReferences(value) {
 
 async function sealedAnalyzerRebindFixture(root) {
   const oldAnalyzerSha256 = "8cee9c2d3a9829fe196982616dcdb33b3872ce5dd2f15dd2e99cf9d08e21384b";
-  const correctedAnalyzerSha256 = "4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201";
+  const correctedAnalyzerSha256 = "7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439";
   let derivedRequests = [];
   const fixture = await producerFixture(root, {
     deriveAnalyzerAuthorityRebindRequests: async () => structuredClone(derivedRequests),
@@ -484,6 +503,7 @@ async function sealedAnalyzerRebindFixture(root) {
     protectedTargetAuthorityCount: 4,
     failureCount: 2,
     manifestReferenceCount: countManifestReferences(manifest),
+    reboundManifestReferenceCount: countManifestReferences(manifest) + 1,
   };
   fixture.producer.analyzerAuthorityRebindIncident = incident;
   return {
@@ -509,7 +529,7 @@ test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe
     ["expectedPreStateSha256", "1".repeat(64), /pre-state/i],
     ["oldCaptureManifestSha256", "2".repeat(64), /manifest/i],
     ["oldSourcePackageSha256", "3".repeat(64), /source package/i],
-    ["oldAnalyzerSha256", "4".repeat(64), /old analyzer/i],
+    ["oldAnalyzerSha256", "4".repeat(64), /old analyzer|expected analyzer/i],
     ["correctedAnalyzerSha256", "5".repeat(64), /portable corrected analyzer/i],
   ]) {
     producer.analyzerAuthorityRebindIncident = { ...originalIncident, [field]: replacement };
@@ -548,9 +568,26 @@ test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe
   await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /changed artifact/i);
   await fsp.writeFile(targetAuthorityPath, targetAuthorityBytes);
 
+  const captureRecord = state.captures[0];
+  const captureEventPath = path.join(fx.started.sessionDir, "events", `${captureRecord.operationId}.json`);
+  const captureEventBytes = await fsp.readFile(captureEventPath);
+  const alteredCaptureEvent = JSON.parse(captureEventBytes.toString("utf8"));
+  alteredCaptureEvent.request.targetFace = "blank_reverse";
+  await fsp.writeFile(captureEventPath, canonicalBytes(alteredCaptureEvent));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /accepted capture.*event/i);
+  await fsp.writeFile(captureEventPath, captureEventBytes);
+
+  const targetEventPath = path.join(fx.started.sessionDir, "events", `${targetRecord.operationId}.json`);
+  const targetEventBytes = await fsp.readFile(targetEventPath);
+  const alteredTargetEvent = JSON.parse(targetEventBytes.toString("utf8"));
+  alteredTargetEvent.request.protectedDimensionMm = 999;
+  await fsp.writeFile(targetEventPath, canonicalBytes(alteredTargetEvent));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /protected-target authority event/i);
+  await fsp.writeFile(targetEventPath, targetEventBytes);
+
   for (const [name, pattern] of [
     ["capture-manifest.json", /manifest/i],
-    ["source-capture-package.json", /source package/i],
+    ["source-capture-package.json", /source.*package/i],
   ]) {
     const filePath = path.join(fx.started.sessionDir, name);
     const bytes = await fsp.readFile(filePath);
@@ -592,10 +629,48 @@ test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe
   producer.analyzerAuthorityRebindTestFailpoint = "after-stage";
   await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_STAGE/);
   assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  const journalPath = path.join(path.dirname(fx.started.sessionDir), `.${fx.sessionId}.analyzer-authority-rebind-journal-v1.json`);
+  const journalBytes = await fsp.readFile(journalPath);
+  await fsp.writeFile(journalPath, Buffer.concat([journalBytes, Buffer.from(" ")]));
+  producer.analyzerAuthorityRebindTestFailpoint = undefined;
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /journal.*canonical/i);
+  assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  const tamperedJournal = JSON.parse(journalBytes.toString("utf8"));
+  tamperedJournal.expectedReceiptSha256 = "7".repeat(64);
+  await fsp.writeFile(journalPath, canonicalBytes(tamperedJournal));
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /journal.*authenticated|authenticated.*journal/i);
+  assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  await fsp.writeFile(journalPath, journalBytes);
   producer.analyzerAuthorityRebindTestFailpoint = "after-backup-rename";
   await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_BACKUP_RENAME/);
   assert.equal(fs.existsSync(fx.started.sessionDir), false);
+  producer.analyzerAuthorityRebindTestFailpoint = "after-stage-to-live";
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_STAGE_TO_LIVE/);
+  const backupDir = `${fx.started.sessionDir}.analyzer-authority-rebind-backup-v1`;
+  assert.equal(fs.existsSync(fx.started.sessionDir), true);
+  assert.equal(fs.existsSync(backupDir), true);
+  const installedState = JSON.parse(await fsp.readFile(fx.statePath, "utf8"));
+  const installedRaw = installedState.artifacts.find((artifact) => artifact.artifactClass === "raw_capture");
+  const installedRawPath = path.join(fx.started.sessionDir, ...installedRaw.path.split("/"));
+  await fsp.appendFile(installedRawPath, "post-swap-corruption");
   producer.analyzerAuthorityRebindTestFailpoint = undefined;
+  await assert.rejects(
+    producer.rebindKnownSealedAnalyzerAuthority(),
+    /exact original was restored and the replacement quarantined/i,
+  );
+  assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  assert.equal(fs.existsSync(backupDir), false);
+  assert.equal(fs.existsSync(journalPath), false);
+  assert.equal(fs.existsSync(`${fx.started.sessionDir}.analyzer-authority-rebind-quarantine-v1`), true);
+  const restoredSeal = await producer.seal({
+    sessionId: fx.sessionId,
+    operationId: "synthetic-old-seal",
+    profileId: "synthetic-profile-v1",
+    calibrationVersion: "synthetic-calibration-v1",
+    artifactId: "synthetic-artifact-v1",
+  });
+  assert.equal(restoredSeal.captureManifest.sha256, originalIncident.oldCaptureManifestSha256);
+  assert.equal(restoredSeal.sourceCapturePackage.sha256, originalIncident.oldSourcePackageSha256);
 
   const result = await producer.rebindKnownSealedAnalyzerAuthority();
   assert.equal(result.idempotent, false);
@@ -628,10 +703,104 @@ test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe
     assert.equal(sha256(authorityCopy), entry.authorityFile.sha256);
     assert.equal(sha256(eventCopy), entry.eventFile.sha256);
   }
+  for (const descriptor of Object.values(ledger.sealedEnvelope)) {
+    const envelopeCopy = await fsp.readFile(path.join(fx.started.sessionDir, ...descriptor.preservedPath.split("/")));
+    assert.equal(sha256(envelopeCopy), descriptor.sha256);
+    assert.equal(envelopeCopy.length, descriptor.byteSize);
+  }
+  const completedTreeSha256 = await directoryTreeSha256(fx.started.sessionDir);
   const replay = await producer.rebindKnownSealedAnalyzerAuthority();
   assert.equal(replay.idempotent, true);
   assert.deepEqual(replay.receipt, result.receipt);
   assert.equal(replay.status.sessionStateSha256, result.status.sessionStateSha256);
+  assert.equal(await directoryTreeSha256(fx.started.sessionDir), completedTreeSha256);
+
+  const completedSnapshot = path.join(root, "completed-rebind-snapshot");
+  await fsp.cp(fx.started.sessionDir, completedSnapshot, { recursive: true });
+  const restoreCompleted = async () => {
+    await fsp.rm(fx.started.sessionDir, { recursive: true, force: true });
+    await fsp.cp(completedSnapshot, fx.started.sessionDir, { recursive: true });
+  };
+  const expectCompletedTamperRejected = async (label, mutate) => {
+    await restoreCompleted();
+    await mutate();
+    await assert.rejects(
+      producer.rebindKnownSealedAnalyzerAuthority(),
+      /completed|changed artifact|accepted capture|protected-target|analyzer authority|manifest|package|receipt|superseded|ENOENT/i,
+      label,
+    );
+  };
+  const completedState = JSON.parse(await fsp.readFile(path.join(completedSnapshot, "capture-session.json"), "utf8"));
+  const completedRaw = completedState.artifacts.find((artifact) => artifact.artifactClass === "raw_capture");
+  const completedCorrected = completedState.artifacts.find((artifact) =>
+    artifact.artifactClass === "measurement" &&
+    completedState.measurements.find((record) => record.evidenceId === artifact.evidenceId)?.payload.instrument.kind === "fixed_rig_geometry");
+  const completedTarget = completedState.artifacts.find((artifact) => artifact.artifactClass === "target");
+  const completedCapture = completedState.captures[0];
+  const completedTargetRecord = completedState.measurements.find((record) => record.payload.instrument.kind === "protected_target_geometry");
+  const completedAnalyzerRecord = completedState.measurements.find((record) => record.payload.instrument.kind === "fixed_rig_geometry");
+  const completedReceiptPath = path.join(fx.started.sessionDir, ...completedState.analyzerAuthorityRebind.receiptPath.split("/"));
+  const completedLedgerPath = path.join(fx.started.sessionDir, ...completedState.analyzerAuthorityRebind.supersededAuthorityLedgerPath.split("/"));
+  const artifactPathFor = (artifact) => path.join(fx.started.sessionDir, ...artifact.path.split("/"));
+  const eventPathFor = (operationId) => path.join(fx.started.sessionDir, "events", `${operationId}.json`);
+  const appendTamper = async (filePath) => fsp.appendFile(filePath, "tamper");
+  const canonicalEventTamper = async (operationId) => {
+    const filePath = eventPathFor(operationId);
+    const event = JSON.parse(await fsp.readFile(filePath, "utf8"));
+    event.postSuccessTamper = true;
+    await fsp.writeFile(filePath, canonicalBytes(event));
+  };
+
+  await expectCompletedTamperRejected("canonical state evidence mutation", async () => {
+    const filePath = fx.statePath;
+    const body = JSON.parse(await fsp.readFile(filePath, "utf8"));
+    body.failedOperations[0].error = "post-success canonical tamper";
+    await fsp.writeFile(filePath, canonicalBytes(body));
+  });
+  for (const [label, filePath] of [
+    ["raw artifact", artifactPathFor(completedRaw)],
+    ["corrected authority artifact", artifactPathFor(completedCorrected)],
+    ["protected target artifact", artifactPathFor(completedTarget)],
+    ["new manifest", path.join(fx.started.sessionDir, "capture-manifest.json")],
+    ["new source package", path.join(fx.started.sessionDir, "source-capture-package.json")],
+    ["receipt", completedReceiptPath],
+    ["supersession ledger", completedLedgerPath],
+  ]) await expectCompletedTamperRejected(label, () => appendTamper(filePath));
+  for (const [label, operationId] of [
+    ["capture event", completedCapture.operationId],
+    ["protected-target event", completedTargetRecord.operationId],
+    ["analyzer event", completedAnalyzerRecord.operationId],
+  ]) await expectCompletedTamperRejected(label, () => canonicalEventTamper(operationId));
+  const preservedDescriptors = [
+    ["preserved authority", ledger.entries[0].authorityFile],
+    ["preserved authority event", ledger.entries[0].eventFile],
+    ...Object.entries(ledger.sealedEnvelope).map(([name, descriptor]) => [`preserved envelope ${name}`, descriptor]),
+  ];
+  for (const [label, descriptor] of preservedDescriptors) {
+    const filePath = path.join(fx.started.sessionDir, ...descriptor.preservedPath.split("/"));
+    await expectCompletedTamperRejected(label, () => appendTamper(filePath));
+  }
+  for (const [label, filePath] of [
+    ["state deletion", fx.statePath],
+    ["raw artifact deletion", artifactPathFor(completedRaw)],
+    ["corrected artifact deletion", artifactPathFor(completedCorrected)],
+    ["target artifact deletion", artifactPathFor(completedTarget)],
+    ["capture event deletion", eventPathFor(completedCapture.operationId)],
+    ["target event deletion", eventPathFor(completedTargetRecord.operationId)],
+    ["analyzer event deletion", eventPathFor(completedAnalyzerRecord.operationId)],
+    ["manifest deletion", path.join(fx.started.sessionDir, "capture-manifest.json")],
+    ["package deletion", path.join(fx.started.sessionDir, "source-capture-package.json")],
+    ["receipt deletion", completedReceiptPath],
+    ["ledger deletion", completedLedgerPath],
+    ...preservedDescriptors.map(([label, descriptor]) => [
+      `${label} deletion`, path.join(fx.started.sessionDir, ...descriptor.preservedPath.split("/")),
+    ]),
+  ]) await expectCompletedTamperRejected(label, () => fsp.rm(filePath));
+  await restoreCompleted();
+  const finalReplay = await producer.rebindKnownSealedAnalyzerAuthority();
+  assert.equal(finalReplay.idempotent, true);
+  assert.deepEqual(finalReplay.receipt, result.receipt);
+  assert.equal(await directoryTreeSha256(fx.started.sessionDir), completedTreeSha256);
   console.log(`synthetic analyzer-rebind evidence ${JSON.stringify({
     oldStateSha256: originalIncident.expectedPreStateSha256,
     oldManifestSha256: originalIncident.oldCaptureManifestSha256,

@@ -463,7 +463,7 @@ if ($Action -eq 'RebindSealedAnalyzerAuthority') {
   if ($null -eq $result -or
       [string]$result.status.sessionId -ne 'math-cal-v1-20260722-4cfa410c-01' -or
       [string]$result.receipt.rebindId -ne 'sealed-analyzer-authority-rebind-20260722-v1' -or
-      [string]$result.receipt.correctedAnalyzerSha256 -ne '4387cfacd2193e326f06e5cb461d478d293cb1c9e62449ec1c8c28b1c17eb201' -or
+      [string]$result.receipt.correctedAnalyzerSha256 -ne '7d9d15992b8ba2f7bedcfcb137ce3431a33d3ce708d4925e81ea95e9eb0a7439' -or
       [int]$result.receipt.correctedAuthority.count -ne 74 -or
       -not [bool]$result.status.sealed) {
     throw 'The protected bridge did not return the exact incident-bound analyzer-authority rebind receipt.'
