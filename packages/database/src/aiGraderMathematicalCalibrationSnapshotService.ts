@@ -340,10 +340,13 @@ function validateVerifiedBundle(
     );
   }
   const mathematicalProfile = mathematicalCalibrationProfileV1Schema.safeParse(loaded.profile);
-  const operationalValidation = mathematicalProfile.success
+  const isMathematicallyAccepted = mathematicalProfile.success &&
+    mathematicalProfile.data.isCalibrated === true &&
+    mathematicalProfile.data.status === "finalized";
+  const operationalValidation = isMathematicallyAccepted
     ? undefined
     : validateMathematicalCalibrationForOperationalUseV1(loaded.profile);
-  if (!mathematicalProfile.success &&
+  if (!isMathematicallyAccepted &&
       (!operationalValidation?.valid || !operationalValidation.isOperationallyAccepted ||
         !operationalValidation.profile)) {
     return artifactFailure(
@@ -351,7 +354,7 @@ function validateVerifiedBundle(
       "Canonical calibration-bundle loader did not return a mathematically accepted or exact owner-authorized profile.",
     );
   }
-  const profile = mathematicalProfile.success
+  const profile = isMathematicallyAccepted
     ? mathematicalProfile.data
     : operationalValidation!.profile!;
   const operationalAcceptance = "operationalAcceptance" in profile

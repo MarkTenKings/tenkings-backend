@@ -549,6 +549,58 @@ test("owner-authorized rejected calibration imports and trusts only with the exa
   }), (error) => error.code === "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INVALID");
 });
 
+test("schema-valid rejected twelve-member loader output cannot be inserted or trusted without owner authority", async () => {
+  const set = artifactSet("rejected-without-owner");
+  const compromisedLoaded = {
+    ...set.loaded,
+    profile: {
+      ...set.profile,
+      isCalibrated: false,
+      status: "rejected",
+    },
+  };
+  const compromisedOptions = {
+    ...serviceOptions([set]),
+    async loadFinalizedBundle() {
+      return compromisedLoaded;
+    },
+  };
+  let creates = 0;
+  const importService = createAiGraderMathematicalCalibrationSnapshotService(mockDb({
+    async create() {
+      creates += 1;
+      return row(set);
+    },
+  }), compromisedOptions);
+  await assert.rejects(importService.importDraft({
+    rigId: set.profile.rigId,
+    bundleStorageKey: set.bundleKey,
+    expectedBundleManifestSha256: set.authority.bundleManifestSha256,
+    componentSerials: { camera: "basler-1", light: "leimac-1" },
+    operatingContextV1: operatingContext(set),
+    importedByOperatorId: "importer-1",
+  }), (error) => error.code === "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INVALID");
+  assert.equal(creates, 0);
+
+  let trustUpdates = 0;
+  const trustService = createAiGraderMathematicalCalibrationSnapshotService(mockDb({
+    async findFirst() {
+      return row(set);
+    },
+    async updateMany() {
+      trustUpdates += 1;
+      return { count: 1 };
+    },
+  }), compromisedOptions);
+  await assert.rejects(trustService.trust({
+    snapshotId: "snapshot-rejected-without-owner",
+    expectedArtifactSha256: set.profile.artifactSha256,
+    expectedBundleManifestSha256: set.authority.bundleManifestSha256,
+    trustedByOperatorId: "reviewer-1",
+  }), (error) => error.code === "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INVALID");
+  assert.equal(trustUpdates, 0);
+});
+
 test("wrong bundle manifest identity fails before snapshot insertion", async () => {
   const set = artifactSet();
   let creates = 0;
