@@ -237,11 +237,10 @@ test("product-owner-confirmed target geometry is derived from and bound to the a
     operationId: "protected-target-print-y",
     measurementType: "print_scale",
     axis: "y",
-    nominalSpanMm: 200,
-    measuredSpanMm: 200,
-    measurementU95Mm: 0.035,
-    measurementMethod: "product_owner_confirmed_target_geometry_v1",
-    sourceMetrologyArtifactSha256: "e".repeat(64),
+    protectedSpanMm: 200,
+    authorityBasis: "protected_checkerboard_geometry",
+    measurementMethod: "protected_checkerboard_geometry_authority_v1",
+    sourceTargetEvidenceId: "print-verified-calibration-target",
     instrument,
   };
   await assert.rejects(
@@ -258,6 +257,14 @@ test("product-owner-confirmed target geometry is derived from and bound to the a
   const measurementArtifact = state.artifacts.find((artifact) => artifact.role === "print_scale_verification_y");
   const measurement = JSON.parse(await fsp.readFile(path.join(started.sessionDir, ...measurementArtifact.path.split("/")), "utf8"));
   assert.deepEqual(measurement.instrument, instrument);
+  assert.equal(measurement.schemaVersion, "ten-kings-calibration-print-scale-authority-v1");
+  assert.equal(measurement.protectedSpanMm, 200);
+  assert.equal(measurement.authorityBasis, "protected_checkerboard_geometry");
+  assert.equal(measurement.sourceTargetEvidenceId, "print-verified-calibration-target");
+  assert.equal(measurement.sourceTargetSha256, fixture.targetSha256);
+  assert.equal("nominalSpanMm" in measurement, false);
+  assert.equal("measuredSpanMm" in measurement, false);
+  assert.equal("measurementU95Mm" in measurement, false);
   assert.equal("manufacturer" in measurement.instrument, false);
   assert.equal("serialNumber" in measurement.instrument, false);
   assert.equal("calibrationSha256" in measurement.instrument, false);

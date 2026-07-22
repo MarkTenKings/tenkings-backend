@@ -423,6 +423,10 @@ export async function finalizeMathematicalCalibrationV1({
 
     const profile = result.profile;
     const physicalArtifact = result.artifact;
+    const physicalMethods = exactObject(
+      physicalArtifact.methods,
+      "physicalArtifact.methods",
+    );
     const sourceCapturePackage = exactObject(
       analysis.sourceCapturePackage,
       "sourceCapturePackage",
@@ -430,6 +434,7 @@ export async function finalizeMathematicalCalibrationV1({
     exactObjectKeys(sourceCapturePackage, [
       "captureEvidenceAcceptance",
       "captureProfileVersion",
+      "evidenceDerivedAuthority",
       "manifestSha256",
       "packageId",
       "purpose",
@@ -452,11 +457,26 @@ export async function finalizeMathematicalCalibrationV1({
       sourceCapturePackage.captureEvidenceAcceptance,
       "sourceCapturePackage.captureEvidenceAcceptance",
     );
+    const evidenceDerivedAuthority = exactObject(
+      sourceCapturePackage.evidenceDerivedAuthority,
+      "sourceCapturePackage.evidenceDerivedAuthority",
+    );
+    exactObjectKeys(evidenceDerivedAuthority, [
+      "thresholdSetHash",
+      "thresholdSetId",
+      "uncertaintyCoverageFactor",
+    ], "sourceCapturePackage.evidenceDerivedAuthority");
     if (
       sourceCapturePackage.purpose !== "mathematical_calibration_v1" ||
       sourceCapturePackage.rigId !== profile.rigId ||
       sourceCapturePackage.thresholdSetId !== profile.thresholdSetId ||
       sourceCapturePackage.thresholdSetHash !== profile.thresholdSetHash ||
+      evidenceDerivedAuthority.thresholdSetId !== profile.thresholdSetId ||
+      evidenceDerivedAuthority.thresholdSetHash !== profile.thresholdSetHash ||
+      typeof evidenceDerivedAuthority.uncertaintyCoverageFactor !== "number" ||
+      !Number.isFinite(evidenceDerivedAuthority.uncertaintyCoverageFactor) ||
+      evidenceDerivedAuthority.uncertaintyCoverageFactor <= 0 ||
+      evidenceDerivedAuthority.uncertaintyCoverageFactor !== physicalMethods.coverageFactor ||
       sourceSubject.productionCard !== false ||
       sourceStationAuthority.noProductionMutation !== true
     ) {

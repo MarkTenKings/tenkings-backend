@@ -8,6 +8,11 @@ const {
   FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2,
   materializeFastCalibrationRigAuthorityV1_2,
 } = require("../../dist/drivers/fixedRigFastMathematicalCalibrationRigMaterializerV1_2");
+const {
+  MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+} = require("../../../shared/dist");
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -51,7 +56,7 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
     authorityStatement: "product_owner_confirmed_exact_target_geometry_v1",
   } : { instrumentId: "instrument-1", kind: "caliper", calibrationVersion: "cert-v1", calibrationSha256: instrument.sha256 };
   const physicalMeasurementMethod = protectedTargetGeometry
-    ? "product_owner_confirmed_target_geometry_v1"
+    ? "protected_checkerboard_geometry_authority_v1"
     : "traceable-physical-metrology-v1";
   const metrology = await write(sourceRoot, "references/metrology-source.bin", Buffer.from("supervised-metrology-worksheet-v1"));
   const lensEvidence = await write(sourceRoot, "references/lens-authority.bin", Buffer.from("lens-asset-and-mount-authority-v1"));
@@ -153,20 +158,34 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
     return artifact;
   };
   for (const axis of ["x", "y"]) {
-    measurementArtifacts.print.push(await measurement(`print_scale_verification_${axis}`, {
-      schemaVersion: "ten-kings-calibration-print-scale-measurement-v1", operatorId: componentEvidence.operatorId,
-      recordedAt: "2026-07-21T13:00:00.000Z", measurementMethod: physicalMeasurementMethod,
-      instrument: physicalInstrument,
-      axis, nominalSpanMm: axis === "x" ? 100 : 200, measuredSpanMm: axis === "x" ? 100 : 200,
-      measurementU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
-    }, `print-scale-${axis}`));
-    measurementArtifacts.cut.push(await measurement(`target_cut_dimension_${axis}`, {
-      schemaVersion: "ten-kings-calibration-target-cut-dimension-measurement-v1", operatorId: componentEvidence.operatorId,
-      recordedAt: "2026-07-21T13:01:00.000Z", measurementMethod: physicalMeasurementMethod,
-      instrument: physicalInstrument,
-      axis, nominalDimensionMm: axis === "x" ? 63.5 : 88.9, measuredDimensionMm: axis === "x" ? 63.5 : 88.9,
-      measurementU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
-    }, `target-cut-${axis}`));
+    const common = {
+      operatorId: componentEvidence.operatorId, measurementMethod: physicalMeasurementMethod,
+      instrument: physicalInstrument, axis,
+    };
+    measurementArtifacts.print.push(await measurement(`print_scale_verification_${axis}`,
+      protectedTargetGeometry ? {
+        schemaVersion: "ten-kings-calibration-print-scale-authority-v1", ...common,
+        recordedAt: "2026-07-21T13:00:00.000Z", protectedSpanMm: axis === "x" ? 100 : 200,
+        authorityBasis: "protected_checkerboard_geometry",
+        sourceTargetEvidenceId: "print-verified-calibration-target", sourceTargetSha256: targetSha256,
+      } : {
+        schemaVersion: "ten-kings-calibration-print-scale-measurement-v1", ...common,
+        recordedAt: "2026-07-21T13:00:00.000Z", nominalSpanMm: axis === "x" ? 100 : 200,
+        measuredSpanMm: axis === "x" ? 100 : 200, measurementU95Mm: 0.1,
+        sourceMetrologyArtifactSha256: metrology.sha256,
+      }, `print-scale-${axis}`));
+    measurementArtifacts.cut.push(await measurement(`target_cut_dimension_${axis}`,
+      protectedTargetGeometry ? {
+        schemaVersion: "ten-kings-calibration-target-cut-dimension-authority-v1", ...common,
+        recordedAt: "2026-07-21T13:01:00.000Z", protectedDimensionMm: axis === "x" ? 63.5 : 88.9,
+        authorityBasis: "protected_checkerboard_geometry",
+        sourceTargetEvidenceId: "print-verified-calibration-target", sourceTargetSha256: targetSha256,
+      } : {
+        schemaVersion: "ten-kings-calibration-target-cut-dimension-measurement-v1", ...common,
+        recordedAt: "2026-07-21T13:01:00.000Z", nominalDimensionMm: axis === "x" ? 63.5 : 88.9,
+        measuredDimensionMm: axis === "x" ? 63.5 : 88.9, measurementU95Mm: 0.1,
+        sourceMetrologyArtifactSha256: metrology.sha256,
+      }, `target-cut-${axis}`));
   }
   for (let channel = 1; channel <= 8; channel += 1) {
     const angle = (channel - 1) * Math.PI / 4;
@@ -174,12 +193,22 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
       measurementArtifacts.direction.push(await measurement(`direction_geometry_channel_${channel}`, {
         schemaVersion: "ten-kings-calibration-direction-measurement-v1", operatorId: componentEvidence.operatorId,
         recordedAt: "2026-07-21T13:02:00.000Z", measurementMethod: protectedTargetGeometry
-          ? "fixed_ring_segment_geometry_with_ruler_v1"
+          ? "illumination_centroid_checkerboard_repeatability_v1"
           : physicalMeasurementMethod,
-        instrument: physicalInstrument,
+        instrument: protectedTargetGeometry ? {
+          instrumentId: "ten-kings-illumination-centroid-direction-analyzer-v1", kind: "fixed_rig_geometry",
+          calibrationVersion: "opencv_illumination_centroid_checkerboard_v1", calibrationSha256: analyzerScriptSha256,
+        } : physicalInstrument,
         channelIndex: channel, sampleIndex: sample,
         sourcePointMm: { x: 100 * Math.cos(angle), y: 100 * Math.sin(angle) }, cardCenterPointMm: { x: 0, y: 0 },
-        pointU95Mm: 0.1, sourceMetrologyArtifactSha256: metrology.sha256,
+        pointU95Mm: 0.1,
+        ...(protectedTargetGeometry ? {
+          sourceCaptureOperationId: normalized.pattern[(channel - 1) * 3 + sample - 1].operationId,
+          sourceEvidenceId: normalized.pattern[(channel - 1) * 3 + sample - 1].evidenceId,
+          sourceSha256: normalized.pattern[(channel - 1) * 3 + sample - 1].sha256,
+          sourceRole: `illumination_pattern_channel_${channel}`,
+          measurementAlgorithmVersion: "opencv_illumination_centroid_checkerboard_v1",
+        } : { sourceMetrologyArtifactSha256: metrology.sha256 }),
       }, `direction-${channel}-${sample}`, channel));
     }
   }
@@ -201,13 +230,18 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
       }, `repeatability-${measurementClass}-${index + 1}`));
     }
   }
-  const target = await addArtifact({ artifactClass: "target", role: "print_verified_calibration_target", evidenceId: "verified-target", bytes: targetBytes });
+  const target = await addArtifact({ artifactClass: "target", role: "print_verified_calibration_target", evidenceId: "print-verified-calibration-target", bytes: targetBytes });
   if (artifacts.length !== 283) throw new Error(`fixture artifact count ${artifacts.length} is not 283`);
   const capturePackage = {
     schemaVersion: "ten-kings-mathematical-calibration-capture-package-v1", packageId: "physical-capture-package-1",
     rigId: liveProbe.rigId, captureProfileVersion: "ten-kings-fixed-rig-mathematical-calibration-v1",
-    purpose: "mathematical_calibration_v1", thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
-    thresholdSetHash: require("../../../shared/dist").MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    purpose: "mathematical_calibration_v1", thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    evidenceDerivedAuthority: {
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      uncertaintyCoverageFactor: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor,
+    },
     captureEvidenceAcceptance: {},
     stationAuthority: {
       stationId: liveProbe.stationId, sessionId: "physical-session-1", operatorId: componentEvidence.operatorId,
@@ -244,8 +278,12 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
       ...raw.lens.map((entry) => ({ ...evidenceReference(entry), axis: "x", physicalSpanMm: 100, physicalSpanU95Mm: 0.1, pixelSpan: 1000 })),
       ...raw.lens.map((entry) => ({ ...evidenceReference(entry), axis: "y", physicalSpanMm: 100, physicalSpanU95Mm: 0.1, pixelSpan: 1000 })),
     ],
-    targetPrintScaleSamples: measurementArtifacts.print.map((entry, index) => ({ ...evidenceReference(entry), axis: index ? "y" : "x", nominalSpanMm: index ? 200 : 100, measuredSpanMm: index ? 200 : 100, measurementU95Mm: 0.1 })),
-    targetCutDimensionSamples: measurementArtifacts.cut.map((entry, index) => ({ ...evidenceReference(entry), axis: index ? "y" : "x", nominalDimensionMm: index ? 88.9 : 63.5, measuredDimensionMm: index ? 88.9 : 63.5, measurementU95Mm: 0.1 })),
+    targetPrintScaleSamples: measurementArtifacts.print.map((entry, index) => protectedTargetGeometry
+      ? { ...evidenceReference(entry), axis: index ? "y" : "x", authorityBasis: "protected_checkerboard_geometry", protectedSpanMm: index ? 200 : 100, targetVersion: componentEvidence.targetVersion, targetSha256 }
+      : { ...evidenceReference(entry), axis: index ? "y" : "x", nominalSpanMm: index ? 200 : 100, measuredSpanMm: index ? 200 : 100, measurementU95Mm: 0.1 }),
+    targetCutDimensionSamples: measurementArtifacts.cut.map((entry, index) => protectedTargetGeometry
+      ? { ...evidenceReference(entry), axis: index ? "y" : "x", authorityBasis: "protected_checkerboard_geometry", protectedDimensionMm: index ? 88.9 : 63.5, targetVersion: componentEvidence.targetVersion, targetSha256 }
+      : { ...evidenceReference(entry), axis: index ? "y" : "x", nominalDimensionMm: index ? 88.9 : 63.5, measuredDimensionMm: index ? 88.9 : 63.5, measurementU95Mm: 0.1 }),
     lensResidualSamples: raw.lens.map((entry) => ({ ...evidenceReference(entry), residualPx: 0.1 })),
     normalizationResidualSamples: raw.normalization.map((entry) => ({ ...evidenceReference(entry), residualPx: 0.2 })),
     repeatedPlacementSamples: raw.placement.map((entry, index) => ({ ...evidenceReference(entry), displacementXMm: index % 2 ? 0.005 : -0.005, displacementYMm: index % 2 ? -0.004 : 0.004 })),
@@ -258,9 +296,18 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
       const channel = index + 1; const angle = index * Math.PI / 4;
       return {
         channelIndex: channel,
-        directionMeasurementSamples: measurementArtifacts.direction.slice(index * 3, index * 3 + 3).map((entry) => ({
-          ...evidenceReference(entry), measurementMethod: "fixed_ring_segment_geometry_with_ruler_v1",
+        directionMeasurementSamples: measurementArtifacts.direction.slice(index * 3, index * 3 + 3).map((entry, sampleIndex) => ({
+          ...evidenceReference(entry), measurementMethod: protectedTargetGeometry
+            ? "illumination_centroid_checkerboard_repeatability_v1"
+            : "fixed_ring_segment_geometry_with_ruler_v1",
           sourcePointMm: { x: 100 * Math.cos(angle), y: 100 * Math.sin(angle) }, cardCenterPointMm: { x: 0, y: 0 }, pointU95Mm: 0.1,
+          ...(protectedTargetGeometry ? {
+            sourceCaptureOperationId: normalized.pattern[index * 3 + sampleIndex].operationId,
+            sourceEvidenceId: normalized.pattern[index * 3 + sampleIndex].evidenceId,
+            sourceSha256: normalized.pattern[index * 3 + sampleIndex].sha256,
+            sourceRole: `illumination_pattern_channel_${channel}`,
+            measurementAlgorithmVersion: "opencv_illumination_centroid_checkerboard_v1",
+          } : {}),
         })),
         directionValidationAngularErrorsDegrees: [0.1, 0.1, 0.1], relativeResponse: [1,1,1,1], responseScale: 1,
         flatFieldArtifactId: `flat-field-${channel}`, flatFieldArtifactSha256: digest(derivedFlat[index]),
@@ -284,7 +331,8 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
     schemaVersion: "ten-kings-mathematical-calibration-v1.2-rig-materialization-input-v1",
     captureManifest: captureManifestRef, liveProbe: liveRef, componentEvidence: componentRef, stageTransformEvidence: stageRef,
     referencedEvidence: [
-      ...(instrument ? [{ role: "instrument_calibration", ...instrument }] : []), { role: "metrology_source", ...metrology },
+      ...(instrument ? [{ role: "instrument_calibration", ...instrument }] : []),
+      ...(protectedTargetGeometry ? [] : [{ role: "metrology_source", ...metrology }]),
       { role: "lens_authority", ...lensEvidence }, { role: "component_wiring", ...wiringEvidence },
       ...stageEvidence.map((entry) => ({ role: "stage_transform_measurement", ...entry })),
     ],

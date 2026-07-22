@@ -33,13 +33,26 @@ test("V1.0.1 runbook distinguishes ordinary retry from hard stop without weakeni
   assert.match(runbook, /hard-stops the session and is not retryable/);
 });
 
-test("metrology derives protected target authority without device or certificate questions", () => {
+test("normal V1.0.1 flow derives all authority from protected target and immutable capture evidence without manual questions", () => {
   const runbook = fs.readFileSync(path.join(repositoryRoot, "docs", "runbooks", "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md"), "utf8");
   const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
-  assert.match(runbook, /abs\(measuredSpanMm - nominalSpanMm\) \+ measurementU95Mm <= 0\.20 mm/);
+  const authorityDeriver = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "prepare-mathematical-calibration-repeatability-v1.py"), "utf8");
+  const targetManifestText = fs.readFileSync(path.join(repositoryRoot, "output", "pdf", "ten-kings-mathematical-calibration-target-v1.json"), "utf8");
+  const targetManifest = JSON.parse(targetManifestText);
+  assert.match(runbook, /protected nominal checkerboard geometry/i);
   assert.match(runbook, /product_owner_confirmed_exact_target_geometry_v1/);
-  assert.match(runbook, /no measuring-device or calibration-certificate fields/i);
-  assert.match(runner, /function Get-ProtectedTargetGeometryAuthority/);
-  assert.match(runner, /product_owner_confirmed_exact_target_geometry_v1/);
-  assert.doesNotMatch(runner, /product_owner_attested_device|ownerAttestation|manufacturer|serialNumber|maximumRangeMm|accuracyMm|resolutionMm|calibrationSha256/);
+  assert.match(runbook, /no measuring-device, certificate, coordinate, or U95 input/i);
+  assert.match(runner, /'DeriveAuthority'/);
+  assert.match(runner, /Invoke-EvidenceAuthorityDerivation/);
+  assert.match(runner, /if \(\$authorityKeys\.Count -ne 78\)/);
+  assert.doesNotMatch(runner, /CreateMetrologyTemplate|SubmitMetrology|MetrologyInputPath|measuredSpanMm|measuredDimensionMm|measurementU95Mm|sourcePointMm|cardCenterPointMm|pointU95Mm/);
+  assert.match(authorityDeriver, /protected_checkerboard_geometry/);
+  assert.match(authorityDeriver, /illumination_centroid_checkerboard_repeatability_v1/);
+  assert.match(authorityDeriver, /requires exactly 102 captures/);
+  assert.doesNotMatch(authorityDeriver, /fixed_ring_segment_geometry_with_ruler_v1|traceable_ruler|measuredSpanMm|measuredDimensionMm/);
+  assert.equal(targetManifest.requiredPrintScaleVerification.authorityBasis, "protected_checkerboard_geometry");
+  assert.equal(targetManifest.requiredPrintScaleVerification.operatorInputRequired, false);
+  assert.equal(targetManifest.requiredCutDimensionVerification.authorityBasis, "protected_checkerboard_geometry");
+  assert.equal(targetManifest.requiredCutDimensionVerification.operatorInputRequired, false);
+  assert.doesNotMatch(targetManifestText, /measurementU95Required|measuredSpanMm|measuredDimensionMm|measurementU95Mm/);
 });

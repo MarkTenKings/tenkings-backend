@@ -1,8 +1,8 @@
 [CmdletBinding()]
 param(
   [ValidateSet(
-    'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry', 'CreateMetrologyTemplate', 'SubmitMetrology',
-    'DeriveRepeatability', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline'
+    'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry',
+    'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline'
   )]
   [string]$Action = 'Worksheet',
   [string]$BridgeUrl = 'http://127.0.0.1:47653',
@@ -11,30 +11,25 @@ param(
   [string]$OperatorId,
   [string]$TargetVersion,
   [string]$TargetSha256,
-  [string]$MetrologyInputPath,
-  [string]$MetrologyInputSha256,
   [string]$ProfileId,
   [string]$CalibrationVersion,
   [string]$ArtifactId,
-  [string]$RepeatabilityOutputPath,
+  [string]$AuthorityOutputPath,
   [string]$AnalysisOutputDir,
   [string]$FinalizedOutputDir,
   [string]$PythonExecutable = 'python',
   [string]$NodeExecutable = 'node',
   [switch]$ConfirmInitialCheckerboardPositioned,
   [switch]$ConfirmPhysicalAction,
-  [switch]$ConfirmMetrologySubmission,
   [switch]$ConfirmSeal
 )
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $ScriptRoot = Split-Path -Parent $PSCommandPath
-$RepositoryRoot = (Resolve-Path (Join-Path $ScriptRoot '..\..')).Path
 $AnalyzerPath = Join-Path $ScriptRoot 'analyze-mathematical-calibration-v1.py'
-$RepeatabilityPath = Join-Path $ScriptRoot 'prepare-mathematical-calibration-repeatability-v1.py'
+$AuthorityDerivationPath = Join-Path $ScriptRoot 'prepare-mathematical-calibration-repeatability-v1.py'
 $FinalizerPath = Join-Path $ScriptRoot 'finalize-mathematical-calibration-v1.mjs'
-$TargetManifestPath = Join-Path $RepositoryRoot 'output\pdf\ten-kings-mathematical-calibration-target-v1.json'
 
 function Assert-SafeIdentifier {
   param([object]$Value, [string]$Label)
@@ -62,38 +57,6 @@ function Get-ExactFileSha256 {
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
-function Get-FiniteNumber {
-  param([object]$Value, [string]$Label, [double]$Minimum = [double]::NegativeInfinity)
-  if ($null -eq $Value -or ([string]$Value).Trim().Length -eq 0) {
-    throw ($Label + ' is required and must be numeric.')
-  }
-  try { $number = [double]$Value } catch { throw ($Label + ' must be numeric.') }
-  if ([double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt $Minimum) {
-    throw ($Label + ' must be finite and at least ' + $Minimum + '.')
-  }
-  return $number
-}
-
-function Get-ExactInteger {
-  param([object]$Value, [string]$Label, [int]$Minimum, [int]$Maximum)
-  $number = Get-FiniteNumber -Value $Value -Label $Label -Minimum $Minimum
-  if ($number -ne [Math]::Truncate($number) -or $number -gt $Maximum) {
-    throw ($Label + ' must be an integer from ' + $Minimum + ' through ' + $Maximum + '.')
-  }
-  return [int]$number
-}
-
-function Get-ProtectedTargetGeometryAuthority {
-  param([object]$State)
-  return @{
-    instrumentId = 'protected-calibration-target-geometry-v1'
-    kind = 'protected_target_geometry'
-    targetVersion = Assert-SafeIdentifier -Value $State.subject.targetVersion -Label 'capture-session targetVersion'
-    targetSha256 = Assert-ExactSha256 -Value $State.subject.targetSha256 -Label 'capture-session targetSha256'
-    authorityStatement = 'product_owner_confirmed_exact_target_geometry_v1'
-  }
-}
-
 function Invoke-ExactProcess {
   param([string]$Executable, [string[]]$Arguments, [string]$Label)
   & $Executable @Arguments
@@ -108,20 +71,6 @@ function Assert-NewOutputDirectory {
   $resolved = [System.IO.Path]::GetFullPath($Path)
   if (Test-Path -LiteralPath $resolved) {
     throw ($Label + ' must be a new path and will not overwrite an existing file or directory: ' + $resolved)
-  }
-  return $resolved
-}
-
-function Assert-NewOutputFile {
-  param([string]$Path, [string]$Label)
-  if ([string]::IsNullOrWhiteSpace($Path)) { throw ($Label + ' is required.') }
-  $resolved = [System.IO.Path]::GetFullPath($Path)
-  if (Test-Path -LiteralPath $resolved) {
-    throw ($Label + ' must be a new path and will not overwrite an existing file or directory: ' + $resolved)
-  }
-  $parent = Split-Path -Parent $resolved
-  if ([string]::IsNullOrWhiteSpace($parent) -or -not (Test-Path -LiteralPath $parent -PathType Container)) {
-    throw ($Label + ' parent directory must already exist: ' + $parent)
   }
   return $resolved
 }
@@ -292,178 +241,6 @@ function Assert-ExactSlotSet {
   }
 }
 
-function New-MetrologyInputTemplate {
-  param($Status, $State)
-  if ($Status.sealed) { throw 'A sealed calibration session cannot create a new metrology template.' }
-  if ([int]$Status.captureCount -ne 102) {
-    throw 'CreateMetrologyTemplate is blocked until all 102 immutable capture slots are complete.'
-  }
-  $outputPath = Assert-NewOutputFile -Path $MetrologyInputPath -Label 'MetrologyInputPath'
-  $targetManifestSha256 = Get-ExactFileSha256 -Path $TargetManifestPath -Label 'Protected target manifest'
-  $targetManifest = Get-Content -LiteralPath $TargetManifestPath -Raw | ConvertFrom-Json
-  if ($targetManifest.schemaVersion -ne 'ten-kings-calibration-target-manifest-v1') {
-    throw 'Protected target manifest is not the exact calibration-target V1 schema.'
-  }
-  $protectedTargetSha256 = Assert-ExactSha256 -Value $State.subject.targetSha256 -Label 'capture-session targetSha256'
-  $manifestTargetSha256 = Assert-ExactSha256 -Value $targetManifest.pdfSha256 -Label 'target manifest pdfSha256'
-  if ($protectedTargetSha256 -ne $manifestTargetSha256) {
-    throw 'The session target authority does not match the repository-protected printable target PDF.'
-  }
-  $statePath = Join-Path ([string]$Status.sessionDir) 'capture-session.json'
-  $sourceCaptureSessionSha256 = Get-ExactFileSha256 -Path $statePath -Label 'Capture-session ledger'
-  $directions = [System.Collections.Generic.List[object]]::new()
-  foreach ($channel in 1..8) {
-    foreach ($sample in 1..3) {
-      $directions.Add([ordered]@{
-        channelIndex = $channel
-        sampleIndex = $sample
-        sourcePointMm = [ordered]@{ x = $null; y = $null }
-        cardCenterPointMm = [ordered]@{ x = $null; y = $null }
-        pointU95Mm = $null
-        measurementMethod = 'fixed_ring_segment_geometry_with_ruler_v1'
-      })
-    }
-  }
-  $template = [ordered]@{
-    schemaVersion = 'ten-kings-mathematical-calibration-metrology-input-v1'
-    sessionId = $SessionId
-    targetSha256 = $protectedTargetSha256
-    sourceCaptureSessionSha256 = $sourceCaptureSessionSha256
-    targetManifestSha256 = $targetManifestSha256
-    instructions = [ordered]@{
-      incompleteTemplate = $true
-      submission = 'Replace every physical-value null with the independently observed value, then compute the exact file SHA-256 and use SubmitMetrology with -ConfirmMetrologySubmission. Target authority is derived automatically from the hash-protected session target; no measuring-device or certificate identity is requested.'
-      printAcceptance = [string]$targetManifest.requiredPrintScaleVerification.acceptanceFormula
-      cutAcceptance = 'abs(measuredDimensionMm - nominalDimensionMm) + measurementU95Mm <= 0.20'
-      targetAuthority = 'product_owner_confirmed_exact_target_geometry_v1 bound to the exact session targetVersion and targetSha256'
-    }
-    printScaleMeasurements = @(
-      [ordered]@{ axis = 'x'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.x.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' },
-      [ordered]@{ axis = 'y'; nominalSpanMm = [double]$targetManifest.requiredPrintScaleVerification.y.nominalSpanMm; measuredSpanMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' }
-    )
-    targetCutDimensionMeasurements = @(
-      [ordered]@{ axis = 'x'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.x.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' },
-      [ordered]@{ axis = 'y'; nominalDimensionMm = [double]$targetManifest.requiredCutDimensionVerification.y.nominalDimensionMm; measuredDimensionMm = $null; measurementU95Mm = $null; measurementMethod = 'product_owner_confirmed_target_geometry_v1' }
-    )
-    directionGeometryMeasurements = @($directions)
-  }
-  $json = $template | ConvertTo-Json -Depth 10
-  [System.IO.File]::WriteAllText(
-    $outputPath,
-    $json + [Environment]::NewLine,
-    [System.Text.UTF8Encoding]::new($false)
-  )
-  Write-Host ('Created incomplete write-once metrology template: ' + $outputPath)
-  Write-Host ('Template baseline SHA-256 (will change when completed): ' + (Get-ExactFileSha256 -Path $outputPath -Label 'Metrology template'))
-  Write-Host 'No metrology was submitted. Complete every null, rehash the exact file, independently review it, then use SubmitMetrology.'
-}
-
-function Submit-MetrologyArtifact {
-  param($Status, $State)
-  if (-not $ConfirmMetrologySubmission) {
-    throw 'SubmitMetrology requires -ConfirmMetrologySubmission after the physical values and protected target binding have been checked.'
-  }
-  if ($Status.sealed) { throw 'A sealed calibration session cannot accept metrology.' }
-  if ([int]$Status.captureCount -ne 102) {
-    throw 'Metrology submission is blocked until all 102 immutable capture slots are complete.'
-  }
-  if ([string]::IsNullOrWhiteSpace($MetrologyInputPath) -or
-      [string]::IsNullOrWhiteSpace($MetrologyInputSha256)) {
-    throw 'SubmitMetrology requires MetrologyInputPath and its exact MetrologyInputSha256.'
-  }
-  $metrologyPath = [System.IO.Path]::GetFullPath($MetrologyInputPath)
-  $observedMetrologySha256 = Get-ExactFileSha256 -Path $metrologyPath -Label 'Metrology input'
-  $expectedMetrologySha256 = Assert-ExactSha256 -Value $MetrologyInputSha256 -Label 'MetrologyInputSha256'
-  if ($observedMetrologySha256 -ne $expectedMetrologySha256) {
-    throw 'Metrology input SHA-256 does not match the explicitly supplied authority.'
-  }
-  $metrology = Get-Content -LiteralPath $metrologyPath -Raw | ConvertFrom-Json
-  if ($metrology.schemaVersion -ne 'ten-kings-mathematical-calibration-metrology-input-v1') {
-    throw 'Metrology input schemaVersion is not the exact V1 contract.'
-  }
-  if ([string]$metrology.sessionId -ne $SessionId) {
-    throw 'Metrology input is not bound to this exact sessionId.'
-  }
-  $targetHash = Assert-ExactSha256 -Value $metrology.targetSha256 -Label 'metrology.targetSha256'
-  if ($targetHash -ne ([string]$State.subject.targetSha256).ToLowerInvariant()) {
-    throw 'Metrology input is not bound to the exact protected calibration target SHA-256.'
-  }
-  $statePath = Join-Path ([string]$Status.sessionDir) 'capture-session.json'
-  $currentStateSha256 = Get-ExactFileSha256 -Path $statePath -Label 'Capture-session ledger'
-  $sourceStateSha256 = Assert-ExactSha256 -Value $metrology.sourceCaptureSessionSha256 -Label 'metrology.sourceCaptureSessionSha256'
-  if ($currentStateSha256 -ne $sourceStateSha256) {
-    $physicalExisting = @($State.measurements | Where-Object {
-      $_.measurementType -in @('print_scale', 'target_cut_dimension', 'direction_geometry')
-    })
-    if ($physicalExisting.Count -eq 0 -or @($physicalExisting | Where-Object {
-      ([string]$_.payload.sourceMetrologyArtifactSha256).ToLowerInvariant() -ne $observedMetrologySha256
-    }).Count -ne 0) {
-      throw 'Metrology source capture-session SHA-256 changed and no same-artifact immutable resume authority exists.'
-    }
-  }
-  $protectedTargetGeometry = Get-ProtectedTargetGeometryAuthority -State $State
-  $requests = [System.Collections.Generic.List[object]]::new()
-  $prefix = 'cal-metrology-' + $observedMetrologySha256.Substring(0, 12)
-  $printSlots = [System.Collections.Generic.List[string]]::new()
-  foreach ($entry in @($metrology.printScaleMeasurements)) {
-    $axis = [string]$entry.axis
-    $printSlots.Add('print_scale:' + $axis)
-    $requests.Add(@{
-      sessionId = $SessionId; operationId = $prefix + '-print-' + $axis
-      measurementType = 'print_scale'; axis = $axis
-      nominalSpanMm = Get-FiniteNumber -Value $entry.nominalSpanMm -Label ('printScale.' + $axis + '.nominalSpanMm') -Minimum 0.001
-      measuredSpanMm = Get-FiniteNumber -Value $entry.measuredSpanMm -Label ('printScale.' + $axis + '.measuredSpanMm') -Minimum 0.001
-      measurementU95Mm = Get-FiniteNumber -Value $entry.measurementU95Mm -Label ('printScale.' + $axis + '.measurementU95Mm') -Minimum 0
-      measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label ('printScale.' + $axis + '.measurementMethod')
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
-    })
-  }
-  Assert-ExactSlotSet -Observed $printSlots -Expected @('print_scale:x', 'print_scale:y') -Label 'Print-scale measurements'
-  $cutSlots = [System.Collections.Generic.List[string]]::new()
-  foreach ($entry in @($metrology.targetCutDimensionMeasurements)) {
-    $axis = [string]$entry.axis
-    $cutSlots.Add('target_cut_dimension:' + $axis)
-    $requests.Add(@{
-      sessionId = $SessionId; operationId = $prefix + '-cut-' + $axis
-      measurementType = 'target_cut_dimension'; axis = $axis
-      nominalDimensionMm = Get-FiniteNumber -Value $entry.nominalDimensionMm -Label ('targetCut.' + $axis + '.nominalDimensionMm') -Minimum 0.001
-      measuredDimensionMm = Get-FiniteNumber -Value $entry.measuredDimensionMm -Label ('targetCut.' + $axis + '.measuredDimensionMm') -Minimum 0.001
-      measurementU95Mm = Get-FiniteNumber -Value $entry.measurementU95Mm -Label ('targetCut.' + $axis + '.measurementU95Mm') -Minimum 0
-      measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label ('targetCut.' + $axis + '.measurementMethod')
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
-    })
-  }
-  Assert-ExactSlotSet -Observed $cutSlots -Expected @('target_cut_dimension:x', 'target_cut_dimension:y') -Label 'Target-cut measurements'
-  $directionSlots = [System.Collections.Generic.List[string]]::new()
-  foreach ($entry in @($metrology.directionGeometryMeasurements)) {
-    $channel = Get-ExactInteger -Value $entry.channelIndex -Label 'direction.channelIndex' -Minimum 1 -Maximum 8
-    $sample = Get-ExactInteger -Value $entry.sampleIndex -Label 'direction.sampleIndex' -Minimum 1 -Maximum 3
-    $directionSlots.Add('direction_geometry:' + $channel + ':' + $sample)
-    $requests.Add(@{
-      sessionId = $SessionId; operationId = $prefix + '-direction-' + $channel + '-' + $sample
-      measurementType = 'direction_geometry'; channelIndex = $channel; sampleIndex = $sample
-      sourcePointMm = @{
-        x = Get-FiniteNumber -Value $entry.sourcePointMm.x -Label 'direction.sourcePointMm.x'
-        y = Get-FiniteNumber -Value $entry.sourcePointMm.y -Label 'direction.sourcePointMm.y'
-      }
-      cardCenterPointMm = @{
-        x = Get-FiniteNumber -Value $entry.cardCenterPointMm.x -Label 'direction.cardCenterPointMm.x'
-        y = Get-FiniteNumber -Value $entry.cardCenterPointMm.y -Label 'direction.cardCenterPointMm.y'
-      }
-      pointU95Mm = Get-FiniteNumber -Value $entry.pointU95Mm -Label 'direction.pointU95Mm' -Minimum 0
-      measurementMethod = Assert-SafeIdentifier -Value $entry.measurementMethod -Label 'direction.measurementMethod'
-      sourceMetrologyArtifactSha256 = $observedMetrologySha256; instrument = $protectedTargetGeometry
-    })
-  }
-  $expectedDirections = foreach ($channel in 1..8) { foreach ($sample in 1..3) { 'direction_geometry:' + $channel + ':' + $sample } }
-  Assert-ExactSlotSet -Observed $directionSlots -Expected $expectedDirections -Label 'Direction-geometry measurements'
-  foreach ($request in $requests) {
-    $null = Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/measurement' -Body $request
-  }
-  Write-Host ('Recorded or idempotently confirmed 28 immutable metrology slots from artifact ' + $observedMetrologySha256 + '.')
-  return Get-CalibrationStatus
-}
-
 function Get-SlotKey {
   param($Slot)
   $channel = if ($null -eq $Slot.channelIndex) { 'none' } else { [string]$Slot.channelIndex }
@@ -483,15 +260,13 @@ function Show-Worksheet {
   Write-Host ''
   $plan | Select-Object role, channelIndex, sampleIndex, targetFace, physicalAction |
     Format-Table -AutoSize
-  Write-Host 'Required physical metrology ledger: print scale x/y; cut dimensions x/y; direction geometry channels 1..8 samples 1..3.'
-  Write-Host 'CreateMetrologyTemplate emits the exact 28-slot, session/target/ledger-bound input skeleton after all 102 captures; it never submits placeholder values.'
-  Write-Host 'SubmitMetrology accepts one SHA-pinned ten-kings-mathematical-calibration-metrology-input-v1 JSON artifact bound to sessionId, targetSha256, and sourceCaptureSessionSha256.'
-  Write-Host 'Its three physical-value arrays must contain exactly 2, 2, and 24 unique slots; protected target authority is derived automatically from the active session.'
-  Write-Host 'DeriveRepeatability invokes the pinned OpenCV analyzer implementation and records the exact 50 repeatability measurements before sealing.'
+  Write-Host 'No manual physical-authority value entry is requested.'
+  Write-Host 'DeriveAuthority records four protected nominal target-geometry entries and deterministically derives 24 direction/U95 plus 50 repeatability entries from exact immutable evidence.'
+  Write-Host 'Target entries are protected geometry authority, never physical measurements. Direction entries bind the matching three-per-channel illumination captures and the centralized uncertainty coverage factor.'
   Write-Host 'An ordinary rejected exact still preserves all accepted slots and hashes. Reposition the same pending pose and use Retry, which always creates a new operation ID.'
   Write-Host 'Resume rebinds the same immutable session after runner, browser, or protected helper-page restart; hard-stop failures are never retryable.'
   Write-Host 'Seal is fail-closed at exactly 102 captures and 78 measurements. Analyze and Finalize require new output paths and never mutate Production.'
-  Write-Host 'CompleteOffline performs optional metrology submission, repeatability derivation, seal, analyzer, and finalizer in that exact order.'
+  Write-Host 'CompleteOffline performs evidence-authority derivation, seal, analyzer, and finalizer in that exact order.'
 }
 
 function Get-NextCaptureSlot {
@@ -549,37 +324,30 @@ function Invoke-CaptureSlotWithReport {
   }
 }
 
-function Invoke-RepeatabilityDerivation {
+function Invoke-EvidenceAuthorityDerivation {
   param($Status, $State)
-  if ($Status.sealed) { throw 'Repeatability derivation must run before seal.' }
+  if ($Status.sealed) { throw 'Evidence-authority derivation must run before seal.' }
   if ([int]$Status.captureCount -ne 102) {
-    throw 'Repeatability derivation requires all 102 immutable captures.'
+    throw 'Evidence-authority derivation requires all 102 immutable captures.'
   }
-  $physicalKeys = @($State.measurements | Where-Object {
-    $_.measurementType -in @('print_scale', 'target_cut_dimension', 'direction_geometry')
-  } | ForEach-Object { Get-MeasurementKey -Measurement $_ })
-  $expectedPhysical = @((Get-ExpectedMeasurementKeys) | Where-Object {
-    $_ -notlike 'measurement_repeatability:*'
-  })
-  Assert-ExactSlotSet -Observed $physicalKeys -Expected $expectedPhysical -Label 'Pre-repeatability physical metrology ledger'
-  $outputPath = $RepeatabilityOutputPath
+  $outputPath = $AuthorityOutputPath
   if ([string]::IsNullOrWhiteSpace($outputPath)) {
-    $outputPath = Join-Path (Split-Path ([string]$Status.sessionDir) -Parent) ($SessionId + '-repeatability-preseal-v1.json')
+    $outputPath = Join-Path (Split-Path ([string]$Status.sessionDir) -Parent) ($SessionId + '-authority-' + ([string]$Status.sessionStateSha256).Substring(0, 12) + '-preseal-v1.json')
   }
   $outputPath = [System.IO.Path]::GetFullPath($outputPath)
   if (Test-Path -LiteralPath $outputPath) {
-    throw ('Repeatability output is immutable and already exists: ' + $outputPath)
+    throw ('Evidence-authority output is immutable and already exists: ' + $outputPath)
   }
   $analyzerSha256 = Get-ExactFileSha256 -Path $AnalyzerPath -Label 'Pinned analyzer source'
-  $repeatabilitySha256 = Get-ExactFileSha256 -Path $RepeatabilityPath -Label 'Pinned repeatability source'
+  $authorityDerivationSha256 = Get-ExactFileSha256 -Path $AuthorityDerivationPath -Label 'Pinned authority-derivation source'
   Write-Host ('Pinned analyzer SHA-256: ' + $analyzerSha256)
-  Write-Host ('Pinned repeatability producer SHA-256: ' + $repeatabilitySha256)
+  Write-Host ('Pinned authority-derivation producer SHA-256: ' + $authorityDerivationSha256)
   $tokenVariable = 'TK_MATHEMATICAL_CALIBRATION_STATION_TOKEN'
   $previousToken = [Environment]::GetEnvironmentVariable($tokenVariable, 'Process')
   [Environment]::SetEnvironmentVariable($tokenVariable, $StationToken, 'Process')
   try {
-    Invoke-ExactProcess -Executable $PythonExecutable -Label 'Repeatability derivation/submission' -Arguments @(
-      $RepeatabilityPath,
+    Invoke-ExactProcess -Executable $PythonExecutable -Label 'Evidence-authority derivation/submission' -Arguments @(
+      $AuthorityDerivationPath,
       '--session-dir', ([string]$Status.sessionDir),
       '--output', $outputPath,
       '--bridge-url', $BridgeUrl,
@@ -588,9 +356,9 @@ function Invoke-RepeatabilityDerivation {
   } finally {
     [Environment]::SetEnvironmentVariable($tokenVariable, $previousToken, 'Process')
   }
-  $outputSha256 = Get-ExactFileSha256 -Path $outputPath -Label 'Repeatability pre-seal artifact'
-  Write-Host ('Repeatability pre-seal artifact: ' + $outputPath)
-  Write-Host ('Repeatability pre-seal SHA-256: ' + $outputSha256)
+  $outputSha256 = Get-ExactFileSha256 -Path $outputPath -Label 'Evidence-authority pre-seal artifact'
+  Write-Host ('Evidence-authority pre-seal artifact: ' + $outputPath)
+  Write-Host ('Evidence-authority pre-seal SHA-256: ' + $outputSha256)
   return Get-CalibrationStatus
 }
 
@@ -598,6 +366,11 @@ function Invoke-CalibrationSeal {
   param($Status, $State)
   if (-not $ConfirmSeal) {
     throw 'Seal requires -ConfirmSeal after reviewing the complete 102-capture / 78-measurement status.'
+  }
+  $existingKeys = @($State.measurements | ForEach-Object { Get-MeasurementKey -Measurement $_ })
+  if ($existingKeys.Count -ne 78) {
+    $Status = Invoke-EvidenceAuthorityDerivation -Status $Status -State $State
+    $State = Get-CalibrationState -Status $Status
   }
   foreach ($value in @(
     @{ value = $ProfileId; label = 'ProfileId' },
@@ -721,7 +494,7 @@ if ($Action -eq 'Status') {
   Write-Host ('Protected target SHA-256: ' + $state.subject.targetSha256)
   $observedMeasurementKeys = @($state.measurements | ForEach-Object { Get-MeasurementKey -Measurement $_ })
   $missingMeasurementKeys = @((Get-ExpectedMeasurementKeys) | Where-Object { $_ -notin $observedMeasurementKeys })
-  Write-Host ('Immutable measurements: ' + $observedMeasurementKeys.Count + '/78; missing ' + $missingMeasurementKeys.Count + '.')
+  Write-Host ('Immutable evidence-authority entries: ' + $observedMeasurementKeys.Count + '/78; missing ' + $missingMeasurementKeys.Count + '.')
   if ($missingMeasurementKeys.Count -gt 0) {
     $missingMeasurementKeys | Select-Object -First 20 | ForEach-Object { Write-Host ('  missing ' + $_) }
     if ($missingMeasurementKeys.Count -gt 20) { Write-Host '  (remaining missing slots omitted from display)' }
@@ -737,18 +510,8 @@ if ($Action -eq 'Status') {
   exit 0
 }
 
-if ($Action -eq 'SubmitMetrology') {
-  Submit-MetrologyArtifact -Status $status -State $state
-  exit 0
-}
-
-if ($Action -eq 'CreateMetrologyTemplate') {
-  New-MetrologyInputTemplate -Status $status -State $state
-  exit 0
-}
-
-if ($Action -eq 'DeriveRepeatability') {
-  Invoke-RepeatabilityDerivation -Status $status -State $state
+if ($Action -eq 'DeriveAuthority') {
+  Invoke-EvidenceAuthorityDerivation -Status $status -State $state
   exit 0
 }
 
@@ -768,20 +531,15 @@ if ($Action -eq 'Finalize') {
 }
 
 if ($Action -eq 'CompleteOffline') {
-  if (-not [string]::IsNullOrWhiteSpace($MetrologyInputPath)) {
-    $status = Submit-MetrologyArtifact -Status $status -State $state
+  $authorityKeys = @($state.measurements | ForEach-Object {
+    Get-MeasurementKey -Measurement $_
+  })
+  if ($authorityKeys.Count -ne 78) {
+    $status = Invoke-EvidenceAuthorityDerivation -Status $status -State $state
     $state = Get-CalibrationState -Status $status
-  }
-  $repeatabilityKeys = @($state.measurements | Where-Object {
-    $_.measurementType -eq 'measurement_repeatability'
-  } | ForEach-Object { Get-MeasurementKey -Measurement $_ })
-  if ($repeatabilityKeys.Count -eq 0) {
-    $status = Invoke-RepeatabilityDerivation -Status $status -State $state
-    $state = Get-CalibrationState -Status $status
-  } elseif ($repeatabilityKeys.Count -ne 50) {
-    throw 'CompleteOffline found a partial repeatability ledger; rerun DeriveRepeatability with a new output path to idempotently finish the exact same producer requests.'
   } else {
-    Write-Host 'All 50 analyzer-derived repeatability records already exist; derivation was not repeated.'
+    Assert-ExactSlotSet -Observed $authorityKeys -Expected @(Get-ExpectedMeasurementKeys) -Label 'Existing evidence-authority ledger'
+    Write-Host 'All 78 evidence-derived authority records already exist; derivation was not repeated.'
   }
   if (-not $status.sealed) {
     $sealed = Invoke-CalibrationSeal -Status $status -State $state

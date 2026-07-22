@@ -155,7 +155,20 @@ test("materializes product-owner-confirmed protected target geometry without dev
     const directory = path.join(prepared.acceptanceRoot, result.directoryName);
     const evidence = JSON.parse(await fs.readFile(path.join(directory, "rig-characterization-source-evidence-v1.json"), "utf8"));
     assert.equal(evidence.files.some((entry) => entry.sourceRole === "instrument_calibration"), false);
+    assert.equal(evidence.files.some((entry) => entry.sourceRole === "metrology_source"), false);
     assert.equal(evidence.files.some((entry) => entry.sourceRole === "print_verified_calibration_target"), true);
+    const physicalAnalysis = JSON.parse(await fs.readFile(path.join(directory, "rig-characterization-physical-analysis-v1.json"), "utf8"));
+    assert.equal(physicalAnalysis.builderInput.targetPrintScaleSamples.every((entry) =>
+      entry.authorityBasis === "protected_checkerboard_geometry" && "protectedSpanMm" in entry &&
+      !("measuredSpanMm" in entry) && !("measurementU95Mm" in entry)), true);
+    assert.equal(physicalAnalysis.builderInput.targetCutDimensionSamples.every((entry) =>
+      entry.authorityBasis === "protected_checkerboard_geometry" && "protectedDimensionMm" in entry &&
+      !("measuredDimensionMm" in entry) && !("measurementU95Mm" in entry)), true);
+    assert.equal(physicalAnalysis.builderInput.channels.every((channel) =>
+      channel.directionMeasurementSamples.every((entry) =>
+        entry.measurementMethod === "illumination_centroid_checkerboard_repeatability_v1" &&
+        entry.sourceRole === `illumination_pattern_channel_${channel.channelIndex}` &&
+        typeof entry.sourceEvidenceId === "string" && typeof entry.sourceSha256 === "string")), true);
 
     const wrongRoot = await temporary("rig-materializer-protected-target-mismatch");
     try {

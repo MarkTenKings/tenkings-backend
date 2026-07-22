@@ -56,6 +56,11 @@ function analysis() {
       purpose: "mathematical_calibration_v1",
       thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
       thresholdSetHash: "d".repeat(64),
+      evidenceDerivedAuthority: {
+        thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
+        thresholdSetHash: "d".repeat(64),
+        uncertaintyCoverageFactor: 1.96,
+      },
       captureEvidenceAcceptance: {
         poseDiversity: { policy: "fixture-v1" },
         repeatedPlacementAuthority: "fixture-v1",
@@ -174,6 +179,7 @@ test("finalization writes a profile only when the acceptance authority finalizes
           artifactId: "artifact-v1",
           artifactSha256: "b".repeat(64),
           algorithmVersion: "fixed-rig-physical-calibration-v1",
+          methods: { coverageFactor: 1.96 },
         },
         issues: [],
       }),

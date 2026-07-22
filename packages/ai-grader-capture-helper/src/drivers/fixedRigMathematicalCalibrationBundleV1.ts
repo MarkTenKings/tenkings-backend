@@ -288,8 +288,16 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
   } else {
     exactKeys(sourcePackage, [
       "schemaVersion", "packageId", "manifestSha256", "rigId", "captureProfileVersion", "purpose",
-      "thresholdSetId", "thresholdSetHash", "captureEvidenceAcceptance", "stationAuthority", "subject",
+      "thresholdSetId", "thresholdSetHash", "captureEvidenceAcceptance", "evidenceDerivedAuthority",
+      "stationAuthority", "subject",
     ], "Calibration bundle sourceCapturePackage");
+    const evidenceDerivedAuthority = record(
+      sourcePackage.evidenceDerivedAuthority,
+      "Calibration bundle evidenceDerivedAuthority",
+    );
+    exactKeys(evidenceDerivedAuthority, [
+      "thresholdSetId", "thresholdSetHash", "uncertaintyCoverageFactor",
+    ], "Calibration bundle evidenceDerivedAuthority");
     if (
       bundle.analysisAlgorithmVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_ANALYSIS_ALGORITHM_V1 ||
       sourcePackage.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1 ||
@@ -297,6 +305,10 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
       sourcePackage.purpose !== "mathematical_calibration_v1" || sourcePackage.rigId !== rigId ||
       sourcePackage.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
       sourcePackage.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
+      evidenceDerivedAuthority.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      evidenceDerivedAuthority.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
+      evidenceDerivedAuthority.uncertaintyCoverageFactor !==
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor ||
       !sameJson(
         sourcePackage.captureEvidenceAcceptance,
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence,

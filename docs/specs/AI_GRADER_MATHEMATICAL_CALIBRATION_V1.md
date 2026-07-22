@@ -38,7 +38,7 @@ Every physical measurement carries a versioned `U95` authority composed by root-
 - repeated-measurement variation; and
 - lighting/channel confidence.
 
-One-time rig-characterization metrology uses `product_owner_confirmed_exact_target_geometry_v1`, derived automatically from the active session's exact protected target version/SHA-256 and its immutable captured target bytes. The operator contract has no measuring-device, certificate, serial-number, range, accuracy, or resolution questions. Recorded physical values and U95 values continue through the existing calculations unchanged; this changes only provenance authority, not any numerical acceptance formula, uncertainty calculation, centralized threshold, or grading/subgrading algorithm.
+One-time rig-characterization target authority uses `product_owner_confirmed_exact_target_geometry_v1`, derived automatically from the active session's exact protected target version/SHA-256 and immutable captured target bytes. Its four records are explicitly protected nominal checkerboard geometry, never physical measurements. The 24 physical-direction records and their U95 values are derived deterministically from the exact three-per-channel immutable illumination captures and the ten-capture checkerboard repeatability evidence under the centralized uncertainty coverage factor. The operator contract has no measuring-device, certificate, coordinate, or U95 questions. No scoring formula, centralized threshold, capture count, or grading/subgrading algorithm changes.
 
 The required calculations are:
 

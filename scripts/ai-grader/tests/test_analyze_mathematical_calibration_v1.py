@@ -92,12 +92,6 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
     def build_fixture(self, root: Path) -> Path:
         operator_id = 'offline-test'
         finalized_at = '2026-07-18T20:00:00.000Z'
-        instrument = {
-            'instrumentId': 'synthetic-traceable-ruler',
-            'kind': 'traceable_ruler',
-            'calibrationVersion': 'synthetic-instrument-v1',
-            'calibrationSha256': 'a' * 64,
-        }
         repeatability_instrument = {
             'instrumentId':
                 'ten-kings-fixed-rig-repeatability-analyzer-v1',
@@ -109,7 +103,7 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
         measurement_counter = 0
 
         def measurement_provenance(method: str,
-                                   selected_instrument=None) -> dict:
+                                   selected_instrument: dict) -> dict:
             nonlocal measurement_counter
             measurement_counter += 1
             return {
@@ -117,7 +111,7 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 'recordedAt':
                     f'2026-07-18T20:01:00.{measurement_counter:03d}Z',
                 'measurementMethod': method,
-                'instrument': selected_instrument or instrument,
+                'instrument': selected_instrument,
             }
 
         board = checkerboard()
@@ -176,7 +170,6 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             frames = []
             dark_frames = []
             pattern_frames = []
-            direction_measurements = []
             for frame_index in range(3):
                 response = (
                      150.0 + channel * 3.0 +
@@ -215,44 +208,11 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                     'path': dark_path.name,
                     'sha256': digest(dark_path),
                 })
-                direction_path = (
-                    root / f'direction-{channel}-{frame_index + 1}.json')
-                source_point = {
-                    'x': round(31.75 + 30 * float(np.cos(angle)), 6),
-                    'y': round(44.45 + 30 * float(np.sin(angle)), 6),
-                }
-                provenance = measurement_provenance(
-                    'fixed_ring_segment_geometry_with_ruler_v1')
-                direction_path.write_text(json.dumps({
-                    'schemaVersion':
-                        'ten-kings-calibration-direction-measurement-v1',
-                    'channelIndex': channel,
-                    'sampleIndex': frame_index + 1,
-                    'measurementMethod':
-                        'fixed_ring_segment_geometry_with_ruler_v1',
-                    'sourcePointMm': source_point,
-                    'cardCenterPointMm': {'x': 31.75, 'y': 44.45},
-                    'pointU95Mm': 0.05,
-                    **provenance,
-                }, sort_keys=True) + '\n', encoding='utf-8')
-                direction_measurements.append({
-                    'evidenceId':
-                        f'direction-{channel}-{frame_index + 1}',
-                    'path': direction_path.name,
-                    'sha256': digest(direction_path),
-                    'sampleIndex': frame_index + 1,
-                    'measurementMethod':
-                        'fixed_ring_segment_geometry_with_ruler_v1',
-                    'sourcePointMm': source_point,
-                    'cardCenterPointMm': {'x': 31.75, 'y': 44.45},
-                    'pointU95Mm': 0.05,
-                    **provenance,
-                })
             channel_entries.append({
                 'channelIndex': channel,
                 'frames': frames,
                 'darkFrames': dark_frames,
-                'directionMeasurements': direction_measurements,
+                'directionMeasurements': [],
                 'illuminationPatternFrames': pattern_frames,
             })
 
@@ -316,72 +276,162 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                     **provenance,
                 })
 
-        target_path = root / 'synthetic-target.pdf'
-        target_path.write_bytes(b'%PDF-1.4\n% synthetic calibration target fixture\n')
+        direction_instrument = {
+            'instrumentId':
+                'ten-kings-illumination-centroid-direction-analyzer-v1',
+            'kind': 'fixed_rig_geometry',
+            'calibrationVersion':
+                'opencv_illumination_centroid_checkerboard_v1',
+            'calibrationSha256': digest(SCRIPT),
+        }
+        threshold_source = (
+            SCRIPT.parents[2] / 'packages' / 'shared' / 'src' /
+            'aiGraderMathematicalCalibrationV1.ts').read_text(
+                encoding='utf-8')
+        threshold_match = re.search(
+            r'MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH\s*=\s*\n?\s*'
+            r'"([0-9a-f]{64})"', threshold_source)
+        threshold_id_match = re.search(
+            r'MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID\s*=\s*\n?\s*'
+            r'"([^"]+)"', threshold_source)
+        coverage_match = re.search(
+            r'coverageFactor:\s*([0-9]+(?:\.[0-9]+)?)', threshold_source)
+        if (threshold_match is None or threshold_id_match is None or
+                coverage_match is None):
+            raise RuntimeError('central threshold authority was not found')
+        uncertainty_coverage_factor = float(coverage_match.group(1))
+        for channel_entry in channel_entries:
+            channel = channel_entry['channelIndex']
+            pattern_images = [
+                MODULE.load_gray(root / entry['path'])
+                for entry in channel_entry['illuminationPatternFrames']
+            ]
+            derived = MODULE.compute_illumination_direction_authority(
+                pattern_images, 63.5, 88.9,
+                repeatability_values['linear_mm'],
+                uncertainty_coverage_factor)
+            for value, source in zip(
+                    derived, channel_entry['illuminationPatternFrames']):
+                sample_index = value['sampleIndex']
+                direction_path = (
+                    root / f'direction-{channel}-{sample_index}.json')
+                provenance = measurement_provenance(
+                    'illumination_centroid_checkerboard_repeatability_v1',
+                    direction_instrument)
+                source_binding = {
+                    'sourceCaptureOperationId':
+                        f'capture-{source["evidenceId"]}',
+                    'sourceEvidenceId': source['evidenceId'],
+                    'sourceSha256': source['sha256'],
+                    'sourceRole':
+                        f'illumination_pattern_channel_{channel}',
+                    'measurementAlgorithmVersion':
+                        'opencv_illumination_centroid_checkerboard_v1',
+                }
+                measurement = {
+                    'schemaVersion':
+                        'ten-kings-calibration-direction-measurement-v1',
+                    'channelIndex': channel,
+                    'sampleIndex': sample_index,
+                    'measurementMethod':
+                        'illumination_centroid_checkerboard_repeatability_v1',
+                    'sourcePointMm': value['sourcePointMm'],
+                    'cardCenterPointMm': value['cardCenterPointMm'],
+                    'pointU95Mm': value['pointU95Mm'],
+                    **source_binding,
+                    **provenance,
+                }
+                direction_path.write_text(
+                    json.dumps(measurement, sort_keys=True) + '\n',
+                    encoding='utf-8')
+                channel_entry['directionMeasurements'].append({
+                    'evidenceId':
+                        f'direction-{channel}-{sample_index}',
+                    'path': direction_path.name,
+                    'sha256': digest(direction_path),
+                    **{key: value for key, value in measurement.items()
+                       if key != 'schemaVersion'},
+                })
+
+        protected_target_manifest_path = (
+            SCRIPT.parents[2] / 'output' / 'pdf' /
+            'ten-kings-mathematical-calibration-target-v1.json')
+        protected_target_manifest = json.loads(
+            protected_target_manifest_path.read_text(encoding='utf-8'))
+        protected_target_source = (
+            protected_target_manifest_path.parent /
+            protected_target_manifest['pdf'])
+        target_path = root / protected_target_manifest['pdf']
+        shutil.copyfile(protected_target_source, target_path)
         target_hash = digest(target_path)
         rig_id = 'fixed-rig-test'
         capture_profile_version = (
             'ten-kings-fixed-rig-mathematical-calibration-v1')
-        target_version = (
-            'ten-kings-mathematical-calibration-target-v1.0.0')
+        target_version = protected_target_manifest['version']
+        target_instrument = {
+            'instrumentId': 'protected-calibration-target-geometry-v1',
+            'kind': 'protected_target_geometry',
+            'targetVersion': target_version,
+            'targetSha256': target_hash,
+            'authorityStatement':
+                'product_owner_confirmed_exact_target_geometry_v1',
+        }
         print_scale_entries = {}
-        for axis, nominal, measured, u95 in (
-                ('x', 100.0, 100.0, 0.05),
-                ('y', 200.0, 200.0, 0.10)):
+        for axis, protected_span in (('x', 100.0), ('y', 200.0)):
             path = root / f'print-scale-{axis}.json'
             provenance = measurement_provenance(
-                'traceable_ruler_direct_v1')
+                'protected_checkerboard_geometry_authority_v1',
+                target_instrument)
             measurement = {
                 'schemaVersion':
-                    'ten-kings-calibration-print-scale-measurement-v1',
+                    'ten-kings-calibration-print-scale-authority-v1',
                 'axis': axis,
-                'nominalSpanMm': nominal,
-                'measuredSpanMm': measured,
-                'measurementU95Mm': u95,
+                'protectedSpanMm': protected_span,
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'sourceTargetEvidenceId':
+                    'print-verified-calibration-target',
+                'sourceTargetSha256': target_hash,
                 **provenance,
             }
             path.write_text(
                 json.dumps(measurement, sort_keys=True) + '\n',
                 encoding='utf-8')
             print_scale_entries[axis] = {
-                'evidenceId': f'synthetic-print-scale-{axis}',
+                'evidenceId': f'protected-print-scale-{axis}',
                 'path': path.name,
                 'sha256': digest(path),
-                'nominalSpanMm': nominal,
-                'measuredSpanMm': measured,
-                'measurementU95Mm': u95,
-                **provenance,
+                **{key: value for key, value in measurement.items()
+                   if key != 'schemaVersion'},
             }
         cut_dimension_entries = {}
-        for axis, nominal, measured, u95 in (
-                ('x', 63.5, 63.5, 0.05),
-                ('y', 88.9, 88.9, 0.05)):
+        for axis, protected_dimension in (('x', 63.5), ('y', 88.9)):
             path = root / f'target-cut-dimension-{axis}.json'
             provenance = measurement_provenance(
-                'traceable_ruler_direct_v1')
+                'protected_checkerboard_geometry_authority_v1',
+                target_instrument)
             measurement = {
                 'schemaVersion':
-                    'ten-kings-calibration-target-cut-dimension-measurement-v1',
+                    'ten-kings-calibration-target-cut-dimension-authority-v1',
                 'axis': axis,
-                'nominalDimensionMm': nominal,
-                'measuredDimensionMm': measured,
-                'measurementU95Mm': u95,
+                'protectedDimensionMm': protected_dimension,
+                'authorityBasis': 'protected_checkerboard_geometry',
+                'sourceTargetEvidenceId':
+                    'print-verified-calibration-target',
+                'sourceTargetSha256': target_hash,
                 **provenance,
             }
             path.write_text(
                 json.dumps(measurement, sort_keys=True) + '\n',
                 encoding='utf-8')
             cut_dimension_entries[axis] = {
-                'evidenceId': f'synthetic-target-cut-dimension-{axis}',
+                'evidenceId': f'protected-target-cut-dimension-{axis}',
                 'path': path.name,
                 'sha256': digest(path),
-                'nominalDimensionMm': nominal,
-                'measuredDimensionMm': measured,
-                'measurementU95Mm': u95,
-                **provenance,
+                **{key: value for key, value in measurement.items()
+                   if key != 'schemaVersion'},
             }
         target_entry = {
-            'evidenceId': 'synthetic-target',
+            'evidenceId': 'print-verified-calibration-target',
             'path': target_path.name,
             'version': target_version,
             'sha256': target_hash,
@@ -634,15 +684,6 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 f'illumination_pattern_channel_{channel_index}',
                 channel_index)
         package_path = root / 'source-capture-package.json'
-        threshold_source = (
-            SCRIPT.parents[2] / 'packages' / 'shared' / 'src' /
-            'aiGraderMathematicalCalibrationV1.ts').read_text(
-                encoding='utf-8')
-        threshold_match = re.search(
-            r'MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH\s*=\s*\n?\s*'
-            r'"([0-9a-f]{64})"', threshold_source)
-        if threshold_match is None:
-            raise RuntimeError('threshold-set hash was not found')
         package_path.write_text(json.dumps({
             'schemaVersion':
                 'ten-kings-mathematical-calibration-capture-package-v1',
@@ -650,8 +691,13 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             'rigId': rig_id,
             'captureProfileVersion': capture_profile_version,
             'purpose': 'mathematical_calibration_v1',
-            'thresholdSetId': 'ten-kings-mathematical-grading-v1.0.1',
+            'thresholdSetId': threshold_id_match.group(1),
             'thresholdSetHash': threshold_match.group(1),
+            'evidenceDerivedAuthority': {
+                'thresholdSetId': threshold_id_match.group(1),
+                'thresholdSetHash': threshold_match.group(1),
+                'uncertaintyCoverageFactor': uncertainty_coverage_factor,
+            },
             'captureEvidenceAcceptance': {
                 'poseDiversity': {
                     'minimumDetectedTargetCoverageFractionPerView': 0.3,
@@ -847,7 +893,7 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             self.assertEqual(len(builder['segmentationBoundarySamples']), 10)
             self.assertEqual(len(builder['targetCutDimensionSamples']), 2)
             self.assertEqual(
-                [sample['nominalDimensionMm']
+                [sample['protectedDimensionMm']
                  for sample in builder['targetCutDimensionSamples']],
                 [63.5, 88.9])
             self.assertTrue(any(
@@ -871,7 +917,15 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 self.assertEqual(len(channel['directionMeasurementSamples']), 3)
                 self.assertTrue(all(
                     sample['measurementMethod'] ==
-                    'fixed_ring_segment_geometry_with_ruler_v1'
+                    'illumination_centroid_checkerboard_repeatability_v1'
+                    for sample in channel['directionMeasurementSamples']))
+                self.assertTrue(all(
+                    sample['measurementAlgorithmVersion'] ==
+                    'opencv_illumination_centroid_checkerboard_v1'
+                    for sample in channel['directionMeasurementSamples']))
+                self.assertTrue(all(
+                    sample['sourceEvidenceId'].startswith(
+                        f'pattern-{index + 1}-')
                     for sample in channel['directionMeasurementSamples']))
                 self.assertTrue(all(
                     sample['pointU95Mm'] > 0
@@ -883,6 +937,18 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                     channel['direction']['x'] * np.cos(angle) +
                     channel['direction']['y'] * np.sin(angle), 0.9)
             self.assertEqual(len(builder['targetPrintScaleSamples']), 2)
+            self.assertTrue(all(
+                sample['authorityBasis'] ==
+                'protected_checkerboard_geometry'
+                for sample in builder['targetPrintScaleSamples']))
+            self.assertTrue(all(
+                sample['authorityBasis'] ==
+                'protected_checkerboard_geometry'
+                for sample in builder['targetCutDimensionSamples']))
+            self.assertTrue(all(
+                'measuredSpanMm' not in sample and
+                'measurementU95Mm' not in sample
+                for sample in builder['targetPrintScaleSamples']))
             self.assertEqual(builder['lensModel']['model'],
                              'opencv_brown_conrady_v1')
             self.assertLess(
@@ -935,52 +1001,102 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             session_id = 'preseal-repeatability-session-v1'
             output_root = root / 'sessions'
             session_dir = output_root / session_id
-            raw_dir = session_dir / 'evidence' / 'raw'
-            raw_dir.mkdir(parents=True)
+            (session_dir / 'evidence' / 'imported').mkdir(parents=True)
             state_artifacts = []
             state_captures = []
-            for sample_index, entry in enumerate(
-                    manifest['placementViews'], start=1):
-                declaration = declarations[entry['evidenceId']]
-                relative_path = (
-                    f'evidence/raw/placement-{sample_index:02d}.png')
-                destination = session_dir.joinpath(*relative_path.split('/'))
-                shutil.copyfile(root / entry['path'], destination)
-                self.assertEqual(digest(destination), entry['sha256'])
-                operation_id = declaration['operationId']
-                state_artifacts.append({
-                    'evidenceId': entry['evidenceId'],
-                    'path': relative_path,
-                    'sha256': entry['sha256'],
-                    'role': 'repeated_placement',
-                    'artifactClass': 'raw_capture',
-                    'rigId': 'fixed-rig-test',
-                    'captureProfileVersion':
-                        'ten-kings-fixed-rig-mathematical-calibration-v1',
-                    'subjectDesignation': 'calibration_target',
-                    'productionCard': False,
-                    'operationId': operation_id,
-                    'capturedAt': declaration['capturedAt'],
-                    'channelIndex': None,
-                    'targetFace': 'checkerboard',
-                    'removeReseatCycleId':
-                        f'remove-reseat-cycle-{sample_index}',
-                    'byteSize': destination.stat().st_size,
-                    'mediaType': 'image/png',
-                })
-                state_captures.append({
-                    'operationId': operation_id,
-                    'role': 'repeated_placement',
-                    'sampleIndex': sample_index,
-                    'targetFace': 'checkerboard',
-                    'capturedAt': declaration['capturedAt'],
-                    'removeReseatCycleId':
-                        f'remove-reseat-cycle-{sample_index}',
-                    'rawEvidenceId': entry['evidenceId'],
-                    'normalizedEvidenceId':
-                        f'{entry["evidenceId"]}-normalized',
-                    'completedAt': declaration['capturedAt'],
-                })
+            capture_specs = []
+
+            def add_checkerboard_specs(entries, role):
+                for sample_index, entry in enumerate(entries, start=1):
+                    capture_specs.append({
+                        'role': role,
+                        'sampleIndex': sample_index,
+                        'channelIndex': None,
+                        'rawEvidenceId': entry['evidenceId'],
+                        'normalizedEvidenceId':
+                            f'{entry["evidenceId"]}-normalized',
+                    })
+
+            def add_channel_specs(entries, role, channel_index):
+                for sample_index, entry in enumerate(entries, start=1):
+                    normalized = declarations[entry['evidenceId']]
+                    capture_specs.append({
+                        'role': role,
+                        'sampleIndex': sample_index,
+                        'channelIndex': channel_index,
+                        'rawEvidenceId': normalized['parentEvidenceId'],
+                        'normalizedEvidenceId': entry['evidenceId'],
+                    })
+
+            add_checkerboard_specs(manifest['geometryViews'], 'lens_geometry')
+            add_checkerboard_specs(
+                manifest['normalizationViews'], 'normalization_registration')
+            add_checkerboard_specs(
+                manifest['placementViews'], 'repeated_placement')
+            for channel in manifest['flatFieldChannels']:
+                channel_index = channel['channelIndex']
+                add_channel_specs(
+                    channel['frames'], 'flat_field', channel_index)
+                add_channel_specs(
+                    channel['darkFrames'], 'dark_control', channel_index)
+                add_channel_specs(
+                    channel['illuminationPatternFrames'],
+                    'illumination_pattern', channel_index)
+            self.assertEqual(len(capture_specs), 102)
+
+            capture_evidence_ids = set()
+            for spec in capture_specs:
+                raw = declarations[spec['rawEvidenceId']]
+                normalized = declarations[spec['normalizedEvidenceId']]
+                self.assertEqual(raw['operationId'], normalized['operationId'])
+                for declaration in (raw, normalized):
+                    evidence_id = declaration['evidenceId']
+                    self.assertNotIn(evidence_id, capture_evidence_ids)
+                    capture_evidence_ids.add(evidence_id)
+                    relative_path = (
+                        f'evidence/imported/{declaration["path"]}')
+                    destination = session_dir.joinpath(
+                        *relative_path.split('/'))
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(root / declaration['path'], destination)
+                    self.assertEqual(digest(destination), declaration['sha256'])
+                    state_artifacts.append({
+                        **declaration,
+                        'path': relative_path,
+                        'byteSize': destination.stat().st_size,
+                    })
+                capture = {
+                    'operationId': raw['operationId'],
+                    'role': spec['role'],
+                    'sampleIndex': spec['sampleIndex'],
+                    'channelIndex': spec['channelIndex'],
+                    'targetFace': raw['targetFace'],
+                    'capturedAt': raw['capturedAt'],
+                    'rawEvidenceId': raw['evidenceId'],
+                    'normalizedEvidenceId': normalized['evidenceId'],
+                    'completedAt': raw['capturedAt'],
+                }
+                if spec['role'] == 'repeated_placement':
+                    capture['removeReseatCycleId'] = (
+                        f'remove-reseat-cycle-{spec["sampleIndex"]}')
+                state_captures.append(capture)
+
+            target_declaration = declarations[
+                'print-verified-calibration-target']
+            target_relative_path = (
+                f'evidence/target/{target_declaration["path"]}')
+            target_destination = session_dir.joinpath(
+                *target_relative_path.split('/'))
+            target_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(root / target_declaration['path'],
+                            target_destination)
+            self.assertEqual(digest(target_destination),
+                             target_declaration['sha256'])
+            state_artifacts.append({
+                **target_declaration,
+                'path': target_relative_path,
+                'byteSize': target_destination.stat().st_size,
+            })
             state = {
                 'schemaVersion':
                     'ten-kings-mathematical-calibration-capture-session-v1',
@@ -998,6 +1114,8 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 'updatedAt': '2026-07-18T20:00:00.000Z',
                 'protectedSettings': package['stationAuthority'][
                     'protectedSettings'],
+                'evidenceDerivedAuthority':
+                    package['evidenceDerivedAuthority'],
                 'artifacts': state_artifacts,
                 'captures': state_captures,
                 'measurements': [],
@@ -1008,8 +1126,38 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 json.dumps(state, indent=2, sort_keys=True) + '\n',
                 encoding='utf-8')
             derived = PRESEAL.derive(str(session_dir))
-            self.assertEqual(len(derived['requests']), 50)
+            self.assertEqual(len(derived['requests']), 78)
             self.assertEqual(len(derived['existing']), 0)
+            target_requests = [
+                request for request in derived['requests']
+                if request['measurementType'] in {
+                    'print_scale', 'target_cut_dimension'}]
+            direction_requests = [
+                request for request in derived['requests']
+                if request['measurementType'] == 'direction_geometry']
+            repeatability_requests = [
+                request for request in derived['requests']
+                if request['measurementType'] ==
+                'measurement_repeatability']
+            self.assertEqual(len(target_requests), 4)
+            self.assertEqual(len(direction_requests), 24)
+            self.assertEqual(len(repeatability_requests), 50)
+            self.assertTrue(all(
+                request['authorityBasis'] ==
+                'protected_checkerboard_geometry'
+                for request in target_requests))
+            self.assertTrue(all(
+                'measuredSpanMm' not in request and
+                'measuredDimensionMm' not in request and
+                'measurementU95Mm' not in request
+                for request in target_requests))
+            self.assertTrue(all(
+                request['measurementMethod'] ==
+                'illumination_centroid_checkerboard_repeatability_v1' and
+                request['sourceEvidenceId'].startswith('pattern-') and
+                request['sourceCaptureOperationId'].startswith(
+                    'capture-pattern-')
+                for request in direction_requests))
             expected_values = {
                 (entry['measurementClass'], entry['sampleIndex']):
                     entry['measuredValue']
@@ -1018,11 +1166,12 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
             self.assertEqual(
                 {(request['measurementClass'], request['sampleIndex']):
                     request['measuredValue']
-                 for request in derived['requests']},
+                 for request in repeatability_requests},
                 expected_values)
             self.assertTrue(all(
                 request['instrument']['calibrationSha256'] == digest(SCRIPT)
-                for request in derived['requests']))
+                for request in [*direction_requests,
+                                *repeatability_requests]))
 
             request_path = root / 'preseal-requests.json'
             request_path.write_text(
@@ -1063,15 +1212,18 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                 f'stdout={node_record.stdout} stderr={node_record.stderr}')
             self.assertEqual(node_record.stdout, 'recorded')
             verified = PRESEAL.derive(str(session_dir))
-            self.assertEqual(len(verified['existing']), 50)
+            self.assertEqual(len(verified['existing']), 78)
             recorded_state = json.loads(state_path.read_text(encoding='utf-8'))
-            self.assertEqual(len(recorded_state['measurements']), 50)
+            self.assertEqual(len(recorded_state['measurements']), 78)
             self.assertEqual(len([
                 artifact for artifact in recorded_state['artifacts']
                 if artifact['role'] == 'measurement_repeatability']), 50)
-            first_source = session_dir.joinpath(
-                *state_artifacts[0]['path'].split('/'))
-            first_source.write_bytes(first_source.read_bytes() + b'tamper')
+            placement_source = next(
+                artifact for artifact in state_artifacts
+                if artifact['role'] == 'repeated_placement')
+            placement_path = session_dir.joinpath(
+                *placement_source['path'].split('/'))
+            placement_path.write_bytes(placement_path.read_bytes() + b'tamper')
             with self.assertRaisesRegex(ValueError, 'SHA-256 mismatch'):
                 PRESEAL.derive(str(session_dir))
 
@@ -1220,13 +1372,13 @@ class MathematicalCalibrationAnalysisTest(unittest.TestCase):
                     'not declared by the source capture package',
                 ),
                 (
-                    'cut measurement differs from immutable artifact',
+                    'protected cut authority differs from immutable artifact',
                     None,
                     lambda manifest: manifest['target'][
                         'cutDimensionVerification']['x'].update({
-                            'measuredDimensionMm': 63.4,
+                            'protectedDimensionMm': 63.4,
                         }),
-                    'does not match its immutable measurement artifact',
+                    'does not match the exact protected checkerboard target',
                 ),
             ]
             for name, package_mutator, manifest_mutator, message in cases:

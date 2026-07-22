@@ -209,6 +209,17 @@ export type RecordFixedRigMathematicalCalibrationMeasurementV1Request =
       operationId: string;
       measurementType: "print_scale";
       axis: "x" | "y";
+      protectedSpanMm: number;
+      authorityBasis: "protected_checkerboard_geometry";
+      measurementMethod: "protected_checkerboard_geometry_authority_v1";
+      sourceTargetEvidenceId: "print-verified-calibration-target";
+      instrument: FixedRigMathematicalCalibrationProtectedTargetGeometryV1;
+    }
+  | {
+      sessionId: string;
+      operationId: string;
+      measurementType: "print_scale";
+      axis: "x" | "y";
       nominalSpanMm: number;
       measuredSpanMm: number;
       measurementU95Mm: number;
@@ -221,12 +232,39 @@ export type RecordFixedRigMathematicalCalibrationMeasurementV1Request =
       operationId: string;
       measurementType: "target_cut_dimension";
       axis: "x" | "y";
+      protectedDimensionMm: number;
+      authorityBasis: "protected_checkerboard_geometry";
+      measurementMethod: "protected_checkerboard_geometry_authority_v1";
+      sourceTargetEvidenceId: "print-verified-calibration-target";
+      instrument: FixedRigMathematicalCalibrationProtectedTargetGeometryV1;
+    }
+  | {
+      sessionId: string;
+      operationId: string;
+      measurementType: "target_cut_dimension";
+      axis: "x" | "y";
       nominalDimensionMm: number;
       measuredDimensionMm: number;
       measurementU95Mm: number;
       measurementMethod: string;
       sourceMetrologyArtifactSha256: string;
       instrument: FixedRigMathematicalCalibrationInstrumentV1;
+    }
+  | {
+      sessionId: string;
+      operationId: string;
+      measurementType: "direction_geometry";
+      channelIndex: number;
+      sampleIndex: number;
+      sourcePointMm: { x: number; y: number };
+      cardCenterPointMm: { x: number; y: number };
+      pointU95Mm: number;
+      sourceCaptureOperationId: string;
+      sourceEvidenceId: string;
+      sourceSha256: string;
+      measurementAlgorithmVersion: "opencv_illumination_centroid_checkerboard_v1";
+      measurementMethod: "illumination_centroid_checkerboard_repeatability_v1";
+      instrument: FixedRigMathematicalCalibrationCertifiedInstrumentV1;
     }
   | {
       sessionId: string;
@@ -374,6 +412,11 @@ interface CaptureSessionStateV1 {
   updatedAt: string;
   sealedAt?: string;
   protectedSettings: FixedRigMathematicalCalibrationProtectedSettingsV1;
+  evidenceDerivedAuthority: {
+    thresholdSetId: string;
+    thresholdSetHash: string;
+    uncertaintyCoverageFactor: number;
+  };
   artifacts: CaptureArtifactV1[];
   captures: CaptureRecordV1[];
   measurements: MeasurementRecordV1[];
@@ -969,6 +1012,17 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       }
       const targetBytes = await readFile(this.config.targetPath);
       if (hash(targetBytes) !== this.config.targetSha256) throw new Error("Bridge-protected calibration target file SHA-256 mismatch.");
+      const expectedAuthority = this.config.contractVersion === "v1.1"
+        ? {
+            thresholdSetId: MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID,
+            thresholdSetHash: MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH,
+            uncertaintyCoverageFactor: MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST.uncertainty.coverageFactor,
+          }
+        : {
+            thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+            thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+            uncertaintyCoverageFactor: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor,
+          };
       const sessionDir = this.sessionDir(sessionId);
       const statePath = this.statePath(sessionId);
       if (existsSync(statePath)) {
@@ -978,7 +1032,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           state.operatorId !== operatorId ||
           state.subject.targetVersion !== request.targetVersion ||
           state.subject.targetSha256 !== request.targetSha256 ||
-          hash(canonicalBytes(state.protectedSettings)) !== hash(canonicalBytes(this.config.protectedSettings))
+          hash(canonicalBytes(state.protectedSettings)) !== hash(canonicalBytes(this.config.protectedSettings)) ||
+          hash(canonicalBytes(state.evidenceDerivedAuthority)) !== hash(canonicalBytes(expectedAuthority))
         ) {
           const stoppedAt = (this.config.now?.() ?? new Date()).toISOString();
           state.hardStop = { operationId: "session-resume", stoppedAt, reason: "Calibration capture resume identity/settings mismatch." };
@@ -1036,6 +1091,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         createdAt,
         updatedAt: createdAt,
         protectedSettings: this.config.protectedSettings,
+        evidenceDerivedAuthority: expectedAuthority,
         artifacts: [targetArtifact],
         captures: [],
         measurements: [],
@@ -1369,40 +1425,87 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       let schemaVersion: string;
       if (request.measurementType === "print_scale") {
         role = `print_scale_verification_${request.axis}`;
-        schemaVersion = "ten-kings-calibration-print-scale-measurement-v1";
-        const nominalSpanMm = finite(request.nominalSpanMm, "nominalSpanMm", 0.001);
-        const measuredSpanMm = finite(request.measuredSpanMm, "measuredSpanMm", 0.001);
-        const measurementU95Mm = finite(request.measurementU95Mm, "measurementU95Mm", 0);
-        Object.assign(payload, {
-          axis: request.axis,
-          nominalSpanMm,
-          measuredSpanMm,
-          measurementU95Mm,
-          sourceMetrologyArtifactSha256: assertSha256(
-            request.sourceMetrologyArtifactSha256,
-            "sourceMetrologyArtifactSha256",
-          ),
-        });
+        if ("protectedSpanMm" in request) {
+          schemaVersion = "ten-kings-calibration-print-scale-authority-v1";
+          const protectedSpanMm = finite(request.protectedSpanMm, "protectedSpanMm", 0.001);
+          if (request.authorityBasis !== "protected_checkerboard_geometry" ||
+              request.measurementMethod !== "protected_checkerboard_geometry_authority_v1" ||
+              request.sourceTargetEvidenceId !== "print-verified-calibration-target" ||
+              request.instrument.kind !== "protected_target_geometry") {
+            throw new Error("Print-scale authority must come from the exact protected checkerboard target.");
+          }
+          const targetArtifact = state.artifacts.find((artifact) => artifact.evidenceId === request.sourceTargetEvidenceId);
+          if (!targetArtifact || targetArtifact.artifactClass !== "target" || targetArtifact.sha256 !== state.subject.targetSha256) {
+            throw new Error("Print-scale authority source target is unavailable or does not match the session target.");
+          }
+          Object.assign(payload, {
+            axis: request.axis,
+            protectedSpanMm,
+            authorityBasis: request.authorityBasis,
+            sourceTargetEvidenceId: targetArtifact.evidenceId,
+            sourceTargetSha256: targetArtifact.sha256,
+          });
+        } else {
+          if (request.instrument.kind === "protected_target_geometry") {
+            throw new Error("Protected target geometry must use the nominal target-authority contract, not physical measurement fields.");
+          }
+          schemaVersion = "ten-kings-calibration-print-scale-measurement-v1";
+          Object.assign(payload, {
+            axis: request.axis,
+            nominalSpanMm: finite(request.nominalSpanMm, "nominalSpanMm", 0.001),
+            measuredSpanMm: finite(request.measuredSpanMm, "measuredSpanMm", 0.001),
+            measurementU95Mm: finite(request.measurementU95Mm, "measurementU95Mm", 0),
+            sourceMetrologyArtifactSha256: assertSha256(request.sourceMetrologyArtifactSha256, "sourceMetrologyArtifactSha256"),
+          });
+        }
       } else if (request.measurementType === "target_cut_dimension") {
         role = `target_cut_dimension_${request.axis}`;
-        schemaVersion = "ten-kings-calibration-target-cut-dimension-measurement-v1";
-        const nominalDimensionMm = finite(request.nominalDimensionMm, "nominalDimensionMm", 0.001);
-        const measuredDimensionMm = finite(request.measuredDimensionMm, "measuredDimensionMm", 0.001);
-        const measurementU95Mm = finite(request.measurementU95Mm, "measurementU95Mm", 0);
-        Object.assign(payload, {
-          axis: request.axis,
-          nominalDimensionMm,
-          measuredDimensionMm,
-          measurementU95Mm,
-          sourceMetrologyArtifactSha256: assertSha256(
-            request.sourceMetrologyArtifactSha256,
-            "sourceMetrologyArtifactSha256",
-          ),
-        });
+        if ("protectedDimensionMm" in request) {
+          schemaVersion = "ten-kings-calibration-target-cut-dimension-authority-v1";
+          const protectedDimensionMm = finite(request.protectedDimensionMm, "protectedDimensionMm", 0.001);
+          if (request.authorityBasis !== "protected_checkerboard_geometry" ||
+              request.measurementMethod !== "protected_checkerboard_geometry_authority_v1" ||
+              request.sourceTargetEvidenceId !== "print-verified-calibration-target" ||
+              request.instrument.kind !== "protected_target_geometry") {
+            throw new Error("Target-cut authority must come from the exact protected checkerboard target.");
+          }
+          const targetArtifact = state.artifacts.find((artifact) => artifact.evidenceId === request.sourceTargetEvidenceId);
+          if (!targetArtifact || targetArtifact.artifactClass !== "target" || targetArtifact.sha256 !== state.subject.targetSha256) {
+            throw new Error("Target-cut authority source target is unavailable or does not match the session target.");
+          }
+          Object.assign(payload, {
+            axis: request.axis,
+            protectedDimensionMm,
+            authorityBasis: request.authorityBasis,
+            sourceTargetEvidenceId: targetArtifact.evidenceId,
+            sourceTargetSha256: targetArtifact.sha256,
+          });
+        } else {
+          if (request.instrument.kind === "protected_target_geometry") {
+            throw new Error("Protected target geometry must use the nominal target-authority contract, not physical measurement fields.");
+          }
+          schemaVersion = "ten-kings-calibration-target-cut-dimension-measurement-v1";
+          Object.assign(payload, {
+            axis: request.axis,
+            nominalDimensionMm: finite(request.nominalDimensionMm, "nominalDimensionMm", 0.001),
+            measuredDimensionMm: finite(request.measuredDimensionMm, "measuredDimensionMm", 0.001),
+            measurementU95Mm: finite(request.measurementU95Mm, "measurementU95Mm", 0),
+            sourceMetrologyArtifactSha256: assertSha256(request.sourceMetrologyArtifactSha256, "sourceMetrologyArtifactSha256"),
+          });
+        }
       } else if (request.measurementType === "direction_geometry") {
         const channelIndex = positiveInteger(request.channelIndex, "channelIndex");
         const sampleIndex = positiveInteger(request.sampleIndex, "sampleIndex");
         if (channelIndex > 8 || sampleIndex > 3) throw new Error("Direction geometry requires channel 1-8 and sample 1-3.");
+        const evidenceDerived = "measurementAlgorithmVersion" in request;
+        if (evidenceDerived &&
+            (request.measurementMethod !== "illumination_centroid_checkerboard_repeatability_v1" ||
+             request.measurementAlgorithmVersion !== "opencv_illumination_centroid_checkerboard_v1" ||
+             request.instrument.kind !== "fixed_rig_geometry" ||
+             request.instrument.instrumentId !== "ten-kings-illumination-centroid-direction-analyzer-v1" ||
+             request.instrument.calibrationVersion !== request.measurementAlgorithmVersion)) {
+          throw new Error("Direction authority must use the exact illumination-centroid checkerboard derivation.");
+        }
         role = `direction_geometry_channel_${channelIndex}`;
         schemaVersion = "ten-kings-calibration-direction-measurement-v1";
         const sourcePointMm = {
@@ -1420,11 +1523,41 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           sourcePointMm,
           cardCenterPointMm,
           pointU95Mm,
-          sourceMetrologyArtifactSha256: assertSha256(
-            request.sourceMetrologyArtifactSha256,
-            "sourceMetrologyArtifactSha256",
-          ),
         });
+        if (evidenceDerived) {
+          const sourceCaptureOperationId = assertSafeId(request.sourceCaptureOperationId, "sourceCaptureOperationId");
+          const sourceEvidenceId = assertSafeId(request.sourceEvidenceId, "sourceEvidenceId");
+          const sourceSha256 = assertSha256(request.sourceSha256, "sourceSha256");
+          const sourceCapture = state.captures.find((capture) =>
+            capture.operationId === sourceCaptureOperationId && capture.role === "illumination_pattern" &&
+            capture.channelIndex === channelIndex && capture.sampleIndex === sampleIndex
+          );
+          if (!sourceCapture || sourceCapture.normalizedEvidenceId !== sourceEvidenceId) {
+            throw new Error("Direction authority must bind the matching immutable normalized illumination capture.");
+          }
+          const sourceArtifact = state.artifacts.find((artifact) => artifact.evidenceId === sourceEvidenceId);
+          if (!sourceArtifact || sourceArtifact.artifactClass !== "normalized_derivative" ||
+              sourceArtifact.role !== `illumination_pattern_channel_${channelIndex}` || sourceArtifact.sha256 !== sourceSha256) {
+            throw new Error("Direction authority illumination evidence is unavailable or mismatched.");
+          }
+          const sessionRoot = path.resolve(this.sessionDir(request.sessionId));
+          const sourcePath = path.resolve(sessionRoot, ...sourceArtifact.path.split("/"));
+          if (!sourcePath.startsWith(`${sessionRoot}${path.sep}`) || hash(await readFile(sourcePath)) !== sourceSha256) {
+            throw new Error("Direction authority illumination evidence failed immutable path/hash verification.");
+          }
+          Object.assign(payload, {
+            sourceCaptureOperationId, sourceEvidenceId, sourceSha256,
+            sourceRole: `illumination_pattern_channel_${channelIndex}`,
+            measurementAlgorithmVersion: request.measurementAlgorithmVersion,
+          });
+        } else {
+          if (request.instrument.kind === "protected_target_geometry") {
+            throw new Error("Protected target geometry cannot authorize physical light-direction coordinates.");
+          }
+          Object.assign(payload, {
+            sourceMetrologyArtifactSha256: assertSha256(request.sourceMetrologyArtifactSha256, "sourceMetrologyArtifactSha256"),
+          });
+        }
       } else {
         if (!MEASUREMENT_CLASSES.includes(request.measurementClass)) throw new Error("measurementClass is not allowlisted.");
         const sampleIndex = positiveInteger(request.sampleIndex, "sampleIndex");
@@ -1641,6 +1774,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         purpose: state.purpose,
         thresholdSetId: v11 ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_ID : MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
         thresholdSetHash: v11 ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_SET_HASH : MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+        evidenceDerivedAuthority: state.evidenceDerivedAuthority,
         captureEvidenceAcceptance:
           thresholdManifest.calibrationAcceptance.captureEvidence,
         ...(v11 ? {
@@ -1690,8 +1824,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         path: targetArtifact.path,
         version: state.subject.targetVersion,
         sha256: targetArtifact.sha256,
-        couponWidthMm: Number(measurementFor("target_cut_dimension", (payload) => payload.axis === "x").nominalDimensionMm),
-        couponHeightMm: Number(measurementFor("target_cut_dimension", (payload) => payload.axis === "y").nominalDimensionMm),
+        couponWidthMm: Number(measurementFor("target_cut_dimension", (payload) => payload.axis === "x").protectedDimensionMm ?? measurementFor("target_cut_dimension", (payload) => payload.axis === "x").nominalDimensionMm),
+        couponHeightMm: Number(measurementFor("target_cut_dimension", (payload) => payload.axis === "y").protectedDimensionMm ?? measurementFor("target_cut_dimension", (payload) => payload.axis === "y").nominalDimensionMm),
         cutDimensionVerification: {
           x: measurementFor("target_cut_dimension", (payload) => payload.axis === "x"),
           y: measurementFor("target_cut_dimension", (payload) => payload.axis === "y"),

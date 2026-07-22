@@ -4,6 +4,7 @@ import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
+  MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
 } from "@tenkings/shared";
@@ -64,7 +65,7 @@ const SOURCE_REFERENCE_ROLES = new Set([
   "instrument_calibration", "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
 ]);
 const REQUIRED_NON_INSTRUMENT_REFERENCE_ROLES = [
-  "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
+  "lens_authority", "component_wiring", "stage_transform_measurement",
 ] as const;
 const RIG_MEMBER_SPECS = Object.freeze([
   { role: "target_metrology", fileName: "target-metrology-authority-v1.json" },
@@ -266,6 +267,39 @@ function validateProtectedTargetGeometryInstrument(
   return true;
 }
 
+function validateProtectedTargetGeometryMeasurement(
+  value: JsonObject,
+  sourceRole: string,
+  targetSha256: string,
+): void {
+  const axis = sourceRole.endsWith("_x") ? "x" : sourceRole.endsWith("_y") ? "y" : null;
+  if (!axis || value.measurementMethod !== "protected_checkerboard_geometry_authority_v1" ||
+      value.authorityBasis !== "protected_checkerboard_geometry" ||
+      value.sourceTargetEvidenceId !== "print-verified-calibration-target" ||
+      value.sourceTargetSha256 !== targetSha256 || value.sourceMetrologyArtifactSha256 !== undefined) {
+    throw new Error("Protected target geometry measurement does not use the exact nominal target-authority contract.");
+  }
+  if (sourceRole === `print_scale_verification_${axis}`) {
+    if (value.schemaVersion !== "ten-kings-calibration-print-scale-authority-v1" ||
+        value.protectedSpanMm !== (axis === "x" ? 100 : 200) ||
+        value.nominalSpanMm !== undefined || value.measuredSpanMm !== undefined ||
+        value.measurementU95Mm !== undefined) {
+      throw new Error("Protected print-scale authority is not exact nominal checkerboard geometry.");
+    }
+    return;
+  }
+  if (sourceRole === `target_cut_dimension_${axis}`) {
+    if (value.schemaVersion !== "ten-kings-calibration-target-cut-dimension-authority-v1" ||
+        value.protectedDimensionMm !== (axis === "x" ? 63.5 : 88.9) ||
+        value.nominalDimensionMm !== undefined || value.measuredDimensionMm !== undefined ||
+        value.measurementU95Mm !== undefined) {
+      throw new Error("Protected target-cut authority is not exact nominal checkerboard geometry.");
+    }
+    return;
+  }
+  throw new Error("Protected target geometry cannot authorize non-target physical measurements.");
+}
+
 function safeRelative(value: unknown, label: string): string {
   if (typeof value !== "string" || !SAFE_RELATIVE.test(value) || path.isAbsolute(value) || value.includes("\\") ||
       value.split("/").some((part) => part === "" || part === "." || part === "..")) {
@@ -310,7 +344,7 @@ function validateInputManifest(value: FastCalibrationRigMaterializationInputMani
   validateFileReference(value.componentEvidence, "componentEvidence");
   validateFileReference(value.stageTransformEvidence, "stageTransformEvidence");
   if (!Array.isArray(value.referencedEvidence) || value.referencedEvidence.length < 5) {
-    throw new Error("Rig materialization requires explicit metrology, lens, wiring, and stage evidence.");
+    throw new Error("Rig materialization requires explicit lens, wiring, and stage evidence.");
   }
   const names = new Set<string>();
   const hashes = new Set<string>();
@@ -441,6 +475,14 @@ async function loadCaptureAuthority(input: {
       packageValue.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH) {
     throw new Error("Source capture package is not exact supervised Mathematical V1.0.1 raw evidence.");
   }
+  const evidenceDerivedAuthority = packageValue.evidenceDerivedAuthority as JsonObject;
+  if (!evidenceDerivedAuthority) throw new Error("Source capture package lacks evidence-derived threshold authority.");
+  exactKeys(evidenceDerivedAuthority, ["thresholdSetId", "thresholdSetHash", "uncertaintyCoverageFactor"], "evidence-derived threshold authority");
+  if (evidenceDerivedAuthority.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      evidenceDerivedAuthority.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
+      evidenceDerivedAuthority.uncertaintyCoverageFactor !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor) {
+    throw new Error("Evidence-derived uncertainty does not bind the loaded centralized threshold authority.");
+  }
   const subject = packageValue.subject as JsonObject;
   if (!subject || subject.designation !== "calibration_target" || subject.productionCard !== false) {
     throw new Error("Source capture package must be a non-production calibration target.");
@@ -509,7 +551,7 @@ async function loadCaptureAuthority(input: {
         ? subjectTargetSha256
         : exactSha(instrument.calibrationSha256, "measurement instrument authority sha256");
       if (protectedTargetGeometry) {
-        // The exact target bytes are already a hash-verified capture artifact, not an external device authority.
+        validateProtectedTargetGeometryMeasurement(measurement, sourceRole, subjectTargetSha256);
       } else if (instrument.kind === "fixed_rig_geometry") {
         if (instrumentHash !== input.physicalAnalyzerSha256) throw new Error("Repeatability measurement does not bind the loaded physical analyzer bytes.");
       } else {
@@ -845,6 +887,14 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
       capturePackage.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH) {
     throw new Error("Materialized capture authority is not exact supervised Mathematical V1.0.1 raw evidence.");
   }
+  const materializedEvidenceAuthority = capturePackage.evidenceDerivedAuthority as JsonObject;
+  if (!materializedEvidenceAuthority) throw new Error("Materialized capture package lacks evidence-derived threshold authority.");
+  exactKeys(materializedEvidenceAuthority, ["thresholdSetId", "thresholdSetHash", "uncertaintyCoverageFactor"], "materialized evidence-derived threshold authority");
+  if (materializedEvidenceAuthority.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      materializedEvidenceAuthority.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH ||
+      materializedEvidenceAuthority.uncertaintyCoverageFactor !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor) {
+    throw new Error("Materialized evidence-derived uncertainty differs from the loaded threshold authority.");
+  }
   exactKeys(captureManifest.sourceCapturePackage, ["packageId", "path", "sha256"], "materialized source capture package binding");
   if ((captureManifest.sourceCapturePackage as JsonObject).sha256 !== capturePackageEvidence.entry.sha256) {
     throw new Error("Materialized capture manifest does not bind the exact copied capture package bytes.");
@@ -901,6 +951,7 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
         ? captureTargetSha256
         : exactSha(instrument.calibrationSha256, "materialized measurement instrument sha256");
       if (protectedTargetGeometry) {
+        validateProtectedTargetGeometryMeasurement(measurement, artifactEntry.sourceRole, captureTargetSha256);
         const targetEntry = evidence.files.find((entry) => entry.kind === "capture_artifact" &&
           entry.sourceRole === "print_verified_calibration_target" && entry.sha256 === captureTargetSha256);
         if (!targetEntry) throw new Error("Materialized protected target geometry bytes are unavailable.");
