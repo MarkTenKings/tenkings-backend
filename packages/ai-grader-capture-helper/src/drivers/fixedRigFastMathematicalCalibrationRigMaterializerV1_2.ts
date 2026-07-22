@@ -1,0 +1,1079 @@
+import crypto from "node:crypto";
+import { spawn } from "node:child_process";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import path from "node:path";
+import {
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+} from "@tenkings/shared";
+import {
+  FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256,
+  FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256,
+} from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
+import { FIXED_RIG_FAST_CALIBRATION_FINALIZER_V1_2_SHA256 } from "./fixedRigFastCalibrationFinalizerAlgorithmV1_2";
+import {
+  FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA,
+  FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
+  hashFastCalibrationCanonicalV1_2,
+  validateFastCalibrationRuntimeContextV1_2,
+  verifyFastCalibrationRigCharacterizationSourceV1_2,
+  type FastCalibrationChannelWiringV1_2,
+  type FastCalibrationRigCharacterizationSourceV1_2,
+  type FastCalibrationRigSourceBundleMemberV1_2,
+  type FastCalibrationRuntimeContextV1_2,
+} from "./fixedRigFastMathematicalCalibrationV1_2";
+import {
+  buildFixedRigPhysicalCalibrationV1,
+  type BuildFixedRigPhysicalCalibrationV1Input,
+  type FixedRigCalibrationEvidenceReferenceV1,
+} from "./fixedRigPhysicalCalibrationV1";
+
+export const FAST_CALIBRATION_RIG_MATERIALIZATION_INPUT_SCHEMA_V1_2 =
+  "ten-kings-mathematical-calibration-v1.2-rig-materialization-input-v1" as const;
+export const FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_SCHEMA_V1_2 =
+  "ten-kings-mathematical-calibration-v1.2-rig-source-evidence-v1" as const;
+export const FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_SCHEMA_V1_2 =
+  "ten-kings-mathematical-calibration-v1.2-rig-physical-analysis-v1" as const;
+export const FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_SCHEMA_V1_2 =
+  "ten-kings-mathematical-calibration-v1.2-rig-authority-materialization-handoff-v1" as const;
+export const FAST_CALIBRATION_RIG_MATERIALIZATION_AUTHORITY_V1_2 =
+  "trusted-local-supervised-rig-characterization-materializer-v1" as const;
+export const FAST_CALIBRATION_RIG_MATERIALIZATION_CONFIRMATION_V1_2 =
+  "MATERIALIZE MATHEMATICAL CALIBRATION V1.2 RIG AUTHORITY" as const;
+
+export const FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2 = "mathematical-calibration-runtime-context-v1.2.json" as const;
+export const FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2 = "rig-characterization-source-v1.2.json" as const;
+export const FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_FILE_V1_2 = "rig-characterization-source-evidence-v1.json" as const;
+export const FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_FILE_V1_2 = "rig-characterization-physical-analysis-v1.json" as const;
+export const FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_FILE_V1_2 = "rig-characterization-materializer-handoff-v1.json" as const;
+export const FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_DIR_V1_2 = "source-evidence" as const;
+
+const CAPTURE_MANIFEST_SCHEMA = "ten-kings-mathematical-calibration-capture-manifest-v1";
+const CAPTURE_PACKAGE_SCHEMA = "ten-kings-mathematical-calibration-capture-package-v1";
+const CAPTURE_PROFILE = "ten-kings-fixed-rig-mathematical-calibration-v1";
+const PHYSICAL_ANALYSIS_SCHEMA = "ten-kings-mathematical-calibration-analysis-v1";
+const PHYSICAL_ANALYSIS_ALGORITHM = "opencv_physical_calibration_analysis_v1";
+const LIVE_PROBE_SCHEMA = "ten-kings-mathematical-calibration-v1.2-protected-live-probe-evidence-v1";
+const COMPONENT_EVIDENCE_SCHEMA = "ten-kings-mathematical-calibration-v1.2-component-supervision-evidence-v1";
+const STAGE_TRANSFORM_SCHEMA = "ten-kings-mathematical-calibration-v1.2-stage-transform-evidence-v1";
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
+const SAFE_RELATIVE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,511}$/;
+const SOURCE_REFERENCE_ROLES = new Set([
+  "instrument_calibration", "metrology_source", "lens_authority", "component_wiring", "stage_transform_measurement",
+]);
+const RIG_MEMBER_SPECS = Object.freeze([
+  { role: "target_metrology", fileName: "target-metrology-authority-v1.json" },
+  { role: "camera_lens", fileName: "camera-lens-authority-v1.json" },
+  { role: "physical_light_directions", fileName: "physical-light-directions-authority-v1.json" },
+  { role: "component_identities", fileName: "component-identities-authority-v1.json" },
+  { role: "repeatability", fileName: "repeatability-authority-v1.json" },
+] as const);
+
+type JsonObject = Record<string, unknown>;
+type FileReference = { fileName: string; sha256: string };
+type ReferencedEvidence = FileReference & { role: string };
+
+export interface FastCalibrationRigMaterializationInputManifestV1_2 {
+  schemaVersion: typeof FAST_CALIBRATION_RIG_MATERIALIZATION_INPUT_SCHEMA_V1_2;
+  captureManifest: FileReference;
+  liveProbe: FileReference;
+  componentEvidence: FileReference;
+  stageTransformEvidence: FileReference;
+  referencedEvidence: ReferencedEvidence[];
+}
+
+export interface FastCalibrationProtectedLiveProbeEvidenceV1_2 {
+  schemaVersion: typeof LIVE_PROBE_SCHEMA;
+  observedAt: string;
+  probeAuthority: "protected-basler-leimac-live-probe-v1";
+  stationId: string;
+  rigId: string;
+  camera: {
+    serialNumber: string;
+    modelName: string;
+    transport: "GigE";
+    exposureUs: number;
+    gain: number;
+    pixelFormat: string;
+    widthPx: number;
+    heightPx: number;
+  };
+  controller: { identity: string; unit: number; responseKinds: string[] };
+  dutyPercent: number;
+  locationLabel: string;
+  lightingConfigurationId: string;
+}
+
+export interface FastCalibrationComponentSupervisionEvidenceV1_2 {
+  schemaVersion: typeof COMPONENT_EVIDENCE_SCHEMA;
+  recordedAt: string;
+  operatorId: string;
+  rigId: string;
+  controllerIdentity: string;
+  componentConfigurationId: string;
+  lensAuthorityId: string;
+  lensAuthorityEvidenceSha256: string;
+  wiringEvidenceSha256: string;
+  channelWiring: FastCalibrationChannelWiringV1_2[];
+  targetVersion: string;
+  targetSha256: string;
+}
+
+export interface FastCalibrationStageTransformEvidenceV1_2 {
+  schemaVersion: typeof STAGE_TRANSFORM_SCHEMA;
+  recordedAt: string;
+  operatorId: string;
+  rigId: string;
+  cameraSerialNumber: string;
+  cameraModelName: string;
+  lensAuthorityId: string;
+  method: "supervised-stage-to-undistorted-sensor-matrix-v1";
+  stageToUndistortedSensorMatrix: [number, number, number, number];
+  measurementEvidenceSha256: string[];
+}
+
+export interface FastCalibrationRigPhysicalAnalysisV1_2 {
+  schemaVersion: typeof FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_SCHEMA_V1_2;
+  sourceCaptureManifestSha256: string;
+  sourceCapturePackageSha256: string;
+  physicalAnalyzerSha256: string;
+  builderInput: BuildFixedRigPhysicalCalibrationV1Input;
+  physicalArtifactSha256: string;
+  profileSha256: string;
+}
+
+export interface FastCalibrationRigSourceEvidenceEntryV1_2 {
+  kind: string;
+  evidenceId: string;
+  sourceRole: string;
+  fileName: string;
+  sha256: string;
+  byteSize: number;
+}
+
+export interface FastCalibrationRigSourceEvidenceManifestV1_2 {
+  schemaVersion: typeof FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_SCHEMA_V1_2;
+  inputManifestSha256: string;
+  sourceCaptureManifestSha256: string;
+  sourceCapturePackageSha256: string;
+  physicalAnalyzerSha256: string;
+  physicalAnalyzerDependencyManifestSha256: string;
+  files: FastCalibrationRigSourceEvidenceEntryV1_2[];
+}
+
+export interface FastCalibrationRigMaterializationAnalysisResultV1_2 {
+  builderInput: BuildFixedRigPhysicalCalibrationV1Input;
+  derivedArtifacts: Array<{ kind: "derived_flat_field" | "derived_illumination_pattern"; sourceRole: string; bytes: Buffer }>;
+}
+
+export interface MaterializeFastCalibrationRigAuthorityV1_2Input {
+  inputManifestPath: string;
+  inputManifestSha256: string;
+  acceptanceRoot: string;
+  confirmation: string;
+  pythonExecutable?: string;
+  analyzePhysicalEvidence?: (input: {
+    captureManifestPath: string;
+    captureManifestSha256: string;
+    outputDir: string;
+  }) => Promise<FastCalibrationRigMaterializationAnalysisResultV1_2>;
+}
+
+export interface MaterializedFastCalibrationRigAuthorityV1_2 {
+  directoryName: string;
+  runtimeContextSha256: string;
+  rigSourceBundleSha256: string;
+  sourceEvidenceManifestSha256: string;
+  physicalAnalysisSha256: string;
+  handoffSha256: string;
+  runtimeContext: FastCalibrationRuntimeContextV1_2;
+  rigSource: FastCalibrationRigCharacterizationSourceV1_2;
+}
+
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as JsonObject)
+      .filter(([, entry]) => entry !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => [key, canonical(entry)]));
+  }
+  return value;
+}
+
+function canonicalBytes(value: unknown): Buffer {
+  return Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
+}
+
+function hash(bytes: Uint8Array): string {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+function exactKeys(value: unknown, keys: readonly string[], label: string): asserts value is JsonObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be one exact object.`);
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} contains missing or extra fields.`);
+  }
+}
+
+function exactId(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SAFE_ID.test(value)) throw new Error(`${label} must be an exact safe identifier.`);
+  return value;
+}
+
+function exactSha(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SHA256.test(value)) throw new Error(`${label} must be an exact lowercase SHA-256.`);
+  return value;
+}
+
+function exactTimestamp(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) ||
+      new Date(value).toISOString() !== value) throw new Error(`${label} must be one exact UTC timestamp.`);
+  return value;
+}
+
+function finite(value: unknown, label: string, minimum?: number, maximum?: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value) ||
+      (minimum !== undefined && value < minimum) || (maximum !== undefined && value > maximum)) {
+    throw new Error(`${label} is outside its finite allowed range.`);
+  }
+  return value;
+}
+
+function safeRelative(value: unknown, label: string): string {
+  if (typeof value !== "string" || !SAFE_RELATIVE.test(value) || path.isAbsolute(value) || value.includes("\\") ||
+      value.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    throw new Error(`${label} must be one safe relative file name.`);
+  }
+  return value;
+}
+
+function contained(root: string, relativeName: string): string {
+  const absoluteRoot = path.resolve(root);
+  const resolved = path.resolve(absoluteRoot, ...relativeName.split("/"));
+  if (resolved === absoluteRoot || !resolved.startsWith(`${absoluteRoot}${path.sep}`)) {
+    throw new Error("Rig materialization evidence path escaped its protected root.");
+  }
+  return resolved;
+}
+
+function parseCanonical<T>(bytes: Buffer, label: string): T {
+  let value: unknown;
+  try { value = JSON.parse(bytes.toString("utf8")); } catch { throw new Error(`${label} is not valid JSON.`); }
+  if (!bytes.equals(canonicalBytes(value))) throw new Error(`${label} must use exact canonical JSON bytes.`);
+  return value as T;
+}
+
+async function readExact(filePath: string, expectedSha256: string, label: string): Promise<Buffer> {
+  const bytes = await readFile(filePath);
+  if (hash(bytes) !== expectedSha256) throw new Error(`${label} differs from its exact SHA-256.`);
+  return bytes;
+}
+
+function validateFileReference(value: FileReference, label: string): void {
+  exactKeys(value, ["fileName", "sha256"], label);
+  safeRelative(value.fileName, `${label}.fileName`);
+  exactSha(value.sha256, `${label}.sha256`);
+}
+
+function validateInputManifest(value: FastCalibrationRigMaterializationInputManifestV1_2): void {
+  exactKeys(value, ["schemaVersion", "captureManifest", "liveProbe", "componentEvidence", "stageTransformEvidence", "referencedEvidence"], "rig materialization input");
+  if (value.schemaVersion !== FAST_CALIBRATION_RIG_MATERIALIZATION_INPUT_SCHEMA_V1_2) throw new Error("Rig materialization input schema mismatch.");
+  validateFileReference(value.captureManifest, "captureManifest");
+  validateFileReference(value.liveProbe, "liveProbe");
+  validateFileReference(value.componentEvidence, "componentEvidence");
+  validateFileReference(value.stageTransformEvidence, "stageTransformEvidence");
+  if (!Array.isArray(value.referencedEvidence) || value.referencedEvidence.length < 5) {
+    throw new Error("Rig materialization requires explicit metrology, instrument, lens, wiring, and stage evidence.");
+  }
+  const names = new Set<string>();
+  const hashes = new Set<string>();
+  const roles = new Set<string>();
+  for (const entry of value.referencedEvidence) {
+    exactKeys(entry, ["role", "fileName", "sha256"], "referenced evidence");
+    if (!SOURCE_REFERENCE_ROLES.has(entry.role)) throw new Error("Rig materialization referenced-evidence role is not allowlisted.");
+    safeRelative(entry.fileName, "referenced evidence fileName");
+    exactSha(entry.sha256, "referenced evidence sha256");
+    if (names.has(entry.fileName) || hashes.has(entry.sha256)) throw new Error("Rig materialization rejects duplicate or relabelled referenced evidence.");
+    names.add(entry.fileName);
+    hashes.add(entry.sha256);
+    roles.add(entry.role);
+  }
+  for (const role of SOURCE_REFERENCE_ROLES) {
+    if (!roles.has(role)) throw new Error(`Rig materialization requires explicit ${role} evidence.`);
+  }
+}
+
+function validateLiveProbe(value: FastCalibrationProtectedLiveProbeEvidenceV1_2): void {
+  exactKeys(value, ["schemaVersion", "observedAt", "probeAuthority", "stationId", "rigId", "camera", "controller", "dutyPercent", "locationLabel", "lightingConfigurationId"], "live probe evidence");
+  if (value.schemaVersion !== LIVE_PROBE_SCHEMA || value.probeAuthority !== "protected-basler-leimac-live-probe-v1") {
+    throw new Error("Rig materialization rejects synthetic or unrecognized live-probe evidence.");
+  }
+  exactTimestamp(value.observedAt, "live probe observedAt");
+  exactId(value.stationId, "live probe stationId");
+  exactId(value.rigId, "live probe rigId");
+  exactKeys(value.camera, ["serialNumber", "modelName", "transport", "exposureUs", "gain", "pixelFormat", "widthPx", "heightPx"], "live probe camera");
+  if (value.camera.transport !== "GigE") throw new Error("Rig materialization requires observed Basler GigE evidence.");
+  exactId(value.camera.serialNumber, "live probe camera serialNumber");
+  exactId(value.camera.modelName, "live probe camera modelName");
+  exactId(value.camera.pixelFormat, "live probe camera pixelFormat");
+  finite(value.camera.exposureUs, "live probe exposureUs", 1, 10_000_000);
+  finite(value.camera.gain, "live probe gain", 0, 100);
+  if (!Number.isInteger(value.camera.widthPx) || !Number.isInteger(value.camera.heightPx) || value.camera.widthPx < 64 || value.camera.heightPx < 64) {
+    throw new Error("Live probe camera dimensions are invalid.");
+  }
+  exactKeys(value.controller, ["identity", "unit", "responseKinds"], "live probe controller");
+  exactId(value.controller.identity, "live probe controller identity");
+  if (!Number.isInteger(value.controller.unit) || value.controller.unit < 1 || value.controller.unit > 255 ||
+      !Array.isArray(value.controller.responseKinds) || value.controller.responseKinds.length === 0 ||
+      value.controller.responseKinds.some((entry) => entry !== "ack")) {
+    throw new Error("Live probe requires exact controller unit-information acknowledgements.");
+  }
+  finite(value.dutyPercent, "live probe dutyPercent", Number.EPSILON, 100);
+  exactId(value.locationLabel, "live probe locationLabel");
+  exactId(value.lightingConfigurationId, "live probe lightingConfigurationId");
+}
+
+function validateWiring(value: FastCalibrationChannelWiringV1_2[]): void {
+  if (!Array.isArray(value) || value.length !== 8) throw new Error("Component evidence requires exact channel wiring 1 through 8.");
+  const outputs = new Set<string>();
+  value.forEach((entry, index) => {
+    exactKeys(entry, ["channelIndex", "controllerOutput", "componentId", "physicalDirectionId"], "component channel wiring");
+    if (entry.channelIndex !== index + 1) throw new Error("Component channel wiring order must be exact 1 through 8.");
+    const output = exactId(entry.controllerOutput, "component controllerOutput");
+    if (outputs.has(output)) throw new Error("Component controller outputs must be unique.");
+    outputs.add(output);
+    exactId(entry.componentId, "component componentId");
+    exactId(entry.physicalDirectionId, "component physicalDirectionId");
+  });
+}
+
+function validateComponentEvidence(value: FastCalibrationComponentSupervisionEvidenceV1_2): void {
+  exactKeys(value, ["schemaVersion", "recordedAt", "operatorId", "rigId", "controllerIdentity", "componentConfigurationId", "lensAuthorityId", "lensAuthorityEvidenceSha256", "wiringEvidenceSha256", "channelWiring", "targetVersion", "targetSha256"], "component evidence");
+  if (value.schemaVersion !== COMPONENT_EVIDENCE_SCHEMA) throw new Error("Component supervision evidence schema mismatch.");
+  exactTimestamp(value.recordedAt, "component evidence recordedAt");
+  [value.operatorId, value.rigId, value.controllerIdentity, value.componentConfigurationId, value.lensAuthorityId, value.targetVersion]
+    .forEach((entry, index) => exactId(entry, `component evidence identity ${index}`));
+  exactSha(value.lensAuthorityEvidenceSha256, "component lens evidence sha256");
+  exactSha(value.wiringEvidenceSha256, "component wiring evidence sha256");
+  exactSha(value.targetSha256, "component target sha256");
+  validateWiring(value.channelWiring);
+}
+
+function validateStageTransform(value: FastCalibrationStageTransformEvidenceV1_2): void {
+  exactKeys(value, ["schemaVersion", "recordedAt", "operatorId", "rigId", "cameraSerialNumber", "cameraModelName", "lensAuthorityId", "method", "stageToUndistortedSensorMatrix", "measurementEvidenceSha256"], "stage transform evidence");
+  if (value.schemaVersion !== STAGE_TRANSFORM_SCHEMA || value.method !== "supervised-stage-to-undistorted-sensor-matrix-v1") {
+    throw new Error("Stage transform evidence schema or method mismatch.");
+  }
+  exactTimestamp(value.recordedAt, "stage transform recordedAt");
+  [value.operatorId, value.rigId, value.cameraSerialNumber, value.cameraModelName, value.lensAuthorityId]
+    .forEach((entry, index) => exactId(entry, `stage transform identity ${index}`));
+  if (!Array.isArray(value.stageToUndistortedSensorMatrix) || value.stageToUndistortedSensorMatrix.length !== 4 ||
+      value.stageToUndistortedSensorMatrix.some((entry) => !Number.isFinite(entry)) ||
+      Math.abs(value.stageToUndistortedSensorMatrix[0] * value.stageToUndistortedSensorMatrix[3] -
+        value.stageToUndistortedSensorMatrix[1] * value.stageToUndistortedSensorMatrix[2]) < 1e-12) {
+    throw new Error("Stage transform requires one finite non-singular measured matrix.");
+  }
+  if (!Array.isArray(value.measurementEvidenceSha256) || value.measurementEvidenceSha256.length < 3 ||
+      new Set(value.measurementEvidenceSha256).size !== value.measurementEvidenceSha256.length) {
+    throw new Error("Stage transform requires at least three unique supervised measurement artifacts.");
+  }
+  value.measurementEvidenceSha256.forEach((entry) => exactSha(entry, "stage transform measurement evidence sha256"));
+}
+
+type CapturedArtifact = {
+  evidenceId: string;
+  sourceRole: string;
+  kind: "capture_artifact";
+  bytes: Buffer;
+  metadata: JsonObject;
+};
+
+async function loadCaptureAuthority(input: {
+  root: string;
+  captureManifestRef: FileReference;
+  liveProbe: FastCalibrationProtectedLiveProbeEvidenceV1_2;
+  physicalAnalyzerSha256: string;
+  referencesByHash: Map<string, ReferencedEvidence>;
+  consumedReferenceHashes: Set<string>;
+}): Promise<{ captureManifestBytes: Buffer; capturePackageBytes: Buffer; capturePackageSha256: string; artifacts: CapturedArtifact[]; packageValue: JsonObject }> {
+  const captureManifestPath = contained(input.root, input.captureManifestRef.fileName);
+  const captureManifestBytes = await readExact(captureManifestPath, input.captureManifestRef.sha256, "source capture manifest");
+  const manifest = parseCanonical<JsonObject>(captureManifestBytes, "source capture manifest");
+  if (manifest.schemaVersion !== CAPTURE_MANIFEST_SCHEMA || manifest.captureProfileVersion !== CAPTURE_PROFILE) {
+    throw new Error("Rig materialization requires the exact supervised V1.0.1 raw capture manifest, never an old profile or V1.1 projection.");
+  }
+  exactKeys(manifest.sourceCapturePackage, ["packageId", "path", "sha256"], "source capture package binding");
+  const packageRef = manifest.sourceCapturePackage as { packageId: string; path: string; sha256: string };
+  exactId(packageRef.packageId, "source capture packageId");
+  safeRelative(packageRef.path, "source capture package path");
+  exactSha(packageRef.sha256, "source capture package sha256");
+  const capturePackageBytes = await readExact(contained(input.root, packageRef.path), packageRef.sha256, "source capture package");
+  const packageValue = parseCanonical<JsonObject>(capturePackageBytes, "source capture package");
+  if (packageValue.schemaVersion !== CAPTURE_PACKAGE_SCHEMA || packageValue.captureProfileVersion !== CAPTURE_PROFILE ||
+      packageValue.purpose !== "mathematical_calibration_v1" || packageValue.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      packageValue.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH) {
+    throw new Error("Source capture package is not exact supervised Mathematical V1.0.1 raw evidence.");
+  }
+  const subject = packageValue.subject as JsonObject;
+  if (!subject || subject.designation !== "calibration_target" || subject.productionCard !== false) {
+    throw new Error("Source capture package must be a non-production calibration target.");
+  }
+  const station = packageValue.stationAuthority as JsonObject;
+  const settings = station?.protectedSettings as JsonObject;
+  if (!station || station.noProductionMutation !== true || !settings || settings.stationId !== input.liveProbe.stationId ||
+      settings.rigId !== input.liveProbe.rigId || settings.captureProfileVersion !== CAPTURE_PROFILE ||
+      settings.exposureUs !== input.liveProbe.camera.exposureUs || settings.gain !== input.liveProbe.camera.gain ||
+      settings.dutyPercent !== input.liveProbe.dutyPercent || settings.leimacUnit !== input.liveProbe.controller.unit) {
+    throw new Error("Source capture protected settings differ from the protected live probe.");
+  }
+  const artifactsValue = packageValue.artifacts;
+  if (!Array.isArray(artifactsValue) || artifactsValue.length === 0) throw new Error("Source capture package has no exact artifact ledger.");
+  const ids = new Set<string>();
+  const paths = new Set<string>();
+  const hashes = new Set<string>();
+  const artifacts: CapturedArtifact[] = [];
+  let rawCount = 0;
+  let normalizedCount = 0;
+  let measurementCount = 0;
+  let targetCount = 0;
+  for (const candidate of artifactsValue) {
+    const artifact = candidate as JsonObject;
+    const evidenceId = exactId(artifact.evidenceId, "capture artifact evidenceId");
+    const relative = safeRelative(artifact.path, "capture artifact path");
+    const sha256 = exactSha(artifact.sha256, "capture artifact sha256");
+    const sourceRole = exactId(artifact.role, "capture artifact role");
+    if (ids.has(evidenceId) || paths.has(relative) || hashes.has(sha256)) throw new Error("Source capture package contains duplicate or relabelled evidence.");
+    ids.add(evidenceId); paths.add(relative); hashes.add(sha256);
+    const bytes = await readExact(contained(input.root, relative), sha256, `capture artifact ${evidenceId}`);
+    if (!Number.isInteger(artifact.byteSize) || artifact.byteSize !== bytes.length || artifact.rigId !== input.liveProbe.rigId ||
+        artifact.captureProfileVersion !== CAPTURE_PROFILE || artifact.subjectDesignation !== "calibration_target" || artifact.productionCard !== false) {
+      throw new Error("Source capture artifact metadata differs from its exact bytes or protected identity.");
+    }
+    if (artifact.artifactClass === "raw_capture") {
+      rawCount += 1;
+      const camera = artifact.camera as JsonObject;
+      const pylon = artifact.pylon as JsonObject;
+      const leimac = artifact.leimac as JsonObject;
+      const safeOff = artifact.safeOff as JsonObject;
+      if (!camera || camera.serialNumber !== input.liveProbe.camera.serialNumber || camera.modelName !== input.liveProbe.camera.modelName ||
+          camera.transport !== "GigE" || camera.sourcePixelFormat !== input.liveProbe.camera.pixelFormat ||
+          camera.exposureUs !== input.liveProbe.camera.exposureUs || camera.gain !== input.liveProbe.camera.gain ||
+          !pylon || typeof pylon.version !== "string" || typeof pylon.bridgeVersion !== "string" ||
+          !leimac || leimac.unit !== input.liveProbe.controller.unit || leimac.complete !== true ||
+          leimac.expectedWriteCount !== leimac.acknowledgedWriteCount || !Array.isArray(leimac.responseKinds) ||
+          (leimac.responseKinds as unknown[]).some((entry) => entry !== "ack") || !safeOff ||
+          safeOff.beforeCaptureConfirmed !== true || safeOff.afterCaptureConfirmed !== true) {
+        throw new Error("Raw capture lacks exact observed camera/controller/safe-off authority.");
+      }
+    } else if (artifact.artifactClass === "normalized_derivative") normalizedCount += 1;
+    else if (artifact.artifactClass === "measurement") {
+      measurementCount += 1;
+      const measurement = parseCanonical<JsonObject>(bytes, `measurement artifact ${evidenceId}`);
+      const instrument = measurement.instrument as JsonObject;
+      if (!instrument) throw new Error("Measurement artifact lacks exact instrument authority.");
+      const instrumentHash = exactSha(instrument.calibrationSha256, "measurement instrument calibration sha256");
+      if (instrument.kind === "fixed_rig_geometry") {
+        if (instrumentHash !== input.physicalAnalyzerSha256) throw new Error("Repeatability measurement does not bind the loaded physical analyzer bytes.");
+      } else {
+        const reference = input.referencesByHash.get(instrumentHash);
+        if (!reference || reference.role !== "instrument_calibration") throw new Error("Measurement instrument calibration hash is not dereferenced to exact bytes.");
+        input.consumedReferenceHashes.add(instrumentHash);
+      }
+      if (measurement.sourceMetrologyArtifactSha256 !== undefined) {
+        const metrologyHash = exactSha(measurement.sourceMetrologyArtifactSha256, "measurement source metrology sha256");
+        const reference = input.referencesByHash.get(metrologyHash);
+        if (!reference || reference.role !== "metrology_source") throw new Error("Measurement metrology hash is not dereferenced to exact bytes.");
+        input.consumedReferenceHashes.add(metrologyHash);
+      }
+    } else if (artifact.artifactClass === "target") targetCount += 1;
+    else throw new Error("Source capture artifact class is not allowlisted.");
+    artifacts.push({ evidenceId, sourceRole, kind: "capture_artifact", bytes, metadata: artifact });
+  }
+  if (rawCount !== 102 || normalizedCount !== 102 || measurementCount !== 78 || targetCount !== 1 || artifacts.length !== 283) {
+    throw new Error("Source capture package must contain exact V1.0.1 102-capture/78-measurement supervised evidence with no extras.");
+  }
+  return { captureManifestBytes, capturePackageBytes, capturePackageSha256: hash(capturePackageBytes), artifacts, packageValue };
+}
+
+function allBuilderEvidence(input: BuildFixedRigPhysicalCalibrationV1Input): FixedRigCalibrationEvidenceReferenceV1[] {
+  return [
+    ...input.targetEvidence, ...input.scaleSamples, ...input.targetPrintScaleSamples, ...input.targetCutDimensionSamples,
+    ...input.lensResidualSamples, ...input.normalizationResidualSamples, ...input.repeatedPlacementSamples,
+    ...input.segmentationBoundarySamples, ...input.measurementRepeatabilitySamples,
+    ...input.channels.flatMap((channel) => channel.directionMeasurementSamples),
+    ...input.channels.flatMap((channel) => channel.flatFieldFrames),
+    ...input.channels.flatMap((channel) => channel.darkControlFrames),
+    ...input.channels.flatMap((channel) => channel.illuminationPatternFrames),
+  ];
+}
+
+function validateBuilderInput(builder: BuildFixedRigPhysicalCalibrationV1Input, artifacts: CapturedArtifact[], derived: FastCalibrationRigMaterializationAnalysisResultV1_2["derivedArtifacts"]): void {
+  exactKeys(builder, ["profileId", "calibrationVersion", "rigId", "artifactId", "finalizedAt", "normalizedWidthPx", "normalizedHeightPx", "scaleSamples", "targetPrintScaleSamples", "targetCutDimensionSamples", "lensResidualSamples", "normalizationResidualSamples", "repeatedPlacementSamples", "segmentationBoundarySamples", "measurementRepeatabilitySamples", "channels", "targetEvidence", "operatorId", "targetVersion", "targetSha256", "lensModel", "normalizationModel"], "physical analyzer builderInput");
+  const byId = new Map(artifacts.map((entry) => [entry.evidenceId, entry]));
+  for (const evidence of allBuilderEvidence(builder)) {
+    const artifact = byId.get(exactId(evidence.evidenceId, "builder evidenceId"));
+    if (!artifact || artifact.sourceRole !== evidence.role || hash(artifact.bytes) !== exactSha(evidence.sha256, "builder evidence sha256")) {
+      throw new Error("Physical analyzer result contains unverified, relabelled, or corrupt evidence linkage.");
+    }
+  }
+  const derivedHashes = new Map(derived.map((entry) => [hash(entry.bytes), entry]));
+  if (derived.length !== 9 || new Set(derived.map((entry) => hash(entry.bytes))).size !== derived.length) {
+    throw new Error("Physical analyzer must return exactly eight unique flat fields and one unique illumination artifact.");
+  }
+  const consumedDerivedHashes = new Set<string>();
+  for (const channel of builder.channels) {
+    const flatSha256 = exactSha(channel.flatFieldArtifactSha256, "flat-field artifact sha256");
+    const illuminationSha256 = exactSha(channel.illuminationPatternArtifactSha256, "illumination artifact sha256");
+    const flat = derivedHashes.get(flatSha256);
+    const illumination = derivedHashes.get(illuminationSha256);
+    if (!flat || flat.kind !== "derived_flat_field" || !illumination || illumination.kind !== "derived_illumination_pattern") {
+      throw new Error("Physical analyzer channel artifacts are not dereferenced to exact derived bytes.");
+    }
+    consumedDerivedHashes.add(flatSha256); consumedDerivedHashes.add(illuminationSha256);
+  }
+  if (consumedDerivedHashes.size !== derived.length) {
+    throw new Error("Physical analyzer returned unused or relabelled derived artifacts.");
+  }
+}
+
+function runProcess(executable: string, args: string[], timeoutMs: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-4000); });
+    const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Physical calibration analyzer timed out.")); }, timeoutMs);
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`Physical calibration analyzer failed closed (${code ?? "no-exit"}): ${stderr}`));
+    });
+  });
+}
+
+async function defaultAnalyzePhysicalEvidence(input: {
+  captureManifestPath: string;
+  captureManifestSha256: string;
+  outputDir: string;
+  pythonExecutable: string;
+  analyzerScriptPath: string;
+}): Promise<FastCalibrationRigMaterializationAnalysisResultV1_2> {
+  await mkdir(input.outputDir, { recursive: true });
+  await runProcess(input.pythonExecutable, [input.analyzerScriptPath, "--manifest", input.captureManifestPath, "--output-dir", input.outputDir], 10 * 60_000);
+  const resultBytes = await readFile(path.join(input.outputDir, "mathematical-calibration-analysis-v1.json"));
+  const result = JSON.parse(resultBytes.toString("utf8")) as JsonObject;
+  if (result.schemaVersion !== PHYSICAL_ANALYSIS_SCHEMA || result.algorithmVersion !== PHYSICAL_ANALYSIS_ALGORITHM ||
+      result.sourceManifestSha256 !== input.captureManifestSha256) throw new Error("Physical analyzer result identity mismatch.");
+  const payloadJson = result.analysisPayloadJson;
+  if (typeof payloadJson !== "string" || hash(Buffer.from(payloadJson, "utf8")) !== result.analysisSha256) {
+    throw new Error("Physical analyzer result hash does not bind its exact payload.");
+  }
+  const flat = Array.isArray(result.flatFieldArtifacts) ? result.flatFieldArtifacts as JsonObject[] : [];
+  const illumination = result.illuminationPatternArtifact as JsonObject;
+  const derivedArtifacts: FastCalibrationRigMaterializationAnalysisResultV1_2["derivedArtifacts"] = [];
+  for (const entry of flat) {
+    const fileName = safeRelative(entry.artifactFileName, "physical analyzer flat-field fileName");
+    const bytes = await readExact(contained(input.outputDir, fileName), exactSha(entry.artifactFileSha256, "physical analyzer flat-field sha256"), "physical analyzer flat-field artifact");
+    derivedArtifacts.push({ kind: "derived_flat_field", sourceRole: fileName.replace(/\.json$/, ""), bytes });
+  }
+  if (!illumination) throw new Error("Physical analyzer did not emit an illumination-pattern artifact.");
+  const illuminationName = safeRelative(illumination.artifactFileName, "physical analyzer illumination fileName");
+  const illuminationBytes = await readExact(contained(input.outputDir, illuminationName), exactSha(illumination.artifactFileSha256, "physical analyzer illumination sha256"), "physical analyzer illumination artifact");
+  derivedArtifacts.push({ kind: "derived_illumination_pattern", sourceRole: "illumination-pattern-v1", bytes: illuminationBytes });
+  return { builderInput: result.builderInput as unknown as BuildFixedRigPhysicalCalibrationV1Input, derivedArtifacts };
+}
+
+function sourceEntry(kind: string, evidenceId: string, sourceRole: string, bytes: Buffer, index: number): { manifest: FastCalibrationRigSourceEvidenceEntryV1_2; bytes: Buffer } {
+  const sha256 = hash(bytes);
+  return {
+    manifest: {
+      kind, evidenceId, sourceRole,
+      fileName: `${FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_DIR_V1_2}/${String(index).padStart(4, "0")}-${sha256}.bin`,
+      sha256, byteSize: bytes.length,
+    },
+    bytes,
+  };
+}
+
+async function writeExclusive(filePath: string, bytes: Buffer): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, bytes, { flag: "wx" });
+}
+
+function referenceByRole(references: ReferencedEvidence[], hashValue: string, role: string): ReferencedEvidence {
+  const reference = references.find((entry) => entry.sha256 === hashValue && entry.role === role);
+  if (!reference) throw new Error(`${role} authority hash is not dereferenced to exact supervised bytes.`);
+  return reference;
+}
+
+function expectedTopLevelEntries(): string[] {
+  return [
+    FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2,
+    FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2,
+    FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_FILE_V1_2,
+    FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_FILE_V1_2,
+    FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_FILE_V1_2,
+    FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_DIR_V1_2,
+    ...RIG_MEMBER_SPECS.map((entry) => entry.fileName),
+  ].sort();
+}
+
+export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
+  directory: string;
+  expectedRuntimeContextSha256?: string;
+  expectedRigSourceBundleSha256?: string;
+}): Promise<MaterializedFastCalibrationRigAuthorityV1_2> {
+  if (!path.isAbsolute(input.directory)) throw new Error("Materialized rig authority directory must be absolute.");
+  const actualTop = (await readdir(input.directory)).sort();
+  const expectedTop = expectedTopLevelEntries();
+  if (actualTop.length !== expectedTop.length || actualTop.some((entry, index) => entry !== expectedTop[index])) {
+    throw new Error("Materialized rig authority directory is partial or contains unexpected files.");
+  }
+  const runtimeBytes = await readFile(path.join(input.directory, FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2));
+  const runtimeSha256 = hash(runtimeBytes);
+  if (input.expectedRuntimeContextSha256 && runtimeSha256 !== input.expectedRuntimeContextSha256) throw new Error("Materialized runtime context hash mismatch.");
+  const runtimeContext = parseCanonical<FastCalibrationRuntimeContextV1_2>(runtimeBytes, "materialized runtime context");
+  validateFastCalibrationRuntimeContextV1_2(runtimeContext);
+  if (runtimeContext.algorithmHashes.geometry !== FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256 ||
+      runtimeContext.algorithmHashes.photometric !== FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256 ||
+      runtimeContext.algorithmHashes.finalizer !== FIXED_RIG_FAST_CALIBRATION_FINALIZER_V1_2_SHA256 ||
+      runtimeContext.algorithmHashes.thresholdManifest !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH) {
+    throw new Error("Materialized runtime context algorithm identity differs from the loaded Production implementation.");
+  }
+  const bundleBytes = await readFile(path.join(input.directory, FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2));
+  const bundleSha256 = hash(bundleBytes);
+  if (input.expectedRigSourceBundleSha256 && bundleSha256 !== input.expectedRigSourceBundleSha256) throw new Error("Materialized rig source bundle hash mismatch.");
+  const bundle = parseCanonical<JsonObject>(bundleBytes, "materialized rig source bundle");
+  const evidenceManifestBytes = await readFile(path.join(input.directory, FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_FILE_V1_2));
+  if (hash(evidenceManifestBytes) !== bundle.sourceEvidenceManifestSha256) throw new Error("Rig source bundle does not bind the exact source-evidence manifest.");
+  const evidence = parseCanonical<FastCalibrationRigSourceEvidenceManifestV1_2>(evidenceManifestBytes, "materialized source-evidence manifest");
+  exactKeys(evidence, ["schemaVersion", "inputManifestSha256", "sourceCaptureManifestSha256", "sourceCapturePackageSha256", "physicalAnalyzerSha256", "physicalAnalyzerDependencyManifestSha256", "files"], "materialized source-evidence manifest");
+  if (evidence.schemaVersion !== FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_SCHEMA_V1_2 || !Array.isArray(evidence.files)) throw new Error("Materialized source-evidence manifest schema mismatch.");
+  exactSha(evidence.inputManifestSha256, "materialized input manifest sha256");
+  exactSha(evidence.sourceCaptureManifestSha256, "materialized source capture manifest sha256");
+  exactSha(evidence.sourceCapturePackageSha256, "materialized source capture package sha256");
+  exactSha(evidence.physicalAnalyzerSha256, "materialized physical analyzer sha256");
+  exactSha(evidence.physicalAnalyzerDependencyManifestSha256, "materialized analyzer dependency sha256");
+  const evidenceDirectory = path.join(input.directory, FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_DIR_V1_2);
+  const expectedEvidenceNames = evidence.files.map((entry) => path.basename(entry.fileName)).sort();
+  const actualEvidenceNames = (await readdir(evidenceDirectory)).sort();
+  if (expectedEvidenceNames.length !== actualEvidenceNames.length || expectedEvidenceNames.some((entry, index) => entry !== actualEvidenceNames[index])) {
+    throw new Error("Materialized source evidence is missing, duplicated, or contains extra files.");
+  }
+  const evidenceBytes = new Map<string, Buffer>();
+  const evidenceEntries = new Map<string, FastCalibrationRigSourceEvidenceEntryV1_2>();
+  const evidenceIds = new Set<string>();
+  const evidenceHashes = new Set<string>();
+  for (const entry of evidence.files) {
+    exactKeys(entry, ["kind", "evidenceId", "sourceRole", "fileName", "sha256", "byteSize"], "materialized evidence entry");
+    safeRelative(entry.fileName, "materialized evidence fileName");
+    exactId(entry.kind, "materialized evidence kind");
+    exactId(entry.evidenceId, "materialized evidenceId");
+    exactId(entry.sourceRole, "materialized evidence sourceRole");
+    exactSha(entry.sha256, "materialized evidence sha256");
+    if (evidenceIds.has(entry.evidenceId) || evidenceHashes.has(entry.sha256)) throw new Error("Materialized source evidence is duplicated or relabelled.");
+    evidenceIds.add(entry.evidenceId); evidenceHashes.add(entry.sha256);
+    const bytes = await readExact(contained(input.directory, entry.fileName), entry.sha256, `materialized evidence ${entry.evidenceId}`);
+    if (entry.byteSize !== bytes.length) throw new Error("Materialized evidence byte size mismatch.");
+    evidenceBytes.set(entry.evidenceId, bytes);
+    evidenceEntries.set(entry.evidenceId, entry);
+  }
+  const requireEvidence = (evidenceId: string, kind: string, expectedSha256?: string): { entry: FastCalibrationRigSourceEvidenceEntryV1_2; bytes: Buffer } => {
+    const entry = evidenceEntries.get(evidenceId);
+    const bytes = evidenceBytes.get(evidenceId);
+    if (!entry || !bytes || entry.kind !== kind || (expectedSha256 !== undefined && entry.sha256 !== expectedSha256)) {
+      throw new Error(`Materialized ${evidenceId} evidence identity or hash mismatch.`);
+    }
+    return { entry, bytes };
+  };
+  const inputManifestEvidence = requireEvidence("rig-materialization-input", "input_manifest", evidence.inputManifestSha256);
+  const sourceInput = parseCanonical<FastCalibrationRigMaterializationInputManifestV1_2>(inputManifestEvidence.bytes, "materialized rig input manifest");
+  validateInputManifest(sourceInput);
+  const liveEvidence = requireEvidence("protected-live-probe", "live_probe", sourceInput.liveProbe.sha256);
+  const componentEvidence = requireEvidence("component-supervision", "component_evidence", sourceInput.componentEvidence.sha256);
+  const stageEvidence = requireEvidence("stage-transform", "stage_transform", sourceInput.stageTransformEvidence.sha256);
+  const live = parseCanonical<FastCalibrationProtectedLiveProbeEvidenceV1_2>(liveEvidence.bytes, "materialized protected live probe");
+  const components = parseCanonical<FastCalibrationComponentSupervisionEvidenceV1_2>(componentEvidence.bytes, "materialized component evidence");
+  const stage = parseCanonical<FastCalibrationStageTransformEvidenceV1_2>(stageEvidence.bytes, "materialized stage transform evidence");
+  validateLiveProbe(live); validateComponentEvidence(components); validateStageTransform(stage);
+  if (components.rigId !== live.rigId || components.controllerIdentity !== live.controller.identity ||
+      stage.rigId !== live.rigId || stage.cameraSerialNumber !== live.camera.serialNumber ||
+      stage.cameraModelName !== live.camera.modelName || stage.lensAuthorityId !== components.lensAuthorityId ||
+      components.operatorId !== stage.operatorId) {
+    throw new Error("Materialized component/stage/live evidence identities do not match.");
+  }
+  for (const reference of sourceInput.referencedEvidence) {
+    const matching = evidence.files.filter((entry) => entry.kind === "referenced_evidence" &&
+      entry.sourceRole === reference.role && entry.sha256 === reference.sha256);
+    if (matching.length !== 1) throw new Error("Materialized supervised reference is missing, duplicated, or relabelled.");
+  }
+  const sourceReferenceByHash = new Map(sourceInput.referencedEvidence.map((entry) => [entry.sha256, entry]));
+  const consumedSourceReferenceHashes = new Set<string>();
+  const consumeSourceReference = (sha256: string, role: string): void => {
+    const reference = sourceReferenceByHash.get(sha256);
+    if (!reference || reference.role !== role) throw new Error(`Materialized ${role} authority is not dereferenced to exact supervised bytes.`);
+    consumedSourceReferenceHashes.add(sha256);
+  };
+  consumeSourceReference(components.lensAuthorityEvidenceSha256, "lens_authority");
+  consumeSourceReference(components.wiringEvidenceSha256, "component_wiring");
+  stage.measurementEvidenceSha256.forEach((sha256) => consumeSourceReference(sha256, "stage_transform_measurement"));
+  const analyzerEvidence = requireEvidence("physical-analyzer-source", "physical_analyzer", evidence.physicalAnalyzerSha256);
+  const analyzerDependencyEvidence = requireEvidence("physical-analyzer-dependencies", "physical_analyzer_dependency", evidence.physicalAnalyzerDependencyManifestSha256);
+  const analyzerScriptPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
+  const analyzerDependencyPath = path.resolve(__dirname, "../../../../scripts/ai-grader/requirements-mathematical-calibration-v1.txt");
+  if (hash(await readFile(analyzerScriptPath)) !== analyzerEvidence.entry.sha256 ||
+      hash(await readFile(analyzerDependencyPath)) !== analyzerDependencyEvidence.entry.sha256) {
+    throw new Error("Materialized physical analyzer authority differs from the shipped Production analyzer/dependencies.");
+  }
+  const captureManifestEvidence = requireEvidence("source-capture-manifest", "capture_manifest", evidence.sourceCaptureManifestSha256);
+  const capturePackageEvidence = requireEvidence("source-capture-package", "capture_package", evidence.sourceCapturePackageSha256);
+  if (sourceInput.captureManifest.sha256 !== captureManifestEvidence.entry.sha256) {
+    throw new Error("Materialized input manifest does not bind the exact source capture manifest bytes.");
+  }
+  const captureManifest = parseCanonical<JsonObject>(captureManifestEvidence.bytes, "materialized source capture manifest");
+  const capturePackage = parseCanonical<JsonObject>(capturePackageEvidence.bytes, "materialized source capture package");
+  if (captureManifest.schemaVersion !== CAPTURE_MANIFEST_SCHEMA || captureManifest.captureProfileVersion !== CAPTURE_PROFILE ||
+      capturePackage.schemaVersion !== CAPTURE_PACKAGE_SCHEMA || capturePackage.captureProfileVersion !== CAPTURE_PROFILE ||
+      capturePackage.purpose !== "mathematical_calibration_v1" || capturePackage.thresholdSetId !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID ||
+      capturePackage.thresholdSetHash !== MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH) {
+    throw new Error("Materialized capture authority is not exact supervised Mathematical V1.0.1 raw evidence.");
+  }
+  exactKeys(captureManifest.sourceCapturePackage, ["packageId", "path", "sha256"], "materialized source capture package binding");
+  if ((captureManifest.sourceCapturePackage as JsonObject).sha256 !== capturePackageEvidence.entry.sha256) {
+    throw new Error("Materialized capture manifest does not bind the exact copied capture package bytes.");
+  }
+  const station = capturePackage.stationAuthority as JsonObject;
+  const settings = station?.protectedSettings as JsonObject;
+  if (!station || station.noProductionMutation !== true || !settings || settings.stationId !== live.stationId ||
+      settings.rigId !== live.rigId || settings.captureProfileVersion !== CAPTURE_PROFILE ||
+      settings.exposureUs !== live.camera.exposureUs || settings.gain !== live.camera.gain ||
+      settings.dutyPercent !== live.dutyPercent || settings.leimacUnit !== live.controller.unit) {
+    throw new Error("Materialized capture protected settings differ from the protected live probe.");
+  }
+  if (!Array.isArray(capturePackage.artifacts) || capturePackage.artifacts.length !== 283) {
+    throw new Error("Materialized capture package must retain the exact 283-artifact ledger.");
+  }
+  for (const candidate of capturePackage.artifacts) {
+    const artifact = candidate as JsonObject;
+    const artifactEntry = evidenceEntries.get(exactId(artifact.evidenceId, "materialized capture artifact evidenceId"));
+    if (!artifactEntry || artifactEntry.kind !== "capture_artifact" || artifactEntry.sha256 !== artifact.sha256 ||
+        artifactEntry.sourceRole !== artifact.role || artifactEntry.byteSize !== artifact.byteSize) {
+      throw new Error("Materialized capture artifact bytes are missing, corrupt, or relabelled.");
+    }
+    if (artifact.artifactClass === "raw_capture") {
+      const camera = artifact.camera as JsonObject;
+      const leimac = artifact.leimac as JsonObject;
+      const safeOff = artifact.safeOff as JsonObject;
+      if (!camera || camera.serialNumber !== live.camera.serialNumber || camera.modelName !== live.camera.modelName ||
+          camera.transport !== "GigE" || camera.sourcePixelFormat !== live.camera.pixelFormat ||
+          camera.exposureUs !== live.camera.exposureUs || camera.gain !== live.camera.gain ||
+          !leimac || leimac.unit !== live.controller.unit || leimac.complete !== true ||
+          leimac.expectedWriteCount !== leimac.acknowledgedWriteCount || !Array.isArray(leimac.responseKinds) ||
+          (leimac.responseKinds as unknown[]).some((entry) => entry !== "ack") || !safeOff ||
+          safeOff.beforeCaptureConfirmed !== true || safeOff.afterCaptureConfirmed !== true) {
+        throw new Error("Materialized raw capture does not reproduce observed camera/controller/safe-off authority.");
+      }
+    } else if (artifact.artifactClass === "measurement") {
+      const measurementBytes = evidenceBytes.get(artifactEntry.evidenceId);
+      if (!measurementBytes) throw new Error("Materialized measurement bytes are missing.");
+      const measurement = parseCanonical<JsonObject>(measurementBytes, `materialized measurement ${artifactEntry.evidenceId}`);
+      const instrument = measurement.instrument as JsonObject;
+      if (!instrument) throw new Error("Materialized measurement lacks instrument authority.");
+      const instrumentSha256 = exactSha(instrument.calibrationSha256, "materialized measurement instrument sha256");
+      if (instrument.kind === "fixed_rig_geometry") {
+        if (instrumentSha256 !== evidence.physicalAnalyzerSha256) throw new Error("Materialized repeatability measurement does not bind the shipped physical analyzer.");
+      } else {
+        consumeSourceReference(instrumentSha256, "instrument_calibration");
+      }
+      if (measurement.sourceMetrologyArtifactSha256 !== undefined) {
+        consumeSourceReference(exactSha(measurement.sourceMetrologyArtifactSha256, "materialized measurement metrology sha256"), "metrology_source");
+      }
+    }
+  }
+  if (consumedSourceReferenceHashes.size !== sourceInput.referencedEvidence.length) {
+    throw new Error("Materialized supervised evidence contains unused or unverified references.");
+  }
+  const physicalAnalysisBytes = await readFile(path.join(input.directory, FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_FILE_V1_2));
+  const physicalAnalysis = parseCanonical<FastCalibrationRigPhysicalAnalysisV1_2>(physicalAnalysisBytes, "materialized physical analysis");
+  exactKeys(physicalAnalysis, ["schemaVersion", "sourceCaptureManifestSha256", "sourceCapturePackageSha256", "physicalAnalyzerSha256", "builderInput", "physicalArtifactSha256", "profileSha256"], "materialized physical analysis");
+  if (physicalAnalysis.schemaVersion !== FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_SCHEMA_V1_2 ||
+      physicalAnalysis.sourceCaptureManifestSha256 !== evidence.sourceCaptureManifestSha256 ||
+      physicalAnalysis.sourceCapturePackageSha256 !== evidence.sourceCapturePackageSha256 ||
+      physicalAnalysis.physicalAnalyzerSha256 !== evidence.physicalAnalyzerSha256) {
+    throw new Error("Materialized physical analysis source authority mismatch.");
+  }
+  const rebuilt = buildFixedRigPhysicalCalibrationV1(physicalAnalysis.builderInput);
+  if (rebuilt.status !== "finalized" || rebuilt.artifact.artifactSha256 !== physicalAnalysis.physicalArtifactSha256 ||
+      hashFastCalibrationCanonicalV1_2(rebuilt.profile) !== physicalAnalysis.profileSha256) {
+    throw new Error("Materialized physical analysis does not reproduce accepted physical calculations.");
+  }
+  const artifactEvidence = evidence.files.filter((entry) => entry.kind === "capture_artifact");
+  const byId = new Map(artifactEvidence.map((entry) => [entry.evidenceId, entry]));
+  for (const reference of allBuilderEvidence(physicalAnalysis.builderInput)) {
+    const entry = byId.get(reference.evidenceId);
+    if (!entry || entry.sha256 !== reference.sha256 || entry.sourceRole !== reference.role) {
+      throw new Error("Materialized physical analysis contains an unverified evidence reference.");
+    }
+  }
+  const members = await Promise.all(RIG_MEMBER_SPECS.map(async (member) => ({
+    fileName: member.fileName,
+    bytes: await readFile(path.join(input.directory, member.fileName)),
+  })));
+  const rigSource = { bundleBytes, members };
+  const verified = verifyFastCalibrationRigCharacterizationSourceV1_2(rigSource, runtimeContext);
+  if (verified.authority.sourceCaptureManifestSha256 !== evidence.sourceCaptureManifestSha256) {
+    throw new Error("Materialized rig authority does not bind the exact source capture manifest.");
+  }
+  if (physicalAnalysis.builderInput.rigId !== live.rigId || physicalAnalysis.builderInput.operatorId !== components.operatorId ||
+      physicalAnalysis.builderInput.targetVersion !== components.targetVersion || physicalAnalysis.builderInput.targetSha256 !== components.targetSha256 ||
+      physicalAnalysis.builderInput.lensModel.sourceWidthPx !== live.camera.widthPx ||
+      physicalAnalysis.builderInput.lensModel.sourceHeightPx !== live.camera.heightPx || runtimeContext.stationId !== live.stationId ||
+      runtimeContext.rigId !== live.rigId || runtimeContext.camera.serialNumber !== live.camera.serialNumber ||
+      runtimeContext.camera.modelName !== live.camera.modelName || runtimeContext.camera.lensAuthorityId !== components.lensAuthorityId ||
+      runtimeContext.controller.identity !== components.controllerIdentity ||
+      hashFastCalibrationCanonicalV1_2(runtimeContext.controller.channelWiring) !== hashFastCalibrationCanonicalV1_2(components.channelWiring)) {
+    throw new Error("Materialized runtime/rig authority does not reconstruct the supervised live/component/target evidence.");
+  }
+  const handoffBytes = await readFile(path.join(input.directory, FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_FILE_V1_2));
+  const handoff = parseCanonical<JsonObject>(handoffBytes, "materialized operator handoff");
+  exactKeys(handoff, ["schemaVersion", "authority", "characterizedAt", "rigId", "operatorId", "runtimeContextFileName", "runtimeContextSha256", "rigSourceBundleFileName", "rigSourceBundleSha256", "sourceEvidenceManifestFileName", "sourceEvidenceManifestSha256", "physicalAnalysisFileName", "physicalAnalysisSha256", "physicalArtifactSha256", "profileSha256", "members"], "materialized operator handoff");
+  if (handoff.schemaVersion !== FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_SCHEMA_V1_2 ||
+      handoff.authority !== FAST_CALIBRATION_RIG_MATERIALIZATION_AUTHORITY_V1_2 || handoff.rigSourceBundleSha256 !== bundleSha256 ||
+      handoff.runtimeContextSha256 !== runtimeSha256 || handoff.sourceEvidenceManifestSha256 !== hash(evidenceManifestBytes) ||
+      handoff.physicalAnalysisSha256 !== hash(physicalAnalysisBytes) || handoff.physicalArtifactSha256 !== physicalAnalysis.physicalArtifactSha256 ||
+      handoff.profileSha256 !== physicalAnalysis.profileSha256 ||
+      hashFastCalibrationCanonicalV1_2(handoff.members) !== hashFastCalibrationCanonicalV1_2(bundle.members)) {
+    throw new Error("Materialized operator handoff does not bind the exact authority outputs.");
+  }
+  return {
+    directoryName: path.basename(input.directory), runtimeContextSha256: runtimeSha256,
+    rigSourceBundleSha256: bundleSha256, sourceEvidenceManifestSha256: hash(evidenceManifestBytes),
+    physicalAnalysisSha256: hash(physicalAnalysisBytes), handoffSha256: hash(handoffBytes), runtimeContext, rigSource,
+  };
+}
+
+export async function materializeFastCalibrationRigAuthorityV1_2(
+  input: MaterializeFastCalibrationRigAuthorityV1_2Input,
+): Promise<MaterializedFastCalibrationRigAuthorityV1_2> {
+  if (input.confirmation !== FAST_CALIBRATION_RIG_MATERIALIZATION_CONFIRMATION_V1_2) throw new Error("Rig authority materialization requires the exact operator confirmation.");
+  if (!path.isAbsolute(input.inputManifestPath) || !path.isAbsolute(input.acceptanceRoot)) throw new Error("Rig materialization paths must be protected absolute paths.");
+  exactSha(input.inputManifestSha256, "rig materialization input manifest sha256");
+  const sourceRoot = path.dirname(input.inputManifestPath);
+  const inputManifestBytes = await readExact(input.inputManifestPath, input.inputManifestSha256, "rig materialization input manifest");
+  const manifest = parseCanonical<FastCalibrationRigMaterializationInputManifestV1_2>(inputManifestBytes, "rig materialization input manifest");
+  validateInputManifest(manifest);
+  const readReferenced = async <T>(reference: FileReference, label: string): Promise<{ bytes: Buffer; value: T }> => {
+    const bytes = await readExact(contained(sourceRoot, reference.fileName), reference.sha256, label);
+    return { bytes, value: parseCanonical<T>(bytes, label) };
+  };
+  const live = await readReferenced<FastCalibrationProtectedLiveProbeEvidenceV1_2>(manifest.liveProbe, "protected live probe evidence");
+  const components = await readReferenced<FastCalibrationComponentSupervisionEvidenceV1_2>(manifest.componentEvidence, "component supervision evidence");
+  const stage = await readReferenced<FastCalibrationStageTransformEvidenceV1_2>(manifest.stageTransformEvidence, "stage transform evidence");
+  validateLiveProbe(live.value); validateComponentEvidence(components.value); validateStageTransform(stage.value);
+  if (components.value.rigId !== live.value.rigId || components.value.controllerIdentity !== live.value.controller.identity ||
+      stage.value.rigId !== live.value.rigId || stage.value.cameraSerialNumber !== live.value.camera.serialNumber ||
+      stage.value.cameraModelName !== live.value.camera.modelName || stage.value.lensAuthorityId !== components.value.lensAuthorityId ||
+      components.value.operatorId !== stage.value.operatorId) throw new Error("Supervised component/stage/live identities do not match.");
+  const referencesByHash = new Map<string, ReferencedEvidence>();
+  const referencedBytes = new Map<string, Buffer>();
+  for (const reference of manifest.referencedEvidence) {
+    const bytes = await readExact(contained(sourceRoot, reference.fileName), reference.sha256, `referenced ${reference.role} evidence`);
+    referencesByHash.set(reference.sha256, reference);
+    referencedBytes.set(reference.sha256, bytes);
+  }
+  const consumedReferenceHashes = new Set<string>();
+  for (const [sha256, role] of [
+    [components.value.lensAuthorityEvidenceSha256, "lens_authority"],
+    [components.value.wiringEvidenceSha256, "component_wiring"],
+  ] as const) {
+    referenceByRole(manifest.referencedEvidence, sha256, role);
+    consumedReferenceHashes.add(sha256);
+  }
+  for (const sha256 of stage.value.measurementEvidenceSha256) {
+    referenceByRole(manifest.referencedEvidence, sha256, "stage_transform_measurement");
+    consumedReferenceHashes.add(sha256);
+  }
+  const analyzerScriptPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
+  const analyzerDependencyPath = path.resolve(__dirname, "../../../../scripts/ai-grader/requirements-mathematical-calibration-v1.txt");
+  const analyzerScriptBytes = await readFile(analyzerScriptPath);
+  const analyzerDependencyBytes = await readFile(analyzerDependencyPath);
+  const physicalAnalyzerSha256 = hash(analyzerScriptBytes);
+  const capture = await loadCaptureAuthority({
+    root: sourceRoot, captureManifestRef: manifest.captureManifest, liveProbe: live.value,
+    physicalAnalyzerSha256, referencesByHash, consumedReferenceHashes,
+  });
+  if (consumedReferenceHashes.size !== manifest.referencedEvidence.length ||
+      manifest.referencedEvidence.some((entry) => !consumedReferenceHashes.has(entry.sha256))) {
+    throw new Error("Rig materialization referenced evidence contains unused or unverified files.");
+  }
+  await mkdir(input.acceptanceRoot, { recursive: true });
+  const temporary = path.join(input.acceptanceRoot, `.rig-materialization-${crypto.randomUUID()}`);
+  await mkdir(temporary, { recursive: false });
+  try {
+    const analysisWorking = path.join(temporary, ".physical-analysis-working");
+    const analysis = input.analyzePhysicalEvidence
+      ? await input.analyzePhysicalEvidence({ captureManifestPath: contained(sourceRoot, manifest.captureManifest.fileName), captureManifestSha256: manifest.captureManifest.sha256, outputDir: analysisWorking })
+      : await defaultAnalyzePhysicalEvidence({ captureManifestPath: contained(sourceRoot, manifest.captureManifest.fileName), captureManifestSha256: manifest.captureManifest.sha256, outputDir: analysisWorking, pythonExecutable: input.pythonExecutable ?? "python", analyzerScriptPath });
+    validateBuilderInput(analysis.builderInput, capture.artifacts, analysis.derivedArtifacts);
+    const builder = analysis.builderInput;
+    const physical = buildFixedRigPhysicalCalibrationV1(builder);
+    if (physical.status !== "finalized") throw new Error(`Rig physical acceptance rejected: ${JSON.stringify(physical.issues)}`);
+    if (builder.rigId !== live.value.rigId || builder.operatorId !== components.value.operatorId ||
+        builder.targetVersion !== components.value.targetVersion || builder.targetSha256 !== components.value.targetSha256 ||
+        builder.lensModel.sourceWidthPx !== live.value.camera.widthPx || builder.lensModel.sourceHeightPx !== live.value.camera.heightPx) {
+      throw new Error("Physical analysis target/rig/operator/camera identity differs from supervised evidence.");
+    }
+    const algorithmHashes = {
+      geometry: FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256,
+      photometric: FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256,
+      finalizer: FIXED_RIG_FAST_CALIBRATION_FINALIZER_V1_2_SHA256,
+      thresholdManifest: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    };
+    const runtimeContext: FastCalibrationRuntimeContextV1_2 = {
+      schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
+      stationId: live.value.stationId, rigId: live.value.rigId,
+      camera: { ...live.value.camera, lensAuthorityId: components.value.lensAuthorityId } as FastCalibrationRuntimeContextV1_2["camera"],
+      controller: { identity: live.value.controller.identity, unit: live.value.controller.unit, channelWiring: components.value.channelWiring },
+      dutyPercent: live.value.dutyPercent,
+      target: { version: builder.targetVersion, sha256: builder.targetSha256 },
+      componentConfigurationId: components.value.componentConfigurationId,
+      algorithmHashes, locationLabel: live.value.locationLabel, lightingConfigurationId: live.value.lightingConfigurationId,
+    };
+    delete (runtimeContext.camera as unknown as JsonObject).transport;
+    validateFastCalibrationRuntimeContextV1_2(runtimeContext);
+    const memberValues = [
+      {
+        schemaVersion: "ten-kings-target-metrology-authority-v1", rigId: builder.rigId,
+        targetVersion: builder.targetVersion, targetSha256: builder.targetSha256,
+        scaleSamples: builder.scaleSamples, targetPrintScaleSamples: builder.targetPrintScaleSamples,
+        targetCutDimensionSamples: builder.targetCutDimensionSamples, targetEvidence: builder.targetEvidence,
+      },
+      {
+        schemaVersion: "ten-kings-camera-lens-authority-v1", rigId: builder.rigId,
+        cameraSerialNumber: live.value.camera.serialNumber, cameraModelName: live.value.camera.modelName,
+        lensAuthorityId: components.value.lensAuthorityId, normalizedWidthPx: builder.normalizedWidthPx,
+        normalizedHeightPx: builder.normalizedHeightPx, lensResidualSamples: builder.lensResidualSamples,
+        lensModel: builder.lensModel, normalizationModel: builder.normalizationModel,
+      },
+      {
+        schemaVersion: "ten-kings-physical-light-directions-authority-v1", rigId: builder.rigId,
+        stageToUndistortedSensorMatrix: stage.value.stageToUndistortedSensorMatrix,
+        channels: builder.channels.map(({ channelIndex, directionMeasurementSamples }) => ({ channelIndex, directionMeasurementSamples })),
+      },
+      {
+        schemaVersion: "ten-kings-component-identities-authority-v1", rigId: builder.rigId,
+        controllerIdentity: components.value.controllerIdentity, componentConfigurationId: components.value.componentConfigurationId,
+        channelWiring: components.value.channelWiring, algorithmHashes,
+      },
+      {
+        schemaVersion: "ten-kings-repeatability-authority-v1", rigId: builder.rigId,
+        repeatedPlacementSamples: builder.repeatedPlacementSamples,
+        measurementRepeatabilitySamples: builder.measurementRepeatabilitySamples,
+      },
+    ];
+    const memberBytes = memberValues.map(canonicalBytes);
+    const memberLedger: FastCalibrationRigSourceBundleMemberV1_2[] = RIG_MEMBER_SPECS.map((entry, index) => ({
+      role: entry.role, fileName: entry.fileName, sha256: hash(memberBytes[index]!),
+    }));
+    const sourceFiles: Array<{ kind: string; evidenceId: string; sourceRole: string; bytes: Buffer }> = [
+      { kind: "input_manifest", evidenceId: "rig-materialization-input", sourceRole: "materialization_input", bytes: inputManifestBytes },
+      { kind: "capture_manifest", evidenceId: "source-capture-manifest", sourceRole: "capture_manifest", bytes: capture.captureManifestBytes },
+      { kind: "capture_package", evidenceId: "source-capture-package", sourceRole: "capture_package", bytes: capture.capturePackageBytes },
+      ...capture.artifacts.map((entry) => ({ kind: entry.kind, evidenceId: entry.evidenceId, sourceRole: entry.sourceRole, bytes: entry.bytes })),
+      { kind: "live_probe", evidenceId: "protected-live-probe", sourceRole: "live_runtime", bytes: live.bytes },
+      { kind: "component_evidence", evidenceId: "component-supervision", sourceRole: "component_authority", bytes: components.bytes },
+      { kind: "stage_transform", evidenceId: "stage-transform", sourceRole: "stage_transform", bytes: stage.bytes },
+      ...manifest.referencedEvidence.map((entry) => ({ kind: "referenced_evidence", evidenceId: `reference-${entry.role}-${entry.sha256.slice(0, 16)}`, sourceRole: entry.role, bytes: referencedBytes.get(entry.sha256)! })),
+      { kind: "physical_analyzer", evidenceId: "physical-analyzer-source", sourceRole: PHYSICAL_ANALYSIS_ALGORITHM, bytes: analyzerScriptBytes },
+      { kind: "physical_analyzer_dependency", evidenceId: "physical-analyzer-dependencies", sourceRole: "python-opencv-dependency-manifest", bytes: analyzerDependencyBytes },
+      ...analysis.derivedArtifacts.map((entry, index) => ({ kind: entry.kind, evidenceId: `derived-${entry.kind}-${index + 1}`, sourceRole: entry.sourceRole, bytes: entry.bytes })),
+    ];
+    const sourceHashes = sourceFiles.map((entry) => hash(entry.bytes));
+    if (new Set(sourceFiles.map((entry) => entry.evidenceId)).size !== sourceFiles.length || new Set(sourceHashes).size !== sourceHashes.length) {
+      throw new Error("Rig materialization source evidence contains duplicate or relabelled bytes.");
+    }
+    const stagedEvidence = sourceFiles.map((entry, index) => sourceEntry(entry.kind, entry.evidenceId, entry.sourceRole, entry.bytes, index + 1));
+    const sourceEvidenceManifest: FastCalibrationRigSourceEvidenceManifestV1_2 = {
+      schemaVersion: FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_SCHEMA_V1_2,
+      inputManifestSha256: input.inputManifestSha256,
+      sourceCaptureManifestSha256: manifest.captureManifest.sha256,
+      sourceCapturePackageSha256: capture.capturePackageSha256,
+      physicalAnalyzerSha256,
+      physicalAnalyzerDependencyManifestSha256: hash(analyzerDependencyBytes),
+      files: stagedEvidence.map((entry) => entry.manifest),
+    };
+    const sourceEvidenceManifestBytes = canonicalBytes(sourceEvidenceManifest);
+    const sourceEvidenceManifestSha256 = hash(sourceEvidenceManifestBytes);
+    const physicalAnalysis: FastCalibrationRigPhysicalAnalysisV1_2 = {
+      schemaVersion: FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_SCHEMA_V1_2,
+      sourceCaptureManifestSha256: manifest.captureManifest.sha256,
+      sourceCapturePackageSha256: capture.capturePackageSha256,
+      physicalAnalyzerSha256, builderInput: builder,
+      physicalArtifactSha256: physical.artifact.artifactSha256,
+      profileSha256: hashFastCalibrationCanonicalV1_2(physical.profile),
+    };
+    const physicalAnalysisBytes = canonicalBytes(physicalAnalysis);
+    const rigSourceBundleBytes = canonicalBytes({
+      schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA,
+      characterizedAt: builder.finalizedAt, rigId: builder.rigId,
+      sourceCaptureManifestSha256: manifest.captureManifest.sha256,
+      sourceEvidenceManifestSha256,
+      members: memberLedger,
+    });
+    const rigSourceBundleSha256 = hash(rigSourceBundleBytes);
+    const runtimeContextBytes = canonicalBytes(runtimeContext);
+    const handoff = {
+      schemaVersion: FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_SCHEMA_V1_2,
+      authority: FAST_CALIBRATION_RIG_MATERIALIZATION_AUTHORITY_V1_2,
+      characterizedAt: builder.finalizedAt, rigId: builder.rigId, operatorId: builder.operatorId,
+      runtimeContextFileName: FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2,
+      runtimeContextSha256: hash(runtimeContextBytes),
+      rigSourceBundleFileName: FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2,
+      rigSourceBundleSha256,
+      sourceEvidenceManifestFileName: FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_FILE_V1_2,
+      sourceEvidenceManifestSha256,
+      physicalAnalysisFileName: FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_FILE_V1_2,
+      physicalAnalysisSha256: hash(physicalAnalysisBytes),
+      physicalArtifactSha256: physical.artifact.artifactSha256,
+      profileSha256: hashFastCalibrationCanonicalV1_2(physical.profile),
+      members: memberLedger,
+    };
+    const handoffBytes = canonicalBytes(handoff);
+    await rm(analysisWorking, { recursive: true, force: true });
+    await writeExclusive(path.join(temporary, FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2), runtimeContextBytes);
+    await writeExclusive(path.join(temporary, FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2), rigSourceBundleBytes);
+    await writeExclusive(path.join(temporary, FAST_CALIBRATION_RIG_SOURCE_EVIDENCE_FILE_V1_2), sourceEvidenceManifestBytes);
+    await writeExclusive(path.join(temporary, FAST_CALIBRATION_RIG_PHYSICAL_ANALYSIS_FILE_V1_2), physicalAnalysisBytes);
+    await writeExclusive(path.join(temporary, FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_FILE_V1_2), handoffBytes);
+    for (let index = 0; index < RIG_MEMBER_SPECS.length; index += 1) await writeExclusive(path.join(temporary, RIG_MEMBER_SPECS[index]!.fileName), memberBytes[index]!);
+    for (const entry of stagedEvidence) await writeExclusive(contained(temporary, entry.manifest.fileName), entry.bytes);
+    const destination = path.join(input.acceptanceRoot, rigSourceBundleSha256);
+    try {
+      await rename(temporary, destination);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "ENOTEMPTY" && code !== "EPERM") throw error;
+      const existing = await loadMaterializedFastCalibrationRigAuthorityV1_2({
+        directory: destination,
+        expectedRuntimeContextSha256: hash(runtimeContextBytes),
+        expectedRigSourceBundleSha256: rigSourceBundleSha256,
+      });
+      const existingHandoff = await readFile(path.join(destination, FAST_CALIBRATION_RIG_MATERIALIZATION_HANDOFF_FILE_V1_2));
+      if (!existingHandoff.equals(handoffBytes)) throw new Error("Existing rig authority materialization conflicts with the exact evidence/output.");
+      await rm(temporary, { recursive: true, force: true });
+      return existing;
+    }
+    return await loadMaterializedFastCalibrationRigAuthorityV1_2({
+      directory: destination,
+      expectedRuntimeContextSha256: hash(runtimeContextBytes),
+      expectedRigSourceBundleSha256: rigSourceBundleSha256,
+    });
+  } catch (error) {
+    await rm(temporary, { recursive: true, force: true });
+    throw error;
+  }
+}

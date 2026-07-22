@@ -26,6 +26,9 @@ const {
 const {
   MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS,
 } = require("../dist/drivers/mathematicalCalibrationV1_2Contract");
+const {
+  materializeFastCalibrationRigFixtureV1_2,
+} = require("./helpers/fastCalibrationRigMaterializationFixtureV1_2");
 
 const token = "V1-2-Hardware-Free-Route-Test-Token";
 const digest = (value) => crypto.createHash("sha256").update(value).digest("hex");
@@ -211,6 +214,7 @@ function oneTimeAuthority(context) {
       characterizedAt: "2026-07-21T12:00:00.000Z",
       rigId: context.rigId,
       sourceCaptureManifestSha256: hashSeed("route-one-time-capture"),
+      sourceEvidenceManifestSha256: hashSeed("route-one-time-source-evidence"),
       members: members.map(({ role, fileName, bytes }) => ({ role, fileName, sha256: digest(bytes) })),
     }),
     members: members.map(({ fileName, bytes }) => ({ fileName, bytes })),
@@ -481,27 +485,18 @@ test("actual V1.2 route family uses durable local authority through resumable ev
   }
 });
 
-async function writeProtectedAuthorityFiles(root, context = runtimeContext()) {
-  const source = oneTimeAuthority(context);
-  const protectedDir = path.join(root, "protected-v1.2");
-  const memberDir = path.join(protectedDir, "members");
-  await fs.mkdir(memberDir, { recursive: true });
-  const runtimeBytes = canonicalBytes(context);
-  const runtimePath = path.join(protectedDir, "runtime-context-v1.2.json");
-  const bundlePath = path.join(protectedDir, "rig-source-v1.2.json");
-  await fs.writeFile(runtimePath, runtimeBytes);
-  await fs.writeFile(bundlePath, source.bundleBytes);
-  await Promise.all(source.members.map((member) => fs.writeFile(path.join(memberDir, member.fileName), member.bytes)));
+async function writeProtectedAuthorityFiles(root, contextOverride) {
+  const materialized = await materializeFastCalibrationRigFixtureV1_2(path.join(root, "protected-v1.2"));
+  const runtimePath = materialized.env.AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH;
+  if (contextOverride) {
+    const runtime = JSON.parse(await fs.readFile(runtimePath, "utf8"));
+    runtime.algorithmHashes = structuredClone(contextOverride.algorithmHashes);
+    const runtimeBytes = canonicalBytes(runtime);
+    await fs.writeFile(runtimePath, runtimeBytes);
+    materialized.env.AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SHA256 = digest(runtimeBytes);
+  }
   return {
-    env: {
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH: runtimePath,
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SHA256: digest(runtimeBytes),
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_PATH: bundlePath,
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_BUNDLE_SHA256: digest(source.bundleBytes),
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_MEMBER_DIR: memberDir,
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_FINALIZER_STAGING_ROOT: path.join(protectedDir, "trusted-finalizer-staging"),
-      AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID: "protected-route-operator",
-    },
+    env: materialized.env,
     runtimePath,
   };
 }
@@ -583,7 +578,7 @@ test("actual station CLI factory constructs the protected V1.2 authority inertly
     );
     await assert.rejects(
       () => driftBridge.mathematicalCalibrationV1_2Authority.startOrResume({}),
-      /does not bind the loaded V1.2 analyzer implementation manifest/,
+      /does not bind the loaded V1.2 analyzer\/finalizer implementation manifests/,
     );
 
     const corruptHashEnv = {
