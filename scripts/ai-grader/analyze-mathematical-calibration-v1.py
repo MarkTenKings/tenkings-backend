@@ -717,18 +717,86 @@ def object_points(columns: int, rows: int, cell_mm: float) -> np.ndarray:
     return points
 
 
-def detect_checkerboard(image: np.ndarray, columns: int,
-                        rows: int) -> np.ndarray:
+def valid_checkerboard_points(points: np.ndarray, columns: int, rows: int,
+                              width: int, height: int) -> bool:
+    return bool(
+        points.shape == (columns * rows, 2)
+        and np.isfinite(points).all()
+        and (points[:, 0] >= 0.0).all()
+        and (points[:, 0] <= float(width - 1)).all()
+        and (points[:, 1] >= 0.0).all()
+        and (points[:, 1] <= float(height - 1)).all()
+    )
+
+
+def find_checkerboard_sb(image: np.ndarray, columns: int,
+                         rows: int) -> np.ndarray | None:
     flags = (cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY |
              cv2.CALIB_CB_NORMALIZE_IMAGE)
-    found, corners = cv2.findChessboardCornersSB(image, (columns, rows),
-                                                  flags=flags)
-    if not found or corners is None or len(corners) != columns * rows:
+    found, corners = cv2.findChessboardCornersSB(
+        image, (columns, rows), flags=flags)
+    if not found or corners is None or corners.shape != (
+            columns * rows, 1, 2):
+        return None
+    points = corners.reshape(-1, 2).astype(np.float32)
+    if not valid_checkerboard_points(
+            points, columns, rows, image.shape[1], image.shape[0]):
+        return None
+    return points
+
+
+def find_checkerboard_sb_with_local_contrast(
+        image: np.ndarray, columns: int, rows: int) -> np.ndarray | None:
+    if (columns, rows) != (11, 16):
+        return None
+    height, width = image.shape[:2]
+    for threshold in (40, 60, 80, 100, 120, 140):
+        _, mask = cv2.threshold(
+            image, threshold, 255, cv2.THRESH_BINARY_INV)
+        contours, _ = cv2.findContours(
+            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contour = max(contours, key=cv2.contourArea)
+        x, y, roi_width, roi_height = cv2.boundingRect(contour)
+        if roi_width * roi_height < width * height * 0.10:
+            continue
+        for inset_fraction in (0.0, 0.03, 0.04, 0.05):
+            inset_x = round(roi_width * inset_fraction)
+            inset_y = round(roi_height * inset_fraction)
+            crop_x = x + inset_x
+            crop_y = y + inset_y
+            crop_width = roi_width - 2 * inset_x
+            crop_height = roi_height - 2 * inset_y
+            if crop_width <= 0 or crop_height <= 0:
+                continue
+            roi = cv2.equalizeHist(
+                image[crop_y:crop_y + crop_height,
+                      crop_x:crop_x + crop_width])
+            points = find_checkerboard_sb(roi, columns, rows)
+            if points is None:
+                continue
+            source_points = points + np.array(
+                [crop_x, crop_y], dtype=np.float32)
+            if valid_checkerboard_points(
+                    source_points, columns, rows, width, height):
+                return source_points
+    return None
+
+
+def detect_checkerboard(image: np.ndarray, columns: int,
+                        rows: int) -> np.ndarray:
+    points = find_checkerboard_sb(image, columns, rows)
+    if points is None and (columns, rows) == (11, 16):
+        points = find_checkerboard_sb_with_local_contrast(
+            image, columns, rows)
+    if points is None:
         raise ValueError(
             f'checkerboard detection failed: expected {columns}x{rows} internal corners')
-    points = corners.reshape(-1, 2).astype(np.float32)
-    if not np.isfinite(points).all():
-        raise ValueError('checkerboard detector produced non-finite coordinates')
+    if not valid_checkerboard_points(
+            points, columns, rows, image.shape[1], image.shape[0]):
+        raise ValueError(
+            'checkerboard detector produced non-finite or out-of-frame coordinates')
     return points
 
 
