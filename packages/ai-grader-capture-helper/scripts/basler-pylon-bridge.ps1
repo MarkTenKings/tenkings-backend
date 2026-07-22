@@ -2723,7 +2723,8 @@ function Get-MathematicalCalibrationOpenedContext {
   param(
     [object]$Camera,
     [System.Collections.IDictionary]$CameraMetadata,
-    [string]$ControllerIdentity
+    [string]$ControllerIdentity,
+    [string[]]$SafeOffResponseKinds
   )
   return [ordered]@{
     camera = [ordered]@{
@@ -2738,6 +2739,7 @@ function Get-MathematicalCalibrationOpenedContext {
     controller = [ordered]@{
       identity = $ControllerIdentity
       unit = $LeimacUnit
+      responseKinds = @($SafeOffResponseKinds)
     }
   }
 }
@@ -2758,12 +2760,13 @@ function Open-MathematicalCalibrationHardware {
     $leimacSession = New-WarmLeimacSession
     $controllerIdentity = Get-WarmLeimacIdentity $leimacSession
     $safeOff = Apply-WarmLeimacFrames -Session $leimacSession -Frames (New-WarmLeimacSafeOffFrames)
-    [void](Get-ExactAckKinds $safeOff "Mathematical calibration initial safe-off")
+    $safeOffResponseKinds = @(Get-ExactAckKinds $safeOff "Mathematical calibration initial safe-off")
     return [ordered]@{
       camera = $camera
       cameraMetadata = Convert-CameraInfo $cameraInfo $CameraIndex
       leimacSession = $leimacSession
       controllerIdentity = $controllerIdentity
+      safeOffResponseKinds = $safeOffResponseKinds
     }
   } catch {
     if ($null -ne $leimacSession) {
@@ -2790,7 +2793,9 @@ function Read-MathematicalCalibrationContext {
   $hardware = $null
   try {
     $hardware = Open-MathematicalCalibrationHardware $Install
-    return Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity
+    $terminalSafeOff = Apply-WarmLeimacFrames -Session $hardware.leimacSession -Frames (New-WarmLeimacSafeOffFrames)
+    $hardware.safeOffResponseKinds = @(Get-ExactAckKinds $terminalSafeOff "Mathematical calibration context terminal safe-off")
+    return Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity $hardware.safeOffResponseKinds
   } finally {
     Close-MathematicalCalibrationHardware $hardware
   }
@@ -2801,7 +2806,7 @@ function Start-MathematicalCalibrationSession {
   $hardware = $null
   try {
     $hardware = Open-MathematicalCalibrationHardware $Install
-    $context = Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity
+    $context = Get-MathematicalCalibrationOpenedContext $hardware.camera $hardware.cameraMetadata $hardware.controllerIdentity $hardware.safeOffResponseKinds
     Write-BridgeJson ([ordered]@{ ok = $true; event = "opened"; result = $context })
     while ($true) {
       $line = [Console]::In.ReadLine()

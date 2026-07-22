@@ -127,7 +127,8 @@ async function prepareFastCalibrationRigMaterializationFixtureV1_2(root, options
         pylon: { version: "7.5.0", bridgeVersion: "basler-pylon-bridge-v1" },
         leimac: {
           unit: liveProbe.controller.unit, dutyPercent: input.role.includes("dark_control") ? 0 : liveProbe.dutyPercent,
-          enabledChannels: [], expectedWriteCount: 1, acknowledgedWriteCount: 1, responseKinds: ["ack"], complete: true,
+          enabledChannels: input.role.includes("dark_control") || !input.channelIndex ? [] : [input.channelIndex],
+          expectedWriteCount: 1, acknowledgedWriteCount: 1, responseKinds: ["ack"], complete: true,
         },
         safeOff: { beforeCaptureConfirmed: true, afterCaptureConfirmed: true, confirmedAt: "2026-07-21T12:59:00.000Z" },
       } : {}),

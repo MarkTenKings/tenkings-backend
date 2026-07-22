@@ -149,12 +149,19 @@ export interface FastCalibrationCameraLensAuthorityMemberV1_2 {
   normalizationModel: BuildFixedRigPhysicalCalibrationV1Input["normalizationModel"];
 }
 
-export interface FastCalibrationPhysicalDirectionsAuthorityMemberV1_2 {
+export type FastCalibrationPhysicalDirectionsAuthorityMemberV1_2 = {
   schemaVersion: "ten-kings-physical-light-directions-authority-v1";
   rigId: string;
-  stageToUndistortedSensorMatrix: readonly [number, number, number, number];
   channels: Array<Pick<FixedRigCalibrationChannelInputV1, "channelIndex" | "directionMeasurementSamples">>;
-}
+} & (
+  | {
+      coordinateFrame: "canonical_normalized_target_v1";
+      authorityMethod: "evidence_derived_normalized_illumination_direction_v1";
+    }
+  | {
+      stageToUndistortedSensorMatrix: readonly [number, number, number, number];
+    }
+);
 
 export interface FastCalibrationComponentIdentitiesAuthorityMemberV1_2 {
   schemaVersion: "ten-kings-component-identities-authority-v1";
@@ -174,7 +181,12 @@ export interface FastCalibrationRepeatabilityAuthorityMemberV1_2 {
 
 export interface VerifiedFastCalibrationRigCharacterizationSourceV1_2 {
   authority: FastCalibrationRigCharacterizationAuthorityV1_2;
-  physicalDirectionTransform: readonly [number, number, number, number];
+  directionCoordinateAuthority:
+    | { coordinateFrame: "canonical_normalized_target_v1" }
+    | {
+        coordinateFrame: "measured_stage_v1";
+        stageToUndistortedSensorMatrix: readonly [number, number, number, number];
+      };
   oneTimeBuilderInput: Pick<BuildFixedRigPhysicalCalibrationV1Input,
     | "rigId" | "normalizedWidthPx" | "normalizedHeightPx" | "scaleSamples"
     | "targetPrintScaleSamples" | "targetCutDimensionSamples" | "lensResidualSamples"
@@ -699,7 +711,14 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
   const camera = parseCanonicalJson<FastCalibrationCameraLensAuthorityMemberV1_2>(memberBytes[1], "camera/lens authority");
   exactKeys(camera, ["schemaVersion", "rigId", "cameraSerialNumber", "cameraModelName", "lensAuthorityId", "normalizedWidthPx", "normalizedHeightPx", "lensResidualSamples", "lensModel", "normalizationModel"], "camera/lens authority");
   const directions = parseCanonicalJson<FastCalibrationPhysicalDirectionsAuthorityMemberV1_2>(memberBytes[2], "physical direction authority");
-  exactKeys(directions, ["schemaVersion", "rigId", "stageToUndistortedSensorMatrix", "channels"], "physical direction authority");
+  if ("coordinateFrame" in directions && directions.coordinateFrame === "canonical_normalized_target_v1") {
+    exactKeys(directions, ["schemaVersion", "rigId", "coordinateFrame", "authorityMethod", "channels"], "physical direction authority");
+    if (directions.authorityMethod !== "evidence_derived_normalized_illumination_direction_v1") {
+      throw new Error("Canonical target-frame direction authority method mismatch.");
+    }
+  } else {
+    exactKeys(directions, ["schemaVersion", "rigId", "stageToUndistortedSensorMatrix", "channels"], "physical direction authority");
+  }
   const components = parseCanonicalJson<FastCalibrationComponentIdentitiesAuthorityMemberV1_2>(memberBytes[3], "component identity authority");
   exactKeys(components, ["schemaVersion", "rigId", "controllerIdentity", "componentConfigurationId", "channelWiring", "algorithmHashes"], "component identity authority");
   const repeatability = parseCanonicalJson<FastCalibrationRepeatabilityAuthorityMemberV1_2>(memberBytes[4], "repeatability authority");
@@ -720,11 +739,12 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
       !Array.isArray(repeatability.repeatedPlacementSamples) || !Array.isArray(repeatability.measurementRepeatabilitySamples)) {
     throw new Error("Rig-characterization source members do not contain reconstructable one-time inputs.");
   }
-  if (!Array.isArray(directions.stageToUndistortedSensorMatrix) || directions.stageToUndistortedSensorMatrix.length !== 4 ||
-      directions.stageToUndistortedSensorMatrix.some((value) => !Number.isFinite(value)) ||
-      Math.abs(directions.stageToUndistortedSensorMatrix[0] * directions.stageToUndistortedSensorMatrix[3] -
-        directions.stageToUndistortedSensorMatrix[1] * directions.stageToUndistortedSensorMatrix[2]) < 1e-12) {
-    throw new Error("Physical direction authority requires one finite non-singular stage-to-normalized-target transform.");
+  if (!("coordinateFrame" in directions) &&
+      (!Array.isArray(directions.stageToUndistortedSensorMatrix) || directions.stageToUndistortedSensorMatrix.length !== 4 ||
+        directions.stageToUndistortedSensorMatrix.some((value) => !Number.isFinite(value)) ||
+        Math.abs(directions.stageToUndistortedSensorMatrix[0] * directions.stageToUndistortedSensorMatrix[3] -
+          directions.stageToUndistortedSensorMatrix[1] * directions.stageToUndistortedSensorMatrix[2]) < 1e-12)) {
+    throw new Error("Legacy measured-stage direction authority requires one finite non-singular transform.");
   }
   if (directions.channels.length !== 8 || directions.channels.some((channel, index) => {
     exactKeys(channel, ["channelIndex", "directionMeasurementSamples"], "physical direction authority channel");
@@ -784,7 +804,14 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
   return {
     authority,
     oneTimeBuilderInput,
-    physicalDirectionTransform: [...directions.stageToUndistortedSensorMatrix] as [number, number, number, number],
+    directionCoordinateAuthority: "coordinateFrame" in directions && directions.coordinateFrame === "canonical_normalized_target_v1"
+      ? { coordinateFrame: "canonical_normalized_target_v1" }
+      : {
+          coordinateFrame: "measured_stage_v1",
+          stageToUndistortedSensorMatrix: [...(directions as FastCalibrationPhysicalDirectionsAuthorityMemberV1_2 & {
+            stageToUndistortedSensorMatrix: readonly [number, number, number, number];
+          }).stageToUndistortedSensorMatrix] as [number, number, number, number],
+        },
   };
 }
 
@@ -1823,7 +1850,12 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       const y = vectors.reduce((sum, value) => sum + value.y, 0) / vectors.length;
       const magnitude = Math.hypot(x, y);
       if (!Number.isFinite(magnitude) || magnitude <= 0) throw new Error(`Channel ${channelIndex} physical direction is degenerate.`);
-      return transformFastCalibrationPhysicalDirectionV1_2({ x: x / magnitude, y: y / magnitude }, decoded.physicalToNormalizedDirectionMatrix);
+      const normalized = { x: x / magnitude, y: y / magnitude };
+      if (decoded.directionCoordinateFrame === "canonical_normalized_target_v1") return normalized;
+      if (!decoded.physicalToNormalizedDirectionMatrix) {
+        throw new Error("Legacy measured-stage direction analysis lacks its measured transform.");
+      }
+      return transformFastCalibrationPhysicalDirectionV1_2(normalized, decoded.physicalToNormalizedDirectionMatrix);
     };
     const angleError = (grid: number[], expected: { x: number; y: number }): number => {
       const minimum = Math.min(...grid);
@@ -1963,7 +1995,7 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       readFrame: (entry) => this.readAcceptedFrame(entry, events),
       geometryAuthority: {
         lensModel: verifiedRig.oneTimeBuilderInput.lensModel,
-        stageToUndistortedSensorMatrix: verifiedRig.physicalDirectionTransform,
+        directionCoordinateAuthority: verifiedRig.directionCoordinateAuthority,
       },
     });
     const derived = this.buildEvidenceDerivedInput(source, verifiedRig, decoded);

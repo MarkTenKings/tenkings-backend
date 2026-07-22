@@ -19,7 +19,7 @@ const openedContext = {
     widthPx: 1000,
     heightPx: 1400,
   },
-  controller: { identity: "controller-1", unit: 1 },
+  controller: { identity: "controller-1", unit: 1, responseKinds: ["ack"] },
 };
 
 function fakeSpawner(configure) {
@@ -154,6 +154,25 @@ test("live-context probe timeout terminates its one-shot child before rejecting"
   await assert.rejects(session.probeContext(), /live-context probe timed out/);
   assert.equal(fake.children[0].closed, true);
   assert.ok(fake.children[0].killCount >= 1);
+});
+
+test("live-context probe returns only exact observed safe-off acknowledgements", async () => {
+  const accepted = fakeSpawner((child) => setImmediate(() => {
+    child.stdout.write(JSON.stringify({ ok: true, result: openedContext }));
+    child.emitClose(0);
+  }));
+  const session = new BaslerLeimacMathematicalCalibrationSessionV1_2(sessionConfig(accepted.spawnProcess));
+  assert.deepEqual(await session.probeContext(), openedContext);
+
+  const rejected = fakeSpawner((child) => setImmediate(() => {
+    child.stdout.write(JSON.stringify({ ok: true, result: {
+      ...openedContext,
+      controller: { ...openedContext.controller, responseKinds: ["nak"] },
+    } }));
+    child.emitClose(0);
+  }));
+  const invalid = new BaslerLeimacMathematicalCalibrationSessionV1_2(sessionConfig(rejected.spawnProcess));
+  await assert.rejects(() => invalid.probeContext(), /safe-off responses.*acknowledgements/i);
 });
 
 test("non-JSON protocol output fails closed and terminates the owner", async () => {

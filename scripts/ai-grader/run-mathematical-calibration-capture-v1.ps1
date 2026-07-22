@@ -2,7 +2,7 @@
 param(
   [ValidateSet(
     'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry',
-    'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline'
+    'DeriveAuthority', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline', 'PrepareRigInput'
   )]
   [string]$Action = 'Worksheet',
   [string]$BridgeUrl = 'http://127.0.0.1:47653',
@@ -267,6 +267,7 @@ function Show-Worksheet {
   Write-Host 'Resume rebinds the same immutable session after runner, browser, or protected helper-page restart; hard-stop failures are never retryable.'
   Write-Host 'Seal is fail-closed at exactly 102 captures and 78 measurements. Analyze and Finalize require new output paths and never mutate Production.'
   Write-Host 'CompleteOffline performs evidence-authority derivation, seal, analyzer, and finalizer in that exact order.'
+  Write-Host 'PrepareRigInput then probes the protected rig and creates the canonical hash-bound V1.2 materializer input without operator authority fields.'
 }
 
 function Get-NextCaptureSlot {
@@ -485,6 +486,19 @@ if ($Action -in @('Start', 'Resume')) {
 $status = Get-CalibrationStatus
 $state = Get-CalibrationState -Status $status
 $next = Get-NextCaptureSlot -State $state
+
+if ($Action -eq 'PrepareRigInput') {
+  if (-not $status.sealed -or $null -ne $status.hardStop -or [int]$status.captureCount -ne 102 -or [int]$status.measurementCount -ne 78) {
+    throw 'PrepareRigInput requires one healthy sealed V1.0.1 session with exactly 102 captures and 78 evidence-derived authority records.'
+  }
+  $result = (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/materialization-input' -Body @{
+    sessionId = $SessionId
+  }).result
+  $result
+  Write-Host ('Canonical V1.2 rig materialization input SHA-256: ' + $result.inputManifestSha256)
+  Write-Host ('Canonical V1.2 rig materialization input path: ' + $result.inputManifestPath)
+  exit 0
+}
 
 if ($Action -eq 'Status') {
   $status

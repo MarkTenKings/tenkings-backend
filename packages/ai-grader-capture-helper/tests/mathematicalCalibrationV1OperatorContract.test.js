@@ -37,6 +37,7 @@ test("normal V1.0.1 flow derives all authority from protected target and immutab
   const runbook = fs.readFileSync(path.join(repositoryRoot, "docs", "runbooks", "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_RUNBOOK.md"), "utf8");
   const runner = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "run-mathematical-calibration-capture-v1.ps1"), "utf8");
   const authorityDeriver = fs.readFileSync(path.join(repositoryRoot, "scripts", "ai-grader", "prepare-mathematical-calibration-repeatability-v1.py"), "utf8");
+  const hardwareBridge = fs.readFileSync(path.join(repositoryRoot, "packages", "ai-grader-capture-helper", "scripts", "basler-pylon-bridge.ps1"), "utf8");
   const targetManifestText = fs.readFileSync(path.join(repositoryRoot, "output", "pdf", "ten-kings-mathematical-calibration-target-v1.json"), "utf8");
   const targetManifest = JSON.parse(targetManifestText);
   assert.match(runbook, /protected nominal checkerboard geometry/i);
@@ -45,6 +46,13 @@ test("normal V1.0.1 flow derives all authority from protected target and immutab
   assert.match(runner, /'DeriveAuthority'/);
   assert.match(runner, /Invoke-EvidenceAuthorityDerivation/);
   assert.match(runner, /if \(\$authorityKeys\.Count -ne 78\)/);
+  assert.match(runner, /'PrepareRigInput'/);
+  assert.match(runner, /\/calibration\/mathematical-v1\/materialization-input/);
+  assert.match(runbook, /canonical_normalized_target_v1/);
+  assert.match(runbook, /contains no stage matrix/);
+  assert.match(runbook, /accepts only the session ID/);
+  assert.match(hardwareBridge, /Mathematical calibration context terminal safe-off/);
+  assert.match(hardwareBridge, /responseKinds = @\(\$SafeOffResponseKinds\)/);
   assert.doesNotMatch(runner, /CreateMetrologyTemplate|SubmitMetrology|MetrologyInputPath|measuredSpanMm|measuredDimensionMm|measurementU95Mm|sourcePointMm|cardCenterPointMm|pointU95Mm/);
   assert.match(authorityDeriver, /protected_checkerboard_geometry/);
   assert.match(authorityDeriver, /illumination_centroid_checkerboard_repeatability_v1/);

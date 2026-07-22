@@ -55,7 +55,12 @@ export const FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_GRID_SIZE_V1_2 = FAST_CALIBR
 
 export interface FastCalibrationEvidenceGeometryAuthorityV1_2 {
   lensModel: FixedRigLensDistortionModelV1;
-  stageToUndistortedSensorMatrix: readonly [number, number, number, number];
+  directionCoordinateAuthority:
+    | { coordinateFrame: "canonical_normalized_target_v1" }
+    | {
+        coordinateFrame: "measured_stage_v1";
+        stageToUndistortedSensorMatrix: readonly [number, number, number, number];
+      };
 }
 
 export interface FastCalibrationDerivedPoseEvidenceV1_2 {
@@ -78,7 +83,8 @@ export interface FastCalibrationEvidenceAnalysisResultV1_2 {
   photometricAlgorithmSha256: string;
   gridWidth: typeof FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_GRID_SIZE_V1_2;
   gridHeight: typeof FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_GRID_SIZE_V1_2;
-  physicalToNormalizedDirectionMatrix: readonly [number, number, number, number];
+  directionCoordinateFrame: "canonical_normalized_target_v1" | "measured_stage_v1";
+  physicalToNormalizedDirectionMatrix?: readonly [number, number, number, number];
   poses: FastCalibrationDerivedPoseEvidenceV1_2[];
   channels: FastCalibrationDecodedChannelEvidenceV1_2[];
 }
@@ -203,10 +209,13 @@ export class FixedRigFastCalibrationEvidenceAnalyzerV1_2 implements FastCalibrat
     }
     const photometricTransform = poses[3]?.normalizedToUndistortedHomography;
     if (!photometricTransform) throw new Error("Photometric normalization requires the exact fourth accepted pose transform.");
-    const physicalToNormalizedDirectionMatrix = composeFastCalibrationPhysicalToNormalizedDirectionV1_2(
-      photometricTransform,
-      input.geometryAuthority.stageToUndistortedSensorMatrix,
-    );
+    const directionCoordinateFrame = input.geometryAuthority.directionCoordinateAuthority.coordinateFrame;
+    const physicalToNormalizedDirectionMatrix = directionCoordinateFrame === "measured_stage_v1"
+      ? composeFastCalibrationPhysicalToNormalizedDirectionV1_2(
+          photometricTransform,
+          input.geometryAuthority.directionCoordinateAuthority.stageToUndistortedSensorMatrix,
+        )
+      : undefined;
     const channels: FastCalibrationDecodedChannelEvidenceV1_2[] = [];
     for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
       const decoded: FastCalibrationDecodedChannelEvidenceV1_2 = {
@@ -240,7 +249,8 @@ export class FixedRigFastCalibrationEvidenceAnalyzerV1_2 implements FastCalibrat
       gridWidth: FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_GRID_SIZE_V1_2,
       gridHeight: FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_GRID_SIZE_V1_2,
       poses,
-      physicalToNormalizedDirectionMatrix,
+      directionCoordinateFrame,
+      ...(physicalToNormalizedDirectionMatrix ? { physicalToNormalizedDirectionMatrix } : {}),
       channels,
     };
   }

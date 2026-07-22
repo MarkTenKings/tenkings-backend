@@ -239,7 +239,7 @@ implements MathematicalCalibrationV1_2LocalSessionAuthority {
     const verified = verifyFastCalibrationRigCharacterizationSourceV1_2(source, runtimeContext);
     return {
       lensModel: verified.oneTimeBuilderInput.lensModel,
-      stageToUndistortedSensorMatrix: verified.physicalDirectionTransform,
+      directionCoordinateAuthority: verified.directionCoordinateAuthority,
     };
   }
 

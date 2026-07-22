@@ -57,7 +57,11 @@ const PHYSICAL_ANALYSIS_SCHEMA = "ten-kings-mathematical-calibration-analysis-v1
 const PHYSICAL_ANALYSIS_ALGORITHM = "opencv_physical_calibration_analysis_v1";
 const LIVE_PROBE_SCHEMA = "ten-kings-mathematical-calibration-v1.2-protected-live-probe-evidence-v1";
 const COMPONENT_EVIDENCE_SCHEMA = "ten-kings-mathematical-calibration-v1.2-component-supervision-evidence-v1";
+const EVIDENCE_DERIVED_COMPONENT_EVIDENCE_SCHEMA = "ten-kings-mathematical-calibration-v1.2-evidence-derived-component-authority-v1";
 const STAGE_TRANSFORM_SCHEMA = "ten-kings-mathematical-calibration-v1.2-stage-transform-evidence-v1";
+const CANONICAL_DIRECTION_FRAME_SCHEMA = "ten-kings-mathematical-calibration-v1.2-canonical-target-direction-authority-v1";
+const EVIDENCE_DERIVED_LENS_SCHEMA = "ten-kings-mathematical-calibration-v1.2-evidence-derived-lens-authority-v1";
+const EVIDENCE_DERIVED_WIRING_SCHEMA = "ten-kings-mathematical-calibration-v1.2-evidence-derived-wiring-authority-v1";
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_RELATIVE = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,511}$/;
@@ -79,14 +83,17 @@ type JsonObject = Record<string, unknown>;
 type FileReference = { fileName: string; sha256: string };
 type ReferencedEvidence = FileReference & { role: string };
 
-export interface FastCalibrationRigMaterializationInputManifestV1_2 {
+interface FastCalibrationRigMaterializationInputManifestBaseV1_2 {
   schemaVersion: typeof FAST_CALIBRATION_RIG_MATERIALIZATION_INPUT_SCHEMA_V1_2;
   captureManifest: FileReference;
   liveProbe: FileReference;
   componentEvidence: FileReference;
-  stageTransformEvidence: FileReference;
   referencedEvidence: ReferencedEvidence[];
 }
+
+export type FastCalibrationRigMaterializationInputManifestV1_2 =
+  | (FastCalibrationRigMaterializationInputManifestBaseV1_2 & { stageTransformEvidence: FileReference })
+  | (FastCalibrationRigMaterializationInputManifestBaseV1_2 & { directionFrameEvidence: FileReference });
 
 export interface FastCalibrationProtectedLiveProbeEvidenceV1_2 {
   schemaVersion: typeof LIVE_PROBE_SCHEMA;
@@ -125,6 +132,26 @@ export interface FastCalibrationComponentSupervisionEvidenceV1_2 {
   targetSha256: string;
 }
 
+export interface FastCalibrationEvidenceDerivedComponentAuthorityV1_2 {
+  schemaVersion: typeof EVIDENCE_DERIVED_COMPONENT_EVIDENCE_SCHEMA;
+  derivedAt: string;
+  authorityMethod: "content_addressed_observed_rig_response_v1";
+  rigId: string;
+  controllerIdentity: string;
+  controllerUnit: number;
+  componentConfigurationId: string;
+  lensAuthorityId: string;
+  lensAuthorityEvidenceSha256: string;
+  wiringEvidenceSha256: string;
+  channelWiring: FastCalibrationChannelWiringV1_2[];
+  targetVersion: string;
+  targetSha256: string;
+}
+
+export type FastCalibrationComponentAuthorityEvidenceV1_2 =
+  | FastCalibrationComponentSupervisionEvidenceV1_2
+  | FastCalibrationEvidenceDerivedComponentAuthorityV1_2;
+
 export interface FastCalibrationStageTransformEvidenceV1_2 {
   schemaVersion: typeof STAGE_TRANSFORM_SCHEMA;
   recordedAt: string;
@@ -136,6 +163,52 @@ export interface FastCalibrationStageTransformEvidenceV1_2 {
   method: "supervised-stage-to-undistorted-sensor-matrix-v1";
   stageToUndistortedSensorMatrix: [number, number, number, number];
   measurementEvidenceSha256: string[];
+}
+
+export interface FastCalibrationCanonicalDirectionFrameEvidenceV1_2 {
+  schemaVersion: typeof CANONICAL_DIRECTION_FRAME_SCHEMA;
+  derivedAt: string;
+  authorityMethod: "evidence_derived_normalized_illumination_direction_v1";
+  coordinateFrame: "canonical_normalized_target_v1";
+  rigId: string;
+  physicalAnalyzerSha256: string;
+  channels: Array<{
+    channelIndex: number;
+    physicalDirectionId: string;
+    directionMeasurementEvidence: Array<{
+      evidenceId: string;
+      sha256: string;
+      sourceEvidenceId: string;
+      sourceSha256: string;
+    }>;
+  }>;
+}
+
+export interface FastCalibrationEvidenceDerivedLensAuthorityV1_2 {
+  schemaVersion: typeof EVIDENCE_DERIVED_LENS_SCHEMA;
+  authorityMethod: "exact_capture_and_analyzer_binding_v1";
+  rigId: string;
+  cameraSerialNumber: string;
+  cameraModelName: string;
+  targetVersion: string;
+  targetSha256: string;
+  sourceCaptureManifestSha256: string;
+  physicalAnalyzerSha256: string;
+  lensGeometryEvidence: Array<{ evidenceId: string; sha256: string }>;
+  normalizationRegistrationEvidence: Array<{ evidenceId: string; sha256: string }>;
+}
+
+export interface FastCalibrationEvidenceDerivedWiringAuthorityV1_2 {
+  schemaVersion: typeof EVIDENCE_DERIVED_WIRING_SCHEMA;
+  authorityMethod: "observed_leimac_acknowledged_response_v1";
+  rigId: string;
+  controllerIdentity: string;
+  controllerUnit: number;
+  channels: Array<{
+    channelIndex: number;
+    controllerOutput: string;
+    responseEvidence: Array<{ evidenceId: string; role: string; sha256: string }>;
+  }>;
 }
 
 export interface FastCalibrationRigPhysicalAnalysisV1_2 {
@@ -337,14 +410,22 @@ function validateFileReference(value: FileReference, label: string): void {
 }
 
 function validateInputManifest(value: FastCalibrationRigMaterializationInputManifestV1_2): void {
-  exactKeys(value, ["schemaVersion", "captureManifest", "liveProbe", "componentEvidence", "stageTransformEvidence", "referencedEvidence"], "rig materialization input");
+  const canonicalDirection = "directionFrameEvidence" in value;
+  const directionReference: FileReference = canonicalDirection ? value.directionFrameEvidence : value.stageTransformEvidence;
+  exactKeys(value, canonicalDirection
+    ? ["schemaVersion", "captureManifest", "liveProbe", "componentEvidence", "directionFrameEvidence", "referencedEvidence"]
+    : ["schemaVersion", "captureManifest", "liveProbe", "componentEvidence", "stageTransformEvidence", "referencedEvidence"], "rig materialization input");
   if (value.schemaVersion !== FAST_CALIBRATION_RIG_MATERIALIZATION_INPUT_SCHEMA_V1_2) throw new Error("Rig materialization input schema mismatch.");
   validateFileReference(value.captureManifest, "captureManifest");
   validateFileReference(value.liveProbe, "liveProbe");
   validateFileReference(value.componentEvidence, "componentEvidence");
-  validateFileReference(value.stageTransformEvidence, "stageTransformEvidence");
-  if (!Array.isArray(value.referencedEvidence) || value.referencedEvidence.length < 5) {
-    throw new Error("Rig materialization requires explicit lens, wiring, and stage evidence.");
+  validateFileReference(directionReference,
+    canonicalDirection ? "directionFrameEvidence" : "stageTransformEvidence");
+  if (!Array.isArray(value.referencedEvidence) ||
+      (canonicalDirection ? value.referencedEvidence.length !== 2 : value.referencedEvidence.length < 5)) {
+    throw new Error(canonicalDirection
+      ? "Canonical-target rig materialization requires exactly generated lens and wiring evidence."
+      : "Rig materialization requires explicit lens, wiring, and stage evidence.");
   }
   const names = new Set<string>();
   const hashes = new Set<string>();
@@ -360,7 +441,11 @@ function validateInputManifest(value: FastCalibrationRigMaterializationInputMani
     roles.add(entry.role);
   }
   for (const role of REQUIRED_NON_INSTRUMENT_REFERENCE_ROLES) {
-    if (!roles.has(role)) throw new Error(`Rig materialization requires explicit ${role} evidence.`);
+    if ((canonicalDirection && role === "stage_transform_measurement") || roles.has(role)) continue;
+    throw new Error(`Rig materialization requires explicit ${role} evidence.`);
+  }
+  if (canonicalDirection && [...roles].some((role) => role !== "lens_authority" && role !== "component_wiring")) {
+    throw new Error("Canonical-target rig materialization rejects legacy, instrument, metrology, and manual authority references.");
   }
 }
 
@@ -408,16 +493,99 @@ function validateWiring(value: FastCalibrationChannelWiringV1_2[]): void {
   });
 }
 
-function validateComponentEvidence(value: FastCalibrationComponentSupervisionEvidenceV1_2): void {
-  exactKeys(value, ["schemaVersion", "recordedAt", "operatorId", "rigId", "controllerIdentity", "componentConfigurationId", "lensAuthorityId", "lensAuthorityEvidenceSha256", "wiringEvidenceSha256", "channelWiring", "targetVersion", "targetSha256"], "component evidence");
-  if (value.schemaVersion !== COMPONENT_EVIDENCE_SCHEMA) throw new Error("Component supervision evidence schema mismatch.");
-  exactTimestamp(value.recordedAt, "component evidence recordedAt");
-  [value.operatorId, value.rigId, value.controllerIdentity, value.componentConfigurationId, value.lensAuthorityId, value.targetVersion]
+function validateComponentEvidence(value: FastCalibrationComponentAuthorityEvidenceV1_2): void {
+  if (value.schemaVersion === EVIDENCE_DERIVED_COMPONENT_EVIDENCE_SCHEMA) {
+    exactKeys(value, ["schemaVersion", "derivedAt", "authorityMethod", "rigId", "controllerIdentity", "controllerUnit", "componentConfigurationId", "lensAuthorityId", "lensAuthorityEvidenceSha256", "wiringEvidenceSha256", "channelWiring", "targetVersion", "targetSha256"], "evidence-derived component authority");
+    if (value.authorityMethod !== "content_addressed_observed_rig_response_v1") throw new Error("Evidence-derived component authority method mismatch.");
+    exactTimestamp(value.derivedAt, "component authority derivedAt");
+    if (!Number.isInteger(value.controllerUnit) || value.controllerUnit < 1 || value.controllerUnit > 255) throw new Error("Evidence-derived component controller unit is invalid.");
+  } else {
+    exactKeys(value, ["schemaVersion", "recordedAt", "operatorId", "rigId", "controllerIdentity", "componentConfigurationId", "lensAuthorityId", "lensAuthorityEvidenceSha256", "wiringEvidenceSha256", "channelWiring", "targetVersion", "targetSha256"], "component evidence");
+    if (value.schemaVersion !== COMPONENT_EVIDENCE_SCHEMA) throw new Error("Component supervision evidence schema mismatch.");
+    exactTimestamp(value.recordedAt, "component evidence recordedAt");
+    exactId(value.operatorId, "component evidence operatorId");
+  }
+  [value.rigId, value.controllerIdentity, value.componentConfigurationId, value.lensAuthorityId, value.targetVersion]
     .forEach((entry, index) => exactId(entry, `component evidence identity ${index}`));
   exactSha(value.lensAuthorityEvidenceSha256, "component lens evidence sha256");
   exactSha(value.wiringEvidenceSha256, "component wiring evidence sha256");
   exactSha(value.targetSha256, "component target sha256");
   validateWiring(value.channelWiring);
+}
+
+function validateCanonicalDirectionFrame(value: FastCalibrationCanonicalDirectionFrameEvidenceV1_2): void {
+  exactKeys(value, ["schemaVersion", "derivedAt", "authorityMethod", "coordinateFrame", "rigId", "physicalAnalyzerSha256", "channels"], "canonical target direction authority");
+  if (value.schemaVersion !== CANONICAL_DIRECTION_FRAME_SCHEMA ||
+      value.authorityMethod !== "evidence_derived_normalized_illumination_direction_v1" ||
+      value.coordinateFrame !== "canonical_normalized_target_v1") {
+    throw new Error("Canonical target direction authority schema, method, or coordinate frame mismatch.");
+  }
+  exactTimestamp(value.derivedAt, "canonical target direction derivedAt");
+  exactId(value.rigId, "canonical target direction rigId");
+  exactSha(value.physicalAnalyzerSha256, "canonical target direction analyzer sha256");
+  if (!Array.isArray(value.channels) || value.channels.length !== 8) throw new Error("Canonical target direction authority requires exactly eight channels.");
+  const directionIds = new Set<string>();
+  value.channels.forEach((channel, index) => {
+    exactKeys(channel, ["channelIndex", "physicalDirectionId", "directionMeasurementEvidence"], "canonical target direction channel");
+    if (channel.channelIndex !== index + 1 || directionIds.has(channel.physicalDirectionId)) throw new Error("Canonical target direction identities must be unique and ordered 1 through 8.");
+    directionIds.add(exactId(channel.physicalDirectionId, "canonical target physicalDirectionId"));
+    if (!Array.isArray(channel.directionMeasurementEvidence) || channel.directionMeasurementEvidence.length !== 3) throw new Error("Canonical target direction requires exactly three evidence-derived measurements per channel.");
+    const hashes = new Set<string>();
+    channel.directionMeasurementEvidence.forEach((entry) => {
+      exactKeys(entry, ["evidenceId", "sha256", "sourceEvidenceId", "sourceSha256"], "canonical target direction evidence reference");
+      exactId(entry.evidenceId, "direction measurement evidenceId");
+      exactId(entry.sourceEvidenceId, "direction source evidenceId");
+      exactSha(entry.sha256, "direction measurement sha256");
+      exactSha(entry.sourceSha256, "direction source sha256");
+      if (hashes.has(entry.sha256) || hashes.has(entry.sourceSha256)) throw new Error("Canonical target direction evidence contains duplicate hashes.");
+      hashes.add(entry.sha256); hashes.add(entry.sourceSha256);
+    });
+  });
+}
+
+function operationalId(prefix: string, value: unknown): string {
+  return `tk-${prefix}-${hash(canonicalBytes(value))}`;
+}
+
+function validateEvidenceDerivedLens(value: FastCalibrationEvidenceDerivedLensAuthorityV1_2): void {
+  exactKeys(value, ["schemaVersion", "authorityMethod", "rigId", "cameraSerialNumber", "cameraModelName", "targetVersion", "targetSha256", "sourceCaptureManifestSha256", "physicalAnalyzerSha256", "lensGeometryEvidence", "normalizationRegistrationEvidence"], "evidence-derived lens authority");
+  if (value.schemaVersion !== EVIDENCE_DERIVED_LENS_SCHEMA || value.authorityMethod !== "exact_capture_and_analyzer_binding_v1") throw new Error("Evidence-derived lens authority schema or method mismatch.");
+  [value.rigId, value.cameraSerialNumber, value.cameraModelName, value.targetVersion]
+    .forEach((entry, index) => exactId(entry, `evidence-derived lens identity ${index}`));
+  [value.targetSha256, value.sourceCaptureManifestSha256, value.physicalAnalyzerSha256]
+    .forEach((entry, index) => exactSha(entry, `evidence-derived lens hash ${index}`));
+  for (const [label, entries] of [["lens geometry", value.lensGeometryEvidence], ["normalization registration", value.normalizationRegistrationEvidence]] as const) {
+    if (!Array.isArray(entries) || entries.length !== 20) throw new Error(`Evidence-derived ${label} authority requires exact raw and normalized evidence for ten poses.`);
+    const hashes = new Set<string>();
+    entries.forEach((entry) => {
+      exactKeys(entry, ["evidenceId", "sha256"], `evidence-derived ${label} reference`);
+      exactId(entry.evidenceId, `${label} evidenceId`); exactSha(entry.sha256, `${label} sha256`);
+      if (hashes.has(entry.sha256)) throw new Error(`Evidence-derived ${label} authority contains duplicate evidence.`);
+      hashes.add(entry.sha256);
+    });
+  }
+}
+
+function validateEvidenceDerivedWiring(value: FastCalibrationEvidenceDerivedWiringAuthorityV1_2): void {
+  exactKeys(value, ["schemaVersion", "authorityMethod", "rigId", "controllerIdentity", "controllerUnit", "channels"], "evidence-derived wiring authority");
+  if (value.schemaVersion !== EVIDENCE_DERIVED_WIRING_SCHEMA || value.authorityMethod !== "observed_leimac_acknowledged_response_v1") throw new Error("Evidence-derived wiring authority schema or method mismatch.");
+  exactId(value.rigId, "evidence-derived wiring rigId"); exactId(value.controllerIdentity, "evidence-derived wiring controllerIdentity");
+  if (!Number.isInteger(value.controllerUnit) || value.controllerUnit < 1 || value.controllerUnit > 255 || !Array.isArray(value.channels) || value.channels.length !== 8) throw new Error("Evidence-derived wiring requires one valid controller unit and exactly eight channels.");
+  const outputs = new Set<string>(); const hashes = new Set<string>();
+  value.channels.forEach((channel, index) => {
+    exactKeys(channel, ["channelIndex", "controllerOutput", "responseEvidence"], "evidence-derived wiring channel");
+    if (channel.channelIndex !== index + 1) throw new Error("Evidence-derived wiring channels must be ordered 1 through 8.");
+    exactId(channel.controllerOutput, "evidence-derived controllerOutput");
+    if (outputs.has(channel.controllerOutput)) throw new Error("Evidence-derived controller outputs must be unique.");
+    outputs.add(channel.controllerOutput);
+    if (!Array.isArray(channel.responseEvidence) || channel.responseEvidence.length !== 6) throw new Error("Evidence-derived wiring requires exactly six acknowledged on-channel response captures per channel.");
+    channel.responseEvidence.forEach((entry) => {
+      exactKeys(entry, ["evidenceId", "role", "sha256"], "evidence-derived wiring response reference");
+      exactId(entry.evidenceId, "wiring response evidenceId"); exactId(entry.role, "wiring response role"); exactSha(entry.sha256, "wiring response sha256");
+      if (hashes.has(entry.sha256)) throw new Error("Evidence-derived wiring response hashes must be globally unique.");
+      hashes.add(entry.sha256);
+    });
+  });
 }
 
 function validateStageTransform(value: FastCalibrationStageTransformEvidenceV1_2): void {
@@ -448,6 +616,87 @@ type CapturedArtifact = {
   bytes: Buffer;
   metadata: JsonObject;
 };
+
+function validateCanonicalGeneratedAuthorities(input: {
+  live: FastCalibrationProtectedLiveProbeEvidenceV1_2;
+  components: FastCalibrationComponentAuthorityEvidenceV1_2;
+  directions: FastCalibrationCanonicalDirectionFrameEvidenceV1_2;
+  lens: FastCalibrationEvidenceDerivedLensAuthorityV1_2;
+  wiring: FastCalibrationEvidenceDerivedWiringAuthorityV1_2;
+  captureManifestSha256: string;
+  physicalAnalyzerSha256: string;
+  artifacts: CapturedArtifact[];
+  builder?: BuildFixedRigPhysicalCalibrationV1Input;
+}): void {
+  const { live, components, directions, lens, wiring } = input;
+  if (!("controllerUnit" in components)) throw new Error("Canonical-target materialization rejects legacy or manually supplied component authority.");
+  validateEvidenceDerivedLens(lens); validateEvidenceDerivedWiring(wiring);
+  if (lens.rigId !== live.rigId || lens.cameraSerialNumber !== live.camera.serialNumber ||
+      lens.cameraModelName !== live.camera.modelName || lens.sourceCaptureManifestSha256 !== input.captureManifestSha256 ||
+      lens.physicalAnalyzerSha256 !== input.physicalAnalyzerSha256 || directions.physicalAnalyzerSha256 !== input.physicalAnalyzerSha256 ||
+      wiring.rigId !== live.rigId || wiring.controllerIdentity !== live.controller.identity || wiring.controllerUnit !== live.controller.unit ||
+      components.targetVersion !== lens.targetVersion || components.targetSha256 !== lens.targetSha256) {
+    throw new Error("Canonical-target authority does not bind the exact live, capture, target, and analyzer evidence.");
+  }
+  if (components.lensAuthorityId !== operationalId("lens-authority", lens) ||
+      components.componentConfigurationId !== operationalId("component-configuration", wiring)) {
+    throw new Error("Canonical-target operational lens or component identity is not content-addressed from exact evidence.");
+  }
+  const byId = new Map(input.artifacts.map((entry) => [entry.evidenceId, entry]));
+  for (const [label, entries, roles] of [
+    ["lens geometry", lens.lensGeometryEvidence, ["lens_geometry", "lens_geometry_normalized"]],
+    ["normalization registration", lens.normalizationRegistrationEvidence, ["normalization_registration", "normalization_registration_normalized"]],
+  ] as const) {
+    for (const reference of entries) {
+      const artifact = byId.get(reference.evidenceId);
+      if (!artifact || artifact.metadata.sha256 !== reference.sha256 || !roles.includes(artifact.sourceRole as never)) {
+        throw new Error(`Canonical-target ${label} authority contains missing, mismatched, or relabelled capture evidence.`);
+      }
+    }
+  }
+  wiring.channels.forEach((channel, index) => {
+    const direction = directions.channels[index]!;
+    const expectedComponentId = operationalId("component", {
+      rigId: live.rigId, controllerIdentity: live.controller.identity, controllerUnit: live.controller.unit,
+      controllerOutput: channel.controllerOutput, channelIndex: channel.channelIndex,
+      responseEvidenceSha256: channel.responseEvidence.map((entry) => entry.sha256),
+    });
+    const expectedDirectionId = operationalId("physical-direction", {
+      rigId: live.rigId, coordinateFrame: directions.coordinateFrame, channelIndex: direction.channelIndex,
+      directionMeasurementEvidence: direction.directionMeasurementEvidence,
+    });
+    const binding = components.channelWiring[index]!;
+    if (direction.channelIndex !== channel.channelIndex || direction.physicalDirectionId !== expectedDirectionId ||
+        binding.channelIndex !== channel.channelIndex || binding.controllerOutput !== channel.controllerOutput ||
+        binding.componentId !== expectedComponentId || binding.physicalDirectionId !== expectedDirectionId) {
+      throw new Error("Canonical-target channel operational identities are not uniquely content-addressed from exact evidence.");
+    }
+    for (const response of channel.responseEvidence) {
+      const artifact = byId.get(response.evidenceId);
+      const metadata = artifact?.metadata;
+      const leimac = metadata?.leimac as JsonObject | undefined;
+      const safeOff = metadata?.safeOff as JsonObject | undefined;
+      if (!artifact || artifact.sourceRole !== response.role || metadata?.sha256 !== response.sha256 ||
+          metadata.artifactClass !== "raw_capture" || metadata.channelIndex !== channel.channelIndex ||
+          !leimac || leimac.unit !== live.controller.unit || leimac.complete !== true ||
+          !Array.isArray(leimac.enabledChannels) || leimac.enabledChannels.length !== 1 || leimac.enabledChannels[0] !== channel.channelIndex ||
+          leimac.expectedWriteCount !== leimac.acknowledgedWriteCount || !Array.isArray(leimac.responseKinds) ||
+          (leimac.responseKinds as unknown[]).some((entry) => entry !== "ack") || !safeOff ||
+          safeOff.beforeCaptureConfirmed !== true || safeOff.afterCaptureConfirmed !== true) {
+        throw new Error("Canonical-target component identity lacks exact acknowledged on-channel response evidence.");
+      }
+    }
+    if (input.builder) {
+      const samples = input.builder.channels[index]?.directionMeasurementSamples;
+      if (!samples || samples.length !== 3 || samples.some((sample, sampleIndex) => {
+        const expected = direction.directionMeasurementEvidence[sampleIndex]!;
+        const derivedSample = sample as typeof sample & { sourceEvidenceId?: string; sourceSha256?: string };
+        return sample.evidenceId !== expected.evidenceId || sample.sha256 !== expected.sha256 ||
+          derivedSample.sourceEvidenceId !== expected.sourceEvidenceId || derivedSample.sourceSha256 !== expected.sourceSha256;
+      })) throw new Error("Canonical-target direction identity does not bind the exact analyzer-derived direction samples.");
+    }
+  });
+}
 
 async function loadCaptureAuthority(input: {
   root: string;
@@ -838,17 +1087,27 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
   const inputManifestEvidence = requireEvidence("rig-materialization-input", "input_manifest", evidence.inputManifestSha256);
   const sourceInput = parseCanonical<FastCalibrationRigMaterializationInputManifestV1_2>(inputManifestEvidence.bytes, "materialized rig input manifest");
   validateInputManifest(sourceInput);
+  const canonicalDirection = "directionFrameEvidence" in sourceInput;
   const liveEvidence = requireEvidence("protected-live-probe", "live_probe", sourceInput.liveProbe.sha256);
-  const componentEvidence = requireEvidence("component-supervision", "component_evidence", sourceInput.componentEvidence.sha256);
-  const stageEvidence = requireEvidence("stage-transform", "stage_transform", sourceInput.stageTransformEvidence.sha256);
+  const componentEvidence = requireEvidence(canonicalDirection ? "evidence-derived-components" : "component-supervision", "component_evidence", sourceInput.componentEvidence.sha256);
+  const directionEvidence = canonicalDirection
+    ? requireEvidence("canonical-target-directions", "direction_frame", sourceInput.directionFrameEvidence.sha256)
+    : requireEvidence("stage-transform", "stage_transform", sourceInput.stageTransformEvidence.sha256);
   const live = parseCanonical<FastCalibrationProtectedLiveProbeEvidenceV1_2>(liveEvidence.bytes, "materialized protected live probe");
-  const components = parseCanonical<FastCalibrationComponentSupervisionEvidenceV1_2>(componentEvidence.bytes, "materialized component evidence");
-  const stage = parseCanonical<FastCalibrationStageTransformEvidenceV1_2>(stageEvidence.bytes, "materialized stage transform evidence");
-  validateLiveProbe(live); validateComponentEvidence(components); validateStageTransform(stage);
+  const components = parseCanonical<FastCalibrationComponentAuthorityEvidenceV1_2>(componentEvidence.bytes, "materialized component evidence");
+  const directionAuthority = canonicalDirection
+    ? parseCanonical<FastCalibrationCanonicalDirectionFrameEvidenceV1_2>(directionEvidence.bytes, "materialized canonical target direction evidence")
+    : parseCanonical<FastCalibrationStageTransformEvidenceV1_2>(directionEvidence.bytes, "materialized stage transform evidence");
+  validateLiveProbe(live); validateComponentEvidence(components);
+  if (canonicalDirection) validateCanonicalDirectionFrame(directionAuthority as FastCalibrationCanonicalDirectionFrameEvidenceV1_2);
+  else validateStageTransform(directionAuthority as FastCalibrationStageTransformEvidenceV1_2);
   if (components.rigId !== live.rigId || components.controllerIdentity !== live.controller.identity ||
-      stage.rigId !== live.rigId || stage.cameraSerialNumber !== live.camera.serialNumber ||
-      stage.cameraModelName !== live.camera.modelName || stage.lensAuthorityId !== components.lensAuthorityId ||
-      components.operatorId !== stage.operatorId) {
+      directionAuthority.rigId !== live.rigId ||
+      (!canonicalDirection && ((directionAuthority as FastCalibrationStageTransformEvidenceV1_2).cameraSerialNumber !== live.camera.serialNumber ||
+        (directionAuthority as FastCalibrationStageTransformEvidenceV1_2).cameraModelName !== live.camera.modelName ||
+        (directionAuthority as FastCalibrationStageTransformEvidenceV1_2).lensAuthorityId !== components.lensAuthorityId ||
+        !("operatorId" in components) || components.operatorId !== (directionAuthority as FastCalibrationStageTransformEvidenceV1_2).operatorId)) ||
+      (canonicalDirection && (!("controllerUnit" in components) || components.controllerUnit !== live.controller.unit))) {
     throw new Error("Materialized component/stage/live evidence identities do not match.");
   }
   for (const reference of sourceInput.referencedEvidence) {
@@ -865,7 +1124,20 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
   };
   consumeSourceReference(components.lensAuthorityEvidenceSha256, "lens_authority");
   consumeSourceReference(components.wiringEvidenceSha256, "component_wiring");
-  stage.measurementEvidenceSha256.forEach((sha256) => consumeSourceReference(sha256, "stage_transform_measurement"));
+  if (!canonicalDirection) (directionAuthority as FastCalibrationStageTransformEvidenceV1_2).measurementEvidenceSha256
+    .forEach((sha256) => consumeSourceReference(sha256, "stage_transform_measurement"));
+  const referencedBytesByHash = (sha256: string): Buffer => {
+    const entry = evidence.files.find((candidate) => candidate.kind === "referenced_evidence" && candidate.sha256 === sha256);
+    const bytes = entry ? evidenceBytes.get(entry.evidenceId) : undefined;
+    if (!bytes) throw new Error("Materialized referenced authority bytes are missing.");
+    return bytes;
+  };
+  const canonicalLens = canonicalDirection
+    ? parseCanonical<FastCalibrationEvidenceDerivedLensAuthorityV1_2>(referencedBytesByHash(components.lensAuthorityEvidenceSha256), "materialized evidence-derived lens authority")
+    : undefined;
+  const canonicalWiring = canonicalDirection
+    ? parseCanonical<FastCalibrationEvidenceDerivedWiringAuthorityV1_2>(referencedBytesByHash(components.wiringEvidenceSha256), "materialized evidence-derived wiring authority")
+    : undefined;
   const analyzerEvidence = requireEvidence("physical-analyzer-source", "physical_analyzer", evidence.physicalAnalyzerSha256);
   const analyzerDependencyEvidence = requireEvidence("physical-analyzer-dependencies", "physical_analyzer_dependency", evidence.physicalAnalyzerDependencyManifestSha256);
   const analyzerScriptPath = path.resolve(__dirname, "../../../../scripts/ai-grader/analyze-mathematical-calibration-v1.py");
@@ -916,6 +1188,7 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
   if (!Array.isArray(capturePackage.artifacts) || capturePackage.artifacts.length !== 283) {
     throw new Error("Materialized capture package must retain the exact 283-artifact ledger.");
   }
+  const materializedArtifacts: CapturedArtifact[] = [];
   for (const candidate of capturePackage.artifacts) {
     const artifact = candidate as JsonObject;
     const artifactEntry = evidenceEntries.get(exactId(artifact.evidenceId, "materialized capture artifact evidenceId"));
@@ -923,6 +1196,9 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
         artifactEntry.sourceRole !== artifact.role || artifactEntry.byteSize !== artifact.byteSize) {
       throw new Error("Materialized capture artifact bytes are missing, corrupt, or relabelled.");
     }
+    const artifactBytes = evidenceBytes.get(artifactEntry.evidenceId);
+    if (!artifactBytes) throw new Error("Materialized capture artifact bytes are missing.");
+    materializedArtifacts.push({ evidenceId: artifactEntry.evidenceId, sourceRole: artifactEntry.sourceRole, kind: "capture_artifact", bytes: artifactBytes, metadata: artifact });
     if (artifact.artifactClass === "raw_capture") {
       const camera = artifact.camera as JsonObject;
       const leimac = artifact.leimac as JsonObject;
@@ -985,6 +1261,14 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
       hashFastCalibrationCanonicalV1_2(rebuilt.profile) !== physicalAnalysis.profileSha256) {
     throw new Error("Materialized physical analysis does not reproduce accepted physical calculations.");
   }
+  if (canonicalDirection) validateCanonicalGeneratedAuthorities({
+    live, components,
+    directions: directionAuthority as FastCalibrationCanonicalDirectionFrameEvidenceV1_2,
+    lens: canonicalLens!, wiring: canonicalWiring!,
+    captureManifestSha256: sourceInput.captureManifest.sha256,
+    physicalAnalyzerSha256: evidence.physicalAnalyzerSha256,
+    artifacts: materializedArtifacts, builder: physicalAnalysis.builderInput,
+  });
   const artifactEvidence = evidence.files.filter((entry) => entry.kind === "capture_artifact");
   const byId = new Map(artifactEvidence.map((entry) => [entry.evidenceId, entry]));
   for (const reference of allBuilderEvidence(physicalAnalysis.builderInput)) {
@@ -1002,7 +1286,8 @@ export async function loadMaterializedFastCalibrationRigAuthorityV1_2(input: {
   if (verified.authority.sourceCaptureManifestSha256 !== evidence.sourceCaptureManifestSha256) {
     throw new Error("Materialized rig authority does not bind the exact source capture manifest.");
   }
-  if (physicalAnalysis.builderInput.rigId !== live.rigId || physicalAnalysis.builderInput.operatorId !== components.operatorId ||
+  if (physicalAnalysis.builderInput.rigId !== live.rigId ||
+      (!canonicalDirection && (!("operatorId" in components) || physicalAnalysis.builderInput.operatorId !== components.operatorId)) ||
       physicalAnalysis.builderInput.targetVersion !== components.targetVersion || physicalAnalysis.builderInput.targetSha256 !== components.targetSha256 ||
       physicalAnalysis.builderInput.lensModel.sourceWidthPx !== live.camera.widthPx ||
       physicalAnalysis.builderInput.lensModel.sourceHeightPx !== live.camera.heightPx || runtimeContext.stationId !== live.stationId ||
@@ -1040,18 +1325,28 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
   const inputManifestBytes = await readExact(input.inputManifestPath, input.inputManifestSha256, "rig materialization input manifest");
   const manifest = parseCanonical<FastCalibrationRigMaterializationInputManifestV1_2>(inputManifestBytes, "rig materialization input manifest");
   validateInputManifest(manifest);
+  const canonicalDirection = "directionFrameEvidence" in manifest;
   const readReferenced = async <T>(reference: FileReference, label: string): Promise<{ bytes: Buffer; value: T }> => {
     const bytes = await readExact(contained(sourceRoot, reference.fileName), reference.sha256, label);
     return { bytes, value: parseCanonical<T>(bytes, label) };
   };
   const live = await readReferenced<FastCalibrationProtectedLiveProbeEvidenceV1_2>(manifest.liveProbe, "protected live probe evidence");
-  const components = await readReferenced<FastCalibrationComponentSupervisionEvidenceV1_2>(manifest.componentEvidence, "component supervision evidence");
-  const stage = await readReferenced<FastCalibrationStageTransformEvidenceV1_2>(manifest.stageTransformEvidence, "stage transform evidence");
-  validateLiveProbe(live.value); validateComponentEvidence(components.value); validateStageTransform(stage.value);
+  const components = await readReferenced<FastCalibrationComponentAuthorityEvidenceV1_2>(manifest.componentEvidence, "component authority evidence");
+  const directionAuthority = canonicalDirection
+    ? await readReferenced<FastCalibrationCanonicalDirectionFrameEvidenceV1_2>(manifest.directionFrameEvidence, "canonical target direction evidence")
+    : await readReferenced<FastCalibrationStageTransformEvidenceV1_2>(manifest.stageTransformEvidence, "stage transform evidence");
+  validateLiveProbe(live.value); validateComponentEvidence(components.value);
+  if (canonicalDirection) validateCanonicalDirectionFrame(directionAuthority.value as FastCalibrationCanonicalDirectionFrameEvidenceV1_2);
+  else validateStageTransform(directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2);
   if (components.value.rigId !== live.value.rigId || components.value.controllerIdentity !== live.value.controller.identity ||
-      stage.value.rigId !== live.value.rigId || stage.value.cameraSerialNumber !== live.value.camera.serialNumber ||
-      stage.value.cameraModelName !== live.value.camera.modelName || stage.value.lensAuthorityId !== components.value.lensAuthorityId ||
-      components.value.operatorId !== stage.value.operatorId) throw new Error("Supervised component/stage/live identities do not match.");
+      directionAuthority.value.rigId !== live.value.rigId ||
+      (!canonicalDirection && ((directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).cameraSerialNumber !== live.value.camera.serialNumber ||
+        (directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).cameraModelName !== live.value.camera.modelName ||
+        (directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).lensAuthorityId !== components.value.lensAuthorityId ||
+        !("operatorId" in components.value) || components.value.operatorId !== (directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).operatorId)) ||
+      (canonicalDirection && (!("controllerUnit" in components.value) || components.value.controllerUnit !== live.value.controller.unit))) {
+    throw new Error("Component/direction/live evidence identities do not match.");
+  }
   const referencesByHash = new Map<string, ReferencedEvidence>();
   const referencedBytes = new Map<string, Buffer>();
   for (const reference of manifest.referencedEvidence) {
@@ -1067,7 +1362,7 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
     referenceByRole(manifest.referencedEvidence, sha256, role);
     consumedReferenceHashes.add(sha256);
   }
-  for (const sha256 of stage.value.measurementEvidenceSha256) {
+  for (const sha256 of canonicalDirection ? [] : (directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).measurementEvidenceSha256) {
     referenceByRole(manifest.referencedEvidence, sha256, "stage_transform_measurement");
     consumedReferenceHashes.add(sha256);
   }
@@ -1079,6 +1374,20 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
   const capture = await loadCaptureAuthority({
     root: sourceRoot, captureManifestRef: manifest.captureManifest, liveProbe: live.value,
     physicalAnalyzerSha256, referencesByHash, consumedReferenceHashes,
+  });
+  const canonicalLens = canonicalDirection
+    ? parseCanonical<FastCalibrationEvidenceDerivedLensAuthorityV1_2>(referencedBytes.get(components.value.lensAuthorityEvidenceSha256)!, "evidence-derived lens authority")
+    : undefined;
+  const canonicalWiring = canonicalDirection
+    ? parseCanonical<FastCalibrationEvidenceDerivedWiringAuthorityV1_2>(referencedBytes.get(components.value.wiringEvidenceSha256)!, "evidence-derived wiring authority")
+    : undefined;
+  if (canonicalDirection) validateCanonicalGeneratedAuthorities({
+    live: live.value,
+    components: components.value,
+    directions: directionAuthority.value as FastCalibrationCanonicalDirectionFrameEvidenceV1_2,
+    lens: canonicalLens!, wiring: canonicalWiring!,
+    captureManifestSha256: manifest.captureManifest.sha256,
+    physicalAnalyzerSha256, artifacts: capture.artifacts,
   });
   if (consumedReferenceHashes.size !== manifest.referencedEvidence.length ||
       manifest.referencedEvidence.some((entry) => !consumedReferenceHashes.has(entry.sha256))) {
@@ -1096,11 +1405,18 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
     const builder = analysis.builderInput;
     const physical = buildFixedRigPhysicalCalibrationV1(builder);
     if (physical.status !== "finalized") throw new Error(`Rig physical acceptance rejected: ${JSON.stringify(physical.issues)}`);
-    if (builder.rigId !== live.value.rigId || builder.operatorId !== components.value.operatorId ||
+    if (builder.rigId !== live.value.rigId ||
+        (!canonicalDirection && (!("operatorId" in components.value) || builder.operatorId !== components.value.operatorId)) ||
         builder.targetVersion !== components.value.targetVersion || builder.targetSha256 !== components.value.targetSha256 ||
         builder.lensModel.sourceWidthPx !== live.value.camera.widthPx || builder.lensModel.sourceHeightPx !== live.value.camera.heightPx) {
       throw new Error("Physical analysis target/rig/operator/camera identity differs from supervised evidence.");
     }
+    if (canonicalDirection) validateCanonicalGeneratedAuthorities({
+      live: live.value, components: components.value,
+      directions: directionAuthority.value as FastCalibrationCanonicalDirectionFrameEvidenceV1_2,
+      lens: canonicalLens!, wiring: canonicalWiring!, captureManifestSha256: manifest.captureManifest.sha256,
+      physicalAnalyzerSha256, artifacts: capture.artifacts, builder,
+    });
     const algorithmHashes = {
       geometry: FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256,
       photometric: FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256,
@@ -1135,7 +1451,12 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
       },
       {
         schemaVersion: "ten-kings-physical-light-directions-authority-v1", rigId: builder.rigId,
-        stageToUndistortedSensorMatrix: stage.value.stageToUndistortedSensorMatrix,
+        ...(canonicalDirection ? {
+          coordinateFrame: "canonical_normalized_target_v1",
+          authorityMethod: "evidence_derived_normalized_illumination_direction_v1",
+        } : {
+          stageToUndistortedSensorMatrix: (directionAuthority.value as FastCalibrationStageTransformEvidenceV1_2).stageToUndistortedSensorMatrix,
+        }),
         channels: builder.channels.map(({ channelIndex, directionMeasurementSamples }) => ({ channelIndex, directionMeasurementSamples })),
       },
       {
@@ -1159,8 +1480,10 @@ export async function materializeFastCalibrationRigAuthorityV1_2(
       { kind: "capture_package", evidenceId: "source-capture-package", sourceRole: "capture_package", bytes: capture.capturePackageBytes },
       ...capture.artifacts.map((entry) => ({ kind: entry.kind, evidenceId: entry.evidenceId, sourceRole: entry.sourceRole, bytes: entry.bytes })),
       { kind: "live_probe", evidenceId: "protected-live-probe", sourceRole: "live_runtime", bytes: live.bytes },
-      { kind: "component_evidence", evidenceId: "component-supervision", sourceRole: "component_authority", bytes: components.bytes },
-      { kind: "stage_transform", evidenceId: "stage-transform", sourceRole: "stage_transform", bytes: stage.bytes },
+      { kind: "component_evidence", evidenceId: canonicalDirection ? "evidence-derived-components" : "component-supervision", sourceRole: "component_authority", bytes: components.bytes },
+      canonicalDirection
+        ? { kind: "direction_frame", evidenceId: "canonical-target-directions", sourceRole: "canonical_normalized_target", bytes: directionAuthority.bytes }
+        : { kind: "stage_transform", evidenceId: "stage-transform", sourceRole: "stage_transform", bytes: directionAuthority.bytes },
       ...manifest.referencedEvidence.map((entry) => ({ kind: "referenced_evidence", evidenceId: `reference-${entry.role}-${entry.sha256.slice(0, 16)}`, sourceRole: entry.role, bytes: referencedBytes.get(entry.sha256)! })),
       { kind: "physical_analyzer", evidenceId: "physical-analyzer-source", sourceRole: PHYSICAL_ANALYSIS_ALGORITHM, bytes: analyzerScriptBytes },
       { kind: "physical_analyzer_dependency", evidenceId: "physical-analyzer-dependencies", sourceRole: "python-opencv-dependency-manifest", bytes: analyzerDependencyBytes },

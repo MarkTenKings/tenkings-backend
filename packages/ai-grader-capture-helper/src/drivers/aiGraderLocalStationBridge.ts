@@ -141,6 +141,14 @@ import {
 import { loadFixedRigMathematicalCalibrationBundleV1 } from "./fixedRigMathematicalCalibrationBundleV1";
 import type { FastCalibrationRuntimeContextV1_2 } from "./fixedRigFastMathematicalCalibrationV1_2";
 import {
+  BaslerLeimacMathematicalCalibrationSessionV1_2,
+  type BaslerMathematicalCalibrationLiveContextV1_2,
+} from "./baslerLeimacMathematicalCalibrationSessionV1_2";
+import {
+  produceFastCalibrationRigMaterializationInputV1_2,
+  type ProducedFastCalibrationRigMaterializationInputV1_2,
+} from "./fixedRigFastMathematicalCalibrationRigInputProducerV1_2";
+import {
   DurableMathematicalCalibrationV1_2LocalSessionAuthority,
   type DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig,
 } from "./fixedRigFastMathematicalCalibrationLocalAuthorityV1_2";
@@ -360,7 +368,8 @@ export type AiGraderLocalStationBridgeAction =
   | "submit-mathematical-finding-reviews"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
-  | "fail-queued-ocr";
+  | "fail-queued-ocr"
+  | "mathematical-calibration-rig-input";
 
 export type AiGraderRapidCaptureWorkflowState =
   | "front_captured"
@@ -1421,6 +1430,8 @@ export interface AiGraderLocalStationBridgeDependencies {
   onRealHardwareBoundary?: (boundary: AiGraderLocalStationRealHardwareBoundary) => void;
   mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  produceFastCalibrationRigMaterializationInputV1_2?: typeof produceFastCalibrationRigMaterializationInputV1_2;
+  probeFastCalibrationRigMaterializationContextV1_2?: () => Promise<BaslerMathematicalCalibrationLiveContextV1_2>;
   loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
   buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
   captureMathematicalCalibrationFrame?: (
@@ -2949,6 +2960,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
     { method: "POST", action: "mathematical-calibration-seal", path: "/calibration/mathematical-v1/seal", hardwareAccess: false, description: "Fail closed unless the unique capture/metrology ledger is complete, then seal analyzer input and source package." },
+    { method: "POST", action: "mathematical-calibration-rig-input", path: "/calibration/mathematical-v1/materialization-input", hardwareAccess: true, description: "Probe the protected rig and derive one exact canonical-target-frame V1.2 materialization input from sealed immutable evidence." },
     { method: "POST", action: "mathematical-calibration-v1.1-start", path: "/calibration/mathematical-v1.1/start", hardwareAccess: false, description: "Start the isolated four-placement Mathematical Calibration V1.1 session; no Production station session is created." },
     { method: "GET", action: "mathematical-calibration-v1.1-page", path: MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH, hardwareAccess: false, description: "Serve the same-origin protected calibration-only preview page; no Production station page is opened." },
     { method: "GET", action: "mathematical-calibration-v1.1-status", path: "/calibration/mathematical-v1.1/status", hardwareAccess: false, description: "Read the active four-placement V1.1 calibration session." },
@@ -12170,6 +12182,70 @@ export class AiGraderLocalStationBridgeService {
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
   }
 
+  prepareMathematicalCalibrationRigMaterializationInput(
+    sessionId: string,
+  ): Promise<ProducedFastCalibrationRigMaterializationInputV1_2> {
+    if (!ATOMIC_CAPTURE_ASSERTION_RE.test(sessionId)) throw new Error("Mathematical Calibration V1.0.1 materialization sessionId is invalid.");
+    this.assertCalibrationSessionIsolated();
+    assertRealBridgeArmed(this.config);
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Rig materialization input is bound to the active V1.0.1 session only.");
+    }
+    const producer = this.requireMathematicalCalibrationCaptureProducer();
+    return producer.status(sessionId).then((status) => {
+      if (!status.sealed || status.hardStop || !status.captureManifestPath) {
+        throw new Error("Rig materialization input requires one exact sealed, healthy V1.0.1 capture session.");
+      }
+      return this.serializeTerminalLifecycle(async () => {
+      await this.awaitLightingLifecycleIdle();
+      await this.stopPreviewForHardwareAction("mathematical calibration V1.2 rig-authority probe");
+      const owner = `mathematical-calibration-rig-input:${sessionId}`;
+      this.acquireCaptureLock(owner);
+      try {
+        const current = await producer.status(sessionId);
+        if (!current.sealed || current.hardStop || !current.captureManifestPath || current.captureManifestPath !== status.captureManifestPath || current.sessionStateSha256 !== status.sessionStateSha256) {
+          throw new Error("Rig materialization input requires one exact sealed, healthy V1.0.1 capture session.");
+        }
+        const captureManifestBytes = await readFile(current.captureManifestPath);
+        const liveContext = this.dependencies.probeFastCalibrationRigMaterializationContextV1_2
+          ? await this.dependencies.probeFastCalibrationRigMaterializationContextV1_2()
+          : await this.probeFastCalibrationRigMaterializationContextV1_2(current.sessionDir);
+        return await (this.dependencies.produceFastCalibrationRigMaterializationInputV1_2 ??
+          produceFastCalibrationRigMaterializationInputV1_2)({
+          captureManifestPath: current.captureManifestPath,
+          captureManifestSha256: crypto.createHash("sha256").update(captureManifestBytes).digest("hex"),
+          liveContext,
+          observedAt: new Date().toISOString(),
+        });
+      } finally {
+        if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
+      }
+      });
+    });
+  }
+
+  private async probeFastCalibrationRigMaterializationContextV1_2(
+    sessionDir: string,
+  ): Promise<BaslerMathematicalCalibrationLiveContextV1_2> {
+    if (!this.config.leimacHost || !this.config.leimacPort || !this.config.leimacUnit) {
+      throw new Error("Protected rig materialization probe requires the configured Leimac endpoint and unit.");
+    }
+    const session = new BaslerLeimacMathematicalCalibrationSessionV1_2({
+      outputDir: path.join(sessionDir, "rig-materialization-probe"),
+      cameraIndex: this.config.cameraIndex ?? 0,
+      ...(this.config.pylonRoot ? { pylonRoot: this.config.pylonRoot } : {}),
+      ...(this.config.baslerBridgeScript ? { bridgeScriptPath: this.config.baslerBridgeScript } : {}),
+      timeoutMs: this.config.pylonTimeoutMs,
+      exposureUs: this.config.exposureUs,
+      gain: this.config.gain,
+      leimacHost: this.config.leimacHost,
+      leimacPort: this.config.leimacPort,
+      leimacUnit: this.config.leimacUnit,
+      dutyPercent: this.config.duty,
+    });
+    return session.probeContext();
+  }
+
   mathematicalCalibrationV1_1CaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     if (this.mathematicalCalibrationV1_1SessionId && this.mathematicalCalibrationV1_1SessionId !== sessionId) {
       throw new Error("Mathematical Calibration V1.1 status is bound to the active calibration session only.");
@@ -13403,6 +13479,21 @@ export function createAiGraderLocalStationBridgeHttpServer(
         if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
         const body = await readJsonBody(req);
         return sendJson(res, 200, { ok: true, operation: "mathematical-calibration-seal", result: await service.sealMathematicalCalibrationCapture(body as unknown as SealFixedRigMathematicalCalibrationCaptureV1Request) }, origin, config);
+      }
+
+      if (url.pathname === "/calibration/mathematical-v1/materialization-input") {
+        if (req.method !== "POST") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "POST is required for rig materialization input production." }, origin, config);
+        if (!tokenMatches(req, config)) return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        if (url.search.length > 0) throw new Error("Rig materialization input production does not accept query authority.");
+        const body = await readJsonBody(req);
+        if (!body || typeof body !== "object" || Array.isArray(body) || Object.keys(body).length !== 1 || typeof (body as Record<string, unknown>).sessionId !== "string") {
+          throw new Error("Rig materialization input production accepts only one exact sessionId and no browser-authored authority.");
+        }
+        return sendJson(res, 200, {
+          ok: true,
+          operation: "mathematical-calibration-rig-input",
+          result: await service.prepareMathematicalCalibrationRigMaterializationInput((body as Record<string, unknown>).sessionId as string),
+        }, origin, config);
       }
 
       if (url.pathname === "/mathematical-v1/review-assets") {

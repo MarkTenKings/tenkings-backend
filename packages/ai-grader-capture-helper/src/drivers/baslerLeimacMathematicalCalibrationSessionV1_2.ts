@@ -22,6 +22,7 @@ export interface BaslerMathematicalCalibrationLiveContextV1_2 {
   controller: {
     identity: string;
     unit: number;
+    responseKinds: string[];
   };
 }
 
@@ -289,6 +290,7 @@ export class BaslerLeimacMathematicalCalibrationSessionV1_2 {
       controller: {
         identity: exactSafe(String(controller.identity ?? ""), "live controller identity"),
         unit: Number(controller.unit),
+        responseKinds: exactResponseKinds(controller.responseKinds, "live context safe-off responses"),
       },
     };
   }
@@ -337,6 +339,7 @@ export class BaslerLeimacMathematicalCalibrationSessionV1_2 {
       controller: {
         identity: exactSafe(String(controller.identity ?? ""), "opened controller identity"),
         unit: Number(controller.unit),
+        responseKinds: exactResponseKinds(controller.responseKinds, "opened context safe-off responses"),
       },
       };
     } catch (error) {
