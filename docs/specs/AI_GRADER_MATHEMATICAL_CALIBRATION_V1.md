@@ -1,6 +1,8 @@
 # Ten Kings AI Grader Mathematical Calibration V1
 
-Status: implementation candidate; a finalized physical calibration bundle and independent Mac architecture/calibration review are required before any protected rollout.
+last_verified_at: 2026-07-22
+
+Status: implementation candidate; an exact reviewed calibration authority and independent Mac architecture/calibration review are required before any protected rollout.
 
 ## Purpose
 
@@ -138,7 +140,7 @@ Internal and report scores round to two decimals with the manifest rounding poli
 
 ## Immutable calibration authority
 
-A finalized calibration is one hash-protected `ten-kings-mathematical-calibration-bundle-v1`. Its ordered 12-member ledger contains:
+Under normal mathematical acceptance, a finalized calibration is one hash-protected `ten-kings-mathematical-calibration-bundle-v1`. Its ordered 12-member ledger contains:
 
 - finalized mathematical calibration profile;
 - physical calibration artifact;
@@ -147,6 +149,16 @@ A finalized calibration is one hash-protected `ten-kings-mathematical-calibratio
 - illumination-pattern/direction artifact.
 
 The bundle binds the non-production capture package, exact rig/camera/profile/settings, printable target hash, protected target-geometry and physical-direction evidence, distortion/normalization models, scale, repeated placement/measurement, boundary uncertainty, channel response/direction, algorithms, threshold set, and every member byte. `isCalibrated=true` is emitted only by the finalizer after all centralized acceptance gates pass.
+
+### Incident-bound product-owner operational acceptance
+
+Normal mathematical acceptance is unchanged. The centralized formulas and thresholds remain authoritative, and an ordinary rejected or incomplete run cannot produce or use a finalized/trusted bundle. The normal V1.2 result remains a 12-member bundle whose profile is `status=finalized` and `isCalibrated=true`.
+
+One exact session, `math-cal-v1-20260722-4cfa410c-01`, has a separately versioned, hash-bound product-owner operational policy path. It does not alter or replace the mathematical result: the profile remains `status=rejected` and `isCalibrated=false`, every measurement remains unchanged, and the complete 36-entry rejection/issue ledger remains present. The resulting transparent bundle has exactly 13 members, with the exact product-owner operational-acceptance record as its thirteenth member. That record is content-addressed decision metadata for Mark / Ten Kings, including the decision timestamp and exact reason; its unkeyed canonical hash does not independently authenticate Mark.
+
+Operational Production use requires exact loader and registry verification and a fresh-human-admin ECDSA-signed `ACTIVE` calibration activation authority. The signed statement must bind the exact containing bundle manifest, 13-member ledger, runtime context, rig characterization, rig ID, and operating context. The existing hosted activation signature boundary authenticates and authorizes operational use of the owner decision. A browser boolean, caller-authored authority/hash, threshold-pass claim, cross-session/context reuse, fallback, newest/closest/LKG selection, or automatic rollback cannot authorize it.
+
+Every owner-accepted report must carry that exact activation authority and visibly disclose `Owner accepted with recorded exceptions`, mathematical status `REJECTED`, `isCalibrated=false`, Mark / Ten Kings, the decision timestamp and reason, all 36 exception path/message entries, the owner-authority and exception-ledger hashes, and the activation ID, hosted key/signature metadata, and exact bundle/context bindings. Revocation and supersession remain explicit and append-only. This incident policy does not change V1.2's normal 12-member mathematical acceptance and cannot authorize any other rejected calibration.
 
 ### Fast calibration V1.2 authority composition
 
@@ -194,7 +206,7 @@ Rejected or unreviewed findings cannot enter a final V0.3 report. Confirmed/adju
 Publication independently verifies:
 
 - strict V0.3 schema and all four element formulas;
-- exact finalized calibration bundle and current TRUSTED snapshot;
+- exact normal finalized 12-member calibration bundle and current TRUSTED snapshot, or the exact incident-bound 13-member owner-operational bundle and its signed ACTIVE activation authority;
 - exact APPROVED design-reference rows and current artifact bytes;
 - complete immutable Publish authority, including calibration and condition observations;
 - exact Mathematical V1 release schema and statuses;

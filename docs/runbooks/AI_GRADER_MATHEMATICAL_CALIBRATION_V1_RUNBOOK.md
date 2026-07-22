@@ -1,6 +1,6 @@
 # AI Grader Mathematical Calibration V1 Runbook
 
-last_verified_at: 2026-07-21
+last_verified_at: 2026-07-22
 owner: Mark
 status: supervised non-production calibration only; no protected rollout authority
 
@@ -8,7 +8,7 @@ status: supervised non-production calibration only; no protected rollout authori
 
 This runbook creates one physically measured, immutable Mathematical Calibration V1 bundle for the fixed Basler/Leimac rig. It is not a Production deployment, database import, trust action, report publication, label print, inventory operation, or NFC workflow.
 
-The executable acceptance and scoring authority is `packages/shared/src/aiGraderMathematicalCalibrationV1.ts`. The operator launcher is `scripts/ai-grader/run-mathematical-calibration-capture-v1.ps1`. A session is calibrated only when the analyzer and finalizer produce a complete accepted 12-member bundle. Never edit a result, submit placeholder metrology, or set `isCalibrated=true` manually.
+The executable acceptance and scoring authority is `packages/shared/src/aiGraderMathematicalCalibrationV1.ts`. The operator launcher is `scripts/ai-grader/run-mathematical-calibration-capture-v1.ps1`. Under the normal mathematical contract, a session is calibrated only when the analyzer and finalizer produce a complete accepted 12-member bundle with `status=finalized` and `isCalibrated=true`; an ordinary rejected or incomplete run cannot produce or use a finalized/trusted bundle. Never edit a result, submit placeholder metrology, or set `isCalibrated=true` manually.
 
 Use one exact reviewed checkout pinned to the intended source commit. Do not install it over the Dell helper, change the Scheduled Task, rotate or print a station token, or persist new driver/firmware/controller settings. If another process already owns the camera or the requested loopback port, stop and obtain direction rather than changing the installed helper.
 
@@ -223,7 +223,11 @@ Run the explicit derivation for review, or let `CompleteOffline` invoke it autom
   -ConfirmSeal
 ```
 
-`CompleteOffline` must return `offline_calibration_complete`, `productionMutation=false`, and `v0FallbackUsed=false`. Preserve the capture manifest, source package, certified analysis SHA-256, complete bundle, bundle SHA-256, and all acceptance issues. A rejected analysis is an honest result: it produces no trusted profile and must be corrected with a new calibration session rather than edited.
+`CompleteOffline` must return `offline_calibration_complete`, `productionMutation=false`, and `v0FallbackUsed=false`. Preserve the capture manifest, source package, certified analysis SHA-256, complete bundle, bundle SHA-256, and all acceptance issues. Under the normal contract, a rejected analysis is an honest result: it produces no trusted profile and must be corrected with a new calibration session rather than edited.
+
+The only documented policy exception is exact preserved session `math-cal-v1-20260722-4cfa410c-01`. Its separately versioned product-owner operational-acceptance path preserves `status=rejected`, `isCalibrated=false`, every measurement, and all 36 issues. It does not repair or relabel the mathematical result. Its transparent 13-member bundle is operationally eligible only after the exact owner record, canonical loader, and registry identities verify and a fresh-human-admin ECDSA-signed `ACTIVE` activation binds the exact bundle manifest, member ledger, runtime context, rig characterization, rig ID, and operating context. The owner record is content-addressed decision metadata; the signed activation, not the self-hash alone, authenticates and authorizes its Production use. A browser cannot assert this state, and no caller-authored hash, threshold-pass label, fallback, cross-session reuse, newest/closest/LKG selection, or automatic rollback is accepted.
+
+Reports for that exact owner-accepted authority require the exact activation and must visibly show `Owner accepted with recorded exceptions`, mathematical `REJECTED`, `isCalibrated=false`, Mark / Ten Kings, decision timestamp and reason, all 36 exceptions, and owner/activation/signature/bundle provenance. Revocation and supersession remain explicit and append-only. This runbook does not authorize creating or activating that authority, does not alter the normal V1.2 12-member acceptance path, and cannot be reused for another rejected calibration.
 
 After the healthy session is sealed, create the V1.2 rig-materializer input through the protected bridge. This command accepts only the session ID. It pauses/releases preview, obtains one protected Basler/Leimac live probe with exact safe-off acknowledgements, and binds it to the sealed capture manifest, analyzer bytes, 24 evidence-derived direction records, and acknowledged per-channel response hashes:
 
@@ -238,7 +242,7 @@ The returned `inputManifestPath` and `inputManifestSha256` are the only material
 
 ## Acceptance evidence and supervised test card
 
-Before using the bundle on a test card, independently verify that:
+Before using a normally mathematically accepted bundle on a test card, independently verify that:
 
 - all manifest acceptance criteria pass and the finalized profile says `isCalibrated=true` only inside the complete bundle;
 - the 12-member ledger and every member hash revalidate;
