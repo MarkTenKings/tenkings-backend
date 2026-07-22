@@ -60,6 +60,139 @@ function makeIdleStatus(root) {
   return { statusPath, statusSha256: hash(fs.readFileSync(statusPath)) };
 }
 
+const safeOffFrameExpectations = [
+  {
+    name: "lightingOutput",
+    commandNumber: "86",
+    description: "Lighting output ON/OFF; channel enable or safe off",
+    request: "W8601010000020000030000040000050000060000070000080000",
+    response: "W86ACK0",
+    meaning: "Lighting output OFF",
+  },
+  {
+    name: "asynchronousOutput",
+    commandNumber: "85",
+    description: "Asynchronous output ON/OFF; OFF for trigger-only profile",
+    request: "W8501010000020000030000040000050000060000070000080000",
+    response: "W85ACK0",
+    meaning: "Asynchronous output OFF",
+  },
+  {
+    name: "lightingOutputValue",
+    commandNumber: "11",
+    description: "Lighting output value; PWM duty cycle in 1000 steps",
+    request: "W1101010000020000030000040000050000060000070000080000",
+    response: "W11ACK0",
+    meaning: "PWM duty 0 steps for safe-off",
+  },
+];
+
+function safeOffReceipt(incident, startMs = Date.parse("2026-07-22T17:59:40.000Z")) {
+  const durations = [100, 600, 600];
+  const interWriteGaps = [0, 2, 3];
+  let cursor = startMs;
+  const frames = safeOffFrameExpectations.map((expected) => ({
+    name: expected.name,
+    commandNumber: expected.commandNumber,
+    description: expected.description,
+    targetDesignation: "01",
+    channelValues: Array.from({ length: 8 }, (_, index) => ({ channel: index + 1, value: "0000", meaning: expected.meaning })),
+    requestAscii: expected.request,
+    requestFrame: expected.request,
+    terminator: "",
+    allowlisted: true,
+  }));
+  const writes = safeOffFrameExpectations.map((expected, index) => {
+    cursor += interWriteGaps[index];
+    const startedAt = new Date(cursor).toISOString();
+    cursor += durations[index];
+    return {
+      ok: true,
+      host: "169.254.191.156",
+      port: 1000,
+      timeoutMs: 1500,
+      startedAt,
+      finishedAt: new Date(cursor).toISOString(),
+      durationMs: durations[index],
+      frame: structuredClone(frames[index]),
+      rawResponse: expected.response,
+      responseKind: "ack",
+    };
+  });
+  const operation = {
+    ok: true,
+    service: "ai-grader-capture-helper",
+    command: "leimac-idmu-safe-off",
+    result: {
+      ok: true,
+      host: "169.254.191.156",
+      port: 1000,
+      timeoutMs: 1500,
+      startedAt: new Date(startMs).toISOString(),
+      finishedAt: new Date(cursor).toISOString(),
+      durationMs: cursor - startMs,
+      applied: true,
+      frames,
+      writes,
+      safety: {
+        writesApplied: true,
+        lightsCommanded: false,
+        outputSettingsChanged: true,
+        triggerSettingsChanged: false,
+        persistentSaved: false,
+        arbitraryWritesAllowed: false,
+      },
+    },
+  };
+  return {
+    schemaVersion: "ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1",
+    incidentId: incident.incidentId,
+    purpose: "stale_invalid_review_archive_preflight",
+    authorization: { owner: incident.owner, source: incident.authorizationSource },
+    operation,
+  };
+}
+
+function enableExternalSafeOffEvidence(fixture, { mutateReceipt, mutateStatus, startMs } = {}) {
+  const status = JSON.parse(fs.readFileSync(fixture.options.idleStatusPath, "utf8"));
+  status.liveLighting = {
+    status: "unavailable",
+    profile: { enabled: false },
+    applied: {
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+      verificationState: "unknown",
+      expectedWriteCount: 0,
+      acknowledgedWriteCount: 0,
+      verificationComplete: false,
+    },
+    physicalState: {
+      state: "unverified",
+      changedAt: "2026-07-22T17:59:30.000Z",
+      expectedWriteCount: 0,
+      acknowledgedWriteCount: 0,
+      complete: false,
+    },
+    connection: { state: "idle", persistentLeimacSession: false },
+    safetyEvents: [],
+  };
+  status.previewStatus.safety = { lightingCommanded: false };
+  mutateStatus?.(status);
+  writeJson(fixture.options.idleStatusPath, status);
+  const statusCapturedAt = new Date("2026-07-22T17:59:50.000Z");
+  fs.utimesSync(fixture.options.idleStatusPath, statusCapturedAt, statusCapturedAt);
+  fixture.options.idleStatusSha256 = hash(fs.readFileSync(fixture.options.idleStatusPath));
+
+  const receiptPath = path.join(fixture.root, "external-safe-off-receipt.json");
+  const receipt = safeOffReceipt(fixture.incident, startMs);
+  mutateReceipt?.(receipt);
+  fs.writeFileSync(receiptPath, canonicalBytes(receipt));
+  fixture.options.externalSafeOffReceiptPath = receiptPath;
+  fixture.options.externalSafeOffReceiptSha256 = hash(fs.readFileSync(receiptPath));
+  return { receiptPath, receipt, statusCapturedAt };
+}
+
 function makeTarget(root, timestamp, overrides = {}) {
   const prefix = `ai-grader-browser-station-session-${timestamp}`;
   const sessionId = `${prefix}-session`;
@@ -196,6 +329,11 @@ function makeFixture(overrides = {}) {
     owner: "Mark / Ten Kings",
     reason: "owner_removed_stale_invalid_finding_review_v1",
     authorizationSource: "synthetic_test_authority",
+    safeOffController: {
+      identity: "leimac-idmu-tcp:169.254.191.156:1000",
+      host: "169.254.191.156",
+      port: 1000,
+    },
   };
   const idle = makeIdleStatus(root);
   const options = {
@@ -220,6 +358,11 @@ test("fixed production incident exposes only the exact two owner-authorized queu
     "ai-grader-browser-station-session-2026-07-21T035440224Z-session-rapid-card",
   ]);
   assert.equal(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.reason, "owner_removed_stale_invalid_finding_review_v1");
+  assert.deepEqual(STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722.safeOffController, {
+    identity: "leimac-idmu-tcp:169.254.191.156:1000",
+    host: "169.254.191.156",
+    port: 1000,
+  });
 });
 
 test("exact transaction archives full entries and evidence identities, removes only two, and replays read-only", async () => {
@@ -250,6 +393,9 @@ test("exact transaction archives full entries and evidence identities, removes o
     assert.deepEqual(fs.readFileSync(fixture.first.reportBundlePath), evidenceBefore);
     assert.deepEqual(fs.readFileSync(path.join(first.archiveDir, "before-rapid-capture-queue.json")), fixture.beforeBytes);
     const ledger = JSON.parse(fs.readFileSync(path.join(first.archiveDir, "archive-ledger.json"), "utf8"));
+    const receipt = JSON.parse(fs.readFileSync(first.receiptPath, "utf8"));
+    assert.deepEqual(ledger.safeOffEvidence, { source: "bridge_status", bridgePhysicalState: "safe_off_verified", physicalComplete: true });
+    assert.deepEqual(receipt.safeOffEvidence, ledger.safeOffEvidence);
     assert.equal(ledger.removedEntries.length, 2);
     assert.equal(ledger.removedEntries.every((entry) => entry.findingValidation.status === "invalid" && entry.findingValidation.sourceCandidateCount === 16 && entry.findingValidation.publishedFindingCount === 0 && entry.findingValidation.issueCount === 32), true);
     assert.equal(ledger.removedEntries.every((entry) => entry.publication.storageUpload === "pending_not_uploaded" && entry.publication.cardLinkage === "not_linked"), true);
@@ -279,6 +425,111 @@ test("wrong queue hash or wrong exact target identity refuses before archive or 
       assert.equal(fs.readdirSync(fixture.archiveRoot).length, 0);
     } finally { cleanup(fixture); }
   }
+});
+
+test("exact canonical external guarded safe-off receipt composes with unverified idle bridge status and is archived immutably", async () => {
+  const fixture = makeFixture();
+  try {
+    const external = enableExternalSafeOffEvidence(fixture);
+    const result = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    const ledger = JSON.parse(fs.readFileSync(path.join(result.archiveDir, "archive-ledger.json"), "utf8"));
+    const receipt = JSON.parse(fs.readFileSync(result.receiptPath, "utf8"));
+    assert.equal(ledger.safeOffEvidence.source, "external_guarded_leimac_safe_off");
+    assert.equal(ledger.safeOffEvidence.bridgePhysicalState, "unverified");
+    assert.equal(ledger.safeOffEvidence.receipt.sha256, fixture.options.externalSafeOffReceiptSha256);
+    assert.equal(ledger.safeOffEvidence.controllerIdentity, "leimac-idmu-tcp:169.254.191.156:1000");
+    assert.deepEqual(ledger.safeOffEvidence.ackResponses, ["W86ACK0", "W85ACK0", "W11ACK0"]);
+    assert.deepEqual(ledger.safeOffEvidence.zeroedChannels, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert.equal(ledger.safeOffEvidence.lightsCommanded, false);
+    assert.equal(ledger.safeOffEvidence.persistentSaved, false);
+    assert.deepEqual(receipt.safeOffEvidence, ledger.safeOffEvidence);
+    assert.deepEqual(
+      fs.readFileSync(path.join(result.archiveDir, "external-safe-off-receipt.json")),
+      fs.readFileSync(external.receiptPath),
+    );
+    fs.rmSync(external.receiptPath);
+    fs.rmSync(fixture.options.idleStatusPath);
+    const replay = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    assert.equal(replay.idempotent, true);
+    assert.equal(replay.archiveId, result.archiveId);
+  } finally { cleanup(fixture); }
+});
+
+test("external safe-off receipt exception rejects missing, tampered, stale, future, wrong-controller, wrong-ACK, nonzero, or unsafe evidence before mutation", async () => {
+  const modes = [
+    "missing", "partial_path", "partial_hash", "missing_file", "tampered", "wrong_hash", "noncanonical", "stale", "future",
+    "wrong_incident", "wrong_purpose", "wrong_owner", "wrong_source", "wrong_controller", "wrong_ack", "nonzero_output",
+    "lights_commanded", "persistent_save", "post_command_conflict",
+  ];
+  for (const mode of modes) {
+    const fixture = makeFixture();
+    try {
+      const startMs = mode === "stale"
+        ? Date.parse("2026-07-22T17:50:00.000Z")
+        : mode === "future"
+          ? Date.parse("2026-07-22T17:59:55.000Z")
+          : undefined;
+      const external = enableExternalSafeOffEvidence(fixture, {
+        startMs,
+        mutateReceipt(receipt) {
+          if (mode === "wrong_incident") receipt.incidentId = "unrelated-maintenance-incident";
+          if (mode === "wrong_purpose") receipt.purpose = "general_queue_override";
+          if (mode === "wrong_owner") receipt.authorization.owner = "Unrelated operator";
+          if (mode === "wrong_source") receipt.authorization.source = "unrelated_authorization";
+          if (mode === "wrong_controller") {
+            receipt.operation.result.host = "169.254.191.157";
+            receipt.operation.result.writes.forEach((write) => { write.host = "169.254.191.157"; });
+          }
+          if (mode === "wrong_ack") receipt.operation.result.writes[1].rawResponse = "W85NACK0";
+          if (mode === "nonzero_output") {
+            receipt.operation.result.frames[0].channelValues[0].value = "0001";
+            receipt.operation.result.writes[0].frame.channelValues[0].value = "0001";
+          }
+          if (mode === "lights_commanded") receipt.operation.result.safety.lightsCommanded = true;
+          if (mode === "persistent_save") receipt.operation.result.safety.persistentSaved = true;
+        },
+        mutateStatus(status) {
+          if (mode === "post_command_conflict") {
+            status.liveLighting.status = "on";
+            status.liveLighting.physicalState.state = "positioning_light_verified";
+            status.liveLighting.physicalState.complete = true;
+          }
+        },
+      });
+      if (mode === "missing") {
+        delete fixture.options.externalSafeOffReceiptPath;
+        delete fixture.options.externalSafeOffReceiptSha256;
+      }
+      if (mode === "partial_path") delete fixture.options.externalSafeOffReceiptSha256;
+      if (mode === "partial_hash") delete fixture.options.externalSafeOffReceiptPath;
+      if (mode === "missing_file") fs.rmSync(external.receiptPath);
+      if (mode === "tampered") fs.appendFileSync(external.receiptPath, "tamper");
+      if (mode === "wrong_hash") fixture.options.externalSafeOffReceiptSha256 = "f".repeat(64);
+      if (mode === "noncanonical") {
+        fs.writeFileSync(external.receiptPath, `${JSON.stringify(external.receipt, null, 2)}\n`);
+        fixture.options.externalSafeOffReceiptSha256 = hash(fs.readFileSync(external.receiptPath));
+      }
+      await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident));
+      assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes, mode);
+      assert.equal(fs.readdirSync(fixture.archiveRoot).length, 0, mode);
+    } finally { cleanup(fixture); }
+  }
+});
+
+test("external safe-off receipt survives authenticated crash recovery and archived-receipt tamper fails replay", async () => {
+  const fixture = makeFixture();
+  try {
+    enableExternalSafeOffEvidence(fixture);
+    await assert.rejects(
+      archiveStaleInvalidRapidCaptureQueueItemsForTestV1({ ...fixture.options, failpoint: "after_backup_rename" }, fixture.incident),
+      /Injected failure/,
+    );
+    const recovered = await archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident);
+    const archivedReceipt = path.join(recovered.archiveDir, "external-safe-off-receipt.json");
+    assert.equal(fs.existsSync(archivedReceipt), true);
+    fs.appendFileSync(archivedReceipt, "tamper");
+    await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident), /archive|canonical|safe-off/i);
+  } finally { cleanup(fixture); }
 });
 
 test("uploaded or linked target refuses without changing queue or referenced evidence", async () => {
@@ -313,7 +564,7 @@ test("stale or unsafe helper status refuses before archive or queue mutation", a
       if (mode === "lighting_not_safe") status.liveLighting.physicalState.state = "positioning_light_verified";
       writeJson(fixture.options.idleStatusPath, status);
       fixture.options.idleStatusSha256 = hash(fs.readFileSync(fixture.options.idleStatusPath));
-      await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident), /does not prove idle/);
+      await assert.rejects(archiveStaleInvalidRapidCaptureQueueItemsForTestV1(fixture.options, fixture.incident), /does not prove idle|safe-off status is stale|required/);
       assert.deepEqual(fs.readFileSync(fixture.queuePath), fixture.beforeBytes);
     } finally { cleanup(fixture); }
   }

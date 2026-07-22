@@ -22,9 +22,39 @@ const ARCHIVE_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-v1" as 
 const RECEIPT_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-receipt-v1" as const;
 const JOURNAL_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-journal-v1" as const;
 const POINTER_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-archive-pointer-v1" as const;
+const EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA = "ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1" as const;
+const EXTERNAL_SAFE_OFF_PURPOSE = "stale_invalid_review_archive_preflight" as const;
 const REASON = "owner_removed_stale_invalid_finding_review_v1" as const;
 const TARGET_SOURCE_CANDIDATES = 16;
 const TARGET_VALIDATION_ISSUES = 32;
+const EXTERNAL_SAFE_OFF_MAX_AGE_MS = 5 * 60_000;
+const EXTERNAL_SAFE_OFF_TIMEOUT_MS = 1500;
+const SAFE_OFF_FRAME_EXPECTATIONS = [
+  {
+    name: "lightingOutput",
+    commandNumber: "86",
+    description: "Lighting output ON/OFF; channel enable or safe off",
+    request: "W8601010000020000030000040000050000060000070000080000",
+    response: "W86ACK0",
+    meaning: "Lighting output OFF",
+  },
+  {
+    name: "asynchronousOutput",
+    commandNumber: "85",
+    description: "Asynchronous output ON/OFF; OFF for trigger-only profile",
+    request: "W8501010000020000030000040000050000060000070000080000",
+    response: "W85ACK0",
+    meaning: "Asynchronous output OFF",
+  },
+  {
+    name: "lightingOutputValue",
+    commandNumber: "11",
+    description: "Lighting output value; PWM duty cycle in 1000 steps",
+    request: "W1101010000020000030000040000050000060000070000080000",
+    response: "W11ACK0",
+    meaning: "PWM duty 0 steps for safe-off",
+  },
+] as const;
 
 type JsonRecord = Record<string, any>;
 
@@ -35,6 +65,11 @@ export interface StaleInvalidRapidCaptureQueueIncidentV1 {
   owner: "Mark / Ten Kings";
   reason: typeof REASON;
   authorizationSource: string;
+  safeOffController: {
+    identity: string;
+    host: string;
+    port: number;
+  };
 }
 
 export const STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722: StaleInvalidRapidCaptureQueueIncidentV1 = {
@@ -55,6 +90,11 @@ export const STALE_INVALID_RAPID_CAPTURE_QUEUE_INCIDENT_20260722: StaleInvalidRa
   owner: "Mark / Ten Kings",
   reason: REASON,
   authorizationSource: "explicit_product_owner_instruction_2026-07-22",
+  safeOffController: {
+    identity: "leimac-idmu-tcp:169.254.191.156:1000",
+    host: "169.254.191.156",
+    port: 1000,
+  },
 };
 
 export interface StaleInvalidRapidCaptureQueueArchivalOptionsV1 {
@@ -62,6 +102,8 @@ export interface StaleInvalidRapidCaptureQueueArchivalOptionsV1 {
   archiveRoot: string;
   idleStatusPath: string;
   idleStatusSha256: string;
+  externalSafeOffReceiptPath?: string;
+  externalSafeOffReceiptSha256?: string;
   now?: string;
   helperPort?: number;
   requireHelperPortReleased?: () => Promise<void>;
@@ -92,6 +134,31 @@ interface FileIdentityV1 {
   byteSize: number;
 }
 
+type SafeOffEvidenceV1 = {
+  source: "bridge_status";
+  bridgePhysicalState: "safe_off_verified";
+  physicalComplete: true;
+} | {
+  source: "external_guarded_leimac_safe_off";
+  bridgePhysicalState: "unverified";
+  physicalComplete: false;
+  receipt: FileIdentityV1;
+  controllerIdentity: string;
+  controllerHost: string;
+  controllerPort: number;
+  command: "leimac-idmu-safe-off";
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
+  idleStatusCapturedAt: string;
+  receiptToStatusMs: number;
+  statusToExecutionMs: number;
+  ackResponses: ["W86ACK0", "W85ACK0", "W11ACK0"];
+  zeroedChannels: [1, 2, 3, 4, 5, 6, 7, 8];
+  lightsCommanded: false;
+  persistentSaved: false;
+};
+
 interface ArchiveLedgerV1 {
   schemaVersion: typeof ARCHIVE_SCHEMA;
   incidentId: string;
@@ -102,6 +169,7 @@ interface ArchiveLedgerV1 {
     source: string;
   };
   idleStatusEvidence: FileIdentityV1;
+  safeOffEvidence: SafeOffEvidenceV1;
   queue: {
     schemaVersion: typeof QUEUE_SCHEMA;
     beforeSha256: string;
@@ -163,6 +231,7 @@ interface ArchiveReceiptV1 {
   unfinishedAfterCount: 0;
   removedQueueItemIds: string[];
   archiveLedgerSha256: string;
+  safeOffEvidence: SafeOffEvidenceV1;
 }
 
 interface TransactionJournalV1 {
@@ -313,7 +382,151 @@ export function evaluateRapidCaptureQueueMaintenanceGateV1(queue: unknown): {
   return { ready: unfinishedQueueItemIds.length === 0, unfinishedQueueItemIds, terminalQueueItemIds };
 }
 
-function verifyIdleStatus(statusPath: string, expectedSha256: string, executedAt: string): FileIdentityV1 {
+function timestampMs(value: unknown, label: string): number {
+  if (typeof value !== "string") throw new Error(`${label} timestamp is missing.`);
+  exactTimestamp(value);
+  return Date.parse(value);
+}
+
+function exactZeroedFrame(value: unknown, index: number): JsonRecord {
+  const expected = SAFE_OFF_FRAME_EXPECTATIONS[index];
+  if (!expected || !exactKeys(value, [
+    "name", "commandNumber", "description", "targetDesignation", "channelValues",
+    "requestAscii", "requestFrame", "terminator", "allowlisted",
+  ])) throw new Error("External safe-off receipt frame shape is invalid.");
+  if (
+    value.name !== expected.name || value.commandNumber !== expected.commandNumber || value.description !== expected.description ||
+    value.targetDesignation !== "01" || value.requestAscii !== expected.request || value.requestFrame !== expected.request ||
+    value.terminator !== "" || value.allowlisted !== true || !Array.isArray(value.channelValues) || value.channelValues.length !== 8
+  ) throw new Error(`External safe-off receipt frame ${expected.name} is not the exact allowlisted safe-off command.`);
+  value.channelValues.forEach((channel: unknown, channelIndex: number) => {
+    if (
+      !exactKeys(channel, ["channel", "value", "meaning"]) || channel.channel !== channelIndex + 1 ||
+      channel.value !== "0000" || channel.meaning !== expected.meaning
+    ) throw new Error(`External safe-off receipt frame ${expected.name} did not zero every channel.`);
+  });
+  return value;
+}
+
+function externalSafeOffEvidenceFromBytes(
+  bytes: Buffer,
+  identity: FileIdentityV1,
+  status: JsonRecord,
+  statusCapturedAt: string,
+  executedAt: string,
+  incident: Pick<StaleInvalidRapidCaptureQueueIncidentV1, "incidentId" | "owner" | "authorizationSource" | "safeOffController">,
+): SafeOffEvidenceV1 {
+  const receipt = parseCanonical<JsonRecord>(bytes, "External safe-off receipt");
+  if (!exactKeys(receipt, ["schemaVersion", "incidentId", "purpose", "authorization", "operation"]) ||
+      receipt.schemaVersion !== EXTERNAL_SAFE_OFF_RECEIPT_SCHEMA || receipt.incidentId !== incident.incidentId ||
+      receipt.purpose !== EXTERNAL_SAFE_OFF_PURPOSE || !exactKeys(receipt.authorization, ["owner", "source"]) ||
+      receipt.authorization.owner !== incident.owner || receipt.authorization.source !== incident.authorizationSource ||
+      !exactKeys(receipt.operation, ["ok", "service", "command", "result"]) || receipt.operation.ok !== true ||
+      receipt.operation.service !== "ai-grader-capture-helper" || receipt.operation.command !== "leimac-idmu-safe-off" ||
+      !isRecord(receipt.operation.result)) {
+    throw new Error("External safe-off receipt is not the exact guarded capture-helper operation.");
+  }
+  const result = receipt.operation.result;
+  const controller = incident.safeOffController;
+  if (!exactKeys(result, [
+    "ok", "host", "port", "timeoutMs", "startedAt", "finishedAt", "durationMs", "applied", "frames", "writes", "safety",
+  ]) || result.ok !== true || result.applied !== true || result.host !== controller.host || result.port !== controller.port ||
+      result.timeoutMs !== EXTERNAL_SAFE_OFF_TIMEOUT_MS || !Number.isSafeInteger(result.durationMs) || result.durationMs < 0 ||
+      result.durationMs > 10_000 || !Array.isArray(result.frames) || result.frames.length !== 3 ||
+      !Array.isArray(result.writes) || result.writes.length !== 3 || !isRecord(result.safety)) {
+    throw new Error("External safe-off receipt completion or configured controller identity is invalid.");
+  }
+  const startedMs = timestampMs(result.startedAt, "External safe-off start");
+  const finishedMs = timestampMs(result.finishedAt, "External safe-off finish");
+  if (finishedMs < startedMs || finishedMs - startedMs !== result.durationMs) {
+    throw new Error("External safe-off receipt duration does not match its exact timestamps.");
+  }
+  result.frames.forEach((frame: unknown, index: number) => exactZeroedFrame(frame, index));
+  let priorFinishedMs = startedMs;
+  result.writes.forEach((write: unknown, index: number) => {
+    const expected = SAFE_OFF_FRAME_EXPECTATIONS[index];
+    if (!expected || !exactKeys(write, [
+      "ok", "host", "port", "timeoutMs", "startedAt", "finishedAt", "durationMs", "frame", "rawResponse", "responseKind",
+    ])) throw new Error("External safe-off receipt write shape is invalid.");
+    const writeStartedMs = timestampMs(write.startedAt, "External safe-off write start");
+    const writeFinishedMs = timestampMs(write.finishedAt, "External safe-off write finish");
+    if (
+      write.ok !== true || write.host !== controller.host || write.port !== controller.port || write.timeoutMs !== EXTERNAL_SAFE_OFF_TIMEOUT_MS ||
+      write.rawResponse !== expected.response || write.responseKind !== "ack" || !sameJson(write.frame, result.frames[index]) ||
+      writeStartedMs < priorFinishedMs || writeFinishedMs < writeStartedMs || writeFinishedMs - writeStartedMs !== write.durationMs ||
+      !Number.isSafeInteger(write.durationMs) || writeStartedMs < startedMs || writeFinishedMs > finishedMs
+    ) throw new Error(`External safe-off receipt write ${expected.name} lacks its exact bounded acknowledgement.`);
+    priorFinishedMs = writeFinishedMs;
+  });
+  if (priorFinishedMs > finishedMs || !exactKeys(result.safety, [
+    "writesApplied", "lightsCommanded", "outputSettingsChanged", "triggerSettingsChanged", "persistentSaved", "arbitraryWritesAllowed",
+  ]) || result.safety.writesApplied !== true || result.safety.lightsCommanded !== false ||
+      result.safety.outputSettingsChanged !== true || result.safety.triggerSettingsChanged !== false ||
+      result.safety.persistentSaved !== false || result.safety.arbitraryWritesAllowed !== false) {
+    throw new Error("External safe-off receipt safety summary is invalid.");
+  }
+
+  const statusCapturedMs = timestampMs(statusCapturedAt, "Idle status capture");
+  const executionMs = timestampMs(executedAt, "Maintenance execution");
+  const statusUpdatedMs = timestampMs(status.updatedAt, "Authenticated helper status update");
+  if (
+    statusUpdatedMs > startedMs || finishedMs > statusCapturedMs || statusCapturedMs > executionMs ||
+    statusCapturedMs - finishedMs > EXTERNAL_SAFE_OFF_MAX_AGE_MS || executionMs - statusCapturedMs > EXTERNAL_SAFE_OFF_MAX_AGE_MS
+  ) throw new Error("External safe-off receipt is stale, future-dated, unrelated, or ordered incorrectly against status and execution.");
+
+  const lighting = isRecord(status.liveLighting) ? status.liveLighting : {};
+  const physical = isRecord(lighting.physicalState) ? lighting.physicalState : {};
+  const profile = isRecord(lighting.profile) ? lighting.profile : {};
+  const applied = isRecord(lighting.applied) ? lighting.applied : {};
+  const connection = isRecord(lighting.connection) ? lighting.connection : {};
+  const preview = isRecord(status.previewStatus) ? status.previewStatus : {};
+  const previewSafety = isRecord(preview.safety) ? preview.safety : {};
+  const physicalChangedMs = timestampMs(physical.changedAt, "Bridge physical-state change");
+  const appliedAtMs = typeof applied.appliedAt === "string" ? timestampMs(applied.appliedAt, "Bridge lighting apply") : undefined;
+  const conflictingEvent = Array.isArray(lighting.safetyEvents) && lighting.safetyEvents.some((event: unknown) => {
+    if (!isRecord(event)) return true;
+    const candidate = typeof event.at === "string" ? event.at : typeof event.changedAt === "string" ? event.changedAt : undefined;
+    return candidate !== undefined && timestampMs(candidate, "Bridge lighting event") > startedMs;
+  });
+  if (
+    lighting.status !== "unavailable" || physical.state !== "unverified" || physical.complete !== false ||
+    physical.expectedWriteCount !== 0 || physical.acknowledgedWriteCount !== 0 || physicalChangedMs > startedMs ||
+    profile.enabled !== false || applied.dutyPercent !== 0 || applied.actualLeimacPwmStep !== 0 ||
+    !Array.isArray(applied.channels) || applied.channels.length !== 0 || applied.verificationState !== "unknown" ||
+    applied.expectedWriteCount !== 0 || applied.acknowledgedWriteCount !== 0 || applied.verificationComplete !== false ||
+    connection.state !== "idle" || connection.persistentLeimacSession !== false || previewSafety.lightingCommanded !== false ||
+    (appliedAtMs !== undefined && appliedAtMs > startedMs) || conflictingEvent
+  ) throw new Error("Authenticated helper status contains post-command or conflicting lighting state; external safe-off evidence cannot be composed.");
+
+  return {
+    source: "external_guarded_leimac_safe_off",
+    bridgePhysicalState: "unverified",
+    physicalComplete: false,
+    receipt: identity,
+    controllerIdentity: controller.identity,
+    controllerHost: controller.host,
+    controllerPort: controller.port,
+    command: "leimac-idmu-safe-off",
+    startedAt: result.startedAt,
+    finishedAt: result.finishedAt,
+    durationMs: result.durationMs,
+    idleStatusCapturedAt: statusCapturedAt,
+    receiptToStatusMs: statusCapturedMs - finishedMs,
+    statusToExecutionMs: executionMs - statusCapturedMs,
+    ackResponses: ["W86ACK0", "W85ACK0", "W11ACK0"],
+    zeroedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
+    lightsCommanded: false,
+    persistentSaved: false,
+  };
+}
+
+function verifyIdleStatus(
+  statusPath: string,
+  expectedSha256: string,
+  executedAt: string,
+  externalReceipt: { path?: string; sha256?: string },
+  incident: StaleInvalidRapidCaptureQueueIncidentV1,
+): { identity: FileIdentityV1; safeOffEvidence: SafeOffEvidenceV1 } {
   if (!SHA256.test(expectedSha256)) throw new Error("Idle status evidence SHA-256 is invalid.");
   const identity = fileIdentity(statusPath);
   if (identity.sha256 !== expectedSha256) throw new Error("Idle status evidence SHA-256 does not match its exact bytes.");
@@ -328,16 +541,37 @@ function verifyIdleStatus(statusPath: string, expectedSha256: string, executedAt
   const executionTime = Date.parse(executedAt);
   if (
     status.ok !== true || status.localOnly !== true || status.currentStep !== "start_new_card" || status.sessionId !== undefined ||
-    !Number.isFinite(statusTime) || statusTime > executionTime || executionTime - statusTime > 5 * 60_000 ||
+    !Number.isFinite(statusTime) || statusTime > executionTime ||
     !["not_started", "stopped"].includes(preview.status) || !["idle", "released"].includes(preview.cameraOwnership) ||
     !isRecord(preview.intentionalTransition) || preview.intentionalTransition.active !== false ||
     warm.status !== "idle" || captureLock.held !== false ||
-    !Array.isArray(queues.capture) || queues.capture.length !== 0 || !Array.isArray(queues.processing) || queues.processing.length !== 0 || !Array.isArray(queues.report) || queues.report.length !== 0 ||
-    !["safe_off", "off"].includes(lighting.status) || physical.state !== "safe_off_verified" || physical.complete !== true
+    !Array.isArray(queues.capture) || queues.capture.length !== 0 || !Array.isArray(queues.processing) || queues.processing.length !== 0 || !Array.isArray(queues.report) || queues.report.length !== 0
   ) {
-    throw new Error("Authenticated helper status does not prove idle session, preview, camera, capture lock, worker queues, and safe lighting state.");
+    throw new Error("Authenticated helper status does not prove idle session, preview, camera, capture lock, and worker queues.");
   }
-  return identity;
+  const hasReceiptPath = typeof externalReceipt.path === "string" && externalReceipt.path.length > 0;
+  const hasReceiptSha = typeof externalReceipt.sha256 === "string" && externalReceipt.sha256.length > 0;
+  if (hasReceiptPath !== hasReceiptSha) throw new Error("External safe-off receipt path and SHA-256 must be supplied together.");
+  if (["safe_off", "off"].includes(lighting.status) && physical.state === "safe_off_verified" && physical.complete === true) {
+    if (hasReceiptPath) throw new Error("External safe-off receipt is not accepted when bridge-native safe_off_verified evidence is already authoritative.");
+    if (executionTime - statusTime > EXTERNAL_SAFE_OFF_MAX_AGE_MS) throw new Error("Authenticated helper safe-off status is stale.");
+    return {
+      identity,
+      safeOffEvidence: { source: "bridge_status", bridgePhysicalState: "safe_off_verified", physicalComplete: true },
+    };
+  }
+  if (!hasReceiptPath || !hasReceiptSha || !SHA256.test(externalReceipt.sha256!)) {
+    throw new Error("Bridge physical state is unverified; the exact external safe-off receipt path and SHA-256 are required.");
+  }
+  const receiptIdentity = fileIdentity(externalReceipt.path!);
+  if (receiptIdentity.sha256 !== externalReceipt.sha256) throw new Error("External safe-off receipt SHA-256 does not match its exact bytes.");
+  const statusCapturedAt = statSync(identity.path).mtime.toISOString();
+  return {
+    identity,
+    safeOffEvidence: externalSafeOffEvidenceFromBytes(
+      readFileSync(receiptIdentity.path), receiptIdentity, status, statusCapturedAt, executedAt, incident,
+    ),
+  };
 }
 
 async function requirePortReleased(port: number): Promise<void> {
@@ -505,6 +739,7 @@ function expectedReceipt(ledger: ArchiveLedgerV1, archiveId: string): ArchiveRec
     unfinishedAfterCount: 0,
     removedQueueItemIds: ledger.removedEntries.map((entry) => entry.queueItemId),
     archiveLedgerSha256: archiveId,
+    safeOffEvidence: ledger.safeOffEvidence,
   };
 }
 
@@ -533,6 +768,9 @@ function createArchive(
     writeExclusiveSynced(path.join(temporary, "after-rapid-capture-queue.json"), afterBytes);
     writeExclusiveSynced(path.join(temporary, "removed-entries.json"), canonicalBytes(removedItems));
     writeExclusiveSynced(path.join(temporary, "idle-status-evidence.json"), readFileSync(ledger.idleStatusEvidence.path));
+    if (ledger.safeOffEvidence.source === "external_guarded_leimac_safe_off") {
+      writeExclusiveSynced(path.join(temporary, "external-safe-off-receipt.json"), readFileSync(ledger.safeOffEvidence.receipt.path));
+    }
     writeExclusiveSynced(path.join(temporary, "archive-ledger.json"), ledgerBytes);
     writeExclusiveSynced(path.join(temporary, "receipt.json"), receiptBytes);
     renameSync(temporary, archiveDir);
@@ -549,8 +787,14 @@ function verifyArchive(archiveDir: string): { ledger: ArchiveLedgerV1; receipt: 
   const archiveId = sha256(ledgerBytes);
   if (
     path.basename(path.resolve(archiveDir)) !== archiveId || ledger.schemaVersion !== ARCHIVE_SCHEMA ||
-    !exactKeys(ledger, ["schemaVersion", "incidentId", "executedAt", "authorization", "idleStatusEvidence", "queue", "removedEntries", "retainedTerminalEntries", "referencedEvidence", "preservation"])
+    !exactKeys(ledger, ["schemaVersion", "incidentId", "executedAt", "authorization", "idleStatusEvidence", "safeOffEvidence", "queue", "removedEntries", "retainedTerminalEntries", "referencedEvidence", "preservation"])
   ) throw new Error("Archive directory is not bound to its exact canonical ledger.");
+  const expectedArchiveFiles = [
+    "after-rapid-capture-queue.json", "archive-ledger.json", "before-rapid-capture-queue.json",
+    "idle-status-evidence.json", "receipt.json", "removed-entries.json",
+    ...(ledger.safeOffEvidence.source === "external_guarded_leimac_safe_off" ? ["external-safe-off-receipt.json"] : []),
+  ].sort();
+  if (!sameJson(readdirSync(archiveDir).sort(), expectedArchiveFiles)) throw new Error("Archive contains an unexpected or missing incident evidence member.");
   const receiptBytes = readFileSync(path.join(archiveDir, "receipt.json"));
   const receipt = parseCanonical<ArchiveReceiptV1>(receiptBytes, "Archive receipt");
   if (!sameJson(receipt, expectedReceipt(ledger, archiveId))) throw new Error("Archive receipt does not reproduce the exact ledger and archive identity.");
@@ -567,6 +811,34 @@ function verifyArchive(archiveDir: string): { ledger: ArchiveLedgerV1; receipt: 
   if (sha256(idleBytes) !== ledger.idleStatusEvidence.sha256 || idleBytes.length !== ledger.idleStatusEvidence.byteSize) {
     throw new Error("Archived idle-status evidence no longer matches its exact ledger identity.");
   }
+  if (ledger.safeOffEvidence.source === "external_guarded_leimac_safe_off") {
+    const externalBytes = readFileSync(path.join(archiveDir, "external-safe-off-receipt.json"));
+    if (
+      sha256(externalBytes) !== ledger.safeOffEvidence.receipt.sha256 ||
+      externalBytes.length !== ledger.safeOffEvidence.receipt.byteSize
+    ) throw new Error("Archived external safe-off receipt no longer matches its exact ledger identity.");
+    const status = JSON.parse(idleBytes.toString("utf8")) as JsonRecord;
+    const reproduced = externalSafeOffEvidenceFromBytes(
+      externalBytes,
+      ledger.safeOffEvidence.receipt,
+      status,
+      ledger.safeOffEvidence.idleStatusCapturedAt,
+      ledger.executedAt,
+      {
+        incidentId: ledger.incidentId,
+        owner: ledger.authorization.owner,
+        authorizationSource: ledger.authorization.source,
+        safeOffController: {
+          identity: ledger.safeOffEvidence.controllerIdentity,
+          host: ledger.safeOffEvidence.controllerHost,
+          port: ledger.safeOffEvidence.controllerPort,
+        },
+      },
+    );
+    if (!sameJson(reproduced, ledger.safeOffEvidence)) throw new Error("Archived external safe-off verification summary does not reproduce exactly.");
+  } else if (
+    ledger.safeOffEvidence.bridgePhysicalState !== "safe_off_verified" || ledger.safeOffEvidence.physicalComplete !== true
+  ) throw new Error("Archive bridge-native safe-off evidence is invalid.");
   for (const expected of ledger.referencedEvidence) {
     if (!sameJson(fileIdentity(expected.path), expected)) throw new Error(`Archived referenced evidence changed or disappeared: ${expected.path}`);
   }
@@ -598,6 +870,11 @@ function assertVerifiedArchiveMatchesIncident(
     ledger.incidentId !== incident.incidentId || ledger.queue.beforeSha256 !== incident.expectedBeforeQueueSha256 ||
     ledger.queue.beforeCount !== 5 || ledger.queue.afterCount !== 3 || ledger.queue.unfinishedBeforeCount !== 2 || ledger.queue.unfinishedAfterCount !== 0 ||
     ledger.authorization.owner !== incident.owner || ledger.authorization.reason !== incident.reason || ledger.authorization.source !== incident.authorizationSource ||
+    (ledger.safeOffEvidence.source === "external_guarded_leimac_safe_off" && (
+      ledger.safeOffEvidence.controllerIdentity !== incident.safeOffController.identity ||
+      ledger.safeOffEvidence.controllerHost !== incident.safeOffController.host ||
+      ledger.safeOffEvidence.controllerPort !== incident.safeOffController.port
+    )) ||
     ledger.removedEntries.length !== 2 || !sameJson(ledger.removedEntries.map(targetIdentity), incident.targetItems) ||
     ledger.removedEntries.some((entry) => entry.findingValidation.status !== "invalid" || entry.findingValidation.sourceCandidateCount !== 16 || entry.findingValidation.publishedFindingCount !== 0 || entry.findingValidation.issueCount !== 32 || entry.publication.storageUpload !== "pending_not_uploaded" || entry.publication.cardLinkage !== "not_linked") ||
     ledger.retainedTerminalEntries.length !== 3 || ledger.retainedTerminalEntries.some((entry) => entry.state !== "failed") ||
@@ -770,6 +1047,18 @@ async function execute(
   if (containedBy(idleStatusPath, outputDir) || containedBy(idleStatusPath, archiveRoot)) {
     throw new Error("Idle status evidence must be outside both the Rapid output and quarantine archive roots.");
   }
+  const hasExternalReceiptPath = typeof options.externalSafeOffReceiptPath === "string" && options.externalSafeOffReceiptPath.length > 0;
+  const hasExternalReceiptSha = typeof options.externalSafeOffReceiptSha256 === "string" && options.externalSafeOffReceiptSha256.length > 0;
+  if (hasExternalReceiptPath !== hasExternalReceiptSha) {
+    throw new Error("External safe-off receipt path and SHA-256 must be supplied together.");
+  }
+  const externalSafeOffReceiptPath = hasExternalReceiptPath
+    ? safeAbsolute(options.externalSafeOffReceiptPath!, "External safe-off receipt path")
+    : undefined;
+  if (externalSafeOffReceiptPath && (
+    containedBy(externalSafeOffReceiptPath, outputDir) || containedBy(externalSafeOffReceiptPath, archiveRoot) ||
+    externalSafeOffReceiptPath === idleStatusPath
+  )) throw new Error("External safe-off receipt must be a distinct file outside the Rapid output and quarantine archive roots.");
   const queuePath = path.join(outputDir, "rapid-capture-queue.json");
   const paths = journalPaths(queuePath);
   const executedAt = exactTimestamp(options.now ?? new Date().toISOString());
@@ -807,7 +1096,14 @@ async function execute(
       }
     }
   }
-  const idleStatusEvidence = verifyIdleStatus(idleStatusPath, options.idleStatusSha256, executedAt);
+  const verifiedIdleStatus = verifyIdleStatus(
+    idleStatusPath,
+    options.idleStatusSha256,
+    executedAt,
+    { path: externalSafeOffReceiptPath, sha256: options.externalSafeOffReceiptSha256?.toLowerCase() },
+    incident,
+  );
+  const idleStatusEvidence = verifiedIdleStatus.identity;
   await (options.requireHelperPortReleased ?? (() => requirePortReleased(options.helperPort ?? 47652)))();
 
   if (existsSync(paths.journalPath)) {
@@ -901,6 +1197,7 @@ async function execute(
     executedAt,
     authorization: { owner: incident.owner, reason: incident.reason, source: incident.authorizationSource },
     idleStatusEvidence,
+    safeOffEvidence: verifiedIdleStatus.safeOffEvidence,
     queue: {
       schemaVersion: QUEUE_SCHEMA,
       beforeSha256: sha256(beforeBytes),

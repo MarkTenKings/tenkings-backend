@@ -97,20 +97,63 @@ The incident-bound command `tk-ai-grader-archive-stale-invalid-reviews` may remo
 
 This is not a general queue/FSM action. It is hard-bound to queue SHA-256 `3bdb4118245ee92406280f74bb45ed43c56e279f5d2cad37c2c6b444d256e05f`, exactly five entries, exactly those two unfinished items, and exactly three retained terminal failed items. It refuses unless each target still has succeeded OCR, `findingValidation=invalid`, `16` source candidates, `0` published findings, `32` issues, local upload not performed, no production DB write, and no CardAsset/Item linkage. It hashes every referenced local report/manifest/artifact, preserves those files in place, writes exact before/after queue bytes plus both complete removed entries into a content-addressed archive, and records reason `owner_removed_stale_invalid_finding_review_v1` with owner `Mark / Ten Kings`. It atomically replaces only `rapid-capture-queue.json` and installs a canonical non-active archive pointer that lets the orphan-manifest startup guard verify those two unchanged session manifests against the complete archive; the three retained terminal entries must reproduce unchanged. A canonical journal/backup provides bounded restore or idempotent completion after interruption.
 
-Execution remains separately authorized. Capture a fresh token-gated helper status response outside the station output root and hash it. It must be no more than five minutes old and prove `start_new_card`, no active session, preview stopped/not-started, camera idle/released, no transition or capture lock, all worker queues empty, and physical lighting `safe_off_verified`. Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the command; do not stop NFC or alter hardware. Use one new archive root outside the station output directory:
+Execution remains separately authorized. Capture a fresh token-gated helper status response outside the station output root and hash it. It must prove `start_new_card`, no active session, preview stopped/not-started, camera idle/released, no transition or capture lock, and all worker queues empty. The normal path also requires a no-more-than-five-minute-old bridge-native `safe_off_verified` physical lighting state.
+
+Only for this fixed 2026-07-22 incident, bridge `physicalState=unverified` may instead be composed with one separately authorized, out-of-process `leimac-idmu-safe-off` receipt. Both optional receipt arguments are required together. The receipt must be exact canonical JSON with its caller-supplied SHA-256; bind this incident and owner authorization; reproduce the exact configured `169.254.191.156:1000` controller, unit-one `W86`/`W85`/`W11` zero frames, successful `W86ACK0`/`W85ACK0`/`W11ACK0` responses, all eight output/asynchronous-output/PWM channels at zero, `lightsCommanded=false`, and `persistentSaved=false`; and precede the fresh status capture and transaction by no more than five minutes. The authenticated status must remain otherwise idle and must contain no post-command lighting apply, safety event, persistent controller session, or conflicting state. A native `safe_off_verified` status never accepts the exception receipt. The verified receipt bytes, identity, timing, controller, ACKs, zero-channel summary, and safety result become immutable archive-ledger and transaction-receipt members.
+
+Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the command; do not stop NFC. Use one new archive root outside the station output directory. The following is the exact exceptional one-time sequence after the hotfix is independently reviewed, merged, installed, and a new exact hardware authorization is obtained. It issues exactly one hardware command: the guarded `leimac-idmu-safe-off` invocation.
 
 ```powershell
 $queueOutput = 'C:\TenKings\capture-data\ai-grader-station'
 $archiveRoot = 'C:\TenKings\capture-data\ai-grader-queue-quarantine\owner-removed-stale-invalid-review-20260722-v1'
 $idleStatus = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\idle-status.json'
+$externalSafeOffReceipt = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\external-safe-off-receipt.json'
+$installedRepo = 'C:\TenKings\repos\tenkings-rip-it-live'
 $config = Get-Content -LiteralPath 'C:\TenKings\config\ai-grader-local-bridge.json' -Raw | ConvertFrom-Json
+$configuredLeimacHost = [string]$config.leimacHost
+$configuredLeimacPort = [int]$config.leimacPort
+if ($configuredLeimacHost -ne '169.254.191.156' -or $configuredLeimacPort -ne 1000) {
+  throw 'Configured Leimac controller does not match the fixed incident endpoint; do not issue a hardware command.'
+}
+if (Test-Path -LiteralPath $externalSafeOffReceipt) {
+  throw 'External safe-off receipt path already exists; preserve it and stop rather than replacing evidence.'
+}
+[System.IO.Directory]::CreateDirectory((Split-Path -Parent $externalSafeOffReceipt)) | Out-Null
+
+# Exactly one bounded hardware command. A fresh explicit Mark authorization is required before this invocation.
+Push-Location $installedRepo
+try {
+  $safeOffOutput = & node packages\ai-grader-capture-helper\dist\cli.js leimac-idmu-safe-off `
+    --host $configuredLeimacHost --port $configuredLeimacPort --timeout-ms 1500 --unit 1 `
+    --apply --confirm 'APPLY LEIMAC SAFE OFF'
+  if ($LASTEXITCODE -ne 0) { throw 'Guarded Leimac safe-off command failed; preserve output and stop.' }
+} finally {
+  Pop-Location
+}
+$safeOffOperation = ($safeOffOutput -join [Environment]::NewLine) | ConvertFrom-Json
+$safeOffEnvelope = [ordered]@{
+  schemaVersion = 'ten-kings-ai-grader-stale-invalid-review-external-safe-off-receipt-v1'
+  incidentId = 'ten-kings-stale-invalid-review-removal-20260722-v1'
+  purpose = 'stale_invalid_review_archive_preflight'
+  authorization = [ordered]@{
+    owner = 'Mark / Ten Kings'
+    source = 'explicit_product_owner_instruction_2026-07-22'
+  }
+  operation = $safeOffOperation
+}
+$canonicalizer = 'const fs=require("fs");let s="";process.stdin.setEncoding("utf8");process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{const k=v=>Array.isArray(v)?v.map(k):v&&typeof v==="object"?Object.fromEntries(Object.keys(v).sort().map(x=>[x,k(v[x])])):v;fs.writeFileSync(process.argv[1],JSON.stringify(k(JSON.parse(s)))+"\n",{encoding:"utf8",flag:"wx"});});'
+$safeOffEnvelope | ConvertTo-Json -Depth 100 -Compress | & node -e $canonicalizer $externalSafeOffReceipt
+if ($LASTEXITCODE -ne 0) { throw 'Canonical safe-off receipt creation failed; preserve command output and stop.' }
+$externalSafeOffReceiptSha = (Get-FileHash -LiteralPath $externalSafeOffReceipt -Algorithm SHA256).Hash.ToLowerInvariant()
+
+# Capture authenticated idle status after the acknowledged command; its file identity/time binds command ordering.
 $headers = @{ 'x-ai-grader-station-token' = [string]$config.stationToken }
 $status = (Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:47652/status' -Headers $headers).result
 $statusJson = ($status | ConvertTo-Json -Depth 100) + [Environment]::NewLine
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $idleStatus)) | Out-Null
 [System.IO.File]::WriteAllText($idleStatus, $statusJson, $utf8NoBom)
-Remove-Variable headers, config, status, statusJson
+Remove-Variable headers, config, status, statusJson, safeOffOperation, safeOffEnvelope, safeOffOutput
 $idleStatusSha = (Get-FileHash -LiteralPath $idleStatus -Algorithm SHA256).Hash.ToLowerInvariant()
 
 # Run from the installed/current checkout so the approved stop script targets the installed helper.
@@ -119,11 +162,15 @@ if (Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 47652 -State Listen 
   throw 'Production helper port 47652 is still listening; do not run the archive transaction.'
 }
 
-node packages\ai-grader-capture-helper\dist\staleInvalidRapidCaptureQueueArchivalCli.js `
+node "$installedRepo\packages\ai-grader-capture-helper\dist\staleInvalidRapidCaptureQueueArchivalCli.js" `
   --output-dir $queueOutput `
   --archive-root $archiveRoot `
   --idle-status-path $idleStatus `
-  --idle-status-sha256 $idleStatusSha
+  --idle-status-sha256 $idleStatusSha `
+  --external-safe-off-receipt-path $externalSafeOffReceipt `
+  --external-safe-off-receipt-sha256 $externalSafeOffReceiptSha
 ```
+
+If the fresh status already proves native `safe_off_verified`, omit both external-receipt arguments and do not issue another safe-off command. Never reuse an earlier receipt, replace an existing receipt path, or run the exceptional command for a different queue, incident, controller, or archive.
 
 After success, hash and parse the active queue again. It must contain exactly the original three terminal failed items, zero unfinished items, and the command-reported after SHA/counts. Verify the archive pointer, archive ledger, exact before queue hash/bytes, receipt, removed-entry identities, and every referenced file hash before any helper restart. The pointer continues to authenticate those immutable incident records and rejects either removed target ID or exact session/report triple if it is ever reintroduced, while the ordinary Rapid queue schema/integrity guards remain authoritative for legitimate later queue updates and new cards. The archived entries remain visible through the pointer/archive/receipt but no longer block maintenance; any genuinely unfinished future active queue item still blocks. Never raw-edit the queue, delete report/session/evidence files, publish or link either report, invent findings, change OCR/grades, or reuse this command for another queue/hash/item.
