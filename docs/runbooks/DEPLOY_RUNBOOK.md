@@ -87,3 +87,43 @@ Never create or trust a snapshot merely to unlock measurements. Under the normal
 The sole policy exception is the separately versioned product-owner operational acceptance for exact session `math-cal-v1-20260722-4cfa410c-01`. Its profile and mathematical acceptance remain `status=rejected` and `isCalibrated=false`, with the original measurements and all 36 rejection issues unchanged. Its transparent 13-member bundle may become operationally usable only when the exact owner authority, loader result, registry identity, bundle manifest, member ledger, runtime context, rig characterization, rig ID, and operating context all verify, followed by a fresh-human-admin ECDSA-signed `ACTIVE` activation that binds those exact identities. The content-addressed owner record is decision metadata; it is not independently authenticated and cannot replace the signed activation. Owner-accepted reports require that activation and must display the rejected status, owner/reason/timestamp, every exception, and signature/bundle provenance. A browser boolean, caller-authored hash, threshold-pass label, cross-session replay, fallback, newest/closest/LKG selection, or automatic rollback is prohibited. Revocation and supersession are explicit and append-only. This exception neither changes the normal 12-member V1.2 mathematical-acceptance gate nor authorizes another rejected calibration.
 
 Before any protected rollout, require the complete disposable PostgreSQL migration chain plus second-deploy no-op, all normal GitHub/Docker/Vercel checks, and the separately required independent Mac architecture/calibration review. Apply the additive migration, import/trust a real bundle, install/update a Dell helper, deploy, or enable V1 only under a separately authorized rollout; none is an ordinary consequence of merging the implementation PR.
+
+## One-Time Stale Invalid Rapid-Review Archive Gate
+
+The incident-bound command `tk-ai-grader-archive-stale-invalid-reviews` may remove only these two unpublished legacy test entries from the active local Rapid queue:
+
+- `ai-grader-browser-station-session-2026-07-21T042424764Z-session-rapid-card` / session `ai-grader-browser-station-session-2026-07-21T042424764Z-session` / report `ai-grader-browser-station-session-2026-07-21T042424764Z-report`;
+- `ai-grader-browser-station-session-2026-07-21T035440224Z-session-rapid-card` / session `ai-grader-browser-station-session-2026-07-21T035440224Z-session` / report `ai-grader-browser-station-session-2026-07-21T035440224Z-report`.
+
+This is not a general queue/FSM action. It is hard-bound to queue SHA-256 `3bdb4118245ee92406280f74bb45ed43c56e279f5d2cad37c2c6b444d256e05f`, exactly five entries, exactly those two unfinished items, and exactly three retained terminal failed items. It refuses unless each target still has succeeded OCR, `findingValidation=invalid`, `16` source candidates, `0` published findings, `32` issues, local upload not performed, no production DB write, and no CardAsset/Item linkage. It hashes every referenced local report/manifest/artifact, preserves those files in place, writes exact before/after queue bytes plus both complete removed entries into a content-addressed archive, and records reason `owner_removed_stale_invalid_finding_review_v1` with owner `Mark / Ten Kings`. It atomically replaces only `rapid-capture-queue.json` and installs a canonical non-active archive pointer that lets the orphan-manifest startup guard verify those two unchanged session manifests against the complete archive; the three retained terminal entries must reproduce unchanged. A canonical journal/backup provides bounded restore or idempotent completion after interruption.
+
+Execution remains separately authorized. Capture a fresh token-gated helper status response outside the station output root and hash it. It must be no more than five minutes old and prove `start_new_card`, no active session, preview stopped/not-started, camera idle/released, no transition or capture lock, all worker queues empty, and physical lighting `safe_off_verified`. Then stop only the old capture helper through the approved maintenance lifecycle and prove `127.0.0.1:47652` is released before running the command; do not stop NFC or alter hardware. Use one new archive root outside the station output directory:
+
+```powershell
+$queueOutput = 'C:\TenKings\capture-data\ai-grader-station'
+$archiveRoot = 'C:\TenKings\capture-data\ai-grader-queue-quarantine\owner-removed-stale-invalid-review-20260722-v1'
+$idleStatus = 'C:\TenKings\acceptance-evidence\ai-grader-queue-maintenance\idle-status.json'
+$config = Get-Content -LiteralPath 'C:\TenKings\config\ai-grader-local-bridge.json' -Raw | ConvertFrom-Json
+$headers = @{ 'x-ai-grader-station-token' = [string]$config.stationToken }
+$status = (Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:47652/status' -Headers $headers).result
+$statusJson = ($status | ConvertTo-Json -Depth 100) + [Environment]::NewLine
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.Directory]::CreateDirectory((Split-Path -Parent $idleStatus)) | Out-Null
+[System.IO.File]::WriteAllText($idleStatus, $statusJson, $utf8NoBom)
+Remove-Variable headers, config, status, statusJson
+$idleStatusSha = (Get-FileHash -LiteralPath $idleStatus -Algorithm SHA256).Hash.ToLowerInvariant()
+
+# Run from the installed/current checkout so the approved stop script targets the installed helper.
+& 'C:\TenKings\repos\tenkings-rip-it-live\scripts\ai-grader\stop-local-station-bridge.ps1' -KillProcess
+if (Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 47652 -State Listen -ErrorAction SilentlyContinue) {
+  throw 'Production helper port 47652 is still listening; do not run the archive transaction.'
+}
+
+node packages\ai-grader-capture-helper\dist\staleInvalidRapidCaptureQueueArchivalCli.js `
+  --output-dir $queueOutput `
+  --archive-root $archiveRoot `
+  --idle-status-path $idleStatus `
+  --idle-status-sha256 $idleStatusSha
+```
+
+After success, hash and parse the active queue again. It must contain exactly the original three terminal failed items, zero unfinished items, and the command-reported after SHA/counts. Verify the archive pointer, archive ledger, exact before queue hash/bytes, receipt, removed-entry identities, and every referenced file hash before any helper restart. The pointer continues to authenticate those immutable incident records and rejects either removed target ID or exact session/report triple if it is ever reintroduced, while the ordinary Rapid queue schema/integrity guards remain authoritative for legitimate later queue updates and new cards. The archived entries remain visible through the pointer/archive/receipt but no longer block maintenance; any genuinely unfinished future active queue item still blocks. Never raw-edit the queue, delete report/session/evidence files, publish or link either report, invent findings, change OCR/grades, or reuse this command for another queue/hash/item.

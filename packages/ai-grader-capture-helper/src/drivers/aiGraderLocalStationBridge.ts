@@ -70,6 +70,7 @@ import {
   writeAiGraderProductionRelease,
   type AiGraderProductionRelease,
 } from "./aiGraderProductionRelease";
+import { archivedRapidCaptureQueueTriplesForMaintenanceV1 } from "./staleInvalidRapidCaptureQueueArchivalV1";
 import {
   AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION,
   AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
@@ -4185,9 +4186,10 @@ function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): Pe
   }
 }
 
-function assertNoUnqueuedRapidSessionManifest(
+export function assertNoUnqueuedRapidSessionManifest(
   config: AiGraderLocalStationBridgeConfig,
-  queue: PersistedAiGraderRapidCaptureQueue,
+  queue: { items: Array<{ queueItemId: string; sessionId: string; reportId: string }> },
+  archived = archivedRapidCaptureQueueTriplesForMaintenanceV1(config.outputDir),
 ): void {
   if (!existsSync(config.outputDir)) return;
   const queued = new Set(queue.items.map((item) => `${item.queueItemId}|${item.sessionId}|${item.reportId}`));
@@ -4223,11 +4225,13 @@ function assertNoUnqueuedRapidSessionManifest(
     }
     if (!rapid?.safelyQueuedAt && !rapid?.queueItemId) continue;
     if (rapid.workflowState === "published" || rapid.workflowState === "failed") continue;
+    const exactClaim = `${rapid.queueItemId}|${manifest.sessionId}|${manifest.reportId}`;
+    if (archived.has(exactClaim)) continue;
     if (
       !rapid.queueItemId
       || !manifest.sessionId
       || !manifest.reportId
-      || !queued.has(`${rapid.queueItemId}|${manifest.sessionId}|${manifest.reportId}`)
+      || !queued.has(exactClaim)
     ) {
       throw new Error(`Session manifest ${entry.name} claims a durable Rapid enqueue absent from the authoritative queue; startup refuses to hide the exact card.`);
     }

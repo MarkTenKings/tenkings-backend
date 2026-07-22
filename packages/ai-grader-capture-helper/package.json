@@ -6,7 +6,8 @@
   "types": "dist/index.d.ts",
   "bin": {
     "tk-ai-grader-capture-helper": "dist/cli.js",
-    "tk-ai-grader-materialize-mathematical-calibration-v1-2-rig-authority": "dist/materializeMathematicalCalibrationV1_2RigAuthorityCli.js"
+    "tk-ai-grader-materialize-mathematical-calibration-v1-2-rig-authority": "dist/materializeMathematicalCalibrationV1_2RigAuthorityCli.js",
+    "tk-ai-grader-archive-stale-invalid-reviews": "dist/staleInvalidRapidCaptureQueueArchivalCli.js"
   },
   "exports": {
     ".": {
