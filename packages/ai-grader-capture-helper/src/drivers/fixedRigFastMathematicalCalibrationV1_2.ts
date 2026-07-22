@@ -121,6 +121,7 @@ export interface FastCalibrationRigSourceBundleV1_2 {
   characterizedAt: string;
   rigId: string;
   sourceCaptureManifestSha256: string;
+  sourceEvidenceManifestSha256: string;
   members: FastCalibrationRigSourceBundleMemberV1_2[];
 }
 
@@ -189,6 +190,7 @@ export interface FastCalibrationRigCharacterizationAuthorityV1_2 {
   rigId: string;
   sourceBundleManifestSha256: string;
   sourceCaptureManifestSha256: string;
+  sourceEvidenceManifestSha256: string;
   sourceMemberLedgerSha256: string;
   targetMetrologyAuthoritySha256: string;
   cameraLensAuthoritySha256: string;
@@ -659,13 +661,14 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
 ): VerifiedFastCalibrationRigCharacterizationSourceV1_2 {
   validateFastCalibrationRuntimeContextV1_2(context);
   const bundle = parseCanonicalJson<FastCalibrationRigSourceBundleV1_2>(source.bundleBytes, "rigCharacterizationSource.bundle");
-  exactKeys(bundle, ["schemaVersion", "characterizedAt", "rigId", "sourceCaptureManifestSha256", "members"], "rigCharacterizationSource.bundle");
+  exactKeys(bundle, ["schemaVersion", "characterizedAt", "rigId", "sourceCaptureManifestSha256", "sourceEvidenceManifestSha256", "members"], "rigCharacterizationSource.bundle");
   if (bundle.schemaVersion !== FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RIG_SOURCE_SCHEMA) {
     throw new Error("Rig-characterization source bundle schema mismatch.");
   }
   exactIsoTimestamp(bundle.characterizedAt, "rigCharacterizationSource.characterizedAt");
   exactId(bundle.rigId, "rigCharacterizationSource.rigId");
   exactSha(bundle.sourceCaptureManifestSha256, "rigCharacterizationSource.sourceCaptureManifestSha256");
+  exactSha(bundle.sourceEvidenceManifestSha256, "rigCharacterizationSource.sourceEvidenceManifestSha256");
   if (!Array.isArray(bundle.members) || bundle.members.length !== RIG_SOURCE_MEMBERS.length ||
       bundle.members.some((member, index) => {
         exactKeys(member, ["role", "fileName", "sha256"], "rigCharacterizationSource.bundle member");
@@ -759,6 +762,7 @@ export function verifyFastCalibrationRigCharacterizationSourceV1_2(
     rigId: bundle.rigId,
     sourceBundleManifestSha256: hashBytes(source.bundleBytes),
     sourceCaptureManifestSha256: bundle.sourceCaptureManifestSha256,
+    sourceEvidenceManifestSha256: bundle.sourceEvidenceManifestSha256,
     sourceMemberLedgerSha256: hashFastCalibrationCanonicalV1_2(bundle.members),
     targetMetrologyAuthoritySha256: bundle.members[0].sha256,
     cameraLensAuthoritySha256: bundle.members[1].sha256,
@@ -793,7 +797,7 @@ export function validateFastCalibrationRigCharacterizationV1_2(
   }
   exactKeys(authority, [
     "schemaVersion", "characterizedAt", "rigId", "sourceBundleManifestSha256", "sourceCaptureManifestSha256",
-    "sourceMemberLedgerSha256", "targetMetrologyAuthoritySha256", "cameraLensAuthoritySha256",
+    "sourceEvidenceManifestSha256", "sourceMemberLedgerSha256", "targetMetrologyAuthoritySha256", "cameraLensAuthoritySha256",
     "physicalLightDirectionAuthoritySha256", "componentIdentityAuthoritySha256", "repeatabilityAuthoritySha256",
     "oneTimeCalibrationInputSha256", "cameraSerialNumber", "cameraModelName", "lensAuthorityId",
     "controllerIdentity", "channelWiring", "targetVersion", "targetSha256", "componentConfigurationId",

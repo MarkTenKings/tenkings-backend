@@ -10,6 +10,7 @@ import {
   FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256,
   FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256,
 } from "./fixedRigFastCalibrationEvidenceAnalyzerV1_2";
+import { FIXED_RIG_FAST_CALIBRATION_FINALIZER_V1_2_SHA256 } from "./fixedRigFastCalibrationFinalizerAlgorithmV1_2";
 import type {
   DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig,
   MathematicalCalibrationV1_2PersistentBatchControllerFactory,
@@ -23,6 +24,11 @@ import {
   type FastCalibrationRigCharacterizationSourceV1_2,
   type FastCalibrationRuntimeContextV1_2,
 } from "./fixedRigFastMathematicalCalibrationV1_2";
+import {
+  FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2,
+  FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2,
+  loadMaterializedFastCalibrationRigAuthorityV1_2,
+} from "./fixedRigFastMathematicalCalibrationRigMaterializerV1_2";
 
 export const MATHEMATICAL_CALIBRATION_V1_2_PROTECTED_ENV = Object.freeze({
   runtimeContextPath: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_PATH",
@@ -34,13 +40,6 @@ export const MATHEMATICAL_CALIBRATION_V1_2_PROTECTED_ENV = Object.freeze({
   operatorId: "AI_GRADER_MATHEMATICAL_CALIBRATION_V1_2_OPERATOR_ID",
 });
 
-const RIG_MEMBER_FILES = Object.freeze([
-  "target-metrology-authority-v1.json",
-  "camera-lens-authority-v1.json",
-  "physical-light-directions-authority-v1.json",
-  "component-identities-authority-v1.json",
-  "repeatability-authority-v1.json",
-]);
 const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/;
 
@@ -138,6 +137,12 @@ function protectedPaths(env: NodeJS.ProcessEnv): ProtectedPaths | undefined {
   }
   if (!SHA256.test(values.runtimeContextSha256) || !SHA256.test(values.rigSourceBundleSha256)) {
     throw new Error("Mathematical Calibration V1.2 protected file hashes must be exact lowercase SHA-256 values.");
+  }
+  if (path.resolve(values.runtimeContextPath) !== path.join(path.resolve(values.rigSourceMemberDir), FAST_CALIBRATION_RUNTIME_CONTEXT_FILE_V1_2) ||
+      path.resolve(values.rigSourceBundlePath) !== path.join(path.resolve(values.rigSourceMemberDir), FAST_CALIBRATION_RIG_SOURCE_BUNDLE_FILE_V1_2)) {
+    throw new Error(
+      "Mathematical Calibration V1.2 runtime and rig bundle must be loaded from the exact atomic materialization directory.",
+    );
   }
   if (!SAFE_ID.test(values.operatorId)) throw new Error("Mathematical Calibration V1.2 protected operator ID is invalid.");
   return values;
@@ -318,21 +323,23 @@ export function buildMathematicalCalibrationV1_2ProductionAuthorityConfig(
     const context = parseCanonicalJson<FastCalibrationRuntimeContextV1_2>(bytes, "Protected runtime context");
     validateFastCalibrationRuntimeContextV1_2(context);
     if (context.algorithmHashes.geometry !== FIXED_RIG_FAST_CALIBRATION_GEOMETRY_ANALYZER_V1_2_SHA256 ||
-        context.algorithmHashes.photometric !== FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256) {
-      throw new Error("Protected runtime context does not bind the loaded V1.2 analyzer implementation manifest.");
+        context.algorithmHashes.photometric !== FIXED_RIG_FAST_CALIBRATION_PHOTOMETRIC_ANALYZER_V1_2_SHA256 ||
+        context.algorithmHashes.finalizer !== FIXED_RIG_FAST_CALIBRATION_FINALIZER_V1_2_SHA256) {
+      throw new Error("Protected runtime context does not bind the loaded V1.2 analyzer/finalizer implementation manifests.");
     }
     return context;
   };
 
   const loadRigCharacterizationSource = async (): Promise<FastCalibrationRigCharacterizationSourceV1_2> => {
-    const bundleBytes = await readExact(paths.rigSourceBundlePath, paths.rigSourceBundleSha256, "Protected rig source bundle");
-    const members = await Promise.all(RIG_MEMBER_FILES.map(async (fileName) => ({
-      fileName,
-      bytes: await readFile(path.join(paths.rigSourceMemberDir, fileName)),
-    })));
-    const source = { bundleBytes, members };
-    verifyFastCalibrationRigCharacterizationSourceV1_2(source, await loadProtectedRuntime());
-    return source;
+    const expectedRuntime = await loadProtectedRuntime();
+    const materialized = await loadMaterializedFastCalibrationRigAuthorityV1_2({
+      directory: paths.rigSourceMemberDir,
+      expectedRuntimeContextSha256: paths.runtimeContextSha256,
+      expectedRigSourceBundleSha256: paths.rigSourceBundleSha256,
+    });
+    assertFastCalibrationRuntimeContextMatchV1_2(expectedRuntime, materialized.runtimeContext);
+    verifyFastCalibrationRigCharacterizationSourceV1_2(materialized.rigSource, expectedRuntime);
+    return materialized.rigSource;
   };
 
   const persistentBatchControllers: MathematicalCalibrationV1_2PersistentBatchControllerFactory = {
