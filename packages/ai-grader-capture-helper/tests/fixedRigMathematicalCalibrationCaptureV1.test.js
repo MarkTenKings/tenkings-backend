@@ -515,7 +515,61 @@ async function sealedAnalyzerRebindFixture(root) {
   };
 }
 
+async function assertPreInstallStageFailureRestoresOriginal(mode) {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-analyzer-rebind-${mode}-`));
+  const fx = await sealedAnalyzerRebindFixture(root);
+  const producer = fx.fixture.producer;
+  const sessionDir = fx.started.sessionDir;
+  const outputRoot = path.dirname(sessionDir);
+  const stageRoot = path.join(outputRoot, ".analyzer-authority-rebind-stage-v1");
+  const stageSessionDir = path.join(stageRoot, fx.sessionId);
+  const backupDir = `${sessionDir}.analyzer-authority-rebind-backup-v1`;
+  const quarantineDir = `${sessionDir}.analyzer-authority-rebind-quarantine-v1`;
+  const journalPath = path.join(outputRoot, `.${fx.sessionId}.analyzer-authority-rebind-journal-v1.json`);
+  const receiptPath = path.join(
+    sessionDir, "rebind", fx.incident.rebindId, "analyzer-authority-rebind-receipt.json",
+  );
+  const oldManifestBytes = await fsp.readFile(path.join(sessionDir, "capture-manifest.json"));
+  const oldPackageBytes = await fsp.readFile(path.join(sessionDir, "source-capture-package.json"));
+
+  producer.analyzerAuthorityRebindTestFailpoint = "after-backup-rename";
+  await assert.rejects(producer.rebindKnownSealedAnalyzerAuthority(), /FAILPOINT_AFTER_BACKUP_RENAME/);
+  assert.equal(fs.existsSync(sessionDir), false);
+  assert.equal(fs.existsSync(backupDir), true);
+  assert.equal(fs.existsSync(stageSessionDir), true);
+  if (mode === "missing-stage") {
+    await fsp.rm(stageRoot, { recursive: true, force: true });
+  } else {
+    assert.equal(mode, "corrupt-stage");
+    await fsp.appendFile(path.join(stageSessionDir, "capture-session.json"), " ");
+  }
+
+  producer.analyzerAuthorityRebindTestFailpoint = undefined;
+  await assert.rejects(
+    producer.rebindKnownSealedAnalyzerAuthority(),
+    /exact original was restored at its canonical path; retry the operation/i,
+  );
+  assert.equal(fs.existsSync(sessionDir), true);
+  assert.equal(fs.existsSync(backupDir), false);
+  assert.equal(fs.existsSync(journalPath), false);
+  assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
+  assert.deepEqual(await fsp.readFile(path.join(sessionDir, "capture-manifest.json")), oldManifestBytes);
+  assert.deepEqual(await fsp.readFile(path.join(sessionDir, "source-capture-package.json")), oldPackageBytes);
+  assert.equal(fs.existsSync(receiptPath), false);
+  assert.equal(JSON.parse((await fsp.readFile(fx.statePath)).toString("utf8")).analyzerAuthorityRebind, undefined);
+  assert.equal(fs.existsSync(quarantineDir), mode === "corrupt-stage");
+
+  const completed = await producer.rebindKnownSealedAnalyzerAuthority();
+  assert.equal(completed.idempotent, false);
+  assert.equal(completed.status.sealed, true);
+  assert.equal(completed.status.captureCount, 102);
+  assert.equal(completed.status.measurementCount, 78);
+  assert.equal(completed.receipt.correctedAuthority.count, 74);
+}
+
 test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe, and idempotent", async () => {
+  await assertPreInstallStageFailureRestoresOriginal("missing-stage");
+  await assertPreInstallStageFailureRestoresOriginal("corrupt-stage");
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-analyzer-rebind-"));
   const fx = await sealedAnalyzerRebindFixture(root);
   const producer = fx.fixture.producer;

@@ -2239,15 +2239,40 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         await rm(journalPath, { force: true });
         throw new Error(`Installed incident rebind failed full verification; the exact original was restored and the replacement quarantined: ${String(reason)}`);
       };
+      const restoreOriginalBackupBeforeInstall = async (reason: unknown): Promise<never> => {
+        await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
+        let stagedDisposition = "missing";
+        if (existsSync(stageSessionDir)) {
+          if (existsSync(quarantineDir)) {
+            stagedDisposition = "preserved at its staged path because the quarantine path is already occupied";
+          } else {
+            await rename(stageSessionDir, quarantineDir);
+            stagedDisposition = "quarantined";
+          }
+        }
+        await rename(backupDir, sessionDir);
+        await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
+        if (!existsSync(stageSessionDir)) await rm(stageRoot, { recursive: true, force: true });
+        await rm(journalPath, { force: true });
+        throw new Error(
+          `Journal-bound staged replacement was missing or invalid; the exact original was restored at its canonical path; retry the operation. ` +
+          `The staged replacement was ${stagedDisposition}: ${String(reason)}`,
+        );
+      };
       if (existsSync(journalPath)) {
         const journal = await readAuthenticatedJournal();
         const liveExists = existsSync(sessionDir);
         const backupExists = existsSync(backupDir);
         if (!liveExists && backupExists) {
           await this.verifyOriginalAnalyzerAuthorityIncidentSession(backupDir);
-          if (!existsSync(stageSessionDir)) throw new Error("Journal-bound backup recovery is missing its staged replacement.");
-          const staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
-          if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
+          let staged;
+          try {
+            if (!existsSync(stageSessionDir)) throw new Error("Journal-bound backup recovery is missing its staged replacement.");
+            staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
+            if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
+          } catch (error) {
+            return restoreOriginalBackupBeforeInstall(error);
+          }
           await rename(backupDir, sessionDir);
           await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
           await rm(stageRoot, { recursive: true, force: true });
