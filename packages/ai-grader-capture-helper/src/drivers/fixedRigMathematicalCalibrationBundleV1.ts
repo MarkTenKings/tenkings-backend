@@ -551,7 +551,7 @@ export function verifyFixedRigMathematicalCalibrationBundleBytesV1(
     acceptance.profileId === null && acceptance.calibrationVersion === null &&
     operationalAcceptance.subject.analysisSha256 === bundle.sourceAnalysisSha256 &&
     operationalAcceptance.subject.sourceCaptureManifestSha256 === sourceAnalysisManifestSha256 &&
-    operationalAcceptance.subject.sourceCaptureManifestSha256 === sourceCaptureManifestSha256 &&
+    operationalAcceptance.subject.sourceCapturePackageSha256 === sourceCaptureManifestSha256 &&
     operationalAcceptance.subject.thresholdSetHash === MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH &&
     operationalAcceptance.subject.physicalArtifactSha256 === physical.artifactSha256 &&
     operationalAcceptance.subject.mathematicalAcceptanceFileSha256 === acceptanceFile.sha256 &&
