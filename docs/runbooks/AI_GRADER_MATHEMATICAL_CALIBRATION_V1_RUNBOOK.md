@@ -196,7 +196,7 @@ After a runner, browser, or protected helper-page restart, rebind the existing i
 .\scripts\ai-grader\open-mathematical-calibration-v1.ps1 -SessionId '<safe-session-id>' -Port 47653
 ```
 
-Do not reuse `-ConfirmPhysicalAction` until the displayed movement or retry correction has actually been completed. Hard identity/context corruption, wrong or stale preview binding, unreleased camera ownership, missing controller acknowledgement, safe-off failure, or evidence hash mismatch hard-stops the session and is not retryable. Never substitute another camera, image, target, channel, or manual measurement.
+Do not reuse `-ConfirmPhysicalAction` until the displayed movement or retry correction has actually been completed. A purely logical preflight rejection (wrong request session, wrong next slot or face, forbidden normalization-geometry reuse, missing/wrong/stale preview binding, or blank-reverse request while preview is live) does not mutate or hard-stop the healthy authority session and does not begin the camera/lighting lifecycle; correct the request and retry the same pending slot with a new operation ID. Durable identity/context or accepted-evidence corruption, unreleased camera ownership, preview drain/release or capture-lock failure, missing controller acknowledgement, or safe-off failure hard-stops the session and is not retryable. Never substitute another camera, image, target, channel, or manual measurement.
 
 ## Metrology, repeatability, seal, and finalization
 

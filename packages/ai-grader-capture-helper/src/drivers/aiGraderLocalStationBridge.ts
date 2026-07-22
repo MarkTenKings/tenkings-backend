@@ -12184,12 +12184,15 @@ export class AiGraderLocalStationBridgeService {
     assertRealBridgeArmed(this.config);
     return this.serializeTerminalLifecycle(async () => {
       const producer = this.requireMathematicalCalibrationCaptureProducer();
-      const rejectContext = async (reason: string): Promise<never> => {
+      const rejectPreflight = (reason: string): never => {
+        throw new Error(reason);
+      };
+      const hardStopPhysicalLifecycle = async (reason: string): Promise<never> => {
         const authoritySessionId = this.mathematicalCalibrationV1SessionId ?? request.sessionId;
         await producer.recordHardStop(authoritySessionId, request.operationId, reason);
         let cleanupError: string | undefined;
         try {
-          await this.stopPreviewStream("V1.0.1 calibration context rejection", {
+          await this.stopPreviewStream("V1.0.1 calibration physical lifecycle failure", {
             waitForRelease: true,
             requireRelease: true,
             settleMs: PREVIEW_CAMERA_SETTLE_MS,
@@ -12198,13 +12201,13 @@ export class AiGraderLocalStationBridgeService {
           cleanupError = error instanceof Error ? error.message : "Calibration preview cleanup failed.";
         }
         try {
-          const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${request.operationId} context rejection`);
+          const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${request.operationId} physical lifecycle failure`);
           if (!safeOff.ok) {
-            cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration context-rejection safe-off could not be confirmed."]
+            cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration physical-failure safe-off could not be confirmed."]
               .filter(Boolean).join(" ");
           }
         } catch (error) {
-          cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration context-rejection safe-off failed."]
+          cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration physical-failure safe-off failed."]
             .filter(Boolean).join(" ");
         }
         if (!cleanupError) {
@@ -12221,7 +12224,7 @@ export class AiGraderLocalStationBridgeService {
         throw new Error(cleanupError ? `${reason} Cleanup also failed: ${cleanupError}` : reason);
       };
       if (this.mathematicalCalibrationV1SessionId !== request.sessionId) {
-        return rejectContext("Mathematical Calibration V1.0.1 capture requires the exact active bridge-bound session.");
+        return rejectPreflight("Mathematical Calibration V1.0.1 capture requires the exact active bridge-bound session.");
       }
       const durableBeforeCapture = await producer.status(request.sessionId);
       const requestedSlotKey = `${request.role}:${request.channelIndex ?? "none"}:${request.sampleIndex}`;
@@ -12230,7 +12233,7 @@ export class AiGraderLocalStationBridgeService {
         durableBeforeCapture.nextCaptureSlot.slotKey !== requestedSlotKey ||
         durableBeforeCapture.nextCaptureSlot.targetFace !== request.targetFace
       ) {
-        return rejectContext(
+        return rejectPreflight(
           `Mathematical Calibration V1.0.1 request ${requestedSlotKey} does not match exact next slot ${durableBeforeCapture.nextCaptureSlot?.slotKey ?? "none"}.`,
         );
       }
@@ -12239,7 +12242,7 @@ export class AiGraderLocalStationBridgeService {
         (request.role === "lens_geometry" || request.role === "normalization_registration") &&
         request.normalizationSourceOperationId !== undefined
       ) {
-        return rejectContext("V1.0.1 lens and normalization capture must rerun detection on the exact still and cannot reuse prior geometry.");
+        return rejectPreflight("V1.0.1 lens and normalization capture must rerun detection on the exact still and cannot reuse prior geometry.");
       }
       const preview = this.previewStatus();
       const mathematicalPreview = preview.mathematicalCalibrationPreview;
@@ -12262,7 +12265,7 @@ export class AiGraderLocalStationBridgeService {
           binding.capturedAt !== mathematicalPreview.lastFrameAt ||
           !Number.isFinite(frameAt) || ageMs < -1000 || ageMs > PREVIEW_GEOMETRY_MAX_AGE_MS
         ) {
-          return rejectContext("Mathematical Calibration V1.0.1 capture rejected a missing, wrong-session, or stale live-preview binding.");
+          return rejectPreflight("Mathematical Calibration V1.0.1 capture rejected a missing, wrong-session, or stale live-preview binding.");
         }
       } else if (
         request.previewBinding ||
@@ -12271,23 +12274,23 @@ export class AiGraderLocalStationBridgeService {
         preview.status === "live" ||
         (preview.cameraOwnership !== "idle" && preview.cameraOwnership !== "released")
       ) {
-        return rejectContext("Mathematical Calibration V1.0.1 blank-reverse capture requires preview stopped and camera ownership released.");
+        return rejectPreflight("Mathematical Calibration V1.0.1 blank-reverse capture requires preview stopped and camera ownership released.");
       }
       try {
         await this.awaitLightingLifecycleIdle();
       } catch (error) {
-        return rejectContext(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
       }
       try {
         await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1");
       } catch (error) {
-        return rejectContext(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
       }
       const owner = `mathematical-calibration:${request.sessionId}:${request.operationId}`;
       try {
         this.acquireCaptureLock(owner);
       } catch (error) {
-        return rejectContext(error instanceof Error ? error.message : "Calibration capture ownership could not be acquired.");
+        return hardStopPhysicalLifecycle(error instanceof Error ? error.message : "Calibration capture ownership could not be acquired.");
       }
       let result: FixedRigMathematicalCalibrationCaptureSessionStatusV1 | undefined;
       let operationError: Error | undefined;

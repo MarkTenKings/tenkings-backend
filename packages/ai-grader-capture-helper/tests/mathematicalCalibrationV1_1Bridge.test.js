@@ -36,6 +36,7 @@ async function v1BridgeFixture(root, options = {}) {
   const sessionId = options.sessionId ?? "calibration-v1-bridge-session";
   const hardStops = [];
   const captures = [];
+  let orphanReleaseCalls = 0;
   let status = {
     schemaVersion: "ten-kings-mathematical-calibration-capture-session-v1",
     sessionId,
@@ -65,10 +66,11 @@ async function v1BridgeFixture(root, options = {}) {
     captureStep: async (request) => {
       captures.push(request);
       if (options.captureFailure) throw new Error(options.captureFailure);
+      const captureCount = status.captureCount + 1;
       status = {
         ...status,
-        captureCount: 1,
-        nextCaptureSlot: { role: "lens_geometry", sampleIndex: 2, channelIndex: null, targetFace: "checkerboard", slotKey: "lens_geometry:none:2" },
+        captureCount,
+        nextCaptureSlot: { role: "lens_geometry", sampleIndex: captureCount + 1, channelIndex: null, targetFace: "checkerboard", slotKey: `lens_geometry:none:${captureCount + 1}` },
       };
       return status;
     },
@@ -82,7 +84,7 @@ async function v1BridgeFixture(root, options = {}) {
   });
   const service = new AiGraderLocalStationBridgeService(config, undefined, undefined, {
     mathematicalCalibrationCaptureProducer: producer,
-    stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+    stopOrphanedPreviewStreamsUntilReleased: async () => { orphanReleaseCalls += 1; return 0; },
     detectMathematicalCalibrationPreviewCheckerboard: async () => ({
       imageWidth: 1200, imageHeight: 1680,
       internalCorners: Array.from({ length: 176 }, (_, index) => ({ x: index % 11, y: Math.floor(index / 11) })),
@@ -96,7 +98,19 @@ async function v1BridgeFixture(root, options = {}) {
     targetVersion: "ten-kings-mathematical-calibration-target-v1.0.0",
     targetSha256: "b".repeat(64),
   });
-  return { service, sessionId, hardStops, captures };
+  return {
+    service,
+    sessionId,
+    hardStops,
+    captures,
+    sessionSnapshot: () => structuredClone(status),
+    lifecycleSnapshot: () => ({
+      captures: captures.length,
+      orphanReleaseCalls,
+      safeOffCommands: service.manifest.commandResults.length,
+      lightingSafetyEvents: service.manifest.liveLighting.safetyEvents.length,
+    }),
+  };
 }
 
 test("checkerboard detector default timeout allows ten-second bounded detection", async () => {
@@ -273,7 +287,7 @@ test("V1.1 binds only a calibration session, exposes overlay-gated capture, and 
   await stream;
 });
 
-test("V1.0.1 preview rejects wrong/stale bindings and reconnects with a fresh epoch after successful capture cleanup", async () => {
+test("V1.0.1 preflight rejection preserves the active session and preview before fresh-binding retry", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-preview-lifecycle-"));
   const fixture = await v1BridgeFixture(root);
   const wrong = mockPreviewExchange("wrong-calibration-session");
@@ -295,6 +309,36 @@ test("V1.0.1 preview rejects wrong/stale bindings and reconnects with a fresh ep
     frameId: before.latestFrameId,
     capturedAt: before.lastFrameAt,
   };
+  const initialSession = fixture.sessionSnapshot();
+  const initialLifecycle = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: "wrong-request-session", operationId: "v1-preview-wrong-request-session", role: "lens_geometry", sampleIndex: 1,
+      targetFace: "checkerboard", previewBinding: firstBinding,
+    }),
+    /exact active bridge-bound session/i,
+  );
+  assert.equal(fixture.hardStops.length, 0);
+  assert.deepEqual(fixture.sessionSnapshot(), initialSession);
+  assert.deepEqual(fixture.lifecycleSnapshot(), initialLifecycle);
+  assert.equal(fixture.service.previewStatus().status, "live");
+  assert.equal(fixture.service.previewStatus().cameraOwnership, "preview_stream");
+  assert.equal(fixture.service.previewStatus().sideEpoch, firstBinding.epoch);
+
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId, operationId: "v1-preview-wrong-slot", role: "lens_geometry", sampleIndex: 2,
+      targetFace: "checkerboard", previewBinding: firstBinding,
+    }),
+    /does not match exact next slot/i,
+  );
+  assert.equal(fixture.hardStops.length, 0);
+  assert.deepEqual(fixture.sessionSnapshot(), initialSession);
+  assert.deepEqual(fixture.lifecycleSnapshot(), initialLifecycle);
+  assert.equal(fixture.service.previewStatus().status, "live");
+  assert.equal(fixture.service.previewStatus().cameraOwnership, "preview_stream");
+  assert.equal(fixture.service.previewStatus().sideEpoch, firstBinding.epoch);
+
   const captured = await fixture.service.captureMathematicalCalibrationStep({
     sessionId: fixture.sessionId, operationId: "v1-preview-success", role: "lens_geometry", sampleIndex: 1,
     targetFace: "checkerboard", previewBinding: firstBinding,
@@ -311,6 +355,8 @@ test("V1.0.1 preview rejects wrong/stale bindings and reconnects with a fresh ep
   const reconnected = fixture.service.previewStatus();
   assert.equal(reconnected.status, "live");
   assert.notEqual(reconnected.sideEpoch, firstBinding.epoch);
+  const pendingSession = fixture.sessionSnapshot();
+  const pendingLifecycle = fixture.lifecycleSnapshot();
   await assert.rejects(
     fixture.service.captureMathematicalCalibrationStep({
       sessionId: fixture.sessionId, operationId: "v1-preview-stale", role: "lens_geometry", sampleIndex: 2,
@@ -318,8 +364,29 @@ test("V1.0.1 preview rejects wrong/stale bindings and reconnects with a fresh ep
     }),
     /wrong-session, or stale live-preview binding/i,
   );
-  assert.equal(fixture.hardStops.length, 1);
+  assert.equal(fixture.hardStops.length, 0);
+  assert.deepEqual(fixture.sessionSnapshot(), pendingSession);
+  assert.deepEqual(fixture.lifecycleSnapshot(), pendingLifecycle);
+  const afterStaleRejection = fixture.service.previewStatus();
+  assert.equal(afterStaleRejection.status, "live");
+  assert.equal(afterStaleRejection.cameraOwnership, "preview_stream");
+  assert.equal(afterStaleRejection.mathematicalCalibrationPreview.active, true);
+  assert.equal(afterStaleRejection.sideEpoch, reconnected.sideEpoch);
+
+  const freshBindingStatus = fixture.service.previewStatus();
+  const retried = await fixture.service.captureMathematicalCalibrationStep({
+    sessionId: fixture.sessionId, operationId: "v1-preview-retry-current", role: "lens_geometry", sampleIndex: 2,
+    targetFace: "checkerboard", previewBinding: {
+      sessionId: fixture.sessionId,
+      epoch: freshBindingStatus.sideEpoch,
+      frameId: freshBindingStatus.latestFrameId,
+      capturedAt: freshBindingStatus.lastFrameAt,
+    },
+  });
   await secondStream;
+  assert.equal(retried.captureCount, 2);
+  assert.equal(fixture.captures.length, 2);
+  assert.equal(fixture.hardStops.length, 0);
   assert.equal(fixture.service.previewStatus().status, "stopped");
   assert.equal(fixture.service.previewStatus().cameraOwnership, "released");
   assert.equal(fixture.service.previewStatus().mathematicalCalibrationPreview.active, false);

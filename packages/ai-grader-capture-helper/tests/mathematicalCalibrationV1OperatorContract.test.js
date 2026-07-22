@@ -27,6 +27,8 @@ test("V1.0.1 runbook distinguishes ordinary retry from hard stop without weakeni
   assert.match(runbook, /same exact slot remains pending/);
   assert.match(runbook, /-Action Retry/);
   assert.match(runbook, /-Action Resume/);
-  assert.match(runbook, /wrong or stale preview binding/);
+  assert.match(runbook, /missing\/wrong\/stale preview binding/);
+  assert.match(runbook, /does not mutate or hard-stop the healthy authority session/);
+  assert.match(runbook, /does not begin the camera\/lighting lifecycle/);
   assert.match(runbook, /hard-stops the session and is not retryable/);
 });

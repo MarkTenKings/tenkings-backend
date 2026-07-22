@@ -18,6 +18,13 @@ test("V1.0.1 operator page is session-bound, read-only, and exposes pose, aggreg
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /failedAttempts/);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /Advisory positioning only/i);
   assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /Reconnect fresh preview epoch/);
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /const imageUrl=URL\.createObjectURL/);
+  assert.equal(
+    (MATHEMATICAL_CALIBRATION_V1_PAGE_HTML.match(/URL\.revokeObjectURL\(imageUrl\)/g) ?? []).length,
+    2,
+    "each preview Blob URL must be revoked on image load or error",
+  );
+  assert.match(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /image\.onload=.*URL\.revokeObjectURL\(imageUrl\).*image\.onerror=.*URL\.revokeObjectURL\(imageUrl\)/s);
   assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /\/capture["']/);
   assert.doesNotMatch(MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, /stationToken=/i);
 });
