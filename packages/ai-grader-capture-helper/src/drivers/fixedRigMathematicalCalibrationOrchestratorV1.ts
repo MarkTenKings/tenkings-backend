@@ -6,7 +6,7 @@ import {
   mathematicalDesignReferenceV1Schema,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
   type MathematicalMeasurementV1,

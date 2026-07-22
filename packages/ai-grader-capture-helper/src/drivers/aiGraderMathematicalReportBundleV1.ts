@@ -18,17 +18,17 @@ import {
   aiGraderReportBundleV03Schema,
   aiGraderPublishedDefectFindingV2Schema,
   canonicalJsonV1,
-  validateMathematicalCalibrationProfileV1,
   type AiGraderPublishedDefectFindingV2,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderReportBundleV03,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
   type RegisteredDesignTemplateAxisCalculationV1,
   type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 import type { FixedRigCenteringElementResultV1, FixedRigPointV1 } from "./fixedRigCenteringV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 import type { FixedRigConditionElementResultV1 } from "./fixedRigCornerEdgeV1";
 import type {
   FixedRigMathematicalGradeV1Result,
@@ -1056,8 +1056,8 @@ function assertFinalSourceContract(
   grade: FinalMathematicalGradeV1;
   centering: ComputedCenteringV1;
 } {
-  const calibration = validateMathematicalCalibrationProfileV1(input.calibrationProfile);
-  if (!calibration.valid || !calibration.isCalibrated) {
+  const calibration = validateMathematicalCalibrationForOperationalUseV1(input.calibrationProfile);
+  if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
     throw new Error(
       `Calibrated V1 report rejected: ${calibration.issues
         .map((issue) => `${issue.path}: ${issue.message}`)

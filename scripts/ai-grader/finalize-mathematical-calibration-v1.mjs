@@ -6,6 +6,7 @@ import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promis
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const ANALYSIS_SCHEMA = "ten-kings-mathematical-calibration-analysis-v1";
 const ANALYSIS_ALGORITHM = "opencv_physical_calibration_analysis_v1";
@@ -14,6 +15,7 @@ const BUNDLE_SCHEMA = "ten-kings-mathematical-calibration-bundle-v1";
 const PROFILE_FILE_NAME = "mathematical-calibration-profile-v1.json";
 const PHYSICAL_ARTIFACT_FILE_NAME = "mathematical-calibration-artifact-v1.json";
 const ACCEPTANCE_FILE_NAME = "mathematical-calibration-acceptance-v1.json";
+const PRODUCT_OWNER_AUTHORITY_FILE_NAME = "product-owner-operational-acceptance-v1.json";
 const BUNDLE_FILE_NAME = "mathematical-calibration-bundle-v1.json";
 const REGISTRY_HANDOFF_SCHEMA = "ten-kings-mathematical-calibration-finalizer-handoff-v1";
 const REGISTRY_HANDOFF_AUTHORITY = "trusted-local-mathematical-calibration-finalizer-v1";
@@ -36,11 +38,15 @@ function parseArguments(argv) {
   let analysisPath;
   let outputDir;
   let registryStagingRoot;
+  let productOwnerOperationalAcceptancePath;
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     if (option === "--analysis") analysisPath = argv[++index];
     else if (option === "--output-dir") outputDir = argv[++index];
     else if (option === "--registry-staging-root") registryStagingRoot = argv[++index];
+    else if (option === "--product-owner-operational-acceptance") {
+      productOwnerOperationalAcceptancePath = argv[++index];
+    }
     else if (option === "--help" || option === "-h") {
       return { help: true };
     } else {
@@ -54,6 +60,9 @@ function parseArguments(argv) {
     analysisPath: path.resolve(analysisPath),
     outputDir: path.resolve(outputDir),
     registryStagingRoot: registryStagingRoot ? path.resolve(registryStagingRoot) : undefined,
+    productOwnerOperationalAcceptancePath: productOwnerOperationalAcceptancePath
+      ? path.resolve(productOwnerOperationalAcceptancePath)
+      : undefined,
   };
 }
 
@@ -121,6 +130,22 @@ function sha256(bytes) {
 
 function jsonBytes(value) {
   return Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+export function buildMathematicalCalibrationAcceptanceV1(analysis, result) {
+  return {
+    schemaVersion: "ten-kings-mathematical-calibration-acceptance-v1",
+    analysisSha256: analysis.analysisSha256,
+    sourceManifestSha256: analysis.sourceManifestSha256,
+    sourceCapturePackage: analysis.sourceCapturePackage,
+    status: result.status,
+    isCalibrated: result.isCalibrated,
+    issues: result.issues,
+    artifactId: result.artifact.artifactId,
+    artifactSha256: result.artifact.artifactSha256,
+    profileId: result.profile?.profileId ?? null,
+    calibrationVersion: result.profile?.calibrationVersion ?? null,
+  };
 }
 
 async function writeJson(filePath, value) {
@@ -284,6 +309,15 @@ export async function stageFinalizedMathematicalCalibrationBundleForRegistryV1({
     bundleFileName: BUNDLE_FILE_NAME,
     bundleManifestSha256: bundle.sha256,
     sourceAnalysisSha256: bundle.manifest.sourceAnalysisSha256,
+    ...(bundle.manifest.operationalAcceptance
+      ? {
+          operationalAcceptanceStatus: bundle.manifest.operationalAcceptance.status,
+          operationalAcceptanceAuthoritySha256:
+            bundle.manifest.operationalAcceptance.authoritySha256,
+          operationalAcceptanceAuthorityFileSha256:
+            bundle.manifest.operationalAcceptance.authorityFileSha256,
+        }
+      : {}),
   };
   const files = [
     { fileName: BUNDLE_FILE_NAME, sha256: bundle.sha256 },
@@ -369,10 +403,15 @@ export async function finalizeMathematicalCalibrationV1({
   analysisPath,
   outputDir,
   registryStagingRoot,
+  productOwnerOperationalAcceptancePath,
   buildFixedRigPhysicalCalibrationV1,
+  verifyProductOwnerOperationalAcceptanceV1,
+  validateMathematicalCalibrationForOperationalUseV1,
+  implementationIdentity,
 }) {
+  const analysisBytes = await readFile(analysisPath);
   const analysis = verifyMathematicalCalibrationAnalysisV1(
-    JSON.parse(await readFile(analysisPath, "utf8")),
+    JSON.parse(analysisBytes.toString("utf8")),
   );
   const result = buildFixedRigPhysicalCalibrationV1(analysis.builderInput);
   if (
@@ -389,19 +428,67 @@ export async function finalizeMathematicalCalibrationV1({
     analysisPath,
   );
   await mkdir(outputDir, { recursive: true });
-  const acceptance = {
-    schemaVersion: "ten-kings-mathematical-calibration-acceptance-v1",
-    analysisSha256: analysis.analysisSha256,
-    sourceManifestSha256: analysis.sourceManifestSha256,
-    sourceCapturePackage: analysis.sourceCapturePackage,
-    status: result.status,
-    isCalibrated: result.isCalibrated,
-    issues: result.issues,
-    artifactId: result.artifact.artifactId,
-    artifactSha256: result.artifact.artifactSha256,
-    profileId: result.profile?.profileId ?? null,
-    calibrationVersion: result.profile?.calibrationVersion ?? null,
-  };
+  const acceptance = buildMathematicalCalibrationAcceptanceV1(analysis, result);
+  const acceptanceBytes = jsonBytes(acceptance);
+  let operationalAcceptance = null;
+  let operationalProfile = null;
+  let operationalAuthorityFileBytes = null;
+  if (productOwnerOperationalAcceptancePath) {
+    if (result.status !== "rejected" || result.isCalibrated || !result.operationalProfileCandidate) {
+      throw new Error("Product-owner operational acceptance is valid only for the exact rejected calibration.");
+    }
+    if (!verifyProductOwnerOperationalAcceptanceV1 ||
+        !validateMathematicalCalibrationForOperationalUseV1 ||
+        !implementationIdentity) {
+      throw new Error("Product-owner operational acceptance requires the protected verifier identities.");
+    }
+    operationalAuthorityFileBytes = await readFile(productOwnerOperationalAcceptancePath);
+    const parsedAuthority = verifyProductOwnerOperationalAcceptanceV1(
+      JSON.parse(operationalAuthorityFileBytes.toString("utf8")),
+      implementationIdentity,
+    );
+    const sourcePackage = exactObject(analysis.sourceCapturePackage, "sourceCapturePackage");
+    const stationAuthority = exactObject(sourcePackage.stationAuthority, "sourceCapturePackage.stationAuthority");
+    const subject = parsedAuthority.subject;
+    const subjectMismatches = [
+      ["sessionId", subject.sessionId, stationAuthority.sessionId],
+      ["sourceCaptureManifestSha256", subject.sourceCaptureManifestSha256, analysis.sourceManifestSha256],
+      ["sourceCapturePackage.manifestSha256", subject.sourceCaptureManifestSha256, sourcePackage.manifestSha256],
+      ["analysisSha256", subject.analysisSha256, analysis.analysisSha256],
+      ["analysisFileSha256", subject.analysisFileSha256, sha256(analysisBytes)],
+      ["thresholdSetHash", subject.thresholdSetHash, sourcePackage.thresholdSetHash],
+      ["physicalArtifactSha256", subject.physicalArtifactSha256, result.artifact.artifactSha256],
+      ["mathematicalAcceptanceFileSha256", subject.mathematicalAcceptanceFileSha256, sha256(acceptanceBytes)],
+      ["mathematicalAcceptanceStatus", subject.mathematicalAcceptanceStatus, acceptance.status],
+      ["mathematicalIsCalibrated", subject.mathematicalIsCalibrated, acceptance.isCalibrated],
+      ["rigId", subject.rigId, result.artifact.rigId],
+      ["profileId", subject.profileId, result.operationalProfileCandidate.profileId],
+      ["calibrationVersion", subject.calibrationVersion, result.operationalProfileCandidate.calibrationVersion],
+      ["finalizedAt", subject.finalizedAt, result.operationalProfileCandidate.finalizedAt],
+      ["artifactId", subject.artifactId, result.operationalProfileCandidate.artifactId],
+    ].filter(([, actual, expected]) => actual !== expected).map(([label]) => label);
+    if (JSON.stringify(canonical(parsedAuthority.exceptionLedger)) !==
+        JSON.stringify(canonical(result.issues))) {
+      subjectMismatches.push("exceptionLedger");
+    }
+    if (subjectMismatches.length > 0) {
+      throw new Error(
+        `Product-owner operational acceptance does not match exact rejected fields: ${subjectMismatches.join(", ")}.`,
+      );
+    }
+    operationalProfile = {
+      ...result.operationalProfileCandidate,
+      operationalAcceptance: parsedAuthority,
+    };
+    const operationalValidation = validateMathematicalCalibrationForOperationalUseV1(
+      operationalProfile,
+    );
+    if (!operationalValidation.valid || !operationalValidation.isOperationallyAccepted ||
+        operationalValidation.isCalibrated || !operationalValidation.profile) {
+      throw new Error("Product-owner operational profile did not reproduce its recorded mathematical exceptions.");
+    }
+    operationalAcceptance = parsedAuthority;
+  }
   const physicalArtifactWrite = await writeJson(
     path.join(outputDir, PHYSICAL_ARTIFACT_FILE_NAME),
     result.artifact,
@@ -411,17 +498,27 @@ export async function finalizeMathematicalCalibrationV1({
     acceptance,
   );
   let bundle = null;
-  if (result.status === "finalized") {
+  if (result.status === "finalized" || operationalAcceptance) {
+    const selectedProfile = result.status === "finalized" ? result.profile : operationalProfile;
+    if (!selectedProfile) throw new Error("Calibration finalization did not produce an operational profile.");
     const profileWrite = await writeJson(
       path.join(outputDir, PROFILE_FILE_NAME),
-      result.profile,
+      selectedProfile,
     );
+    let operationalAuthorityWrite = null;
+    if (operationalAcceptance && operationalAuthorityFileBytes) {
+      const authorityDestination = path.join(outputDir, PRODUCT_OWNER_AUTHORITY_FILE_NAME);
+      await writeFile(authorityDestination, operationalAuthorityFileBytes, { flag: "wx" });
+      operationalAuthorityWrite = {
+        sha256: sha256(operationalAuthorityFileBytes),
+      };
+    }
     for (const flatField of certifiedPhotometricArtifacts.flatFields) {
       await copyCertifiedArtifact(flatField, outputDir);
     }
     await copyCertifiedArtifact(certifiedPhotometricArtifacts.illuminationPattern, outputDir);
 
-    const profile = result.profile;
+    const profile = selectedProfile;
     const physicalArtifact = result.artifact;
     const physicalMethods = exactObject(
       physicalArtifact.methods,
@@ -432,6 +529,9 @@ export async function finalizeMathematicalCalibrationV1({
       "sourceCapturePackage",
     );
     exactObjectKeys(sourceCapturePackage, [
+      ...(sourceCapturePackage.analyzerAuthoritySupersession === undefined
+        ? []
+        : ["analyzerAuthoritySupersession"]),
       "captureEvidenceAcceptance",
       "captureProfileVersion",
       "evidenceDerivedAuthority",
@@ -445,6 +545,15 @@ export async function finalizeMathematicalCalibrationV1({
       "thresholdSetHash",
       "thresholdSetId",
     ], "sourceCapturePackage");
+    if (sourceCapturePackage.analyzerAuthoritySupersession !== undefined) {
+      const supersession = exactObject(
+        sourceCapturePackage.analyzerAuthoritySupersession,
+        "sourceCapturePackage.analyzerAuthoritySupersession",
+      );
+      exactObjectKeys(supersession, ["byteSize", "path", "rebindId", "schemaVersion", "sha256"],
+        "sourceCapturePackage.analyzerAuthoritySupersession");
+      exactSha256(supersession.sha256, "sourceCapturePackage.analyzerAuthoritySupersession.sha256");
+    }
     const sourceSubject = exactObject(
       sourceCapturePackage.subject,
       "sourceCapturePackage.subject",
@@ -530,6 +639,18 @@ export async function finalizeMathematicalCalibrationV1({
           "sourceCapturePackage.captureProfileVersion",
         ),
       },
+      ...(operationalAcceptance && operationalAuthorityWrite
+        ? {
+            operationalAcceptance: {
+              status: operationalAcceptance.authorityStatus,
+              authorityId: operationalAcceptance.authorityId,
+              authoritySha256: operationalAcceptance.authoritySha256,
+              authorityFileSha256: operationalAuthorityWrite.sha256,
+              exceptionLedgerSha256: operationalAcceptance.exceptionLedgerSha256,
+              exceptionCount: operationalAcceptance.exceptionLedger.length,
+            },
+          }
+        : {}),
       artifacts: [
         {
           role: "calibration_profile",
@@ -546,6 +667,13 @@ export async function finalizeMathematicalCalibrationV1({
           fileName: ACCEPTANCE_FILE_NAME,
           sha256: acceptanceWrite.sha256,
         },
+        ...(operationalAcceptance && operationalAuthorityWrite
+          ? [{
+              role: "product_owner_operational_acceptance",
+              fileName: PRODUCT_OWNER_AUTHORITY_FILE_NAME,
+              sha256: operationalAuthorityWrite.sha256,
+            }]
+          : []),
         ...certifiedPhotometricArtifacts.flatFields.map((entry) => ({
           role: entry.role,
           channelIndex: entry.channelIndex,
@@ -574,7 +702,7 @@ export async function finalizeMathematicalCalibrationV1({
       });
     }
   }
-  return { result, acceptance, bundle };
+  return { result, acceptance, operationalAcceptance, bundle };
 }
 
 async function main() {
@@ -582,7 +710,9 @@ async function main() {
   if (parsed.help) {
     process.stdout.write(
       "Usage: node scripts/ai-grader/finalize-mathematical-calibration-v1.mjs " +
-      "--analysis <analysis.json> --output-dir <new-empty-output-dir> [--registry-staging-root <fixed-root>]\n",
+      "--analysis <analysis.json> --output-dir <new-empty-output-dir> " +
+      "[--product-owner-operational-acceptance <authority.json>] " +
+      "[--registry-staging-root <fixed-root>]\n",
     );
     return;
   }
@@ -593,9 +723,32 @@ async function main() {
     "../../packages/ai-grader-capture-helper/dist/drivers/fixedRigPhysicalCalibrationV1.js",
   );
   const { buildFixedRigPhysicalCalibrationV1 } = require(driverPath);
-  const { acceptance, bundle } = await finalizeMathematicalCalibrationV1({
+  const operationalVerifierPath = path.resolve(
+    moduleDir,
+    "../../packages/ai-grader-capture-helper/dist/drivers/productOwnerOperationalAcceptanceV1.js",
+  );
+  const {
+    verifyProductOwnerOperationalAcceptanceV1,
+    validateMathematicalCalibrationForOperationalUseV1,
+  } = require(operationalVerifierPath);
+  const authorityProducerPath = path.resolve(
+    moduleDir,
+    "create-product-owner-operational-acceptance-v1.mjs",
+  );
+  const implementationIdentity = {
+    finalizerSha256: sha256(await readFile(fileURLToPath(import.meta.url))),
+    authorityProducerSha256: sha256(await readFile(authorityProducerPath)),
+    implementationGitSha: execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: path.resolve(moduleDir, "../.."),
+      encoding: "utf8",
+    }).trim(),
+  };
+  const { acceptance, operationalAcceptance, bundle } = await finalizeMathematicalCalibrationV1({
     ...parsed,
     buildFixedRigPhysicalCalibrationV1,
+    verifyProductOwnerOperationalAcceptanceV1,
+    validateMathematicalCalibrationForOperationalUseV1,
+    implementationIdentity,
   });
   process.stdout.write(`${JSON.stringify({
     ...acceptance,
@@ -606,8 +759,17 @@ async function main() {
           registryHandoff: bundle.registryHandoff ?? null,
         }
       : null,
+    operationalAcceptance: operationalAcceptance
+      ? {
+          status: operationalAcceptance.authorityStatus,
+          authorityId: operationalAcceptance.authorityId,
+          authoritySha256: operationalAcceptance.authoritySha256,
+          exceptionLedgerSha256: operationalAcceptance.exceptionLedgerSha256,
+          exceptionCount: operationalAcceptance.exceptionLedger.length,
+        }
+      : null,
   })}\n`);
-  if (!acceptance.isCalibrated) process.exitCode = 2;
+  if (!acceptance.isCalibrated && !operationalAcceptance) process.exitCode = 2;
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : "";

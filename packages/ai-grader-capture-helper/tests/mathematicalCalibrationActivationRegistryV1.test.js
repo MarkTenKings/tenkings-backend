@@ -47,11 +47,18 @@ function signHostedAuthority(unsigned, privateKey = HOSTED_AUTHORITY_PRIVATE_KEY
   };
 }
 
-function memberLedger() {
+function memberLedger(ownerAccepted = false) {
   return [
     ["calibration_profile", undefined, "mathematical-calibration-profile-v1.json"],
     ["physical_calibration_artifact", undefined, "mathematical-calibration-artifact-v1.json"],
     ["calibration_acceptance", undefined, "mathematical-calibration-acceptance-v1.json"],
+    ...(ownerAccepted
+      ? [[
+          "product_owner_operational_acceptance",
+          undefined,
+          "product-owner-operational-acceptance-v1.json",
+        ]]
+      : []),
     ...Array.from({ length: 8 }, (_, index) => ["flat_field", index + 1, `flat-field-channel-${index + 1}-v1.json`]),
     ["illumination_pattern", undefined, "illumination-pattern-v1.json"],
   ].map(([role, channelIndex, fileName], index) => ({
@@ -437,5 +444,123 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   await assert.rejects(
     registry.assertStartAuthority(hosted),
     (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_AUTHORITY_MISMATCH",
+  );
+});
+
+test("local registry ingests the owner authority only through the exact 13-member finalizer handoff", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-owner-calibration-ingest-"));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const members = memberLedger(true);
+  const authority = {
+    schemaVersion: "ten-kings-mathematical-calibration-bundle-v1",
+    bundleManifestSha256: sha("owner-bundle-manifest"),
+    sourceCaptureManifestSha256: sha("owner-capture-manifest"),
+    memberLedgerSha256: sha(canonicalAiGraderCalibrationJsonV1(members)),
+    members,
+  };
+  const ownerAuthority = {
+    authorityStatus: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+    authoritySha256: sha("owner-authority"),
+  };
+  const ownerFileSha256 = members[3].sha256;
+  const bundleModulePath = require.resolve("../dist/drivers/fixedRigMathematicalCalibrationBundleV1");
+  const bundleModule = require(bundleModulePath);
+  const originalLoader = bundleModule.loadFixedRigMathematicalCalibrationBundleV1;
+  bundleModule.loadFixedRigMathematicalCalibrationBundleV1 = (input) => ({
+    bundlePath: input.bundlePath,
+    bundleSha256: input.bundleSha256,
+    bundle: {},
+    profile: {
+      rigId: RIG_ID,
+      profileId: "owner-profile-v1",
+      calibrationVersion: "owner-calibration-v1",
+      finalizedAt: NOW.toISOString(),
+      artifactSha256: sha("owner-rig-characterization"),
+    },
+    physicalArtifact: {},
+    acceptance: {},
+    operationalAcceptance: ownerAuthority,
+    authority,
+    files: { operationalAcceptance: { sha256: ownerFileSha256 } },
+  });
+  t.after(() => { bundleModule.loadFixedRigMathematicalCalibrationBundleV1 = originalLoader; });
+  delete require.cache[require.resolve("../dist/drivers/mathematicalCalibrationActivationRegistryV1")];
+  const {
+    createMathematicalCalibrationActivationRegistryV1,
+  } = require("../dist/drivers/mathematicalCalibrationActivationRegistryV1");
+
+  const finalizedBundleStagingRoot = path.join(root, "trusted-finalizer-staging");
+  const stagingDir = path.join(finalizedBundleStagingRoot, authority.bundleManifestSha256);
+  await fs.mkdir(stagingDir, { recursive: true });
+  await fs.writeFile(path.join(stagingDir, "mathematical-calibration-bundle-v1.json"), "owner bundle");
+  for (const member of members) {
+    await fs.writeFile(path.join(stagingDir, member.fileName), `owner member ${member.fileName}`);
+  }
+  const handoff = {
+    schemaVersion: "ten-kings-mathematical-calibration-finalizer-handoff-v1",
+    authority: "trusted-local-mathematical-calibration-finalizer-v1",
+    rigId: RIG_ID,
+    profileId: "owner-profile-v1",
+    calibrationVersion: "owner-calibration-v1",
+    finalizedAt: NOW.toISOString(),
+    bundleFileName: "mathematical-calibration-bundle-v1.json",
+    bundleManifestSha256: authority.bundleManifestSha256,
+    sourceAnalysisSha256: sha("owner-source-analysis"),
+    operationalAcceptanceStatus: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+    operationalAcceptanceAuthoritySha256: ownerAuthority.authoritySha256,
+    operationalAcceptanceAuthorityFileSha256: ownerFileSha256,
+  };
+  await fs.writeFile(
+    path.join(stagingDir, "mathematical-calibration-finalizer-handoff-v1.json"),
+    JSON.stringify(handoff),
+  );
+  const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const registry = createMathematicalCalibrationActivationRegistryV1({
+    rootDir: root,
+    finalizedBundleStagingRoot,
+    expectedRigId: RIG_ID,
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    workstationKeyId: KEY_ID,
+    workstationPrivateKey: privateKey,
+    hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
+    liveOperatingContext: async (value) => value,
+    isIdle: async () => true,
+    now: () => NOW,
+  });
+  const ingested = await registry.ingestFinalizedBundle({
+    bundleManifestSha256: authority.bundleManifestSha256,
+  });
+  assert.equal(ingested.authority.members.length, 13);
+  assert.equal(
+    await fs.readFile(path.join(path.dirname(ingested.bundlePath),
+      "product-owner-operational-acceptance-v1.json"), "utf8"),
+    "owner member product-owner-operational-acceptance-v1.json",
+  );
+
+  const invalidRoot = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-owner-handoff-invalid-"));
+  t.after(async () => fs.rm(invalidRoot, { recursive: true, force: true }));
+  const invalidStage = path.join(invalidRoot, authority.bundleManifestSha256);
+  await fs.mkdir(invalidStage, { recursive: true });
+  await fs.writeFile(
+    path.join(invalidStage, "mathematical-calibration-finalizer-handoff-v1.json"),
+    JSON.stringify({ ...handoff, operationalAcceptanceStatus: undefined }),
+  );
+  const invalidRegistry = createMathematicalCalibrationActivationRegistryV1({
+    rootDir: path.join(root, "invalid-registry"),
+    finalizedBundleStagingRoot: invalidRoot,
+    expectedRigId: RIG_ID,
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    workstationKeyId: KEY_ID,
+    workstationPrivateKey: privateKey,
+    hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
+    liveOperatingContext: async (value) => value,
+    isIdle: async () => true,
+    now: () => NOW,
+  });
+  await assert.rejects(
+    invalidRegistry.ingestFinalizedBundle({ bundleManifestSha256: authority.bundleManifestSha256 }),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_FINALIZER_HANDOFF_INVALID",
   );
 });

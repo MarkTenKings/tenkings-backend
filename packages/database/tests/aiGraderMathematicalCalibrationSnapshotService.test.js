@@ -6,6 +6,18 @@ const { join } = require("node:path");
 const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
+  canonicalProductOwnerOperationalAcceptanceIssueLedgerV1,
+  canonicalProductOwnerOperationalAcceptancePayloadV1,
+  validateMathematicalCalibrationProfileV1,
 } = require("@tenkings/shared");
 const {
   AI_GRADER_MATHEMATICAL_CALIBRATION_IMPORT_V1_SCHEMA_VERSION,
@@ -220,6 +232,140 @@ function artifactSet(suffix = "v1") {
   };
 }
 
+function ownerAcceptedArtifactSet() {
+  const set = artifactSet("owner");
+  const profile = {
+    ...set.profile,
+    rigId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.rigId,
+    artifactSha256: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.physicalArtifactSha256,
+    isCalibrated: false,
+    status: "rejected",
+    lensResidualPx: 100,
+  };
+  const physicalArtifact = {
+    ...set.physicalArtifact,
+    rigId: profile.rigId,
+    artifactSha256: profile.artifactSha256,
+  };
+  const mathematical = validateMathematicalCalibrationProfileV1({
+    ...profile,
+    isCalibrated: true,
+    status: "finalized",
+  });
+  assert.equal(mathematical.valid, false);
+  const exceptionLedger = [
+    ...Array.from({ length: 36 - mathematical.issues.length }, (_, index) => ({
+      path: `certifiedAnalysis.exception${index + 1}`,
+      message: `Recorded exception ${index + 1}.`,
+    })),
+    ...mathematical.issues,
+  ];
+  const subject = {
+    ...PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+    mathematicalAcceptanceStatus: "rejected",
+    mathematicalIsCalibrated: false,
+    profileId: profile.profileId,
+    calibrationVersion: profile.calibrationVersion,
+    finalizedAt: profile.finalizedAt,
+    artifactId: profile.artifactId,
+  };
+  delete subject.exceptionCount;
+  const authorityWithoutHash = {
+    schemaVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+    authorityId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+    authorityStatus: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
+    hashPolicy: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+    owner: {
+      name: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+      organization: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+      role: "product_owner",
+    },
+    decisionAt: "2026-07-22T12:05:00.000Z",
+    reason: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+    subject,
+    exceptionLedger,
+    exceptionLedgerSha256: hashBytes(Buffer.from(
+      canonicalProductOwnerOperationalAcceptanceIssueLedgerV1(exceptionLedger),
+      "utf8",
+    )),
+    implementation: {
+      contractVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+      implementationGitSha: "1".repeat(40),
+      finalizerSha256: "2".repeat(64),
+      authorityProducerSha256: "3".repeat(64),
+      nodeRuntimeVersion: process.version,
+    },
+    lifecycle: {
+      sequence: 1,
+      priorAuthoritySha256: null,
+      revokedByAuthoritySha256: null,
+      supersededByAuthoritySha256: null,
+    },
+  };
+  const operationalAcceptance = { ...authorityWithoutHash, authoritySha256: "0".repeat(64) };
+  operationalAcceptance.authoritySha256 = hashBytes(Buffer.from(
+    canonicalProductOwnerOperationalAcceptancePayloadV1(operationalAcceptance),
+    "utf8",
+  ));
+  profile.operationalAcceptance = operationalAcceptance;
+
+  const profileBytes = Buffer.from(JSON.stringify(profile));
+  const physicalBytes = Buffer.from(JSON.stringify(physicalArtifact));
+  const operationalBytes = Buffer.from(JSON.stringify(operationalAcceptance));
+  const members = set.authority.members.map((member) => ({ ...member }));
+  members[0].sha256 = hashBytes(profileBytes);
+  members[1].sha256 = hashBytes(physicalBytes);
+  members.splice(3, 0, {
+    role: "product_owner_operational_acceptance",
+    fileName: "product-owner-operational-acceptance-v1.json",
+    sha256: hashBytes(operationalBytes),
+  });
+  const bundleBytes = Buffer.from(JSON.stringify({
+    schemaVersion: BUNDLE_SCHEMA,
+    suffix: set.suffix,
+    members,
+  }));
+  const authority = {
+    ...set.authority,
+    bundleManifestSha256: hashBytes(bundleBytes),
+    memberLedgerSha256: hashCanonical(members),
+    members,
+  };
+  const directory = set.bundleKey.split("/").slice(0, -1).join("/");
+  const memberStorageKeys = members.map((member) => ({
+    ...member,
+    storageKey: `${directory}/${member.fileName}`,
+  }));
+  const storage = new Map(set.storage);
+  storage.set(set.bundleKey, bundleBytes);
+  storage.set(memberStorageKeys[0].storageKey, profileBytes);
+  storage.set(memberStorageKeys[1].storageKey, physicalBytes);
+  storage.set(memberStorageKeys[3].storageKey, operationalBytes);
+  const files = memberStorageKeys.map((member) => ({ path: member.storageKey, sha256: member.sha256 }));
+  return {
+    ...set,
+    profile,
+    physicalArtifact,
+    authority,
+    memberStorageKeys,
+    storage,
+    loaded: {
+      profile,
+      physicalArtifact,
+      operationalAcceptance,
+      authority,
+      files: {
+        profile: files[0],
+        physicalArtifact: files[1],
+        acceptance: files[2],
+        operationalAcceptance: files[3],
+        flatFields: files.slice(4, 12),
+        illuminationPattern: files[12],
+      },
+    },
+  };
+}
+
 function row(set, overrides = {}) {
   const context = operatingContext(set);
   const { calibration: _calibration, schemaVersion: _schemaVersion, ...runtimeContext } = context;
@@ -341,6 +487,66 @@ test("imports DRAFT only after the exact manifest and all twelve member bytes ve
   assert.equal(createData.mathematicalSourceCaptureManifestSha256, set.authority.sourceCaptureManifestSha256);
   assert.equal(createData.mathematicalMemberLedgerSha256, set.authority.memberLedgerSha256);
   assert.deepEqual(Object.keys(createData.componentSerials), ["camera", "light"]);
+});
+
+test("owner-authorized rejected calibration imports and trusts only with the exact 13-member authority", async () => {
+  const set = ownerAcceptedArtifactSet();
+  let status = "DRAFT";
+  let createdData;
+  const service = createAiGraderMathematicalCalibrationSnapshotService(mockDb({
+    async create({ data }) {
+      createdData = data;
+      return row(set, data);
+    },
+    async findFirst({ where }) {
+      if (where.id !== "snapshot-owner") return null;
+      return row(set, {
+        id: "snapshot-owner",
+        trustStatus: status,
+        trustedAt: status === "TRUSTED" ? NOW : null,
+        trustedByOperatorId: status === "TRUSTED" ? "reviewer-1" : null,
+      });
+    },
+    async updateMany() {
+      status = "TRUSTED";
+      return { count: 1 };
+    },
+  }), serviceOptions([set]));
+  const imported = await service.importDraft({
+    rigId: set.profile.rigId,
+    bundleStorageKey: set.bundleKey,
+    expectedBundleManifestSha256: set.authority.bundleManifestSha256,
+    componentSerials: { camera: "basler-1", light: "leimac-1" },
+    operatingContextV1: operatingContext(set),
+    importedByOperatorId: "importer-1",
+  });
+  assert.equal(imported.trustStatus, "DRAFT");
+  assert.equal(createdData.artifactKeys.members.length, 13);
+  assert.equal(
+    createdData.artifactKeys.members[3].role,
+    "product_owner_operational_acceptance",
+  );
+  const trusted = await service.trust({
+    snapshotId: "snapshot-owner",
+    expectedArtifactSha256: set.profile.artifactSha256,
+    expectedBundleManifestSha256: set.authority.bundleManifestSha256,
+    trustedByOperatorId: "reviewer-1",
+  });
+  assert.equal(trusted.trustStatus, "TRUSTED");
+
+  const tampered = ownerAcceptedArtifactSet();
+  tampered.loaded.profile.operationalAcceptance.exceptionLedger.pop();
+  const rejected = createAiGraderMathematicalCalibrationSnapshotService(mockDb({
+    async create() { throw new Error("must not create"); },
+  }), serviceOptions([tampered]));
+  await assert.rejects(rejected.importDraft({
+    rigId: tampered.profile.rigId,
+    bundleStorageKey: tampered.bundleKey,
+    expectedBundleManifestSha256: tampered.authority.bundleManifestSha256,
+    componentSerials: { camera: "basler-1" },
+    operatingContextV1: operatingContext(tampered),
+    importedByOperatorId: "importer-1",
+  }), (error) => error.code === "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INVALID");
 });
 
 test("wrong bundle manifest identity fails before snapshot insertion", async () => {

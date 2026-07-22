@@ -38,6 +38,7 @@ export const aiGraderCalibrationBundleMemberIdentityV1Schema = z.object({
     "calibration_profile",
     "physical_calibration_artifact",
     "calibration_acceptance",
+    "product_owner_operational_acceptance",
     "flat_field",
     "illumination_pattern",
   ]),
@@ -56,6 +57,15 @@ const EXPECTED_BUNDLE_MEMBERS = [
     `flat-field-channel-${index + 1}-v1.json`,
   ]),
   ["illumination_pattern", undefined, "illumination-pattern-v1.json"],
+] as const;
+const EXPECTED_OWNER_ACCEPTED_BUNDLE_MEMBERS = [
+  ...EXPECTED_BUNDLE_MEMBERS.slice(0, 3),
+  [
+    "product_owner_operational_acceptance",
+    undefined,
+    "product-owner-operational-acceptance-v1.json",
+  ],
+  ...EXPECTED_BUNDLE_MEMBERS.slice(3),
 ] as const;
 
 export const aiGraderOperatingContextV1Schema = z.object({
@@ -97,7 +107,7 @@ export const aiGraderOperatingContextV1Schema = z.object({
     bundleManifestSha256: sha256,
     sourceCaptureManifestSha256: sha256,
     memberLedgerSha256: sha256,
-    members: z.array(aiGraderCalibrationBundleMemberIdentityV1Schema).length(12),
+    members: z.array(aiGraderCalibrationBundleMemberIdentityV1Schema).min(12).max(13),
   }).strict(),
   software: z.object({
     captureProfileVersion: canonicalText,
@@ -116,10 +126,17 @@ export const aiGraderOperatingContextV1Schema = z.object({
   if (JSON.stringify(channelIndexes) !== JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8])) {
     context.addIssue({ code: "custom", path: ["controller", "channelMap"], message: "must contain ordered channels 1 through 8" });
   }
+  const expectedBundleMembers = value.calibration.members.length === 13
+    ? EXPECTED_OWNER_ACCEPTED_BUNDLE_MEMBERS
+    : EXPECTED_BUNDLE_MEMBERS;
   value.calibration.members.forEach((member, index) => {
-    const expected = EXPECTED_BUNDLE_MEMBERS[index]!;
+    const expected = expectedBundleMembers[index]!;
     if (member.role !== expected[0] || member.channelIndex !== expected[1] || member.fileName !== expected[2]) {
-      context.addIssue({ code: "custom", path: ["calibration", "members", index], message: "does not match the canonical ordered 12-member ledger" });
+      context.addIssue({
+        code: "custom",
+        path: ["calibration", "members", index],
+        message: "does not match the canonical ordered 12-member or owner-authorized 13-member ledger",
+      });
     }
   });
 });

@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import {
+  buildMathematicalCalibrationAcceptanceV1,
   finalizeMathematicalCalibrationV1,
   verifyMathematicalCalibrationAnalysisV1,
 } from "../finalize-mathematical-calibration-v1.mjs";
@@ -309,6 +310,139 @@ test("finalization rejects a changed certified photometric artifact before writi
     await assert.rejects(
       readFile(path.join(outputDir, "mathematical-calibration-bundle-v1.json")),
       /ENOENT/,
+    );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("owner-authorized rejection preserves mathematical failure and emits a 13-member transparent bundle", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "calibration-owner-authority-"));
+  try {
+    const fixture = await writeAnalysisFixture(temporaryRoot);
+    const { analysisPath } = fixture;
+    const sourceAnalysis = {
+      ...fixture.value,
+      sourceManifestSha256: fixture.value.sourceCapturePackage.manifestSha256,
+    };
+    const { hashPolicy: _hashPolicy, analysisPayloadJson: _payload, analysisSha256: _sha, ...payload } = sourceAnalysis;
+    sourceAnalysis.analysisPayloadJson = JSON.stringify(canonical(payload));
+    sourceAnalysis.analysisSha256 = digest(Buffer.from(sourceAnalysis.analysisPayloadJson, "utf8"));
+    await writeFile(analysisPath, JSON.stringify(sourceAnalysis), "utf8");
+    const outputDir = path.join(temporaryRoot, "owner-authorized");
+    const registryStagingRoot = path.join(temporaryRoot, "owner-staging");
+    const authorityPath = path.join(temporaryRoot, "owner-authority.json");
+    await writeFile(authorityPath, JSON.stringify({ protected: true }), "utf8");
+    const issues = Array.from({ length: 36 }, (_, index) => ({
+      path: `analysis.exceptions.${index + 1}`,
+      message: `Recorded exception ${index + 1}.`,
+    }));
+    const operationalProfileCandidate = {
+      profileId: "test-profile",
+      calibrationVersion: "test-v1",
+      rigId: "ten-kings-fixed-rig-v1",
+      finalizedAt: "2026-07-18T12:00:00.000Z",
+      thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
+      thresholdSetHash: "d".repeat(64),
+      artifactId: "artifact-v1",
+      artifactSha256: "c".repeat(64),
+      isCalibrated: false,
+      status: "rejected",
+    };
+    const result = {
+      status: "rejected",
+      isCalibrated: false,
+      profile: null,
+      operationalProfileCandidate,
+      artifact: {
+        artifactId: operationalProfileCandidate.artifactId,
+        artifactSha256: operationalProfileCandidate.artifactSha256,
+        rigId: operationalProfileCandidate.rigId,
+        algorithmVersion: "fixed-rig-physical-calibration-v1",
+        methods: { coverageFactor: 1.96 },
+      },
+      issues,
+    };
+    const acceptance = buildMathematicalCalibrationAcceptanceV1(
+      verifyMathematicalCalibrationAnalysisV1(sourceAnalysis),
+      result,
+    );
+    const authority = {
+      authorityStatus: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+      authorityId: "owner-authority-v1",
+      authoritySha256: "4".repeat(64),
+      exceptionLedgerSha256: "5".repeat(64),
+      exceptionLedger: issues,
+      subject: {
+        sessionId: sourceAnalysis.sourceCapturePackage.stationAuthority.sessionId,
+        sourceCaptureManifestSha256: sourceAnalysis.sourceManifestSha256,
+        sourceCapturePackageSha256: "6".repeat(64),
+        analysisSha256: sourceAnalysis.analysisSha256,
+        analysisFileSha256: digest(await readFile(analysisPath)),
+        thresholdSetHash: sourceAnalysis.sourceCapturePackage.thresholdSetHash,
+        physicalArtifactSha256: result.artifact.artifactSha256,
+        mathematicalAcceptanceFileSha256: digest(exactJsonBytes(acceptance)),
+        mathematicalAcceptanceStatus: "rejected",
+        mathematicalIsCalibrated: false,
+        rigId: operationalProfileCandidate.rigId,
+        profileId: operationalProfileCandidate.profileId,
+        calibrationVersion: operationalProfileCandidate.calibrationVersion,
+        finalizedAt: operationalProfileCandidate.finalizedAt,
+        artifactId: operationalProfileCandidate.artifactId,
+      },
+    };
+    const finalized = await finalizeMathematicalCalibrationV1({
+      analysisPath,
+      outputDir,
+      registryStagingRoot,
+      productOwnerOperationalAcceptancePath: authorityPath,
+      buildFixedRigPhysicalCalibrationV1: () => result,
+      verifyProductOwnerOperationalAcceptanceV1: () => authority,
+      validateMathematicalCalibrationForOperationalUseV1: (profile) => ({
+        valid: true,
+        isCalibrated: false,
+        isOperationallyAccepted: true,
+        profile,
+        issues,
+      }),
+      implementationIdentity: {
+        implementationGitSha: "1".repeat(40),
+        finalizerSha256: "2".repeat(64),
+        authorityProducerSha256: "3".repeat(64),
+      },
+    });
+    assert.equal(finalized.acceptance.status, "rejected");
+    assert.equal(finalized.acceptance.isCalibrated, false);
+    assert.deepEqual(finalized.acceptance.issues, issues);
+    assert.equal(finalized.operationalAcceptance.authorityStatus,
+      "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS");
+    assert.equal(finalized.bundle.manifest.artifacts.length, 13);
+    assert.equal(finalized.bundle.manifest.operationalAcceptance.exceptionCount, 36);
+    assert.equal(
+      finalized.bundle.manifest.artifacts[3].role,
+      "product_owner_operational_acceptance",
+    );
+    const emittedProfile = JSON.parse(await readFile(
+      path.join(outputDir, "mathematical-calibration-profile-v1.json"),
+      "utf8",
+    ));
+    assert.equal(emittedProfile.isCalibrated, false);
+    assert.equal(emittedProfile.status, "rejected");
+    assert.deepEqual(emittedProfile.operationalAcceptance.exceptionLedger, issues);
+    const handoff = JSON.parse(await readFile(
+      path.join(
+        registryStagingRoot,
+        finalized.bundle.sha256,
+        "mathematical-calibration-finalizer-handoff-v1.json",
+      ),
+      "utf8",
+    ));
+    assert.equal(handoff.operationalAcceptanceStatus,
+      "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS");
+    assert.equal(handoff.operationalAcceptanceAuthoritySha256, authority.authoritySha256);
+    assert.equal(
+      handoff.operationalAcceptanceAuthorityFileSha256,
+      finalized.bundle.manifest.operationalAcceptance.authorityFileSha256,
     );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });

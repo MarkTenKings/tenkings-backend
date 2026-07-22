@@ -210,6 +210,7 @@ export * from "./aiGraderDefectFindingsV2";
 export * from "./aiGraderReportBundles";
 export * from "./aiGraderReportBundlesV03";
 export * from "./aiGraderMathematicalCalibrationV1";
+export * from "./aiGraderProductOwnerOperationalAcceptanceV1";
 export * from "./aiGraderPokemonStandardCornerProfileV1";
 export * from "./aiGraderCalibrationActivationV1";
 export {

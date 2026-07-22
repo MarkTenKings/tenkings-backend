@@ -15,10 +15,22 @@ const {
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
   POKEMON_TCG_STANDARD_CORNER_PROFILE,
   POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+  PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV03Schema,
   buildMathematicalMeasurementV1,
   calculateFindingDeductionV1,
+  canonicalProductOwnerOperationalAcceptanceIssueLedgerV1,
+  canonicalProductOwnerOperationalAcceptancePayloadV1,
+  validateMathematicalCalibrationProfileV1,
 } = require("../dist");
 
 const SHA = "c".repeat(64);
@@ -430,6 +442,91 @@ function cleanV03Bundle(overrides = {}) {
     publicAssets,
     ...overrides,
   };
+}
+
+function ownerAcceptedV03Bundle() {
+  const bundle = cleanV03Bundle();
+  const profile = {
+    ...bundle.calibrationProfile,
+    rigId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.rigId,
+    artifactSha256: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.physicalArtifactSha256,
+    isCalibrated: false,
+    status: "rejected",
+    lensResidualPx: 0.8,
+  };
+  bundle.centeringEvidence.front.outerCutGeometryEvidence.observedArtifact.calibrationSha256 =
+    profile.artifactSha256;
+  bundle.centeringEvidence.back.outerCutGeometryEvidence.observedArtifact.calibrationSha256 =
+    profile.artifactSha256;
+  const mathematical = validateMathematicalCalibrationProfileV1({
+    ...profile,
+    isCalibrated: true,
+    status: "finalized",
+  });
+  assert.equal(mathematical.valid, false);
+  const exceptionLedger = [
+    ...Array.from({ length: 36 - mathematical.issues.length }, (_, index) => ({
+      path: `certifiedAnalysis.exception${index + 1}`,
+      message: `Recorded certified-analysis exception ${index + 1}.`,
+    })),
+    ...mathematical.issues,
+  ];
+  const subject = {
+    ...PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT,
+    mathematicalAcceptanceStatus: "rejected",
+    mathematicalIsCalibrated: false,
+    profileId: profile.profileId,
+    calibrationVersion: profile.calibrationVersion,
+    finalizedAt: profile.finalizedAt,
+    artifactId: profile.artifactId,
+  };
+  delete subject.exceptionCount;
+  const withoutHash = {
+    schemaVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_SCHEMA_VERSION,
+    authorityId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_AUTHORITY_ID,
+    authorityStatus: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_STATUS,
+    hashPolicy: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_HASH_POLICY,
+    owner: {
+      name: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_NAME,
+      organization: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_OWNER_ORGANIZATION,
+      role: "product_owner",
+    },
+    decisionAt: "2026-07-22T12:05:00.000Z",
+    reason: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_REASON,
+    subject,
+    exceptionLedger,
+    exceptionLedgerSha256: crypto.createHash("sha256")
+      .update(canonicalProductOwnerOperationalAcceptanceIssueLedgerV1(exceptionLedger), "utf8")
+      .digest("hex"),
+    implementation: {
+      contractVersion: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_CONTRACT_VERSION,
+      implementationGitSha: "1".repeat(40),
+      finalizerSha256: "2".repeat(64),
+      authorityProducerSha256: "3".repeat(64),
+      nodeRuntimeVersion: process.version,
+    },
+    lifecycle: {
+      sequence: 1,
+      priorAuthoritySha256: null,
+      revokedByAuthoritySha256: null,
+      supersededByAuthoritySha256: null,
+    },
+  };
+  const authority = { ...withoutHash, authoritySha256: "0".repeat(64) };
+  authority.authoritySha256 = crypto.createHash("sha256")
+    .update(canonicalProductOwnerOperationalAcceptancePayloadV1(authority), "utf8")
+    .digest("hex");
+  profile.operationalAcceptance = authority;
+  bundle.calibrationProfile = profile;
+  bundle.calibrationBundleAuthority.members.splice(3, 0, {
+    role: "product_owner_operational_acceptance",
+    fileName: "product-owner-operational-acceptance-v1.json",
+    sha256: crypto.createHash("sha256").update(JSON.stringify(authority), "utf8").digest("hex"),
+  });
+  bundle.calibrationBundleAuthority.memberLedgerSha256 = crypto.createHash("sha256")
+    .update(JSON.stringify(canonical(bundle.calibrationBundleAuthority.members)), "utf8")
+    .digest("hex");
+  return bundle;
 }
 
 function pokemonStandardV03Bundle() {
@@ -868,6 +965,35 @@ test("v0.3 accepts the exact V1.2 calibration authority only as an all-or-nothin
   const wrongContract = structuredClone(bundle);
   wrongContract.calibrationBundleAuthority.captureContractVersion = "1.1.0";
   assert.equal(aiGraderReportBundleV03Schema.safeParse(wrongContract).success, false);
+});
+
+test("v0.3 exposes owner acceptance and the complete mathematical exception ledger", () => {
+  const bundle = ownerAcceptedV03Bundle();
+  const parsed = aiGraderReportBundleV03Schema.safeParse(bundle);
+  assert.equal(parsed.success, true, parsed.success ? "" : JSON.stringify(parsed.error.issues));
+  assert.equal(parsed.data.calibrationProfile.isCalibrated, false);
+  assert.equal(parsed.data.calibrationProfile.status, "rejected");
+  assert.equal(
+    parsed.data.calibrationProfile.operationalAcceptance.authorityStatus,
+    "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+  );
+  assert.equal(parsed.data.calibrationProfile.operationalAcceptance.exceptionLedger.length, 36);
+  assert.equal(
+    parsed.data.calibrationBundleAuthority.members[3].role,
+    "product_owner_operational_acceptance",
+  );
+
+  const missingIssue = structuredClone(bundle);
+  missingIssue.calibrationProfile.operationalAcceptance.exceptionLedger.pop();
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingIssue).success, false);
+
+  const missingAuthorityMember = structuredClone(bundle);
+  missingAuthorityMember.calibrationBundleAuthority.members.splice(3, 1);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(missingAuthorityMember).success, false);
+
+  const replayed = structuredClone(bundle);
+  replayed.calibrationProfile.profileId = "another-profile";
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(replayed).success, false);
 });
 
 test("Pokemon standard reports preserve the exact profile, eight independent contours, and source hashes", () => {

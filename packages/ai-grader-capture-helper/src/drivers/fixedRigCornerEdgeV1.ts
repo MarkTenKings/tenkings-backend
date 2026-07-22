@@ -9,10 +9,9 @@ import {
   calculateApplicableSevereDefectCapV1,
   calculateFindingDeductionV1,
   mathematicalFindingV1Schema,
-  validateMathematicalCalibrationProfileV1,
   type MathematicalFindingCategoryV1,
   type MathematicalFindingV1,
-  type MathematicalCalibrationProfileV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalMeasurementKindV1,
   type MathematicalMeasurementUnitV1,
   type MathematicalMeasurementV1,
@@ -20,6 +19,7 @@ import {
 } from "@tenkings/shared";
 import type { FixedRigScalarPlaneV1 } from "./fixedRigPhotometricEvidenceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_CORNER_EDGE_V1_VERSION = "fixed_rig_corner_edge_v1" as const;
 
@@ -166,9 +166,9 @@ function finitePositive(value: number): boolean {
 }
 
 function calibrationIssue(calibration: FixedRigConditionMeasurementCalibrationV1): string | null {
-  const validation = validateMathematicalCalibrationProfileV1(calibration.profile);
+  const validation = validateMathematicalCalibrationForOperationalUseV1(calibration.profile);
   const profile = validation.profile;
-  if (!validation.valid || !validation.isCalibrated || !profile) {
+  if (!validation.valid || (!validation.isCalibrated && !validation.isOperationallyAccepted) || !profile) {
     return "Condition measurements require a finalized calibration profile satisfying every V1 acceptance gate.";
   }
   if (

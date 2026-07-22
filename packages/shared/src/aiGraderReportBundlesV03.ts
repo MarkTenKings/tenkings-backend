@@ -23,7 +23,6 @@ import {
   calculateOverallGradeV1,
   calculateRegisteredDesignTemplateAxisV1,
   fuseCenteringFrontBackV1,
-  mathematicalCalibrationProfileV1Schema,
   mathematicalCenteringRegistrationV1Schema,
   mathematicalDeductionLedgerV1Schema,
   mathematicalDesignReferenceV1Schema,
@@ -32,8 +31,12 @@ import {
   mathematicalScoreV1Schema,
   roundMathematicalScoreV1,
   scoreCenteringRatioV1,
-  validateMathematicalCalibrationProfileV1,
 } from "./aiGraderMathematicalCalibrationV1";
+import {
+  operationallyAcceptedMathematicalCalibrationProfileV1Schema,
+  validateMathematicalCalibrationForOperationalUseV1,
+} from "./aiGraderProductOwnerOperationalAcceptanceV1";
+import { mathematicalCalibrationProfileV1Schema } from "./aiGraderMathematicalCalibrationV1";
 import {
   POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
   POKEMON_TCG_STANDARD_CORNER_PROFILE_RADIUS_MM,
@@ -499,7 +502,13 @@ const pokemonStandardCornerAuthoritySchema = z.strictObject({
 
 const calibrationBundleAuthorityMemberSchema = z.discriminatedUnion("role", [
   z.strictObject({
-    role: z.enum(["calibration_profile", "physical_calibration_artifact", "calibration_acceptance", "illumination_pattern"]),
+    role: z.enum([
+      "calibration_profile",
+      "physical_calibration_artifact",
+      "calibration_acceptance",
+      "product_owner_operational_acceptance",
+      "illumination_pattern",
+    ]),
     fileName: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/),
     sha256: sha256Schema,
   }),
@@ -516,7 +525,7 @@ const calibrationBundleAuthoritySchema = z.strictObject({
   bundleManifestSha256: sha256Schema,
   sourceCaptureManifestSha256: sha256Schema,
   memberLedgerSha256: sha256Schema,
-  members: z.array(calibrationBundleAuthorityMemberSchema).length(12),
+  members: z.array(calibrationBundleAuthorityMemberSchema).min(12).max(13),
   captureContractVersion: z.literal("1.2.0").optional(),
   runtimeContextSha256: sha256Schema.optional(),
   rigCharacterizationSha256: sha256Schema.optional(),
@@ -531,6 +540,18 @@ const calibrationBundleAuthoritySchema = z.strictObject({
     context.addIssue({
       code: "custom",
       message: "V1.2 calibration bundle authority requires the exact contract, runtime-context, and rig-characterization hashes together",
+    });
+  }
+  const ownerMembers = authority.members.filter((member) =>
+    member.role === "product_owner_operational_acceptance");
+  if (
+    (authority.members.length === 12 && ownerMembers.length !== 0) ||
+    (authority.members.length === 13 && ownerMembers.length !== 1)
+  ) {
+    context.addIssue({
+      code: "custom",
+      path: ["members"],
+      message: "must contain exactly twelve mathematical members or thirteen with one product-owner authority",
     });
   }
 });
@@ -554,7 +575,10 @@ export const aiGraderReportBundleV03Schema = z
       }),
       publication: z.strictObject({ publicReportUrl: aiGraderSafePublishedUrlSchema }),
     }),
-    calibrationProfile: mathematicalCalibrationProfileV1Schema,
+    calibrationProfile: z.union([
+      mathematicalCalibrationProfileV1Schema,
+      operationallyAcceptedMathematicalCalibrationProfileV1Schema,
+    ]),
     calibrationActivationAuthority: aiGraderCalibrationActivationAuthorityV1Schema.optional(),
     calibrationBundleAuthority: calibrationBundleAuthoritySchema,
     designReferences: z.array(mathematicalDesignReferenceV1Schema).max(10),
@@ -575,9 +599,25 @@ export const aiGraderReportBundleV03Schema = z
     limitations: z.array(safeTextSchema(500)).max(100).optional(),
   })
   .superRefine((bundle, context) => {
-    const calibration = validateMathematicalCalibrationProfileV1(bundle.calibrationProfile);
-    if (!calibration.valid || !calibration.isCalibrated) {
-      context.addIssue({ code: "custom", path: ["calibrationProfile"], message: "must satisfy every calibrated V1 acceptance criterion" });
+    const calibration = validateMathematicalCalibrationForOperationalUseV1(bundle.calibrationProfile);
+    if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
+      context.addIssue({
+        code: "custom",
+        path: ["calibrationProfile"],
+        message: "must satisfy mathematical acceptance or exact product-owner operational authority",
+      });
+    }
+    const ownerAuthorityMembers = bundle.calibrationBundleAuthority.members.filter((member) =>
+      member.role === "product_owner_operational_acceptance");
+    if (
+      (calibration.isOperationallyAccepted && ownerAuthorityMembers.length !== 1) ||
+      (!calibration.isOperationallyAccepted && ownerAuthorityMembers.length !== 0)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["calibrationBundleAuthority", "members"],
+        message: "must expose the exact product-owner authority only for an operationally accepted rejected profile",
+      });
     }
     const intendedProfileIds = new Set([
       bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileId,
@@ -708,6 +748,12 @@ export const aiGraderReportBundleV03Schema = z
       { role: "calibration_profile", fileName: "mathematical-calibration-profile-v1.json" },
       { role: "physical_calibration_artifact", fileName: "mathematical-calibration-artifact-v1.json" },
       { role: "calibration_acceptance", fileName: "mathematical-calibration-acceptance-v1.json" },
+      ...(calibration.isOperationallyAccepted
+        ? [{
+            role: "product_owner_operational_acceptance" as const,
+            fileName: "product-owner-operational-acceptance-v1.json",
+          }]
+        : []),
       ...Array.from({ length: 8 }, (_, index) => ({
         role: "flat_field",
         channelIndex: index + 1,

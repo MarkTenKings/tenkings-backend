@@ -56,6 +56,9 @@ export type MathematicalCalibrationFinalizerHandoffV1 = {
   bundleFileName: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_BUNDLE_FILE_V1;
   bundleManifestSha256: string;
   sourceAnalysisSha256: string;
+  operationalAcceptanceStatus?: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS";
+  operationalAcceptanceAuthoritySha256?: string;
+  operationalAcceptanceAuthorityFileSha256?: string;
 };
 
 
@@ -411,6 +414,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
       return fail("AI_GRADER_LOCAL_CALIBRATION_FINALIZER_HANDOFF_INVALID", "Trusted finalizer handoff is invalid.");
     }
     const handoff = handoffValue as Record<string, unknown>;
+    const hasOperationalAcceptance = handoff.operationalAcceptanceStatus !== undefined;
     const expectedHandoffKeys = [
       "schemaVersion",
       "authority",
@@ -421,6 +425,11 @@ export function createMathematicalCalibrationActivationRegistryV1(
       "bundleFileName",
       "bundleManifestSha256",
       "sourceAnalysisSha256",
+      ...(hasOperationalAcceptance ? [
+        "operationalAcceptanceStatus",
+        "operationalAcceptanceAuthoritySha256",
+        "operationalAcceptanceAuthorityFileSha256",
+      ] : []),
     ].sort();
     const actualHandoffKeys = Object.keys(handoff).sort();
     if (actualHandoffKeys.length !== expectedHandoffKeys.length ||
@@ -432,8 +441,15 @@ export function createMathematicalCalibrationActivationRegistryV1(
         handoff.bundleManifestSha256 !== bundleManifestSha256 ||
         typeof handoff.profileId !== "string" || !handoff.profileId.trim() ||
         typeof handoff.calibrationVersion !== "string" || !handoff.calibrationVersion.trim() ||
-        typeof handoff.finalizedAt !== "string" || !Number.isFinite(new Date(handoff.finalizedAt).getTime()) ||
-        typeof handoff.sourceAnalysisSha256 !== "string" || !SHA256.test(handoff.sourceAnalysisSha256)) {
+         typeof handoff.finalizedAt !== "string" || !Number.isFinite(new Date(handoff.finalizedAt).getTime()) ||
+         typeof handoff.sourceAnalysisSha256 !== "string" || !SHA256.test(handoff.sourceAnalysisSha256) ||
+         (hasOperationalAcceptance && (
+           handoff.operationalAcceptanceStatus !== "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS" ||
+           typeof handoff.operationalAcceptanceAuthoritySha256 !== "string" ||
+           !SHA256.test(handoff.operationalAcceptanceAuthoritySha256) ||
+           typeof handoff.operationalAcceptanceAuthorityFileSha256 !== "string" ||
+           !SHA256.test(handoff.operationalAcceptanceAuthorityFileSha256)
+         ))) {
       return fail(
         "AI_GRADER_LOCAL_CALIBRATION_FINALIZER_HANDOFF_INVALID",
         "Trusted finalizer handoff does not match the exact rig, bundle, and immutable finalizer contract.",
@@ -449,8 +465,14 @@ export function createMathematicalCalibrationActivationRegistryV1(
       expectedRigId: options.expectedRigId,
     });
     if (source.profile.profileId !== handoff.profileId ||
-        source.profile.calibrationVersion !== handoff.calibrationVersion ||
-        source.profile.finalizedAt !== handoff.finalizedAt) {
+         source.profile.calibrationVersion !== handoff.calibrationVersion ||
+         source.profile.finalizedAt !== handoff.finalizedAt ||
+         (hasOperationalAcceptance
+           ? !source.operationalAcceptance ||
+             source.operationalAcceptance.authorityStatus !== handoff.operationalAcceptanceStatus ||
+             source.operationalAcceptance.authoritySha256 !== handoff.operationalAcceptanceAuthoritySha256 ||
+             source.files.operationalAcceptance?.sha256 !== handoff.operationalAcceptanceAuthorityFileSha256
+           : source.operationalAcceptance !== undefined)) {
       fail(
         "AI_GRADER_LOCAL_CALIBRATION_FINALIZER_HANDOFF_INVALID",
         "Finalized bundle profile identity does not match the trusted finalizer handoff.",

@@ -891,6 +891,11 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     rigId?: string;
     artifactSha256?: string;
     bundleSha256?: string;
+    operationalAcceptanceStatus?: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS";
+    operationalAcceptanceAuthorityId?: string;
+    operationalAcceptanceAuthoritySha256?: string;
+    operationalAcceptanceExceptionLedgerSha256?: string;
+    operationalAcceptanceExceptionCount?: number;
     captureContractVersion?: "1.2.0";
     runtimeContextSha256?: string;
     rigCharacterizationSha256?: string;
@@ -2914,6 +2919,15 @@ function mathematicalCalibrationReadiness(
       rigId: loaded.profile.rigId,
       artifactSha256: loaded.profile.artifactSha256,
       bundleSha256: loaded.bundleSha256,
+      ...(loaded.operationalAcceptance ? {
+        operationalAcceptanceStatus: loaded.operationalAcceptance.authorityStatus,
+        operationalAcceptanceAuthorityId: loaded.operationalAcceptance.authorityId,
+        operationalAcceptanceAuthoritySha256: loaded.operationalAcceptance.authoritySha256,
+        operationalAcceptanceExceptionLedgerSha256:
+          loaded.operationalAcceptance.exceptionLedgerSha256,
+        operationalAcceptanceExceptionCount:
+          loaded.operationalAcceptance.exceptionLedger.length,
+      } : {}),
       ...(loaded.authority.captureContractVersion ? {
         captureContractVersion: loaded.authority.captureContractVersion,
         runtimeContextSha256: loaded.authority.runtimeContextSha256,

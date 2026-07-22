@@ -4,8 +4,10 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  rejectedMathematicalCalibrationProfileCandidateV1Schema,
   validateMathematicalCalibrationProfileV1,
   type MathematicalCalibrationProfileV1,
+  type RejectedMathematicalCalibrationProfileCandidateV1,
   type MathematicalCalibrationValidationIssueV1,
 } from "@tenkings/shared";
 
@@ -244,6 +246,7 @@ export type BuildFixedRigPhysicalCalibrationV1Result =
       status: "rejected";
       isCalibrated: false;
       profile: null;
+      operationalProfileCandidate: RejectedMathematicalCalibrationProfileCandidateV1;
       artifact: FixedRigPhysicalCalibrationArtifactV1;
       issues: MathematicalCalibrationValidationIssueV1[];
     };
@@ -856,6 +859,11 @@ export function buildFixedRigPhysicalCalibrationV1(
       status: "rejected",
       isCalibrated: false,
       profile: null,
+      operationalProfileCandidate: rejectedMathematicalCalibrationProfileCandidateV1Schema.parse({
+        ...profileCandidate,
+        isCalibrated: false,
+        status: "rejected",
+      }),
       artifact,
       issues,
     };

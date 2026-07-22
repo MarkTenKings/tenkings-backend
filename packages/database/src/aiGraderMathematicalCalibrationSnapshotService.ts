@@ -4,7 +4,9 @@ import {
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
   mathematicalCalibrationProfileV1Schema,
-  type MathematicalCalibrationProfileV1,
+  validateMathematicalCalibrationForOperationalUseV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1,
+  type ProductOwnerOperationalAcceptanceV1,
 } from "@tenkings/shared";
 
 export const AI_GRADER_MATHEMATICAL_CALIBRATION_IMPORT_V1_SCHEMA_VERSION =
@@ -23,6 +25,7 @@ export type AiGraderMathematicalCalibrationBundleAuthorityMemberV1 = {
     | "calibration_profile"
     | "physical_calibration_artifact"
     | "calibration_acceptance"
+    | "product_owner_operational_acceptance"
     | "flat_field"
     | "illumination_pattern";
   channelIndex?: number;
@@ -39,13 +42,15 @@ export type AiGraderMathematicalCalibrationBundleAuthorityV1 = {
 };
 
 export type AiGraderLoadedMathematicalCalibrationBundleV1 = {
-  profile: MathematicalCalibrationProfileV1;
+  profile: OperationallyUsableMathematicalCalibrationProfileV1;
   physicalArtifact: JsonRecord;
+  operationalAcceptance?: ProductOwnerOperationalAcceptanceV1;
   authority: AiGraderMathematicalCalibrationBundleAuthorityV1;
   files: {
     profile: { path: string; sha256: string };
     physicalArtifact: { path: string; sha256: string };
     acceptance: { path: string; sha256: string };
+    operationalAcceptance?: { path: string; sha256: string };
     flatFields: Array<{ path: string; sha256: string }>;
     illuminationPattern: { path: string; sha256: string };
   };
@@ -174,7 +179,7 @@ export class AiGraderMathematicalCalibrationSnapshotServiceError extends Error {
 }
 
 type VerifiedArtifactSet = {
-  profile: MathematicalCalibrationProfileV1;
+  profile: OperationallyUsableMathematicalCalibrationProfileV1;
   physicalArtifact: JsonRecord;
   authority: AiGraderMathematicalCalibrationBundleAuthorityV1;
   bundleStorageKey: string;
@@ -295,10 +300,10 @@ function artifactKeysFromRow(row: AiGraderMathematicalCalibrationSnapshotRow) {
       "Stored calibration artifact-key schema is invalid.",
     );
   }
-  if (!Array.isArray(keys.members) || keys.members.length !== 12) {
+  if (!Array.isArray(keys.members) || (keys.members.length !== 12 && keys.members.length !== 13)) {
     return artifactFailure(
       "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INTEGRITY_MISMATCH",
-      "Stored calibration artifact-key ledger must contain exactly twelve members.",
+      "Stored calibration artifact-key ledger must contain exactly twelve or thirteen members.",
     );
   }
   return {
@@ -334,14 +339,34 @@ function validateVerifiedBundle(
       "Canonical calibration-bundle loader returned no verified bundle.",
     );
   }
-  const parsedProfile = mathematicalCalibrationProfileV1Schema.safeParse(loaded.profile);
-  if (!parsedProfile.success || !parsedProfile.data.isCalibrated || parsedProfile.data.status !== "finalized") {
+  const mathematicalProfile = mathematicalCalibrationProfileV1Schema.safeParse(loaded.profile);
+  const operationalValidation = mathematicalProfile.success
+    ? undefined
+    : validateMathematicalCalibrationForOperationalUseV1(loaded.profile);
+  if (!mathematicalProfile.success &&
+      (!operationalValidation?.valid || !operationalValidation.isOperationallyAccepted ||
+        !operationalValidation.profile)) {
     return artifactFailure(
       "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INVALID",
-      "Canonical calibration-bundle loader did not return a finalized Mathematical Calibration Profile V1.",
+      "Canonical calibration-bundle loader did not return a mathematically accepted or exact owner-authorized profile.",
     );
   }
-  const profile = parsedProfile.data;
+  const profile = mathematicalProfile.success
+    ? mathematicalProfile.data
+    : operationalValidation!.profile!;
+  const operationalAcceptance = "operationalAcceptance" in profile
+    ? profile.operationalAcceptance
+    : undefined;
+  if (
+    (operationalAcceptance === undefined) !== (loaded.operationalAcceptance === undefined) ||
+    (operationalAcceptance !== undefined &&
+      !sameCanonicalJson(operationalAcceptance, loaded.operationalAcceptance))
+  ) {
+    return artifactFailure(
+      "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INTEGRITY_MISMATCH",
+      "Canonical calibration-bundle loader owner authority does not match the operational profile.",
+    );
+  }
   if (profile.rigId !== expectedRigId) {
     return artifactFailure(
       "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INTEGRITY_MISMATCH",
@@ -355,7 +380,7 @@ function validateVerifiedBundle(
     sha256(authority.bundleManifestSha256, "authority.bundleManifestSha256") !==
       expectedBundleManifestSha256 ||
     !Array.isArray(authority.members) ||
-    authority.members.length !== 12
+    authority.members.length !== (operationalAcceptance ? 13 : 12)
   ) {
     return artifactFailure(
       "AI_GRADER_MATHEMATICAL_CALIBRATION_ARTIFACT_INTEGRITY_MISMATCH",
@@ -368,6 +393,12 @@ function validateVerifiedBundle(
     { role: "calibration_profile", fileName: "mathematical-calibration-profile-v1.json" },
     { role: "physical_calibration_artifact", fileName: "mathematical-calibration-artifact-v1.json" },
     { role: "calibration_acceptance", fileName: "mathematical-calibration-acceptance-v1.json" },
+    ...(operationalAcceptance
+      ? [{
+          role: "product_owner_operational_acceptance",
+          fileName: "product-owner-operational-acceptance-v1.json",
+        }]
+      : []),
     ...Array.from({ length: 8 }, (_, index) => ({
       role: "flat_field",
       channelIndex: index + 1,
@@ -411,11 +442,12 @@ function validateVerifiedBundle(
     loaded.files?.profile,
     loaded.files?.physicalArtifact,
     loaded.files?.acceptance,
+    ...(operationalAcceptance ? [loaded.files?.operationalAcceptance] : []),
     ...(loaded.files?.flatFields ?? []),
     loaded.files?.illuminationPattern,
   ];
   if (
-    loadedFiles.length !== 12 ||
+    loadedFiles.length !== expectedMembers.length ||
     loadedFiles.some((file, index) =>
       !file ||
       file.path !== memberStorageKeys[index]!.storageKey ||
