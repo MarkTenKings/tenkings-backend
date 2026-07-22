@@ -122,7 +122,9 @@ async function producerFixture(root, options = {}) {
     },
     normalize: options.useDefaultNormalizer ? undefined : async (input) => {
       const request = requests.get(input.sourceImageId.replace(/-raw$/, "").split("-").slice(-1)[0])
-        ?? [...requests.values()].find((candidate) => input.sourceImageId.includes(candidate.operationId));
+        ?? [...requests.values()]
+          .filter((candidate) => input.sourceImageId.includes(candidate.operationId))
+          .sort((left, right) => right.operationId.length - left.operationId.length)[0];
       assert.ok(request, `missing capture request for ${input.sourceImageId}`);
       const rawBytes = await fsp.readFile(input.sourceImagePath);
       const rawHash = sha256(rawBytes);
@@ -345,6 +347,158 @@ test("calibration producer rejects non-finite or out-of-frame target corners bef
         artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative").length,
       0,
     );
+  }
+});
+
+test("V1.0.1 ordinary low-coverage rejection preserves accepted hashes and resumes the same slot with a new operation ID", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-retry-resume-"));
+  const geometryForRequest = ({ request, defaultGeometry }) => request.operationId === "lens-low-coverage-attempt"
+    ? {
+        ...defaultGeometry,
+        corners: {
+          topLeft: { x: 300, y: 450 }, topRight: { x: 700, y: 450 },
+          bottomRight: { x: 700, y: 950 }, bottomLeft: { x: 300, y: 950 },
+        },
+        boundingBox: { x: 300, y: 450, width: 400, height: 500 },
+      }
+    : defaultGeometry;
+  const fixture = await producerFixture(root, { geometryForRequest });
+  const sessionId = "calibration-v1-retry-resume";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  await fixture.producer.captureStep({
+    sessionId, operationId: "lens-accepted-1", role: "lens_geometry", sampleIndex: 1, targetFace: "checkerboard",
+  });
+  const before = await fixture.producer.status(sessionId);
+  const acceptedBefore = structuredClone(before.acceptedCaptureHistory);
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId, operationId: "lens-prior-geometry-reuse", role: "lens_geometry", sampleIndex: 2,
+      targetFace: "checkerboard", normalizationSourceOperationId: "lens-accepted-1",
+    }),
+    /exact captured still.*cannot reuse prior geometry/i,
+  );
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId, operationId: "lens-low-coverage-attempt", role: "lens_geometry", sampleIndex: 2, targetFace: "checkerboard",
+    }),
+    /coverage .* below centralized minimum/i,
+  );
+  const failed = await fixture.producer.status(sessionId);
+  assert.equal(failed.captureCount, 1);
+  assert.equal(failed.nextCaptureSlot.slotKey, "lens_geometry:none:2");
+  assert.equal(failed.retryAllowed, true);
+  assert.equal(failed.failedAttempts.at(-1).operationId, "lens-low-coverage-attempt");
+  assert.match(failed.failedAttempts.at(-1).candidateRawSha256, /^[a-f0-9]{64}$/);
+  assert.match(failed.failedAttempts.at(-1).candidateCapturedAt, /^2026-07-18T20:00:00/);
+  assert.equal(failed.failedAttempts.at(-1).candidatePose.coverageFraction, 0.142857);
+  assert.deepEqual(failed.acceptedCaptureHistory, acceptedBefore);
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId, operationId: "lens-low-coverage-attempt", role: "lens_geometry", sampleIndex: 2, targetFace: "checkerboard",
+    }),
+    /operationId cannot be reused/i,
+  );
+
+  const restarted = await producerFixture(root, { geometryForRequest });
+  const resumed = await restarted.producer.start({ ...startRequest(restarted.targetSha256, sessionId), resume: true });
+  assert.equal(resumed.retryAllowed, true);
+  assert.deepEqual(resumed.acceptedCaptureHistory, acceptedBefore);
+  const retried = await restarted.producer.captureStep({
+    sessionId, operationId: "lens-retry-new-operation", role: "lens_geometry", sampleIndex: 2, targetFace: "checkerboard",
+  });
+  assert.equal(retried.captureCount, 2);
+  assert.equal(retried.retryAllowed, false);
+  assert.deepEqual(retried.acceptedCaptureHistory.slice(0, 1), acceptedBefore);
+  assert.equal(fs.existsSync(path.join(started.sessionDir, "evidence", "raw", "lens_geometry-all-02-lens-low-coverage-attempt.png")), false);
+  assert.equal(fs.existsSync(path.join(started.sessionDir, "evidence", "normalized", "lens_geometry-all-02-lens-low-coverage-attempt.png")), false);
+});
+
+test("V1.0.1 restart resume hard-stops immutable accepted-artifact corruption", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-resume-integrity-"));
+  const fixture = await producerFixture(root);
+  const sessionId = "calibration-v1-resume-integrity";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  const accepted = await fixture.producer.captureStep({
+    sessionId, operationId: "resume-integrity-accepted", role: "lens_geometry", sampleIndex: 1, targetFace: "checkerboard",
+  });
+  const raw = accepted.acceptedCaptureHistory[0];
+  await fsp.writeFile(path.join(started.sessionDir, "evidence", "raw", raw.rawEvidenceId.replace(/-raw$/, "") + ".png"), Buffer.from("tampered"));
+  const restarted = await producerFixture(root);
+  await assert.rejects(
+    restarted.producer.start({ ...startRequest(restarted.targetSha256, sessionId), resume: true }),
+    /immutable SHA-256\/size verification/i,
+  );
+  const stopped = await restarted.producer.status(sessionId);
+  assert.equal(stopped.hardStop.operationId, "session-resume");
+  assert.match(stopped.hardStop.reason, /immutable SHA-256\/size verification/i);
+});
+
+test("V1.0.1 lens and normalization tenth-pose aggregate rejection leaves nine hashes unchanged and accepts a corrected retry", async (t) => {
+  const poseGeometry = ({ request, defaultGeometry }) => {
+    const testedRole = request.operationId.startsWith("lens-test-")
+      ? "lens_geometry"
+      : request.operationId.startsWith("normalization-test-")
+        ? "normalization_registration"
+        : undefined;
+    if (!testedRole) return defaultGeometry;
+    const goodRetry = request.operationId.endsWith("-good-retry");
+    const sample = request.sampleIndex;
+    const centerX = goodRetry ? 560 : 480 + ((sample - 1) % 3) * 20;
+    const centerY = goodRetry ? 820 : 680 + (Math.floor((sample - 1) / 3) % 3) * 20;
+    const rotationDegrees = goodRetry ? 3 : -0.5 + ((sample - 1) % 3) * 0.5;
+    return {
+      ...defaultGeometry,
+      corners: {
+        topLeft: { x: centerX - 300, y: centerY - 450 }, topRight: { x: centerX + 300, y: centerY - 450 },
+        bottomRight: { x: centerX + 300, y: centerY + 450 }, bottomLeft: { x: centerX - 300, y: centerY + 450 },
+      },
+      boundingBox: { x: centerX - 300, y: centerY - 450, width: 600, height: 900 },
+      rotationDegrees,
+    };
+  };
+  for (const role of ["lens_geometry", "normalization_registration"]) {
+    await t.test(role, async () => {
+      const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-v1-aggregate-${role}-`));
+      const fixture = await producerFixture(root, { geometryForRequest: poseGeometry });
+      const sessionId = `calibration-v1-aggregate-${role}`;
+      await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+      if (role === "normalization_registration") {
+        for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+          await fixture.producer.captureStep({
+            sessionId, operationId: `prerequisite-lens-${sampleIndex}`, role: "lens_geometry", sampleIndex, targetFace: "checkerboard",
+          });
+        }
+      }
+      for (let sampleIndex = 1; sampleIndex <= 9; sampleIndex += 1) {
+        await fixture.producer.captureStep({
+          sessionId, operationId: `${role === "lens_geometry" ? "lens" : "normalization"}-test-${sampleIndex}`,
+          role, sampleIndex, targetFace: "checkerboard",
+        });
+      }
+      const before = await fixture.producer.status(sessionId);
+      const roleHistoryBefore = before.acceptedCaptureHistory.filter((entry) => entry.role === role);
+      await assert.rejects(
+        fixture.producer.captureStep({
+          sessionId, operationId: `${role === "lens_geometry" ? "lens" : "normalization"}-test-10-bad`,
+          role, sampleIndex: 10, targetFace: "checkerboard",
+        }),
+        /prospective tenth-pose aggregate does not meet centralized minima/i,
+      );
+      const failed = await fixture.producer.status(sessionId);
+      assert.equal(failed.retryAllowed, true);
+      assert.deepEqual(failed.acceptedCaptureHistory.filter((entry) => entry.role === role), roleHistoryBefore);
+      assert.ok(failed.failedAttempts.at(-1).prospectiveAggregate.x < 0.07);
+      assert.ok(failed.failedAttempts.at(-1).prospectiveAggregate.y < 0.08);
+      assert.ok(failed.failedAttempts.at(-1).prospectiveAggregate.rotationDegrees < 2);
+      const accepted = await fixture.producer.captureStep({
+        sessionId, operationId: `${role === "lens_geometry" ? "lens" : "normalization"}-test-10-good-retry`,
+        role, sampleIndex: 10, targetFace: "checkerboard",
+      });
+      assert.deepEqual(accepted.acceptedCaptureHistory.filter((entry) => entry.role === role).slice(0, 9), roleHistoryBefore);
+      const progress = accepted.poseProgress.find((entry) => entry.role === role);
+      assert.equal(progress.acceptedCount, 10);
+      assert.equal(progress.aggregateSatisfied, true);
+    });
   }
 });
 

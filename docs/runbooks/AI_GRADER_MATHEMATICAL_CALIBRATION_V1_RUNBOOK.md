@@ -150,6 +150,14 @@ $targetManifest = Get-Content output/pdf/ten-kings-mathematical-calibration-targ
   -ConfirmInitialCheckerboardPositioned
 ```
 
+Open the isolated V1.0.1 operator page from the protected launcher. It is token-paired, session-bound, and restricted to loopback port `47653`:
+
+```powershell
+.\scripts\ai-grader\open-mathematical-calibration-v1.ps1 -SessionId '<safe-session-id>' -Port 47653
+```
+
+Keep the live image visible while positioning every checkerboard pose. The page shows the exact next role/slot, detected center/rotation/coverage, current and prospective aggregate spans, immutable accepted history/hashes, and ordinary failures. Preview guidance is advisory: the capture authority always reruns geometry detection on the exact captured still before committing the slot. Each checkerboard capture is bound to the current session, fresh preview epoch, latest frame ID, and timestamp; after capture success or failure, wait for the page to reconnect with a new epoch before another attempt.
+
 The immutable plan contains exactly 102 captures:
 
 - 10 lens-geometry checkerboard poses;
@@ -170,7 +178,25 @@ Use `-Action Status` before every continuation. `Advance` deliberately pauses wh
   -ConfirmPhysicalAction
 ```
 
-Do not reuse `-ConfirmPhysicalAction` until the next displayed movement has actually been completed. On any capture, acknowledgement, identity, hash, safe-off, or source-validation failure, stop and preserve the session. Never substitute another camera, image, target, channel, or manual measurement.
+For `lens_geometry` and `normalization_registration`, an accepted exact still must retain fully-in-frame detected geometry and meet centralized coverage `>= 0.30`. Before either role's tenth slot is committed, the prospective ten-pose span must meet X `>= 0.07`, Y `>= 0.08`, and rotation `>= 2 degrees`. A failed detector, low-coverage view, or insufficient prospective tenth-pose aggregate is an ordinary rejection: all earlier accepted files and hashes remain immutable, the same exact slot remains pending, and the failed operation ID is permanently recorded. Correct the physical pose, then retry only that slot with a new operation ID:
+
+```powershell
+.\scripts\ai-grader\run-mathematical-calibration-capture-v1.ps1 `
+  -Action Retry -BridgeUrl 'http://127.0.0.1:47653' -SessionId '<safe-session-id>' `
+  -ConfirmPhysicalAction
+```
+
+After a runner, browser, or protected helper-page restart, rebind the existing immutable session, reopen the preview page, and continue the same missing slot:
+
+```powershell
+.\scripts\ai-grader\run-mathematical-calibration-capture-v1.ps1 `
+  -Action Resume -BridgeUrl 'http://127.0.0.1:47653' -SessionId '<safe-session-id>' `
+  -OperatorId '<same-safe-operator-id>' -TargetVersion ([string]$targetManifest.version) `
+  -TargetSha256 ([string]$targetManifest.pdfSha256)
+.\scripts\ai-grader\open-mathematical-calibration-v1.ps1 -SessionId '<safe-session-id>' -Port 47653
+```
+
+Do not reuse `-ConfirmPhysicalAction` until the displayed movement or retry correction has actually been completed. Hard identity/context corruption, wrong or stale preview binding, unreleased camera ownership, missing controller acknowledgement, safe-off failure, or evidence hash mismatch hard-stops the session and is not retryable. Never substitute another camera, image, target, channel, or manual measurement.
 
 ## Metrology, repeatability, seal, and finalization
 

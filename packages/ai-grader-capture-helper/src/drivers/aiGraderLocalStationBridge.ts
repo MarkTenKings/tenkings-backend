@@ -133,6 +133,8 @@ import {
   type MathematicalCalibrationPreviewCheckerboard,
 } from "./mathematicalCalibrationPreviewCheckerboard";
 import {
+  MATHEMATICAL_CALIBRATION_V1_PAGE_HTML,
+  MATHEMATICAL_CALIBRATION_V1_PAGE_PATH,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML,
   MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH,
 } from "./mathematicalCalibrationV1_1Page";
@@ -928,7 +930,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
       path: string;
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
@@ -1084,10 +1086,14 @@ export interface AiGraderLocalStationPreviewStatus {
     previewFramesPersisted: false;
   };
   mathematicalCalibrationPreview?: {
-    contractVersion: "1.1.0";
+    contractVersion: "1.0.1" | "1.1.0";
     sessionId: string;
     active: boolean;
-    overlay: MathematicalCalibrationV1_1PreviewAssessment;
+    overlay: MathematicalCalibrationV1_1PreviewAssessment & {
+      guidance?: string[];
+      prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
+    };
+    sessionStatus?: FixedRigMathematicalCalibrationCaptureSessionStatusV1;
     lastFrameId?: string;
     lastFrameAt?: string;
     cameraOwnership: "preview_stream" | "capture_action" | "released";
@@ -2921,7 +2927,7 @@ function bridgeEndpoints() {
       method: "GET" | "POST";
       action: AiGraderLocalStationBridgeAction | "preview-status" | "preview-stream" | "lighting-status" | "lighting-apply" | "lighting-heartbeat"
         | "mathematical-calibration-start" | "mathematical-calibration-status" | "mathematical-calibration-capture"
-        | "mathematical-calibration-measurement" | "mathematical-calibration-seal"
+        | "mathematical-calibration-measurement" | "mathematical-calibration-seal" | "mathematical-calibration-v1-page"
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
@@ -2938,6 +2944,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "lighting-apply", path: "/lighting/apply", hardwareAccess: true, description: "Apply an explicit bounded Leimac duty for preview tuning." },
     { method: "POST", action: "lighting-heartbeat", path: "/lighting/heartbeat", hardwareAccess: false, description: "Keep browser live lighting watchdog alive while the operator page is connected." },
     { method: "POST", action: "mathematical-calibration-start", path: "/calibration/mathematical-v1/start", hardwareAccess: false, description: "Start or explicitly resume a purpose-bound non-production calibration capture session." },
+    { method: "GET", action: "mathematical-calibration-v1-page", path: MATHEMATICAL_CALIBRATION_V1_PAGE_PATH, hardwareAccess: false, description: "Serve the isolated token-paired V1.0.1 102-capture positioning page on the protected bridge." },
     { method: "GET", action: "mathematical-calibration-status", path: "/calibration/mathematical-v1/status", hardwareAccess: false, description: "Read one exact calibration capture-session status." },
     { method: "POST", action: "mathematical-calibration-capture", path: "/calibration/mathematical-v1/capture", hardwareAccess: true, description: "Capture one allowlisted calibration step under bridge lock, watchdog, protected settings, and safe-off." },
     { method: "POST", action: "mathematical-calibration-measurement", path: "/calibration/mathematical-v1/measurement", hardwareAccess: false, description: "Record one instrument/operator/time-bound immutable physical measurement." },
@@ -4551,6 +4558,7 @@ export class AiGraderLocalStationBridgeService {
   private lightingLifecyclePending = 0;
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private mathematicalCalibrationV1SessionId?: string;
   private mathematicalCalibrationV1_1SessionId?: string;
   private mathematicalCalibrationV1_2MutationPending = false;
   private mathematicalCalibrationPreviewStatus?: AiGraderLocalStationPreviewStatus["mathematicalCalibrationPreview"];
@@ -4883,19 +4891,85 @@ export class AiGraderLocalStationBridgeService {
           throw new Error("mock calibration preview has no checkerboard frame");
         }
         : detectMathematicalCalibrationPreviewCheckerboard);
-    const acceptedPoses = this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
-    void Promise.all([detectCheckerboard(frame), acceptedPoses]).then(([geometry, previousPoses]) => {
+    const v1 = current.contractVersion === "1.0.1";
+    const nextRole = current.sessionStatus?.nextCaptureSlot?.role;
+    const acceptedPoses = v1
+      ? this.mathematicalCalibrationCaptureProducer?.previewPoses(
+          current.sessionId,
+          nextRole === "lens_geometry" || nextRole === "normalization_registration" || nextRole === "repeated_placement"
+            ? nextRole
+            : undefined,
+        ) ?? Promise.resolve([])
+      : this.mathematicalCalibrationCaptureProducerV1_1?.previewPoses(current.sessionId) ?? Promise.resolve([]);
+    const sessionStatus = v1
+      ? this.requireMathematicalCalibrationCaptureProducer().status(current.sessionId)
+      : this.requireMathematicalCalibrationCaptureProducerV1_1().status(current.sessionId);
+    void Promise.all([detectCheckerboard(frame), acceptedPoses, sessionStatus]).then(([geometry, previousPoses, status]) => {
       if (this.mathematicalCalibrationPreviewStatus?.sessionId !== current.sessionId || !this.mathematicalCalibrationPreviewStatus.active) return;
-      const assessment = assessMathematicalCalibrationV1_1Preview({
+      const baseAssessment = assessMathematicalCalibrationV1_1Preview({
         corners: geometry.outerCorners,
         imageWidth: geometry.imageWidth,
         imageHeight: geometry.imageHeight,
         rotationDegrees: geometry.rotationDegrees,
         acceptedPoses: previousPoses,
       });
+      let assessment: MathematicalCalibrationV1_1PreviewAssessment & {
+        guidance?: string[];
+        prospectiveAggregate?: { x: number; y: number; rotationDegrees: number };
+      } = baseAssessment;
+      if (v1) {
+        const role = status.nextCaptureSlot?.role;
+        const progress = status.poseProgress.find((entry) => entry.role === role);
+        const prospectivePoses = baseAssessment.center && baseAssessment.rotationDegrees !== null
+          ? [...previousPoses, {
+              evidenceId: frameId,
+              centerXFraction: baseAssessment.center.xFraction,
+              centerYFraction: baseAssessment.center.yFraction,
+              coverageFraction: baseAssessment.coverageFraction ?? 0,
+              rotationDegrees: baseAssessment.rotationDegrees,
+              cornerSignature: [],
+              imageWidth: geometry.imageWidth,
+              imageHeight: geometry.imageHeight,
+              corners: geometry.outerCorners,
+            }]
+          : previousPoses;
+        const span = (values: readonly number[]) => values.length === 0 ? 0 : Math.max(...values) - Math.min(...values);
+        const prospectiveAggregate = {
+          x: Number(span(prospectivePoses.map((pose) => pose.centerXFraction)).toFixed(6)),
+          y: Number(span(prospectivePoses.map((pose) => pose.centerYFraction)).toFixed(6)),
+          rotationDegrees: Number(span(prospectivePoses.map((pose) => pose.rotationDegrees)).toFixed(6)),
+        };
+        const tenthAggregateSatisfied = !progress || progress.acceptedCount < 9 || (
+          prospectiveAggregate.x >= progress.requiredAggregate.x &&
+          prospectiveAggregate.y >= progress.requiredAggregate.y &&
+          prospectiveAggregate.rotationDegrees >= progress.requiredAggregate.rotationDegrees
+        );
+        const guidance = [...baseAssessment.reasons];
+        if (role === "lens_geometry" || role === "normalization_registration") {
+          guidance.push(
+            `prospective ${role} spans X ${prospectiveAggregate.x.toFixed(4)}/${progress?.requiredAggregate.x.toFixed(4) ?? "-"}, ` +
+            `Y ${prospectiveAggregate.y.toFixed(4)}/${progress?.requiredAggregate.y.toFixed(4) ?? "-"}, ` +
+            `rotation ${prospectiveAggregate.rotationDegrees.toFixed(2)}/${progress?.requiredAggregate.rotationDegrees.toFixed(2) ?? "-"} degrees`,
+          );
+          if (progress?.acceptedCount === 9 && !tenthAggregateSatisfied) guidance.push("move or rotate the target until every prospective tenth-pose span reaches its centralized minimum");
+        } else if (role === "repeated_placement") {
+          guidance.push("remove and reseat the checkerboard for the exact pending repeated-placement slot");
+        } else if (status.nextCaptureSlot?.targetFace === "blank_reverse") {
+          guidance.push("stop preview, confirm camera release, then flip to the blank reverse");
+        }
+        assessment = {
+          ...baseAssessment,
+          sufficientlyDistinct: baseAssessment.valid && tenthAggregateSatisfied,
+          placementIndex: previousPoses.length + 1,
+          nextPlacementIndex: previousPoses.length + 2,
+          guidance,
+          prospectiveAggregate,
+        };
+      }
       this.mathematicalCalibrationPreviewStatus = {
         ...this.mathematicalCalibrationPreviewStatus,
         overlay: assessment,
+        sessionStatus: status,
         lastFrameId: frameId,
         lastFrameAt: capturedAt,
       };
@@ -10918,9 +10992,29 @@ export class AiGraderLocalStationBridgeService {
     const calibrationPreviewSessionId = calibrationPreviewHeader === undefined
       ? undefined
       : exactRequestHeader(req, "X-AI-Grader-Mathematical-Calibration-Session-Id");
-    const calibrationPreviewBound = Boolean(
-      calibrationPreviewSessionId && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId,
-    );
+    const calibrationPreviewContractVersion = calibrationPreviewSessionId !== undefined
+      && calibrationPreviewSessionId === this.mathematicalCalibrationV1SessionId
+      ? "1.0.1" as const
+      : calibrationPreviewSessionId !== undefined
+        && calibrationPreviewSessionId === this.mathematicalCalibrationV1_1SessionId
+        ? "1.1.0" as const
+        : undefined;
+    const calibrationPreviewBound = calibrationPreviewContractVersion !== undefined;
+    if (calibrationPreviewSessionId && !calibrationPreviewBound) {
+      sendJson(
+        res,
+        409,
+        {
+          ok: false,
+          code: "AI_GRADER_CALIBRATION_PREVIEW_SESSION_MISMATCH",
+          message: "Mathematical Calibration preview requires the exact active bridge-bound session.",
+          result: this.previewStatus(),
+        },
+        origin,
+        this.config,
+      );
+      return Promise.resolve();
+    }
     if (calibrationPreviewBound && this.config.port !== MATHEMATICAL_CALIBRATION_PREVIEW_PORT) {
       sendJson(
         res,
@@ -10928,7 +11022,7 @@ export class AiGraderLocalStationBridgeService {
         {
           ok: false,
           code: "AI_GRADER_CALIBRATION_PREVIEW_PROTECTED_PORT_REQUIRED",
-          message: `Mathematical Calibration V1.1 preview requires protected bridge port ${MATHEMATICAL_CALIBRATION_PREVIEW_PORT}.`,
+          message: `Mathematical Calibration preview requires protected bridge port ${MATHEMATICAL_CALIBRATION_PREVIEW_PORT}.`,
           result: this.previewStatus(),
         },
         origin,
@@ -11060,7 +11154,7 @@ export class AiGraderLocalStationBridgeService {
       ? {
           sessionId: calibrationPreviewSessionId!,
           side: "front" as const,
-          sideEpoch: `mathematical-calibration-v1.1-${calibrationPreviewSessionId}`,
+          sideEpoch: `mathematical-calibration-${calibrationPreviewContractVersion}-${calibrationPreviewSessionId}-${previewReservation}`,
         }
       : {
           sessionId: this.manifest.sessionId!,
@@ -11097,11 +11191,15 @@ export class AiGraderLocalStationBridgeService {
       lastStopReason: undefined,
     });
     if (calibrationPreviewBound) {
+      const sessionStatus = calibrationPreviewContractVersion === "1.0.1"
+        ? await this.requireMathematicalCalibrationCaptureProducer().status(binding.sessionId)
+        : await this.requireMathematicalCalibrationCaptureProducerV1_1().status(binding.sessionId);
       this.mathematicalCalibrationPreviewStatus = {
-        contractVersion: "1.1.0",
+        contractVersion: calibrationPreviewContractVersion!,
         sessionId: binding.sessionId,
         active: true,
         overlay: assessMathematicalCalibrationV1_1Preview({ acceptedPoses: [] }),
+        sessionStatus,
         cameraOwnership: this.config.mode === "real" ? "preview_stream" : "released",
         reconnectAllowed: true,
       };
@@ -12043,7 +12141,13 @@ export class AiGraderLocalStationBridgeService {
     request: StartFixedRigMathematicalCalibrationCaptureV1Request,
   ): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     this.assertCalibrationSessionIsolated();
-    return this.requireMathematicalCalibrationCaptureProducer().start(request);
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== request.sessionId) {
+      throw new Error("Only one active Mathematical Calibration V1.0.1 session may be bound to the protected bridge.");
+    }
+    return this.requireMathematicalCalibrationCaptureProducer().start(request).then((status) => {
+      this.mathematicalCalibrationV1SessionId = request.sessionId;
+      return status;
+    });
   }
 
   startMathematicalCalibrationV1_1Capture(
@@ -12060,6 +12164,9 @@ export class AiGraderLocalStationBridgeService {
   }
 
   mathematicalCalibrationCaptureStatus(sessionId: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    if (this.mathematicalCalibrationV1SessionId && this.mathematicalCalibrationV1SessionId !== sessionId) {
+      throw new Error("Mathematical Calibration V1.0.1 status is bound to the active calibration session only.");
+    }
     return this.requireMathematicalCalibrationCaptureProducer().status(sessionId);
   }
 
@@ -12076,26 +12183,146 @@ export class AiGraderLocalStationBridgeService {
     this.assertCalibrationSessionIsolated();
     assertRealBridgeArmed(this.config);
     return this.serializeTerminalLifecycle(async () => {
-      await this.awaitLightingLifecycleIdle();
-      await this.stopPreviewForHardwareAction("mathematical calibration");
+      const producer = this.requireMathematicalCalibrationCaptureProducer();
+      const rejectContext = async (reason: string): Promise<never> => {
+        const authoritySessionId = this.mathematicalCalibrationV1SessionId ?? request.sessionId;
+        await producer.recordHardStop(authoritySessionId, request.operationId, reason);
+        let cleanupError: string | undefined;
+        try {
+          await this.stopPreviewStream("V1.0.1 calibration context rejection", {
+            waitForRelease: true,
+            requireRelease: true,
+            settleMs: PREVIEW_CAMERA_SETTLE_MS,
+          });
+        } catch (error) {
+          cleanupError = error instanceof Error ? error.message : "Calibration preview cleanup failed.";
+        }
+        try {
+          const safeOff = await this.runTerminalSafeOff(`mathematical calibration V1.0.1 ${request.operationId} context rejection`);
+          if (!safeOff.ok) {
+            cleanupError = [cleanupError, safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration context-rejection safe-off could not be confirmed."]
+              .filter(Boolean).join(" ");
+          }
+        } catch (error) {
+          cleanupError = [cleanupError, error instanceof Error ? error.message : "Calibration context-rejection safe-off failed."]
+            .filter(Boolean).join(" ");
+        }
+        if (!cleanupError) {
+          this.updatePreviewStatus({ status: "stopped", cameraOwnership: "released", lastStopReason: reason });
+          if (this.mathematicalCalibrationPreviewStatus?.sessionId === authoritySessionId) {
+            this.mathematicalCalibrationPreviewStatus = {
+              ...this.mathematicalCalibrationPreviewStatus,
+              active: false,
+              cameraOwnership: "released",
+              sessionStatus: await producer.status(authoritySessionId),
+            };
+          }
+        }
+        throw new Error(cleanupError ? `${reason} Cleanup also failed: ${cleanupError}` : reason);
+      };
+      if (this.mathematicalCalibrationV1SessionId !== request.sessionId) {
+        return rejectContext("Mathematical Calibration V1.0.1 capture requires the exact active bridge-bound session.");
+      }
+      const durableBeforeCapture = await producer.status(request.sessionId);
+      const requestedSlotKey = `${request.role}:${request.channelIndex ?? "none"}:${request.sampleIndex}`;
+      if (
+        !durableBeforeCapture.nextCaptureSlot ||
+        durableBeforeCapture.nextCaptureSlot.slotKey !== requestedSlotKey ||
+        durableBeforeCapture.nextCaptureSlot.targetFace !== request.targetFace
+      ) {
+        return rejectContext(
+          `Mathematical Calibration V1.0.1 request ${requestedSlotKey} does not match exact next slot ${durableBeforeCapture.nextCaptureSlot?.slotKey ?? "none"}.`,
+        );
+      }
+      const checkerboardRole = request.role === "lens_geometry" || request.role === "normalization_registration" || request.role === "repeated_placement";
+      if (
+        (request.role === "lens_geometry" || request.role === "normalization_registration") &&
+        request.normalizationSourceOperationId !== undefined
+      ) {
+        return rejectContext("V1.0.1 lens and normalization capture must rerun detection on the exact still and cannot reuse prior geometry.");
+      }
+      const preview = this.previewStatus();
+      const mathematicalPreview = preview.mathematicalCalibrationPreview;
+      if (checkerboardRole) {
+        const binding = request.previewBinding;
+        const frameAt = Date.parse(binding?.capturedAt ?? "");
+        const ageMs = Date.now() - frameAt;
+        if (
+          !binding ||
+          binding.sessionId !== request.sessionId ||
+          mathematicalPreview?.contractVersion !== "1.0.1" ||
+          mathematicalPreview.sessionId !== request.sessionId ||
+          !mathematicalPreview.active ||
+          preview.status !== "live" ||
+          preview.cameraOwnership !== "preview_stream" ||
+          binding.epoch !== preview.sideEpoch ||
+          binding.frameId !== preview.latestFrameId ||
+          binding.frameId !== mathematicalPreview.lastFrameId ||
+          binding.capturedAt !== preview.lastFrameAt ||
+          binding.capturedAt !== mathematicalPreview.lastFrameAt ||
+          !Number.isFinite(frameAt) || ageMs < -1000 || ageMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+        ) {
+          return rejectContext("Mathematical Calibration V1.0.1 capture rejected a missing, wrong-session, or stale live-preview binding.");
+        }
+      } else if (
+        request.previewBinding ||
+        mathematicalPreview?.active ||
+        preview.status === "starting" ||
+        preview.status === "live" ||
+        (preview.cameraOwnership !== "idle" && preview.cameraOwnership !== "released")
+      ) {
+        return rejectContext("Mathematical Calibration V1.0.1 blank-reverse capture requires preview stopped and camera ownership released.");
+      }
+      try {
+        await this.awaitLightingLifecycleIdle();
+      } catch (error) {
+        return rejectContext(error instanceof Error ? error.message : "Calibration lighting lifecycle did not become idle.");
+      }
+      try {
+        await this.stopPreviewForHardwareAction("mathematical calibration V1.0.1");
+      } catch (error) {
+        return rejectContext(error instanceof Error ? error.message : "Calibration preview did not drain before capture.");
+      }
       const owner = `mathematical-calibration:${request.sessionId}:${request.operationId}`;
-      this.acquireCaptureLock(owner);
+      try {
+        this.acquireCaptureLock(owner);
+      } catch (error) {
+        return rejectContext(error instanceof Error ? error.message : "Calibration capture ownership could not be acquired.");
+      }
       let result: FixedRigMathematicalCalibrationCaptureSessionStatusV1 | undefined;
       let operationError: Error | undefined;
       try {
-        result = await this.requireMathematicalCalibrationCaptureProducer().captureStep(request);
+        result = await producer.captureStep(request);
       } catch (error) {
         operationError = error instanceof Error ? error : new Error("Mathematical calibration capture failed.");
       }
-      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>>;
+      let safeOff: Awaited<ReturnType<AiGraderLocalStationBridgeService["runTerminalSafeOff"]>> | undefined;
+      let safeOffError: Error | undefined;
       try {
         safeOff = await this.runTerminalSafeOff(`mathematical calibration ${request.operationId} bridge lifecycle end`);
+      } catch (error) {
+        safeOffError = error instanceof Error ? error : new Error("Calibration lifecycle safe-off threw before acknowledgement.");
       } finally {
         if (this.captureLock?.owner === owner) this.releaseCaptureLock(owner);
       }
-      if (!safeOff.ok) {
-        const message = safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+      if (safeOffError || !safeOff?.ok) {
+        const message = safeOffError?.message ?? safeOff?.directError?.message ?? safeOff?.guardedCleanupError?.message ?? "Calibration lifecycle safe-off could not be confirmed.";
+        await producer.recordHardStop(request.sessionId, request.operationId, message);
         throw new Error(operationError ? `${operationError.message} ${message}` : message);
+      }
+      this.updatePreviewStatus({
+        status: "stopped",
+        cameraOwnership: "released",
+        lastStopReason: `mathematical calibration V1.0.1 ${request.operationId} capture lifecycle released camera ownership`,
+      });
+      if (this.mathematicalCalibrationPreviewStatus?.sessionId === request.sessionId) {
+        const durableStatus = result ?? await producer.status(request.sessionId);
+        this.mathematicalCalibrationPreviewStatus = {
+          ...this.mathematicalCalibrationPreviewStatus,
+          active: false,
+          cameraOwnership: "released",
+          sessionStatus: durableStatus,
+        };
       }
       if (operationError) throw operationError;
       if (!result) throw new Error("Mathematical calibration capture did not return a durable session status.");
@@ -12915,6 +13142,11 @@ export function createAiGraderLocalStationBridgeHttpServer(
       if (url.pathname === MATHEMATICAL_CALIBRATION_V1_1_PAGE_PATH) {
         if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the calibration-only page." }, origin, config);
         return sendText(res, 200, MATHEMATICAL_CALIBRATION_V1_1_PAGE_HTML, origin, config, "text/html; charset=utf-8");
+      }
+
+      if (url.pathname === MATHEMATICAL_CALIBRATION_V1_PAGE_PATH) {
+        if (req.method !== "GET") return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for the V1.0.1 calibration-only page." }, origin, config);
+        return sendText(res, 200, MATHEMATICAL_CALIBRATION_V1_PAGE_HTML, origin, config, "text/html; charset=utf-8");
       }
 
       const statusRoutes = new Set(["/status", "/latest-report", "/session-manifest"]);

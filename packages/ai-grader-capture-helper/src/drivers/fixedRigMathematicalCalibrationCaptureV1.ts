@@ -176,6 +176,12 @@ export interface CaptureFixedRigMathematicalCalibrationStepV1Request {
   targetFace: FixedRigMathematicalCalibrationTargetFaceV1;
   normalizationSourceOperationId?: string;
   removeReseatCycleId?: string;
+  previewBinding?: {
+    sessionId: string;
+    epoch: string;
+    frameId: string;
+    capturedAt: string;
+  };
 }
 
 export interface FixedRigMathematicalCalibrationInstrumentV1 {
@@ -303,6 +309,35 @@ interface CaptureRecordV1 {
   completedAt: string;
 }
 
+export interface FixedRigMathematicalCalibrationPoseV1 {
+  centerXFraction: number;
+  centerYFraction: number;
+  coverageFraction: number;
+  rotationDegrees: number;
+  cornerSignature: number[];
+}
+
+export interface FixedRigMathematicalCalibrationAggregateV1 {
+  x: number;
+  y: number;
+  rotationDegrees: number;
+}
+
+interface FailedCaptureOperationV1 {
+  operationId: string;
+  failedAt: string;
+  error: string;
+  role?: FixedRigMathematicalCalibrationCaptureRoleV1;
+  sampleIndex?: number;
+  channelIndex?: number;
+  targetFace?: FixedRigMathematicalCalibrationTargetFaceV1;
+  slotKey?: string;
+  candidateRawSha256?: string;
+  candidateCapturedAt?: string;
+  candidatePose?: FixedRigMathematicalCalibrationPoseV1;
+  prospectiveAggregate?: FixedRigMathematicalCalibrationAggregateV1;
+}
+
 interface MeasurementRecordV1 {
   operationId: string;
   measurementType: RecordFixedRigMathematicalCalibrationMeasurementV1Request["measurementType"];
@@ -330,8 +365,27 @@ interface CaptureSessionStateV1 {
   artifacts: CaptureArtifactV1[];
   captures: CaptureRecordV1[];
   measurements: MeasurementRecordV1[];
-  failedOperations: Array<{ operationId: string; failedAt: string; error: string }>;
+  failedOperations: FailedCaptureOperationV1[];
+  hardStop?: { operationId: string; stoppedAt: string; reason: string };
   blankReverseFlipRecorded?: boolean;
+}
+
+export interface FixedRigMathematicalCalibrationCaptureSlotV1 {
+  role: FixedRigMathematicalCalibrationCaptureRoleV1;
+  sampleIndex: number;
+  channelIndex: number | null;
+  targetFace: FixedRigMathematicalCalibrationTargetFaceV1;
+  slotKey: string;
+}
+
+export interface FixedRigMathematicalCalibrationPoseProgressV1 {
+  role: "lens_geometry" | "normalization_registration";
+  acceptedCount: number;
+  requiredCount: 10;
+  currentAggregate: FixedRigMathematicalCalibrationAggregateV1;
+  minimumCoverageFraction: number;
+  requiredAggregate: FixedRigMathematicalCalibrationAggregateV1;
+  aggregateSatisfied: boolean;
 }
 
 export interface FixedRigMathematicalCalibrationCaptureSessionStatusV1 {
@@ -343,6 +397,37 @@ export interface FixedRigMathematicalCalibrationCaptureSessionStatusV1 {
   captureCount: number;
   measurementCount: number;
   failedOperationCount: number;
+  sessionStateSha256: string;
+  nextCaptureSlot: FixedRigMathematicalCalibrationCaptureSlotV1 | null;
+  retryAllowed: boolean;
+  hardStop: { operationId: string; stoppedAt: string; reason: string } | null;
+  poseProgress: FixedRigMathematicalCalibrationPoseProgressV1[];
+  acceptedCaptureHistory: Array<{
+    operationId: string;
+    role: FixedRigMathematicalCalibrationCaptureRoleV1;
+    sampleIndex: number;
+    channelIndex: number | null;
+    slotKey: string;
+    capturedAt: string;
+    rawEvidenceId: string;
+    rawSha256: string;
+    normalizedEvidenceId: string;
+    normalizedSha256: string;
+    pose: FixedRigMathematicalCalibrationPoseV1 | null;
+  }>;
+  failedAttempts: Array<{
+    operationId: string;
+    failedAt: string;
+    error: string;
+    role: FixedRigMathematicalCalibrationCaptureRoleV1 | null;
+    sampleIndex: number | null;
+    channelIndex: number | null;
+    slotKey: string | null;
+    candidateRawSha256: string | null;
+    candidateCapturedAt: string | null;
+    candidatePose: FixedRigMathematicalCalibrationPoseV1 | null;
+    prospectiveAggregate: FixedRigMathematicalCalibrationAggregateV1 | null;
+  }>;
   sessionDir: string;
   packageManifestPath?: string;
   captureManifestPath?: string;
@@ -439,6 +524,96 @@ function captureKey(input: Pick<CaptureRecordV1, "role" | "sampleIndex" | "chann
   return `${input.role}:${input.channelIndex ?? "none"}:${input.sampleIndex}`;
 }
 
+function capturePlan(contractVersion: "v1.0.1" | "v1.1"): FixedRigMathematicalCalibrationCaptureSlotV1[] {
+  const plan: FixedRigMathematicalCalibrationCaptureSlotV1[] = [];
+  if (contractVersion === "v1.1") {
+    for (let sampleIndex = 1; sampleIndex <= 4; sampleIndex += 1) {
+      plan.push({
+        role: "checkerboard_placement",
+        sampleIndex,
+        channelIndex: null,
+        targetFace: "checkerboard",
+        slotKey: `checkerboard_placement:none:${sampleIndex}`,
+      });
+    }
+  } else {
+    for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"] as const) {
+      for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+        plan.push({ role, sampleIndex, channelIndex: null, targetFace: "checkerboard", slotKey: `${role}:none:${sampleIndex}` });
+      }
+    }
+  }
+  for (let channelIndex = 1; channelIndex <= 8; channelIndex += 1) {
+    for (const role of ["dark_control", "flat_field", "illumination_pattern"] as const) {
+      for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+        plan.push({
+          role,
+          sampleIndex,
+          channelIndex,
+          targetFace: "blank_reverse",
+          slotKey: `${role}:${channelIndex}:${sampleIndex}`,
+        });
+      }
+    }
+  }
+  return plan;
+}
+
+function aggregateFor(poses: readonly FixedRigMathematicalCalibrationPoseV1[]): FixedRigMathematicalCalibrationAggregateV1 {
+  if (poses.length === 0) return { x: 0, y: 0, rotationDegrees: 0 };
+  const span = (values: readonly number[]) => Number((Math.max(...values) - Math.min(...values)).toFixed(6));
+  return {
+    x: span(poses.map((pose) => pose.centerXFraction)),
+    y: span(poses.map((pose) => pose.centerYFraction)),
+    rotationDegrees: span(poses.map((pose) => pose.rotationDegrees)),
+  };
+}
+
+function acceptedPosesFor(
+  state: CaptureSessionStateV1,
+  role: "lens_geometry" | "normalization_registration",
+): FixedRigMathematicalCalibrationPoseV1[] {
+  return state.artifacts
+    .filter((artifact) => artifact.artifactClass === "raw_capture" && artifact.role === role && artifact.pose)
+    .map((artifact) => artifact.pose!);
+}
+
+function aggregateMeets(
+  observed: FixedRigMathematicalCalibrationAggregateV1,
+  required: FixedRigMathematicalCalibrationAggregateV1,
+): boolean {
+  return observed.x >= required.x && observed.y >= required.y && observed.rotationDegrees >= required.rotationDegrees;
+}
+
+class FixedRigMathematicalCalibrationHardStopV1 extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FixedRigMathematicalCalibrationHardStopV1";
+  }
+}
+
+function hardStop(message: string): never {
+  throw new FixedRigMathematicalCalibrationHardStopV1(message);
+}
+
+function posePolicyForV1(role: "lens_geometry" | "normalization_registration") {
+  const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.captureEvidence.poseDiversity;
+  return {
+    minimumCoverageFraction: policy.minimumDetectedTargetCoverageFractionPerView,
+    requiredAggregate: role === "lens_geometry"
+      ? {
+          x: policy.geometry.minimumNormalizedCenterSpanX,
+          y: policy.geometry.minimumNormalizedCenterSpanY,
+          rotationDegrees: policy.geometry.minimumRotationSpanDegrees,
+        }
+      : {
+          x: policy.normalization.minimumNormalizedCenterSpanX,
+          y: policy.normalization.minimumNormalizedCenterSpanY,
+          rotationDegrees: policy.normalization.minimumRotationSpanDegrees,
+        },
+  };
+}
+
 function measurementKey(record: MeasurementRecordV1): string {
   const payload = record.payload;
   switch (record.measurementType) {
@@ -467,6 +642,66 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
 function statusFor(state: CaptureSessionStateV1, sessionDir: string): FixedRigMathematicalCalibrationCaptureSessionStatusV1 {
   const packagePath = path.join(sessionDir, "source-capture-package.json");
   const manifestPath = path.join(sessionDir, "capture-manifest.json");
+  const contractVersion = state.schemaVersion === MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_SESSION_SCHEMA ? "v1.1" : "v1.0.1";
+  const completedKeys = new Set(state.captures.map(captureKey));
+  const nextCaptureSlot = capturePlan(contractVersion).find((slot) => !completedKeys.has(slot.slotKey)) ?? null;
+  const posePolicy = (contractVersion === "v1.1" ? MATHEMATICAL_CALIBRATION_V1_1_THRESHOLD_MANIFEST : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST)
+    .calibrationAcceptance.captureEvidence.poseDiversity;
+  const poseProgress = contractVersion === "v1.0.1"
+    ? (["lens_geometry", "normalization_registration"] as const).map((role): FixedRigMathematicalCalibrationPoseProgressV1 => {
+        const poses = acceptedPosesFor(state, role);
+        const rolePolicy = role === "lens_geometry" ? posePolicy.geometry : posePolicy.normalization;
+        const requiredAggregate = {
+          x: rolePolicy.minimumNormalizedCenterSpanX,
+          y: rolePolicy.minimumNormalizedCenterSpanY,
+          rotationDegrees: rolePolicy.minimumRotationSpanDegrees,
+        };
+        const currentAggregate = aggregateFor(poses);
+        return {
+          role,
+          acceptedCount: poses.length,
+          requiredCount: 10,
+          currentAggregate,
+          minimumCoverageFraction: posePolicy.minimumDetectedTargetCoverageFractionPerView,
+          requiredAggregate,
+          aggregateSatisfied: poses.length === 10 && aggregateMeets(currentAggregate, requiredAggregate),
+        };
+      })
+    : [];
+  const acceptedCaptureHistory = state.captures.map((capture) => {
+    const raw = state.artifacts.find((artifact) => artifact.evidenceId === capture.rawEvidenceId);
+    const normalized = state.artifacts.find((artifact) => artifact.evidenceId === capture.normalizedEvidenceId);
+    if (!raw || !normalized) throw new Error(`Calibration capture ${capture.operationId} has incomplete immutable artifact authority.`);
+    return {
+      operationId: capture.operationId,
+      role: capture.role,
+      sampleIndex: capture.sampleIndex,
+      channelIndex: capture.channelIndex ?? null,
+      slotKey: captureKey(capture),
+      capturedAt: capture.capturedAt,
+      rawEvidenceId: capture.rawEvidenceId,
+      rawSha256: raw.sha256,
+      normalizedEvidenceId: capture.normalizedEvidenceId,
+      normalizedSha256: normalized.sha256,
+      pose: raw.pose ?? null,
+    };
+  });
+  const failedAttempts = state.failedOperations.map((failure) => ({
+    operationId: failure.operationId,
+    failedAt: failure.failedAt,
+    error: failure.error,
+    role: failure.role ?? null,
+    sampleIndex: failure.sampleIndex ?? null,
+    channelIndex: failure.channelIndex ?? null,
+    slotKey: failure.slotKey ?? null,
+    candidateRawSha256: failure.candidateRawSha256 ?? null,
+    candidateCapturedAt: failure.candidateCapturedAt ?? null,
+    candidatePose: failure.candidatePose ?? null,
+    prospectiveAggregate: failure.prospectiveAggregate ?? null,
+  }));
+  const retryAllowed = Boolean(
+    !state.hardStop && nextCaptureSlot && [...state.failedOperations].reverse().some((failure) => failure.slotKey === nextCaptureSlot.slotKey),
+  );
   return {
     schemaVersion: state.schemaVersion,
     sessionId: state.sessionId,
@@ -476,6 +711,13 @@ function statusFor(state: CaptureSessionStateV1, sessionDir: string): FixedRigMa
     captureCount: state.captures.length,
     measurementCount: state.measurements.length,
     failedOperationCount: state.failedOperations.length,
+    sessionStateSha256: hash(canonicalBytes(state)),
+    nextCaptureSlot,
+    retryAllowed,
+    hardStop: state.hardStop ?? null,
+    poseProgress,
+    acceptedCaptureHistory,
+    failedAttempts,
     sessionDir,
     ...(existsSync(packagePath) ? { packageManifestPath: packagePath } : {}),
     ...(existsSync(manifestPath) ? { captureManifestPath: manifestPath } : {}),
@@ -576,6 +818,13 @@ function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV
   if (input.normalizationSourceOperationId !== undefined) {
     assertSafeId(input.normalizationSourceOperationId, "normalizationSourceOperationId");
   }
+  if (
+    contractVersion === "v1.0.1" &&
+    (input.role === "lens_geometry" || input.role === "normalization_registration") &&
+    input.normalizationSourceOperationId !== undefined
+  ) {
+    throw new Error("V1.0.1 lens and normalization slots must detect geometry from the exact captured still and cannot reuse prior geometry.");
+  }
   if (contractVersion === "v1.1" && !["checkerboard_placement", "flat_field", "dark_control", "illumination_pattern"].includes(input.role)) {
     throw new Error("V1.1 accepts exactly four checkerboard_placement captures; the V1.0.1 geometry/normalization/reseat roles are not valid.");
   }
@@ -649,6 +898,36 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     await writeJsonAtomic(this.statePath(state.sessionId), state);
   }
 
+  private async verifyAcceptedArtifactIntegrity(state: CaptureSessionStateV1): Promise<void> {
+    const sessionRoot = path.resolve(this.sessionDir(state.sessionId));
+    for (const artifact of state.artifacts) {
+      const artifactPath = path.resolve(sessionRoot, ...artifact.path.split("/"));
+      if (!artifactPath.startsWith(`${sessionRoot}${path.sep}`)) {
+        throw new Error(`Calibration artifact ${artifact.evidenceId} escapes the isolated session root.`);
+      }
+      const bytes = await readFile(artifactPath);
+      const metadata = await stat(artifactPath);
+      if (hash(bytes) !== artifact.sha256 || metadata.size !== artifact.byteSize) {
+        throw new Error(`Calibration artifact ${artifact.evidenceId} failed immutable SHA-256/size verification.`);
+      }
+    }
+  }
+
+  async recordHardStop(sessionId: string, operationId: string, reason: string): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
+    return this.serialized(async () => {
+      assertSafeId(sessionId, "sessionId");
+      assertSafeId(operationId, "operationId");
+      const state = await this.load(sessionId);
+      if (!state.hardStop) {
+        const stoppedAt = (this.config.now?.() ?? new Date()).toISOString();
+        state.hardStop = { operationId, stoppedAt, reason: reason.slice(0, 500) };
+        state.updatedAt = stoppedAt;
+        await this.persist(state);
+      }
+      return statusFor(state, this.sessionDir(sessionId));
+    });
+  }
+
   async start(request: StartFixedRigMathematicalCalibrationCaptureV1Request): Promise<FixedRigMathematicalCalibrationCaptureSessionStatusV1> {
     return this.serialized(async () => {
       const sessionId = assertSafeId(request.sessionId, "sessionId");
@@ -669,7 +948,21 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           state.subject.targetSha256 !== request.targetSha256 ||
           hash(canonicalBytes(state.protectedSettings)) !== hash(canonicalBytes(this.config.protectedSettings))
         ) {
+          const stoppedAt = (this.config.now?.() ?? new Date()).toISOString();
+          state.hardStop = { operationId: "session-resume", stoppedAt, reason: "Calibration capture resume identity/settings mismatch." };
+          state.updatedAt = stoppedAt;
+          await this.persist(state);
           throw new Error("Calibration capture resume identity/settings mismatch.");
+        }
+        try {
+          await this.verifyAcceptedArtifactIntegrity(state);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "Calibration resume artifact integrity verification failed.";
+          const stoppedAt = (this.config.now?.() ?? new Date()).toISOString();
+          state.hardStop = { operationId: "session-resume", stoppedAt, reason: reason.slice(0, 500) };
+          state.updatedAt = stoppedAt;
+          await this.persist(state);
+          throw error;
         }
         return statusFor(state, sessionDir);
       }
@@ -727,11 +1020,15 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     return statusFor(state, this.sessionDir(sessionId));
   }
 
-  async previewPoses(sessionId: string): Promise<MathematicalCalibrationV1_1Pose[]> {
-    if (this.config.contractVersion !== "v1.1") return [];
+  async previewPoses(
+    sessionId: string,
+    role?: "lens_geometry" | "normalization_registration" | "repeated_placement",
+  ): Promise<MathematicalCalibrationV1_1Pose[]> {
     const state = await this.load(assertSafeId(sessionId, "sessionId"));
+    const previewRole = this.config.contractVersion === "v1.1" ? "checkerboard_placement" : role;
+    if (!previewRole) return [];
     return state.artifacts
-      .filter((artifact) => artifact.artifactClass === "raw_capture" && artifact.role === "checkerboard_placement" && artifact.pose)
+      .filter((artifact) => artifact.artifactClass === "raw_capture" && artifact.role === previewRole && artifact.pose)
       .sort((left, right) => left.operationId.localeCompare(right.operationId))
       .map((artifact) => {
         const pose = artifact.pose!;
@@ -760,6 +1057,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       assertCaptureRequest(request, this.config.contractVersion ?? "v1.0.1");
       const state = await this.load(request.sessionId);
       if (state.sealedAt) throw new Error("Sealed calibration capture sessions are immutable.");
+      if (state.hardStop) {
+        throw new Error(`Calibration capture session is hard-stopped: ${state.hardStop.reason}`);
+      }
       if (state.captures.some((capture) => capture.operationId === request.operationId)) {
         return statusFor(state, this.sessionDir(request.sessionId));
       }
@@ -770,6 +1070,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       if (state.captures.some((capture) => captureKey(capture) === key)) {
         throw new Error(`Calibration capture slot ${key} is already occupied and cannot be overwritten.`);
       }
+      const contractVersion = this.config.contractVersion ?? "v1.0.1";
       if (this.config.contractVersion === "v1.1" && request.normalizationSourceOperationId !== undefined) {
         throw new Error("V1.1 placement captures are immutable source evidence and may not import or reuse another capture as their input.");
       }
@@ -795,11 +1096,16 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         protectedSettings: state.protectedSettings,
         lighting,
       };
+      let candidatePose: FixedRigMathematicalCalibrationPoseV1 | undefined;
+      let prospectiveAggregate: FixedRigMathematicalCalibrationAggregateV1 | undefined;
+      let candidateRawSha256: string | undefined;
+      let candidateCapturedAt: string | undefined;
       try {
         const captured = await this.config.capture(boundaryRequest);
+        candidateCapturedAt = captured.capturedAt;
         if (!Buffer.isBuffer(captured.rawBytes) || captured.rawBytes.length === 0) throw new Error("Capture boundary returned no raw bytes.");
         if (captured.camera.exposureUs !== state.protectedSettings.exposureUs || captured.camera.gain !== state.protectedSettings.gain) {
-          throw new Error("Capture boundary camera settings do not match bridge-protected calibration settings.");
+          hardStop("Capture boundary camera settings do not match bridge-protected calibration settings.");
         }
         if (
           captured.leimac.unit !== state.protectedSettings.leimacUnit ||
@@ -808,17 +1114,21 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           captured.leimac.acknowledgedWriteCount !== captured.leimac.expectedWriteCount ||
           captured.leimac.complete !== true
         ) {
-          throw new Error("Capture boundary Leimac settings/acknowledgements do not match the protected logical capture step.");
+          hardStop("Capture boundary Leimac settings/acknowledgements do not match the protected logical capture step.");
         }
         if (!captured.safeOff.beforeCaptureConfirmed || !captured.safeOff.afterCaptureConfirmed) {
-          throw new Error("Capture boundary did not confirm safe-off before and after calibration capture.");
+          hardStop("Capture boundary did not confirm safe-off before and after calibration capture.");
         }
         const extension = captured.mimeType === "image/tiff" ? "tiff" : "png";
         const baseName = `${request.role}-${request.channelIndex ?? "all"}-${String(request.sampleIndex).padStart(2, "0")}-${safeSegment(request.operationId)}`;
         const rawRelativePath = portable("evidence", "raw", `${baseName}.${extension}`);
         const rawPath = path.join(this.sessionDir(request.sessionId), ...rawRelativePath.split("/"));
-        await writeExclusive(rawPath, captured.rawBytes);
+        const sourceImagePath = contractVersion === "v1.0.1"
+          ? path.join(operationDir, `${baseName}-raw-working.${extension}`)
+          : rawPath;
+        await writeExclusive(sourceImagePath, captured.rawBytes);
         const rawSha256 = hash(captured.rawBytes);
+        candidateRawSha256 = rawSha256;
         const rawEvidenceId = `${baseName}-raw`;
         let referencedGeometry: CardGeometryMetadata | undefined;
         if (request.normalizationSourceOperationId) {
@@ -840,7 +1150,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           : undefined;
         const workingOutputPath = path.join(operationDir, `${baseName}-normalized-working.png`);
         const normalization = await (this.config.normalize ?? defaultNormalizer)({
-          sourceImagePath: rawPath,
+          sourceImagePath,
           workingOutputPath,
           capturedAt: captured.capturedAt,
           sourceImageId: rawEvidenceId,
@@ -854,22 +1164,45 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           throw new Error("Calibration normalization must preserve raw bytes and produce a normalized derivative.");
         }
         const pose = poseFromGeometry(normalization.geometry);
+        candidatePose = pose;
+        if (contractVersion === "v1.0.1" && (request.role === "lens_geometry" || request.role === "normalization_registration")) {
+          const policy = posePolicyForV1(request.role);
+          if (pose.coverageFraction < policy.minimumCoverageFraction) {
+            throw new Error(
+              `${request.role} exact captured still coverage ${pose.coverageFraction.toFixed(6)} is below centralized minimum ${policy.minimumCoverageFraction.toFixed(6)}.`,
+            );
+          }
+          const accepted = acceptedPosesFor(state, request.role);
+          prospectiveAggregate = aggregateFor([...accepted, pose]);
+          if (accepted.length === 9 && !aggregateMeets(prospectiveAggregate, policy.requiredAggregate)) {
+            throw new Error(
+              `${request.role} prospective tenth-pose aggregate does not meet centralized minima ` +
+              `(X ${prospectiveAggregate.x.toFixed(6)}/${policy.requiredAggregate.x.toFixed(6)}, ` +
+              `Y ${prospectiveAggregate.y.toFixed(6)}/${policy.requiredAggregate.y.toFixed(6)}, ` +
+              `rotation ${prospectiveAggregate.rotationDegrees.toFixed(6)}/${policy.requiredAggregate.rotationDegrees.toFixed(6)} degrees).`,
+            );
+          }
+        }
         if (normalization.rawArtifact.sha256 !== rawSha256 || normalization.normalizedArtifact.sourceSha256 !== rawSha256) {
-          throw new Error("Calibration normalization source hash does not bind to the immutable raw capture.");
+          hardStop("Calibration normalization source hash does not bind to the immutable raw capture.");
         }
         if (
           normalization.normalizedArtifact.imageWidth !== state.protectedSettings.normalizedWidthPx ||
           normalization.normalizedArtifact.imageHeight !== state.protectedSettings.normalizedHeightPx
         ) {
-          throw new Error("Calibration normalized derivative dimensions do not match protected settings.");
+          hardStop("Calibration normalized derivative dimensions do not match protected settings.");
         }
         const normalizedBytes = await readFile(normalization.normalizedArtifact.localOutputPath);
         const normalizedRelativePath = portable("evidence", "normalized", `${baseName}.png`);
         const normalizedPath = path.join(this.sessionDir(request.sessionId), ...normalizedRelativePath.split("/"));
-        await writeExclusive(normalizedPath, normalizedBytes);
+        if (contractVersion !== "v1.0.1") await writeExclusive(normalizedPath, normalizedBytes);
         const normalizedSha256 = hash(normalizedBytes);
         if (normalization.normalizedArtifact.sha256 !== normalizedSha256) {
-          throw new Error("Calibration normalized derivative SHA-256 mismatch.");
+          hardStop("Calibration normalized derivative SHA-256 mismatch.");
+        }
+        if (contractVersion === "v1.0.1") {
+          await writeExclusive(rawPath, captured.rawBytes);
+          await writeExclusive(normalizedPath, normalizedBytes);
         }
         const normalizedEvidenceId = `${baseName}-normalized`;
         const geometryRecordPath = path.join(this.sessionDir(request.sessionId), "working", `${normalizedEvidenceId}-geometry.json`);
@@ -951,12 +1284,25 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         return statusFor(state, this.sessionDir(request.sessionId));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Calibration capture failed.";
+        const failedAt = (this.config.now?.() ?? new Date()).toISOString();
         state.failedOperations.push({
           operationId: request.operationId,
-          failedAt: (this.config.now?.() ?? new Date()).toISOString(),
+          failedAt,
           error: message.slice(0, 500),
+          role: request.role,
+          sampleIndex: request.sampleIndex,
+          ...(request.channelIndex !== undefined ? { channelIndex: request.channelIndex } : {}),
+          targetFace: request.targetFace,
+          slotKey: key,
+          ...(candidateRawSha256 ? { candidateRawSha256 } : {}),
+          ...(candidateCapturedAt ? { candidateCapturedAt } : {}),
+          ...(candidatePose ? { candidatePose } : {}),
+          ...(prospectiveAggregate ? { prospectiveAggregate } : {}),
         });
-        state.updatedAt = (this.config.now?.() ?? new Date()).toISOString();
+        if (error instanceof FixedRigMathematicalCalibrationHardStopV1) {
+          state.hardStop = { operationId: request.operationId, stoppedAt: failedAt, reason: message.slice(0, 500) };
+        }
+        state.updatedAt = failedAt;
         await this.persist(state);
         throw error;
       }

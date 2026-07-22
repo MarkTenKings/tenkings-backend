@@ -1,11 +1,11 @@
 [CmdletBinding()]
 param(
   [ValidateSet(
-    'Worksheet', 'Status', 'Start', 'Advance', 'CreateMetrologyTemplate', 'SubmitMetrology',
+    'Worksheet', 'Status', 'Start', 'Resume', 'Advance', 'Retry', 'CreateMetrologyTemplate', 'SubmitMetrology',
     'DeriveRepeatability', 'Seal', 'Analyze', 'Finalize', 'CompleteOffline'
   )]
   [string]$Action = 'Worksheet',
-  [string]$BridgeUrl = 'http://127.0.0.1:47652',
+  [string]$BridgeUrl = 'http://127.0.0.1:47653',
   [string]$StationToken = $env:AI_GRADER_STATION_TOKEN,
   [string]$SessionId,
   [string]$OperatorId,
@@ -205,6 +205,51 @@ function Invoke-CalibrationBridge {
 function Get-CalibrationStatus {
   $escaped = [uri]::EscapeDataString($SessionId)
   return (Invoke-CalibrationBridge -Method GET -Path ('/calibration/mathematical-v1/status?sessionId=' + $escaped)).result
+}
+
+function Write-PoseProgress {
+  param($Status)
+  foreach ($progress in @($Status.poseProgress)) {
+    Write-Host (
+      ([string]$progress.role) + ': accepted ' + ([string]$progress.acceptedCount) + '/10; current X ' +
+      ([string]$progress.currentAggregate.x) + '/' + ([string]$progress.requiredAggregate.x) + ', Y ' +
+      ([string]$progress.currentAggregate.y) + '/' + ([string]$progress.requiredAggregate.y) + ', rotation ' +
+      ([string]$progress.currentAggregate.rotationDegrees) + '/' + ([string]$progress.requiredAggregate.rotationDegrees) + ' degrees.'
+    )
+  }
+  $lastFailure = @($Status.failedAttempts) | Select-Object -Last 1
+  if ($null -ne $lastFailure) {
+    Write-Host ('Last failed operation ' + $lastFailure.operationId + ' left slot ' + $lastFailure.slotKey + ' pending: ' + $lastFailure.error)
+    if ($null -ne $lastFailure.candidatePose) {
+      Write-Host ('Rejected exact-still pose center/coverage/rotation: ' + $lastFailure.candidatePose.centerXFraction + ', ' + $lastFailure.candidatePose.centerYFraction + '; ' + $lastFailure.candidatePose.coverageFraction + '; ' + $lastFailure.candidatePose.rotationDegrees + ' degrees.')
+    }
+    if ($null -ne $lastFailure.prospectiveAggregate) {
+      Write-Host ('Rejected prospective aggregate X/Y/rotation: ' + $lastFailure.prospectiveAggregate.x + ', ' + $lastFailure.prospectiveAggregate.y + ', ' + $lastFailure.prospectiveAggregate.rotationDegrees + ' degrees.')
+    }
+  }
+}
+
+function Get-LivePreviewBinding {
+  param($Slot)
+  if ($Slot.targetFace -ne 'checkerboard') { return $null }
+  $preview = (Invoke-CalibrationBridge -Method GET -Path '/preview/status').result
+  $math = $preview.mathematicalCalibrationPreview
+  if ($preview.status -ne 'live' -or $preview.cameraOwnership -ne 'preview_stream' -or
+      $null -eq $math -or $math.contractVersion -ne '1.0.1' -or $math.sessionId -ne $SessionId -or
+      -not $math.active -or [string]::IsNullOrWhiteSpace([string]$preview.sideEpoch) -or
+      [string]::IsNullOrWhiteSpace([string]$preview.latestFrameId) -or
+      $preview.latestFrameId -ne $math.lastFrameId -or $preview.lastFrameAt -ne $math.lastFrameAt) {
+    throw 'Checkerboard capture requires one live V1.0.1 preview bound to this exact session and latest frame. Open or reconnect the protected V1.0.1 page.'
+  }
+  try { $frameAt = [DateTimeOffset]::Parse([string]$preview.lastFrameAt) } catch { throw 'The live preview frame timestamp is invalid.' }
+  $ageMs = ([DateTimeOffset]::UtcNow - $frameAt.ToUniversalTime()).TotalMilliseconds
+  if ($ageMs -lt -1000 -or $ageMs -gt 2000) { throw 'The live preview frame is stale; reconnect and wait for a fresh epoch/frame before capture.' }
+  return @{
+    sessionId = $SessionId
+    epoch = [string]$preview.sideEpoch
+    frameId = [string]$preview.latestFrameId
+    capturedAt = [string]$preview.lastFrameAt
+  }
 }
 
 function Get-CalibrationState {
@@ -463,6 +508,8 @@ function Show-Worksheet {
   Write-Host 'SubmitMetrology accepts one SHA-pinned ten-kings-mathematical-calibration-metrology-input-v1 JSON artifact bound to sessionId, targetSha256, and sourceCaptureSessionSha256.'
   Write-Host 'Its instruments object must contain printScale, targetCutDimension, and directionGeometry identities; its three measurement arrays must contain exactly 2, 2, and 24 unique slots.'
   Write-Host 'DeriveRepeatability invokes the pinned OpenCV analyzer implementation and records the exact 50 repeatability measurements before sealing.'
+  Write-Host 'An ordinary rejected exact still preserves all accepted slots and hashes. Reposition the same pending pose and use Retry, which always creates a new operation ID.'
+  Write-Host 'Resume rebinds the same immutable session after runner, browser, or protected helper-page restart; hard-stop failures are never retryable.'
   Write-Host 'Seal is fail-closed at exactly 102 captures and 78 measurements. Analyze and Finalize require new output paths and never mutate Production.'
   Write-Host 'CompleteOffline performs optional metrology submission, repeatability derivation, seal, analyzer, and finalizer in that exact order.'
 }
@@ -496,8 +543,30 @@ function Invoke-CaptureSlot {
   if (-not [string]::IsNullOrWhiteSpace([string]$Slot.removeReseatCycleId)) {
     $body.removeReseatCycleId = $Slot.removeReseatCycleId
   }
+  $previewBinding = Get-LivePreviewBinding -Slot $Slot
+  if ($null -ne $previewBinding) { $body.previewBinding = $previewBinding }
   Write-Host ('Capturing exact slot ' + (Get-SlotKey -Slot $Slot) + ' with new operation ID ' + $body.operationId)
   return (Invoke-CalibrationBridge -Method POST -Path '/calibration/mathematical-v1/capture' -Body $body).result
+}
+
+function Invoke-CaptureSlotWithReport {
+  param($Slot)
+  try {
+    return Invoke-CaptureSlot -Slot $Slot
+  } catch {
+    $attemptError = $_.Exception.Message
+    $after = Get-CalibrationStatus
+    $after
+    Write-PoseProgress -Status $after
+    Write-Host ('Accepted immutable captures remain ' + $after.captureCount + '; accepted history/hashes were not replaced.')
+    if ($null -ne $after.hardStop) {
+      throw ('Calibration session hard-stopped and must not be retried: ' + $after.hardStop.reason)
+    }
+    if ($after.retryAllowed) {
+      throw ('Ordinary attempt rejected; the same exact slot remains pending. Reposition it, then run -Action Retry with -ConfirmPhysicalAction. Original error: ' + $attemptError)
+    }
+    throw $attemptError
+  }
 }
 
 function Invoke-RepeatabilityDerivation {
@@ -635,8 +704,8 @@ if ($Action -eq 'Worksheet') {
 
 Assert-BridgeInput
 
-if ($Action -eq 'Start') {
-  if (-not $ConfirmInitialCheckerboardPositioned) {
+if ($Action -in @('Start', 'Resume')) {
+  if ($Action -eq 'Start' -and -not $ConfirmInitialCheckerboardPositioned) {
     throw 'Start is blocked until Mark confirms the verified non-production target is positioned checkerboard face up.'
   }
   if ([string]::IsNullOrWhiteSpace($OperatorId) -or
@@ -649,10 +718,14 @@ if ($Action -eq 'Start') {
     operatorId = $OperatorId
     targetVersion = $TargetVersion
     targetSha256 = $TargetSha256
-    resume = $false
+    resume = ($Action -eq 'Resume')
   }).result
   $result
-  Write-Host 'Session created. Advance may now capture the first checkerboard pose; no capture ran before confirmation.'
+  if ($Action -eq 'Resume') {
+    Write-Host 'Exact immutable session resumed and rebound. Reconnect the protected V1.0.1 preview page before Advance or Retry.'
+  } else {
+    Write-Host 'Session created. Open the protected V1.0.1 preview page, then Advance may capture the first checkerboard pose.'
+  }
   exit 0
 }
 
@@ -662,6 +735,7 @@ $next = Get-NextCaptureSlot -State $state
 
 if ($Action -eq 'Status') {
   $status
+  Write-PoseProgress -Status $status
   $statePath = Join-Path ([string]$status.sessionDir) 'capture-session.json'
   Write-Host ('Capture-session ledger SHA-256: ' + (Get-ExactFileSha256 -Path $statePath -Label 'Capture-session ledger'))
   Write-Host ('Protected target SHA-256: ' + $state.subject.targetSha256)
@@ -678,6 +752,8 @@ if ($Action -eq 'Status') {
     Write-Host ('Next exact slot: ' + (Get-SlotKey -Slot $next))
     Write-Host ('Required physical action: ' + $next.physicalAction)
   }
+  if ($null -ne $status.hardStop) { Write-Host ('HARD STOP: ' + $status.hardStop.reason) }
+  elseif ($status.retryAllowed) { Write-Host 'Retry is allowed for the exact pending slot and must use a new operation ID.' }
   exit 0
 }
 
@@ -752,12 +828,35 @@ if ($null -eq $next) {
   exit 0
 }
 
+if ($null -ne $status.hardStop) {
+  throw ('Calibration session is hard-stopped and no capture/retry is allowed: ' + $status.hardStop.reason)
+}
+if ($Action -eq 'Advance' -and $status.retryAllowed) {
+  throw ('The exact pending slot has a recorded ordinary failure. Use -Action Retry with a new operation ID; Advance will not silently turn a failed attempt into a new step.')
+}
+if ($Action -eq 'Retry') {
+  if (-not $status.retryAllowed) { throw 'Retry is allowed only when the exact pending slot has a recorded ordinary failed attempt.' }
+  $lastFailure = @($status.failedAttempts) | Select-Object -Last 1
+  if ($null -eq $lastFailure -or $lastFailure.slotKey -ne (Get-SlotKey -Slot $next)) {
+    throw 'Retry status does not bind the most recent failed attempt to the exact current missing slot.'
+  }
+  if (-not $ConfirmPhysicalAction) {
+    throw ('Retry paused for physical correction of the same missing slot ' + $lastFailure.slotKey + '. Reposition it, then rerun with -ConfirmPhysicalAction.')
+  }
+  $status = Invoke-CaptureSlotWithReport -Slot $next
+  $status
+  Write-PoseProgress -Status $status
+  Write-Host 'Retry accepted the exact previously missing slot under a new operation ID; all earlier accepted hashes remain unchanged.'
+  exit 0
+}
+
 $requiresPhysicalAction = $next.physicalAction -notin @('none', 'none_after_initial_confirmation')
 if ($requiresPhysicalAction -and -not $ConfirmPhysicalAction) {
   throw ('Advance paused for physical action: ' + $next.physicalAction + '. Complete it, then rerun with -ConfirmPhysicalAction.')
 }
 
-$status = Invoke-CaptureSlot -Slot $next
+$status = Invoke-CaptureSlotWithReport -Slot $next
+Write-PoseProgress -Status $status
 if ($next.targetFace -ne 'blank_reverse') {
   $status
   Write-Host 'Capture complete. The driver stopped because the next checkerboard slot requires a physical pose or reseat.'
@@ -778,5 +877,5 @@ while ($true) {
   if ($next.targetFace -ne 'blank_reverse' -or $next.physicalAction -notin @('none')) {
     throw 'Deterministic plan invariant failed while advancing blank-reverse captures.'
   }
-  $status = Invoke-CaptureSlot -Slot $next
+  $status = Invoke-CaptureSlotWithReport -Slot $next
 }
