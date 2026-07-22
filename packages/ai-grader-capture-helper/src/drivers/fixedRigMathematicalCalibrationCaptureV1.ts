@@ -1248,7 +1248,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private readonly verifiedBlankReverseGeometry = new Map<string, VerifiedBlankReverseGeometryAuthorityV1>();
   private readonly blankReverseTimestampFalseStopRecovery = BLANK_REVERSE_TIMESTAMP_FALSE_STOP_RECOVERY_V1;
   private readonly analyzerAuthorityRebindIncident = ANALYZER_AUTHORITY_REBIND_INCIDENT_V1;
-  private analyzerAuthorityRebindTestFailpoint?: "after-stage" | "after-backup-rename" | "after-stage-to-live";
+  private analyzerAuthorityRebindTestFailpoint?:
+    "after-stage" | "after-backup-rename" | "after-original-restore" | "after-stage-to-live";
   private analyzerAuthoritySupersessionLedgerForSeal?: AnalyzerAuthoritySupersessionLedgerReferenceV1;
 
   constructor(config: FixedRigMathematicalCalibrationCaptureProducerConfigV1) {
@@ -2252,6 +2253,9 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         }
         await rename(backupDir, sessionDir);
         await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
+        if (this.analyzerAuthorityRebindTestFailpoint === "after-original-restore") {
+          throw new Error("TEST_ONLY_ANALYZER_REBIND_FAILPOINT_AFTER_ORIGINAL_RESTORE");
+        }
         if (!existsSync(stageSessionDir)) await rm(stageRoot, { recursive: true, force: true });
         await rm(journalPath, { force: true });
         throw new Error(
@@ -2294,10 +2298,26 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           const liveBytes = await readFile(path.join(sessionDir, "capture-session.json"));
           if (hash(liveBytes) === incident.expectedPreStateSha256) {
             await this.verifyOriginalAnalyzerAuthorityIncidentSession(sessionDir);
-            if (!existsSync(stageSessionDir)) throw new Error("Journal-bound original session is missing its staged replacement.");
-            const staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
-            if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
-            await rm(stageRoot, { recursive: true, force: true });
+            let removeDisposableStageRoot = false;
+            if (!existsSync(stageSessionDir)) {
+              removeDisposableStageRoot = true;
+            } else {
+              let staged;
+              try {
+                staged = await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir);
+                if (!staged) throw new Error("Journal-bound staged replacement is not a completed incident rebind.");
+              } catch {
+                if (!existsSync(quarantineDir)) {
+                  await rename(stageSessionDir, quarantineDir);
+                  removeDisposableStageRoot = true;
+                }
+              }
+              if (staged) {
+                await this.verifyCompletedAnalyzerAuthorityIncidentSession(stageSessionDir, journal);
+                removeDisposableStageRoot = true;
+              }
+            }
+            if (removeDisposableStageRoot) await rm(stageRoot, { recursive: true, force: true });
             await rm(journalPath, { force: true });
           } else {
             const installed = await this.verifyCompletedAnalyzerAuthorityIncidentSession(sessionDir, journal);

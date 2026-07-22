@@ -544,14 +544,14 @@ async function assertPreInstallStageFailureRestoresOriginal(mode) {
     await fsp.appendFile(path.join(stageSessionDir, "capture-session.json"), " ");
   }
 
-  producer.analyzerAuthorityRebindTestFailpoint = undefined;
+  producer.analyzerAuthorityRebindTestFailpoint = "after-original-restore";
   await assert.rejects(
     producer.rebindKnownSealedAnalyzerAuthority(),
-    /exact original was restored at its canonical path; retry the operation/i,
+    /FAILPOINT_AFTER_ORIGINAL_RESTORE/,
   );
   assert.equal(fs.existsSync(sessionDir), true);
   assert.equal(fs.existsSync(backupDir), false);
-  assert.equal(fs.existsSync(journalPath), false);
+  assert.equal(fs.existsSync(journalPath), true);
   assert.deepEqual(await fsp.readFile(fx.statePath), fx.preStateBytes);
   assert.deepEqual(await fsp.readFile(path.join(sessionDir, "capture-manifest.json")), oldManifestBytes);
   assert.deepEqual(await fsp.readFile(path.join(sessionDir, "source-capture-package.json")), oldPackageBytes);
@@ -559,12 +559,15 @@ async function assertPreInstallStageFailureRestoresOriginal(mode) {
   assert.equal(JSON.parse((await fsp.readFile(fx.statePath)).toString("utf8")).analyzerAuthorityRebind, undefined);
   assert.equal(fs.existsSync(quarantineDir), mode === "corrupt-stage");
 
+  producer.analyzerAuthorityRebindTestFailpoint = undefined;
   const completed = await producer.rebindKnownSealedAnalyzerAuthority();
   assert.equal(completed.idempotent, false);
   assert.equal(completed.status.sealed, true);
   assert.equal(completed.status.captureCount, 102);
   assert.equal(completed.status.measurementCount, 78);
   assert.equal(completed.receipt.correctedAuthority.count, 74);
+  assert.equal(fs.existsSync(backupDir), false);
+  assert.equal(fs.existsSync(journalPath), false);
 }
 
 test("incident-bound analyzer authority rebind is exact, adversarial, crash-safe, and idempotent", async () => {
