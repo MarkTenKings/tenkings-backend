@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   detectAndNormalizeCardImage,
   normalizeCardImageWithGeometry,
@@ -337,6 +337,16 @@ interface CaptureArtifactV1 {
     scaleX: number;
     scaleY: number;
     deskewAppliedDegrees: number;
+    geometryAuthority?: {
+      kind: "same_session_accepted_blank_reverse_v1";
+      sourceSessionId: string;
+      sourceOperationId: string;
+      sourceRawEvidenceId: string;
+      sourceRawSha256: string;
+      sourceNormalizedEvidenceId: string;
+      sourceNormalizedSha256: string;
+      sourceGeometrySha256: string;
+    };
   };
   pose?: {
     centerXFraction: number;
@@ -424,6 +434,12 @@ interface CaptureSessionStateV1 {
   failedOperations: FailedCaptureOperationV1[];
   hardStop?: { operationId: string; stoppedAt: string; reason: string };
   blankReverseFlipRecorded?: boolean;
+}
+
+interface VerifiedBlankReverseGeometryAuthorityV1 {
+  geometry: CardGeometryMetadata;
+  fingerprint: string;
+  provenance: NonNullable<NonNullable<CaptureArtifactV1["normalization"]>["geometryAuthority"]>;
 }
 
 export interface FixedRigMathematicalCalibrationCaptureSlotV1 {
@@ -553,7 +569,7 @@ function safeSegment(value: string): string {
   return value.replace(/:/g, "-");
 }
 
-function captureRole(input: CaptureFixedRigMathematicalCalibrationStepV1Request): string {
+function captureRole(input: Pick<CaptureFixedRigMathematicalCalibrationStepV1Request, "role" | "channelIndex">): string {
   if (input.role === "flat_field") return `flat_field_channel_${input.channelIndex}`;
   if (input.role === "dark_control") return `dark_control_channel_${input.channelIndex}`;
   if (input.role === "illumination_pattern") return `illumination_pattern_channel_${input.channelIndex}`;
@@ -565,8 +581,14 @@ function analysisUsesRaw(role: FixedRigMathematicalCalibrationCaptureRoleV1): bo
   return role === "lens_geometry" || role === "normalization_registration" || role === "repeated_placement" || role === "checkerboard_placement";
 }
 
+function isBlankReversePhotometricRole(
+  role: FixedRigMathematicalCalibrationCaptureRoleV1,
+): role is "flat_field" | "dark_control" | "illumination_pattern" {
+  return role === "flat_field" || role === "dark_control" || role === "illumination_pattern";
+}
+
 function lightingFor(
-  input: CaptureFixedRigMathematicalCalibrationStepV1Request,
+  input: Pick<CaptureFixedRigMathematicalCalibrationStepV1Request, "role" | "channelIndex">,
   settings: FixedRigMathematicalCalibrationProtectedSettingsV1,
 ): FixedRigMathematicalCalibrationCaptureBoundaryRequestV1["lighting"] {
   if (input.role === "dark_control") return { mode: "safe_off", enabledChannels: [], dutyPercent: 0 };
@@ -872,14 +894,7 @@ function assertCaptureRequest(input: CaptureFixedRigMathematicalCalibrationStepV
     if (input.sampleIndex > 10) throw new Error(`${input.role} sampleIndex must be 1 through 10.`);
   }
   if (input.normalizationSourceOperationId !== undefined) {
-    assertSafeId(input.normalizationSourceOperationId, "normalizationSourceOperationId");
-  }
-  if (
-    contractVersion === "v1.0.1" &&
-    (input.role === "lens_geometry" || input.role === "normalization_registration") &&
-    input.normalizationSourceOperationId !== undefined
-  ) {
-    throw new Error("V1.0.1 lens and normalization slots must detect geometry from the exact captured still and cannot reuse prior geometry.");
+    throw new Error("Calibration normalization geometry is server-owned and normalizationSourceOperationId may not be supplied by a browser or operator.");
   }
   if (contractVersion === "v1.1" && !["checkerboard_placement", "flat_field", "dark_control", "illumination_pattern"].includes(input.role)) {
     throw new Error("V1.1 accepts exactly four checkerboard_placement captures; the V1.0.1 geometry/normalization/reseat roles are not valid.");
@@ -928,6 +943,7 @@ function assertPhysicalMeasurementTargetAuthority(input: {
 export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   private readonly config: FixedRigMathematicalCalibrationCaptureProducerConfigV1;
   private chain: Promise<unknown> = Promise.resolve();
+  private readonly verifiedBlankReverseGeometry = new Map<string, VerifiedBlankReverseGeometryAuthorityV1>();
 
   constructor(config: FixedRigMathematicalCalibrationCaptureProducerConfigV1) {
     this.config = config;
@@ -958,6 +974,211 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
     return path.join(this.sessionDir(sessionId), "capture-session.json");
   }
 
+  private async readAcceptedArtifactBytes(state: CaptureSessionStateV1, artifact: CaptureArtifactV1): Promise<Buffer> {
+    const sessionRoot = path.resolve(this.sessionDir(state.sessionId));
+    const artifactPath = path.resolve(sessionRoot, ...artifact.path.split("/"));
+    if (!artifactPath.startsWith(`${sessionRoot}${path.sep}`)) {
+      throw new Error(`Calibration artifact ${artifact.evidenceId} escapes the isolated session root.`);
+    }
+    const bytes = await readFile(artifactPath);
+    const metadata = await stat(artifactPath);
+    if (hash(bytes) !== artifact.sha256 || metadata.size !== artifact.byteSize) {
+      throw new Error(`Calibration artifact ${artifact.evidenceId} failed immutable SHA-256/size verification.`);
+    }
+    return bytes;
+  }
+
+  private async resolveBlankReverseGeometryAuthority(
+    state: CaptureSessionStateV1,
+  ): Promise<VerifiedBlankReverseGeometryAuthorityV1 | undefined> {
+    if (
+      state.schemaVersion !== FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 ||
+      state.purpose !== "mathematical_calibration_v1"
+    ) {
+      return undefined;
+    }
+    if (
+      hash(canonicalBytes(state.protectedSettings)) !== hash(canonicalBytes(this.config.protectedSettings)) ||
+      state.subject.targetVersion !== this.config.targetVersion ||
+      state.subject.targetSha256 !== this.config.targetSha256
+    ) {
+      hardStop("Accepted blank-reverse geometry authority does not match the protected session target or settings.");
+    }
+    const planOrder = new Map(capturePlan("v1.0.1").map((slot, index) => [slot.slotKey, index]));
+    const candidates = state.captures
+      .filter((capture) => capture.targetFace === "blank_reverse" && isBlankReversePhotometricRole(capture.role));
+    if (candidates.length === 0) return undefined;
+    const source = candidates[0]!;
+    if (!planOrder.has(captureKey(source))) {
+      hardStop("Accepted blank-reverse geometry source is not a canonical V1.0.1 capture slot.");
+    }
+    if (
+      state.captures.filter((capture) => capture.operationId === source.operationId).length !== 1 ||
+      state.captures.filter((capture) => captureKey(capture) === captureKey(source)).length !== 1
+    ) {
+      hardStop("Accepted blank-reverse geometry source is duplicated in the immutable capture ledger.");
+    }
+    const rawMatches = state.artifacts.filter((artifact) => artifact.evidenceId === source.rawEvidenceId);
+    const normalizedMatches = state.artifacts.filter((artifact) => artifact.evidenceId === source.normalizedEvidenceId);
+    if (rawMatches.length !== 1 || normalizedMatches.length !== 1) {
+      hardStop("Accepted blank-reverse geometry source has missing or duplicate artifact identities.");
+    }
+    const rawArtifact = rawMatches[0]!;
+    const normalizedArtifact = normalizedMatches[0]!;
+    const expectedRole = captureRole(source);
+    const expectedLighting = lightingFor(source, state.protectedSettings);
+    if (
+      rawArtifact.artifactClass !== "raw_capture" ||
+      normalizedArtifact.artifactClass !== "normalized_derivative" ||
+      rawArtifact.operationId !== source.operationId ||
+      normalizedArtifact.operationId !== source.operationId ||
+      rawArtifact.role !== `${expectedRole}_raw` ||
+      normalizedArtifact.role !== expectedRole ||
+      rawArtifact.targetFace !== "blank_reverse" ||
+      normalizedArtifact.targetFace !== "blank_reverse" ||
+      rawArtifact.channelIndex !== (source.channelIndex ?? null) ||
+      normalizedArtifact.channelIndex !== (source.channelIndex ?? null) ||
+      rawArtifact.rigId !== state.protectedSettings.rigId ||
+      normalizedArtifact.rigId !== state.protectedSettings.rigId ||
+      rawArtifact.captureProfileVersion !== state.protectedSettings.captureProfileVersion ||
+      normalizedArtifact.captureProfileVersion !== state.protectedSettings.captureProfileVersion ||
+      rawArtifact.subjectDesignation !== "calibration_target" ||
+      normalizedArtifact.subjectDesignation !== "calibration_target" ||
+      rawArtifact.productionCard !== false ||
+      normalizedArtifact.productionCard !== false ||
+      rawArtifact.capturedAt !== source.capturedAt ||
+      normalizedArtifact.capturedAt !== source.capturedAt ||
+      rawArtifact.camera?.exposureUs !== state.protectedSettings.exposureUs ||
+      rawArtifact.camera?.gain !== state.protectedSettings.gain ||
+      rawArtifact.leimac?.unit !== state.protectedSettings.leimacUnit ||
+      rawArtifact.leimac?.dutyPercent !== expectedLighting.dutyPercent ||
+      JSON.stringify([...(rawArtifact.leimac?.enabledChannels ?? [])].sort()) !== JSON.stringify([...expectedLighting.enabledChannels].sort()) ||
+      rawArtifact.leimac?.complete !== true ||
+      rawArtifact.leimac.acknowledgedWriteCount !== rawArtifact.leimac.expectedWriteCount ||
+      rawArtifact.safeOff?.beforeCaptureConfirmed !== true ||
+      rawArtifact.safeOff?.afterCaptureConfirmed !== true ||
+      normalizedArtifact.parentEvidenceId !== rawArtifact.evidenceId ||
+      normalizedArtifact.parentSha256 !== rawArtifact.sha256 ||
+      normalizedArtifact.normalization?.sourceSha256 !== rawArtifact.sha256 ||
+      normalizedArtifact.normalization?.coordinateFrame !== "normalized_card_portrait_pixels" ||
+      normalizedArtifact.normalization?.widthPx !== state.protectedSettings.normalizedWidthPx ||
+      normalizedArtifact.normalization?.heightPx !== state.protectedSettings.normalizedHeightPx ||
+      !rawArtifact.pose ||
+      !normalizedArtifact.pose ||
+      hash(canonicalBytes(rawArtifact.pose)) !== hash(canonicalBytes(normalizedArtifact.pose))
+    ) {
+      hardStop("Accepted blank-reverse geometry source does not match its immutable capture, rig, controller, pose, or normalization authority.");
+    }
+    const [rawBytes, normalizedBytes] = await Promise.all([
+      this.readAcceptedArtifactBytes(state, rawArtifact),
+      this.readAcceptedArtifactBytes(state, normalizedArtifact),
+    ]);
+    if (/[\\/]/.test(normalizedArtifact.evidenceId)) {
+      hardStop("Accepted blank-reverse normalized evidence identity is not path-safe.");
+    }
+    const sessionRoot = path.resolve(this.sessionDir(state.sessionId));
+    const geometryPath = path.resolve(sessionRoot, "working", `${normalizedArtifact.evidenceId}-geometry.json`);
+    if (!geometryPath.startsWith(`${sessionRoot}${path.sep}`)) {
+      hardStop("Accepted blank-reverse geometry record escapes the isolated session root.");
+    }
+    const geometryBytes = await readFile(geometryPath);
+    let geometry: CardGeometryMetadata;
+    try {
+      geometry = JSON.parse(geometryBytes.toString("utf-8")) as CardGeometryMetadata;
+    } catch {
+      hardStop("Accepted blank-reverse geometry record is not valid canonical JSON.");
+    }
+    if (!geometry! || !geometryBytes.equals(canonicalBytes(geometry))) {
+      hardStop("Accepted blank-reverse geometry record is not canonical immutable geometry.");
+    }
+    const geometryPose = poseFromGeometry(geometry);
+    if (
+      geometry.version !== normalizedArtifact.normalization!.algorithmVersion ||
+      geometry.sourceImageId !== rawArtifact.evidenceId ||
+      geometry.sourceFrameId !== rawArtifact.evidenceId ||
+      geometry.timestamp !== source.capturedAt ||
+      geometry.placementState !== "ready" ||
+      geometry.geometrySource !== "detected" ||
+      geometry.captureMode !== "automatic_detection" ||
+      geometry.confidenceBasis !== "automatic_detection" ||
+      geometry.detectionUsed !== true ||
+      geometry.manualOverrideUsed !== false ||
+      hash(canonicalBytes(geometryPose)) !== hash(canonicalBytes(rawArtifact.pose))
+    ) {
+      hardStop("Accepted blank-reverse geometry record does not reproduce its immutable accepted pose and detection authority.");
+    }
+    const geometrySha256 = hash(geometryBytes);
+    const provenance: VerifiedBlankReverseGeometryAuthorityV1["provenance"] = {
+      kind: "same_session_accepted_blank_reverse_v1",
+      sourceSessionId: state.sessionId,
+      sourceOperationId: source.operationId,
+      sourceRawEvidenceId: rawArtifact.evidenceId,
+      sourceRawSha256: rawArtifact.sha256,
+      sourceNormalizedEvidenceId: normalizedArtifact.evidenceId,
+      sourceNormalizedSha256: normalizedArtifact.sha256,
+      sourceGeometrySha256: geometrySha256,
+    };
+    const fingerprint = hash(canonicalBytes({
+      protectedSettings: state.protectedSettings,
+      subject: state.subject,
+      source,
+      rawArtifact,
+      normalizedArtifact,
+      rawSha256: hash(rawBytes),
+      normalizedSha256: hash(normalizedBytes),
+      geometrySha256,
+    }));
+    const cached = this.verifiedBlankReverseGeometry.get(state.sessionId);
+    if (cached) {
+      if (cached.fingerprint !== fingerprint) {
+        hardStop("Accepted blank-reverse geometry authority changed after server verification.");
+      }
+      return { geometry, fingerprint, provenance };
+    }
+    const auditOutputPath = path.join(
+      this.sessionDir(state.sessionId),
+      "working",
+      `${normalizedArtifact.evidenceId}-authority-audit-${crypto.randomUUID()}.png`,
+    );
+    try {
+      const reproduced = await (this.config.normalize ?? defaultNormalizer)({
+        sourceImagePath: path.join(sessionRoot, ...rawArtifact.path.split("/")),
+        workingOutputPath: auditOutputPath,
+        capturedAt: source.capturedAt,
+        sourceImageId: rawArtifact.evidenceId,
+      });
+      const reproducedBytes = reproduced.normalizedArtifact
+        ? await readFile(reproduced.normalizedArtifact.localOutputPath)
+        : undefined;
+      const expectedNormalization = normalizedArtifact.normalization!;
+      if (
+        !reproduced.rawEvidencePreserved ||
+        !reproduced.normalizedArtifact ||
+        !reproducedBytes ||
+        reproduced.rawArtifact.sha256 !== rawArtifact.sha256 ||
+        reproduced.normalizedArtifact.sourceSha256 !== rawArtifact.sha256 ||
+        reproduced.normalizedArtifact.sha256 !== normalizedArtifact.sha256 ||
+        !reproducedBytes.equals(normalizedBytes) ||
+        !canonicalBytes(reproduced.geometry).equals(geometryBytes) ||
+        reproduced.normalizedArtifact.imageWidth !== expectedNormalization.widthPx ||
+        reproduced.normalizedArtifact.imageHeight !== expectedNormalization.heightPx ||
+        reproduced.normalizedArtifact.geometricResamplingApplied !== expectedNormalization.geometricResamplingApplied ||
+        reproduced.normalizedArtifact.sourceCropWidth !== expectedNormalization.sourceCropWidth ||
+        reproduced.normalizedArtifact.sourceCropHeight !== expectedNormalization.sourceCropHeight ||
+        reproduced.normalizedArtifact.scaleX !== expectedNormalization.scaleX ||
+        reproduced.normalizedArtifact.scaleY !== expectedNormalization.scaleY ||
+        reproduced.normalizedArtifact.deskewAppliedDegrees !== expectedNormalization.deskewAppliedDegrees
+      ) {
+        hardStop("Accepted blank-reverse geometry and normalized derivative do not reproduce from the exact immutable source raw.");
+      }
+    } finally {
+      await rm(auditOutputPath, { force: true });
+    }
+    const verified = { geometry, fingerprint, provenance };
+    this.verifiedBlankReverseGeometry.set(state.sessionId, verified);
+    return verified;
+  }
+
   private async load(sessionId: string): Promise<CaptureSessionStateV1> {
     const bytes = await readFile(this.statePath(sessionId));
     const state = JSON.parse(bytes.toString("utf-8")) as CaptureSessionStateV1;
@@ -975,17 +1196,8 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
   }
 
   private async verifyAcceptedArtifactIntegrity(state: CaptureSessionStateV1): Promise<void> {
-    const sessionRoot = path.resolve(this.sessionDir(state.sessionId));
     for (const artifact of state.artifacts) {
-      const artifactPath = path.resolve(sessionRoot, ...artifact.path.split("/"));
-      if (!artifactPath.startsWith(`${sessionRoot}${path.sep}`)) {
-        throw new Error(`Calibration artifact ${artifact.evidenceId} escapes the isolated session root.`);
-      }
-      const bytes = await readFile(artifactPath);
-      const metadata = await stat(artifactPath);
-      if (hash(bytes) !== artifact.sha256 || metadata.size !== artifact.byteSize) {
-        throw new Error(`Calibration artifact ${artifact.evidenceId} failed immutable SHA-256/size verification.`);
-      }
+      await this.readAcceptedArtifactBytes(state, artifact);
     }
   }
 
@@ -1160,17 +1372,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         throw new Error(`Calibration capture slot ${key} is already occupied and cannot be overwritten.`);
       }
       const contractVersion = this.config.contractVersion ?? "v1.0.1";
-      if (this.config.contractVersion === "v1.1" && request.normalizationSourceOperationId !== undefined) {
-        throw new Error("V1.1 placement captures are immutable source evidence and may not import or reuse another capture as their input.");
-      }
-      const reusableGeometry = request.normalizationSourceOperationId
-        ? state.artifacts.find(
-            (artifact) => artifact.operationId === request.normalizationSourceOperationId && artifact.artifactClass === "normalized_derivative",
-          )
-        : undefined;
-      if (request.normalizationSourceOperationId && !reusableGeometry?.pose) {
-        throw new Error("normalizationSourceOperationId does not identify completed geometry-bound evidence.");
-      }
       const operationDir = path.join(this.sessionDir(request.sessionId), "working", safeSegment(request.operationId));
       const lighting = lightingFor(request, state.protectedSettings);
       const boundaryRequest: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1 = {
@@ -1190,6 +1391,17 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
       let candidateRawSha256: string | undefined;
       let candidateCapturedAt: string | undefined;
       try {
+        let blankReverseGeometryAuthority: VerifiedBlankReverseGeometryAuthorityV1 | undefined;
+        if (contractVersion === "v1.0.1" && isBlankReversePhotometricRole(request.role)) {
+          try {
+            blankReverseGeometryAuthority = await this.resolveBlankReverseGeometryAuthority(state);
+          } catch (error) {
+            if (error instanceof FixedRigMathematicalCalibrationHardStopV1) throw error;
+            hardStop(
+              `Accepted blank-reverse geometry authority verification failed: ${error instanceof Error ? error.message : "unknown integrity error"}`,
+            );
+          }
+        }
         const captured = await this.config.capture(boundaryRequest);
         candidateCapturedAt = captured.capturedAt;
         if (!Buffer.isBuffer(captured.rawBytes) || captured.rawBytes.length === 0) throw new Error("Capture boundary returned no raw bytes.");
@@ -1219,14 +1431,6 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
         const rawSha256 = hash(captured.rawBytes);
         candidateRawSha256 = rawSha256;
         const rawEvidenceId = `${baseName}-raw`;
-        let referencedGeometry: CardGeometryMetadata | undefined;
-        if (request.normalizationSourceOperationId) {
-          const sourceRecord = state.captures.find((record) => record.operationId === request.normalizationSourceOperationId);
-          const sourceArtifact = state.artifacts.find((artifact) => artifact.evidenceId === sourceRecord?.normalizedEvidenceId);
-          const geometryPath = sourceArtifact ? path.join(this.sessionDir(request.sessionId), "working", `${sourceArtifact.evidenceId}-geometry.json`) : undefined;
-          if (!geometryPath || !existsSync(geometryPath)) throw new Error("Reusable normalization geometry record is unavailable.");
-          referencedGeometry = JSON.parse((await readFile(geometryPath)).toString("utf-8")) as CardGeometryMetadata;
-        }
         const captureTimeGeometry = this.config.contractVersion === "v1.1" && request.role === "checkerboard_placement"
           ? checkerboardGeometryMetadata(
               await (this.config.detectCheckerboard ?? detectMathematicalCalibrationPreviewCheckerboard)(captured.rawBytes),
@@ -1245,12 +1449,18 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
           sourceImageId: rawEvidenceId,
           ...(captureTimeGeometry
             ? { reusableGeometry: captureTimeGeometry }
-            : referencedGeometry
-              ? { reusableGeometry: referencedGeometry }
+            : blankReverseGeometryAuthority
+              ? { reusableGeometry: blankReverseGeometryAuthority.geometry }
               : {}),
         });
         if (!normalization.rawEvidencePreserved || !normalization.normalizedArtifact) {
           throw new Error("Calibration normalization must preserve raw bytes and produce a normalized derivative.");
+        }
+        if (
+          blankReverseGeometryAuthority &&
+          hash(canonicalBytes(normalization.geometry)) !== blankReverseGeometryAuthority.provenance.sourceGeometrySha256
+        ) {
+          hardStop("Blank-reverse normalization did not use the exact verified server-selected geometry authority.");
         }
         const pose = poseFromGeometry(normalization.geometry);
         candidatePose = pose;
@@ -1345,6 +1555,7 @@ export class FixedRigMathematicalCalibrationCaptureProducerV1 {
             scaleX: normalization.normalizedArtifact.scaleX,
             scaleY: normalization.normalizedArtifact.scaleY,
             deskewAppliedDegrees: normalization.normalizedArtifact.deskewAppliedDegrees,
+            ...(blankReverseGeometryAuthority ? { geometryAuthority: blankReverseGeometryAuthority.provenance } : {}),
           },
           pose,
         };

@@ -366,6 +366,27 @@ test("V1.0.1 displayed-frame preflight rejects wrong session, epoch, and slot wi
   await firstStream;
 });
 
+test("V1.0.1 rejects browser-supplied normalization geometry before preview or hardware lifecycle work", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-server-owned-geometry-"));
+  const fixture = await v1BridgeFixture(root);
+  const before = fixture.lifecycleSnapshot();
+  await assert.rejects(
+    fixture.service.captureMathematicalCalibrationStep({
+      sessionId: fixture.sessionId,
+      operationId: "browser-supplied-geometry",
+      role: "lens_geometry",
+      sampleIndex: 1,
+      targetFace: "checkerboard",
+      normalizationSourceOperationId: "external-or-cross-session-source",
+    }),
+    /server-owned.*may not be supplied/i,
+  );
+  assert.deepEqual(fixture.lifecycleSnapshot(), before);
+  assert.equal(fixture.captures.length, 0);
+  assert.equal(fixture.hardStops.length, 0);
+  assert.equal(fixture.sessionSnapshot().captureCount, 0);
+});
+
 test("V1.0.1 exact displayed frame remains authoritative while continuous latest frames advance", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-displayed-frame-advance-"));
   const fixture = await v1BridgeFixture(root);

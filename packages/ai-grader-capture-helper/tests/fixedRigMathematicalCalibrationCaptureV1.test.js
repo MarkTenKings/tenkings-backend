@@ -47,7 +47,8 @@ async function producerFixture(root, options = {}) {
   const targetBytes = Buffer.from("%PDF-1.4\n% immutable non-production target\n", "utf8");
   const targetPath = path.join(root, "protected-target.pdf");
   await fsp.writeFile(targetPath, targetBytes);
-  const requests = new Map();
+  const requests = options.requestRegistry ?? new Map();
+  const normalizationInputs = [];
   let captureCounter = 0;
   const protectedSettings = {
     stationId: "local-dell-ai-grader-station",
@@ -62,6 +63,7 @@ async function producerFixture(root, options = {}) {
     normalizedWidthPx: 1200,
     normalizedHeightPx: 1680,
     checkerboard: { internalColumns: 11, internalRows: 16, cellMm: 5 },
+    ...(options.protectedSettings ?? {}),
   };
   const producer = new FixedRigMathematicalCalibrationCaptureProducerV1({
     outputRoot: path.join(root, "calibration-sessions"),
@@ -121,6 +123,10 @@ async function producerFixture(root, options = {}) {
       };
     },
     normalize: options.useDefaultNormalizer ? undefined : async (input) => {
+      normalizationInputs.push({
+        sourceImageId: input.sourceImageId,
+        reusableGeometry: input.reusableGeometry ? structuredClone(input.reusableGeometry) : undefined,
+      });
       const request = requests.get(input.sourceImageId.replace(/-raw$/, "").split("-").slice(-1)[0])
         ?? [...requests.values()]
           .filter((candidate) => input.sourceImageId.includes(candidate.operationId))
@@ -145,16 +151,42 @@ async function producerFixture(root, options = {}) {
       };
       const defaultGeometry = {
         version: "ten-kings-card-geometry-v1",
+        detectionPolicy: "captured_evidence_full",
+        side: "front",
+        placementState: "ready",
+        adjustmentReason: null,
+        geometrySource: "detected",
+        captureMode: "automatic_detection",
+        confidenceBasis: "automatic_detection",
+        detectionUsed: true,
+        manualOverrideUsed: false,
         corners,
+        detectedCorners: corners,
         boundingBox: { x: centerX - 300, y: centerY - 450, width: 600, height: 900 },
         rotationDegrees: rotation,
-        image: { width: 1000, height: 1400 },
+        skewDegrees: 0,
+        confidence: 1,
+        sourceImageId: input.sourceImageId,
+        sourceFrameId: input.sourceImageId,
+        timestamp: input.capturedAt,
+        image: { width: 1000, height: 1400, coordinateFrame: "source_image_pixels" },
+        semanticOrientation: {
+          canonicalOrientation: "portrait",
+          basis: "operator_top_toward_preview_top",
+          contentUprightVerified: false,
+        },
+        placement: {},
+        detection: { backgroundLuma: 0 },
+        warnings: [],
       };
-      const geometry = options.geometryForRequest
+      const serverReusableGeometry = !options.v11 && ["dark_control", "flat_field", "illumination_pattern"].includes(request.role)
+        ? input.reusableGeometry
+        : undefined;
+      const geometry = serverReusableGeometry ?? (options.geometryForRequest
         ? options.geometryForRequest({ request, sample, defaultGeometry })
         : options.assertCaptureTimeGeometry && request.role === "checkerboard_placement"
           ? input.reusableGeometry
-        : defaultGeometry;
+        : defaultGeometry);
       if (options.assertCaptureTimeGeometry && request.role === "checkerboard_placement") {
         assert.ok(input.reusableGeometry, "checkerboard placement must receive capture-time geometry");
         assert.equal(input.reusableGeometry.detection.method, "opencv_find_chessboard_corners_sb_v1");
@@ -169,16 +201,20 @@ async function producerFixture(root, options = {}) {
           assert.ok(point.y > 0 && point.y < input.reusableGeometry.image.height);
         }
       }
+      const rawArtifact = {
+        fileName: path.basename(input.sourceImagePath),
+        sha256: rawHash,
+        byteSize: rawBytes.length,
+        mimeType: "image/png",
+        imageWidth: 1000,
+        imageHeight: 1400,
+      };
+      if (options.normalizationFailureOperationIds?.has(request.operationId)) {
+        return { geometry, rawArtifact, rawEvidencePreserved: true };
+      }
       return {
         geometry,
-        rawArtifact: {
-          fileName: path.basename(input.sourceImagePath),
-          sha256: rawHash,
-          byteSize: rawBytes.length,
-          mimeType: "image/png",
-          imageWidth: 1000,
-          imageHeight: 1400,
-        },
+        rawArtifact,
         normalizedArtifact: {
           localOutputPath: input.workingOutputPath,
           fileName: path.basename(input.workingOutputPath),
@@ -206,6 +242,7 @@ async function producerFixture(root, options = {}) {
   return {
     producer,
     requests,
+    normalizationInputs,
     targetSha256: sha256(targetBytes),
     get captureCount() { return captureCounter; },
   };
@@ -425,7 +462,7 @@ test("V1.0.1 ordinary low-coverage rejection preserves accepted hashes and resum
       sessionId, operationId: "lens-prior-geometry-reuse", role: "lens_geometry", sampleIndex: 2,
       targetFace: "checkerboard", normalizationSourceOperationId: "lens-accepted-1",
     }),
-    /exact captured still.*cannot reuse prior geometry/i,
+    /server-owned.*may not be supplied/i,
   );
   await assert.rejects(
     fixture.producer.captureStep({
@@ -481,6 +518,290 @@ test("V1.0.1 restart resume hard-stops immutable accepted-artifact corruption", 
   const stopped = await restarted.producer.status(sessionId);
   assert.equal(stopped.hardStop.operationId, "session-resume");
   assert.match(stopped.hardStop.reason, /immutable SHA-256\/size verification/i);
+});
+
+test("V1.0.1 blank-reverse normalization establishes one exact source, then reuses only server-selected same-session geometry", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-blank-geometry-reuse-"));
+  const fixture = await producerFixture(root, {
+    normalizationFailureOperationIds: new Set(["blank-first-detection-failed"]),
+  });
+  const sessionId = "calibration-v1-blank-geometry-reuse";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId,
+      operationId: "blank-first-detection-failed",
+      role: "dark_control",
+      channelIndex: 1,
+      sampleIndex: 1,
+      targetFace: "blank_reverse",
+    }),
+    /must preserve raw bytes and produce a normalized derivative/i,
+  );
+  assert.equal(fixture.normalizationInputs.at(-1).reusableGeometry, undefined, "the first blank must use exact-frame detection");
+  const first = await fixture.producer.captureStep({
+    sessionId,
+    operationId: "blank-first-accepted",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 1,
+    targetFace: "blank_reverse",
+  });
+  assert.equal(first.captureCount, 1);
+  assert.equal(fixture.normalizationInputs.at(-1).reusableGeometry, undefined, "no source exists until the first blank is accepted");
+  const stateBefore = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  const sourceRecord = stateBefore.captures[0];
+  const sourceArtifactsBefore = stateBefore.artifacts
+    .filter((artifact) => artifact.operationId === sourceRecord.operationId)
+    .map((artifact) => structuredClone(artifact));
+  const sourceBytesBefore = await Promise.all(sourceArtifactsBefore.map(async (artifact) => ({
+    evidenceId: artifact.evidenceId,
+    bytes: await fsp.readFile(path.join(started.sessionDir, ...artifact.path.split("/"))),
+  })));
+
+  const second = await fixture.producer.captureStep({
+    sessionId,
+    operationId: "blank-second-accepted",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 2,
+    targetFace: "blank_reverse",
+  });
+  assert.equal(second.captureCount, 2);
+  const secondInput = fixture.normalizationInputs.find((input) => input.sourceImageId.includes("blank-second-accepted"));
+  assert.ok(secondInput?.reusableGeometry, "the later blank must receive verified server-owned geometry");
+  assert.equal(secondInput.reusableGeometry.sourceImageId, sourceRecord.rawEvidenceId);
+  const stateAfter = JSON.parse(await fsp.readFile(path.join(started.sessionDir, "capture-session.json"), "utf8"));
+  assert.deepEqual(
+    stateAfter.artifacts.filter((artifact) => artifact.operationId === sourceRecord.operationId),
+    sourceArtifactsBefore,
+    "accepted source metadata must remain byte-for-byte immutable",
+  );
+  for (const snapshot of sourceBytesBefore) {
+    assert.deepEqual(
+      await fsp.readFile(path.join(started.sessionDir, ...stateAfter.artifacts.find((artifact) => artifact.evidenceId === snapshot.evidenceId).path.split("/"))),
+      snapshot.bytes,
+    );
+  }
+  const secondNormalized = stateAfter.artifacts.find(
+    (artifact) => artifact.operationId === "blank-second-accepted" && artifact.artifactClass === "normalized_derivative",
+  );
+  assert.deepEqual(secondNormalized.normalization.geometryAuthority, {
+    kind: "same_session_accepted_blank_reverse_v1",
+    sourceSessionId: sessionId,
+    sourceOperationId: sourceRecord.operationId,
+    sourceRawEvidenceId: sourceRecord.rawEvidenceId,
+    sourceRawSha256: stateAfter.artifacts.find((artifact) => artifact.evidenceId === sourceRecord.rawEvidenceId).sha256,
+    sourceNormalizedEvidenceId: sourceRecord.normalizedEvidenceId,
+    sourceNormalizedSha256: stateAfter.artifacts.find((artifact) => artifact.evidenceId === sourceRecord.normalizedEvidenceId).sha256,
+    sourceGeometrySha256: sha256(await fsp.readFile(path.join(started.sessionDir, "working", `${sourceRecord.normalizedEvidenceId}-geometry.json`))),
+  });
+
+  const capturesBeforeCheckerboard = fixture.captureCount;
+  await fixture.producer.captureStep({
+    sessionId,
+    operationId: "checkerboard-after-blank-source",
+    role: "repeated_placement",
+    sampleIndex: 1,
+    targetFace: "checkerboard",
+    removeReseatCycleId: "checkerboard-after-blank-source-cycle",
+  });
+  assert.equal(fixture.captureCount, capturesBeforeCheckerboard + 1);
+  assert.equal(
+    fixture.normalizationInputs.find((input) => input.sourceImageId.includes("checkerboard-after-blank-source")).reusableGeometry,
+    undefined,
+    "checkerboard roles must continue exact-still redetection",
+  );
+});
+
+test("V1.0.1 rejects blank-geometry tamper and browser-selected, cross-session, or wrong-settings authority before capture", async (t) => {
+  const tamperCases = [
+    ["geometry-file", async ({ state, sessionDir }) => {
+      const source = state.captures[0];
+      const geometryPath = path.join(sessionDir, "working", `${source.normalizedEvidenceId}-geometry.json`);
+      const geometry = JSON.parse(await fsp.readFile(geometryPath, "utf8"));
+      geometry.warnings = ["tampered"];
+      await fsp.writeFile(geometryPath, `${JSON.stringify(geometry)}\n`);
+    }],
+    ["pose", async ({ state, statePath }) => {
+      state.artifacts.find((artifact) => artifact.evidenceId === state.captures[0].rawEvidenceId).pose.rotationDegrees += 0.25;
+      await fsp.writeFile(statePath, `${JSON.stringify(state)}\n`);
+    }],
+    ["artifact-link", async ({ state, statePath }) => {
+      state.artifacts.find((artifact) => artifact.evidenceId === state.captures[0].normalizedEvidenceId).parentEvidenceId = "fabricated-parent";
+      await fsp.writeFile(statePath, `${JSON.stringify(state)}\n`);
+    }],
+    ["artifact-hash", async ({ state, statePath }) => {
+      state.artifacts.find((artifact) => artifact.evidenceId === state.captures[0].rawEvidenceId).sha256 = "f".repeat(64);
+      await fsp.writeFile(statePath, `${JSON.stringify(state)}\n`);
+    }],
+  ];
+  for (const [label, tamper] of tamperCases) {
+    await t.test(`${label} tamper`, async () => {
+      const root = await fsp.mkdtemp(path.join(os.tmpdir(), `tk-calibration-v1-blank-tamper-${label}-`));
+      const fixture = await producerFixture(root);
+      const sessionId = `calibration-v1-blank-tamper-${label}`;
+      const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+      await fixture.producer.captureStep({
+        sessionId, operationId: `blank-source-${label}`, role: "dark_control", channelIndex: 1, sampleIndex: 1, targetFace: "blank_reverse",
+      });
+      const statePath = path.join(started.sessionDir, "capture-session.json");
+      const state = JSON.parse(await fsp.readFile(statePath, "utf8"));
+      const acceptedBefore = structuredClone(state.captures);
+      await tamper({ state, statePath, sessionDir: started.sessionDir });
+      await assert.rejects(
+        fixture.producer.captureStep({
+          sessionId, operationId: `blank-after-${label}-tamper`, role: "dark_control", channelIndex: 1, sampleIndex: 2, targetFace: "blank_reverse",
+        }),
+        /blank-reverse geometry|immutable SHA-256|authority/i,
+      );
+      assert.equal(fixture.captureCount, 1, "authority tamper must be rejected before the capture boundary");
+      const stopped = await fixture.producer.status(sessionId);
+      assert.ok(stopped.hardStop, "accepted authority corruption is a durable hard stop");
+      const after = JSON.parse(await fsp.readFile(statePath, "utf8"));
+      assert.deepEqual(after.captures, acceptedBefore, "tamper rejection must not supersede accepted capture records");
+    });
+  }
+
+  await t.test("manual cross-session source and wrong settings", async () => {
+    const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-blank-cross-session-"));
+    const fixture = await producerFixture(root);
+    const sessionA = "calibration-v1-blank-source-session-a";
+    const startedA = await fixture.producer.start(startRequest(fixture.targetSha256, sessionA));
+    await fixture.producer.captureStep({
+      sessionId: sessionA, operationId: "blank-source-session-a", role: "dark_control", channelIndex: 1, sampleIndex: 1, targetFace: "blank_reverse",
+    });
+    const sessionB = "calibration-v1-blank-source-session-b";
+    await fixture.producer.start(startRequest(fixture.targetSha256, sessionB));
+    const captureCountBefore = fixture.captureCount;
+    await assert.rejects(
+      fixture.producer.captureStep({
+        sessionId: sessionB,
+        operationId: "manual-cross-session-source",
+        role: "dark_control",
+        channelIndex: 1,
+        sampleIndex: 1,
+        targetFace: "blank_reverse",
+        normalizationSourceOperationId: "blank-source-session-a",
+      }),
+      /server-owned.*may not be supplied/i,
+    );
+    assert.equal(fixture.captureCount, captureCountBefore);
+    assert.equal((await fixture.producer.status(sessionB)).hardStop, null, "manual preflight rejection must not brick a healthy session");
+
+    const wrongSettings = await producerFixture(root, {
+      requestRegistry: fixture.requests,
+      protectedSettings: { exposureUs: 6300 },
+    });
+    await assert.rejects(
+      wrongSettings.producer.start({ ...startRequest(wrongSettings.targetSha256, sessionA), resume: true }),
+      /identity\/settings mismatch/i,
+    );
+    assert.equal(wrongSettings.captureCount, 0);
+    const stoppedA = JSON.parse(await fsp.readFile(path.join(startedA.sessionDir, "capture-session.json"), "utf8"));
+    assert.equal(stoppedA.captures.length, 1);
+  });
+});
+
+test("V1.0.1 resumes the preserved 32-capture blank failure at the exact pending slot with a new operation ID", async () => {
+  const root = await fsp.mkdtemp(path.join(os.tmpdir(), "tk-calibration-v1-existing-32-resume-"));
+  const requestRegistry = new Map();
+  const fixture = await producerFixture(root, {
+    requestRegistry,
+    normalizationFailureOperationIds: new Set(["dark-control-1-3-old-failure"]),
+  });
+  const sessionId = "math-cal-v1-20260722-4cfa410c-01-fixture";
+  const started = await fixture.producer.start(startRequest(fixture.targetSha256, sessionId));
+  for (const role of ["lens_geometry", "normalization_registration", "repeated_placement"]) {
+    for (let sampleIndex = 1; sampleIndex <= 10; sampleIndex += 1) {
+      await fixture.producer.captureStep({
+        sessionId,
+        operationId: `${role}-accepted-${sampleIndex}`,
+        role,
+        sampleIndex,
+        targetFace: "checkerboard",
+        ...(role === "repeated_placement" ? { removeReseatCycleId: `preserved-reseat-${sampleIndex}` } : {}),
+      });
+    }
+  }
+  for (const sampleIndex of [1, 2]) {
+    await fixture.producer.captureStep({
+      sessionId,
+      operationId: `dark-control-1-${sampleIndex}-accepted`,
+      role: "dark_control",
+      channelIndex: 1,
+      sampleIndex,
+      targetFace: "blank_reverse",
+    });
+  }
+  await assert.rejects(
+    fixture.producer.captureStep({
+      sessionId,
+      operationId: "dark-control-1-3-old-failure",
+      role: "dark_control",
+      channelIndex: 1,
+      sampleIndex: 3,
+      targetFace: "blank_reverse",
+    }),
+    /must preserve raw bytes and produce a normalized derivative/i,
+  );
+  const failed = await fixture.producer.status(sessionId);
+  assert.equal(failed.captureCount, 32);
+  assert.equal(failed.nextCaptureSlot.slotKey, "dark_control:1:3");
+  assert.equal(failed.retryAllowed, true);
+  assert.equal(failed.failedAttempts.at(-1).operationId, "dark-control-1-3-old-failure");
+  assert.equal(
+    fs.existsSync(path.join(started.sessionDir, "working", "dark-control-1-3-old-failure", "dark_control-1-03-dark-control-1-3-old-failure-raw-working.png")),
+    true,
+    "the rejected exact raw remains preserved as failed-attempt evidence",
+  );
+  const statePath = path.join(started.sessionDir, "capture-session.json");
+  const stateBefore = JSON.parse(await fsp.readFile(statePath, "utf8"));
+  const acceptedArtifactsBefore = stateBefore.artifacts
+    .filter((artifact) => artifact.artifactClass === "raw_capture" || artifact.artifactClass === "normalized_derivative")
+    .map((artifact) => structuredClone(artifact));
+  const acceptedBytesBefore = new Map(await Promise.all(acceptedArtifactsBefore.map(async (artifact) => [
+    artifact.evidenceId,
+    await fsp.readFile(path.join(started.sessionDir, ...artifact.path.split("/"))),
+  ])));
+
+  const restarted = await producerFixture(root, { requestRegistry });
+  const resumed = await restarted.producer.start({ ...startRequest(restarted.targetSha256, sessionId), resume: true });
+  assert.equal(resumed.captureCount, 32);
+  assert.equal(resumed.nextCaptureSlot.slotKey, "dark_control:1:3");
+  const retried = await restarted.producer.captureStep({
+    sessionId,
+    operationId: "dark-control-1-3-new-retry",
+    role: "dark_control",
+    channelIndex: 1,
+    sampleIndex: 3,
+    targetFace: "blank_reverse",
+  });
+  assert.equal(retried.captureCount, 33);
+  assert.equal(retried.failedAttempts.at(-1).operationId, "dark-control-1-3-old-failure");
+  assert.notEqual(retried.acceptedCaptureHistory.at(-1).operationId, "dark-control-1-3-old-failure");
+  assert.equal(retried.acceptedCaptureHistory.at(-1).operationId, "dark-control-1-3-new-retry");
+  assert.equal(restarted.captureCount, 1, "hardware-free restart fixture executes only the requested new capture boundary");
+  const stateAfter = JSON.parse(await fsp.readFile(statePath, "utf8"));
+  const retryNormalized = stateAfter.artifacts.find(
+    (artifact) => artifact.operationId === "dark-control-1-3-new-retry" && artifact.artifactClass === "normalized_derivative",
+  );
+  assert.equal(
+    retryNormalized.normalization.geometryAuthority.sourceOperationId,
+    "dark-control-1-1-accepted",
+    "resume must keep the first accepted blank as authority rather than selecting the newest capture",
+  );
+  assert.deepEqual(
+    stateAfter.artifacts
+      .filter((artifact) => acceptedBytesBefore.has(artifact.evidenceId))
+      .map((artifact) => artifact),
+    acceptedArtifactsBefore,
+    "all 32 previously accepted capture artifacts remain immutable",
+  );
+  for (const [evidenceId, bytes] of acceptedBytesBefore) {
+    const artifact = stateAfter.artifacts.find((candidate) => candidate.evidenceId === evidenceId);
+    assert.deepEqual(await fsp.readFile(path.join(started.sessionDir, ...artifact.path.split("/"))), bytes);
+  }
 });
 
 test("V1.0.1 lens and normalization tenth-pose aggregate rejection leaves nine hashes unchanged and accepts a corrected retry", async (t) => {

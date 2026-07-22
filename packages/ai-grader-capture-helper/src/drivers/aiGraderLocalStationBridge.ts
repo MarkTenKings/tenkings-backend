@@ -12700,11 +12700,8 @@ export class AiGraderLocalStationBridgeService {
         );
       }
       const checkerboardRole = request.role === "lens_geometry" || request.role === "normalization_registration" || request.role === "repeated_placement";
-      if (
-        (request.role === "lens_geometry" || request.role === "normalization_registration") &&
-        request.normalizationSourceOperationId !== undefined
-      ) {
-        return rejectPreflight("V1.0.1 lens and normalization capture must rerun detection on the exact still and cannot reuse prior geometry.");
+      if (request.normalizationSourceOperationId !== undefined) {
+        return rejectPreflight("V1.0.1 normalization geometry is server-owned and may not be supplied by a browser or operator.");
       }
       const preview = this.previewStatus();
       const mathematicalPreview = preview.mathematicalCalibrationPreview;
