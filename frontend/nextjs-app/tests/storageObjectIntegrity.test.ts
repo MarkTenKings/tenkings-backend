@@ -5,6 +5,7 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  readStorageBodyBuffer,
   verifyStorageObjectIntegrity,
   type StorageObjectIntegrityDependencies,
 } from "../lib/server/storage";
@@ -45,6 +46,29 @@ function source(input: {
     },
   };
 }
+
+test("reads an AWS SDK serverless Body through transformToByteArray without a Node stream", async () => {
+  const expected = Buffer.from("serverless-transform-body");
+  let transforms = 0;
+  const result = await readStorageBodyBuffer({
+    async transformToByteArray() {
+      transforms += 1;
+      return Uint8Array.from(expected);
+    },
+  });
+  assert.equal(transforms, 1);
+  assert.ok(Buffer.isBuffer(result));
+  assert.deepEqual(result, expected);
+});
+
+test("preserves Node stream Body reads", async () => {
+  const expected = Buffer.from("node-stream-body");
+  const result = await readStorageBodyBuffer(
+    Readable.from([expected.subarray(0, 4), expected.subarray(4)]),
+  );
+  assert.ok(Buffer.isBuffer(result));
+  assert.deepEqual(result, expected);
+});
 
 test("uses a valid provider-native SHA-256 without reading object bytes", async () => {
   const bytes = Buffer.from("provider-native-integrity");
