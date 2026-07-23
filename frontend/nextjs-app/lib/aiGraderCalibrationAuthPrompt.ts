@@ -4,8 +4,9 @@ export type AiGraderCalibrationAuthPromptClaim = {
 
 export function claimAiGraderCalibrationAdminPrompt(
   claim: AiGraderCalibrationAuthPromptClaim,
+  blocked = false,
 ): boolean {
-  if (claim.current) {
+  if (blocked || claim.current) {
     return false;
   }
   claim.current = true;

@@ -17,6 +17,33 @@ test("a completed session can rearm the automatic admin prompt for a later sign-
   assert.equal(claimAiGraderCalibrationAdminPrompt(claim), true);
 });
 
+test("forced activation reauthentication blocks a competing automatic admin prompt", () => {
+  const claim = { current: false };
+
+  assert.equal(claimAiGraderCalibrationAdminPrompt(claim, true), false);
+  assert.equal(claim.current, false);
+  assert.equal(claimAiGraderCalibrationAdminPrompt(claim, true), false);
+
+  assert.equal(claimAiGraderCalibrationAdminPrompt(claim, false), true);
+  assert.equal(claim.current, true);
+});
+
+test("the calibration page binds activation busy state to the automatic prompt claim", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/calibration.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /claimAiGraderCalibrationAdminPrompt\(automaticAdminPromptClaimRef,\s*registryBusy\)/,
+  );
+});
+
+test("automatic prompting still rearms after a later sign-out", () => {
+  const claim = { current: false };
+  assert.equal(claimAiGraderCalibrationAdminPrompt(claim), true);
+
+  claim.current = false;
+  assert.equal(claimAiGraderCalibrationAdminPrompt(claim), true);
+});
+
 test("the phone control exposes a usable telephone input contract", () => {
   const source = readFileSync(new URL("../components/AuthModal.tsx", import.meta.url), "utf8");
   assert.match(source, /type="tel"/);
