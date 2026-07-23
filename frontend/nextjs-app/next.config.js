@@ -1,3 +1,6 @@
+const path = require("node:path");
+
+const repositoryRoot = path.resolve(__dirname, "../..");
 const aiGraderCalibrationSharpRuntimeFiles = [
   "../../node_modules/.pnpm/sharp@0.34.5/node_modules/sharp/**/*",
   "../../node_modules/.pnpm/@img+sharp-linux-x64@*/node_modules/@img/sharp-linux-x64/**/*",
@@ -8,6 +11,7 @@ const aiGraderCalibrationSharpRuntimeFiles = [
 const nextConfig = {
   transpilePackages: ["@tenkings/database", "@tenkings/shared"],
   experimental: {
+    outputFileTracingRoot: repositoryRoot,
     outputFileTracingIncludes: {
       "/api/admin/ai-grader/calibration-snapshots/**": aiGraderCalibrationSharpRuntimeFiles,
       "/api/admin/ai-grader/calibration-activations/**": aiGraderCalibrationSharpRuntimeFiles,
