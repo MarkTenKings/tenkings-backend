@@ -26,15 +26,20 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
 } from "@tenkings/shared";
 import type { MathematicalCalibrationV1_1Pose } from "./fixedRigMathematicalCalibrationV1_1";
+import {
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+} from "./fixedRigMathematicalCalibrationCaptureContractV1";
+
+export {
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
+  FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
+} from "./fixedRigMathematicalCalibrationCaptureContractV1";
 
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_SESSION_V1 =
   "ten-kings-mathematical-calibration-capture-session-v1" as const;
-export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1 =
-  "ten-kings-mathematical-calibration-capture-package-v1" as const;
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_MANIFEST_V1 =
   "ten-kings-mathematical-calibration-capture-manifest-v1" as const;
-export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1 =
-  "ten-kings-fixed-rig-mathematical-calibration-v1" as const;
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1_1 =
   MATHEMATICAL_CALIBRATION_V1_1_CAPTURE_PROFILE;
 

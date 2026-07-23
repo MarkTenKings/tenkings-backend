@@ -18,7 +18,6 @@ import {
   stageFastCalibrationFinalizerHandoffV1_2,
   verifyFastCalibrationFinalizerHandoffV1_2,
 } from "./fixedRigFastMathematicalCalibrationFinalizerHandoffV1_2";
-import { transformFastCalibrationPhysicalDirectionV1_2 } from "./fixedRigFastCalibrationMathV1_2";
 import type {
   BuildFixedRigPhysicalCalibrationV1Input,
   FixedRigCalibrationChannelInputV1,
@@ -1781,6 +1780,10 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
     source: ReturnType<FixedRigFastMathematicalCalibrationCoreV1_2["sourceAuthority"]>,
     verifiedRig: VerifiedFastCalibrationRigCharacterizationSourceV1_2,
     decoded: FastCalibrationEvidenceAnalysisResultV1_2,
+    transformPhysicalDirection: (
+      vector: { x: number; y: number },
+      matrix: readonly [number, number, number, number],
+    ) => { x: number; y: number },
   ): Pick<BuildFastCalibrationAnalysisV1_2Input, "builderInput" | "flatFieldArtifacts" | "illuminationPatternArtifact"> {
     if (decoded.geometryAlgorithmSha256 !== this.identity.runtimeContext.algorithmHashes.geometry ||
         decoded.photometricAlgorithmSha256 !== this.identity.runtimeContext.algorithmHashes.photometric) {
@@ -1855,7 +1858,7 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
       if (!decoded.physicalToNormalizedDirectionMatrix) {
         throw new Error("Legacy measured-stage direction analysis lacks its measured transform.");
       }
-      return transformFastCalibrationPhysicalDirectionV1_2(normalized, decoded.physicalToNormalizedDirectionMatrix);
+      return transformPhysicalDirection(normalized, decoded.physicalToNormalizedDirectionMatrix);
     };
     const angleError = (grid: number[], expected: { x: number; y: number }): number => {
       const minimum = Math.min(...grid);
@@ -1998,7 +2001,14 @@ export class FixedRigFastMathematicalCalibrationCoreV1_2 {
         directionCoordinateAuthority: verifiedRig.directionCoordinateAuthority,
       },
     });
-    const derived = this.buildEvidenceDerivedInput(source, verifiedRig, decoded);
+    const { transformFastCalibrationPhysicalDirectionV1_2 } =
+      await import("./fixedRigFastCalibrationMathV1_2");
+    const derived = this.buildEvidenceDerivedInput(
+      source,
+      verifiedRig,
+      decoded,
+      transformFastCalibrationPhysicalDirectionV1_2,
+    );
     const analysisModule = await import("./fixedRigFastMathematicalCalibrationBundleV1_2");
     return analysisModule.buildFastCalibrationAnalysisV1_2({ ...source, ...derived });
   }
