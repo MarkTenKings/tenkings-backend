@@ -24,6 +24,12 @@ function request(action: string, body: Record<string, unknown>, method = "POST")
 
 function service(overrides: Record<string, unknown> = {}) {
   return {
+    async resolveTrustedRegistry() {
+      return {
+        registry: { registryRevision: "a".repeat(64) },
+        status: { ok: true, registryRevision: "a".repeat(64), active: null, pending: null, authority: null },
+      };
+    },
     async list() { return { registryRevision: "a".repeat(64) }; },
     async status() { return { registryRevision: "a".repeat(64), active: null, pending: null, authority: null }; },
     async requestActivation() { return { registryRevision: "a".repeat(64), activation: {}, pendingAuthority: {} }; },
@@ -32,6 +38,52 @@ function service(overrides: Record<string, unknown> = {}) {
     ...overrides,
   } as any;
 }
+
+test("hosted trusted resolver accepts no browser rig choice and performs no write", async () => {
+  let ordinaryAuth = 0;
+  let freshAuth = 0;
+  let resolved = 0;
+  let writeCalled = false;
+  const runtime = createAiGraderCalibrationActivationApiHandler({
+    async requireAdminSession() {
+      ordinaryAuth += 1;
+      return { user: { id: "admin-exact" } };
+    },
+    async requireFreshAdminSession() {
+      freshAuth += 1;
+      return { user: { id: "admin-exact" } };
+    },
+    service: service({
+      async resolveTrustedRegistry() {
+        resolved += 1;
+        return {
+          registry: { rigId: "rig-hosted", registryRevision: "a".repeat(64) },
+          status: { ok: true, registryRevision: "a".repeat(64), active: null, pending: null, authority: null },
+        };
+      },
+      async requestActivation() {
+        writeCalled = true;
+        return {};
+      },
+    }),
+  });
+
+  const result = response();
+  await runtime(request("resolve-trusted", {}), result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal(result.state.body.registry.rigId, "rig-hosted");
+  assert.equal(resolved, 1);
+  assert.equal(ordinaryAuth, 1);
+  assert.equal(freshAuth, 0);
+  assert.equal(writeCalled, false);
+
+  for (const forbidden of [{ rigId: "browser-rig" }, { snapshotId: "browser-snapshot" }]) {
+    const rejected = response();
+    await runtime(request("resolve-trusted", forbidden), rejected.res);
+    assert.equal(rejected.state.status, 400);
+  }
+  assert.equal(resolved, 1);
+});
 
 test("hosted activation routes own action, actor, hashes, and state while writes require fresh human admin", async () => {
   const calls: Array<{ input: Record<string, unknown>; actor: string }> = [];

@@ -119,14 +119,23 @@ function snapshot(id, seed) {
     createdAt: new Date("2026-07-21T16:00:00.000Z"),
     mathematicalProfileId: `profile-${seed}`,
     mathematicalCalibrationVersion: `calibration-${seed}`,
-    mathematicalArtifactSha256: sha(`artifact:${seed}`),
+    mathematicalArtifactSha256: operatingContext.calibration.rigCharacterizationSha256,
     mathematicalBundleManifestSha256: operatingContext.calibration.bundleManifestSha256,
     mathematicalMemberLedgerSha256: operatingContext.calibration.memberLedgerSha256,
     mathematicalRigCharacterizationSha256: operatingContext.calibration.rigCharacterizationSha256,
     mathematicalOperatingContextV1: operatingContext,
     mathematicalOperatingContextHash: sha(canonicalAiGraderOperatingContextV1(operatingContext)),
     mathematicalRuntimeContextHash: sha(canonicalAiGraderRuntimeContextV1(operatingContext)),
-    rig: { id: RIG_ID, status: "ACTIVE", tenant: { id: TENANT_ID } },
+    rig: {
+      id: RIG_ID,
+      tenantId: TENANT_ID,
+      locationId: "calibration-bench",
+      label: RIG_ID,
+      rigVersion: "fixed-rig-v1",
+      status: "ACTIVE",
+      tenant: { id: TENANT_ID, slug: TENANT_ID },
+      location: { id: "calibration-bench", tenantId: TENANT_ID, name: "calibration-bench" },
+    },
   };
 }
 
@@ -266,6 +275,147 @@ function signedReceipt(pendingAuthority, privateKey) {
 async function errorCode(promise, code) {
   await assert.rejects(promise, (error) => error && error.code === code);
 }
+
+test("hosted resolver selects only one exact imported TRUSTED snapshot without a local calibration session", async () => {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const selected = snapshot("snapshot-imported-trusted", "imported-trusted");
+  const { db, state } = createMemoryDb([selected]);
+  let verifiedStorage = 0;
+  const service = createAiGraderCalibrationActivationService(db, {
+    now: () => new Date(NOW),
+    acquireRigLock: async () => undefined,
+    verifySnapshotStorage: async (row) => {
+      verifiedStorage += 1;
+      assert.equal(row.id, selected.id);
+    },
+    workstationPublicKeys: new Map([[KEY_ID, {
+      keyId: KEY_ID,
+      tenantId: TENANT_ID,
+      publicKey,
+    }]]),
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
+  });
+
+  const resolved = await service.resolveTrustedRegistry();
+  assert.equal(resolved.registry.rigId, RIG_ID);
+  assert.equal(resolved.registry.snapshots.length, 1);
+  assert.equal(resolved.registry.snapshots[0].snapshotId, selected.id);
+  assert.equal(resolved.registry.snapshots[0].trustStatus, "TRUSTED");
+  assert.equal(resolved.registry.snapshots[0].activationEligible, true);
+  assert.equal(resolved.status.ok, true);
+  assert.equal(resolved.status.registryRevision, resolved.registry.registryRevision);
+  assert.equal(resolved.status.active, null);
+  assert.equal(resolved.status.pending, null);
+  assert.equal(resolved.status.authority, null);
+  assert.equal(verifiedStorage, 1);
+  assert.equal(state.activations.length, 0);
+  assert.equal(state.activePointers.size, 0);
+  assert.equal(state.pendingPointers.size, 0);
+});
+
+test("hosted resolver rejects absent, multiple, mismatched, or hash-inconsistent trusted authority before mutation", async () => {
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const workstationPublicKeys = new Map([[KEY_ID, {
+    keyId: KEY_ID,
+    tenantId: TENANT_ID,
+    publicKey,
+  }]]);
+  const serviceFor = (rows) => {
+    const { db, state } = createMemoryDb(rows);
+    return {
+      state,
+      service: createAiGraderCalibrationActivationService(db, {
+        now: () => new Date(NOW),
+        acquireRigLock: async () => undefined,
+        verifySnapshotStorage: async () => undefined,
+        workstationPublicKeys,
+        hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
+      }),
+    };
+  };
+
+  const draft = snapshot("snapshot-draft", "draft");
+  draft.trustStatus = "DRAFT";
+  await errorCode(
+    serviceFor([draft]).service.resolveTrustedRegistry(),
+    "AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE",
+  );
+
+  await errorCode(
+    serviceFor([
+      snapshot("snapshot-trusted-1", "trusted-1"),
+      snapshot("snapshot-trusted-2", "trusted-2"),
+    ]).service.resolveTrustedRegistry(),
+    "AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE",
+  );
+
+  for (const [index, mutate] of [
+    (row) => { row.rig.status = "INACTIVE"; },
+    (row) => { row.rig.rigVersion = "wrong-rig-version"; },
+    (row) => { row.rig.location.tenantId = "wrong-tenant"; },
+    (row) => { row.mathematicalBundleManifestSha256 = "f".repeat(64); },
+    (row) => { row.mathematicalRuntimeContextHash = "e".repeat(64); },
+  ].entries()) {
+    const row = snapshot(`snapshot-mismatch-${index}`, "mismatch");
+    mutate(row);
+    const { service, state } = serviceFor([row]);
+    await errorCode(
+      service.resolveTrustedRegistry(),
+      "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+    );
+    assert.equal(state.activations.length, 0);
+    assert.equal(state.activePointers.size, 0);
+    assert.equal(state.pendingPointers.size, 0);
+  }
+});
+
+test("hosted resolver requires canonical signer/workstation identity and no competing activation", async () => {
+  const selected = snapshot("snapshot-identity-gates", "identity-gates");
+  const withoutSigner = createMemoryDb([selected]);
+  const noSigner = createAiGraderCalibrationActivationService(withoutSigner.db, {
+    now: () => new Date(NOW),
+    verifySnapshotStorage: async () => undefined,
+  });
+  await errorCode(
+    noSigner.resolveTrustedRegistry(),
+    "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+  );
+
+  const withoutWorkstation = createMemoryDb([snapshot("snapshot-no-workstation", "no-workstation")]);
+  const noWorkstation = createAiGraderCalibrationActivationService(withoutWorkstation.db, {
+    now: () => new Date(NOW),
+    verifySnapshotStorage: async () => undefined,
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
+  });
+  await errorCode(
+    noWorkstation.resolveTrustedRegistry(),
+    "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+  );
+
+  const { publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const competing = createMemoryDb([snapshot("snapshot-competing", "competing")]);
+  competing.state.pendingPointers.set(RIG_ID, {
+    rigId: RIG_ID,
+    activationId: "competing-activation",
+    activationRevision: "a".repeat(64),
+    pendingExpiresAt: new Date(NOW.getTime() + 60_000),
+  });
+  const service = createAiGraderCalibrationActivationService(competing.db, {
+    now: () => new Date(NOW),
+    verifySnapshotStorage: async () => undefined,
+    workstationPublicKeys: new Map([[KEY_ID, {
+      keyId: KEY_ID,
+      tenantId: TENANT_ID,
+      publicKey,
+    }]]),
+    hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
+  });
+  await errorCode(
+    service.resolveTrustedRegistry(),
+    "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+  );
+  assert.equal(competing.state.activations.length, 0);
+});
 
 test("two-phase activation is exact, fail-closed, explicitly reactivatable, and single-active under concurrency", async () => {
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
