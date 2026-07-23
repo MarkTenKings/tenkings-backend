@@ -126,6 +126,8 @@ function activeCalibrationAuthority(): AiGraderCalibrationActivationAuthorityV1 
     runtimeContextHash: "5".repeat(64),
     rigCharacterizationSha256: "6".repeat(64),
     operatingContextHash: "7".repeat(64),
+    observationId: "calibration-observation-station-v1",
+    workstationObservationSha256: "0".repeat(64),
     workstationReceiptSha256: "8".repeat(64),
     activatedAt: "2026-07-21T18:45:00.000Z",
     hostedAuthorityKeyId: "9".repeat(64),

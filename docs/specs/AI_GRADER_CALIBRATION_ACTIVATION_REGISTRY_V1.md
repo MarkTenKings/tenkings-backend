@@ -1,6 +1,6 @@
 # AI Grader Mathematical Calibration Activation Registry V1
 
-Status: implementation candidate on `feature/ai-grader-calibration-activation-registry`, based only on frozen integration SHA `e7673c1a4f1799a594d09279ad392982ac028205`.
+Status: corrective implementation candidate on `hotfix/ai-grader-atomic-activation-observation-20260723`, based exactly on Production serving commit `ae0c85788337eec22291bccaaedf4cd27db6d9fd`.
 
 This contract adds activation authority without changing the evidentiary role of `CalibrationSnapshot`. Snapshots and bundle bytes remain immutable. Selecting a calibration creates append-only activation history; it never edits an old calibration or changes a historical report binding.
 
@@ -29,7 +29,7 @@ No migration in this branch has been applied to Production.
 - controller identity, wiring-map identity, and ordered channel map 1-8;
 - lighting configuration, ordered selected channels, and duty;
 - exposure, gain, pixel format, width, and height;
-- target, rig-characterization, bundle-manifest, source-capture, member-ledger, and all twelve member hashes;
+- target, rig-characterization, bundle-manifest, source-capture, member-ledger, and every canonical member hash (twelve mathematical members, or thirteen when the immutable owner-operational authority is present);
 - capture profile, calibration/analysis algorithms, threshold set/hash, helper identity, and helper version.
 
 `runtimeContextHash` is derived from the same contract with calibration identity omitted. Both operating and runtime hashes must reproduce exactly.
@@ -38,7 +38,7 @@ No migration in this branch has been applied to Production.
 
 The browser is transport only; it is never authority. Hosted owns a P-256 PKCS#8 signing key configured only through `AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNING_KEY_PKCS8_BASE64`. Its key ID is the SHA-256 of the corresponding DER-SPKI public key.
 
-Both `AiGraderCalibrationPendingAuthorityV1` and `AiGraderCalibrationActivationAuthorityV1` are closed signed envelopes. Their canonical statements bind the schema, explicit `PENDING` or `ACTIVE` phase, activation ID/hash/revision, snapshot/rig, every bundle/member/runtime/rig-characterization/operating-context hash, hosted key ID/algorithm/issue time, phase timestamps/expiry, exact operating context for PENDING, and exact workstation receipt hash for ACTIVE. The signature is ECDSA P-256/SHA-256 with IEEE-P1363 encoding.
+`AiGraderCalibrationObservationAuthorityV1`, `AiGraderCalibrationPendingAuthorityV1`, and `AiGraderCalibrationActivationAuthorityV1` are closed signed envelopes. Their canonical statements bind the schema, explicit `OBSERVATION`, `PENDING`, or `ACTIVE` phase, observation and/or activation identities, snapshot/rig, every bundle/member/runtime/rig-characterization/operating-context hash, hosted key ID/algorithm/issue time, and phase timestamps/expiry. PENDING binds the exact workstation-observation hash; ACTIVE additionally binds the exact workstation-receipt hash. The signature is ECDSA P-256/SHA-256 with IEEE-P1363 encoding.
 
 The workstation has only a rig-scoped public-key allowlist supplied by `AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_PUBLIC_KEYS_JSON`. It recomputes each key ID from exact DER-SPKI bytes and verifies phase, rig, clock window, canonical statement, and signature before writing PENDING, before changing the pointer to ACTIVE, and on every Start. Unknown keys, unsigned legacy values, malformed/wrong-phase envelopes, tampering, expired pending or Start envelopes, and replay/cross-rig/cross-activation attempts fail with no fallback.
 
@@ -46,16 +46,17 @@ ACTIVE envelopes are short-lived Start credentials. Once a fresh envelope has au
 
 ## State machine and no fallback
 
-1. A fresh human admin selects an exact trusted, non-revoked snapshot using an optimistic registry revision and idempotency key.
-2. Hosted appends a new activation root plus `PENDING_CREATED` and returns a canonical server-signed PENDING envelope.
-3. Starting a pending selection first removes the prior active pointer and appends `SUPERSEDED` to that old activation. Replacing another pending activation appends `FAILED`.
-4. Local helper atomically writes the new PENDING pointer before byte/context verification. This immediately prevents continued use of the old profile.
-5. Local first verifies the hosted PENDING phase, pinned signing key, canonical signature, exact rig, and expiry; only then may it write PENDING and verify idle state, content-addressed bundle/member bytes, and live operating/runtime context.
-6. Local signs the canonical workstation receipt using allowlisted P-256/SHA-256 IEEE-P1363 authority and stores it immutably.
-7. Hosted re-locks the rig, re-verifies snapshot bytes and the exact receipt, appends `LOCAL_VERIFIED` then `ACTIVATED`, deletes pending, and creates the sole ACTIVE pointer.
-8. Local verifies the hosted ACTIVE signature before accepting it, requires exact pending-pointer and immutable-receipt agreement, then atomically changes the pointer to ACTIVE.
+1. A fresh human admin selects an exact trusted, non-revoked snapshot using an optimistic registry revision. Hosted performs a read-only registry/storage check and returns a short-lived, canonical server-signed OBSERVATION envelope. No activation root or pointer exists yet.
+2. Local verifies the OBSERVATION envelope, exact rig/context/bundle, idle state, and the absence of conflicting local authority. It then performs exactly one physical runtime observation. Preflight safe-off, every lighting acknowledgement, camera identity/settings, capture evidence, and final safe-off acknowledgement must all succeed.
+3. The retained PNG is written create-new beneath the protected activation registry, outside both preserved calibration trees. Local hashes it and the canonical runtime observation, signs a closed workstation-observation contract that binds both hashes and every snapshot/rig/bundle/ledger/runtime/operating-context identity, and atomically commits the observation directory. The hosted contract never contains the machine-specific absolute path.
+4. Only after step 3 may the browser request activation. Hosted verifies both signatures, clock windows, exact context and evidence bindings, then appends the activation root plus `PENDING_CREATED` and returns a server-signed PENDING envelope that binds the observation ID/hash.
+5. Local verifies the PENDING envelope and re-reads the same immutable observation and PNG. It performs no hardware access, signs the canonical workstation receipt, stores context/receipt immutably, and writes the local PENDING pointer last.
+6. Hosted re-locks the rig, re-verifies snapshot bytes and the exact receipt/observation bindings, appends `LOCAL_VERIFIED` then `ACTIVATED`, deletes pending, and creates the sole hosted ACTIVE pointer.
+7. Local verifies the hosted ACTIVE signature and exact pending-pointer/receipt/observation agreement, then atomically converges the pointer to ACTIVE without camera or lighting access. Replaying the exact ACTIVE authority is idempotent and performs no hardware access.
 
-A failed activation leaves no active pointer. There is no automatic rollback, newest/previous/closest selection, or last-known-good path. If any activation root for the exact rig/snapshot ever contains `ACTIVATED`, every later attempt must use the explicit `reactivate` route and reference an exact prior activated ID, even when the latest reactivation attempt failed. Revoked snapshots cannot activate. Revocation appends `REVOKED` audit events and deletes matching active/pending pointers; the Start gate independently rechecks snapshot trust.
+A failed physical observation creates no hosted activation row/pointer and no local activation pointer/receipt. If a PNG was already created, it is retained with a clearly labeled failed-observation record; otherwise the staging directory is removed. There is no automatic hardware retry. A later hosted request/completion failure uses the existing append-only failure event and archives only its exact matching local PENDING pointer. If hosted has already reached ACTIVE, a retry of local confirmation converges to the same ACTIVE pointer with no hardware.
+
+There is no automatic rollback, newest/previous/closest selection, or last-known-good path. If any activation root for the exact rig/snapshot ever contains `ACTIVATED`, every later attempt must use the explicit `reactivate` route and reference an exact prior activated ID, even when the latest reactivation attempt failed. Revoked snapshots cannot activate. Revocation appends `REVOKED` audit events and deletes matching active/pending pointers; the Start gate independently rechecks snapshot trust.
 
 ## Hosted routes and exported DTOs
 
@@ -66,6 +67,7 @@ All routes are POST-only. The route selects the action; authenticated server sta
 | Resolve sole imported TRUSTED registry | `/api/admin/ai-grader/calibration-activations/resolve-trusted` | `AiGraderCalibrationActivationResolveTrustedRequestV1` | `AiGraderCalibrationActivationResolveTrustedResponseV1` |
 | list | `/api/admin/ai-grader/calibration-activations/list` | `AiGraderCalibrationActivationListRequestV1` | `AiGraderCalibrationActivationListResponseV1` |
 | status | `/api/admin/ai-grader/calibration-activations/status` | `AiGraderCalibrationActivationStatusRequestV1` | `AiGraderCalibrationActivationStatusResponseV1` |
+| observe | `/api/admin/ai-grader/calibration-activations/observe` | `AiGraderCalibrationObservationRequestV1` | `AiGraderCalibrationObservationResponseV1` |
 | activate | `/api/admin/ai-grader/calibration-activations/activate` | `AiGraderCalibrationActivateRequestV1` | `AiGraderCalibrationActivationPendingResponseV1` |
 | reactivate | `/api/admin/ai-grader/calibration-activations/reactivate` | `AiGraderCalibrationReactivateRequestV1` | `AiGraderCalibrationActivationPendingResponseV1` |
 | complete | `/api/admin/ai-grader/calibration-activations/complete` | `AiGraderCalibrationCompleteActivationRequestV1` | `AiGraderCalibrationCompleteActivationResponseV1` |
@@ -78,7 +80,7 @@ List/status projections carry stable activation ID, activation hash, event revis
 
 The read-only `resolve-trusted` route accepts an exact empty body and therefore cannot accept a browser-selected rig or snapshot. It is used only when no live local mathematical-calibration session projects a rig. Hosted requires exactly one eligible TRUSTED mathematical snapshot, exact immutable storage bytes and context hashes, one matching active tenant/location/rig/version parent chain, one tenant workstation public identity, the configured hosted signer, and no active, pending, or historical competing activation. Zero or multiple TRUSTED snapshots, any parent/hash/configuration mismatch, or any competing authority fails closed without creating an activation or touching local hardware. When a live local session does project an exact rig, the original rig-scoped list/status path remains authoritative.
 
-List/status use the existing admin session. Trust, activate, reactivate, complete, fail, revoke, and supersede require `requireFreshHumanAdminSession`: a currently stored human session no older than 15 minutes. Static operator keys and service accounts are rejected. The Start authority route permits only a human Production actor.
+List/status use the existing admin session. Trust, observe, activate, reactivate, complete, fail, revoke, and supersede require `requireFreshHumanAdminSession`: a currently stored human session no older than 15 minutes. Static operator keys and service accounts are rejected. The Start authority route permits only a human Production actor.
 
 ## Local registry and helper integration
 
@@ -92,13 +94,15 @@ The registry verifies that handoff and every bundle/member byte before copying t
 
 `<registry-root>/bundles/sha256/<bundleManifestSha256>/`
 
-Existing content-addressed bundles are never overwritten. Hosted operating contexts are stored immutably per activation. Receipts are immutable at `receipts/<activationId>.json`. The only mutable local file is the atomically replaced `active-pointer-v1.json`.
+Existing content-addressed bundles are never overwritten. Successful activation observations are retained at `activation-evidence/successful/<observationId>/` with the fixed PNG, hosted OBSERVATION authority, and signed workstation observation. Failed probes that produced a PNG are retained at `activation-evidence/failed/<observationId>/`. Hosted operating contexts are stored immutably per activation. Receipts are immutable at `receipts/<activationId>.json`. The only mutable local file is the atomically replaced `active-pointer-v1.json`; exact failed PENDING pointers are moved into the protected failure ledger.
 
 Ordinary selection uses the loopback/token-protected helper actions:
 
 - `ingest-finalized-calibration-bundle`
+- `observe-calibration-activation`
 - `prepare-calibration-activation`
 - `confirm-calibration-activation`
+- `abort-calibration-activation`
 
 No config edit or helper restart is required. Production startup configuration supplies registry/key/inventory plumbing:
 
@@ -111,7 +115,7 @@ No config edit or helper restart is required. Production startup configuration s
 - optional `AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_DIR`
 - optional `AI_GRADER_CALIBRATION_HELPER_INSTANCE_ID`
 
-The SHA-pinned inventory binds rig/location, camera, optics, controller transport/wiring, lighting configuration, pixel format/resolution, and helper identity. On prepare, confirm, and every Start, the real helper opens Basler/Pylon at the exact requested exposure/gain, proves the observed serial/model/pixel format/resolution, writes the exact Leimac channel/duty frames, requires every controller acknowledgement, and cross-checks those observations against both the protected inventory and hosted context.
+The SHA-pinned inventory binds rig/location, camera, optics, controller transport/wiring, lighting configuration, pixel format/resolution, and helper identity. Only `observe-calibration-activation` performs the activation hardware observation: it opens Basler/Pylon at the exact requested exposure/gain, proves observed serial/model/pixel format/resolution, issues the bounded Leimac frames, requires every acknowledgement, retains the PNG evidence, and requires a final safe-off acknowledgement before any activation authority write is possible. Prepare and confirm reuse that exact signed observation and perform no camera or lighting access. Every later Start still performs its independently required live operating-context check.
 
 `AI_GRADER_CALIBRATION_LIVE_OPERATING_CONTEXT_PATH` is prohibited in real mode. Editable JSON may be used only through explicit test/mock dependency injection and can never be Production authority. The private key and protected inventory remain workstation-local and are not returned by hosted APIs.
 

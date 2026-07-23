@@ -9,6 +9,7 @@ import {
   trustedPokemonCardFormatAuthorityV1Schema,
   type TrustedPokemonCardFormatAuthorityV1,
   type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderCalibrationWorkstationObservationV1,
   type AiGraderCalibrationWorkstationReceiptV1,
 } from "@tenkings/shared";
 
@@ -32,9 +33,11 @@ export type AiGraderStationStepId =
 export type AiGraderStationAction =
   | "status"
   | "start-session"
+  | "observe-calibration-activation"
   | "prepare-calibration-activation"
   | "ingest-finalized-calibration-bundle"
   | "confirm-calibration-activation"
+  | "abort-calibration-activation"
   | "capture-front"
   | "capture-back"
   | "publish-report"
@@ -643,6 +646,7 @@ export type AiGraderLocalStationStatus = {
   calibrationActivation?: {
     configured: boolean;
     state: "UNAVAILABLE" | "IDLE" | "PENDING" | "ACTIVE";
+    observation?: AiGraderCalibrationWorkstationObservationV1;
     receipt?: AiGraderCalibrationWorkstationReceiptV1;
     authority?: AiGraderCalibrationActivationAuthorityV1;
   };
@@ -2464,9 +2468,11 @@ export const AI_GRADER_STATION_STEPS: AiGraderStationStep[] = [
 const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   status: "start_new_card",
   "start-session": "live_preview_focus_framing",
+  "observe-calibration-activation": "start_new_card",
   "prepare-calibration-activation": "start_new_card",
   "ingest-finalized-calibration-bundle": "start_new_card",
   "confirm-calibration-activation": "start_new_card",
+  "abort-calibration-activation": "start_new_card",
   "capture-front": "prompt_flip_card",
   "capture-back": "run_provisional_diagnostics",
   "publish-report": "finalize_publish_report",

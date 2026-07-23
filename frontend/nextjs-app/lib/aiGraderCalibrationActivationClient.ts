@@ -11,6 +11,7 @@ export const AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1 = {
   resolveTrusted: "/api/admin/ai-grader/calibration-activations/resolve-trusted",
   list: "/api/admin/ai-grader/calibration-activations/list",
   status: "/api/admin/ai-grader/calibration-activations/status",
+  observe: "/api/admin/ai-grader/calibration-activations/observe",
   activate: "/api/admin/ai-grader/calibration-activations/activate",
   reactivate: "/api/admin/ai-grader/calibration-activations/reactivate",
   complete: "/api/admin/ai-grader/calibration-activations/complete",
@@ -25,7 +26,10 @@ const positiveInteger = z.number().int().positive();
 const nonnegativeFinite = z.number().finite().nonnegative();
 
 const bundleMemberSchema = z.object({
-  role: z.enum(["calibration_profile", "physical_calibration_artifact", "calibration_acceptance", "flat_field", "illumination_pattern"]),
+  role: z.enum([
+    "calibration_profile", "physical_calibration_artifact", "calibration_acceptance",
+    "product_owner_operational_acceptance", "flat_field", "illumination_pattern",
+  ]),
   channelIndex: z.number().int().min(1).max(8).optional(),
   fileName: canonicalText,
   sha256,
@@ -37,6 +41,11 @@ const expectedMembers = [
   ["calibration_acceptance", undefined, "mathematical-calibration-acceptance-v1.json"],
   ...Array.from({ length: 8 }, (_, index) => ["flat_field", index + 1, `flat-field-channel-${index + 1}-v1.json`]),
   ["illumination_pattern", undefined, "illumination-pattern-v1.json"],
+] as const;
+const expectedOwnerAcceptedMembers = [
+  ...expectedMembers.slice(0, 3),
+  ["product_owner_operational_acceptance", undefined, "product-owner-operational-acceptance-v1.json"],
+  ...expectedMembers.slice(3),
 ] as const;
 
 const operatingContextSchema = z.object({
@@ -78,7 +87,7 @@ const operatingContextSchema = z.object({
     bundleManifestSha256: sha256,
     sourceCaptureManifestSha256: sha256,
     memberLedgerSha256: sha256,
-    members: z.array(bundleMemberSchema).length(12),
+    members: z.array(bundleMemberSchema).min(12).max(13),
   }).strict(),
   software: z.object({
     captureProfileVersion: canonicalText,
@@ -96,10 +105,13 @@ const operatingContextSchema = z.object({
   if (JSON.stringify(value.controller.channelMap.map((entry) => entry.channelIndex)) !== JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8])) {
     context.addIssue({ code: "custom", path: ["controller", "channelMap"], message: "must contain ordered channels 1 through 8" });
   }
+  const exactMembers = value.calibration.members.length === 13
+    ? expectedOwnerAcceptedMembers
+    : expectedMembers;
   value.calibration.members.forEach((member, index) => {
-    const expected = expectedMembers[index]!;
+    const expected = exactMembers[index]!;
     if (member.role !== expected[0] || member.channelIndex !== expected[1] || member.fileName !== expected[2]) {
-      context.addIssue({ code: "custom", path: ["calibration", "members", index], message: "does not match the canonical ordered 12-member ledger" });
+      context.addIssue({ code: "custom", path: ["calibration", "members", index], message: "does not match the canonical ordered member ledger" });
     }
   });
 });
@@ -110,6 +122,72 @@ const hostedSignatureShape = {
   hostedAuthorityIssuedAt: timestamp,
   hostedAuthorityExpiresAt: timestamp,
 } as const;
+
+const runtimeObservationSchema = z.object({
+  schemaVersion: z.literal("ten-kings-mathematical-calibration-runtime-observation-v1"),
+  source: z.literal("opened-basler-pylon-and-leimac-acknowledgement-v1"),
+  camera: z.object({ serial: canonicalText, model: canonicalText }).strict(),
+  capture: z.object({
+    exposureUs: positiveInteger,
+    gain: nonnegativeFinite,
+    pixelFormat: canonicalText,
+    widthPx: positiveInteger,
+    heightPx: positiveInteger,
+  }).strict(),
+  controller: z.object({
+    controllerTransportIdentity: canonicalText,
+    selectedChannels: z.array(z.number().int().min(1).max(8)).length(8),
+    dutyPercent: nonnegativeFinite.max(100),
+    expectedWriteCount: positiveInteger,
+    acknowledgedWriteCount: positiveInteger,
+    allWritesAcknowledged: z.literal(true),
+  }).strict(),
+  software: z.object({ helperInstanceId: canonicalText, helperVersion: canonicalText }).strict(),
+}).strict();
+
+export const aiGraderCalibrationObservationAuthorityV1Schema = z.object({
+  schemaVersion: z.literal("ten-kings-ai-grader-calibration-observation-authority-v1"),
+  authorityPhase: z.literal("OBSERVATION"),
+  observationId: canonicalText,
+  registryRevision: sha256,
+  snapshotId: canonicalText,
+  rigId: canonicalText,
+  bundleManifestSha256: sha256,
+  memberLedgerSha256: sha256,
+  runtimeContextHash: sha256,
+  rigCharacterizationSha256: sha256,
+  operatingContextHash: sha256,
+  operatingContextV1: operatingContextSchema,
+  ...hostedSignatureShape,
+  hostedAuthoritySignature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+}).strict();
+
+export const aiGraderCalibrationWorkstationObservationV1Schema = z.object({
+  schemaVersion: z.literal("ten-kings-ai-grader-calibration-workstation-observation-v1"),
+  observationId: canonicalText,
+  hostedObservationAuthoritySha256: sha256,
+  registryRevision: sha256,
+  snapshotId: canonicalText,
+  rigId: canonicalText,
+  bundleManifestSha256: sha256,
+  memberLedgerSha256: sha256,
+  runtimeContextHash: sha256,
+  rigCharacterizationSha256: sha256,
+  expectedOperatingContextHash: sha256,
+  observedOperatingContextHash: sha256,
+  runtimeObservation: runtimeObservationSchema,
+  runtimeObservationSha256: sha256,
+  evidenceImageFileName: z.literal("activation-runtime-evidence.png"),
+  evidenceImageMediaType: z.literal("image/png"),
+  evidenceImageSha256: sha256,
+  evidenceImageByteSize: z.number().int().nonnegative(),
+  helperInstanceId: canonicalText,
+  helperVersion: canonicalText,
+  workstationKeyId: sha256,
+  signatureAlgorithm: z.literal("ecdsa-p256-sha256-ieee-p1363"),
+  observedAt: timestamp,
+  signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
+}).strict();
 
 export const aiGraderCalibrationPendingAuthorityV1Schema = z.object({
   schemaVersion: z.literal("ten-kings-ai-grader-calibration-pending-authority-v1"),
@@ -124,6 +202,8 @@ export const aiGraderCalibrationPendingAuthorityV1Schema = z.object({
   runtimeContextHash: sha256,
   rigCharacterizationSha256: sha256,
   operatingContextHash: sha256,
+  observationId: canonicalText,
+  workstationObservationSha256: sha256,
   operatingContextV1: operatingContextSchema,
   requestedAt: timestamp,
   pendingExpiresAt: timestamp,
@@ -154,6 +234,8 @@ export const aiGraderCalibrationActivationAuthorityV1Schema = z.object({
   runtimeContextHash: sha256,
   rigCharacterizationSha256: sha256,
   operatingContextHash: sha256,
+  observationId: canonicalText,
+  workstationObservationSha256: sha256,
   workstationReceiptSha256: sha256,
   activatedAt: timestamp,
   ...hostedSignatureShape,
@@ -179,6 +261,10 @@ export const aiGraderCalibrationWorkstationReceiptV1Schema = z.object({
   rigCharacterizationSha256: sha256,
   expectedOperatingContextHash: sha256,
   observedOperatingContextHash: sha256,
+  observationId: canonicalText,
+  workstationObservationSha256: sha256,
+  runtimeObservationSha256: sha256,
+  evidenceImageSha256: sha256,
   helperInstanceId: canonicalText,
   helperVersion: canonicalText,
   workstationKeyId: sha256,
@@ -222,6 +308,8 @@ export const aiGraderCalibrationActivationProjectionV1Schema = z.object({
   runtimeContextHash: sha256,
   rigCharacterizationSha256: sha256,
   operatingContextHash: sha256,
+  observationId: canonicalText,
+  workstationObservationSha256: sha256,
   workstationReceiptSha256: sha256.nullable(),
   requestedAt: timestamp,
   pendingExpiresAt: timestamp,
@@ -245,12 +333,19 @@ export const aiGraderCalibrationActivationRegistryProjectionV1Schema = z.object(
 
 const listRequestSchema = z.object({ rigId: canonicalText, includeIncomplete: z.boolean().optional() }).strict();
 const statusRequestSchema = z.object({ rigId: canonicalText }).strict();
+const observationRequestSchema = z.object({
+  rigId: canonicalText,
+  snapshotId: canonicalText,
+  expectedRegistryRevision: sha256,
+}).strict();
 const activateRequestSchema = z.object({
   rigId: canonicalText,
   snapshotId: canonicalText,
   expectedRegistryRevision: sha256,
   idempotencyKey: canonicalText,
   reason: longCanonicalText,
+  observationAuthority: aiGraderCalibrationObservationAuthorityV1Schema,
+  workstationObservation: aiGraderCalibrationWorkstationObservationV1Schema,
 }).strict();
 const reactivateRequestSchema = activateRequestSchema.extend({ priorActivationId: canonicalText }).strict();
 const completeRequestSchema = z.object({
@@ -283,6 +378,10 @@ const resolvedTrustedResponseSchema = z.object({
   registry: aiGraderCalibrationActivationRegistryProjectionV1Schema,
   status: statusResponseSchema,
 }).strict();
+const observationResponseSchema = z.object({
+  ok: z.literal(true),
+  observationAuthority: aiGraderCalibrationObservationAuthorityV1Schema,
+}).strict();
 const pendingResponseSchema = z.object({
   ok: z.literal(true),
   registryRevision: sha256,
@@ -304,6 +403,7 @@ const failResponseSchema = z.object({
 const localActivationStateSchema = z.object({
   configured: z.boolean(),
   state: z.enum(["UNAVAILABLE", "IDLE", "PENDING", "ACTIVE"]),
+  observation: aiGraderCalibrationWorkstationObservationV1Schema.optional(),
   receipt: aiGraderCalibrationWorkstationReceiptV1Schema.optional(),
   authority: aiGraderCalibrationActivationAuthorityV1Schema.optional(),
 }).strict();
@@ -314,6 +414,10 @@ const localActionResponseSchema = z.object({
 
 export type AiGraderCalibrationPendingAuthorityV1 = z.infer<typeof aiGraderCalibrationPendingAuthorityV1Schema>;
 export type AiGraderCalibrationActivationAuthorityV1 = z.infer<typeof aiGraderCalibrationActivationAuthorityV1Schema>;
+export type AiGraderCalibrationObservationAuthorityV1 =
+  z.infer<typeof aiGraderCalibrationObservationAuthorityV1Schema>;
+export type AiGraderCalibrationWorkstationObservationV1 =
+  z.infer<typeof aiGraderCalibrationWorkstationObservationV1Schema>;
 export type AiGraderCalibrationWorkstationReceiptV1 = z.infer<typeof aiGraderCalibrationWorkstationReceiptV1Schema>;
 export type AiGraderCalibrationSnapshotProjectionV1 = z.infer<typeof aiGraderCalibrationSnapshotProjectionV1Schema>;
 export type AiGraderCalibrationActivationProjectionV1 = z.infer<typeof aiGraderCalibrationActivationProjectionV1Schema>;
@@ -413,6 +517,29 @@ export function readAiGraderCalibrationActivationStatusV1(
   );
 }
 
+export function requestAiGraderCalibrationObservationAuthorityV1(
+  input: {
+    token: string;
+    rigId: string;
+    snapshotId: string;
+    expectedRegistryRevision: string;
+  },
+  fetchImpl: typeof fetch = fetch,
+) {
+  const body = observationRequestSchema.parse({
+    rigId: input.rigId,
+    snapshotId: input.snapshotId,
+    expectedRegistryRevision: input.expectedRegistryRevision,
+  });
+  return hostedPost(
+    AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.observe,
+    body,
+    input.token,
+    observationResponseSchema,
+    fetchImpl,
+  );
+}
+
 export function requestAiGraderCalibrationActivationV1(
   input: {
     token: string;
@@ -423,6 +550,8 @@ export function requestAiGraderCalibrationActivationV1(
     expectedRegistryRevision: string;
     idempotencyKey: string;
     reason: string;
+    observationAuthority: AiGraderCalibrationObservationAuthorityV1;
+    workstationObservation: AiGraderCalibrationWorkstationObservationV1;
   },
   fetchImpl: typeof fetch = fetch,
 ) {
@@ -432,6 +561,8 @@ export function requestAiGraderCalibrationActivationV1(
     expectedRegistryRevision: input.expectedRegistryRevision,
     idempotencyKey: input.idempotencyKey,
     reason: input.reason,
+    observationAuthority: input.observationAuthority,
+    workstationObservation: input.workstationObservation,
   };
   const body = input.action === "reactivate"
     ? reactivateRequestSchema.parse({ ...base, priorActivationId: input.priorActivationId })
@@ -487,7 +618,8 @@ async function localActivationAction(
   input: {
     baseUrl: string;
     stationToken: string;
-    action: "prepare-calibration-activation" | "confirm-calibration-activation";
+    action: "observe-calibration-activation" | "prepare-calibration-activation" |
+      "confirm-calibration-activation" | "abort-calibration-activation";
     body: Record<string, unknown>;
   },
   fetchImpl: typeof fetch,
@@ -538,6 +670,25 @@ export function prepareLocalAiGraderCalibrationActivationV1(
   }, fetchImpl);
 }
 
+export function observeLocalAiGraderCalibrationActivationV1(
+  input: {
+    baseUrl: string;
+    stationToken: string;
+    observationAuthority: AiGraderCalibrationObservationAuthorityV1;
+  },
+  fetchImpl: typeof fetch = fetch,
+) {
+  return localActivationAction({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    action: "observe-calibration-activation",
+    body: {
+      calibrationObservationAuthority:
+        aiGraderCalibrationObservationAuthorityV1Schema.parse(input.observationAuthority),
+    },
+  }, fetchImpl);
+}
+
 export function confirmLocalAiGraderCalibrationActivationV1(
   input: { baseUrl: string; stationToken: string; authority: AiGraderCalibrationActivationAuthorityV1 },
   fetchImpl: typeof fetch = fetch,
@@ -550,6 +701,25 @@ export function confirmLocalAiGraderCalibrationActivationV1(
   }, fetchImpl);
 }
 
+export function abortLocalAiGraderCalibrationActivationV1(
+  input: {
+    baseUrl: string;
+    stationToken: string;
+    pendingAuthority: AiGraderCalibrationPendingAuthorityV1;
+  },
+  fetchImpl: typeof fetch = fetch,
+) {
+  return localActivationAction({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    action: "abort-calibration-activation",
+    body: {
+      calibrationPendingAuthority:
+        aiGraderCalibrationPendingAuthorityV1Schema.parse(input.pendingAuthority),
+    },
+  }, fetchImpl);
+}
+
 export type AiGraderCalibrationActivationWorkflowSelectionV1 = {
   action: "activate" | "reactivate";
   snapshot: AiGraderCalibrationSnapshotProjectionV1;
@@ -559,6 +729,8 @@ export type AiGraderCalibrationActivationWorkflowSelectionV1 = {
 };
 
 export type AiGraderCalibrationActivationWorkflowResultV1 = {
+  observationAuthority: AiGraderCalibrationObservationAuthorityV1;
+  workstationObservation: AiGraderCalibrationWorkstationObservationV1;
   pending: AiGraderCalibrationActivationPendingResponseV1;
   localPending: AiGraderCalibrationLocalActivationStateV1;
   completed: AiGraderCalibrationCompleteActivationResponseV1;
@@ -617,9 +789,37 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
   const idempotency = input.idempotencyKeyFactory ?? newIdempotencyKey;
   let pending: AiGraderCalibrationActivationPendingResponseV1 | undefined;
   let completed: AiGraderCalibrationCompleteActivationResponseV1 | undefined;
+  let observationAuthority: AiGraderCalibrationObservationAuthorityV1 | undefined;
+  let workstationObservation: AiGraderCalibrationWorkstationObservationV1 | undefined;
   let failureStage: "PENDING_AUTHORITY_UNAVAILABLE" | "LOCAL_PREPARATION_FAILED" | "HOSTED_COMPLETION_FAILED" =
     "PENDING_AUTHORITY_UNAVAILABLE";
   try {
+    const observationResponse = await requestAiGraderCalibrationObservationAuthorityV1({
+      token: input.freshAdminToken,
+      rigId: snapshot.rigId,
+      snapshotId: snapshot.snapshotId,
+      expectedRegistryRevision,
+    }, fetchImpl);
+    observationAuthority = observationResponse.observationAuthority;
+    exactMatch(observationAuthority.rigId, snapshot.rigId, "observation rig");
+    exactMatch(observationAuthority.snapshotId, snapshot.snapshotId, "observation snapshot");
+    exactMatch(observationAuthority.registryRevision, expectedRegistryRevision, "observation registry revision");
+    const localObservation = await observeLocalAiGraderCalibrationActivationV1({
+      baseUrl: input.baseUrl,
+      stationToken: input.stationToken,
+      observationAuthority,
+    }, fetchImpl);
+    if (!localObservation.observation || localObservation.state !== "IDLE") {
+      throw new AiGraderCalibrationActivationTransportError(
+        "Local helper did not return one immutable workstation runtime observation.",
+        409,
+        "AI_GRADER_CALIBRATION_OBSERVATION_UNAVAILABLE",
+      );
+    }
+    workstationObservation = localObservation.observation;
+    exactMatch(workstationObservation.observationId, observationAuthority.observationId, "workstation observation ID");
+    exactMatch(workstationObservation.snapshotId, snapshot.snapshotId, "workstation observation snapshot");
+
     pending = await requestAiGraderCalibrationActivationV1({
       token: input.freshAdminToken,
       action: input.selection.action,
@@ -629,6 +829,8 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
       expectedRegistryRevision,
       idempotencyKey: idempotency("request"),
       reason,
+      observationAuthority,
+      workstationObservation,
     }, fetchImpl);
     exactMatch(pending.activation.rigId, snapshot.rigId, "rig");
     exactMatch(pending.activation.snapshotId, snapshot.snapshotId, "snapshot");
@@ -687,7 +889,14 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
     }
     exactMatch(localActive.authority.activationId, completed.activation.activationId, "local ACTIVE activation ID");
     exactMatch(localActive.authority.activationRevision, completed.activation.activationRevision, "local ACTIVE revision");
-    return { pending, localPending, completed, localActive };
+    return {
+      observationAuthority,
+      workstationObservation,
+      pending,
+      localPending,
+      completed,
+      localActive,
+    };
   } catch (error) {
     if (pending && !completed) {
       try {
@@ -698,6 +907,13 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
           idempotencyKey: idempotency("fail"),
           failureCode: failureStage,
         }, fetchImpl);
+        if (pending.pendingAuthority) {
+          await abortLocalAiGraderCalibrationActivationV1({
+            baseUrl: input.baseUrl,
+            stationToken: input.stationToken,
+            pendingAuthority: pending.pendingAuthority,
+          }, fetchImpl);
+        }
       } catch (failError) {
         const originalMessage = error instanceof Error ? error.message : "Calibration activation failed.";
         const failMessage = failError instanceof Error ? failError.message : "Hosted failure recording failed.";
