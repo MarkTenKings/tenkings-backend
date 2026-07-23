@@ -2,25 +2,14 @@ import { NextApiRequest } from "next";
 import { createHash } from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
+import {
+  HttpError,
+  parseRemoteAdminSession,
+  validateFreshAdminSession,
+  type AdminSession,
+} from "./adminSessionAuthority";
 
-export interface AdminSession {
-  sessionId: string;
-  tokenHash: string;
-  user: {
-    id: string;
-    phone: string | null;
-    displayName: string | null;
-  };
-}
-
-class HttpError extends Error {
-  statusCode: number;
-
-  constructor(statusCode: number, message: string) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
+export type { AdminSession } from "./adminSessionAuthority";
 
 const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
 
@@ -45,14 +34,6 @@ const resolveAuthServiceUrl = (): string | null => {
 
 const AUTH_SERVICE_URL = resolveAuthServiceUrl();
 
-const buildAuthUrl = (path: string) => {
-  if (!AUTH_SERVICE_URL) {
-    return null;
-  }
-  const suffix = path.startsWith("/") ? path : `/${path}`;
-  return `${AUTH_SERVICE_URL}${suffix}`;
-};
-
 const extractToken = (req: NextApiRequest): string => {
   const header = req.headers.authorization ?? "";
   const [scheme, token] = header.trim().split(/\s+/);
@@ -62,60 +43,52 @@ const extractToken = (req: NextApiRequest): string => {
   return token.trim();
 };
 
-async function lookupViaAuthService(token: string): Promise<AdminSession | null> {
-  const url = buildAuthUrl("/session");
+export async function lookupViaAuthService(
+  token: string,
+  options: {
+    authServiceUrl?: string | null;
+    fetchImpl?: typeof fetch;
+    nowMs?: number;
+  } = {},
+): Promise<AdminSession | null> {
+  const authServiceUrl =
+    options.authServiceUrl === undefined
+      ? AUTH_SERVICE_URL
+      : options.authServiceUrl
+        ? trimTrailingSlash(options.authServiceUrl)
+        : null;
+  const url = authServiceUrl ? `${authServiceUrl}/session` : null;
   if (!url) {
     return null;
   }
 
+  let response: Response;
   try {
-    const response = await fetch(url, {
+    response = await (options.fetchImpl ?? fetch)(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
-
-    if (response.status === 401 || response.status === 404) {
-      return null;
-    }
-
-    if (!response.ok) {
-      const message = await response.text().catch(() => "Auth service error");
-      console.warn("[admin] auth service returned non-ok status", {
-        status: response.status,
-        message,
-      });
-      return null;
-    }
-
-    const payload = (await response.json()) as {
-      session?: {
-        id?: string;
-        tokenHash?: string;
-        user?: {
-          id?: string;
-          phone?: string | null;
-          displayName?: string | null;
-        };
-      };
-    };
-
-    if (!payload?.session?.id || !payload.session.tokenHash || !payload.session.user?.id) {
-      console.warn("[admin] auth service returned invalid session payload");
-      return null;
-    }
-
-    return {
-      sessionId: payload.session.id,
-      tokenHash: payload.session.tokenHash,
-      user: {
-        id: payload.session.user.id,
-        phone: payload.session.user.phone ?? null,
-        displayName: payload.session.user.displayName ?? null,
-      },
-    };
   } catch (error) {
-    console.warn("[admin] auth service lookup threw", error);
+    console.warn("[admin] auth service lookup unavailable", {
+      name: error instanceof Error ? error.name : "UnknownError",
+    });
     return null;
   }
+
+  if (response.status === 401 || response.status === 404) {
+    throw new HttpError(401, "Session not found");
+  }
+  if (!response.ok) {
+    console.warn("[admin] auth service returned non-ok status", { status: response.status });
+    throw new HttpError(response.status >= 500 ? 503 : 502, "Auth service session lookup failed");
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new HttpError(502, "Auth service returned an invalid session response");
+  }
+  return parseRemoteAdminSession(payload, token, options.nowMs);
 }
 
 export async function requireAdminSession(req: NextApiRequest): Promise<AdminSession> {
@@ -150,6 +123,7 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
     return {
       sessionId: `operator-key:${operatorUser.id}`,
       tokenHash: "operator-key",
+      authority: "operator-key",
       user: {
         id: operatorUser.id,
         phone: operatorUser.phone,
@@ -196,6 +170,9 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
   return {
     sessionId: session.id,
     tokenHash: session.tokenHash,
+    authority: "local-database",
+    createdAt: session.createdAt,
+    expiresAt: session.expiresAt,
     user: {
       id: user.id,
       phone: user.phone,
@@ -215,25 +192,15 @@ export async function requireFreshHumanAdminSession(
   maximumAgeMs = FRESH_HUMAN_ADMIN_SESSION_MAX_AGE_MS,
 ): Promise<AdminSession> {
   const admin = await requireAdminSession(req);
-  if (admin.sessionId.startsWith("operator-key:") || admin.tokenHash === "operator-key") {
-    throw new HttpError(403, "Fresh human-admin authentication required");
-  }
-  const session = await prisma.session.findUnique({
-    where: { id: admin.sessionId },
-    include: { user: true },
+  return validateFreshAdminSession(admin, {
+    maximumAgeMs,
+    async findLocalSession(id) {
+      return prisma.session.findUnique({
+        where: { id },
+        include: { user: true },
+      });
+    },
   });
-  const now = Date.now();
-  if (!session || !session.user || session.user.id !== admin.user.id || session.tokenHash !== admin.tokenHash) {
-    throw new HttpError(401, "Fresh human-admin session could not be verified");
-  }
-  if (session.expiresAt.getTime() <= now) {
-    throw new HttpError(401, "Session expired");
-  }
-  if (!Number.isSafeInteger(maximumAgeMs) || maximumAgeMs < 60_000 ||
-      now - session.createdAt.getTime() > maximumAgeMs) {
-    throw new HttpError(403, "Fresh human-admin authentication required");
-  }
-  return admin;
 }
 
 
