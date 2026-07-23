@@ -13,6 +13,7 @@ import {
   type AiGraderCalibrationConsoleAction,
   type AiGraderCalibrationConsoleViewModel,
 } from "../../lib/aiGraderCalibrationConsole";
+import { claimAiGraderCalibrationAdminPrompt } from "../../lib/aiGraderCalibrationAuthPrompt";
 import {
   listAiGraderCalibrationActivationsV1,
   readAiGraderCalibrationActivationStatusV1,
@@ -138,6 +139,7 @@ export default function AiGraderCalibrationPage() {
   const initialBinding = displayModel.source === "authoritative_bridge" ? displayModel.previewBinding : undefined;
   const [previewEpochState, setPreviewEpochState] = useState<AiGraderPreviewEpochState>(() => createAiGraderPreviewEpochState(initialBinding));
   const previewEpochStateRef = useRef(previewEpochState);
+  const automaticAdminPromptClaimRef = useRef(false);
   const [freshnessNow, setFreshnessNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -145,7 +147,16 @@ export default function AiGraderCalibrationPage() {
   }, [previewEpochState]);
 
   useEffect(() => {
-    if (!router.isReady || localMock || sessionLoading || session) return;
+    if (session) {
+      automaticAdminPromptClaimRef.current = false;
+      return;
+    }
+    if (
+      !router.isReady
+      || localMock
+      || sessionLoading
+      || !claimAiGraderCalibrationAdminPrompt(automaticAdminPromptClaimRef)
+    ) return;
     void ensureSession({ message: "Admin authentication is required to open calibration." }).catch(() => undefined);
   }, [ensureSession, localMock, router.isReady, session, sessionLoading]);
 

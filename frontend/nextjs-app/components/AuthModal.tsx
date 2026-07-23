@@ -94,6 +94,8 @@ export default function AuthModal({
           <label className="block text-sm text-slate-200">
             Mobile number
             <input
+              type="tel"
+              name="phone"
               value={phone}
               onChange={(event) => onPhoneChange(event.target.value)}
               placeholder="555 555 5555"
