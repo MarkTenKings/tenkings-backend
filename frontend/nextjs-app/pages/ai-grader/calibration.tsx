@@ -155,10 +155,10 @@ export default function AiGraderCalibrationPage() {
       !router.isReady
       || localMock
       || sessionLoading
-      || !claimAiGraderCalibrationAdminPrompt(automaticAdminPromptClaimRef)
+      || !claimAiGraderCalibrationAdminPrompt(automaticAdminPromptClaimRef, registryBusy)
     ) return;
     void ensureSession({ message: "Admin authentication is required to open calibration." }).catch(() => undefined);
-  }, [ensureSession, localMock, router.isReady, session, sessionLoading]);
+  }, [ensureSession, localMock, registryBusy, router.isReady, session, sessionLoading]);
 
   const applyV1_2Status = useCallback((status: MathematicalCalibrationV1_2SessionStatusDto) => {
     setV1_2Status(status);
