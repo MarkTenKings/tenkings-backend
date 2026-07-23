@@ -63,6 +63,7 @@ All routes are POST-only. The route selects the action; authenticated server sta
 
 | Action | Route | Request DTO | Response DTO |
 | --- | --- | --- | --- |
+| Resolve sole imported TRUSTED registry | `/api/admin/ai-grader/calibration-activations/resolve-trusted` | `AiGraderCalibrationActivationResolveTrustedRequestV1` | `AiGraderCalibrationActivationResolveTrustedResponseV1` |
 | list | `/api/admin/ai-grader/calibration-activations/list` | `AiGraderCalibrationActivationListRequestV1` | `AiGraderCalibrationActivationListResponseV1` |
 | status | `/api/admin/ai-grader/calibration-activations/status` | `AiGraderCalibrationActivationStatusRequestV1` | `AiGraderCalibrationActivationStatusResponseV1` |
 | activate | `/api/admin/ai-grader/calibration-activations/activate` | `AiGraderCalibrationActivateRequestV1` | `AiGraderCalibrationActivationPendingResponseV1` |
@@ -74,6 +75,8 @@ All routes are POST-only. The route selects the action; authenticated server sta
 The route constants are exported as `AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1`. Route names and exported DTO names are unchanged. Pending responses contain the server-built and server-signed `AiGraderCalibrationPendingAuthorityV1`, including the exact operating context. Complete and Start responses contain a signed ACTIVE envelope. Complete accepts only the workstation receipt plus exact activation/revision/idempotency identifiers; it does not accept a browser-declared pending or ACTIVE authority.
 
 List/status projections carry stable activation ID, activation hash, event revision, state, snapshot/rig IDs, all exact hashes, receipt hash, pending expiry, requested/local/active/terminal timestamps, prior activation, and successor linkage. Incomplete legacy snapshots are explicitly projected as ineligible.
+
+The read-only `resolve-trusted` route accepts an exact empty body and therefore cannot accept a browser-selected rig or snapshot. It is used only when no live local mathematical-calibration session projects a rig. Hosted requires exactly one eligible TRUSTED mathematical snapshot, exact immutable storage bytes and context hashes, one matching active tenant/location/rig/version parent chain, one tenant workstation public identity, the configured hosted signer, and no active, pending, or historical competing activation. Zero or multiple TRUSTED snapshots, any parent/hash/configuration mismatch, or any competing authority fails closed without creating an activation or touching local hardware. When a live local session does project an exact rig, the original rig-scoped list/status path remains authoritative.
 
 List/status use the existing admin session. Trust, activate, reactivate, complete, fail, revoke, and supersede require `requireFreshHumanAdminSession`: a currently stored human session no older than 15 minutes. Static operator keys and service accounts are rejected. The Start authority route permits only a human Production actor.
 

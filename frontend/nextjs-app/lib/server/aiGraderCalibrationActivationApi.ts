@@ -9,6 +9,7 @@ import type {
 type AdminIdentity = { user: { id: string } };
 type JsonRecord = Record<string, unknown>;
 type ActivationService = {
+  resolveTrustedRegistry(): Promise<any>;
   list(rigId: string, includeIncomplete?: boolean): Promise<any>;
   status(rigId: string): Promise<any>;
   requestActivation(
@@ -76,6 +77,11 @@ export function createAiGraderCalibrationActivationApiHandler(
         ? await deps.requireFreshAdminSession(req)
         : await deps.requireAdminSession(req);
 
+      if (action === "resolve-trusted") {
+        exactBody(req.body, []);
+        const resolved = await deps.service.resolveTrustedRegistry();
+        return res.status(200).json({ ok: true, ...resolved });
+      }
       if (action === "list") {
         const input = exactBody(req.body, ["rigId", "includeIncomplete"]);
         if (input.includeIncomplete !== undefined && typeof input.includeIncomplete !== "boolean") {

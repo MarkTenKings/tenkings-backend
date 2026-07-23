@@ -16,9 +16,13 @@ import {
 import {
   listAiGraderCalibrationActivationsV1,
   readAiGraderCalibrationActivationStatusV1,
+  resolveTrustedAiGraderCalibrationRegistryV1,
   runAiGraderCalibrationActivationWorkflowV1,
   type AiGraderCalibrationSnapshotProjectionV1,
 } from "../../lib/aiGraderCalibrationActivationClient";
+import {
+  resolveAiGraderCalibrationRegistryForConsoleV1,
+} from "../../lib/aiGraderCalibrationRegistryResolver";
 import {
   listMathematicalCalibrationV1_2Sessions,
   mutateMathematicalCalibrationV1_2Session,
@@ -175,15 +179,20 @@ export default function AiGraderCalibrationPage() {
     setRegistryState((current) => ({ ...current, loading: true, error: undefined }));
     try {
       const credentials = pairedStationCredentials();
-      const stationStatus = await callAiGraderStationBridge({ ...credentials, action: "status" });
-      const rigId = stationStatus.mathematicalCalibration?.rigId?.trim();
-      if (!rigId) throw new Error("The paired helper did not project one exact rig identity for the hosted registry.");
-      const listed = await listAiGraderCalibrationActivationsV1({ token, rigId, includeIncomplete: true });
-      const status = await readAiGraderCalibrationActivationStatusV1({ token, rigId });
-      if (listed.registry.rigId !== rigId || listed.registry.registryRevision !== status.registryRevision) {
-        throw new Error("Hosted registry changed while loading. Refresh before selecting a calibration.");
-      }
-      setRegistryState({ loading: false, registry: listed.registry, status });
+      const resolved = await resolveAiGraderCalibrationRegistryForConsoleV1({
+        readLocalRigId: async () => {
+          const stationStatus = await callAiGraderStationBridge({ ...credentials, action: "status" });
+          return stationStatus.mathematicalCalibration?.rigId;
+        },
+        listByRigId: (rigId) => listAiGraderCalibrationActivationsV1({
+          token,
+          rigId,
+          includeIncomplete: true,
+        }),
+        readStatusByRigId: (rigId) => readAiGraderCalibrationActivationStatusV1({ token, rigId }),
+        resolveSoleHostedTrusted: () => resolveTrustedAiGraderCalibrationRegistryV1({ token }),
+      });
+      setRegistryState({ loading: false, registry: resolved.registry, status: resolved.status });
     } catch (error) {
       setRegistryState({
         loading: false,

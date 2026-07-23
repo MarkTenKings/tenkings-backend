@@ -8,6 +8,7 @@ import { normalizeAiGraderStationBridgeUrl } from "./aiGraderStationBridgeClient
  * manufactures, or interprets activation authority.
  */
 export const AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1 = {
+  resolveTrusted: "/api/admin/ai-grader/calibration-activations/resolve-trusted",
   list: "/api/admin/ai-grader/calibration-activations/list",
   status: "/api/admin/ai-grader/calibration-activations/status",
   activate: "/api/admin/ai-grader/calibration-activations/activate",
@@ -277,6 +278,11 @@ const statusResponseSchema = z.object({
   authority: aiGraderCalibrationActivationAuthorityV1Schema.nullable(),
   observedAt: timestamp,
 }).strict();
+const resolvedTrustedResponseSchema = z.object({
+  ok: z.literal(true),
+  registry: aiGraderCalibrationActivationRegistryProjectionV1Schema,
+  status: statusResponseSchema,
+}).strict();
 const pendingResponseSchema = z.object({
   ok: z.literal(true),
   registryRevision: sha256,
@@ -314,6 +320,7 @@ export type AiGraderCalibrationActivationProjectionV1 = z.infer<typeof aiGraderC
 export type AiGraderCalibrationActivationRegistryProjectionV1 = z.infer<typeof aiGraderCalibrationActivationRegistryProjectionV1Schema>;
 export type AiGraderCalibrationActivationListResponseV1 = z.infer<typeof listResponseSchema>;
 export type AiGraderCalibrationActivationStatusResponseV1 = z.infer<typeof statusResponseSchema>;
+export type AiGraderCalibrationActivationResolvedTrustedResponseV1 = z.infer<typeof resolvedTrustedResponseSchema>;
 export type AiGraderCalibrationActivationPendingResponseV1 = z.infer<typeof pendingResponseSchema>;
 export type AiGraderCalibrationCompleteActivationResponseV1 = z.infer<typeof completeResponseSchema>;
 export type AiGraderCalibrationFailActivationResponseV1 = z.infer<typeof failResponseSchema>;
@@ -378,6 +385,19 @@ export function listAiGraderCalibrationActivationsV1(
     ...(input.includeIncomplete === undefined ? {} : { includeIncomplete: input.includeIncomplete }),
   });
   return hostedPost(AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.list, body, input.token, listResponseSchema, fetchImpl);
+}
+
+export function resolveTrustedAiGraderCalibrationRegistryV1(
+  input: { token: string },
+  fetchImpl: typeof fetch = fetch,
+) {
+  return hostedPost(
+    AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.resolveTrusted,
+    {},
+    input.token,
+    resolvedTrustedResponseSchema,
+    fetchImpl,
+  );
 }
 
 export function readAiGraderCalibrationActivationStatusV1(

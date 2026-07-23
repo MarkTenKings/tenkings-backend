@@ -19,6 +19,7 @@ import {
   canonicalAiGraderCalibrationJsonV1,
   canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
+  canonicalAiGraderRuntimeContextV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationActivationProjectionV1,
   type AiGraderCalibrationActivationRegistryProjectionV1,
@@ -684,6 +685,120 @@ export function createAiGraderCalibrationActivationService(
     return loadRegistry(db, rigId, date(now(), "now"), includeIncomplete);
   }
 
+  async function resolveTrustedRegistry() {
+    requireHostedAuthoritySigningKey();
+    if (!db.calibrationSnapshot?.findMany) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_SCHEMA_UNAVAILABLE",
+        "Calibration snapshot registry is unavailable.",
+        503,
+      );
+    }
+    const trustedRows = await db.calibrationSnapshot.findMany({
+      where: {
+        calibrationType: "MATHEMATICAL_GRADING_V1",
+        trustStatus: "TRUSTED",
+        revokedAt: null,
+      },
+      include: {
+        rig: {
+          include: {
+            tenant: true,
+            location: true,
+          },
+        },
+      },
+      orderBy: [{ trustedAt: "desc" }, { id: "asc" }],
+      take: 2,
+    });
+    if (!Array.isArray(trustedRows) || trustedRows.length !== 1) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE",
+        "Hosted activation resolution requires exactly one trusted Mathematical CalibrationSnapshot.",
+        409,
+      );
+    }
+
+    const snapshot = record(trustedRows[0], "resolved CalibrationSnapshot");
+    const rigId = text(snapshot.rigId, "snapshot.rigId");
+    exactSnapshotForActivation(snapshot, rigId);
+    const context = parseContext(snapshot);
+    const rig = record(snapshot.rig, "snapshot.rig");
+    const tenant = record(rig.tenant, "snapshot.rig.tenant");
+    const location = record(rig.location, "snapshot.rig.location");
+    const canonicalRigMatches =
+      rig.id === rigId &&
+      rig.status === "ACTIVE" &&
+      rig.label === rigId &&
+      rig.tenantId === tenant.id &&
+      tenant.slug === tenant.id &&
+      rig.locationId === location.id &&
+      location.tenantId === tenant.id &&
+      location.name === location.id &&
+      context.rig.tenantId === tenant.id &&
+      context.rig.rigId === rigId &&
+      context.rig.rigVersion === rig.rigVersion &&
+      context.rig.locationId === location.id;
+    if (!canonicalRigMatches) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+        "The sole trusted snapshot does not match one exact active tenant/location/rig/version authority.",
+        503,
+      );
+    }
+    const exactContextBindings =
+      snapshot.mathematicalArtifactSha256 === context.calibration.rigCharacterizationSha256 &&
+      snapshot.mathematicalRigCharacterizationSha256 === context.calibration.rigCharacterizationSha256 &&
+      snapshot.mathematicalBundleManifestSha256 === context.calibration.bundleManifestSha256 &&
+      snapshot.mathematicalMemberLedgerSha256 === context.calibration.memberLedgerSha256 &&
+      snapshot.mathematicalRuntimeContextHash === hash(canonicalAiGraderRuntimeContextV1(context));
+    if (!exactContextBindings) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+        "The sole trusted snapshot does not reproduce its immutable bundle/runtime/rig hash authority.",
+        503,
+      );
+    }
+    const tenantWorkstationKeys = [...workstationKeys.values()]
+      .filter((entry) => entry.tenantId === tenant.id);
+    if (tenantWorkstationKeys.length !== 1) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
+        "Hosted activation resolution requires one canonical workstation public identity for the exact tenant.",
+        503,
+      );
+    }
+
+    await verifySnapshotStorage(snapshot);
+    const registry = await loadRegistry(db, rigId, date(now(), "now"), true);
+    const exactTrustedSnapshots = registry.snapshots.filter((entry) =>
+      entry.trustStatus === "TRUSTED" && entry.activationEligible);
+    if (
+      exactTrustedSnapshots.length !== 1 ||
+      exactTrustedSnapshots[0]?.snapshotId !== snapshot.id ||
+      registry.pendingActivationId !== null ||
+      registry.activeActivationId !== null ||
+      registry.activations.length !== 0
+    ) {
+      return failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+        "Hosted activation resolution found ambiguous snapshot or competing activation authority.",
+        409,
+      );
+    }
+    return {
+      registry,
+      status: {
+        ok: true,
+        registryRevision: registry.registryRevision,
+        active: null,
+        pending: null,
+        authority: null,
+        observedAt: registry.observedAt,
+      },
+    };
+  }
+
   async function status(rigIdValue: string) {
     const registry = await list(rigIdValue, true);
     const active = registry.activeActivationId
@@ -1174,6 +1289,7 @@ export function createAiGraderCalibrationActivationService(
   }
 
   return {
+    resolveTrustedRegistry,
     list,
     status,
     requestActivation,

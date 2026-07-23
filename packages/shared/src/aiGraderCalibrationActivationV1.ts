@@ -17,6 +17,7 @@ export const AI_GRADER_CALIBRATION_ACTIVATION_API_V1 =
 export const AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1 =
   "/api/ai-grader/calibration-activation/status" as const;
 export const AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1 = {
+  resolveTrusted: `${AI_GRADER_CALIBRATION_ACTIVATION_API_V1}/resolve-trusted`,
   list: `${AI_GRADER_CALIBRATION_ACTIVATION_API_V1}/list`,
   status: `${AI_GRADER_CALIBRATION_ACTIVATION_API_V1}/status`,
   activate: `${AI_GRADER_CALIBRATION_ACTIVATION_API_V1}/activate`,
@@ -405,6 +406,12 @@ export type AiGraderCalibrationActivationRegistryProjectionV1 = {
 
 export type AiGraderCalibrationActivationListRequestV1 = { rigId: string; includeIncomplete?: boolean };
 export type AiGraderCalibrationActivationListResponseV1 = { ok: true; registry: AiGraderCalibrationActivationRegistryProjectionV1 };
+export type AiGraderCalibrationActivationResolveTrustedRequestV1 = Record<string, never>;
+export type AiGraderCalibrationActivationResolveTrustedResponseV1 = {
+  ok: true;
+  registry: AiGraderCalibrationActivationRegistryProjectionV1;
+  status: AiGraderCalibrationActivationStatusResponseV1;
+};
 export type AiGraderCalibrationActivationStatusRequestV1 = { rigId: string };
 export type AiGraderCalibrationActivationStatusResponseV1 = {
   ok: true;
