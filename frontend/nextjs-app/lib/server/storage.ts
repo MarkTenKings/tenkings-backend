@@ -352,6 +352,26 @@ export async function writeLocalFile(storageKey: string, data: Buffer) {
   return filePath;
 }
 
+export async function readStorageBodyBuffer(body: unknown) {
+  if (!body) {
+    throw new Error("Unable to read S3 object body");
+  }
+  if (typeof (body as any).transformToByteArray === "function") {
+    return Buffer.from(await (body as any).transformToByteArray());
+  }
+  if (typeof (body as any).on !== "function") {
+    throw new Error("Unable to read S3 object body");
+  }
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    (body as any)
+      .on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+      .on("end", () => resolve())
+      .on("error", (err: Error) => reject(err));
+  });
+  return Buffer.concat(chunks);
+}
+
 export async function readStorageBuffer(storageKey: string) {
   const mode = getStorageMode();
   if (mode === "s3") {
@@ -362,18 +382,7 @@ export async function readStorageBuffer(storageKey: string) {
         Key: storageKey,
       })
     );
-    const body = response.Body;
-    if (!body || typeof (body as any).on !== "function") {
-      throw new Error("Unable to read S3 object body");
-    }
-    const chunks: Buffer[] = [];
-    await new Promise<void>((resolve, reject) => {
-      (body as any)
-        .on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
-        .on("end", () => resolve())
-        .on("error", (err: Error) => reject(err));
-    });
-    return Buffer.concat(chunks);
+    return readStorageBodyBuffer(response.Body);
   }
 
   const filePath = getLocalFilePath(storageKey);
