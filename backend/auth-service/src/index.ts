@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { prisma, Prisma } from "@tenkings/database";
+import { buildAuthSessionResponse } from "./authSessionResponse.js";
 import { TURNSTILE_SEND_CODE_ACTION, verifyTurnstileToken } from "./turnstile.js";
 
 const app = express();
@@ -195,7 +196,7 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
       return { user, wallet };
     });
 
-    console.log(`[auth] verify success`, { userId: payload.user.id, tokenHash });
+    console.log(`[auth] verify success`, { userId: payload.user.id });
 
     res.json({
       token: sessionToken,
@@ -232,25 +233,7 @@ app.get(["/auth/session", "/session"], async (req, res, next) => {
 
     const wallet = await resolveWallet(session.user.id, session.user.wallet);
 
-    res.json({
-      session: {
-        id: session.id,
-        tokenHash: session.tokenHash,
-        expiresAt: session.expiresAt,
-        user: {
-          id: session.user.id,
-          phone: session.user.phone,
-          displayName: session.user.displayName,
-          avatarUrl: session.user.avatarUrl,
-        },
-      },
-      wallet: wallet
-        ? {
-            id: wallet.id,
-            balance: wallet.balance,
-          }
-        : null,
-    });
+    res.json(buildAuthSessionResponse(session, wallet));
   } catch (error) {
     console.error("auth session lookup failed", error);
     next(error);
