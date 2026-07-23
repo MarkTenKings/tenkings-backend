@@ -11,6 +11,9 @@ import { requireAdminSession, requireFreshHumanAdminSession } from "../../../../
 import {
   createAiGraderMathematicalCalibrationSnapshotApiHandler,
 } from "../../../../../lib/server/aiGraderMathematicalCalibrationSnapshotApi";
+import {
+  withCalibrationBundleLoaderDiagnostics,
+} from "../../../../../lib/server/aiGraderCalibrationBundleLoaderDiagnostic";
 import { readStorageBuffer } from "../../../../../lib/server/storage";
 
 export const config = {
@@ -18,12 +21,17 @@ export const config = {
   api: { bodyParser: { sizeLimit: "64kb" } },
 };
 
+const loadFinalizedBundleWithDiagnostics =
+  withCalibrationBundleLoaderDiagnostics(
+    loadFixedRigMathematicalCalibrationBundleFromStorageV1,
+  );
+
 const runtime = createAiGraderMathematicalCalibrationSnapshotApiHandler({
   requireAdminSession,
   requireFreshAdminSession: requireFreshHumanAdminSession,
   service: createAiGraderMathematicalCalibrationSnapshotService(prisma as any, {
     readArtifactBytes: async (key) => readStorageBuffer(key),
-    loadFinalizedBundle: loadFixedRigMathematicalCalibrationBundleFromStorageV1,
+    loadFinalizedBundle: loadFinalizedBundleWithDiagnostics,
   }),
   activationService: createAiGraderCalibrationActivationService(prisma as any),
 });
