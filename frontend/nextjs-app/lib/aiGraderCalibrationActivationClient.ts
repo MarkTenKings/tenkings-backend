@@ -701,6 +701,23 @@ export function confirmLocalAiGraderCalibrationActivationV1(
   }, fetchImpl);
 }
 
+/**
+ * Hardware-free convergence after hosted ACTIVE exists. The caller must supply
+ * the exact signed ACTIVE authority returned by the hosted registry; this path
+ * performs only the idempotent local confirmation action.
+ */
+export function reconcileLocalAiGraderCalibrationActivationV1(
+  input: { baseUrl: string; stationToken: string; authority: AiGraderCalibrationActivationAuthorityV1 },
+  fetchImpl: typeof fetch = fetch,
+) {
+  return confirmLocalAiGraderCalibrationActivationV1(input, fetchImpl);
+}
+
+function isRecoverableLocalConfirmationInterruption(error: unknown) {
+  return error instanceof Error &&
+    (!(error instanceof AiGraderCalibrationActivationTransportError) || error.status >= 500);
+}
+
 export function abortLocalAiGraderCalibrationActivationV1(
   input: {
     baseUrl: string;
@@ -875,11 +892,21 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
     exactMatch(completed.authority.activationId, pending.activation.activationId, "ACTIVE authority ID");
     exactMatch(completed.authority.activationRevision, completed.activation.activationRevision, "ACTIVE authority revision");
 
-    const localActive = await confirmLocalAiGraderCalibrationActivationV1({
-      baseUrl: input.baseUrl,
-      stationToken: input.stationToken,
-      authority: completed.authority,
-    }, fetchImpl);
+    let localActive: AiGraderCalibrationLocalActivationStateV1;
+    try {
+      localActive = await confirmLocalAiGraderCalibrationActivationV1({
+        baseUrl: input.baseUrl,
+        stationToken: input.stationToken,
+        authority: completed.authority,
+      }, fetchImpl);
+    } catch (error) {
+      if (!isRecoverableLocalConfirmationInterruption(error)) throw error;
+      localActive = await reconcileLocalAiGraderCalibrationActivationV1({
+        baseUrl: input.baseUrl,
+        stationToken: input.stationToken,
+        authority: completed.authority,
+      }, fetchImpl);
+    }
     if (localActive.state !== "ACTIVE" || !localActive.authority) {
       throw new AiGraderCalibrationActivationTransportError(
         "Hosted activation completed, but local ACTIVE confirmation failed closed.",

@@ -1,5 +1,16 @@
 import { constants as fsConstants } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import {
   createHash,
   createPublicKey,
@@ -433,6 +444,37 @@ export function createMathematicalCalibrationActivationRegistryV1(
     }
   }
 
+  async function inventoryRetainedObservationFiles(
+    stagingDir: string,
+    currentDir = stagingDir,
+  ): Promise<Array<{ fileName: string; sha256: string; byteSize: number }>> {
+    const retained: Array<{ fileName: string; sha256: string; byteSize: number }> = [];
+    const entries = (await readdir(currentDir, { withFileTypes: true }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await chmod(entryPath, 0o700);
+        retained.push(...await inventoryRetainedObservationFiles(stagingDir, entryPath));
+        continue;
+      }
+      if (!entry.isFile()) {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_EVIDENCE_UNSUPPORTED",
+          "Observation staging contains an unsupported filesystem entry; evidence was retained fail closed.",
+        );
+      }
+      const bytes = await readFile(entryPath);
+      await chmod(entryPath, 0o600);
+      retained.push({
+        fileName: path.relative(stagingDir, entryPath).split(path.sep).join("/"),
+        sha256: sha256(bytes),
+        byteSize: bytes.byteLength,
+      });
+    }
+    return retained.sort((left, right) => left.fileName.localeCompare(right.fileName));
+  }
+
   async function readWorkstationObservation(
     observationId: string,
     expectedSha256: string,
@@ -526,7 +568,6 @@ export function createMathematicalCalibrationActivationRegistryV1(
     }
     await mkdir(stagingDir, { recursive: false, mode: 0o700 });
     const imagePath = path.join(stagingDir, "activation-runtime-evidence.png");
-    let imageCreated = false;
     try {
       const result = await options.observeActivationRuntime(expectedContext, stagingDir);
       const runtimeObservation = aiGraderCalibrationRuntimeObservationV1Schema.parse(result.runtimeObservation);
@@ -555,7 +596,6 @@ export function createMathematicalCalibrationActivationRegistryV1(
         fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Runtime observation did not match the exact hosted context and evidence contract.");
       }
       const imageBytes = await readFile(imagePath);
-      imageCreated = true;
       if (
         sha256(imageBytes) !== result.evidenceImage.sha256 ||
         imageBytes.byteLength !== result.evidenceImage.byteSize
@@ -599,34 +639,34 @@ export function createMathematicalCalibrationActivationRegistryV1(
       await rename(stagingDir, successfulDir);
       return observation;
     } catch (error) {
-      if (!imageCreated) imageCreated = await exists(imagePath);
-      if (imageCreated) {
-        try {
-          const imageBytes = await readFile(imagePath);
-          await chmod(imagePath, 0o600);
-          await writeImmutable(path.join(stagingDir, "failed-observation-v1.json"), {
-            schemaVersion: "ten-kings-ai-grader-calibration-failed-observation-v1",
-            state: "FAILED_BEFORE_ACTIVATION_AUTHORITY",
-            observationId: authority.observationId,
-            snapshotId: authority.snapshotId,
-            rigId: authority.rigId,
-            bundleManifestSha256: authority.bundleManifestSha256,
-            memberLedgerSha256: authority.memberLedgerSha256,
-            runtimeContextHash: authority.runtimeContextHash,
-            operatingContextHash: authority.operatingContextHash,
-            evidenceImageFileName: "activation-runtime-evidence.png",
-            evidenceImageSha256: sha256(imageBytes),
-            evidenceImageByteSize: imageBytes.byteLength,
-            failureCode: error instanceof MathematicalCalibrationActivationRegistryV1Error
-              ? error.code
-              : "AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_FAILED",
-            failedAt: now().toISOString(),
-          });
-        } finally {
-          await rename(stagingDir, failedDir);
+      if (await exists(stagingDir)) {
+        const stagingEntries = await readdir(stagingDir);
+        if (stagingEntries.length === 0) {
+          await rmdir(stagingDir);
+        } else {
+          try {
+            const retainedEvidence = await inventoryRetainedObservationFiles(stagingDir);
+            await writeImmutable(path.join(stagingDir, "failed-observation-v1.json"), {
+              schemaVersion: "ten-kings-ai-grader-calibration-failed-observation-v1",
+              state: "FAILED_BEFORE_ACTIVATION_AUTHORITY",
+              observationId: authority.observationId,
+              snapshotId: authority.snapshotId,
+              rigId: authority.rigId,
+              bundleManifestSha256: authority.bundleManifestSha256,
+              memberLedgerSha256: authority.memberLedgerSha256,
+              runtimeContextHash: authority.runtimeContextHash,
+              operatingContextHash: authority.operatingContextHash,
+              retainedEvidence,
+              retainedEvidenceCount: retainedEvidence.length,
+              failureCode: error instanceof MathematicalCalibrationActivationRegistryV1Error
+                ? error.code
+                : "AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_FAILED",
+              failedAt: now().toISOString(),
+            });
+          } finally {
+            await rename(stagingDir, failedDir);
+          }
         }
-      } else if (await exists(stagingDir)) {
-        await rm(stagingDir, { recursive: true, force: false });
       }
       throw error;
     }

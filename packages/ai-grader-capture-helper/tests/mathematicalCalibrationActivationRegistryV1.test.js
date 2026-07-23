@@ -299,6 +299,14 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
       if (observationMode === "capture-failure") {
         throw new Error("camera capture failed before evidence creation");
       }
+      if (observationMode === "noncanonical-partial-evidence") {
+        await fs.writeFile(
+          path.join(evidenceDirectory, "activation-runtime-evidence.partial-20260721T190000000Z.png"),
+          Buffer.from("partial activation runtime evidence"),
+          { flag: "wx" },
+        );
+        throw new Error("camera adapter failed after writing noncanonical evidence");
+      }
       const imageBytes = Buffer.from("activation runtime evidence");
       await fs.writeFile(
         path.join(evidenceDirectory, "activation-runtime-evidence.png"),
@@ -364,6 +372,7 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   for (const [mode, suffix] of [
     ["preflight-safe-off", "preflight-failure"],
     ["capture-failure", "capture-failure"],
+    ["noncanonical-partial-evidence", "partial-evidence-failure"],
     ["missing-ack", "ack-failure"],
     ["camera-mismatch", "camera-failure"],
     ["settings-mismatch", "settings-failure"],
@@ -385,6 +394,35 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
         await fs.stat(failedDirectory).then(() => true, () => false),
         false,
         `${mode} leaves no empty failed-evidence directory`,
+      );
+    } else if (mode === "noncanonical-partial-evidence") {
+      const retainedName = "activation-runtime-evidence.partial-20260721T190000000Z.png";
+      const retainedBytes = Buffer.from("partial activation runtime evidence");
+      const failedRecord = JSON.parse(
+        await fs.readFile(path.join(failedDirectory, "failed-observation-v1.json"), "utf8"),
+      );
+      assert.equal(failedRecord.state, "FAILED_BEFORE_ACTIVATION_AUTHORITY");
+      assert.equal(failedRecord.observationId, failureAuthority.observationId);
+      assert.deepEqual(failedRecord.retainedEvidence, [{
+        fileName: retainedName,
+        sha256: sha(retainedBytes),
+        byteSize: retainedBytes.byteLength,
+      }]);
+      assert.equal(failedRecord.retainedEvidenceCount, 1);
+      assert.deepEqual(
+        await fs.readFile(path.join(failedDirectory, retainedName)),
+        retainedBytes,
+        "noncanonical adapter evidence remains byte-identical after atomic quarantine",
+      );
+      const callsBeforeRetry = activationObservationCalls;
+      await assert.rejects(
+        registry.observeActivation(failureAuthority),
+        (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT",
+      );
+      assert.equal(
+        activationObservationCalls,
+        callsBeforeRetry,
+        "failed observation identity blocks a second hardware observation",
       );
     } else {
       assert.equal(
