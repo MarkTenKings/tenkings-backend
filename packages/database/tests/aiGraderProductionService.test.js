@@ -371,6 +371,8 @@ function sampleV03ActivationAuthority(profile, bundleAuthority, overrides = {}) 
     runtimeContextHash: "8".repeat(64),
     rigCharacterizationSha256: profile.artifactSha256,
     operatingContextHash: "9".repeat(64),
+    observationId: "calibration-observation-v03",
+    workstationObservationSha256: "b".repeat(64),
     workstationReceiptSha256: "a".repeat(64),
     activatedAt: "2026-07-18T18:45:00.000Z",
     hostedAuthorityKeyId: "c".repeat(64),

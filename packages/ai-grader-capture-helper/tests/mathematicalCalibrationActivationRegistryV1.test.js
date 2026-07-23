@@ -133,6 +133,8 @@ function pendingAuthority(context, authority, artifactSha256, suffix) {
     runtimeContextHash: sha(canonicalAiGraderRuntimeContextV1(context)),
     rigCharacterizationSha256: artifactSha256,
     operatingContextHash: sha(canonicalAiGraderOperatingContextV1(context)),
+    observationId: `observation-${suffix}`,
+    workstationObservationSha256: sha(`workstation-observation:${suffix}`),
     operatingContextV1: context,
     requestedAt,
     pendingExpiresAt,
@@ -140,6 +142,27 @@ function pendingAuthority(context, authority, artifactSha256, suffix) {
     hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
     hostedAuthorityIssuedAt: requestedAt,
     hostedAuthorityExpiresAt: pendingExpiresAt,
+  });
+}
+
+function observationAuthority(context, authority, artifactSha256, suffix) {
+  return signHostedAuthority({
+    schemaVersion: "ten-kings-ai-grader-calibration-observation-authority-v1",
+    authorityPhase: "OBSERVATION",
+    observationId: `observation-${suffix}`,
+    registryRevision: sha(`registry:${suffix}`),
+    snapshotId: `snapshot-${suffix}`,
+    rigId: RIG_ID,
+    bundleManifestSha256: authority.bundleManifestSha256,
+    memberLedgerSha256: authority.memberLedgerSha256,
+    runtimeContextHash: sha(canonicalAiGraderRuntimeContextV1(context)),
+    rigCharacterizationSha256: artifactSha256,
+    operatingContextHash: sha(canonicalAiGraderOperatingContextV1(context)),
+    operatingContextV1: context,
+    hostedAuthorityKeyId: HOSTED_AUTHORITY_KEY_ID,
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: NOW.toISOString(),
+    hostedAuthorityExpiresAt: new Date(NOW.getTime() + 600000).toISOString(),
   });
 }
 
@@ -256,6 +279,8 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
 
   const { privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   let localNow = new Date(NOW);
+  let observationMode = "success";
+  let activationObservationCalls = 0;
   const registry = createMathematicalCalibrationActivationRegistryV1({
     rootDir: root,
     finalizedBundleStagingRoot,
@@ -266,6 +291,60 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     workstationPrivateKey: privateKey,
     hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
     liveOperatingContext: trustedLiveOperatingContext,
+    observeActivationRuntime: async (expected, evidenceDirectory) => {
+      activationObservationCalls += 1;
+      if (observationMode === "preflight-safe-off") {
+        throw new Error("preflight safe-off acknowledgement missing");
+      }
+      if (observationMode === "capture-failure") {
+        throw new Error("camera capture failed before evidence creation");
+      }
+      if (observationMode === "noncanonical-partial-evidence") {
+        await fs.writeFile(
+          path.join(evidenceDirectory, "activation-runtime-evidence.partial-20260721T190000000Z.png"),
+          Buffer.from("partial activation runtime evidence"),
+          { flag: "wx" },
+        );
+        throw new Error("camera adapter failed after writing noncanonical evidence");
+      }
+      const imageBytes = Buffer.from("activation runtime evidence");
+      await fs.writeFile(
+        path.join(evidenceDirectory, "activation-runtime-evidence.png"),
+        imageBytes,
+        { flag: "wx" },
+      );
+      if (observationMode === "final-safe-off") {
+        throw new Error("final safe-off acknowledgement missing");
+      }
+      const returnedObservation = structuredClone(observedRuntime);
+      if (observationMode === "missing-ack") {
+        returnedObservation.controller.acknowledgedWriteCount -= 1;
+      }
+      if (observationMode === "camera-mismatch") {
+        returnedObservation.camera.serial = "different-camera";
+      }
+      if (observationMode === "settings-mismatch") {
+        returnedObservation.capture.gain += 1;
+      }
+      trustedLiveOperatingContext.validateObservation(expected, returnedObservation);
+      if (observationMode === "evidence-write-failure") {
+        await fs.writeFile(
+          path.join(evidenceDirectory, "workstation-observation-v1.json"),
+          "conflicting bytes",
+          { flag: "wx" },
+        );
+      }
+      return {
+        runtimeObservation: returnedObservation,
+        evidenceImage: {
+          fileName: "activation-runtime-evidence.png",
+          mediaType: "image/png",
+          sha256: sha(imageBytes),
+          byteSize: imageBytes.byteLength,
+          observedAt: NOW.toISOString(),
+        },
+      };
+    },
     isIdle: async () => true,
     now: () => new Date(localNow),
   });
@@ -290,7 +369,107 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   assert.equal(ingested.bundlePath, bundlePath);
   assert.equal(await fs.readFile(bundlePath, "utf8"), "immutable finalized bundle fixture");
 
+  for (const [mode, suffix] of [
+    ["preflight-safe-off", "preflight-failure"],
+    ["capture-failure", "capture-failure"],
+    ["noncanonical-partial-evidence", "partial-evidence-failure"],
+    ["missing-ack", "ack-failure"],
+    ["camera-mismatch", "camera-failure"],
+    ["settings-mismatch", "settings-failure"],
+    ["final-safe-off", "final-safe-off-failure"],
+    ["evidence-write-failure", "write-failure"],
+  ]) {
+    observationMode = mode;
+    const beforeCalls = activationObservationCalls;
+    const failureAuthority = observationAuthority(context, authority, artifactSha256, suffix);
+    await assert.rejects(
+      registry.observeActivation(failureAuthority),
+    );
+    assert.equal(activationObservationCalls, beforeCalls + 1, `${mode} performs one observation attempt`);
+    assert.equal(await fs.stat(registry.paths.pointerPath).then(() => true, () => false), false);
+    assert.equal(await fs.stat(registry.paths.receiptsRoot).then(() => true, () => false), false);
+    const failedDirectory = path.join(registry.paths.failedEvidenceRoot, failureAuthority.observationId);
+    if (mode === "preflight-safe-off" || mode === "capture-failure") {
+      assert.equal(
+        await fs.stat(failedDirectory).then(() => true, () => false),
+        false,
+        `${mode} leaves no empty failed-evidence directory`,
+      );
+    } else if (mode === "noncanonical-partial-evidence") {
+      const retainedName = "activation-runtime-evidence.partial-20260721T190000000Z.png";
+      const retainedBytes = Buffer.from("partial activation runtime evidence");
+      const failedRecord = JSON.parse(
+        await fs.readFile(path.join(failedDirectory, "failed-observation-v1.json"), "utf8"),
+      );
+      assert.equal(failedRecord.state, "FAILED_BEFORE_ACTIVATION_AUTHORITY");
+      assert.equal(failedRecord.observationId, failureAuthority.observationId);
+      assert.deepEqual(failedRecord.retainedEvidence, [{
+        fileName: retainedName,
+        sha256: sha(retainedBytes),
+        byteSize: retainedBytes.byteLength,
+      }]);
+      assert.equal(failedRecord.retainedEvidenceCount, 1);
+      assert.deepEqual(
+        await fs.readFile(path.join(failedDirectory, retainedName)),
+        retainedBytes,
+        "noncanonical adapter evidence remains byte-identical after atomic quarantine",
+      );
+      const callsBeforeRetry = activationObservationCalls;
+      await assert.rejects(
+        registry.observeActivation(failureAuthority),
+        (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT",
+      );
+      assert.equal(
+        activationObservationCalls,
+        callsBeforeRetry,
+        "failed observation identity blocks a second hardware observation",
+      );
+    } else {
+      assert.equal(
+        await fs.readFile(path.join(failedDirectory, "activation-runtime-evidence.png"), "utf8"),
+        "activation runtime evidence",
+      );
+      const failedRecord = JSON.parse(
+        await fs.readFile(path.join(failedDirectory, "failed-observation-v1.json"), "utf8"),
+      );
+      assert.equal(failedRecord.state, "FAILED_BEFORE_ACTIVATION_AUTHORITY");
+      assert.equal(failedRecord.observationId, failureAuthority.observationId);
+    }
+  }
+  const collisionAuthority = observationAuthority(
+    context,
+    authority,
+    artifactSha256,
+    "create-collision",
+  );
+  await fs.mkdir(
+    path.join(registry.paths.successfulEvidenceRoot, collisionAuthority.observationId),
+    { recursive: true },
+  );
+  const callsBeforeCollision = activationObservationCalls;
+  await assert.rejects(
+    registry.observeActivation(collisionAuthority),
+    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT",
+  );
+  assert.equal(activationObservationCalls, callsBeforeCollision, "evidence collision blocks before hardware");
+  assert.equal(await fs.stat(registry.paths.pointerPath).then(() => true, () => false), false);
+
+  observationMode = "success";
+  const exactObservationAuthority = observationAuthority(context, authority, artifactSha256, "v1");
+  const observation = await registry.observeActivation(exactObservationAuthority);
+  const callsAfterSuccessfulObservation = activationObservationCalls;
+  assert.deepEqual(
+    await registry.observeActivation(exactObservationAuthority),
+    observation,
+    "an exact lost-response replay returns retained observation evidence without hardware",
+  );
+  assert.equal(activationObservationCalls, callsAfterSuccessfulObservation);
   const pending = pendingAuthority(context, authority, artifactSha256, "v1");
+  pending.workstationObservationSha256 = sha(canonicalAiGraderCalibrationJsonV1(observation));
+  Object.assign(pending, signHostedAuthority({
+    ...pending,
+    hostedAuthoritySignature: undefined,
+  }));
   const unsignedPending = structuredClone(pending);
   delete unsignedPending.hostedAuthoritySignature;
   await assert.rejects(
@@ -347,12 +526,18 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
   );
   const receipt = await registry.prepareActivation(pending);
-  await assert.rejects(
-    registry.prepareActivation(pending),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REPLAYED",
-  );
+  assert.deepEqual(await registry.prepareActivation(pending), receipt);
   assert.equal((await registry.readPointer()).state, "PENDING");
   assert.equal(receipt.observedOperatingContextHash, pending.operatingContextHash);
+  assert.deepEqual(await registry.abortPendingActivation(pending), { aborted: true });
+  assert.equal(await fs.stat(registry.paths.pointerPath).then(() => true, () => false), false);
+  assert.deepEqual(await registry.abortPendingActivation(pending), { aborted: false });
+  assert.deepEqual(
+    await registry.prepareActivation(pending),
+    receipt,
+    "exact immutable receipt can recover the same local pending state without hardware",
+  );
+  const callsAfterActivationObservation = activationObservationCalls;
 
   const receiptPath = path.join(root, "receipts", `${pending.activationId}.json`);
   const receiptSha256 = sha(await fs.readFile(receiptPath));
@@ -369,6 +554,8 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     runtimeContextHash: pending.runtimeContextHash,
     rigCharacterizationSha256: pending.rigCharacterizationSha256,
     operatingContextHash: pending.operatingContextHash,
+    observationId: pending.observationId,
+    workstationObservationSha256: pending.workstationObservationSha256,
     workstationReceiptSha256: receiptSha256,
     activatedAt: NOW.toISOString(),
     hostedAuthorityKeyId: HOSTED_AUTHORITY_KEY_ID,
@@ -397,7 +584,15 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_HOSTED_MISMATCH",
   );
   assert.equal((await registry.readPointer()).state, "PENDING");
+  localNow = new Date(NOW.getTime() + 180000);
   await registry.confirmHostedActivation(hosted);
+  assert.equal((await registry.confirmHostedActivation(hosted)).state, "ACTIVE");
+  localNow = new Date(NOW);
+  assert.equal(
+    activationObservationCalls,
+    callsAfterActivationObservation,
+    "expired-authority recovery and idempotent ACTIVE convergence perform no additional activation observation",
+  );
   const active = await registry.assertStartAuthority(hosted);
   assert.equal(active.bundlePath, bundlePath);
   await assert.rejects(
@@ -433,18 +628,6 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_RUNTIME_CONTEXT_UNTRUSTED",
   );
 
-  const next = pendingAuthority(context, authority, artifactSha256, "v2");
-  await assert.rejects(
-    registry.prepareActivation(next),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_RUNTIME_CONTEXT_UNTRUSTED",
-  );
-  const pointerAfterFailure = await registry.readPointer();
-  assert.equal(pointerAfterFailure.state, "PENDING");
-  assert.equal(pointerAfterFailure.activationId, next.activationId);
-  await assert.rejects(
-    registry.assertStartAuthority(hosted),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_AUTHORITY_MISMATCH",
-  );
 });
 
 test("local registry ingests the owner authority only through the exact 13-member finalizer handoff", async (t) => {

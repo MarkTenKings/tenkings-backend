@@ -3,6 +3,7 @@ import type {
   AiGraderCalibrationActivateRequestV1,
   AiGraderCalibrationCompleteActivationRequestV1,
   AiGraderCalibrationFailActivationRequestV1,
+  AiGraderCalibrationObservationRequestV1,
   AiGraderCalibrationReactivateRequestV1,
 } from "@tenkings/shared";
 
@@ -12,6 +13,7 @@ type ActivationService = {
   resolveTrustedRegistry(): Promise<any>;
   list(rigId: string, includeIncomplete?: boolean): Promise<any>;
   status(rigId: string): Promise<any>;
+  requestObservationAuthority(input: AiGraderCalibrationObservationRequestV1): Promise<any>;
   requestActivation(
     input:
       | (AiGraderCalibrationActivateRequestV1 & { action: "activate" })
@@ -28,7 +30,7 @@ export type AiGraderCalibrationActivationApiDependencies = {
   service: ActivationService;
 };
 
-const WRITE_ACTIONS = new Set(["activate", "reactivate", "complete", "fail"]);
+const WRITE_ACTIONS = new Set(["observe", "activate", "reactivate", "complete", "fail"]);
 
 function actionFrom(req: NextApiRequest) {
   const parts = Array.isArray(req.query.action) ? req.query.action : [req.query.action];
@@ -95,8 +97,18 @@ export function createAiGraderCalibrationActivationApiHandler(
         const status = await deps.service.status(String(input.rigId ?? ""));
         return res.status(200).json({ ok: true, ...status });
       }
+      if (action === "observe") {
+        const input = exactBody(req.body, ["rigId", "snapshotId", "expectedRegistryRevision"]);
+        const observation = await deps.service.requestObservationAuthority(
+          input as AiGraderCalibrationObservationRequestV1,
+        );
+        return res.status(200).json({ ok: true, ...observation });
+      }
       if (action === "activate") {
-        const input = exactBody(req.body, ["rigId", "snapshotId", "expectedRegistryRevision", "idempotencyKey", "reason"]);
+        const input = exactBody(req.body, [
+          "rigId", "snapshotId", "expectedRegistryRevision", "idempotencyKey", "reason",
+          "observationAuthority", "workstationObservation",
+        ]);
         const pending = await deps.service.requestActivation({
           ...(input as AiGraderCalibrationActivateRequestV1),
           action: "activate",
@@ -104,7 +116,10 @@ export function createAiGraderCalibrationActivationApiHandler(
         return res.status(201).json({ ok: true, ...pending });
       }
       if (action === "reactivate") {
-        const input = exactBody(req.body, ["rigId", "snapshotId", "priorActivationId", "expectedRegistryRevision", "idempotencyKey", "reason"]);
+        const input = exactBody(req.body, [
+          "rigId", "snapshotId", "priorActivationId", "expectedRegistryRevision",
+          "idempotencyKey", "reason", "observationAuthority", "workstationObservation",
+        ]);
         const pending = await deps.service.requestActivation({
           ...(input as AiGraderCalibrationReactivateRequestV1),
           action: "reactivate",

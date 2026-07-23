@@ -1074,6 +1074,8 @@ function ownerAcceptedReportInput() {
     runtimeContextHash: "6".repeat(64),
     rigCharacterizationSha256: profile.artifactSha256,
     operatingContextHash: "7".repeat(64),
+    observationId: "owner-report-observation-v1",
+    workstationObservationSha256: "0".repeat(64),
     workstationReceiptSha256: "8".repeat(64),
     activatedAt: "2026-07-22T14:05:00.000Z",
     hostedAuthorityKeyId: "9".repeat(64),

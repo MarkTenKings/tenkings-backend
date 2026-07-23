@@ -32,6 +32,7 @@ function service(overrides: Record<string, unknown> = {}) {
     },
     async list() { return { registryRevision: "a".repeat(64) }; },
     async status() { return { registryRevision: "a".repeat(64), active: null, pending: null, authority: null }; },
+    async requestObservationAuthority() { return { observationAuthority: { observationId: "observation-1" } }; },
     async requestActivation() { return { registryRevision: "a".repeat(64), activation: {}, pendingAuthority: {} }; },
     async completeActivation() { return { registryRevision: "a".repeat(64), activation: {}, authority: {} }; },
     async failActivation() { return { registryRevision: "a".repeat(64), activation: {} }; },
@@ -113,12 +114,16 @@ test("hosted activation routes own action, actor, hashes, and state while writes
   assert.equal(freshAuth, 0);
 
   const activated = response();
+  const observationAuthority = { observationId: "observation-1" };
+  const workstationObservation = { observationId: "observation-1" };
   await runtime(request("activate", {
     rigId: "rig-1",
     snapshotId: "snapshot-1",
     expectedRegistryRevision: "b".repeat(64),
     idempotencyKey: "request-1",
     reason: "exact profile selected by human",
+    observationAuthority,
+    workstationObservation,
   }), activated.res);
   assert.equal(activated.state.status, 201);
   assert.equal(freshAuth, 1);
@@ -129,6 +134,8 @@ test("hosted activation routes own action, actor, hashes, and state while writes
       expectedRegistryRevision: "b".repeat(64),
       idempotencyKey: "request-1",
       reason: "exact profile selected by human",
+      observationAuthority,
+      workstationObservation,
       action: "activate",
     },
     actor: "admin-exact",
@@ -149,11 +156,47 @@ test("hosted activation routes own action, actor, hashes, and state while writes
       expectedRegistryRevision: "b".repeat(64),
       idempotencyKey: "request-2",
       reason: "attempted browser declaration",
+      observationAuthority,
+      workstationObservation,
       ...forbidden,
     }), rejected.res);
     assert.equal(rejected.state.status, 400);
   }
   assert.equal(calls.length, 1);
+});
+
+test("observation authority requires fresh human admin and performs no activation write", async () => {
+  let observations = 0;
+  let activations = 0;
+  const runtime = createAiGraderCalibrationActivationApiHandler({
+    async requireAdminSession() { return { user: { id: "admin" } }; },
+    async requireFreshAdminSession() { return { user: { id: "fresh-admin" } }; },
+    service: service({
+      async requestObservationAuthority(input: Record<string, unknown>) {
+        observations += 1;
+        assert.deepEqual(input, {
+          rigId: "rig-1",
+          snapshotId: "snapshot-1",
+          expectedRegistryRevision: "b".repeat(64),
+        });
+        return { observationAuthority: { observationId: "observation-1" } };
+      },
+      async requestActivation() {
+        activations += 1;
+        return {};
+      },
+    }),
+  });
+  const result = response();
+  await runtime(request("observe", {
+    rigId: "rig-1",
+    snapshotId: "snapshot-1",
+    expectedRegistryRevision: "b".repeat(64),
+  }), result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal(result.state.body.observationAuthority.observationId, "observation-1");
+  assert.equal(observations, 1);
+  assert.equal(activations, 0);
 });
 
 test("reactivate is explicit and mutation is denied when fresh-human step-up fails", async () => {

@@ -9,18 +9,23 @@ import {
 } from "node:crypto";
 import {
   AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
+  AI_GRADER_CALIBRATION_OBSERVATION_AUTHORITY_V1_SCHEMA_VERSION,
   AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION,
   AI_GRADER_CALIBRATION_ACTIVATION_AUTHORITY_V1_SCHEMA_VERSION,
   aiGraderCalibrationActivationAuthorityV1Schema,
+  aiGraderCalibrationObservationAuthorityV1Schema,
   aiGraderCalibrationPendingAuthorityV1Schema,
   aiGraderCalibrationWorkstationReceiptStatementV1,
   aiGraderCalibrationWorkstationReceiptV1Schema,
+  aiGraderCalibrationWorkstationObservationStatementV1,
+  aiGraderCalibrationWorkstationObservationV1Schema,
   aiGraderOperatingContextV1Schema,
   canonicalAiGraderCalibrationJsonV1,
   canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
   type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderCalibrationObservationAuthorityV1,
   type AiGraderCalibrationActivationProjectionV1,
   type AiGraderCalibrationActivationRegistryProjectionV1,
   type AiGraderCalibrationActivationStateV1,
@@ -31,6 +36,7 @@ import {
   type AiGraderCalibrationReactivateRequestV1,
   type AiGraderCalibrationSnapshotProjectionV1,
   type AiGraderCalibrationWorkstationReceiptV1,
+  type AiGraderCalibrationWorkstationObservationV1,
   type AiGraderOperatingContextV1,
 } from "@tenkings/shared";
 
@@ -260,6 +266,7 @@ function activationProjection(rowValue: unknown, observedAt: Date): AiGraderCali
     state = "EXPIRED";
   }
   const receiptEvent = [...events].reverse().find((entry) => typeof entry.workstationReceiptSha256 === "string");
+  const pendingDetails = record(events[0]!.safeDetails, "pending activation details");
   const localEvent = events.find((entry) => entry.eventType === "LOCAL_VERIFIED");
   const activeEvent = events.find((entry) => entry.eventType === "ACTIVATED");
   const terminalEvent = [...events].reverse().find((entry) =>
@@ -281,6 +288,11 @@ function activationProjection(rowValue: unknown, observedAt: Date): AiGraderCali
     runtimeContextHash: exactSha(row.runtimeContextHash, "activation.runtimeContextHash"),
     rigCharacterizationSha256: exactSha(row.rigCharacterizationSha256, "activation.rigCharacterizationSha256"),
     operatingContextHash: exactSha(row.operatingContextHash, "activation.operatingContextHash"),
+    observationId: text(pendingDetails.observationId, "activation.observationId"),
+    workstationObservationSha256: exactSha(
+      pendingDetails.workstationObservationSha256,
+      "activation.workstationObservationSha256",
+    ),
     workstationReceiptSha256: receiptEvent ? exactSha(receiptEvent.workstationReceiptSha256, "activation.workstationReceiptSha256") : null,
     requestedAt: iso(row.requestedAt),
     pendingExpiresAt: iso(row.pendingExpiresAt),
@@ -542,6 +554,8 @@ function authorityFrom(
     runtimeContextHash: activation.runtimeContextHash,
     rigCharacterizationSha256: activation.rigCharacterizationSha256,
     operatingContextHash: activation.operatingContextHash,
+    observationId: activation.observationId,
+    workstationObservationSha256: activation.workstationObservationSha256,
     workstationReceiptSha256: activation.workstationReceiptSha256,
     activatedAt: activation.activatedAt,
     hostedAuthorityKeyId: signingKey.keyId,
@@ -583,6 +597,11 @@ function pendingAuthorityFrom(
   }
   const requestedAt = iso(root.requestedAt);
   const pendingExpiresAt = iso(root.pendingExpiresAt);
+  const pendingEvent = sortedEvents(root)[0]!;
+  if (pendingEvent.eventType !== "PENDING_CREATED") {
+    return failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Pending activation event authority is invalid.", 503);
+  }
+  const pendingDetails = record(pendingEvent.safeDetails, "pending activation details");
   const unsigned = {
     schemaVersion: AI_GRADER_CALIBRATION_PENDING_AUTHORITY_V1_SCHEMA_VERSION,
     authorityPhase: "PENDING" as const,
@@ -596,6 +615,11 @@ function pendingAuthorityFrom(
     runtimeContextHash: exactSha(root.runtimeContextHash, "activation.runtimeContextHash"),
     rigCharacterizationSha256: exactSha(root.rigCharacterizationSha256, "activation.rigCharacterizationSha256"),
     operatingContextHash,
+    observationId: text(pendingDetails.observationId, "activation.observationId"),
+    workstationObservationSha256: exactSha(
+      pendingDetails.workstationObservationSha256,
+      "activation.workstationObservationSha256",
+    ),
     operatingContextV1: context.data,
     requestedAt,
     pendingExpiresAt,
@@ -610,6 +634,48 @@ function pendingAuthorityFrom(
     { key: signingKey.privateKey, dsaEncoding: "ieee-p1363" },
   ).toString("base64url");
   return aiGraderCalibrationPendingAuthorityV1Schema.parse({
+    ...unsigned,
+    hostedAuthoritySignature,
+  });
+}
+
+function observationAuthorityFrom(
+  snapshotValue: unknown,
+  registryRevision: string,
+  observationId: string,
+  issuedAt: Date,
+  ttlMs: number,
+  signingKey: AiGraderCalibrationHostedAuthoritySigningKeyV1,
+): AiGraderCalibrationObservationAuthorityV1 {
+  const snapshot = record(snapshotValue, "observation snapshot");
+  const context = parseContext(snapshot);
+  const unsigned = {
+    schemaVersion: AI_GRADER_CALIBRATION_OBSERVATION_AUTHORITY_V1_SCHEMA_VERSION,
+    authorityPhase: "OBSERVATION" as const,
+    observationId: text(observationId, "observationId"),
+    registryRevision: exactSha(registryRevision, "registryRevision"),
+    snapshotId: text(snapshot.id, "snapshot.id"),
+    rigId: text(snapshot.rigId, "snapshot.rigId"),
+    bundleManifestSha256: exactSha(snapshot.mathematicalBundleManifestSha256, "snapshot.bundleManifestSha256"),
+    memberLedgerSha256: exactSha(snapshot.mathematicalMemberLedgerSha256, "snapshot.memberLedgerSha256"),
+    runtimeContextHash: exactSha(snapshot.mathematicalRuntimeContextHash, "snapshot.runtimeContextHash"),
+    rigCharacterizationSha256: exactSha(
+      snapshot.mathematicalRigCharacterizationSha256,
+      "snapshot.rigCharacterizationSha256",
+    ),
+    operatingContextHash: exactSha(snapshot.mathematicalOperatingContextHash, "snapshot.operatingContextHash"),
+    operatingContextV1: context,
+    hostedAuthorityKeyId: signingKey.keyId,
+    hostedAuthoritySignatureAlgorithm: AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
+    hostedAuthorityIssuedAt: issuedAt.toISOString(),
+    hostedAuthorityExpiresAt: new Date(issuedAt.getTime() + ttlMs).toISOString(),
+  };
+  const hostedAuthoritySignature = signSignature(
+    "sha256",
+    Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(unsigned), "utf8"),
+    { key: signingKey.privateKey, dsaEncoding: "ieee-p1363" },
+  ).toString("base64url");
+  return aiGraderCalibrationObservationAuthorityV1Schema.parse({
     ...unsigned,
     hostedAuthoritySignature,
   });
@@ -819,6 +885,135 @@ export function createAiGraderCalibrationActivationService(
     };
   }
 
+  async function requestObservationAuthority(input: {
+    rigId: string;
+    snapshotId: string;
+    expectedRegistryRevision: string;
+  }) {
+    const signingKey = requireHostedAuthoritySigningKey();
+    const rigId = text(input.rigId, "rigId");
+    const snapshotId = text(input.snapshotId, "snapshotId");
+    const expectedRegistryRevision = exactSha(input.expectedRegistryRevision, "expectedRegistryRevision");
+    const at = date(now(), "now");
+    const registry = await loadRegistry(db, rigId, at, true);
+    if (registry.registryRevision !== expectedRegistryRevision) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_REVISION_CONFLICT", "Calibration registry changed before runtime observation.", 409);
+    }
+    if (registry.pendingActivationId !== null) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY", "Runtime observation is blocked by an existing pending activation.", 409);
+    }
+    const selected = registry.snapshots.filter((entry) =>
+      entry.snapshotId === snapshotId && entry.trustStatus === "TRUSTED" && entry.activationEligible);
+    if (selected.length !== 1) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE", "Runtime observation requires one exact trusted snapshot.", 409);
+    }
+    const snapshotRow = await db.calibrationSnapshot.findFirst({ where: { id: snapshotId, rigId } });
+    if (!snapshotRow) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE", "Runtime observation snapshot was not found.", 404);
+    }
+    const snapshot = exactSnapshotForActivation(snapshotRow, rigId);
+    await verifySnapshotStorage(snapshot);
+    return {
+      observationAuthority: observationAuthorityFrom(
+        snapshot,
+        registry.registryRevision,
+        `calibration-observation-${randomId()}`,
+        at,
+        ttlMs,
+        signingKey,
+      ),
+    };
+  }
+
+  function verifyObservationForActivation(
+    authorityValue: unknown,
+    observationValue: unknown,
+    snapshot: JsonRecord,
+    expectedRegistryRevision: string,
+    at: Date,
+  ) {
+    const authorityParsed = aiGraderCalibrationObservationAuthorityV1Schema.safeParse(authorityValue);
+    const observationParsed = aiGraderCalibrationWorkstationObservationV1Schema.safeParse(observationValue);
+    if (!authorityParsed.success || !observationParsed.success) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation authority/evidence contract is invalid.", 400);
+    }
+    const authority = authorityParsed.data;
+    const observation = observationParsed.data;
+    const signingKey = requireHostedAuthoritySigningKey();
+    let hostedSignatureValid = false;
+    try {
+      hostedSignatureValid = authority.hostedAuthorityKeyId === signingKey.keyId && verifySignature(
+        "sha256",
+        Buffer.from(canonicalAiGraderCalibrationHostedAuthorityStatementV1(authority), "utf8"),
+        { key: createPublicKey(signingKey.privateKey), dsaEncoding: "ieee-p1363" },
+        Buffer.from(authority.hostedAuthoritySignature, "base64url"),
+      );
+    } catch { hostedSignatureValid = false; }
+    const issuedAt = date(authority.hostedAuthorityIssuedAt, "observationAuthority.issuedAt");
+    const expiresAt = date(authority.hostedAuthorityExpiresAt, "observationAuthority.expiresAt");
+    const observedAt = date(observation.observedAt, "workstationObservation.observedAt");
+    const authoritySha256 = hashCanonical(authority);
+    const runtimeObservationSha256 = hashCanonical(observation.runtimeObservation);
+    if (
+      !hostedSignatureValid ||
+      authority.registryRevision !== expectedRegistryRevision ||
+      authority.snapshotId !== snapshot.id ||
+      authority.rigId !== snapshot.rigId ||
+      authority.bundleManifestSha256 !== snapshot.mathematicalBundleManifestSha256 ||
+      authority.memberLedgerSha256 !== snapshot.mathematicalMemberLedgerSha256 ||
+      authority.runtimeContextHash !== snapshot.mathematicalRuntimeContextHash ||
+      authority.rigCharacterizationSha256 !== snapshot.mathematicalRigCharacterizationSha256 ||
+      authority.operatingContextHash !== snapshot.mathematicalOperatingContextHash ||
+      hash(canonicalAiGraderOperatingContextV1(authority.operatingContextV1)) !== authority.operatingContextHash ||
+      observation.observationId !== authority.observationId ||
+      observation.hostedObservationAuthoritySha256 !== authoritySha256 ||
+      observation.registryRevision !== authority.registryRevision ||
+      observation.snapshotId !== authority.snapshotId ||
+      observation.rigId !== authority.rigId ||
+      observation.bundleManifestSha256 !== authority.bundleManifestSha256 ||
+      observation.memberLedgerSha256 !== authority.memberLedgerSha256 ||
+      observation.runtimeContextHash !== authority.runtimeContextHash ||
+      observation.rigCharacterizationSha256 !== authority.rigCharacterizationSha256 ||
+      observation.expectedOperatingContextHash !== authority.operatingContextHash ||
+      observation.observedOperatingContextHash !== authority.operatingContextHash ||
+      observation.runtimeObservationSha256 !== runtimeObservationSha256 ||
+      observation.runtimeObservation.camera.serial !== authority.operatingContextV1.camera.serial ||
+      observation.runtimeObservation.camera.model !== authority.operatingContextV1.camera.model ||
+      canonicalAiGraderCalibrationJsonV1(observation.runtimeObservation.capture) !==
+        canonicalAiGraderCalibrationJsonV1(authority.operatingContextV1.capture) ||
+      observation.runtimeObservation.software.helperInstanceId !==
+        authority.operatingContextV1.software.helperInstanceId ||
+      observation.runtimeObservation.software.helperVersion !==
+        authority.operatingContextV1.software.helperVersion ||
+      observedAt.getTime() < issuedAt.getTime() - RECEIPT_CLOCK_SKEW_MS ||
+      observedAt.getTime() > expiresAt.getTime() ||
+      observedAt.getTime() > at.getTime() + RECEIPT_CLOCK_SKEW_MS ||
+      at.getTime() > expiresAt.getTime()
+    ) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation does not match the exact signed snapshot authority.", 409);
+    }
+    const key = workstationKeys.get(observation.workstationKeyId);
+    const snapshotRig = record(snapshot.rig, "snapshot.rig");
+    const tenantId = text(record(snapshotRig.tenant, "snapshot.rig.tenant").id, "snapshot.rig.tenant.id");
+    let workstationSignatureValid = false;
+    try {
+      workstationSignatureValid = Boolean(key && key.tenantId === tenantId) && verifySignature(
+        "sha256",
+        Buffer.from(aiGraderCalibrationWorkstationObservationStatementV1(observation), "utf8"),
+        { key: key!.publicKey, dsaEncoding: "ieee-p1363" },
+        Buffer.from(observation.signature, "base64url"),
+      );
+    } catch { workstationSignatureValid = false; }
+    if (!workstationSignatureValid) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation workstation signature was rejected.", 403);
+    }
+    return {
+      authority,
+      observation,
+      workstationObservationSha256: hashCanonical(observation),
+    };
+  }
+
   async function requestActivation(input: ActivationRequest, actorUserIdValue: string) {
     requireHostedAuthoritySigningKey();
     const rigId = text(input.rigId, "rigId");
@@ -830,7 +1025,20 @@ export function createAiGraderCalibrationActivationService(
     const kind = input.action;
     const priorActivationId = kind === "reactivate" ? text(input.priorActivationId, "priorActivationId") : null;
     const idempotencyHash = hash(idempotencyKey);
-    const requestHash = hashCanonical({ schemaVersion: "ten-kings-ai-grader-calibration-activation-request-v1", kind, rigId, snapshotId, priorActivationId, reason });
+    const parsedObservation = aiGraderCalibrationWorkstationObservationV1Schema.safeParse(input.workstationObservation);
+    if (!parsedObservation.success) {
+      failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation evidence is invalid.", 400);
+    }
+    const workstationObservationSha256 = hashCanonical(parsedObservation.data);
+    const requestHash = hashCanonical({
+      schemaVersion: "ten-kings-ai-grader-calibration-activation-request-v1",
+      kind,
+      rigId,
+      snapshotId,
+      priorActivationId,
+      reason,
+      workstationObservationSha256,
+    });
     return transaction(async (tx) => {
       await acquireRigLock(tx, rigId);
       const existing = await tx.mathematicalCalibrationActivation.findFirst({
@@ -857,11 +1065,24 @@ export function createAiGraderCalibrationActivationService(
       if (before.registryRevision !== expectedRegistryRevision) {
         failure("AI_GRADER_CALIBRATION_ACTIVATION_REVISION_CONFLICT", "Calibration registry changed; refresh before selecting an exact profile.", 409);
       }
-      const snapshotRow = await tx.calibrationSnapshot.findFirst({ where: { id: snapshotId, rigId } });
+      const snapshotRow = await tx.calibrationSnapshot.findFirst({
+        where: { id: snapshotId, rigId },
+        include: { rig: { include: { tenant: true } } },
+      });
       if (!snapshotRow) failure("AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE", "The exact selected snapshot was not found for this rig.", 404);
       const snapshot = exactSnapshotForActivation(snapshotRow, rigId);
       await verifySnapshotStorage(snapshot);
       const context = parseContext(snapshot);
+      const observation = verifyObservationForActivation(
+        input.observationAuthority,
+        input.workstationObservation,
+        snapshot,
+        expectedRegistryRevision,
+        at,
+      );
+      if (observation.workstationObservationSha256 !== workstationObservationSha256) {
+        failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation evidence hash changed during verification.", 409);
+      }
       const prior = priorActivationId
         ? await tx.mathematicalCalibrationActivation.findFirst({
             where: { id: priorActivationId, rigId, calibrationSnapshotId: snapshotId },
@@ -900,6 +1121,8 @@ export function createAiGraderCalibrationActivationService(
         requestedAt: at.toISOString(),
         pendingExpiresAt: expiresAt.toISOString(),
         priorActivationId,
+        observationId: observation.authority.observationId,
+        workstationObservationSha256,
       };
       const activationHash = hashCanonical(activationIdentity);
       const activePointer = await tx.mathematicalCalibrationActivePointer.findUnique({ where: { rigId } });
@@ -955,7 +1178,13 @@ export function createAiGraderCalibrationActivationService(
         eventType: "PENDING_CREATED",
         previousEventHash: null,
         actorUserId,
-        safeDetails: { requestKind: kind },
+        safeDetails: {
+          requestKind: kind,
+          observationId: observation.authority.observationId,
+          workstationObservationSha256,
+          runtimeObservationSha256: observation.observation.runtimeObservationSha256,
+          evidenceImageSha256: observation.observation.evidenceImageSha256,
+        },
         occurredAt: at,
       });
       await tx.mathematicalCalibrationPendingPointer.create({ data: {
@@ -975,7 +1204,7 @@ export function createAiGraderCalibrationActivationService(
         registryRevision: registry.registryRevision,
         activation,
         pendingAuthority: pendingAuthorityFrom(
-          createdActivation,
+          { ...createdActivation, events: [pendingEvent] },
           pendingEvent.eventHash,
           hostedAuthoritySigningKey,
         ),
@@ -991,6 +1220,7 @@ export function createAiGraderCalibrationActivationService(
     at: Date,
   ) {
     const receiptSha256 = hashCanonical(receipt);
+    const pendingDetails = record(sortedEvents(root)[0]!.safeDetails, "pending activation details");
     if (
       receipt.activationId !== root.id || receipt.activationHash !== root.activationHash ||
       receipt.activationRevision !== pending.activationRevision || receipt.snapshotId !== root.calibrationSnapshotId ||
@@ -998,7 +1228,11 @@ export function createAiGraderCalibrationActivationService(
       receipt.memberLedgerSha256 !== root.memberLedgerSha256 || receipt.runtimeContextHash !== root.runtimeContextHash ||
       receipt.rigCharacterizationSha256 !== root.rigCharacterizationSha256 ||
       receipt.expectedOperatingContextHash !== root.operatingContextHash ||
-      receipt.observedOperatingContextHash !== root.operatingContextHash
+      receipt.observedOperatingContextHash !== root.operatingContextHash ||
+      receipt.observationId !== pendingDetails.observationId ||
+      receipt.workstationObservationSha256 !== pendingDetails.workstationObservationSha256 ||
+      receipt.runtimeObservationSha256 !== pendingDetails.runtimeObservationSha256 ||
+      receipt.evidenceImageSha256 !== pendingDetails.evidenceImageSha256
     ) {
       failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Workstation receipt does not match the exact pending activation, bundle, and live operating context.", 409);
     }
@@ -1292,6 +1526,7 @@ export function createAiGraderCalibrationActivationService(
     resolveTrustedRegistry,
     list,
     status,
+    requestObservationAuthority,
     requestActivation,
     completeActivation,
     failActivation,

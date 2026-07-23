@@ -311,9 +311,9 @@ export function createMathematicalCalibrationOperatingContextRuntimeV1(
   };
   exactMatch(inventory.software, helperIdentity, "Running helper identity");
 
-  return async function trustedLiveOperatingContext(
+  const validateExpected = (
     expectedValue: AiGraderOperatingContextV1,
-  ): Promise<AiGraderOperatingContextV1> {
+  ): AiGraderOperatingContextV1 => {
     const expected = aiGraderOperatingContextV1Schema.parse(expectedValue);
     exactMatch(expected.rig, inventory.rig, "Rig/location identity");
     exactMatch(expected.camera, inventory.camera, "Camera inventory identity");
@@ -345,8 +345,14 @@ export function createMathematicalCalibrationOperatingContextRuntimeV1(
       helperIdentity,
       "Hosted helper identity",
     );
+    return expected;
+  };
 
-    const observed = parseRuntimeObservation(await options.observeRuntime(expected));
+  const validateObserved = (
+    expected: AiGraderOperatingContextV1,
+    observationValue: unknown,
+  ): AiGraderOperatingContextV1 => {
+    const observed = parseRuntimeObservation(observationValue);
     exactMatch(observed.camera, expected.camera, "Opened Basler camera identity");
     exactMatch(observed.capture, expected.capture, "Applied Basler capture settings");
     exactMatch(
@@ -367,4 +373,16 @@ export function createMathematicalCalibrationOperatingContextRuntimeV1(
     exactMatch(observed.software, helperIdentity, "Observed helper identity");
     return expected;
   };
+  const validateObservation = (
+    expectedValue: AiGraderOperatingContextV1,
+    observationValue: unknown,
+  ): AiGraderOperatingContextV1 =>
+    validateObserved(validateExpected(expectedValue), observationValue);
+  const trustedLiveOperatingContext = async (
+    expectedValue: AiGraderOperatingContextV1,
+  ): Promise<AiGraderOperatingContextV1> => {
+    const expected = validateExpected(expectedValue);
+    return validateObserved(expected, await options.observeRuntime(expected));
+  };
+  return Object.assign(trustedLiveOperatingContext, { validateObservation });
 }

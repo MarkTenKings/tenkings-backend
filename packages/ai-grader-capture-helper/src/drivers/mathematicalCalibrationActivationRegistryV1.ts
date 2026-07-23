@@ -1,5 +1,16 @@
 import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import {
   createHash,
   createPublicKey,
@@ -12,12 +23,17 @@ import path from "node:path";
 import {
   AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
   AI_GRADER_CALIBRATION_LOCAL_POINTER_V1_SCHEMA_VERSION,
+  AI_GRADER_CALIBRATION_WORKSTATION_OBSERVATION_V1_SCHEMA_VERSION,
   AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION,
   aiGraderCalibrationActivationAuthorityV1Schema,
   aiGraderCalibrationLocalPointerV1Schema,
+  aiGraderCalibrationObservationAuthorityV1Schema,
   aiGraderCalibrationPendingAuthorityV1Schema,
   aiGraderCalibrationWorkstationReceiptStatementV1,
   aiGraderCalibrationWorkstationReceiptV1Schema,
+  aiGraderCalibrationWorkstationObservationStatementV1,
+  aiGraderCalibrationWorkstationObservationV1Schema,
+  aiGraderCalibrationRuntimeObservationV1Schema,
   aiGraderOperatingContextV1Schema,
   canonicalAiGraderCalibrationJsonV1,
   canonicalAiGraderCalibrationHostedAuthorityStatementV1,
@@ -25,8 +41,11 @@ import {
   canonicalAiGraderRuntimeContextV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationLocalPointerV1,
+  type AiGraderCalibrationObservationAuthorityV1,
   type AiGraderCalibrationPendingAuthorityV1,
   type AiGraderCalibrationWorkstationReceiptV1,
+  type AiGraderCalibrationWorkstationObservationV1,
+  type AiGraderCalibrationRuntimeObservationV1,
   type AiGraderOperatingContextV1,
 } from "@tenkings/shared";
 import {
@@ -74,6 +93,19 @@ export type MathematicalCalibrationActivationRegistryV1Options = {
   liveOperatingContext(
     expected: AiGraderOperatingContextV1,
   ): AiGraderOperatingContextV1 | Promise<AiGraderOperatingContextV1>;
+  observeActivationRuntime(
+    expected: AiGraderOperatingContextV1,
+    evidenceDirectory: string,
+  ): Promise<{
+    runtimeObservation: AiGraderCalibrationRuntimeObservationV1;
+    evidenceImage: {
+      fileName: "activation-runtime-evidence.png";
+      mediaType: "image/png";
+      sha256: string;
+      byteSize: number;
+      observedAt: string;
+    };
+  }>;
   isIdle(): boolean | Promise<boolean>;
   now?: () => Date;
 };
@@ -205,6 +237,9 @@ export function createMathematicalCalibrationActivationRegistryV1(
   const bundlesRoot = path.join(rootDir, "bundles", "sha256");
   const receiptsRoot = path.join(rootDir, "receipts");
   const contextsRoot = path.join(rootDir, "operating-contexts");
+  const evidenceRoot = path.join(rootDir, "activation-evidence");
+  const successfulEvidenceRoot = path.join(evidenceRoot, "successful");
+  const failedEvidenceRoot = path.join(evidenceRoot, "failed");
   const pointerPath = path.join(rootDir, "active-pointer-v1.json");
   const now = options.now ?? (() => new Date());
   if (!path.isAbsolute(options.rootDir) || !path.isAbsolute(options.finalizedBundleStagingRoot) ||
@@ -220,7 +255,12 @@ export function createMathematicalCalibrationActivationRegistryV1(
 
   function verifyHostedAuthority(
     value: unknown,
+    expectedPhase: "OBSERVATION",
+  ): AiGraderCalibrationObservationAuthorityV1;
+  function verifyHostedAuthority(
+    value: unknown,
     expectedPhase: "PENDING",
+    allowExpiredPending?: boolean,
   ): AiGraderCalibrationPendingAuthorityV1;
   function verifyHostedAuthority(
     value: unknown,
@@ -229,12 +269,16 @@ export function createMathematicalCalibrationActivationRegistryV1(
   ): AiGraderCalibrationActivationAuthorityV1;
   function verifyHostedAuthority(
     value: unknown,
-    expectedPhase: "PENDING" | "ACTIVE",
-    allowExpiredActive = false,
-  ): AiGraderCalibrationPendingAuthorityV1 | AiGraderCalibrationActivationAuthorityV1 {
-    const parsed = expectedPhase === "PENDING"
-      ? aiGraderCalibrationPendingAuthorityV1Schema.safeParse(value)
-      : aiGraderCalibrationActivationAuthorityV1Schema.safeParse(value);
+    expectedPhase: "OBSERVATION" | "PENDING" | "ACTIVE",
+    allowExpired = false,
+  ): AiGraderCalibrationObservationAuthorityV1 |
+    AiGraderCalibrationPendingAuthorityV1 |
+    AiGraderCalibrationActivationAuthorityV1 {
+    const parsed = expectedPhase === "OBSERVATION"
+      ? aiGraderCalibrationObservationAuthorityV1Schema.safeParse(value)
+      : expectedPhase === "PENDING"
+        ? aiGraderCalibrationPendingAuthorityV1Schema.safeParse(value)
+        : aiGraderCalibrationActivationAuthorityV1Schema.safeParse(value);
     if (!parsed.success || parsed.data.authorityPhase !== expectedPhase) {
       return fail(
         "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REJECTED",
@@ -261,8 +305,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
     if (!Number.isFinite(exactNow.getTime()) || !Number.isFinite(issuedAt.getTime()) ||
         !Number.isFinite(expiresAt.getTime()) ||
         issuedAt.getTime() > exactNow.getTime() + 30_000 ||
-        (expiresAt.getTime() <= exactNow.getTime() &&
-          !(expectedPhase === "ACTIVE" && allowExpiredActive))) {
+        (expiresAt.getTime() <= exactNow.getTime() && !allowExpired)) {
       return fail(
         "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_EXPIRED",
         "Hosted calibration authority is expired or outside the accepted clock window.",
@@ -303,7 +346,9 @@ export function createMathematicalCalibrationActivationRegistryV1(
   async function writeAtomic(filePath: string, value: unknown) {
     await mkdir(path.dirname(filePath), { recursive: true });
     const tempPath = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
-    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", flag: "wx", flush: true });
+    await writeFile(tempPath, `${JSON.stringify(value, null, 2)}\n`, {
+      encoding: "utf8", flag: "wx", flush: true, mode: 0o600,
+    });
     await rename(tempPath, filePath);
   }
 
@@ -311,7 +356,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
     const serialized = canonicalAiGraderCalibrationJsonV1(value);
     await mkdir(path.dirname(filePath), { recursive: true });
     try {
-      await writeFile(filePath, serialized, { encoding: "utf8", flag: "wx", flush: true });
+      await writeFile(filePath, serialized, { encoding: "utf8", flag: "wx", flush: true, mode: 0o600 });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (await readFile(filePath, "utf8") !== serialized) {
@@ -373,6 +418,258 @@ export function createMathematicalCalibrationActivationRegistryV1(
       fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Trusted live operating context does not match the exact activation context/runtime hashes.");
     }
     return { observed, observedHash };
+  }
+
+  function observationDirectory(root: string, observationId: string) {
+    if (!observationId.trim() || path.basename(observationId) !== observationId) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_PATH_REJECTED", "Observation ID is unsafe for activation evidence storage.");
+    }
+    return path.join(root, observationId);
+  }
+
+  function verifyWorkstationSignature(
+    observation: AiGraderCalibrationWorkstationObservationV1,
+  ) {
+    let valid = false;
+    try {
+      valid = observation.workstationKeyId === options.workstationKeyId && verifyBytes(
+        "sha256",
+        Buffer.from(aiGraderCalibrationWorkstationObservationStatementV1(observation), "utf8"),
+        { key: createPublicKey(options.workstationPrivateKey), dsaEncoding: "ieee-p1363" },
+        Buffer.from(observation.signature, "base64url"),
+      );
+    } catch { valid = false; }
+    if (!valid) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Immutable workstation observation signature was rejected.");
+    }
+  }
+
+  async function inventoryRetainedObservationFiles(
+    stagingDir: string,
+    currentDir = stagingDir,
+  ): Promise<Array<{ fileName: string; sha256: string; byteSize: number }>> {
+    const retained: Array<{ fileName: string; sha256: string; byteSize: number }> = [];
+    const entries = (await readdir(currentDir, { withFileTypes: true }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const entryPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await chmod(entryPath, 0o700);
+        retained.push(...await inventoryRetainedObservationFiles(stagingDir, entryPath));
+        continue;
+      }
+      if (!entry.isFile()) {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_EVIDENCE_UNSUPPORTED",
+          "Observation staging contains an unsupported filesystem entry; evidence was retained fail closed.",
+        );
+      }
+      const bytes = await readFile(entryPath);
+      await chmod(entryPath, 0o600);
+      retained.push({
+        fileName: path.relative(stagingDir, entryPath).split(path.sep).join("/"),
+        sha256: sha256(bytes),
+        byteSize: bytes.byteLength,
+      });
+    }
+    return retained.sort((left, right) => left.fileName.localeCompare(right.fileName));
+  }
+
+  async function readWorkstationObservation(
+    observationId: string,
+    expectedSha256: string,
+  ): Promise<AiGraderCalibrationWorkstationObservationV1> {
+    const evidencePath = path.join(
+      observationDirectory(successfulEvidenceRoot, observationId),
+      "workstation-observation-v1.json",
+    );
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(evidencePath);
+    } catch {
+      return fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_MISSING", "Exact immutable workstation observation is missing.");
+    }
+    if (sha256(bytes) !== expectedSha256) {
+      return fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Immutable workstation observation bytes do not match hosted authority.");
+    }
+    let parsed: unknown;
+    try { parsed = JSON.parse(bytes.toString("utf8")); } catch {
+      return fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Immutable workstation observation is corrupt.");
+    }
+    const observation = aiGraderCalibrationWorkstationObservationV1Schema.parse(parsed);
+    if (canonicalSha(observation) !== expectedSha256 || observation.observationId !== observationId) {
+      return fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Immutable workstation observation does not reproduce its exact identity.");
+    }
+    verifyWorkstationSignature(observation);
+    const imagePath = path.join(path.dirname(evidencePath), observation.evidenceImageFileName);
+    const imageBytes = await readFile(imagePath);
+    if (
+      sha256(imageBytes) !== observation.evidenceImageSha256 ||
+      imageBytes.byteLength !== observation.evidenceImageByteSize
+    ) {
+      return fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Retained activation evidence image is missing or changed.");
+    }
+    return observation;
+  }
+
+  async function observeActivation(value: unknown): Promise<AiGraderCalibrationWorkstationObservationV1> {
+    const authority = verifyHostedAuthority(value, "OBSERVATION");
+    if (!await options.isIdle()) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_NOT_IDLE", "Local helper must be idle before the one activation runtime observation.");
+    }
+    if (await exists(pointerPath)) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "Runtime observation requires no local activation pointer.");
+    }
+    const expectedContext = aiGraderOperatingContextV1Schema.parse(authority.operatingContextV1);
+    if (
+      sha256(canonicalAiGraderOperatingContextV1(expectedContext)) !== authority.operatingContextHash ||
+      sha256(canonicalAiGraderRuntimeContextV1(expectedContext)) !== authority.runtimeContextHash
+    ) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted observation context does not reproduce its exact hashes.");
+    }
+    verifyBundle(authority);
+    await mkdir(evidenceRoot, { recursive: true, mode: 0o700 });
+    await mkdir(successfulEvidenceRoot, { recursive: true, mode: 0o700 });
+    await mkdir(failedEvidenceRoot, { recursive: true, mode: 0o700 });
+    const successfulDir = observationDirectory(successfulEvidenceRoot, authority.observationId);
+    const failedDir = observationDirectory(failedEvidenceRoot, authority.observationId);
+    const stagingDir = path.join(evidenceRoot, `.observation-${authority.observationId}`);
+    if (await exists(successfulDir)) {
+      try {
+        const storedAuthority = aiGraderCalibrationObservationAuthorityV1Schema.parse(
+          JSON.parse(await readFile(
+            path.join(successfulDir, "hosted-observation-authority-v1.json"),
+            "utf8",
+          )),
+        );
+        const storedObservation = aiGraderCalibrationWorkstationObservationV1Schema.parse(
+          JSON.parse(await readFile(
+            path.join(successfulDir, "workstation-observation-v1.json"),
+            "utf8",
+          )),
+        );
+        if (
+          canonicalSha(storedAuthority) !== canonicalSha(authority) ||
+          storedObservation.hostedObservationAuthoritySha256 !== canonicalSha(authority)
+        ) {
+          fail("AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT", "Existing activation observation evidence belongs to different hosted authority.");
+        }
+        return await readWorkstationObservation(
+          authority.observationId,
+          canonicalSha(storedObservation),
+        );
+      } catch (error) {
+        if (error instanceof MathematicalCalibrationActivationRegistryV1Error) throw error;
+        fail("AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT", "Existing activation observation evidence is incomplete or corrupt.");
+      }
+    }
+    if (await exists(failedDir) || await exists(stagingDir)) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT", "Activation observation evidence identity already exists; automatic hardware retry is prohibited.");
+    }
+    await mkdir(stagingDir, { recursive: false, mode: 0o700 });
+    const imagePath = path.join(stagingDir, "activation-runtime-evidence.png");
+    try {
+      const result = await options.observeActivationRuntime(expectedContext, stagingDir);
+      const runtimeObservation = aiGraderCalibrationRuntimeObservationV1Schema.parse(result.runtimeObservation);
+      const observedAt = new Date(result.evidenceImage.observedAt);
+      const issuedAt = new Date(authority.hostedAuthorityIssuedAt);
+      const expiresAt = new Date(authority.hostedAuthorityExpiresAt);
+      if (
+        result.evidenceImage.fileName !== "activation-runtime-evidence.png" ||
+        result.evidenceImage.mediaType !== "image/png" ||
+        !SHA256.test(result.evidenceImage.sha256) ||
+        !Number.isSafeInteger(result.evidenceImage.byteSize) ||
+        result.evidenceImage.byteSize < 1 ||
+        !Number.isFinite(observedAt.getTime()) ||
+        observedAt.getTime() < issuedAt.getTime() - 30_000 ||
+        observedAt.getTime() > expiresAt.getTime() ||
+        runtimeObservation.camera.serial !== expectedContext.camera.serial ||
+        runtimeObservation.camera.model !== expectedContext.camera.model ||
+        canonicalAiGraderCalibrationJsonV1(runtimeObservation.capture) !==
+          canonicalAiGraderCalibrationJsonV1(expectedContext.capture) ||
+        canonicalAiGraderCalibrationJsonV1(runtimeObservation.controller.selectedChannels) !==
+          canonicalAiGraderCalibrationJsonV1(expectedContext.lighting.selectedChannels) ||
+        runtimeObservation.controller.dutyPercent !== expectedContext.lighting.dutyPercent ||
+        runtimeObservation.software.helperInstanceId !== options.helperInstanceId ||
+        runtimeObservation.software.helperVersion !== options.helperVersion
+      ) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Runtime observation did not match the exact hosted context and evidence contract.");
+      }
+      const imageBytes = await readFile(imagePath);
+      if (
+        sha256(imageBytes) !== result.evidenceImage.sha256 ||
+        imageBytes.byteLength !== result.evidenceImage.byteSize
+      ) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Captured activation evidence image bytes do not match the runtime result.");
+      }
+      await chmod(imagePath, 0o600);
+      const unsigned = {
+        schemaVersion: AI_GRADER_CALIBRATION_WORKSTATION_OBSERVATION_V1_SCHEMA_VERSION,
+        observationId: authority.observationId,
+        hostedObservationAuthoritySha256: canonicalSha(authority),
+        registryRevision: authority.registryRevision,
+        snapshotId: authority.snapshotId,
+        rigId: authority.rigId,
+        bundleManifestSha256: authority.bundleManifestSha256,
+        memberLedgerSha256: authority.memberLedgerSha256,
+        runtimeContextHash: authority.runtimeContextHash,
+        rigCharacterizationSha256: authority.rigCharacterizationSha256,
+        expectedOperatingContextHash: authority.operatingContextHash,
+        observedOperatingContextHash: authority.operatingContextHash,
+        runtimeObservation,
+        runtimeObservationSha256: canonicalSha(runtimeObservation),
+        evidenceImageFileName: "activation-runtime-evidence.png" as const,
+        evidenceImageMediaType: "image/png" as const,
+        evidenceImageSha256: result.evidenceImage.sha256,
+        evidenceImageByteSize: result.evidenceImage.byteSize,
+        helperInstanceId: options.helperInstanceId,
+        helperVersion: options.helperVersion,
+        workstationKeyId: options.workstationKeyId,
+        signatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363" as const,
+        observedAt: observedAt.toISOString(),
+      };
+      const signature = signBytes(
+        "sha256",
+        Buffer.from(canonicalAiGraderCalibrationJsonV1(unsigned), "utf8"),
+        { key: options.workstationPrivateKey, dsaEncoding: "ieee-p1363" },
+      ).toString("base64url");
+      const observation = aiGraderCalibrationWorkstationObservationV1Schema.parse({ ...unsigned, signature });
+      await writeImmutable(path.join(stagingDir, "hosted-observation-authority-v1.json"), authority);
+      await writeImmutable(path.join(stagingDir, "workstation-observation-v1.json"), observation);
+      await rename(stagingDir, successfulDir);
+      return observation;
+    } catch (error) {
+      if (await exists(stagingDir)) {
+        const stagingEntries = await readdir(stagingDir);
+        if (stagingEntries.length === 0) {
+          await rmdir(stagingDir);
+        } else {
+          try {
+            const retainedEvidence = await inventoryRetainedObservationFiles(stagingDir);
+            await writeImmutable(path.join(stagingDir, "failed-observation-v1.json"), {
+              schemaVersion: "ten-kings-ai-grader-calibration-failed-observation-v1",
+              state: "FAILED_BEFORE_ACTIVATION_AUTHORITY",
+              observationId: authority.observationId,
+              snapshotId: authority.snapshotId,
+              rigId: authority.rigId,
+              bundleManifestSha256: authority.bundleManifestSha256,
+              memberLedgerSha256: authority.memberLedgerSha256,
+              runtimeContextHash: authority.runtimeContextHash,
+              operatingContextHash: authority.operatingContextHash,
+              retainedEvidence,
+              retainedEvidenceCount: retainedEvidence.length,
+              failureCode: error instanceof MathematicalCalibrationActivationRegistryV1Error
+                ? error.code
+                : "AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_FAILED",
+              failedAt: now().toISOString(),
+            });
+          } finally {
+            await rename(stagingDir, failedDir);
+          }
+        }
+      }
+      throw error;
+    }
   }
 
   async function readPointer(): Promise<AiGraderCalibrationLocalPointerV1> {
@@ -532,13 +829,127 @@ export function createMathematicalCalibrationActivationRegistryV1(
     if (!await options.isIdle()) fail("AI_GRADER_LOCAL_CALIBRATION_NOT_IDLE", "Local helper must be idle before activation verification.");
     if (await exists(pointerPath)) {
       const current = await readPointer();
-      if (current.activationId === pending.activationId) {
-        fail(
-          "AI_GRADER_LOCAL_CALIBRATION_HOSTED_AUTHORITY_REPLAYED",
-          "A hosted pending authority for an activation already seen locally cannot be replayed.",
-        );
+      if (
+        current.state === "PENDING" &&
+        current.activationId === pending.activationId &&
+        current.activationHash === pending.activationHash &&
+        current.activationRevision === pending.activationRevision &&
+        current.observationId === pending.observationId &&
+        current.workstationObservationSha256 === pending.workstationObservationSha256
+      ) {
+        const receiptBytes = await readFile(path.join(receiptsRoot, `${pending.activationId}.json`));
+        if (sha256(receiptBytes) !== current.workstationReceiptSha256) {
+          fail("AI_GRADER_LOCAL_CALIBRATION_RECEIPT_MISMATCH", "Idempotent local preparation found a changed receipt.");
+        }
+        return aiGraderCalibrationWorkstationReceiptV1Schema.parse(JSON.parse(receiptBytes.toString("utf8")));
       }
+      fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "A different local activation pointer already exists.");
     }
+    const expectedContext = aiGraderOperatingContextV1Schema.parse(pending.operatingContextV1);
+    const expectedContextHash = sha256(canonicalAiGraderOperatingContextV1(expectedContext));
+    if (expectedContextHash !== pending.operatingContextHash) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted pending operating context does not reproduce its exact hash.");
+    }
+    verifyBundle(pending);
+    const observation = await readWorkstationObservation(
+      pending.observationId,
+      pending.workstationObservationSha256,
+    );
+    if (
+      observation.snapshotId !== pending.snapshotId ||
+      observation.rigId !== pending.rigId ||
+      observation.bundleManifestSha256 !== pending.bundleManifestSha256 ||
+      observation.memberLedgerSha256 !== pending.memberLedgerSha256 ||
+      observation.runtimeContextHash !== pending.runtimeContextHash ||
+      observation.rigCharacterizationSha256 !== pending.rigCharacterizationSha256 ||
+      observation.expectedOperatingContextHash !== pending.operatingContextHash ||
+      observation.observedOperatingContextHash !== pending.operatingContextHash
+    ) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED", "Pending authority does not match the exact immutable workstation observation.");
+    }
+    const receiptPath = path.join(receiptsRoot, `${pending.activationId}.json`);
+    let receipt: AiGraderCalibrationWorkstationReceiptV1;
+    if (await exists(receiptPath)) {
+      const parsed = aiGraderCalibrationWorkstationReceiptV1Schema.safeParse(
+        JSON.parse(await readFile(receiptPath, "utf8")),
+      );
+      if (!parsed.success) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_RECEIPT_MISMATCH", "Existing immutable workstation receipt is corrupt.");
+      }
+      receipt = parsed.data;
+      let receiptSignatureValid = false;
+      try {
+        receiptSignatureValid = verifyBytes(
+          "sha256",
+          Buffer.from(aiGraderCalibrationWorkstationReceiptStatementV1(receipt), "utf8"),
+          { key: createPublicKey(options.workstationPrivateKey), dsaEncoding: "ieee-p1363" },
+          Buffer.from(receipt.signature, "base64url"),
+        );
+      } catch { receiptSignatureValid = false; }
+      const exactReceiptFields = {
+        activationId: pending.activationId,
+        activationHash: pending.activationHash,
+        activationRevision: pending.activationRevision,
+        snapshotId: pending.snapshotId,
+        rigId: pending.rigId,
+        bundleManifestSha256: pending.bundleManifestSha256,
+        memberLedgerSha256: pending.memberLedgerSha256,
+        runtimeContextHash: pending.runtimeContextHash,
+        rigCharacterizationSha256: pending.rigCharacterizationSha256,
+        expectedOperatingContextHash: pending.operatingContextHash,
+        observedOperatingContextHash: observation.observedOperatingContextHash,
+        observationId: observation.observationId,
+        workstationObservationSha256: pending.workstationObservationSha256,
+        runtimeObservationSha256: observation.runtimeObservationSha256,
+        evidenceImageSha256: observation.evidenceImageSha256,
+        helperInstanceId: options.helperInstanceId,
+        helperVersion: options.helperVersion,
+        workstationKeyId: options.workstationKeyId,
+        expiresAt: pending.pendingExpiresAt,
+      };
+      if (
+        !receiptSignatureValid ||
+        Object.entries(exactReceiptFields).some(
+          ([key, expected]) => receipt[key as keyof AiGraderCalibrationWorkstationReceiptV1] !== expected,
+        )
+      ) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_RECEIPT_MISMATCH", "Existing immutable workstation receipt does not match the exact pending authority and observation.");
+      }
+    } else {
+      const unsigned = {
+        schemaVersion: AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION,
+        activationId: pending.activationId,
+        activationHash: pending.activationHash,
+        activationRevision: pending.activationRevision,
+        snapshotId: pending.snapshotId,
+        rigId: pending.rigId,
+        bundleManifestSha256: pending.bundleManifestSha256,
+        memberLedgerSha256: pending.memberLedgerSha256,
+        runtimeContextHash: pending.runtimeContextHash,
+        rigCharacterizationSha256: pending.rigCharacterizationSha256,
+        expectedOperatingContextHash: pending.operatingContextHash,
+        observedOperatingContextHash: observation.observedOperatingContextHash,
+        observationId: observation.observationId,
+        workstationObservationSha256: pending.workstationObservationSha256,
+        runtimeObservationSha256: observation.runtimeObservationSha256,
+        evidenceImageSha256: observation.evidenceImageSha256,
+        helperInstanceId: options.helperInstanceId,
+        helperVersion: options.helperVersion,
+        workstationKeyId: options.workstationKeyId,
+        signatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363" as const,
+        verifiedAt: exactNow.toISOString(),
+        expiresAt: pending.pendingExpiresAt,
+      };
+      const signature = signBytes(
+        "sha256",
+        Buffer.from(canonicalAiGraderCalibrationJsonV1(unsigned), "utf8"),
+        { key: options.workstationPrivateKey, dsaEncoding: "ieee-p1363" },
+      ).toString("base64url");
+      receipt = aiGraderCalibrationWorkstationReceiptV1Schema.parse({ ...unsigned, signature });
+    }
+    await writeImmutable(operatingContextPath(pending.activationId), expectedContext);
+    await writeImmutable(receiptPath, receipt);
+    const receiptSha256 = canonicalSha(receipt);
     const pendingPointer: AiGraderCalibrationLocalPointerV1 = {
       schemaVersion: AI_GRADER_CALIBRATION_LOCAL_POINTER_V1_SCHEMA_VERSION,
       state: "PENDING",
@@ -552,61 +963,43 @@ export function createMathematicalCalibrationActivationRegistryV1(
       runtimeContextHash: pending.runtimeContextHash,
       rigCharacterizationSha256: pending.rigCharacterizationSha256,
       operatingContextHash: pending.operatingContextHash,
+      observationId: pending.observationId,
+      workstationObservationSha256: pending.workstationObservationSha256,
+      workstationReceiptSha256: receiptSha256,
       pendingExpiresAt: pending.pendingExpiresAt,
       writtenAt: exactNow.toISOString(),
     };
     await writeAtomic(pointerPath, aiGraderCalibrationLocalPointerV1Schema.parse(pendingPointer));
-    const expectedContext = aiGraderOperatingContextV1Schema.parse(pending.operatingContextV1);
-    const expectedContextHash = sha256(canonicalAiGraderOperatingContextV1(expectedContext));
-    if (expectedContextHash !== pending.operatingContextHash) {
-      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted pending operating context does not reproduce its exact hash.");
-    }
-    await writeImmutable(operatingContextPath(pending.activationId), expectedContext);
-    verifyBundle(pending);
-    const { observedHash } = await liveContext(
-      expectedContext,
-      pending.operatingContextHash,
-      pending.runtimeContextHash,
-    );
-    const unsigned = {
-      schemaVersion: AI_GRADER_CALIBRATION_WORKSTATION_RECEIPT_V1_SCHEMA_VERSION,
-      activationId: pending.activationId,
-      activationHash: pending.activationHash,
-      activationRevision: pending.activationRevision,
-      snapshotId: pending.snapshotId,
-      rigId: pending.rigId,
-      bundleManifestSha256: pending.bundleManifestSha256,
-      memberLedgerSha256: pending.memberLedgerSha256,
-      runtimeContextHash: pending.runtimeContextHash,
-      rigCharacterizationSha256: pending.rigCharacterizationSha256,
-      expectedOperatingContextHash: pending.operatingContextHash,
-      observedOperatingContextHash: observedHash,
-      helperInstanceId: options.helperInstanceId,
-      helperVersion: options.helperVersion,
-      workstationKeyId: options.workstationKeyId,
-      signatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363" as const,
-      verifiedAt: exactNow.toISOString(),
-      expiresAt: pending.pendingExpiresAt,
-    };
-    const signature = signBytes(
-      "sha256",
-      Buffer.from(canonicalAiGraderCalibrationJsonV1(unsigned), "utf8"),
-      { key: options.workstationPrivateKey, dsaEncoding: "ieee-p1363" },
-    ).toString("base64url");
-    const receipt = aiGraderCalibrationWorkstationReceiptV1Schema.parse({ ...unsigned, signature });
-    await writeImmutable(path.join(receiptsRoot, `${pending.activationId}.json`), receipt);
     return receipt;
   }
 
   async function confirmHostedActivation(value: unknown) {
-    const authority = verifyHostedAuthority(value, "ACTIVE");
+    // ACTIVE expiry limits authorization to start a new card. It does not make an
+    // exact hosted/local recovery unsafe: confirmation still requires the signed
+    // authority to match the immutable receipt, observation, and PENDING pointer.
+    const authority = verifyHostedAuthority(value, "ACTIVE", true);
     const pointer = await readPointer();
+    if (pointer.state === "ACTIVE") {
+      const exactActiveFields: (keyof AiGraderCalibrationActivationAuthorityV1)[] = [
+        "activationId", "activationHash", "activationRevision", "snapshotId", "rigId",
+        "bundleManifestSha256", "memberLedgerSha256", "runtimeContextHash",
+        "rigCharacterizationSha256", "operatingContextHash", "observationId",
+        "workstationObservationSha256", "workstationReceiptSha256", "activatedAt",
+      ];
+      if (exactActiveFields.some((field) => pointer[field as keyof typeof pointer] !== authority[field])) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_HOSTED_MISMATCH", "Existing local ACTIVE pointer does not match hosted ACTIVE authority.");
+      }
+      return pointer;
+    }
     if (pointer.state !== "PENDING" || pointer.activationId !== authority.activationId ||
         pointer.activationHash !== authority.activationHash || pointer.snapshotId !== authority.snapshotId ||
         pointer.rigId !== authority.rigId || pointer.bundleManifestSha256 !== authority.bundleManifestSha256 ||
         pointer.memberLedgerSha256 !== authority.memberLedgerSha256 || pointer.runtimeContextHash !== authority.runtimeContextHash ||
         pointer.rigCharacterizationSha256 !== authority.rigCharacterizationSha256 ||
-        pointer.operatingContextHash !== authority.operatingContextHash) {
+        pointer.operatingContextHash !== authority.operatingContextHash ||
+        pointer.observationId !== authority.observationId ||
+        pointer.workstationObservationSha256 !== authority.workstationObservationSha256 ||
+        pointer.workstationReceiptSha256 !== authority.workstationReceiptSha256) {
       fail("AI_GRADER_LOCAL_CALIBRATION_HOSTED_MISMATCH", "Hosted ACTIVE authority does not match the exact local pending pointer.");
     }
     const receiptBytes = await readFile(path.join(receiptsRoot, `${authority.activationId}.json`));
@@ -614,11 +1007,11 @@ export function createMathematicalCalibrationActivationRegistryV1(
       fail("AI_GRADER_LOCAL_CALIBRATION_RECEIPT_MISMATCH", "Hosted ACTIVE receipt hash does not match exact immutable local receipt bytes.");
     }
     verifyBundle(authority);
-    const expectedContext = await readExpectedOperatingContext(
+    await readExpectedOperatingContext(
       authority.activationId,
       authority.operatingContextHash,
     );
-    await liveContext(expectedContext, authority.operatingContextHash, authority.runtimeContextHash);
+    await readWorkstationObservation(authority.observationId, authority.workstationObservationSha256);
     const activePointer: AiGraderCalibrationLocalPointerV1 = {
       ...pointer,
       state: "ACTIVE",
@@ -632,13 +1025,42 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return activePointer;
   }
 
+  async function abortPendingActivation(value: unknown) {
+    // A hosted failure can be recorded at the pending-expiry boundary. The exact
+    // signed PENDING authority remains sufficient to remove only its matching
+    // local pointer; expiry must not strand that pointer indefinitely.
+    const pending = verifyHostedAuthority(value, "PENDING", true);
+    if (!await exists(pointerPath)) return { aborted: false };
+    const pointer = await readPointer();
+    if (
+      pointer.state !== "PENDING" ||
+      pointer.activationId !== pending.activationId ||
+      pointer.activationHash !== pending.activationHash ||
+      pointer.activationRevision !== pending.activationRevision ||
+      pointer.observationId !== pending.observationId ||
+      pointer.workstationObservationSha256 !== pending.workstationObservationSha256
+    ) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "Local pending pointer does not match the exact hosted failure authority.");
+    }
+    const failedPointersRoot = path.join(rootDir, "failed-pointers");
+    await mkdir(failedPointersRoot, { recursive: true, mode: 0o700 });
+    const archivedPointerPath = path.join(failedPointersRoot, `${pending.activationId}.json`);
+    if (await exists(archivedPointerPath)) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT", "Failed local pointer archive already exists.");
+    }
+    await rename(pointerPath, archivedPointerPath);
+    await chmod(archivedPointerPath, 0o600);
+    return { aborted: true };
+  }
+
   async function assertActiveAuthority(value: unknown, allowExpiredActive: boolean) {
     const hosted = verifyHostedAuthority(value, "ACTIVE", allowExpiredActive);
     const pointer = await readPointer();
     const exactFields: (keyof AiGraderCalibrationActivationAuthorityV1)[] = [
       "activationId", "activationHash", "activationRevision", "snapshotId", "rigId",
       "bundleManifestSha256", "memberLedgerSha256", "runtimeContextHash",
-      "rigCharacterizationSha256", "operatingContextHash", "workstationReceiptSha256", "activatedAt",
+      "rigCharacterizationSha256", "operatingContextHash", "observationId",
+      "workstationObservationSha256", "workstationReceiptSha256", "activatedAt",
     ];
     if (pointer.state !== "ACTIVE" || exactFields.some((field) => pointer[field as keyof typeof pointer] !== hosted[field])) {
       fail("AI_GRADER_LOCAL_CALIBRATION_AUTHORITY_MISMATCH", "Start New Card requires exact local/hosted ACTIVE activation agreement.");
@@ -668,11 +1090,23 @@ export function createMathematicalCalibrationActivationRegistryV1(
 
   return {
     ingestFinalizedBundle,
+    observeActivation,
     prepareActivation,
     confirmHostedActivation,
+    abortPendingActivation,
     assertStartAuthority,
     assertBoundSessionAuthority,
     readPointer,
-    paths: { rootDir, finalizedBundleStagingRoot, bundlesRoot, receiptsRoot, contextsRoot, pointerPath },
+    paths: {
+      rootDir,
+      finalizedBundleStagingRoot,
+      bundlesRoot,
+      receiptsRoot,
+      contextsRoot,
+      evidenceRoot,
+      successfulEvidenceRoot,
+      failedEvidenceRoot,
+      pointerPath,
+    },
   };
 }

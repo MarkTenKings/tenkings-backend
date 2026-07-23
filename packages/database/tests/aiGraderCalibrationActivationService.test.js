@@ -8,6 +8,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   aiGraderCalibrationWorkstationReceiptStatementV1,
+  aiGraderCalibrationWorkstationObservationStatementV1,
   canonicalAiGraderCalibrationHostedAuthorityStatementV1,
   canonicalAiGraderOperatingContextV1,
   canonicalAiGraderRuntimeContextV1,
@@ -230,7 +231,69 @@ function createMemoryDb(snapshots) {
   return { db, state };
 }
 
-function activationRequest(snapshotId, revision, idempotencyKey, action = "activate", priorActivationId) {
+function runtimeObservation(operatingContext) {
+  return {
+    schemaVersion: "ten-kings-mathematical-calibration-runtime-observation-v1",
+    source: "opened-basler-pylon-and-leimac-acknowledgement-v1",
+    camera: operatingContext.camera,
+    capture: operatingContext.capture,
+    controller: {
+      controllerTransportIdentity: "leimac-idmu-tcp:test:1000:unit:1",
+      selectedChannels: operatingContext.lighting.selectedChannels,
+      dutyPercent: operatingContext.lighting.dutyPercent,
+      expectedWriteCount: 3,
+      acknowledgedWriteCount: 3,
+      allWritesAcknowledged: true,
+    },
+    software: {
+      helperInstanceId: operatingContext.software.helperInstanceId,
+      helperVersion: operatingContext.software.helperVersion,
+    },
+  };
+}
+
+function signedObservation(authority, privateKey) {
+  const observed = runtimeObservation(authority.operatingContextV1);
+  const observation = {
+    schemaVersion: "ten-kings-ai-grader-calibration-workstation-observation-v1",
+    observationId: authority.observationId,
+    hostedObservationAuthoritySha256: sha(require("@tenkings/shared").canonicalAiGraderCalibrationJsonV1(authority)),
+    registryRevision: authority.registryRevision,
+    snapshotId: authority.snapshotId,
+    rigId: authority.rigId,
+    bundleManifestSha256: authority.bundleManifestSha256,
+    memberLedgerSha256: authority.memberLedgerSha256,
+    runtimeContextHash: authority.runtimeContextHash,
+    rigCharacterizationSha256: authority.rigCharacterizationSha256,
+    expectedOperatingContextHash: authority.operatingContextHash,
+    observedOperatingContextHash: authority.operatingContextHash,
+    runtimeObservation: observed,
+    runtimeObservationSha256: sha(require("@tenkings/shared").canonicalAiGraderCalibrationJsonV1(observed)),
+    evidenceImageFileName: "activation-runtime-evidence.png",
+    evidenceImageMediaType: "image/png",
+    evidenceImageSha256: sha("activation evidence"),
+    evidenceImageByteSize: 19,
+    helperInstanceId: "helper-1",
+    helperVersion: "helper-v1",
+    workstationKeyId: KEY_ID,
+    signatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    observedAt: NOW.toISOString(),
+    signature: "A".repeat(86),
+  };
+  observation.signature = sign(
+    "sha256",
+    Buffer.from(aiGraderCalibrationWorkstationObservationStatementV1(observation), "utf8"),
+    { key: privateKey, dsaEncoding: "ieee-p1363" },
+  ).toString("base64url");
+  return observation;
+}
+
+async function activationRequest(service, privateKey, snapshotId, revision, idempotencyKey, action = "activate", priorActivationId) {
+  const { observationAuthority } = await service.requestObservationAuthority({
+    rigId: RIG_ID,
+    snapshotId,
+    expectedRegistryRevision: revision,
+  });
   return {
     action,
     rigId: RIG_ID,
@@ -238,11 +301,13 @@ function activationRequest(snapshotId, revision, idempotencyKey, action = "activ
     expectedRegistryRevision: revision,
     idempotencyKey,
     reason: action === "reactivate" ? "explicit historical calibration reactivation" : "explicit calibrated profile selection",
+    observationAuthority,
+    workstationObservation: signedObservation(observationAuthority, privateKey),
     ...(priorActivationId ? { priorActivationId } : {}),
   };
 }
 
-function signedReceipt(pendingAuthority, privateKey) {
+function signedReceipt(pendingAuthority, privateKey, observation) {
   const receipt = {
     schemaVersion: "ten-kings-ai-grader-calibration-workstation-receipt-v1",
     activationId: pendingAuthority.activationId,
@@ -256,6 +321,10 @@ function signedReceipt(pendingAuthority, privateKey) {
     rigCharacterizationSha256: pendingAuthority.rigCharacterizationSha256,
     expectedOperatingContextHash: pendingAuthority.operatingContextHash,
     observedOperatingContextHash: pendingAuthority.operatingContextHash,
+    observationId: pendingAuthority.observationId,
+    workstationObservationSha256: pendingAuthority.workstationObservationSha256,
+    runtimeObservationSha256: observation.runtimeObservationSha256,
+    evidenceImageSha256: observation.evidenceImageSha256,
     helperInstanceId: "helper-1",
     helperVersion: "helper-v1",
     workstationKeyId: KEY_ID,
@@ -436,8 +505,25 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   });
 
   let registry = await service.list(RIG_ID, true);
+  const rejectedRequest = await activationRequest(
+    service, privateKey, first.id, registry.registryRevision, "reject-tampered-observation",
+  );
+  rejectedRequest.workstationObservation = {
+    ...rejectedRequest.workstationObservation,
+    evidenceImageSha256: sha("tampered activation evidence"),
+  };
+  await errorCode(
+    service.requestActivation(rejectedRequest, "admin-1"),
+    "AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED",
+  );
+  assert.equal(state.activations.length, 0, "rejected observation creates no hosted activation");
+  assert.equal(state.pendingPointers.size, 0, "rejected observation creates no hosted pending pointer");
+
+  const initialRequest = await activationRequest(
+    service, privateKey, first.id, registry.registryRevision, "activate-v1",
+  );
   const initial = await service.requestActivation(
-    activationRequest(first.id, registry.registryRevision, "activate-v1"),
+    initialRequest,
     "admin-1",
   );
   assert.equal(initial.activation.state, "PENDING");
@@ -456,11 +542,31 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   assert.equal(state.activePointers.size, 0);
   assert.equal(state.pendingPointers.size, 1);
 
+  const initialReceipt = signedReceipt(
+    initial.pendingAuthority,
+    privateKey,
+    initialRequest.workstationObservation,
+  );
+  await errorCode(
+    service.completeActivation({
+      activationId: initial.activation.activationId,
+      expectedActivationRevision: initial.activation.activationRevision,
+      idempotencyKey: "reject-tampered-completion",
+      workstationReceipt: {
+        ...initialReceipt,
+        evidenceImageSha256: sha("tampered completion evidence"),
+      },
+    }, "admin-1"),
+    "AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED",
+  );
+  assert.equal(state.activePointers.size, 0, "rejected completion creates no hosted ACTIVE pointer");
+  assert.equal(state.pendingPointers.size, 1, "rejected completion preserves exact hosted PENDING state");
+
   const completed = await service.completeActivation({
     activationId: initial.activation.activationId,
     expectedActivationRevision: initial.activation.activationRevision,
     idempotencyKey: "complete-v1",
-    workstationReceipt: signedReceipt(initial.pendingAuthority, privateKey),
+    workstationReceipt: initialReceipt,
   }, "admin-1");
   assert.equal(completed.activation.state, "ACTIVE");
   assert.equal(completed.authority.authorityPhase, "ACTIVE");
@@ -470,8 +576,11 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   assert.equal((await service.readStartAuthority(TENANT_ID, RIG_ID)).authority.activationId, completed.activation.activationId);
 
   registry = await service.list(RIG_ID, true);
+  const replacementRequest = await activationRequest(
+    service, privateKey, second.id, registry.registryRevision, "activate-v2",
+  );
   const replacement = await service.requestActivation(
-    activationRequest(second.id, registry.registryRevision, "activate-v2"),
+    replacementRequest,
     "admin-1",
   );
   assert.equal(replacement.activation.state, "PENDING");
@@ -496,14 +605,17 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   );
 
   registry = await service.list(RIG_ID, true);
+  const failedReactivationRequest = await activationRequest(
+    service,
+    privateKey,
+    first.id,
+    registry.registryRevision,
+    "reactivate-v1-fails",
+    "reactivate",
+    completed.activation.activationId,
+  );
   const failedReactivationPending = await service.requestActivation(
-    activationRequest(
-      first.id,
-      registry.registryRevision,
-      "reactivate-v1-fails",
-      "reactivate",
-      completed.activation.activationId,
-    ),
+    failedReactivationRequest,
     "admin-1",
   );
   const failedReactivation = await service.failActivation({
@@ -515,20 +627,36 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   assert.equal(failedReactivation.activation.state, "FAILED");
 
   registry = await service.list(RIG_ID, true);
+  const ordinaryReuseRequest = await activationRequest(
+    service, privateKey, first.id, registry.registryRevision, "ordinary-reuse-after-failed-reactivation",
+  );
   await errorCode(
     service.requestActivation(
-      activationRequest(first.id, registry.registryRevision, "ordinary-reuse-after-failed-reactivation"),
+      ordinaryReuseRequest,
       "admin-1",
     ),
     "AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED",
   );
+  const reactivationRequest = await activationRequest(
+    service,
+    privateKey,
+    first.id,
+    registry.registryRevision,
+    "reactivate-v1",
+    "reactivate",
+    completed.activation.activationId,
+  );
   const reactivatedPending = await service.requestActivation(
-    activationRequest(first.id, registry.registryRevision, "reactivate-v1", "reactivate", completed.activation.activationId),
+    reactivationRequest,
     "admin-1",
   );
   assert.equal(reactivatedPending.activation.priorActivationId, completed.activation.activationId);
 
-  const receipt = signedReceipt(reactivatedPending.pendingAuthority, privateKey);
+  const receipt = signedReceipt(
+    reactivatedPending.pendingAuthority,
+    privateKey,
+    reactivationRequest.workstationObservation,
+  );
   const concurrentResults = await Promise.allSettled([
     service.completeActivation({
       activationId: reactivatedPending.activation.activationId,
@@ -639,6 +767,20 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
     workstationPrivateKey: privateKey,
     hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
     liveOperatingContext: async (expected) => expected,
+    observeActivationRuntime: async (expected, evidenceDirectory) => {
+      const imageBytes = Buffer.from("activation evidence");
+      await fs.writeFile(path.join(evidenceDirectory, "activation-runtime-evidence.png"), imageBytes, { flag: "wx" });
+      return {
+        runtimeObservation: runtimeObservation(expected),
+        evidenceImage: {
+          fileName: "activation-runtime-evidence.png",
+          mediaType: "image/png",
+          sha256: sha(imageBytes),
+          byteSize: imageBytes.byteLength,
+          observedAt: NOW.toISOString(),
+        },
+      };
+    },
     isIdle: async () => true,
     now: () => new Date(NOW),
   });
@@ -660,12 +802,23 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
     hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
   });
   const listed = await hosted.list(RIG_ID, true);
+  const { observationAuthority } = await hosted.requestObservationAuthority({
+    rigId: RIG_ID,
+    snapshotId: selected.id,
+    expectedRegistryRevision: listed.registryRevision,
+  });
+  const workstationObservation = await registry.observeActivation(observationAuthority);
   const pending = await hosted.requestActivation(
-    activationRequest(
-      selected.id,
-      listed.registryRevision,
-      "activate-end-to-end",
-    ),
+    {
+      action: "activate",
+      rigId: RIG_ID,
+      snapshotId: selected.id,
+      expectedRegistryRevision: listed.registryRevision,
+      idempotencyKey: "activate-end-to-end",
+      reason: "explicit calibrated profile selection",
+      observationAuthority,
+      workstationObservation,
+    },
     "admin-1",
   );
   const receipt = await registry.prepareActivation(pending.pendingAuthority);
@@ -693,19 +846,21 @@ test("operating-context mismatch and stale optimistic revision cannot create act
   const registry = await service.list(RIG_ID, true);
   selected.mathematicalOperatingContextHash = "f".repeat(64);
   await errorCode(
-    service.requestActivation(
-      activationRequest(selected.id, registry.registryRevision, "context-mismatch"),
-      "admin-1",
-    ),
-    "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+    service.requestObservationAuthority({
+      rigId: RIG_ID,
+      snapshotId: selected.id,
+      expectedRegistryRevision: registry.registryRevision,
+    }),
+    "AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE",
   );
   assert.equal(state.activations.length, 0);
   selected.mathematicalOperatingContextHash = sha(canonicalAiGraderOperatingContextV1(selected.mathematicalOperatingContextV1));
   await errorCode(
-    service.requestActivation(
-      activationRequest(selected.id, "0".repeat(64), "stale-revision"),
-      "admin-1",
-    ),
+    service.requestObservationAuthority({
+      rigId: RIG_ID,
+      snapshotId: selected.id,
+      expectedRegistryRevision: "0".repeat(64),
+    }),
     "AI_GRADER_CALIBRATION_ACTIVATION_REVISION_CONFLICT",
   );
   assert.equal(state.activations.length, 0);
@@ -723,7 +878,14 @@ test("hosted activation request fails before mutation when authority signing is 
   const registry = await service.list(RIG_ID, true);
   await errorCode(
     service.requestActivation(
-      activationRequest(selected.id, registry.registryRevision, "signing-required"),
+      {
+        action: "activate",
+        rigId: RIG_ID,
+        snapshotId: selected.id,
+        expectedRegistryRevision: registry.registryRevision,
+        idempotencyKey: "signing-required",
+        reason: "explicit calibrated profile selection",
+      },
       "admin-1",
     ),
     "AI_GRADER_CALIBRATION_ACTIVATION_UNAVAILABLE",
