@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs/promises");
+const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -48,6 +49,39 @@ function jsonBytes(value) {
 }
 
 const compactCanonicalBytes = (value) => Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
+
+function parentStaticPhysicalDirectionTransform(vector, matrix) {
+  if (matrix.some((value) => !Number.isFinite(value))) {
+    throw new Error("Physical-to-normalized direction matrix is non-finite.");
+  }
+  const transformed = {
+    x: matrix[0] * vector.x + matrix[1] * vector.y,
+    y: matrix[2] * vector.x + matrix[3] * vector.y,
+  };
+  const magnitude = Math.hypot(transformed.x, transformed.y);
+  if (!Number.isFinite(magnitude) || magnitude <= 0) {
+    throw new Error("Physical light direction transform is degenerate.");
+  }
+  return { x: transformed.x / magnitude, y: transformed.y / magnitude };
+}
+
+function assertSameTransformOutcome(actualTransform, vector, matrix) {
+  let expected;
+  let expectedError;
+  try {
+    expected = parentStaticPhysicalDirectionTransform(vector, matrix);
+  } catch (error) {
+    expectedError = error;
+  }
+  if (expectedError) {
+    assert.throws(
+      () => actualTransform(vector, matrix),
+      (error) => error instanceof Error && error.message === expectedError.message,
+    );
+    return;
+  }
+  assert.deepEqual(compactCanonicalBytes(actualTransform(vector, matrix)), compactCanonicalBytes(expected));
+}
 function runtimeContext() {
   return {
     schemaVersion: FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_RUNTIME_CONTEXT_SCHEMA,
@@ -604,7 +638,47 @@ test("core derives analysis, canonical finalization, and durable ready-for-activ
       mutate(changed);
       await assert.rejects(core.analyze(changed), /accepts no caller-authored values/);
     }
-    await core.analyze();
+    const mathModulePath = require.resolve("../dist/drivers/fixedRigFastCalibrationMathV1_2");
+    assert.equal(require.cache[mathModulePath], undefined, "Dell analysis math must remain lazy before analyze");
+    const originalLoad = Module._load;
+    let lazyModuleLoadCount = 0;
+    let dellTransformCallCount = 0;
+    let boundaryProbeCount = 0;
+    Module._load = function(request, parent, isMain) {
+      const resolved = Module._resolveFilename(request, parent, isMain);
+      const loaded = originalLoad.call(this, request, parent, isMain);
+      if (resolved !== mathModulePath) return loaded;
+      lazyModuleLoadCount += 1;
+      for (const [vector, matrix] of [
+        [{ x: 1, y: 0 }, [1, 0, 0, 1]],
+        [{ x: 0.6, y: -0.8 }, [0, -1, 1, 0]],
+        [{ x: -1, y: 1 }, [2, 0.5, -0.25, 3]],
+        [{ x: 1, y: 0 }, [Number.EPSILON, 0, 0, Number.EPSILON]],
+        [{ x: 1, y: 0 }, [0, 0, 0, 0]],
+        [{ x: 1, y: 0 }, [Number.NaN, 0, 0, 1]],
+      ]) {
+        assertSameTransformOutcome(loaded.transformFastCalibrationPhysicalDirectionV1_2, vector, matrix);
+        boundaryProbeCount += 1;
+      }
+      return {
+        ...loaded,
+        transformFastCalibrationPhysicalDirectionV1_2(vector, matrix) {
+          const actual = loaded.transformFastCalibrationPhysicalDirectionV1_2(vector, matrix);
+          const expected = parentStaticPhysicalDirectionTransform(vector, matrix);
+          assert.deepEqual(compactCanonicalBytes(actual), compactCanonicalBytes(expected));
+          dellTransformCallCount += 1;
+          return actual;
+        },
+      };
+    };
+    try {
+      await core.analyze();
+    } finally {
+      Module._load = originalLoad;
+    }
+    assert.equal(lazyModuleLoadCount, 1);
+    assert.equal(boundaryProbeCount, 6);
+    assert.equal(dellTransformCallCount, 8);
     assert.equal(core.status().phase, "finalize");
     await core.finalize();
     assert.equal(core.status().phase, "ready_for_explicit_activation");

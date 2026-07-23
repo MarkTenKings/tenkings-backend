@@ -12,7 +12,7 @@ import {
 import {
   FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PACKAGE_V1,
   FIXED_RIG_MATHEMATICAL_CALIBRATION_CAPTURE_PROFILE_V1,
-} from "./fixedRigMathematicalCalibrationCaptureV1";
+} from "./fixedRigMathematicalCalibrationCaptureContractV1";
 import { FIXED_RIG_PHYSICAL_CALIBRATION_V1_VERSION } from "./fixedRigPhysicalCalibrationV1";
 import {
   FIXED_RIG_FAST_MATHEMATICAL_CALIBRATION_V1_2_ANALYSIS_ALGORITHM,
