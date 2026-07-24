@@ -2921,7 +2921,11 @@ function mathematicalCalibrationReadiness(
   loader: typeof loadFixedRigMathematicalCalibrationBundleV1 = loadFixedRigMathematicalCalibrationBundleV1,
 ): NonNullable<AiGraderLocalStationBridgeStatus["mathematicalCalibration"]> {
   if (!config.mathematicalCalibrationBundlePath || !config.mathematicalCalibrationBundleSha256) {
-    return { ready: false, reason: "No exact finalized Mathematical Calibration V1 bundle is configured on this station." };
+    return {
+      ready: false,
+      reason: "No exact finalized Mathematical Calibration V1 bundle is configured on this station.",
+      rigId: config.mathematicalCalibrationRigId,
+    };
   }
   try {
     const loaded = loader({
@@ -2955,7 +2959,11 @@ function mathematicalCalibrationReadiness(
       } : {}),
     };
   } catch (error) {
-    return { ready: false, reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established." };
+    return {
+      ready: false,
+      reason: error instanceof Error ? error.message : "Calibration bundle readiness could not be established.",
+      rigId: config.mathematicalCalibrationRigId,
+    };
   }
 }
 

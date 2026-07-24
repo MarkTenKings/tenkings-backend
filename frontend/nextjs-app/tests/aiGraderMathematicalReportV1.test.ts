@@ -367,7 +367,7 @@ test("V1 report renders exact scores, subscores, formulas, and evidence limitati
   assert.match(html, /Exact deduction formula/);
   assert.match(html, /linear clamped/);
   assert.match(html, /0\.55 &lt;= max\(0\.05, 0\.08\)/);
-  assert.match(html, /Human finding review/);
+  assert.doesNotMatch(html, /Finding review|Human finding review/);
   assert.match(html, /Exact immutable deduction overlay for finding surface-scratch-front-1/);
   assert.match(html, /href="\/api\/evidence\/deduction-overlay"/);
   assert.match(html, /Exact immutable segmentation mask for finding surface-scratch-front-1/);
@@ -376,28 +376,23 @@ test("V1 report renders exact scores, subscores, formulas, and evidence limitati
   assert.match(html, /Exact calibration bundle members/);
 });
 
-test("owner-accepted report visibly preserves rejection, all exceptions, and signed activation provenance", () => {
+test("owner-accepted calibration metadata remains internal and is not rendered on the public report", () => {
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
     bundle: ownerAcceptedDisplayBundle(),
   }));
-  assert.match(html, /Owner accepted with recorded exceptions/);
-  assert.match(html, /Mathematical status REJECTED/);
-  assert.match(html, /isCalibrated=false/);
-  assert.match(html, /This is not a mathematical threshold pass/);
-  assert.match(html, /Mark \/ Ten Kings/);
-  assert.match(html, /Product owner directs operational use of the preserved calibration exactly as captured/);
-  assert.match(html, /Complete mathematical exception ledger \(36\)/);
-  assert.equal((html.match(/Recorded mathematical exception message/g) ?? []).length, 36);
-  assert.match(html, /certifiedAnalysis\.exception36/);
-  assert.match(html, /owner-accepted-activation-v1 \/ ACTIVE/);
-  assert.match(html, /ecdsa-p256-sha256-ieee-p1363/);
-  assert.match(html, new RegExp("A".repeat(86)));
-  assert.match(html, /Bundle manifest binding/);
-  assert.match(html, /Member-ledger binding/);
-  assert.match(html, /Runtime \/ operating-context binding/);
+  assert.doesNotMatch(html, /Owner accepted with recorded exceptions/);
+  assert.doesNotMatch(html, /Mathematical status REJECTED/);
+  assert.doesNotMatch(html, /isCalibrated=false/);
+  assert.doesNotMatch(html, /Mark \/ Ten Kings/);
+  assert.doesNotMatch(html, /Complete mathematical exception ledger/);
+  assert.doesNotMatch(html, /Recorded mathematical exception message/);
+  assert.doesNotMatch(html, /certifiedAnalysis\.exception36/);
+  assert.doesNotMatch(html, /owner-accepted-activation-v1/);
+  assert.doesNotMatch(html, /ecdsa-p256-sha256-ieee-p1363/);
+  assert.match(html, /Immutable grading provenance/);
 });
 
-test("V1 report renders human-reviewed values as effective while retaining immutable machine values", () => {
+test("V1 public report renders approved replacement values without human or machine annotations", () => {
   const bundle = displayBundle();
   const editorialRevision = buildAiGraderReportEditorialRevisionV1({
     reportId: bundle.reportId,
@@ -407,10 +402,10 @@ test("V1 report renders human-reviewed values as effective while retaining immut
     editedAt: "2026-07-21T18:00:00.000Z",
     scores: { centering: 8.25, corners: 8.5, edges: 8.75, surface: 9 },
     content: {
-      cardTitle: "Human Reviewed Display Card",
-      reportSummary: "An administrator reviewed every required grading element.",
-      cornersExplanation: "Corner evidence was adjudicated at 8.50.",
-      whyNot10: "The effective reviewed report records visible corner wear.",
+      cardTitle: "Approved Display Card",
+      reportSummary: "Every required grading element is reflected in this report.",
+      cornersExplanation: "Corner condition is 8.50.",
+      whyNot10: "Visible corner wear prevents a grade of 10.",
     },
     adjudicatedMachineFailures: ["MACHINE_CORNER_REVIEW_REQUIRED"],
   });
@@ -419,15 +414,14 @@ test("V1 report renders human-reviewed values as effective while retaining immut
     bundle,
     editorialRevision,
   }));
-  assert.match(html, /Human Reviewed Display Card/);
-  assert.match(html, /Completed — human reviewed\/admin adjudicated · revision 2/);
+  assert.match(html, /Approved Display Card/);
   assert.match(html, new RegExp(editorialRevision.calculation.overall.toFixed(2)));
-  assert.match(html, /Immutable machine overall: 9\.58/);
-  assert.match(html, /Human reviewed · machine 9\.75/);
-  assert.match(html, /Corner evidence was adjudicated at 8\.50/);
-  assert.match(html, /Effective human-reviewed explanation/);
-  assert.match(html, /visible corner wear/);
-  assert.match(html, /Adjudicated machine failures: MACHINE_CORNER_REVIEW_REQUIRED/);
+  assert.match(html, /8\.50/);
+  assert.match(html, /Corner condition is 8\.50/);
+  assert.match(html, /Visible corner wear prevents a grade of 10/);
+  assert.doesNotMatch(html, /human reviewed|human-reviewed|admin adjudicated/i);
+  assert.doesNotMatch(html, /Immutable machine|machine overall|machine failures/i);
+  assert.doesNotMatch(html, /MACHINE_CORNER_REVIEW_REQUIRED/);
 });
 
 test("registered-template centering renders exact approved reference and correspondence provenance", () => {
