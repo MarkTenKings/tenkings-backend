@@ -190,6 +190,18 @@ test("Production station exposes Mathematical V1 as a fixed contract with no Leg
   assert.doesNotMatch(source, /setSelectedGradingContract/);
 });
 
+test("Production station uses plain-language card and border labels", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(source, /<option value="generic_standard">Sports<\/option>/);
+  assert.match(source, /<option value="pokemon_tcg_standard">Pokémon<\/option>/);
+  assert.match(source, /<option value="printed_border_v1">Border<\/option>/);
+  assert.match(source, /<option value="registered_design_template_v1">No Border<\/option>/);
+  assert.doesNotMatch(source, />Existing standard trading card<\/option>/);
+  assert.doesNotMatch(source, />Trusted Pokémon TCG standard<\/option>/);
+  assert.doesNotMatch(source, />Printed border V1<\/option>/);
+  assert.doesNotMatch(source, />Approved registered template V1<\/option>/);
+});
+
 test("Production station uses the configured activation registry instead of the retired direct-bundle UI gate", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(
