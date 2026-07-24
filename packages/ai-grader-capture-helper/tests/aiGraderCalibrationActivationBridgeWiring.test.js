@@ -1,6 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const os = require("node:os");
+const path = require("node:path");
 const {
+  AiGraderLocalStationBridgeService,
+  buildAiGraderLocalStationBridgeConfig,
   createAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 
@@ -60,4 +65,43 @@ test("real helper requires pinned hosted authority verification keys before read
     ),
     /pinned hosted authority public keys/,
   );
+});
+
+test("activation evidence collision fails before any real hardware boundary", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-activation-collision-"));
+  t.after(async () => fs.rm(root, { recursive: true, force: true }));
+  const outputDir = path.join(root, "helper-output");
+  const evidenceDirectory = path.join(root, "registry-staging");
+  await fs.mkdir(evidenceDirectory, { recursive: true });
+  await fs.writeFile(
+    path.join(evidenceDirectory, "activation-runtime-evidence.png"),
+    "pre-existing immutable evidence",
+    { flag: "wx" },
+  );
+  const config = buildAiGraderLocalStationBridgeConfig({
+    ...realInput(),
+    outputDir,
+  });
+  let realHardwareBoundaryCount = 0;
+  let lightingWriteCount = 0;
+  const service = new AiGraderLocalStationBridgeService(config, undefined, undefined, {
+    onRealHardwareBoundary: () => { realHardwareBoundaryCount += 1; },
+    writeLightingFrames: async () => {
+      lightingWriteCount += 1;
+      return [];
+    },
+  });
+
+  await assert.rejects(
+    service.observeMathematicalCalibrationActivationRuntime(
+      {},
+      "local-dell-ai-grader-station",
+      "ai-grader-local-station-bridge-v0.10",
+      evidenceDirectory,
+    ),
+    /create-new target already exists/,
+  );
+  assert.equal(realHardwareBoundaryCount, 0);
+  assert.equal(lightingWriteCount, 0);
+  assert.equal(service.status().warmRunnerStatus.captureLock.held, false);
 });
