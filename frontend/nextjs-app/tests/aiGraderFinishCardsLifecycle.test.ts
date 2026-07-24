@@ -97,6 +97,7 @@ function discardDb(options: {
   identityReportId?: string;
   legacyPreRapidIdentity?: boolean;
   confirmedAt?: string;
+  relatedListing?: boolean;
 } = {}) {
   const calls: string[] = [];
   const sessionStatus = options.sessionStatus ?? "published";
@@ -209,21 +210,26 @@ function discardDb(options: {
       },
     },
     item: {
-      async findUnique() {
+      async findUnique(query: { select?: Record<string, unknown> }) {
+        db.itemFindUniqueSelect = query.select;
+        const countSelection = query.select?._count as { select?: Record<string, unknown> } | undefined;
+        if (countSelection?.select?.listings) {
+          throw new Error(
+            "Unknown field `listings` for select statement on model `ItemCountOutputType`. Available options are ownerships, packSlots, kioskReveals, packLabels, aiGraderNfcTags.",
+          );
+        }
         return {
           id: itemId,
           number: cardAssetId,
           cardQrCodeId: null,
           ownerships: [{ id: "ownership-1", note: `Linked from confirmed AI Grader card asset ${cardAssetId}` }],
-          _count: {
-            listings: 0,
-            packSlots: 0,
-            ingestionTask: 0,
-            shippingRequest: 0,
-            kioskReveals: 0,
-            goldenTicketPrize: 0,
-            packLabels: 0,
-          },
+          listings: options.relatedListing ? { id: "listing-1" } : null,
+          packSlots: [],
+          ingestionTask: null,
+          shippingRequest: null,
+          kioskReveals: [],
+          goldenTicketPrize: null,
+          packLabels: [],
         };
       },
       async deleteMany() {
@@ -319,6 +325,12 @@ test("Discard accepts the exact July 8 legacy card shape with both pre-Rapid ide
     },
   });
   assert.deepEqual(storageCalls, [prefix, cardStorageKey]);
+  assert.equal("_count" in db.itemFindUniqueSelect, false);
+  assert.deepEqual(
+    ["listings", "packSlots", "ingestionTask", "shippingRequest", "kioskReveals", "goldenTicketPrize", "packLabels"]
+      .filter((relation) => relation in db.itemFindUniqueSelect),
+    ["listings", "packSlots", "ingestionTask", "shippingRequest", "kioskReveals", "goldenTicketPrize", "packLabels"],
+  );
   assert.equal(result.databaseDeleted, true);
 });
 
@@ -376,6 +388,35 @@ test("Discard rejects an external CardAsset object shared by another card before
     (error: unknown) =>
       error instanceof Error &&
       (error as Error & { code?: string }).code === "AI_GRADER_DISCARD_CARD_STORAGE_SHARED",
+  );
+  assert.equal(storageCalls, 0);
+});
+
+test("Discard rejects an Item with a related listing using schema-valid direct relation evidence", async () => {
+  const db = discardDb({
+    legacyPreRapidIdentity: true,
+    confirmedAt: "2026-07-08T21:09:00.000Z",
+    relatedListing: true,
+  });
+  let storageCalls = 0;
+  await assert.rejects(
+    discardAiGraderFinishCardRuntime({
+      tenantId: "ten-kings",
+      reportId,
+      operatorUserId: "operator-1",
+      dbClient: db,
+      async deleteStoragePrefix(storagePrefix) {
+        storageCalls += 1;
+        return { storagePrefix, listedObjectCount: 0, deletedObjectCount: 0 };
+      },
+      async deleteStorageObject(storageKey) {
+        storageCalls += 1;
+        return { storageKey, deleteRequestCompleted: true };
+      },
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "AI_GRADER_DISCARD_ITEM_OWNERSHIP_UNPROVEN",
   );
   assert.equal(storageCalls, 0);
 });
