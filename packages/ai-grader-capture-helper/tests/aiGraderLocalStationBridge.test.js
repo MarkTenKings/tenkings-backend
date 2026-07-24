@@ -17,6 +17,15 @@ const {
 const sourceRoot = path.resolve(__dirname, "../src");
 const bridgeSource = fs.readFileSync(path.join(sourceRoot, "drivers/aiGraderLocalStationBridge.ts"), "utf8");
 const RAW_ROLES = ["dark_control", "all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)];
+const BRACKET_EXPOSURES_US = [15000, 30000, 37500];
+const BRACKET_RAW_ROLES = [
+  "all_on",
+  "accepted_profile",
+  ...BRACKET_EXPOSURES_US.flatMap((exposureUs) => [
+    ...Array.from({ length: 3 }, (_, index) => `bracket_${exposureUs}_reference_${index + 1}`),
+    ...Array.from({ length: 8 }, (_, index) => `bracket_${exposureUs}_channel_${index + 1}`),
+  ]),
+];
 const OCR_FIELDS = [
   "category", "playerName", "cardName", "year", "manufacturer", "sport", "game",
   "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
@@ -88,6 +97,80 @@ function capturePayload(manifest, side, seed) {
       sessionId: manifest.sessionId,
       side,
       packageId,
+      acceptedAt: new Date().toISOString(),
+    },
+  };
+}
+
+function bracketCapturePayload(manifest, side, seed, packageDir) {
+  const sideDir = path.join(packageDir, side);
+  fs.mkdirSync(sideDir, { recursive: true });
+  let ordinal = 0;
+  const capturedRole = (roleName, label, channel) => {
+    ordinal += 1;
+    const outputFilePath = path.join(sideDir, `basler-${label}-20260724T2112${String(ordinal).padStart(5, "0")}Z.tiff`);
+    const bytes = Buffer.from(`${seed}:${side}:${roleName}:immutable-native-tiff-bytes`);
+    fs.writeFileSync(outputFilePath, bytes);
+    return {
+      role: roleName,
+      label,
+      ...(channel === undefined ? {} : { channel }),
+      capture: {
+        outputFilePath,
+        mimeType: "image/tiff",
+        savedImageFormat: "TIFF",
+        sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+        byteSize: bytes.byteLength,
+      },
+    };
+  };
+  const allOn = capturedRole("all_on", `${side}-all-on`, "all");
+  const acceptedProfile = capturedRole(
+    "accepted_profile",
+    `${side}-accepted-lighting-profile`,
+    [1, 2, 3, 4, 5, 6, 7, 8],
+  );
+  const cells = BRACKET_EXPOSURES_US.map((exposureUs) => ({
+    exposureUs,
+    references: Array.from({ length: 3 }, (_, index) =>
+      capturedRole(
+        `bracket_${exposureUs}_reference_${index + 1}`,
+        `${side}-bracket-${exposureUs}-reference-${index + 1}`,
+      )),
+    channels: Array.from({ length: 8 }, (_, index) =>
+      capturedRole(
+        `bracket_${exposureUs}_channel_${index + 1}`,
+        `${side}-bracket-${exposureUs}-channel-${index + 1}`,
+        index + 1,
+      )),
+  }));
+  return {
+    captureProfile: "production_fast",
+    rawEvidenceFormat: "tiff",
+    packageId: path.basename(packageDir),
+    warmBatch: {
+      side,
+      captures: {
+        darkControl: cells[2].references[0],
+        allOn,
+        acceptedProfile,
+        channels: cells[2].channels,
+        photometricBracket: {
+          version: "fixed_rig_exposure_bracket_capture_v1",
+          exposuresUs: BRACKET_EXPOSURES_US,
+          isolatedDutyTenthsPercent: 24,
+          settleMs: 0,
+          gain: 0,
+          pixelFormat: "Mono8",
+          cells,
+        },
+      },
+    },
+    sideProcessingJob: {
+      requestId: `${seed}-${side}-processing-request`,
+      sessionId: manifest.sessionId,
+      side,
+      packageId: path.basename(packageDir),
       acceptedAt: new Date().toISOString(),
     },
   };
@@ -224,7 +307,10 @@ function installSimulatedPublicCapture(service, behavior = {}) {
     const seed = `${manifest.reportId}-${invocations[side]}`;
     const packageDir = path.join(manifest.outputs.sessionDir, `${side}-package`);
     fs.mkdirSync(packageDir, { recursive: true });
-    const payload = { ...capturePayload(manifest, side, seed), packageDir };
+    const payload = {
+      ...(behavior.capturePayload?.(manifest, side, seed, packageDir) ?? capturePayload(manifest, side, seed)),
+      packageDir,
+    };
     const result = {
       stepId: `capture_${side}`,
       ok: true,
@@ -637,6 +723,61 @@ test("atomic Back queue commit persists exact TIFF hashes and queue before captu
     assert.equal(service.status().rapidCaptureQueue.items[0].rawEvidence.format, "tiff");
     assert.equal(service.captureLock.owner, "atomic-test-owner", "queue commit never releases capture ownership itself");
     service.releaseCaptureLock("atomic-test-owner");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("real-shape bracket Front -> Back transaction durably commits all 33 native TIFF roles without legacy aliases", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-bracket-atomic-queue-"));
+  try {
+    const { config, service } = configFor(outputDir);
+    service.enqueueRapidFinalization = () => {};
+    installSimulatedPublicCapture(service, { capturePayload: bracketCapturePayload });
+    await startHistoricalLegacyFixtureSession(service, { reportId: "bracket-atomic-order-report" });
+
+    await service.action("capture-front", bindReadyPreview(service, "front", "bracket-atomic"));
+    const completed = await service.action("capture-back", bindReadyPreview(service, "back", "bracket-atomic"));
+    assert.equal(completed.currentStep, "start_new_card");
+    assert.equal(completed.rapidCaptureQueue.items.length, 1);
+
+    const persistedQueue = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf8"));
+    assert.equal(persistedQueue.items.length, 1);
+    const persistedItem = persistedQueue.items[0];
+    const persistedManifest = JSON.parse(fs.readFileSync(persistedItem.manifestPath, "utf8"));
+    for (const side of ["front", "back"]) {
+      const captured = persistedManifest.commandResults.find((result) => result.stepId === `capture_${side}` && result.ok).payload;
+      const nativeRoles = [
+        captured.warmBatch.captures.allOn,
+        captured.warmBatch.captures.acceptedProfile,
+        ...captured.warmBatch.captures.photometricBracket.cells.flatMap((cell) => [
+          ...cell.references,
+          ...cell.channels,
+        ]),
+      ];
+      const queuedSide = persistedItem.rawEvidence.sides.find((entry) => entry.side === side);
+      assert.deepEqual(nativeRoles.map((entry) => entry.role), BRACKET_RAW_ROLES);
+      assert.deepEqual(queuedSide.roles.map((entry) => entry.role), BRACKET_RAW_ROLES);
+      assert.equal(new Set(nativeRoles.map((entry) => entry.capture.outputFilePath.toLowerCase())).size, 35);
+      assert.equal(nativeRoles.slice(2).length, 33);
+      assert.equal(nativeRoles.every((entry) => fs.existsSync(entry.capture.outputFilePath)), true);
+      assert.deepEqual(
+        queuedSide.roles.map(({ role, sha256, byteSize }) => ({ role, sha256, byteSize })),
+        nativeRoles.map(({ role, capture }) => ({
+          role,
+          sha256: crypto.createHash("sha256").update(fs.readFileSync(capture.outputFilePath)).digest("hex"),
+          byteSize: fs.statSync(capture.outputFilePath).size,
+        })),
+      );
+      assert.equal(queuedSide.roles.some((entry) => entry.role === "dark_control" || /^channel_[1-8]$/.test(entry.role)), false);
+    }
+
+    const reloaded = new AiGraderLocalStationBridgeService(config);
+    assert.deepEqual(
+      reloaded.status().rapidCaptureQueue.items[0].rawEvidence.sides.map((side) => side.roles.length),
+      [35, 35],
+      "the native bracket contract remains valid after durable queue reload",
+    );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }

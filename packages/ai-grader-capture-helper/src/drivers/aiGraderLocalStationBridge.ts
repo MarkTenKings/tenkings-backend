@@ -3586,11 +3586,28 @@ const RAPID_WORKFLOW_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
   "finding_review_required", "insufficient_evidence",
   "report_ready_needs_confirm", "confirmed_needs_publish", "published", "failed",
 ]);
-const RAPID_RAW_EVIDENCE_ROLES = [
+const RAPID_LEGACY_RAW_EVIDENCE_ROLES = [
   "dark_control", "all_on", "accepted_profile",
   ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`),
 ] as const;
+const RAPID_BRACKET_RAW_EVIDENCE_ROLES = [
+  "all_on",
+  "accepted_profile",
+  ...[15000, 30000, 37500].flatMap((exposureUs) => [
+    ...Array.from({ length: 3 }, (_, index) => `bracket_${exposureUs}_reference_${index + 1}`),
+    ...Array.from({ length: 8 }, (_, index) => `bracket_${exposureUs}_channel_${index + 1}`),
+  ]),
+] as const;
+const RAPID_RAW_EVIDENCE_ROLE_CONTRACTS: readonly (readonly string[])[] = [
+  RAPID_LEGACY_RAW_EVIDENCE_ROLES,
+  RAPID_BRACKET_RAW_EVIDENCE_ROLES,
+];
 const INVALID_PERSISTED_RAPID_ITEM_DETAIL = "Persisted exact-item state failed allowlist validation and cannot resume or become review-ready.";
+
+function rapidRawEvidenceRoleContract(roles: readonly string[]): readonly string[] | undefined {
+  return RAPID_RAW_EVIDENCE_ROLE_CONTRACTS.find((contract) =>
+    roles.length === contract.length && roles.every((role, index) => role === contract[index]));
+}
 
 function persistedTimestamp(value: unknown, label: string): string {
   if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
@@ -3684,13 +3701,13 @@ function persistedRawEvidence(
     }
     const side = rawSide.side as AiGraderWarmRunnerSide;
     const packageId = persistedIdentifier(rawSide.packageId, `${side} package identity`);
-    if (!Array.isArray(rawSide.roles) || rawSide.roles.length !== RAPID_RAW_EVIDENCE_ROLES.length) {
+    if (!Array.isArray(rawSide.roles)) {
       throw new Error(`Persisted Rapid ${side} TIFF roles are incomplete.`);
     }
     const roles = rawSide.roles.map((role) => {
       if (
         !exactObjectKeys(role, ["role", "sha256", "byteSize", "mimeType"])
-        || !RAPID_RAW_EVIDENCE_ROLES.includes(role.role as typeof RAPID_RAW_EVIDENCE_ROLES[number])
+        || typeof role.role !== "string"
         || typeof role.sha256 !== "string"
         || !/^[a-f0-9]{64}$/i.test(role.sha256)
         || !Number.isSafeInteger(role.byteSize)
@@ -3706,7 +3723,7 @@ function persistedRawEvidence(
         mimeType: "image/tiff" as const,
       };
     });
-    if (new Set(roles.map((role) => role.role)).size !== RAPID_RAW_EVIDENCE_ROLES.length) {
+    if (!rapidRawEvidenceRoleContract(roles.map((role) => role.role))) {
       throw new Error(`Persisted Rapid ${side} TIFF roles are not exact and unique.`);
     }
     return { side, packageId, roles };
@@ -7693,19 +7710,39 @@ export class AiGraderLocalStationBridgeService {
       throw new Error(`Rapid queue commit requires exact ${side} production_fast TIFF capture identity.`);
     }
     const captures = payload.warmBatch?.captures;
-    const roleCaptures = [captures?.darkControl, captures?.allOn, captures?.acceptedProfile, ...(Array.isArray(captures?.channels) ? captures.channels : [])];
-    const expectedRoles = new Set(["dark_control", "all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)]);
-    const roles = roleCaptures.map((entry: any) => {
+    const bracketCells = captures?.photometricBracket?.cells;
+    const bracketCapture = captures?.photometricBracket !== undefined;
+    const roleCaptures = bracketCapture
+      ? [
+          captures?.allOn,
+          captures?.acceptedProfile,
+          ...(Array.isArray(bracketCells)
+            ? bracketCells.flatMap((cell: any) => [
+                ...(Array.isArray(cell?.references) ? cell.references : []),
+                ...(Array.isArray(cell?.channels) ? cell.channels : []),
+              ])
+            : []),
+        ]
+      : [
+          captures?.darkControl,
+          captures?.allOn,
+          captures?.acceptedProfile,
+          ...(Array.isArray(captures?.channels) ? captures.channels : []),
+        ];
+    const expectedRoles = bracketCapture
+      ? RAPID_BRACKET_RAW_EVIDENCE_ROLES
+      : RAPID_LEGACY_RAW_EVIDENCE_ROLES;
+    const roles = roleCaptures.map((entry: any, index: number) => {
       const role = entry?.role;
       const capture = entry?.capture;
       if (
-        typeof role !== "string"
-        || !expectedRoles.has(role)
+        role !== expectedRoles[index]
         || capture?.mimeType !== "image/tiff"
         || capture?.savedImageFormat !== "TIFF"
         || !/^[a-f0-9]{64}$/i.test(capture?.sha256 ?? "")
         || !Number.isSafeInteger(capture?.byteSize)
         || capture.byteSize <= 0
+        || (bracketCapture && (typeof capture?.outputFilePath !== "string" || !path.isAbsolute(capture.outputFilePath)))
       ) {
         throw new Error(`Rapid queue commit requires immutable ${side} TIFF bytes and hashes for every exact evidence role.`);
       }
@@ -7716,7 +7753,17 @@ export class AiGraderLocalStationBridgeService {
         mimeType: "image/tiff" as const,
       };
     });
-    if (roles.length !== expectedRoles.size || new Set(roles.map((role) => role.role)).size !== expectedRoles.size) {
+    if (
+      roles.length !== expectedRoles.length
+      || !rapidRawEvidenceRoleContract(roles.map((role) => role.role))
+      || (
+        bracketCapture
+        && new Set(roleCaptures.map((entry: any) =>
+          typeof entry?.capture?.outputFilePath === "string"
+            ? path.resolve(entry.capture.outputFilePath).toLowerCase()
+            : "")).size !== expectedRoles.length
+      )
+    ) {
       throw new Error(`Rapid queue commit requires one immutable ${side} TIFF for every exact evidence role.`);
     }
     const job = payload.sideProcessingJob;
