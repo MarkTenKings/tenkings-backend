@@ -1892,6 +1892,15 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
           : {}),
       }
     : undefined;
+  const rawCalibrationActivation = status.calibrationActivation;
+  const calibrationActivation =
+    rawCalibrationActivation &&
+    ["UNAVAILABLE", "IDLE", "PENDING", "ACTIVE"].includes(rawCalibrationActivation.state)
+      ? {
+          configured: rawCalibrationActivation.configured === true,
+          state: rawCalibrationActivation.state,
+        }
+      : undefined;
   const gradingContract =
     status.gradingContract === "mathematical_calibration_v1" ? "mathematical_calibration_v1"
       : status.gradingContract === "legacy_v0" ? "legacy_v0"
@@ -1907,6 +1916,7 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     hardwareActionsEnabled: status.hardwareActionsEnabled,
     ...(gradingContract ? { gradingContract } : {}),
     ...(mathematicalCalibration ? { mathematicalCalibration } : {}),
+    ...(calibrationActivation ? { calibrationActivation } : {}),
     ...(mathematicalV1 ? { mathematicalV1 } : {}),
     currentStep: status.currentStep,
     nextAction: status.nextAction,
