@@ -12,6 +12,7 @@ const {
   createAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const {
+  assertFixedRigMathematicalWarmSideCaptureProfileV1,
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
 } = require("../dist/drivers/fixedRigMathematicalStationAdapterV1");
 const {
@@ -39,6 +40,37 @@ const OCR_FIELDS = [
   "category", "playerName", "cardName", "year", "manufacturer", "sport", "game",
   "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
 ];
+
+test("Mathematical ingestion accepts only the one production-fast full-forensic TIFF side contract", () => {
+  const exact = {
+    status: "completed",
+    executionPath: "warm_full_forensic_runner",
+    captureProfile: "production_fast",
+    evidenceSide: "front",
+    captureProfilePlan: {
+      rawEvidenceFormat: "tiff",
+      evidenceRoles: "full_forensic",
+      productionFastOptIn: true,
+    },
+  };
+  assert.doesNotThrow(() =>
+    assertFixedRigMathematicalWarmSideCaptureProfileV1(exact, "front"));
+  for (const drift of [
+    { captureProfile: "full_forensic" },
+    { executionPath: "cold_command_fallback" },
+    { captureProfilePlan: { ...exact.captureProfilePlan, rawEvidenceFormat: "png" } },
+    { captureProfilePlan: { ...exact.captureProfilePlan, evidenceRoles: "reduced" } },
+    { captureProfilePlan: { ...exact.captureProfilePlan, productionFastOptIn: false } },
+  ]) {
+    assert.throws(
+      () => assertFixedRigMathematicalWarmSideCaptureProfileV1({
+        ...exact,
+        ...drift,
+      }, "front"),
+      /production-fast package with full-forensic TIFF evidence/,
+    );
+  }
+});
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
