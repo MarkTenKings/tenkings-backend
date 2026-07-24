@@ -202,8 +202,11 @@ test("Production station uses plain-language card and border labels", () => {
   assert.doesNotMatch(source, />Approved registered template V1<\/option>/);
 });
 
-test("Production station shows contextual Sports and Pokémon identity fields", () => {
+test("Production station uses one contextual card-information form for grading and publishing", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(source, /<p className="eyebrow">Card Information<\/p>/);
+  assert.match(source, /Enter Once Before Grading/);
+  assert.match(source, /One form \/ all outputs/);
   assert.match(source, /Card Type/);
   assert.match(source, /Pokémon \/ Card Name/);
   assert.match(source, /Pokémon Set/);
@@ -214,8 +217,16 @@ test("Production station shows contextual Sports and Pokémon identity fields", 
   assert.match(source, /Subset \/ Insert/);
   assert.match(source, /\{label\}\{optional \? " \(Optional\)" : ""\}/);
   assert.doesNotMatch(source, /\["tenantId", "Tenant ID"\]/);
+  assert.doesNotMatch(source, /<p className="eyebrow">Card Identity<\/p>/);
+  assert.doesNotMatch(source, /Review before Approve & Publish/);
   assert.match(source, /tenantId:\s*"ten-kings"/);
   assert.match(source, /programId:\s*mathematicalAuthorityDraft\.programId\.trim\(\) \|\| "base"/);
+  assert.match(source, /updateSharedCardInformation\(field, event\.target\.value\)/);
+  assert.match(source, /field === "setId"[\s\S]*?updateIdentityDraft\("productSet", value\)/);
+  assert.match(source, /field === "programId"[\s\S]*?updateIdentityDraft\("insert", value\)/);
+  assert.match(source, /field === "parallelId"[\s\S]*?updateIdentityDraft\("parallel", value\)/);
+  assert.match(source, /preCaptureDraftBySessionRef\.current\.set\(started\.sessionManifest\.gradingSessionId/);
+  assert.match(source, /preCaptureDraftBySessionRef\.current\.get\(activeReview\.gradingSessionId\)/);
   assert.match(
     source,
     /const mathematicalAuthorityDraftComplete = \[\s*mathematicalAuthorityDraft\.title,\s*mathematicalAuthorityDraft\.setId,\s*mathematicalAuthorityDraft\.cardNumber,\s*\]/,

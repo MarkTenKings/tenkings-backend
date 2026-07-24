@@ -178,6 +178,12 @@ type IdentityDraftState = {
   memorabilia: boolean;
 };
 
+type IdentityDraftSnapshot = {
+  identityDraft: IdentityDraftState;
+  editedFields: Set<keyof IdentityDraftState>;
+  selectedCard: CardSelectionState | null;
+};
+
 type SlabUploadState = {
   front?: { status: string; publicUrl?: string; message?: string };
   back?: { status: string; publicUrl?: string; message?: string };
@@ -815,15 +821,12 @@ export default function AiGraderStationPage() {
   });
   const [cardSearchQuery, setCardSearchQuery] = useState("");
   const [cardSearchResults, setCardSearchResults] = useState<CardSelectionState[]>([]);
-  const [cardSearchMessage, setCardSearchMessage] = useState("Confirm the card identity to create a Ten Kings CardAsset/Item before publish.");
+  const [cardSearchMessage, setCardSearchMessage] = useState("The card information entered above will create a Ten Kings CardAsset/Item before publish.");
   const [selectedCard, setSelectedCard] = useState<CardSelectionState | null>(null);
   const [identityDraft, setIdentityDraft] = useState<IdentityDraftState>(defaultIdentityDraft);
   const identityEditedFieldsRef = useRef<Set<keyof IdentityDraftState>>(new Set());
-  const reviewDraftCacheRef = useRef<Map<string, {
-    identityDraft: IdentityDraftState;
-    editedFields: Set<keyof IdentityDraftState>;
-    selectedCard: CardSelectionState | null;
-  }>>(new Map());
+  const reviewDraftCacheRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
+  const preCaptureDraftBySessionRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
   const activeReviewIdentityRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
   const queuedOcrRunningRef = useRef<Set<string>>(new Set());
@@ -857,7 +860,7 @@ export default function AiGraderStationPage() {
   const mathematicalReviewObjectUrlsRef = useRef<string[]>([]);
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
-    message: "Card identity has not been confirmed.",
+    message: "Card information has not yet been linked to a Ten Kings CardAsset/Item.",
   });
   const [confirmedDownstream, setConfirmedDownstream] = useState<ConfirmedDownstreamState>({
     comps: {
@@ -1878,7 +1881,7 @@ export default function AiGraderStationPage() {
     mathematicalAuthorityDraft.title,
     mathematicalAuthorityDraft.setId,
     mathematicalAuthorityDraft.cardNumber,
-  ].every((value) => value.trim().length > 0);
+  ].every((value) => value.trim().length > 0) && identityDraftComplete;
   const pokemonAuthoritySelected =
     mathematicalAuthorityDraft.cardFormatProfile === "pokemon_tcg_standard";
   const mathematicalIdentityFields = pokemonAuthoritySelected
@@ -2366,10 +2369,12 @@ export default function AiGraderStationPage() {
       activeReviewIdentityRef.current = identityKey;
       hydratedOcrIdentityRef.current = null;
       const cached = reviewDraftCacheRef.current.get(identityKey);
-      identityEditedFieldsRef.current = new Set(cached?.editedFields ?? []);
-      setSelectedCard(cached?.selectedCard ?? null);
-      setIdentityDraft(cached?.identityDraft ?? defaultIdentityDraft);
-      setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+      const preCapture = preCaptureDraftBySessionRef.current.get(activeReview.gradingSessionId);
+      const initialDraft = cached ?? preCapture;
+      identityEditedFieldsRef.current = new Set(initialDraft?.editedFields ?? []);
+      setSelectedCard(initialDraft?.selectedCard ?? null);
+      setIdentityDraft(initialDraft?.identityDraft ?? defaultIdentityDraft);
+      setIdentityStatus({ status: "idle", message: "Card information has not yet been linked to a Ten Kings CardAsset/Item." });
       setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
     }
     const persistedOcr = activeReviewItem.ocr;
@@ -2776,7 +2781,6 @@ export default function AiGraderStationPage() {
           stagedStatus.frontCaptureReadiness.code === "design_reference_staging_required") {
         throw new Error(stagedStatus.frontCaptureReadiness.message);
       }
-      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
       setMathematicalAuthorityStatus({
         status: "completed",
         message: "Exact Mathematical V1 identity and per-side centering authority are bound; registered bytes are staged and hash verified.",
@@ -2793,16 +2797,16 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const resetReviewUiState = () => {
+  const resetReviewUiState = (initialDraft?: IdentityDraftSnapshot) => {
     activeReviewIdentityRef.current = null;
-    identityEditedFieldsRef.current.clear();
-    setSelectedCard(null);
-    setIdentityDraft(defaultIdentityDraft);
+    identityEditedFieldsRef.current = new Set(initialDraft?.editedFields ?? []);
+    setSelectedCard(initialDraft?.selectedCard ?? null);
+    setIdentityDraft(initialDraft?.identityDraft ?? defaultIdentityDraft);
     setOcrPrefillState({
       status: "idle",
       message: "OCR prefill starts after normalized front and back images are ready.",
     });
-    setIdentityStatus({ status: "idle", message: "Card identity has not been confirmed." });
+    setIdentityStatus({ status: "idle", message: "Card information has not yet been linked to a Ten Kings CardAsset/Item." });
     setConfirmedDownstream({
       comps: {
         status: "idle",
@@ -2862,10 +2866,14 @@ export default function AiGraderStationPage() {
         ),
       );
       await stagePreparedMathematicalDesignReferences(prepared, started);
-      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
+        identityDraft: { ...identityDraft },
+        editedFields: new Set(identityEditedFieldsRef.current),
+        selectedCard,
+      });
       setMathematicalAuthorityStatus({
         status: "completed",
-        message: "Exact Mathematical V1 identity and per-side centering authority are bound before capture.",
+        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
       });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
@@ -3024,7 +3032,7 @@ export default function AiGraderStationPage() {
           next.rapidCaptureQueue.activeReview.reportId !== item.reportId) {
         throw new Error("Rapid Capture review activation returned a different queue/session/report identity.");
       }
-      resetReviewUiState();
+      resetReviewUiState(preCaptureDraftBySessionRef.current.get(item.sessionId));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
@@ -3151,6 +3159,41 @@ export default function AiGraderStationPage() {
   const updateIdentityDraft = <K extends keyof IdentityDraftState>(key: K, value: IdentityDraftState[K]) => {
     identityEditedFieldsRef.current.add(key);
     setIdentityDraft((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateCardType = (cardFormatProfile: MathematicalAuthorityDraftState["cardFormatProfile"]) => {
+    const pokemon = cardFormatProfile === "pokemon_tcg_standard";
+    setMathematicalAuthorityDraft((current) => ({ ...current, cardFormatProfile }));
+    identityEditedFieldsRef.current.add("category");
+    if (pokemon) identityEditedFieldsRef.current.add("game");
+    setIdentityDraft((current) => {
+      const currentSubject = current.category === "sport" ? current.playerName : current.cardName;
+      return {
+        ...current,
+        category: pokemon ? "tcg" : "sport",
+        playerName: pokemon ? current.playerName : currentSubject,
+        cardName: pokemon ? currentSubject : current.cardName,
+        game: pokemon ? "Pokemon" : "",
+      };
+    });
+  };
+
+  const updateSharedCardInformation = (
+    field: "title" | "setId" | "programId" | "cardNumber" | "variantId" | "parallelId",
+    value: string,
+  ) => {
+    setMathematicalAuthorityDraft((current) => ({ ...current, [field]: value }));
+    if (field === "title") {
+      updateIdentityDraft(pokemonAuthoritySelected ? "cardName" : "playerName", value);
+    } else if (field === "setId") {
+      updateIdentityDraft("productSet", value);
+    } else if (field === "programId") {
+      updateIdentityDraft("insert", value);
+    } else if (field === "cardNumber") {
+      updateIdentityDraft("cardNumber", value);
+    } else if (field === "parallelId") {
+      updateIdentityDraft("parallel", value);
+    }
   };
 
   const identityDraftPayload = () => ({
@@ -5272,10 +5315,10 @@ export default function AiGraderStationPage() {
               <section className="mathematical-authority">
                 <div className="capture-settings-head">
                   <div>
-                    <p className="eyebrow">Pre-Capture Authority</p>
-                    <h3>{mathematicalAuthorityBound ? "Exact V1 Authority Bound" : "Exact Card Identity Required"}</h3>
+                    <p className="eyebrow">Card Information</p>
+                    <h3>{mathematicalAuthorityBound ? "Card Information Bound" : "Enter Once Before Grading"}</h3>
                   </div>
-                  <strong>{mathematicalAuthorityBound ? "Immutable for this session" : "Before Capture Front"}</strong>
+                  <strong>{mathematicalAuthorityBound ? "Used throughout this card" : "One form / all outputs"}</strong>
                 </div>
                 {cleanSessionMathematicalV1?.gradingAuthority ? (
                   <div className="mathematical-bound-summary">
@@ -5298,10 +5341,9 @@ export default function AiGraderStationPage() {
                     Card Type
                     <select
                       value={mathematicalAuthorityDraft.cardFormatProfile}
-                      onChange={(event) => setMathematicalAuthorityDraft((current) => ({
-                        ...current,
-                        cardFormatProfile: event.target.value as MathematicalAuthorityDraftState["cardFormatProfile"],
-                      }))}
+                      onChange={(event) => updateCardType(
+                        event.target.value as MathematicalAuthorityDraftState["cardFormatProfile"],
+                      )}
                       disabled={mathematicalAuthorityBound || busy !== null}
                     >
                       <option value="generic_standard">Sports</option>
@@ -5314,16 +5356,76 @@ export default function AiGraderStationPage() {
                       <input
                         type="text"
                         value={mathematicalAuthorityDraft[field]}
-                        onChange={(event) => setMathematicalAuthorityDraft((current) => ({
-                          ...current,
-                          [field]: event.target.value,
-                        }))}
+                        onChange={(event) => updateSharedCardInformation(field, event.target.value)}
                         disabled={mathematicalAuthorityBound || busy !== null}
                         required={!optional}
                       />
                     </label>
                   ))}
                 </div>
+                <div className="identity-grid">
+                  <label>
+                    Year
+                    <input
+                      value={identityDraft.year}
+                      onChange={(event) => updateIdentityDraft("year", event.target.value)}
+                      placeholder="2020"
+                      disabled={mathematicalAuthorityBound || busy !== null}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Manufacturer
+                    <input
+                      value={identityDraft.manufacturer}
+                      onChange={(event) => updateIdentityDraft("manufacturer", event.target.value)}
+                      placeholder={pokemonAuthoritySelected ? "Pokémon, Wizards of the Coast" : "Panini, Topps"}
+                      disabled={mathematicalAuthorityBound || busy !== null}
+                      required
+                    />
+                  </label>
+                  {!pokemonAuthoritySelected ? (
+                    <label>
+                      Sport
+                      <input
+                        value={identityDraft.sport}
+                        onChange={(event) => updateIdentityDraft("sport", event.target.value)}
+                        placeholder="Basketball"
+                        disabled={mathematicalAuthorityBound || busy !== null}
+                        required
+                      />
+                    </label>
+                  ) : null}
+                  <label>
+                    Numbered (Optional)
+                    <input
+                      value={identityDraft.numbered}
+                      onChange={(event) => updateIdentityDraft("numbered", event.target.value)}
+                      placeholder="12/99"
+                      disabled={mathematicalAuthorityBound || busy !== null}
+                    />
+                  </label>
+                </div>
+                {!pokemonAuthoritySelected ? (
+                  <div className="check-row">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={identityDraft.autograph}
+                        onChange={(event) => updateIdentityDraft("autograph", event.target.checked)}
+                        disabled={mathematicalAuthorityBound || busy !== null}
+                      /> Autograph
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={identityDraft.memorabilia}
+                        onChange={(event) => updateIdentityDraft("memorabilia", event.target.checked)}
+                        disabled={mathematicalAuthorityBound || busy !== null}
+                      /> Memorabilia
+                    </label>
+                  </div>
+                ) : null}
                 <div className="mathematical-profile-grid">
                   {(["front", "back"] as const).map((side) => (
                     <label key={side}>
@@ -5350,6 +5452,15 @@ export default function AiGraderStationPage() {
                     ? "Enter the Pokémon card information. Leave Subset, Variation, and Finish / Parallel blank when they do not apply."
                     : "Enter the sports card information. Leave Subset / Insert, Variation, and Parallel blank when they do not apply."}
                 </p>
+                <p>
+                  Enter these values once. The station reuses them for grading authority, the database
+                  card/item, grade reports, labels, sold comps, and inventory.
+                </p>
+                {identityDraftMissing.length ? (
+                  <p className="status-note">
+                    Required before Start New Card: {identityDraftMissing.join(", ")}.
+                  </p>
+                ) : null}
                 <p>
                   Choose Border when that side has a visible printed border. Choose No Border only when an approved template exists for that exact card.
                 </p>
@@ -5537,8 +5648,8 @@ export default function AiGraderStationPage() {
           </section>
 
           <section className="card-linkage">
-            <p className="eyebrow">Card Identity</p>
-            <h3>{selectedCard?.displayTitle ?? "Review before Approve & Publish"}</h3>
+            <p className="eyebrow">Card Record</p>
+            <h3>{selectedCard?.displayTitle ?? "Database Linkage / Existing Card Search"}</h3>
             <p className={identityStatus.status === "failed" ? "step-message failed" : "step-message"}>
               {identityStatus.status === "idle" ? selectedCard?.subtitle ?? cardSearchMessage : identityStatus.message}
             </p>
@@ -5573,72 +5684,6 @@ export default function AiGraderStationPage() {
                 ) : null}
               </div>
             ) : null}
-            <div className="identity-grid">
-              <label>
-                Category
-                <select value={identityDraft.category} onChange={(event) => updateIdentityDraft("category", event.target.value as IdentityDraftState["category"])}>
-                  <option value="sport">Sport</option>
-                  <option value="tcg">TCG</option>
-                  <option value="comics">Comics</option>
-                </select>
-              </label>
-              <label>
-                {identityDraft.category === "sport" ? "Player / Name" : "Card Name"}
-                <input
-                  value={identityDraft.category === "sport" ? identityDraft.playerName : identityDraft.cardName}
-                  onChange={(event) =>
-                    identityDraft.category === "sport"
-                      ? updateIdentityDraft("playerName", event.target.value)
-                      : updateIdentityDraft("cardName", event.target.value)
-                  }
-                  placeholder={activeReviewBundle?.cardIdentity.title ?? "Card identity"}
-                />
-              </label>
-              <label>
-                Year
-                <input value={identityDraft.year} onChange={(event) => updateIdentityDraft("year", event.target.value)} placeholder="2020" />
-              </label>
-              <label>
-                Manufacturer
-                <input value={identityDraft.manufacturer} onChange={(event) => updateIdentityDraft("manufacturer", event.target.value)} placeholder="Panini, Topps" />
-              </label>
-              <label>
-                {identityDraft.category === "tcg" ? "Game" : "Sport / Game"}
-                <input
-                  value={identityDraft.category === "tcg" ? identityDraft.game : identityDraft.sport}
-                  onChange={(event) =>
-                    identityDraft.category === "tcg"
-                      ? updateIdentityDraft("game", event.target.value)
-                      : updateIdentityDraft("sport", event.target.value)
-                  }
-                  placeholder={identityDraft.category === "tcg" ? "Pokemon" : "Basketball"}
-                />
-              </label>
-              <label>
-                Product Set
-                <input value={identityDraft.productSet} onChange={(event) => updateIdentityDraft("productSet", event.target.value)} placeholder="Prizm, Select" />
-              </label>
-              <label>
-                Card #
-                <input value={identityDraft.cardNumber} onChange={(event) => updateIdentityDraft("cardNumber", event.target.value)} />
-              </label>
-              <label>
-                Insert
-                <input value={identityDraft.insert} onChange={(event) => updateIdentityDraft("insert", event.target.value)} />
-              </label>
-              <label>
-                Parallel
-                <input value={identityDraft.parallel} onChange={(event) => updateIdentityDraft("parallel", event.target.value)} />
-              </label>
-              <label>
-                Numbered
-                <input value={identityDraft.numbered} onChange={(event) => updateIdentityDraft("numbered", event.target.value)} placeholder="12/99" />
-              </label>
-            </div>
-            <div className="check-row">
-              <label><input type="checkbox" checked={identityDraft.autograph} onChange={(event) => updateIdentityDraft("autograph", event.target.checked)} /> Auto</label>
-              <label><input type="checkbox" checked={identityDraft.memorabilia} onChange={(event) => updateIdentityDraft("memorabilia", event.target.checked)} /> Mem</label>
-            </div>
             {!linkedCardReady && createCardBlockers.length ? <p className="status-note">Required before Approve & Publish: {createCardBlockers.join(", ")}.</p> : null}
             {!productionSignedIn && !linkedCardReady ? <p className="status-note">Production sign-in is required before Approve & Publish.</p> : null}
             {linkedCardReady ? <p className="status-note">CardAsset {selectedCard?.cardAssetId} / Item {selectedCard?.itemId}</p> : null}
