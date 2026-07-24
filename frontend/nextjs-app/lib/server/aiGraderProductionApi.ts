@@ -5171,23 +5171,52 @@ function exactAiGraderIntakeIdentity(value: unknown, input: {
     optionalString(record.reportId) === input.reportId;
 }
 
+const AI_GRADER_RAPID_IDENTITY_INTRODUCED_AT_MS = Date.parse("2026-07-19T00:29:07.000Z");
+
+function absentAiGraderRapidIdentity(value: unknown) {
+  return value === undefined || value === null;
+}
+
 function assertExclusiveAiGraderIntakeCard(input: {
   card: JsonRecord;
   reportId: string;
   gradingSessionId: string;
-  queueItemId: string;
+  queueItemId?: string | null;
 }) {
   const classificationSources = isRecord(input.card.classificationSourcesJson)
     ? input.card.classificationSourcesJson
     : {};
   const aiGrading = isRecord(input.card.aiGradingJson) ? input.card.aiGradingJson : {};
+  const confirmedAt = optionalString(classificationSources.confirmedAt);
+  const confirmedAtMs = confirmedAt ? Date.parse(confirmedAt) : Number.NaN;
+  const confirmedAtIsCanonical = Boolean(
+    confirmedAt &&
+    Number.isFinite(confirmedAtMs) &&
+    new Date(confirmedAtMs).toISOString() === confirmedAt,
+  );
+  const exactCurrentRapidIdentity = input.queueItemId
+    ? exactAiGraderIntakeIdentity(classificationSources.rapidQueueIdentity, {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+      }) &&
+      exactAiGraderIntakeIdentity(aiGrading.rapidQueueIdentity, {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+      })
+    : false;
+  const exactLegacyPreRapidIdentity =
+    absentAiGraderRapidIdentity(classificationSources.rapidQueueIdentity) &&
+    absentAiGraderRapidIdentity(aiGrading.rapidQueueIdentity) &&
+    confirmedAtIsCanonical &&
+    confirmedAtMs < AI_GRADER_RAPID_IDENTITY_INTRODUCED_AT_MS;
   if (
     optionalString(classificationSources.source) !== "ai_grader_confirmed_identity" ||
     optionalString(classificationSources.reportId) !== input.reportId ||
-    !exactAiGraderIntakeIdentity(classificationSources.rapidQueueIdentity, input) ||
     optionalString(aiGrading.source) !== "ai_grader_new_card_intake_v0" ||
     optionalString(aiGrading.reportId) !== input.reportId ||
-    !exactAiGraderIntakeIdentity(aiGrading.rapidQueueIdentity, input)
+    (!exactCurrentRapidIdentity && !exactLegacyPreRapidIdentity)
   ) {
     throw aiGraderDiscardError(
       "The linked CardAsset was not proven to be exclusively created by this exact AI Grader report.",
@@ -5417,7 +5446,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
       const rapidIdentity = firstRecord(classificationSources.rapidQueueIdentity);
       const queueItemId = optionalString(rapidIdentity?.queueItemId);
       const cardAssetStorageKey = optionalString(card.storageKey);
-      if (!queueItemId || !cardAssetStorageKey) {
+      if (!cardAssetStorageKey) {
         throw aiGraderDiscardError(
           "The linked CardAsset does not match the report's exact storage and queue identity.",
           "AI_GRADER_DISCARD_CARD_OWNERSHIP_UNPROVEN",
