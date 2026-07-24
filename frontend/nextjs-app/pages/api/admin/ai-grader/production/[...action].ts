@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, readCachedAiGraderNfcSchemaReadiness } from "@tenkings/database";
 import {
+  deleteStorageObject,
   getS3ObjectAcl,
   deleteStoragePrefix,
   presignUploadUrl,
@@ -123,6 +124,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     addToInventory: addAiGraderCardToInventoryRuntime,
     discardFinishCard: (input) => discardAiGraderFinishCardRuntime({
       ...input,
+      deleteStorageObject,
       deleteStoragePrefix,
     }),
   });
