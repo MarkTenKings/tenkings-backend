@@ -562,6 +562,7 @@ export async function resolveAiGraderTrustedPokemonCardFormatAuthorityV1(input: 
       headers: { "content-type": "application/json", ...input.headers },
       body: JSON.stringify({
         lookup: {
+          title: exactMathematicalTitle(input.identity.title),
           setId: exactMathematicalIdentityField(input.identity.setId, "set ID"),
           programId: exactMathematicalIdentityField(input.identity.programId, "program ID"),
           cardNumber: exactMathematicalIdentityField(input.identity.cardNumber, "card number", 128),
@@ -586,10 +587,19 @@ export async function resolveAiGraderTrustedPokemonCardFormatAuthorityV1(input: 
   const parsed = trustedPokemonCardFormatAuthorityV1Schema.safeParse(
     payload.result?.authority,
   );
+  const expectedIdentity = {
+    title: exactMathematicalTitle(input.identity.title),
+    sideCount: 2 as const,
+    tenantId: exactMathematicalIdentityField(input.identity.tenantId, "tenant ID"),
+    setId: exactMathematicalIdentityField(input.identity.setId, "set ID"),
+    programId: exactMathematicalIdentityField(input.identity.programId, "program ID"),
+    cardNumber: exactMathematicalIdentityField(input.identity.cardNumber, "card number", 128),
+    variantId: exactNullableMathematicalIdentityField(input.identity.variantId, "variant ID"),
+    parallelId: exactNullableMathematicalIdentityField(input.identity.parallelId, "parallel ID"),
+  };
   if (!parsed.success ||
-      parsed.data.artifact.cardIdentity.tenantId !==
-        exactMathematicalIdentityField(input.identity.tenantId, "tenant ID")) {
-    throw new Error("Hosted Pokémon card-format authority returned an invalid identity artifact.");
+      JSON.stringify(parsed.data.artifact.cardIdentity) !== JSON.stringify(expectedIdentity)) {
+    throw new Error("Trusted Pokémon card-format authority returned an invalid identity artifact.");
   }
   return parsed.data;
 }

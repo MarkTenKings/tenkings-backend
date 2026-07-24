@@ -11,6 +11,7 @@ import {
   type TrustedPokemonCardFormatAuthorityV1,
   type TrustedPokemonCardFormatAuthorityArtifactV1,
 } from "@tenkings/shared";
+import type { AiGraderProductionActor } from "./aiGraderProductionAuth";
 
 export const AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ENV =
   "AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY" as const;
@@ -19,6 +20,7 @@ export const AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ID_ENV =
 
 const identityFieldSchema = z.string().trim().min(1).max(191);
 const lookupSchema = z.strictObject({
+  title: z.string().trim().min(1).max(300),
   setId: identityFieldSchema,
   programId: identityFieldSchema,
   cardNumber: z.string().trim().min(1).max(128),
@@ -122,6 +124,106 @@ function exactIso(value: string | Date, label: string): string {
   return date.toISOString();
 }
 
+function signPokemonCardFormatAuthorityArtifactV1(input: {
+  artifact: TrustedPokemonCardFormatAuthorityArtifactV1;
+  hmacKey: string;
+  hmacKeyId: string;
+}): TrustedPokemonCardFormatAuthorityV1 {
+  if (Buffer.byteLength(input.hmacKey, "utf8") < 32 ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.hmacKeyId)) {
+    throw new Error("Trusted card-format authority signing configuration is invalid.");
+  }
+  const artifactBytes = canonicalJsonV1(input.artifact);
+  return trustedPokemonCardFormatAuthorityV1Schema.parse({
+    schemaVersion: "ten-kings-trusted-card-format-authority-v1",
+    artifact: input.artifact,
+    artifactSha256: sha256(artifactBytes),
+    authentication: {
+      algorithm: "hmac-sha256",
+      keyId: input.hmacKeyId,
+      signature: createHmac("sha256", input.hmacKey)
+        .update(artifactBytes, "utf8")
+        .digest("hex"),
+    },
+  });
+}
+
+export function signAuthenticatedOperatorPokemonStandardCardAuthorityV1(input: {
+  tenantId: string;
+  lookup: TrustedPokemonCardLookupV1;
+  actor: Extract<AiGraderProductionActor, { type: "human_operator" }>;
+  hmacKey: string;
+  hmacKeyId: string;
+}): TrustedPokemonCardFormatAuthorityV1 {
+  const lookup = lookupSchema.parse(input.lookup);
+  const recordedAt = exactIso(
+    input.actor.audit.requestedAt,
+    "Authenticated operator request timestamp",
+  );
+  const operatorIdSha256 = sha256(input.actor.user.id);
+  const cardIdentity = {
+    title: lookup.title,
+    sideCount: 2 as const,
+    tenantId: input.tenantId,
+    setId: lookup.setId,
+    programId: lookup.programId,
+    cardNumber: lookup.cardNumber,
+    variantId: lookup.variantId,
+    parallelId: lookup.parallelId,
+  };
+  const cardSnapshot = {
+    schemaVersion: "ten-kings-authenticated-operator-card-identity-v1",
+    cardIdentity,
+    operatorIdSha256,
+    operatorRole: input.actor.role,
+    recordedAt,
+  };
+  const sourceSnapshot = {
+    schemaVersion: "ten-kings-authenticated-operator-identity-source-v1",
+    actorType: input.actor.type,
+    operatorIdSha256,
+    operatorRole: input.actor.role,
+    requestedAction: input.actor.audit.action,
+    recordedAt,
+  };
+  const artifact: TrustedPokemonCardFormatAuthorityArtifactV1 = {
+    resolverVersion: "ten-kings-authenticated-operator-card-format-resolver-v1",
+    cardIdentity,
+    formatSelection: {
+      game: "pokemon_tcg",
+      physicalFormat: "standard",
+      widthMm: POKEMON_TCG_STANDARD_CORNER_PROFILE_WIDTH_MM,
+      heightMm: POKEMON_TCG_STANDARD_CORNER_PROFILE_HEIGHT_MM,
+      profileId: POKEMON_TCG_STANDARD_CORNER_PROFILE_ID,
+      profileVersion: POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION,
+      profileArtifactSha256: POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+    },
+    sourceRecord: {
+      recordType: "authenticated_operator_card_identity",
+      recordId: `operator-card:${sha256(canonicalJsonV1(cardIdentity))}`,
+      recordUpdatedAt: recordedAt,
+      recordSha256: sha256(canonicalJsonV1(cardSnapshot)),
+    },
+    identitySourceArtifact: {
+      artifactType: "authenticated_operator_input",
+      artifactId: `operator:${operatorIdSha256}`,
+      artifactSha256: sha256(canonicalJsonV1(sourceSnapshot)),
+      trustStatus: "trusted",
+    },
+    provenance: {
+      authority: "ten_kings_authenticated_operator_card_identity",
+      physicalFormatAuthority:
+        "ten_kings_authenticated_operator_pokemon_standard_selection",
+      browserSelfDeclarationAccepted: false,
+    },
+  };
+  return signPokemonCardFormatAuthorityArtifactV1({
+    artifact,
+    hmacKey: input.hmacKey,
+    hmacKeyId: input.hmacKeyId,
+  });
+}
+
 export function signHostedPokemonStandardCardAuthorityV1(input: {
   tenantId: string;
   lookup: TrustedPokemonCardLookupV1;
@@ -176,10 +278,6 @@ export function signHostedPokemonStandardCardAuthorityV1(input: {
   if (claim.data.widthMm !== POKEMON_TCG_STANDARD_CORNER_PROFILE_WIDTH_MM ||
       claim.data.heightMm !== POKEMON_TCG_STANDARD_CORNER_PROFILE_HEIGHT_MM) {
     throw new Error("Trusted Pokémon standard dimensions do not match 63.50 mm by 88.90 mm.");
-  }
-  if (Buffer.byteLength(input.hmacKey, "utf8") < 32 ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.hmacKeyId)) {
-    throw new Error("Trusted card-format authority signing configuration is invalid.");
   }
   const sourceSnapshot = {
     id: row.source.id,
@@ -255,20 +353,11 @@ export function signHostedPokemonStandardCardAuthorityV1(input: {
       browserSelfDeclarationAccepted: false,
     },
   };
-  const artifactBytes = canonicalJsonV1(artifact);
-  const envelope = {
-    schemaVersion: "ten-kings-trusted-card-format-authority-v1" as const,
+  return signPokemonCardFormatAuthorityArtifactV1({
     artifact,
-    artifactSha256: sha256(artifactBytes),
-    authentication: {
-      algorithm: "hmac-sha256" as const,
-      keyId: input.hmacKeyId,
-      signature: createHmac("sha256", input.hmacKey)
-        .update(artifactBytes, "utf8")
-        .digest("hex"),
-    },
-  };
-  return trustedPokemonCardFormatAuthorityV1Schema.parse(envelope);
+    hmacKey: input.hmacKey,
+    hmacKeyId: input.hmacKeyId,
+  });
 }
 
 export function parseTrustedPokemonCardLookupBody(value: unknown): TrustedPokemonCardLookupV1 {
@@ -279,14 +368,24 @@ export function parseTrustedPokemonCardLookupBody(value: unknown): TrustedPokemo
   return lookupSchema.parse(body.lookup);
 }
 
-export async function resolveHostedPokemonStandardCardAuthorityRuntime(input: {
+export async function resolvePokemonStandardCardAuthorityRuntime(input: {
   tenantId: string;
   lookup: TrustedPokemonCardLookupV1;
+  actor?: AiGraderProductionActor;
   dbClient?: any;
   env?: NodeJS.ProcessEnv;
 }): Promise<TrustedPokemonCardFormatAuthorityV1> {
   const env = input.env ?? process.env;
   const { key, keyId } = exactHmacConfiguration(env);
+  if (input.actor?.type === "human_operator") {
+    return signAuthenticatedOperatorPokemonStandardCardAuthorityV1({
+      tenantId: input.tenantId,
+      lookup: input.lookup,
+      actor: input.actor,
+      hmacKey: key,
+      hmacKeyId: keyId,
+    });
+  }
   const db = input.dbClient ?? (await import("@tenkings/database")).prisma as any;
   const row = await db.setCard?.findUnique?.({
     where: {

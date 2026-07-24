@@ -18,9 +18,12 @@ const identity = {
   parallelId: null,
 };
 
-function signedAuthority() {
+function signedAuthority(source = "hosted") {
+  const operator = source === "authenticated_operator";
   const artifact = {
-    resolverVersion: "ten-kings-hosted-card-format-resolver-v1",
+    resolverVersion: operator
+      ? "ten-kings-authenticated-operator-card-format-resolver-v1"
+      : "ten-kings-hosted-card-format-resolver-v1",
     cardIdentity: identity,
     formatSelection: {
       game: "pokemon_tcg",
@@ -32,20 +35,24 @@ function signedAuthority() {
       profileArtifactSha256: shared.POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
     },
     sourceRecord: {
-      recordType: "hosted_set_card",
+      recordType: operator ? "authenticated_operator_card_identity" : "hosted_set_card",
       recordId: "set-card-1",
       recordUpdatedAt: "2026-07-21T12:00:00.000Z",
       recordSha256: "a".repeat(64),
     },
     identitySourceArtifact: {
-      artifactType: "set_taxonomy_source",
+      artifactType: operator ? "authenticated_operator_input" : "set_taxonomy_source",
       artifactId: "taxonomy-source-1",
       artifactSha256: "b".repeat(64),
       trustStatus: "trusted",
     },
     provenance: {
-      authority: "ten_kings_hosted_immutable_card_identity",
-      physicalFormatAuthority: "ten_kings_owner_approved_card_format_record",
+      authority: operator
+        ? "ten_kings_authenticated_operator_card_identity"
+        : "ten_kings_hosted_immutable_card_identity",
+      physicalFormatAuthority: operator
+        ? "ten_kings_authenticated_operator_pokemon_standard_selection"
+        : "ten_kings_owner_approved_card_format_record",
       browserSelfDeclarationAccepted: false,
     },
   };
@@ -76,7 +83,7 @@ test("mutated profile bytes fail even when the canonical hash is still declared"
   );
 });
 
-test("the helper accepts only an exact hosted signature and exact card identity", () => {
+test("the helper accepts exact hosted or authenticated-operator signatures and exact card identity", () => {
   const authority = signedAuthority();
   assert.deepEqual(drivers.verifyTrustedPokemonCardFormatAuthorityV1({
     authority,
@@ -99,6 +106,14 @@ test("the helper accepts only an exact hosted signature and exact card identity"
     expectedKeyId: KEY_ID,
     expectedCardIdentity: { ...identity, cardNumber: "999" },
   }), /exact card identity/);
+
+  const operatorAuthority = signedAuthority("authenticated_operator");
+  assert.deepEqual(drivers.verifyTrustedPokemonCardFormatAuthorityV1({
+    authority: operatorAuthority,
+    hmacKey: HMAC_KEY,
+    expectedKeyId: KEY_ID,
+    expectedCardIdentity: identity,
+  }), operatorAuthority);
 });
 
 test("the exact 63.5 x 88.9 mm and R3.18 contour is deterministic and separate from generic", () => {
