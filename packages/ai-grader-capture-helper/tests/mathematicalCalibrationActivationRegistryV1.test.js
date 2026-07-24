@@ -219,12 +219,16 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     },
     software: structuredClone(protectedInventory.software),
   };
+  let liveOperatingContextCalls = 0;
   const trustedLiveOperatingContext = createMathematicalCalibrationOperatingContextRuntimeV1({
     protectedInventoryBytes,
     protectedInventorySha256: sha(protectedInventoryBytes),
     helperInstanceId: "helper-1",
     helperVersion: "helper-v1",
-    observeRuntime: async () => observedRuntime,
+    observeRuntime: async () => {
+      liveOperatingContextCalls += 1;
+      return observedRuntime;
+    },
   });
 
   const bundleModulePath = require.resolve("../dist/drivers/fixedRigMathematicalCalibrationBundleV1");
@@ -621,6 +625,11 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   );
   const active = await registry.assertStartAuthority(hosted);
   assert.equal(active.bundlePath, bundlePath);
+  assert.equal(
+    liveOperatingContextCalls,
+    0,
+    "Start New Card validates retained signed activation evidence without rerunning hardware",
+  );
   await assert.rejects(
     registry.assertStartAuthority({
       ...hosted,
@@ -643,15 +652,22 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
   );
   const boundSession = await registry.assertBoundSessionAuthority(hosted);
   assert.equal(boundSession.authority.activationId, hosted.activationId);
+  assert.equal(
+    liveOperatingContextCalls,
+    0,
+    "report finalization validates retained signed activation evidence without rerunning hardware",
+  );
   localNow = new Date(NOW);
 
   observedRuntime = {
     ...observedRuntime,
     capture: { ...observedRuntime.capture, gain: 1 },
   };
-  await assert.rejects(
-    registry.assertStartAuthority(hosted),
-    (error) => error.code === "AI_GRADER_LOCAL_CALIBRATION_RUNTIME_CONTEXT_UNTRUSTED",
+  assert.equal((await registry.assertStartAuthority(hosted)).authority.activationId, hosted.activationId);
+  assert.equal(
+    liveOperatingContextCalls,
+    0,
+    "ordinary grading never converts active-authority validation into another activation probe",
   );
 
 });
