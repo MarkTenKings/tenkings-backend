@@ -15,7 +15,7 @@ import type {
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID =
   'fixed_rig_raw_sensor_outer_cut_detector_v1' as const;
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION =
-  'fixed_rig_raw_sensor_outer_cut_detector_v1.1.0' as const;
+  'fixed_rig_raw_sensor_outer_cut_detector_v1.2.0' as const;
 export const FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION =
   'fixed-rig-raw-bound-observed-outer-cut-artifact-v1' as const;
 
@@ -88,6 +88,7 @@ export interface DetectFixedRigRawBoundObservedOuterCutV1Input {
 const POLICY = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
   .outerCutBoundaryMeasurement;
 const MAX_EFFECTIVE_SEARCH_MULTIPLIER = 4;
+const ROUNDED_CORNER_RECOVERY_MARGIN_MM = 0.2;
 
 function fail(reasons: string[]): FixedRigRawBoundObservedOuterCutDetectionV1 {
   return {
@@ -276,6 +277,10 @@ function sortedGradientCandidates(input: {
   return candidates;
 }
 
+function isRoundedCornerSample(tangent: FixedRigPointV1): boolean {
+  return Math.abs(tangent.x) > 1e-6 && Math.abs(tangent.y) > 1e-6;
+}
+
 export function verifyFixedRigRawBoundObservedOuterCutArtifactV1(
   artifact: FixedRigRawBoundObservedOuterCutArtifactV1,
 ): boolean {
@@ -387,6 +392,15 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
       nominalSearchPixels,
       Math.ceil(effectiveSearchHalfWidthMm / mmPerNormalPixel),
     );
+    const roundedCornerSearchPixels = isRoundedCornerSample(sample.tangent)
+      ? Math.max(
+          effectiveSearchPixels,
+          Math.ceil(
+            (effectiveSearchHalfWidthMm + ROUNDED_CORNER_RECOVERY_MARGIN_MM) /
+              mmPerNormalPixel,
+          ),
+        )
+      : effectiveSearchPixels;
     let candidates = sortedGradientCandidates({
       plane,
       point: sample.point,
@@ -402,6 +416,19 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
         point: sample.point,
         normal,
         searchPixels: effectiveSearchPixels,
+      });
+      strongest = candidates[0];
+    }
+    if ((!strongest || strongest.gradient < minimumGradient) &&
+        roundedCornerSearchPixels > effectiveSearchPixels) {
+      // Rounded-corner samples carry one additional, tightly bounded physical
+      // profile margin. Straight edges never receive it, and it is consulted
+      // only after both the manifest and calibrated geometry envelopes fail.
+      candidates = sortedGradientCandidates({
+        plane,
+        point: sample.point,
+        normal,
+        searchPixels: roundedCornerSearchPixels,
       });
       strongest = candidates[0];
     }
