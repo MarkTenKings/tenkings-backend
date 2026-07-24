@@ -12,7 +12,14 @@ const {
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const canonicalHash = (value) => hash(Buffer.from(JSON.stringify(value), 'utf8'));
 
-function transformFor(rawSha256) {
+function transformFor(rawSha256, crop = {
+  leftPx: 100,
+  topPx: 140,
+  widthPx: 800,
+  heightPx: 1120,
+}) {
+  const scaleX = 1200 / crop.widthPx;
+  const scaleY = 1680 / crop.heightPx;
   const payload = {
     schemaVersion: CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1,
     sourceSha256: rawSha256,
@@ -23,11 +30,21 @@ function transformFor(rawSha256) {
     deskewClockwiseDegrees: 0,
     rotatedWidthPx: 1000,
     rotatedHeightPx: 1400,
-    crop: { leftPx: 100, topPx: 140, widthPx: 800, heightPx: 1120 },
+    crop,
     outputCoordinateFrame: 'normalized_card_portrait_pixels',
     outputWidthPx: 1200,
     outputHeightPx: 1680,
-    matrix: [1.5, 0, -150, 0, 1.5, -210, 0, 0, 1],
+    matrix: [
+      scaleX,
+      0,
+      -scaleX * crop.leftPx,
+      0,
+      scaleY,
+      -scaleY * crop.topPx,
+      0,
+      0,
+      1,
+    ],
   };
   return { ...payload, transformSha256: canonicalHash(payload) };
 }
@@ -57,7 +74,7 @@ function rawCardPlane() {
   return { width, height, data };
 }
 
-function detectorInput(rawAllOnRgb) {
+function detectorInput(rawAllOnRgb, crop) {
   const rawSha256 = hash(Buffer.from('exact-raw-all-on-file'));
   return {
     rawAllOnRgb,
@@ -65,7 +82,7 @@ function detectorInput(rawAllOnRgb) {
     rawAllOnAssetSha256: rawSha256,
     normalizedAllOnAssetId: 'front-normalized-all-on',
     normalizedAllOnAssetSha256: hash(Buffer.from('exact-normalized-all-on-file')),
-    rawToNormalizedTransform: transformFor(rawSha256),
+    rawToNormalizedTransform: transformFor(rawSha256, crop),
     calibrationProfileId: 'fixed-rig-profile-v1',
     calibrationVersion: 'calibration-v1',
     calibrationSha256: hash(Buffer.from('finalized-calibration-profile')),
@@ -98,6 +115,32 @@ test('raw sensor outer-cut detector searches raw exterior pixels and emits a tra
     result.artifact.u95ComponentsMm.calibratedSegmentationBoundary);
 });
 
+test('raw sensor outer-cut detector recovers exact strong edges from bounded normalization geometry mismatch', () => {
+  const input = detectorInput(rawCardPlane(), {
+    leftPx: 80,
+    topPx: 140,
+    widthPx: 840,
+    heightPx: 1120,
+  });
+  const result = detectFixedRigRawBoundObservedOuterCutV1(input);
+  assert.equal(result.status, 'computed');
+  assert.equal(result.artifact.supportedCrossSectionCount, 192);
+  assert.ok(result.artifact.minimumDetectedGradientDigitalUnits >= 4);
+});
+
+test('raw sensor outer-cut detector rejects normalization mismatch beyond its bounded recovery envelope', () => {
+  const result = detectFixedRigRawBoundObservedOuterCutV1(
+    detectorInput(rawCardPlane(), {
+      leftPx: 50,
+      topPx: 350,
+      widthPx: 900,
+      heightPx: 700,
+    }),
+  );
+  assert.equal(result.status, 'insufficient_evidence');
+  assert.match(result.reasons.join(' '), /bounded outer-cut recovery envelope/i);
+});
+
 test('raw sensor outer-cut detector fails closed when raw exterior evidence is absent or transform identity is changed', () => {
   const input = detectorInput(rawCardPlane());
   const empty = {
@@ -111,6 +154,21 @@ test('raw sensor outer-cut detector fails closed when raw exterior evidence is a
   });
   assert.equal(noBoundary.status, 'insufficient_evidence');
   assert.match(noBoundary.reasons.join(' '), /gradient/i);
+
+  const weakBoundary = rawCardPlane();
+  for (let index = 0; index < weakBoundary.data.length; index += 1) {
+    weakBoundary.data[index] = 0.5 + (weakBoundary.data[index] - 0.5) * 0.02;
+  }
+  const weakResult = detectFixedRigRawBoundObservedOuterCutV1({
+    ...detectorInput(weakBoundary, {
+      leftPx: 80,
+      topPx: 140,
+      widthPx: 840,
+      heightPx: 1120,
+    }),
+  });
+  assert.equal(weakResult.status, 'insufficient_evidence');
+  assert.match(weakResult.reasons.join(' '), /gradient/i);
 
   const changedIdentity = detectFixedRigRawBoundObservedOuterCutV1({
     ...input,
