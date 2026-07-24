@@ -1,4 +1,5 @@
 const os = require("node:os");
+const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
@@ -436,6 +437,19 @@ test("production warm side capture explicitly opts into the authenticated photom
   assert.equal(calls.length, 1);
   assert.equal(calls[0].args.includes("fixed-rig-side-batch"), true);
   assert.equal(calls[0].args.includes("-PhotometricBracketV1"), true);
+});
+
+test("Production PowerShell bracket binds channel-addressed unit-one frames to exact ACKs", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../scripts/basler-pylon-bridge.ps1"),
+    "utf8",
+  );
+  assert.match(source, /\$data \+= \("\{0:D2\}\{1\}" -f \$channel, \$value\)/);
+  assert.match(source, /\$requestFrame = "W\$CommandNumber\$targetDesignation\$data"/);
+  assert.match(source, /\$expectedAck = "W\$\(\$frame\.commandNumber\)ACK0"/);
+  assert.match(source, /Send-WarmLeimacFrameObject -Session \$Session -Frame \$frame -NoRetry/);
+  assert.match(source, /\$write\.exactAck -ne \$true/);
+  assert.doesNotMatch(source, /\$raw -notmatch "\^\(ACK\|A\|OK\)\$"/);
 });
 
 test("CLI Basler capture rejects unsafe inputs before bridge execution", async () => {

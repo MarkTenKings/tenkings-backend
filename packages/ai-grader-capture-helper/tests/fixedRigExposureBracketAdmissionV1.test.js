@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
@@ -11,10 +12,17 @@ const {
   buildFixedRigExposureBracketFusionV1,
 } = require("../dist/drivers/fixedRigExposureBracketFusionV1");
 const {
+  isExactSealedCommonModeAdmissionV1,
+  suppressExactSealedAdmissionPublicLimitationV1,
+} = require("../dist/drivers/fixedRigMathematicalCalibrationOrchestratorV1");
+const {
   buildFixedRigPhotometricEvidenceV1,
 } = require("../dist/drivers/fixedRigPhotometricEvidenceV1");
 const {
+  assertFixedRigExactLeimacWritesV1,
+  assertFixedRigPhotometricBracketCaptureProvenanceV1,
   assertFixedRigReusedAuthoritativeTransformV1,
+  rehashFixedRigPhotometricBracketRawCapturesV1,
 } = require("../dist/drivers/fixedRigMathematicalStationAdapterV1");
 
 const SHA = "a".repeat(64);
@@ -144,11 +152,32 @@ test("authorized 17+5+1+1 common-mode topology is admitted without making pixels
   assert.equal(result.status, "computed");
   assert.equal(result.admissionAdjustment.region.pixelCount, 17);
   assert.equal(result.admissionAdjustment.totalInvalidPixelCount, 24);
+  assert.deepEqual(result.admissionAdjustment.allInvalidComponentPixelCounts, [17, 5, 1, 1]);
   assert.equal(result.ungradableRegions.length, 0);
   assert.equal(result.admissionExcludedCommonModeMask.reduce((a, b) => a + b, 0), 17);
   assert.equal(result.invalidIlluminationMask.reduce((a, b) => a + b, 0), 24);
   assert.equal(result.channels.some((channel) =>
     channel.validDirectionalObservationMask.some(Boolean)), false);
+  assert.equal(isExactSealedCommonModeAdmissionV1(result), true);
+  assert.equal(isExactSealedCommonModeAdmissionV1({
+    ...result,
+    admissionAdjustment: {
+      ...result.admissionAdjustment,
+      allInvalidComponentPixelCounts: [17, 6, 1],
+    },
+  }), false);
+  for (const classification of [
+    "invalid_condition_evidence_excluded",
+    "common_mode_specular_glare",
+    "insufficient_directional_observations",
+  ]) {
+    assert.equal(
+      suppressExactSealedAdmissionPublicLimitationV1(result, classification),
+      true,
+    );
+  }
+  assert.equal(suppressExactSealedAdmissionPublicLimitationV1(result, "clipping"), false);
+  assert.equal(suppressExactSealedAdmissionPublicLimitationV1(result, "low_confidence"), false);
 });
 
 test("admission remains fail-closed at every literal boundary", () => {
@@ -194,7 +223,9 @@ test("tau1 bracket selects the highest eligible nonclipped source and blank evid
         index === 7 ? 0 : exposureUs === 37500 ? 255 : exposureUs === 30000 ? 30 : 15,
       ),
       sourceEvidenceId: `channel-${index + 1}-${exposureUs}`,
-      sourceSha256: SHA,
+      sourceSha256: crypto.createHash("sha256")
+        .update(`channel-${index + 1}-${exposureUs}`)
+        .digest("hex"),
     })),
   }));
   const result = buildFixedRigExposureBracketFusionV1({
@@ -214,6 +245,20 @@ test("tau1 bracket selects the highest eligible nonclipped source and blank evid
   assert.deepEqual(
     Array.from(result.channels[0].fusedObservation.selectedExposureUs),
     [30000, 30000, 30000, 30000],
+  );
+  assert.equal(result.channels[0].sourceEvidenceId, "channel-1-37500");
+  assert.equal(
+    result.channels[0].sourceSha256,
+    crypto.createHash("sha256").update("channel-1-37500").digest("hex"),
+  );
+  assert.deepEqual(
+    result.channels[0].fusedObservation.sourceEvidenceIds,
+    ["channel-1-15000", "channel-1-30000", "channel-1-37500"],
+  );
+  assert.deepEqual(
+    result.channels[0].fusedObservation.sourceSha256s,
+    [15000, 30000, 37500].map((exposureUs) =>
+      crypto.createHash("sha256").update(`channel-1-${exposureUs}`).digest("hex")),
   );
   assert.ok(Math.abs(result.channels[0].fusedObservation.correctedResponse[0] - 45 / 255) < 1e-6);
   assert.deepEqual(Array.from(result.channels[7].fusedObservation.eligibleMask), [0, 0, 0, 0]);
@@ -343,6 +388,154 @@ test("bracket registration must reuse the one transform and remain bound to its 
       rawCapture: { sha256: "c".repeat(64) },
     }),
     /hash-bound/,
+  );
+});
+
+test("station adapter accepts literal real unit-one Leimac frames and command ACKs only", () => {
+  const w11 = "W1101010024020000030000040000050000060000070000080000";
+  const w86 = "W8601010001020000030000040000050000060000070000080000";
+  const write = (requestFrame, commandNumber) => ({
+    ok: true,
+    responseKind: "ack",
+    attempt: 1,
+    automaticRetryCount: 0,
+    expectedAck: `W${commandNumber}ACK0`,
+    rawResponse: `W${commandNumber}ACK0`,
+    normalizedResponse: `W${commandNumber}ACK0`,
+    exactAck: true,
+    frame: {
+      commandNumber,
+      targetDesignation: "01",
+      requestAscii: requestFrame,
+      requestFrame,
+    },
+  });
+  assert.doesNotThrow(() => assertFixedRigExactLeimacWritesV1(
+    [write(w11, "11"), write(w86, "86")],
+    [w11, w86],
+    "literal bridge writes",
+  ));
+  assert.throws(
+    () => assertFixedRigExactLeimacWritesV1(
+      [{ ...write(w11, "11"), rawResponse: "ACK", normalizedResponse: "ACK" }],
+      [w11],
+      "generic ACK",
+    ),
+    /exact unit-one request frames/,
+  );
+  assert.throws(
+    () => assertFixedRigExactLeimacWritesV1(
+      [write("W1100240000000000000000000000000000", "11")],
+      [w11],
+      "abbreviated frame",
+    ),
+    /exact unit-one request frames/,
+  );
+});
+
+function provenanceCells() {
+  let ordinal = 0;
+  const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
+  const role = (exposureUs, roleName) => {
+    ordinal += 1;
+    const started = ordinal * 10;
+    return {
+      role: roleName,
+      monotonicStartedTicks: started,
+      monotonicFinishedTicks: started + 5,
+      capture: {
+        exposureTime: exposureUs,
+        outputFilePath: `C:/sealed/raw-${ordinal}.tiff`,
+        sha256: hash(`raw-${ordinal}`),
+        timestamp: `capture-${ordinal}`,
+        camera: { serialNumber: "camera-serial-1" },
+      },
+      normalized: {
+        analysisArtifact: {
+          localOutputPath: `C:/sealed/normalized-${ordinal}.png`,
+          sha256: hash(`normalized-${ordinal}`),
+        },
+      },
+    };
+  };
+  return [15000, 30000, 37500].map((exposureUs) => ({
+    exposureUs,
+    cameraReadback: { cameraSerialNumber: "camera-serial-1" },
+    references: [1, 2, 3].map((referenceOrdinal) => ({
+      ...role(exposureUs, `bracket_${exposureUs}_reference_${referenceOrdinal}`),
+      referenceOrdinal,
+    })),
+    channels: Array.from({ length: 8 }, (_, index) => ({
+      ...role(exposureUs, `bracket_${exposureUs}_channel_${index + 1}`),
+      channel: index + 1,
+    })),
+  }));
+}
+
+test("bracket provenance requires 33 unique ordered same-camera capture sources", () => {
+  const valid = provenanceCells();
+  assert.doesNotThrow(() =>
+    assertFixedRigPhotometricBracketCaptureProvenanceV1(valid, "front"));
+
+  const duplicate = structuredClone(valid);
+  duplicate[0].references[1].capture.outputFilePath =
+    duplicate[0].references[0].capture.outputFilePath;
+  assert.throws(
+    () => assertFixedRigPhotometricBracketCaptureProvenanceV1(duplicate, "front"),
+    /aliases another bracket capture source/,
+  );
+
+  const mismatchedCamera = structuredClone(valid);
+  mismatchedCamera[1].channels[2].capture.camera.serialNumber = "camera-serial-2";
+  assert.throws(
+    () => assertFixedRigPhotometricBracketCaptureProvenanceV1(mismatchedCamera, "front"),
+    /camera serial differs/,
+  );
+
+  const reordered = structuredClone(valid);
+  reordered[0].references[1].monotonicStartedTicks =
+    reordered[0].references[0].monotonicFinishedTicks;
+  assert.throws(
+    () => assertFixedRigPhotometricBracketCaptureProvenanceV1(reordered, "front"),
+    /strictly monotonic/,
+  );
+
+  const nonpositive = structuredClone(valid);
+  nonpositive[0].references[0].monotonicStartedTicks = 0;
+  assert.throws(
+    () => assertFixedRigPhotometricBracketCaptureProvenanceV1(nonpositive, "front"),
+    /strictly monotonic/,
+  );
+});
+
+test("station adapter rehashes every one of the 33 raw role TIFFs", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-bracket-raw-rehash-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const cells = provenanceCells();
+  const roles = cells.flatMap((cell) => [...cell.references, ...cell.channels]);
+  roles.forEach((role, index) => {
+    const bytes = Buffer.from(`immutable raw TIFF role ${index + 1}`, "utf8");
+    const filePath = path.join(root, `role-${index + 1}.tiff`);
+    fs.writeFileSync(filePath, bytes);
+    role.capture.outputFilePath = filePath;
+    role.capture.sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+  });
+  const verified = await rehashFixedRigPhotometricBracketRawCapturesV1({
+    cells,
+    packageDir: root,
+    side: "front",
+  });
+  assert.equal(verified.length, 33);
+  assert.equal(new Set(verified.map((file) => file.filePath)).size, 33);
+
+  fs.appendFileSync(roles[17].capture.outputFilePath, "tampered");
+  await assert.rejects(
+    rehashFixedRigPhotometricBracketRawCapturesV1({
+      cells,
+      packageDir: root,
+      side: "front",
+    }),
+    /file SHA-256 mismatch/,
   );
 });
 

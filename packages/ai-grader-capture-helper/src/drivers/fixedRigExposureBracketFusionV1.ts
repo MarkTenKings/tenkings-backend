@@ -265,6 +265,10 @@ export function buildFixedRigExposureBracketFusionV1(
           if (corrected > 0.01) normalizedCount[index] += 1;
         }
       }
+      const orderedObservations = channel.observations
+        .slice()
+        .sort((left, right) => left.exposureUs - right.exposureUs);
+      const presentationObservation = orderedObservations[2]!;
       return {
         channel: channel.channel,
         image: {
@@ -273,13 +277,12 @@ export function buildFixedRigExposureBracketFusionV1(
           data: new Float32Array(pixelCount),
         },
         channelConfidence: channel.channelConfidence,
-        sourceEvidenceId:
-          `exposure-bracket-v1-channel-${channel.channel}`,
+        // The highest-exposure frame remains the existing review/presentation
+        // asset for this channel. Per-pixel selection still retains all three
+        // exact source identities below.
+        sourceEvidenceId: presentationObservation.sourceEvidenceId,
         sourceSha256: sha256(
-          channel.observations
-            .slice()
-            .sort((left, right) => left.exposureUs - right.exposureUs)[2]!
-            .sourceSha256,
+          presentationObservation.sourceSha256,
           "Bracket observation",
         ),
         fusedObservation: {
@@ -287,8 +290,8 @@ export function buildFixedRigExposureBracketFusionV1(
           eligibleMask,
           clippingMask,
           selectedExposureUs,
-          sourceEvidenceIds: channel.observations.map((entry) => entry.sourceEvidenceId),
-          sourceSha256s: channel.observations.map((entry) =>
+          sourceEvidenceIds: orderedObservations.map((entry) => entry.sourceEvidenceId),
+          sourceSha256s: orderedObservations.map((entry) =>
             sha256(entry.sourceSha256, "Bracket observation")),
         },
       };

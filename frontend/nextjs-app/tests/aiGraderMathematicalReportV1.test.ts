@@ -392,6 +392,20 @@ test("owner-accepted calibration metadata remains internal and is not rendered o
   assert.match(html, /Immutable grading provenance/);
 });
 
+test("sealed common-mode admission internals do not leak limitation or review language", () => {
+  const bundle = displayBundle() as any;
+  bundle.evidenceQualityLimitations = [];
+  bundle.internalPhotometricAdmission = {
+    version: "fixed_rig_common_mode_interior_admission_v1",
+    allInvalidComponentPixelCounts: [17, 5, 1, 1],
+    explanation:
+      "Internal admission exception avoids provisional or insufficient evidence and human review.",
+  };
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle }));
+  assert.match(html, /No evidence-quality limitation recorded/);
+  assert.doesNotMatch(html, /provisional|insufficient|human|exception|admission/i);
+});
+
 test("V1 public report renders approved replacement values without human or machine annotations", () => {
   const bundle = displayBundle();
   const editorialRevision = buildAiGraderReportEditorialRevisionV1({

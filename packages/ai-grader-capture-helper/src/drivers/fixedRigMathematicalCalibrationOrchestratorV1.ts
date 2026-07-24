@@ -163,8 +163,10 @@ export interface FixedRigMathematicalCalibrationSideInputV1 {
   rawToNormalizedTransform: CardGeometryRawToNormalizedTransformV1;
   normalizedAllOn: FixedRigExactReportEvidenceFileV1;
   normalizedCard: FixedRigExactReportEvidenceFileV1;
-  directionalChannels: FixedRigExactDirectionalChannelV1[];
-  darkControl: FixedRigExactReportEvidenceFileV1;
+  /** Required only for the legacy direct-photometric test seam. */
+  directionalChannels?: FixedRigExactDirectionalChannelV1[];
+  /** Required only for the legacy direct-photometric test seam. */
+  darkControl?: FixedRigExactReportEvidenceFileV1;
   photometricExposureBracket?: {
     version: "fixed_rig_exposure_bracket_capture_v1";
     isolatedDutyTenthsPercent: 24;
@@ -804,14 +806,29 @@ async function ingestSideV1(input: {
         label: `${side} approved design artifact`,
       })
     : undefined;
-  const indexes = sideInput.directionalChannels.map((channel) => channel.channel);
-  if (indexes.length !== REQUIRED_CHANNEL_COUNT || new Set(indexes).size !== REQUIRED_CHANNEL_COUNT ||
-      indexes.some((channel) => !Number.isInteger(channel) || channel < 1 || channel > REQUIRED_CHANNEL_COUNT)) {
-    return fail("input_contract", `${side} requires each fixed-rig directional channel exactly once.`, {
+  const bracketProvided = Boolean(sideInput.photometricExposureBracket);
+  if (bracketProvided && (sideInput.directionalChannels || sideInput.darkControl)) {
+    return fail("input_contract", `${side} exposure-bracket evidence cannot carry legacy directional/dark aliases.`, {
+      requiresImplementationCorrection: true,
+    });
+  }
+  const directChannels = sideInput.directionalChannels ?? [];
+  const indexes = directChannels.map((channel) => channel.channel);
+  if (
+    !bracketProvided &&
+    (indexes.length !== REQUIRED_CHANNEL_COUNT ||
+      new Set(indexes).size !== REQUIRED_CHANNEL_COUNT ||
+      indexes.some((channel) =>
+        !Number.isInteger(channel) ||
+        channel < 1 ||
+        channel > REQUIRED_CHANNEL_COUNT) ||
+      !sideInput.darkControl)
+  ) {
+    return fail("input_contract", `${side} direct evidence requires dark control and each directional channel exactly once.`, {
       requiresRecapture: true,
     });
   }
-  const sortedChannels = [...sideInput.directionalChannels].sort((left, right) => left.channel - right.channel);
+  const sortedChannels = [...directChannels].sort((left, right) => left.channel - right.channel);
   const channelInputs: Parameters<typeof buildFixedRigPhotometricEvidenceV1>[0]["channels"] = [];
   const channelReferences: EvidenceReferenceV1[] = [];
   const assetBindings: AiGraderMathematicalReportAssetBindingV1[] = [
@@ -984,29 +1001,42 @@ async function ingestSideV1(input: {
       }))),
     };
   }
-  const darkBytes = await readExactFileV1(
-    sideInput.darkControl,
-    `${side} registered dark control`,
-    "capture_evidence_ingestion",
-  );
-  const darkControl = await decodeGrayPlaneV1({
-    bytes: darkBytes,
-    width: profile.normalizedWidthPx,
-    height: profile.normalizedHeightPx,
-    sensorMaximumValue: input.sensorMaximumValue,
-    label: `${side} registered dark control`,
-  });
-  assetBindings.push({
-    id: sideInput.darkControl.assetId,
-    side,
-    evidenceRole: "other_evidence",
-    fileName: sideInput.darkControl.fileName,
-    contentType: sideInput.darkControl.contentType,
-    bytes: darkBytes,
-    sha256: sideInput.darkControl.sha256.toLowerCase(),
-    widthPx: profile.normalizedWidthPx,
-    heightPx: profile.normalizedHeightPx,
-  });
+  let darkControl: FixedRigScalarPlaneV1;
+  if (decodedBracket) {
+    // Fused responses already subtract the exact same-exposure reference mean.
+    // A zero plane satisfies the downstream shape contract without introducing
+    // a second dark subtraction or a legacy evidence alias.
+    darkControl = {
+      width: profile.normalizedWidthPx,
+      height: profile.normalizedHeightPx,
+      data: new Float32Array(profile.normalizedWidthPx * profile.normalizedHeightPx),
+    };
+  } else {
+    const directDarkControl = sideInput.darkControl!;
+    const darkBytes = await readExactFileV1(
+      directDarkControl,
+      `${side} registered dark control`,
+      "capture_evidence_ingestion",
+    );
+    darkControl = await decodeGrayPlaneV1({
+      bytes: darkBytes,
+      width: profile.normalizedWidthPx,
+      height: profile.normalizedHeightPx,
+      sensorMaximumValue: input.sensorMaximumValue,
+      label: `${side} registered dark control`,
+    });
+    assetBindings.push({
+      id: directDarkControl.assetId,
+      side,
+      evidenceRole: "other_evidence",
+      fileName: directDarkControl.fileName,
+      contentType: directDarkControl.contentType,
+      bytes: darkBytes,
+      sha256: directDarkControl.sha256.toLowerCase(),
+      widthPx: profile.normalizedWidthPx,
+      heightPx: profile.normalizedHeightPx,
+    });
+  }
   const normalizedReference: EvidenceReferenceV1 = {
     assetId: sideInput.normalizedCard.assetId,
     sha256: sideInput.normalizedCard.sha256.toLowerCase(),
@@ -1459,7 +1489,7 @@ async function ingestSideV1(input: {
     input: sideInput,
     normalizedBytes,
     normalizedReference,
-    channelAssetIds: sortedChannels.map((channel) => channel.assetId),
+    channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
     detectorPlaneSha256s,
     assetBindings,
     photometric,
@@ -2271,6 +2301,38 @@ function maskFractionV1(mask: ArrayLike<number>, gradeRelevantMask: ArrayLike<nu
   return denominator ? Math.round((numerator / denominator) * 1_000_000) / 1_000_000 : 0;
 }
 
+export function isExactSealedCommonModeAdmissionV1(
+  photometric: FixedRigPhotometricEvidenceV1,
+): boolean {
+  const adjustment = photometric.admissionAdjustment;
+  return adjustment?.version === "fixed_rig_common_mode_interior_admission_v1" &&
+    adjustment.region.pixelCount === 17 &&
+    adjustment.totalInvalidPixelCount === 24 &&
+    adjustment.qualifyingComponentCount === 1 &&
+    adjustment.selectedFusedClippingPixelCount === 0 &&
+    adjustment.allInvalidPixelsExclusivelyCommonMode === true &&
+    adjustment.deepInterior === true &&
+    JSON.stringify(adjustment.allInvalidComponentPixelCounts) ===
+      JSON.stringify([17, 5, 1, 1]);
+}
+
+export function suppressExactSealedAdmissionPublicLimitationV1(
+  photometric: FixedRigPhotometricEvidenceV1,
+  classification:
+    | "invalid_condition_evidence_excluded"
+    | "common_mode_specular_glare"
+    | "insufficient_directional_observations"
+    | "clipping"
+    | "low_confidence",
+): boolean {
+  return isExactSealedCommonModeAdmissionV1(photometric) &&
+    (
+      classification === "invalid_condition_evidence_excluded" ||
+      classification === "common_mode_specular_glare" ||
+      classification === "insufficient_directional_observations"
+    );
+}
+
 function deriveEvidenceQualityLimitationsV1(
   sides: Record<Side, IngestedSideV1>,
 ): AiGraderMathematicalEvidenceQualityLimitationV1[] {
@@ -2286,7 +2348,13 @@ function deriveEvidenceQualityLimitationsV1(
         (limitation) =>
           limitation.code === "invalid_condition_evidence_excluded",
       );
-    if (excludedConditionEvidence) {
+    if (
+      excludedConditionEvidence &&
+      !suppressExactSealedAdmissionPublicLimitationV1(
+        side.photometric,
+        "invalid_condition_evidence_excluded",
+      )
+    ) {
       limitations.push({
         limitationId:
           sideName + "-full-card-condition-evidence-excluded",
@@ -2303,8 +2371,14 @@ function deriveEvidenceQualityLimitationsV1(
       });
     }
     if (
-      side.photometric.coverage.commonModeSpecularPixelFraction > 0 ||
-      side.photometric.coverage.calibratedPatternPixelFraction > 0
+      (
+        side.photometric.coverage.commonModeSpecularPixelFraction > 0 ||
+        side.photometric.coverage.calibratedPatternPixelFraction > 0
+      ) &&
+      !suppressExactSealedAdmissionPublicLimitationV1(
+        side.photometric,
+        "common_mode_specular_glare",
+      )
     ) {
       const excludedPixelFraction = Math.min(
         1,
@@ -2367,7 +2441,13 @@ function deriveEvidenceQualityLimitationsV1(
       side.photometric.insufficientDirectionalObservationsMask,
       side.photometric.gradeRelevantMask,
     );
-    if (insufficientDirectionalFraction > 0) {
+    if (
+      insufficientDirectionalFraction > 0 &&
+      !suppressExactSealedAdmissionPublicLimitationV1(
+        side.photometric,
+        "insufficient_directional_observations",
+      )
+    ) {
       limitations.push({
         limitationId: `${sideName}-full-card-directional-coverage`,
         side: sideName,
@@ -2768,7 +2848,33 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           input.sides[side].rawToNormalizedTransform.transformSha256,
         normalizedAllOnSha256: input.sides[side].normalizedAllOn.sha256.toLowerCase(),
         normalizedCardSha256: input.sides[side].normalizedCard.sha256.toLowerCase(),
-        darkControlSha256: input.sides[side].darkControl.sha256.toLowerCase(),
+        ...(input.sides[side].photometricExposureBracket ? {
+          photometricExposureBracket: {
+            version: input.sides[side].photometricExposureBracket!.version,
+            isolatedDutyTenthsPercent:
+              input.sides[side].photometricExposureBracket!.isolatedDutyTenthsPercent,
+            settleMs: input.sides[side].photometricExposureBracket!.settleMs,
+            gain: input.sides[side].photometricExposureBracket!.gain,
+            pixelFormat: input.sides[side].photometricExposureBracket!.pixelFormat,
+            referenceSha256s: input.sides[side].photometricExposureBracket!.references
+              .slice()
+              .sort((left, right) => left.exposureUs - right.exposureUs)
+              .map((entry) => entry.sha256.toLowerCase()),
+            directionalChannelSha256s:
+              input.sides[side].photometricExposureBracket!.channels
+                .slice()
+                .sort((left, right) => left.channel - right.channel)
+                .flatMap((channel) => channel.observations
+                  .slice()
+                  .sort((left, right) => left.exposureUs - right.exposureUs)
+                  .map((entry) => entry.sha256.toLowerCase())),
+          },
+        } : {
+          darkControlSha256: input.sides[side].darkControl!.sha256.toLowerCase(),
+          directionalChannelSha256s: [...input.sides[side].directionalChannels!]
+            .sort((left, right) => left.channel - right.channel)
+            .map((entry) => entry.sha256.toLowerCase()),
+        }),
         ...(input.sides[side].designReference ? {
           designReferenceId: input.sides[side].designReference!.designReferenceId,
           designReferenceSha256:
@@ -2782,9 +2888,6 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           input.sides[side].intendedOuterBoundary.profileVersion,
         intendedOuterBoundaryArtifactSha256:
           input.sides[side].intendedOuterBoundary.artifactSha256,
-        directionalChannelSha256s: [...input.sides[side].directionalChannels]
-          .sort((left, right) => left.channel - right.channel)
-          .map((entry) => entry.sha256.toLowerCase()),
         detectorPlaneSha256s: sides[side].detectorPlaneSha256s,
         heatmapUsedAsIndependentGradeInput: false,
       }])),

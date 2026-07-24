@@ -326,6 +326,16 @@ async function darkPng() {
   }).png({ compressionLevel: 9 }).toBuffer();
 }
 
+async function bracketPng(value, marker) {
+  const bytes = Buffer.alloc(WIDTH * HEIGHT, value);
+  // The immutable-role marker sits outside the rounded expected-card mask. It
+  // makes every sealed source byte/hash-distinct without changing grade evidence.
+  bytes[0] = marker;
+  return sharp(bytes, {
+    raw: { width: WIDTH, height: HEIGHT, channels: 1 },
+  }).png({ compressionLevel: 9 }).toBuffer();
+}
+
 function pointInsideContour(x, y, contour) {
   let inside = false;
   for (
@@ -525,6 +535,58 @@ async function buildSide(root, side, profile, options = {}) {
   };
 }
 
+async function replaceWithSealedExposureBracket(root, sideName, side) {
+  const exposures = [15000, 30000, 37500];
+  let marker = 1;
+  const references = [];
+  const channels = Array.from({ length: 8 }, (_, index) => ({
+    channel: index + 1,
+    channelConfidence: 0.99,
+    observations: [],
+  }));
+  for (const exposureUs of exposures) {
+    for (let referenceOrdinal = 1; referenceOrdinal <= 3; referenceOrdinal += 1) {
+      const fileName =
+        `${sideName}-bracket-${exposureUs}-reference-${referenceOrdinal}.png`;
+      references.push({
+        ...reportEvidence(
+          writeExact(root, fileName, await bracketPng(0, marker++)),
+          `${sideName}-bracket-${exposureUs}-reference-${referenceOrdinal}`,
+          fileName,
+        ),
+        exposureUs,
+      });
+    }
+    const value = exposureUs === 15000 ? 36 : exposureUs === 30000 ? 72 : 90;
+    for (let channel = 1; channel <= 8; channel += 1) {
+      const fileName = `${sideName}-bracket-${exposureUs}-channel-${channel}.png`;
+      channels[channel - 1].observations.push({
+        ...reportEvidence(
+          writeExact(root, fileName, await bracketPng(value, marker++)),
+          `${sideName}-bracket-${exposureUs}-channel-${channel}`,
+          fileName,
+        ),
+        exposureUs,
+      });
+    }
+  }
+  const result = {
+    ...side,
+    photometricExposureBracket: {
+      version: "fixed_rig_exposure_bracket_capture_v1",
+      isolatedDutyTenthsPercent: 24,
+      settleMs: 0,
+      gain: 0,
+      pixelFormat: "Mono8",
+      references,
+      channels,
+    },
+  };
+  delete result.directionalChannels;
+  delete result.darkControl;
+  return result;
+}
+
 async function buildFixture(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-orchestrator-"));
   const calibration = buildCalibrationArtifacts();
@@ -660,6 +722,44 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   assert.equal(scratchPlane.header.derivation, "fused_calibrated_detector");
   assert.ok(scratchPlane.header.sourceEvidence.some((entry) => entry.role === "all_on"));
   assert.equal(scratchPlane.header.heatmapUsedAsInput, false);
+});
+
+test("sealed 33-source bracket completes strict report/package asset registration", async (t) => {
+  const fixture = await buildFixture({
+    reportId: "mathematical-orchestrator-sealed-exposure-bracket",
+    outputName: "sealed-exposure-bracket-report-package",
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  fixture.input.sides.front = await replaceWithSealedExposureBracket(
+    fixture.root,
+    "front",
+    fixture.input.sides.front,
+  );
+  fixture.input.sides.back = await replaceWithSealedExposureBracket(
+    fixture.root,
+    "back",
+    fixture.input.sides.back,
+  );
+  const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  assert.equal(
+    result.status,
+    "completed",
+    result.reasons?.join("; ") ?? JSON.stringify(result.reviewRequest?.findings),
+  );
+  assert.equal(result.v0FallbackUsed, false);
+  assert.equal(fs.existsSync(result.reportPackage.envelopePath), true);
+  const serialized = JSON.stringify(result.reportArtifact.bundle);
+  assert.doesNotMatch(serialized, /exposure-bracket-v1-channel-/);
+  for (const sideName of ["front", "back"]) {
+    for (let channel = 1; channel <= 8; channel += 1) {
+      const realPresentationAsset =
+        `${sideName}-bracket-37500-channel-${channel}`;
+      assert.match(serialized, new RegExp(realPresentationAsset));
+      assert.ok(result.reportArtifact.bundle.publicAssets.some(
+        (asset) => asset.id === realPresentationAsset,
+      ));
+    }
+  }
 });
 
 test("partial channel clipping recovers from alternate channels without recapture or a condition deduction", async (t) => {

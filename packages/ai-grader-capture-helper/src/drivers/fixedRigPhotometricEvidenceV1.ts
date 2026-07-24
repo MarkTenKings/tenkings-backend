@@ -157,6 +157,7 @@ export interface FixedRigPhotometricEvidenceV1 {
     version: "fixed_rig_common_mode_interior_admission_v1";
     region: { x: number; y: number; width: number; height: number; pixelCount: number };
     totalInvalidPixelCount: number;
+    allInvalidComponentPixelCounts: number[];
     qualifyingComponentCount: number;
     selectedFusedClippingPixelCount: number;
     allInvalidPixelsExclusivelyCommonMode: true;

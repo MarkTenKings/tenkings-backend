@@ -1013,8 +1013,11 @@ function Send-WarmLeimacFrameObject {
   $started = (Get-Date).ToUniversalTime()
   $watch = [System.Diagnostics.Stopwatch]::StartNew()
   if (-not $Session.enabled) {
+    $expectedAck = "W$($Frame.commandNumber)ACK0"
     return [ordered]@{
       ok = $true
+      attempt = 1
+      automaticRetryCount = 0
       host = ""
       port = $LeimacPort
       timeoutMs = 1500
@@ -1022,7 +1025,10 @@ function Send-WarmLeimacFrameObject {
       finishedAt = (Get-Date).ToUniversalTime().ToString("o")
       durationMs = 0
       frame = $Frame
+      expectedAck = $expectedAck
       rawResponse = "DISABLED"
+      normalizedResponse = "DISABLED"
+      exactAck = $false
       responseKind = "ack"
     }
   }
@@ -1040,10 +1046,14 @@ function Send-WarmLeimacFrameObject {
       $buffer = New-Object byte[] 256
       $read = $Session.stream.Read($buffer, 0, $buffer.Length)
       $raw = $(if ($read -gt 0) { [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read) } else { "" })
+      $normalizedResponse = $raw.Trim()
+      $expectedAck = "W$($Frame.commandNumber)ACK0"
       $responseKind = $(if ($raw -match "NAK") { "nak" } elseif ($raw -match "ACK|^A|OK" -or $raw.Length -gt 0) { "ack" } else { "unknown" })
       $watch.Stop()
       return [ordered]@{
         ok = ($responseKind -ne "nak")
+        attempt = $attempts
+        automaticRetryCount = $attempts - 1
         host = $LeimacHost
         port = $LeimacPort
         timeoutMs = 1500
@@ -1051,7 +1061,10 @@ function Send-WarmLeimacFrameObject {
         finishedAt = (Get-Date).ToUniversalTime().ToString("o")
         durationMs = [Math]::Round($watch.Elapsed.TotalMilliseconds, 1)
         frame = $Frame
+        expectedAck = $expectedAck
         rawResponse = $raw
+        normalizedResponse = $normalizedResponse
+        exactAck = ($normalizedResponse -ceq $expectedAck)
         responseKind = $responseKind
       }
     } catch {
@@ -1060,6 +1073,8 @@ function Send-WarmLeimacFrameObject {
         $watch.Stop()
         return [ordered]@{
           ok = $false
+          attempt = $attempts
+          automaticRetryCount = $attempts - 1
           host = $LeimacHost
           port = $LeimacPort
           timeoutMs = 1500
@@ -1100,7 +1115,17 @@ function Apply-WarmLeimacFramesExactOnce {
     $write = Send-WarmLeimacFrameObject -Session $Session -Frame $frame -NoRetry
     $writes += $write
     $raw = ([string]$write.rawResponse).Trim()
-    if (-not $write.ok -or $write.responseKind -ne "ack" -or $raw -notmatch "^(ACK|A|OK)$") {
+    $expectedAck = "W$($frame.commandNumber)ACK0"
+    if (
+      -not $write.ok -or
+      $write.responseKind -ne "ack" -or
+      $write.attempt -ne 1 -or
+      $write.automaticRetryCount -ne 0 -or
+      $write.expectedAck -cne $expectedAck -or
+      $write.normalizedResponse -cne $expectedAck -or
+      $raw -cne $expectedAck -or
+      $write.exactAck -ne $true
+    ) {
       throw "$Label did not receive one exact ACK for $($frame.name)."
     }
   }

@@ -108,11 +108,6 @@ interface ParsedWarmSideV1 {
   rawAllOn: FixedRigExactReportEvidenceFileV1;
   normalizedAllOn: FixedRigExactReportEvidenceFileV1;
   normalizedCard: FixedRigExactReportEvidenceFileV1;
-  darkControl: FixedRigExactReportEvidenceFileV1;
-  directionalChannels: Array<FixedRigExactReportEvidenceFileV1 & {
-    channel: number;
-    channelConfidence: number;
-  }>;
   photometricExposureBracket: NonNullable<
     FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
   >;
@@ -183,15 +178,165 @@ function exactNumber(value: unknown, expected: number, label: string): number {
   return value;
 }
 
-function assertExactAcks(value: unknown, expectedCount: number, label: string): void {
+function fixedRigLeimacUnitOneRequestFrameV1(
+  commandNumber: '11' | '85' | '86',
+  values: readonly string[],
+): string {
+  if (
+    values.length !== 8 ||
+    values.some((value) => !/^\d{4}$/.test(value))
+  ) {
+    throw new Error('Fixed-rig Leimac request frames require eight exact four-digit values.');
+  }
+  return `W${commandNumber}01${values
+    .map((value, index) => String(index + 1).padStart(2, '0') + value)
+    .join('')}`;
+}
+
+const FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1 = [
+  fixedRigLeimacUnitOneRequestFrameV1('86', Array(8).fill('0000')),
+  fixedRigLeimacUnitOneRequestFrameV1('85', Array(8).fill('0000')),
+  fixedRigLeimacUnitOneRequestFrameV1('11', Array(8).fill('0000')),
+] as const;
+
+export function assertFixedRigExactLeimacWritesV1(
+  value: unknown,
+  expectedRequestFrames: readonly string[],
+  label: string,
+): void {
   const writes = array(value, label);
-  if (writes.length !== expectedCount || writes.some((entry) => {
+  if (writes.length !== expectedRequestFrames.length || writes.some((entry, index) => {
     const write = object(entry, label + ' write');
+    const frame = object(write.frame, label + ' write frame');
+    const expectedRequestFrame = expectedRequestFrames[index]!;
+    const commandNumber = expectedRequestFrame.slice(1, 3);
+    const expectedAck = `W${commandNumber}ACK0`;
     return write.ok !== true ||
       write.responseKind !== 'ack' ||
-      !/^(ACK|A|OK)$/.test(String(write.rawResponse ?? '').trim());
+      write.attempt !== 1 ||
+      write.automaticRetryCount !== 0 ||
+      write.expectedAck !== expectedAck ||
+      write.normalizedResponse !== expectedAck ||
+      write.exactAck !== true ||
+      String(write.rawResponse ?? '').trim() !== expectedAck ||
+      frame.commandNumber !== commandNumber ||
+      frame.targetDesignation !== '01' ||
+      frame.requestAscii !== expectedRequestFrame ||
+      frame.requestFrame !== expectedRequestFrame;
   })) {
-    throw new Error(label + ' must contain exact one-shot ACK evidence.');
+    throw new Error(label + ' must contain exact unit-one request frames and one-shot command ACK evidence.');
+  }
+}
+
+export function assertFixedRigPhotometricBracketCaptureProvenanceV1(
+  value: unknown,
+  side: Side,
+): void {
+  const cells = array(value, side + ' bracket cells');
+  if (cells.length !== 3) {
+    throw new Error(side + ' exposure bracket requires exactly three cells.');
+  }
+  const expectedExposures = [15000, 30000, 37500];
+  const rawPaths = new Set<string>();
+  const normalizedPaths = new Set<string>();
+  const captureTimestamps = new Set<string>();
+  let authoritativeCameraSerial: string | undefined;
+  let previousFinishedTicks = 0;
+  let captureCount = 0;
+
+  const validateRole = (
+    roleValue: unknown,
+    expectedRole: string,
+    expectedExposureUs: number,
+    label: string,
+  ) => {
+    const role = object(roleValue, label);
+    if (role.role !== expectedRole) {
+      throw new Error(label + ' role does not match its exact capture-plan position.');
+    }
+    const startedTicks = role.monotonicStartedTicks;
+    const finishedTicks = role.monotonicFinishedTicks;
+    if (
+      typeof startedTicks !== 'number' ||
+      typeof finishedTicks !== 'number' ||
+      !Number.isSafeInteger(startedTicks) ||
+      !Number.isSafeInteger(finishedTicks) ||
+      startedTicks <= 0 ||
+      finishedTicks <= startedTicks ||
+      startedTicks <= previousFinishedTicks
+    ) {
+      throw new Error(label + ' capture window is not positive and strictly monotonic.');
+    }
+    previousFinishedTicks = finishedTicks;
+
+    const capture = object(role.capture, label + ' capture');
+    exactNumber(capture.exposureTime, expectedExposureUs, label + ' capture exposure');
+    const camera = object(capture.camera, label + ' capture camera');
+    const cameraSerial = string(camera.serialNumber, label + ' capture camera serial');
+    if (!authoritativeCameraSerial) authoritativeCameraSerial = cameraSerial;
+    if (cameraSerial !== authoritativeCameraSerial) {
+      throw new Error(label + ' capture camera serial differs within the bracket.');
+    }
+    const rawPath = path.resolve(string(capture.outputFilePath, label + ' raw path')).toLowerCase();
+    exactSha(capture.sha256, label + ' raw sha256');
+    const captureTimestamp = string(capture.timestamp, label + ' capture timestamp');
+    const normalized = object(role.normalized, label + ' normalized role');
+    const artifact = object(normalized.analysisArtifact, label + ' normalized artifact');
+    const normalizedPath = path.resolve(
+      string(artifact.localOutputPath, label + ' normalized path'),
+    ).toLowerCase();
+    exactSha(artifact.sha256, label + ' normalized sha256');
+    if (
+      rawPaths.has(rawPath) ||
+      normalizedPaths.has(normalizedPath) ||
+      captureTimestamps.has(captureTimestamp)
+    ) {
+      throw new Error(label + ' aliases another bracket capture source or artifact.');
+    }
+    rawPaths.add(rawPath);
+    normalizedPaths.add(normalizedPath);
+    captureTimestamps.add(captureTimestamp);
+    captureCount += 1;
+  };
+
+  cells.forEach((cellValue, cellIndex) => {
+    const exposureUs = expectedExposures[cellIndex]!;
+    const cell = object(cellValue, side + ' bracket cell');
+    exactNumber(cell.exposureUs, exposureUs, side + ' bracket exposure');
+    const readback = object(cell.cameraReadback, side + ' bracket camera readback');
+    const cellCameraSerial = string(
+      readback.cameraSerialNumber,
+      side + ' bracket camera readback serial',
+    );
+    if (!authoritativeCameraSerial) authoritativeCameraSerial = cellCameraSerial;
+    if (cellCameraSerial !== authoritativeCameraSerial) {
+      throw new Error(side + ' bracket camera readback serial differs within the bracket.');
+    }
+    const references = array(cell.references, side + ' bracket references');
+    const channels = array(cell.channels, side + ' bracket channels');
+    if (references.length !== 3 || channels.length !== 8) {
+      throw new Error(side + ' bracket cell requires three references and channels 1 through 8.');
+    }
+    references.forEach((role, index) => validateRole(
+      role,
+      `bracket_${exposureUs}_reference_${index + 1}`,
+      exposureUs,
+      `${side} bracket ${exposureUs} reference ${index + 1}`,
+    ));
+    channels.forEach((role, index) => validateRole(
+      role,
+      `bracket_${exposureUs}_channel_${index + 1}`,
+      exposureUs,
+      `${side} bracket ${exposureUs} channel ${index + 1}`,
+    ));
+  });
+  if (
+    captureCount !== 33 ||
+    rawPaths.size !== 33 ||
+    normalizedPaths.size !== 33 ||
+    captureTimestamps.size !== 33
+  ) {
+    throw new Error(side + ' bracket must contain 33 distinct ordered capture records and paths.');
   }
 }
 
@@ -236,6 +381,52 @@ function evidenceFrom(input: {
     fileName: path.basename(filePath),
     contentType: contentType(filePath),
   };
+}
+
+export async function rehashFixedRigPhotometricBracketRawCapturesV1(input: {
+  cells: unknown;
+  packageDir: string;
+  side: Side;
+}): Promise<FixedRigExactReportEvidenceFileV1[]> {
+  const rawFiles: FixedRigExactReportEvidenceFileV1[] = [];
+  const cells = array(input.cells, input.side + ' bracket cells');
+  cells.forEach((cellValue, cellIndex) => {
+    const cell = object(cellValue, input.side + ' bracket cell');
+    const exposureUs = [15000, 30000, 37500][cellIndex]!;
+    const roles = [
+      ...array(cell.references, input.side + ' bracket references').map(
+        (value, index) => ({
+          value,
+          suffix: `reference-${index + 1}`,
+        }),
+      ),
+      ...array(cell.channels, input.side + ' bracket channels').map(
+        (value, index) => ({
+          value,
+          suffix: `channel-${index + 1}`,
+        }),
+      ),
+    ];
+    roles.forEach(({ value, suffix }) => {
+      const capture = object(
+        object(value, `${input.side} bracket ${exposureUs} ${suffix}`).capture,
+        `${input.side} bracket ${exposureUs} ${suffix} capture`,
+      );
+      rawFiles.push(evidenceFrom({
+        packageDir: input.packageDir,
+        artifact: capture,
+        pathField: 'outputFilePath',
+        assetId: `${input.side}-bracket-${exposureUs}-${suffix}-raw`,
+        label: `${input.side} bracket ${exposureUs} ${suffix} raw`,
+      }));
+    });
+  });
+  if (rawFiles.length !== 33) {
+    throw new Error(input.side + ' bracket must rehash exactly 33 raw capture roles.');
+  }
+  await Promise.all(rawFiles.map((file) =>
+    readExact(file.filePath, file.sha256, input.side + ' ' + file.assetId)));
+  return rawFiles;
 }
 
 function recordOrEmpty(value: unknown): Record<string, unknown> {
@@ -331,8 +522,6 @@ async function parseWarmSideV1(input: {
   const side = object(manifest[input.side], input.side + ' side evidence');
   const allOn = object(side.allOn, input.side + ' all-on evidence');
   const accepted = object(side.acceptedProfile, input.side + ' accepted-profile evidence');
-  const dark = object(side.darkControl, input.side + ' dark-control evidence');
-  const normalizedDark = object(dark.normalized, input.side + ' normalized dark-control evidence');
   const normalizedCard = object(side.normalizedCard, input.side + ' normalized-card evidence');
   const rawAllOn = evidenceFrom({
     packageDir,
@@ -385,37 +574,6 @@ async function parseWarmSideV1(input: {
     authority: rawToNormalizedTransform,
     label: input.side + ' accepted-profile registration',
   });
-  const darkControl = evidenceFrom({
-    packageDir,
-    artifact: object(normalizedDark.analysisArtifact, input.side + ' normalized dark artifact'),
-    pathField: 'localOutputPath',
-    assetId: input.side + '-normalized-dark-control',
-    label: input.side + ' normalized dark control',
-  });
-  const channels = array(side.channels, input.side + ' directional channels')
-    .map((value) => object(value, input.side + ' directional channel'))
-    .sort((left, right) => Number(left.channel) - Number(right.channel));
-  if (channels.length !== 8 || channels.some((entry, index) => entry.channel !== index + 1)) {
-    throw new Error(input.side + ' warm manifest must contain channels 1 through 8 exactly once.');
-  }
-  const directionalChannels = channels.map((entry, index) => {
-    const channel = index + 1;
-    const channelConfidence = input.channelConfidences.get(channel);
-    if (!Number.isFinite(channelConfidence)) {
-      throw new Error('Finalized calibration has no direction confidence for channel ' + channel + '.');
-    }
-    return {
-      ...evidenceFrom({
-        packageDir,
-        artifact: object(entry.analysisArtifact, input.side + ' channel ' + channel + ' artifact'),
-        pathField: 'localOutputPath',
-        assetId: input.side + '-directional-channel-' + channel,
-        label: input.side + ' directional channel ' + channel,
-      }),
-      channel,
-      channelConfidence: Number(channelConfidence),
-    };
-  });
   const bracket = object(
     side.photometricExposureBracket,
     input.side + ' photometric exposure bracket',
@@ -435,6 +593,12 @@ async function parseWarmSideV1(input: {
   if (cells.length !== 3) {
     throw new Error(input.side + ' exposure bracket requires exactly three cells.');
   }
+  assertFixedRigPhotometricBracketCaptureProvenanceV1(cells, input.side);
+  await rehashFixedRigPhotometricBracketRawCapturesV1({
+    cells,
+    packageDir,
+    side: input.side,
+  });
   const bracketReferences: NonNullable<
     FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
   >['references'] = [];
@@ -460,8 +624,16 @@ async function parseWarmSideV1(input: {
         !readback.cameraSerialNumber) {
       throw new Error(input.side + ' bracket camera identity/readback is incomplete.');
     }
-    assertExactAcks(cell.safeOffBefore, 3, input.side + ' bracket cell safe-off before');
-    assertExactAcks(cell.safeOffAfter, 3, input.side + ' bracket cell safe-off after');
+    assertFixedRigExactLeimacWritesV1(
+      cell.safeOffBefore,
+      FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1,
+      input.side + ' bracket cell safe-off before',
+    );
+    assertFixedRigExactLeimacWritesV1(
+      cell.safeOffAfter,
+      FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1,
+      input.side + ' bracket cell safe-off after',
+    );
     const references = array(cell.references, input.side + ' bracket references');
     const observations = array(cell.channels, input.side + ' bracket channels');
     if (references.length !== 3 || observations.length !== 8) {
@@ -471,7 +643,11 @@ async function parseWarmSideV1(input: {
       const role = object(value, input.side + ' bracket reference');
       exactNumber(role.exposureUs, exposureUs, input.side + ' reference exposure');
       exactNumber(role.referenceOrdinal, index + 1, input.side + ' reference ordinal');
-      assertExactAcks(role.safeOffBefore, 3, input.side + ' reference safe-off');
+      assertFixedRigExactLeimacWritesV1(
+        role.safeOffBefore,
+        FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1,
+        input.side + ' reference safe-off',
+      );
       const capture = object(role.capture, input.side + ' bracket reference capture');
       exactNumber(capture.exposureTime, exposureUs, input.side + ' reference capture exposure');
       exactNumber(capture.gain, 0, input.side + ' reference capture gain');
@@ -503,9 +679,11 @@ async function parseWarmSideV1(input: {
       exactNumber(role.exposureUs, exposureUs, input.side + ' bracket channel exposure');
       exactNumber(role.dutyTenthsPercent, 24, input.side + ' bracket channel duty');
       exactNumber(role.settleMs, 0, input.side + ' bracket channel settle');
-      assertExactAcks(role.safeOffBefore, 3, input.side + ' bracket channel safe-off before');
-      assertExactAcks(role.writes, 2, input.side + ' bracket channel one-hot writes');
-      assertExactAcks(role.safeOffAfter, 3, input.side + ' bracket channel safe-off after');
+      assertFixedRigExactLeimacWritesV1(
+        role.safeOffBefore,
+        FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1,
+        input.side + ' bracket channel safe-off before',
+      );
       const capture = object(role.capture, input.side + ' bracket channel capture');
       exactNumber(capture.exposureTime, exposureUs, input.side + ' bracket channel capture exposure');
       exactNumber(capture.gain, 0, input.side + ' bracket channel capture gain');
@@ -515,17 +693,33 @@ async function parseWarmSideV1(input: {
       const frames = array(role.frames, input.side + ' bracket one-hot frames');
       const w11 = object(frames[0], 'W11 frame');
       const w86 = object(frames[1], 'W86 frame');
-      const expectedW11 = 'W11' + Array.from(
-        { length: 8 },
-        (_, position) => position === index ? '0024' : '0000',
-      ).join('');
-      const expectedW86 = 'W86' + Array.from(
-        { length: 8 },
-        (_, position) => position === index ? '0001' : '0000',
-      ).join('');
+      const expectedW11 = fixedRigLeimacUnitOneRequestFrameV1(
+        '11',
+        Array.from({ length: 8 }, (_, position) =>
+          position === index ? '0024' : '0000'),
+      );
+      const expectedW86 = fixedRigLeimacUnitOneRequestFrameV1(
+        '86',
+        Array.from({ length: 8 }, (_, position) =>
+          position === index ? '0001' : '0000'),
+      );
+      assertFixedRigExactLeimacWritesV1(
+        role.writes,
+        [expectedW11, expectedW86],
+        input.side + ' bracket channel one-hot writes',
+      );
+      assertFixedRigExactLeimacWritesV1(
+        role.safeOffAfter,
+        FIXED_RIG_LEIMAC_SAFE_OFF_REQUEST_FRAMES_V1,
+        input.side + ' bracket channel safe-off after',
+      );
       if (frames.length !== 2 ||
           w11.commandNumber !== '11' ||
           w86.commandNumber !== '86' ||
+          w11.targetDesignation !== '01' ||
+          w86.targetDesignation !== '01' ||
+          w11.requestAscii !== expectedW11 ||
+          w86.requestAscii !== expectedW86 ||
           w11.requestFrame !== expectedW11 ||
           w86.requestFrame !== expectedW86) {
         throw new Error(input.side + ' bracket lighting must use exact one-hot W11/W86 frames.');
@@ -562,8 +756,6 @@ async function parseWarmSideV1(input: {
     rawAllOn,
     normalizedAllOn,
     normalizedAccepted,
-    darkControl,
-    ...directionalChannels,
     ...bracketFiles,
   ];
   await Promise.all(allFiles.map((file) =>
@@ -572,8 +764,6 @@ async function parseWarmSideV1(input: {
     rawAllOn,
     normalizedAllOn,
     normalizedCard: normalizedAccepted,
-    darkControl,
-    directionalChannels,
     photometricExposureBracket,
     rawToNormalizedTransform,
     normalizedCardBytes: await readExact(
@@ -778,8 +968,6 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     rawToNormalizedTransform: warm[side].rawToNormalizedTransform,
     normalizedAllOn: warm[side].normalizedAllOn,
     normalizedCard: warm[side].normalizedCard,
-    directionalChannels: warm[side].directionalChannels,
-    darkControl: warm[side].darkControl,
     photometricExposureBracket: warm[side].photometricExposureBracket,
     intendedOuterBoundary,
     ...(centering[side].designReference ? {

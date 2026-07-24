@@ -151,6 +151,9 @@ export function applyFixedRigCommonModeInteriorAdmissionV1(input: {
         pixelCount: region!.pixels.length,
       },
       totalInvalidPixelCount: invalidPixelCount,
+      allInvalidComponentPixelCounts: allComponents
+        .map((component) => component.pixels.length)
+        .sort((left, right) => right - left),
       qualifyingComponentCount: qualifying.length,
       selectedFusedClippingPixelCount: selectedClippingPixelCount,
       allInvalidPixelsExclusivelyCommonMode: true,
