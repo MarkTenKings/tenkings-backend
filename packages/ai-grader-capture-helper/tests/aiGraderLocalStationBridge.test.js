@@ -444,6 +444,18 @@ test("station launcher passes the exact production_fast capture profile pair", (
   assert.match(bridgeSource, /return await service\.streamPreview\(req, res, origin\)/);
 });
 
+test("station status preserves the configured rig identity while real activation supplies the finalized bundle", () => {
+  const outputDir = path.join(os.tmpdir(), "tenkings-activation-rig-identity");
+  const { service } = configFor(outputDir, {}, {
+    mathematicalCalibrationRigId: "fixed-rig-dell-v1",
+  });
+  assert.deepEqual(service.status().mathematicalCalibration, {
+    ready: false,
+    reason: "No exact finalized Mathematical Calibration V1 bundle is configured on this station.",
+    rigId: "fixed-rig-dell-v1",
+  });
+});
+
 test("provisional geometry is an explicit paired geometry-only opt-in and never claims calibration", () => {
   const outputDir = path.join(os.tmpdir(), "tenkings-provisional-geometry-config");
   const artifactPath = path.join(outputDir, "provisional-geometry.json");

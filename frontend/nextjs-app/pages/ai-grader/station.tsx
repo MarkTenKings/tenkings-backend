@@ -1864,7 +1864,13 @@ export default function AiGraderStationPage() {
   const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 10);
   const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) =>
     RAPID_PROCESSING_STATES.has(item.state) || item.ocr.state === "eligible" || item.ocr.state === "in_flight");
-  const mathematicalCalibrationReady = status.mathematicalCalibration?.ready === true;
+  const mathematicalActivationPreflightReady =
+    bridgeConnected &&
+    status.calibrationActivation?.configured === true &&
+    Boolean(status.mathematicalCalibration?.rigId);
+  const mathematicalCalibrationReady =
+    status.mathematicalCalibration?.ready === true ||
+    mathematicalActivationPreflightReady;
   const mathematicalCalibrationBlocked =
     selectedGradingContract === "mathematical_calibration_v1" &&
     !mathematicalCalibrationReady;
@@ -5235,8 +5241,10 @@ export default function AiGraderStationPage() {
             <div className={`grading-contract-readiness ${mathematicalCalibrationReady ? "ready" : "blocked"}`} role="status">
               <strong>{mathematicalCalibrationReady ? "Mathematical V1 ready" : "Mathematical V1 unavailable"}</strong>
               <p>
-                {mathematicalCalibrationReady
+                {status.mathematicalCalibration?.ready
                   ? `${status.mathematicalCalibration?.profileId ?? "Finalized profile"} / ${status.mathematicalCalibration?.calibrationVersion ?? "version recorded"} on ${status.mathematicalCalibration?.rigId ?? "the fixed rig"}.`
+                  : mathematicalActivationPreflightReady
+                    ? `Exact hosted/local ACTIVE calibration authority will be verified at Start New Card for ${status.mathematicalCalibration?.rigId}.`
                   : status.mathematicalCalibration?.reason ?? "The bridge has not verified a finalized physical calibration profile."}
               </p>
               {status.mathematicalCalibration?.artifactSha256 ? <code>{status.mathematicalCalibration.artifactSha256}</code> : null}
