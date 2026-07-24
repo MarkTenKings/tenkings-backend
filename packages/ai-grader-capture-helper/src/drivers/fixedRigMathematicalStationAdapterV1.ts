@@ -25,6 +25,10 @@ import { loadFixedRigMathematicalCalibrationBundleV1 } from './fixedRigMathemati
 import type { FastCalibrationRuntimeContextV1_2 } from './fixedRigFastMathematicalCalibrationV1_2';
 import { buildFixedRigAutomaticDesignRegistrationV1 } from './fixedRigAutomaticDesignRegistrationV1';
 import {
+  verifyCardGeometryRawToNormalizedTransformV1,
+  type CardGeometryRawToNormalizedTransformV1,
+} from './cardGeometry';
+import {
   buildFixedRigPokemonTcgStandardBoundaryV1,
   FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
   verifyTrustedPokemonCardFormatAuthorityV1,
@@ -109,6 +113,9 @@ interface ParsedWarmSideV1 {
     channel: number;
     channelConfidence: number;
   }>;
+  photometricExposureBracket: NonNullable<
+    FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
+  >;
   rawToNormalizedTransform: FixedRigMathematicalCalibrationSideInputV1['rawToNormalizedTransform'];
   normalizedCardBytes: Buffer;
   geometry: Record<string, unknown>;
@@ -169,6 +176,25 @@ function array(value: unknown, label: string): unknown[] {
   return value;
 }
 
+function exactNumber(value: unknown, expected: number, label: string): number {
+  if (typeof value !== 'number' || value !== expected) {
+    throw new Error(label + ' must equal ' + expected + '.');
+  }
+  return value;
+}
+
+function assertExactAcks(value: unknown, expectedCount: number, label: string): void {
+  const writes = array(value, label);
+  if (writes.length !== expectedCount || writes.some((entry) => {
+    const write = object(entry, label + ' write');
+    return write.ok !== true ||
+      write.responseKind !== 'ack' ||
+      !/^(ACK|A|OK)$/.test(String(write.rawResponse ?? '').trim());
+  })) {
+    throw new Error(label + ' must contain exact one-shot ACK evidence.');
+  }
+}
+
 function within(root: string, filePath: string, label: string): string {
   const resolvedRoot = path.resolve(root);
   const resolved = path.resolve(filePath);
@@ -216,6 +242,44 @@ function recordOrEmpty(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+export function assertFixedRigReusedAuthoritativeTransformV1(input: {
+  artifact: JsonObject;
+  rawCapture: JsonObject;
+  authority: CardGeometryRawToNormalizedTransformV1;
+  label: string;
+}): void {
+  const transform = object(
+    input.artifact.rawToNormalizedTransform,
+    input.label + ' raw-to-normalized transform',
+  ) as unknown as CardGeometryRawToNormalizedTransformV1;
+  const sourceSha256 = exactSha(input.rawCapture.sha256, input.label + ' raw capture SHA-256');
+  if (
+    exactSha(input.artifact.sourceSha256, input.label + ' normalized source SHA-256') !==
+      sourceSha256 ||
+    transform.sourceSha256 !== sourceSha256 ||
+    !verifyCardGeometryRawToNormalizedTransformV1(transform)
+  ) {
+    throw new Error(input.label + ' is not hash-bound to its exact raw capture and transform.');
+  }
+  const sameFixedTransform =
+    transform.schemaVersion === input.authority.schemaVersion &&
+    transform.sourceCoordinateFrame === input.authority.sourceCoordinateFrame &&
+    transform.sourceWidthPx === input.authority.sourceWidthPx &&
+    transform.sourceHeightPx === input.authority.sourceHeightPx &&
+    transform.autoOrientApplied === input.authority.autoOrientApplied &&
+    transform.deskewClockwiseDegrees === input.authority.deskewClockwiseDegrees &&
+    transform.rotatedWidthPx === input.authority.rotatedWidthPx &&
+    transform.rotatedHeightPx === input.authority.rotatedHeightPx &&
+    JSON.stringify(transform.crop) === JSON.stringify(input.authority.crop) &&
+    transform.outputCoordinateFrame === input.authority.outputCoordinateFrame &&
+    transform.outputWidthPx === input.authority.outputWidthPx &&
+    transform.outputHeightPx === input.authority.outputHeightPx &&
+    JSON.stringify(transform.matrix) === JSON.stringify(input.authority.matrix);
+  if (!sameFixedTransform) {
+    throw new Error(input.label + ' did not reuse the one authoritative side transform.');
+  }
 }
 
 export function assertFixedRigMathematicalWarmSideCaptureProfileV1(
@@ -299,6 +363,28 @@ async function parseWarmSideV1(input: {
     assetId: input.side + '-accepted-profile',
     label: input.side + ' accepted profile',
   });
+  const normalizedCardArtifact = object(
+    normalizedCard.normalizedArtifact,
+    input.side + ' normalization authority artifact',
+  );
+  const rawToNormalizedTransform = object(
+    normalizedCardArtifact.rawToNormalizedTransform,
+    input.side + ' raw-to-normalized transform',
+  ) as unknown as CardGeometryRawToNormalizedTransformV1;
+  if (
+    rawToNormalizedTransform.sourceSha256 !== rawAllOn.sha256 ||
+    !verifyCardGeometryRawToNormalizedTransformV1(rawToNormalizedTransform) ||
+    rawToNormalizedTransform.transformSha256 !==
+      (normalizedAllOnArtifact.rawToNormalizedTransform as JsonObject | undefined)?.transformSha256
+  ) {
+    throw new Error(input.side + ' all-on transform is not bound to the exact raw/normalized role.');
+  }
+  assertFixedRigReusedAuthoritativeTransformV1({
+    artifact: acceptedArtifact,
+    rawCapture: object(accepted.capture, input.side + ' raw accepted-profile capture'),
+    authority: rawToNormalizedTransform,
+    label: input.side + ' accepted-profile registration',
+  });
   const darkControl = evidenceFrom({
     packageDir,
     artifact: object(normalizedDark.analysisArtifact, input.side + ' normalized dark artifact'),
@@ -330,25 +416,155 @@ async function parseWarmSideV1(input: {
       channelConfidence: Number(channelConfidence),
     };
   });
-  const normalizedCardArtifact = object(
-    normalizedCard.normalizedArtifact,
-    input.side + ' normalization authority artifact',
+  const bracket = object(
+    side.photometricExposureBracket,
+    input.side + ' photometric exposure bracket',
   );
-  const rawToNormalizedTransform = object(
-    normalizedCardArtifact.rawToNormalizedTransform,
-    input.side + ' raw-to-normalized transform',
-  ) as unknown as FixedRigMathematicalCalibrationSideInputV1['rawToNormalizedTransform'];
-  if (rawToNormalizedTransform.sourceSha256 !== rawAllOn.sha256 ||
-      rawToNormalizedTransform.transformSha256 !==
-        (normalizedAllOnArtifact.rawToNormalizedTransform as JsonObject | undefined)?.transformSha256) {
-    throw new Error(input.side + ' all-on transform is not bound to the exact raw/normalized role.');
+  if (
+    bracket.version !== 'fixed_rig_exposure_bracket_capture_v1' ||
+    bracket.pixelFormat !== 'Mono8' ||
+    bracket.automaticRetryCount !== 0
+  ) {
+    throw new Error(input.side + ' requires the authenticated production exposure-bracket contract.');
   }
+  exactNumber(bracket.isolatedDutyTenthsPercent, 24, input.side + ' bracket duty');
+  exactNumber(bracket.settleMs, 0, input.side + ' bracket settle');
+  exactNumber(bracket.gain, 0, input.side + ' bracket gain');
+  const expectedExposures = [15000, 30000, 37500];
+  const cells = array(bracket.cells, input.side + ' bracket cells');
+  if (cells.length !== 3) {
+    throw new Error(input.side + ' exposure bracket requires exactly three cells.');
+  }
+  const bracketReferences: NonNullable<
+    FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
+  >['references'] = [];
+  const bracketChannels = new Map<number, NonNullable<
+    FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
+  >['channels'][number]>(Array.from({ length: 8 }, (_, index) => [
+    index + 1,
+    {
+      channel: index + 1,
+      channelConfidence: Number(input.channelConfidences.get(index + 1)),
+      observations: [],
+    },
+  ]));
+  const bracketFiles: FixedRigExactReportEvidenceFileV1[] = [];
+  for (let cellIndex = 0; cellIndex < cells.length; cellIndex += 1) {
+    const cell = object(cells[cellIndex], input.side + ' bracket cell');
+    const exposureUs = expectedExposures[cellIndex]!;
+    exactNumber(cell.exposureUs, exposureUs, input.side + ' bracket exposure');
+    const readback = object(cell.cameraReadback, input.side + ' bracket camera readback');
+    exactNumber(readback.exposureUs, exposureUs, input.side + ' bracket exposure readback');
+    exactNumber(readback.gain, 0, input.side + ' bracket gain readback');
+    if (readback.pixelFormat !== 'Mono8' || typeof readback.cameraSerialNumber !== 'string' ||
+        !readback.cameraSerialNumber) {
+      throw new Error(input.side + ' bracket camera identity/readback is incomplete.');
+    }
+    assertExactAcks(cell.safeOffBefore, 3, input.side + ' bracket cell safe-off before');
+    assertExactAcks(cell.safeOffAfter, 3, input.side + ' bracket cell safe-off after');
+    const references = array(cell.references, input.side + ' bracket references');
+    const observations = array(cell.channels, input.side + ' bracket channels');
+    if (references.length !== 3 || observations.length !== 8) {
+      throw new Error(input.side + ' bracket cell requires three references and channels 1 through 8.');
+    }
+    references.forEach((value, index) => {
+      const role = object(value, input.side + ' bracket reference');
+      exactNumber(role.exposureUs, exposureUs, input.side + ' reference exposure');
+      exactNumber(role.referenceOrdinal, index + 1, input.side + ' reference ordinal');
+      assertExactAcks(role.safeOffBefore, 3, input.side + ' reference safe-off');
+      const capture = object(role.capture, input.side + ' bracket reference capture');
+      exactNumber(capture.exposureTime, exposureUs, input.side + ' reference capture exposure');
+      exactNumber(capture.gain, 0, input.side + ' reference capture gain');
+      if (capture.sourcePixelFormat !== 'Mono8') {
+        throw new Error(input.side + ' bracket reference is not Mono8.');
+      }
+      const normalized = object(role.normalized, input.side + ' normalized bracket reference');
+      const artifact = object(normalized.analysisArtifact, input.side + ' bracket reference artifact');
+      assertFixedRigReusedAuthoritativeTransformV1({
+        artifact,
+        rawCapture: capture,
+        authority: rawToNormalizedTransform,
+        label: input.side + ' bracket reference registration',
+      });
+      const evidence = evidenceFrom({
+        packageDir,
+        artifact,
+        pathField: 'localOutputPath',
+        assetId: `${input.side}-bracket-${exposureUs}-reference-${index + 1}`,
+        label: `${input.side} bracket ${exposureUs} reference ${index + 1}`,
+      });
+      bracketReferences.push({ ...evidence, exposureUs });
+      bracketFiles.push(evidence);
+    });
+    observations.forEach((value, index) => {
+      const role = object(value, input.side + ' bracket channel');
+      const channel = index + 1;
+      exactNumber(role.channel, channel, input.side + ' bracket channel index');
+      exactNumber(role.exposureUs, exposureUs, input.side + ' bracket channel exposure');
+      exactNumber(role.dutyTenthsPercent, 24, input.side + ' bracket channel duty');
+      exactNumber(role.settleMs, 0, input.side + ' bracket channel settle');
+      assertExactAcks(role.safeOffBefore, 3, input.side + ' bracket channel safe-off before');
+      assertExactAcks(role.writes, 2, input.side + ' bracket channel one-hot writes');
+      assertExactAcks(role.safeOffAfter, 3, input.side + ' bracket channel safe-off after');
+      const capture = object(role.capture, input.side + ' bracket channel capture');
+      exactNumber(capture.exposureTime, exposureUs, input.side + ' bracket channel capture exposure');
+      exactNumber(capture.gain, 0, input.side + ' bracket channel capture gain');
+      if (capture.sourcePixelFormat !== 'Mono8') {
+        throw new Error(input.side + ' bracket channel is not Mono8.');
+      }
+      const frames = array(role.frames, input.side + ' bracket one-hot frames');
+      const w11 = object(frames[0], 'W11 frame');
+      const w86 = object(frames[1], 'W86 frame');
+      const expectedW11 = 'W11' + Array.from(
+        { length: 8 },
+        (_, position) => position === index ? '0024' : '0000',
+      ).join('');
+      const expectedW86 = 'W86' + Array.from(
+        { length: 8 },
+        (_, position) => position === index ? '0001' : '0000',
+      ).join('');
+      if (frames.length !== 2 ||
+          w11.commandNumber !== '11' ||
+          w86.commandNumber !== '86' ||
+          w11.requestFrame !== expectedW11 ||
+          w86.requestFrame !== expectedW86) {
+        throw new Error(input.side + ' bracket lighting must use exact one-hot W11/W86 frames.');
+      }
+      const normalized = object(role.normalized, input.side + ' normalized bracket channel');
+      const artifact = object(normalized.analysisArtifact, input.side + ' bracket channel artifact');
+      assertFixedRigReusedAuthoritativeTransformV1({
+        artifact,
+        rawCapture: capture,
+        authority: rawToNormalizedTransform,
+        label: input.side + ' bracket channel registration',
+      });
+      const evidence = evidenceFrom({
+        packageDir,
+        artifact,
+        pathField: 'localOutputPath',
+        assetId: `${input.side}-bracket-${exposureUs}-channel-${channel}`,
+        label: `${input.side} bracket ${exposureUs} channel ${channel}`,
+      });
+      bracketChannels.get(channel)!.observations.push({ ...evidence, exposureUs });
+      bracketFiles.push(evidence);
+    });
+  }
+  const photometricExposureBracket: ParsedWarmSideV1['photometricExposureBracket'] = {
+    version: 'fixed_rig_exposure_bracket_capture_v1',
+    isolatedDutyTenthsPercent: 24,
+    settleMs: 0,
+    gain: 0,
+    pixelFormat: 'Mono8',
+    references: bracketReferences,
+    channels: [...bracketChannels.values()],
+  };
   const allFiles = [
     rawAllOn,
     normalizedAllOn,
     normalizedAccepted,
     darkControl,
     ...directionalChannels,
+    ...bracketFiles,
   ];
   await Promise.all(allFiles.map((file) =>
     readExact(file.filePath, file.sha256, input.side + ' ' + file.assetId)));
@@ -358,6 +574,7 @@ async function parseWarmSideV1(input: {
     normalizedCard: normalizedAccepted,
     darkControl,
     directionalChannels,
+    photometricExposureBracket,
     rawToNormalizedTransform,
     normalizedCardBytes: await readExact(
       normalizedAccepted.filePath,
@@ -563,6 +780,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     normalizedCard: warm[side].normalizedCard,
     directionalChannels: warm[side].directionalChannels,
     darkControl: warm[side].darkControl,
+    photometricExposureBracket: warm[side].photometricExposureBracket,
     intendedOuterBoundary,
     ...(centering[side].designReference ? {
       designReference: centering[side].designReference,

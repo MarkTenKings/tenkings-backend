@@ -637,6 +637,14 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   assert.equal(result.reportArtifact.bundle.schemaVersion, "ai-grader-report-bundle-v0.3");
   assert.equal(result.reportArtifact.bundle.productionRelease.finalGrade.status, "final_mathematical_grade_v1");
   assert.equal(result.reportArtifact.bundle.deductionLedger.entries.length, 0);
+  const customerFacingRelease = JSON.stringify({
+    finalGrade: result.reportArtifact.bundle.productionRelease.finalGrade,
+    label: result.reportArtifact.bundle.productionRelease.label,
+  });
+  assert.doesNotMatch(
+    customerFacingRelease,
+    /provisional|insufficient evidence|human review|exception/i,
+  );
   assert.equal(fs.existsSync(result.reportPackage.envelopePath), true);
   const expectedMaskPayload = result.reportArtifact.assetPayloads.find(
     (entry) => entry.id.endsWith("/expectedOuterCardMask.tkplane"),

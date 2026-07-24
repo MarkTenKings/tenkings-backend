@@ -419,6 +419,25 @@ test("Basler format normalization is lossless by default and rejects unsupported
   assert.throws(() => normalizeBaslerSavedImageFormat("gif"), /png, tiff, or jpg/);
 });
 
+test("production warm side capture explicitly opts into the authenticated photometric bracket", async () => {
+  const calls = [];
+  const client = new BaslerPylonClient(
+    { bridgeScriptPath: BRIDGE_SCRIPT },
+    fakeRunnerFor({ executionPath: "warm_full_forensic_runner" }, calls)
+  );
+
+  await client.captureFixedRigSideBatch({
+    outputDir: path.join(os.tmpdir(), "basler-production-bracket"),
+    side: "front",
+    savedFormat: "tiff",
+    photometricBracketV1: true,
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.includes("fixed-rig-side-batch"), true);
+  assert.equal(calls[0].args.includes("-PhotometricBracketV1"), true);
+});
+
 test("CLI Basler capture rejects unsafe inputs before bridge execution", async () => {
   let stderr = "";
   const missingLabelCode = await runCaptureHelperCli(

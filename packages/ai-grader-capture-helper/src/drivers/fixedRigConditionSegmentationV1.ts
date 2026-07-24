@@ -909,9 +909,14 @@ export function buildFixedRigConditionSegmentationV1(
   if (reasons.length) return insufficient(input.side, reasons);
 
   const features = buildFeaturePlanes(input);
+  const admissionCoverageMask = input.photometricEvidence.admissionExcludedCommonModeMask
+    ? maskFrom(width, height, (index) =>
+        Number(features.conditionValid.data[index]) === 1 ||
+        Number(input.photometricEvidence.admissionExcludedCommonModeMask![index]) === 1)
+    : features.conditionValid;
   const conditionCoverage = assessConditionEvidenceCoverage(
     input.planes.expectedOuterCardMask!,
-    features.conditionValid,
+    admissionCoverageMask,
   );
   const coveragePolicy = CONDITION_POLICY.excludedEvidenceCoveragePolicy;
   const coverageReasons: string[] = [];

@@ -74,6 +74,11 @@ import {
   type FixedRigPhotometricEvidenceV1,
   type FixedRigScalarPlaneV1,
 } from "./fixedRigPhotometricEvidenceV1";
+import {
+  buildFixedRigExposureBracketFusionV1,
+  type FixedRigExposureBracketPlaneV1,
+} from "./fixedRigExposureBracketFusionV1";
+import { applyFixedRigCommonModeInteriorAdmissionV1 } from "./fixedRigPhotometricAdmissionV1";
 import type { FixedRigPhysicalCalibrationArtifactV1 } from "./fixedRigPhysicalCalibrationV1";
 import { buildFixedRigSurfaceV1, type FixedRigSurfaceV1Result } from "./fixedRigSurfaceV1";
 import {
@@ -119,6 +124,17 @@ export interface FixedRigExactDirectionalChannelV1 extends FixedRigExactReportEv
   channelConfidence: number;
 }
 
+export interface FixedRigExactExposureBracketFrameV1
+  extends FixedRigExactReportEvidenceFileV1 {
+  exposureUs: number;
+}
+
+export interface FixedRigExactExposureBracketChannelV1 {
+  channel: number;
+  channelConfidence: number;
+  observations: FixedRigExactExposureBracketFrameV1[];
+}
+
 export type FixedRigMathematicalCardIdentityV1 = AiGraderReportBundleV03["cardIdentity"] & {
   title: string;
   sideCount: 2;
@@ -149,6 +165,15 @@ export interface FixedRigMathematicalCalibrationSideInputV1 {
   normalizedCard: FixedRigExactReportEvidenceFileV1;
   directionalChannels: FixedRigExactDirectionalChannelV1[];
   darkControl: FixedRigExactReportEvidenceFileV1;
+  photometricExposureBracket?: {
+    version: "fixed_rig_exposure_bracket_capture_v1";
+    isolatedDutyTenthsPercent: 24;
+    settleMs: 0;
+    gain: 0;
+    pixelFormat: "Mono8";
+    references: FixedRigExactExposureBracketFrameV1[];
+    channels: FixedRigExactExposureBracketChannelV1[];
+  };
   /** Exact approved card-format cut geometry; never inferred from frame size. */
   intendedOuterBoundary: FixedRigOuterBoundaryArtifactV1;
   designReference?: MathematicalDesignReferenceV1;
@@ -838,7 +863,7 @@ async function ingestSideV1(input: {
       heightPx: profile.normalizedHeightPx,
     });
   }
-  for (const channel of sortedChannels) {
+  for (const channel of sideInput.photometricExposureBracket ? [] : sortedChannels) {
     if (!Number.isFinite(channel.channelConfidence) || channel.channelConfidence < 0 || channel.channelConfidence > 1) {
       return fail("input_contract", `${side} channel ${channel.channel} confidence is not a measured fraction.`, {
         requiresRecapture: true,
@@ -882,6 +907,82 @@ async function ingestSideV1(input: {
       widthPx: profile.normalizedWidthPx,
       heightPx: profile.normalizedHeightPx,
     });
+  }
+  let decodedBracket: {
+    references: FixedRigExposureBracketPlaneV1[];
+    channels: Array<{
+      channel: number;
+      channelConfidence: number;
+      observations: FixedRigExposureBracketPlaneV1[];
+    }>;
+  } | undefined;
+  if (sideInput.photometricExposureBracket) {
+    const bracket = sideInput.photometricExposureBracket;
+    if (
+      bracket.version !== "fixed_rig_exposure_bracket_capture_v1" ||
+      bracket.isolatedDutyTenthsPercent !== 24 ||
+      bracket.settleMs !== 0 ||
+      bracket.gain !== 0 ||
+      bracket.pixelFormat !== "Mono8"
+    ) {
+      return fail("input_contract", `${side} exposure bracket does not match the authorized acquisition contract.`, {
+        requiresRecapture: true,
+      });
+    }
+    const decodeBracketFrame = async (
+      frame: FixedRigExactExposureBracketFrameV1,
+      label: string,
+    ): Promise<FixedRigExposureBracketPlaneV1> => {
+      const bytes = await readExactFileV1(
+        frame,
+        label,
+        "capture_evidence_ingestion",
+      );
+      const plane = await decodeGrayPlaneV1({
+        bytes,
+        width: profile.normalizedWidthPx,
+        height: profile.normalizedHeightPx,
+        sensorMaximumValue: input.sensorMaximumValue,
+        label,
+      });
+      assetBindings.push({
+        id: frame.assetId,
+        side,
+        evidenceRole: "directional_channel",
+        fileName: frame.fileName,
+        contentType: frame.contentType,
+        bytes,
+        sha256: frame.sha256.toLowerCase(),
+        widthPx: profile.normalizedWidthPx,
+        heightPx: profile.normalizedHeightPx,
+      });
+      channelReferences.push({
+        assetId: frame.assetId,
+        sha256: frame.sha256.toLowerCase(),
+        side,
+        role: "directional_channel",
+        regionId: `${side}-full-card`,
+      });
+      return {
+        exposureUs: frame.exposureUs,
+        plane,
+        sourceEvidenceId: frame.assetId,
+        sourceSha256: frame.sha256.toLowerCase(),
+      };
+    };
+    decodedBracket = {
+      references: await Promise.all(bracket.references.map((frame, index) =>
+        decodeBracketFrame(frame, `${side} bracket reference ${index + 1}`))),
+      channels: await Promise.all(bracket.channels.map(async (channel) => ({
+        channel: channel.channel,
+        channelConfidence: channel.channelConfidence,
+        observations: await Promise.all(channel.observations.map((frame) =>
+          decodeBracketFrame(
+            frame,
+            `${side} bracket channel ${channel.channel} ${frame.exposureUs} us`,
+          ))),
+      }))),
+    };
   }
   const darkBytes = await readExactFileV1(
     sideInput.darkControl,
@@ -1011,17 +1112,9 @@ async function ingestSideV1(input: {
       requiresImplementationCorrection: true,
     });
   }
-  // The bounded evidence domain includes the card and the exterior perimeter
-  // search band needed to prove chips/protrusions. Physical capture producers
-  // must bind raw exterior pixels and their raw-to-normalized transform; the
-  // intended material mask above remains a separate card-format authority.
-  gradeRelevantMask = {
-    width: profile.normalizedWidthPx,
-    height: profile.normalizedHeightPx,
-    data: new Float32Array(
-      profile.normalizedWidthPx * profile.normalizedHeightPx,
-    ).fill(1),
-  };
+  // Photometric admission is card material only. Raw exterior evidence remains
+  // independently bound to the outer-cut detector above.
+  gradeRelevantMask = expectedOuterCardMask;
   const conditionEvidenceDomainMaskBytes = canonicalJsonBytes({
     schemaVersion: "fixed-rig-condition-evidence-domain-mask-v1",
     assetId: conditionEvidenceDomainMaskAssetId,
@@ -1034,7 +1127,7 @@ async function ingestSideV1(input: {
     calibrationSha256: profile.artifactSha256,
     intendedBoundaryArtifactSha256: intendedOuterBoundary.artifactSha256,
     derivation: "complete_bounded_capture_domain_including_outer_cut_search_evidence",
-    dataEncoding: "all_pixels_equal_one",
+    dataEncoding: "expected_outer_card_mask",
     manualOverrideUsed: false,
   });
   const conditionEvidenceDomainMaskSha256 =
@@ -1051,14 +1144,35 @@ async function ingestSideV1(input: {
   });
   let photometric: FixedRigPhotometricEvidenceV1;
   try {
-    photometric = buildFixedRigPhotometricEvidenceV1({
-      channels: channelInputs,
+    const fusion = decodedBracket
+      ? buildFixedRigExposureBracketFusionV1({
+          width: profile.normalizedWidthPx,
+          height: profile.normalizedHeightPx,
+          sensorMaximumValue: input.sensorMaximumValue,
+          gradeRelevantMask,
+          references: decodedBracket.references,
+          channels: decodedBracket.channels,
+          flatFieldChannels: input.photometricCalibration.flatFieldChannels,
+        })
+      : undefined;
+    const computed = buildFixedRigPhotometricEvidenceV1({
+      channels: fusion?.channels ?? channelInputs,
       calibration: input.photometricCalibration,
       darkControl,
       gradeRelevantMask,
-      gradeRelevantMaskSourceEvidenceId: conditionEvidenceDomainMaskAssetId,
-      gradeRelevantMaskSourceSha256: conditionEvidenceDomainMaskSha256,
+      gradeRelevantMaskSourceEvidenceId: expectedOuterCardMaskAssetId,
+      gradeRelevantMaskSourceSha256: sha256(expectedOuterCardMaskBytes),
     });
+    photometric = fusion
+      ? applyFixedRigCommonModeInteriorAdmissionV1({
+          evidence: computed,
+          pixelsPerMmX: sideInput.measurementCalibration.pixelsPerMmX,
+          pixelsPerMmY: sideInput.measurementCalibration.pixelsPerMmY,
+          adaptiveRawGuardFailureMask: fusion.adaptiveRawGuardFailureMask,
+          normalizedFloorFailureMask: fusion.normalizedFloorFailureMask,
+          selectedFusedClippingMask: fusion.selectedFusedClippingMask,
+        })
+      : computed;
   } catch (error) {
     return fail("photometric_evidence", `Unable to compute ${side} calibrated photometric evidence: ${safeMessage(error)}.`, {
       requiresImplementationCorrection: true,

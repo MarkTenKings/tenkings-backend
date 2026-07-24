@@ -65,6 +65,10 @@ function photometric(side, options = {}) {
   }));
   const invalidMask = plane(WIDTH, HEIGHT, (_x, _y, index) => invalid.has(index) ? 1 : 0).data;
   const glareMask = plane(WIDTH, HEIGHT, (_x, _y, index) => glare.has(index) ? 1 : 0).data;
+  const admissionExcludedCommonModeMask = options.admissionExcluded
+    ? plane(WIDTH, HEIGHT, (_x, _y, index) =>
+        options.admissionExcluded.includes(index) ? 1 : 0).data
+    : undefined;
   return {
     version: "fixed_rig_photometric_evidence_v1",
     status: "computed",
@@ -97,6 +101,7 @@ function photometric(side, options = {}) {
     lowConfidenceMask: new Uint8Array(WIDTH * HEIGHT),
     insufficientDirectionalObservationsMask: invalidMask,
     invalidIlluminationMask: invalidMask,
+    ...(admissionExcludedCommonModeMask ? { admissionExcludedCommonModeMask } : {}),
     coverage: {
       validPixelCount: WIDTH * HEIGHT - invalid.size,
       totalPixelCount: WIDTH * HEIGHT,
@@ -443,6 +448,31 @@ test("manifest coverage policy permits small excluded evidence but fails a conti
     insufficient.reasons.join(" "),
     /contiguous expected-card region.*12-pixel ungradable threshold/i,
   );
+});
+
+test("admitted deep-interior common-mode region cannot re-fail topology or become a defect", () => {
+  const admitted = [];
+  for (let offset = 0; offset < 17; offset += 1) {
+    admitted.push((50 + Math.floor(offset / 6)) * WIDTH + 35 + (offset % 6));
+  }
+  const input = buildInput("front", {
+    photometricEvidence: photometric("front", {
+      invalid: admitted,
+      glare: admitted,
+      admissionExcluded: admitted,
+    }),
+  });
+  for (const index of admitted) {
+    input.planes.exposedFiberResponse.data[index] = 1;
+  }
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.equal(segmented.validEvidenceCoverage, 1);
+  assert.equal(admitted.every((index) =>
+    segmented.conditionValidEvidenceMask.data[index] === 0), true);
+  assert.equal(segmented.surfaceCandidateSeeds.every((seed) =>
+    admitted.every((index) => seed.candidateMask.data[index] === 0)), true);
+  assert.equal(segmented.invalidPixelsBecameDefects, false);
 });
 
 test("printed-border condition can proceed without design-relative color while identity mismatch fails", () => {

@@ -27,6 +27,7 @@ param(
   [int]$LeimacUnit = 1,
   [int]$PreviewDutyTenthsPercent = 12,
   [string]$SelectedChannels = "1,2,3,4,5,6,7,8",
+  [switch]$PhotometricBracketV1,
   [switch]$Apply
 )
 
@@ -1004,7 +1005,11 @@ function Close-WarmLeimacSession {
 }
 
 function Send-WarmLeimacFrameObject {
-  param([System.Collections.IDictionary]$Session, [System.Collections.IDictionary]$Frame)
+  param(
+    [System.Collections.IDictionary]$Session,
+    [System.Collections.IDictionary]$Frame,
+    [switch]$NoRetry
+  )
   $started = (Get-Date).ToUniversalTime()
   $watch = [System.Diagnostics.Stopwatch]::StartNew()
   if (-not $Session.enabled) {
@@ -1022,7 +1027,8 @@ function Send-WarmLeimacFrameObject {
     }
   }
   $attempts = 0
-  while ($attempts -lt 2) {
+  $maximumAttempts = $(if ($NoRetry) { 1 } else { 2 })
+  while ($attempts -lt $maximumAttempts) {
     $attempts += 1
     try {
       if ($null -eq $Session.stream) {
@@ -1050,7 +1056,7 @@ function Send-WarmLeimacFrameObject {
       }
     } catch {
       Close-WarmLeimacSession $Session
-      if ($attempts -ge 2) {
+      if ($attempts -ge $maximumAttempts) {
         $watch.Stop()
         return [ordered]@{
           ok = $false
@@ -1078,6 +1084,24 @@ function Apply-WarmLeimacFrames {
     $writes += $write
     if (-not $write.ok) {
       throw "Leimac warm write failed for $($frame.name): $($write.error)"
+    }
+  }
+  return $writes
+}
+
+function Apply-WarmLeimacFramesExactOnce {
+  param(
+    [System.Collections.IDictionary]$Session,
+    [object[]]$Frames,
+    [string]$Label
+  )
+  $writes = @()
+  foreach ($frame in $Frames) {
+    $write = Send-WarmLeimacFrameObject -Session $Session -Frame $frame -NoRetry
+    $writes += $write
+    $raw = ([string]$write.rawResponse).Trim()
+    if (-not $write.ok -or $write.responseKind -ne "ack" -or $raw -notmatch "^(ACK|A|OK)$") {
+      throw "$Label did not receive one exact ACK for $($frame.name)."
     }
   }
   return $writes
@@ -1237,9 +1261,6 @@ function Capture-FixedRigSideBatch {
     $leimacSession = New-WarmLeimacSession
     $safeOffFrames = @(New-WarmLeimacSafeOffFrames)
     $safeOffStartWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $safeOffFrames)
-    $darkCapture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel "$Side-dark-control" -ConfiguredPixelFormat $configuredPixelFormat -ExposureTime $exposureTime -ConfiguredGain $configuredGain
-    $capturesStarted = $true
-
     $setupFrames = @(New-WarmLeimacTriggerSetupFrames)
     $setupWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $setupFrames)
 
@@ -1261,9 +1282,102 @@ function Capture-FixedRigSideBatch {
     $all = @(1, 2, 3, 4, 5, 6, 7, 8)
     $allOn = Capture-WarmLitRole -Role "all_on" -CaptureLabel "$Side-all-on" -ChannelSpec "all" -Channels $all
     $accepted = Capture-WarmLitRole -Role "accepted_profile" -CaptureLabel "$Side-accepted-lighting-profile" -ChannelSpec $selected -Channels $selected
-    $channels = @()
-    for ($channel = 1; $channel -le 8; $channel += 1) {
-      $channels += Capture-WarmLitRole -Role "channel_$channel" -CaptureLabel "$Side-channel-$channel" -ChannelSpec $channel -Channels @($channel)
+    $capturesStarted = $true
+    $photometricBracket = $null
+    if ($PhotometricBracketV1) {
+      $bracketExposures = @(15000, 30000, 37500)
+      $bracketCells = @()
+      Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::PixelFormat, "PixelFormat") "Mono8"
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw, "Gain") 0.0)
+      foreach ($bracketExposureUs in $bracketExposures) {
+        [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$bracketExposureUs))
+        $cellPixelFormat = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat))
+        $cellExposureUs = [double](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs))
+        $cellGain = [double](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw))
+        if ($cellPixelFormat -ne "Mono8" -or $cellExposureUs -ne $bracketExposureUs -or $cellGain -ne 0) {
+          throw "Exposure-bracket camera readback does not exactly match Mono8/$bracketExposureUs us/gain 0."
+        }
+        $cellSafeOffBefore = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $safeOffFrames -Label "Exposure-bracket cell safe-off before")
+        $references = @()
+        for ($referenceOrdinal = 1; $referenceOrdinal -le 3; $referenceOrdinal += 1) {
+          $referenceSafeOff = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $safeOffFrames -Label "Exposure-bracket reference safe-off")
+          $referenceStartedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+          $referenceCapture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel "$Side-bracket-$bracketExposureUs-reference-$referenceOrdinal" -ConfiguredPixelFormat $cellPixelFormat -ExposureTime $cellExposureUs -ConfiguredGain $cellGain
+          $referenceFinishedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+          $references += [ordered]@{
+            role = "bracket_$($bracketExposureUs)_reference_$referenceOrdinal"
+            label = "$Side-bracket-$bracketExposureUs-reference-$referenceOrdinal"
+            exposureUs = $bracketExposureUs
+            referenceOrdinal = $referenceOrdinal
+            safeOffBefore = $referenceSafeOff
+            monotonicStartedTicks = $referenceStartedTicks
+            monotonicFinishedTicks = $referenceFinishedTicks
+            capture = $referenceCapture
+          }
+        }
+        $bracketChannels = @()
+        for ($channel = 1; $channel -le 8; $channel += 1) {
+          $channelSafeOffBefore = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $safeOffFrames -Label "Exposure-bracket channel safe-off before")
+          $frames = @(New-WarmLeimacLightFrames -Channels @($channel) -DutyTenthsPercent 24)
+          $writes = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $frames -Label "Exposure-bracket one-hot lighting")
+          $channelCapture = $null
+          $channelSafeOffAfter = @()
+          $channelStartedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+          try {
+            $channelCapture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel "$Side-bracket-$bracketExposureUs-channel-$channel" -ConfiguredPixelFormat $cellPixelFormat -ExposureTime $cellExposureUs -ConfiguredGain $cellGain
+          } finally {
+            $channelSafeOffAfter = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $safeOffFrames -Label "Exposure-bracket channel safe-off after")
+          }
+          $channelFinishedTicks = [System.Diagnostics.Stopwatch]::GetTimestamp()
+          $bracketChannels += [ordered]@{
+            role = "bracket_$($bracketExposureUs)_channel_$channel"
+            label = "$Side-bracket-$bracketExposureUs-channel-$channel"
+            channel = $channel
+            exposureUs = $bracketExposureUs
+            dutyTenthsPercent = 24
+            settleMs = 0
+            frames = $frames
+            writes = $writes
+            safeOffBefore = $channelSafeOffBefore
+            safeOffAfter = $channelSafeOffAfter
+            monotonicStartedTicks = $channelStartedTicks
+            monotonicFinishedTicks = $channelFinishedTicks
+            capture = $channelCapture
+          }
+        }
+        $cellSafeOffAfter = @(Apply-WarmLeimacFramesExactOnce -Session $leimacSession -Frames $safeOffFrames -Label "Exposure-bracket cell safe-off after")
+        $bracketCells += [ordered]@{
+          exposureUs = $bracketExposureUs
+          cameraReadback = [ordered]@{
+            exposureUs = $cellExposureUs
+            gain = $cellGain
+            pixelFormat = $cellPixelFormat
+            cameraSerialNumber = [string]$cameraMetadata.serialNumber
+          }
+          safeOffBefore = $cellSafeOffBefore
+          references = $references
+          channels = $bracketChannels
+          safeOffAfter = $cellSafeOffAfter
+        }
+      }
+      $photometricBracket = [ordered]@{
+        version = "fixed_rig_exposure_bracket_capture_v1"
+        exposuresUs = $bracketExposures
+        isolatedDutyTenthsPercent = 24
+        settleMs = 0
+        gain = 0
+        pixelFormat = "Mono8"
+        automaticRetryCount = 0
+        cells = $bracketCells
+      }
+      $darkCapture = $bracketCells[2].references[0].capture
+      $channels = @($bracketCells[2].channels)
+    } else {
+      $darkCapture = Capture-WarmStill -Camera $camera -Install $Install -CameraMetadata $cameraMetadata -CaptureLabel "$Side-dark-control" -ConfiguredPixelFormat $configuredPixelFormat -ExposureTime $exposureTime -ConfiguredGain $configuredGain
+      $channels = @()
+      for ($channel = 1; $channel -le 8; $channel += 1) {
+        $channels += Capture-WarmLitRole -Role "channel_$channel" -CaptureLabel "$Side-channel-$channel" -ChannelSpec $channel -Channels @($channel)
+      }
     }
 
     $safeOffEndWrites = @(Apply-WarmLeimacFrames -Session $leimacSession -Frames $safeOffFrames)
@@ -1293,6 +1407,7 @@ function Capture-FixedRigSideBatch {
         allOn = $allOn
         acceptedProfile = $accepted
         channels = $channels
+        photometricBracket = $photometricBracket
       }
       timing = [ordered]@{
         warmCameraOpenConfigure = [ordered]@{ durationMs = [Math]::Round($openWatch.Elapsed.TotalMilliseconds, 1); startedAt = $openedAt }
@@ -1307,7 +1422,7 @@ function Capture-FixedRigSideBatch {
         persistentLeimacSaved = $false
         finalLightOffAttempted = $true
       }
-      note = "Warm full-forensic side batch captured dark control, all-on, accepted profile, and Leimac channels 1-8 with one Basler camera owner for the side."
+      note = $(if ($PhotometricBracketV1) { "Warm production side batch captured all-on and accepted roles plus the authenticated three-exposure photometric bracket with one Basler camera owner." } else { "Warm full-forensic side batch captured dark control, all-on, accepted profile, and Leimac channels 1-8 with one Basler camera owner for the side." })
     }
   } catch {
     $failureMessage = $_.Exception.Message
