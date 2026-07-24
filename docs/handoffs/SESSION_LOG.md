@@ -28236,3 +28236,7 @@ By enabling Rip It Live, I confirm:
 - PR #139 merged as exact commit `906ecbc7440e68a87b4e4014424106abab555ba1`, Vercel completed its Production deployment, and the protected Dell helper restarted from that exact clean merge in authenticated `start_new_card`/idle state without a capture, lighting, or grading action.
 - The first live Production browser check caught one narrow remaining defect: the helper correctly returned `calibrationActivation.configured=true`, state `IDLE`, and rig `fixed-rig-dell-v1`, but `sanitizeAiGraderLocalStationStatusForDisplay` omitted the activation projection before React evaluated the new preflight gate. The page therefore continued to show the retired direct-bundle failure even though the exact activation road was available.
 - The display sanitizer now retains only the bounded `configured` flag and whitelisted activation state; observation, receipt, authority, secret, and filesystem details remain excluded. Focused local-station plus Mathematical-station tests passed `52/52`, frontend TypeScript no-emit passed, and `git diff --check` passed.
+
+## 2026-07-23 - PC Agent 0 plain-language grading labels
+
+- Mark confirmed the Production scope is standard-size sports and Pokémon cards and directed the four operator-facing dropdown labels to match that workflow. The presentation labels are now `Sports`, `Pokémon`, `Border`, and `No Border`; the existing exact internal values, Pokémon hosted authority verification, registered-template enforcement, calibration, mathematics, and grading behavior are unchanged.

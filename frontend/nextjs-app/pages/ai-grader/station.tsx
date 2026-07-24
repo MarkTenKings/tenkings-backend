@@ -5287,8 +5287,8 @@ export default function AiGraderStationPage() {
                       }))}
                       disabled={mathematicalAuthorityBound || busy !== null}
                     >
-                      <option value="generic_standard">Existing standard trading card</option>
-                      <option value="pokemon_tcg_standard">Trusted Pokémon TCG standard</option>
+                      <option value="generic_standard">Sports</option>
+                      <option value="pokemon_tcg_standard">Pokémon</option>
                     </select>
                   </label>
                   {([
@@ -5330,8 +5330,8 @@ export default function AiGraderStationPage() {
                         }))}
                         disabled={mathematicalAuthorityBound || busy !== null}
                       >
-                        <option value="printed_border_v1">Printed border V1</option>
-                        <option value="registered_design_template_v1">Approved registered template V1</option>
+                        <option value="printed_border_v1">Border</option>
+                        <option value="registered_design_template_v1">No Border</option>
                       </select>
                     </label>
                   ))}
