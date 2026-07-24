@@ -13,6 +13,10 @@ const {
 const {
   createMathematicalCalibrationOperatingContextRuntimeV1,
 } = require("../dist/drivers/mathematicalCalibrationOperatingContextRuntimeV1");
+const {
+  ACTIVATION_RUNTIME_FAILED_SCRATCH_DIRECTORY_V1,
+  prepareActivationRuntimeEvidenceScratchV1,
+} = require("../dist/drivers/activationRuntimeEvidenceScratchV1");
 
 const NOW = new Date("2026-07-21T19:00:00.000Z");
 const RIG_ID = "ten-kings-fixed-rig-v1";
@@ -307,6 +311,21 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
         );
         throw new Error("camera adapter failed after writing noncanonical evidence");
       }
+      if (observationMode === "short-scratch-partial-evidence") {
+        const scratch = await prepareActivationRuntimeEvidenceScratchV1({
+          helperOutputRoot: path.join(root, "helper-output"),
+          evidenceDirectory,
+          attemptToken: "4".repeat(32),
+        });
+        await scratch.capture(async ({ outputDir }) => {
+          await fs.writeFile(
+            path.join(outputDir, "activation-runtime-evidence.partial-20260721T190000000Z.png"),
+            Buffer.from("partial activation runtime evidence"),
+            { flag: "wx" },
+          );
+          throw new Error("Pylon failed after writing noncanonical scratch evidence");
+        });
+      }
       const imageBytes = Buffer.from("activation runtime evidence");
       await fs.writeFile(
         path.join(evidenceDirectory, "activation-runtime-evidence.png"),
@@ -373,6 +392,7 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
     ["preflight-safe-off", "preflight-failure"],
     ["capture-failure", "capture-failure"],
     ["noncanonical-partial-evidence", "partial-evidence-failure"],
+    ["short-scratch-partial-evidence", "short-scratch-partial-evidence-failure"],
     ["missing-ack", "ack-failure"],
     ["camera-mismatch", "camera-failure"],
     ["settings-mismatch", "settings-failure"],
@@ -395,22 +415,28 @@ test("local registry uses content-addressed bytes, atomic exact pointers, and no
         false,
         `${mode} leaves no empty failed-evidence directory`,
       );
-    } else if (mode === "noncanonical-partial-evidence") {
+    } else if (
+      mode === "noncanonical-partial-evidence" ||
+      mode === "short-scratch-partial-evidence"
+    ) {
       const retainedName = "activation-runtime-evidence.partial-20260721T190000000Z.png";
       const retainedBytes = Buffer.from("partial activation runtime evidence");
+      const retainedRelativeName = mode === "short-scratch-partial-evidence"
+        ? `${ACTIVATION_RUNTIME_FAILED_SCRATCH_DIRECTORY_V1}/${retainedName}`
+        : retainedName;
       const failedRecord = JSON.parse(
         await fs.readFile(path.join(failedDirectory, "failed-observation-v1.json"), "utf8"),
       );
       assert.equal(failedRecord.state, "FAILED_BEFORE_ACTIVATION_AUTHORITY");
       assert.equal(failedRecord.observationId, failureAuthority.observationId);
       assert.deepEqual(failedRecord.retainedEvidence, [{
-        fileName: retainedName,
+        fileName: retainedRelativeName,
         sha256: sha(retainedBytes),
         byteSize: retainedBytes.byteLength,
       }]);
       assert.equal(failedRecord.retainedEvidenceCount, 1);
       assert.deepEqual(
-        await fs.readFile(path.join(failedDirectory, retainedName)),
+        await fs.readFile(path.join(failedDirectory, ...retainedRelativeName.split("/"))),
         retainedBytes,
         "noncanonical adapter evidence remains byte-identical after atomic quarantine",
       );

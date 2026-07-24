@@ -50,6 +50,7 @@ import {
   defaultBaslerPylonBridgeScriptPath,
   type BaslerCaptureStillResult,
 } from "./baslerPylonClient";
+import { prepareActivationRuntimeEvidenceScratchV1 } from "./activationRuntimeEvidenceScratchV1";
 import {
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
   buildAiGraderReportBundle,
@@ -9449,8 +9450,17 @@ export class AiGraderLocalStationBridgeService {
     const owner = `calibration-activation-runtime:${crypto.randomUUID()}`;
     const previousWarmRunnerStatus = this.manifest.warmRunnerStatus.status;
     const previousWarmRunnerActiveSide = this.manifest.warmRunnerStatus.activeSide;
+    let evidenceScratch:
+      Awaited<ReturnType<typeof prepareActivationRuntimeEvidenceScratchV1>> | undefined;
     this.acquireCaptureLock(owner);
     try {
+      const outputDir = evidenceDirectory
+        ? path.resolve(evidenceDirectory)
+        : path.join(this.config.outputDir, "calibration-activation-runtime-probes");
+      evidenceScratch = await prepareActivationRuntimeEvidenceScratchV1({
+        helperOutputRoot: this.config.outputDir,
+        evidenceDirectory: outputDir,
+      });
       const safeOffBefore = await this.runTerminalSafeOff("calibration activation runtime preflight");
       if (!safeOffBefore.ok) {
       throw new Error(
@@ -9476,32 +9486,21 @@ export class AiGraderLocalStationBridgeService {
         frames,
         await this.executeLiveLightingFrames(frames),
       );
-      const outputDir = evidenceDirectory
-        ? path.resolve(evidenceDirectory)
-        : path.join(this.config.outputDir, "calibration-activation-runtime-probes");
-      await mkdir(outputDir, { recursive: true });
       this.dependencies.onRealHardwareBoundary?.("calibration_camera_capture");
       const client = new BaslerPylonClient({
         pylonRoot: this.config.pylonRoot,
         bridgeScriptPath: this.config.baslerBridgeScript,
         timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
       });
-      captureResult = await client.captureStill({
-        outputDir,
-        label: `calibration-activation-runtime-${Date.now()}`,
-        cameraIndex: this.config.cameraIndex ?? 0,
-        savedFormat: "png",
-        exposureUs: expected.capture.exposureUs,
-        gain: expected.capture.gain,
-      });
-      const retainedImagePath = path.join(outputDir, "activation-runtime-evidence.png");
-      if (path.resolve(captureResult.outputFilePath) !== path.resolve(retainedImagePath)) {
-        if (existsSync(retainedImagePath)) {
-          throw new Error("Activation runtime evidence create-new target already exists.");
-        }
-        await rename(captureResult.outputFilePath, retainedImagePath);
-        captureResult = { ...captureResult, outputFilePath: retainedImagePath };
-      }
+      captureResult = await evidenceScratch.capture(({ outputDir: pylonOutputDir, label }) =>
+        client.captureStill({
+          outputDir: pylonOutputDir,
+          label,
+          cameraIndex: this.config.cameraIndex ?? 0,
+          savedFormat: "png",
+          exposureUs: expected.capture.exposureUs,
+          gain: expected.capture.gain,
+        }));
     } catch (error) {
       operationError = error instanceof Error ? error : new Error("Calibration activation runtime observation failed.");
     } finally {
@@ -9555,6 +9554,21 @@ export class AiGraderLocalStationBridgeService {
         observedAt: captureResult.timestamp,
       },
     };
+    } catch (error) {
+      if (evidenceScratch) {
+        try {
+          await evidenceScratch.retainFailure();
+        } catch (retentionError) {
+          const primaryMessage = error instanceof Error
+            ? error.message
+            : "Calibration activation runtime observation failed.";
+          const retentionMessage = retentionError instanceof Error
+            ? retentionError.message
+            : "Activation runtime scratch retention failed.";
+          throw new Error(`${primaryMessage} ${retentionMessage}`);
+        }
+      }
+      throw error;
     } finally {
       this.releaseCaptureLock(owner);
       this.manifest.warmRunnerStatus.status = previousWarmRunnerStatus;
