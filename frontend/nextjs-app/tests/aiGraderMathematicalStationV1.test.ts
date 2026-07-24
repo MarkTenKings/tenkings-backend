@@ -190,6 +190,21 @@ test("Production station exposes Mathematical V1 as a fixed contract with no Leg
   assert.doesNotMatch(source, /setSelectedGradingContract/);
 });
 
+test("Production station uses the configured activation registry instead of the retired direct-bundle UI gate", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /const mathematicalActivationPreflightReady =\s*bridgeConnected &&\s*status\.calibrationActivation\?\.configured === true &&\s*Boolean\(status\.mathematicalCalibration\?\.rigId\)/,
+  );
+  assert.match(
+    source,
+    /const mathematicalCalibrationReady =\s*status\.mathematicalCalibration\?\.ready === true \|\|\s*mathematicalActivationPreflightReady/,
+  );
+  assert.match(source, /Exact hosted\/local ACTIVE calibration authority will be verified at Start New Card/);
+  assert.match(source, /await fetch\(AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1/);
+  assert.match(source, /buildAiGraderCaptureProfileRequest\([\s\S]*?activationPayload\.authority/);
+});
+
 test("Mathematical V1 does not restore retired profile or separate Rapid queue actions", () => {
   const status = buildAiGraderLocalStationStatus();
   assert.equal(status.captureProfile, "production_fast");
