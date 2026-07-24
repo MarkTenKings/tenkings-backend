@@ -23,6 +23,14 @@ export interface FixedRigPhotometricChannelInputV1 {
   channelConfidence?: number;
   sourceEvidenceId: string;
   sourceSha256: string;
+  fusedObservation?: {
+    correctedResponse: FixedRigScalarPlaneV1["data"];
+    eligibleMask: ArrayLike<number>;
+    clippingMask: ArrayLike<number>;
+    selectedExposureUs: ArrayLike<number>;
+    sourceEvidenceIds: string[];
+    sourceSha256s: string[];
+  };
 }
 
 export interface FixedRigFlatFieldChannelCalibrationV1 {
@@ -143,6 +151,18 @@ export interface FixedRigPhotometricEvidenceV1 {
   lowConfidenceMask: Uint8Array;
   insufficientDirectionalObservationsMask: Uint8Array;
   invalidIlluminationMask: Uint8Array;
+  /** Pixels admitted only for topology; they remain excluded from all scoring. */
+  admissionExcludedCommonModeMask?: Uint8Array;
+  admissionAdjustment?: {
+    version: "fixed_rig_common_mode_interior_admission_v1";
+    region: { x: number; y: number; width: number; height: number; pixelCount: number };
+    totalInvalidPixelCount: number;
+    allInvalidComponentPixelCounts: number[];
+    qualifyingComponentCount: number;
+    selectedFusedClippingPixelCount: number;
+    allInvalidPixelsExclusivelyCommonMode: true;
+    deepInterior: true;
+  };
   gradeRelevantMask: Uint8Array;
   gradeRelevantMaskSourceEvidenceId: string;
   gradeRelevantMaskSourceSha256: string;
@@ -496,6 +516,25 @@ function validateBuildInput(
     if (!isSha256(channel.sourceSha256)) {
       throw new Error(`Channel ${channel.channel} source SHA-256 is invalid.`);
     }
+    if (channel.fusedObservation) {
+      for (const [label, values] of [
+        ["corrected response", channel.fusedObservation.correctedResponse],
+        ["eligibility mask", channel.fusedObservation.eligibleMask],
+        ["clipping mask", channel.fusedObservation.clippingMask],
+        ["selected exposure", channel.fusedObservation.selectedExposureUs],
+      ] as const) {
+        if (values.length !== calibration.width * calibration.height) {
+          throw new Error(`Channel ${channel.channel} fused ${label} does not match the normalized-card frame.`);
+        }
+      }
+      if (
+        channel.fusedObservation.sourceEvidenceIds.length !== 3 ||
+        channel.fusedObservation.sourceSha256s.length !== 3 ||
+        channel.fusedObservation.sourceSha256s.some((value) => !isSha256(value))
+      ) {
+        throw new Error(`Channel ${channel.channel} fused observation requires three immutable source frames.`);
+      }
+    }
     const flat = flatByChannel.get(channel.channel);
     if (!flat) throw new Error(`Channel ${channel.channel} is missing flat-field calibration.`);
     assertPlane(`Channel ${channel.channel} flat field`, flat.relativeResponse, calibration.width, calibration.height);
@@ -574,7 +613,12 @@ export function buildFixedRigPhotometricEvidenceV1(
 
   for (let index = 0; index < pixelCount; index += 1) {
     if (!gradeRelevantMask[index]) {
-      invalidIlluminationMask[index] = 1;
+      // Pixels outside the exact card-material mask are not photometric
+      // evidence and therefore are neither valid nor invalid card evidence.
+      // The count sentinel keeps downstream rectangular ROI containers from
+      // treating the non-card margin as a capture failure; no channel mask is
+      // made valid and no directional feature can be produced there.
+      usableDirectionalObservationCount[index] = orderedInputs.length;
       continue;
     }
     const responses: number[] = [];
@@ -586,18 +630,19 @@ export function buildFixedRigPhotometricEvidenceV1(
       const inputChannel = orderedInputs[channelIndex] as FixedRigPhotometricChannelInputV1;
       const outputChannel = correctedChannels[channelIndex] as FixedRigCorrectedPhotometricChannelV1;
       const flat = flatByChannel.get(inputChannel.channel) as FixedRigFlatFieldChannelCalibrationV1;
-      const rawValue = Number(inputChannel.image.data[index]);
-      const registeredDark = Number(input.darkControl.data[index]);
-      const calibratedDark = Number(flat.darkOffset?.data[index] ?? 0);
-      const flatResponse = Number(flat.relativeResponse.data[index]);
       const confidence = Number(
         inputChannel.confidence?.data[index] ??
         inputChannel.channelConfidence,
       );
+      const fused = inputChannel.fusedObservation;
+      const rawValue = Number(inputChannel.image.data[index]);
+      const registeredDark = Number(input.darkControl.data[index]);
+      const calibratedDark = Number(flat.darkOffset?.data[index] ?? 0);
+      const flatResponse = Number(flat.relativeResponse.data[index]);
       if (
-        !Number.isFinite(rawValue) ||
-        !Number.isFinite(registeredDark) ||
-        !Number.isFinite(calibratedDark) ||
+        (!fused && !Number.isFinite(rawValue)) ||
+        (!fused && !Number.isFinite(registeredDark)) ||
+        (!fused && !Number.isFinite(calibratedDark)) ||
         !Number.isFinite(flatResponse) ||
         flatResponse <= 0 ||
         !Number.isFinite(confidence)
@@ -608,14 +653,28 @@ export function buildFixedRigPhotometricEvidenceV1(
         lowConfidenceChannels += 1;
         continue;
       }
-      const rawNormalized = rawValue / calibration.sensorMaximumValue;
-      const signal = Math.max(0, rawValue - registeredDark - calibratedDark);
-      const corrected = signal / flatResponse / calibration.sensorMaximumValue;
+      const corrected = fused
+        ? Number(fused.correctedResponse[index])
+        : Math.max(0, rawValue - registeredDark - calibratedDark) /
+          flatResponse /
+          calibration.sensorMaximumValue;
+      if (!Number.isFinite(corrected) || corrected < 0) {
+        outputChannel.lowConfidenceMask[index] = 1;
+        responses.push(0);
+        initialValidity.push(false);
+        lowConfidenceChannels += 1;
+        continue;
+      }
       outputChannel.correctedResponse[index] = corrected;
       responses.push(corrected);
 
-      const saturated = rawNormalized >= thresholds.saturationNormalizedThreshold;
-      const underexposed = corrected <= thresholds.underexposureNormalizedThreshold;
+      const saturated = fused
+        ? Boolean(fused.clippingMask[index])
+        : rawValue / calibration.sensorMaximumValue >=
+          thresholds.saturationNormalizedThreshold;
+      const underexposed = fused
+        ? !fused.eligibleMask[index] || corrected <= 0.01
+        : corrected <= thresholds.underexposureNormalizedThreshold;
       const lowConfidence = confidence < thresholds.minLightingChannelConfidence;
       if (saturated) {
         outputChannel.saturationMask[index] = 1;

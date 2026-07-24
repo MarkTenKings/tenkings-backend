@@ -213,7 +213,13 @@ export type BaslerFixedRigSideBatchExecutionPath = "warm_full_forensic_runner";
 export type BaslerFixedRigSideBatchSide = "front" | "back";
 
 export interface BaslerFixedRigSideBatchRoleCapture {
-  role: "dark_control" | "all_on" | "accepted_profile" | `channel_${number}`;
+  role:
+    | "dark_control"
+    | "all_on"
+    | "accepted_profile"
+    | `channel_${number}`
+    | `bracket_${number}_reference_${number}`
+    | `bracket_${number}_channel_${number}`;
   label: string;
   channel?: number | "all" | number[];
   frames?: unknown[];
@@ -247,6 +253,20 @@ export interface BaslerFixedRigSideBatchResult {
     allOn: BaslerFixedRigSideBatchRoleCapture;
     acceptedProfile: BaslerFixedRigSideBatchRoleCapture;
     channels: BaslerFixedRigSideBatchRoleCapture[];
+    photometricBracket?: {
+      version: "fixed_rig_exposure_bracket_capture_v1";
+      exposuresUs: [15000, 30000, 37500];
+      isolatedDutyTenthsPercent: 24;
+      settleMs: 0;
+      gain: 0;
+      pixelFormat: "Mono8";
+      cells: Array<{
+        exposureUs: number;
+        cameraReadback: unknown;
+        references: BaslerFixedRigSideBatchRoleCapture[];
+        channels: BaslerFixedRigSideBatchRoleCapture[];
+      }>;
+    };
   };
   timing?: unknown;
   safety?: unknown;
@@ -360,6 +380,7 @@ export interface BaslerFixedRigSideBatchOptions {
   leimacPort?: number;
   leimacUnit?: number;
   dutyPercent?: number;
+  photometricBracketV1?: boolean;
 }
 
 export interface BaslerOperatorPreviewWindowOptions {
@@ -687,6 +708,7 @@ export class BaslerPylonClient {
       ...(options.leimacHost ? ["-LeimacHost", options.leimacHost] : []),
       ...(options.leimacPort ? ["-LeimacPort", String(options.leimacPort)] : []),
       ...(options.leimacUnit ? ["-LeimacUnit", String(options.leimacUnit)] : []),
+      ...(options.photometricBracketV1 ? ["-PhotometricBracketV1"] : []),
     ]);
   }
 

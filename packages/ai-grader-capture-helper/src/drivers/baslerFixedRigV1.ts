@@ -3281,6 +3281,7 @@ export async function captureFixedRigWarmSideBatch(input: FixedRigWarmEvidencePa
     leimacPort: input.leimacPort,
     leimacUnit: input.leimacUnit,
     dutyPercent: activeLightingProfile.selectedDutyPercent,
+    photometricBracketV1: captureProfile === "production_fast",
   });
   return {
     executionPath: "warm_full_forensic_runner",
@@ -3848,12 +3849,28 @@ export async function processFixedRigWarmSideBatch(
     provisionalGeometryCorrection,
   } = captureBatch;
   const originalBatch = provisionalGeometryCorrection?.originalBatch ?? batch;
-  const rawRoleCaptures = [
-    originalBatch.captures.darkControl,
-    originalBatch.captures.allOn,
-    originalBatch.captures.acceptedProfile,
-    ...originalBatch.captures.channels,
-  ];
+  const bracketCells = batch.captures.photometricBracket?.cells ?? [];
+  const bracketRoles = bracketCells.flatMap((cell) => [
+    ...cell.references,
+    ...cell.channels,
+  ]);
+  const originalBracketRoles =
+    originalBatch.captures.photometricBracket?.cells.flatMap((cell) => [
+      ...cell.references,
+      ...cell.channels,
+    ]) ?? [];
+  const rawRoleCaptures = originalBracketRoles.length
+    ? [
+        originalBatch.captures.allOn,
+        originalBatch.captures.acceptedProfile,
+        ...originalBracketRoles,
+      ]
+    : [
+        originalBatch.captures.darkControl,
+        originalBatch.captures.allOn,
+        originalBatch.captures.acceptedProfile,
+        ...originalBatch.captures.channels,
+      ];
   const sumCaptureTiming = (phase: "grab" | "save" | "hash") =>
     Math.round(
       rawRoleCaptures.reduce((total, role) => {
@@ -3895,20 +3912,18 @@ export async function processFixedRigWarmSideBatch(
     if (role.role === "dark_control") return originalBatch.captures.darkControl;
     if (role.role === "all_on") return originalBatch.captures.allOn;
     if (role.role === "accepted_profile") return originalBatch.captures.acceptedProfile;
-    return originalBatch.captures.channels.find((candidate) => candidate.role === role.role) ?? role;
+    return originalBatch.captures.channels.find((candidate) => candidate.role === role.role) ??
+      originalBracketRoles.find((candidate) => candidate.role === role.role) ??
+      role;
   };
   // Verify every immutable capture before any geometry authority or derived
   // artifact is created. The authority below only sees hashes that matched the
   // captured manifest, never a mutable preview frame or fixture rectangle.
-  const rawEvidenceIntegrity = await timed("rawEvidenceIntegrity", () => verifyRawCaptureIntegrity([
-    { role: "dark_control", capture: originalBatch.captures.darkControl.capture },
-    { role: "all_on", capture: originalBatch.captures.allOn.capture },
-    { role: "accepted_profile", capture: originalBatch.captures.acceptedProfile.capture },
-    ...originalBatch.captures.channels
-      .slice()
-      .sort((a, b) => Number(a.channel ?? 0) - Number(b.channel ?? 0))
-      .map((role) => ({ role: `channel_${Number(role.channel)}`, capture: role.capture })),
-  ]));
+  const rawEvidenceIntegrity = await timed("rawEvidenceIntegrity", () =>
+    verifyRawCaptureIntegrity(rawRoleCaptures.map((role) => ({
+      role: role.role,
+      capture: role.capture,
+    }))));
   if (!options.trustedWorkerGeometryAuthorityResolver) {
     throw new Error(
       `AI Grader ${side} captured-evidence geometry requires the dedicated processing worker; no in-process fallback is permitted.`,
@@ -3933,11 +3948,17 @@ export async function processFixedRigWarmSideBatch(
   const authoritativeGeometry: CardGeometryMetadata = normalizedCard.geometry;
   const recordedGeometryAuthority: FixedRigFullResolutionGeometryAuthority = fullResolutionGeometryAuthority;
   const authoritativeGeometryRole = recordedGeometryAuthority.authoritativeRole;
-  const transformReusedForRoles = (
-    authoritativeGeometryRole === "all_on"
-      ? ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-      : ["dark_control", "all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-  );
+  const transformReusedForRoles = bracketRoles.length
+    ? (
+        authoritativeGeometryRole === "all_on"
+          ? ["accepted_profile", ...bracketRoles.map((role) => role.role)]
+          : ["all_on", ...bracketRoles.map((role) => role.role)]
+      )
+    : (
+        authoritativeGeometryRole === "all_on"
+          ? ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+          : ["dark_control", "all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
+      );
   const normalizeVisibleRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     fileLabel: string,
@@ -3952,11 +3973,19 @@ export async function processFixedRigWarmSideBatch(
     }
     return { ...registration, normalizedArtifact: registration.normalizedArtifact };
   };
-  const visibleRoleNormalizationInputs = [
-    { role: batch.captures.darkControl, fileLabel: "dark-control" },
-    { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
-    ...orderedChannelRoles.map((role) => ({ role, fileLabel: `channel-${Number(role.channel)}` })),
-  ];
+  const visibleRoleNormalizationInputs = bracketRoles.length
+    ? [
+        { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
+        ...bracketRoles.map((role) => ({
+          role,
+          fileLabel: role.role.replace(/_/g, "-"),
+        })),
+      ]
+    : [
+        { role: batch.captures.darkControl, fileLabel: "dark-control" },
+        { role: batch.captures.acceptedProfile, fileLabel: "accepted-profile" },
+        ...orderedChannelRoles.map((role) => ({ role, fileLabel: `channel-${Number(role.channel)}` })),
+      ];
   const visibleRoleRegistrations = await timed("registeredRoleNormalization", () =>
     mapWithConcurrency(
       visibleRoleNormalizationInputs,
@@ -3964,9 +3993,18 @@ export async function processFixedRigWarmSideBatch(
       ({ role, fileLabel }) => normalizeVisibleRole(role, fileLabel),
     )
   );
-  const darkControlRegistration = visibleRoleRegistrations[0]!;
-  const acceptedRegistration = visibleRoleRegistrations[1]!;
-  const channelRegistrations = visibleRoleRegistrations.slice(2);
+  const darkControlRegistration = bracketRoles.length
+    ? undefined
+    : visibleRoleRegistrations[0]!;
+  const acceptedRegistration = bracketRoles.length
+    ? visibleRoleRegistrations[0]!
+    : visibleRoleRegistrations[1]!;
+  const channelRegistrations = bracketRoles.length
+    ? []
+    : visibleRoleRegistrations.slice(2);
+  const bracketRegistrations = bracketRoles.length
+    ? visibleRoleRegistrations.slice(1)
+    : [];
   const analyzeNormalizedRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     analysisArtifact: CardGeometryNormalizedArtifact,
@@ -3994,15 +4032,24 @@ export async function processFixedRigWarmSideBatch(
       analyzeFixedRigMacroQuality(batch.captures.allOn.capture.outputFilePath),
     ])
   );
-  const normalizedRoleAnalysisInputs = [
-    { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
-    { role: batch.captures.darkControl, artifact: darkControlRegistration.normalizedArtifact },
-    { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
-    ...orderedChannelRoles.map((role, index) => ({
-      role,
-      artifact: channelRegistrations[index]!.normalizedArtifact,
-    })),
-  ];
+  const normalizedRoleAnalysisInputs = bracketRoles.length
+    ? [
+        { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
+        { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
+        ...bracketRoles.map((role, index) => ({
+          role,
+          artifact: bracketRegistrations[index]!.normalizedArtifact,
+        })),
+      ]
+    : [
+        { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
+        { role: batch.captures.darkControl, artifact: darkControlRegistration!.normalizedArtifact },
+        { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
+        ...orderedChannelRoles.map((role, index) => ({
+          role,
+          artifact: channelRegistrations[index]!.normalizedArtifact,
+        })),
+      ];
   const normalizedRoleAnalyses = await timed("normalizedImageAnalysis", () =>
     mapWithConcurrency(
       normalizedRoleAnalysisInputs,
@@ -4011,12 +4058,46 @@ export async function processFixedRigWarmSideBatch(
     )
   );
   const allOn = normalizedRoleAnalyses[0]!;
-  const normalizedDarkControl = normalizedRoleAnalyses[1]!;
-  const acceptedProfile = normalizedRoleAnalyses[2]!;
-  const channels = normalizedRoleAnalyses.slice(3).map((channelAnalysis, index) => ({
-    ...channelAnalysis,
-    channel: Number(orderedChannelRoles[index]!.channel),
-  }));
+  const acceptedProfile = bracketRoles.length
+    ? normalizedRoleAnalyses[1]!
+    : normalizedRoleAnalyses[2]!;
+  const bracketAnalyses = bracketRoles.length
+    ? normalizedRoleAnalyses.slice(2)
+    : [];
+  const bracketAnalysisByRole = new Map(
+    bracketRoles.map((role, index) => [role.role, bracketAnalyses[index]!]),
+  );
+  const normalizedDarkControl = bracketRoles.length
+    ? bracketAnalysisByRole.get("bracket_37500_reference_1")!
+    : normalizedRoleAnalyses[1]!;
+  const channels = bracketRoles.length
+    ? Array.from({ length: 8 }, (_, index) => ({
+        ...bracketAnalysisByRole.get(`bracket_37500_channel_${index + 1}`)!,
+        channel: index + 1,
+      }))
+    : normalizedRoleAnalyses.slice(3).map((channelAnalysis, index) => ({
+        ...channelAnalysis,
+        channel: Number(orderedChannelRoles[index]!.channel),
+      }));
+  if (bracketRoles.length && (!normalizedDarkControl || channels.some((entry) => !entry))) {
+    throw new Error(`AI Grader ${side} exposure bracket is incomplete after fixed-transform registration.`);
+  }
+  const normalizedPhotometricBracket = batch.captures.photometricBracket
+    ? {
+        ...batch.captures.photometricBracket,
+        cells: batch.captures.photometricBracket.cells.map((cell) => ({
+          ...cell,
+          references: cell.references.map((role) => ({
+            ...role,
+            normalized: bracketAnalysisByRole.get(role.role),
+          })),
+          channels: cell.channels.map((role) => ({
+            ...role,
+            normalized: bracketAnalysisByRole.get(role.role),
+          })),
+        })),
+      }
+    : undefined;
   const channelDisplayImages: Array<{ channel: number; displayImage: FixedRigDisplayArtifact }> = channels.map((channelCapture) => ({
     channel: channelCapture.channel,
     displayImage: normalizedArtifactAsDisplay(
@@ -4317,6 +4398,9 @@ export async function processFixedRigWarmSideBatch(
     allOn,
     acceptedProfile,
     channels,
+    ...(normalizedPhotometricBracket
+      ? { photometricExposureBracket: normalizedPhotometricBracket }
+      : {}),
     channelDisplayImages,
     roiDefinitions,
     displayImage,

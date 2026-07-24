@@ -203,5 +203,7 @@ export * from "./mathematicalCalibrationActivationRegistryV1";
 export * from "./mathematicalCalibrationOperatingContextRuntimeV1";
 export * from './fixedRigMathematicalStationAdapterV1';
 export * from './fixedRigAutomaticDesignRegistrationV1';
+export * from './fixedRigExposureBracketFusionV1';
+export * from './fixedRigPhotometricAdmissionV1';
 export * from "./mathematicalCalibrationV1_2Contract";
 export * from "./staleInvalidRapidCaptureQueueArchivalV1";
