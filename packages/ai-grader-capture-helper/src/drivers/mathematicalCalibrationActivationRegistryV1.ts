@@ -406,20 +406,6 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return context;
   }
 
-  async function liveContext(
-    expected: AiGraderOperatingContextV1,
-    expectedHash: string,
-    expectedRuntimeHash: string,
-  ) {
-    const observed = aiGraderOperatingContextV1Schema.parse(await options.liveOperatingContext(expected));
-    const observedHash = sha256(canonicalAiGraderOperatingContextV1(observed));
-    const runtimeHash = sha256(canonicalAiGraderRuntimeContextV1(observed));
-    if (observedHash !== expectedHash || runtimeHash !== expectedRuntimeHash || observed.rig.rigId !== options.expectedRigId) {
-      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Trusted live operating context does not match the exact activation context/runtime hashes.");
-    }
-    return { observed, observedHash };
-  }
-
   function observationDirectory(root: string, observationId: string) {
     if (!observationId.trim() || path.basename(observationId) !== observationId) {
       fail("AI_GRADER_LOCAL_CALIBRATION_PATH_REJECTED", "Observation ID is unsafe for activation evidence storage.");
@@ -1076,7 +1062,31 @@ export function createMathematicalCalibrationActivationRegistryV1(
       hosted.activationId,
       hosted.operatingContextHash,
     );
-    await liveContext(expectedContext, hosted.operatingContextHash, hosted.runtimeContextHash);
+    if (sha256(canonicalAiGraderRuntimeContextV1(expectedContext)) !== hosted.runtimeContextHash) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH",
+        "Stored hosted operating context does not reproduce the exact activated runtime hash.",
+      );
+    }
+    const observation = await readWorkstationObservation(
+      hosted.observationId,
+      hosted.workstationObservationSha256,
+    );
+    if (
+      observation.snapshotId !== hosted.snapshotId ||
+      observation.rigId !== hosted.rigId ||
+      observation.bundleManifestSha256 !== hosted.bundleManifestSha256 ||
+      observation.memberLedgerSha256 !== hosted.memberLedgerSha256 ||
+      observation.expectedOperatingContextHash !== hosted.operatingContextHash ||
+      observation.observedOperatingContextHash !== hosted.operatingContextHash ||
+      observation.helperInstanceId !== options.helperInstanceId ||
+      observation.helperVersion !== options.helperVersion
+    ) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED",
+        "Immutable workstation observation does not match the exact active calibration authority.",
+      );
+    }
     return { authority: hosted, bundlePath: loaded.bundlePath, receiptPath };
   }
 
