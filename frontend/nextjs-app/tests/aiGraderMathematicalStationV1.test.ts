@@ -202,6 +202,26 @@ test("Production station uses plain-language card and border labels", () => {
   assert.doesNotMatch(source, />Approved registered template V1<\/option>/);
 });
 
+test("Production station shows contextual Sports and Pokémon identity fields", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(source, /Card Type/);
+  assert.match(source, /Pokémon \/ Card Name/);
+  assert.match(source, /Pokémon Set/);
+  assert.match(source, /Subset/);
+  assert.match(source, /Finish \/ Parallel/);
+  assert.match(source, /Card \/ Player/);
+  assert.match(source, /Sports Set/);
+  assert.match(source, /Subset \/ Insert/);
+  assert.match(source, /\{label\}\{optional \? " \(Optional\)" : ""\}/);
+  assert.doesNotMatch(source, /\["tenantId", "Tenant ID"\]/);
+  assert.match(source, /tenantId:\s*"ten-kings"/);
+  assert.match(source, /programId:\s*mathematicalAuthorityDraft\.programId\.trim\(\) \|\| "base"/);
+  assert.match(
+    source,
+    /const mathematicalAuthorityDraftComplete = \[\s*mathematicalAuthorityDraft\.title,\s*mathematicalAuthorityDraft\.setId,\s*mathematicalAuthorityDraft\.cardNumber,\s*\]/,
+  );
+});
+
 test("Production station uses the configured activation registry instead of the retired direct-bundle UI gate", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(

@@ -28240,3 +28240,8 @@ By enabling Rip It Live, I confirm:
 ## 2026-07-23 - PC Agent 0 plain-language grading labels
 
 - Mark confirmed the Production scope is standard-size sports and Pokémon cards and directed the four operator-facing dropdown labels to match that workflow. The presentation labels are now `Sports`, `Pokémon`, `Border`, and `No Border`; the existing exact internal values, Pokémon hosted authority verification, registered-template enforcement, calibration, mathematics, and grading behavior are unchanged.
+
+## 2026-07-23 - PC Agent 0 contextual one-card identity form
+
+- Mark directed the one-card operator form to render Sports terminology only when Sports is selected and Pokémon terminology only when Pokémon is selected. Sports now shows Card / Player, Sports Set, optional Subset / Insert, Card Number, optional Variation, and optional Parallel. Pokémon now shows Pokémon / Card Name, Pokémon Set, optional Subset, Card Number, optional Variation, and optional Finish / Parallel.
+- The internal Production tenant is fixed to `ten-kings` and removed from the operator form. A blank optional subset/program binds to the existing `base` checklist key. Optional variation/parallel fields remain visible and explicitly labeled Optional. This is a UI/input-boundary change only; the exact internal authority schema, hosted Pokémon lookup, registered-template enforcement, calibration, and grading mathematics remain unchanged.

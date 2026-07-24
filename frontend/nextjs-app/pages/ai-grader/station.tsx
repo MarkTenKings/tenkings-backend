@@ -600,7 +600,7 @@ const defaultIdentityDraft: IdentityDraftState = {
 const defaultMathematicalAuthorityDraft: MathematicalAuthorityDraftState = {
   cardFormatProfile: "generic_standard",
   title: "",
-  tenantId: "",
+  tenantId: "ten-kings",
   setId: "",
   programId: "",
   cardNumber: "",
@@ -1876,11 +1876,28 @@ export default function AiGraderStationPage() {
     !mathematicalCalibrationReady;
   const mathematicalAuthorityDraftComplete = [
     mathematicalAuthorityDraft.title,
-    mathematicalAuthorityDraft.tenantId,
     mathematicalAuthorityDraft.setId,
-    mathematicalAuthorityDraft.programId,
     mathematicalAuthorityDraft.cardNumber,
   ].every((value) => value.trim().length > 0);
+  const pokemonAuthoritySelected =
+    mathematicalAuthorityDraft.cardFormatProfile === "pokemon_tcg_standard";
+  const mathematicalIdentityFields = pokemonAuthoritySelected
+    ? ([
+        { field: "title", label: "Pokémon / Card Name", optional: false },
+        { field: "setId", label: "Pokémon Set", optional: false },
+        { field: "programId", label: "Subset", optional: true },
+        { field: "cardNumber", label: "Card Number", optional: false },
+        { field: "variantId", label: "Variation", optional: true },
+        { field: "parallelId", label: "Finish / Parallel", optional: true },
+      ] as const)
+    : ([
+        { field: "title", label: "Card / Player", optional: false },
+        { field: "setId", label: "Sports Set", optional: false },
+        { field: "programId", label: "Subset / Insert", optional: true },
+        { field: "cardNumber", label: "Card Number", optional: false },
+        { field: "variantId", label: "Variation", optional: true },
+        { field: "parallelId", label: "Parallel", optional: true },
+      ] as const);
   const mathematicalStartBlocked =
     mathematicalCalibrationBlocked ||
     (selectedGradingContract === "mathematical_calibration_v1" &&
@@ -2626,9 +2643,9 @@ export default function AiGraderStationPage() {
   }> => {
     const identity: AiGraderMathematicalCardIdentityDraftV1 = {
       title: mathematicalAuthorityDraft.title,
-      tenantId: mathematicalAuthorityDraft.tenantId,
+      tenantId: "ten-kings",
       setId: mathematicalAuthorityDraft.setId,
-      programId: mathematicalAuthorityDraft.programId,
+      programId: mathematicalAuthorityDraft.programId.trim() || "base",
       cardNumber: mathematicalAuthorityDraft.cardNumber,
       variantId: mathematicalAuthorityDraft.variantId.trim() || null,
       parallelId: mathematicalAuthorityDraft.parallelId.trim() || null,
@@ -5278,7 +5295,7 @@ export default function AiGraderStationPage() {
                 ) : null}
                 <div className="mathematical-identity-grid">
                   <label>
-                    Physical format authority
+                    Card Type
                     <select
                       value={mathematicalAuthorityDraft.cardFormatProfile}
                       onChange={(event) => setMathematicalAuthorityDraft((current) => ({
@@ -5291,17 +5308,9 @@ export default function AiGraderStationPage() {
                       <option value="pokemon_tcg_standard">Pokémon</option>
                     </select>
                   </label>
-                  {([
-                    ["title", "Card title"],
-                    ["tenantId", "Tenant ID"],
-                    ["setId", "Set ID"],
-                    ["programId", "Program ID"],
-                    ["cardNumber", "Card number"],
-                    ["variantId", "Variant ID (optional)"],
-                    ["parallelId", "Parallel ID (optional)"],
-                  ] as const).map(([field, label]) => (
+                  {mathematicalIdentityFields.map(({ field, label, optional }) => (
                     <label key={field}>
-                      {label}
+                      {label}{optional ? " (Optional)" : ""}
                       <input
                         type="text"
                         value={mathematicalAuthorityDraft[field]}
@@ -5310,7 +5319,7 @@ export default function AiGraderStationPage() {
                           [field]: event.target.value,
                         }))}
                         disabled={mathematicalAuthorityBound || busy !== null}
-                        required={!label.includes("optional")}
+                        required={!optional}
                       />
                     </label>
                   ))}
@@ -5337,15 +5346,12 @@ export default function AiGraderStationPage() {
                   ))}
                 </div>
                 <p>
-                  Pokémon TCG standard selection is unlocked only by the hosted immutable set-card and
-                  taxonomy-source artifact. The browser cannot self-declare Pokémon format, dimensions,
-                  radius, verification status, or tolerances. Jumbo, oversize, nonstandard, contradictory,
-                  and unresolved records fail without choosing the generic or nearest profile.
+                  {pokemonAuthoritySelected
+                    ? "Enter the Pokémon card information. Leave Subset, Variation, and Finish / Parallel blank when they do not apply."
+                    : "Enter the sports card information. Leave Subset / Insert, Variation, and Parallel blank when they do not apply."}
                 </p>
                 <p>
-                  Registered-template sides resolve the active approved artifact for this exact identity,
-                  download and SHA-256 verify its bytes, then stage those bytes to the paired session.
-                  The browser never supplies a registration transform, confidence, local path, or publication URL.
+                  Choose Border when that side has a visible printed border. Choose No Border only when an approved template exists for that exact card.
                 </p>
                 <p className={`status-note ${mathematicalAuthorityStatus.status}`}>
                   {mathematicalAuthorityStatus.message}
