@@ -374,6 +374,7 @@ export type AiGraderLocalStationBridgeAction =
   | "latest-report"
   | "session-manifest"
   | "activate-queue-item"
+  | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
   | "begin-queued-ocr"
@@ -3097,6 +3098,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", hardwareAccess: false, description: "Prepare local publication manifest and future public report URL data." },
     { method: "POST", action: "cancel-session", hardwareAccess: true, description: "Cancel the local station session and run guarded safe-off cleanup." },
     { method: "POST", action: "activate-queue-item", hardwareAccess: false, description: "Open one completed queued report for Approve & Publish." },
+    { method: "POST", action: "discard-queue-item", hardwareAccess: false, description: "Permanently delete one exact unpublished working-queue card and its local artifacts." },
     { method: "POST", action: "bind-mathematical-grading-authority", hardwareAccess: false, description: "Bind exact Mathematical V1 card and centering/design-reference authority to a fresh Rapid continuation before capture; publication remains bridge-derived." },
     { method: "POST", action: "submit-mathematical-finding-reviews", hardwareAccess: false, description: "Submit explicit operator finding decisions bound to the exact pending review-request SHA-256 and rerun deterministically." },
     { method: "POST", action: "begin-queued-ocr", hardwareAccess: false, description: "Claim one exact eligible queued OCR item once." },
@@ -7860,6 +7862,38 @@ export class AiGraderLocalStationBridgeService {
     return clean;
   }
 
+  private cleanStartAfterCancellationManifest(cancelledManifest: AiGraderLocalStationBridgeManifest): AiGraderLocalStationBridgeManifest {
+    const now = new Date().toISOString();
+    const clean = newManifest(this.config, now);
+    clean.previewStatus.status = "stopped";
+    clean.previewStatus.cameraOwnership = "released";
+    clean.previewStatus.positioningLightReady = false;
+    clean.previewStatus.lastStopReason = "Cancelled card was closed with verified safe-off; Start New Card is ready.";
+    clean.liveLighting.status = "safe_off";
+    clean.liveLighting.applied = {
+      ...clean.liveLighting.applied,
+      enabled: false,
+      dutyPercent: 0,
+      actualLeimacPwmStep: 0,
+      channels: [],
+      verificationState: "verified",
+      expectedWriteCount: cancelledManifest.liveLighting.physicalState.expectedWriteCount,
+      acknowledgedWriteCount: cancelledManifest.liveLighting.physicalState.acknowledgedWriteCount,
+      verificationComplete: true,
+      verifiedAt: cancelledManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.liveLighting.physicalState = {
+      ...cancelledManifest.liveLighting.physicalState,
+      state: "safe_off_verified",
+      reason: "Cancelled card ended with controller-acknowledged safe-off.",
+      changedAt: now,
+      complete: true,
+      verifiedAt: cancelledManifest.liveLighting.physicalState.verifiedAt ?? now,
+    };
+    clean.progressLog.push(`${now} Cancelled card ${cancelledManifest.sessionId}/${cancelledManifest.reportId} was closed; the station returned to Start New Card.`);
+    return clean;
+  }
+
   private cleanStartAfterFailedStartManifest(failedManifest: AiGraderLocalStationBridgeManifest, failure: string): AiGraderLocalStationBridgeManifest {
     const now = new Date().toISOString();
     const clean = newManifest(this.config, now);
@@ -8747,6 +8781,55 @@ export class AiGraderLocalStationBridgeService {
     this.activeQueueItemId = item.queueItemId;
     manifest.progressLog.push(`${new Date().toISOString()} Selected this exact queued report for review without changing capture, preview, lighting, or session ownership.`);
     await writeSessionManifest(manifest);
+  }
+
+  private discardArtifactDirectories(item: PersistedAiGraderRapidCaptureQueueItem): string[] {
+    const outputRoot = path.resolve(this.config.outputDir);
+    const sessionDir = path.resolve(path.dirname(item.manifestPath));
+    if (
+      sessionDir === outputRoot
+      || !isSubpath(sessionDir, outputRoot)
+      || path.basename(item.manifestPath) !== "station-session.json"
+    ) {
+      throw new Error("Discard refused an invalid session artifact directory.");
+    }
+    const reportRoot = path.resolve(reportBundleRootDir(this.config));
+    const reportDir = path.resolve(publishPackageDir(this.config, item.reportId));
+    if (reportDir === reportRoot || !isSubpath(reportDir, reportRoot)) {
+      throw new Error("Discard refused an invalid report artifact directory.");
+    }
+    return Array.from(new Set([sessionDir, reportDir]));
+  }
+
+  private async discardRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
+    let item = this.exactQueuedItem(request);
+    if (item.state === "published") {
+      throw new Error("Published cards are not part of the unpublished working queue and cannot be locally discarded.");
+    }
+
+    // The serialized worker must release all file handles before the exact card is deleted.
+    await this.reportWorker.catch(() => {});
+    item = this.exactQueuedItem(request);
+    if (item.state === "published") {
+      throw new Error("This card became published before discard and cannot be locally deleted.");
+    }
+    const artifactDirectories = this.discardArtifactDirectories(item);
+    await this.cancelWarmProcessingSession(item.sessionId, "operator discarded exact working-queue card");
+
+    await this.runRapidQueueMutation(async () => {
+      const mutableItem = this.exactMutableQueuedItem(request);
+      if (mutableItem.state === "published") {
+        throw new Error("This card became published before discard and cannot be locally deleted.");
+      }
+      this.rapidQueue.items = this.rapidQueue.items.filter(
+        (candidate) => candidate.queueItemId !== mutableItem.queueItemId,
+      );
+      this.queuedManifests.delete(mutableItem.queueItemId);
+      if (this.activeQueueItemId === mutableItem.queueItemId) this.activeQueueItemId = undefined;
+      return { value: undefined };
+    });
+
+    await Promise.all(artifactDirectories.map((directory) => rm(directory, { recursive: true, force: true })));
   }
 
   private async submitMathematicalFindingReviews(
@@ -13314,6 +13397,11 @@ export class AiGraderLocalStationBridgeService {
       await this.activateRapidQueueItem(request);
       return this.status();
     }
+    if (action === "discard-queue-item") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
+      await this.discardRapidQueueItem(request);
+      return this.status();
+    }
     if (action === "begin-queued-ocr") {
       assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId"]);
       await this.beginQueuedOcr(request);
@@ -13471,6 +13559,9 @@ export class AiGraderLocalStationBridgeService {
           : safeOff.directError?.message ?? safeOff.guardedCleanupError?.message ?? "Station cancellation safe-off could not be confirmed.";
         throw new Error([safeOffMessage, processingError?.message].filter(Boolean).join(" "));
       }
+      const cancelledManifest = this.manifest;
+      this.activeQueueItemId = undefined;
+      this.manifest = this.cleanStartAfterCancellationManifest(cancelledManifest);
       return this.status();
     });
 
@@ -13494,6 +13585,7 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "latest-report",
     "session-manifest",
     "activate-queue-item",
+    "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
     "begin-queued-ocr",

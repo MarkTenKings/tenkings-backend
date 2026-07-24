@@ -45,6 +45,7 @@ export type AiGraderStationAction =
   | "latest-report"
   | "session-manifest"
   | "activate-queue-item"
+  | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
   | "begin-queued-ocr"
@@ -2490,6 +2491,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
   "activate-queue-item": "view_unified_report",
+  "discard-queue-item": "start_new_card",
   "bind-mathematical-grading-authority": "capture_front",
   "submit-mathematical-finding-reviews": "view_unified_report",
   "begin-queued-ocr": "start_new_card",
@@ -2944,6 +2946,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "latest-report",
     "session-manifest",
     "activate-queue-item",
+    "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
     "begin-queued-ocr",

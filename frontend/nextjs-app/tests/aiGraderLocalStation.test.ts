@@ -645,7 +645,7 @@ test("removed browser safety, Single finalization, and separate queue mutation a
     "configure-rapid-capture", "queue-current-card", "run-diagnostics", "export-report-bundle",
     "calculate-final-grade", "finalize-report", "generate-label-data",
   ]) assert.equal(parseAiGraderStationAction(action), null);
-  for (const action of ["activate-queue-item", "begin-queued-ocr", "complete-queued-ocr", "fail-queued-ocr"]) {
+  for (const action of ["activate-queue-item", "discard-queue-item", "begin-queued-ocr", "complete-queued-ocr", "fail-queued-ocr"]) {
     assert.equal(parseAiGraderStationAction(action), action);
   }
   const status = buildAiGraderLocalStationStatus();
@@ -1616,6 +1616,31 @@ test("failed local queue copy does not promise an inaccessible review form", () 
   assert.match(copyBlock, /This failed item is not available for review or publication in the station/);
   assert.match(queueBlock, /rapidQueueTerminalFailureCopy\(item\)/);
   assert.doesNotMatch(queueBlock, /item\.error \?\? item\.ocr\.failure\?\.message/);
+});
+
+test("station exposes simple reset plus destructive discard for every unpublished working-queue card", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  const queueStart = source.indexOf('<div className="rapid-queue-list">');
+  const queueBlock = source.slice(queueStart, source.indexOf('<section className={productionSignedIn', queueStart));
+  const discardStart = source.indexOf("const discardRapidQueueItem");
+  const discardBlock = source.slice(discardStart, source.indexOf("const submitMathematicalFindingReviews", discardStart));
+  const modalStart = source.indexOf('<div className="discard-dialog-backdrop"');
+  const modalBlock = source.slice(modalStart, source.indexOf("<style jsx>", modalStart));
+  const cancelStart = source.indexOf("const cancelCurrentCard");
+  const cancelBlock = source.slice(cancelStart, source.indexOf("const reconcileBridgePreviewStatus", cancelStart));
+
+  assert.match(source, /\.filter\(\(item\) => item\.state !== "published"\)/);
+  assert.match(queueBlock, /setDiscardCandidate\(item\)/);
+  assert.doesNotMatch(queueBlock, /item\.state === "failed"[\s\S]{0,200}setDiscardCandidate/);
+  assert.match(discardBlock, /runAction\("discard-queue-item"/);
+  assert.match(discardBlock, /candidate\.queueItemId === item\.queueItemId/);
+  assert.match(modalBlock, /Are you sure you want to discard this card\?/);
+  assert.match(modalBlock, /All local data, captured evidence, and generated files/);
+  assert.match(modalBlock, /YES, DISCARD THIS CARD/);
+  assert.match(modalBlock, /NO, CANCEL/);
+  assert.match(cancelBlock, /runAction\("cancel-session"\)/);
+  assert.match(cancelBlock, /cancelled\.currentStep !== "start_new_card"/);
+  assert.match(source, /Cancel Current Card/);
 });
 
 test("prepublication card linkage cannot create a hosted report, valuation, or Finish job", () => {

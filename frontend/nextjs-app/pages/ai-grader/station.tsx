@@ -38,6 +38,7 @@ import {
   type AiGraderLocalReportHistory,
   type AiGraderLocalReportHistoryItem,
   type AiGraderStationAction,
+  type AiGraderRapidCaptureQueueItem,
   type AiGraderRapidQueueIdentity,
 } from "../../lib/aiGraderLocalStation";
 import {
@@ -135,7 +136,7 @@ import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
-type RapidItemOperation = "review" | "publish";
+type RapidItemOperation = "review" | "publish" | "discard";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -780,8 +781,9 @@ export default function AiGraderStationPage() {
   const [status, setStatus] = useState<AiGraderLocalStationStatus>(() => buildAiGraderLocalStationStatus({ action: "status" }));
   const [workArea, setWorkArea] = useState<StationWorkArea>("grade");
   const [busy, setBusy] = useState<string | null>(null);
-  const [captureBusy, setCaptureBusy] = useState<"start" | "front" | "back" | null>(null);
+  const [captureBusy, setCaptureBusy] = useState<"start" | "front" | "back" | "cancel" | null>(null);
   const [rapidItemOperations, setRapidItemOperations] = useState<Record<string, RapidItemOperation | undefined>>({});
+  const [discardCandidate, setDiscardCandidate] = useState<AiGraderRapidCaptureQueueItem | null>(null);
   const publicationReviewClaimRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [publicationReviewClaim, setPublicationReviewClaim] = useState<AiGraderRapidQueueIdentity | null>(null);
   const previewBrowserCaptureActionActive = captureBusy === "front" || captureBusy === "back";
@@ -1864,9 +1866,15 @@ export default function AiGraderStationPage() {
     return matching.length ? matching.reduce((sum, phase) => sum + phase.durationMs, 0) : undefined;
   };
 
-  const rapidQueueItems = status.rapidCaptureQueue.items.slice(0, 10);
-  const rapidQueueHasProcessing = status.rapidCaptureQueue.items.some((item) =>
+  const rapidQueueItems = status.rapidCaptureQueue.items
+    .filter((item) => item.state !== "published")
+    .slice(0, 10);
+  const rapidQueueHasProcessing = rapidQueueItems.some((item) =>
     RAPID_PROCESSING_STATES.has(item.state) || item.ocr.state === "eligible" || item.ocr.state === "in_flight");
+  const currentCardActive =
+    bridgeConnected &&
+    status.sessionManifest.status === "hardware_pending" &&
+    status.currentStep !== "start_new_card";
   const mathematicalActivationPreflightReady =
     bridgeConnected &&
     status.calibrationActivation?.configured === true &&
@@ -2924,6 +2932,31 @@ export default function AiGraderStationPage() {
     }
   };
 
+  const cancelCurrentCard = async () => {
+    if (!currentCardActive || captureBusy !== null) return;
+    if (!window.confirm("Cancel this current card and return to Start New Card?")) return;
+    const cancelledSessionId = status.sessionManifest.gradingSessionId;
+    setCaptureBusy("cancel");
+    setError(null);
+    try {
+      const cancelled = await runAction("cancel-session");
+      if (cancelled.currentStep !== "start_new_card" || cancelled.sessionManifest.status !== "planned") {
+        throw new Error("Cancellation did not return the station to a clean Start New Card state.");
+      }
+      preCaptureDraftBySessionRef.current.delete(cancelledSessionId);
+      resetReviewUiState();
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "idle",
+        message: "Enter the next card information before Start New Card.",
+      });
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Current card could not be cancelled.");
+    } finally {
+      setCaptureBusy(null);
+    }
+  };
+
   const reconcileBridgePreviewStatus = (nextStatus: AiGraderLocalStationStatus["previewStatus"]) => {
     const binding = aiGraderPreviewStatusBinding(nextStatus);
     if (aiGraderPreviewBindingChanged(previewEpochStateRef.current.binding, binding)) {
@@ -3039,6 +3072,47 @@ export default function AiGraderStationPage() {
       setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: undefined }));
     }
   };
+
+  const discardRapidQueueItem = async () => {
+    const item = discardCandidate;
+    if (!item) return;
+    const wasActive = item.queueItemId === activeReview?.queueItemId &&
+      item.sessionId === activeReview.gradingSessionId &&
+      item.reportId === activeReview.reportId;
+    const draftKey = [item.queueItemId, item.sessionId, item.reportId].join(":");
+    setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: "discard" }));
+    setError(null);
+    try {
+      const next = await runAction("discard-queue-item", buildAiGraderRapidQueueActivationRequest({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+      }));
+      if (next.rapidCaptureQueue.items.some((candidate) =>
+        candidate.queueItemId === item.queueItemId ||
+        candidate.sessionId === item.sessionId ||
+        candidate.reportId === item.reportId
+      )) {
+        throw new Error("Discard did not remove the exact card from the working queue.");
+      }
+      preCaptureDraftBySessionRef.current.delete(item.sessionId);
+      reviewDraftCacheRef.current.delete(draftKey);
+      if (wasActive) {
+        resetReviewUiState();
+        setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+        setMathematicalAuthorityStatus({
+          status: "idle",
+          message: "Enter the next card information before Start New Card.",
+        });
+      }
+      setDiscardCandidate(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Card could not be discarded.");
+    } finally {
+      setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: undefined }));
+    }
+  };
+
   const submitMathematicalFindingReviews = async () => {
     const request = mathematicalReviewRequest;
     if (!request) {
@@ -5272,6 +5346,16 @@ export default function AiGraderStationPage() {
             <button type="button" className="primary" onClick={startNewCard} disabled={!canStartNewCard || mathematicalStartBlocked}>
               {captureBusy === "start" ? "Starting" : "Start New Card"}
             </button>
+            {currentCardActive ? (
+              <button
+                type="button"
+                className="cancel-current-card"
+                onClick={() => void cancelCurrentCard()}
+                disabled={captureBusy !== null}
+              >
+                {captureBusy === "cancel" ? "Cancelling Current Card" : "Cancel Current Card"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="start-grading"
@@ -5498,25 +5582,35 @@ export default function AiGraderStationPage() {
                           <span>{item.mathematicalV1.reasons.join(" ")}</span>
                         ) : null}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void activateRapidQueueItem(item)}
-                        disabled={!reviewable || active || itemOperation === "review" || !aiGraderReviewActivationAvailable(publicationReviewClaim)}
-                      >
-                        {published
-                          ? "Published"
-                          : active
-                            ? "Active"
-                            : itemOperation === "review"
-                              ? "Opening"
-                              : item.state === "finding_review_required"
-                                ? "Open Exact Finding Review"
-                                : item.state === "insufficient_evidence"
-                                  ? "Open Insufficient Evidence"
-                                  : reviewable
-                                    ? "Open for Review"
-                                    : statusText}
-                      </button>
+                      <div className="rapid-queue-actions">
+                        <button
+                          type="button"
+                          onClick={() => void activateRapidQueueItem(item)}
+                          disabled={!reviewable || active || Boolean(itemOperation) || !aiGraderReviewActivationAvailable(publicationReviewClaim)}
+                        >
+                          {published
+                            ? "Published"
+                            : active
+                              ? "Active"
+                              : itemOperation === "review"
+                                ? "Opening"
+                                : item.state === "finding_review_required"
+                                  ? "Open Exact Finding Review"
+                                  : item.state === "insufficient_evidence"
+                                    ? "Open Insufficient Evidence"
+                                    : reviewable
+                                      ? "Open for Review"
+                                      : statusText}
+                        </button>
+                        <button
+                          type="button"
+                          className="discard-card"
+                          onClick={() => setDiscardCandidate(item)}
+                          disabled={Boolean(itemOperation)}
+                        >
+                          {itemOperation === "discard" ? "Discarding" : "Discard"}
+                        </button>
+                      </div>
                     </article>
                   );
                 }) : <p>Capture Back queues each completed card here while the next card can begin.</p>}
@@ -6059,6 +6153,43 @@ export default function AiGraderStationPage() {
           </div>
         </section>
       </main>
+
+      {discardCandidate ? (
+        <div className="discard-dialog-backdrop" role="presentation">
+          <section
+            className="discard-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="discard-card-title"
+            aria-describedby="discard-card-description"
+          >
+            <p className="eyebrow">Destructive Action</p>
+            <h2 id="discard-card-title">Are you sure you want to discard this card?</h2>
+            <p id="discard-card-description">
+              All local data, captured evidence, and generated files for this unpublished card will be permanently erased.
+              This cannot be undone.
+            </p>
+            <small>{discardCandidate.reportId}</small>
+            <div className="discard-dialog-actions">
+              <button
+                type="button"
+                className="confirm-discard"
+                onClick={() => void discardRapidQueueItem()}
+                disabled={rapidItemOperations[discardCandidate.queueItemId] === "discard"}
+              >
+                YES, DISCARD THIS CARD
+              </button>
+              <button
+                type="button"
+                onClick={() => setDiscardCandidate(null)}
+                disabled={rapidItemOperations[discardCandidate.queueItemId] === "discard"}
+              >
+                NO, CANCEL
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <style jsx>{`
         .station {
@@ -6778,6 +6909,10 @@ export default function AiGraderStationPage() {
           min-width: 0;
           gap: 2px;
         }
+        .rapid-queue-list article > .rapid-queue-actions {
+          grid-template-columns: 1fr;
+          gap: 6px;
+        }
         .rapid-queue-list small,
         .rapid-queue-list span {
           overflow: hidden;
@@ -6790,6 +6925,53 @@ export default function AiGraderStationPage() {
           min-height: 32px;
           padding: 6px 8px;
           font-size: 9px;
+        }
+        .rapid-queue-list .discard-card {
+          border-color: rgba(255, 126, 126, 0.45);
+          background: rgba(95, 12, 18, 0.24);
+          color: #ffd6d6;
+        }
+        .discard-dialog-backdrop {
+          position: fixed;
+          z-index: 1000;
+          inset: 0;
+          display: grid;
+          place-items: center;
+          padding: 20px;
+          background: rgba(0, 0, 0, 0.78);
+        }
+        .discard-dialog {
+          width: min(520px, 100%);
+          border: 1px solid rgba(255, 126, 126, 0.55);
+          border-radius: 10px;
+          padding: 22px;
+          background: #171312;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.65);
+        }
+        .discard-dialog h2 {
+          margin: 8px 0 12px;
+          font-size: 24px;
+        }
+        .discard-dialog p {
+          color: #e8d6cf;
+          line-height: 1.5;
+        }
+        .discard-dialog small {
+          display: block;
+          margin-top: 12px;
+          color: #bda7a0;
+          overflow-wrap: anywhere;
+        }
+        .discard-dialog-actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+          margin-top: 20px;
+        }
+        .discard-dialog-actions .confirm-discard {
+          border-color: rgba(255, 82, 82, 0.75);
+          background: #7a151b;
+          color: #fff;
         }
         .production-auth {
           display: grid;
@@ -6860,6 +7042,13 @@ export default function AiGraderStationPage() {
           margin-top: 14px;
           border-color: rgba(228, 191, 105, 0.7);
           color: #f7e4b4;
+        }
+        .cancel-current-card {
+          width: 100%;
+          margin-top: 8px;
+          border-color: rgba(255, 126, 126, 0.5);
+          background: rgba(95, 12, 18, 0.24);
+          color: #ffd6d6;
         }
         .profile {
           display: grid;
