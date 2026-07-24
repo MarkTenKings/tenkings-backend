@@ -617,6 +617,28 @@ test("exact accepted profile identity keeps controller-acknowledged Front captur
   assert.equal(sanitized.frontCaptureReadiness.profileIdentity, "accepted-0123456789abcdef");
 });
 
+test("display sanitizer preserves activation-registry preflight readiness", () => {
+  const status = buildAiGraderLocalStationStatus();
+  status.mathematicalCalibration = {
+    ready: false,
+    reason: "No exact finalized Mathematical Calibration V1 bundle is configured on this station.",
+    rigId: "fixed-rig-dell-v1",
+  };
+  status.calibrationActivation = {
+    configured: true,
+    state: "IDLE",
+  };
+
+  const sanitized = sanitizeAiGraderLocalStationStatusForDisplay(status);
+
+  assert.equal(sanitized.mathematicalCalibration?.ready, false);
+  assert.equal(sanitized.mathematicalCalibration?.rigId, "fixed-rig-dell-v1");
+  assert.deepEqual(sanitized.calibrationActivation, {
+    configured: true,
+    state: "IDLE",
+  });
+});
+
 test("removed browser safety, Single finalization, and separate queue mutation actions are absent", () => {
   for (const action of [
     "safe-off", "confirm-light-idle-off", "confirm-fixture-rulers", "accept-profile", "confirm-flip",
