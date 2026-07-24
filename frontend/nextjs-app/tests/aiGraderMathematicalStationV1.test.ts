@@ -227,6 +227,11 @@ test("Production station uses one contextual card-information form for grading a
   assert.match(source, /field === "parallelId"[\s\S]*?updateIdentityDraft\("parallel", value\)/);
   assert.match(source, /preCaptureDraftBySessionRef\.current\.set\(started\.sessionManifest\.gradingSessionId/);
   assert.match(source, /preCaptureDraftBySessionRef\.current\.get\(activeReview\.gradingSessionId\)/);
+  assert.doesNotMatch(source, /card information\. Leave Subset/);
+  assert.doesNotMatch(source, /Enter these values once\./);
+  assert.doesNotMatch(source, /Choose Border when that side has a visible printed border\./);
+  assert.doesNotMatch(source, /\{mathematicalAuthorityStatus\.message\}/);
+  assert.doesNotMatch(source, /Capture Front and Capture Back are the one production road\./);
   assert.match(
     source,
     /const mathematicalAuthorityDraftComplete = \[\s*mathematicalAuthorityDraft\.title,\s*mathematicalAuthorityDraft\.setId,\s*mathematicalAuthorityDraft\.cardNumber,\s*\]/,

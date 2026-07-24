@@ -5447,26 +5447,11 @@ export default function AiGraderStationPage() {
                     </label>
                   ))}
                 </div>
-                <p>
-                  {pokemonAuthoritySelected
-                    ? "Enter the Pokémon card information. Leave Subset, Variation, and Finish / Parallel blank when they do not apply."
-                    : "Enter the sports card information. Leave Subset / Insert, Variation, and Parallel blank when they do not apply."}
-                </p>
-                <p>
-                  Enter these values once. The station reuses them for grading authority, the database
-                  card/item, grade reports, labels, sold comps, and inventory.
-                </p>
                 {identityDraftMissing.length ? (
                   <p className="status-note">
                     Required before Start New Card: {identityDraftMissing.join(", ")}.
                   </p>
                 ) : null}
-                <p>
-                  Choose Border when that side has a visible printed border. Choose No Border only when an approved template exists for that exact card.
-                </p>
-                <p className={`status-note ${mathematicalAuthorityStatus.status}`}>
-                  {mathematicalAuthorityStatus.message}
-                </p>
                 {mathematicalAuthorityActionRequired ? (
                   <button
                     type="button"
@@ -5478,7 +5463,6 @@ export default function AiGraderStationPage() {
                 ) : null}
               </section>
             ) : null}
-            <p>Capture Front and Capture Back are the one production road. A successful Back returns only after immutable TIFF evidence and the exact card are durably queued; background work never owns the camera.</p>
           </section>
 
           <section className="rapid-queue">
