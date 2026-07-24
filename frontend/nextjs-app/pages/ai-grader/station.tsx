@@ -20,7 +20,6 @@ import {
   aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
   buildAiGraderLocalStationStatus,
-  buildSampleAiGraderReportHistory,
   completeAiGraderExactPublicationHandoff,
   embedAiGraderAuthoritativeProductionRelease,
   sanitizeAiGraderPreviewCardGeometryBySide,
@@ -65,7 +64,6 @@ import {
   fetchAiGraderStationPreviewStatus,
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
-  fetchAiGraderStationReportHistory,
   heartbeatAiGraderLiveLighting,
   initializeAiGraderQueuedOcrAttemptOwner,
   openAiGraderStationPreviewStream,
@@ -415,6 +413,95 @@ function sortHistory(items: AiGraderLocalReportHistoryItem[], sort: HistorySort)
     return sorted.sort((a, b) => String(a.category ?? "Unknown").localeCompare(String(b.category ?? "Unknown")));
   }
   return sorted.sort((a, b) => String(b.generatedAt ?? "").localeCompare(String(a.generatedAt ?? "")));
+}
+
+function emptyAiGraderProductionHistory(): AiGraderLocalReportHistory {
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "persisted_records",
+    items: [],
+    stats: {
+      allTime: 0,
+      monthly: 0,
+      weekly: 0,
+      daily: 0,
+      provisionalGradeCounts: {},
+      finalGradeCounts: {},
+      finalizedCount: 0,
+      draftCount: 0,
+      warningsCount: 0,
+    },
+  };
+}
+
+function productionHistoryWarnings(value: unknown) {
+  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === "string");
+  if (value && typeof value === "object") return Object.keys(value as Record<string, unknown>);
+  return typeof value === "string" && value.trim() ? [value.trim()] : [];
+}
+
+function mapProductionHistory(value: unknown): AiGraderLocalReportHistory {
+  const result = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const rows = Array.isArray(result.items) ? result.items : [];
+  const items = rows.flatMap((value): AiGraderLocalReportHistoryItem[] => {
+    const row = value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+    const reportId = typeof row.reportId === "string" ? row.reportId.trim() : "";
+    if (!reportId) return [];
+    const publicReportUrl = typeof row.publicReportUrl === "string" && row.publicReportUrl.startsWith("https://")
+      ? row.publicReportUrl
+      : undefined;
+    const generatedAt = [row.publishedAt, row.finalizedAt, row.updatedAt, row.createdAt]
+      .find((entry): entry is string => typeof entry === "string" && Boolean(entry.trim()));
+    return [{
+      reportId,
+      gradingSessionId: typeof row.gradingSessionId === "string" ? row.gradingSessionId : "",
+      generatedAt,
+      status: typeof row.publicationStatus === "string" ? row.publicationStatus : "published",
+      viewerPath: publicReportUrl ?? `/ai-grader/reports/${encodeURIComponent(reportId)}`,
+      publicReportUrl,
+      finalOverallGrade: typeof row.finalOverallGrade === "number" && Number.isFinite(row.finalOverallGrade)
+        ? row.finalOverallGrade
+        : undefined,
+      title: typeof row.cardTitle === "string" && row.cardTitle.trim() ? row.cardTitle.trim() : reportId,
+      warnings: productionHistoryWarnings(row.warnings),
+    }];
+  });
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const startOfWeek = startOfDay - now.getDay() * 24 * 60 * 60 * 1000;
+  const timestamps = items.map((item) => Date.parse(item.generatedAt ?? "")).filter(Number.isFinite);
+  const grades = items
+    .map((item) => item.finalOverallGrade)
+    .filter((grade): grade is number => typeof grade === "number" && Number.isFinite(grade));
+  const finalGradeCounts: Record<string, number> = {};
+  for (const grade of grades) {
+    const key = String(grade);
+    finalGradeCounts[key] = (finalGradeCounts[key] ?? 0) + 1;
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "persisted_records",
+    items,
+    stats: {
+      allTime: items.length,
+      monthly: timestamps.filter((timestamp) => timestamp >= startOfMonth).length,
+      weekly: timestamps.filter((timestamp) => timestamp >= startOfWeek).length,
+      daily: timestamps.filter((timestamp) => timestamp >= startOfDay).length,
+      averageFinalGrade: grades.length
+        ? Number((grades.reduce((sum, grade) => sum + grade, 0) / grades.length).toFixed(2))
+        : undefined,
+      provisionalGradeCounts: {},
+      finalGradeCounts,
+      finalizedCount: items.length,
+      draftCount: 0,
+      warningsCount: items.reduce((sum, item) => sum + item.warnings.length, 0),
+    },
+  };
 }
 
 function unsafePublishString(value: string) {
@@ -816,7 +903,7 @@ export default function AiGraderStationPage() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyView, setHistoryView] = useState<HistoryView>("list");
   const [historySort, setHistorySort] = useState<HistorySort>("most_recent");
-  const [history, setHistory] = useState<AiGraderLocalReportHistory>(() => buildSampleAiGraderReportHistory());
+  const [history, setHistory] = useState<AiGraderLocalReportHistory>(() => emptyAiGraderProductionHistory());
   const [productionPublish, setProductionPublish] = useState<ProductionPublishState>({
     status: "idle",
     message: "Ten Kings DB/storage publish has not been run.",
@@ -2451,12 +2538,16 @@ export default function AiGraderStationPage() {
   };
 
   const refreshHistory = async () => {
-    if (!bridgeConnected) {
-      setHistory(buildSampleAiGraderReportHistory());
-      return;
+    const response = await fetch("/api/admin/ai-grader/production/history", {
+      method: "GET",
+      headers: await productionAuthHeaders({}, "load AI Grader History"),
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok !== true) {
+      throw new Error(payload.message ?? "AI Grader History could not be loaded.");
     }
-    const nextHistory = await fetchAiGraderStationReportHistory({ baseUrl: bridgeUrl, stationToken });
-    setHistory(nextHistory);
+    setHistory(mapProductionHistory(payload.result));
   };
 
   const refreshFinishQueue = async (preferredReportId?: string | null) => {
@@ -2991,10 +3082,6 @@ export default function AiGraderStationPage() {
       exposureUs: next.acceptedProfile.exposureUs,
       gain: next.acceptedProfile.gain,
     });
-    setHistory(await fetchAiGraderStationReportHistory({
-      baseUrl: targetBridgeUrl,
-      stationToken: targetStationToken,
-    }));
     return next;
   };
 
@@ -4234,45 +4321,14 @@ export default function AiGraderStationPage() {
 
   const openHistoryReport = async (reportId: string) => {
     if (!reportId) return;
-    if (!bridgeConnected || !stationToken.trim()) {
-      setError("Connect the Dell local station bridge before opening local report history.");
+    setError(null);
+    const item = history.items.find((candidate) => candidate.reportId === reportId);
+    const target = item?.publicReportUrl ?? item?.viewerPath;
+    if (!target) {
+      setError("The hosted report URL is unavailable.");
       return;
     }
-    setBusy("open-report");
-    setError(null);
-    setLocalReport({
-      open: true,
-      status: "loading",
-      message: "Loading local history report images from the paired Dell bridge.",
-      reportId,
-    });
-    try {
-      const bundle = await fetchAiGraderStationReportBundle({
-        baseUrl: bridgeUrl,
-        stationToken,
-        reportId,
-        includeAssetBodies: true,
-      });
-      const imageCount = reportImageAssets(bundle, { allowEmbeddedBodies: true }).length;
-      setLocalReport({
-        open: true,
-        status: "ready",
-        message: imageCount ? `${imageCount} local report image(s) loaded through the paired bridge.` : "Local report loaded, but no renderable image assets were returned.",
-        reportId,
-        bundle,
-      });
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.";
-      setLocalReport({
-        open: true,
-        status: "error",
-        message,
-        reportId,
-      });
-      setError(message);
-    } finally {
-      setBusy(null);
-    }
+    window.open(target, "_blank", "noopener,noreferrer");
   };
 
   const openHistory = async () => {
@@ -4281,7 +4337,7 @@ export default function AiGraderStationPage() {
     try {
       await refreshHistory();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Could not load local AI Grader report history.");
+      setError(requestError instanceof Error ? requestError.message : "Could not load AI Grader History.");
     }
   };
 
@@ -6109,7 +6165,7 @@ export default function AiGraderStationPage() {
           <div className="history-head">
             <div>
               <p className="eyebrow">Card History Reports</p>
-              <h2>Local AI Grader sessions</h2>
+              <h2>AI Grader History</h2>
             </div>
             <div className="history-controls">
               <select value={historySort} onChange={(event) => setHistorySort(event.target.value as HistorySort)}>
@@ -6139,7 +6195,7 @@ export default function AiGraderStationPage() {
                 <div>
                   <span>{item.generatedAt ? new Date(item.generatedAt).toLocaleString() : "Unknown date"}</span>
                   <strong>{item.title ?? item.reportId}</strong>
-                  <p>{item.localHtmlPath ?? item.reportBundlePath ?? "Local report path pending."}</p>
+                  <p>{item.publicReportUrl ? "Hosted Production report" : "Hosted report link pending."}</p>
                 </div>
                 <div className="history-grade">
                   <span>{item.finalOverallGrade ? "Final grade" : "Provisional"}</span>

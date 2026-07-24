@@ -2,7 +2,15 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { GetObjectCommand, HeadObjectCommand, ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  ObjectCannedACL,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const DEFAULT_MODE = "local";
@@ -86,6 +94,12 @@ export type StorageObjectIntegrityResult = {
 export type StorageObjectIntegrityDependencies = {
   headObject?: (storageKey: string) => Promise<StorageObjectHead>;
   openRead?: (storageKey: string) => Promise<StorageObjectRead>;
+};
+
+export type StoragePrefixDeleteResult = {
+  storagePrefix: string;
+  listedObjectCount: number;
+  deletedObjectCount: number;
 };
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
@@ -343,6 +357,83 @@ export async function ensureLocalRoot() {
 export function getLocalFilePath(storageKey: string) {
   const normalized = storageKey.replace(/\\/g, "/");
   return path.join(localRoot, normalized);
+}
+
+function controlledStoragePrefix(value: string) {
+  const normalized = String(value ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (
+    !normalized.endsWith("/") ||
+    normalized.includes("..") ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*\/$/.test(normalized)
+  ) {
+    throw new Error("Storage deletion prefix is invalid.");
+  }
+  return normalized;
+}
+
+export async function deleteStoragePrefix(storagePrefix: string): Promise<StoragePrefixDeleteResult> {
+  const prefix = controlledStoragePrefix(storagePrefix);
+  const storageMode = getStorageMode();
+  if (storageMode === "s3") {
+    const client = getS3Client();
+    let listedObjectCount = 0;
+    let deletedObjectCount = 0;
+    while (true) {
+      const listed = await client.send(new ListObjectsV2Command({
+        Bucket: s3Bucket,
+        Prefix: prefix,
+      }));
+      const keys = (listed.Contents ?? [])
+        .map((entry) => entry.Key)
+        .filter((key): key is string => Boolean(key && key.startsWith(prefix)));
+      listedObjectCount += keys.length;
+      if (!keys.length) break;
+      const deleted = await client.send(new DeleteObjectsCommand({
+        Bucket: s3Bucket,
+        Delete: {
+          Objects: keys.map((Key) => ({ Key })),
+          Quiet: false,
+        },
+      }));
+      if (deleted.Errors?.length) {
+        const error = new Error("Storage prefix deletion stopped after the provider rejected one or more objects.") as Error & {
+          partialResult?: StoragePrefixDeleteResult;
+        };
+        error.partialResult = {
+          storagePrefix: prefix,
+          listedObjectCount,
+          deletedObjectCount: deletedObjectCount + (deleted.Deleted?.length ?? 0),
+        };
+        throw error;
+      }
+      deletedObjectCount += deleted.Deleted?.length ?? keys.length;
+    }
+    return { storagePrefix: prefix, listedObjectCount, deletedObjectCount };
+  }
+
+  const root = path.resolve(localRoot);
+  const target = path.resolve(root, ...prefix.split("/").filter(Boolean));
+  if (target === root || !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Local storage deletion target is outside the configured storage root.");
+  }
+  let listedObjectCount = 0;
+  const countFiles = async (directory: string): Promise<void> => {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const child = path.join(directory, entry.name);
+      if (entry.isDirectory()) await countFiles(child);
+      else listedObjectCount += 1;
+    }
+  };
+  try {
+    await countFiles(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { storagePrefix: prefix, listedObjectCount: 0, deletedObjectCount: 0 };
+    }
+    throw error;
+  }
+  await fs.rm(target, { recursive: true, force: true });
+  return { storagePrefix: prefix, listedObjectCount, deletedObjectCount: listedObjectCount };
 }
 
 export async function writeLocalFile(storageKey: string, data: Buffer) {

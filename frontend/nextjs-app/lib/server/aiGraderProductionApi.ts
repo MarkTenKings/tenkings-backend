@@ -65,7 +65,7 @@ import {
   type AiGraderProductionActorAudit,
 } from "./aiGraderProductionAuth";
 import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
-import { readStorageBuffer } from "./storage";
+import { readStorageBuffer, type StoragePrefixDeleteResult } from "./storage";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
   completePublishedAiGraderCardTx,
@@ -299,6 +299,23 @@ export type AiGraderAddToInventoryResult = {
   labelPairId?: string | null;
 };
 
+export type AiGraderDiscardFinishCardResult = {
+  reportId: string;
+  storage: StoragePrefixDeleteResult;
+  databaseDeleted: true;
+  deleted: {
+    report: number;
+    session: number;
+    evidenceAssets: number;
+    nfcTags: number;
+    nfcProgrammingAttempts: number;
+    nfcAuditEvents: number;
+    cardAsset: number;
+    item: number;
+    cardBatch: number;
+  };
+};
+
 export type AiGraderProductionApiDependencies = {
   env?: EnvLike;
   nfcSchemaReadiness?: () => Promise<boolean>;
@@ -339,7 +356,7 @@ export type AiGraderProductionApiDependencies = {
     itemId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderProductionPublishPersistResult>;
-  listHistory?(): Promise<AiGraderProductionHistoryResult>;
+  listHistory?(input: { tenantId: string }): Promise<AiGraderProductionHistoryResult>;
   listFinishQueue?(input: { tenantId: string }): Promise<AiGraderFinishCardsQueueResult>;
   listLabelSheets?(input: { tenantId: string }): Promise<AiGraderLabelSheetsResult>;
   searchCards?(input: {
@@ -426,6 +443,12 @@ export type AiGraderProductionApiDependencies = {
     operatorUserId?: string | null;
     actorAudit?: AiGraderProductionActorAudit | null;
   }): Promise<AiGraderAddToInventoryResult>;
+  discardFinishCard?(input: {
+    tenantId: string;
+    reportId: string;
+    operatorUserId?: string | null;
+    actorAudit?: AiGraderProductionActorAudit | null;
+  }): Promise<AiGraderDiscardFinishCardResult>;
   prepareLabelSheetPrint?(input: {
     tenantId: string;
     sheetId: string;
@@ -467,6 +490,7 @@ export type AiGraderProductionHistoryItem = {
   warnings?: unknown;
   cardAssetId?: string | null;
   itemId?: string | null;
+  cardTitle?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   finalizedAt?: string | null;
@@ -490,8 +514,7 @@ export type AiGraderProductionHistoryResult = {
 export type AiGraderFinishCardsQueueStatus =
   | "needs_comps_review"
   | "needs_slab_photos"
-  | "ready_for_inventory"
-  | "complete";
+  | "ready_for_inventory";
 
 export type AiGraderFinishNfcStatus =
   | "missing"
@@ -522,7 +545,7 @@ export type AiGraderFinishCardsQueueItem = {
   publishedAt?: string | null;
   createdAt?: string | null;
   queueStatus: AiGraderFinishCardsQueueStatus;
-  statusText: "Needs Comps Review" | "Needs Slab Photos" | "Ready for Inventory" | "Complete";
+  statusText: "Needs Comps Review" | "Needs Slab Photos" | "Ready for Inventory";
   needs: Array<"Comps Review" | "Slab Photos" | "Program NFC" | "Add To Inventory">;
   label: {
     printed: boolean;
@@ -570,14 +593,11 @@ export type AiGraderFinishCardsQueueResult = {
     needsEbayEvaluate: number;
     /** @deprecated Use readyForInventory. */
     needsInventory: number;
-    complete: number;
   };
 };
 
 type AiGraderFinishCardsQueueBuildOptions = {
   activeLimit?: number;
-  includeCompleted?: boolean;
-  recentCompletedLimit?: number;
   nfcRequired?: boolean;
 };
 
@@ -2249,6 +2269,7 @@ export function buildAiGraderProductionHistoryResult(rows: unknown[]): AiGraderP
       warnings: row.warnings,
       cardAssetId: typeof row.cardAssetId === "string" ? row.cardAssetId : null,
       itemId: typeof row.itemId === "string" ? row.itemId : null,
+      cardTitle: optionalString(row.cardTitle) ?? null,
       createdAt: dateString(row.createdAt),
       updatedAt: dateString(row.updatedAt),
       finalizedAt: dateString(row.finalizedAt),
@@ -2312,8 +2333,7 @@ function queueCardTitle(row: JsonRecord) {
 function finishStatusText(status: AiGraderFinishCardsQueueStatus): AiGraderFinishCardsQueueItem["statusText"] {
   if (status === "needs_comps_review") return "Needs Comps Review";
   if (status === "needs_slab_photos") return "Needs Slab Photos";
-  if (status === "ready_for_inventory") return "Ready for Inventory";
-  return "Complete";
+  return "Ready for Inventory";
 }
 
 function positiveQueueInteger(value: unknown) {
@@ -2457,7 +2477,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       const sessionStatus = optionalString(session?.status);
       return Boolean(reportId) && optionalString(session?.reportId) === reportId &&
         optionalString(row.publicationStatus) === "published" &&
-        (sessionStatus === "published" || sessionStatus === "inventory_ready");
+        sessionStatus === "published";
     })
     .map((row): AiGraderFinishCardsQueueItem => {
     const label = firstRecord(row.labels) ?? firstRecord(row.label);
@@ -2507,9 +2527,7 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       ? "needs_comps_review"
       : !slabComplete
         ? "needs_slab_photos"
-        : inventoryComplete
-          ? "complete"
-          : "ready_for_inventory";
+        : "ready_for_inventory";
     const needs: AiGraderFinishCardsQueueItem["needs"] = [];
     if (!valuationComplete) needs.push("Comps Review");
     if (!slabComplete) needs.push("Slab Photos");
@@ -2568,19 +2586,11 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
         canAddToInventory: labelPrinted && slabComplete && valuationComplete && (!nfcRequired || nfcReady) && !inventoryComplete,
       },
     };
-    });
+    })
+    .filter((item) => !item.inventory.complete);
   allItems.sort(compareFinishQueueItems);
-  const activeItems = allItems.filter((item) => item.queueStatus !== "complete");
-  const completedItems = allItems.filter((item) => item.queueStatus === "complete");
   const activeLimit = options.activeLimit ?? 100;
-  const limitedActiveItems = activeLimit > 0 ? activeItems.slice(0, activeLimit) : activeItems;
-  const recentCompletedLimit = Math.max(0, Math.trunc(options.recentCompletedLimit ?? 0));
-  const includedCompletedItems = options.includeCompleted
-    ? completedItems
-    : recentCompletedLimit > 0
-      ? completedItems.slice(-recentCompletedLimit)
-      : [];
-  const items = [...limitedActiveItems, ...includedCompletedItems].sort(compareFinishQueueItems);
+  const items = activeLimit > 0 ? allItems.slice(0, activeLimit) : allItems;
   return {
     source: "persisted_records",
     orderedBy: "labelSheet_asc_slot_asc_createdAt_asc",
@@ -2593,7 +2603,6 @@ export function buildAiGraderFinishCardsQueueResult(rows: unknown[], options: Ai
       readyForInventory: items.filter((item) => item.queueStatus === "ready_for_inventory").length,
       needsEbayEvaluate: items.filter((item) => item.queueStatus === "needs_comps_review").length,
       needsInventory: items.filter((item) => item.queueStatus === "ready_for_inventory").length,
-      complete: allItems.filter((item) => item.queueStatus === "complete").length,
     },
   };
 }
@@ -2637,6 +2646,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "run-comps",
           "save-comps-selection",
           "add-to-inventory",
+          "discard-finish-card",
         ],
         auth: aiGraderProductionAuthStatus(env),
         noHardwareControls: true,
@@ -2681,6 +2691,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "run-comps",
       "save-comps-selection",
       "add-to-inventory",
+      "discard-finish-card",
     ];
     if (!allowedActions.includes(key)) {
       return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
@@ -2718,7 +2729,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "render-label-sheet-cut-svg" ||
         key === "prepare-label-sheet-print" ||
         key === "mark-label-sheet-printed" ||
-        key === "add-to-inventory"
+        key === "add-to-inventory" ||
+        key === "discard-finish-card"
           ? "publish"
           : key === "mathematical-card-authority"
             ? "card-search"
@@ -2764,7 +2776,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         });
       }
       if (key === "history") {
-        const result = deps.listHistory ? await deps.listHistory() : { status: "not_implemented", items: [] };
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = deps.listHistory ? await deps.listHistory({ tenantId }) : { status: "not_implemented", items: [] };
         return res.status(200).json({ ok: true, enabled: true, operation: "aiGraderProductionHistory", result });
       }
       if (key === "finish-queue") {
@@ -3299,6 +3312,23 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           result,
         });
       }
+      if (key === "discard-finish-card") {
+        if (!deps.discardFinishCard) throw new Error("AI Grader Finish Cards discard is not configured.");
+        const input = parseAddToInventoryBody(req.body);
+        const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
+        const result = await deps.discardFinishCard({
+          tenantId,
+          reportId: input.reportId,
+          operatorUserId: actorOperatorUserId(authorizedActor),
+          actorAudit: authorizedActor.audit,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderDiscardFinishCard",
+          result,
+        });
+      }
       if (key === "create-card-from-report") {
         if (!deps.createCardFromReport) throw new Error("AI Grader create-card-from-report is not configured.");
         const input = parseCreateCardFromReportBody(req.body);
@@ -3518,9 +3548,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       });
     } catch (error) {
       const code = isRecord(error) && typeof error.code === "string" ? error.code : undefined;
+      const partialResult = isRecord(error) && isRecord(error.partialResult) ? error.partialResult : undefined;
       return res.status(errorStatus(error)).json({
         ok: false,
         ...(code ? { code } : {}),
+        ...(partialResult ? { result: partialResult } : {}),
         message: error instanceof Error ? error.message : "AI Grader production publish failed.",
       });
     }
@@ -5116,10 +5148,475 @@ export async function addAiGraderCardToInventoryRuntime(input: {
   });
 }
 
-export async function listProductionReportHistoryRuntime(): Promise<AiGraderProductionHistoryResult> {
+function aiGraderDiscardError(message: string, code: string, statusCode = 409) {
+  const error = new Error(message) as Error & { code?: string; statusCode?: number };
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function exactAiGraderIntakeIdentity(value: unknown, input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+}) {
+  const record = isRecord(value) ? value : {};
+  return optionalString(record.queueItemId) === input.queueItemId &&
+    optionalString(record.gradingSessionId) === input.gradingSessionId &&
+    optionalString(record.reportId) === input.reportId;
+}
+
+function assertExclusiveAiGraderIntakeCard(input: {
+  card: JsonRecord;
+  reportId: string;
+  gradingSessionId: string;
+  queueItemId: string;
+}) {
+  const classificationSources = isRecord(input.card.classificationSourcesJson)
+    ? input.card.classificationSourcesJson
+    : {};
+  const aiGrading = isRecord(input.card.aiGradingJson) ? input.card.aiGradingJson : {};
+  if (
+    optionalString(classificationSources.source) !== "ai_grader_confirmed_identity" ||
+    optionalString(classificationSources.reportId) !== input.reportId ||
+    !exactAiGraderIntakeIdentity(classificationSources.rapidQueueIdentity, input) ||
+    optionalString(aiGrading.source) !== "ai_grader_new_card_intake_v0" ||
+    optionalString(aiGrading.reportId) !== input.reportId ||
+    !exactAiGraderIntakeIdentity(aiGrading.rapidQueueIdentity, input)
+  ) {
+    throw aiGraderDiscardError(
+      "The linked CardAsset was not proven to be exclusively created by this exact AI Grader report.",
+      "AI_GRADER_DISCARD_CARD_OWNERSHIP_UNPROVEN",
+    );
+  }
+}
+
+function assertExclusiveAiGraderIntakeBatch(batch: JsonRecord, reportId: string, cardAssetId: string) {
+  const cards = Array.isArray(batch.cards) ? batch.cards.filter(isRecord) : [];
+  const tags = Array.isArray(batch.tags) ? batch.tags.filter((tag): tag is string => typeof tag === "string") : [];
+  const packLabels = Array.isArray(batch.packLabels) ? batch.packLabels : [];
+  const sourcePacks = Array.isArray(batch.sourcePacks) ? batch.sourcePacks : [];
+  const intakeBatchState =
+    (optionalString(batch.status) === "UPLOADING" && numericValue(batch.processedCount, -1) === 0) ||
+    (optionalString(batch.status) === "READY" && numericValue(batch.processedCount, -1) === 1);
+  if (
+    optionalString(batch.notes) !== `Created from AI Grader report ${reportId}` ||
+    numericValue(batch.totalCount, -1) !== 1 ||
+    !intakeBatchState ||
+    !tags.includes("ai-grader") ||
+    !tags.includes("new-card-intake") ||
+    cards.length !== 1 ||
+    optionalString(cards[0]?.id) !== cardAssetId ||
+    packLabels.length > 0 ||
+    sourcePacks.length > 0
+  ) {
+    throw aiGraderDiscardError(
+      "The linked CardBatch is shared or no longer matches the exclusive AI Grader intake batch.",
+      "AI_GRADER_DISCARD_BATCH_OWNERSHIP_UNPROVEN",
+    );
+  }
+}
+
+function assertExclusiveAiGraderIntakeItem(item: JsonRecord, cardAssetId: string) {
+  const ownerships = Array.isArray(item.ownerships) ? item.ownerships.filter(isRecord) : [];
+  const counts = isRecord(item._count) ? item._count : {};
+  const sharedRelationCount = [
+    counts.listings,
+    counts.packSlots,
+    counts.ingestionTask,
+    counts.shippingRequest,
+    counts.kioskReveals,
+    counts.goldenTicketPrize,
+    counts.packLabels,
+  ].map((value) => numericValue(value, 0)).reduce((sum: number, value) => sum + value, 0);
+  if (
+    optionalString(item.number) !== cardAssetId ||
+    optionalString(item.cardQrCodeId) ||
+    sharedRelationCount > 0 ||
+    ownerships.length !== 1 ||
+    optionalString(ownerships[0]?.note) !== `Linked from confirmed AI Grader card asset ${cardAssetId}`
+  ) {
+    throw aiGraderDiscardError(
+      "The linked Item is shared or was not proven to be exclusively created for this AI Grader CardAsset.",
+      "AI_GRADER_DISCARD_ITEM_OWNERSHIP_UNPROVEN",
+    );
+  }
+}
+
+function assertReportStoragePrefix(report: JsonRecord, prefix: string) {
+  const publication = firstRecord(report.publication);
+  const storageValues = [
+    report.reportBundleStorageKey,
+    report.productionReleaseStorageKey,
+    report.labelDataStorageKey,
+    report.assetManifestStorageKey,
+    report.reportHtmlStorageKey,
+    publication?.reportBundleStorageKey,
+  ]
+    .map(optionalString)
+    .filter((value): value is string => Boolean(value));
+  const publicationPrefix = optionalString(publication?.storageKeyPrefix);
+  if ((publicationPrefix && publicationPrefix !== prefix) || storageValues.some((value) => !value.startsWith(prefix))) {
+    throw aiGraderDiscardError(
+      "The report storage keys do not match the exact canonical report prefix.",
+      "AI_GRADER_DISCARD_STORAGE_IDENTITY_MISMATCH",
+    );
+  }
+  const evidenceAssets = Array.isArray(report.evidenceAssets) ? report.evidenceAssets.filter(isRecord) : [];
+  if (evidenceAssets.some((asset) => !optionalString(asset.storageKey)?.startsWith(prefix))) {
+    throw aiGraderDiscardError(
+      "One or more report evidence objects are outside the exact canonical report prefix.",
+      "AI_GRADER_DISCARD_STORAGE_IDENTITY_MISMATCH",
+    );
+  }
+}
+
+export async function discardAiGraderFinishCardRuntime(input: {
+  tenantId: string;
+  reportId: string;
+  operatorUserId?: string | null;
+  actorAudit?: AiGraderProductionActorAudit | null;
+  dbClient?: any;
+  deleteStoragePrefix(storagePrefix: string): Promise<StoragePrefixDeleteResult>;
+}): Promise<AiGraderDiscardFinishCardResult> {
+  if (!input.operatorUserId) {
+    throw aiGraderDiscardError(
+      "A human operator session is required to discard a card from Finish Cards.",
+      "AI_GRADER_DISCARD_HUMAN_OPERATOR_REQUIRED",
+      403,
+    );
+  }
+  const reportId = stringValue(input.reportId, "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(reportId)) {
+    throw aiGraderDiscardError("reportId is invalid.", "AI_GRADER_DISCARD_REPORT_ID_INVALID", 400);
+  }
+  const canonicalPrefix = `ai-grader/reports/${safeStorageSegment(reportId)}/`;
   const { prisma } = await import("@tenkings/database");
-  const db = prisma as any;
+  const db = input.dbClient ?? (prisma as any);
+  let storageResult: StoragePrefixDeleteResult | null = null;
+  try {
+    return await db.$transaction(async (tx: any) => {
+      if (typeof tx.$queryRaw !== "function") {
+        throw new Error("AI Grader report lifecycle transaction locking is unavailable.");
+      }
+      await tx.$queryRaw`
+        SELECT 1 AS "lockAcquired"
+        FROM pg_advisory_xact_lock(hashtext('ai-grader-report-lifecycle'), hashtext(${reportId}))
+      `;
+      await tx.$queryRaw`
+        SELECT 1 AS "lockAcquired"
+        FROM pg_advisory_xact_lock(hashtext('ai-grader-label-sheets'), hashtext(${input.tenantId}))
+      `;
+      const report = await tx.aiGraderReport.findFirst({
+        where: { tenantId: input.tenantId, reportId },
+        select: {
+          id: true,
+          tenantId: true,
+          sessionId: true,
+          reportId: true,
+          publicationStatus: true,
+          cardAssetId: true,
+          itemId: true,
+          reportBundleStorageKey: true,
+          productionReleaseStorageKey: true,
+          labelDataStorageKey: true,
+          assetManifestStorageKey: true,
+          reportHtmlStorageKey: true,
+          session: {
+            select: {
+              id: true,
+              gradingSessionId: true,
+              reportId: true,
+              status: true,
+              cardAssetId: true,
+              itemId: true,
+              calibrationActivationId: true,
+              reports: { select: { id: true } },
+            },
+          },
+          publication: {
+            select: {
+              storageKeyPrefix: true,
+              reportBundleStorageKey: true,
+            },
+          },
+          evidenceAssets: {
+            select: { id: true, storageKey: true },
+          },
+        },
+      });
+      if (!isRecord(report)) {
+        throw aiGraderDiscardError(
+          "AI Grader report was not found in this tenant's Finish Cards queue.",
+          "AI_GRADER_DISCARD_REPORT_NOT_FOUND",
+          404,
+        );
+      }
+      const session = firstRecord(report.session);
+      const reportRowId = optionalString(report.id);
+      const sessionId = optionalString(session?.id);
+      if (
+        !reportRowId ||
+        !sessionId ||
+        optionalString(report.publicationStatus) !== "published" ||
+        optionalString(session?.reportId) !== reportId ||
+        optionalString(session?.status) !== "published"
+      ) {
+        throw aiGraderDiscardError(
+          "This card is no longer eligible for Finish Cards discard. Inventory and completed History records cannot be discarded here.",
+          "AI_GRADER_DISCARD_INVENTORY_READY",
+        );
+      }
+      const sessionReports = Array.isArray(session?.reports) ? session.reports : [];
+      if (sessionReports.length !== 1 || optionalString(firstRecord(sessionReports[0])?.id) !== reportRowId) {
+        throw aiGraderDiscardError(
+          "The grading session is shared by more than this exact report.",
+          "AI_GRADER_DISCARD_SESSION_OWNERSHIP_UNPROVEN",
+        );
+      }
+      const cardAssetId = optionalString(report.cardAssetId);
+      const itemId = optionalString(report.itemId);
+      const gradingSessionId = optionalString(session?.gradingSessionId);
+      if (
+        !cardAssetId ||
+        !itemId ||
+        !gradingSessionId ||
+        optionalString(session?.cardAssetId) !== cardAssetId ||
+        optionalString(session?.itemId) !== itemId
+      ) {
+        throw aiGraderDiscardError(
+          "The Finish Cards report, session, CardAsset, and Item linkage is incomplete or contradictory.",
+          "AI_GRADER_DISCARD_LINKAGE_MISMATCH",
+        );
+      }
+      const card = await tx.cardAsset.findUnique({
+        where: { id: cardAssetId },
+        select: {
+          id: true,
+          batchId: true,
+          storageKey: true,
+          reviewStage: true,
+          classificationSourcesJson: true,
+          aiGradingJson: true,
+        },
+      });
+      if (!isRecord(card) || optionalString(card.reviewStage) === CardReviewStage.INVENTORY_READY_FOR_SALE) {
+        throw aiGraderDiscardError(
+          "The linked CardAsset is missing or has already entered inventory.",
+          "AI_GRADER_DISCARD_INVENTORY_READY",
+        );
+      }
+      const classificationSources = isRecord(card.classificationSourcesJson) ? card.classificationSourcesJson : {};
+      const rapidIdentity = firstRecord(classificationSources.rapidQueueIdentity);
+      const queueItemId = optionalString(rapidIdentity?.queueItemId);
+      if (!queueItemId || !optionalString(card.storageKey)?.startsWith(canonicalPrefix)) {
+        throw aiGraderDiscardError(
+          "The linked CardAsset does not match the report's exact storage and queue identity.",
+          "AI_GRADER_DISCARD_CARD_OWNERSHIP_UNPROVEN",
+        );
+      }
+      assertExclusiveAiGraderIntakeCard({ card, reportId, gradingSessionId, queueItemId });
+      const batchId = optionalString(card.batchId);
+      const batch = batchId
+        ? await tx.cardBatch.findUnique({
+            where: { id: batchId },
+            select: {
+              id: true,
+              notes: true,
+              totalCount: true,
+              processedCount: true,
+              status: true,
+              tags: true,
+              cards: { select: { id: true } },
+              packLabels: { select: { id: true } },
+              sourcePacks: { select: { id: true } },
+            },
+          })
+        : null;
+      if (!isRecord(batch)) {
+        throw aiGraderDiscardError("The linked AI Grader intake batch was not found.", "AI_GRADER_DISCARD_BATCH_OWNERSHIP_UNPROVEN");
+      }
+      if (!batchId) {
+        throw aiGraderDiscardError("The linked AI Grader intake batch identity is missing.", "AI_GRADER_DISCARD_BATCH_OWNERSHIP_UNPROVEN");
+      }
+      assertExclusiveAiGraderIntakeBatch(batch, reportId, cardAssetId);
+      const item = await tx.item.findUnique({
+        where: { id: itemId },
+        select: {
+          id: true,
+          number: true,
+          cardQrCodeId: true,
+          ownerships: { select: { id: true, note: true } },
+          _count: {
+            select: {
+              listings: true,
+              packSlots: true,
+              ingestionTask: true,
+              shippingRequest: true,
+              kioskReveals: true,
+              goldenTicketPrize: true,
+              packLabels: true,
+            },
+          },
+        },
+      });
+      if (!isRecord(item)) {
+        throw aiGraderDiscardError("The linked AI Grader Item was not found.", "AI_GRADER_DISCARD_ITEM_OWNERSHIP_UNPROVEN");
+      }
+      assertExclusiveAiGraderIntakeItem(item, cardAssetId);
+      const otherReportCount = await tx.aiGraderReport.count({
+        where: {
+          id: { not: reportRowId },
+          OR: [{ cardAssetId }, { itemId }],
+        },
+      });
+      const otherSessionCount = await tx.aiGraderSession.count({
+        where: {
+          id: { not: sessionId },
+          OR: [{ cardAssetId }, { itemId }],
+        },
+      });
+      if (otherReportCount > 0 || otherSessionCount > 0) {
+        throw aiGraderDiscardError(
+          "The linked CardAsset or Item is referenced by another AI Grader lifecycle.",
+          "AI_GRADER_DISCARD_SHARED_LINKAGE",
+        );
+      }
+      assertReportStoragePrefix(report, canonicalPrefix);
+
+      storageResult = await input.deleteStoragePrefix(canonicalPrefix);
+
+      const tags = await tx.aiGraderNfcTag.findMany({
+        where: { tenantId: input.tenantId, aiGraderReportId: reportRowId },
+        select: { id: true },
+      });
+      const tagIds = tags.map((tag: { id: string }) => tag.id);
+      const nfcAuditEvents = tagIds.length
+        ? await tx.aiGraderNfcAuditEvent.deleteMany({ where: { tagId: { in: tagIds } } })
+        : { count: 0 };
+      const nfcProgrammingAttempts = tagIds.length
+        ? await tx.aiGraderNfcProgrammingAttempt.deleteMany({ where: { tagId: { in: tagIds } } })
+        : { count: 0 };
+      const nfcTags = tagIds.length
+        ? await tx.aiGraderNfcTag.deleteMany({ where: { id: { in: tagIds }, tenantId: input.tenantId } })
+        : { count: 0 };
+      const evidenceAssets = await tx.aiGraderEvidenceAsset.deleteMany({
+        where: {
+          tenantId: input.tenantId,
+          OR: [
+            { reportId: reportRowId },
+            { sessionId },
+          ],
+        },
+      });
+      const deletedReport = await tx.aiGraderReport.deleteMany({
+        where: { id: reportRowId, tenantId: input.tenantId, reportId },
+      });
+      const deletedSession = await tx.aiGraderSession.deleteMany({
+        where: { id: sessionId, tenantId: input.tenantId, gradingSessionId },
+      });
+      const deletedItem = await tx.item.deleteMany({ where: { id: itemId, number: cardAssetId } });
+      const deletedCard = await tx.cardAsset.deleteMany({ where: { id: cardAssetId, batchId } });
+      const deletedBatch = await tx.cardBatch.deleteMany({ where: { id: batchId } });
+      if (
+        deletedReport.count !== 1 ||
+        deletedSession.count !== 1 ||
+        deletedItem.count !== 1 ||
+        deletedCard.count !== 1 ||
+        deletedBatch.count !== 1
+      ) {
+        throw new Error("AI Grader discard database cleanup did not delete every exact lifecycle row.");
+      }
+      return {
+        reportId,
+        storage: storageResult,
+        databaseDeleted: true,
+        deleted: {
+          report: deletedReport.count,
+          session: deletedSession.count,
+          evidenceAssets: evidenceAssets.count,
+          nfcTags: nfcTags.count,
+          nfcProgrammingAttempts: nfcProgrammingAttempts.count,
+          nfcAuditEvents: nfcAuditEvents.count,
+          cardAsset: deletedCard.count,
+          item: deletedItem.count,
+          cardBatch: deletedBatch.count,
+        },
+      };
+    });
+  } catch (error) {
+    if (!storageResult && isRecord(error) && isRecord(error.partialResult)) {
+      const partial = error.partialResult;
+      const partialPrefix = optionalString(partial.storagePrefix);
+      const listedObjectCount = numericValue(partial.listedObjectCount, -1);
+      const deletedObjectCount = numericValue(partial.deletedObjectCount, -1);
+      if (partialPrefix === canonicalPrefix && listedObjectCount >= 0 && deletedObjectCount >= 0) {
+        storageResult = { storagePrefix: partialPrefix, listedObjectCount, deletedObjectCount };
+      }
+    }
+    if (!storageResult) throw error;
+    const wrapped = new Error(
+      "Report storage was erased, but database cleanup did not finish. Retry this exact discard before doing anything else.",
+    ) as Error & {
+      code?: string;
+      statusCode?: number;
+      partialResult?: {
+        reportId: string;
+        storage: StoragePrefixDeleteResult;
+        databaseDeleted: false;
+        retryable: true;
+      };
+    };
+    wrapped.code = "AI_GRADER_DISCARD_PARTIAL_FAILURE";
+    wrapped.statusCode = 500;
+    wrapped.partialResult = {
+      reportId,
+      storage: storageResult,
+      databaseDeleted: false,
+      retryable: true,
+    };
+    throw wrapped;
+  }
+}
+
+async function hydrateAiGraderProductionHistoryRows(db: any, reportRows: unknown[]) {
+  const reports = reportRows.filter(isRecord);
+  const cardAssetIds = Array.from(new Set(reports.map((row) => optionalString(row.cardAssetId)).filter((id): id is string => Boolean(id))));
+  const itemIds = Array.from(new Set(reports.map((row) => optionalString(row.itemId)).filter((id): id is string => Boolean(id))));
+  const cards = cardAssetIds.length
+    ? await db.cardAsset.findMany({
+        where: { id: { in: cardAssetIds } },
+        select: { id: true, fileName: true, customTitle: true, resolvedPlayerName: true },
+      })
+    : [];
+  const items = itemIds.length
+    ? await db.item.findMany({
+        where: { id: { in: itemIds } },
+        select: { id: true, name: true, set: true, number: true },
+      })
+    : [];
+  const cardById = new Map((Array.isArray(cards) ? cards : []).filter(isRecord).map((card) => [optionalString(card.id), card] as const));
+  const itemById = new Map((Array.isArray(items) ? items : []).filter(isRecord).map((item) => [optionalString(item.id), item] as const));
+  return reports.map((row) => ({
+    ...row,
+    cardAsset: cardById.get(optionalString(row.cardAssetId)),
+    item: itemById.get(optionalString(row.itemId)),
+  }));
+}
+
+export async function listProductionReportHistoryRuntime(input?: {
+  tenantId?: string;
+  dbClient?: any;
+}): Promise<AiGraderProductionHistoryResult> {
+  const { prisma } = await import("@tenkings/database");
+  const db = input?.dbClient ?? (prisma as any);
+  const tenantId = input?.tenantId ?? process.env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
   const rows = await db.aiGraderReport?.findMany?.({
+    where: {
+      tenantId,
+      publicationStatus: "published",
+      session: { is: { status: "inventory_ready" } },
+    },
     orderBy: { updatedAt: "desc" },
     take: 100,
     select: {
@@ -5145,12 +5642,16 @@ export async function listProductionReportHistoryRuntime(): Promise<AiGraderProd
       },
     },
   });
-  return buildAiGraderProductionHistoryResult(Array.isArray(rows) ? rows : []);
+  const reports = Array.isArray(rows) ? rows : [];
+  const hydrated = await hydrateAiGraderProductionHistoryRows(db, reports);
+  return buildAiGraderProductionHistoryResult(hydrated.map((row) => ({
+    ...row,
+    cardTitle: queueCardTitle(row),
+  })));
 }
 
 const AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT = 100;
 const AI_GRADER_FINISH_QUEUE_PAGE_SIZE = 100;
-const AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT = 10;
 
 async function hydrateAiGraderFinishCardsQueueRows(
   db: any,
@@ -5290,7 +5791,7 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
         tenantId,
         publicationStatus: "published",
         OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
-        session: { is: { status: { not: "inventory_ready" } } },
+        session: { is: { status: "published" } },
       },
       orderBy: [{ publishedAt: "asc" }, { createdAt: "asc" }],
       skip,
@@ -5309,24 +5810,8 @@ export async function listAiGraderFinishCardsQueueRuntime(input?: {
     skip += reports.length;
   }
 
-  const recentCompletedRows = await db.aiGraderReport?.findMany?.({
-    where: {
-      tenantId,
-      publicationStatus: "published",
-      OR: [{ cardAssetId: { not: null } }, { itemId: { not: null } }],
-      session: { is: { status: "inventory_ready" } },
-    },
-    orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
-    take: AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT,
-    select: reportSelect,
-  });
-  if (Array.isArray(recentCompletedRows) && recentCompletedRows.length) {
-    hydratedRows.push(...(await hydrateAiGraderFinishCardsQueueRows(db, recentCompletedRows, { tenantId })));
-  }
-
   return buildAiGraderFinishCardsQueueResult(hydratedRows, {
     activeLimit: AI_GRADER_FINISH_QUEUE_ACTIVE_LIMIT,
-    recentCompletedLimit: AI_GRADER_FINISH_QUEUE_RECENT_COMPLETED_LIMIT,
     nfcRequired,
   });
 }
