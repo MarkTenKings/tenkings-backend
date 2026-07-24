@@ -543,6 +543,73 @@ test("failed configured lighting durably rolls back to sessionless Start New Car
   }
 });
 
+test("Cancel Current Card preserves its closed audit manifest and restores a clean sessionless Start New Card", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-cancel-current-card-"));
+  try {
+    const { service } = configFor(outputDir);
+    await startHistoricalLegacyFixtureSession(service, { reportId: "cancel-current-card-report" });
+    const cancelledSessionId = service.manifest.sessionId;
+    const cancelledManifestPath = service.manifest.outputs.manifestPath;
+    const retainedEvidencePath = path.join(service.manifest.outputs.sessionDir, "retained-before-queue.txt");
+    fs.writeFileSync(retainedEvidencePath, "retained cancellation evidence");
+
+    const cancelled = await service.action("cancel-session", {});
+    assert.equal(cancelled.sessionId, undefined);
+    assert.equal(cancelled.currentStep, "start_new_card");
+    assert.equal(cancelled.sessionManifest.status, "planned");
+    assert.equal(cancelled.liveLighting.status, "safe_off");
+    assert.equal(cancelled.liveLighting.physicalState.state, "safe_off_verified");
+
+    const persistedCancelled = JSON.parse(fs.readFileSync(cancelledManifestPath, "utf8"));
+    assert.equal(persistedCancelled.sessionId, cancelledSessionId);
+    assert.equal(persistedCancelled.currentStep, "session_complete");
+    assert.equal(persistedCancelled.warmRunnerStatus.status, "cancelled");
+    assert.equal(fs.readFileSync(retainedEvidencePath, "utf8"), "retained cancellation evidence");
+
+    const next = await startHistoricalLegacyFixtureSession(service, { reportId: "after-cancel-report" });
+    assert.equal(next.currentStep, "capture_front");
+    assert.notEqual(next.sessionId, cancelledSessionId);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("Discard permanently removes a non-failed unpublished working-queue card and its exact local artifacts", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-discard-working-card-"));
+  try {
+    const { service } = configFor(outputDir);
+    service.enqueueRapidFinalization = () => {};
+    await startHistoricalLegacyFixtureSession(service, { reportId: "discard-finalizing-report" });
+    prepareExactCapturedCard(service, "discard-finalizing");
+    service.acquireCaptureLock("discard-test-owner");
+    await service.commitCurrentCardToRapidQueueUnderCaptureLock("discard-test-owner");
+    service.releaseCaptureLock("discard-test-owner");
+
+    const item = service.status().rapidCaptureQueue.items[0];
+    assert.equal(item.state, "finalizing", "discard is not limited to failed or insufficient-evidence cards");
+    const sessionDir = path.dirname(service.rapidQueue.items[0].manifestPath);
+    const reportDir = path.join(outputDir, "report-bundles", item.reportId);
+    fs.mkdirSync(reportDir, { recursive: true });
+    fs.writeFileSync(path.join(reportDir, "generated-report.txt"), "generated local report");
+    service.activeQueueItemId = item.queueItemId;
+
+    const discarded = await service.action("discard-queue-item", {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+    });
+
+    assert.equal(discarded.rapidCaptureQueue.items.length, 0);
+    assert.equal(discarded.rapidCaptureQueue.activeQueueItemId, undefined);
+    assert.equal(fs.existsSync(sessionDir), false);
+    assert.equal(fs.existsSync(reportDir), false);
+    const persistedQueue = JSON.parse(fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"), "utf8"));
+    assert.deepEqual(persistedQueue.items, []);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("atomic Back queue commit persists exact TIFF hashes and queue before capture ownership can release", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-atomic-queue-"));
   const observations = [];
