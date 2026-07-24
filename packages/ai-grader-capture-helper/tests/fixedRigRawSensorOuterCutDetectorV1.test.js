@@ -49,15 +49,13 @@ function transformFor(rawSha256, crop = {
   return { ...payload, transformSha256: canonicalHash(payload) };
 }
 
-function rawCardPlane() {
+function rawCardPlane(radius = 40, halfWidth = 400) {
   const width = 1000;
   const height = 1400;
   const data = new Float32Array(width * height * 3);
   const centerX = 500;
   const centerY = 700;
-  const halfWidth = 400;
   const halfHeight = 560;
-  const radius = 40;
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const qx = Math.abs(x + 0.5 - centerX) - (halfWidth - radius);
@@ -126,6 +124,23 @@ test('raw sensor outer-cut detector recovers exact strong edges from bounded nor
   assert.equal(result.status, 'computed');
   assert.equal(result.artifact.supportedCrossSectionCount, 192);
   assert.ok(result.artifact.minimumDetectedGradientDigitalUnits >= 4);
+});
+
+test('raw sensor outer-cut detector applies only the narrow rounded-corner recovery margin', () => {
+  const result = detectFixedRigRawBoundObservedOuterCutV1(
+    detectorInput(rawCardPlane(75)),
+  );
+  assert.equal(result.status, 'computed', JSON.stringify(result));
+  assert.equal(result.artifact.supportedCrossSectionCount, 192);
+  assert.ok(result.artifact.minimumDetectedGradientDigitalUnits >= 4);
+});
+
+test('raw sensor outer-cut detector does not apply the corner margin to straight edges', () => {
+  const result = detectFixedRigRawBoundObservedOuterCutV1(
+    detectorInput(rawCardPlane(40, 420)),
+  );
+  assert.equal(result.status, 'insufficient_evidence');
+  assert.match(result.reasons.join(' '), /gradient/i);
 });
 
 test('raw sensor outer-cut detector rejects normalization mismatch beyond its bounded recovery envelope', () => {
