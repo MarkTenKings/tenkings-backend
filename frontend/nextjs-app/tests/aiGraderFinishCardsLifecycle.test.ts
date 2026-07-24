@@ -7,7 +7,7 @@ import {
 } from "../lib/server/aiGraderProductionApi";
 import { deleteStorageObject } from "../lib/server/storage";
 
-const reportId = "report-1";
+const reportId = "TK-AIG-FD3E9DF1";
 const reportRowId = "report-row-1";
 const sessionId = "session-row-1";
 const gradingSessionId = "grading-session-1";
@@ -15,7 +15,7 @@ const queueItemId = "queue-item-1";
 const cardAssetId = "card-1";
 const itemId = "item-1";
 const batchId = "batch-1";
-const prefix = `ai-grader/reports/${reportId}/`;
+const prefix = `ai-grader/reports/${reportId.toLowerCase()}/`;
 
 test("Exact CardAsset storage deletion rejects traversal and prefix targets", async () => {
   await assert.rejects(deleteStorageObject("../shared-card.png"), /deletion key is invalid/i);
@@ -95,6 +95,8 @@ function discardDb(options: {
   cardStorageKey?: string;
   sharedCardStorageCount?: number;
   identityReportId?: string;
+  legacyPreRapidIdentity?: boolean;
+  confirmedAt?: string;
 } = {}) {
   const calls: string[] = [];
   const sessionStatus = options.sessionStatus ?? "published";
@@ -160,6 +162,7 @@ function discardDb(options: {
       async findUnique() {
         const identityReportId = options.identityReportId ?? reportId;
         const rapidQueueIdentity = { queueItemId, gradingSessionId, reportId: identityReportId };
+        const legacyPreRapidIdentity = options.legacyPreRapidIdentity === true;
         return {
           id: cardAssetId,
           batchId,
@@ -168,12 +171,13 @@ function discardDb(options: {
           classificationSourcesJson: {
             source: "ai_grader_confirmed_identity",
             reportId: identityReportId,
-            rapidQueueIdentity,
+            confirmedAt: options.confirmedAt ?? "2026-07-24T05:00:00.000Z",
+            ...(!legacyPreRapidIdentity ? { rapidQueueIdentity } : {}),
           },
           aiGradingJson: {
             source: "ai_grader_new_card_intake_v0",
             reportId: identityReportId,
-            rapidQueueIdentity,
+            ...(!legacyPreRapidIdentity ? { rapidQueueIdentity } : {}),
           },
         };
       },
@@ -292,10 +296,66 @@ test("Discard accepts an exclusively-owned CardAsset object outside the report p
   assert.equal(result.databaseDeleted, true);
 });
 
+test("Discard accepts the exact July 8 legacy card shape with both pre-Rapid identity fields absent", async () => {
+  const cardStorageKey = `card-assets/legacy/${cardAssetId}/normalized-front.png`;
+  const db = discardDb({
+    cardStorageKey,
+    legacyPreRapidIdentity: true,
+    confirmedAt: "2026-07-08T21:09:00.000Z",
+  });
+  const storageCalls: string[] = [];
+  const result = await discardAiGraderFinishCardRuntime({
+    tenantId: "ten-kings",
+    reportId,
+    operatorUserId: "operator-1",
+    dbClient: db,
+    async deleteStoragePrefix(storagePrefix) {
+      storageCalls.push(storagePrefix);
+      return { storagePrefix, listedObjectCount: 8, deletedObjectCount: 8 };
+    },
+    async deleteStorageObject(storageKey) {
+      storageCalls.push(storageKey);
+      return { storageKey, deleteRequestCompleted: true };
+    },
+  });
+  assert.deepEqual(storageCalls, [prefix, cardStorageKey]);
+  assert.equal(result.databaseDeleted, true);
+});
+
+test("Discard rejects absent Rapid identities on a post-introduction card before touching storage", async () => {
+  const db = discardDb({
+    legacyPreRapidIdentity: true,
+    confirmedAt: "2026-07-24T05:00:00.000Z",
+  });
+  let storageCalls = 0;
+  await assert.rejects(
+    discardAiGraderFinishCardRuntime({
+      tenantId: "ten-kings",
+      reportId,
+      operatorUserId: "operator-1",
+      dbClient: db,
+      async deleteStoragePrefix(storagePrefix) {
+        storageCalls += 1;
+        return { storagePrefix, listedObjectCount: 0, deletedObjectCount: 0 };
+      },
+      async deleteStorageObject(storageKey) {
+        storageCalls += 1;
+        return { storageKey, deleteRequestCompleted: true };
+      },
+    }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as Error & { code?: string }).code === "AI_GRADER_DISCARD_CARD_OWNERSHIP_UNPROVEN",
+  );
+  assert.equal(storageCalls, 0);
+});
+
 test("Discard rejects an external CardAsset object shared by another card before touching storage", async () => {
   const db = discardDb({
     cardStorageKey: `card-assets/${cardAssetId}/normalized-front.png`,
     sharedCardStorageCount: 1,
+    legacyPreRapidIdentity: true,
+    confirmedAt: "2026-07-08T21:09:00.000Z",
   });
   let storageCalls = 0;
   await assert.rejects(
@@ -320,10 +380,12 @@ test("Discard rejects an external CardAsset object shared by another card before
   assert.equal(storageCalls, 0);
 });
 
-test("Discard rejects a CardAsset whose duplicated report identity does not match before touching storage", async () => {
+test("Discard rejects a legacy CardAsset whose duplicated source report identity does not match before touching storage", async () => {
   const db = discardDb({
     cardStorageKey: `card-assets/${cardAssetId}/normalized-front.png`,
     identityReportId: "different-report",
+    legacyPreRapidIdentity: true,
+    confirmedAt: "2026-07-08T21:09:00.000Z",
   });
   let storageCalls = 0;
   await assert.rejects(
