@@ -218,6 +218,30 @@ function recordOrEmpty(value: unknown): Record<string, unknown> {
     : {};
 }
 
+export function assertFixedRigMathematicalWarmSideCaptureProfileV1(
+  value: unknown,
+  side: Side,
+): void {
+  const manifest = object(value, side + ' warm manifest');
+  const captureProfilePlan = object(
+    manifest.captureProfilePlan,
+    side + ' warm capture profile plan',
+  );
+  if (
+    manifest.status !== 'completed' ||
+    manifest.executionPath !== 'warm_full_forensic_runner' ||
+    manifest.captureProfile !== 'production_fast' ||
+    manifest.evidenceSide !== side ||
+    captureProfilePlan.rawEvidenceFormat !== 'tiff' ||
+    captureProfilePlan.evidenceRoles !== 'full_forensic' ||
+    captureProfilePlan.productionFastOptIn !== true
+  ) {
+    throw new Error(
+      side + ' warm manifest is not one completed production-fast package with full-forensic TIFF evidence.',
+    );
+  }
+}
+
 async function parseWarmSideV1(input: {
   side: Side;
   manifestPath: string;
@@ -232,10 +256,7 @@ async function parseWarmSideV1(input: {
     input.side + ' warm manifest',
   );
   const manifest = object(JSON.parse(bytes.toString('utf8')), input.side + ' warm manifest');
-  if (manifest.status !== 'completed' || manifest.executionPath !== 'warm_full_forensic_runner' ||
-      manifest.captureProfile !== 'full_forensic' || manifest.evidenceSide !== input.side) {
-    throw new Error(input.side + ' warm manifest is not one completed full-forensic side package.');
-  }
+  assertFixedRigMathematicalWarmSideCaptureProfileV1(manifest, input.side);
   if (path.resolve(string(manifest.packageDir, input.side + ' packageDir')) !== packageDir) {
     throw new Error(input.side + ' warm manifest packageDir does not match its protected location.');
   }
