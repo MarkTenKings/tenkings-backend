@@ -5253,20 +5253,18 @@ function assertExclusiveAiGraderIntakeBatch(batch: JsonRecord, reportId: string,
 
 function assertExclusiveAiGraderIntakeItem(item: JsonRecord, cardAssetId: string) {
   const ownerships = Array.isArray(item.ownerships) ? item.ownerships.filter(isRecord) : [];
-  const counts = isRecord(item._count) ? item._count : {};
-  const sharedRelationCount = [
-    counts.listings,
-    counts.packSlots,
-    counts.ingestionTask,
-    counts.shippingRequest,
-    counts.kioskReveals,
-    counts.goldenTicketPrize,
-    counts.packLabels,
-  ].map((value) => numericValue(value, 0)).reduce((sum: number, value) => sum + value, 0);
+  const sharedRelationPresent =
+    isRecord(item.listings) ||
+    (Array.isArray(item.packSlots) && item.packSlots.length > 0) ||
+    isRecord(item.ingestionTask) ||
+    isRecord(item.shippingRequest) ||
+    (Array.isArray(item.kioskReveals) && item.kioskReveals.length > 0) ||
+    isRecord(item.goldenTicketPrize) ||
+    (Array.isArray(item.packLabels) && item.packLabels.length > 0);
   if (
     optionalString(item.number) !== cardAssetId ||
     optionalString(item.cardQrCodeId) ||
-    sharedRelationCount > 0 ||
+    sharedRelationPresent ||
     ownerships.length !== 1 ||
     optionalString(ownerships[0]?.note) !== `Linked from confirmed AI Grader card asset ${cardAssetId}`
   ) {
@@ -5497,17 +5495,13 @@ export async function discardAiGraderFinishCardRuntime(input: {
           number: true,
           cardQrCodeId: true,
           ownerships: { select: { id: true, note: true } },
-          _count: {
-            select: {
-              listings: true,
-              packSlots: true,
-              ingestionTask: true,
-              shippingRequest: true,
-              kioskReveals: true,
-              goldenTicketPrize: true,
-              packLabels: true,
-            },
-          },
+          listings: { select: { id: true } },
+          packSlots: { select: { id: true }, take: 1 },
+          ingestionTask: { select: { id: true } },
+          shippingRequest: { select: { id: true } },
+          kioskReveals: { select: { id: true }, take: 1 },
+          goldenTicketPrize: { select: { id: true } },
+          packLabels: { select: { id: true }, take: 1 },
         },
       });
       if (!isRecord(item)) {
