@@ -1430,6 +1430,23 @@ test("production station rejects a version-compatible mock or contract bridge", 
   );
 });
 
+test("capture busy state leaves the live preview connected until the helper owns the atomic transition", () => {
+  const effectStart = stationPageSource.indexOf("const positioningStepActive");
+  const effectEnd = stationPageSource.indexOf("const expectedBinding", effectStart);
+  const previewEligibilityBlock = stationPageSource.slice(effectStart, effectEnd);
+  const captureStart = stationPageSource.indexOf("const runStationCapture");
+  const captureEnd = stationPageSource.indexOf("const cancelCurrentCard", captureStart);
+  const captureBlock = stationPageSource.slice(captureStart, captureEnd);
+
+  assert.ok(effectStart >= 0 && effectEnd > effectStart);
+  assert.ok(captureStart >= 0 && captureEnd > captureStart);
+  assert.doesNotMatch(previewEligibilityBlock, /captureBusy|previewBrowserCaptureActionActive/);
+  assert.match(previewEligibilityBlock, /status\.warmRunnerStatus\.captureLock\.held/);
+  assert.match(previewEligibilityBlock, /status\.warmRunnerStatus\.status !== "capturing"/);
+  assert.match(captureBlock, /setCaptureBusy\(side\)/);
+  assert.match(captureBlock, /runAiGraderCapture\(/);
+});
+
 test("station source has no Single route, separate queue mutation, OCR retry, duplicate next control, or hosted mock station API", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /stationCaptureMode|configure-rapid-capture|queue-current-card|retryOcrPrefill|Retry OCR|Start Next Grade|callStationContract/);

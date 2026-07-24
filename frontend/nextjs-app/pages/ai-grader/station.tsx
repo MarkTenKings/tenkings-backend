@@ -873,7 +873,6 @@ export default function AiGraderStationPage() {
   const [discardCandidate, setDiscardCandidate] = useState<AiGraderRapidCaptureQueueItem | null>(null);
   const publicationReviewClaimRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [publicationReviewClaim, setPublicationReviewClaim] = useState<AiGraderRapidQueueIdentity | null>(null);
-  const previewBrowserCaptureActionActive = captureBusy === "front" || captureBusy === "back";
   const [error, setError] = useState<string | null>(null);
   const [bridgeUrl, setBridgeUrl] = useState(DEFAULT_AI_GRADER_STATION_BRIDGE_URL);
   const [stationToken, setStationToken] = useState("");
@@ -1357,7 +1356,6 @@ export default function AiGraderStationPage() {
     const previewEligible = bridgeConnected &&
       Boolean(stationToken.trim()) &&
       positioningStepActive &&
-      !previewBrowserCaptureActionActive &&
       !status.warmRunnerStatus.captureLock.held &&
       status.warmRunnerStatus.status !== "capturing" &&
       status.warmRunnerStatus.previewPolicy.holdActive !== true;
@@ -1504,7 +1502,6 @@ export default function AiGraderStationPage() {
   }, [
     bridgeConnected,
     bridgeUrl,
-    previewBrowserCaptureActionActive,
     stationToken,
     status.currentStep,
     status.sessionManifest.backCaptured,
