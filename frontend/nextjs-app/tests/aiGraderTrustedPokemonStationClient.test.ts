@@ -55,7 +55,7 @@ const trustedAuthority: TrustedPokemonCardFormatAuthorityV1 = {
   },
 };
 
-test("the browser sends lookup fields only and binds the returned hosted identity", async () => {
+test("the browser sends identity fields only and binds the returned trusted identity", async () => {
   let requestBody: unknown;
   const fetchImpl: typeof fetch = async (_url, init) => {
     requestBody = JSON.parse(String(init?.body));
@@ -65,14 +65,12 @@ test("the browser sends lookup fields only and binds the returned hosted identit
     }), { status: 200, headers: { "content-type": "application/json" } });
   };
   const authority = await resolveAiGraderTrustedPokemonCardFormatAuthorityV1({
-    identity: {
-      ...trustedAuthority.artifact.cardIdentity,
-      title: "Browser text is not physical-format authority",
-    },
+    identity: trustedAuthority.artifact.cardIdentity,
     headers: { authorization: "Bearer test" },
   }, fetchImpl);
   assert.deepEqual(requestBody, {
     lookup: {
+      title: "Pikachu",
       setId: "pokemon-base",
       programId: "pokemon",
       cardNumber: "58/102",

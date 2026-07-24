@@ -98,7 +98,10 @@ const identifierSchema = z
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/);
 
 export const trustedPokemonCardFormatAuthorityArtifactV1Schema = z.strictObject({
-  resolverVersion: z.literal("ten-kings-hosted-card-format-resolver-v1"),
+  resolverVersion: z.union([
+    z.literal("ten-kings-hosted-card-format-resolver-v1"),
+    z.literal("ten-kings-authenticated-operator-card-format-resolver-v1"),
+  ]),
   cardIdentity: z.strictObject({
     title: z.string().trim().min(1).max(300),
     sideCount: z.literal(2),
@@ -119,20 +122,32 @@ export const trustedPokemonCardFormatAuthorityArtifactV1Schema = z.strictObject(
     profileArtifactSha256: z.literal(POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256),
   }),
   sourceRecord: z.strictObject({
-    recordType: z.literal("hosted_set_card"),
+    recordType: z.union([
+      z.literal("hosted_set_card"),
+      z.literal("authenticated_operator_card_identity"),
+    ]),
     recordId: identifierSchema,
     recordUpdatedAt: z.string().datetime({ offset: true }),
     recordSha256: sha256Schema,
   }),
   identitySourceArtifact: z.strictObject({
-    artifactType: z.literal("set_taxonomy_source"),
+    artifactType: z.union([
+      z.literal("set_taxonomy_source"),
+      z.literal("authenticated_operator_input"),
+    ]),
     artifactId: identifierSchema,
     artifactSha256: sha256Schema,
     trustStatus: z.literal("trusted"),
   }),
   provenance: z.strictObject({
-    authority: z.literal("ten_kings_hosted_immutable_card_identity"),
-    physicalFormatAuthority: z.literal("ten_kings_owner_approved_card_format_record"),
+    authority: z.union([
+      z.literal("ten_kings_hosted_immutable_card_identity"),
+      z.literal("ten_kings_authenticated_operator_card_identity"),
+    ]),
+    physicalFormatAuthority: z.union([
+      z.literal("ten_kings_owner_approved_card_format_record"),
+      z.literal("ten_kings_authenticated_operator_pokemon_standard_selection"),
+    ]),
     browserSelfDeclarationAccepted: z.literal(false),
   }),
 });

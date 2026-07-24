@@ -7,6 +7,7 @@ import {
 } from "@tenkings/shared";
 import {
   parseTrustedPokemonCardLookupBody,
+  resolvePokemonStandardCardAuthorityRuntime,
   signHostedPokemonStandardCardAuthorityV1,
   type HostedPokemonCardAuthorityRecordV1,
 } from "../lib/server/aiGraderTrustedCardFormatAuthority";
@@ -17,6 +18,7 @@ import {
 
 const HMAC_KEY = "test-only-hosted-pokemon-authority-key-0001";
 const LOOKUP = {
+  title: "Charizard",
   setId: "pokemon-base",
   programId: "pokemon",
   cardNumber: "4/102",
@@ -141,6 +143,88 @@ test("the browser request cannot self-declare a trusted profile or measurement",
   assert.throws(() => parseTrustedPokemonCardLookupBody({
     lookup: { ...LOOKUP, measurements: [] },
   }));
+});
+
+test("an authenticated human operator can start a new Pokemon card without a hosted catalog row", async () => {
+  let catalogQueried = false;
+  const lookup = {
+    title: "GRENINJA",
+    setId: "BREAKPOINT XY",
+    programId: "REV-FOIL",
+    cardNumber: "40/122",
+    variantId: null,
+    parallelId: null,
+  } as const;
+  const authority = await resolvePokemonStandardCardAuthorityRuntime({
+    tenantId: "ten-kings",
+    lookup,
+    actor: {
+      type: "human_operator",
+      role: "ai_grader_operator",
+      user: {
+        id: "operator-user-1",
+        phone: null,
+        displayName: "Mark",
+      },
+      sessionId: "operator-session-1",
+      tokenHash: "operator-token-hash",
+      audit: {
+        actorType: "human_operator",
+        action: "card-search",
+        requestedAt: "2026-07-24T00:00:00.000Z",
+        userId: "operator-user-1",
+        role: "ai_grader_operator",
+      },
+    },
+    dbClient: {
+      setCard: {
+        findUnique: async () => {
+          catalogQueried = true;
+          return null;
+        },
+      },
+    },
+    env: {
+      NODE_ENV: "test",
+      AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY: HMAC_KEY,
+      AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ID: "pokemon-authority-test-v1",
+    },
+  });
+  assert.equal(catalogQueried, false);
+  assert.deepEqual(authority.artifact.cardIdentity, {
+    ...lookup,
+    sideCount: 2,
+    tenantId: "ten-kings",
+  });
+  assert.equal(
+    authority.artifact.resolverVersion,
+    "ten-kings-authenticated-operator-card-format-resolver-v1",
+  );
+  assert.equal(
+    authority.artifact.sourceRecord.recordType,
+    "authenticated_operator_card_identity",
+  );
+  assert.equal(
+    authority.artifact.provenance.authority,
+    "ten_kings_authenticated_operator_card_identity",
+  );
+  assert.deepEqual(authority.artifact.formatSelection, {
+    game: "pokemon_tcg",
+    physicalFormat: "standard",
+    widthMm: 63.5,
+    heightMm: 88.9,
+    profileId: "pokemon_tcg_standard",
+    profileVersion: "1.0.0",
+    profileArtifactSha256: "691124bc600aeffe0106a6db81a64e45b78b7ce39665153ebf24972e5e6105ab",
+  });
+  assert.equal(
+    aiGraderTrustedPokemonCardFormatAuthorityIssue(authority, {
+      AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY: HMAC_KEY,
+      AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY_ID: "pokemon-authority-test-v1",
+    }),
+    undefined,
+  );
+  assert.equal(JSON.stringify(authority).includes("operator-user-1"), false);
 });
 
 test("the Production report boundary rejects a caller-created or forged authority", () => {
