@@ -1294,6 +1294,19 @@ test("insufficient Mathematical evidence persists exact stage, reasons, flags, a
       }),
       /review-ready item/i,
     );
+    await service.shutdown("insufficient-evidence persistence reload");
+    const reloaded = createService(outputDir, async () => insufficientResult());
+    try {
+      const persisted = reloaded.status().rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === queued.item.queueItemId,
+      );
+      assert.equal(persisted.state, "insufficient_evidence");
+      assert.equal(persisted.history.at(-1).state, "insufficient_evidence");
+      assert.equal(persisted.mathematicalV1.status, "insufficient_evidence");
+      assert.equal(persisted.ocr.state, queued.item.ocr.state);
+    } finally {
+      await reloaded.shutdown("insufficient-evidence persistence reload complete");
+    }
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }

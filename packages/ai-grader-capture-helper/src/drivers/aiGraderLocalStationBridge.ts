@@ -3581,6 +3581,7 @@ function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
 
 const RAPID_WORKFLOW_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
   "front_captured", "front_processing", "back_positioning", "back_captured", "finalizing",
+  "finding_review_required", "insufficient_evidence",
   "report_ready_needs_confirm", "confirmed_needs_publish", "published", "failed",
 ]);
 const RAPID_RAW_EVIDENCE_ROLES = [
