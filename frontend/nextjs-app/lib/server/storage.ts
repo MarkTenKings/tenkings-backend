@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import {
+  DeleteObjectCommand,
   DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -100,6 +101,11 @@ export type StoragePrefixDeleteResult = {
   storagePrefix: string;
   listedObjectCount: number;
   deletedObjectCount: number;
+};
+
+export type StorageObjectDeleteResult = {
+  storageKey: string;
+  deleteRequestCompleted: true;
 };
 
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/i;
@@ -369,6 +375,45 @@ function controlledStoragePrefix(value: string) {
     throw new Error("Storage deletion prefix is invalid.");
   }
   return normalized;
+}
+
+function controlledStorageObjectKey(value: string) {
+  const normalized = String(value ?? "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (
+    !normalized ||
+    normalized.endsWith("/") ||
+    normalized.includes("..") ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(normalized)
+  ) {
+    throw new Error("Storage object deletion key is invalid.");
+  }
+  return normalized;
+}
+
+export async function deleteStorageObject(storageKey: string): Promise<StorageObjectDeleteResult> {
+  const key = controlledStorageObjectKey(storageKey);
+  const storageMode = getStorageMode();
+  if (storageMode === "s3") {
+    await getS3Client().send(new DeleteObjectCommand({
+      Bucket: s3Bucket,
+      Key: key,
+    }));
+    return { storageKey: key, deleteRequestCompleted: true };
+  }
+
+  const root = path.resolve(localRoot);
+  const target = path.resolve(root, ...key.split("/").filter(Boolean));
+  if (target === root || !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error("Local storage object deletion target is outside the configured storage root.");
+  }
+  try {
+    const stats = await fs.stat(target);
+    if (!stats.isFile()) throw new Error("Local storage object deletion target is not a file.");
+    await fs.unlink(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return { storageKey: key, deleteRequestCompleted: true };
 }
 
 export async function deleteStoragePrefix(storagePrefix: string): Promise<StoragePrefixDeleteResult> {

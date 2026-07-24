@@ -65,7 +65,11 @@ import {
   type AiGraderProductionActorAudit,
 } from "./aiGraderProductionAuth";
 import type { AiGraderLabelSheetsResult } from "../aiGraderLabelSheets";
-import { readStorageBuffer, type StoragePrefixDeleteResult } from "./storage";
+import {
+  readStorageBuffer,
+  type StorageObjectDeleteResult,
+  type StoragePrefixDeleteResult,
+} from "./storage";
 import { AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION } from "../aiGraderLocalStation";
 import {
   completePublishedAiGraderCardTx,
@@ -302,6 +306,7 @@ export type AiGraderAddToInventoryResult = {
 export type AiGraderDiscardFinishCardResult = {
   reportId: string;
   storage: StoragePrefixDeleteResult;
+  cardAssetStorage?: StorageObjectDeleteResult;
   databaseDeleted: true;
   deleted: {
     report: number;
@@ -5278,6 +5283,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
   actorAudit?: AiGraderProductionActorAudit | null;
   dbClient?: any;
   deleteStoragePrefix(storagePrefix: string): Promise<StoragePrefixDeleteResult>;
+  deleteStorageObject(storageKey: string): Promise<StorageObjectDeleteResult>;
 }): Promise<AiGraderDiscardFinishCardResult> {
   if (!input.operatorUserId) {
     throw aiGraderDiscardError(
@@ -5294,6 +5300,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
   const { prisma } = await import("@tenkings/database");
   const db = input.dbClient ?? (prisma as any);
   let storageResult: StoragePrefixDeleteResult | null = null;
+  let cardAssetStorageResult: StorageObjectDeleteResult | null = null;
   try {
     return await db.$transaction(async (tx: any) => {
       if (typeof tx.$queryRaw !== "function") {
@@ -5409,13 +5416,27 @@ export async function discardAiGraderFinishCardRuntime(input: {
       const classificationSources = isRecord(card.classificationSourcesJson) ? card.classificationSourcesJson : {};
       const rapidIdentity = firstRecord(classificationSources.rapidQueueIdentity);
       const queueItemId = optionalString(rapidIdentity?.queueItemId);
-      if (!queueItemId || !optionalString(card.storageKey)?.startsWith(canonicalPrefix)) {
+      const cardAssetStorageKey = optionalString(card.storageKey);
+      if (!queueItemId || !cardAssetStorageKey) {
         throw aiGraderDiscardError(
           "The linked CardAsset does not match the report's exact storage and queue identity.",
           "AI_GRADER_DISCARD_CARD_OWNERSHIP_UNPROVEN",
         );
       }
       assertExclusiveAiGraderIntakeCard({ card, reportId, gradingSessionId, queueItemId });
+      const cardAssetStorageInsideReportPrefix = cardAssetStorageKey.startsWith(canonicalPrefix);
+      const sharedCardStorageCount = await tx.cardAsset.count({
+        where: {
+          id: { not: cardAssetId },
+          storageKey: cardAssetStorageKey,
+        },
+      });
+      if (sharedCardStorageCount > 0) {
+        throw aiGraderDiscardError(
+          "The linked CardAsset storage object is shared by another card.",
+          "AI_GRADER_DISCARD_CARD_STORAGE_SHARED",
+        );
+      }
       const batchId = optionalString(card.batchId);
       const batch = batchId
         ? await tx.cardBatch.findUnique({
@@ -5485,6 +5506,9 @@ export async function discardAiGraderFinishCardRuntime(input: {
       assertReportStoragePrefix(report, canonicalPrefix);
 
       storageResult = await input.deleteStoragePrefix(canonicalPrefix);
+      if (!cardAssetStorageInsideReportPrefix) {
+        cardAssetStorageResult = await input.deleteStorageObject(cardAssetStorageKey);
+      }
 
       const tags = await tx.aiGraderNfcTag.findMany({
         where: { tenantId: input.tenantId, aiGraderReportId: reportRowId },
@@ -5530,6 +5554,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
       return {
         reportId,
         storage: storageResult,
+        ...(cardAssetStorageResult ? { cardAssetStorage: cardAssetStorageResult } : {}),
         databaseDeleted: true,
         deleted: {
           report: deletedReport.count,
@@ -5563,6 +5588,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
       partialResult?: {
         reportId: string;
         storage: StoragePrefixDeleteResult;
+        cardAssetStorage?: StorageObjectDeleteResult;
         databaseDeleted: false;
         retryable: true;
       };
@@ -5572,6 +5598,7 @@ export async function discardAiGraderFinishCardRuntime(input: {
     wrapped.partialResult = {
       reportId,
       storage: storageResult,
+      ...(cardAssetStorageResult ? { cardAssetStorage: cardAssetStorageResult } : {}),
       databaseDeleted: false,
       retryable: true,
     };
