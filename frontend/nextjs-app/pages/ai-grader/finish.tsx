@@ -6,7 +6,7 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 
-type QueueStage = "needs_comps_review" | "needs_slab_photos" | "ready_for_inventory" | "complete";
+type QueueStage = "needs_comps_review" | "needs_slab_photos" | "ready_for_inventory";
 type StageFilter = "active" | QueueStage;
 type NoticeTone = "info" | "success" | "error";
 
@@ -118,7 +118,6 @@ const stageFilters: Array<{ id: StageFilter; label: string }> = [
   { id: "needs_comps_review", label: "Comps review" },
   { id: "needs_slab_photos", label: "Slab photos" },
   { id: "ready_for_inventory", label: "Ready for inventory" },
-  { id: "complete", label: "Complete" },
 ];
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -158,8 +157,7 @@ async function verifyProductionSession(token: string): Promise<ProductionActor> 
 function stageLabel(stage: QueueStage) {
   if (stage === "needs_comps_review") return "Needs comps review";
   if (stage === "needs_slab_photos") return "Needs slab photos";
-  if (stage === "ready_for_inventory") return "Ready for inventory";
-  return "Complete";
+  return "Ready for inventory";
 }
 
 function gradeLabel(grade?: number | null) {
@@ -237,9 +235,6 @@ function compsStatusPending(status?: string | null) {
 }
 
 function actionMessage(item: FinishQueueItem) {
-  if (item.queueStatus === "complete") {
-    return { title: "Complete", message: "This card has passed every gate and is in inventory." };
-  }
   if (item.queueStatus === "needs_comps_review") {
     if (item.valuation.errorMessage) {
       return { title: "Retry comps", message: item.valuation.errorMessage };
@@ -284,6 +279,7 @@ export default function AiGraderFinishPage() {
   const [notices, setNotices] = useState<Record<string, CardNotice>>({});
   const [uploads, setUploads] = useState<Record<string, UploadState>>({});
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [discardCandidate, setDiscardCandidate] = useState<FinishQueueItem | null>(null);
   const bootTokenRef = useRef<string | null>(null);
 
   const loadQueueWithToken = useCallback(async (token: string, preferredReportId?: string | null, silent = false) => {
@@ -291,7 +287,7 @@ export default function AiGraderFinishPage() {
       setQueueState("loading");
       setQueueMessage("Loading cards in chronological order.");
     }
-    const response = await fetch("/api/admin/ai-grader/production/finish-queue?includeCompleted=true", {
+    const response = await fetch("/api/admin/ai-grader/production/finish-queue", {
       method: "GET",
       headers: buildAdminHeaders(token, { accept: "application/json" }),
       cache: "no-store",
@@ -326,7 +322,7 @@ export default function AiGraderFinishPage() {
     setSelectedReportId((current) => {
       const preferred = preferredReportId && result.items.some((item) => item.reportId === preferredReportId) ? preferredReportId : null;
       const retained = current && result.items.some((item) => item.reportId === current) ? current : null;
-      return preferred || retained || result.items.find((item) => item.queueStatus !== "complete")?.reportId || result.items[0]?.reportId || null;
+      return preferred || retained || result.items[0]?.reportId || null;
     });
     setQueueState("ready");
     setQueueMessage(result.items.length ? `${result.items.length} card${result.items.length === 1 ? "" : "s"} loaded.` : "No cards are in the queue.");
@@ -442,17 +438,16 @@ export default function AiGraderFinishPage() {
       needs_comps_review: 0,
       needs_slab_photos: 0,
       ready_for_inventory: 0,
-      complete: 0,
     };
     for (const item of queue.items) {
       result[item.queueStatus] += 1;
-      if (item.queueStatus !== "complete") result.active += 1;
+      result.active += 1;
     }
     return result;
   }, [queue.items]);
 
   const visibleItems = useMemo(
-    () => queue.items.filter((item) => (filter === "active" ? item.queueStatus !== "complete" : item.queueStatus === filter)),
+    () => queue.items.filter((item) => filter === "active" || item.queueStatus === filter),
     [filter, queue.items]
   );
 
@@ -724,13 +719,55 @@ export default function AiGraderFinishPage() {
       });
       const payload = await readPayload(response);
       if (!response.ok || payload.ok !== true) throw apiError(response, payload, "The card could not be added to inventory.");
-      setNotice(item.reportId, "success", "Inventory action complete.");
-      const activeSession = await ensureAuthorizedSession("refresh the completed card");
-      await loadQueueWithToken(activeSession.token, item.reportId, true);
-      setFilter("complete");
-      setSelectedReportId(item.reportId);
+      const activeSession = await ensureAuthorizedSession("refresh Finish Cards");
+      await loadQueueWithToken(activeSession.token, null, true);
+      setFilter("active");
+      setQueueState("ready");
+      setQueueMessage("Card added to Inventory. It is now available in main Inventory and AI Grader History.");
     } catch (error) {
       setNotice(item.reportId, "error", error instanceof Error ? error.message : "The card could not be added to inventory.");
+    } finally {
+      setBusyAction(null);
+    }
+  };
+
+  const discardFinishCard = async () => {
+    const item = discardCandidate;
+    if (!item) return;
+    setBusyAction(`discard:${item.reportId}`);
+    try {
+      const response = await fetch("/api/admin/ai-grader/production/discard-finish-card", {
+        method: "POST",
+        headers: await authenticatedHeaders({ "content-type": "application/json" }, "permanently discard this card"),
+        body: JSON.stringify({ reportId: item.reportId }),
+      });
+      const payload = await readPayload(response);
+      if (!response.ok || payload.ok !== true) {
+        throw apiError(response, payload, "The card could not be discarded.");
+      }
+      setDiscardCandidate(null);
+      setSelectedCompIds((current) => {
+        const next = { ...current };
+        delete next[item.reportId];
+        return next;
+      });
+      setNotices((current) => {
+        const next = { ...current };
+        delete next[item.reportId];
+        return next;
+      });
+      setUploads((current) => {
+        const next = { ...current };
+        delete next[item.reportId];
+        return next;
+      });
+      const activeSession = await ensureAuthorizedSession("refresh Finish Cards");
+      await loadQueueWithToken(activeSession.token, null, true);
+      setQueueState("ready");
+      setQueueMessage("Card permanently discarded from Finish Cards.");
+    } catch (error) {
+      setNotice(item.reportId, "error", error instanceof Error ? error.message : "The card could not be discarded.");
+      setDiscardCandidate(null);
     } finally {
       setBusyAction(null);
     }
@@ -881,10 +918,20 @@ export default function AiGraderFinishPage() {
                       {` / ${formatDate(selectedItem.publishedAt ?? selectedItem.createdAt)}`}
                     </p>
                   </div>
-                  <span className={`stage-badge large ${selectedItem.queueStatus}`}>{stageLabel(selectedItem.queueStatus)}</span>
+                  <div className="selected-card-actions">
+                    <span className={`stage-badge large ${selectedItem.queueStatus}`}>{stageLabel(selectedItem.queueStatus)}</span>
+                    <button
+                      type="button"
+                      className="button destructive"
+                      onClick={() => setDiscardCandidate(selectedItem)}
+                      disabled={busyAction !== null}
+                    >
+                      Discard
+                    </button>
+                  </div>
                 </div>
 
-                <div className={`next-action ${selectedItem.valuation.errorMessage ? "blocked" : selectedItem.queueStatus === "complete" ? "done" : ""}`}>
+                <div className={`next-action ${selectedItem.valuation.errorMessage ? "blocked" : ""}`}>
                   <div>
                     <span>Next action</span>
                     <strong>{selectedAction.title}</strong>
@@ -1086,9 +1133,7 @@ export default function AiGraderFinishPage() {
                     >
                       {busyAction === `inventory:${selectedItem.reportId}` ? "Adding to inventory" : "Add to inventory"}
                     </button>
-                  ) : (
-                    <div className="inventory-complete"><strong>Inventory complete</strong><span>This card needs no further action.</span></div>
-                  )}
+                  ) : null}
                 </section>
               </>
             ) : (
@@ -1100,6 +1145,45 @@ export default function AiGraderFinishPage() {
           </section>
         </div>
       </main>
+
+      {discardCandidate ? (
+        <div className="discard-backdrop" role="presentation">
+          <section
+            className="discard-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="discard-title"
+            aria-describedby="discard-warning"
+          >
+            <p className="eyebrow">Destructive action</p>
+            <h2 id="discard-title">Are you sure you want to discard this card?</h2>
+            <p id="discard-warning">
+              All data for this card will be permanently erased, including its hosted report, captured evidence,
+              label assignment, comps, slab photos, NFC state, and pre-inventory card records. This cannot be undone.
+            </p>
+            <strong>{discardCandidate.cardTitle}</strong>
+            <small>{discardCandidate.reportId}</small>
+            <div className="discard-actions">
+              <button
+                type="button"
+                className="button destructive"
+                onClick={() => void discardFinishCard()}
+                disabled={busyAction === `discard:${discardCandidate.reportId}`}
+              >
+                {busyAction === `discard:${discardCandidate.reportId}` ? "Discarding" : "Yes, Discard This Card"}
+              </button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setDiscardCandidate(null)}
+                disabled={busyAction === `discard:${discardCandidate.reportId}`}
+              >
+                No, Cancel
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <style jsx>{`
         :global(body) {
@@ -1234,6 +1318,49 @@ export default function AiGraderFinishPage() {
           color: #26343c;
           background: #ffffff;
           border-color: #cbd3d7;
+        }
+        .button.destructive {
+          color: #ffffff;
+          background: #a82f29;
+          border-color: #a82f29;
+        }
+        .selected-card-actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .discard-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: grid;
+          place-items: center;
+          padding: 20px;
+          background: rgba(16, 22, 26, 0.68);
+        }
+        .discard-dialog {
+          display: grid;
+          gap: 14px;
+          width: min(560px, 100%);
+          padding: 24px;
+          background: #ffffff;
+          border: 2px solid #a82f29;
+          border-radius: 8px;
+          box-shadow: 0 20px 60px rgba(16, 22, 26, 0.32);
+        }
+        .discard-dialog > p:not(.eyebrow) {
+          color: #4f5c64;
+          line-height: 1.55;
+        }
+        .discard-dialog > small {
+          color: #6a777e;
+          overflow-wrap: anywhere;
+        }
+        .discard-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          margin-top: 6px;
         }
         .sheets-link {
           display: inline-grid;

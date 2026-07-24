@@ -2447,12 +2447,13 @@ export type AiGraderLocalReportHistoryItem = {
   confidenceBand?: string;
   title?: string;
   category?: string;
+  publicReportUrl?: string;
   warnings: string[];
 };
 
 export type AiGraderLocalReportHistory = {
   generatedAt: string;
-  source: "local_bridge_file_backed" | "fixture";
+  source: "local_bridge_file_backed" | "fixture" | "persisted_records";
   items: AiGraderLocalReportHistoryItem[];
   stats: {
     allTime: number;

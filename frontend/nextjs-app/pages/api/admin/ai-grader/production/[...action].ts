@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, readCachedAiGraderNfcSchemaReadiness } from "@tenkings/database";
 import {
   getS3ObjectAcl,
+  deleteStoragePrefix,
   presignUploadUrl,
   publicUrlFor,
   readStoragePrefix,
@@ -15,6 +16,7 @@ import {
   addAiGraderCardToInventoryRuntime,
   createAiGraderProductionApiHandler,
   createAiGraderCardFromReportRuntime,
+  discardAiGraderFinishCardRuntime,
   finalizeAiGraderSlabbedPhotoUploadRuntime,
   listAiGraderFinishCardsQueueRuntime,
   listProductionReportHistoryRuntime,
@@ -94,7 +96,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
       return { ...integrity, ...dimensions };
     },
     persist: persistProductionReleaseRuntime,
-    listHistory: listProductionReportHistoryRuntime,
+    listHistory: ({ tenantId }) => listProductionReportHistoryRuntime({ tenantId }),
     listFinishQueue: ({ tenantId }) => listAiGraderFinishCardsQueueRuntime({ tenantId }),
     listLabelSheets: ({ tenantId }) => listAiGraderLabelSheetsRuntime({ tenantId }),
     searchCards: searchAiGraderCardItemsRuntime,
@@ -119,6 +121,10 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     renderLabelSheetPdf: renderAiGraderLabelSheetPdfRuntime,
     renderLabelSheetCutSvg: renderAiGraderLabelSheetCutSvgRuntime,
     addToInventory: addAiGraderCardToInventoryRuntime,
+    discardFinishCard: (input) => discardAiGraderFinishCardRuntime({
+      ...input,
+      deleteStoragePrefix,
+    }),
   });
   return runtime(req, res);
 }

@@ -15,7 +15,7 @@ import type {
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID =
   'fixed_rig_raw_sensor_outer_cut_detector_v1' as const;
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION =
-  'fixed_rig_raw_sensor_outer_cut_detector_v1.0.0' as const;
+  'fixed_rig_raw_sensor_outer_cut_detector_v1.1.0' as const;
 export const FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION =
   'fixed-rig-raw-bound-observed-outer-cut-artifact-v1' as const;
 
@@ -87,6 +87,7 @@ export interface DetectFixedRigRawBoundObservedOuterCutV1Input {
 
 const POLICY = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
   .outerCutBoundaryMeasurement;
+const MAX_EFFECTIVE_SEARCH_MULTIPLIER = 4;
 
 function fail(reasons: string[]): FixedRigRawBoundObservedOuterCutDetectionV1 {
   return {
@@ -224,6 +225,57 @@ function rawVectorLengthMm(
   );
 }
 
+function calibratedSegmentationBoundaryMm(input: {
+  segmentationBoundaryU95Px: number;
+  pixelsPerMmX: number;
+  pixelsPerMmY: number;
+}): number {
+  return input.segmentationBoundaryU95Px * Math.max(
+    1 / input.pixelsPerMmX,
+    1 / input.pixelsPerMmY,
+  );
+}
+
+function normalizationAspectMismatchMm(
+  transform: CardGeometryRawToNormalizedTransformV1,
+  pixelsPerMmX: number,
+): number {
+  const expectedRawCropWidth = transform.crop.heightPx *
+    transform.outputWidthPx / transform.outputHeightPx;
+  const halfWidthMismatchRawPx = Math.abs(
+    transform.crop.widthPx - expectedRawCropWidth,
+  ) / 2;
+  const normalizedPixelsPerRawCropPixel =
+    transform.outputWidthPx / transform.crop.widthPx;
+  return halfWidthMismatchRawPx * normalizedPixelsPerRawCropPixel / pixelsPerMmX;
+}
+
+function sortedGradientCandidates(input: {
+  plane: FixedRigOuterCutRgbPlaneV1;
+  point: FixedRigPointV1;
+  normal: FixedRigPointV1;
+  searchPixels: number;
+}): Array<{ gradient: number; offset: number }> {
+  const candidates: Array<{ gradient: number; offset: number }> = [];
+  for (let offset = -input.searchPixels; offset < input.searchPixels; offset += 1) {
+    const first = lumaAt(
+      input.plane,
+      input.point.x + input.normal.x * offset,
+      input.point.y + input.normal.y * offset,
+    );
+    const second = lumaAt(
+      input.plane,
+      input.point.x + input.normal.x * (offset + 1),
+      input.point.y + input.normal.y * (offset + 1),
+    );
+    if (first === undefined || second === undefined) continue;
+    candidates.push({ gradient: Math.abs(second - first), offset: offset + 0.5 });
+  }
+  candidates.sort((left, right) => right.gradient - left.gradient ||
+    Math.abs(left.offset) - Math.abs(right.offset) || left.offset - right.offset);
+  return candidates;
+}
+
 export function verifyFixedRigRawBoundObservedOuterCutArtifactV1(
   artifact: FixedRigRawBoundObservedOuterCutArtifactV1,
 ): boolean {
@@ -290,6 +342,25 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
   }
   const clockwise = signedPolygonArea(rawIntended) > 0;
   const minimumGradient = POLICY.minimumDirectionalGradientDigitalUnits / 255;
+  const segmentationBoundaryMm = calibratedSegmentationBoundaryMm(input);
+  const geometryMismatchMm = normalizationAspectMismatchMm(
+    transform,
+    input.pixelsPerMmX,
+  );
+  // The manifest band remains the first and authoritative search. A failed
+  // nominal cross-section may use only the exact calibration U95 plus the
+  // measured 5:7 normalization mismatch to reach the same physical edge.
+  // This compensates upstream localization error without lowering the edge
+  // gradient, accepting a missing sample, or consulting another image.
+  const effectiveSearchHalfWidthMm = POLICY.searchHalfWidthMm +
+    segmentationBoundaryMm + geometryMismatchMm;
+  const maximumEffectiveSearchHalfWidthMm =
+    POLICY.searchHalfWidthMm * MAX_EFFECTIVE_SEARCH_MULTIPLIER;
+  if (effectiveSearchHalfWidthMm > maximumEffectiveSearchHalfWidthMm) {
+    return fail([
+      'The raw-to-normalized geometry mismatch exceeds the bounded outer-cut recovery envelope.',
+    ]);
+  }
   const detectedRaw: FixedRigPointV1[] = [];
   const gradients: number[] = [];
   let unsupported = 0;
@@ -308,25 +379,32 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
       unsupported += 1;
       continue;
     }
-    const searchPixels = Math.max(1, Math.ceil(POLICY.searchHalfWidthMm / mmPerNormalPixel));
-    const candidates: Array<{ gradient: number; offset: number }> = [];
-    for (let offset = -searchPixels; offset < searchPixels; offset += 1) {
-      const first = lumaAt(
+    const nominalSearchPixels = Math.max(
+      1,
+      Math.ceil(POLICY.searchHalfWidthMm / mmPerNormalPixel),
+    );
+    const effectiveSearchPixels = Math.max(
+      nominalSearchPixels,
+      Math.ceil(effectiveSearchHalfWidthMm / mmPerNormalPixel),
+    );
+    let candidates = sortedGradientCandidates({
+      plane,
+      point: sample.point,
+      normal,
+      searchPixels: nominalSearchPixels,
+    });
+    let strongest = candidates[0];
+    if (!strongest || strongest.gradient < minimumGradient) {
+      // Recovery is deliberately staged: a supported nominal observation is
+      // never replaced by a farther artwork or glare transition.
+      candidates = sortedGradientCandidates({
         plane,
-        sample.point.x + normal.x * offset,
-        sample.point.y + normal.y * offset,
-      );
-      const second = lumaAt(
-        plane,
-        sample.point.x + normal.x * (offset + 1),
-        sample.point.y + normal.y * (offset + 1),
-      );
-      if (first === undefined || second === undefined) continue;
-      candidates.push({ gradient: Math.abs(second - first), offset: offset + 0.5 });
+        point: sample.point,
+        normal,
+        searchPixels: effectiveSearchPixels,
+      });
+      strongest = candidates[0];
     }
-    candidates.sort((left, right) => right.gradient - left.gradient ||
-      Math.abs(left.offset) - Math.abs(right.offset) || left.offset - right.offset);
-    const strongest = candidates[0];
     if (!strongest || strongest.gradient < minimumGradient) {
       unsupported += 1;
       continue;
@@ -363,10 +441,7 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
   });
   const meanGradient = gradients.reduce((sum, value) => sum + value, 0) / gradients.length;
   const minimumDetectedGradient = Math.min(...gradients);
-  const calibratedSegmentationBoundary = input.segmentationBoundaryU95Px * Math.max(
-    1 / input.pixelsPerMmX,
-    1 / input.pixelsPerMmY,
-  );
+  const calibratedSegmentationBoundary = segmentationBoundaryMm;
   const rawDetectorLocalization = POLICY.minimumResidualLimitPx * Math.max(
     rawVectorLengthMm(transform, { x: 1, y: 0 }, input.pixelsPerMmX, input.pixelsPerMmY),
     rawVectorLengthMm(transform, { x: 0, y: 1 }, input.pixelsPerMmX, input.pixelsPerMmY),
