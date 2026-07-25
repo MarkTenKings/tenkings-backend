@@ -6,6 +6,7 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   mathematicalDesignReferenceV1Schema,
+  roundMathematicalScoreV1,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
   type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
@@ -2719,6 +2720,17 @@ function operatorResolutionRequestV1(input: {
   };
   const surfaceComputed =
     input.surfaces.front.status === "computed" && input.surfaces.back.status === "computed";
+  const originalSurfaceScore = surfaceComputed
+    ? roundMathematicalScoreV1(
+        10 - (["front", "back"] as const).reduce(
+          (total, side) => total + input.surfaces[side].findings.reduce(
+            (sideTotal, finding) => sideTotal + finding.deduction,
+            0,
+          ),
+          0,
+        ),
+      )
+    : null;
   return buildFixedRigOperatorResolutionRequestV1({
     generatedAt: input.generatedAt,
     binding: input.binding,
@@ -2752,7 +2764,7 @@ function operatorResolutionRequestV1(input: {
       }),
       surface: originalElementV1({
         status: surfaceComputed ? "computed" : "insufficient_evidence",
-        score: null,
+        score: originalSurfaceScore,
         explanation: surfaceComputed
           ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula
           : null,
@@ -2762,6 +2774,7 @@ function operatorResolutionRequestV1(input: {
                 `${side}: ${entry.message}`)
             : []),
         result: {
+          score: originalSurfaceScore,
           front: compactSurface(input.surfaces.front),
           back: compactSurface(input.surfaces.back),
         },

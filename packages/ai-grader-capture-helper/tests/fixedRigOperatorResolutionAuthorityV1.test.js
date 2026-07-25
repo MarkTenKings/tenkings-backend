@@ -111,11 +111,16 @@ function submission(requestSha256) {
 
 test("strict submission accepts all four legal element forms and preserves owner text", () => {
   const pending = request();
+  const candidate = submission(pending.requestSha256);
+  candidate.resolutions[1].score = 8.03;
+  candidate.resolutions[2].score = 1.11;
   const parsed = parseFixedRigOperatorResolutionSubmissionV1(
-    submission(pending.requestSha256),
+    candidate,
     { width: 63.5, height: 88.9 },
   );
   assert.equal(parsed.resolutions.length, 4);
+  assert.equal(parsed.resolutions[1].score, 8.03);
+  assert.equal(parsed.resolutions[2].score, 1.11);
   assert.equal(
     parsed.resolutions[2].publicExplanation,
     "Edges show light wear along the lower border.",
@@ -176,6 +181,20 @@ test("strict schema rejects score and policy mutation fields plus malformed valu
       /finite numeric score/,
     );
   }
+});
+
+test("every computed original requires a numeric score", () => {
+  const pending = request();
+  const originalElements = structuredClone(pending.originalElements);
+  originalElements.surface.score = null;
+  assert.throws(
+    () => buildFixedRigOperatorResolutionRequestV1({
+      generatedAt: pending.generatedAt,
+      binding: pending.binding,
+      originalElements,
+    }),
+    /surface computed original score/i,
+  );
 });
 
 test("centering rejects wrong unit, order, count, negatives, impossible sums, and score fields", () => {

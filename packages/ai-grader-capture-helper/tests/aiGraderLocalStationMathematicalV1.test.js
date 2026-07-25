@@ -638,7 +638,9 @@ function safeOcrResult(item) {
 }
 
 function installMathematicalReleaseStub(service) {
+  let callCount = 0;
   service.writeProductionReleaseForManifest = async (manifest) => {
+    callCount += 1;
     const packageDir = path.dirname(manifest.outputs.reportBundlePath);
     fs.mkdirSync(packageDir, { recursive: true });
     const productionReleasePath = path.join(packageDir, "production-release.json");
@@ -659,6 +661,11 @@ function installMathematicalReleaseStub(service) {
     manifest.outputs.labelDataPath = labelDataPath;
     manifest.productionRelease = release;
     return release;
+  };
+  return {
+    get callCount() {
+      return callCount;
+    },
   };
 }
 
@@ -1254,6 +1261,11 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
           front: [2.1, 2.2, 2.3, 2.4],
           back: [2.4, 2.3, 2.2, 2.1],
         },
+      }, {
+        element: "corners",
+        score: 8.03,
+        publicExplanation: "Corners show slight wear at the upper left.",
+        internalReason: "The exact corner evidence was reconciled by the owner.",
       }],
     };
     const action = {
@@ -1296,14 +1308,134 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
       undefined,
     );
 
-    const completed = await service.action("submit-operator-resolutions", action);
+    const runMathematicalStationPackage =
+      service.runMathematicalStationPackage.bind(service);
+    let failAfterReceiptPersistence = true;
+    service.runMathematicalStationPackage = async (...args) => {
+      if (failAfterReceiptPersistence) {
+        failAfterReceiptPersistence = false;
+        throw new Error("failpoint after operator receipt persistence");
+      }
+      return runMathematicalStationPackage(...args);
+    };
+    await assert.rejects(
+      service.action("submit-operator-resolutions", action),
+      /failpoint after operator receipt persistence/,
+    );
+    const persistedAfterCrash = service.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(
+      persistedAfterCrash.mathematicalV1.operatorResolutionReceipts.length,
+      1,
+    );
+    assert.equal(
+      persistedAfterCrash.mathematicalV1.operatorResolutionReceipts[0].phase,
+      "authority_committed",
+    );
+    assert.equal(adapterCalls, 1, "failpoint must run after receipt persistence but before rerun");
+    const conflictingRevisionDuringResume = {
+      ...structuredClone(action),
+      idempotencyKey: "operator-resolution-idempotency-2",
+    };
+    conflictingRevisionDuringResume.operatorAuthentication =
+      operatorAuthentication(conflictingRevisionDuringResume);
+    await assert.rejects(
+      service.action(
+        "submit-operator-resolutions",
+        conflictingRevisionDuringResume,
+      ),
+      /previously committed operator resolution receipt must finish/i,
+    );
+    const persistedManifestPath = persistedAfterCrash.outputs.manifestPath;
+    const persistedAfterCrashBytes = fs.readFileSync(persistedManifestPath);
+
+    const recomputeAuthoritySelfHash = (authority) => {
+      const { authoritySha256, ...payload } = authority;
+      authority.authoritySha256 = hashFixedRigOperatorResolutionValueV1(payload);
+    };
+    const assertPersistedTamperRejected = async (mutate, pattern) => {
+      const tampered = JSON.parse(persistedAfterCrashBytes.toString("utf8"));
+      mutate(tampered.mathematicalV1.operatorResolutionReceipts[0]);
+      fs.writeFileSync(persistedManifestPath, JSON.stringify(tampered, null, 2));
+      const restarted = createService(outputDir, async (input) => {
+        adapterCalls += 1;
+        return completedResult(input, pendingRequest);
+      });
+      installMathematicalReleaseStub(restarted);
+      await assert.rejects(
+        async () => {
+          await restarted.action("activate-queue-item", queued.identity);
+          await restarted.action("submit-operator-resolutions", action);
+        },
+        pattern,
+      );
+      assert.equal(adapterCalls, 1, "tampered persisted receipt must fail before rerun");
+    };
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        receipt.operatorAuthentication.authentication.signature = "0".repeat(64);
+      },
+      /authentication signature is invalid/i,
+    );
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        receipt.operatorAuthentication.authentication.keyId = "wrong-key";
+      },
+      /authentication key identity mismatch/i,
+    );
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        const authentication = receipt.operatorAuthentication;
+        authentication.payload.expiresAt = authentication.payload.issuedAt;
+        const payloadBytes = canonicalJsonV1(authentication.payload);
+        authentication.payloadSha256 = sha256(Buffer.from(payloadBytes, "utf8"));
+        authentication.authentication.signature = crypto
+          .createHmac("sha256", OPERATOR_AUTH_HMAC_KEY)
+          .update(
+            AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1 + "\n",
+            "utf8",
+          )
+          .update(payloadBytes, "utf8")
+          .digest("hex");
+      },
+      /expired or has invalid timing/i,
+    );
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        receipt.authority.resolutions.find((entry) => entry.element === "corners").score = 1.11;
+        recomputeAuthoritySelfHash(receipt.authority);
+      },
+      /submission sha-256|authenticated submission/i,
+    );
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        receipt.authority.operatorId = "tampered-owner";
+        recomputeAuthoritySelfHash(receipt.authority);
+      },
+      /operator identity|authenticated operator/i,
+    );
+    fs.writeFileSync(persistedManifestPath, persistedAfterCrashBytes);
+
+    const resumedService = createService(outputDir, async (input) => {
+      adapterCalls += 1;
+      assert.equal(input.operatorResolutionAuthorities.length, 1);
+      return completedResult(input, pendingRequest);
+    });
+    const releaseTracker = installMathematicalReleaseStub(resumedService);
+    await resumedService.action("activate-queue-item", queued.identity);
+    const exactPersistedRetry = structuredClone(action);
+    exactPersistedRetry.operatorAuthentication = null;
+    const completed = await resumedService.action(
+      "submit-operator-resolutions",
+      exactPersistedRetry,
+    );
     const completedItem = completed.rapidCaptureQueue.items.find(
       (item) => item.queueItemId === queued.item.queueItemId,
     );
     assert.equal(completedItem.state, "finalizing");
     assert.equal(completedItem.mathematicalV1.status, "completed");
     assert.equal(adapterCalls, 2);
-    const receipt = service.queuedManifests.get(queued.item.queueItemId)
+    assert.equal(releaseTracker.callCount, 1);
+    const receipt = resumedService.queuedManifests.get(queued.item.queueItemId)
       .mathematicalV1.operatorResolutionReceipts[0];
     assert.equal(receipt.idempotencyKey, action.idempotencyKey);
     assert.equal(receipt.authority.operatorId, "authenticated-owner-1");
@@ -1317,11 +1449,14 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     );
     assert.match(receipt.authority.resolutions[0].internalReason, /insufficient/);
     assert.equal(receipt.authority.binding.sides.front.nativeRoles.length, 35);
+    assert.equal(receipt.phase, "rerun_completed");
+    assert.match(receipt.completedAt, /^\d{4}-\d{2}-\d{2}T/);
 
-    await service.action("submit-operator-resolutions", action);
+    await resumedService.action("submit-operator-resolutions", action);
     assert.equal(adapterCalls, 2, "same idempotent retry must not rerun or append");
+    assert.equal(releaseTracker.callCount, 1, "same retry must not duplicate the report release");
     assert.equal(
-      service.queuedManifests.get(queued.item.queueItemId)
+      resumedService.queuedManifests.get(queued.item.queueItemId)
         .mathematicalV1.operatorResolutionReceipts.length,
       1,
     );
@@ -1331,7 +1466,7 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
       "Printed borders show a slight left-to-right imbalance.";
     conflict.operatorAuthentication = operatorAuthentication(conflict);
     await assert.rejects(
-      service.action("submit-operator-resolutions", conflict),
+      resumedService.action("submit-operator-resolutions", conflict),
       /idempotency key conflicts/,
     );
   } finally {

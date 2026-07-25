@@ -189,8 +189,7 @@ export function validateFixedRigOperatorPublicExplanationV1(value: unknown): str
 }
 
 function exactScore(value: unknown, label: string): number {
-  if (typeof value !== "number" || !mathematicalScoreV1Schema.safeParse(value).success ||
-      Math.round(value * 100) !== value * 100) {
+  if (typeof value !== "number" || !mathematicalScoreV1Schema.safeParse(value).success) {
     throw new Error(`${label} must be a finite numeric score from 1.00 through 10.00 with at most two decimals.`);
   }
   return value;
@@ -307,10 +306,14 @@ function validateOriginal(
   if (value.status !== "computed" && value.status !== "insufficient_evidence") {
     throw new Error(`${label} has an invalid original status.`);
   }
-  if (value.status === "computed" && value.score !== null) {
+  if (value.status === "computed") {
+    if (value.score === null) {
+      throw new Error(`${label} computed original score must be numeric.`);
+    }
     exactScore(value.score, `${label} original score`);
+  } else if (value.score !== null) {
+    throw new Error(`${label} insufficient original score must be null.`);
   }
-  else if (value.score !== null) throw new Error(`${label} insufficient original score must be null.`);
   if (value.explanation !== null) boundedText(value.explanation, `${label} original explanation`, 4000);
   if (!Array.isArray(value.failureReasons) ||
       value.failureReasons.some((reason) => typeof reason !== "string" || !reason.trim())) {

@@ -210,9 +210,11 @@ import {
   FIXED_RIG_STANDARD_TRADING_CARD_WIDTH_MM,
 } from "./fixedRigStandardCardFormatV1";
 import {
+  FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
   buildFixedRigOperatorResolutionAuthorityV1,
   hashFixedRigOperatorResolutionValueV1,
   parseFixedRigOperatorResolutionSubmissionV1,
+  verifyFixedRigOperatorResolutionAuthorityV1,
   verifyFixedRigOperatorResolutionRequestV1,
   type FixedRigOperatorResolutionAuthorityV1,
   type FixedRigOperatorResolutionRequestV1,
@@ -334,6 +336,7 @@ export type AiGraderLocalStationMathematicalExecutionV1 =
       attempt: number;
       v0FallbackUsed: false;
       reviewRequestSha256?: string;
+      operatorResolutionRequest?: FixedRigOperatorResolutionRequestV1;
     }
   | {
       status: "finding_review_required";
@@ -390,6 +393,8 @@ export interface AiGraderLocalStationMathematicalV1State {
     submissionSha256: string;
     operatorAuthentication: AiGraderOperatorResolutionAuthenticationV1;
     authority: FixedRigOperatorResolutionAuthorityV1;
+    phase: "authority_committed" | "rerun_completed";
+    completedAt: string | null;
   }>;
   execution?: AiGraderLocalStationMathematicalExecutionV1;
 }
@@ -7593,6 +7598,16 @@ export class AiGraderLocalStationBridgeService {
     if (!queueItem) {
       throw new Error("Mathematical V1 processing requires the exact durable queue item identity.");
     }
+    const persistedOperatorResolutionRequest =
+      manifest.mathematicalV1.operatorResolutionReceipts?.length
+        ? this.persistedOperatorResolutionRequest(manifest)
+        : undefined;
+    const operatorResolutionAuthorities = persistedOperatorResolutionRequest
+      ? this.validatedOperatorResolutionReceipts(
+          manifest,
+          persistedOperatorResolutionRequest,
+        )
+      : [];
     const attempt = (prior?.attempt ?? 0) + 1;
     const startedAt = new Date().toISOString();
     manifest.mathematicalV1.execution = {
@@ -7602,6 +7617,9 @@ export class AiGraderLocalStationBridgeService {
       v0FallbackUsed: false,
       ...(prior?.status === "finding_review_required"
         ? { reviewRequestSha256: prior.reviewRequest.artifactSha256 }
+        : {}),
+      ...(persistedOperatorResolutionRequest
+        ? { operatorResolutionRequest: persistedOperatorResolutionRequest }
         : {}),
     };
     manifest.mathematicalV1.submittedFindingReviews = findingReviews
@@ -7647,10 +7665,8 @@ export class AiGraderLocalStationBridgeService {
             },
           } : {}),
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
-        ...(manifest.mathematicalV1.operatorResolutionReceipts?.length ? {
-          operatorResolutionAuthorities:
-            manifest.mathematicalV1.operatorResolutionReceipts.map((receipt) =>
-              structuredClone(receipt.authority)),
+        ...(operatorResolutionAuthorities.length ? {
+          operatorResolutionAuthorities,
         } : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
@@ -8286,6 +8302,9 @@ export class AiGraderLocalStationBridgeService {
       throw new Error(`Queued item manifest has terminal ${manifest.captureFailure.stage} failure and cannot resume background readiness.`);
     }
     this.assertQueuedEvidenceMatchesManifest(item, manifest);
+    if (manifest.mathematicalV1?.operatorResolutionReceipts?.length) {
+      this.operatorResolutionRequest(manifest);
+    }
     this.queuedManifests.set(item.queueItemId, manifest);
     return manifest;
   }
@@ -9109,7 +9128,7 @@ export class AiGraderLocalStationBridgeService {
     await this.syncQueuedManifest(manifest);
   }
 
-  private operatorResolutionRequest(
+  private persistedOperatorResolutionRequest(
     manifest: AiGraderLocalStationBridgeManifest,
   ): FixedRigOperatorResolutionRequestV1 {
     const execution = manifest.mathematicalV1?.execution;
@@ -9126,7 +9145,101 @@ export class AiGraderLocalStationBridgeService {
       }
       return execution.operatorResolutionRequest;
     }
+    if (execution?.status === "processing" &&
+        execution.operatorResolutionRequest) {
+      if (!verifyFixedRigOperatorResolutionRequestV1(execution.operatorResolutionRequest)) {
+        throw new Error("Persisted operator resolution request is invalid or noncanonical.");
+      }
+      return execution.operatorResolutionRequest;
+    }
     throw new Error("Operator resolution requires the exact pending element-resolution request.");
+  }
+
+  private validatedOperatorResolutionReceipts(
+    manifest: AiGraderLocalStationBridgeManifest,
+    request: FixedRigOperatorResolutionRequestV1,
+  ): FixedRigOperatorResolutionAuthorityV1[] {
+    const receipts = manifest.mathematicalV1?.operatorResolutionReceipts ?? [];
+    let priorAuthoritySha256: string | null = null;
+    return receipts.map((receipt, index) => {
+      if (
+        (receipt.phase !== "authority_committed" &&
+          receipt.phase !== "rerun_completed") ||
+        (receipt.phase === "authority_committed" && receipt.completedAt !== null) ||
+        (index < receipts.length - 1 && receipt.phase !== "rerun_completed") ||
+        (receipt.phase === "rerun_completed" &&
+          (typeof receipt.completedAt !== "string" ||
+            !Number.isFinite(Date.parse(receipt.completedAt)) ||
+            new Date(receipt.completedAt).toISOString() !== receipt.completedAt))
+      ) {
+        throw new Error("Persisted operator resolution receipt has invalid completion phase state.");
+      }
+      if (
+        !verifyFixedRigOperatorResolutionAuthorityV1(receipt.authority) ||
+        receipt.authority.revision !== index + 1 ||
+        receipt.authority.supersedesAuthoritySha256 !== priorAuthoritySha256 ||
+        receipt.authority.requestSha256 !== request.requestSha256 ||
+        hashFixedRigOperatorResolutionValueV1(receipt.authority.binding) !==
+          hashFixedRigOperatorResolutionValueV1(request.binding)
+      ) {
+        throw new Error("Persisted operator resolution authority is stale, malformed, or bound to different evidence.");
+      }
+      priorAuthoritySha256 = receipt.authority.authoritySha256;
+      const reconstructedSubmission = parseFixedRigOperatorResolutionSubmissionV1({
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: receipt.authority.requestSha256,
+        operatorConfirmed: true,
+        resolutions: receipt.authority.resolutions.map(({ original, ...resolution }) =>
+          structuredClone(resolution)),
+      }, {
+        width: FIXED_RIG_STANDARD_TRADING_CARD_WIDTH_MM,
+        height: FIXED_RIG_STANDARD_TRADING_CARD_HEIGHT_MM,
+      });
+      const reconstructedSubmissionSha256 =
+        hashFixedRigOperatorResolutionValueV1(reconstructedSubmission);
+      if (
+        receipt.submissionSha256 !== reconstructedSubmissionSha256 ||
+        receipt.operatorAuthentication.payload.submissionSha256 !==
+          reconstructedSubmissionSha256
+      ) {
+        throw new Error("Persisted operator resolution submission SHA-256 does not match the authenticated submission.");
+      }
+      const authentication = verifyOperatorResolutionAuthenticationV1({
+        value: receipt.operatorAuthentication,
+        expected: {
+          queueItemId: request.binding.queueItemId,
+          gradingSessionId: request.binding.gradingSessionId,
+          reportId: request.binding.reportId,
+          requestSha256: request.requestSha256,
+          submissionSha256: reconstructedSubmissionSha256,
+          idempotencyKey: receipt.idempotencyKey,
+        },
+        hmacKey: this.config.cardFormatAuthorityHmacKey,
+        hmacKeyId: this.config.cardFormatAuthorityHmacKeyId,
+        nowMs: Date.parse(receipt.authority.authenticatedAt),
+      });
+      if (
+        authentication.payload.operatorId !== receipt.authority.operatorId ||
+        authentication.payload.issuedAt !== receipt.authority.authenticatedAt
+      ) {
+        throw new Error("Persisted operator resolution authority does not match the authenticated operator identity and time.");
+      }
+      if (
+        receipt.phase === "rerun_completed" &&
+        Date.parse(receipt.completedAt!) < Date.parse(receipt.authority.authenticatedAt)
+      ) {
+        throw new Error("Persisted operator resolution completion predates its authenticated authority.");
+      }
+      return structuredClone(receipt.authority);
+    });
+  }
+
+  private operatorResolutionRequest(
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): FixedRigOperatorResolutionRequestV1 {
+    const request = this.persistedOperatorResolutionRequest(manifest);
+    this.validatedOperatorResolutionReceipts(manifest, request);
+    return request;
   }
 
   private async submitOperatorResolutions(
@@ -9158,23 +9271,34 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Operator resolution submission is stale or bound to different evidence.");
     }
     const submissionSha256 = hashFixedRigOperatorResolutionValueV1(submission);
-    const operatorAuthentication = verifyOperatorResolutionAuthenticationV1({
-      value: request.operatorAuthentication,
-      expected: {
-        queueItemId: item.queueItemId,
-        gradingSessionId: item.sessionId,
-        reportId: item.reportId,
-        requestSha256: pendingRequest.requestSha256,
-        submissionSha256,
-        idempotencyKey,
-      },
-      hmacKey: this.config.cardFormatAuthorityHmacKey,
-      hmacKeyId: this.config.cardFormatAuthorityHmacKeyId,
-    });
-    const operatorId = operatorAuthentication.payload.operatorId;
     const existingReceipt = manifest.mathematicalV1.operatorResolutionReceipts?.find(
       (receipt) => receipt.idempotencyKey === idempotencyKey,
     );
+    const unfinishedReceipt = manifest.mathematicalV1.operatorResolutionReceipts?.find(
+      (receipt) => receipt.phase === "authority_committed",
+    );
+    if (unfinishedReceipt &&
+        unfinishedReceipt.idempotencyKey !== idempotencyKey) {
+      throw new Error(
+        "A previously committed operator resolution receipt must finish before a new revision can be accepted.",
+      );
+    }
+    const operatorAuthentication = existingReceipt
+      ? existingReceipt.operatorAuthentication
+      : verifyOperatorResolutionAuthenticationV1({
+          value: request.operatorAuthentication,
+          expected: {
+            queueItemId: item.queueItemId,
+            gradingSessionId: item.sessionId,
+            reportId: item.reportId,
+            requestSha256: pendingRequest.requestSha256,
+            submissionSha256,
+            idempotencyKey,
+          },
+          hmacKey: this.config.cardFormatAuthorityHmacKey,
+          hmacKeyId: this.config.cardFormatAuthorityHmacKeyId,
+        });
+    const operatorId = operatorAuthentication.payload.operatorId;
     if (existingReceipt) {
       if (
         existingReceipt.submissionSha256 !== submissionSha256 ||
@@ -9182,56 +9306,66 @@ export class AiGraderLocalStationBridgeService {
       ) {
         throw new Error("Operator resolution idempotency key conflicts with a different submission.");
       }
-      return;
+      if (existingReceipt.phase === "rerun_completed") return;
     }
     if (!["operator_resolution_required", "finding_review_required"].includes(item.state)) {
       throw new Error(`Operator resolution is unavailable in queue state ${item.state}.`);
     }
-    const mutation = await this.runRapidQueueMutation(async ({ trackManifest }) => {
-      const currentItem = this.exactMutableQueuedItem(request);
-      const currentManifest = await this.exactQueuedManifest(currentItem);
-      trackManifest(currentManifest);
-      const currentRequest = this.operatorResolutionRequest(currentManifest);
-      if (currentRequest.requestSha256 !== pendingRequest.requestSha256) {
-        throw new Error("Operator resolution request changed before the compare-and-swap commit.");
-      }
-      const receipts = currentManifest.mathematicalV1!.operatorResolutionReceipts ?? [];
-      const sameKey = receipts.find((receipt) => receipt.idempotencyKey === idempotencyKey);
-      if (sameKey) {
-        if (
-          sameKey.submissionSha256 !== submissionSha256 ||
-          sameKey.authority.operatorId !== operatorId
-        ) {
-          throw new Error("Operator resolution idempotency key conflicts with a different submission.");
-        }
-        return { value: { duplicate: true, manifest: currentManifest } };
-      }
-      const prior = receipts.at(-1)?.authority;
-      const authority = buildFixedRigOperatorResolutionAuthorityV1({
-        request: currentRequest,
-        submission,
-        operatorId,
-        authenticatedAt: operatorAuthentication.payload.issuedAt,
-        ...(prior ? { priorAuthority: prior } : {}),
-      });
-      currentManifest.mathematicalV1!.operatorResolutionReceipts = [
-        ...receipts,
-        {
-          idempotencyKey,
-          submissionSha256,
-          operatorAuthentication: structuredClone(operatorAuthentication),
-          authority,
-        },
-      ];
-      currentManifest.progressLog.push(
-        `${authority.authenticatedAt} Authenticated element-resolution authority ${authority.authoritySha256} revision ${authority.revision} committed for exact request ${authority.requestSha256}.`,
-      );
-      return {
-        value: { duplicate: false, manifest: currentManifest },
-        manifests: [currentManifest],
-      };
-    });
-    if (mutation.duplicate) return;
+    const mutation = existingReceipt
+      ? { duplicate: true, manifest }
+      : await this.runRapidQueueMutation(async ({ trackManifest }) => {
+          const currentItem = this.exactMutableQueuedItem(request);
+          const currentManifest = await this.exactQueuedManifest(currentItem);
+          trackManifest(currentManifest);
+          const currentRequest = this.operatorResolutionRequest(currentManifest);
+          if (currentRequest.requestSha256 !== pendingRequest.requestSha256) {
+            throw new Error("Operator resolution request changed before the compare-and-swap commit.");
+          }
+          const receipts = currentManifest.mathematicalV1!.operatorResolutionReceipts ?? [];
+          const sameKey = receipts.find((receipt) => receipt.idempotencyKey === idempotencyKey);
+          if (sameKey) {
+            if (
+              sameKey.submissionSha256 !== submissionSha256 ||
+              sameKey.authority.operatorId !== operatorId
+            ) {
+              throw new Error("Operator resolution idempotency key conflicts with a different submission.");
+            }
+            return { value: { duplicate: true, manifest: currentManifest } };
+          }
+          const prior = receipts.at(-1)?.authority;
+          const authority = buildFixedRigOperatorResolutionAuthorityV1({
+            request: currentRequest,
+            submission,
+            operatorId,
+            authenticatedAt: operatorAuthentication.payload.issuedAt,
+            ...(prior ? { priorAuthority: prior } : {}),
+          });
+          currentManifest.mathematicalV1!.operatorResolutionReceipts = [
+            ...receipts,
+            {
+              idempotencyKey,
+              submissionSha256,
+              operatorAuthentication: structuredClone(operatorAuthentication),
+              authority,
+              phase: "authority_committed",
+              completedAt: null,
+            },
+          ];
+          currentManifest.progressLog.push(
+            `${authority.authenticatedAt} Authenticated element-resolution authority ${authority.authoritySha256} revision ${authority.revision} committed for exact request ${authority.requestSha256}.`,
+          );
+          return {
+            value: { duplicate: false, manifest: currentManifest },
+            manifests: [currentManifest],
+          };
+        });
+    const committedReceipt = mutation.manifest.mathematicalV1!
+      .operatorResolutionReceipts!.find((receipt) =>
+        receipt.idempotencyKey === idempotencyKey);
+    if (committedReceipt?.phase === "rerun_completed") return;
+    if (!committedReceipt || committedReceipt.phase !== "authority_committed") {
+      throw new Error("Operator resolution receipt is not in an unfinished committed phase.");
+    }
     const execution = await this.runMathematicalStationPackage(mutation.manifest);
     if (execution.status === "operator_resolution_required") {
       this.transitionRapidWorkflow(
@@ -9268,6 +9402,13 @@ export class AiGraderLocalStationBridgeService {
         "Operator-resolution rerun encountered a non-resolvable evidence or provenance failure.",
       );
     }
+    const completedAt = new Date().toISOString();
+    committedReceipt.phase = "rerun_completed";
+    committedReceipt.completedAt = completedAt;
+    mutation.manifest.updatedAt = completedAt;
+    mutation.manifest.progressLog.push(
+      `${completedAt} Authenticated element-resolution authority ${committedReceipt.authority.authoritySha256} completed its deterministic rerun exactly once.`,
+    );
     await this.syncQueuedManifest(mutation.manifest);
   }
 

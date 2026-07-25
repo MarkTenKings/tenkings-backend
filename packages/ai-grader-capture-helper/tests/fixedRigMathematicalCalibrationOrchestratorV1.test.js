@@ -658,9 +658,15 @@ async function replaceWithSealedExposureBracket(root, sideName, side, options = 
   return result;
 }
 
-async function resolveOperatorCheckpoint(input, resolutions = []) {
+async function resolveOperatorCheckpoint(input, resolutions = [], inspectPending = undefined) {
   const pending = await buildFixedRigMathematicalCalibrationReportPackageV1(input);
   if (pending.status !== "operator_resolution_required") return pending;
+  assert.equal(
+    Number.isFinite(pending.request.originalElements.surface.score),
+    true,
+    "a computed original surface result must bind its actual numeric subgrade",
+  );
+  inspectPending?.(pending);
   const deterministicReplay =
     await buildFixedRigMathematicalCalibrationReportPackageV1(input);
   assert.equal(deterministicReplay.status, "operator_resolution_required");
@@ -950,7 +956,16 @@ test("orchestrator preserves a controlled scratch as an exact measurement-derive
     reportId: "mathematical-orchestrator-scratch",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  const draft = await resolveOperatorCheckpoint(fixture.input);
+  const draft = await resolveOperatorCheckpoint(fixture.input, [], (pending) => {
+    assert.ok(
+      pending.request.originalElements.surface.score < 10,
+      "the original surface subgrade must reflect the measured scratch deduction",
+    );
+    assert.match(
+      pending.request.originalElements.surface.resultSha256,
+      /^[a-f0-9]{64}$/,
+    );
+  });
   assert.equal(
     draft.status,
     "finding_review_required",
