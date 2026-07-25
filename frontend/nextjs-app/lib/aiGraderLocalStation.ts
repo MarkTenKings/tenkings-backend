@@ -694,6 +694,11 @@ export type AiGraderLocalStationStatus = {
   hardwareActionsEnabled: boolean;
   startSessionLifecycle?: {
     state: "idle" | "pending";
+    operation?: {
+      reportId: string;
+      gradingSessionId?: string;
+      mathematicalAuthoritySha256: string;
+    };
   };
   gradingContract?: AiGraderGradingContract;
   mathematicalCalibration?: {
@@ -2048,6 +2053,21 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     hardwareActionsEnabled: status.hardwareActionsEnabled,
     startSessionLifecycle: {
       state: status.startSessionLifecycle?.state === "pending" ? "pending" : "idle",
+      ...(status.startSessionLifecycle?.operation &&
+        safeStationId(status.startSessionLifecycle.operation.reportId) &&
+        exactMathematicalSha256(status.startSessionLifecycle.operation.mathematicalAuthoritySha256)
+        ? {
+            operation: {
+              reportId: safeStationId(status.startSessionLifecycle.operation.reportId)!,
+              ...(safeStationId(status.startSessionLifecycle.operation.gradingSessionId)
+                ? { gradingSessionId: safeStationId(status.startSessionLifecycle.operation.gradingSessionId) }
+                : {}),
+              mathematicalAuthoritySha256: exactMathematicalSha256(
+                status.startSessionLifecycle.operation.mathematicalAuthoritySha256,
+              )!,
+            },
+          }
+        : {}),
     },
     ...(gradingContract ? { gradingContract } : {}),
     ...(mathematicalCalibration ? { mathematicalCalibration } : {}),
@@ -2534,13 +2554,32 @@ export function aiGraderStartNewCardAvailable(input: {
   captureLockHeld: boolean;
   warmRunnerStatus: AiGraderWarmRunnerStatusName;
   currentStep: AiGraderStationStepId;
+  startSessionLifecycleState: "idle" | "pending";
 }) {
   return input.bridgeConnected &&
     !input.captureBusy &&
     !input.lightingRequestPending &&
     !input.captureLockHeld &&
     input.warmRunnerStatus !== "capturing" &&
+    input.startSessionLifecycleState !== "pending" &&
     input.currentStep === "start_new_card";
+}
+
+export function aiGraderStartedSessionMatchesOperation(input: {
+  status: AiGraderLocalStationStatus;
+  expected: {
+    reportId: string;
+    mathematicalAuthoritySha256: string;
+  };
+}) {
+  const operation = input.status.startSessionLifecycle?.operation;
+  return input.status.startSessionLifecycle?.state === "idle" &&
+    input.status.currentStep === "capture_front" &&
+    Boolean(operation?.gradingSessionId) &&
+    operation?.reportId === input.expected.reportId &&
+    operation?.reportId === input.status.sessionManifest.reportId &&
+    operation?.gradingSessionId === input.status.sessionManifest.gradingSessionId &&
+    operation?.mathematicalAuthoritySha256 === input.expected.mathematicalAuthoritySha256;
 }
 
 export function selectNextSerializedAiGraderOcrItem(items: AiGraderRapidCaptureQueueItem[]) {

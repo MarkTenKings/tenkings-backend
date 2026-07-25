@@ -291,13 +291,21 @@ test("a delayed local start remains singular and exposes a definitive lifecycle 
     return originalCreateFreshSession(...args);
   };
 
+  const authorityA = printedAuthority();
+  const authorityASha256 = sha256(canonicalJsonV1(authorityA));
   const firstStart = startMathematicalSession(
     service,
-    printedAuthority(),
+    authorityA,
     "delayed-start-report",
   );
   await startEntered;
-  assert.deepEqual(service.status().startSessionLifecycle, { state: "pending" });
+  assert.deepEqual(service.status().startSessionLifecycle, {
+    state: "pending",
+    operation: {
+      reportId: "delayed-start-report",
+      mathematicalAuthoritySha256: authorityASha256,
+    },
+  });
   await assert.rejects(
     startMathematicalSession(
       service,
@@ -310,13 +318,34 @@ test("a delayed local start remains singular and exposes a definitive lifecycle 
 
   releaseStart();
   const completed = await firstStart;
-  assert.deepEqual(completed.startSessionLifecycle, { state: "idle" });
+  assert.deepEqual(completed.startSessionLifecycle, {
+    state: "idle",
+    operation: {
+      reportId: "delayed-start-report",
+      gradingSessionId: completed.sessionManifest.gradingSessionId,
+      mathematicalAuthoritySha256: authorityASha256,
+    },
+  });
   assert.equal(completed.currentStep, "capture_front");
   assert.equal(completed.reportId, "delayed-start-report");
   assert.equal(createCount, 1);
   const persistedSessions = fs.readdirSync(outputDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("ai-grader-browser-station-session-"));
   assert.equal(persistedSessions.length, 1);
+  const persisted = JSON.parse(fs.readFileSync(
+    path.join(outputDir, persistedSessions[0].name, "station-session.json"),
+    "utf8",
+  ));
+  assert.deepEqual(persisted.startOperationIdentity, {
+    reportId: "delayed-start-report",
+    gradingSessionId: completed.sessionManifest.gradingSessionId,
+    mathematicalAuthoritySha256: authorityASha256,
+  });
+  assert.equal(
+    JSON.stringify(persisted).includes("overlapping-start-report"),
+    false,
+    "card B never reaches persisted staging or cache identity",
+  );
 });
 
 function assetMetadata(assetId, evidenceRole, bytes, fileName, widthPx = 24, heightPx = 32) {

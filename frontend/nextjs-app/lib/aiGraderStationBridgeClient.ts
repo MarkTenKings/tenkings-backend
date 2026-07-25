@@ -11,7 +11,10 @@ import type {
   AiGraderMathematicalReviewAssetMetadataV1,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
-import type { AiGraderCalibrationActivationAuthorityV1 } from "@tenkings/shared";
+import {
+  canonicalJsonV1,
+  type AiGraderCalibrationActivationAuthorityV1,
+} from "@tenkings/shared";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
@@ -389,6 +392,7 @@ export function buildAiGraderCaptureProfileRequest(
   gradingContract?: AiGraderGradingContract,
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1,
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
+  reportId?: string,
 ) {
   if (gradingContract !== "mathematical_calibration_v1") {
     throw new Error(
@@ -401,12 +405,22 @@ export function buildAiGraderCaptureProfileRequest(
   if (!calibrationActivationAuthority) {
     throw new Error("Start New Card requires exact hosted/local ACTIVE calibration authority; no configured-bundle fallback is permitted.");
   }
+  if (reportId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(reportId)) {
+    throw new Error("Start New Card report ID is invalid.");
+  }
   return {
     captureProfile,
     gradingContract,
     mathematicalGradingAuthority,
     calibrationActivationAuthority,
+    ...(reportId ? { reportId } : {}),
   } satisfies AiGraderStationBridgeActionRequestBody;
+}
+
+export async function hashAiGraderMathematicalGradingAuthorityV1(
+  authority: AiGraderMathematicalGradingAuthorityV1,
+) {
+  return browserSha256Hex(new TextEncoder().encode(canonicalJsonV1(authority)));
 }
 
 export type AiGraderMathematicalCardIdentityDraftV1 = {

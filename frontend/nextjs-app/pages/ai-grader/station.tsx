@@ -16,6 +16,7 @@ import {
   aiGraderRapidQueueIdentityMatches,
   aiGraderReviewActivationAvailable,
   aiGraderStartNewCardAvailable,
+  aiGraderStartedSessionMatchesOperation,
   assertAiGraderRapidItemPublishable,
   aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
@@ -69,6 +70,7 @@ import {
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
+  hashAiGraderMathematicalGradingAuthorityV1,
   initializeAiGraderQueuedOcrAttemptOwner,
   issueAiGraderOperatorResolutionAuthenticationV1,
   openAiGraderStationPreviewStream,
@@ -2103,6 +2105,7 @@ export default function AiGraderStationPage() {
     captureLockHeld: warmRunner.captureLock.held,
     warmRunnerStatus: warmRunner.status,
     currentStep: status.currentStep,
+    startSessionLifecycleState: status.startSessionLifecycle?.state ?? "idle",
   });
   const liveLightingAvailable =
     bridgeConnected &&
@@ -3013,10 +3016,21 @@ export default function AiGraderStationPage() {
     const startTimeout = window.setTimeout(() => startController.abort(), 30_000);
     let localStartDispatched = false;
     let preparedForStart: Awaited<ReturnType<typeof prepareMathematicalAuthority>> | undefined;
+    let dispatchedStartIdentity: {
+      reportId: string;
+      mathematicalAuthoritySha256: string;
+    } | undefined;
     const acceptStartedSession = async (
       prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
       started: AiGraderLocalStationStatus,
+      expected: {
+        reportId: string;
+        mathematicalAuthoritySha256: string;
+      },
     ) => {
+      if (!aiGraderStartedSessionMatchesOperation({ status: started, expected })) {
+        throw new Error("Started session identity does not match the dispatched report and Mathematical V1 authority.");
+      }
       await stagePreparedMathematicalDesignReferences(prepared, started);
       preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
         identityDraft: { ...identityDraft },
@@ -3034,6 +3048,10 @@ export default function AiGraderStationPage() {
       if (!prepared?.authority) {
         throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
       }
+      dispatchedStartIdentity = {
+        reportId: `ai-grader-${crypto.randomUUID()}`,
+        mathematicalAuthoritySha256: await hashAiGraderMathematicalGradingAuthorityV1(prepared.authority),
+      };
       const calibrationRigId = status.mathematicalCalibration?.rigId;
       if (!calibrationRigId) {
         throw new Error("Start New Card requires the exact local calibration rig identity.");
@@ -3064,9 +3082,10 @@ export default function AiGraderStationPage() {
           selectedGradingContract,
           prepared?.authority,
           activationPayload.authority,
+          dispatchedStartIdentity.reportId,
         ),
       );
-      await acceptStartedSession(prepared, started);
+      await acceptStartedSession(prepared, started, dispatchedStartIdentity);
     } catch (requestError) {
       let reconciled: AiGraderLocalStationStatus | undefined;
       if (localStartDispatched) {
@@ -3085,9 +3104,14 @@ export default function AiGraderStationPage() {
       }
       if (
         reconciled?.currentStep === "capture_front" &&
-        preparedForStart
+        preparedForStart &&
+        dispatchedStartIdentity &&
+        aiGraderStartedSessionMatchesOperation({
+          status: reconciled,
+          expected: dispatchedStartIdentity,
+        })
       ) {
-        await acceptStartedSession(preparedForStart, reconciled);
+        await acceptStartedSession(preparedForStart, reconciled, dispatchedStartIdentity);
         setError(null);
         return;
       }

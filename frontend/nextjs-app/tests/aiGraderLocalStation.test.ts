@@ -12,6 +12,7 @@ import {
   aiGraderRapidItemPublishable,
   aiGraderReviewActivationAvailable,
   aiGraderStartNewCardAvailable,
+  aiGraderStartedSessionMatchesOperation,
   assertAiGraderRapidItemPublishable,
   buildAiGraderLocalStationStatus,
   completeAiGraderExactPublicationHandoff,
@@ -950,8 +951,10 @@ test("Start New Card depends only on authoritative capture and lighting ownershi
     captureLockHeld: false,
     warmRunnerStatus: "processing" as const,
     currentStep: "start_new_card" as const,
+    startSessionLifecycleState: "idle" as const,
   };
   assert.equal(aiGraderStartNewCardAvailable(authoritative), true);
+  assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, startSessionLifecycleState: "pending" }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, captureLockHeld: true }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, currentStep: "capture_back" }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, currentStep: "session_complete" }), false);
@@ -1107,7 +1110,55 @@ test("one synchronous publication claim freezes review selection but never owns 
     captureLockHeld: false,
     warmRunnerStatus: "processing",
     currentStep: "start_new_card",
+    startSessionLifecycleState: "idle",
   }), true, "a hosted publication claim is not part of camera ownership");
+});
+
+test("cross-page Start reconciliation cannot adopt pending card A into card B draft", () => {
+  const pending = buildAiGraderLocalStationStatus();
+  pending.startSessionLifecycle = {
+    state: "pending",
+    operation: {
+      reportId: "report-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  };
+  assert.equal(aiGraderStartNewCardAvailable({
+    bridgeConnected: true,
+    captureBusy: false,
+    lightingRequestPending: false,
+    captureLockHeld: false,
+    warmRunnerStatus: "idle",
+    currentStep: "start_new_card",
+    startSessionLifecycleState: pending.startSessionLifecycle.state,
+  }), false);
+
+  const completed = buildAiGraderLocalStationStatus({ action: "start-session" });
+  completed.currentStep = "capture_front";
+  completed.sessionManifest.gradingSessionId = "session-card-a";
+  completed.sessionManifest.reportId = "report-card-a";
+  completed.startSessionLifecycle = {
+    state: "idle",
+    operation: {
+      reportId: "report-card-a",
+      gradingSessionId: "session-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  };
+  assert.equal(aiGraderStartedSessionMatchesOperation({
+    status: completed,
+    expected: {
+      reportId: "report-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  }), true);
+  assert.equal(aiGraderStartedSessionMatchesOperation({
+    status: completed,
+    expected: {
+      reportId: "report-card-b",
+      mathematicalAuthoritySha256: "b".repeat(64),
+    },
+  }), false);
 });
 
 test("validated hosted publication acknowledges only the exact local item once before route verification failure", async () => {
@@ -1497,6 +1548,11 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   assert.doesNotMatch(localStartCall, /startController\.signal/);
   assert.match(startBlock, /startNewCardInFlightRef\.current/);
   assert.match(startBlock, /runAction\("status"\)[\s\S]+startSessionLifecycle\?\.state !== "pending"/);
+  assert.ok(
+    startBlock.indexOf("aiGraderStartedSessionMatchesOperation") <
+      startBlock.indexOf("stagePreparedMathematicalDesignReferences"),
+    "the exact persisted Start identity is verified before staging or draft caching",
+  );
   assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+setCaptureBusy\(null\)/);
   assert.ok(
     activationBlock.indexOf("publicationReviewClaimRef.current") < activationBlock.indexOf("await runAction"),
