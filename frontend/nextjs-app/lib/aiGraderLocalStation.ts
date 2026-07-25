@@ -1036,6 +1036,16 @@ function safeStationText(value: unknown): string | undefined {
   return trimmed;
 }
 
+function safeOperatorResolutionFailureReason(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 16_384 || /^data:image/i.test(trimmed) || /[a-z]:[\\/]/i.test(trimmed) ||
+      /(?:station|bridge|service)[_-]?token|pairing[_-]?code|authorization|bearer\s|x-amz-|presigned/i.test(trimmed)) {
+    return undefined;
+  }
+  return trimmed;
+}
+
 function exactMathematicalSha256(value: unknown): string | undefined {
   return typeof value === "string" && /^[a-f0-9]{64}$/.test(value) ? value : undefined;
 }
@@ -1408,7 +1418,7 @@ function sanitizeOperatorResolutionRequest(
           : original.score !== null) ||
         (original.explanation !== null && !safeStationText(original.explanation)) ||
         !Array.isArray(original.failureReasons) ||
-        original.failureReasons.some((reason) => !safeStationText(reason)) ||
+        original.failureReasons.some((reason) => !safeOperatorResolutionFailureReason(reason)) ||
         !exactMathematicalSha256(original.resultSha256)) {
       return undefined;
     }
@@ -1418,7 +1428,7 @@ function sanitizeOperatorResolutionRequest(
       explanation: original.explanation === null
         ? null
         : safeStationText(original.explanation)!,
-      failureReasons: original.failureReasons.map((reason) => safeStationText(reason)!),
+      failureReasons: original.failureReasons.map((reason) => safeOperatorResolutionFailureReason(reason)!),
       resultSha256: original.resultSha256 as string,
     };
   }
