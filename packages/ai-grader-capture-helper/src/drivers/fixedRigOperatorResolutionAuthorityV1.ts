@@ -586,6 +586,26 @@ export function verifyFixedRigOperatorResolutionAuthorityV1(
   }
 }
 
+export function verifyFixedRigOperatorResolutionAuthorityAgainstRequestV1(
+  authority: FixedRigOperatorResolutionAuthorityV1,
+  request: FixedRigOperatorResolutionRequestV1,
+): boolean {
+  if (
+    !verifyFixedRigOperatorResolutionRequestV1(request) ||
+    !verifyFixedRigOperatorResolutionAuthorityV1(authority) ||
+    authority.requestSha256 !== request.requestSha256 ||
+    hashFixedRigOperatorResolutionValueV1(authority.binding) !==
+      hashFixedRigOperatorResolutionValueV1(request.binding)
+  ) {
+    return false;
+  }
+  return authority.resolutions.every((resolution) =>
+    hashFixedRigOperatorResolutionValueV1(resolution.original) ===
+      hashFixedRigOperatorResolutionValueV1(
+        request.originalElements[resolution.element],
+      ));
+}
+
 export function latestFixedRigOperatorElementResolutionV1(
   authorities: readonly FixedRigOperatorResolutionAuthorityV1[],
   element: MathematicalGradingElementV1,

@@ -639,7 +639,11 @@ function safeOcrResult(item) {
 
 function installMathematicalReleaseStub(service) {
   let callCount = 0;
-  service.writeProductionReleaseForManifest = async (manifest) => {
+  service.writeProductionReleaseForManifest = async (
+    manifest,
+    _request,
+    options = {},
+  ) => {
     callCount += 1;
     const packageDir = path.dirname(manifest.outputs.reportBundlePath);
     fs.mkdirSync(packageDir, { recursive: true });
@@ -654,6 +658,9 @@ function installMathematicalReleaseStub(service) {
       labelDataGenerated: true,
       qrPayloadGenerated: true,
       label: { status: "label_data_ready" },
+      operatorFinalization: {
+        finalizedAt: options.mathematicalFinalizedAt ?? new Date().toISOString(),
+      },
     };
     fs.writeFileSync(productionReleasePath, JSON.stringify(release, null, 2));
     fs.writeFileSync(labelDataPath, JSON.stringify(release.label, null, 2));
@@ -1266,6 +1273,11 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
         score: 8.03,
         publicExplanation: "Corners show slight wear at the upper left.",
         internalReason: "The exact corner evidence was reconciled by the owner.",
+      }, {
+        element: "surface",
+        score: 9.25,
+        publicExplanation: "The surface shows light handling wear.",
+        internalReason: "The exact surface evidence was reconciled by the owner.",
       }],
     };
     const action = {
@@ -1413,6 +1425,14 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
       },
       /operator identity|authenticated operator/i,
     );
+    await assertPersistedTamperRejected(
+      (receipt) => {
+        receipt.authority.resolutions
+          .find((entry) => entry.element === "surface").original.score = 1;
+        recomputeAuthoritySelfHash(receipt.authority);
+      },
+      /original|stale|malformed|different evidence/i,
+    );
     fs.writeFileSync(persistedManifestPath, persistedAfterCrashBytes);
 
     const resumedService = createService(outputDir, async (input) => {
@@ -1452,6 +1472,17 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     assert.equal(receipt.phase, "rerun_completed");
     assert.match(receipt.completedAt, /^\d{4}-\d{2}-\d{2}T/);
 
+    const completedManifest =
+      resumedService.queuedManifests.get(queued.item.queueItemId);
+    const completedArtifactPaths = [
+      completedManifest.outputs.manifestPath,
+      path.join(outputDir, "rapid-capture-queue.json"),
+      completedManifest.outputs.productionReleasePath,
+      completedManifest.outputs.labelDataPath,
+    ];
+    const completedArtifactBytes = new Map(
+      completedArtifactPaths.map((filePath) => [filePath, fs.readFileSync(filePath)]),
+    );
     await resumedService.action("submit-operator-resolutions", action);
     assert.equal(adapterCalls, 2, "same idempotent retry must not rerun or append");
     assert.equal(releaseTracker.callCount, 1, "same retry must not duplicate the report release");
@@ -1460,6 +1491,13 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
         .mathematicalV1.operatorResolutionReceipts.length,
       1,
     );
+    for (const [filePath, before] of completedArtifactBytes) {
+      assert.deepEqual(
+        fs.readFileSync(filePath),
+        before,
+        `completed serial duplicate must leave ${path.basename(filePath)} byte-identical`,
+      );
+    }
 
     const conflict = structuredClone(action);
     conflict.operatorResolutionSubmission.resolutions[0].publicExplanation =
@@ -1469,6 +1507,309 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
       resumedService.action("submit-operator-resolutions", conflict),
       /idempotency key conflicts/,
     );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent exact operator-resolution duplicates have one durable rerun claimant", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-concurrent-same-"));
+  let pendingRequest;
+  let adapterCalls = 0;
+  let releaseRerun;
+  let firstRerunEntered;
+  let secondRerunEntered;
+  const rerunGate = new Promise((resolve) => {
+    releaseRerun = resolve;
+  });
+  const firstRerun = new Promise((resolve) => {
+    firstRerunEntered = resolve;
+  });
+  const secondRerun = new Promise((resolve) => {
+    secondRerunEntered = resolve;
+  });
+  try {
+    const service = createService(outputDir, async (input) => {
+      adapterCalls += 1;
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      return completedResult(input, pendingRequest);
+    });
+    const releaseTracker = installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-concurrent-same-report",
+      "operator-concurrent-same",
+    );
+    await service.action("activate-queue-item", queued.identity);
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-concurrent-same-key",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "Concurrent exact-duplicate claimant regression.",
+        }],
+      },
+    };
+    action.operatorAuthentication = operatorAuthentication(action);
+
+    const runMathematicalStationPackage =
+      service.runMathematicalStationPackage.bind(service);
+    let rerunCalls = 0;
+    service.runMathematicalStationPackage = async (...args) => {
+      rerunCalls += 1;
+      if (rerunCalls === 1) firstRerunEntered();
+      if (rerunCalls === 2) secondRerunEntered();
+      await rerunGate;
+      return runMathematicalStationPackage(...args);
+    };
+
+    const first = service.action("submit-operator-resolutions", structuredClone(action));
+    await firstRerun;
+    const duplicate = service.action("submit-operator-resolutions", structuredClone(action));
+    let boundaryTimeout;
+    await Promise.race([
+      duplicate.then(() => "duplicate_settled", () => "duplicate_settled"),
+      secondRerun.then(() => "second_rerun_entered"),
+      new Promise((_, reject) => {
+        boundaryTimeout = setTimeout(
+          () => reject(new Error("concurrent duplicate did not reach a deterministic claim boundary")),
+          2_000,
+        );
+      }),
+    ]);
+    clearTimeout(boundaryTimeout);
+    releaseRerun();
+    const outcomes = await Promise.allSettled([first, duplicate]);
+
+    assert.equal(outcomes.every((outcome) => outcome.status === "fulfilled"), true);
+    assert.equal(rerunCalls, 1, "one exact authority may have only one expensive rerun claimant");
+    assert.equal(adapterCalls, 2, "initial grading plus exactly one authority rerun are allowed");
+    assert.equal(releaseTracker.callCount, 1, "one exact authority may release exactly once");
+    assert.equal(
+      service.queuedManifests.get(queued.item.queueItemId)
+        .mathematicalV1.operatorResolutionReceipts.length,
+      1,
+    );
+  } finally {
+    releaseRerun();
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent different operator-resolution authorities cannot append behind an unfinished receipt", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-concurrent-different-"));
+  let pendingRequest;
+  try {
+    const service = createService(outputDir, async (input) => {
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      return completedResult(input, pendingRequest);
+    });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-concurrent-different-report",
+      "operator-concurrent-different",
+    );
+    await service.action("activate-queue-item", queued.identity);
+    const first = {
+      ...queued.identity,
+      idempotencyKey: "operator-concurrent-different-key-1",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "First concurrent authority.",
+        }],
+      },
+    };
+    first.operatorAuthentication = operatorAuthentication(first);
+    const contender = structuredClone(first);
+    contender.idempotencyKey = "operator-concurrent-different-key-2";
+    contender.operatorResolutionSubmission.resolutions[0].score = 8.11;
+    contender.operatorResolutionSubmission.resolutions[0].publicExplanation =
+      "Corners show slight balanced wear.";
+    contender.operatorResolutionSubmission.resolutions[0].internalReason =
+      "Conflicting concurrent authority.";
+    contender.operatorAuthentication = operatorAuthentication(contender);
+
+    const runRapidQueueMutation = service.runRapidQueueMutation.bind(service);
+    let mutationEntrants = 0;
+    let releaseMutationEntrants;
+    const bothMutationEntrants = new Promise((resolve) => {
+      releaseMutationEntrants = resolve;
+    });
+    service.runRapidQueueMutation = async (...args) => {
+      mutationEntrants += 1;
+      if (mutationEntrants === 2) releaseMutationEntrants();
+      if (mutationEntrants <= 2) await bothMutationEntrants;
+      return runRapidQueueMutation(...args);
+    };
+    service.runMathematicalStationPackage = async () => {
+      throw new Error("failpoint after concurrent operator receipt persistence");
+    };
+
+    const outcomes = await Promise.allSettled([
+      service.action("submit-operator-resolutions", first),
+      service.action("submit-operator-resolutions", contender),
+    ]);
+    const receipts = service.queuedManifests.get(queued.item.queueItemId)
+      .mathematicalV1.operatorResolutionReceipts;
+    assert.equal(receipts.length, 1, "an unfinished authority must block a second revision inside the queue lock");
+    assert.equal(receipts[0].idempotencyKey, first.idempotencyKey);
+    assert.equal(outcomes[0].status, "rejected");
+    assert.match(outcomes[0].reason.message, /failpoint after concurrent operator receipt persistence/);
+    assert.equal(outcomes[1].status, "rejected");
+    assert.match(outcomes[1].reason.message, /unfinished|conflict|stale|must finish/i);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("a crash immediately after release write resumes from one deterministic byte-identical release plan", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-release-crash-"));
+  let pendingRequest;
+  let adapterCalls = 0;
+  try {
+    const service = createService(outputDir, async (input) => {
+      adapterCalls += 1;
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      return completedResult(input, pendingRequest);
+    });
+    const firstReleaseTracker = installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-release-crash-report",
+      "operator-release-crash",
+    );
+    await service.action("activate-queue-item", queued.identity);
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-release-crash-key",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "Post-release crash convergence regression.",
+        }],
+      },
+    };
+    action.operatorAuthentication = operatorAuthentication(action);
+
+    const writeProductionReleaseForManifest =
+      service.writeProductionReleaseForManifest.bind(service);
+    let failAfterReleaseWrite = true;
+    let firstReleasePaths;
+    service.writeProductionReleaseForManifest = async (...args) => {
+      const release = await writeProductionReleaseForManifest(...args);
+      firstReleasePaths = {
+        productionReleasePath: args[0].outputs.productionReleasePath,
+        labelDataPath: args[0].outputs.labelDataPath,
+      };
+      if (failAfterReleaseWrite) {
+        failAfterReleaseWrite = false;
+        throw new Error("failpoint immediately after operator release write");
+      }
+      return release;
+    };
+    await assert.rejects(
+      service.action("submit-operator-resolutions", action),
+      /failpoint immediately after operator release write/,
+    );
+    assert.equal(adapterCalls, 2);
+    assert.equal(firstReleaseTracker.callCount, 1);
+    assert.ok(firstReleasePaths);
+    const firstReleaseBytes = new Map([
+      [
+        firstReleasePaths.productionReleasePath,
+        fs.readFileSync(firstReleasePaths.productionReleasePath),
+      ],
+      [
+        firstReleasePaths.labelDataPath,
+        fs.readFileSync(firstReleasePaths.labelDataPath),
+      ],
+    ]);
+    const crashedReceipt = service.queuedManifests.get(queued.item.queueItemId)
+      .mathematicalV1.operatorResolutionReceipts[0];
+    assert.equal(crashedReceipt.phase, "authority_committed");
+    assert.equal(crashedReceipt.completedAt, null);
+    assert.match(crashedReceipt.releasePlan.finalizedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.match(crashedReceipt.releasePlan.executionSha256, /^[a-f0-9]{64}$/);
+
+    const restarted = createService(outputDir, async () => {
+      adapterCalls += 1;
+      throw new Error("durable release-plan recovery must not rerun the report builder");
+    });
+    const resumedReleaseTracker = installMathematicalReleaseStub(restarted);
+    await restarted.action("activate-queue-item", queued.identity);
+    const retry = structuredClone(action);
+    retry.operatorAuthentication = null;
+    await restarted.action("submit-operator-resolutions", retry);
+
+    assert.equal(adapterCalls, 2, "release-plan recovery must reuse the exact completed rerun");
+    assert.equal(resumedReleaseTracker.callCount, 1);
+    const completedManifest =
+      restarted.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(
+      completedManifest.mathematicalV1.operatorResolutionReceipts.length,
+      1,
+    );
+    assert.equal(
+      completedManifest.mathematicalV1.operatorResolutionReceipts[0].phase,
+      "rerun_completed",
+    );
+    for (const [filePath, before] of firstReleaseBytes) {
+      assert.deepEqual(
+        fs.readFileSync(filePath),
+        before,
+        `${path.basename(filePath)} must converge byte-identically after restart`,
+      );
+    }
+    const finalArtifactBytes = new Map(
+      [
+        completedManifest.outputs.manifestPath,
+        path.join(outputDir, "rapid-capture-queue.json"),
+        completedManifest.outputs.productionReleasePath,
+        completedManifest.outputs.labelDataPath,
+      ].map((filePath) => [filePath, fs.readFileSync(filePath)]),
+    );
+    await restarted.action("submit-operator-resolutions", action);
+    assert.equal(resumedReleaseTracker.callCount, 1);
+    for (const [filePath, before] of finalArtifactBytes) {
+      assert.deepEqual(
+        fs.readFileSync(filePath),
+        before,
+        `completed retry must leave ${path.basename(filePath)} byte-identical`,
+      );
+    }
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }

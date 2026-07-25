@@ -1501,6 +1501,7 @@ test("Mathematical V1 release preserves the exact strict grade and one-decimal l
   const result = await writeAiGraderMathematicalProductionReleaseV1({
     packagePath: reportPackage.envelopePath,
     operatorId: "calibration-operator",
+    finalizedAt: "2026-07-24T22:00:00.000Z",
     warningsAccepted: true,
   });
   assert.equal(result.productionRelease.generatedAt, artifact.bundle.generatedAt);
@@ -1517,6 +1518,29 @@ test("Mathematical V1 release preserves the exact strict grade and one-decimal l
     false,
   );
   assert.equal(fs.existsSync(result.releaseChecksumsPath), true);
+  const firstWriteBytes = new Map(
+    [
+      result.productionReleasePath,
+      result.labelDataPath,
+      result.publicationManifestPath,
+      result.integrationContractPath,
+      result.releaseChecksumsPath,
+    ].map((filePath) => [filePath, fs.readFileSync(filePath)]),
+  );
+  const reconciled = await writeAiGraderMathematicalProductionReleaseV1({
+    packagePath: reportPackage.envelopePath,
+    operatorId: "calibration-operator",
+    finalizedAt: "2026-07-24T22:00:00.000Z",
+    warningsAccepted: true,
+  });
+  assert.deepEqual(reconciled.productionRelease, result.productionRelease);
+  for (const [filePath, before] of firstWriteBytes) {
+    assert.deepEqual(
+      fs.readFileSync(filePath),
+      before,
+      `${path.basename(filePath)} must reconcile byte-identically from the persisted finalization timestamp`,
+    );
+  }
 });
 
 test("station Mathematical V1 path returns strict body with external session identity and fails closed when inputs are absent", async (t) => {

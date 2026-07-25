@@ -95,7 +95,7 @@ import {
   buildFixedRigOperatorResolutionRequestV1,
   hashFixedRigOperatorResolutionValueV1,
   latestFixedRigOperatorElementResolutionV1,
-  verifyFixedRigOperatorResolutionAuthorityV1,
+  verifyFixedRigOperatorResolutionAuthorityAgainstRequestV1,
   type FixedRigOperatorResolutionAuthorityV1,
   type FixedRigOperatorResolutionBindingV1,
   type FixedRigOperatorResolutionNativeRoleV1,
@@ -2789,7 +2789,10 @@ function validatedOperatorResolutionAuthoritiesV1(input: {
 }): FixedRigOperatorResolutionAuthorityV1[] {
   let previous: string | null = null;
   return input.authorities.map((authority, index) => {
-    if (!verifyFixedRigOperatorResolutionAuthorityV1(authority) ||
+    if (!verifyFixedRigOperatorResolutionAuthorityAgainstRequestV1(
+      authority,
+      input.request,
+    ) ||
         authority.revision !== index + 1 ||
         authority.supersedesAuthoritySha256 !== previous ||
         authority.requestSha256 !== input.request.requestSha256 ||

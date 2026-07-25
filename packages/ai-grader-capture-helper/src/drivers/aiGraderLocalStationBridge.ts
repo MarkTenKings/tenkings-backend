@@ -214,7 +214,7 @@ import {
   buildFixedRigOperatorResolutionAuthorityV1,
   hashFixedRigOperatorResolutionValueV1,
   parseFixedRigOperatorResolutionSubmissionV1,
-  verifyFixedRigOperatorResolutionAuthorityV1,
+  verifyFixedRigOperatorResolutionAuthorityAgainstRequestV1,
   verifyFixedRigOperatorResolutionRequestV1,
   type FixedRigOperatorResolutionAuthorityV1,
   type FixedRigOperatorResolutionRequestV1,
@@ -394,6 +394,15 @@ export interface AiGraderLocalStationMathematicalV1State {
     operatorAuthentication: AiGraderOperatorResolutionAuthenticationV1;
     authority: FixedRigOperatorResolutionAuthorityV1;
     phase: "authority_committed" | "rerun_completed";
+    rerunClaim: {
+      claimId: string;
+      claimedAt: string;
+      authorityRevision: number;
+    };
+    releasePlan: {
+      finalizedAt: string;
+      executionSha256: string;
+    } | null;
     completedAt: string | null;
   }>;
   execution?: AiGraderLocalStationMathematicalExecutionV1;
@@ -4826,6 +4835,7 @@ export class AiGraderLocalStationBridgeService {
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
   private reportWorker: Promise<void> = Promise.resolve();
   private rapidMutationChain: Promise<void> = Promise.resolve();
+  private operatorResolutionRerunClaims = new Map<string, string>();
   private activeQueueItemId?: string;
   private previewGeometryPending?: {
     frame: Buffer;
@@ -9175,14 +9185,41 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("Persisted operator resolution receipt has invalid completion phase state.");
       }
       if (
-        !verifyFixedRigOperatorResolutionAuthorityV1(receipt.authority) ||
+        !verifyFixedRigOperatorResolutionAuthorityAgainstRequestV1(
+          receipt.authority,
+          request,
+        ) ||
         receipt.authority.revision !== index + 1 ||
         receipt.authority.supersedesAuthoritySha256 !== priorAuthoritySha256 ||
-        receipt.authority.requestSha256 !== request.requestSha256 ||
-        hashFixedRigOperatorResolutionValueV1(receipt.authority.binding) !==
-          hashFixedRigOperatorResolutionValueV1(request.binding)
+        receipt.authority.requestSha256 !== request.requestSha256
       ) {
         throw new Error("Persisted operator resolution authority is stale, malformed, or bound to different evidence.");
+      }
+      if (
+        !receipt.rerunClaim ||
+        !SHA256_LOWERCASE_RE.test(receipt.rerunClaim.claimId) ||
+        !Number.isSafeInteger(receipt.rerunClaim.authorityRevision) ||
+        receipt.rerunClaim.authorityRevision !== receipt.authority.revision ||
+        !Number.isFinite(Date.parse(receipt.rerunClaim.claimedAt)) ||
+        new Date(receipt.rerunClaim.claimedAt).toISOString() !==
+          receipt.rerunClaim.claimedAt ||
+        Date.parse(receipt.rerunClaim.claimedAt) <
+          Date.parse(receipt.authority.authenticatedAt)
+      ) {
+        throw new Error("Persisted operator resolution rerun claim is invalid or bound to a different authority revision.");
+      }
+      if (
+        receipt.releasePlan !== null &&
+        (
+          !SHA256_LOWERCASE_RE.test(receipt.releasePlan.executionSha256) ||
+          !Number.isFinite(Date.parse(receipt.releasePlan.finalizedAt)) ||
+          new Date(receipt.releasePlan.finalizedAt).toISOString() !==
+            receipt.releasePlan.finalizedAt ||
+          Date.parse(receipt.releasePlan.finalizedAt) <
+            Date.parse(receipt.authority.authenticatedAt)
+        )
+      ) {
+        throw new Error("Persisted operator resolution release plan is invalid.");
       }
       priorAuthoritySha256 = receipt.authority.authoritySha256;
       const reconstructedSubmission = parseFixedRigOperatorResolutionSubmissionV1({
@@ -9311,105 +9348,332 @@ export class AiGraderLocalStationBridgeService {
     if (!["operator_resolution_required", "finding_review_required"].includes(item.state)) {
       throw new Error(`Operator resolution is unavailable in queue state ${item.state}.`);
     }
-    const mutation = existingReceipt
-      ? { duplicate: true, manifest }
-      : await this.runRapidQueueMutation(async ({ trackManifest }) => {
-          const currentItem = this.exactMutableQueuedItem(request);
-          const currentManifest = await this.exactQueuedManifest(currentItem);
-          trackManifest(currentManifest);
-          const currentRequest = this.operatorResolutionRequest(currentManifest);
-          if (currentRequest.requestSha256 !== pendingRequest.requestSha256) {
-            throw new Error("Operator resolution request changed before the compare-and-swap commit.");
+    type OperatorResolutionReceipt = NonNullable<
+      AiGraderLocalStationMathematicalV1State["operatorResolutionReceipts"]
+    >[number];
+    const claimReceipt = (
+      queueItemId: string,
+      receipt: OperatorResolutionReceipt,
+    ): string => {
+      const claimedAt = new Date().toISOString();
+      const claimId = crypto.createHash("sha256")
+        .update("ten-kings-operator-resolution-rerun-claim-v1\n", "utf8")
+        .update(queueItemId + "\n", "utf8")
+        .update(receipt.authority.authoritySha256 + "\n", "utf8")
+        .update(crypto.randomBytes(32))
+        .digest("hex");
+      receipt.rerunClaim = {
+        claimId,
+        claimedAt,
+        authorityRevision: receipt.authority.revision,
+      };
+      this.operatorResolutionRerunClaims.set(queueItemId, claimId);
+      return claimId;
+    };
+    let provisionalClaimId: string | undefined;
+    type OperatorResolutionMutation = {
+      mode: "execute" | "duplicate_active" | "completed";
+      manifest: AiGraderLocalStationBridgeManifest;
+      claimId: string | null;
+      authoritySha256: string;
+      authorityRevision: number;
+    };
+    let mutation: OperatorResolutionMutation;
+    try {
+      mutation = await this.runRapidQueueMutation<OperatorResolutionMutation>(
+        async ({ trackManifest }) => {
+        const currentItem = this.exactMutableQueuedItem(request);
+        const currentManifest = await this.exactQueuedManifest(currentItem);
+        trackManifest(currentManifest);
+        const currentRequest = this.operatorResolutionRequest(currentManifest);
+        if (currentRequest.requestSha256 !== pendingRequest.requestSha256) {
+          throw new Error("Operator resolution request changed before the compare-and-swap commit.");
+        }
+        const receipts = currentManifest.mathematicalV1!.operatorResolutionReceipts ?? [];
+        const sameKey = receipts.find((receipt) =>
+          receipt.idempotencyKey === idempotencyKey);
+        const unfinished = receipts.find((receipt) =>
+          receipt.phase === "authority_committed");
+        if (unfinished && unfinished.idempotencyKey !== idempotencyKey) {
+          throw new Error(
+            "A previously committed operator resolution receipt must finish before a new revision can be accepted.",
+          );
+        }
+        if (sameKey) {
+          if (
+            sameKey.submissionSha256 !== submissionSha256 ||
+            sameKey.authority.operatorId !== operatorId
+          ) {
+            throw new Error("Operator resolution idempotency key conflicts with a different submission.");
           }
-          const receipts = currentManifest.mathematicalV1!.operatorResolutionReceipts ?? [];
-          const sameKey = receipts.find((receipt) => receipt.idempotencyKey === idempotencyKey);
-          if (sameKey) {
-            if (
-              sameKey.submissionSha256 !== submissionSha256 ||
-              sameKey.authority.operatorId !== operatorId
-            ) {
-              throw new Error("Operator resolution idempotency key conflicts with a different submission.");
-            }
-            return { value: { duplicate: true, manifest: currentManifest } };
+          if (sameKey.phase === "rerun_completed") {
+            return {
+              value: {
+                mode: "completed" as const,
+                manifest: currentManifest,
+                claimId: null,
+                authoritySha256: sameKey.authority.authoritySha256,
+                authorityRevision: sameKey.authority.revision,
+              },
+            };
           }
-          const prior = receipts.at(-1)?.authority;
-          const authority = buildFixedRigOperatorResolutionAuthorityV1({
-            request: currentRequest,
-            submission,
-            operatorId,
-            authenticatedAt: operatorAuthentication.payload.issuedAt,
-            ...(prior ? { priorAuthority: prior } : {}),
-          });
-          currentManifest.mathematicalV1!.operatorResolutionReceipts = [
-            ...receipts,
-            {
-              idempotencyKey,
-              submissionSha256,
-              operatorAuthentication: structuredClone(operatorAuthentication),
-              authority,
-              phase: "authority_committed",
-              completedAt: null,
-            },
-          ];
+          const activeClaimId =
+            this.operatorResolutionRerunClaims.get(currentItem.queueItemId);
+          if (activeClaimId === sameKey.rerunClaim.claimId) {
+            return {
+              value: {
+                mode: "duplicate_active" as const,
+                manifest: currentManifest,
+                claimId: null,
+                authoritySha256: sameKey.authority.authoritySha256,
+                authorityRevision: sameKey.authority.revision,
+              },
+            };
+          }
+          if (activeClaimId) {
+            throw new Error("Operator resolution rerun claim conflicts with active in-process state.");
+          }
+          provisionalClaimId = claimReceipt(currentItem.queueItemId, sameKey);
+          currentManifest.updatedAt = sameKey.rerunClaim.claimedAt;
           currentManifest.progressLog.push(
-            `${authority.authenticatedAt} Authenticated element-resolution authority ${authority.authoritySha256} revision ${authority.revision} committed for exact request ${authority.requestSha256}.`,
+            `${sameKey.rerunClaim.claimedAt} Resumed authenticated element-resolution authority ${sameKey.authority.authoritySha256} revision ${sameKey.authority.revision} under exact rerun claim ${provisionalClaimId}.`,
           );
           return {
-            value: { duplicate: false, manifest: currentManifest },
+            value: {
+              mode: "execute" as const,
+              manifest: currentManifest,
+              claimId: provisionalClaimId,
+              authoritySha256: sameKey.authority.authoritySha256,
+              authorityRevision: sameKey.authority.revision,
+            },
             manifests: [currentManifest],
           };
+        }
+        if (unfinished) {
+          throw new Error(
+            "A previously committed operator resolution receipt must finish before a new revision can be accepted.",
+          );
+        }
+        if (!["operator_resolution_required", "finding_review_required"].includes(currentItem.state)) {
+          throw new Error(`Operator resolution is unavailable in queue state ${currentItem.state}.`);
+        }
+        const prior = receipts.at(-1)?.authority;
+        const authority = buildFixedRigOperatorResolutionAuthorityV1({
+          request: currentRequest,
+          submission,
+          operatorId,
+          authenticatedAt: operatorAuthentication.payload.issuedAt,
+          ...(prior ? { priorAuthority: prior } : {}),
         });
-    const committedReceipt = mutation.manifest.mathematicalV1!
-      .operatorResolutionReceipts!.find((receipt) =>
-        receipt.idempotencyKey === idempotencyKey);
-    if (committedReceipt?.phase === "rerun_completed") return;
-    if (!committedReceipt || committedReceipt.phase !== "authority_committed") {
-      throw new Error("Operator resolution receipt is not in an unfinished committed phase.");
-    }
-    const execution = await this.runMathematicalStationPackage(mutation.manifest);
-    if (execution.status === "operator_resolution_required") {
-      this.transitionRapidWorkflow(
-        mutation.manifest,
-        "operator_resolution_required",
-        "The committed authority did not resolve every unavailable element; the exact request remains active.",
+        const committedReceipt: OperatorResolutionReceipt = {
+          idempotencyKey,
+          submissionSha256,
+          operatorAuthentication: structuredClone(operatorAuthentication),
+          authority,
+          phase: "authority_committed",
+          rerunClaim: {
+            claimId: "",
+            claimedAt: "",
+            authorityRevision: authority.revision,
+          },
+          releasePlan: null,
+          completedAt: null,
+        };
+        provisionalClaimId = claimReceipt(currentItem.queueItemId, committedReceipt);
+        currentManifest.mathematicalV1!.operatorResolutionReceipts = [
+          ...receipts,
+          committedReceipt,
+        ];
+        currentManifest.updatedAt = committedReceipt.rerunClaim.claimedAt;
+        currentManifest.progressLog.push(
+          `${authority.authenticatedAt} Authenticated element-resolution authority ${authority.authoritySha256} revision ${authority.revision} committed for exact request ${authority.requestSha256} under rerun claim ${provisionalClaimId}.`,
+        );
+        return {
+          value: {
+            mode: "execute" as const,
+            manifest: currentManifest,
+            claimId: provisionalClaimId,
+            authoritySha256: authority.authoritySha256,
+            authorityRevision: authority.revision,
+          },
+          manifests: [currentManifest],
+        };
+        },
       );
-    } else if (execution.status === "finding_review_required") {
-      this.transitionRapidWorkflow(
-        mutation.manifest,
-        "finding_review_required",
-        "Element resolution completed and exact measured findings now require their existing SHA-bound review.",
-      );
-    } else if (execution.status === "completed") {
-      const release = await this.writeProductionReleaseForManifest(mutation.manifest, {
-        operatorId,
-      });
-      if (release.reportId !== mutation.manifest.reportId ||
-          release.gradingSessionId !== mutation.manifest.sessionId) {
-        throw new Error("Operator-resolved release identity does not match the exact queued item.");
+    } catch (error) {
+      if (
+        provisionalClaimId &&
+        this.operatorResolutionRerunClaims.get(item.queueItemId) ===
+          provisionalClaimId
+      ) {
+        this.operatorResolutionRerunClaims.delete(item.queueItemId);
       }
-      const mutableItem = this.exactMutableQueuedItem(request);
-      this.transitionRapidWorkflow(
-        mutation.manifest,
-        mutableItem.ocr.state === "succeeded"
-          ? "report_ready_needs_confirm"
-          : "finalizing",
-        "Resolved subgrades were recomposed by the unchanged Mathematical V1 overall formula.",
-      );
-    } else {
-      this.transitionRapidWorkflow(
-        mutation.manifest,
-        "insufficient_evidence",
-        "Operator-resolution rerun encountered a non-resolvable evidence or provenance failure.",
-      );
+      throw error;
     }
-    const completedAt = new Date().toISOString();
-    committedReceipt.phase = "rerun_completed";
-    committedReceipt.completedAt = completedAt;
-    mutation.manifest.updatedAt = completedAt;
-    mutation.manifest.progressLog.push(
-      `${completedAt} Authenticated element-resolution authority ${committedReceipt.authority.authoritySha256} completed its deterministic rerun exactly once.`,
-    );
-    await this.syncQueuedManifest(mutation.manifest);
+    if (mutation.mode !== "execute" || !mutation.claimId) return;
+    const exactClaimId = mutation.claimId;
+    try {
+      const claimedReceipt = mutation.manifest.mathematicalV1!
+        .operatorResolutionReceipts!.find((receipt) =>
+          receipt.idempotencyKey === idempotencyKey);
+      if (!claimedReceipt) {
+        throw new Error("Operator resolution rerun claim lost its exact receipt.");
+      }
+      let execution: AiGraderLocalStationMathematicalExecutionV1;
+      if (claimedReceipt.releasePlan) {
+        const persistedExecution = mutation.manifest.mathematicalV1!.execution;
+        if (
+          persistedExecution?.status !== "completed" ||
+          hashFixedRigOperatorResolutionValueV1(persistedExecution) !==
+            claimedReceipt.releasePlan.executionSha256
+        ) {
+          throw new Error(
+            "Persisted operator resolution release plan does not match its exact completed rerun result.",
+          );
+        }
+        execution = structuredClone(persistedExecution);
+      } else {
+        execution = await this.runMathematicalStationPackage(mutation.manifest);
+        if (execution.status === "completed") {
+          const completedExecution = execution;
+          const executionSha256 =
+            hashFixedRigOperatorResolutionValueV1(completedExecution);
+          await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            const currentItem = this.exactMutableQueuedItem(request);
+            const currentManifest = await this.exactQueuedManifest(currentItem);
+            trackManifest(currentManifest);
+            const currentReceipt = currentManifest.mathematicalV1!
+              .operatorResolutionReceipts!.find((receipt) =>
+                receipt.idempotencyKey === idempotencyKey);
+            if (
+              !currentReceipt ||
+              currentReceipt.phase !== "authority_committed" ||
+              currentReceipt.rerunClaim.claimId !== exactClaimId ||
+              currentReceipt.authority.revision !==
+                mutation.authorityRevision ||
+              currentReceipt.authority.authoritySha256 !==
+                mutation.authoritySha256 ||
+              this.operatorResolutionRerunClaims.get(
+                currentItem.queueItemId,
+              ) !== exactClaimId
+            ) {
+              throw new Error(
+                "Operator resolution release plan claim is stale or does not match the exact receipt revision.",
+              );
+            }
+            if (currentReceipt.releasePlan) {
+              if (
+                currentReceipt.releasePlan.finalizedAt !==
+                  completedExecution.completedAt ||
+                currentReceipt.releasePlan.executionSha256 !== executionSha256
+              ) {
+                throw new Error(
+                  "Operator resolution release plan conflicts with the completed rerun result.",
+                );
+              }
+            } else {
+              currentReceipt.releasePlan = {
+                finalizedAt: completedExecution.completedAt,
+                executionSha256,
+              };
+              currentManifest.updatedAt = completedExecution.completedAt;
+              currentManifest.progressLog.push(
+                `${completedExecution.completedAt} Bound deterministic production-release finalization to completed rerun ${executionSha256} before release write.`,
+              );
+            }
+            return {
+              value: undefined,
+              manifests: [currentManifest],
+            };
+          });
+        }
+      }
+      await this.runRapidQueueMutation(async ({ trackManifest }) => {
+        const currentItem = this.exactMutableQueuedItem(request);
+        const currentManifest = await this.exactQueuedManifest(currentItem);
+        trackManifest(currentManifest);
+        const committedReceipt = currentManifest.mathematicalV1!
+          .operatorResolutionReceipts!.find((receipt) =>
+            receipt.idempotencyKey === idempotencyKey);
+        if (
+          !committedReceipt ||
+          committedReceipt.phase !== "authority_committed" ||
+          committedReceipt.rerunClaim.claimId !== exactClaimId ||
+          committedReceipt.rerunClaim.authorityRevision !==
+            mutation.authorityRevision ||
+          committedReceipt.authority.revision !== mutation.authorityRevision ||
+          committedReceipt.authority.authoritySha256 !==
+            mutation.authoritySha256 ||
+          this.operatorResolutionRerunClaims.get(currentItem.queueItemId) !==
+            exactClaimId
+        ) {
+          throw new Error(
+            "Operator resolution completion claim is stale or does not match the exact receipt revision.",
+          );
+        }
+        if (execution.status === "operator_resolution_required") {
+          this.transitionRapidWorkflow(
+            currentManifest,
+            "operator_resolution_required",
+            "The committed authority did not resolve every unavailable element; the exact request remains active.",
+          );
+        } else if (execution.status === "finding_review_required") {
+          this.transitionRapidWorkflow(
+            currentManifest,
+            "finding_review_required",
+            "Element resolution completed and exact measured findings now require their existing SHA-bound review.",
+          );
+        } else if (execution.status === "completed") {
+          if (
+            !committedReceipt.releasePlan ||
+            committedReceipt.releasePlan.executionSha256 !==
+              hashFixedRigOperatorResolutionValueV1(execution)
+          ) {
+            throw new Error(
+              "Operator-resolved release requires the exact durable finalization plan.",
+            );
+          }
+          const release = await this.writeProductionReleaseForManifest(currentManifest, {
+            operatorId,
+          }, {
+            mathematicalFinalizedAt:
+              committedReceipt.releasePlan.finalizedAt,
+          });
+          if (release.reportId !== currentManifest.reportId ||
+              release.gradingSessionId !== currentManifest.sessionId) {
+            throw new Error("Operator-resolved release identity does not match the exact queued item.");
+          }
+          this.transitionRapidWorkflow(
+            currentManifest,
+            currentItem.ocr.state === "succeeded"
+              ? "report_ready_needs_confirm"
+              : "finalizing",
+            "Resolved subgrades were recomposed by the unchanged Mathematical V1 overall formula.",
+          );
+        } else {
+          this.transitionRapidWorkflow(
+            currentManifest,
+            "insufficient_evidence",
+            "Operator-resolution rerun encountered a non-resolvable evidence or provenance failure.",
+          );
+        }
+        const completedAt = new Date().toISOString();
+        committedReceipt.phase = "rerun_completed";
+        committedReceipt.completedAt = completedAt;
+        currentManifest.updatedAt = completedAt;
+        currentManifest.progressLog.push(
+          `${completedAt} Authenticated element-resolution authority ${committedReceipt.authority.authoritySha256} completed its deterministic rerun exactly once under claim ${exactClaimId}.`,
+        );
+        return {
+          value: undefined,
+          manifests: [currentManifest],
+        };
+      });
+    } finally {
+      if (this.operatorResolutionRerunClaims.get(item.queueItemId) === exactClaimId) {
+        this.operatorResolutionRerunClaims.delete(item.queueItemId);
+      }
+    }
   }
 
   private async publishSelectedRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
@@ -12761,6 +13025,9 @@ export class AiGraderLocalStationBridgeService {
   private async writeProductionReleaseForManifest(
     manifest: AiGraderLocalStationBridgeManifest,
     request: AiGraderLocalStationBridgeActionRequest,
+    options: {
+      mathematicalFinalizedAt?: string;
+    } = {},
   ): Promise<AiGraderStationProductionRelease> {
     const reportId = manifest.reportId;
     if (!reportId || !manifest.sessionId) {
@@ -12773,6 +13040,9 @@ export class AiGraderLocalStationBridgeService {
         const result = await writeAiGraderMathematicalProductionReleaseV1({
           packagePath: reportPackage.outputDir,
           operatorId: request.operatorId,
+          ...(options.mathematicalFinalizedAt
+            ? { finalizedAt: options.mathematicalFinalizedAt }
+            : {}),
           warningsAccepted: request.warningsAccepted,
           overrideReason: request.overrideReason,
         });

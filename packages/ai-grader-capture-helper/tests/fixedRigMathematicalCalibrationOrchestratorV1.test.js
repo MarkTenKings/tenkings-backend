@@ -838,6 +838,44 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   assert.equal(scratchPlane.header.heatmapUsedAsInput, false);
 });
 
+test("orchestrator rejects a self-rehashed authority whose embedded original differs from the exact request", async (t) => {
+  const fixture = await buildFixture({
+    reportId: "mathematical-orchestrator-original-tamper",
+    outputName: "operator-original-tamper-report-package",
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const pending =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  assert.equal(pending.status, "operator_resolution_required");
+  const authority = buildFixedRigOperatorResolutionAuthorityV1({
+    request: pending.request,
+    submission: {
+      schemaVersion: "operator_resolution_submission_v1",
+      requestSha256: pending.request.requestSha256,
+      operatorConfirmed: true,
+      resolutions: [{
+        element: "surface",
+        score: 9.25,
+        publicExplanation: "The surface shows light handling wear.",
+        internalReason: "Canonical original-snapshot tamper regression.",
+      }],
+    },
+    operatorId: "owner-1",
+    authenticatedAt: GENERATED_AT,
+  });
+  authority.resolutions[0].original.score = 1;
+  const { authoritySha256: _discarded, ...authorityPayload } = authority;
+  authority.authoritySha256 = canonicalHash(authorityPayload);
+  fixture.input.operatorResolutionAuthorities = [authority];
+
+  const rejected =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  assert.equal(rejected.status, "insufficient_evidence");
+  assert.equal(rejected.failedStage, "operator_resolution");
+  assert.match(rejected.reasons.join("; "), /stale|conflicting|immutable evidence/i);
+  assert.equal(rejected.reportPackage, null);
+});
+
 test("sealed 33-source bracket completes strict report/package asset registration", async (t) => {
   const fixture = await buildFixture({
     reportId: "mathematical-orchestrator-sealed-exposure-bracket",
