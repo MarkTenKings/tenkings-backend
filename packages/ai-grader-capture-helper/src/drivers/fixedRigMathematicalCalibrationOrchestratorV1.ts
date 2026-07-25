@@ -697,13 +697,18 @@ interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
 }
 
 interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
-  automaticMeasurementUnavailable: {
-    detector: "raw_sensor_outer_cut";
-    reasons: string[];
-    audit: FixedRigRawBoundOuterCutUnavailableAuditV1;
-  };
+  automaticMeasurementUnavailable:
+    | {
+        detector: "raw_sensor_outer_cut";
+        reasons: string[];
+        audit: FixedRigRawBoundOuterCutUnavailableAuditV1;
+      }
+    | {
+        detector: "photometric_evidence";
+        reasons: string[];
+      };
   condition: null;
-  outerCutGeometryEvidence: null;
+  outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1 | null;
   centering: FixedRigCenteringSideResultV1;
   surface: FixedRigSurfaceV1Result;
   visualizationAssetIds: null;
@@ -1321,11 +1326,6 @@ async function ingestSideV1(input: {
       requiresImplementationCorrection: true,
     });
   }
-  if (photometric.status !== "computed") {
-    return fail("photometric_evidence", `${side} evidence has insufficient valid directional coverage and requires recapture.`, {
-      requiresRecapture: true,
-    });
-  }
   if (observedCut.status !== "computed") {
     const unavailableAudit = observedCut.unavailableAudit;
     if (!unavailableAudit) {
@@ -1402,6 +1402,105 @@ async function ingestSideV1(input: {
       },
       condition: null,
       outerCutGeometryEvidence: null,
+      centering,
+      surface,
+      visualizationAssetIds: null,
+    };
+  }
+  if (photometric.status !== "computed") {
+    const reasons = photometric.evidenceLimitations.length
+      ? photometric.evidenceLimitations.map((limitation) =>
+          `${side} calibrated photometric evidence: ${limitation.message}`)
+      : [`${side} calibrated photometric evidence has insufficient valid directional coverage.`];
+    const centering: FixedRigCenteringSideResultV1 = {
+      version: FIXED_RIG_CENTERING_V1_VERSION,
+      status: "insufficient_evidence",
+      side,
+      profile: sideInput.centering.profileInput.profile,
+      score: null,
+      requiresRecaptureOrApprovedReference: true,
+      reasons,
+      cardDefectDeduction: 0,
+    };
+    const surface: FixedRigSurfaceV1Result = {
+      version: FIXED_RIG_SURFACE_V1_VERSION,
+      photometricEvidenceVersion: photometric.version,
+      status: "insufficient_evidence",
+      side,
+      score: null,
+      startingScore: 10,
+      totalDeduction: 0,
+      formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula,
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      calibrationProfileId: sideInput.measurementCalibration.calibrationProfileId,
+      calibrationVersion: sideInput.measurementCalibration.calibrationVersion,
+      calibrationSha256: sideInput.measurementCalibration.calibrationSha256,
+      sourceEvidence: photometric.channels.map((channel) => ({
+        assetId: channel.sourceEvidenceId,
+        sha256: channel.sourceSha256,
+        side,
+        role: "directional_channel",
+        regionId: `${side}-full-surface`,
+        channelIndex: channel.channel,
+      })),
+      findings: [],
+      suppressedCandidates: [],
+      evidenceQualityLimitations: [{
+        code: "surface_global_coverage_insufficient",
+        regionId: `${side}-full-surface`,
+        requiresRecapture: true,
+        message: reasons.join(" "),
+      }],
+      heatmap: {
+        role: "visualization_only",
+        source: "valid_directional_residuals",
+        usedAsIndependentGradingEvidence: false,
+        response: new Float32Array(photometric.width * photometric.height),
+      },
+      connectedComponentCount: 0,
+      uniquePhysicalFindingCount: 0,
+      applicableSevereDefectCaps: [],
+      noDoubleDeduction: true,
+    };
+    const observedArtifact = observedCut.artifact;
+    const outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1 = {
+      coordinateFrame: "normalized_card_portrait_pixels",
+      observedContourSha256: observedArtifact.artifactSha256,
+      intendedContourSha256: intendedOuterBoundary.artifactSha256,
+      intendedBoundaryProfileId: intendedOuterBoundary.profileId,
+      intendedBoundaryProfileVersion: intendedOuterBoundary.profileVersion,
+      observedContourPointCount: observedArtifact.normalizedContour.length,
+      intendedContourPointCount: intendedOuterBoundary.contour.length,
+      observedContourDetectorId: observedArtifact.detectorId,
+      observedContourDetectorVersion: observedArtifact.detectorVersion,
+      rawAllOnAssetId: observedArtifact.rawAllOnAssetId,
+      rawAllOnAssetSha256: observedArtifact.rawAllOnAssetSha256,
+      rawAllOnScalarPlaneSha256: observedArtifact.rawAllOnScalarPlaneSha256,
+      rawToNormalizedTransformSha256: observedArtifact.rawToNormalizedTransformSha256,
+      normalizedAllOnAssetId: observedArtifact.normalizedAllOnAssetId,
+      normalizedAllOnAssetSha256: observedArtifact.normalizedAllOnAssetSha256,
+      boundaryConfidence: observedArtifact.confidence,
+      boundaryU95Mm: observedArtifact.u95Mm,
+      observedArtifact,
+    };
+    return {
+      side,
+      input: sideInput,
+      normalizedBytes,
+      normalizedReference,
+      channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
+      detectorPlaneSha256s: {
+        expectedOuterCardMask: sha256(expectedOuterCardMaskBytes),
+      },
+      assetBindings,
+      photometric,
+      automaticMeasurementUnavailable: {
+        detector: "photometric_evidence",
+        reasons,
+      },
+      condition: null,
+      outerCutGeometryEvidence,
       centering,
       surface,
       visualizationAssetIds: null,
@@ -2758,15 +2857,23 @@ function operatorResolutionBindingV1(input: {
         requiresImplementationCorrection: true,
       });
     }
+    const availableOuterCut = input.sides[side].outerCutGeometryEvidence;
+    const unavailable = input.sides[side].automaticMeasurementUnavailable;
+    const authenticatedOuterCutArtifactSha256 = availableOuterCut?.observedContourSha256 ??
+      (unavailable?.detector === "raw_sensor_outer_cut"
+        ? unavailable.audit.artifactSha256
+        : fail(
+            "operator_resolution",
+            `${side} operator resolution requires authenticated outer-cut provenance.`,
+            { requiresImplementationCorrection: true },
+          ));
     return {
       rawAllOnAssetId: source.rawAllOn.assetId,
       rawAllOnSha256: source.rawAllOn.sha256.toLowerCase(),
       normalizedAllOnAssetId: source.normalizedAllOn.assetId,
       normalizedAllOnSha256: source.normalizedAllOn.sha256.toLowerCase(),
       rawToNormalizedTransformSha256: source.rawToNormalizedTransform.transformSha256,
-      authenticatedOuterCutArtifactSha256:
-        input.sides[side].outerCutGeometryEvidence?.observedContourSha256 ??
-          input.sides[side].automaticMeasurementUnavailable!.audit.artifactSha256,
+      authenticatedOuterCutArtifactSha256,
       warmManifestSha256: source.warmManifestSha256.toLowerCase(),
       nativeRoles,
       nativeRoleLedgerSha256: hashFixedRigOperatorResolutionValueV1(nativeRoles),

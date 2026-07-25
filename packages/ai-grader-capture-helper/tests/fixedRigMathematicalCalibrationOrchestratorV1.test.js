@@ -1106,21 +1106,76 @@ test("exposure fusion selects nonclipped observations without recapture or a con
   assert.equal(clipping, undefined);
 });
 
-test("a localized region obscured in every channel propagates fail-closed recapture and no report", async (t) => {
+test("valid immutable evidence with insufficient directional coverage routes to owner resolution", async (t) => {
   const fixture = await buildFixture({
     fullyObscuredFront: true,
     reportId: "mathematical-orchestrator-localized-ungradable",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  const result =
-    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
-  assert.equal(result.status, "insufficient_evidence");
-  assert.equal(result.failedStage, "photometric_evidence");
-  assert.equal(result.requiresRecapture, true);
-  assert.equal(result.reportPackage, null);
-  assert.equal(result.stationInput, null);
-  assert.equal(result.v0FallbackUsed, false);
-  assert.match(result.reasons.join(" "), /insufficient valid directional coverage/i);
+  const result = await resolveOperatorCheckpoint(
+    fixture.input,
+    [
+      {
+        element: "centering",
+        publicExplanation: "Printed borders are evenly balanced on both sides.",
+        internalReason: "Owner supplied authenticated physical border measurements.",
+        measurements: {
+          unit: "mm",
+          order: ["left", "right", "top", "bottom"],
+          front: [2.1, 2.2, 2.4, 2.3],
+          back: [2.3, 2.2, 2.1, 2.4],
+        },
+      },
+      {
+        element: "corners",
+        score: 9.4,
+        publicExplanation: "Corners show slight wear at the upper left.",
+        internalReason: "Owner resolved the exact corner element.",
+      },
+      {
+        element: "edges",
+        score: 9.15,
+        publicExplanation: "Edges show light wear along the lower border.",
+        internalReason: "Owner resolved the exact edge element.",
+      },
+      {
+        element: "surface",
+        score: 8.75,
+        publicExplanation: "Surface shows a visible scuff near the center.",
+        internalReason: "Owner resolved the exact surface element.",
+      },
+    ],
+    (pending) => {
+      assert.deepEqual(pending.unresolvedElements, [
+        "centering",
+        "corners",
+        "edges",
+        "surface",
+      ]);
+      assert.match(
+        JSON.stringify(pending.request.originalElements),
+        /no manifest-sufficient usable directional evidence/i,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(pending),
+        /requiresRecapture\"\s*:\s*true/,
+      );
+    },
+  );
+  assert.equal(
+    result.status,
+    "completed",
+    result.reasons?.join("; ") ?? JSON.stringify(result),
+  );
+  assert.equal(result.grade.elements.centering.resolved, true);
+  assert.equal(result.grade.elements.corners.score, 9.4);
+  assert.equal(result.grade.elements.edges.score, 9.15);
+  assert.equal(result.grade.elements.surface.score, 8.75);
+  assert.ok(result.reportArtifact.bundle.centeringEvidence.front.outerCutGeometryEvidence);
+  assert.doesNotMatch(
+    JSON.stringify(result.reportArtifact.bundle),
+    /provisional|insufficient|human|manual|exception|admission/i,
+  );
 });
 
 test("orchestrator preserves a controlled scratch as an exact measurement-derived deduction", async (t) => {
