@@ -10480,7 +10480,7 @@ export class AiGraderLocalStationBridgeService {
         channelValues,
       }),
       composeLeimacIdmuExplicitChannelWriteFrame({
-        name: "asynchronousOutput",
+        name: "lightingOutput",
         unit: this.config.leimacUnit ?? 1,
         channelValues: outputValues,
       }),
