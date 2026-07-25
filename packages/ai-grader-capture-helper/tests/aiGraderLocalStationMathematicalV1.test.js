@@ -268,6 +268,57 @@ async function startMathematicalSession(service, authority = printedAuthority(),
   });
 }
 
+test("a delayed local start remains singular and exposes a definitive lifecycle for timeout reconciliation", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-delayed-start-lifecycle-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const service = createService(outputDir, async () => {
+    throw new Error("report builder is not used during Start New Card");
+  });
+  const originalCreateFreshSession = service.createFreshSession.bind(service);
+  let releaseStart;
+  const startRelease = new Promise((resolve) => {
+    releaseStart = resolve;
+  });
+  let markEntered;
+  const startEntered = new Promise((resolve) => {
+    markEntered = resolve;
+  });
+  let createCount = 0;
+  service.createFreshSession = async (...args) => {
+    createCount += 1;
+    markEntered();
+    await startRelease;
+    return originalCreateFreshSession(...args);
+  };
+
+  const firstStart = startMathematicalSession(
+    service,
+    printedAuthority(),
+    "delayed-start-report",
+  );
+  await startEntered;
+  assert.deepEqual(service.status().startSessionLifecycle, { state: "pending" });
+  await assert.rejects(
+    startMathematicalSession(
+      service,
+      printedAuthority(),
+      "overlapping-start-report",
+    ),
+    /already pending|definitive persisted outcome/i,
+  );
+  assert.equal(createCount, 1);
+
+  releaseStart();
+  const completed = await firstStart;
+  assert.deepEqual(completed.startSessionLifecycle, { state: "idle" });
+  assert.equal(completed.currentStep, "capture_front");
+  assert.equal(completed.reportId, "delayed-start-report");
+  assert.equal(createCount, 1);
+  const persistedSessions = fs.readdirSync(outputDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("ai-grader-browser-station-session-"));
+  assert.equal(persistedSessions.length, 1);
+});
+
 function assetMetadata(assetId, evidenceRole, bytes, fileName, widthPx = 24, heightPx = 32) {
   return {
     assetId,

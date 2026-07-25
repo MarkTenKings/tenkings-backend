@@ -956,6 +956,7 @@ export default function AiGraderStationPage() {
   const liveLightingAuthorityAcknowledged = lightingPhysicalStateAcknowledged(liveLighting);
   const [liveLightingRequestPending, setLiveLightingRequestPending] = useState(false);
   const liveLightingRequestPendingRef = useRef(false);
+  const startNewCardInFlightRef = useRef(false);
   const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
@@ -3003,13 +3004,33 @@ export default function AiGraderStationPage() {
 
   const startNewCard = async () => {
     if (liveLightingRequestPendingRef.current) return;
+    if (startNewCardInFlightRef.current) return;
     if (!canStartNewCard) return;
+    startNewCardInFlightRef.current = true;
     setCaptureBusy("start");
     setError(null);
     const startController = new AbortController();
     const startTimeout = window.setTimeout(() => startController.abort(), 30_000);
+    let localStartDispatched = false;
+    let preparedForStart: Awaited<ReturnType<typeof prepareMathematicalAuthority>> | undefined;
+    const acceptStartedSession = async (
+      prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
+      started: AiGraderLocalStationStatus,
+    ) => {
+      await stagePreparedMathematicalDesignReferences(prepared, started);
+      preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
+        identityDraft: { ...identityDraft },
+        editedFields: new Set(identityEditedFieldsRef.current),
+        selectedCard,
+      });
+      setMathematicalAuthorityStatus({
+        status: "completed",
+        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
+      });
+    };
     try {
       const prepared = await prepareMathematicalAuthority();
+      preparedForStart = prepared;
       if (!prepared?.authority) {
         throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
       }
@@ -3034,6 +3055,8 @@ export default function AiGraderStationPage() {
       if (!activationResponse.ok || !activationPayload.ok || !activationPayload.authority) {
         throw new Error(activationPayload.message || "Start New Card requires one exact hosted ACTIVE calibration activation.");
       }
+      window.clearTimeout(startTimeout);
+      localStartDispatched = true;
       const started = await runAction(
         "start-session",
         buildAiGraderCaptureProfileRequest(
@@ -3042,29 +3065,42 @@ export default function AiGraderStationPage() {
           prepared?.authority,
           activationPayload.authority,
         ),
-        startController.signal,
       );
-      await stagePreparedMathematicalDesignReferences(prepared, started);
-      preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
-        identityDraft: { ...identityDraft },
-        editedFields: new Set(identityEditedFieldsRef.current),
-        selectedCard,
-      });
-      setMathematicalAuthorityStatus({
-        status: "completed",
-        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
-      });
+      await acceptStartedSession(prepared, started);
     } catch (requestError) {
-      const message = startController.signal.aborted
-        ? "Start New Card timed out before the fresh activation authority and local session were accepted. No pending start remains; retry obtains a new authority."
+      let reconciled: AiGraderLocalStationStatus | undefined;
+      if (localStartDispatched) {
+        for (;;) {
+          try {
+            const current = await runAction("status");
+            if (current.startSessionLifecycle?.state !== "pending") {
+              reconciled = current;
+              break;
+            }
+          } catch {
+            // The local start outcome remains pending until a fresh status request succeeds.
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+        }
+      }
+      if (
+        reconciled?.currentStep === "capture_front" &&
+        preparedForStart
+      ) {
+        await acceptStartedSession(preparedForStart, reconciled);
+        setError(null);
+        return;
+      }
+      const message = startController.signal.aborted && !localStartDispatched
+        ? "Start New Card timed out before a local session was dispatched. No local start is pending; retry obtains a fresh authority."
         : requestError instanceof Error
           ? requestError.message
           : "Could not start an AI Grader card session.";
       setMathematicalAuthorityStatus({ status: "failed", message });
-      await runAction("status", undefined, startController.signal).catch(() => undefined);
       setError(message);
     } finally {
       window.clearTimeout(startTimeout);
+      startNewCardInFlightRef.current = false;
       setCaptureBusy(null);
     }
   };

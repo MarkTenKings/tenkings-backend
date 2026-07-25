@@ -1473,7 +1473,11 @@ test("capture busy state leaves the live preview connected until the helper owns
 test("station source has no Single route, separate queue mutation, OCR retry, duplicate next control, or hosted mock station API", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /stationCaptureMode|configure-rapid-capture|queue-current-card|retryOcrPrefill|Retry OCR|Start Next Grade|callStationContract/);
-  const startBlock = source.slice(source.indexOf("const startNewCard"), source.indexOf("const runStationCapture"));
+  const startBlock = source.slice(source.indexOf("const startNewCard = async"), source.indexOf("const runStationCapture"));
+  const localStartCall = startBlock.slice(
+    startBlock.indexOf('"start-session"'),
+    startBlock.indexOf("await acceptStartedSession"),
+  );
   const backBlock = source.slice(source.indexOf("const captureBackAndContinue"), source.indexOf("const activateRapidQueueItem"));
   const prepublicationCardBlock = source.slice(source.indexOf("const createCardFromConfirmedIdentity"), source.indexOf("const searchCardItems"));
   const activationBlock = source.slice(source.indexOf("const activateRapidQueueItem"), source.indexOf("const productionReleaseBody"));
@@ -1489,7 +1493,10 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   assert.match(startBlock, /const startController = new AbortController\(\)/);
   assert.match(startBlock, /window\.setTimeout\(\(\) => startController\.abort\(\), 30_000\)/);
   assert.match(startBlock, /AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1[\s\S]+signal: startController\.signal/);
-  assert.match(startBlock, /"start-session"[\s\S]+startController\.signal/);
+  assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+localStartDispatched = true[\s\S]+"start-session"/);
+  assert.doesNotMatch(localStartCall, /startController\.signal/);
+  assert.match(startBlock, /startNewCardInFlightRef\.current/);
+  assert.match(startBlock, /runAction\("status"\)[\s\S]+startSessionLifecycle\?\.state !== "pending"/);
   assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+setCaptureBusy\(null\)/);
   assert.ok(
     activationBlock.indexOf("publicationReviewClaimRef.current") < activationBlock.indexOf("await runAction"),

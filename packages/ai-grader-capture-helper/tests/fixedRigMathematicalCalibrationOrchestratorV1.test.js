@@ -397,6 +397,7 @@ async function rawAllOnPng(intendedContour, marker, options = {}) {
       const normalizedX = rawX - 8 + 0.5;
       const normalizedY = rawY - 8 + 0.5;
       if (!pointInsideContour(normalizedX, normalizedY, intendedContour)) continue;
+      if (options.zeroOuterCut) continue;
       if (options.partialOuterCut && rawX >= 65 && rawY >= 12) continue;
       const offset = (rawY * rawWidth + rawX) * 3;
       bytes[offset] = 100;
@@ -444,7 +445,10 @@ async function buildSide(root, side, profile, options = {}) {
   const rawAllOnBytes = await rawAllOnPng(
     intendedOuterBoundary.contour,
     side === "front" ? 1 : 2,
-    { partialOuterCut: Boolean(options.partialOuterCut) },
+    {
+      partialOuterCut: Boolean(options.partialOuterCut),
+      zeroOuterCut: Boolean(options.zeroOuterCut),
+    },
   );
   const designBytes = await rgbPng();
   const normalized = reportEvidence(
@@ -738,6 +742,7 @@ async function buildFixture(options = {}) {
     }),
     back: await buildSide(root, "back", calibration.profile, {
       partialOuterCut: Boolean(options.partialOuterCutBack),
+      zeroOuterCut: Boolean(options.zeroOuterCutBack),
     }),
   };
   const sides = {
@@ -914,9 +919,57 @@ test("valid sealed evidence with 132 of 192 raw outer-cut sections routes all af
   assert.equal(result.grade.elements.edges.score, 9.15);
   assert.equal(result.grade.elements.surface.score, 8.75);
   const publicBundle = JSON.stringify(result.reportArtifact.bundle);
+  assert.ok(result.reportArtifact.bundle.centeringEvidence.front.outerCutContourAssetId);
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.outerCutContourAssetId,
+    undefined,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.outerCutGeometryEvidence,
+    undefined,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.publicAssets.some(
+      (asset) =>
+        asset.side === "back" &&
+        asset.evidenceRole === "outer_cut_contour",
+    ),
+    false,
+  );
+  assert.equal(
+    result.reportArtifact.assetPayloads.some(
+      (asset) => asset.id === "back/mathematical-v1/outer-cut-contour.png",
+    ),
+    false,
+  );
+  assert.deepEqual(result.reportArtifact.bundle.conditionObservationEvidence, {
+    corners: [],
+    edges: [],
+  });
   assert.doesNotMatch(
     publicBundle,
-    /provisional|insufficient|human|manual|exception|admission/i,
+    /back measured outer physical cut contour|provisional|insufficient|human|manual|exception|admission/i,
+  );
+});
+
+test("zero of 192 raw outer-cut sections remains a terminal hard failure", async (t) => {
+  const fixture = await buildFixture({
+    zeroOuterCutBack: true,
+    reportId: "mathematical-orchestrator-zero-outer-cut",
+    outputName: "zero-outer-cut-report-package",
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const result =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  assert.equal(result.status, "insufficient_evidence");
+  assert.equal(result.failedStage, "detector_plane_ingestion");
+  assert.equal(result.requiresRecapture, true);
+  assert.equal(result.reportPackage, null);
+  assert.equal(result.stationInput, null);
+  assert.equal(result.v0FallbackUsed, false);
+  assert.match(
+    result.reasons.join(" "),
+    /zero raw perimeter cross-sections|nonzero authenticated outer-cut support/i,
   );
 });
 

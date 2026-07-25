@@ -941,6 +941,9 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  startSessionLifecycle: {
+    state: "idle" | "pending";
+  };
   mathematicalCalibration?: {
     ready: boolean;
     reason?: string;
@@ -4951,6 +4954,7 @@ export class AiGraderLocalStationBridgeService {
   private terminalLifecyclePending = 0;
   private lightingLifecycleChain: Promise<void> = Promise.resolve();
   private lightingLifecyclePending = 0;
+  private startSessionLifecyclePending = false;
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private mathematicalCalibrationV1SessionId?: string;
@@ -5193,6 +5197,9 @@ export class AiGraderLocalStationBridgeService {
       loginRequired: false,
       frontCaptureReadiness: this.deriveFrontCaptureReadiness(),
       hardwareActionsEnabled: this.config.mode === "real",
+      startSessionLifecycle: {
+        state: this.startSessionLifecyclePending ? "pending" : "idle",
+      },
       mathematicalCalibration: mathematicalCalibrationReadiness(
         this.config,
         this.dependencies.loadMathematicalCalibrationBundle ??
@@ -14315,6 +14322,14 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
+    const ownsStartSessionLifecycle = action === "start-session";
+    if (ownsStartSessionLifecycle) {
+      if (this.startSessionLifecyclePending) {
+        throw new Error("Start New Card is already pending; reconcile its definitive persisted outcome before retry.");
+      }
+      this.startSessionLifecyclePending = true;
+    }
+    try {
     if (action === "capture-front") {
       this.assertMathematicalCaptureAuthority(this.manifest, "front");
       return this.atomicFrontCapture(request);
@@ -14520,6 +14535,7 @@ export class AiGraderLocalStationBridgeService {
         gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
       }, now);
+      this.startSessionLifecyclePending = false;
       return this.status();
     }
 
@@ -14588,6 +14604,9 @@ export class AiGraderLocalStationBridgeService {
     });
 
     throw new Error(`Unsupported AI Grader station bridge action: ${action}`);
+    } finally {
+      if (ownsStartSessionLifecycle) this.startSessionLifecyclePending = false;
+    }
   }
 }
 

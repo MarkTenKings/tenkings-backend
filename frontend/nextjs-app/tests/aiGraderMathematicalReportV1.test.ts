@@ -453,6 +453,11 @@ test("resolved physical measurements render the standard report without fabricat
       measurementUnit: "mm",
     };
     delete bundle.centeringEvidence[side].outerCutGeometryEvidence;
+    const removedOuterAssetId = bundle.centeringEvidence[side].outerCutContourAssetId;
+    delete bundle.centeringEvidence[side].outerCutContourAssetId;
+    bundle.publicAssets = bundle.publicAssets.filter(
+      (asset: { id: string }) => asset.id !== removedOuterAssetId,
+    );
   }
   bundle.conditionObservationEvidence = { corners: [], edges: [] };
   for (const element of ["centering", "corners", "edges"] as const) {
@@ -463,7 +468,10 @@ test("resolved physical measurements render the standard report without fabricat
   );
   assert.match(html, /Centering measurements/);
   assert.match(html, /Measurement unit/);
-  assert.doesNotMatch(html, /Outer geometry frame|Observed outer contour/);
+  assert.doesNotMatch(
+    html,
+    /Outer geometry frame|Observed outer contour|measured outer physical cut|outer-cut-contour/i,
+  );
   assert.doesNotMatch(
     html,
     /provisional|insufficient|human|manual|exception|admission/i,

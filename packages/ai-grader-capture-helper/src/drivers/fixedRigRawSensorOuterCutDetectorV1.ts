@@ -498,6 +498,12 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
     });
     gradients.push(strongest.gradient * 255);
   }
+  if (detectedRaw.length === 0) {
+    return fail([
+      'Zero raw perimeter cross-sections supplied authenticated detector support.',
+      'Nonzero authenticated outer-cut support is required before operator resolution.',
+    ]);
+  }
   if (unsupported || ambiguous || detectedRaw.length !== crossSectionCount) {
     const failureReasons = [
       ...(unsupported ? [

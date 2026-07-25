@@ -450,6 +450,7 @@ function centeringOverlaySvg(
   height: number,
   side: ComputedCenteringV1["front"],
   calibration: MathematicalCalibrationProfileV1,
+  hasMeasuredOuterCut: boolean,
 ): Buffer {
   const binding = side.registrationBinding;
   const registeredDesignRegistration =
@@ -507,7 +508,10 @@ function centeringOverlaySvg(
   const tenMillimetersX = 10 / calibration.mmPerPixelX;
   const tenMillimetersY = 10 / calibration.mmPerPixelY;
   const physicalOrigin = { x: 22, y: Math.max(130, height - 118) };
-  const maskPath = `${closedContourPath(side.outerCutContour)} ${closedContourPath(side.printedDesignContour)}`;
+  const measuredOuterCutOverlay = hasMeasuredOuterCut
+    ? `<path d="${closedContourPath(side.outerCutContour)} ${closedContourPath(side.printedDesignContour)}" fill="#ff9f1c" fill-opacity="0.22" fill-rule="evenodd" data-mask="outer-cut-minus-printed-design"/>` +
+      `<polygon points="${contourPoints(side.outerCutContour)}" fill="none" stroke="#ffcc00" stroke-width="3"/>`
+    : "";
   const lines = side.measurementLines.map((line, index) => {
     const y = 34 + index * 24;
     return `<g data-measurement-id="${xmlText(line.id)}">` +
@@ -530,10 +534,9 @@ function centeringOverlaySvg(
   return svgDocument(
     width,
     height,
-    `<defs><marker id="orientation-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ff4dff"/></marker></defs>` +
+      `<defs><marker id="orientation-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#ff4dff"/></marker></defs>` +
       `<rect width="100%" height="100%" fill="#000000" fill-opacity="0.12"/>` +
-      `<path d="${maskPath}" fill="#ff9f1c" fill-opacity="0.22" fill-rule="evenodd" data-mask="outer-cut-minus-printed-design"/>` +
-      `<polygon points="${contourPoints(side.outerCutContour)}" fill="none" stroke="#ffcc00" stroke-width="3"/>` +
+      measuredOuterCutOverlay +
       `<polygon points="${contourPoints(side.printedDesignContour)}" fill="none" stroke="#00ff8c" stroke-width="3"/>` +
       lines +
       correspondenceQa +
@@ -643,25 +646,30 @@ async function addCenteringAssetsAndEvidence(
       widthPx: calibration.normalizedWidthPx,
       heightPx: calibration.normalizedHeightPx,
     } as const;
+    const outerCutGeometryEvidence = geometryEvidence[side.side];
     const [outerCutBytes, printedDesignBytes, measurementOverlayBytes] = await Promise.all([
-      rasterizeGeneratedSvgV1(
-        contourSvg(
-          calibration.normalizedWidthPx,
-          calibration.normalizedHeightPx,
-          side.outerCutContour,
-          "#ffcc00",
-          `${side.side} measured outer physical cut contour`,
-        ),
-        calibration.normalizedWidthPx,
-        calibration.normalizedHeightPx,
-      ),
+      outerCutGeometryEvidence
+        ? rasterizeGeneratedSvgV1(
+            contourSvg(
+              calibration.normalizedWidthPx,
+              calibration.normalizedHeightPx,
+              side.outerCutContour,
+              "#ffcc00",
+              `${side.side} measured outer physical cut contour`,
+            ),
+            calibration.normalizedWidthPx,
+            calibration.normalizedHeightPx,
+          )
+        : Promise.resolve(undefined),
       rasterizeGeneratedSvgV1(
         contourSvg(
           calibration.normalizedWidthPx,
           calibration.normalizedHeightPx,
           side.printedDesignContour,
           "#00ff8c",
-          `${side.side} measured printed-design contour`,
+          side.registration.transformType === "physical_margin_measurement"
+            ? `${side.side} printed-design contour derived from physical margin values`
+            : `${side.side} measured printed-design contour`,
         ),
         calibration.normalizedWidthPx,
         calibration.normalizedHeightPx,
@@ -672,18 +680,21 @@ async function addCenteringAssetsAndEvidence(
           calibration.normalizedHeightPx,
           side,
           calibration,
+          Boolean(outerCutGeometryEvidence),
         ),
         calibration.normalizedWidthPx,
         calibration.normalizedHeightPx,
       ),
     ]);
-    registry.addGenerated({
-      ...common,
-      id: outerCutContourAssetId,
-      fileName: `${side.side}-outer-cut-contour.png`,
-      evidenceRole: "outer_cut_contour",
-      bytes: outerCutBytes,
-    });
+    if (outerCutBytes) {
+      registry.addGenerated({
+        ...common,
+        id: outerCutContourAssetId,
+        fileName: `${side.side}-outer-cut-contour.png`,
+        evidenceRole: "outer_cut_contour",
+        bytes: outerCutBytes,
+      });
+    }
     registry.addGenerated({
       ...common,
       id: printedDesignContourAssetId,
@@ -698,14 +709,13 @@ async function addCenteringAssetsAndEvidence(
       evidenceRole: "centering_overlay",
       bytes: measurementOverlayBytes,
     });
-    const outerCutGeometryEvidence = geometryEvidence[side.side];
     return {
       side: side.side,
       profile: side.profile,
       score: side.score,
       horizontal: centeringAxisEvidence("horizontal", side, calibration),
       vertical: centeringAxisEvidence("vertical", side, calibration),
-      outerCutContourAssetId,
+      ...(outerCutBytes ? { outerCutContourAssetId } : {}),
       printedDesignContourAssetId,
       measurementOverlayAssetId,
       registration: side.registration,
@@ -730,7 +740,7 @@ async function addCenteringAssetsAndEvidence(
           }
         : {}),
       evidenceAssetIds: uniqueCaseInsensitive([
-        outerCutContourAssetId,
+        ...(outerCutBytes ? [outerCutContourAssetId] : []),
         printedDesignContourAssetId,
         measurementOverlayAssetId,
         ...(correspondenceLedgerAssetId ? [correspondenceLedgerAssetId] : []),

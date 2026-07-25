@@ -692,6 +692,9 @@ export type AiGraderLocalStationStatus = {
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  startSessionLifecycle?: {
+    state: "idle" | "pending";
+  };
   gradingContract?: AiGraderGradingContract;
   mathematicalCalibration?: {
     ready: boolean;
@@ -2043,6 +2046,9 @@ export function sanitizeAiGraderLocalStationStatusForDisplay(
     localOnly: true,
     loginRequired: false,
     hardwareActionsEnabled: status.hardwareActionsEnabled,
+    startSessionLifecycle: {
+      state: status.startSessionLifecycle?.state === "pending" ? "pending" : "idle",
+    },
     ...(gradingContract ? { gradingContract } : {}),
     ...(mathematicalCalibration ? { mathematicalCalibration } : {}),
     ...(calibrationActivation ? { calibrationActivation } : {}),

@@ -317,7 +317,7 @@ const centeringSideEvidenceSchema = z
     score: mathematicalScoreV1Schema,
     horizontal: centeringAxisSchema,
     vertical: centeringAxisSchema,
-    outerCutContourAssetId: assetIdSchema,
+    outerCutContourAssetId: assetIdSchema.optional(),
     printedDesignContourAssetId: assetIdSchema,
     measurementOverlayAssetId: assetIdSchema,
     registration: mathematicalCenteringRegistrationV1Schema,
@@ -363,6 +363,13 @@ const centeringSideEvidenceSchema = z
       }
     } else if (side.registrationEvidence) {
       context.addIssue({ code: "custom", path: ["registrationEvidence"], message: "printed-border centering must not claim design-template registration evidence" });
+    }
+    if (Boolean(side.outerCutGeometryEvidence) !== Boolean(side.outerCutContourAssetId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["outerCutContourAssetId"],
+        message: "must exist if and only if authenticated measured outer-cut geometry exists",
+      });
     }
   });
 
@@ -1103,7 +1110,9 @@ export const aiGraderReportBundleV03Schema = z
       if (side.score !== Math.min(side.horizontal.score, side.vertical.score)) {
         context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "score"], message: "must use the worse axis" });
       }
-      requireAssetRole(side.outerCutContourAssetId, sideName, "outer_cut_contour", ["centeringEvidence", sideName, "outerCutContourAssetId"]);
+      if (side.outerCutContourAssetId) {
+        requireAssetRole(side.outerCutContourAssetId, sideName, "outer_cut_contour", ["centeringEvidence", sideName, "outerCutContourAssetId"]);
+      }
       requireAssetRole(side.printedDesignContourAssetId, sideName, "printed_design_contour", ["centeringEvidence", sideName, "printedDesignContourAssetId"]);
       requireAssetRole(side.measurementOverlayAssetId, sideName, "centering_overlay", ["centeringEvidence", sideName, "measurementOverlayAssetId"]);
       side.evidenceAssetIds.forEach((assetId) => requireAsset(assetId, ["centeringEvidence", sideName, "evidenceAssetIds"]));
