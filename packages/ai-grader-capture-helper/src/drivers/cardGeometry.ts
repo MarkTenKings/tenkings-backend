@@ -909,12 +909,15 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
  * coordinates participate in this path.
  */
 const PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION = 512;
+const LIVE_PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION = 256;
 const PERIMETER_GRADIENT_MIN_SIDE_STRENGTH = 1.4;
 const PERIMETER_GRADIENT_MIN_TOTAL_STRENGTH = 8.4;
 const PERIMETER_GRADIENT_MIN_SIGNED_SIDE_STRENGTH = 1.2;
 const PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY = 0.8;
 const PERIMETER_GRADIENT_ANGLE_DEGREES = [-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30] as const;
+const LIVE_PERIMETER_GRADIENT_ANGLE_DEGREES = [-15, -10, -5, 0, 5, 10, 15] as const;
 const PERIMETER_GRADIENT_ASPECT_FACTORS = [0.86, 0.93, 1, 1.07, 1.14] as const;
+const LIVE_PERIMETER_GRADIENT_ASPECT_FACTORS = [0.93, 1, 1.07] as const;
 
 interface PerimeterGradientScore {
   sideStrengths: [number, number, number, number];
@@ -1179,17 +1182,25 @@ function candidateWithinPerimeterGates(input: {
   return perimeterGradientGateFailures(input).length === 0;
 }
 
-function centerValues(length: number, step: number): number[] {
+function centerValues(length: number, step: number, maxCenterOffsetRatio = 1): number[] {
   const values = new Set<number>();
   const center = length / 2;
   for (let offset = -Math.ceil(length / step); offset <= Math.ceil(length / step); offset += 1) {
     const value = round(center + offset * step, 3);
-    if (value > 0 && value < length) values.add(value);
+    if (
+      value > 0
+      && value < length
+      && Math.abs(value - center) <= length * maxCenterOffsetRatio
+    ) values.add(value);
   }
   return [...values].sort((left, right) => left - right);
 }
 
-async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+async function attemptPerimeterGradientDetection(
+  prepared: PreparedImage,
+  thresholds: CardGeometryThresholds,
+  detectionPolicy: AiGraderCardGeometryDetectionPolicy,
+): Promise<DetectionAttempt> {
   let scoredCandidatesSinceYield = 0;
   let lastControllerIoYieldAt = performance.now();
   const yieldForControllerIoIfDue = async () => {
@@ -1199,7 +1210,18 @@ async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresh
     scoredCandidatesSinceYield = 0;
     lastControllerIoYieldAt = performance.now();
   };
-  const scale = Math.min(1, PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION / Math.max(prepared.orientedWidth, prepared.orientedHeight));
+  const livePreview = detectionPolicy === "live_preview_fast";
+  const analysisMaxDimension = livePreview
+    ? LIVE_PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION
+    : PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION;
+  const angleCandidates = livePreview
+    ? LIVE_PERIMETER_GRADIENT_ANGLE_DEGREES
+    : PERIMETER_GRADIENT_ANGLE_DEGREES;
+  const aspectFactors = livePreview
+    ? LIVE_PERIMETER_GRADIENT_ASPECT_FACTORS
+    : PERIMETER_GRADIENT_ASPECT_FACTORS;
+  const maxCenterOffsetRatio = livePreview ? 0.25 : 1;
+  const scale = Math.min(1, analysisMaxDimension / Math.max(prepared.orientedWidth, prepared.orientedHeight));
   const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
   const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
   const { data, info } = await sharp(prepared.rawBytes)
@@ -1306,16 +1328,16 @@ async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresh
       sidePolarity: candidate.sidePolarity,
     };
   };
-  for (const aspectFactor of PERIMETER_GRADIENT_ASPECT_FACTORS) {
+  for (const aspectFactor of aspectFactors) {
     const aspectRatio = thresholds.expectedAspectRatio * aspectFactor;
     const minShort = Math.sqrt((thresholds.minCardCoverage * area) / aspectRatio);
     const maxShort = Math.sqrt((thresholds.maxCardCoverage * area) / aspectRatio);
     for (let shortSide = minShort; shortSide <= maxShort; shortSide += coarseSizeStep) {
       const longSide = shortSide * aspectRatio;
       const coverage = (longSide * shortSide) / area;
-      for (const angleDegrees of PERIMETER_GRADIENT_ANGLE_DEGREES) {
-        for (const centerX of centerValues(analysisWidth, coarseCenterStep)) {
-          for (const centerY of centerValues(analysisHeight, coarseCenterStep)) {
+      for (const angleDegrees of angleCandidates) {
+        for (const centerX of centerValues(analysisWidth, coarseCenterStep, maxCenterOffsetRatio)) {
+          for (const centerY of centerValues(analysisHeight, coarseCenterStep, maxCenterOffsetRatio)) {
             const score = scorePerimeterGradientCandidate({
               luma,
               width: analysisWidth,
@@ -1513,7 +1535,7 @@ async function attemptDetection(
   if (solidPlate.candidate) return solidPlate;
 
   const perimeterStartedAt = performance.now();
-  const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds);
+  const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds, detectionPolicy);
   reportDetectionAttempt(observer, {
     detectionPolicy,
     method: "perimeter_gradient_rectangle_v3",

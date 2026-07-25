@@ -786,6 +786,7 @@ test("live preview falls through to perimeter v3 when illuminated solid-plate se
     clearInterval(controllerIoTimer);
   }
   const completedAt = performance.now();
+  const liveElapsedMs = completedAt - startedAt;
   const controllerIoCheckpoints = [startedAt, ...controllerIoTicks, completedAt];
   const longestControllerIoGapMs = Math.max(
     ...controllerIoCheckpoints.slice(1).map((value, index) => value - controllerIoCheckpoints[index]),
@@ -809,6 +810,10 @@ test("live preview falls through to perimeter v3 when illuminated solid-plate se
   assert.ok(
     longestControllerIoGapMs < 250,
     `live perimeter detection blocked controller I/O for ${longestControllerIoGapMs.toFixed(1)} ms`,
+  );
+  assert.ok(
+    liveElapsedMs < 1_800,
+    `live perimeter detection exceeded the two-second retained-frame window: ${liveElapsedMs.toFixed(1)} ms`,
   );
   assert.equal(captured.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
   assert.equal(captured.placementState, "ready");
