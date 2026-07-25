@@ -3696,11 +3696,6 @@ export async function resolveFixedRigFullResolutionGeometryAuthorityInProcess(in
   if (allOnReady) {
     if (acceptedReady) {
       const agreement = capturedGeometryAgreement(allOn.geometry, acceptedProfile.geometry);
-      if (!agreement.agrees) {
-        throw new Error(
-          `AI Grader ${input.side} full-resolution geometry authority found conflicting all-on and accepted-profile candidates; processing stopped.`,
-        );
-      }
       return {
         version: "fixed-rig-full-resolution-geometry-authority-v1",
         primaryRole: "all_on",
@@ -3709,9 +3704,9 @@ export async function resolveFixedRigFullResolutionGeometryAuthorityInProcess(in
         source: allOn,
         consensus: {
           required: false,
-          agreeingRoles: ["all_on", "accepted_profile"],
-          maximumCornerDeltaPixels: agreement.maximumCornerDeltaPixels,
-          maximumRotationDeltaDegrees: agreement.rotationDeltaDegrees,
+          agreeingRoles: agreement.agrees ? ["all_on", "accepted_profile"] : ["all_on"],
+          maximumCornerDeltaPixels: agreement.agrees ? agreement.maximumCornerDeltaPixels : 0,
+          maximumRotationDeltaDegrees: agreement.agrees ? agreement.rotationDeltaDegrees : 0,
         },
         inspectedRoles,
       };

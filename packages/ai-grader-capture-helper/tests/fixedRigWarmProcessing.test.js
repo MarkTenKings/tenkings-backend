@@ -537,7 +537,7 @@ test("secondary authority rejects directional roles that each match accepted-pro
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
 });
 
-test("conflicting all-on and accepted-profile full-resolution candidates fail before any normalized card artifact", async () => {
+test("conflicting secondary accepted-profile geometry does not block Ready primary all-on authority", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-conflicting-geometry-authority-"));
   const packageDir = path.join(root, "package-front");
   const sideDir = path.join(packageDir, "front");
@@ -550,17 +550,20 @@ test("conflicting all-on and accepted-profile full-resolution candidates fail be
   ]);
   const rolePaths = [allOnPath, allOnPath, acceptedPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath, allOnPath];
 
-  await assert.rejects(
-    processFixedRigWarmSideBatch(warmBatchInput({
-      packageId: "synthetic-conflicting-geometry-authority",
-      packageDir,
-      sideDir,
-      rawPath: allOnPath,
-      rolePaths,
-    }), TEST_ONLY_CAPTURED_AUTHORITY),
-    /full-resolution geometry authority found conflicting all-on and accepted-profile candidates/i,
-  );
-  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
+  const result = await processFixedRigWarmSideBatch(warmBatchInput({
+    packageId: "synthetic-conflicting-geometry-authority",
+    packageDir,
+    sideDir,
+    rawPath: allOnPath,
+    rolePaths,
+  }), TEST_ONLY_CAPTURED_AUTHORITY);
+  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
+  const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
+  assert.equal(authority.resolution, "primary_all_on");
+  assert.equal(authority.authoritativeRole, "all_on");
+  assert.deepEqual(authority.consensus.agreeingRoles, ["all_on"]);
+  assert.equal(authority.inspectedRoles[1].placementState, "ready");
+  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), true);
 });
 
 

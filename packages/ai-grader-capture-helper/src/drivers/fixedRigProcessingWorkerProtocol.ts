@@ -1173,8 +1173,15 @@ export function validateFixedRigProcessingWorkerAuthority(
     }
   }
   if (authority.resolution === "primary_all_on") {
-    const acceptedReady = authority.inspectedRoles[1]?.placementState === "ready";
-    const expectedAgreeing = acceptedReady ? ["all_on", "accepted_profile"] : ["all_on"];
+    const allOnInspection = authority.inspectedRoles[0];
+    const acceptedInspection = authority.inspectedRoles[1];
+    const acceptedAgrees = Boolean(
+      allOnInspection?.placementState === "ready" && allOnInspection.corners && allOnInspection.rotationDegrees != null &&
+      acceptedInspection?.placementState === "ready" && acceptedInspection.corners && acceptedInspection.rotationDegrees != null &&
+      cornerDelta(allOnInspection.corners, acceptedInspection.corners) <= Math.min(allOnSource.imageWidth, allOnSource.imageHeight) * 0.025 &&
+      rotationDelta(allOnInspection.rotationDegrees, acceptedInspection.rotationDegrees) <= 3
+    );
+    const expectedAgreeing = acceptedAgrees ? ["all_on", "accepted_profile"] : ["all_on"];
     if (
       authority.authoritativeRole !== "all_on" || authority.consensus.required !== false ||
       !sameOrderedRoles(inspectedRoles, ["all_on", "accepted_profile"]) ||
