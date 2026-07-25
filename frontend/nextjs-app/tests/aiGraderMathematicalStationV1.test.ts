@@ -613,6 +613,8 @@ test("queued finding and insufficient reviews retain exact Mathematical state wi
 
 test("operator-resolution request display preserves exact originals without exposing private authority metadata", () => {
   const request = reviewRequest();
+  const preservedProductionFailureReason =
+    "front calibrated photometric evidence remains manifest-insufficient; ".repeat(200).trim();
   const authority = buildAiGraderMathematicalGradingAuthorityV1({
     identity: { ...identity },
     profiles: { front: "printed_border_v1", back: "printed_border_v1" },
@@ -652,7 +654,7 @@ test("operator-resolution request display preserves exact originals without expo
                   status: "insufficient_evidence",
                   score: null,
                   explanation: null,
-                  failureReasons: ["Printed-border tracks were unresolved."],
+                  failureReasons: [preservedProductionFailureReason],
                   resultSha256: resultSha256.centering,
                 },
                 corners: {
@@ -710,7 +712,7 @@ test("operator-resolution request display preserves exact originals without expo
     assert.deepEqual(execution.unresolvedElements, ["centering"]);
     assert.equal(execution.request.requestSha256, requestSha256);
     assert.deepEqual(execution.request.originalElements.centering.failureReasons, [
-      "Printed-border tracks were unresolved.",
+      preservedProductionFailureReason,
     ]);
     assert.equal(execution.request.originalElements.corners.score, 9.25);
   }
