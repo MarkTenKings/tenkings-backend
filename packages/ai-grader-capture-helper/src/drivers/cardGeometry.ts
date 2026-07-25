@@ -1380,13 +1380,15 @@ async function attemptPerimeterGradientDetection(
         : "No complete four-edge card perimeter had a usable captured-frame gradient.",
     };
   }
-  // Physical-card candidates are ranked by safe captured-frame coverage first;
-  // a smaller internal artwork rectangle may never replace a larger validated
-  // perimeter. Gradient strength breaks only equal-scale ties.
+  // Rank by the known physical card aspect first, then choose the largest
+  // matching perimeter so a frame or fixture boundary cannot outrank the card.
+  const rankPerimeterCandidates = (left: PerimeterGradientCandidate, right: PerimeterGradientCandidate) =>
+    Math.abs(left.aspectRatio - thresholds.expectedAspectRatio) - Math.abs(right.aspectRatio - thresholds.expectedAspectRatio)
+    || right.coverage - left.coverage
+    || right.totalStrength - left.totalStrength
+    || left.angleDegrees - right.angleDegrees;
   const refinementSeeds = coarseCandidates.length ? coarseCandidates : provisionalCoarseCandidates;
-  refinementSeeds.sort((left, right) =>
-    right.coverage - left.coverage || right.totalStrength - left.totalStrength || left.angleDegrees - right.angleDegrees,
-  );
+  refinementSeeds.sort(rankPerimeterCandidates);
   const coarse = refinementSeeds[0]!;
   const refinedCandidates: PerimeterGradientCandidate[] = [];
   if (candidateWithinPerimeterGates({ candidate: coarse, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
@@ -1437,9 +1439,7 @@ async function attemptPerimeterGradientDetection(
       }
     }
   }
-  refinedCandidates.sort((left, right) =>
-    right.coverage - left.coverage || right.totalStrength - left.totalStrength || left.angleDegrees - right.angleDegrees,
-  );
+  refinedCandidates.sort(rankPerimeterCandidates);
   if (!refinedCandidates.length) {
     const closest = closestRejectionDiagnostics();
     return {
