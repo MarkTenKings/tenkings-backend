@@ -1871,7 +1871,7 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
     assert.equal(manifest.previewStatus.activeSide, "back");
     assert.equal(manifest.liveLighting.physicalState.state, "positioning_light_verified");
     assert.equal(manifest.liveLighting.applied.controllerMode, "asynchronous_continuous");
-    assert.ok(lightingWrites.some((names) => names.at(-1) === "asynchronousOutput"));
+    assert.ok(lightingWrites.some((names) => names.at(-1) === "lightingOutput"));
 
     const request = bindReadyPreview(service, "back", "synthetic-ready-source");
     syntheticReady = structuredClone(manifest.previewStatus.cardGeometry.back);
