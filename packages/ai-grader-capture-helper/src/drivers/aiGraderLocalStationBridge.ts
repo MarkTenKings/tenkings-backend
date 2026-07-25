@@ -1860,6 +1860,20 @@ function verifyOperatorResolutionAuthenticationV1(input: {
   return authentication;
 }
 
+function operatorResolutionLogicalEventTimeV1(
+  ...priorEvents: Array<string | null | undefined>
+): string {
+  let eventTimeMs = Date.now();
+  for (const priorEvent of priorEvents) {
+    if (!priorEvent) continue;
+    const priorEventMs = Date.parse(priorEvent);
+    if (Number.isFinite(priorEventMs)) {
+      eventTimeMs = Math.max(eventTimeMs, priorEventMs);
+    }
+  }
+  return new Date(eventTimeMs).toISOString();
+}
+
 function validateLocalMathematicalGradingAuthorityV1(
   value: unknown,
   verification: {
@@ -7579,6 +7593,7 @@ export class AiGraderLocalStationBridgeService {
   private async runMathematicalStationPackage(
     manifest: AiGraderLocalStationBridgeManifest,
     findingReviews?: FixedRigMathematicalFindingReviewV1[],
+    eventTimeFloor?: string,
   ): Promise<AiGraderLocalStationMathematicalExecutionV1> {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
         !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
@@ -7619,7 +7634,8 @@ export class AiGraderLocalStationBridgeService {
         )
       : [];
     const attempt = (prior?.attempt ?? 0) + 1;
-    const startedAt = new Date().toISOString();
+    const startedAt =
+      operatorResolutionLogicalEventTimeV1(eventTimeFloor);
     manifest.mathematicalV1.execution = {
       status: "processing",
       startedAt,
@@ -7730,7 +7746,8 @@ export class AiGraderLocalStationBridgeService {
         };
       }
     }
-    const completedAt = new Date().toISOString();
+    const completedAt =
+      operatorResolutionLogicalEventTimeV1(startedAt);
     if (result.status === "completed") {
       delete manifest.mathematicalV1.reviewAssets;
       this.applyMathematicalReportPackage(manifest, result.reportPackage);
@@ -9216,7 +9233,9 @@ export class AiGraderLocalStationBridgeService {
           new Date(receipt.releasePlan.finalizedAt).toISOString() !==
             receipt.releasePlan.finalizedAt ||
           Date.parse(receipt.releasePlan.finalizedAt) <
-            Date.parse(receipt.authority.authenticatedAt)
+            Date.parse(receipt.authority.authenticatedAt) ||
+          Date.parse(receipt.releasePlan.finalizedAt) <
+            Date.parse(receipt.rerunClaim.claimedAt)
         )
       ) {
         throw new Error("Persisted operator resolution release plan is invalid.");
@@ -9263,9 +9282,19 @@ export class AiGraderLocalStationBridgeService {
       }
       if (
         receipt.phase === "rerun_completed" &&
-        Date.parse(receipt.completedAt!) < Date.parse(receipt.authority.authenticatedAt)
+        (
+          Date.parse(receipt.completedAt!) <
+            Date.parse(receipt.authority.authenticatedAt) ||
+          Date.parse(receipt.completedAt!) <
+            Date.parse(receipt.rerunClaim.claimedAt) ||
+          (
+            receipt.releasePlan !== null &&
+            Date.parse(receipt.completedAt!) <
+              Date.parse(receipt.releasePlan.finalizedAt)
+          )
+        )
       ) {
-        throw new Error("Persisted operator resolution completion predates its authenticated authority.");
+        throw new Error("Persisted operator resolution completion predates a prior durable event.");
       }
       return structuredClone(receipt.authority);
     });
@@ -9355,7 +9384,13 @@ export class AiGraderLocalStationBridgeService {
       queueItemId: string,
       receipt: OperatorResolutionReceipt,
     ): string => {
-      const claimedAt = new Date().toISOString();
+      const claimedAt = receipt.releasePlan
+        ? receipt.rerunClaim.claimedAt
+        : operatorResolutionLogicalEventTimeV1(
+            receipt.authority.authenticatedAt,
+            receipt.rerunClaim?.claimedAt,
+            receipt.completedAt,
+          );
       const claimId = crypto.createHash("sha256")
         .update("ten-kings-operator-resolution-rerun-claim-v1\n", "utf8")
         .update(queueItemId + "\n", "utf8")
@@ -9533,7 +9568,11 @@ export class AiGraderLocalStationBridgeService {
         }
         execution = structuredClone(persistedExecution);
       } else {
-        execution = await this.runMathematicalStationPackage(mutation.manifest);
+        execution = await this.runMathematicalStationPackage(
+          mutation.manifest,
+          undefined,
+          claimedReceipt.rerunClaim.claimedAt,
+        );
         if (execution.status === "completed") {
           const completedExecution = execution;
           const executionSha256 =
@@ -9563,8 +9602,10 @@ export class AiGraderLocalStationBridgeService {
             }
             if (currentReceipt.releasePlan) {
               if (
-                currentReceipt.releasePlan.finalizedAt !==
-                  completedExecution.completedAt ||
+                Date.parse(currentReceipt.releasePlan.finalizedAt) <
+                  Date.parse(currentReceipt.rerunClaim.claimedAt) ||
+                Date.parse(currentReceipt.releasePlan.finalizedAt) <
+                  Date.parse(completedExecution.completedAt) ||
                 currentReceipt.releasePlan.executionSha256 !== executionSha256
               ) {
                 throw new Error(
@@ -9572,13 +9613,17 @@ export class AiGraderLocalStationBridgeService {
                 );
               }
             } else {
+              const finalizedAt = operatorResolutionLogicalEventTimeV1(
+                currentReceipt.rerunClaim.claimedAt,
+                completedExecution.completedAt,
+              );
               currentReceipt.releasePlan = {
-                finalizedAt: completedExecution.completedAt,
+                finalizedAt,
                 executionSha256,
               };
-              currentManifest.updatedAt = completedExecution.completedAt;
+              currentManifest.updatedAt = finalizedAt;
               currentManifest.progressLog.push(
-                `${completedExecution.completedAt} Bound deterministic production-release finalization to completed rerun ${executionSha256} before release write.`,
+                `${finalizedAt} Bound deterministic production-release finalization to completed rerun ${executionSha256} before release write.`,
               );
             }
             return {
@@ -9657,7 +9702,15 @@ export class AiGraderLocalStationBridgeService {
             "Operator-resolution rerun encountered a non-resolvable evidence or provenance failure.",
           );
         }
-        const completedAt = new Date().toISOString();
+        const completedAt = operatorResolutionLogicalEventTimeV1(
+          committedReceipt.authority.authenticatedAt,
+          committedReceipt.rerunClaim.claimedAt,
+          committedReceipt.releasePlan?.finalizedAt,
+          execution.status === "processing"
+            ? execution.startedAt
+            : execution.completedAt,
+          currentManifest.updatedAt,
+        );
         committedReceipt.phase = "rerun_completed";
         committedReceipt.completedAt = completedAt;
         currentManifest.updatedAt = completedAt;
@@ -13104,7 +13157,9 @@ export class AiGraderLocalStationBridgeService {
         manifest.safety.labelGenerated = true;
         manifest.safety.qrGenerated = true;
         manifest.progressLog.push(
-          new Date().toISOString() + " Mathematical Grading V1 production release validated from the strict V0.3 body with no V0 warning, redistribution, 9.0 cap, manual grade, or scoring fallback.",
+          operatorResolutionLogicalEventTimeV1(
+            options.mathematicalFinalizedAt,
+          ) + " Mathematical Grading V1 production release validated from the strict V0.3 body with no V0 warning, redistribution, 9.0 cap, manual grade, or scoring fallback.",
         );
         await writeSessionManifest(manifest);
         return release;

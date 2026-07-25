@@ -1285,7 +1285,11 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
       idempotencyKey: "operator-resolution-idempotency-1",
       operatorResolutionSubmission: validSubmission,
     };
-    action.operatorAuthentication = operatorAuthentication(action);
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
 
     const forbidden = structuredClone(action);
     forbidden.operatorResolutionSubmission.resolutions[0].publicExplanation =
@@ -1342,6 +1346,15 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     assert.equal(
       persistedAfterCrash.mathematicalV1.operatorResolutionReceipts[0].phase,
       "authority_committed",
+    );
+    assert.ok(
+      Date.parse(
+        persistedAfterCrash.mathematicalV1.operatorResolutionReceipts[0]
+          .rerunClaim.claimedAt,
+      ) >= Date.parse(
+        persistedAfterCrash.mathematicalV1.operatorResolutionReceipts[0]
+          .authority.authenticatedAt,
+      ),
     );
     assert.equal(adapterCalls, 1, "failpoint must run after receipt persistence but before rerun");
     const conflictingRevisionDuringResume = {
@@ -1471,6 +1484,18 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     assert.equal(receipt.authority.binding.sides.front.nativeRoles.length, 35);
     assert.equal(receipt.phase, "rerun_completed");
     assert.match(receipt.completedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(
+      Date.parse(receipt.rerunClaim.claimedAt) >=
+        Date.parse(receipt.authority.authenticatedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.releasePlan.finalizedAt) >=
+        Date.parse(receipt.rerunClaim.claimedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.completedAt) >=
+        Date.parse(receipt.releasePlan.finalizedAt),
+    );
 
     const completedManifest =
       resumedService.queuedManifests.get(queued.item.queueItemId);
@@ -1506,6 +1531,72 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     await assert.rejects(
       resumedService.action("submit-operator-resolutions", conflict),
       /idempotency key conflicts/,
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("valid positive-skew operator authentication completes with nondecreasing durable event times", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-positive-skew-"));
+  let pendingRequest;
+  let adapterCalls = 0;
+  try {
+    const service = createService(outputDir, async (input) => {
+      adapterCalls += 1;
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      return completedResult(input, pendingRequest);
+    });
+    const releaseTracker = installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-positive-skew-report",
+      "operator-positive-skew",
+    );
+    await service.action("activate-queue-item", queued.identity);
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-positive-skew-key",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "Valid positive authentication clock skew regression.",
+        }],
+      },
+    };
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
+
+    await service.action("submit-operator-resolutions", action);
+    assert.equal(adapterCalls, 2);
+    assert.equal(releaseTracker.callCount, 1);
+    const receipt = service.queuedManifests.get(queued.item.queueItemId)
+      .mathematicalV1.operatorResolutionReceipts[0];
+    assert.equal(receipt.phase, "rerun_completed");
+    assert.ok(
+      Date.parse(receipt.rerunClaim.claimedAt) >=
+        Date.parse(receipt.authority.authenticatedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.releasePlan.finalizedAt) >=
+        Date.parse(receipt.rerunClaim.claimedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.completedAt) >=
+        Date.parse(receipt.releasePlan.finalizedAt),
     );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
@@ -1561,7 +1652,11 @@ test("concurrent exact operator-resolution duplicates have one durable rerun cla
         }],
       },
     };
-    action.operatorAuthentication = operatorAuthentication(action);
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
 
     const runMathematicalStationPackage =
       service.runMathematicalStationPackage.bind(service);
@@ -1600,6 +1695,20 @@ test("concurrent exact operator-resolution duplicates have one durable rerun cla
       service.queuedManifests.get(queued.item.queueItemId)
         .mathematicalV1.operatorResolutionReceipts.length,
       1,
+    );
+    const receipt = service.queuedManifests.get(queued.item.queueItemId)
+      .mathematicalV1.operatorResolutionReceipts[0];
+    assert.ok(
+      Date.parse(receipt.rerunClaim.claimedAt) >=
+        Date.parse(receipt.authority.authenticatedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.releasePlan.finalizedAt) >=
+        Date.parse(receipt.rerunClaim.claimedAt),
+    );
+    assert.ok(
+      Date.parse(receipt.completedAt) >=
+        Date.parse(receipt.releasePlan.finalizedAt),
     );
   } finally {
     releaseRerun();
@@ -1642,7 +1751,12 @@ test("concurrent different operator-resolution authorities cannot append behind 
         }],
       },
     };
-    first.operatorAuthentication = operatorAuthentication(first);
+    const skewedAuthenticatedAt = new Date(Date.now() + 4_000);
+    first.operatorAuthentication = operatorAuthentication(
+      first,
+      "authenticated-owner-1",
+      skewedAuthenticatedAt,
+    );
     const contender = structuredClone(first);
     contender.idempotencyKey = "operator-concurrent-different-key-2";
     contender.operatorResolutionSubmission.resolutions[0].score = 8.11;
@@ -1650,7 +1764,11 @@ test("concurrent different operator-resolution authorities cannot append behind 
       "Corners show slight balanced wear.";
     contender.operatorResolutionSubmission.resolutions[0].internalReason =
       "Conflicting concurrent authority.";
-    contender.operatorAuthentication = operatorAuthentication(contender);
+    contender.operatorAuthentication = operatorAuthentication(
+      contender,
+      "authenticated-owner-1",
+      skewedAuthenticatedAt,
+    );
 
     const runRapidQueueMutation = service.runRapidQueueMutation.bind(service);
     let mutationEntrants = 0;
@@ -1676,6 +1794,10 @@ test("concurrent different operator-resolution authorities cannot append behind 
       .mathematicalV1.operatorResolutionReceipts;
     assert.equal(receipts.length, 1, "an unfinished authority must block a second revision inside the queue lock");
     assert.equal(receipts[0].idempotencyKey, first.idempotencyKey);
+    assert.ok(
+      Date.parse(receipts[0].rerunClaim.claimedAt) >=
+        Date.parse(receipts[0].authority.authenticatedAt),
+    );
     assert.equal(outcomes[0].status, "rejected");
     assert.match(outcomes[0].reason.message, /failpoint after concurrent operator receipt persistence/);
     assert.equal(outcomes[1].status, "rejected");
@@ -1722,7 +1844,11 @@ test("a crash immediately after release write resumes from one deterministic byt
         }],
       },
     };
-    action.operatorAuthentication = operatorAuthentication(action);
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
 
     const writeProductionReleaseForManifest =
       service.writeProductionReleaseForManifest.bind(service);
@@ -1763,6 +1889,14 @@ test("a crash immediately after release write resumes from one deterministic byt
     assert.equal(crashedReceipt.completedAt, null);
     assert.match(crashedReceipt.releasePlan.finalizedAt, /^\d{4}-\d{2}-\d{2}T/);
     assert.match(crashedReceipt.releasePlan.executionSha256, /^[a-f0-9]{64}$/);
+    assert.ok(
+      Date.parse(crashedReceipt.rerunClaim.claimedAt) >=
+        Date.parse(crashedReceipt.authority.authenticatedAt),
+    );
+    assert.ok(
+      Date.parse(crashedReceipt.releasePlan.finalizedAt) >=
+        Date.parse(crashedReceipt.rerunClaim.claimedAt),
+    );
 
     const restarted = createService(outputDir, async () => {
       adapterCalls += 1;
@@ -1785,6 +1919,16 @@ test("a crash immediately after release write resumes from one deterministic byt
     assert.equal(
       completedManifest.mathematicalV1.operatorResolutionReceipts[0].phase,
       "rerun_completed",
+    );
+    const completedReceipt =
+      completedManifest.mathematicalV1.operatorResolutionReceipts[0];
+    assert.ok(
+      Date.parse(completedReceipt.releasePlan.finalizedAt) >=
+        Date.parse(completedReceipt.rerunClaim.claimedAt),
+    );
+    assert.ok(
+      Date.parse(completedReceipt.completedAt) >=
+        Date.parse(completedReceipt.releasePlan.finalizedAt),
     );
     for (const [filePath, before] of firstReleaseBytes) {
       assert.deepEqual(
