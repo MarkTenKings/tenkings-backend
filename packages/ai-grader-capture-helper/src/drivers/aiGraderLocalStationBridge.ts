@@ -1025,7 +1025,7 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
-        | "mathematical-design-reference-stage" | "mathematical-review-asset"
+        | "mathematical-design-reference-stage" | "mathematical-review-asset" | "operator-resolution-evidence-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
       description: string;
@@ -3249,7 +3249,7 @@ function bridgeEndpoints() {
         | "mathematical-calibration-v1.1-start" | "mathematical-calibration-v1.1-status" | "mathematical-calibration-v1.1-capture"
         | "mathematical-calibration-v1.1-measurement" | "mathematical-calibration-v1.1-seal" | "mathematical-calibration-v1.1-page"
         | MathematicalCalibrationV1_2BridgeAction
-        | "mathematical-design-reference-stage" | "mathematical-review-asset"
+        | "mathematical-design-reference-stage" | "mathematical-review-asset" | "operator-resolution-evidence-asset"
         | "queued-ocr-descriptor" | "queued-ocr-asset";
       hardwareAccess: boolean;
       description: string;
@@ -3288,6 +3288,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "mathematical-calibration-v1.2-finalize", path: MATHEMATICAL_CALIBRATION_V1_2_ENDPOINTS.finalize, hardwareAccess: false, description: "Run canonical V1.2 finalization and loader verification from the accepted analysis." },
     { method: "POST", action: "mathematical-design-reference-stage", path: "/mathematical-v1/design-reference-artifacts/{front|back}", hardwareAccess: false, description: "Stage one exact approved design-reference body through a token-gated, create-new, 64 MiB bounded, SHA-256 verified session route." },
     { method: "GET", action: "mathematical-review-asset", path: "/mathematical-v1/review-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&assetId={assetId}", hardwareAccess: false, description: "Read one exact active-queue-bound normalized, directional, ROI, segmentation, confidence, or illumination asset named by a pending Mathematical finding-review request." },
+    { method: "GET", action: "operator-resolution-evidence-asset", path: "/mathematical-v1/operator-resolution-assets?queueItemId={queueItemId}&gradingSessionId={gradingSessionId}&reportId={reportId}&side={front|back}", hardwareAccess: false, description: "Read one exact active operator-resolution item's already-preserved and freshly verified normalized Front or Back image." },
     { method: "POST", action: "start-session", hardwareAccess: true, description: "Create a local station session." },
     { method: "POST", action: "ingest-finalized-calibration-bundle", hardwareAccess: false, description: "Import one exact trusted-finalizer handoff by bundle hash from the fixed local staging root; caller paths are prohibited." },
     { method: "POST", action: "observe-calibration-activation", hardwareAccess: true, description: "Perform exactly one fail-closed Basler/Leimac runtime observation and retain its signed immutable evidence before any activation authority write." },
@@ -13135,6 +13136,53 @@ export class AiGraderLocalStationBridgeService {
     };
   }
 
+  async operatorResolutionEvidenceAsset(
+    identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
+    side: string | undefined,
+  ): Promise<{
+    item: PersistedAiGraderRapidCaptureQueueItem;
+    image: PersistedAiGraderQueuedOcrImage;
+    bytes: Buffer;
+  }> {
+    if (side !== "front" && side !== "back") {
+      throw new Error("Operator-resolution evidence side must be front or back.");
+    }
+    const item = this.exactQueuedItem(identity);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error(
+        "Operator-resolution evidence requires the exact currently activated queue/session/report triple.",
+      );
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    if (
+      item.state !== "operator_resolution_required" ||
+      gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
+      manifest.mathematicalV1?.execution?.status !== "operator_resolution_required"
+    ) {
+      throw new Error(
+        "Operator-resolution evidence is available only for one exact pending element-resolution request.",
+      );
+    }
+    this.operatorResolutionRequest(manifest);
+    if (
+      item.ocr.state !== "succeeded" ||
+      !item.ocr.images ||
+      item.ocr.images.length !== 2 ||
+      new Set(item.ocr.images.map((image) => image.side)).size !== 2
+    ) {
+      throw new Error(
+        "Operator-resolution evidence requires the exact succeeded Front and Back normalized-image lifecycle.",
+      );
+    }
+    const image = item.ocr.images.find((candidate) => candidate.side === side);
+    if (!image) throw new Error(`Operator-resolution ${side} evidence is missing.`);
+    return {
+      item,
+      image,
+      bytes: await this.verifiedQueuedOcrImage(item, manifest, image),
+    };
+  }
+
   private async reportBundleUnlocked(
     expectedReportId: string,
     options: { includeAssetBodies?: boolean } = {},
@@ -15371,6 +15419,45 @@ export function createAiGraderLocalStationBridgeHttpServer(
             "X-AI-Grader-Evidence-Role": asset.evidenceRole,
             "X-AI-Grader-Width-Px": String(asset.widthPx),
             "X-AI-Grader-Height-Px": String(asset.heightPx),
+          },
+        );
+      }
+
+      if (url.pathname === "/mathematical-v1/operator-resolution-assets") {
+        if (req.method !== "GET") {
+          return sendJson(res, 405, { ok: false, code: "METHOD_NOT_ALLOWED", message: "GET is required for operator-resolution evidence." }, origin, config);
+        }
+        if (!tokenMatches(req, config)) {
+          return sendJson(res, 401, { ok: false, code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED", message: "Station token is required." }, origin, config);
+        }
+        const queueItemId = url.searchParams.get("queueItemId") ?? "";
+        const gradingSessionId = url.searchParams.get("gradingSessionId") ?? "";
+        const reportId = url.searchParams.get("reportId") ?? "";
+        const side = url.searchParams.get("side") ?? "";
+        if (url.searchParams.size !== 4 || !queueItemId || !gradingSessionId || !reportId || !side) {
+          throw new Error("Operator-resolution evidence requires only exact queueItemId, gradingSessionId, reportId, and side parameters.");
+        }
+        const asset = await service.operatorResolutionEvidenceAsset({
+          queueItemId,
+          gradingSessionId,
+          reportId,
+        }, side);
+        return sendBinary(
+          res,
+          200,
+          asset.bytes,
+          origin,
+          config,
+          asset.image.mimeType,
+          {
+            "X-AI-Grader-Queue-Item-Id": asset.item.queueItemId,
+            "X-AI-Grader-Grading-Session-Id": asset.item.sessionId,
+            "X-AI-Grader-Report-Id": asset.item.reportId,
+            "X-AI-Grader-SHA256": asset.image.checksumSha256,
+            "X-AI-Grader-Side": asset.image.side,
+            "X-AI-Grader-Evidence-Role": asset.image.artifactRole,
+            "X-AI-Grader-Width-Px": String(asset.image.widthPx),
+            "X-AI-Grader-Height-Px": String(asset.image.heightPx),
           },
         );
       }
