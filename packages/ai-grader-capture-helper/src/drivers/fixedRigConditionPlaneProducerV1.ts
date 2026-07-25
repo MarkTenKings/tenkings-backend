@@ -37,6 +37,11 @@ export interface FixedRigOuterBoundaryArtifactV1
 
 export interface BuildFixedRigConditionPlanesV1Input {
   side: Side;
+  /**
+   * Exact capture-source capability. Mono8 remains luminance-only even when
+   * an image decoder represents it as three equal sRGB channels.
+   */
+  colorEvidenceModality: "calibrated_rgb" | "mono8_luminance";
   normalizedAllOnRgb: FixedRigRgbPlaneV1;
   normalizedAcceptedProfileRgb: FixedRigRgbPlaneV1;
   approvedDesignReferenceRgb?: FixedRigRgbPlaneV1;
@@ -101,7 +106,10 @@ export type FixedRigConditionPlaneProducerV1Result =
         registeredResidueDeltaE: FixedRigScalarPlaneV1;
       };
       outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1;
-      designDependentEvidence: "computed" | "unavailable_no_approved_reference";
+      designDependentEvidence:
+        | "computed"
+        | "unavailable_no_approved_reference"
+        | "unavailable_source_modality";
       unavailableModalities: Array<
         "metric_depth" | "polarized_residue" | "design_relative_color"
       >;
@@ -184,6 +192,12 @@ function validateInput(input: BuildFixedRigConditionPlanesV1Input): string[] {
     ...validateRgb("normalized all-on RGB", input.normalizedAllOnRgb, width, height),
     ...validateRgb("normalized accepted-profile RGB", input.normalizedAcceptedProfileRgb, width, height),
   ];
+  if (
+    input.colorEvidenceModality !== "calibrated_rgb" &&
+    input.colorEvidenceModality !== "mono8_luminance"
+  ) {
+    reasons.push("Condition color-evidence modality must be authenticated as calibrated RGB or Mono8 luminance.");
+  }
   if (input.approvedDesignReferenceRgb) {
     reasons.push(...validateRgb(
       "approved design-reference RGB",
@@ -1031,8 +1045,13 @@ export function buildFixedRigConditionPlanesV1(
   const fraying = Float32Array.from(edgeRoughness, (value, index) =>
     observedBoundary[index] ? value : 0);
 
-  let designDependentEvidence: "computed" | "unavailable_no_approved_reference" =
-    "unavailable_no_approved_reference";
+  let designDependentEvidence:
+    | "computed"
+    | "unavailable_no_approved_reference"
+    | "unavailable_source_modality" =
+      input.colorEvidenceModality === "mono8_luminance"
+        ? "unavailable_source_modality"
+        : "unavailable_no_approved_reference";
   let registeredColorDeltaE = new Float32Array(pixelCount);
   let registeredPrintDeltaE = new Float32Array(pixelCount);
   const registeredResidueDeltaE = new Float32Array(pixelCount);
@@ -1062,38 +1081,40 @@ export function buildFixedRigConditionPlanesV1(
         "Approved design registration has fewer valid color samples than the centralized producer minimum.",
       ], { requiresRecapture: true, requiresApprovedDesignReference: true });
     }
-    const stainRadiusX = Math.max(1, Math.ceil(POLICY.color.stainLowPassRadiusMm * pixelsPerMmX));
-    const stainRadiusY = Math.max(1, Math.ceil(POLICY.color.stainLowPassRadiusMm * pixelsPerMmY));
-    registeredColorDeltaE = boxStatistic(
-      width,
-      height,
-      differences.deltaE,
-      stainRadiusX,
-      stainRadiusY,
-    );
-    const printRadiusX = Math.max(1, Math.ceil(POLICY.color.printHighPassRadiusMm * pixelsPerMmX));
-    const printRadiusY = Math.max(1, Math.ceil(POLICY.color.printHighPassRadiusMm * pixelsPerMmY));
-    const printLocalMean = boxStatistic(
-      width,
-      height,
-      differences.deltaE,
-      printRadiusX,
-      printRadiusY,
-    );
-    registeredPrintDeltaE = Float32Array.from(differences.deltaE, (value, index) =>
-      differences.valid[index] ? Math.abs(value - Number(printLocalMean[index])) : 0);
     exposedFiberResponse = Float32Array.from(differences.lightnessDelta, (value, index) =>
       differences.valid[index]
         ? clamp(value / POLICY.color.fiberLightnessDeltaFullScale)
         : 0);
-    if (POLICY.unsupportedModalityGates.polarizedResidueSourceRequiredForPositiveResidue &&
-        maximum(differences.chromaDelta) >= SURFACE_POLICY.minimumResidueDeltaE) {
-      return insufficient(input.side, [
-        "A positive residue/chroma candidate requires calibrated polarized residue evidence; V1 will not classify it from RGB alone.",
-      ], { requiresRecapture: true, requiresCalibration: true });
+    if (input.colorEvidenceModality === "calibrated_rgb") {
+      const stainRadiusX = Math.max(1, Math.ceil(POLICY.color.stainLowPassRadiusMm * pixelsPerMmX));
+      const stainRadiusY = Math.max(1, Math.ceil(POLICY.color.stainLowPassRadiusMm * pixelsPerMmY));
+      registeredColorDeltaE = boxStatistic(
+        width,
+        height,
+        differences.deltaE,
+        stainRadiusX,
+        stainRadiusY,
+      );
+      const printRadiusX = Math.max(1, Math.ceil(POLICY.color.printHighPassRadiusMm * pixelsPerMmX));
+      const printRadiusY = Math.max(1, Math.ceil(POLICY.color.printHighPassRadiusMm * pixelsPerMmY));
+      const printLocalMean = boxStatistic(
+        width,
+        height,
+        differences.deltaE,
+        printRadiusX,
+        printRadiusY,
+      );
+      registeredPrintDeltaE = Float32Array.from(differences.deltaE, (value, index) =>
+        differences.valid[index] ? Math.abs(value - Number(printLocalMean[index])) : 0);
+      if (POLICY.unsupportedModalityGates.polarizedResidueSourceRequiredForPositiveResidue &&
+          maximum(differences.chromaDelta) >= SURFACE_POLICY.minimumResidueDeltaE) {
+        return insufficient(input.side, [
+          "A positive residue/chroma candidate requires calibrated polarized residue evidence; V1 will not classify it from RGB alone.",
+        ], { requiresRecapture: true, requiresCalibration: true });
+      }
+      designDependentEvidence = "computed";
     }
-    designDependentEvidence = "computed";
-  } else {
+  } else if (input.colorEvidenceModality === "calibrated_rgb") {
     const valid = Uint8Array.from(relief.valid);
     const differences = registeredColorDifferences({
       observed: input.normalizedAcceptedProfileRgb,
@@ -1170,7 +1191,7 @@ export function buildFixedRigConditionPlanesV1(
     unavailableModalities: [
       "metric_depth",
       "polarized_residue",
-      ...(designDependentEvidence === "unavailable_no_approved_reference"
+      ...(designDependentEvidence !== "computed"
         ? ["design_relative_color" as const]
         : []),
     ],

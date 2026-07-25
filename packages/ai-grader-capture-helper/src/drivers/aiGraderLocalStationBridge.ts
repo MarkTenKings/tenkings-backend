@@ -93,6 +93,9 @@ import {
   type AiGraderMathematicalReportBundleV1Artifact,
 } from "./aiGraderMathematicalReportBundleV1";
 import {
+  AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  aiGraderOperatorResolutionAuthenticationV1Schema,
+  canonicalJsonV1,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationObservationAuthorityV1,
@@ -100,6 +103,7 @@ import {
   type AiGraderCalibrationWorkstationObservationV1,
   type AiGraderCalibrationWorkstationReceiptV1,
   type AiGraderOperatingContextV1,
+  type AiGraderOperatorResolutionAuthenticationV1,
 } from "@tenkings/shared";
 import {
   detectCardGeometryFromBuffer,
@@ -200,7 +204,20 @@ import {
   FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
   verifyTrustedPokemonCardFormatAuthorityV1,
 } from "./fixedRigPokemonStandardCornerProfileV1";
-import { FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID } from "./fixedRigStandardCardFormatV1";
+import {
+  FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
+  FIXED_RIG_STANDARD_TRADING_CARD_HEIGHT_MM,
+  FIXED_RIG_STANDARD_TRADING_CARD_WIDTH_MM,
+} from "./fixedRigStandardCardFormatV1";
+import {
+  buildFixedRigOperatorResolutionAuthorityV1,
+  hashFixedRigOperatorResolutionValueV1,
+  parseFixedRigOperatorResolutionSubmissionV1,
+  verifyFixedRigOperatorResolutionRequestV1,
+  type FixedRigOperatorResolutionAuthorityV1,
+  type FixedRigOperatorResolutionRequestV1,
+  type FixedRigOperatorResolutionSubmissionV1,
+} from "./fixedRigOperatorResolutionAuthorityV1";
 
 export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
@@ -214,6 +231,8 @@ const BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS = 2000;
 const BACK_POSITIONING_EVENT_LIMIT = 20;
 const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
 const ATOMIC_CAPTURE_AUTHORIZATION_MS = 10000;
+const OPERATOR_RESOLUTION_AUTHENTICATION_MAX_LIFETIME_MS = 60_000;
+const OPERATOR_RESOLUTION_AUTHENTICATION_CLOCK_SKEW_MS = 5_000;
 const PREVIEW_OBSERVATION_LIMIT = 8;
 const MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS = 10000;
 const MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT = 16;
@@ -323,6 +342,15 @@ export type AiGraderLocalStationMathematicalExecutionV1 =
       v0FallbackUsed: false;
       reviewRequest: FixedRigMathematicalFindingReviewRequestV1;
       reviewIssues: string[];
+      operatorResolutionRequest: FixedRigOperatorResolutionRequestV1;
+    }
+  | {
+      status: "operator_resolution_required";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      request: FixedRigOperatorResolutionRequestV1;
+      unresolvedElements: Array<"centering" | "corners" | "edges" | "surface">;
     }
   | {
       status: "completed";
@@ -334,6 +362,7 @@ export type AiGraderLocalStationMathematicalExecutionV1 =
       orchestrationTraceSha256: string;
       grade: MathematicalCompletedResultV1["grade"];
       summary: MathematicalCompletedResultV1["summary"];
+      operatorResolutionRequest: FixedRigOperatorResolutionRequestV1;
     }
   | {
       status: "insufficient_evidence";
@@ -356,6 +385,12 @@ export interface AiGraderLocalStationMathematicalV1State {
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   reviewAssets?: Record<string, AiGraderLocalStationMathematicalReviewAssetV1>;
   submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
+  operatorResolutionReceipts?: Array<{
+    idempotencyKey: string;
+    submissionSha256: string;
+    operatorAuthentication: AiGraderOperatorResolutionAuthenticationV1;
+    authority: FixedRigOperatorResolutionAuthorityV1;
+  }>;
   execution?: AiGraderLocalStationMathematicalExecutionV1;
 }
 
@@ -377,6 +412,7 @@ export type AiGraderLocalStationBridgeAction =
   | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
+  | "submit-operator-resolutions"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
   | "fail-queued-ocr"
@@ -389,6 +425,7 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_captured"
   | "finalizing"
   | "finding_review_required"
+  | "operator_resolution_required"
   | "insufficient_evidence"
   | "report_ready_needs_confirm"
   | "confirmed_needs_publish"
@@ -1436,6 +1473,8 @@ export interface AiGraderLocalStationBridgeActionRequest {
   bundleManifestSha256?: string;
   hostedCalibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   mathematicalFindingReviews?: FixedRigMathematicalFindingReviewV1[];
+  operatorResolutionSubmission?: FixedRigOperatorResolutionSubmissionV1;
+  operatorAuthentication?: AiGraderOperatorResolutionAuthenticationV1;
   mathematicalReportEnvelope?: AiGraderMathematicalReportEnvelopeV1;
   mathematicalReportPackagePath?: string;
   mathematicalAssetPayloads?: AiGraderMathematicalAssetPayloadTransportV1[];
@@ -1747,6 +1786,64 @@ function exactStationString(value: unknown, label: string): string {
     throw new Error(label + " must be a non-empty string.");
   }
   return value.trim();
+}
+
+function verifyOperatorResolutionAuthenticationV1(input: {
+  value: unknown;
+  expected: {
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    requestSha256: string;
+    submissionSha256: string;
+    idempotencyKey: string;
+  };
+  hmacKey?: string;
+  hmacKeyId?: string;
+  nowMs?: number;
+}): AiGraderOperatorResolutionAuthenticationV1 {
+  if (!input.hmacKey || !input.hmacKeyId) {
+    throw new Error("Operator-resolution authentication verification is not configured.");
+  }
+  const authentication =
+    aiGraderOperatorResolutionAuthenticationV1Schema.parse(input.value);
+  const payload = authentication.payload;
+  for (const [key, expected] of Object.entries(input.expected)) {
+    if (payload[key as keyof typeof payload] !== expected) {
+      throw new Error("Operator-resolution authentication is stale or bound to different evidence.");
+    }
+  }
+  if (authentication.authentication.keyId !== input.hmacKeyId) {
+    throw new Error("Operator-resolution authentication key identity mismatch.");
+  }
+  const payloadBytes = canonicalJsonV1(payload);
+  const payloadSha256 = crypto.createHash("sha256")
+    .update(payloadBytes, "utf8")
+    .digest("hex");
+  const signature = crypto.createHmac("sha256", input.hmacKey)
+    .update(AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1 + "\n", "utf8")
+    .update(payloadBytes, "utf8")
+    .digest("hex");
+  if (
+    !secretMatches(authentication.payloadSha256, payloadSha256) ||
+    !secretMatches(authentication.authentication.signature, signature)
+  ) {
+    throw new Error("Operator-resolution authentication signature is invalid.");
+  }
+  const issuedAtMs = Date.parse(payload.issuedAt);
+  const expiresAtMs = Date.parse(payload.expiresAt);
+  const nowMs = input.nowMs ?? Date.now();
+  if (
+    !Number.isFinite(issuedAtMs) ||
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs <= issuedAtMs ||
+    expiresAtMs - issuedAtMs > OPERATOR_RESOLUTION_AUTHENTICATION_MAX_LIFETIME_MS ||
+    issuedAtMs > nowMs + OPERATOR_RESOLUTION_AUTHENTICATION_CLOCK_SKEW_MS ||
+    expiresAtMs < nowMs
+  ) {
+    throw new Error("Operator-resolution authentication is expired or has invalid timing.");
+  }
+  return authentication;
 }
 
 function validateLocalMathematicalGradingAuthorityV1(
@@ -3101,6 +3198,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "discard-queue-item", hardwareAccess: false, description: "Permanently delete one exact unpublished working-queue card and its local artifacts." },
     { method: "POST", action: "bind-mathematical-grading-authority", hardwareAccess: false, description: "Bind exact Mathematical V1 card and centering/design-reference authority to a fresh Rapid continuation before capture; publication remains bridge-derived." },
     { method: "POST", action: "submit-mathematical-finding-reviews", hardwareAccess: false, description: "Submit explicit operator finding decisions bound to the exact pending review-request SHA-256 and rerun deterministically." },
+    { method: "POST", action: "submit-operator-resolutions", hardwareAccess: false, description: "Submit one authenticated versioned element-resolution authority and resume the same durable queue item without recapture." },
     { method: "POST", action: "begin-queued-ocr", hardwareAccess: false, description: "Claim one exact eligible queued OCR item once." },
     { method: "POST", action: "complete-queued-ocr", hardwareAccess: false, description: "Persist one safe exact-item OCR result." },
     { method: "POST", action: "fail-queued-ocr", hardwareAccess: false, description: "Persist one explicit terminal exact-item OCR failure." },
@@ -3583,7 +3681,7 @@ function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
 
 const RAPID_WORKFLOW_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
   "front_captured", "front_processing", "back_positioning", "back_captured", "finalizing",
-  "finding_review_required", "insufficient_evidence",
+  "finding_review_required", "operator_resolution_required", "insufficient_evidence",
   "report_ready_needs_confirm", "confirmed_needs_publish", "published", "failed",
 ]);
 const RAPID_LEGACY_RAW_EVIDENCE_ROLES = [
@@ -4026,6 +4124,7 @@ const MATHEMATICAL_ORCHESTRATION_STAGES = new Set<MathematicalInsufficientResult
   "corner_edge_measurement",
   "surface_measurement",
   "grade_composition",
+  "operator_resolution",
   "finding_review",
   "report_adaptation",
   "package_write",
@@ -4070,6 +4169,17 @@ function persistedMathematicalRapidQueueSummary(
     }
     return {
       status: "finding_review_required",
+      reviewRequestSha256: raw.reviewRequestSha256,
+    };
+  }
+  if (raw.status === "operator_resolution_required") {
+    if (!exactObjectKeys(raw, ["status", "reviewRequestSha256"]) ||
+        typeof raw.reviewRequestSha256 !== "string" ||
+        !SHA256_LOWERCASE_RE.test(raw.reviewRequestSha256)) {
+      throw new Error("Persisted Mathematical Rapid operator-resolution summary is invalid.");
+    }
+    return {
+      status: "operator_resolution_required",
       reviewRequestSha256: raw.reviewRequestSha256,
     };
   }
@@ -4598,6 +4708,12 @@ function mathematicalRapidQueueSummary(
     return {
       status: execution.status,
       reviewRequestSha256: execution.reviewRequest.artifactSha256,
+    };
+  }
+  if (execution.status === "operator_resolution_required") {
+    return {
+      status: execution.status,
+      reviewRequestSha256: execution.request.requestSha256,
     };
   }
   if (execution.status === "insufficient_evidence") {
@@ -7472,6 +7588,11 @@ export class AiGraderLocalStationBridgeService {
       );
     }
     const prior = manifest.mathematicalV1.execution;
+    const queueItem = this.rapidQueue.items.find((candidate) =>
+      candidate.sessionId === manifest.sessionId && candidate.reportId === manifest.reportId);
+    if (!queueItem) {
+      throw new Error("Mathematical V1 processing requires the exact durable queue item identity.");
+    }
     const attempt = (prior?.attempt ?? 0) + 1;
     const startedAt = new Date().toISOString();
     manifest.mathematicalV1.execution = {
@@ -7502,6 +7623,7 @@ export class AiGraderLocalStationBridgeService {
         buildFixedRigMathematicalCalibrationStationPackageV1;
       result = await builder({
         authority: this.hydratedMathematicalGradingAuthority(manifest),
+        queueItemId: queueItem.queueItemId,
         gradingSessionId: manifest.sessionId,
         generatedAt: manifest.mathematicalV1.generatedAt,
         reportId: manifest.reportId,
@@ -7525,6 +7647,11 @@ export class AiGraderLocalStationBridgeService {
             },
           } : {}),
         ...(findingReviews ? { findingReviews: structuredClone(findingReviews) } : {}),
+        ...(manifest.mathematicalV1.operatorResolutionReceipts?.length ? {
+          operatorResolutionAuthorities:
+            manifest.mathematicalV1.operatorResolutionReceipts.map((receipt) =>
+              structuredClone(receipt.authority)),
+        } : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
         throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
@@ -7593,6 +7720,7 @@ export class AiGraderLocalStationBridgeService {
         orchestrationTraceSha256: result.orchestrationTraceSha256,
         grade: result.grade,
         summary: result.summary,
+        operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
       };
       manifest.progressLog.push(
         completedAt + " Mathematical V1 strict V0.3 package completed with all four elements and no V0/manual fallback.",
@@ -7606,10 +7734,25 @@ export class AiGraderLocalStationBridgeService {
         v0FallbackUsed: false,
         reviewRequest: structuredClone(result.reviewRequest),
         reviewIssues: [...result.reviewIssues],
+        operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
       };
       manifest.progressLog.push(
         completedAt + " Mathematical V1 requires explicit operator review bound to request " +
         result.reviewRequest.artifactSha256 + "; no finding was auto-confirmed.",
+      );
+    } else if (result.status === "operator_resolution_required") {
+      delete manifest.mathematicalV1.reviewAssets;
+      manifest.mathematicalV1.execution = {
+        status: "operator_resolution_required",
+        completedAt,
+        attempt,
+        v0FallbackUsed: false,
+        request: structuredClone(result.request),
+        unresolvedElements: [...result.unresolvedElements],
+      };
+      manifest.progressLog.push(
+        completedAt + " Mathematical V1 reached the authenticated element-resolution boundary for request " +
+        result.request.requestSha256 + ".",
       );
     } else {
       delete manifest.mathematicalV1.reviewAssets;
@@ -8554,6 +8697,16 @@ export class AiGraderLocalStationBridgeService {
           const reportId = manifest.reportId ?? "local-report";
           if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
             const execution = await this.runMathematicalStationPackage(manifest);
+            if (execution.status === "operator_resolution_required") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "operator_resolution_required",
+                "Exact element results are ready for authenticated owner resolution bound to request " +
+                execution.request.requestSha256 + ".",
+              );
+              await this.syncQueuedManifest(manifest);
+              return;
+            }
             if (execution.status === "finding_review_required") {
               this.transitionRapidWorkflow(
                 manifest,
@@ -8818,6 +8971,7 @@ export class AiGraderLocalStationBridgeService {
     const item = this.exactQueuedItem(request);
     if (![
       "finding_review_required",
+      "operator_resolution_required",
       "insufficient_evidence",
       "report_ready_needs_confirm",
       "confirmed_needs_publish",
@@ -8953,6 +9107,168 @@ export class AiGraderLocalStationBridgeService {
       );
     }
     await this.syncQueuedManifest(manifest);
+  }
+
+  private operatorResolutionRequest(
+    manifest: AiGraderLocalStationBridgeManifest,
+  ): FixedRigOperatorResolutionRequestV1 {
+    const execution = manifest.mathematicalV1?.execution;
+    if (execution?.status === "operator_resolution_required") {
+      if (!verifyFixedRigOperatorResolutionRequestV1(execution.request)) {
+        throw new Error("Persisted operator resolution request is invalid or noncanonical.");
+      }
+      return execution.request;
+    }
+    if (execution?.status === "finding_review_required" ||
+        execution?.status === "completed") {
+      if (!verifyFixedRigOperatorResolutionRequestV1(execution.operatorResolutionRequest)) {
+        throw new Error("Persisted operator resolution request is invalid or noncanonical.");
+      }
+      return execution.operatorResolutionRequest;
+    }
+    throw new Error("Operator resolution requires the exact pending element-resolution request.");
+  }
+
+  private async submitOperatorResolutions(
+    request: AiGraderLocalStationBridgeActionRequest,
+  ): Promise<void> {
+    const item = this.exactQueuedItem(request);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error("Operator resolution requires the exact currently activated queue/session/report triple.");
+    }
+    const idempotencyKey = exactStationString(
+      request.idempotencyKey,
+      "Operator resolution idempotencyKey",
+    );
+    const manifest = await this.exactQueuedManifest(item);
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
+        !manifest.mathematicalV1) {
+      throw new Error("Operator resolution is available only for an exact Mathematical V1 queued session.");
+    }
+    assertRealReady(this.config, manifest);
+    const pendingRequest = this.operatorResolutionRequest(manifest);
+    const submission = parseFixedRigOperatorResolutionSubmissionV1(
+      request.operatorResolutionSubmission,
+      {
+        width: FIXED_RIG_STANDARD_TRADING_CARD_WIDTH_MM,
+        height: FIXED_RIG_STANDARD_TRADING_CARD_HEIGHT_MM,
+      },
+    );
+    if (submission.requestSha256 !== pendingRequest.requestSha256) {
+      throw new Error("Operator resolution submission is stale or bound to different evidence.");
+    }
+    const submissionSha256 = hashFixedRigOperatorResolutionValueV1(submission);
+    const operatorAuthentication = verifyOperatorResolutionAuthenticationV1({
+      value: request.operatorAuthentication,
+      expected: {
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+        requestSha256: pendingRequest.requestSha256,
+        submissionSha256,
+        idempotencyKey,
+      },
+      hmacKey: this.config.cardFormatAuthorityHmacKey,
+      hmacKeyId: this.config.cardFormatAuthorityHmacKeyId,
+    });
+    const operatorId = operatorAuthentication.payload.operatorId;
+    const existingReceipt = manifest.mathematicalV1.operatorResolutionReceipts?.find(
+      (receipt) => receipt.idempotencyKey === idempotencyKey,
+    );
+    if (existingReceipt) {
+      if (
+        existingReceipt.submissionSha256 !== submissionSha256 ||
+        existingReceipt.authority.operatorId !== operatorId
+      ) {
+        throw new Error("Operator resolution idempotency key conflicts with a different submission.");
+      }
+      return;
+    }
+    if (!["operator_resolution_required", "finding_review_required"].includes(item.state)) {
+      throw new Error(`Operator resolution is unavailable in queue state ${item.state}.`);
+    }
+    const mutation = await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const currentItem = this.exactMutableQueuedItem(request);
+      const currentManifest = await this.exactQueuedManifest(currentItem);
+      trackManifest(currentManifest);
+      const currentRequest = this.operatorResolutionRequest(currentManifest);
+      if (currentRequest.requestSha256 !== pendingRequest.requestSha256) {
+        throw new Error("Operator resolution request changed before the compare-and-swap commit.");
+      }
+      const receipts = currentManifest.mathematicalV1!.operatorResolutionReceipts ?? [];
+      const sameKey = receipts.find((receipt) => receipt.idempotencyKey === idempotencyKey);
+      if (sameKey) {
+        if (
+          sameKey.submissionSha256 !== submissionSha256 ||
+          sameKey.authority.operatorId !== operatorId
+        ) {
+          throw new Error("Operator resolution idempotency key conflicts with a different submission.");
+        }
+        return { value: { duplicate: true, manifest: currentManifest } };
+      }
+      const prior = receipts.at(-1)?.authority;
+      const authority = buildFixedRigOperatorResolutionAuthorityV1({
+        request: currentRequest,
+        submission,
+        operatorId,
+        authenticatedAt: operatorAuthentication.payload.issuedAt,
+        ...(prior ? { priorAuthority: prior } : {}),
+      });
+      currentManifest.mathematicalV1!.operatorResolutionReceipts = [
+        ...receipts,
+        {
+          idempotencyKey,
+          submissionSha256,
+          operatorAuthentication: structuredClone(operatorAuthentication),
+          authority,
+        },
+      ];
+      currentManifest.progressLog.push(
+        `${authority.authenticatedAt} Authenticated element-resolution authority ${authority.authoritySha256} revision ${authority.revision} committed for exact request ${authority.requestSha256}.`,
+      );
+      return {
+        value: { duplicate: false, manifest: currentManifest },
+        manifests: [currentManifest],
+      };
+    });
+    if (mutation.duplicate) return;
+    const execution = await this.runMathematicalStationPackage(mutation.manifest);
+    if (execution.status === "operator_resolution_required") {
+      this.transitionRapidWorkflow(
+        mutation.manifest,
+        "operator_resolution_required",
+        "The committed authority did not resolve every unavailable element; the exact request remains active.",
+      );
+    } else if (execution.status === "finding_review_required") {
+      this.transitionRapidWorkflow(
+        mutation.manifest,
+        "finding_review_required",
+        "Element resolution completed and exact measured findings now require their existing SHA-bound review.",
+      );
+    } else if (execution.status === "completed") {
+      const release = await this.writeProductionReleaseForManifest(mutation.manifest, {
+        operatorId,
+      });
+      if (release.reportId !== mutation.manifest.reportId ||
+          release.gradingSessionId !== mutation.manifest.sessionId) {
+        throw new Error("Operator-resolved release identity does not match the exact queued item.");
+      }
+      const mutableItem = this.exactMutableQueuedItem(request);
+      this.transitionRapidWorkflow(
+        mutation.manifest,
+        mutableItem.ocr.state === "succeeded"
+          ? "report_ready_needs_confirm"
+          : "finalizing",
+        "Resolved subgrades were recomposed by the unchanged Mathematical V1 overall formula.",
+      );
+    } else {
+      this.transitionRapidWorkflow(
+        mutation.manifest,
+        "insufficient_evidence",
+        "Operator-resolution rerun encountered a non-resolvable evidence or provenance failure.",
+      );
+    }
+    await this.syncQueuedManifest(mutation.manifest);
   }
 
   private async publishSelectedRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
@@ -13474,6 +13790,22 @@ export class AiGraderLocalStationBridgeService {
       await this.submitMathematicalFindingReviews(request);
       return this.status();
     }
+    if (action === "submit-operator-resolutions") {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        [
+          "queueItemId",
+          "gradingSessionId",
+          "reportId",
+          "idempotencyKey",
+          "operatorResolutionSubmission",
+          "operatorAuthentication",
+        ],
+      );
+      await this.submitOperatorResolutions(request);
+      return this.status();
+    }
     if (action === "publish-report") {
       assertExactActionRequestKeys(
         request,
@@ -13635,6 +13967,7 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
+    "submit-operator-resolutions",
     "begin-queued-ocr",
     "complete-queued-ocr",
     "fail-queued-ocr",

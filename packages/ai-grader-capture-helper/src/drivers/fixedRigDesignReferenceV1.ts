@@ -12,6 +12,11 @@ import type {
   FixedRigExactCardIdentityV1,
 } from "./fixedRigCenteringV1";
 
+type FixedRigAutomatedCenteringRegistrationV1 = Exclude<
+  FixedRigCenteringRegistrationV1,
+  { transformType: "physical_margin_measurement" }
+>;
+
 export const FIXED_RIG_DESIGN_REFERENCE_PROJECTION_V1_VERSION =
   "fixed_rig_design_reference_projection_v1" as const;
 export const FIXED_RIG_DESIGN_REFERENCE_REGISTRATION_V1_VERSION =
@@ -104,13 +109,13 @@ export interface FixedRigDesignReferenceRegistrationBindingV1 {
 export interface ProjectedApprovedFixedRigDesignReferenceV1 {
   version: typeof FIXED_RIG_DESIGN_REFERENCE_PROJECTION_V1_VERSION;
   designReference: MathematicalDesignReferenceV1;
-  registration: FixedRigCenteringRegistrationV1;
+  registration: FixedRigAutomatedCenteringRegistrationV1;
   binding: FixedRigDesignReferenceRegistrationBindingV1;
   centeringProfileInput: {
     profile: "registered_design_template_v1";
     exactIdentity: FixedRigExactCardIdentityV1;
     designReference: MathematicalDesignReferenceV1;
-    registration: FixedRigCenteringRegistrationV1;
+    registration: FixedRigAutomatedCenteringRegistrationV1;
     registrationBinding: FixedRigDesignReferenceRegistrationBindingV1;
   };
 }
@@ -120,7 +125,7 @@ export type FixedRigDesignReferenceRegistrationVerificationV1 =
   | { valid: false; reason: string };
 
 interface ComputedRegistrationV1 {
-  registration: FixedRigCenteringRegistrationV1;
+  registration: FixedRigAutomatedCenteringRegistrationV1;
   inlierCorrespondenceIds: string[];
 }
 
@@ -439,6 +444,9 @@ function computeRegistration(
     inlierFraction: round(inlierFraction, 6),
     confidence: round(confidence, 6),
   });
+  if (registration.transformType === "physical_margin_measurement") {
+    return fail("Registered design-reference fitting produced a non-projective registration.");
+  }
   return {
     registration,
     inlierCorrespondenceIds: finalInliers.map(
@@ -449,7 +457,7 @@ function computeRegistration(
 
 function registrationSha256(input: {
   ledgerSha256: string;
-  registration: FixedRigCenteringRegistrationV1;
+  registration: FixedRigAutomatedCenteringRegistrationV1;
   inlierCorrespondenceIds: readonly string[];
 }): string {
   return canonicalSha256({
@@ -691,6 +699,12 @@ export function verifyFixedRigDesignReferenceRegistrationBindingV1(input: {
 }): FixedRigDesignReferenceRegistrationVerificationV1 {
   try {
     const { designReference, registration, binding } = input;
+    if (registration.transformType === "physical_margin_measurement") {
+      return {
+        valid: false,
+        reason: "Physical-margin centering cannot satisfy a registered-design-reference binding.",
+      };
+    }
     const ledger = binding.correspondenceLedger;
     if (
       binding.profile !== "registered_design_template_v1" ||

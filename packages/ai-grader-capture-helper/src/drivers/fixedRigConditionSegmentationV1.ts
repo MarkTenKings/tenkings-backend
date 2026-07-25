@@ -24,6 +24,7 @@ import type {
   FixedRigSurfaceChannelSupportV1,
 } from "./fixedRigSurfaceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { measureFixedRigPrincipalExtentsV1 } from "./fixedRigPrincipalExtentsV1";
 import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_CONDITION_SEGMENTATION_V1_VERSION =
@@ -444,35 +445,13 @@ function principalPhysicalExtents(
   pixelsPerMmX: number,
   pixelsPerMmY: number,
 ): { lengthMm: number; widthMm: number } {
-  if (!pixels.length) return { lengthMm: 0, widthMm: 0 };
-  const points = pixels.map((index) => ({
-    x: (index % width) / pixelsPerMmX,
-    y: Math.floor(index / width) / pixelsPerMmY,
-  }));
-  const centerX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
-  const centerY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
-  let xx = 0;
-  let yy = 0;
-  let xy = 0;
-  for (const point of points) {
-    const x = point.x - centerX;
-    const y = point.y - centerY;
-    xx += x * x;
-    yy += y * y;
-    xy += x * y;
-  }
-  const theta = Math.atan2(2 * xy, xx - yy) / 2;
-  const majorX = Math.cos(theta);
-  const majorY = Math.sin(theta);
-  const minorX = -majorY;
-  const minorY = majorX;
-  const major = points.map((point) => point.x * majorX + point.y * majorY);
-  const minor = points.map((point) => point.x * minorX + point.y * minorY);
-  const lengthMm = Math.max(...major) - Math.min(...major) +
-    Math.hypot(majorX / pixelsPerMmX, majorY / pixelsPerMmY);
-  const widthMm = Math.max(...minor) - Math.min(...minor) +
-    Math.hypot(minorX / pixelsPerMmX, minorY / pixelsPerMmY);
-  return lengthMm >= widthMm ? { lengthMm, widthMm } : { lengthMm: widthMm, widthMm: lengthMm };
+  const measured = measureFixedRigPrincipalExtentsV1(
+    pixels,
+    width,
+    1 / pixelsPerMmX,
+    1 / pixelsPerMmY,
+  );
+  return { lengthMm: measured.length, widthMm: measured.width };
 }
 
 function filterComponents(
@@ -1013,13 +992,17 @@ export function buildFixedRigConditionSegmentationV1(
           "Invalid condition pixels were excluded with zero damage deduction; remaining valid evidence passed the manifest full-card and localized-region recapture gates.",
       }]
     : [];
-  if (!input.designReference) {
+  if (
+    !input.designReference ||
+    input.unavailableModalities?.includes("design_relative_color")
+  ) {
     evidenceQualityLimitations.push({
       code: "design_dependent_condition_evidence_unavailable",
       affectedPixelFraction: 1,
       requiresRecapture: false,
-      message:
-        "No approved exact design reference was supplied; registered stain/print/residue comparison is unavailable and contributes neither a defect nor proof of clean condition.",
+      message: input.designReference
+        ? "The authenticated capture source does not provide design-relative color evidence; stain/print/residue comparison is unavailable and contributes neither a defect nor proof of clean condition."
+        : "No approved exact design reference was supplied; registered stain/print/residue comparison is unavailable and contributes neither a defect nor proof of clean condition.",
     });
   }
   return {

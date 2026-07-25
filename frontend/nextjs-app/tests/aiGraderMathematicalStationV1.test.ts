@@ -238,6 +238,38 @@ test("Production station uses one contextual card-information form for grading a
   );
 });
 
+test("Production station exposes one strict operator element-resolution boundary", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.equal(parseAiGraderStationAction("submit-operator-resolutions"), "submit-operator-resolutions");
+  assert.match(source, /activeReviewItem\.state !== "operator_resolution_required"/);
+  assert.match(source, /schemaVersion: "operator_resolution_submission_v1"/);
+  assert.match(source, /operatorConfirmed: true/);
+  assert.match(
+    source,
+    /requireProductionSession\(\s*"authenticate and commit exact element resolutions",?\s*\)/,
+  );
+  assert.match(source, /issueAiGraderOperatorResolutionAuthenticationV1\(\{/);
+  assert.match(source, /operatorResolutionSubmission: submission/);
+  assert.match(source, /operatorAuthentication,/);
+  assert.doesNotMatch(
+    source,
+    /submit-operator-resolutions"[\s\S]{0,500}operatorId:\s*activeSession\.user\.id/,
+  );
+  assert.match(source, /if \(element === "centering"\)/);
+  assert.match(source, /unit: "mm"/);
+  assert.match(source, /order: \["left", "right", "top", "bottom"\]/);
+  assert.match(source, /element,\s*score: Number\(draft\.score\)/);
+  assert.match(source, /publicExplanation: draft\.publicExplanation/);
+  assert.match(source, /internalReason: draft\.internalReason/);
+  assert.match(
+    source,
+    /OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN\s*=\s*\/\(\?:provisional\|insufficient\|human\|manual\|exception\|admission\)\/i/,
+  );
+  assert.match(source, /OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN\.test\(draft\.publicExplanation\)/);
+  assert.doesNotMatch(source, /overallGrade\s*:/);
+  assert.doesNotMatch(source, /labelGrade\s*:/);
+});
+
 test("Production station uses the configured activation registry instead of the retired direct-bundle UI gate", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(
@@ -577,6 +609,118 @@ test("queued finding and insufficient reviews retain exact Mathematical state wi
   const forged = structuredClone(findingPayload) as any;
   forged.activeReview.manifest.mathematicalV1.execution.reviewRequest.reportId = "report-other";
   assert.equal(sanitizeAiGraderRapidCaptureQueue(forged).activeReview, undefined);
+});
+
+test("operator-resolution request display preserves exact originals without exposing private authority metadata", () => {
+  const request = reviewRequest();
+  const authority = buildAiGraderMathematicalGradingAuthorityV1({
+    identity: { ...identity },
+    profiles: { front: "printed_border_v1", back: "printed_border_v1" },
+  });
+  const at = "2026-07-19T12:10:00.000Z";
+  const requestSha256 = "a".repeat(64);
+  const resultSha256 = {
+    centering: "b".repeat(64),
+    corners: "c".repeat(64),
+    edges: "d".repeat(64),
+    surface: "e".repeat(64),
+  };
+  const payload = {
+    activeQueueItemId: "queue-1",
+    activeReview: {
+      queueItemId: "queue-1",
+      gradingSessionId: request.gradingSessionId,
+      reportId: request.reportId,
+      manifest: {
+        latestReport: { reportId: request.reportId, exists: false },
+        mathematicalV1: {
+          schemaVersion: "ten-kings-ai-grader-local-station-mathematical-v1-state-v1",
+          generatedAt: request.generatedAt,
+          gradingAuthority: authority,
+          stagedDesignReferences: {},
+          execution: {
+            status: "operator_resolution_required",
+            completedAt: at,
+            attempt: 1,
+            v0FallbackUsed: false,
+            request: {
+              schemaVersion: "operator_resolution_request_v1",
+              generatedAt: at,
+              requestSha256,
+              originalElements: {
+                centering: {
+                  status: "insufficient_evidence",
+                  score: null,
+                  explanation: null,
+                  failureReasons: ["Printed-border tracks were unresolved."],
+                  resultSha256: resultSha256.centering,
+                },
+                corners: {
+                  status: "computed",
+                  score: 9.25,
+                  explanation: "Corners remain sharply formed.",
+                  failureReasons: [],
+                  resultSha256: resultSha256.corners,
+                },
+                edges: {
+                  status: "computed",
+                  score: 9,
+                  explanation: "Edges remain even.",
+                  failureReasons: [],
+                  resultSha256: resultSha256.edges,
+                },
+                surface: {
+                  status: "computed",
+                  score: 8.75,
+                  explanation: "Surface wear is limited.",
+                  failureReasons: [],
+                  resultSha256: resultSha256.surface,
+                },
+              },
+            },
+            unresolvedElements: ["centering"],
+            authority: {
+              operatorId: "private-owner",
+              internalReason: "private workflow rationale",
+            },
+          },
+        },
+      },
+    },
+    items: [{
+      queueItemId: "queue-1",
+      sessionId: request.gradingSessionId,
+      reportId: request.reportId,
+      state: "operator_resolution_required",
+      queuedAt: at,
+      updatedAt: at,
+      history: [],
+      mathematicalV1: {
+        status: "operator_resolution_required",
+        requestSha256,
+      },
+      ocr: { state: "waiting_for_normalized", updatedAt: at, attemptCount: 0 },
+    }],
+  };
+
+  const sanitized = sanitizeAiGraderRapidCaptureQueue(payload);
+  const execution = sanitized.activeReview?.manifest.mathematicalV1?.execution;
+  assert.equal(execution?.status, "operator_resolution_required");
+  if (execution?.status === "operator_resolution_required") {
+    assert.deepEqual(execution.unresolvedElements, ["centering"]);
+    assert.equal(execution.request.requestSha256, requestSha256);
+    assert.deepEqual(execution.request.originalElements.centering.failureReasons, [
+      "Printed-border tracks were unresolved.",
+    ]);
+    assert.equal(execution.request.originalElements.corners.score, 9.25);
+  }
+  const serialized = JSON.stringify(execution);
+  assert.equal(serialized.includes("private-owner"), false);
+  assert.equal(serialized.includes("private workflow rationale"), false);
+
+  const malformed = structuredClone(payload) as any;
+  malformed.activeReview.manifest.mathematicalV1.execution.request.originalElements.surface.score = "8.75";
+  assert.equal(sanitizeAiGraderRapidCaptureQueue(malformed).activeReview, undefined);
 });
 
 test("complete finding review submits one exact SHA-bound disposition per finding and nothing subjective", () => {

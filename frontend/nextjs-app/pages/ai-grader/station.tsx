@@ -28,6 +28,10 @@ import {
   type AiGraderLiveLightingStatus,
   type AiGraderGradingContract,
   type AiGraderMathematicalFindingReviewRequestV1,
+  type AiGraderOperatorElementResolutionSubmissionV1,
+  type AiGraderOperatorResolutionElementV1,
+  type AiGraderOperatorResolutionRequestV1,
+  type AiGraderOperatorResolutionSubmissionV1,
   type AiGraderMathematicalReviewAssetMetadataV1,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
@@ -66,6 +70,7 @@ import {
   fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
   initializeAiGraderQueuedOcrAttemptOwner,
+  issueAiGraderOperatorResolutionAuthenticationV1,
   openAiGraderStationPreviewStream,
   pairAiGraderStationBridge,
   resolveAiGraderTrustedPokemonCardFormatAuthorityV1,
@@ -724,12 +729,67 @@ const OCR_PREFILL_FIELD_LABELS = {
 } as const;
 
 const RAPID_REVIEWABLE_STATES = new Set<string>([
+  "operator_resolution_required",
   "finding_review_required",
   "insufficient_evidence",
   "report_ready_needs_confirm",
   "confirmed_needs_publish",
 ]);
 const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
+
+const OPERATOR_RESOLUTION_ELEMENTS: AiGraderOperatorResolutionElementV1[] = [
+  "centering",
+  "corners",
+  "edges",
+  "surface",
+];
+const OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN =
+  /(?:provisional|insufficient|human|manual|exception|admission)/i;
+
+type OperatorResolutionElementDraft = {
+  enabled: boolean;
+  score: string;
+  publicExplanation: string;
+  internalReason: string;
+};
+
+type OperatorResolutionDraft = {
+  confirmed: boolean;
+  elements: Record<AiGraderOperatorResolutionElementV1, OperatorResolutionElementDraft>;
+  centering: {
+    front: [string, string, string, string];
+    back: [string, string, string, string];
+  };
+};
+
+function operatorResolutionDraft(
+  request?: AiGraderOperatorResolutionRequestV1,
+): OperatorResolutionDraft {
+  const elements = Object.fromEntries(OPERATOR_RESOLUTION_ELEMENTS.map((element) => {
+    const original = request?.originalElements[element];
+    const safeAutomaticExplanation =
+      original?.explanation &&
+      !OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN.test(original.explanation)
+        ? original.explanation
+        : "";
+    return [element, {
+      enabled: original?.status === "insufficient_evidence",
+      score: original?.score === null || original?.score === undefined
+        ? ""
+        : original.score.toFixed(2),
+      publicExplanation: safeAutomaticExplanation,
+      internalReason: "",
+    }];
+  })) as OperatorResolutionDraft["elements"];
+  return {
+    confirmed: false,
+    elements,
+    centering: {
+      front: ["", "", "", ""],
+      back: ["", "", "", ""],
+    },
+  };
+}
 
 function exactCardItemSelection(selection: CardSelectionState | null) {
   return selection?.source !== "manual_draft" && selection?.cardAssetId && selection.itemId
@@ -946,6 +1006,12 @@ export default function AiGraderStationPage() {
       assets: {},
     });
   const mathematicalReviewObjectUrlsRef = useRef<string[]>([]);
+  const [operatorResolutionDraftState, setOperatorResolutionDraftState] =
+    useState<OperatorResolutionDraft>(() => operatorResolutionDraft());
+  const operatorResolutionIdempotencyRef = useRef<{
+    submission: string;
+    key: string;
+  } | null>(null);
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card information has not yet been linked to a Ten Kings CardAsset/Item.",
@@ -1004,6 +1070,10 @@ export default function AiGraderStationPage() {
     : undefined;
   const activeReviewManifest = activeReviewItem ? activeReview?.manifest : undefined;
   const mathematicalExecution = activeReviewManifest?.mathematicalV1?.execution;
+  const operatorResolutionRequest: AiGraderOperatorResolutionRequestV1 | undefined =
+    mathematicalExecution?.status === "operator_resolution_required"
+      ? mathematicalExecution.request
+      : undefined;
   const mathematicalReviewRequest: AiGraderMathematicalFindingReviewRequestV1 | undefined =
     mathematicalExecution?.status === "finding_review_required"
       ? mathematicalExecution.reviewRequest
@@ -1014,6 +1084,11 @@ export default function AiGraderStationPage() {
       : [];
   const cleanSessionMathematicalV1 = status.mathematicalV1;
   const mathematicalAuthorityBound = Boolean(cleanSessionMathematicalV1?.gradingAuthority);
+
+  useEffect(() => {
+    setOperatorResolutionDraftState(operatorResolutionDraft(operatorResolutionRequest));
+    operatorResolutionIdempotencyRef.current = null;
+  }, [operatorResolutionRequest?.requestSha256]);
 
   const revokeMathematicalReviewObjectUrls = () => {
     for (const objectUrl of mathematicalReviewObjectUrlsRef.current) {
@@ -3253,6 +3328,131 @@ export default function AiGraderStationPage() {
     }
   };
 
+  const submitOperatorResolutions = async () => {
+    const request = operatorResolutionRequest;
+    if (!request || !activeReview || !activeReviewItem || !activeReviewQueueIdentity ||
+        activeReviewItem.state !== "operator_resolution_required") {
+      setError("Element resolution requires the activated exact queue/session/report item and request.");
+      return;
+    }
+    const unresolved = new Set(mathematicalExecution?.status === "operator_resolution_required"
+      ? mathematicalExecution.unresolvedElements
+      : []);
+    const resolutions: AiGraderOperatorElementResolutionSubmissionV1[] = [];
+    for (const element of OPERATOR_RESOLUTION_ELEMENTS) {
+      const draft = operatorResolutionDraftState.elements[element];
+      if (!draft.enabled) {
+        if (unresolved.has(element)) {
+          setError(`${formatStationValue(element)} has no automated result and must be resolved.`);
+          return;
+        }
+        continue;
+      }
+      if (draft.publicExplanation !== draft.publicExplanation.trim() ||
+          !draft.publicExplanation ||
+          draft.publicExplanation.length > 1000 ||
+          OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN.test(draft.publicExplanation)) {
+        setError(`${formatStationValue(element)} public explanation is invalid or contains prohibited workflow wording.`);
+        return;
+      }
+      if (draft.internalReason !== draft.internalReason.trim() ||
+          !draft.internalReason ||
+          draft.internalReason.length > 2000) {
+        setError(`${formatStationValue(element)} internal rationale is required and must be trimmed.`);
+        return;
+      }
+      if (element === "centering") {
+        const parseSide = (side: "front" | "back"): [number, number, number, number] | null => {
+          const values = operatorResolutionDraftState.centering[side].map((entry) => {
+            if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(entry)) return Number.NaN;
+            return Number(entry);
+          });
+          return values.length === 4 && values.every((value) => Number.isFinite(value) && value >= 0)
+            ? values as [number, number, number, number]
+            : null;
+        };
+        const front = parseSide("front");
+        const back = parseSide("back");
+        if (!front || !back ||
+            front[0] + front[1] >= 63.5 || back[0] + back[1] >= 63.5 ||
+            front[2] + front[3] >= 88.9 || back[2] + back[3] >= 88.9) {
+          setError("Centering requires eight physically possible nonnegative millimeter measurements.");
+          return;
+        }
+        resolutions.push({
+          element,
+          publicExplanation: draft.publicExplanation,
+          internalReason: draft.internalReason,
+          measurements: {
+            unit: "mm",
+            order: ["left", "right", "top", "bottom"],
+            front,
+            back,
+          },
+        });
+      } else {
+        if (!/^(?:10(?:\.0{1,2})?|[1-9](?:\.\d{1,2})?)$/.test(draft.score)) {
+          setError(`${formatStationValue(element)} score must be numeric 1.00 through 10.00 with at most two decimals.`);
+          return;
+        }
+        resolutions.push({
+          element,
+          score: Number(draft.score),
+          publicExplanation: draft.publicExplanation,
+          internalReason: draft.internalReason,
+        });
+      }
+    }
+    if (!operatorResolutionDraftState.confirmed) {
+      setError("Confirm the exact element resolutions before submission.");
+      return;
+    }
+    const submission: AiGraderOperatorResolutionSubmissionV1 = {
+      schemaVersion: "operator_resolution_submission_v1",
+      requestSha256: request.requestSha256,
+      operatorConfirmed: true,
+      resolutions,
+    };
+    const serialized = JSON.stringify(submission);
+    const prior = operatorResolutionIdempotencyRef.current;
+    const idempotencyKey = prior?.submission === serialized
+      ? prior.key
+      : `operator-resolution-${crypto.randomUUID()}`;
+    operatorResolutionIdempotencyRef.current = { submission: serialized, key: idempotencyKey };
+    setBusy("operator-resolution");
+    setError(null);
+    try {
+      await requireProductionSession(
+        "authenticate and commit exact element resolutions",
+      );
+      const operatorAuthentication =
+        await issueAiGraderOperatorResolutionAuthenticationV1({
+          ...activeReviewQueueIdentity,
+          requestSha256: request.requestSha256,
+          idempotencyKey,
+          operatorResolutionSubmission: submission,
+          headers: await productionAuthHeaders(
+            {},
+            "authenticate and commit exact element resolutions",
+          ),
+        });
+      await runAction("submit-operator-resolutions", {
+        ...activeReviewQueueIdentity,
+        idempotencyKey,
+        operatorResolutionSubmission: submission,
+        operatorAuthentication,
+      });
+    } catch (requestError) {
+      const message = requestError instanceof Error
+        ? requestError.message
+        : "Exact element resolutions could not be committed.";
+      await runAction("status").catch(() => undefined);
+      setError(message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const productionReleaseBody = (publicationIdentity: AiGraderRapidQueueIdentity) => {
     assertAiGraderRapidItemPublishable(activeReviewItem?.state);
     if (!activeReview || !activeReviewItem || !activeReviewIdentityReady ||
@@ -5053,6 +5253,191 @@ export default function AiGraderStationPage() {
             </section>
           ) : null}
 
+          {operatorResolutionRequest ? (
+            <section className="mathematical-review-shell" aria-label="Exact element resolution">
+              <div className="mathematical-review-head">
+                <div>
+                  <p className="eyebrow">Exact Element Resolution</p>
+                  <h2>Confirm or Resolve Final Subgrades</h2>
+                  <p>
+                    Original detector results remain immutable. Select only elements to resolve;
+                    the overall grade is recomputed by the existing formula.
+                  </p>
+                </div>
+                <div>
+                  <span>Request SHA-256</span>
+                  <code>{operatorResolutionRequest.requestSha256}</code>
+                </div>
+              </div>
+              <div className="operator-resolution-list">
+                {OPERATOR_RESOLUTION_ELEMENTS.map((element) => {
+                  const original = operatorResolutionRequest.originalElements[element];
+                  const draft = operatorResolutionDraftState.elements[element];
+                  const required = mathematicalExecution?.status === "operator_resolution_required" &&
+                    mathematicalExecution.unresolvedElements.includes(element);
+                  return (
+                    <article className="mathematical-finding-review" key={element}>
+                      <header>
+                        <div>
+                          <span>{required ? "Resolution required" : "Automated result available"}</span>
+                          <h3>{formatStationValue(element)}</h3>
+                        </div>
+                        <strong>{original.score === null ? "No score" : original.score.toFixed(2)}</strong>
+                      </header>
+                      {original.explanation ? <p>{original.explanation}</p> : null}
+                      {original.failureReasons.length ? (
+                        <ul className="warning-list">
+                          {original.failureReasons.map((reason) => <li key={reason}>{reason}</li>)}
+                        </ul>
+                      ) : null}
+                      <label className="mathematical-disposition">
+                        <input
+                          type="checkbox"
+                          checked={draft.enabled}
+                          onChange={(event) => setOperatorResolutionDraftState((current) => ({
+                            ...current,
+                            confirmed: false,
+                            elements: {
+                              ...current.elements,
+                              [element]: {
+                                ...current.elements[element],
+                                enabled: event.target.checked,
+                              },
+                            },
+                          }))}
+                          disabled={busy !== null}
+                        />
+                        Resolve this element
+                      </label>
+                      {draft.enabled ? (
+                        <div className="operator-resolution-fields">
+                          {element === "centering" ? (
+                            <div className="mathematical-profile-grid">
+                              {(["front", "back"] as const).flatMap((side) =>
+                                (["left", "right", "top", "bottom"] as const).map((margin, index) => (
+                                  <label key={`${side}-${margin}`}>
+                                    {formatStationValue(side)} {margin} (mm)
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={operatorResolutionDraftState.centering[side][index]}
+                                      onChange={(event) => setOperatorResolutionDraftState((current) => {
+                                        const measurements = [...current.centering[side]] as
+                                          [string, string, string, string];
+                                        measurements[index] = event.target.value;
+                                        return {
+                                          ...current,
+                                          confirmed: false,
+                                          centering: {
+                                            ...current.centering,
+                                            [side]: measurements,
+                                          },
+                                        };
+                                      })}
+                                      disabled={busy !== null}
+                                    />
+                                  </label>
+                                )),
+                              )}
+                            </div>
+                          ) : (
+                            <label>
+                              Final {formatStationValue(element)} subgrade
+                              <input
+                                type="number"
+                                min="1"
+                                max="10"
+                                step="0.01"
+                                value={draft.score}
+                                onChange={(event) => setOperatorResolutionDraftState((current) => ({
+                                  ...current,
+                                  confirmed: false,
+                                  elements: {
+                                    ...current.elements,
+                                    [element]: {
+                                      ...current.elements[element],
+                                      score: event.target.value,
+                                    },
+                                  },
+                                }))}
+                                disabled={busy !== null}
+                              />
+                            </label>
+                          )}
+                          <label>
+                            Public reason why
+                            <textarea
+                              value={draft.publicExplanation}
+                              maxLength={1000}
+                              onChange={(event) => setOperatorResolutionDraftState((current) => ({
+                                ...current,
+                                confirmed: false,
+                                elements: {
+                                  ...current.elements,
+                                  [element]: {
+                                    ...current.elements[element],
+                                    publicExplanation: event.target.value,
+                                  },
+                                },
+                              }))}
+                              disabled={busy !== null}
+                            />
+                          </label>
+                          <label>
+                            Internal resolution rationale
+                            <textarea
+                              value={draft.internalReason}
+                              maxLength={2000}
+                              onChange={(event) => setOperatorResolutionDraftState((current) => ({
+                                ...current,
+                                confirmed: false,
+                                elements: {
+                                  ...current.elements,
+                                  [element]: {
+                                    ...current.elements[element],
+                                    internalReason: event.target.value,
+                                  },
+                                },
+                              }))}
+                              disabled={busy !== null}
+                            />
+                          </label>
+                        </div>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+              <label className="mathematical-disposition">
+                <input
+                  type="checkbox"
+                  checked={operatorResolutionDraftState.confirmed}
+                  onChange={(event) => setOperatorResolutionDraftState((current) => ({
+                    ...current,
+                    confirmed: event.target.checked,
+                  }))}
+                  disabled={busy !== null}
+                />
+                I confirm these exact element results and explanations.
+              </label>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void submitOperatorResolutions()}
+                disabled={busy !== null || !operatorResolutionDraftState.confirmed}
+              >
+                {busy === "operator-resolution"
+                  ? "Authenticating and Rerunning"
+                  : "Commit Exact Resolution and Rerun"}
+              </button>
+              <p>
+                Public explanation text is validated before any queue mutation. Internal rationale,
+                original detector evidence, and immutable receipt metadata remain internal.
+              </p>
+            </section>
+          ) : null}
+
           {mathematicalReviewRequest ? (
             <section className="mathematical-review-shell" aria-label="Exact Mathematical V1 finding review">
               <div className="mathematical-review-head">
@@ -5647,6 +6032,8 @@ export default function AiGraderStationPage() {
                               ? "Active"
                               : itemOperation === "review"
                                 ? "Opening"
+                                : item.state === "operator_resolution_required"
+                                  ? "Open Exact Element Resolution"
                                 : item.state === "finding_review_required"
                                   ? "Open Exact Finding Review"
                                   : item.state === "insufficient_evidence"

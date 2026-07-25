@@ -17,6 +17,10 @@ import {
   type FixedRigMathematicalFindingReviewV1,
   type FixedRigMathematicalOrchestrationStageV1,
 } from './fixedRigMathematicalCalibrationOrchestratorV1';
+import type {
+  FixedRigOperatorResolutionAuthorityV1,
+  FixedRigOperatorResolutionNativeRoleV1,
+} from './fixedRigOperatorResolutionAuthorityV1';
 import {
   buildFixedRigStandardTradingCardBoundaryV1,
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
@@ -92,6 +96,8 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
     back: { manifestPath: string; manifestSha256: string };
   };
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
+  queueItemId: string;
+  operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
   cardFormatAuthorityVerification?: {
     hmacKey: string;
     keyId: string;
@@ -116,6 +122,8 @@ interface ParsedWarmSideV1 {
   geometry: Record<string, unknown>;
   geometryCaptureDecisions: Record<string, unknown>;
   captureTiming: Record<string, unknown>;
+  warmManifestSha256: string;
+  nativeCaptureRoles: FixedRigOperatorResolutionNativeRoleV1[];
 }
 
 function adapterInsufficient(
@@ -158,6 +166,16 @@ function object(value: unknown, label: string): JsonObject {
 function string(value: unknown, label: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(label + ' must be non-empty.');
   return value;
+}
+
+function exactNativeCaptureRole(
+  value: unknown,
+  expected: string,
+  label: string,
+): string {
+  const role = string(value, label);
+  if (role !== expected) throw new Error(label + ' must equal ' + expected + '.');
+  return role;
 }
 
 function exactSha(value: unknown, label: string): string {
@@ -497,6 +515,92 @@ export function assertFixedRigMathematicalWarmSideCaptureProfileV1(
   }
 }
 
+export function collectFixedRigMathematicalNativeCaptureRolesV1(
+  value: unknown,
+  side: Side,
+): FixedRigOperatorResolutionNativeRoleV1[] {
+  const sideEvidence = object(value, side + ' side evidence');
+  const allOn = object(sideEvidence.allOn, side + ' all-on evidence');
+  const accepted = object(sideEvidence.acceptedProfile, side + ' accepted-profile evidence');
+  if (
+    allOn.label !== `${side}-all-on` ||
+    accepted.label !== `${side}-accepted-lighting-profile`
+  ) {
+    throw new Error(side + ' presentation capture roles do not match their canonical side identities.');
+  }
+  const roles: FixedRigOperatorResolutionNativeRoleV1[] = [
+    {
+      captureRole: 'all_on',
+      sha256: exactSha(
+        object(allOn.capture, side + ' raw all-on capture').sha256,
+        side + ' raw all-on capture sha256',
+      ),
+    },
+    {
+      captureRole: 'accepted_profile',
+      sha256: exactSha(
+        object(accepted.capture, side + ' raw accepted-profile capture').sha256,
+        side + ' raw accepted-profile capture sha256',
+      ),
+    },
+  ];
+  const bracket = object(
+    sideEvidence.photometricExposureBracket,
+    side + ' photometric exposure bracket',
+  );
+  const cells = array(bracket.cells, side + ' bracket cells');
+  const expectedExposures = [15000, 30000, 37500];
+  if (cells.length !== expectedExposures.length) {
+    throw new Error(side + ' exposure bracket requires exactly three cells.');
+  }
+  cells.forEach((value, cellIndex) => {
+    const cell = object(value, side + ' bracket cell');
+    const exposureUs = expectedExposures[cellIndex]!;
+    exactNumber(cell.exposureUs, exposureUs, side + ' bracket exposure');
+    const references = array(cell.references, side + ' bracket references');
+    const channels = array(cell.channels, side + ' bracket channels');
+    if (references.length !== 3 || channels.length !== 8) {
+      throw new Error(side + ' bracket cell requires three references and channels 1 through 8.');
+    }
+    references.forEach((entry, index) => {
+      const role = object(entry, side + ' bracket reference');
+      roles.push({
+        captureRole: exactNativeCaptureRole(
+          role.role,
+          `bracket_${exposureUs}_reference_${index + 1}`,
+          side + ' bracket reference captureRole',
+        ),
+        sha256: exactSha(
+          object(role.capture, side + ' bracket reference capture').sha256,
+          side + ' bracket reference raw sha256',
+        ),
+      });
+    });
+    channels.forEach((entry, index) => {
+      const role = object(entry, side + ' bracket channel');
+      roles.push({
+        captureRole: exactNativeCaptureRole(
+          role.role,
+          `bracket_${exposureUs}_channel_${index + 1}`,
+          side + ' bracket channel captureRole',
+        ),
+        sha256: exactSha(
+          object(role.capture, side + ' bracket channel capture').sha256,
+          side + ' bracket channel raw sha256',
+        ),
+      });
+    });
+  });
+  if (
+    roles.length !== 35 ||
+    new Set(roles.map((entry) => entry.captureRole)).size !== roles.length ||
+    new Set(roles.map((entry) => entry.sha256)).size !== roles.length
+  ) {
+    throw new Error(side + ' native capture roles or hashes are missing, duplicated, or aliased.');
+  }
+  return roles;
+}
+
 async function parseWarmSideV1(input: {
   side: Side;
   manifestPath: string;
@@ -522,6 +626,8 @@ async function parseWarmSideV1(input: {
   const side = object(manifest[input.side], input.side + ' side evidence');
   const allOn = object(side.allOn, input.side + ' all-on evidence');
   const accepted = object(side.acceptedProfile, input.side + ' accepted-profile evidence');
+  const nativeCaptureRoles =
+    collectFixedRigMathematicalNativeCaptureRolesV1(side, input.side);
   const normalizedCard = object(side.normalizedCard, input.side + ' normalized-card evidence');
   const rawAllOn = evidenceFrom({
     packageDir,
@@ -774,6 +880,8 @@ async function parseWarmSideV1(input: {
     geometry: recordOrEmpty(normalizedCard.geometry),
     geometryCaptureDecisions: recordOrEmpty(manifest.geometryPolicy),
     captureTiming: recordOrEmpty(manifest.captureTiming),
+    warmManifestSha256: exactSha(input.manifestSha256, input.side + ' warm manifest sha256'),
+    nativeCaptureRoles,
   };
 }
 
@@ -985,12 +1093,15 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       pixelsPerMmY: 1 / loaded.profile.mmPerPixelY,
     },
     algorithmVersion: FIXED_RIG_MATHEMATICAL_STATION_ADAPTER_V1_VERSION,
+    warmManifestSha256: warm[side].warmManifestSha256,
+    nativeCaptureRoles: warm[side].nativeCaptureRoles,
   });
   return buildFixedRigMathematicalCalibrationReportPackageV1({
     gradingContract: 'mathematical_calibration_v1',
     gradingSessionId: input.gradingSessionId,
     generatedAt: input.generatedAt,
     reportId: input.reportId,
+    queueItemId: input.queueItemId,
     outputDir: input.outputDir,
     captureProfileVersion: input.captureProfileVersion,
     cardIdentity: input.authority.cardIdentity,
@@ -1023,6 +1134,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       back: sideInput('back'),
     },
     findingReviews: input.findingReviews,
+    operatorResolutionAuthorities: input.operatorResolutionAuthorities,
     report: {
       publication: input.authority.publication,
       geometry: {

@@ -321,6 +321,7 @@ function input(overrides = {}) {
       : undefined;
   return {
     side: "front",
+    colorEvidenceModality: "calibrated_rgb",
     normalizedAllOnRgb: allOn,
     normalizedAcceptedProfileRgb: accepted,
     approvedDesignReferenceRgb: approvedDesign,
@@ -600,4 +601,69 @@ test("missing approved design leaves design planes unavailable and unexplained c
   assert.equal(unexplained.status, "insufficient_evidence");
   assert.equal(unexplained.requiresApprovedDesignReference, true);
   assert.match(unexplained.reasons.join(" "), /unexplained color/i);
+});
+
+test("Mono8 remains luminance-only without a design reference even after triplet decoding", () => {
+  const alteredLuminance = rgb(({ x, y, base }) =>
+    x >= 16 && x <= 47 && y >= 24 && y <= 71
+      ? Math.min(1, base + 0.45)
+      : base);
+  const result = buildFixedRigConditionPlanesV1(input({
+    colorEvidenceModality: "mono8_luminance",
+    normalizedAcceptedProfileRgb: alteredLuminance,
+    approvedDesignReferenceRgb: undefined,
+    designRegistration: undefined,
+  }));
+  assert.equal(result.status, "computed");
+  assert.equal(result.designDependentEvidence, "unavailable_source_modality");
+  assert.ok(result.unavailableModalities.includes("design_relative_color"));
+  assert.equal(maximum(result.planes.registeredColorDeltaE), 0);
+  assert.equal(maximum(result.planes.registeredPrintDeltaE), 0);
+  assert.equal(maximum(result.planes.registeredResidueDeltaE), 0);
+});
+
+test("an approved design cannot upgrade Mono8 into color, print-color, or residue evidence", () => {
+  const reference = capturedRgb((x, y) =>
+    insidePolygon(x, y, roundedRectangleContour()));
+  const alteredLuminance = rgb(({ x, y, base }) =>
+    x >= 16 && x <= 47 && y >= 24 && y <= 71
+      ? Math.min(1, base + 0.45)
+      : base);
+  const result = buildFixedRigConditionPlanesV1(input({
+    colorEvidenceModality: "mono8_luminance",
+    normalizedAllOnRgb: reference,
+    normalizedAcceptedProfileRgb: alteredLuminance,
+    approvedDesignReferenceRgb: reference,
+  }));
+  assert.equal(result.status, "computed");
+  assert.equal(result.designDependentEvidence, "unavailable_source_modality");
+  assert.equal(maximum(result.planes.registeredColorDeltaE), 0);
+  assert.equal(maximum(result.planes.registeredPrintDeltaE), 0);
+  assert.equal(maximum(result.planes.registeredResidueDeltaE), 0);
+  assert.ok(maximum(result.planes.exposedFiberResponse) > 0);
+});
+
+test("calibrated RGB chroma remains authenticated and fails closed without polarized residue evidence", () => {
+  const reference = capturedRgb((x, y) =>
+    insidePolygon(x, y, roundedRectangleContour()));
+  const chromaCandidate = rgb(({ x, y, channel, base }) =>
+    x >= 16 && x <= 47 && y >= 24 && y <= 71 && channel === 0
+      ? Math.min(1, base + 0.45)
+      : base);
+  const result = buildFixedRigConditionPlanesV1(input({
+    normalizedAllOnRgb: reference,
+    normalizedAcceptedProfileRgb: chromaCandidate,
+    approvedDesignReferenceRgb: reference,
+  }));
+  assert.equal(result.status, "insufficient_evidence");
+  assert.equal(result.requiresCalibration, true);
+  assert.match(result.reasons.join(" "), /polarized residue evidence/i);
+});
+
+test("missing source color capability fails closed", () => {
+  const value = input();
+  delete value.colorEvidenceModality;
+  const result = buildFixedRigConditionPlanesV1(value);
+  assert.equal(result.status, "insufficient_evidence");
+  assert.match(result.reasons.join(" "), /color-evidence modality/i);
 });

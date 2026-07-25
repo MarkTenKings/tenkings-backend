@@ -7,3 +7,4 @@ output/ai-grader-label-v1/rendered/*.png binary
 output/pdf/*.pdf binary
 packages/ai-grader-nfc-helper/src/TenKings.AiGrader.NfcHelper/Templates/f8215-gototags-manual-start-v1.json text eol=lf
 scripts/ai-grader/analyze-mathematical-calibration-v1.py text eol=lf
+packages/ai-grader-capture-helper/tests/fixtures/historical-surface-5-50-derived-ledger-v1.json text eol=lf

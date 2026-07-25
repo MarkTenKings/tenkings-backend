@@ -266,9 +266,9 @@ export default function AiGraderMathematicalReportV1({
               {reviewedExplanation ? <p className="mt-3 rounded bg-emerald-50 p-3 text-sm text-emerald-950">{reviewedExplanation}</p> : null}
               <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                 <dt>Start</dt><dd className="text-right">{score(result.startingScore)}</dd>
-                <dt>Front</dt><dd className="text-right">{score(result.frontScore)}</dd>
-                <dt>Back</dt><dd className="text-right">{score(result.backScore)}</dd>
-                <dt>Deduction</dt><dd className="text-right">-{score(result.aggregatePenalty)}</dd>
+                <dt>Front</dt><dd className="text-right">{result.frontScore === null ? "—" : score(result.frontScore)}</dd>
+                <dt>Back</dt><dd className="text-right">{result.backScore === null ? "—" : score(result.backScore)}</dd>
+                <dt>Deduction</dt><dd className="text-right">{result.aggregatePenalty === null ? "—" : `-${score(result.aggregatePenalty)}`}</dd>
               </dl>
               <p className="mt-3 text-sm text-zinc-700">{result.formula}</p>
             </article>
@@ -559,11 +559,17 @@ export default function AiGraderMathematicalReportV1({
         <p className="mt-2 text-sm">Balance curve: {bundle.centeringEvidence.balanceCurve.map((point) => `${point.ratio}% = ${score(point.score)}`).join("; ")}.</p>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {([bundle.centeringEvidence.front, bundle.centeringEvidence.back] as const).map((side) => {
-            const designReference = bundle.designReferences.find((reference) =>
-              reference.designReferenceId === side.registration.designReferenceId &&
-              reference.artifactSha256 === side.registration.designReferenceSha256 &&
-              reference.side === side.side
-            );
+            const automatedRegistration =
+              side.registration.transformType === "physical_margin_measurement"
+                ? null
+                : side.registration;
+            const designReference = automatedRegistration
+              ? bundle.designReferences.find((reference) =>
+                  reference.designReferenceId === automatedRegistration.designReferenceId &&
+                  reference.artifactSha256 === automatedRegistration.designReferenceSha256 &&
+                  reference.side === side.side
+                )
+              : undefined;
             const measurementOverlay = assets.get(side.measurementOverlayAssetId.toLowerCase());
             const normalizedSource = assets.get(
               side.outerCutGeometryEvidence.normalizedAllOnAssetId.toLowerCase(),
@@ -605,9 +611,15 @@ export default function AiGraderMathematicalReportV1({
               ))}
               <dl className="mt-3 grid grid-cols-2 gap-1 text-sm">
                 <dt>Registration transform</dt><dd>{side.registration.transformType}</dd>
-                <dt>Transform matrix</dt><dd className="break-all font-mono">[{side.registration.transformMatrix.join(", ")}]</dd>
-                <dt>Residual / confidence</dt><dd>{side.registration.registrationResidualPx}px / {Math.round(side.registration.confidence * 100)}%</dd>
-                <dt>Inlier samples</dt><dd>{side.registration.inlierCount} / {Math.round(side.registration.inlierFraction * 100)}%</dd>
+                {side.registration.transformType === "physical_margin_measurement" ? (
+                  <><dt>Measurement unit</dt><dd>{side.registration.measurementUnit}</dd></>
+                ) : (
+                  <>
+                    <dt>Transform matrix</dt><dd className="break-all font-mono">[{side.registration.transformMatrix.join(", ")}]</dd>
+                    <dt>Residual / confidence</dt><dd>{side.registration.registrationResidualPx}px / {Math.round(side.registration.confidence * 100)}%</dd>
+                    <dt>Inlier samples</dt><dd>{side.registration.inlierCount} / {Math.round(side.registration.inlierFraction * 100)}%</dd>
+                  </>
+                )}
                 <dt>Outer geometry frame</dt><dd>{side.outerCutGeometryEvidence.coordinateFrame}</dd>
                 <dt>Observed outer contour</dt><dd>{side.outerCutGeometryEvidence.observedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedContourSha256)}</span></dd>
                 <dt>Intended outer contour</dt><dd>{side.outerCutGeometryEvidence.intendedBoundaryProfileId} / {side.outerCutGeometryEvidence.intendedBoundaryProfileVersion}; {side.outerCutGeometryEvidence.intendedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.intendedContourSha256)}</span></dd>
@@ -619,7 +631,7 @@ export default function AiGraderMathematicalReportV1({
                 <dt>Observed artifact</dt><dd className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedArtifact.artifactSha256)}</dd>
                 <dt>Geometry calibration</dt><dd>{side.outerCutGeometryEvidence.observedArtifact.calibrationProfileId} / {side.outerCutGeometryEvidence.observedArtifact.calibrationVersion}<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedArtifact.calibrationSha256)}</span></dd>
                 <dt>Geometry scale</dt><dd>{side.outerCutGeometryEvidence.observedArtifact.pixelsPerMmX} px/mm × {side.outerCutGeometryEvidence.observedArtifact.pixelsPerMmY} px/mm</dd>
-                {side.registration.designReferenceId ? <><dt>Approved design reference</dt><dd>{side.registration.designReferenceId}{side.registrationEvidence ? ` v${side.registrationEvidence.designReferenceVersion}` : ""}<br /><span className="break-all font-mono">{side.registration.designReferenceSha256 ? fullHash(side.registration.designReferenceSha256) : "hash unavailable"}</span></dd></> : null}
+                {automatedRegistration?.designReferenceId ? <><dt>Approved design reference</dt><dd>{automatedRegistration.designReferenceId}{side.registrationEvidence ? ` v${side.registrationEvidence.designReferenceVersion}` : ""}<br /><span className="break-all font-mono">{automatedRegistration.designReferenceSha256 ? fullHash(automatedRegistration.designReferenceSha256) : "hash unavailable"}</span></dd></> : null}
                 {designReference ? <>
                   <dt>Reference identity</dt><dd>{designReference.tenantId} / {designReference.setId} / {designReference.programId} / #{designReference.cardNumber} / {designReference.variantId ?? "base variant"} / {designReference.parallelId ?? "base parallel"}</dd>
                   <dt>Reference artifact</dt><dd>{designReference.artifactId} · {designReference.widthPx} × {designReference.heightPx}px<br /><span className="break-all font-mono">{fullHash(designReference.artifactSha256)}</span></dd>

@@ -452,13 +452,20 @@ function centeringOverlaySvg(
   calibration: MathematicalCalibrationProfileV1,
 ): Buffer {
   const binding = side.registrationBinding;
+  const registeredDesignRegistration =
+    side.registration.transformType === "physical_margin_measurement"
+      ? null
+      : side.registration;
+  if (binding && !registeredDesignRegistration) {
+    throw new Error(`${side.side} physical-margin centering cannot carry a design-reference registration binding.`);
+  }
   const inlierIds = new Set(binding?.inlierCorrespondenceIds ?? []);
   const correspondenceQa = binding
     ? binding.correspondenceLedger.correspondences.map((correspondence) => {
         const projected = projectDesignReferencePoint(
           correspondence.designReferencePointPx,
           binding.correspondenceLedger.transformType,
-          side.registration.transformMatrix,
+          registeredDesignRegistration!.transformMatrix,
         );
         if (!projected) {
           throw new Error(`${side.side} design-reference correspondence ${correspondence.correspondenceId} cannot be projected for its QA overlay.`);
@@ -484,12 +491,12 @@ function centeringOverlaySvg(
         const center = projectDesignReferencePoint(
           referenceCenter,
           binding.correspondenceLedger.transformType,
-          side.registration.transformMatrix,
+          registeredDesignRegistration!.transformMatrix,
         );
         const top = projectDesignReferencePoint(
           referenceTop,
           binding.correspondenceLedger.transformType,
-          side.registration.transformMatrix,
+          registeredDesignRegistration!.transformMatrix,
         );
         if (!center || !top) throw new Error(`${side.side} design-reference orientation cannot be projected for its QA overlay.`);
         return `<g data-registration-orientation="design-reference-top">` +
@@ -515,7 +522,9 @@ function centeringOverlaySvg(
     `V ${side.vertical.balanceRatio.toFixed(2)}% / ${side.vertical.score.toFixed(2)}; ` +
     `U95 H ${side.u95Mm.horizontal.toFixed(4)} mm V ${side.u95Mm.vertical.toFixed(4)} mm; ` +
     `Grade-10 tolerance ${side.grade10ToleranceMm.toFixed(4)} mm`;
-  const authority = binding
+  const authority = side.registration.transformType === "physical_margin_measurement"
+    ? "authenticated physical printed-border widths in millimeters"
+    : binding
     ? `registered exact reference ${binding.designReferenceId} v${binding.designReferenceVersion}; residual ${side.registration.registrationResidualPx.toFixed(4)} px; inliers ${side.registration.inlierCount}/${side.registration.inlierFraction.toFixed(4)}; confidence ${side.registration.confidence.toFixed(4)}`
     : `detected printed border; robust fit residual ${side.registration.registrationResidualPx.toFixed(4)} px; confidence ${side.registration.confidence.toFixed(4)}`;
   return svgDocument(
@@ -1094,9 +1103,11 @@ function assertFinalSourceContract(
       "Calibrated V1 report rejected: all four measured elements are mandatory; no V0 or manual-grade fallback is permitted.",
     );
   }
-  if (input.centering.status !== "computed" || input.corners.status !== "computed" ||
-      input.edges.status !== "computed" || input.surface.front.status !== "computed" ||
-      input.surface.back.status !== "computed") {
+  if (input.centering.status !== "computed" ||
+      (input.corners.status !== "computed" && !input.grade.elements.corners.resolved) ||
+      (input.edges.status !== "computed" && !input.grade.elements.edges.resolved) ||
+      ((input.surface.front.status !== "computed" || input.surface.back.status !== "computed") &&
+        !input.grade.elements.surface.resolved)) {
     throw new Error("Calibrated V1 report rejected: incomplete or recapture-required physical evidence remains.");
   }
   if (
@@ -1111,13 +1122,16 @@ function assertFinalSourceContract(
   }
   if (
     input.centering.score !== input.grade.elements.centering.score ||
-    input.corners.score !== input.grade.elements.corners.score ||
-    input.edges.score !== input.grade.elements.edges.score
+    (!input.grade.elements.corners.resolved &&
+      input.corners.score !== input.grade.elements.corners.score) ||
+    (!input.grade.elements.edges.resolved &&
+      input.edges.score !== input.grade.elements.edges.score)
   ) {
     throw new Error("Calibrated V1 report rejected: composed element scores do not match their exact measured source results.");
   }
-  if (input.surface.front.evidenceQualityLimitations.length ||
-      input.surface.back.evidenceQualityLimitations.length) {
+  if (!input.grade.elements.surface.resolved &&
+      (input.surface.front.evidenceQualityLimitations.length ||
+       input.surface.back.evidenceQualityLimitations.length)) {
     throw new Error("Calibrated V1 report rejected: surface evidence still requires recapture and cannot receive a final grade.");
   }
 }
@@ -1164,6 +1178,7 @@ function reportElement(
     confidence: validatedConfidence,
     formula: source.formula,
     explanation: source.explanation,
+    ...(source.resolved ? { resolved: true as const } : {}),
   };
 }
 
@@ -1265,11 +1280,11 @@ function publicWhyNot10(
           centeringEvidence.front.measurementOverlayAssetId,
           centeringEvidence.back.measurementOverlayAssetId,
         ]
-      : reason.findingIds.map((findingId) => {
+      : reason.findingIds.length ? reason.findingIds.map((findingId) => {
           const overlay = overlayAssetIdByFindingId.get(findingId.toLowerCase());
           if (!overlay) throw new Error(`Why Not 10 cannot find the deduction overlay for ${findingId}.`);
           return overlay;
-        });
+        }) : [...reason.evidenceAssetIds];
     if (!overlayAssetIds.length) {
       throw new Error(`Why Not 10 reason ${reason.id} is not linked to an exact measurement overlay.`);
     }
@@ -1473,6 +1488,36 @@ function buildPokemonStandardCornerAuthorityV1(
  * physically calibrated evidence. The function intentionally has no V0 path:
  * incomplete evidence throws before any report artifact is returned.
  */
+function publicCalibrationProfileV1(
+  profile: MathematicalCalibrationProfileV1,
+  bundleAuthority: BuildAiGraderMathematicalReportBundleV1Input["calibrationBundleAuthority"],
+) {
+  if (!("operationalAcceptance" in profile)) return profile;
+  const {
+    operationalAcceptance,
+    ...baseProfile
+  } = profile;
+  const authorityMember = bundleAuthority.members.find((member) =>
+    member.role === "product_owner_operational_acceptance");
+  if (!authorityMember) {
+    throw new Error("Operational calibration authorization is missing its exact bundle member.");
+  }
+  return {
+    ...baseProfile,
+    operationalAuthorization: {
+      schemaVersion: "ai-grader-calibration-operational-authorization-public-v1" as const,
+      status: "authorized" as const,
+      authorityId: operationalAcceptance.authorityId,
+      authoritySha256: operationalAcceptance.authoritySha256,
+      authorityFileSha256: authorityMember.sha256,
+      authorizedAt: operationalAcceptance.decisionAt,
+      subject: structuredClone(operationalAcceptance.subject),
+      issueCount: operationalAcceptance.exceptionLedger.length,
+      issueLedgerSha256: operationalAcceptance.exceptionLedgerSha256,
+    },
+  };
+}
+
 export async function buildAiGraderMathematicalReportBundleV1(
   input: BuildAiGraderMathematicalReportBundleV1Input,
 ): Promise<AiGraderMathematicalReportBundleV1Artifact> {
@@ -1567,7 +1612,10 @@ export async function buildAiGraderMathematicalReportBundleV1(
       },
       publication: { publicReportUrl: input.publication.publicReportUrl },
     },
-    calibrationProfile: input.calibrationProfile,
+    calibrationProfile: publicCalibrationProfileV1(
+      input.calibrationProfile,
+      input.calibrationBundleAuthority,
+    ),
     ...(input.calibrationActivationAuthority ? { calibrationActivationAuthority: input.calibrationActivationAuthority } : {}),
     calibrationBundleAuthority: input.calibrationBundleAuthority,
     designReferences: input.designReferences,

@@ -43,7 +43,9 @@ import {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
   AI_GRADER_REPORT_BUNDLE_V02_VERSION,
   AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+  canonicalJsonV1,
   createClassificationPayloadFromAttributes,
+  type AiGraderOperatorResolutionAuthenticationV1,
   type CardAttributes,
   type NormalizedClassification,
   type TrustedPokemonCardFormatAuthorityV1,
@@ -376,6 +378,16 @@ export type AiGraderProductionApiDependencies = {
     admin?: AdminSession | null;
     actor: AiGraderProductionActor;
   }): Promise<TrustedPokemonCardFormatAuthorityV1>;
+  issueOperatorResolutionAuthentication?(input: {
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    requestSha256: string;
+    submissionSha256: string;
+    idempotencyKey: string;
+    actor: AiGraderProductionActor;
+  }): Promise<AiGraderOperatorResolutionAuthenticationV1> |
+    AiGraderOperatorResolutionAuthenticationV1;
   createCardFromReport?(input: {
     queueItemId: string;
     tenantId: string;
@@ -2242,6 +2254,50 @@ function parseLabelSheetMutationBody(body: unknown) {
   return { sheetId, expectedRevision };
 }
 
+function parseOperatorResolutionAuthenticationBody(body: unknown) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("Operator-resolution authentication requires one exact JSON body.");
+  }
+  const value = body as JsonRecord;
+  const expected = [
+    "gradingSessionId",
+    "idempotencyKey",
+    "operatorResolutionSubmission",
+    "queueItemId",
+    "reportId",
+    "requestSha256",
+  ];
+  if (
+    Object.keys(value).sort().join("\n") !== expected.sort().join("\n") ||
+    !value.operatorResolutionSubmission ||
+    typeof value.operatorResolutionSubmission !== "object" ||
+    Array.isArray(value.operatorResolutionSubmission)
+  ) {
+    throw new Error("Operator-resolution authentication body has unsupported or missing fields.");
+  }
+  const exactId = (candidate: unknown, label: string) => {
+    if (typeof candidate !== "string" ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$/.test(candidate)) {
+      throw new Error(label + " must be one exact bounded identifier.");
+    }
+    return candidate;
+  };
+  const requestSha256 = String(value.requestSha256 ?? "");
+  if (!/^[a-f0-9]{64}$/.test(requestSha256)) {
+    throw new Error("Operator-resolution request SHA-256 must be exact.");
+  }
+  return {
+    queueItemId: exactId(value.queueItemId, "Queue item ID"),
+    gradingSessionId: exactId(value.gradingSessionId, "Grading session ID"),
+    reportId: exactId(value.reportId, "Report ID"),
+    requestSha256,
+    idempotencyKey: exactId(value.idempotencyKey, "Resolution idempotency key"),
+    submissionSha256: aiGraderSha256(
+      canonicalJsonV1(value.operatorResolutionSubmission),
+    ),
+  };
+}
+
 function dateString(value: unknown) {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") return value;
@@ -2645,6 +2701,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "mark-label-sheet-printed",
           "card-search",
           "mathematical-card-authority",
+          "operator-resolution-authentication",
           "slabbed-photo-init",
           "slabbed-photo-finalize",
           "upload-slab-photo",
@@ -2690,6 +2747,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "mark-label-sheet-printed",
       "card-search",
       "mathematical-card-authority",
+      "operator-resolution-authentication",
       "slabbed-photo-init",
       "slabbed-photo-finalize",
       "upload-slab-photo",
@@ -2735,7 +2793,8 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "prepare-label-sheet-print" ||
         key === "mark-label-sheet-printed" ||
         key === "add-to-inventory" ||
-        key === "discard-finish-card"
+        key === "discard-finish-card" ||
+        key === "operator-resolution-authentication"
           ? "publish"
           : key === "mathematical-card-authority"
             ? "card-search"
@@ -2851,6 +2910,22 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           enabled: true,
           operation: "aiGraderTrustedMathematicalCardAuthority",
           result: { authority },
+        });
+      }
+      if (key === "operator-resolution-authentication") {
+        if (!deps.issueOperatorResolutionAuthentication) {
+          throw new Error("Operator-resolution authentication is not configured.");
+        }
+        const input = parseOperatorResolutionAuthenticationBody(req.body);
+        const authentication = await deps.issueOperatorResolutionAuthentication({
+          ...input,
+          actor: authorizedActor,
+        });
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderOperatorResolutionAuthentication",
+          result: { authentication },
         });
       }
       if (key === "ocr-prefill-init") {

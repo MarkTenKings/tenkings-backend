@@ -17,6 +17,9 @@ const {
   validateFixedRigProcessingWorkerAuthorityInput,
   validateFixedRigProcessingWorkerRequest,
 } = require("../dist/drivers/fixedRigProcessingWorkerProtocol");
+const {
+  collectFixedRigMathematicalNativeCaptureRolesV1,
+} = require("../dist/drivers/fixedRigMathematicalStationAdapterV1");
 
 const TIMESTAMP = "2026-07-09T20:00:00.000Z";
 const FILE_STAMP = "20260709T200000000Z";
@@ -25,19 +28,25 @@ function hash(filePath) {
   return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
 }
 
-function capture(filePath, note, index, mimeType = "image/png") {
+function capture(filePath, note, index, mimeType = "image/png", overrides = {}) {
   return {
     outputFilePath: filePath,
     sha256: hash(filePath),
     byteSize: fs.statSync(filePath).size,
     mimeType,
-    timestamp: TIMESTAMP,
-    camera: { index: 0, modelName: "file-fixture-only" },
+    timestamp: overrides.timestamp ?? TIMESTAMP,
+    camera: {
+      index: 0,
+      modelName: "file-fixture-only",
+      ...(overrides.cameraSerialNumber
+        ? { serialNumber: overrides.cameraSerialNumber }
+        : {}),
+    },
     imageWidth: 1400,
     imageHeight: 1960,
     sourcePixelFormat: "Mono8",
     savedImageFormat: mimeType === "image/tiff" ? "TIFF" : "PNG",
-    exposureTime: 45000,
+    exposureTime: overrides.exposureTime ?? 45000,
     gain: 0,
     transport: "GigE",
     pylon: { installed: false, status: "test_fixture" },
@@ -93,20 +102,90 @@ async function createFixture(options = {}) {
   const definitions = [
     ["all_on", `${side}-all-on`, "all"],
     ["accepted_profile", `${side}-accepted-lighting-profile`, [1, 2, 3, 4, 5, 6, 7, 8]],
-    ...Array.from({ length: 8 }, (_, index) => [
-      `channel_${index + 1}`,
-      `${side}-channel-${index + 1}`,
-      index + 1,
-    ]),
+    ...(options.bracket
+      ? []
+      : Array.from({ length: 8 }, (_, index) => [
+          `channel_${index + 1}`,
+          `${side}-channel-${index + 1}`,
+          index + 1,
+        ])),
   ];
   const roleCaptures = definitions.map(([roleName, label, channel], index) => {
     const filePath = path.join(sideDir, `basler-${label}-${FILE_STAMP}.${extension}`);
     fs.copyFileSync(sourceTemplate, filePath);
     return role(roleName, label, capture(filePath, label, index + 1, mimeType), channel);
   });
-  const darkPath = path.join(sideDir, `basler-${side}-dark-${FILE_STAMP}.${extension}`);
-  fs.copyFileSync(sourceTemplate, darkPath);
+  let rawOrdinal = roleCaptures.length;
+  const bracketCells = options.bracket
+    ? [15000, 30000, 37500].map((exposureUs) => {
+        const bracketRole = (kind, ordinal) => {
+          rawOrdinal += 1;
+          const roleName = `bracket_${exposureUs}_${kind}_${ordinal}`;
+          const label = `${side}-bracket-${exposureUs}-${kind}-${ordinal}`;
+          const filePath = path.join(sideDir, `basler-${label}-${FILE_STAMP}.${extension}`);
+          fs.copyFileSync(sourceTemplate, filePath);
+          const captureValue = capture(filePath, label, rawOrdinal, mimeType, {
+            exposureTime: exposureUs,
+            cameraSerialNumber: "worker-camera-serial-1",
+            timestamp: new Date(Date.parse(TIMESTAMP) + rawOrdinal).toISOString(),
+          });
+          const startedTicks = rawOrdinal * 10;
+          return {
+            ...role(
+              roleName,
+              label,
+              captureValue,
+              kind === "channel" ? ordinal : undefined,
+            ),
+            exposureUs,
+            monotonicStartedTicks: startedTicks,
+            monotonicFinishedTicks: startedTicks + 5,
+            ...(kind === "reference"
+              ? { referenceOrdinal: ordinal }
+              : { dutyTenthsPercent: 24, settleMs: 0 }),
+          };
+        };
+        return {
+          exposureUs,
+          cameraReadback: {
+            exposureUs,
+            gain: 0,
+            pixelFormat: "Mono8",
+            cameraSerialNumber: "worker-camera-serial-1",
+          },
+          references: Array.from({ length: 3 }, (_, index) =>
+            bracketRole("reference", index + 1)),
+          channels: Array.from({ length: 8 }, (_, index) =>
+            bracketRole("channel", index + 1)),
+        };
+      })
+    : undefined;
+  const darkPath = options.bracket
+    ? undefined
+    : path.join(sideDir, `basler-${side}-dark-${FILE_STAMP}.${extension}`);
+  if (darkPath) fs.copyFileSync(sourceTemplate, darkPath);
+  if (options.bracket) {
+    const exactRawRoles = [
+      ...roleCaptures,
+      ...bracketCells.flatMap((cell) => [...cell.references, ...cell.channels]),
+    ];
+    await Promise.all(exactRawRoles.map(async (entry, index) => {
+      await sharp(sourceTemplate)
+        .withMetadata({ density: 72 + index })
+        .tiff({ compression: "lzw" })
+        .toFile(entry.capture.outputFilePath);
+      entry.capture.sha256 = hash(entry.capture.outputFilePath);
+      entry.capture.byteSize = fs.statSync(entry.capture.outputFilePath).size;
+    }));
+  }
   fs.unlinkSync(sourceTemplate);
+  const selectedBracketCell = bracketCells?.[2];
+  const darkControl = selectedBracketCell
+    ? selectedBracketCell.references[0]
+    : role("dark_control", `${side}-dark`, capture(darkPath, `${side}-dark`, 0, mimeType));
+  const selectedChannels = selectedBracketCell
+    ? selectedBracketCell.channels
+    : roleCaptures.slice(2);
   const batch = {
     executionPath: "warm_full_forensic_runner",
     packageId,
@@ -119,8 +198,8 @@ async function createFixture(options = {}) {
     activeLightingProfile: {
       profileId: "file-fixture-profile",
       profileVersion: "fixed-rig-active-lighting-profile-v0.1",
-      selectedDutyPercent: 1.2,
-      actualLeimacPwmStep: 12,
+      selectedDutyPercent: options.bracket ? 2.4 : 1.2,
+      actualLeimacPwmStep: options.bracket ? 24 : 12,
       selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
       profileSource: "accepted_station_profile",
       acceptedAt: TIMESTAMP,
@@ -141,14 +220,27 @@ async function createFixture(options = {}) {
       persistentBaslerSession: true,
       persistentLeimacSession: true,
       selectedChannels: [1, 2, 3, 4, 5, 6, 7, 8],
-      dutyTenthsPercent: 12,
+      dutyTenthsPercent: options.bracket ? 24 : 12,
       capturesStarted: true,
       leimac: { triggerSetup: { writes: [] } },
       captures: {
-        darkControl: role("dark_control", `${side}-dark`, capture(darkPath, `${side}-dark`, 0, mimeType)),
+        darkControl,
         allOn: roleCaptures[0],
         acceptedProfile: roleCaptures[1],
-        channels: roleCaptures.slice(2),
+        channels: selectedChannels,
+        ...(bracketCells
+          ? {
+              photometricBracket: {
+                version: "fixed_rig_exposure_bracket_capture_v1",
+                exposuresUs: [15000, 30000, 37500],
+                isolatedDutyTenthsPercent: 24,
+                settleMs: 0,
+                gain: 0,
+                pixelFormat: "Mono8",
+                cells: bracketCells,
+              },
+            }
+          : {}),
       },
       timing: { warmCameraOpenConfigure: { durationMs: 400 } },
       safety: { safeOffBefore: true, safeOffAfter: true },
@@ -164,7 +256,20 @@ async function createFixture(options = {}) {
       },
     } : {}),
   };
-  return { root, packageDir, sideDir, batch, sources: roleCaptures.map((entry) => entry.capture.outputFilePath) };
+  const nativeSources = bracketCells
+    ? [
+        roleCaptures[0],
+        roleCaptures[1],
+        ...bracketCells.flatMap((cell) => [...cell.references, ...cell.channels]),
+      ]
+    : roleCaptures;
+  return {
+    root,
+    packageDir,
+    sideDir,
+    batch,
+    sources: nativeSources.map((entry) => entry.capture.outputFilePath),
+  };
 }
 
 function authorityInput(batch) {
@@ -307,6 +412,210 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       assert.equal(tiffResponse.authority.source.geometry.timestamp, TIMESTAMP);
     } finally {
       await controller.shutdown("TIFF test complete");
+    }
+  });
+
+  await t.test("native 35-role exposure bracket preserves exact capture identities through worker geometry and normalization", async (t) => {
+    const bracketFixture = await createFixture({
+      packageId: "worker-package-native-bracket",
+      format: "tiff",
+      bracket: true,
+    });
+    t.after(() => fs.rmSync(bracketFixture.root, { recursive: true, force: true }));
+    const nativeRoles = [
+      bracketFixture.batch.batch.captures.allOn,
+      bracketFixture.batch.batch.captures.acceptedProfile,
+      ...bracketFixture.batch.batch.captures.photometricBracket.cells.flatMap((cell) => [
+        ...cell.references,
+        ...cell.channels,
+      ]),
+    ];
+    assert.equal(nativeRoles.length, 35);
+    assert.equal(new Set(nativeRoles.map((entry) => entry.capture.outputFilePath)).size, 35);
+    const immutableHashes = bracketFixture.sources.map(hash);
+    const bracketRequest = await createFixedRigProcessingWorkerRequest({
+      allowedOutputRoot: bracketFixture.root,
+      requestId: "request-native-bracket",
+      sessionId: "session-native-bracket",
+      captureBatch: bracketFixture.batch,
+    });
+    assert.deepEqual(
+      bracketRequest.sources.map((source) => source.role),
+      ["all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)],
+      "geometry authority retains its canonical role vocabulary",
+    );
+    assert.deepEqual(
+      bracketRequest.sources.map((source) => source.captureRole),
+      [
+        "all_on",
+        "accepted_profile",
+        ...Array.from({ length: 8 }, (_, index) => `bracket_37500_channel_${index + 1}`),
+      ],
+      "the request separately binds the exact native capture roles",
+    );
+    assert.equal(new Set(bracketRequest.sources.map((source) => source.relativePath)).size, 10);
+
+    const runner = createFixedRigWarmForensicProcessingRunner({
+      allowedOutputRoot: bracketFixture.root,
+    });
+    let result;
+    try {
+      result = await runner.processSide(bracketFixture.batch, {
+        requestId: "request-native-bracket-processing",
+        sessionId: "session-native-bracket",
+      });
+    } finally {
+      await runner.shutdownProcessingWorker("native bracket test complete");
+    }
+    assert.equal(result.processingWorker.mode, "captured_evidence_worker");
+    assert.match(result.processingWorker.sourceSetSha256, /^[a-f0-9]{64}$/);
+    assert.equal(result.manifest.rawEvidenceIntegrity.verified, true);
+    assert.equal(result.manifest.rawEvidenceIntegrity.roles.length, 35);
+    assert.deepEqual(
+      result.manifest.rawEvidenceIntegrity.roles.map((entry) => entry.role),
+      nativeRoles.map((entry) => entry.role),
+    );
+    assert.equal(result.manifest.front.allOn.capture.captureRole, undefined);
+    assert.equal(result.manifest.front.acceptedProfile.capture.captureRole, undefined);
+    assert.equal(
+      result.manifest.front.photometricExposureBracket.cells[2].channels[0]
+        .capture.captureRole,
+      undefined,
+      "real capture objects do not fabricate a nested captureRole field",
+    );
+    const nativeRoleBindings =
+      collectFixedRigMathematicalNativeCaptureRolesV1(result.manifest.front, "front");
+    assert.equal(nativeRoleBindings.length, 35);
+    assert.deepEqual(
+      nativeRoleBindings.map((entry) => entry.captureRole),
+      nativeRoles.map((entry) => entry.role),
+    );
+    assert.deepEqual(
+      nativeRoleBindings.map((entry) => entry.sha256),
+      nativeRoles.map((entry) => entry.capture.sha256),
+    );
+    const wrongPresentationLabel = structuredClone(result.manifest.front);
+    wrongPresentationLabel.allOn.label = "front-legacy-alias";
+    assert.throws(
+      () => collectFixedRigMathematicalNativeCaptureRolesV1(
+        wrongPresentationLabel,
+        "front",
+      ),
+      /canonical side identities/i,
+    );
+    const wrongNativeRole = structuredClone(result.manifest.front);
+    wrongNativeRole.photometricExposureBracket.cells[1].channels[3].role =
+      "bracket_30000_channel_5";
+    assert.throws(
+      () => collectFixedRigMathematicalNativeCaptureRolesV1(wrongNativeRole, "front"),
+      /captureRole must equal bracket_30000_channel_4/i,
+    );
+    const aliasedRawHash = structuredClone(result.manifest.front);
+    aliasedRawHash.photometricExposureBracket.cells[0].references[1].capture.sha256 =
+      aliasedRawHash.photometricExposureBracket.cells[0].references[0].capture.sha256;
+    assert.throws(
+      () => collectFixedRigMathematicalNativeCaptureRolesV1(aliasedRawHash, "front"),
+      /missing, duplicated, or aliased/i,
+    );
+    const normalizedBracket =
+      result.manifest.front.photometricExposureBracket.cells.flatMap((cell) => [
+        ...cell.references,
+        ...cell.channels,
+      ]);
+    assert.equal(normalizedBracket.length, 33);
+    assert.equal(
+      new Set(normalizedBracket.map((entry) => entry.capture.outputFilePath)).size,
+      33,
+    );
+    assert.equal(
+      new Set(normalizedBracket.map((entry) => entry.normalized.analysisArtifact.localOutputPath)).size,
+      33,
+    );
+    assert.equal(
+      normalizedBracket.every((entry) =>
+        fs.existsSync(entry.normalized.analysisArtifact.localOutputPath)),
+      true,
+    );
+    assert.equal(
+      fs.existsSync(result.manifest.front.normalizedCard.normalizedArtifact.localOutputPath),
+      true,
+    );
+    assert.deepEqual(bracketFixture.sources.map(hash), immutableHashes);
+  });
+
+  await t.test("native bracket selected aliases, request roles, and every raw role remain fail-closed", async (t) => {
+    const bracketFixture = await createFixture({
+      packageId: "worker-package-native-bracket-negative",
+      format: "tiff",
+      bracket: true,
+    });
+    t.after(() => fs.rmSync(bracketFixture.root, { recursive: true, force: true }));
+    const wrongSelectedCell = structuredClone(bracketFixture.batch);
+    wrongSelectedCell.batch.captures.channels = [
+      wrongSelectedCell.batch.captures.photometricBracket.cells[1].channels[0],
+      ...wrongSelectedCell.batch.captures.channels.slice(1),
+    ];
+    await assert.rejects(
+      createFixedRigProcessingWorkerRequest({
+        allowedOutputRoot: bracketFixture.root,
+        requestId: "request-native-bracket-wrong-alias",
+        sessionId: "session-native-bracket-negative",
+        captureBatch: wrongSelectedCell,
+      }),
+      /not its exact native 37\.5 ms channel/i,
+    );
+
+    const bracketRequest = await createFixedRigProcessingWorkerRequest({
+      allowedOutputRoot: bracketFixture.root,
+      requestId: "request-native-bracket-negative",
+      sessionId: "session-native-bracket-negative",
+      captureBatch: bracketFixture.batch,
+    });
+    const forgedRoleOrder = clone(bracketRequest);
+    [
+      forgedRoleOrder.sources[2].captureRole,
+      forgedRoleOrder.sources[3].captureRole,
+    ] = [
+      forgedRoleOrder.sources[3].captureRole,
+      forgedRoleOrder.sources[2].captureRole,
+    ];
+    assert.throws(
+      () => validateFixedRigProcessingWorkerRequest(forgedRoleOrder),
+      /native capture roles are missing, duplicated, or out of order/i,
+    );
+    const canonicalizedConsumer = authorityInput(bracketFixture.batch);
+    canonicalizedConsumer.channels = canonicalizedConsumer.channels.map((entry, index) => ({
+      ...entry,
+      role: `channel_${index + 1}`,
+    }));
+    await assert.rejects(
+      validateFixedRigProcessingWorkerAuthorityInput(
+        bracketRequest,
+        canonicalizedConsumer,
+        bracketFixture.root,
+      ),
+      /authority roles were missing, duplicated, or reordered/i,
+    );
+
+    const unselectedLowExposureReference =
+      bracketFixture.batch.batch.captures.photometricBracket.cells[0].references[1];
+    fs.appendFileSync(unselectedLowExposureReference.capture.outputFilePath, "tampered");
+    const runner = createFixedRigWarmForensicProcessingRunner({
+      allowedOutputRoot: bracketFixture.root,
+    });
+    try {
+      const error = await settledError(
+        runner.processSide(bracketFixture.batch, {
+          requestId: "request-native-bracket-tampered",
+          sessionId: "session-native-bracket-negative",
+        }),
+      );
+      assert.ok(error instanceof FixedRigProcessingWorkerError);
+      assert.equal(error.code, "worker_failed");
+      assert.equal(error.workerFailureKind, "processing_failed");
+      assert.match(error.message, /failed safely; processing stopped/i);
+    } finally {
+      await runner.shutdownProcessingWorker("native bracket negative test complete");
     }
   });
 

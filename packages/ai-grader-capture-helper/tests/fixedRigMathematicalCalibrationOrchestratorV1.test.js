@@ -16,6 +16,9 @@ const {
   buildFixedRigMathematicalCalibrationReportPackageV1,
 } = require("../dist/drivers/fixedRigMathematicalCalibrationOrchestratorV1");
 const {
+  buildFixedRigOperatorResolutionAuthorityV1,
+} = require("../dist/drivers/fixedRigOperatorResolutionAuthorityV1");
+const {
   hashFixedRigIntendedOuterBoundaryV1,
 } = require("../dist/drivers/fixedRigConditionPlaneProducerV1");
 const {
@@ -385,7 +388,7 @@ function orchestratorIntendedOuterBoundary() {
   };
 }
 
-async function rawAllOnPng(intendedContour) {
+async function rawAllOnPng(intendedContour, marker) {
   const rawWidth = WIDTH + 16;
   const rawHeight = HEIGHT + 16;
   const bytes = Buffer.alloc(rawWidth * rawHeight * 3, 12);
@@ -400,6 +403,9 @@ async function rawAllOnPng(intendedContour) {
       bytes[offset + 2] = 100;
     }
   }
+  bytes[0] = marker;
+  bytes[1] = marker;
+  bytes[2] = marker;
   return sharp(bytes, {
     raw: { width: rawWidth, height: rawHeight, channels: 3 },
   })
@@ -434,7 +440,10 @@ async function buildSide(root, side, profile, options = {}) {
   const normalizedBytes = await rgbPng();
   const allOnBytes = await rgbPng();
   const intendedOuterBoundary = orchestratorIntendedOuterBoundary();
-  const rawAllOnBytes = await rawAllOnPng(intendedOuterBoundary.contour);
+  const rawAllOnBytes = await rawAllOnPng(
+    intendedOuterBoundary.contour,
+    side === "front" ? 1 : 2,
+  );
   const designBytes = await rgbPng();
   const normalized = reportEvidence(
     writeExact(root, `${side}-normalized.png`, normalizedBytes),
@@ -535,10 +544,48 @@ async function buildSide(root, side, profile, options = {}) {
   };
 }
 
-async function replaceWithSealedExposureBracket(root, sideName, side) {
+async function bracketDirectionalPng(value, marker, channel, exposureUs, options = {}) {
+  const bytes = Buffer.alloc(WIDTH * HEIGHT, value);
+  bytes[0] = marker;
+  if (options.scratch) {
+    const residuals = [22, 21, 14, 10, -10, -14, -21, -22];
+    const scaledResidual = Math.round(residuals[channel - 1] * exposureUs / 37500);
+    for (let x = 24; x <= 39; x += 1) {
+      bytes[48 * WIDTH + x] = value + scaledResidual;
+    }
+  }
+  if (options.partialClipping && channel <= 2) {
+    for (let y = 44; y < 46; y += 1) {
+      for (let x = 30; x < 32; x += 1) bytes[y * WIDTH + x] = 255;
+    }
+  }
+  if (options.fullyObscured) {
+    for (let y = 44; y < 48; y += 1) {
+      for (let x = 30; x < 34; x += 1) bytes[y * WIDTH + x] = 255;
+    }
+  }
+  return sharp(bytes, {
+    raw: { width: WIDTH, height: HEIGHT, channels: 1 },
+  }).png({ compressionLevel: 9 }).toBuffer();
+}
+
+async function replaceWithSealedExposureBracket(root, sideName, side, options = {}) {
   const exposures = [15000, 30000, 37500];
-  let marker = 1;
+  let marker = sideName === "front" ? 10 : 110;
   const references = [];
+  const nativeCaptureRoles = [{
+    captureRole: "all_on",
+    sha256: side.rawAllOn.sha256,
+  }];
+  const acceptedRaw = writeExact(
+    root,
+    `${sideName}-raw-accepted-profile.png`,
+    await bracketPng(0, sideName === "front" ? 240 : 241),
+  );
+  nativeCaptureRoles.push({
+    captureRole: "accepted_profile",
+    sha256: acceptedRaw.sha256,
+  });
   const channels = Array.from({ length: 8 }, (_, index) => ({
     channel: index + 1,
     channelConfidence: 0.99,
@@ -548,30 +595,54 @@ async function replaceWithSealedExposureBracket(root, sideName, side) {
     for (let referenceOrdinal = 1; referenceOrdinal <= 3; referenceOrdinal += 1) {
       const fileName =
         `${sideName}-bracket-${exposureUs}-reference-${referenceOrdinal}.png`;
-      references.push({
+      const reference = {
         ...reportEvidence(
           writeExact(root, fileName, await bracketPng(0, marker++)),
           `${sideName}-bracket-${exposureUs}-reference-${referenceOrdinal}`,
           fileName,
         ),
         exposureUs,
+      };
+      references.push(reference);
+      nativeCaptureRoles.push({
+        captureRole: `bracket_${exposureUs}_reference_${referenceOrdinal}`,
+        sha256: reference.sha256,
       });
     }
     const value = exposureUs === 15000 ? 36 : exposureUs === 30000 ? 72 : 90;
     for (let channel = 1; channel <= 8; channel += 1) {
       const fileName = `${sideName}-bracket-${exposureUs}-channel-${channel}.png`;
-      channels[channel - 1].observations.push({
+      const observation = {
         ...reportEvidence(
-          writeExact(root, fileName, await bracketPng(value, marker++)),
+          writeExact(
+            root,
+            fileName,
+            await bracketDirectionalPng(
+              value,
+              marker++,
+              channel,
+              exposureUs,
+              options,
+            ),
+          ),
           `${sideName}-bracket-${exposureUs}-channel-${channel}`,
           fileName,
         ),
         exposureUs,
+      };
+      channels[channel - 1].observations.push(observation);
+      nativeCaptureRoles.push({
+        captureRole: `bracket_${exposureUs}_channel_${channel}`,
+        sha256: observation.sha256,
       });
     }
   }
+  assert.equal(nativeCaptureRoles.length, 35);
+  assert.equal(new Set(nativeCaptureRoles.map((role) => role.sha256)).size, 35);
   const result = {
     ...side,
+    warmManifestSha256: canonicalHash({ side: sideName, nativeCaptureRoles }),
+    nativeCaptureRoles,
     photometricExposureBracket: {
       version: "fixed_rig_exposure_bracket_capture_v1",
       isolatedDutyTenthsPercent: 24,
@@ -585,6 +656,28 @@ async function replaceWithSealedExposureBracket(root, sideName, side) {
   delete result.directionalChannels;
   delete result.darkControl;
   return result;
+}
+
+async function resolveOperatorCheckpoint(input, resolutions = []) {
+  const pending = await buildFixedRigMathematicalCalibrationReportPackageV1(input);
+  if (pending.status !== "operator_resolution_required") return pending;
+  const deterministicReplay =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(input);
+  assert.equal(deterministicReplay.status, "operator_resolution_required");
+  assert.deepEqual(deterministicReplay.request, pending.request);
+  const authority = buildFixedRigOperatorResolutionAuthorityV1({
+    request: pending.request,
+    submission: {
+      schemaVersion: "operator_resolution_submission_v1",
+      requestSha256: pending.request.requestSha256,
+      operatorConfirmed: true,
+      resolutions,
+    },
+    operatorId: "owner-1",
+    authenticatedAt: GENERATED_AT,
+  });
+  input.operatorResolutionAuthorities = [authority];
+  return buildFixedRigMathematicalCalibrationReportPackageV1(input);
 }
 
 async function buildFixture(options = {}) {
@@ -624,7 +717,8 @@ async function buildFixture(options = {}) {
   ];
   const reportId = options.reportId ?? "mathematical-orchestrator-clean";
   const gradingSessionId = options.gradingSessionId ?? "mathematical-session-clean";
-  const sides = {
+  const queueItemId = options.queueItemId ?? `${gradingSessionId}-queue-item`;
+  const directSides = {
     front: await buildSide(root, "front", calibration.profile, {
       scratch: Boolean(options.scratchFront),
       partialClipping: Boolean(options.partialClippingFront),
@@ -632,8 +726,22 @@ async function buildFixture(options = {}) {
     }),
     back: await buildSide(root, "back", calibration.profile),
   };
+  const sides = {
+    front: await replaceWithSealedExposureBracket(
+      root,
+      "front",
+      directSides.front,
+      {
+        scratch: Boolean(options.scratchFront),
+        partialClipping: Boolean(options.partialClippingFront),
+        fullyObscured: Boolean(options.fullyObscuredFront),
+      },
+    ),
+    back: await replaceWithSealedExposureBracket(root, "back", directSides.back),
+  };
   const input = {
     gradingContract: "mathematical_calibration_v1",
+    queueItemId,
     gradingSessionId,
     generatedAt: GENERATED_AT,
     reportId,
@@ -681,7 +789,7 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   const fixture = await buildFixture();
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   assert.equal("calibratedDetectorPlanes" in fixture.input.sides.front, false);
-  const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const result = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(
     result.status,
     "completed",
@@ -730,17 +838,7 @@ test("sealed 33-source bracket completes strict report/package asset registratio
     outputName: "sealed-exposure-bracket-report-package",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  fixture.input.sides.front = await replaceWithSealedExposureBracket(
-    fixture.root,
-    "front",
-    fixture.input.sides.front,
-  );
-  fixture.input.sides.back = await replaceWithSealedExposureBracket(
-    fixture.root,
-    "back",
-    fixture.input.sides.back,
-  );
-  const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const result = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(
     result.status,
     "completed",
@@ -751,6 +849,20 @@ test("sealed 33-source bracket completes strict report/package asset registratio
   const serialized = JSON.stringify(result.reportArtifact.bundle);
   assert.doesNotMatch(serialized, /exposure-bracket-v1-channel-/);
   for (const sideName of ["front", "back"]) {
+    for (const planeName of [
+      "registeredColorDeltaE",
+      "registeredPrintDeltaE",
+      "registeredResidueDeltaE",
+    ]) {
+      const payload = result.reportArtifact.assetPayloads.find(
+        (entry) =>
+          entry.id ===
+          `${sideName}/mathematical-v1/detector-planes/${planeName}.tkplane`,
+      );
+      assert.ok(payload);
+      const decoded = decodeFixedRigCalibratedDetectorPlaneV1(payload.bytes);
+      assert.equal(Math.max(...Array.from(decoded.plane.data)), 0);
+    }
     for (let channel = 1; channel <= 8; channel += 1) {
       const realPresentationAsset =
         `${sideName}-bracket-37500-channel-${channel}`;
@@ -760,16 +872,45 @@ test("sealed 33-source bracket completes strict report/package asset registratio
       ));
     }
   }
+  const publicProjection = JSON.stringify({
+    productionRelease: result.reportArtifact.bundle.productionRelease,
+    label: result.reportArtifact.bundle.productionRelease.label,
+    evidenceQualityLimitations:
+      result.reportArtifact.bundle.evidenceQualityLimitations,
+  });
+  assert.doesNotMatch(
+    publicProjection,
+    /provisional|insufficient|human review|exception|unavailable_source_modality|luminance-only/i,
+  );
+  const publicArtifactTexts = [
+    JSON.stringify(result.stationInput),
+    JSON.stringify(result.reportArtifact.bundle),
+  ];
+  const pendingDirectories = [result.reportPackage.outputDir];
+  while (pendingDirectories.length) {
+    const directory = pendingDirectories.pop();
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        pendingDirectories.push(entryPath);
+      } else if (/\.(?:html|json)$/i.test(entry.name)) {
+        publicArtifactTexts.push(fs.readFileSync(entryPath, "utf8"));
+      }
+    }
+  }
+  assert.doesNotMatch(
+    publicArtifactTexts.join("\n"),
+    /unavailable_source_modality|authenticated capture source does not provide design-relative color evidence|luminance-only/i,
+  );
 });
 
-test("partial channel clipping recovers from alternate channels without recapture or a condition deduction", async (t) => {
+test("exposure fusion selects nonclipped observations without recapture or a condition deduction", async (t) => {
   const fixture = await buildFixture({
     partialClippingFront: true,
     reportId: "mathematical-orchestrator-alternate-channel-recovery",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  const result =
-    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const result = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(result.status, "completed", result.reasons?.join("; "));
   assert.deepEqual(result.summary.scores, {
     centering: 10,
@@ -783,10 +924,7 @@ test("partial channel clipping recovers from alternate channels without recaptur
     (limitation) =>
       limitation.side === "front" && limitation.classification === "clipping",
   );
-  assert.ok(clipping);
-  assert.equal(clipping.recoveredFromAlternateChannels, true);
-  assert.equal(clipping.recaptureRequired, false);
-  assert.equal(clipping.deduction, 0);
+  assert.equal(clipping, undefined);
 });
 
 test("a localized region obscured in every channel propagates fail-closed recapture and no report", async (t) => {
@@ -812,7 +950,7 @@ test("orchestrator preserves a controlled scratch as an exact measurement-derive
     reportId: "mathematical-orchestrator-scratch",
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
-  const draft = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const draft = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(
     draft.status,
     "finding_review_required",
@@ -878,7 +1016,7 @@ test("orchestrator preserves a controlled scratch as an exact measurement-derive
     status: "confirmed",
     reviewedAt: GENERATED_AT,
   }));
-  const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const result = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(result.status, "completed", result.reasons?.join("; "));
   assert.ok(result.grade.elements.surface.score < 10);
   assert.equal(result.grade.findings.length, 1);
@@ -1006,7 +1144,7 @@ test("station accepts the package only inside an explicitly opted-in mathematica
   });
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   fixture.input.outputDir = path.join(stationRoot, "report-bundles", reportId, "mathematical-v1");
-  const result = await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  const result = await resolveOperatorCheckpoint(fixture.input);
   assert.equal(result.status, "completed", result.reasons?.join("; "));
   const resolved = await service.reportBundle(reportId);
   assert.equal(resolved.gradingContract, "mathematical_calibration_v1");

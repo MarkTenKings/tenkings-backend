@@ -714,3 +714,110 @@ test("all eight corner locations contribute by exact worst-plus-average aggregat
   assert.equal(result.deductionLedger.entries.length, 1);
   assert.equal(result.deductionLedger.entries[0].element, "corners");
 });
+
+function resolvedElement(element, score, publicExplanation) {
+  return {
+    authoritySha256: "b".repeat(64),
+    resolution: {
+      element,
+      ...(element === "centering" ? {
+        measurements: {
+          unit: "mm",
+          order: ["left", "right", "top", "bottom"],
+          front: [2, 2, 2, 2],
+          back: [2, 2, 2, 2],
+        },
+      } : { score }),
+      publicExplanation,
+      internalReason: "Private workflow rationale may retain original detector history.",
+      original: {
+        status: "computed",
+        score: 10,
+        explanation: "Original machine explanation.",
+        failureReasons: [],
+        resultSha256: "c".repeat(64),
+      },
+    },
+    publicEvidenceAssetIds: ["front-normalized", "back-normalized"],
+  };
+}
+
+test("resolved element scores use unchanged overall composer and preserve owner explanations", () => {
+  const input = composedInput();
+  input.operatorResolutions = {
+    centering: resolvedElement(
+      "centering",
+      undefined,
+      "Printed borders are evenly balanced on both sides.",
+    ),
+    corners: resolvedElement(
+      "corners",
+      9.4,
+      "Corners show slight wear at the upper left.",
+    ),
+    edges: resolvedElement(
+      "edges",
+      9.15,
+      "Edges show light wear along the lower border.",
+    ),
+    surface: resolvedElement(
+      "surface",
+      8.75,
+      "Surface shows a visible scuff near the center.",
+    ),
+  };
+  const result = buildFixedRigMathematicalGradeV1(input);
+  assert.equal(result.status, "final_mathematical_grade_v1");
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(result.elements).map(([element, value]) => [
+      element,
+      value.score,
+    ])),
+    { centering: 10, corners: 9.4, edges: 9.15, surface: 8.75 },
+  );
+  assert.equal(result.weightedGrade, 9.39);
+  assert.equal(result.weakestElementCap, 9.25);
+  assert.equal(result.overall, 9.25);
+  assert.equal(
+    result.elements.edges.explanation,
+    "Edges show light wear along the lower border.",
+  );
+  assert.equal(
+    result.whyNot10.find((entry) => entry.element === "surface").explanation,
+    "Surface shows a visible scuff near the center.",
+  );
+  assert.doesNotMatch(JSON.stringify(result), /Private workflow rationale/);
+});
+
+test("resolution never removes immutable severe caps or original physical findings", () => {
+  const calibration = buildCalibration();
+  const crease = surfaceFinding({
+    side: "front",
+    calibration,
+    id: "resolved-major-crease",
+    category: "crease",
+    measuredMeasurement: 20,
+  });
+  const input = composedInput({
+    calibration,
+    frontSurfaceFindings: [crease],
+  });
+  input.operatorResolutions = {
+    surface: resolvedElement(
+      "surface",
+      10,
+      "Surface presentation is strong, with the measured crease retained in the record.",
+    ),
+  };
+  const result = buildFixedRigMathematicalGradeV1(input);
+  assert.equal(result.status, "final_mathematical_grade_v1");
+  assert.equal(result.elements.surface.score, 10);
+  assert.equal(result.applicableSevereDefectCap, 5);
+  assert.equal(result.overall, 5);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].findingId, crease.findingId);
+  assert.equal(
+    result.whyNot10.find((entry) => entry.element === "surface").explanation,
+    "Surface presentation is strong, with the measured crease retained in the record.",
+  );
+});

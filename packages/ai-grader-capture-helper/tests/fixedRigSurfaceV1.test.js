@@ -407,6 +407,32 @@ test("a calibrated synthetic scratch produces exact measurements, U95, and a ded
   assert.equal(result.score, 9.53);
 });
 
+test("above-V8-limit full-mask surface component completes exact geometry measurement", () => {
+  const width = 433;
+  const height = 937;
+  const fullMask = mask(width, height, () => true);
+  const photometric = buildPhotometric({
+    width,
+    height,
+    responses: scratchResponses(fullMask),
+  });
+  const result = buildSurface("back", photometric, [
+    seed({
+      side: "back",
+      id: "full-mask-large-component",
+      category: "scratch",
+      candidateMask: fullMask,
+    }),
+  ]);
+  assert.equal(result.status, "computed");
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].pixelMeasurements.detectedPixelCount, 405_721);
+  assert.equal(result.findings[0].pixelMeasurements.validPixelCount, 405_721);
+  assert.equal(result.findings[0].pixelMeasurements.areaPx2, 405_721);
+  assert.equal(result.findings[0].pixelMeasurements.lengthPx, 937);
+  assert.equal(result.findings[0].pixelMeasurements.widthPx, 433);
+});
+
 test("a scratch crossing partially clipped glare is recovered from three valid alternate channels", () => {
   const width = 48;
   const height = 32;

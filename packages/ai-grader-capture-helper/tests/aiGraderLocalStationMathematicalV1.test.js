@@ -23,6 +23,15 @@ const {
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
 } = require("../dist/drivers/fixedRigStandardCardFormatV1");
 const {
+  FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+  buildFixedRigOperatorResolutionRequestV1,
+  hashFixedRigOperatorResolutionValueV1,
+} = require("../dist/drivers/fixedRigOperatorResolutionAuthorityV1");
+const {
+  AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_V1,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
   canonicalJsonV1,
 } = require("@tenkings/shared");
@@ -30,6 +39,8 @@ const {
 const BUNDLE_SHA256 = "a".repeat(64);
 const CALIBRATION_ARTIFACT_SHA256 = "c".repeat(64);
 const REVIEW_REQUEST_SHA256 = "d".repeat(64);
+const OPERATOR_AUTH_HMAC_KEY = "operator-resolution-test-hmac-key-material-0001";
+const OPERATOR_AUTH_HMAC_KEY_ID = "operator-resolution-test-key-v1";
 const RAW_ROLES = [
   "dark_control",
   "all_on",
@@ -238,6 +249,8 @@ function createService(outputDir, builder, configOverrides = {}) {
       "fixed-rig-mathematical-calibration-bundle-v1.json",
     ),
     mathematicalCalibrationBundleSha256: BUNDLE_SHA256,
+    cardFormatAuthorityHmacKey: OPERATOR_AUTH_HMAC_KEY,
+    cardFormatAuthorityHmacKeyId: OPERATOR_AUTH_HMAC_KEY_ID,
     ...configOverrides,
   });
   return new AiGraderLocalStationBridgeService(config, undefined, undefined, {
@@ -708,7 +721,7 @@ function fakeSummary() {
   };
 }
 
-function completedResult(input) {
+function completedResult(input, operatorResolutionRequest) {
   const outputDir = input.outputDir;
   return {
     version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
@@ -740,6 +753,113 @@ function completedResult(input) {
     grade: fakeGrade(),
     orchestrationTraceSha256: "e".repeat(64),
     summary: fakeSummary(),
+    ...(operatorResolutionRequest ? { operatorResolutionRequest } : {}),
+  };
+}
+
+function operatorAuthentication(action, operatorId = "authenticated-owner-1", now = new Date()) {
+  const payload = {
+    schemaVersion: AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_V1,
+    operatorId,
+    operatorRole: "ai_grader_admin",
+    queueItemId: action.queueItemId,
+    gradingSessionId: action.gradingSessionId,
+    reportId: action.reportId,
+    requestSha256: action.operatorResolutionSubmission.requestSha256,
+    submissionSha256: hashFixedRigOperatorResolutionValueV1(
+      action.operatorResolutionSubmission,
+    ),
+    idempotencyKey: action.idempotencyKey,
+    issuedAt: now.toISOString(),
+    expiresAt: new Date(now.valueOf() + 60_000).toISOString(),
+  };
+  const payloadBytes = canonicalJsonV1(payload);
+  return {
+    schemaVersion: AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_V1,
+    payload,
+    payloadSha256: sha256(Buffer.from(payloadBytes, "utf8")),
+    authentication: {
+      algorithm: "hmac-sha256",
+      keyId: OPERATOR_AUTH_HMAC_KEY_ID,
+      signature: crypto.createHmac("sha256", OPERATOR_AUTH_HMAC_KEY)
+        .update(AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1 + "\n", "utf8")
+        .update(payloadBytes, "utf8")
+        .digest("hex"),
+    },
+  };
+}
+
+function operatorResolutionRequestFixture(input) {
+  const sideBinding = (side) => {
+    const nativeRoles = Array.from({ length: 35 }, (_, index) => ({
+      captureRole: `${side}-native-role-${String(index + 1).padStart(2, "0")}`,
+      sha256: hashFixedRigOperatorResolutionValueV1(
+        `${side}-native-role-${index + 1}`,
+      ),
+    }));
+    return {
+      rawAllOnAssetId: `${side}-raw-all-on`,
+      rawAllOnSha256: hashFixedRigOperatorResolutionValueV1(`${side}-raw-all-on`),
+      normalizedAllOnAssetId: `${side}-normalized-all-on`,
+      normalizedAllOnSha256: hashFixedRigOperatorResolutionValueV1(
+        `${side}-normalized-all-on`,
+      ),
+      rawToNormalizedTransformSha256: hashFixedRigOperatorResolutionValueV1(
+        `${side}-transform`,
+      ),
+      authenticatedOuterCutArtifactSha256: hashFixedRigOperatorResolutionValueV1(
+        `${side}-outer-cut`,
+      ),
+      warmManifestSha256: hashFixedRigOperatorResolutionValueV1(
+        `${side}-warm-manifest`,
+      ),
+      nativeRoles,
+      nativeRoleLedgerSha256: hashFixedRigOperatorResolutionValueV1(nativeRoles),
+    };
+  };
+  return buildFixedRigOperatorResolutionRequestV1({
+    generatedAt: input.generatedAt,
+    binding: {
+      queueItemId: input.queueItemId,
+      gradingSessionId: input.gradingSessionId,
+      reportId: input.reportId,
+      cardIdentitySha256: hashFixedRigOperatorResolutionValueV1(input.authority.cardIdentity),
+      calibrationProfileId: "fixture-calibration-profile",
+      calibrationVersion: "fixture-calibration-v1",
+      calibrationArtifactSha256: CALIBRATION_ARTIFACT_SHA256,
+      calibrationBundleManifestSha256: BUNDLE_SHA256,
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      sides: { front: sideBinding("front"), back: sideBinding("back") },
+    },
+    originalElements: Object.fromEntries(
+      ["centering", "corners", "edges", "surface"].map((element) => [
+        element,
+        {
+          status: element === "centering" ? "insufficient_evidence" : "computed",
+          score: element === "centering" ? null : 10,
+          explanation: element === "centering" ? null : `Automatic ${element} result.`,
+          failureReasons: element === "centering"
+            ? ["Printed border fit could not resolve the exact margins."]
+            : [],
+          resultSha256: hashFixedRigOperatorResolutionValueV1(`result-${element}`),
+        },
+      ]),
+    ),
+  });
+}
+
+function operatorResolutionRequiredResult(input, request) {
+  return {
+    version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
+    status: "operator_resolution_required",
+    gradingContract: "mathematical_calibration_v1",
+    v0FallbackUsed: false,
+    failedStage: "operator_resolution",
+    request,
+    unresolvedElements: ["centering"],
+    reportPackage: null,
+    stationInput: null,
   };
 }
 
@@ -1081,6 +1201,138 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
     assert.equal(
       mathematicalReleaseBranch.includes("AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION"),
       true,
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("operator element resolution is authenticated, durable, fail-closed, and idempotently resumes the same queue item", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-resolution-"));
+  let pendingRequest;
+  let adapterCalls = 0;
+  try {
+    const service = createService(outputDir, async (input) => {
+      adapterCalls += 1;
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      assert.equal(input.operatorResolutionAuthorities.length, 1);
+      assert.equal(
+        input.operatorResolutionAuthorities[0].requestSha256,
+        pendingRequest.requestSha256,
+      );
+      return completedResult(input, pendingRequest);
+    });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-resolution-report",
+      "operator-resolution",
+    );
+    assert.equal(queued.item.state, "operator_resolution_required");
+    assert.equal(
+      queued.manifest.mathematicalV1.execution.request.requestSha256,
+      pendingRequest.requestSha256,
+    );
+    await service.action("activate-queue-item", queued.identity);
+
+    const validSubmission = {
+      schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+      requestSha256: pendingRequest.requestSha256,
+      operatorConfirmed: true,
+      resolutions: [{
+        element: "centering",
+        publicExplanation: "Printed borders are evenly balanced on both sides.",
+        internalReason: "The original automated fit was insufficient; exact bound measurements were supplied.",
+        measurements: {
+          unit: "mm",
+          order: ["left", "right", "top", "bottom"],
+          front: [2.1, 2.2, 2.3, 2.4],
+          back: [2.4, 2.3, 2.2, 2.1],
+        },
+      }],
+    };
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-resolution-idempotency-1",
+      operatorResolutionSubmission: validSubmission,
+    };
+    action.operatorAuthentication = operatorAuthentication(action);
+
+    const forbidden = structuredClone(action);
+    forbidden.operatorResolutionSubmission.resolutions[0].publicExplanation =
+      "Human exception accepted.";
+    await assert.rejects(
+      service.action("submit-operator-resolutions", forbidden),
+      /prohibited workflow or disclosure term/,
+    );
+    assert.equal(
+      service.queuedManifests.get(queued.item.queueItemId)
+        .mathematicalV1.operatorResolutionReceipts,
+      undefined,
+      "invalid public text must reject before durable queue mutation",
+    );
+
+    const directOverall = structuredClone(action);
+    directOverall.operatorResolutionSubmission.overall = 10;
+    await assert.rejects(
+      service.action("submit-operator-resolutions", directOverall),
+      /must contain exactly/,
+    );
+    const forgedAuthentication = structuredClone(action);
+    forgedAuthentication.operatorAuthentication.payload.operatorId =
+      "forged-browser-operator";
+    await assert.rejects(
+      service.action("submit-operator-resolutions", forgedAuthentication),
+      /signature is invalid/,
+    );
+    assert.equal(
+      service.queuedManifests.get(queued.item.queueItemId)
+        .mathematicalV1.operatorResolutionReceipts,
+      undefined,
+    );
+
+    const completed = await service.action("submit-operator-resolutions", action);
+    const completedItem = completed.rapidCaptureQueue.items.find(
+      (item) => item.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(completedItem.state, "finalizing");
+    assert.equal(completedItem.mathematicalV1.status, "completed");
+    assert.equal(adapterCalls, 2);
+    const receipt = service.queuedManifests.get(queued.item.queueItemId)
+      .mathematicalV1.operatorResolutionReceipts[0];
+    assert.equal(receipt.idempotencyKey, action.idempotencyKey);
+    assert.equal(receipt.authority.operatorId, "authenticated-owner-1");
+    assert.equal(
+      receipt.operatorAuthentication.payload.operatorId,
+      "authenticated-owner-1",
+    );
+    assert.equal(
+      receipt.authority.resolutions[0].publicExplanation,
+      "Printed borders are evenly balanced on both sides.",
+    );
+    assert.match(receipt.authority.resolutions[0].internalReason, /insufficient/);
+    assert.equal(receipt.authority.binding.sides.front.nativeRoles.length, 35);
+
+    await service.action("submit-operator-resolutions", action);
+    assert.equal(adapterCalls, 2, "same idempotent retry must not rerun or append");
+    assert.equal(
+      service.queuedManifests.get(queued.item.queueItemId)
+        .mathematicalV1.operatorResolutionReceipts.length,
+      1,
+    );
+
+    const conflict = structuredClone(action);
+    conflict.operatorResolutionSubmission.resolutions[0].publicExplanation =
+      "Printed borders show a slight left-to-right imbalance.";
+    conflict.operatorAuthentication = operatorAuthentication(conflict);
+    await assert.rejects(
+      service.action("submit-operator-resolutions", conflict),
+      /idempotency key conflicts/,
     );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });

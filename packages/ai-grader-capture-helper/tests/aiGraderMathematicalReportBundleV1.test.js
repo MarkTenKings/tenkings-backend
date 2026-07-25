@@ -864,6 +864,7 @@ function outerCutGeometryEvidence(calibration) {
 
 function reportInput({
   scratch = false,
+  resolvedEdge = false,
   publication,
   calibration: suppliedCalibration,
   calibrationAuthority,
@@ -872,6 +873,47 @@ function reportInput({
   const calibration = suppliedCalibration ?? calibrationProfile();
   const sourceFinding = scratch ? surfaceFinding(calibration) : undefined;
   const grade = gradeResult(calibration, sourceFinding);
+  if (resolvedEdge) {
+    const publicExplanation = "Edges show light wear along the lower border.";
+    grade.elements.edges = {
+      ...grade.elements.edges,
+      score: 9.15,
+      scoreText: "9.15",
+      frontScore: null,
+      frontScoreText: null,
+      backScore: null,
+      backScoreText: null,
+      aggregatePenalty: null,
+      explanation: publicExplanation,
+      resolved: true,
+      resolutionAuthoritySha256: "b".repeat(64),
+    };
+    const composed = calculateOverallGradeV1({
+      centering: grade.elements.centering.score,
+      corners: grade.elements.corners.score,
+      edges: grade.elements.edges.score,
+      surface: grade.elements.surface.score,
+    });
+    grade.overall = composed.overall;
+    grade.overallText = composed.overall.toFixed(2);
+    grade.labelGrade = composed.labelGrade;
+    grade.labelGradeText = composed.labelGrade.toFixed(1);
+    grade.weightedGrade = composed.weightedGrade;
+    grade.weightedGradeText = composed.weightedGrade.toFixed(2);
+    grade.weakestElement = composed.weakestElement;
+    grade.weakestScore = composed.weakestScore;
+    grade.weakestElementCap = composed.weakestElementCap;
+    grade.whyNot10 = [{
+      id: "why-not-10-resolved-edges",
+      element: "edges",
+      findingIds: [],
+      evidenceAssetIds: ["front/normalized-card.png", "back/normalized-card.png"],
+      deduction: 0.85,
+      explanation: publicExplanation,
+    }];
+    grade.whyNot10Summary =
+      "The final result is below 10.00 because the edge explanation is listed.";
+  }
   const corners = conditionResult("corners");
   const edges = conditionResult("edges");
   const observationPresentations = conditionObservationPresentations(corners, edges);
@@ -983,7 +1025,7 @@ function reportInput({
   };
 }
 
-function ownerAcceptedReportInput() {
+function ownerAcceptedReportInput(options = {}) {
   const profile = {
     ...calibrationProfile(),
     rigId: PRODUCT_OWNER_OPERATIONAL_ACCEPTANCE_V1_INCIDENT.rigId,
@@ -1085,6 +1127,7 @@ function ownerAcceptedReportInput() {
     hostedAuthoritySignature: "A".repeat(86),
   };
   return reportInput({
+    ...options,
     calibration: profile,
     calibrationAuthority: bundleAuthority,
     activationAuthority,
@@ -1160,12 +1203,54 @@ test("strict V0.3 adapter generates deterministic centering evidence without a V
   );
 });
 
+test("owner public explanation renders verbatim while private authority metadata never projects", async () => {
+  const artifact = await buildAiGraderMathematicalReportBundleV1(ownerAcceptedReportInput({
+    resolvedEdge: true,
+  }));
+  const bundle = artifact.bundle;
+  assert.equal(
+    bundle.productionRelease.finalGrade.elements.edges.explanation,
+    "Edges show light wear along the lower border.",
+  );
+  assert.equal(
+    bundle.productionRelease.finalGrade.whyNot10.find(
+      (entry) => entry.element === "edges",
+    ).explanation,
+    "Edges show light wear along the lower border.",
+  );
+  const recomposed = calculateOverallGradeV1({
+    centering: bundle.productionRelease.finalGrade.elements.centering.score,
+    corners: bundle.productionRelease.finalGrade.elements.corners.score,
+    edges: bundle.productionRelease.finalGrade.elements.edges.score,
+    surface: bundle.productionRelease.finalGrade.elements.surface.score,
+  });
+  assert.equal(bundle.productionRelease.finalGrade.weightedGrade, recomposed.weightedGrade);
+  assert.equal(bundle.productionRelease.finalGrade.overall, recomposed.overall);
+  assert.equal(bundle.productionRelease.finalGrade.labelGrade, recomposed.labelGrade);
+  const publicJson = JSON.stringify(bundle);
+  assert.doesNotMatch(
+    publicJson,
+    /provisional|insufficient|human|manual|exception|admission/i,
+    "the scan covers every public JSON key and value",
+  );
+  assert.doesNotMatch(publicJson, /resolutionAuthoritySha256|internalReason|originalElements/);
+  assert.doesNotMatch(publicJson, /b{64}/);
+  const tamperedAuthorization = structuredClone(bundle);
+  tamperedAuthorization.calibrationProfile.operationalAuthorization.authorityFileSha256 =
+    "f".repeat(64);
+  assert.equal(
+    aiGraderReportBundleV03Schema.safeParse(tamperedAuthorization).success,
+    false,
+  );
+});
+
 test("owner-accepted report builder requires the exact signed ACTIVE 13-member activation binding", async (t) => {
   const accepted = await buildAiGraderMathematicalReportBundleV1(ownerAcceptedReportInput());
   assert.equal(
-    accepted.bundle.calibrationProfile.operationalAcceptance.authorityStatus,
-    "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
+    accepted.bundle.calibrationProfile.operationalAuthorization.status,
+    "authorized",
   );
+  assert.equal(accepted.bundle.calibrationProfile.operationalAuthorization.issueCount, 36);
   assert.equal(accepted.bundle.calibrationActivationAuthority.authorityPhase, "ACTIVE");
   assert.equal(accepted.bundle.calibrationBundleAuthority.members.length, 13);
 

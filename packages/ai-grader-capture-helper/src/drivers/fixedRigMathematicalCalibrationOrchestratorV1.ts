@@ -3,6 +3,8 @@ import { readFile } from "node:fs/promises";
 import sharp from "sharp";
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+  MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   mathematicalDesignReferenceV1Schema,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -42,7 +44,9 @@ import {
 } from "./fixedRigConditionPlaneProducerV1";
 import {
   buildFixedRigCenteringSideV1,
+  buildFixedRigPhysicalMarginCenteringSideV1,
   fuseFixedRigCenteringFrontBackV1,
+  type FixedRigCenteringSideResultV1,
   type FixedRigCenteringProfileInputV1,
   type FixedRigPointV1,
 } from "./fixedRigCenteringV1";
@@ -86,6 +90,17 @@ import {
   type CardGeometryRawToNormalizedTransformV1,
 } from './cardGeometry';
 import { detectFixedRigRawBoundObservedOuterCutV1 } from './fixedRigRawSensorOuterCutDetectorV1';
+import {
+  buildFixedRigOperatorResolutionRequestV1,
+  hashFixedRigOperatorResolutionValueV1,
+  latestFixedRigOperatorElementResolutionV1,
+  verifyFixedRigOperatorResolutionAuthorityV1,
+  type FixedRigOperatorResolutionAuthorityV1,
+  type FixedRigOperatorResolutionBindingV1,
+  type FixedRigOperatorResolutionNativeRoleV1,
+  type FixedRigOperatorResolutionOriginalElementV1,
+  type FixedRigOperatorResolutionRequestV1,
+} from "./fixedRigOperatorResolutionAuthorityV1";
 
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION =
   "fixed_rig_mathematical_calibration_orchestrator_v1" as const;
@@ -184,6 +199,8 @@ export interface FixedRigMathematicalCalibrationSideInputV1 {
   centering: FixedRigMathematicalCenteringSideEvidenceV1;
   measurementCalibration: FixedRigConditionMeasurementCalibrationV1;
   algorithmVersion: string;
+  warmManifestSha256: string;
+  nativeCaptureRoles: FixedRigOperatorResolutionNativeRoleV1[];
 }
 
 export interface FixedRigMathematicalFindingReviewV1 {
@@ -260,6 +277,7 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   gradingSessionId: string;
   generatedAt: string;
   reportId: string;
+  queueItemId: string;
   outputDir: string;
   captureProfileVersion: string;
   cardIdentity: FixedRigMathematicalCardIdentityV1;
@@ -285,6 +303,7 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   edgeCrossSideLinks?: FixedRigCrossSideDefectLinkV1[];
   physicalDefectDeduplication?: FixedRigPhysicalDefectDeduplicationV1[];
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
+  operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
   report: {
     publication: {
       certId: string;
@@ -313,6 +332,7 @@ export type FixedRigMathematicalOrchestrationStageV1 =
   | "corner_edge_measurement"
   | "surface_measurement"
   | "grade_composition"
+  | "operator_resolution"
   | "finding_review"
   | "report_adaptation"
   | "package_write";
@@ -353,6 +373,7 @@ export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result =
       grade: FinalGradeV1;
       orchestrationTraceSha256: string;
       summary: FixedRigMathematicalCalibrationOrchestrationSummaryV1;
+      operatorResolutionRequest: FixedRigOperatorResolutionRequestV1;
     }
   | {
       version: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION;
@@ -365,6 +386,18 @@ export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result =
       reviewIssues: string[];
       grade: FinalGradeV1;
       summary: FixedRigMathematicalCalibrationOrchestrationSummaryV1;
+      reportPackage: null;
+      stationInput: null;
+      operatorResolutionRequest: FixedRigOperatorResolutionRequestV1;
+    }
+  | {
+      version: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION;
+      status: "operator_resolution_required";
+      gradingContract: "mathematical_calibration_v1";
+      v0FallbackUsed: false;
+      failedStage: "operator_resolution";
+      request: FixedRigOperatorResolutionRequestV1;
+      unresolvedElements: MathematicalGradingElementV1[];
       reportPackage: null;
       stationInput: null;
     }
@@ -637,8 +670,8 @@ interface IngestedSideV1 {
   photometric: FixedRigPhotometricEvidenceV1;
   condition: ComputedConditionSegmentationV1;
   outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1;
-  centering: Extract<ReturnType<typeof buildFixedRigCenteringSideV1>, { status: "computed" }>;
-  surface: ComputedSurfaceV1;
+  centering: FixedRigCenteringSideResultV1;
+  surface: FixedRigSurfaceV1Result;
   visualizationAssetIds: {
     commonModeResponse: string;
     invalidIlluminationMask: string;
@@ -935,6 +968,7 @@ async function ingestSideV1(input: {
   } | undefined;
   if (sideInput.photometricExposureBracket) {
     const bracket = sideInput.photometricExposureBracket;
+    const bracketAssetBindingStart = assetBindings.length;
     if (
       bracket.version !== "fixed_rig_exposure_bracket_capture_v1" ||
       bracket.isolatedDutyTenthsPercent !== 24 ||
@@ -1000,6 +1034,27 @@ async function ingestSideV1(input: {
           ))),
       }))),
     };
+    const frameOrder = new Map(
+      [
+        ...bracket.references,
+        ...bracket.channels.flatMap((channel) => channel.observations),
+      ].map((frame, index) => [frame.assetId, index] as const),
+    );
+    const orderedFrameIndex = (assetId: string): number => {
+      const index = frameOrder.get(assetId);
+      if (index === undefined) {
+        return fail("input_contract", `${side} bracket evidence escaped its authenticated frame plan.`, {
+          requiresImplementationCorrection: true,
+        });
+      }
+      return index;
+    };
+    channelReferences.sort((left, right) =>
+      orderedFrameIndex(left.assetId) - orderedFrameIndex(right.assetId));
+    const bracketAssetBindings = assetBindings.splice(bracketAssetBindingStart);
+    bracketAssetBindings.sort((left, right) =>
+      orderedFrameIndex(left.id) - orderedFrameIndex(right.id));
+    assetBindings.push(...bracketAssetBindings);
   }
   let darkControl: FixedRigScalarPlaneV1;
   if (decodedBracket) {
@@ -1215,6 +1270,9 @@ async function ingestSideV1(input: {
   }
   const produced = buildFixedRigConditionPlanesV1({
     side,
+    colorEvidenceModality: bracketProvided
+      ? "mono8_luminance"
+      : "calibrated_rgb",
     normalizedAllOnRgb: allOnRgb,
     normalizedAcceptedProfileRgb: normalizedRgb,
     approvedDesignReferenceRgb: designRgb,
@@ -1376,12 +1434,6 @@ async function ingestSideV1(input: {
         profileInput: sideInput.centering.profileInput,
         evidence: centeringEvidence,
       });
-  if (centering.status !== "computed") {
-    return fail("centering", `${side} centering evidence is insufficient: ${centering.reasons.join("; ")}`, {
-      requiresRecapture: true,
-      requiresApprovedDesignReference: true,
-    });
-  }
   const surface = buildFixedRigSurfaceV1({
     side,
     photometricEvidence: photometric,
@@ -1391,11 +1443,6 @@ async function ingestSideV1(input: {
     depthMm: condition.surfaceDepthMm,
     reliefIndex: condition.surfaceReliefIndex,
   });
-  if (surface.status !== "computed") {
-    return fail("surface_measurement", `${side} surface evidence is insufficient and requires recapture.`, {
-      requiresRecapture: true,
-    });
-  }
   const visualizationAssetIds = {
     commonModeResponse: `${side}/mathematical-v1/replay/common-mode-response.png`,
     invalidIlluminationMask:
@@ -1496,7 +1543,7 @@ async function ingestSideV1(input: {
     condition,
     outerCutGeometryEvidence: produced.outerCutGeometryEvidence,
     centering,
-    surface: surface as ComputedSurfaceV1,
+    surface,
     visualizationAssetIds,
   };
 }
@@ -2122,7 +2169,15 @@ async function buildConditionObservationPresentationsV1(input: {
     const observations =
       element === "corners" ? input.cornerObservations : input.edgeObservations;
     for (const observation of observations) {
-      if (observation.status !== "computed" || observation.element !== element) {
+      if (observation.status !== "computed") {
+        if (input.grade.elements[element].resolved && observation.element === element) continue;
+        return fail(
+          "report_adaptation",
+          `Every unresolved ${element} observation must be computed before report evidence is emitted.`,
+          { requiresRecapture: true },
+        );
+      }
+      if (observation.element !== element) {
         return fail(
           "report_adaptation",
           `Every ${element} observation must be computed before report evidence is emitted.`,
@@ -2495,8 +2550,8 @@ function orchestrationSummaryV1(input: {
   profile: MathematicalCalibrationProfileV1;
   sides: Record<Side, IngestedSideV1>;
   centering: Extract<ReturnType<typeof fuseFixedRigCenteringFrontBackV1>, { status: "computed" }>;
-  corners: Extract<ReturnType<typeof aggregateFixedRigCornersV1>, { status: "computed" }>;
-  edges: Extract<ReturnType<typeof aggregateFixedRigEdgesV1>, { status: "computed" }>;
+  corners: ReturnType<typeof aggregateFixedRigCornersV1>;
+  edges: ReturnType<typeof aggregateFixedRigEdgesV1>;
   grade: FinalGradeV1;
 }): FixedRigMathematicalCalibrationOrchestrationSummaryV1 {
   const sideSummary = (side: Side) => ({
@@ -2508,7 +2563,7 @@ function orchestrationSummaryV1(input: {
       .reduce((sum, observation) => sum + observation.findings.length, 0),
     surfaceFindingCount: input.sides[side].surface.findings.length,
     suppressedSurfaceCandidateCount: input.sides[side].surface.suppressedCandidates.length,
-    surfaceScore: input.sides[side].surface.score,
+    surfaceScore: input.sides[side].surface.score ?? input.grade.elements.surface.score,
   });
   return {
     calibration: {
@@ -2519,13 +2574,221 @@ function orchestrationSummaryV1(input: {
     sides: { front: sideSummary("front"), back: sideSummary("back") },
     scores: {
       centering: input.centering.score,
-      corners: input.corners.score,
-      edges: input.edges.score,
+      corners: input.grade.elements.corners.score,
+      edges: input.grade.elements.edges.score,
       surface: input.grade.elements.surface.score,
       overall: input.grade.overall,
       label: input.grade.labelGrade,
     },
   };
+}
+
+function operatorResolutionBindingV1(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  cardIdentity: FixedRigMathematicalCardIdentityV1;
+  profile: MathematicalCalibrationProfileV1;
+  bundleManifestSha256: string;
+  sides: Record<Side, IngestedSideV1>;
+}): FixedRigOperatorResolutionBindingV1 {
+  const sideBinding = (side: Side) => {
+    const source = input.sides[side].input;
+    if (!Array.isArray(source.nativeCaptureRoles)) {
+      return fail("input_contract", `${side} operator-resolution binding requires exact native capture-role provenance.`, {
+        requiresImplementationCorrection: true,
+      });
+    }
+    const nativeRoles = [...source.nativeCaptureRoles].sort((left, right) =>
+      left.captureRole.localeCompare(right.captureRole));
+    if (nativeRoles.length !== 35 ||
+        new Set(nativeRoles.map((role) => role.captureRole)).size !== nativeRoles.length ||
+        new Set(nativeRoles.map((role) => role.sha256)).size !== nativeRoles.length) {
+      return fail("input_contract", `${side} operator-resolution binding requires 35 distinct native capture roles and hashes.`, {
+        requiresImplementationCorrection: true,
+      });
+    }
+    return {
+      rawAllOnAssetId: source.rawAllOn.assetId,
+      rawAllOnSha256: source.rawAllOn.sha256.toLowerCase(),
+      normalizedAllOnAssetId: source.normalizedAllOn.assetId,
+      normalizedAllOnSha256: source.normalizedAllOn.sha256.toLowerCase(),
+      rawToNormalizedTransformSha256: source.rawToNormalizedTransform.transformSha256,
+      authenticatedOuterCutArtifactSha256:
+        input.sides[side].outerCutGeometryEvidence.observedContourSha256,
+      warmManifestSha256: source.warmManifestSha256.toLowerCase(),
+      nativeRoles,
+      nativeRoleLedgerSha256: hashFixedRigOperatorResolutionValueV1(nativeRoles),
+    };
+  };
+  return {
+    queueItemId: input.queueItemId,
+    gradingSessionId: input.gradingSessionId,
+    reportId: input.reportId,
+    cardIdentitySha256: hashFixedRigOperatorResolutionValueV1(input.cardIdentity),
+    calibrationProfileId: input.profile.profileId,
+    calibrationVersion: input.profile.calibrationVersion,
+    calibrationArtifactSha256: input.profile.artifactSha256.toLowerCase(),
+    calibrationBundleManifestSha256: input.bundleManifestSha256.toLowerCase(),
+    thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    sides: { front: sideBinding("front"), back: sideBinding("back") },
+  };
+}
+
+function originalElementV1(input: {
+  status: "computed" | "insufficient_evidence";
+  score: number | null;
+  explanation: string | null;
+  failureReasons: string[];
+  result: unknown;
+}): FixedRigOperatorResolutionOriginalElementV1 {
+  return {
+    status: input.status,
+    score: input.score,
+    explanation: input.explanation,
+    failureReasons: [...input.failureReasons],
+    resultSha256: hashFixedRigOperatorResolutionValueV1(input.result),
+  };
+}
+
+function operatorResolutionRequestV1(input: {
+  generatedAt: string;
+  binding: FixedRigOperatorResolutionBindingV1;
+  centering: ReturnType<typeof fuseFixedRigCenteringFrontBackV1>;
+  corners: ReturnType<typeof aggregateFixedRigCornersV1>;
+  edges: ReturnType<typeof aggregateFixedRigEdgesV1>;
+  surfaces: Record<Side, FixedRigSurfaceV1Result>;
+}): FixedRigOperatorResolutionRequestV1 {
+  const compactCondition = (
+    result: ReturnType<typeof aggregateFixedRigCornersV1>,
+  ) => ({
+    ...result,
+    observations: result.observations.map((observation) =>
+      observation.status === "computed"
+        ? {
+            ...observation,
+            findings: observation.findings.map((finding) => {
+              const { pixelIndices, ...withoutPixels } = finding;
+              return {
+                ...withoutPixels,
+                pixelIndexCount: pixelIndices.length,
+                pixelIndicesSha256: sha256(Buffer.from(
+                  Uint32Array.from(pixelIndices).buffer,
+                )),
+              };
+            }),
+          }
+        : observation),
+  });
+  const compactSurface = (result: FixedRigSurfaceV1Result) => {
+    const { response, ...heatmap } = result.heatmap;
+    return {
+      ...result,
+      heatmap: {
+        ...heatmap,
+        responseLength: response.length,
+        responseSha256: sha256(Buffer.from(
+          response.buffer,
+          response.byteOffset,
+          response.byteLength,
+        )),
+      },
+      findings: result.findings.map((finding) => {
+        const {
+          validPixelIndices,
+          invalidPixelIndices,
+          ...overlay
+        } = finding.overlay;
+        return {
+          ...finding,
+          overlay: {
+            ...overlay,
+            validPixelCount: validPixelIndices.length,
+            invalidPixelCount: invalidPixelIndices.length,
+            validPixelIndicesSha256: sha256(Buffer.from(
+              Uint32Array.from(validPixelIndices).buffer,
+            )),
+            invalidPixelIndicesSha256: sha256(Buffer.from(
+              Uint32Array.from(invalidPixelIndices).buffer,
+            )),
+          },
+        };
+      }),
+    };
+  };
+  const surfaceComputed =
+    input.surfaces.front.status === "computed" && input.surfaces.back.status === "computed";
+  return buildFixedRigOperatorResolutionRequestV1({
+    generatedAt: input.generatedAt,
+    binding: input.binding,
+    originalElements: {
+      centering: originalElementV1({
+        status: input.centering.status,
+        score: input.centering.score,
+        explanation: input.centering.status === "computed" ? input.centering.formula : null,
+        failureReasons: input.centering.status === "insufficient_evidence"
+          ? input.centering.reasons
+          : [],
+        result: input.centering,
+      }),
+      corners: originalElementV1({
+        status: input.corners.status,
+        score: input.corners.score,
+        explanation: input.corners.status === "computed" ? input.corners.aggregation.formula : null,
+        failureReasons: input.corners.status === "insufficient_evidence"
+          ? input.corners.reasons
+          : [],
+        result: compactCondition(input.corners),
+      }),
+      edges: originalElementV1({
+        status: input.edges.status,
+        score: input.edges.score,
+        explanation: input.edges.status === "computed" ? input.edges.aggregation.formula : null,
+        failureReasons: input.edges.status === "insufficient_evidence"
+          ? input.edges.reasons
+          : [],
+        result: compactCondition(input.edges),
+      }),
+      surface: originalElementV1({
+        status: surfaceComputed ? "computed" : "insufficient_evidence",
+        score: null,
+        explanation: surfaceComputed
+          ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula
+          : null,
+        failureReasons: (["front", "back"] as const).flatMap((side) =>
+          input.surfaces[side].status === "insufficient_evidence"
+            ? input.surfaces[side].evidenceQualityLimitations.map((entry) =>
+                `${side}: ${entry.message}`)
+            : []),
+        result: {
+          front: compactSurface(input.surfaces.front),
+          back: compactSurface(input.surfaces.back),
+        },
+      }),
+    },
+  });
+}
+
+function validatedOperatorResolutionAuthoritiesV1(input: {
+  request: FixedRigOperatorResolutionRequestV1;
+  authorities: readonly FixedRigOperatorResolutionAuthorityV1[];
+}): FixedRigOperatorResolutionAuthorityV1[] {
+  let previous: string | null = null;
+  return input.authorities.map((authority, index) => {
+    if (!verifyFixedRigOperatorResolutionAuthorityV1(authority) ||
+        authority.revision !== index + 1 ||
+        authority.supersedesAuthoritySha256 !== previous ||
+        authority.requestSha256 !== input.request.requestSha256 ||
+        hashFixedRigOperatorResolutionValueV1(authority.binding) !==
+          hashFixedRigOperatorResolutionValueV1(input.request.binding)) {
+      return fail("operator_resolution", "Operator resolution authority is stale, conflicting, or bound to different immutable evidence.", {
+        requiresImplementationCorrection: true,
+      });
+    }
+    previous = authority.authoritySha256;
+    return authority;
+  });
 }
 
 function calibratedConfidenceV1(
@@ -2555,11 +2818,15 @@ function deriveReportConfidenceV1(input: {
   const minimumCoverage = (observations: FixedRigConditionObservationResultV1[]) =>
     Math.min(...observations.map((observation) =>
       observation.status === "computed" ? observation.validEvidenceCoverage : 0));
+  const centeringRegistrationConfidence = (side: Side): number =>
+    input.sides[side].centering.status === "computed"
+      ? input.sides[side].centering.registration.confidence
+      : 0;
   const centeringCoverage = Math.min(
     input.sides.front.outerCutGeometryEvidence.boundaryConfidence,
     input.sides.back.outerCutGeometryEvidence.boundaryConfidence,
-    input.sides.front.centering.registration.confidence,
-    input.sides.back.centering.registration.confidence,
+    centeringRegistrationConfidence("front"),
+    centeringRegistrationConfidence("back"),
   );
   const surfaceCoverage = Math.min(
     input.sides.front.photometric.coverage.validPixelFraction,
@@ -2639,7 +2906,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         { requiresImplementationCorrection: true },
       );
     }
-    if (!input.gradingSessionId || !input.reportId || !input.outputDir) {
+    if (!input.queueItemId || !input.gradingSessionId || !input.reportId || !input.outputDir) {
       return fail("input_contract", "Mathematical V1 requires exact session, report, and package identities.", {
         requiresImplementationCorrection: true,
       });
@@ -2701,14 +2968,8 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       photometricCalibration,
       sensorMaximumValue: input.calibration.sensorMaximumValue,
     });
-    const sides = { front, back };
-    const centering = fuseFixedRigCenteringFrontBackV1(front.centering, back.centering);
-    if (centering.status !== "computed") {
-      return fail("centering", `Front/back centering fusion is insufficient: ${centering.reasons.join("; ")}`, {
-        requiresRecapture: true,
-        requiresApprovedDesignReference: true,
-      });
-    }
+    const originalSides = { front, back };
+    const originalCentering = fuseFixedRigCenteringFrontBackV1(front.centering, back.centering);
     const cornerObservations = [front, back].flatMap((side) =>
       side.condition.cornerObservations.map((observation) =>
         measureFixedRigCornerObservationV1(observation)));
@@ -2717,12 +2978,111 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         measureFixedRigEdgeObservationV1(observation)));
     const corners = aggregateFixedRigCornersV1(cornerObservations, input.cornerCrossSideLinks ?? []);
     const edges = aggregateFixedRigEdgesV1(edgeObservations, input.edgeCrossSideLinks ?? []);
-    if (corners.status !== "computed" || edges.status !== "computed") {
-      return fail("corner_edge_measurement", [
-        ...(corners.status === "insufficient_evidence" ? corners.reasons : []),
-        ...(edges.status === "insufficient_evidence" ? edges.reasons : []),
-      ].join("; "), { requiresRecapture: true });
+    const resolutionBinding = operatorResolutionBindingV1({
+      queueItemId: input.queueItemId,
+      gradingSessionId: input.gradingSessionId,
+      reportId: input.reportId,
+      cardIdentity: input.cardIdentity,
+      profile: input.calibration.finalizedProfile,
+      bundleManifestSha256: input.calibration.bundleAuthority.bundleManifestSha256,
+      sides: originalSides,
+    });
+    const operatorResolutionRequest = operatorResolutionRequestV1({
+      generatedAt: input.generatedAt,
+      binding: resolutionBinding,
+      centering: originalCentering,
+      corners,
+      edges,
+      surfaces: { front: front.surface, back: back.surface },
+    });
+    const authorities = validatedOperatorResolutionAuthoritiesV1({
+      request: operatorResolutionRequest,
+      authorities: input.operatorResolutionAuthorities ?? [],
+    });
+    const centeringResolution =
+      latestFixedRigOperatorElementResolutionV1(authorities, "centering");
+    const cornersResolution =
+      latestFixedRigOperatorElementResolutionV1(authorities, "corners");
+    const edgesResolution =
+      latestFixedRigOperatorElementResolutionV1(authorities, "edges");
+    const surfaceResolution =
+      latestFixedRigOperatorElementResolutionV1(authorities, "surface");
+    let centering = originalCentering;
+    let sides = originalSides;
+    if (centeringResolution?.element === "centering") {
+      const measuredSide = (side: Side) => {
+        const [left, right, top, bottom] = centeringResolution.measurements[side];
+        const source = originalSides[side];
+        return buildFixedRigPhysicalMarginCenteringSideV1({
+          side,
+          calibration: input.calibration.finalizedProfile,
+          outerCutContour:
+            source.outerCutGeometryEvidence.observedArtifact.normalizedContour,
+          measurementsMm: { left, right, top, bottom },
+          evidence: [
+            {
+              assetId: source.input.normalizedAllOn.assetId,
+              sha256: source.input.normalizedAllOn.sha256.toLowerCase(),
+              side,
+              role: "all_on",
+              regionId: `${side}-full-card`,
+            },
+            source.normalizedReference,
+          ],
+        });
+      };
+      sides = {
+        front: { ...front, centering: measuredSide("front") },
+        back: { ...back, centering: measuredSide("back") },
+      };
+      centering = fuseFixedRigCenteringFrontBackV1(
+        sides.front.centering,
+        sides.back.centering,
+      );
     }
+    const unresolvedElements: MathematicalGradingElementV1[] = [
+      ...(centering.status === "computed" ? [] : ["centering" as const]),
+      ...(corners.status === "computed" || cornersResolution ? [] : ["corners" as const]),
+      ...(edges.status === "computed" || edgesResolution ? [] : ["edges" as const]),
+      ...(
+        (front.surface.status === "computed" && back.surface.status === "computed") ||
+        surfaceResolution
+          ? []
+          : ["surface" as const]
+      ),
+    ];
+    if (!authorities.length || unresolvedElements.length) {
+      return {
+        version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
+        status: "operator_resolution_required",
+        gradingContract: "mathematical_calibration_v1",
+        v0FallbackUsed: false,
+        failedStage: "operator_resolution",
+        request: operatorResolutionRequest,
+        unresolvedElements,
+        reportPackage: null,
+        stationInput: null,
+      };
+    }
+    if (centering.status !== "computed") {
+      return fail("operator_resolution", "Resolved centering measurements did not produce a computed centering result.", {
+        requiresImplementationCorrection: true,
+      });
+    }
+    const latestAuthorityFor = (element: MathematicalGradingElementV1) => {
+      const resolution = latestFixedRigOperatorElementResolutionV1(authorities, element);
+      if (!resolution) return undefined;
+      const authority = [...authorities].reverse().find((candidate) =>
+        candidate.resolutions.some((entry) => entry.element === element))!;
+      return {
+        authoritySha256: authority.authoritySha256,
+        resolution,
+        publicEvidenceAssetIds: [
+          front.input.normalizedAllOn.assetId,
+          back.input.normalizedAllOn.assetId,
+        ],
+      };
+    };
     const grade = buildFixedRigMathematicalGradeV1({
       calibration: input.calibration.finalizedProfile,
       centering,
@@ -2730,6 +3090,20 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       edges,
       surface: { front: front.surface, back: back.surface },
       physicalDefectDeduplication: input.physicalDefectDeduplication,
+      operatorResolutions: {
+        ...(latestAuthorityFor("centering")
+          ? { centering: latestAuthorityFor("centering")! }
+          : {}),
+        ...(latestAuthorityFor("corners")
+          ? { corners: latestAuthorityFor("corners")! }
+          : {}),
+        ...(latestAuthorityFor("edges")
+          ? { edges: latestAuthorityFor("edges")! }
+          : {}),
+        ...(latestAuthorityFor("surface")
+          ? { surface: latestAuthorityFor("surface")! }
+          : {}),
+      },
     });
     if (grade.status !== "final_mathematical_grade_v1") {
       return fail("grade_composition", grade.issues.map((issue) => issue.message).join("; "), {
@@ -2800,6 +3174,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         reviewIssues,
         grade,
         summary,
+        operatorResolutionRequest,
         reportPackage: null,
         stationInput: null,
       };
@@ -2898,7 +3273,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         status: review.status,
         reviewedAt: review.reviewedAt,
       })),
-      summary,
+        summary,
       v0FallbackUsed: false,
     });
     const traceAssetId = "mathematical-v1/orchestration-trace.json";
@@ -2980,6 +3355,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       grade,
       orchestrationTraceSha256: sha256(traceBytes),
       summary,
+      operatorResolutionRequest,
     };
   } catch (error) {
     if (error instanceof OrchestrationFailureV1) return buildInsufficientResultV1(error);
