@@ -1190,6 +1190,15 @@ function centerValues(length: number, step: number): number[] {
 }
 
 async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+  let scoredCandidatesSinceYield = 0;
+  let lastControllerIoYieldAt = performance.now();
+  const yieldForControllerIoIfDue = async () => {
+    scoredCandidatesSinceYield += 1;
+    if (scoredCandidatesSinceYield < 16 || performance.now() - lastControllerIoYieldAt < 8) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    scoredCandidatesSinceYield = 0;
+    lastControllerIoYieldAt = performance.now();
+  };
   const scale = Math.min(1, PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION / Math.max(prepared.orientedWidth, prepared.orientedHeight));
   const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
   const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
@@ -1329,6 +1338,7 @@ async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresh
               angleDegrees,
             };
             recordCandidate(candidate);
+            await yieldForControllerIoIfDue();
           }
         }
       }
@@ -1399,6 +1409,7 @@ async function attemptPerimeterGradientDetection(prepared: PreparedImage, thresh
             if (candidateWithinPerimeterGates({ candidate, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
               refinedCandidates.push(candidate);
             }
+            await yieldForControllerIoIfDue();
           }
         }
       }
