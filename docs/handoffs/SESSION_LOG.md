@@ -28372,3 +28372,10 @@ By enabling Rip It Live, I confirm:
 - Start New Card applies its 30-second abort only to fresh hosted authority acquisition. Once the local start is dispatched, the browser retains one in-flight owner and reconciles with fresh status calls until the bridge reports a definitive persisted state. The bridge exposes `pending`/`idle`, rejects overlapping starts, and the delayed-start regression proves exactly one session directory and one `capture_front` result.
 - Focused verification passed the capture-helper/shared/simulator build; exact 132/192, 0/192, raw zero-support, and delayed-start regressions `4/4`; frontend lifecycle and no-fabricated-contour checks `2/2`; and `git diff --check`.
 - No hardware, Production state, sealed evidence, calibration, threshold, scoring/subgrade formula, database/schema, deployment, merge, push, recapture, or PR changed.
+
+## 2026-07-25 - Approved AI Grader incident correction Production rollout plan
+
+- Exact source commit `d4e9d155cb551d50ac27d3e401605e0e06d1b82e` (tree `7b82afe532b54a2cf786addb5c7f18ea019cf910`) received independent GO verdicts from both Production reviewers. The reviewed chain includes the partial-evidence/operator-resolution, no-fabricated-observation, canonical preview restoration, bounded OpenAI diagnostics, and exact Start-operation identity corrections.
+- Planned action: push the isolated branch, open and merge one PR into current protected `main`, verify the resulting GitHub checks and Vercel Production deployment/serving identity, then perform the mandatory read-only Dell queue/config/helper preflight.
+- Helper rollout is permitted only if the configured `rapid-capture-queue.json` satisfies the documented update gate. Any malformed, unrecognized, or nonempty queue stops the restart/update without rewriting, moving, acknowledging, retrying, or deleting preserved work.
+- No database migration, calibration change, threshold/formula change, credential rotation, environment-variable change, or destructive data operation is part of this rollout.
