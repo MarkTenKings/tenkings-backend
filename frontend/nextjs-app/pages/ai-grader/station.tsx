@@ -3020,7 +3020,7 @@ export default function AiGraderStationPage() {
       reportId: string;
       mathematicalAuthoritySha256: string;
     } | undefined;
-    const acceptStartedSession = async (
+    const acceptStartedSession = (
       prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
       started: AiGraderLocalStationStatus,
       expected: {
@@ -3031,7 +3031,6 @@ export default function AiGraderStationPage() {
       if (!aiGraderStartedSessionMatchesOperation({ status: started, expected })) {
         throw new Error("Started session identity does not match the dispatched report and Mathematical V1 authority.");
       }
-      await stagePreparedMathematicalDesignReferences(prepared, started);
       preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
         identityDraft: { ...identityDraft },
         editedFields: new Set(identityEditedFieldsRef.current),
@@ -3040,6 +3039,18 @@ export default function AiGraderStationPage() {
       setMathematicalAuthorityStatus({
         status: "completed",
         message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
+      });
+    };
+    const stageStartedSessionReferences = (
+      prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
+      started: AiGraderLocalStationStatus,
+    ) => {
+      void stagePreparedMathematicalDesignReferences(prepared, started).catch((stageError) => {
+        const message = stageError instanceof Error
+          ? stageError.message
+          : "Could not stage the exact Mathematical V1 design references.";
+        setMathematicalAuthorityStatus({ status: "failed", message });
+        setError(message);
       });
     };
     try {
@@ -3085,7 +3096,10 @@ export default function AiGraderStationPage() {
           dispatchedStartIdentity.reportId,
         ),
       );
-      await acceptStartedSession(prepared, started, dispatchedStartIdentity);
+      acceptStartedSession(prepared, started, dispatchedStartIdentity);
+      startNewCardInFlightRef.current = false;
+      setCaptureBusy(null);
+      stageStartedSessionReferences(prepared, started);
     } catch (requestError) {
       let reconciled: AiGraderLocalStationStatus | undefined;
       if (localStartDispatched) {
@@ -3111,7 +3125,10 @@ export default function AiGraderStationPage() {
           expected: dispatchedStartIdentity,
         })
       ) {
-        await acceptStartedSession(preparedForStart, reconciled, dispatchedStartIdentity);
+        acceptStartedSession(preparedForStart, reconciled, dispatchedStartIdentity);
+        startNewCardInFlightRef.current = false;
+        setCaptureBusy(null);
+        stageStartedSessionReferences(preparedForStart, reconciled);
         setError(null);
         return;
       }
