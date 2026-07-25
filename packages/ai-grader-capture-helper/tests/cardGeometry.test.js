@@ -762,7 +762,7 @@ test("reuses one Ready geometry transform on another same-dimension forensic fra
   );
 });
 
-test("live preview uses only the fast detector while captured evidence preserves perimeter v3", async () => {
+test("live preview falls through to perimeter v3 when illuminated solid-plate segmentation rejects the card", async () => {
   const dir = tempDir();
   const darkPerimeterPath = path.join(dir, "policy-dark-perimeter.png");
   await writeDarkPerimeterCard(darkPerimeterPath, { angle: -3, offsetX: 24, offsetY: -12 });
@@ -786,9 +786,12 @@ test("live preview uses only the fast detector while captured evidence preserves
   });
 
   assert.equal(live.detectionPolicy, LIVE_PREVIEW_POLICY);
-  assert.equal(live.placementState, "not_detected");
-  assert.equal(live.detection.method, "solid_plate_color_component_pca_v2");
-  assert.deepEqual(liveAttempts.map(({ method }) => method), ["solid_plate_color_component_pca_v2"]);
+  assert.equal(live.placementState, "ready");
+  assert.equal(live.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.deepEqual(liveAttempts.map(({ method }) => method), [
+    "solid_plate_color_component_pca_v2",
+    "perimeter_gradient_rectangle_v3",
+  ]);
   assert.equal(captured.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
   assert.equal(captured.placementState, "ready");
   assert.equal(captured.detection.method, "perimeter_gradient_rectangle_v3");

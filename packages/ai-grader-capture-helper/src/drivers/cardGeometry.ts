@@ -1501,10 +1501,6 @@ async function attemptDetection(
   }, solidPlateStartedAt);
   if (solidPlate.candidate) return solidPlate;
 
-  // The live preview policy is deliberately bounded to the fast solid-plate
-  // detector. Full-resolution perimeter v3 is captured-evidence-only work.
-  if (detectionPolicy === "live_preview_fast") return solidPlate;
-
   const perimeterStartedAt = performance.now();
   const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds);
   reportDetectionAttempt(observer, {
