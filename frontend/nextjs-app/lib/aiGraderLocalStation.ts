@@ -230,6 +230,52 @@ export type AiGraderOperatorResolutionRequestV1 = {
   >;
 };
 
+export type AiGraderOperatorFailureReasonSummary = {
+  directionalEvidenceRegionCounts: Record<"front" | "back", number>;
+  otherReasons: string[];
+  rawMessageCount: number;
+};
+
+const AI_GRADER_DIRECTIONAL_EVIDENCE_FAILURE_PATTERN =
+  /\b(front|back) calibrated photometric evidence:\s*Region ungradable-(\d+) has no manifest-sufficient usable directional evidence;\s*it is ungradable,\s*not defect-free\./gi;
+
+export function summarizeAiGraderOperatorFailureReasons(
+  failureReasons: readonly string[],
+): AiGraderOperatorFailureReasonSummary {
+  const directionalEvidenceRegions = {
+    front: new Set<number>(),
+    back: new Set<number>(),
+  };
+  const otherReasons = new Set<string>();
+
+  for (const reason of failureReasons) {
+    for (const match of reason.matchAll(AI_GRADER_DIRECTIONAL_EVIDENCE_FAILURE_PATTERN)) {
+      const side = match[1].toLowerCase() as "front" | "back";
+      const region = Number(match[2]);
+      if (Number.isSafeInteger(region) && region > 0) {
+        directionalEvidenceRegions[side].add(region);
+      }
+    }
+    const remainder = reason
+      .replace(AI_GRADER_DIRECTIONAL_EVIDENCE_FAILURE_PATTERN, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const contentBeyondSideLabels = remainder
+      .replace(/\b(?:front|back):/gi, " ")
+      .replace(/[\s,.;:|/-]+/g, "");
+    if (contentBeyondSideLabels) otherReasons.add(remainder);
+  }
+
+  return {
+    directionalEvidenceRegionCounts: {
+      front: directionalEvidenceRegions.front.size,
+      back: directionalEvidenceRegions.back.size,
+    },
+    otherReasons: [...otherReasons],
+    rawMessageCount: failureReasons.length,
+  };
+}
+
 export type AiGraderOperatorElementResolutionSubmissionV1 =
   | {
       element: "centering";

@@ -10,6 +10,7 @@ import {
   buildAiGraderMathematicalGradingAuthorityV1,
   collectAiGraderMathematicalReviewAssets,
   fetchAiGraderMathematicalReviewAsset,
+  fetchAiGraderOperatorResolutionEvidenceAsset,
   stageAiGraderMathematicalDesignReference,
   type AiGraderPreparedRegisteredDesignReferenceV1,
 } from "../lib/aiGraderStationBridgeClient";
@@ -19,9 +20,11 @@ import {
   sanitizeAiGraderMathematicalV1StateForDisplay,
   sanitizeAiGraderRapidCaptureQueue,
   sanitizeAiGraderLocalStationStatusForDisplay,
+  summarizeAiGraderOperatorFailureReasons,
   type AiGraderMathematicalFindingReviewRequestV1,
   type AiGraderMathematicalGradingAuthorityV1,
   type AiGraderMathematicalReviewAssetMetadataV1,
+  type AiGraderQueuedOcrImage,
 } from "../lib/aiGraderLocalStation";
 
 if (!globalThis.crypto?.subtle) {
@@ -270,6 +273,36 @@ test("Production station exposes one strict operator element-resolution boundary
   assert.doesNotMatch(source, /labelGrade\s*:/);
 });
 
+test("operator element resolution is image-first and condenses repeated directional-evidence failures", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /const queueIdentity = operatorResolutionQueueIdentityRef\.current;[\s\S]*?fetchAiGraderOperatorResolutionEvidenceAsset\(\{[\s\S]*?queueItemId: queueIdentity\.queueItemId,[\s\S]*?gradingSessionId: queueIdentity\.gradingSessionId,[\s\S]*?reportId: queueIdentity\.reportId,[\s\S]*?image,/,
+  );
+  assert.match(source, /<h3>Front &amp; Back<\/h3>/);
+  assert.match(source, /operatorResolutionEvidence\.images\[side\]/);
+  assert.match(source, /<details className="operator-technical-details">/);
+  assert.match(source, /Full detector details/);
+  assert.doesNotMatch(
+    source,
+    /original\.failureReasons\.map\(\(reason\) => <li key=\{reason\}>\{reason\}<\/li>\)/,
+  );
+
+  const summary = summarizeAiGraderOperatorFailureReasons([
+    "Front: front calibrated photometric evidence: Region ungradable-1 has no manifest-sufficient usable directional evidence; it is ungradable, not defect-free.",
+    "front calibrated photometric evidence: Region ungradable-2 has no manifest-sufficient usable directional evidence; it is ungradable, not defect-free. front calibrated photometric evidence: Region ungradable-3 has no manifest-sufficient usable directional evidence; it is ungradable, not defect-free.",
+    "Back: back calibrated photometric evidence: Region ungradable-1 has no manifest-sufficient usable directional evidence; it is ungradable, not defect-free.",
+    "Exactly one corners observation is required for each front/back physical location.",
+  ]);
+  assert.deepEqual(summary, {
+    directionalEvidenceRegionCounts: { front: 3, back: 1 },
+    otherReasons: [
+      "Exactly one corners observation is required for each front/back physical location.",
+    ],
+    rawMessageCount: 4,
+  });
+});
+
 test("Production station uses the configured activation registry instead of the retired direct-bundle UI gate", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(
@@ -451,6 +484,68 @@ test("review asset tampering is rejected after exact header verification", async
         "x-ai-grader-height-px": String(metadata.heightPx),
       },
     })) as typeof fetch),
+    /body does not match its exact SHA-256/i,
+  );
+});
+
+test("operator-resolution evidence fetch verifies exact identity, metadata, and SHA-256", async () => {
+  const expectedBytes = Uint8Array.from({ length: 32 }, (_, index) => index + 30);
+  const image: AiGraderQueuedOcrImage = {
+    side: "front",
+    artifactRole: "normalized_card",
+    fileName: "front-normalized-card.png",
+    mimeType: "image/png",
+    checksumSha256: sha256(expectedBytes),
+    byteSize: expectedBytes.byteLength,
+    widthPx: 1200,
+    heightPx: 1680,
+  };
+  let observedUrl = "";
+  const fetchAsset = (bytes: Uint8Array) => (async (url) => {
+    observedUrl = String(url);
+    return new Response(bytes, {
+      status: 200,
+      headers: {
+        "content-type": image.mimeType,
+        "content-length": String(image.byteSize),
+        "x-ai-grader-queue-item-id": "queue-item-1",
+        "x-ai-grader-grading-session-id": "grading-session-1",
+        "x-ai-grader-report-id": "report-1",
+        "x-ai-grader-sha256": image.checksumSha256,
+        "x-ai-grader-side": image.side,
+        "x-ai-grader-evidence-role": image.artifactRole,
+        "x-ai-grader-width-px": String(image.widthPx),
+        "x-ai-grader-height-px": String(image.heightPx),
+      },
+    });
+  }) as typeof fetch;
+  const fetched = await fetchAiGraderOperatorResolutionEvidenceAsset({
+    baseUrl: "http://127.0.0.1:47652",
+    stationToken: "paired-token",
+    queueItemId: "queue-item-1",
+    gradingSessionId: "grading-session-1",
+    reportId: "report-1",
+    image,
+  }, fetchAsset(expectedBytes));
+  assert.equal(
+    observedUrl,
+    "http://127.0.0.1:47652/mathematical-v1/operator-resolution-assets" +
+      "?queueItemId=queue-item-1&gradingSessionId=grading-session-1&reportId=report-1&side=front",
+  );
+  assert.equal(fetched.side, "front");
+  assert.equal(fetched.blob.size, image.byteSize);
+
+  const tampered = expectedBytes.slice();
+  tampered[0] ^= 0xff;
+  await assert.rejects(
+    fetchAiGraderOperatorResolutionEvidenceAsset({
+      baseUrl: "http://127.0.0.1:47652",
+      stationToken: "paired-token",
+      queueItemId: "queue-item-1",
+      gradingSessionId: "grading-session-1",
+      reportId: "report-1",
+      image,
+    }, fetchAsset(tampered)),
     /body does not match its exact SHA-256/i,
   );
 });

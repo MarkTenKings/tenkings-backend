@@ -25,6 +25,7 @@ import {
   embedAiGraderAuthoritativeProductionRelease,
   sanitizeAiGraderPreviewCardGeometryBySide,
   selectNextSerializedAiGraderOcrItem,
+  summarizeAiGraderOperatorFailureReasons,
   type AiGraderLocalStationStatus,
   type AiGraderLiveLightingStatus,
   type AiGraderGradingContract,
@@ -43,6 +44,7 @@ import {
   type AiGraderLocalReportHistoryItem,
   type AiGraderStationAction,
   type AiGraderRapidCaptureQueueItem,
+  type AiGraderQueuedOcrImage,
   type AiGraderRapidQueueIdentity,
 } from "../../lib/aiGraderLocalStation";
 import {
@@ -64,6 +66,7 @@ import {
   callAiGraderStationBridge,
   collectAiGraderMathematicalReviewAssets,
   fetchAiGraderMathematicalReviewAsset,
+  fetchAiGraderOperatorResolutionEvidenceAsset,
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
@@ -276,6 +279,19 @@ type MathematicalReviewAssetState = {
   message: string;
   requestSha256?: string;
   assets: Record<string, MathematicalReviewAssetView>;
+};
+
+type OperatorResolutionEvidenceView = {
+  side: "front" | "back";
+  image: AiGraderQueuedOcrImage;
+  objectUrl: string;
+};
+
+type OperatorResolutionEvidenceState = {
+  status: "idle" | "loading" | "ready" | "error";
+  message: string;
+  requestSha256?: string;
+  images: Partial<Record<"front" | "back", OperatorResolutionEvidenceView>>;
 };
 
 type FinishQueueStatus = "needs_slab_photos" | "needs_ebay_evaluate" | "needs_inventory" | "complete";
@@ -1009,6 +1025,20 @@ export default function AiGraderStationPage() {
       assets: {},
     });
   const mathematicalReviewObjectUrlsRef = useRef<string[]>([]);
+  const [operatorResolutionEvidence, setOperatorResolutionEvidence] =
+    useState<OperatorResolutionEvidenceState>({
+      status: "idle",
+      message: "No exact element-resolution evidence is pending.",
+      images: {},
+    });
+  const operatorResolutionEvidenceObjectUrlsRef = useRef<string[]>([]);
+  const operatorResolutionEvidenceImagesRef = useRef<AiGraderQueuedOcrImage[] | undefined>(
+    undefined,
+  );
+  const operatorResolutionRequestRef = useRef<AiGraderOperatorResolutionRequestV1 | undefined>(
+    undefined,
+  );
+  const operatorResolutionQueueIdentityRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [operatorResolutionDraftState, setOperatorResolutionDraftState] =
     useState<OperatorResolutionDraft>(() => operatorResolutionDraft());
   const operatorResolutionIdempotencyRef = useRef<{
@@ -1077,6 +1107,26 @@ export default function AiGraderStationPage() {
     mathematicalExecution?.status === "operator_resolution_required"
       ? mathematicalExecution.request
       : undefined;
+  const operatorResolutionEvidenceImages =
+    operatorResolutionRequest &&
+    activeReviewItem?.state === "operator_resolution_required" &&
+    activeReviewItem.ocr.state === "succeeded"
+      ? activeReviewItem.ocr.images
+      : undefined;
+  const operatorResolutionEvidenceFingerprint = operatorResolutionEvidenceImages
+    ?.map((image) => [
+      image.side,
+      image.artifactRole,
+      image.checksumSha256,
+      image.byteSize,
+      image.widthPx,
+      image.heightPx,
+    ].join(":"))
+    .sort()
+    .join("|") ?? "";
+  operatorResolutionEvidenceImagesRef.current = operatorResolutionEvidenceImages;
+  operatorResolutionRequestRef.current = operatorResolutionRequest;
+  operatorResolutionQueueIdentityRef.current = activeReviewQueueIdentity;
   const mathematicalReviewRequest: AiGraderMathematicalFindingReviewRequestV1 | undefined =
     mathematicalExecution?.status === "finding_review_required"
       ? mathematicalExecution.reviewRequest
@@ -1098,6 +1148,13 @@ export default function AiGraderStationPage() {
       window.URL.revokeObjectURL(objectUrl);
     }
     mathematicalReviewObjectUrlsRef.current = [];
+  };
+
+  const revokeOperatorResolutionEvidenceObjectUrls = () => {
+    for (const objectUrl of operatorResolutionEvidenceObjectUrlsRef.current) {
+      window.URL.revokeObjectURL(objectUrl);
+    }
+    operatorResolutionEvidenceObjectUrlsRef.current = [];
   };
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
@@ -1268,6 +1325,127 @@ export default function AiGraderStationPage() {
   ]);
 
   useEffect(() => () => revokeMathematicalReviewObjectUrls(), []);
+
+  useEffect(() => {
+    const request = operatorResolutionRequestRef.current;
+    revokeOperatorResolutionEvidenceObjectUrls();
+    if (!request) {
+      setOperatorResolutionEvidence({
+        status: "idle",
+        message: "No exact element-resolution evidence is pending.",
+        images: {},
+      });
+      return;
+    }
+    const queueIdentity = operatorResolutionQueueIdentityRef.current;
+    if (!queueIdentity) {
+      setOperatorResolutionEvidence({
+        status: "error",
+        requestSha256: request.requestSha256,
+        message: "The pending element-resolution request has no exact active queue identity.",
+        images: {},
+      });
+      return;
+    }
+    const images = operatorResolutionEvidenceImagesRef.current;
+    if (
+      !images ||
+      images.length !== 2 ||
+      new Set(images.map((image) => image.side)).size !== 2
+    ) {
+      setOperatorResolutionEvidence({
+        status: "error",
+        requestSha256: request.requestSha256,
+        message:
+          "The exact succeeded normalized Front and Back evidence is not available for this review.",
+        images: {},
+      });
+      return;
+    }
+    if (!bridgeConnected || !stationToken.trim()) {
+      setOperatorResolutionEvidence({
+        status: "error",
+        requestSha256: request.requestSha256,
+        message: "Connect the paired Dell bridge to verify the exact Front and Back evidence.",
+        images: {},
+      });
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    const objectUrls: string[] = [];
+    setOperatorResolutionEvidence({
+      status: "loading",
+      requestSha256: request.requestSha256,
+      message: "Loading and SHA-256 verifying the exact normalized Front and Back images.",
+      images: {},
+    });
+    void (async () => {
+      try {
+        const fetchedImages = await Promise.all(images.map((image) =>
+          fetchAiGraderOperatorResolutionEvidenceAsset({
+            baseUrl: bridgeUrl,
+            stationToken,
+            queueItemId: queueIdentity.queueItemId,
+            gradingSessionId: queueIdentity.gradingSessionId,
+            reportId: queueIdentity.reportId,
+            image,
+            signal: controller.signal,
+          })));
+        if (cancelled) return;
+        const views: Partial<Record<"front" | "back", OperatorResolutionEvidenceView>> = {};
+        for (const fetched of fetchedImages) {
+          const objectUrl = window.URL.createObjectURL(fetched.blob);
+          objectUrls.push(objectUrl);
+          views[fetched.side] = {
+            side: fetched.side,
+            image: fetched.image,
+            objectUrl,
+          };
+        }
+        if (cancelled) return;
+        operatorResolutionEvidenceObjectUrlsRef.current = [...objectUrls];
+        setOperatorResolutionEvidence({
+          status: "ready",
+          requestSha256: request.requestSha256,
+          message:
+            "Front and Back matched the exact queue identity, dimensions, byte count, and SHA-256.",
+          images: views,
+        });
+      } catch (requestError) {
+        for (const objectUrl of objectUrls) window.URL.revokeObjectURL(objectUrl);
+        if (cancelled || controller.signal.aborted) return;
+        setOperatorResolutionEvidence({
+          status: "error",
+          requestSha256: request.requestSha256,
+          message: requestError instanceof Error
+            ? requestError.message
+            : "Exact element-resolution evidence verification failed.",
+          images: {},
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      const urls = operatorResolutionEvidenceObjectUrlsRef.current.length
+        ? operatorResolutionEvidenceObjectUrlsRef.current
+        : objectUrls;
+      for (const objectUrl of urls) window.URL.revokeObjectURL(objectUrl);
+      operatorResolutionEvidenceObjectUrlsRef.current = [];
+    };
+  }, [
+    activeReviewQueueIdentity?.gradingSessionId,
+    activeReviewQueueIdentity?.queueItemId,
+    activeReviewQueueIdentity?.reportId,
+    bridgeConnected,
+    bridgeUrl,
+    operatorResolutionEvidenceFingerprint,
+    operatorResolutionRequest?.requestSha256,
+    stationToken,
+  ]);
+
+  useEffect(() => () => revokeOperatorResolutionEvidenceObjectUrls(), []);
 
   useEffect(() => {
     const frame = cameraFrameRef.current;
@@ -5359,12 +5537,62 @@ export default function AiGraderStationPage() {
                   <code>{operatorResolutionRequest.requestSha256}</code>
                 </div>
               </div>
+              <section className="operator-evidence-workspace" aria-label="Front and Back review evidence">
+                <div className="operator-evidence-head">
+                  <div>
+                    <p className="eyebrow">Card Evidence</p>
+                    <h3>Front &amp; Back</h3>
+                  </div>
+                  <span className={`operator-evidence-badge ${operatorResolutionEvidence.status}`}>
+                    {operatorResolutionEvidence.status === "ready"
+                      ? "Verified"
+                      : formatStationValue(operatorResolutionEvidence.status)}
+                  </span>
+                </div>
+                <p className="operator-evidence-status" aria-live="polite">
+                  {operatorResolutionEvidence.message}
+                </p>
+                <div className="operator-evidence-grid">
+                  {(["front", "back"] as const).map((side) => {
+                    const view = operatorResolutionEvidence.images[side];
+                    return (
+                      <figure key={side}>
+                        {view ? (
+                          <img
+                            src={view.objectUrl}
+                            alt={`${formatStationValue(side)} normalized card evidence`}
+                            width={view.image.widthPx}
+                            height={view.image.heightPx}
+                          />
+                        ) : (
+                          <div className="operator-evidence-placeholder">
+                            {operatorResolutionEvidence.status === "loading"
+                              ? `Loading ${formatStationValue(side)}…`
+                              : `${formatStationValue(side)} unavailable`}
+                          </div>
+                        )}
+                        <figcaption>
+                          <strong>{formatStationValue(side)}</strong>
+                          {view ? (
+                            <span>
+                              {view.image.widthPx} × {view.image.heightPx} verified normalized PNG
+                            </span>
+                          ) : null}
+                        </figcaption>
+                      </figure>
+                    );
+                  })}
+                </div>
+              </section>
               <div className="operator-resolution-list">
                 {OPERATOR_RESOLUTION_ELEMENTS.map((element) => {
                   const original = operatorResolutionRequest.originalElements[element];
                   const draft = operatorResolutionDraftState.elements[element];
                   const required = mathematicalExecution?.status === "operator_resolution_required" &&
                     mathematicalExecution.unresolvedElements.includes(element);
+                  const failureSummary = summarizeAiGraderOperatorFailureReasons(
+                    original.failureReasons,
+                  );
                   return (
                     <article className="mathematical-finding-review" key={element}>
                       <header>
@@ -5376,9 +5604,38 @@ export default function AiGraderStationPage() {
                       </header>
                       {original.explanation ? <p>{original.explanation}</p> : null}
                       {original.failureReasons.length ? (
-                        <ul className="warning-list">
-                          {original.failureReasons.map((reason) => <li key={reason}>{reason}</li>)}
-                        </ul>
+                        <>
+                          <div className="operator-resolution-summary">
+                            <strong>Why review is needed</strong>
+                            <ul>
+                              {(["front", "back"] as const).map((side) => {
+                                const count =
+                                  failureSummary.directionalEvidenceRegionCounts[side];
+                                return count ? (
+                                  <li key={side}>
+                                    <strong>{formatStationValue(side)}:</strong>{" "}
+                                    {count} region{count === 1 ? "" : "s"} lack usable directional
+                                    evidence.
+                                  </li>
+                                ) : null;
+                              })}
+                              {failureSummary.otherReasons.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <details className="operator-technical-details">
+                            <summary>
+                              Full detector details ({failureSummary.rawMessageCount}{" "}
+                              message{failureSummary.rawMessageCount === 1 ? "" : "s"})
+                            </summary>
+                            <ul className="warning-list">
+                              {original.failureReasons.map((reason, index) => (
+                                <li key={`${original.resultSha256}-${index}`}>{reason}</li>
+                              ))}
+                            </ul>
+                          </details>
+                        </>
                       ) : null}
                       <label className="mathematical-disposition">
                         <input
@@ -8321,6 +8578,136 @@ export default function AiGraderStationPage() {
           overflow-wrap: anywhere;
           color: #e7d8af;
         }
+        .operator-evidence-workspace {
+          margin: 0 0 18px;
+          padding: 16px;
+          border: 1px solid rgba(224, 189, 108, 0.28);
+          border-radius: 8px;
+          background: linear-gradient(180deg, rgba(224, 189, 108, 0.07), rgba(255, 255, 255, 0.025));
+        }
+        .operator-evidence-head {
+          display: flex;
+          align-items: start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .operator-evidence-head h3 {
+          margin: 4px 0 0;
+          font-size: 22px;
+        }
+        .operator-evidence-badge {
+          padding: 6px 9px;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 999px;
+          color: #d8d0c4;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .operator-evidence-badge.ready {
+          border-color: rgba(72, 199, 142, 0.45);
+          color: #8ee6ba;
+          background: rgba(72, 199, 142, 0.1);
+        }
+        .operator-evidence-badge.error {
+          border-color: rgba(255, 111, 111, 0.46);
+          color: #ffadad;
+          background: rgba(255, 111, 111, 0.08);
+        }
+        .operator-evidence-status {
+          margin: 8px 0 14px;
+          color: #c9c1b3;
+          font-size: 12px;
+        }
+        .operator-evidence-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .operator-evidence-grid figure {
+          margin: 0;
+          padding: 10px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 7px;
+          background: #050605;
+        }
+        .operator-evidence-grid img,
+        .operator-evidence-placeholder {
+          display: block;
+          width: 100%;
+          height: min(58vh, 680px);
+          border-radius: 4px;
+          background: #020302;
+          object-fit: contain;
+        }
+        .operator-evidence-placeholder {
+          display: grid;
+          place-items: center;
+          min-height: 300px;
+          color: #9d9688;
+        }
+        .operator-evidence-grid figcaption {
+          display: flex;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 9px 2px 1px;
+          color: #d5c8a7;
+          font-size: 10px;
+        }
+        .operator-evidence-grid figcaption span {
+          color: #9d9688;
+          text-align: right;
+        }
+        .operator-resolution-list {
+          display: grid;
+          gap: 14px;
+        }
+        .operator-resolution-summary {
+          margin: 12px 0;
+          padding: 11px 12px;
+          border-left: 3px solid #e0bd6c;
+          background: rgba(224, 189, 108, 0.07);
+        }
+        .operator-resolution-summary > strong {
+          display: block;
+          margin-bottom: 6px;
+          color: #f3db92;
+        }
+        .operator-resolution-summary ul {
+          margin: 0;
+          padding-left: 18px;
+          color: #d8d0c4;
+          line-height: 1.5;
+        }
+        .operator-technical-details {
+          margin: 10px 0 12px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          background: rgba(0, 0, 0, 0.22);
+        }
+        .operator-technical-details summary {
+          padding: 10px 12px;
+          color: #bdb5a8;
+          cursor: pointer;
+          font-size: 11px;
+          font-weight: 800;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+        }
+        .operator-technical-details .warning-list {
+          max-height: 360px;
+          margin: 0 12px 12px;
+          padding: 10px 10px 10px 28px;
+          overflow: auto;
+          border-top: 1px solid rgba(255, 255, 255, 0.08);
+          overflow-wrap: anywhere;
+        }
+        .operator-resolution-fields {
+          display: grid;
+          gap: 10px;
+          margin-top: 10px;
+        }
         .mathematical-finding-list {
           display: grid;
           gap: 18px;
@@ -8474,6 +8861,7 @@ export default function AiGraderStationPage() {
             inset: 12px;
           }
           .mathematical-review-head,
+          .operator-evidence-grid,
           .mathematical-identity-grid,
           .mathematical-profile-grid,
           .mathematical-mask-grid,

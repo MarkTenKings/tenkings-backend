@@ -1617,6 +1617,64 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
   }
 });
 
+test("operator element resolution serves only the active exact item's verified normalized Front and Back evidence", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-evidence-"));
+  let pendingRequest;
+  try {
+    const service = createService(outputDir, async (input) => {
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      return operatorResolutionRequiredResult(input, pendingRequest);
+    });
+    installSimulatedMathematicalCapture(service);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-evidence-report",
+      "operator-evidence",
+    );
+    await service.action("activate-queue-item", queued.identity);
+    const attempt = { ...queued.identity, attemptOwnerId: "operator-evidence-ocr-owner" };
+    await service.action("begin-queued-ocr", attempt);
+    const completedOcr = await service.action("complete-queued-ocr", {
+      ...attempt,
+      result: safeOcrResult(queued.item),
+    });
+    const exactItem = completedOcr.rapidCaptureQueue.items.find(
+      (item) => item.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(exactItem.state, "operator_resolution_required");
+    assert.equal(exactItem.ocr.state, "succeeded");
+
+    for (const side of ["front", "back"]) {
+      const expected = exactItem.ocr.images.find((image) => image.side === side);
+      const served = await service.operatorResolutionEvidenceAsset(queued.identity, side);
+      assert.equal(served.item.queueItemId, queued.item.queueItemId);
+      assert.equal(served.item.sessionId, queued.item.sessionId);
+      assert.equal(served.item.reportId, queued.item.reportId);
+      assert.equal(served.image.artifactRole, "normalized_card");
+      assert.equal(served.image.widthPx, 1200);
+      assert.equal(served.image.heightPx, 1680);
+      assert.equal(served.image.checksumSha256, expected.checksumSha256);
+      assert.equal(served.bytes.byteLength, expected.byteSize);
+      assert.equal(sha256(served.bytes), expected.checksumSha256);
+    }
+    await assert.rejects(
+      service.operatorResolutionEvidenceAsset(
+        { ...queued.identity, reportId: "wrong-report" },
+        "front",
+      ),
+      /does not match the exact persisted queue\/session\/report triple/i,
+    );
+    service.activeQueueItemId = null;
+    await assert.rejects(
+      service.operatorResolutionEvidenceAsset(queued.identity, "front"),
+      /currently activated queue\/session\/report triple/i,
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("valid positive-skew operator authentication completes with nondecreasing durable event times", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-positive-skew-"));
   let pendingRequest;

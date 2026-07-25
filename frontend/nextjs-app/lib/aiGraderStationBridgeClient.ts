@@ -9,6 +9,7 @@ import type {
   AiGraderMathematicalFindingReviewV1,
   AiGraderMathematicalGradingAuthorityV1,
   AiGraderMathematicalReviewAssetMetadataV1,
+  AiGraderQueuedOcrImage,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
 import {
@@ -1106,6 +1107,81 @@ export async function fetchAiGraderMathematicalReviewAsset(input: {
     side: input.requirement.side,
     metadata,
     blob: new Blob([bytes], { type: metadata.contentType }),
+  };
+}
+
+export type AiGraderFetchedOperatorResolutionEvidenceAssetV1 = {
+  side: "front" | "back";
+  image: AiGraderQueuedOcrImage;
+  blob: Blob;
+};
+
+export async function fetchAiGraderOperatorResolutionEvidenceAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  image: AiGraderQueuedOcrImage;
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderFetchedOperatorResolutionEvidenceAssetV1> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const identity = exactRapidQueueIdentity(input);
+  const image = input.image;
+  const response = await fetchImpl(
+    baseUrl + "/mathematical-v1/operator-resolution-assets?queueItemId=" +
+      encodeURIComponent(identity.queueItemId) +
+      "&gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
+      "&side=" + image.side,
+    {
+      method: "GET",
+      headers: { "x-ai-grader-station-token": input.stationToken },
+      signal: input.signal,
+    },
+  );
+  if (!response.ok) {
+    throw await bridgeFailure(
+      response,
+      "The exact operator-resolution " + image.side + " evidence could not be read.",
+    );
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  const widthPx = Number(response.headers.get("x-ai-grader-width-px"));
+  const heightPx = Number(response.headers.get("x-ai-grader-height-px"));
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    contentLength !== image.byteSize ||
+    contentLength <= 0 ||
+    contentLength > AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES ||
+    response.headers.get("content-type") !== image.mimeType ||
+    response.headers.get("x-ai-grader-queue-item-id") !== identity.queueItemId ||
+    response.headers.get("x-ai-grader-grading-session-id") !== identity.gradingSessionId ||
+    response.headers.get("x-ai-grader-report-id") !== identity.reportId ||
+    response.headers.get("x-ai-grader-sha256") !== image.checksumSha256 ||
+    response.headers.get("x-ai-grader-side") !== image.side ||
+    response.headers.get("x-ai-grader-evidence-role") !== image.artifactRole ||
+    widthPx !== image.widthPx ||
+    heightPx !== image.heightPx
+  ) {
+    throw new Error(
+      "The operator-resolution evidence response headers do not match the exact active item.",
+    );
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (
+    bytes.byteLength !== image.byteSize ||
+    await browserSha256Hex(bytes) !== image.checksumSha256
+  ) {
+    throw new Error(
+      "The operator-resolution evidence body does not match its exact SHA-256 and byte authority.",
+    );
+  }
+  return {
+    side: image.side,
+    image,
+    blob: new Blob([bytes], { type: image.mimeType }),
   };
 }
 
