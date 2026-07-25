@@ -444,6 +444,32 @@ test("resolved owner explanation appears verbatim in standard HTML with no priva
   assert.doesNotMatch(html, /internalReason|originalElements|resolutionAuthority/);
 });
 
+test("resolved physical measurements render the standard report without fabricated outer-cut or observation evidence", () => {
+  const bundle = displayBundle() as any;
+  for (const side of ["front", "back"] as const) {
+    bundle.centeringEvidence[side].registration = {
+      profile: bundle.centeringEvidence[side].profile,
+      transformType: "physical_margin_measurement",
+      measurementUnit: "mm",
+    };
+    delete bundle.centeringEvidence[side].outerCutGeometryEvidence;
+  }
+  bundle.conditionObservationEvidence = { corners: [], edges: [] };
+  for (const element of ["centering", "corners", "edges"] as const) {
+    bundle.productionRelease.finalGrade.elements[element].resolved = true;
+  }
+  const html = renderToStaticMarkup(
+    createElement(AiGraderMathematicalReportV1, { bundle }),
+  );
+  assert.match(html, /Centering measurements/);
+  assert.match(html, /Measurement unit/);
+  assert.doesNotMatch(html, /Outer geometry frame|Observed outer contour/);
+  assert.doesNotMatch(
+    html,
+    /provisional|insufficient|human|manual|exception|admission/i,
+  );
+});
+
 test("sealed common-mode admission internals do not leak limitation or review language", () => {
   const bundle = displayBundle() as any;
   bundle.evidenceQualityLimitations = [];

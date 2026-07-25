@@ -29,6 +29,7 @@ import {
   buildAiGraderQueuedOcrFailureRequest,
   buildAiGraderRapidPublicationEvidence,
   buildAiGraderRapidQueueActivationRequest,
+  callAiGraderStationBridge,
   fetchAiGraderStationBridgeHealth,
   initializeAiGraderQueuedOcrAttemptOwner,
   waitForAiGraderQueuedOcrAttemptOwnerLock,
@@ -1430,6 +1431,28 @@ test("production station rejects a version-compatible mock or contract bridge", 
   );
 });
 
+test("station action transport forwards the per-click abort signal", async () => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | null | undefined;
+  const result = await callAiGraderStationBridge({
+    baseUrl: "http://127.0.0.1:47652",
+    stationToken: "StationTokenStationTokenStationToken1234",
+    action: "status",
+    signal: controller.signal,
+  }, (async (_request, init) => {
+    observedSignal = init?.signal;
+    return new Response(JSON.stringify({
+      ok: true,
+      result: buildAiGraderLocalStationStatus(),
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch);
+  assert.equal(observedSignal, controller.signal);
+  assert.equal(result.currentStep, "start_new_card");
+});
+
 test("capture busy state leaves the live preview connected until the helper owns the atomic transition", () => {
   const effectStart = stationPageSource.indexOf("const positioningStepActive");
   const effectEnd = stationPageSource.indexOf("const expectedBinding", effectStart);
@@ -1463,6 +1486,11 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   assert.doesNotMatch(startBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
   assert.doesNotMatch(backBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
   assert.doesNotMatch(startBlock, /publicationReviewClaim/);
+  assert.match(startBlock, /const startController = new AbortController\(\)/);
+  assert.match(startBlock, /window\.setTimeout\(\(\) => startController\.abort\(\), 30_000\)/);
+  assert.match(startBlock, /AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1[\s\S]+signal: startController\.signal/);
+  assert.match(startBlock, /"start-session"[\s\S]+startController\.signal/);
+  assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+setCaptureBusy\(null\)/);
   assert.ok(
     activationBlock.indexOf("publicationReviewClaimRef.current") < activationBlock.indexOf("await runAction"),
     "review selection checks the synchronous publication claim before bridge activation",

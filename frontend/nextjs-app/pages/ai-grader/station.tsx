@@ -2693,11 +2693,15 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const runAction = async (action: AiGraderStationAction, body?: Record<string, unknown>) => {
+  const runAction = async (
+    action: AiGraderStationAction,
+    body?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => {
     if (!bridgeConnected || !stationToken.trim()) {
       throw new Error("Connect the real Dell local station bridge before running station actions.");
     }
-    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body });
+    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body, signal });
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
@@ -3002,6 +3006,8 @@ export default function AiGraderStationPage() {
     if (!canStartNewCard) return;
     setCaptureBusy("start");
     setError(null);
+    const startController = new AbortController();
+    const startTimeout = window.setTimeout(() => startController.abort(), 30_000);
     try {
       const prepared = await prepareMathematicalAuthority();
       if (!prepared?.authority) {
@@ -3018,6 +3024,7 @@ export default function AiGraderStationPage() {
           tenantId: prepared.authority.cardIdentity.tenantId,
           rigId: calibrationRigId,
         }),
+        signal: startController.signal,
       });
       const activationPayload = await activationResponse.json() as {
         ok?: boolean;
@@ -3035,6 +3042,7 @@ export default function AiGraderStationPage() {
           prepared?.authority,
           activationPayload.authority,
         ),
+        startController.signal,
       );
       await stagePreparedMathematicalDesignReferences(prepared, started);
       preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
@@ -3047,11 +3055,16 @@ export default function AiGraderStationPage() {
         message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
       });
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
+      const message = startController.signal.aborted
+        ? "Start New Card timed out before the fresh activation authority and local session were accepted. No pending start remains; retry obtains a new authority."
+        : requestError instanceof Error
+          ? requestError.message
+          : "Could not start an AI Grader card session.";
       setMathematicalAuthorityStatus({ status: "failed", message });
-      await runAction("status").catch(() => undefined);
+      await runAction("status", undefined, startController.signal).catch(() => undefined);
       setError(message);
     } finally {
+      window.clearTimeout(startTimeout);
       setCaptureBusy(null);
     }
   };

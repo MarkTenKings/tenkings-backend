@@ -7,6 +7,7 @@ const {
   buildFixedRigStandardTradingCardBoundaryV1,
   detectFixedRigRawBoundObservedOuterCutV1,
   verifyFixedRigRawBoundObservedOuterCutArtifactV1,
+  verifyFixedRigRawBoundOuterCutUnavailableAuditV1,
 } = require('../dist/drivers');
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -168,6 +169,12 @@ test('raw sensor outer-cut detector fails closed when raw exterior evidence is a
     rawAllOnRgb: empty,
   });
   assert.equal(noBoundary.status, 'insufficient_evidence');
+  assert.equal(noBoundary.failureKind, 'automatic_measurement_unavailable');
+  assert.equal(noBoundary.requiresRecapture, false);
+  assert.equal(
+    verifyFixedRigRawBoundOuterCutUnavailableAuditV1(noBoundary.unavailableAudit),
+    true,
+  );
   assert.match(noBoundary.reasons.join(' '), /gradient/i);
 
   const weakBoundary = rawCardPlane();
@@ -190,5 +197,8 @@ test('raw sensor outer-cut detector fails closed when raw exterior evidence is a
     rawAllOnAssetSha256: hash(Buffer.from('different-raw-file')),
   });
   assert.equal(changedIdentity.status, 'insufficient_evidence');
+  assert.equal(changedIdentity.failureKind, 'invalid_input');
+  assert.equal(changedIdentity.requiresRecapture, true);
+  assert.equal(changedIdentity.unavailableAudit, undefined);
   assert.match(changedIdentity.reasons.join(' '), /transform/i);
 });

@@ -47,6 +47,7 @@ import {
   buildFixedRigCenteringSideV1,
   buildFixedRigPhysicalMarginCenteringSideV1,
   fuseFixedRigCenteringFrontBackV1,
+  FIXED_RIG_CENTERING_V1_VERSION,
   type FixedRigCenteringSideResultV1,
   type FixedRigCenteringProfileInputV1,
   type FixedRigPointV1,
@@ -64,6 +65,7 @@ import {
   measureFixedRigEdgeObservationV1,
   type FixedRigConditionMeasurementCalibrationV1,
   type FixedRigConditionObservationResultV1,
+  type FixedRigConditionElementResultV1,
   type FixedRigCrossSideDefectLinkV1,
   type FixedRigPhysicalFindingV1,
 } from "./fixedRigCornerEdgeV1";
@@ -85,12 +87,20 @@ import {
 } from "./fixedRigExposureBracketFusionV1";
 import { applyFixedRigCommonModeInteriorAdmissionV1 } from "./fixedRigPhotometricAdmissionV1";
 import type { FixedRigPhysicalCalibrationArtifactV1 } from "./fixedRigPhysicalCalibrationV1";
-import { buildFixedRigSurfaceV1, type FixedRigSurfaceV1Result } from "./fixedRigSurfaceV1";
+import {
+  buildFixedRigSurfaceV1,
+  FIXED_RIG_SURFACE_V1_VERSION,
+  type FixedRigSurfaceV1Result,
+} from "./fixedRigSurfaceV1";
 import {
   verifyCardGeometryRawToNormalizedTransformV1,
   type CardGeometryRawToNormalizedTransformV1,
 } from './cardGeometry';
-import { detectFixedRigRawBoundObservedOuterCutV1 } from './fixedRigRawSensorOuterCutDetectorV1';
+import {
+  detectFixedRigRawBoundObservedOuterCutV1,
+  verifyFixedRigRawBoundOuterCutUnavailableAuditV1,
+  type FixedRigRawBoundOuterCutUnavailableAuditV1,
+} from './fixedRigRawSensorOuterCutDetectorV1';
 import {
   buildFixedRigOperatorResolutionRequestV1,
   hashFixedRigOperatorResolutionValueV1,
@@ -660,7 +670,7 @@ function assertMeasurementCalibrationV1(
   }
 }
 
-interface IngestedSideV1 {
+interface IngestedSideBaseV1 {
   side: Side;
   input: FixedRigMathematicalCalibrationSideInputV1;
   normalizedBytes: Buffer;
@@ -669,6 +679,10 @@ interface IngestedSideV1 {
   detectorPlaneSha256s: Record<string, string>;
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
   photometric: FixedRigPhotometricEvidenceV1;
+}
+
+interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
+  automaticMeasurementUnavailable?: undefined;
   condition: ComputedConditionSegmentationV1;
   outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1;
   centering: FixedRigCenteringSideResultV1;
@@ -680,6 +694,41 @@ interface IngestedSideV1 {
     heatmap: string;
     surfaceVision: string;
   };
+}
+
+interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
+  automaticMeasurementUnavailable: {
+    detector: "raw_sensor_outer_cut";
+    reasons: string[];
+    audit: FixedRigRawBoundOuterCutUnavailableAuditV1;
+  };
+  condition: null;
+  outerCutGeometryEvidence: null;
+  centering: FixedRigCenteringSideResultV1;
+  surface: FixedRigSurfaceV1Result;
+  visualizationAssetIds: null;
+}
+
+type IngestedSideV1 = IngestedSideComputedV1 | IngestedSideAutomaticUnavailableV1;
+
+function sideAutomaticallyUnavailableV1(
+  side: IngestedSideV1,
+): side is IngestedSideAutomaticUnavailableV1 {
+  return Boolean(side.automaticMeasurementUnavailable);
+}
+
+function computedSideV1(
+  side: IngestedSideV1,
+  context: string,
+): IngestedSideComputedV1 {
+  if (sideAutomaticallyUnavailableV1(side)) {
+    return fail(
+      "report_adaptation",
+      `${context} cannot reference a side whose automatic detector output is unavailable.`,
+      { requiresImplementationCorrection: true },
+    );
+  }
+  return side;
 }
 
 async function ingestSideV1(input: {
@@ -1147,9 +1196,17 @@ async function ingestSideV1(input: {
     segmentationBoundaryU95Px: profile.segmentationBoundaryU95Px,
   });
   if (observedCut.status !== 'computed') {
-    return fail('detector_plane_ingestion', `${side} raw-sensor outer-cut evidence is insufficient: ${observedCut.reasons.join('; ')}`, {
-      requiresRecapture: true,
-    });
+    if (
+      observedCut.failureKind !== "automatic_measurement_unavailable" ||
+      !observedCut.unavailableAudit ||
+      !verifyFixedRigRawBoundOuterCutUnavailableAuditV1(observedCut.unavailableAudit)
+    ) {
+      return fail(
+        'detector_plane_ingestion',
+        `${side} raw-sensor outer-cut evidence is invalid: ${observedCut.reasons.join('; ')}`,
+        { requiresRecapture: true },
+      );
+    }
   }
   const expectedOuterCardMaskAssetId =
     `${side}/mathematical-v1/detector-planes/expectedOuterCardMask.tkplane`;
@@ -1268,6 +1325,87 @@ async function ingestSideV1(input: {
     return fail("photometric_evidence", `${side} evidence has insufficient valid directional coverage and requires recapture.`, {
       requiresRecapture: true,
     });
+  }
+  if (observedCut.status !== "computed") {
+    const unavailableAudit = observedCut.unavailableAudit;
+    if (!unavailableAudit) {
+      return fail("detector_plane_ingestion", `${side} automatic outer-cut audit is missing.`, {
+        requiresImplementationCorrection: true,
+      });
+    }
+    const reasons = observedCut.reasons.map((reason) =>
+      `${side} raw-sensor outer-cut: ${reason}`);
+    const centering: FixedRigCenteringSideResultV1 = {
+      version: FIXED_RIG_CENTERING_V1_VERSION,
+      status: "insufficient_evidence",
+      side,
+      profile: sideInput.centering.profileInput.profile,
+      score: null,
+      requiresRecaptureOrApprovedReference: true,
+      reasons,
+      cardDefectDeduction: 0,
+    };
+    const surface: FixedRigSurfaceV1Result = {
+      version: FIXED_RIG_SURFACE_V1_VERSION,
+      photometricEvidenceVersion: photometric.version,
+      status: "insufficient_evidence",
+      side,
+      score: null,
+      startingScore: 10,
+      totalDeduction: 0,
+      formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula,
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      calibrationProfileId: sideInput.measurementCalibration.calibrationProfileId,
+      calibrationVersion: sideInput.measurementCalibration.calibrationVersion,
+      calibrationSha256: sideInput.measurementCalibration.calibrationSha256,
+      sourceEvidence: photometric.channels.map((channel) => ({
+        assetId: channel.sourceEvidenceId,
+        sha256: channel.sourceSha256,
+        side,
+        role: "directional_channel",
+        regionId: `${side}-full-surface`,
+        channelIndex: channel.channel,
+      })),
+      findings: [],
+      suppressedCandidates: [],
+      evidenceQualityLimitations: [{
+        code: "surface_global_coverage_insufficient",
+        regionId: `${side}-full-surface`,
+        requiresRecapture: true,
+        message: reasons.join(" "),
+      }],
+      heatmap: {
+        role: "visualization_only",
+        source: "valid_directional_residuals",
+        usedAsIndependentGradingEvidence: false,
+        response: new Float32Array(photometric.width * photometric.height),
+      },
+      connectedComponentCount: 0,
+      uniquePhysicalFindingCount: 0,
+      applicableSevereDefectCaps: [],
+      noDoubleDeduction: true,
+    };
+    return {
+      side,
+      input: sideInput,
+      normalizedBytes,
+      normalizedReference,
+      channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
+      detectorPlaneSha256s: {},
+      assetBindings,
+      photometric,
+      automaticMeasurementUnavailable: {
+        detector: "raw_sensor_outer_cut",
+        reasons: [...observedCut.reasons],
+        audit: unavailableAudit,
+      },
+      condition: null,
+      outerCutGeometryEvidence: null,
+      centering,
+      surface,
+      visualizationAssetIds: null,
+    };
   }
   const produced = buildFixedRigConditionPlanesV1({
     side,
@@ -1629,7 +1767,7 @@ function roiOrigin(input: {
 
 function reportGeometryForFinding(input: {
   finding: FinalGradeV1["findings"][number];
-  side: IngestedSideV1;
+  side: IngestedSideComputedV1;
   cornerObservations: FixedRigConditionObservationResultV1[];
   edgeObservations: FixedRigConditionObservationResultV1[];
 }): {
@@ -1704,7 +1842,10 @@ function findingReviewRequestV1(input: {
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
 }): FixedRigMathematicalFindingReviewRequestV1 {
   const findings = input.grade.findings.map((finding) => {
-    const side = input.sides[finding.side];
+    const side = computedSideV1(
+      input.sides[finding.side],
+      `Finding ${finding.findingId}`,
+    );
     const source = reportGeometryForFinding({
       finding,
       side,
@@ -1951,7 +2092,10 @@ async function buildPreparedFindingPresentationsV1(input: {
 }): Promise<PreparedFindingPresentationV1[]> {
   const presentations: PreparedFindingPresentationV1[] = [];
   for (const finding of input.grade.findings) {
-    const side = input.sides[finding.side];
+    const side = computedSideV1(
+      input.sides[finding.side],
+      `Finding ${finding.findingId}`,
+    );
     const source = reportGeometryForFinding({
       finding,
       side,
@@ -2167,6 +2311,7 @@ async function buildConditionObservationPresentationsV1(input: {
 }): Promise<AiGraderMathematicalConditionObservationPresentationV1[]> {
   const results: AiGraderMathematicalConditionObservationPresentationV1[] = [];
   for (const element of ["corners", "edges"] as const) {
+    if (input.grade.elements[element].resolved) continue;
     const observations =
       element === "corners" ? input.cornerObservations : input.edgeObservations;
     for (const observation of observations) {
@@ -2185,7 +2330,10 @@ async function buildConditionObservationPresentationsV1(input: {
           { requiresRecapture: true },
         );
       }
-      const side = input.sides[observation.side];
+      const side = computedSideV1(
+        input.sides[observation.side],
+        `${observation.side} ${element} ${observation.location}`,
+      );
       const origin = roiOrigin({
         element,
         location: observation.location,
@@ -2395,6 +2543,7 @@ function deriveEvidenceQualityLimitationsV1(
   const limitations: AiGraderMathematicalEvidenceQualityLimitationV1[] = [];
   for (const sideName of ["front", "back"] as const) {
     const side = sides[sideName];
+    if (sideAutomaticallyUnavailableV1(side)) continue;
     const baseEvidence = [
       side.visualizationAssetIds.invalidIlluminationMask,
       side.visualizationAssetIds.confidenceMask,
@@ -2616,7 +2765,8 @@ function operatorResolutionBindingV1(input: {
       normalizedAllOnSha256: source.normalizedAllOn.sha256.toLowerCase(),
       rawToNormalizedTransformSha256: source.rawToNormalizedTransform.transformSha256,
       authenticatedOuterCutArtifactSha256:
-        input.sides[side].outerCutGeometryEvidence.observedContourSha256,
+        input.sides[side].outerCutGeometryEvidence?.observedContourSha256 ??
+          input.sides[side].automaticMeasurementUnavailable!.audit.artifactSha256,
       warmManifestSha256: source.warmManifestSha256.toLowerCase(),
       nativeRoles,
       nativeRoleLedgerSha256: hashFixedRigOperatorResolutionValueV1(nativeRoles),
@@ -2839,8 +2989,8 @@ function deriveReportConfidenceV1(input: {
       ? input.sides[side].centering.registration.confidence
       : 0;
   const centeringCoverage = Math.min(
-    input.sides.front.outerCutGeometryEvidence.boundaryConfidence,
-    input.sides.back.outerCutGeometryEvidence.boundaryConfidence,
+    input.sides.front.outerCutGeometryEvidence?.boundaryConfidence ?? 0,
+    input.sides.back.outerCutGeometryEvidence?.boundaryConfidence ?? 0,
     centeringRegistrationConfidence("front"),
     centeringRegistrationConfidence("back"),
   );
@@ -2986,10 +3136,13 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
     });
     const originalSides = { front, back };
     const originalCentering = fuseFixedRigCenteringFrontBackV1(front.centering, back.centering);
-    const cornerObservations = [front, back].flatMap((side) =>
+    const computedSides = [front, back].filter(
+      (side): side is IngestedSideComputedV1 => !sideAutomaticallyUnavailableV1(side),
+    );
+    const cornerObservations = computedSides.flatMap((side) =>
       side.condition.cornerObservations.map((observation) =>
         measureFixedRigCornerObservationV1(observation)));
-    const edgeObservations = [front, back].flatMap((side) =>
+    const edgeObservations = computedSides.flatMap((side) =>
       side.condition.edgeObservations.map((observation) =>
         measureFixedRigEdgeObservationV1(observation)));
     const corners = aggregateFixedRigCornersV1(cornerObservations, input.cornerCrossSideLinks ?? []);
@@ -3033,7 +3186,8 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           side,
           calibration: input.calibration.finalizedProfile,
           outerCutContour:
-            source.outerCutGeometryEvidence.observedArtifact.normalizedContour,
+            source.outerCutGeometryEvidence?.observedArtifact.normalizedContour ??
+              source.input.intendedOuterBoundary.contour,
           measurementsMm: { left, right, top, bottom },
           evidence: [
             {
@@ -3323,8 +3477,12 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         edges,
         surface: { front: front.surface, back: back.surface },
         outerCutGeometryEvidence: {
-          front: front.outerCutGeometryEvidence,
-          back: back.outerCutGeometryEvidence,
+          ...(front.outerCutGeometryEvidence
+            ? { front: front.outerCutGeometryEvidence }
+            : {}),
+          ...(back.outerCutGeometryEvidence
+            ? { back: back.outerCutGeometryEvidence }
+            : {}),
         },
         grade,
         publication: input.report.publication,

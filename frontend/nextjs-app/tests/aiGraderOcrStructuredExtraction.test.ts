@@ -189,6 +189,50 @@ test("structured extraction fails closed for missing config, non-2xx, refusal, m
   );
 });
 
+test("structured extraction retains only bounded sanitized OpenAI non-2xx diagnostics", async () => {
+  const input = {
+    images: [
+      { side: "front" as const, url: "https://cdn.tenkings.test/front.png" },
+      { side: "back" as const, url: "https://cdn.tenkings.test/back.png" },
+    ],
+    ocr: ocrFixture(),
+  };
+  const secret = "sk-this-must-never-survive";
+  const image = "data:image/png;base64,AAAAsecretimagebytes";
+  await assert.rejects(
+    runAiGraderOcrStructuredExtraction(input, {
+      env: { OPENAI_API_KEY: "redacted-test-key" },
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: {
+          type: "insufficient_quota",
+          code: "insufficient_quota",
+          param: "account",
+          message: `Quota unavailable for ${secret}; source ${image}; see https://secret.test/details`,
+        },
+      }), {
+        status: 429,
+        headers: { "x-request-id": "req_safe_123" },
+      }),
+    }),
+    (error) => {
+      assert.ok(error instanceof AiGraderOcrStructuredExtractionError);
+      assert.equal(error.code, "non_2xx");
+      assert.deepEqual(error.upstreamDiagnostic, {
+        status: 429,
+        requestId: "req_safe_123",
+        errorType: "insufficient_quota",
+        errorCode: "insufficient_quota",
+        errorParam: "account",
+        sanitizedMessage:
+          "Quota unavailable for [redacted-credential]; source [redacted-image]; see [redacted-url]",
+      });
+      const serialized = JSON.stringify(error);
+      assert.doesNotMatch(serialized, /sk-this|AAAAsecret|secret\.test/);
+      return true;
+    },
+  );
+});
+
 test("structured extraction rejects extra fields, unsupported evidence refs, and non-null unknowns", async () => {
   const invalidFields: any = structuredFields();
   invalidFields.year = { ...invalidFields.year, extra: "not allowed" };

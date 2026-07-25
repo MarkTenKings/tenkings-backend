@@ -18,6 +18,8 @@ export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION =
   'fixed_rig_raw_sensor_outer_cut_detector_v1.2.0' as const;
 export const FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION =
   'fixed-rig-raw-bound-observed-outer-cut-artifact-v1' as const;
+export const FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION =
+  'fixed-rig-raw-bound-outer-cut-unavailable-audit-v1' as const;
 
 export interface FixedRigRawBoundObservedOuterCutArtifactV1 {
   schemaVersion: typeof FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION;
@@ -60,13 +62,40 @@ export interface FixedRigRawBoundObservedOuterCutArtifactV1 {
   artifactSha256: string;
 }
 
+export interface FixedRigRawBoundOuterCutUnavailableAuditV1 {
+  schemaVersion: typeof FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION;
+  detectorId: typeof FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID;
+  detectorVersion: typeof FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION;
+  rawAllOnAssetId: string;
+  rawAllOnAssetSha256: string;
+  rawAllOnScalarPlaneSha256: string;
+  normalizedAllOnAssetId: string;
+  normalizedAllOnAssetSha256: string;
+  rawToNormalizedTransformSha256: string;
+  calibrationProfileId: string;
+  calibrationVersion: string;
+  calibrationSha256: string;
+  intendedBoundaryArtifactSha256: string;
+  intendedBoundaryProfileId: string;
+  intendedBoundaryProfileVersion: string;
+  crossSectionCount: number;
+  supportedCrossSectionCount: number;
+  unsupportedCrossSectionCount: number;
+  ambiguousCrossSectionCount: number;
+  minimumGradientDigitalUnits: number;
+  reasons: string[];
+  artifactSha256: string;
+}
+
 export type FixedRigRawBoundObservedOuterCutDetectionV1 =
   | { status: 'computed'; artifact: FixedRigRawBoundObservedOuterCutArtifactV1 }
   | {
       status: 'insufficient_evidence';
+      failureKind: 'invalid_input' | 'automatic_measurement_unavailable';
       reasons: string[];
-      requiresRecapture: true;
+      requiresRecapture: boolean;
       cardDefectDeduction: 0;
+      unavailableAudit?: FixedRigRawBoundOuterCutUnavailableAuditV1;
     };
 
 export interface DetectFixedRigRawBoundObservedOuterCutV1Input {
@@ -90,12 +119,26 @@ const POLICY = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
 const MAX_EFFECTIVE_SEARCH_MULTIPLIER = 4;
 const ROUNDED_CORNER_RECOVERY_MARGIN_MM = 0.2;
 
-function fail(reasons: string[]): FixedRigRawBoundObservedOuterCutDetectionV1 {
+function fail(
+  reasons: string[],
+  unavailableAudit?: Omit<FixedRigRawBoundOuterCutUnavailableAuditV1, 'artifactSha256'>,
+): FixedRigRawBoundObservedOuterCutDetectionV1 {
+  const exactReasons = [...new Set(reasons)];
   return {
     status: 'insufficient_evidence',
-    reasons: [...new Set(reasons)],
-    requiresRecapture: true,
+    failureKind: unavailableAudit ? 'automatic_measurement_unavailable' : 'invalid_input',
+    reasons: exactReasons,
+    requiresRecapture: !unavailableAudit,
     cardDefectDeduction: 0,
+    ...(unavailableAudit
+      ? {
+          unavailableAudit: {
+            ...unavailableAudit,
+            reasons: exactReasons,
+            artifactSha256: sha256({ ...unavailableAudit, reasons: exactReasons }),
+          },
+        }
+      : {}),
   };
 }
 
@@ -288,6 +331,13 @@ export function verifyFixedRigRawBoundObservedOuterCutArtifactV1(
   return isSha256(artifactSha256) && sha256(payload) === artifactSha256;
 }
 
+export function verifyFixedRigRawBoundOuterCutUnavailableAuditV1(
+  artifact: FixedRigRawBoundOuterCutUnavailableAuditV1,
+): boolean {
+  const { artifactSha256, ...payload } = artifact;
+  return isSha256(artifactSha256) && sha256(payload) === artifactSha256;
+}
+
 export function detectFixedRigRawBoundObservedOuterCutV1(
   input: DetectFixedRigRawBoundObservedOuterCutV1Input,
 ): FixedRigRawBoundObservedOuterCutDetectionV1 {
@@ -449,7 +499,7 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
     gradients.push(strongest.gradient * 255);
   }
   if (unsupported || ambiguous || detectedRaw.length !== crossSectionCount) {
-    return fail([
+    const failureReasons = [
       ...(unsupported ? [
         unsupported + ' raw perimeter cross-sections lacked the manifest minimum gradient.',
       ] : []),
@@ -457,7 +507,30 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
         ambiguous + ' raw perimeter cross-sections had tied boundary peaks.',
       ] : []),
       'Every physical edge and rounded-corner arc requires unambiguous raw exterior evidence.',
-    ]);
+    ];
+    return fail(failureReasons, {
+      schemaVersion: FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION,
+      detectorId: FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID,
+      detectorVersion: FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION,
+      rawAllOnAssetId: input.rawAllOnAssetId,
+      rawAllOnAssetSha256: input.rawAllOnAssetSha256,
+      rawAllOnScalarPlaneSha256: scalarPlaneSha256(plane),
+      normalizedAllOnAssetId: input.normalizedAllOnAssetId,
+      normalizedAllOnAssetSha256: input.normalizedAllOnAssetSha256,
+      rawToNormalizedTransformSha256: transform.transformSha256,
+      calibrationProfileId: input.calibrationProfileId,
+      calibrationVersion: input.calibrationVersion,
+      calibrationSha256: input.calibrationSha256,
+      intendedBoundaryArtifactSha256: intended.artifactSha256,
+      intendedBoundaryProfileId: intended.profileId,
+      intendedBoundaryProfileVersion: intended.profileVersion,
+      crossSectionCount,
+      supportedCrossSectionCount: detectedRaw.length,
+      unsupportedCrossSectionCount: unsupported,
+      ambiguousCrossSectionCount: ambiguous,
+      minimumGradientDigitalUnits: POLICY.minimumDirectionalGradientDigitalUnits,
+      reasons: failureReasons,
+    });
   }
   const normalizedContour = detectedRaw.map((point) => {
     const normalized = transformRawPointToNormalizedV1(transform, point);

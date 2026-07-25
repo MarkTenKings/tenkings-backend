@@ -571,9 +571,10 @@ export default function AiGraderMathematicalReportV1({
                 )
               : undefined;
             const measurementOverlay = assets.get(side.measurementOverlayAssetId.toLowerCase());
-            const normalizedSource = assets.get(
-              side.outerCutGeometryEvidence.normalizedAllOnAssetId.toLowerCase(),
-            );
+            const outerCutGeometry = side.outerCutGeometryEvidence;
+            const normalizedSource = outerCutGeometry
+              ? assets.get(outerCutGeometry.normalizedAllOnAssetId.toLowerCase())
+              : undefined;
             return (
             <article className="rounded border border-black/10 p-4" key={side.side}>
               {measurementOverlay?.publicUrl ? (
@@ -620,17 +621,19 @@ export default function AiGraderMathematicalReportV1({
                     <dt>Inlier samples</dt><dd>{side.registration.inlierCount} / {Math.round(side.registration.inlierFraction * 100)}%</dd>
                   </>
                 )}
-                <dt>Outer geometry frame</dt><dd>{side.outerCutGeometryEvidence.coordinateFrame}</dd>
-                <dt>Observed outer contour</dt><dd>{side.outerCutGeometryEvidence.observedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedContourSha256)}</span></dd>
-                <dt>Intended outer contour</dt><dd>{side.outerCutGeometryEvidence.intendedBoundaryProfileId} / {side.outerCutGeometryEvidence.intendedBoundaryProfileVersion}; {side.outerCutGeometryEvidence.intendedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.intendedContourSha256)}</span></dd>
-                <dt>Observed-cut detector</dt><dd>{side.outerCutGeometryEvidence.observedContourDetectorId} / {side.outerCutGeometryEvidence.observedContourDetectorVersion}</dd>
-                <dt>Boundary confidence / U95</dt><dd>{Math.round(side.outerCutGeometryEvidence.boundaryConfidence * 100)}% / {side.outerCutGeometryEvidence.boundaryU95Mm} mm</dd>
-                <dt>Raw all-on cut source</dt><dd>{side.outerCutGeometryEvidence.rawAllOnAssetId}<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.rawAllOnAssetSha256)}</span></dd>
-                <dt>Normalized all-on source</dt><dd>{side.outerCutGeometryEvidence.normalizedAllOnAssetId}<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.normalizedAllOnAssetSha256)}</span></dd>
-                <dt>Raw scalar / transform</dt><dd><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.rawAllOnScalarPlaneSha256)}</span><br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.rawToNormalizedTransformSha256)}</span></dd>
-                <dt>Observed artifact</dt><dd className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedArtifact.artifactSha256)}</dd>
-                <dt>Geometry calibration</dt><dd>{side.outerCutGeometryEvidence.observedArtifact.calibrationProfileId} / {side.outerCutGeometryEvidence.observedArtifact.calibrationVersion}<br /><span className="break-all font-mono">{fullHash(side.outerCutGeometryEvidence.observedArtifact.calibrationSha256)}</span></dd>
-                <dt>Geometry scale</dt><dd>{side.outerCutGeometryEvidence.observedArtifact.pixelsPerMmX} px/mm × {side.outerCutGeometryEvidence.observedArtifact.pixelsPerMmY} px/mm</dd>
+                {outerCutGeometry ? <>
+                <dt>Outer geometry frame</dt><dd>{outerCutGeometry.coordinateFrame}</dd>
+                <dt>Observed outer contour</dt><dd>{outerCutGeometry.observedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(outerCutGeometry.observedContourSha256)}</span></dd>
+                <dt>Intended outer contour</dt><dd>{outerCutGeometry.intendedBoundaryProfileId} / {outerCutGeometry.intendedBoundaryProfileVersion}; {outerCutGeometry.intendedContourPointCount} points<br /><span className="break-all font-mono">{fullHash(outerCutGeometry.intendedContourSha256)}</span></dd>
+                <dt>Observed-cut detector</dt><dd>{outerCutGeometry.observedContourDetectorId} / {outerCutGeometry.observedContourDetectorVersion}</dd>
+                <dt>Boundary confidence / U95</dt><dd>{Math.round(outerCutGeometry.boundaryConfidence * 100)}% / {outerCutGeometry.boundaryU95Mm} mm</dd>
+                <dt>Raw all-on cut source</dt><dd>{outerCutGeometry.rawAllOnAssetId}<br /><span className="break-all font-mono">{fullHash(outerCutGeometry.rawAllOnAssetSha256)}</span></dd>
+                <dt>Normalized all-on source</dt><dd>{outerCutGeometry.normalizedAllOnAssetId}<br /><span className="break-all font-mono">{fullHash(outerCutGeometry.normalizedAllOnAssetSha256)}</span></dd>
+                <dt>Raw scalar / transform</dt><dd><span className="break-all font-mono">{fullHash(outerCutGeometry.rawAllOnScalarPlaneSha256)}</span><br /><span className="break-all font-mono">{fullHash(outerCutGeometry.rawToNormalizedTransformSha256)}</span></dd>
+                <dt>Observed artifact</dt><dd className="break-all font-mono">{fullHash(outerCutGeometry.observedArtifact.artifactSha256)}</dd>
+                <dt>Geometry calibration</dt><dd>{outerCutGeometry.observedArtifact.calibrationProfileId} / {outerCutGeometry.observedArtifact.calibrationVersion}<br /><span className="break-all font-mono">{fullHash(outerCutGeometry.observedArtifact.calibrationSha256)}</span></dd>
+                <dt>Geometry scale</dt><dd>{outerCutGeometry.observedArtifact.pixelsPerMmX} px/mm × {outerCutGeometry.observedArtifact.pixelsPerMmY} px/mm</dd>
+                </> : null}
                 {automatedRegistration?.designReferenceId ? <><dt>Approved design reference</dt><dd>{automatedRegistration.designReferenceId}{side.registrationEvidence ? ` v${side.registrationEvidence.designReferenceVersion}` : ""}<br /><span className="break-all font-mono">{automatedRegistration.designReferenceSha256 ? fullHash(automatedRegistration.designReferenceSha256) : "hash unavailable"}</span></dd></> : null}
                 {designReference ? <>
                   <dt>Reference identity</dt><dd>{designReference.tenantId} / {designReference.setId} / {designReference.programId} / #{designReference.cardNumber} / {designReference.variantId ?? "base variant"} / {designReference.parallelId ?? "base parallel"}</dd>

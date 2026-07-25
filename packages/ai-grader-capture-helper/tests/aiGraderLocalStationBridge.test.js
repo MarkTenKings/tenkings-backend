@@ -16,6 +16,10 @@ const {
 
 const sourceRoot = path.resolve(__dirname, "../src");
 const bridgeSource = fs.readFileSync(path.join(sourceRoot, "drivers/aiGraderLocalStationBridge.ts"), "utf8");
+const pylonBridgeSource = fs.readFileSync(
+  path.resolve(__dirname, "../scripts/basler-pylon-bridge.ps1"),
+  "utf8",
+);
 const RAW_ROLES = ["dark_control", "all_on", "accepted_profile", ...Array.from({ length: 8 }, (_, index) => `channel_${index + 1}`)];
 const BRACKET_EXPOSURES_US = [15000, 30000, 37500];
 const BRACKET_RAW_ROLES = [
@@ -1780,10 +1784,151 @@ test("retained bridge invariants and bounded Leimac conversion remain explicit",
 test("preview multipart assembler remains bounded", () => {
   const assembler = new AiGraderPreviewJpegFrameAssembler();
   const frame = Buffer.from([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9]);
-  const frames = assembler.push(Buffer.concat([Buffer.from("--frame\r\nContent-Type: image/jpeg\r\nContent-Length: 7\r\n\r\n"), frame, Buffer.from("\r\n")]));
-  assert.deepEqual(frames, [frame]);
+  const header = [
+    "--frame",
+    "Content-Type: image/jpeg",
+    "Content-Length: 7",
+    "X-AI-Grader-Captured-At: 2026-07-25T03:50:00.000Z",
+    "X-AI-Grader-Frame-Index: 7",
+    "X-AI-Grader-Camera-Exposure-Us: 45000",
+    "X-AI-Grader-Camera-Gain: 0",
+    "X-AI-Grader-Camera-Pixel-Format: Mono8",
+    "X-AI-Grader-Camera-Trigger-Mode: Off",
+    "X-AI-Grader-Camera-Exposure-Auto: Off",
+    "X-AI-Grader-Camera-Gain-Auto: Off",
+    "X-AI-Grader-Camera-Acquisition-Mode: Continuous",
+    "",
+    "",
+  ].join("\r\n");
+  const frames = assembler.pushWithMetadata(
+    Buffer.concat([Buffer.from(header), frame, Buffer.from("\r\n")]),
+  );
+  assert.equal(frames.length, 1);
+  assert.deepEqual(frames[0].bytes, frame);
+  assert.equal(frames[0].frameIndex, 7);
+  assert.equal(frames[0].capturedAt, "2026-07-25T03:50:00.000Z");
+  assert.deepEqual(frames[0].cameraState, {
+    exposureUs: 45000,
+    gain: 0,
+    pixelFormat: "Mono8",
+    triggerMode: "Off",
+    exposureAuto: "Off",
+    gainAuto: "Off",
+    acquisitionMode: "Continuous",
+  });
   assembler.push(Buffer.alloc(2_000_000));
   assert.ok(assembler.bufferedByteLength < 2_000_000);
+});
+
+test("operator preview bridge restores and reports every canonical transient camera setting", () => {
+  for (const sourceContract of [
+    /PreviewPixelFormat = "Mono8"/,
+    /Set-EnumParameterByName \$camera @\([^\r\n]+PixelFormat[^\r\n]+\) \$PreviewPixelFormat/,
+    /Set-FloatParameterByName \$camera @\([^\r\n]+ExposureTime[^\r\n]+\) \(\[double\]\$ExposureUs\)/,
+    /Set-FloatParameterByName \$camera @\([^\r\n]+Gain[^\r\n]+\) \(\[double\]\$Gain\)/,
+    /Set-EnumParameterByName \$camera @\([^\r\n]+TriggerMode[^\r\n]+\) "Off"/,
+    /Set-EnumParameterByName \$camera @\([^\r\n]+ExposureAuto[^\r\n]+\) "Off"/,
+    /Set-EnumParameterByName \$camera @\([^\r\n]+GainAuto[^\r\n]+\) "Off"/,
+    /Set-EnumParameterByName \$camera @\([^\r\n]+AcquisitionMode[^\r\n]+\) "Continuous"/,
+    /X-AI-Grader-Camera-Exposure-Us/,
+    /X-AI-Grader-Camera-Acquisition-Mode/,
+    /PYLON_PREVIEW_CAMERA_STATE_MISMATCH/,
+  ]) assert.match(pylonBridgeSource, sourceContract);
+});
+
+test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, camera state, light mode, and detector result", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-consecutive-preview-restore-"));
+  const lightingWrites = [];
+  let syntheticReady;
+  try {
+    const { service } = configFor(outputDir, {
+      writeLightingFrames: async (frames) => {
+        lightingWrites.push(frames.map((frame) => frame.name));
+        return frames.map(() => ({ responseKind: "mock", ok: true }));
+      },
+      detectPreviewCardGeometry: async (input) => ({
+        ...syntheticReady,
+        side: input.side,
+        sourceImageId: input.sourceImageId,
+        sourceFrameId: input.sourceFrameId,
+        timestamp: input.timestamp,
+      }),
+    });
+    service.enqueueRapidFinalization = () => {};
+    installSimulatedPublicCapture(service);
+
+    await startHistoricalLegacyFixtureSession(service, { reportId: "preview-restore-card-1" });
+    await service.action("capture-front", bindReadyPreview(service, "front", "restore-card-1"));
+    const card1BackEpoch = service.manifest.previewStatus.sideEpoch;
+    await service.action("capture-back", bindReadyPreview(service, "back", "restore-card-1"));
+    assert.equal(service.status().currentStep, "start_new_card");
+
+    await startHistoricalLegacyFixtureSession(service, { reportId: "preview-restore-card-2" });
+    await service.action("capture-front", bindReadyPreview(service, "front", "restore-card-2"));
+    const manifest = service.manifest;
+    const card2BackEpoch = manifest.previewStatus.sideEpoch;
+    assert.notEqual(card2BackEpoch, card1BackEpoch);
+    assert.equal(manifest.previewStatus.activeSide, "back");
+    assert.equal(manifest.liveLighting.physicalState.state, "positioning_light_verified");
+    assert.equal(manifest.liveLighting.applied.controllerMode, "asynchronous_continuous");
+    assert.ok(lightingWrites.some((names) => names.at(-1) === "asynchronousOutput"));
+
+    const request = bindReadyPreview(service, "back", "synthetic-ready-source");
+    syntheticReady = structuredClone(manifest.previewStatus.cardGeometry.back);
+    delete manifest.previewStatus.cardGeometry.back;
+    manifest.previewStatus.cardGeometry.analysis.framesAnalyzed = 0;
+    manifest.previewStatus.cardGeometry.analysis.detectorInvocationState = "not_run";
+    manifest.previewStatus.cardGeometry.analysis.lastOutcome = undefined;
+    const binding = {
+      sessionId: manifest.sessionId,
+      side: "back",
+      sideEpoch: card2BackEpoch,
+    };
+    const observedCameraState = {
+      exposureUs: manifest.acceptedProfile.exposureUs,
+      gain: manifest.acceptedProfile.gain,
+      pixelFormat: "Mono8",
+      triggerMode: "Off",
+      exposureAuto: "Off",
+      gainAuto: "Off",
+      acquisitionMode: "Continuous",
+    };
+    assert.equal(
+      service.acceptPreviewCameraState(
+        { ...observedCameraState, exposureUs: 37500 },
+        binding,
+        request.captureTriggerAt,
+      ),
+      false,
+    );
+    assert.equal(manifest.previewStatus.cameraState.verificationState, "failed");
+    assert.equal(
+      service.acceptPreviewCameraState(observedCameraState, binding, request.captureTriggerAt),
+      true,
+    );
+    const frameId = "card-2-back-detectable-frame";
+    service.notePreviewFrame(1, binding, frameId, request.captureTriggerAt);
+    service.queuePreviewGeometryAnalysis(
+      Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+      1,
+      request.captureTriggerAt,
+      "preview_capture_header",
+      frameId,
+      binding,
+    );
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (manifest.previewStatus.cardGeometry.analysis.detectorInvocationState === "completed") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(manifest.previewStatus.cameraState.verificationState, "verified");
+    assert.equal(manifest.previewStatus.cameraState.sideEpoch, card2BackEpoch);
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.detectorInvocationState, "completed");
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.framesAnalyzed, 1);
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.lastOutcome, "ready");
+    assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
 });
 
 test('Start New Card rejects an active caller-supplied report identity before changing the exact active session', async () => {

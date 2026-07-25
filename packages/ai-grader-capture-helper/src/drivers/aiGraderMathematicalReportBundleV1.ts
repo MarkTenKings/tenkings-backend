@@ -169,8 +169,8 @@ export interface BuildAiGraderMathematicalReportBundleV1Input {
   edges: FixedRigConditionElementResultV1;
   surface: { front: FixedRigSurfaceV1Result; back: FixedRigSurfaceV1Result };
   outerCutGeometryEvidence: {
-    front: AiGraderReportBundleV03["centeringEvidence"]["front"]["outerCutGeometryEvidence"];
-    back: AiGraderReportBundleV03["centeringEvidence"]["back"]["outerCutGeometryEvidence"];
+    front?: NonNullable<AiGraderReportBundleV03["centeringEvidence"]["front"]["outerCutGeometryEvidence"]>;
+    back?: NonNullable<AiGraderReportBundleV03["centeringEvidence"]["back"]["outerCutGeometryEvidence"]>;
   };
   grade: FixedRigMathematicalGradeV1Result;
   publication: {
@@ -698,6 +698,7 @@ async function addCenteringAssetsAndEvidence(
       evidenceRole: "centering_overlay",
       bytes: measurementOverlayBytes,
     });
+    const outerCutGeometryEvidence = geometryEvidence[side.side];
     return {
       side: side.side,
       profile: side.profile,
@@ -708,7 +709,9 @@ async function addCenteringAssetsAndEvidence(
       printedDesignContourAssetId,
       measurementOverlayAssetId,
       registration: side.registration,
-      outerCutGeometryEvidence: { ...geometryEvidence[side.side] },
+      ...(outerCutGeometryEvidence
+        ? { outerCutGeometryEvidence: structuredClone(outerCutGeometryEvidence) }
+        : {}),
       ...(side.registrationBinding
         ? {
             registrationEvidence: {
@@ -731,8 +734,12 @@ async function addCenteringAssetsAndEvidence(
         printedDesignContourAssetId,
         measurementOverlayAssetId,
         ...(correspondenceLedgerAssetId ? [correspondenceLedgerAssetId] : []),
-        geometryEvidence[side.side].rawAllOnAssetId,
-        geometryEvidence[side.side].normalizedAllOnAssetId,
+        ...(outerCutGeometryEvidence
+          ? [
+              outerCutGeometryEvidence.rawAllOnAssetId,
+              outerCutGeometryEvidence.normalizedAllOnAssetId,
+            ]
+          : []),
         ...side.evidence.map((reference) => reference.assetId),
       ]),
     };
@@ -1187,10 +1194,16 @@ function conditionObservationEvidence(
   registry: PublicAssetRegistryV1,
 ): AiGraderReportBundleV03["conditionObservationEvidence"] {
   const expectedCount =
-    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount +
-    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount;
+    (input.grade.elements.corners.resolved
+      ? 0
+      : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount) +
+    (input.grade.elements.edges.resolved
+      ? 0
+      : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount);
   if (input.conditionObservationPresentations.length !== expectedCount) {
-    throw new Error("Every one of the eight corner and eight edge observations requires exact report evidence.");
+    throw new Error(
+      "Every unresolved corner and edge observation requires exact report evidence, while resolved elements must not fabricate observations.",
+    );
   }
   const seen = new Set<string>();
   const observations = input.conditionObservationPresentations.map((observation) => {
@@ -1392,6 +1405,13 @@ function buildPokemonStandardCornerAuthorityV1(
   input: BuildAiGraderMathematicalReportBundleV1Input & { grade: FinalMathematicalGradeV1 },
 ): AiGraderReportBundleV03["pokemonStandardCornerAuthority"] | undefined {
   if (!input.pokemonStandardCornerAuthority) return undefined;
+  if (
+    input.corners.status !== "computed" ||
+    !input.outerCutGeometryEvidence.front ||
+    !input.outerCutGeometryEvidence.back
+  ) {
+    return undefined;
+  }
   const verification = input.pokemonStandardCornerAuthorityVerification;
   const verifiedAuthority = verifyTrustedPokemonCardFormatAuthorityV1({
     authority: input.pokemonStandardCornerAuthority,
@@ -1409,7 +1429,7 @@ function buildPokemonStandardCornerAuthorityV1(
     if (!contour) {
       throw new Error(`${observation.side} ${observation.location} has no analyzer-created contour result.`);
     }
-    const geometry = input.outerCutGeometryEvidence[observation.side];
+    const geometry = input.outerCutGeometryEvidence[observation.side]!;
     const observed = geometry.observedArtifact;
     return {
       side: observation.side,

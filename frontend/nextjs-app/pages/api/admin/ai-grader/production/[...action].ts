@@ -115,6 +115,16 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         openAiElapsedMs: diagnostics.openAiElapsedMs,
         totalProviderElapsedMs: diagnostics.totalProviderElapsedMs,
         actualOpenAiModel: diagnostics.actualOpenAiModel,
+        ...(diagnostics.openAiFailure
+          ? {
+              upstreamStatus: diagnostics.openAiFailure.status,
+              upstreamRequestId: diagnostics.openAiFailure.requestId,
+              upstreamErrorType: diagnostics.openAiFailure.errorType,
+              upstreamErrorCode: diagnostics.openAiFailure.errorCode,
+              upstreamErrorParam: diagnostics.openAiFailure.errorParam,
+              upstreamSanitizedMessage: diagnostics.openAiFailure.sanitizedMessage,
+            }
+          : {}),
       });
     },
     runComps: runAiGraderEbayCompsRuntime,

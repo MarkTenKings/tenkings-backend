@@ -80,10 +80,11 @@ export type AiGraderOcrPrefillResult = {
 
 export type AiGraderOcrProviderDiagnostics = {
   schemaVersion: "ai-grader-ocr-provider-diagnostics-v1";
-  googleElapsedMs: number;
-  openAiElapsedMs: number;
-  totalProviderElapsedMs: number;
-  actualOpenAiModel: string;
+  googleElapsedMs?: number;
+  openAiElapsedMs?: number;
+  totalProviderElapsedMs?: number;
+  actualOpenAiModel?: string;
+  openAiFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
 };
 
 export type AiGraderOcrPrefillRuntimeResult = AiGraderOcrPrefillResult & {
@@ -376,7 +377,17 @@ function openAiFailure(error: unknown) {
   }
   if (error.code === "timeout") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_TIMEOUT");
   if (error.code === "network") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_NETWORK");
-  if (error.code === "non_2xx") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_NON_2XX");
+  if (error.code === "non_2xx") {
+    return new AiGraderOcrFailure(
+      "AI_GRADER_OCR_OPENAI_NON_2XX",
+      error.upstreamDiagnostic
+        ? {
+            schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
+            openAiFailure: error.upstreamDiagnostic,
+          }
+        : undefined,
+    );
+  }
   if (error.code === "refusal") return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_REFUSAL");
   return new AiGraderOcrFailure("AI_GRADER_OCR_OPENAI_SCHEMA_FAILED");
 }

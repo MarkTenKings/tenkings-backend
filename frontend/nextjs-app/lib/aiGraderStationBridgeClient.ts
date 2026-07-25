@@ -343,6 +343,7 @@ export type AiGraderStationBridgeCallInput = {
   stationToken: string;
   action: AiGraderStationAction;
   body?: AiGraderStationBridgeActionRequestBody | Record<string, unknown>;
+  signal?: AbortSignal;
 };
 
 export type AiGraderStationBridgeActionRequestBody = {
@@ -1241,6 +1242,7 @@ export async function callAiGraderStationBridge(
       "x-ai-grader-station-token": input.stationToken,
     },
     body: method === "POST" ? JSON.stringify(input.body ?? {}) : undefined,
+    signal: input.signal,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.ok !== true) {

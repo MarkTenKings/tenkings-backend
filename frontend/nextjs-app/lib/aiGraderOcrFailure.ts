@@ -116,17 +116,33 @@ export function aiGraderOcrFailurePresentation(code: AiGraderOcrFailureCode) {
   return FAILURE_PRESENTATIONS[code];
 }
 
+export type AiGraderOcrUpstreamFailureDiagnostic = {
+  status: number;
+  requestId?: string;
+  errorType?: string;
+  errorCode?: string;
+  errorParam?: string;
+  sanitizedMessage?: string;
+};
+
+export type AiGraderOcrFailureDiagnostics = {
+  schemaVersion: "ai-grader-ocr-provider-diagnostics-v1";
+  openAiFailure: AiGraderOcrUpstreamFailureDiagnostic;
+};
+
 export class AiGraderOcrFailure extends Error {
   readonly code: AiGraderOcrFailureCode;
   readonly category: AiGraderOcrFailureCategory;
   readonly statusCode: number;
+  readonly internalProviderDiagnostics?: AiGraderOcrFailureDiagnostics;
 
-  constructor(code: AiGraderOcrFailureCode) {
+  constructor(code: AiGraderOcrFailureCode, internalProviderDiagnostics?: AiGraderOcrFailureDiagnostics) {
     const presentation = aiGraderOcrFailurePresentation(code);
     super(presentation.message);
     this.name = "AiGraderOcrFailure";
     this.code = code;
     this.category = presentation.category;
     this.statusCode = presentation.statusCode;
+    this.internalProviderDiagnostics = internalProviderDiagnostics;
   }
 }

@@ -20,6 +20,8 @@ param(
   [string]$IdleUserOutputValue = "false",
   [int]$ExposureUs = 0,
   [double]$Gain = -1,
+  [ValidateSet("Mono8")]
+  [string]$PreviewPixelFormat = "Mono8",
   [int]$RefreshIntervalMs = 500,
   [int]$JpegQuality = 72,
   [string]$LeimacHost,
@@ -1516,9 +1518,21 @@ function Write-MjpegChunk {
     [string]$Boundary,
     [byte[]]$JpegBytes,
     [int]$FrameIndex,
-    [datetime]$CapturedAt
+    [datetime]$CapturedAt,
+    [System.Collections.IDictionary]$CameraState
   )
-  $header = "--$Boundary`r`nContent-Type: image/jpeg`r`nContent-Length: $($JpegBytes.Length)`r`nX-AI-Grader-Frame-Index: $FrameIndex`r`nX-AI-Grader-Captured-At: $($CapturedAt.ToUniversalTime().ToString("o"))`r`n`r`n"
+  $cameraHeaders = ""
+  if ($null -ne $CameraState) {
+    $cameraHeaders =
+      "X-AI-Grader-Camera-Exposure-Us: $($CameraState.exposureUs)`r`n" +
+      "X-AI-Grader-Camera-Gain: $($CameraState.gain)`r`n" +
+      "X-AI-Grader-Camera-Pixel-Format: $($CameraState.pixelFormat)`r`n" +
+      "X-AI-Grader-Camera-Trigger-Mode: $($CameraState.triggerMode)`r`n" +
+      "X-AI-Grader-Camera-Exposure-Auto: $($CameraState.exposureAuto)`r`n" +
+      "X-AI-Grader-Camera-Gain-Auto: $($CameraState.gainAuto)`r`n" +
+      "X-AI-Grader-Camera-Acquisition-Mode: $($CameraState.acquisitionMode)`r`n"
+  }
+  $header = "--$Boundary`r`nContent-Type: image/jpeg`r`nContent-Length: $($JpegBytes.Length)`r`nX-AI-Grader-Frame-Index: $FrameIndex`r`nX-AI-Grader-Captured-At: $($CapturedAt.ToUniversalTime().ToString("o"))`r`n$cameraHeaders`r`n"
   $headerBytes = [System.Text.Encoding]::ASCII.GetBytes($header)
   $footerBytes = [System.Text.Encoding]::ASCII.GetBytes("`r`n")
   $Output.Write($headerBytes, 0, $headerBytes.Length)
@@ -1556,15 +1570,39 @@ function Start-OperatorPreviewMjpegStream {
 
   try {
     [void]$camera.Open()
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::PixelFormat, "PixelFormat") $PreviewPixelFormat
     if ($ExposureUs -gt 0) {
       [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs, "ExposureTime") ([double]$ExposureUs))
     }
+    if ($Gain -ge 0) {
+      [void](Set-FloatParameterByName $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw, "Gain") ([double]$Gain))
+    }
     try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerSelector, "TriggerSelector") "FrameStart" } catch {}
-    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off" } catch {}
-    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off" } catch {}
-    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off" } catch {}
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode") "Off"
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto") "Off"
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto") "Off"
     try { [Basler.Pylon.Configuration]::AcquireContinuous($camera, $null) } catch {}
-    try { Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::AcquisitionMode, "AcquisitionMode") "Continuous" } catch {}
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::AcquisitionMode, "AcquisitionMode") "Continuous"
+    $previewCameraState = [ordered]@{
+      exposureUs = [double](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureTime, [Basler.Pylon.PLCamera]::ExposureTimeAbs))
+      gain = [double](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::Gain, [Basler.Pylon.PLCamera]::GainAbs, [Basler.Pylon.PLCamera]::GainRaw))
+      pixelFormat = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::PixelFormat))
+      triggerMode = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::TriggerMode, "TriggerMode"))
+      exposureAuto = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::ExposureAuto, "ExposureAuto"))
+      gainAuto = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::GainAuto, "GainAuto"))
+      acquisitionMode = [string](Get-ReadableParameterValue $camera @([Basler.Pylon.PLCamera]::AcquisitionMode, "AcquisitionMode"))
+    }
+    if (
+      $previewCameraState.exposureUs -ne [double]$ExposureUs -or
+      $previewCameraState.gain -ne [double]$Gain -or
+      $previewCameraState.pixelFormat -cne $PreviewPixelFormat -or
+      $previewCameraState.triggerMode -cne "Off" -or
+      $previewCameraState.exposureAuto -cne "Off" -or
+      $previewCameraState.gainAuto -cne "Off" -or
+      $previewCameraState.acquisitionMode -cne "Continuous"
+    ) {
+      throw "PYLON_PREVIEW_CAMERA_STATE_MISMATCH: Browser preview camera readback did not exactly match the canonical transient state."
+    }
     try { $camera.Parameters[[Basler.Pylon.PLCameraInstance]::OutputQueueSize].SetValue(1) } catch {}
     [void]$camera.StreamGrabber.Start([Basler.Pylon.GrabStrategy]::LatestImages, [Basler.Pylon.GrabLoop]::ProvidedByUser)
     $streamStarted = $true
@@ -1585,7 +1623,7 @@ function Start-OperatorPreviewMjpegStream {
         $bitmap.RotateFlip([System.Drawing.RotateFlipType]::Rotate90FlipNone)
         $bytes = Convert-BitmapToJpegBytes -Bitmap $bitmap -Quality $JpegQuality
         $frameIndex += 1
-        Write-MjpegChunk -Output $stdout -Boundary $boundary -JpegBytes $bytes -FrameIndex $frameIndex -CapturedAt (Get-Date)
+        Write-MjpegChunk -Output $stdout -Boundary $boundary -JpegBytes $bytes -FrameIndex $frameIndex -CapturedAt (Get-Date) -CameraState $previewCameraState
       } finally {
         if ($null -ne $bitmap) { try { $bitmap.Dispose() } catch {} }
         if ($null -ne $grabResult) { try { $grabResult.Dispose() } catch {} }
