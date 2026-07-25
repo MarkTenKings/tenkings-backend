@@ -28,6 +28,10 @@ export type FixedRigProcessingWorkerSourceRole =
   | "accepted_profile"
   | `channel_${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
 
+export type FixedRigProcessingWorkerCaptureRole =
+  | FixedRigProcessingWorkerSourceRole
+  | `bracket_37500_channel_${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8}`;
+
 export interface FixedRigProcessingWorkerIdentity {
   protocolVersion: typeof FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION;
   requestId: string;
@@ -39,6 +43,7 @@ export interface FixedRigProcessingWorkerIdentity {
 
 export interface FixedRigProcessingWorkerSourceRef {
   role: FixedRigProcessingWorkerSourceRole;
+  captureRole: FixedRigProcessingWorkerCaptureRole;
   label: string;
   channel: "all" | number[] | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
   relativePath: string;
@@ -162,9 +167,12 @@ function toProtocolRelative(parentRealPath: string, childRealPath: string): stri
   return path.relative(parentRealPath, childRealPath).split(path.sep).join("/");
 }
 
-function roleLabel(side: FixedRigCardSide, role: FixedRigProcessingWorkerSourceRole): string {
+function roleLabel(side: FixedRigCardSide, role: FixedRigProcessingWorkerCaptureRole): string {
   if (role === "all_on") return `${side}-all-on`;
   if (role === "accepted_profile") return `${side}-accepted-lighting-profile`;
+  if (role.startsWith("bracket_37500_channel_")) {
+    return `${side}-bracket-37500-channel-${Number(role.slice("bracket_37500_channel_".length))}`;
+  }
   return `${side}-channel-${Number(role.slice("channel_".length))}`;
 }
 
@@ -189,9 +197,36 @@ function expectedRoles(): FixedRigProcessingWorkerSourceRole[] {
   ];
 }
 
+function legacyCaptureRoles(): FixedRigProcessingWorkerCaptureRole[] {
+  return expectedRoles();
+}
+
+function bracketCaptureRoles(): FixedRigProcessingWorkerCaptureRole[] {
+  return [
+    "all_on",
+    "accepted_profile",
+    "bracket_37500_channel_1",
+    "bracket_37500_channel_2",
+    "bracket_37500_channel_3",
+    "bracket_37500_channel_4",
+    "bracket_37500_channel_5",
+    "bracket_37500_channel_6",
+    "bracket_37500_channel_7",
+    "bracket_37500_channel_8",
+  ];
+}
+
+function exactCaptureRoleContract(
+  roles: readonly string[],
+): FixedRigProcessingWorkerCaptureRole[] | undefined {
+  return [legacyCaptureRoles(), bracketCaptureRoles()].find((contract) =>
+    roles.length === contract.length && roles.every((role, index) => role === contract[index]));
+}
+
 function sourceSetSha256(sources: readonly FixedRigProcessingWorkerSourceRef[]): string {
   const canonical = sources.map((source) => ({
     role: source.role,
+    captureRole: source.captureRole,
     label: source.label,
     channel: source.channel,
     relativePath: source.relativePath,
@@ -237,6 +272,44 @@ function roleCaptures(captureBatch: FixedRigWarmSideCaptureBatch): BaslerFixedRi
   ];
 }
 
+function assertSelectedBracketRolesMatchNativeCell(captureBatch: FixedRigWarmSideCaptureBatch): void {
+  const bracket = captureBatch.batch.captures.photometricBracket;
+  if (!bracket) return;
+  const selectedCell = bracket.cells.find((cell) => cell.exposureUs === 37500);
+  const selectedRoles = captureBatch.batch.captures.channels;
+  if (
+    bracket.version !== "fixed_rig_exposure_bracket_capture_v1"
+    || bracket.exposuresUs.length !== 3
+    || bracket.exposuresUs.some((exposureUs, index) => exposureUs !== [15000, 30000, 37500][index])
+    || bracket.cells.length !== 3
+    || !selectedCell
+    || selectedCell.channels.length !== 8
+    || selectedRoles.length !== 8
+  ) {
+    throw new FixedRigProcessingWorkerProtocolError(
+      "source_identity_failed",
+      "Captured bracket geometry sources do not match the exact native 37.5 ms cell.",
+    );
+  }
+  selectedRoles.forEach((selected, index) => {
+    const native = selectedCell.channels[index];
+    if (
+      !native
+      || selected.role !== native.role
+      || selected.label !== native.label
+      || selected.channel !== native.channel
+      || selected.capture.outputFilePath !== native.capture.outputFilePath
+      || selected.capture.sha256 !== native.capture.sha256
+      || selected.capture.byteSize !== native.capture.byteSize
+    ) {
+      throw new FixedRigProcessingWorkerProtocolError(
+        "source_identity_failed",
+        "Captured bracket geometry source is not its exact native 37.5 ms channel.",
+      );
+    }
+  });
+}
+
 export async function createFixedRigProcessingWorkerRequest(input: {
   allowedOutputRoot: string;
   requestId: string;
@@ -260,19 +333,27 @@ export async function createFixedRigProcessingWorkerRequest(input: {
       "Captured package identity is not an immutable side package under the configured output root.",
     );
   }
+  assertSelectedBracketRolesMatchNativeCell(input.captureBatch);
   const captures = roleCaptures(input.captureBatch);
   const roles = expectedRoles();
-  if (captures.length !== roles.length || captures.some((capture, index) => capture.role !== roles[index])) {
+  const captureRoles = input.captureBatch.batch.captures.photometricBracket
+    ? bracketCaptureRoles()
+    : legacyCaptureRoles();
+  if (
+    captures.length !== roles.length
+    || captures.some((capture, index) => capture.role !== captureRoles[index])
+  ) {
     throw new FixedRigProcessingWorkerProtocolError("source_identity_failed", "Captured authority roles are missing, duplicated, or out of order.");
   }
   const seenFiles = new Set<string>();
   const sources: FixedRigProcessingWorkerSourceRef[] = [];
   for (const [index, roleCapture] of captures.entries()) {
     const role = roles[index]!;
+    const captureRole = captureRoles[index]!;
     const capture = roleCapture.capture;
     const fileReal = await realpath(capture.outputFilePath);
     const relativePath = toProtocolRelative(sideReal, fileReal);
-    const label = roleLabel(input.captureBatch.side, role);
+    const label = roleLabel(input.captureBatch.side, captureRole);
     const channel = role === "all_on"
       ? "all"
       : role === "accepted_profile"
@@ -300,6 +381,7 @@ export async function createFixedRigProcessingWorkerRequest(input: {
     const sourceFrameId = `${input.captureBatch.side}-${role}-${capture.sha256.slice(0, 16)}`;
     sources.push({
       role,
+      captureRole,
       label,
       channel,
       relativePath,
@@ -361,6 +443,13 @@ export function validateFixedRigProcessingWorkerRequest(value: unknown): asserts
     throw new FixedRigProcessingWorkerProtocolError("invalid_request", "Worker request must contain the exact authority source set.");
   }
   const roles = expectedRoles();
+  if (!exactCaptureRoleContract(request.sources.map((source) =>
+    source && typeof source === "object" ? source.captureRole : ""))) {
+    throw new FixedRigProcessingWorkerProtocolError(
+      "source_identity_failed",
+      "Worker native capture roles are missing, duplicated, or out of order.",
+    );
+  }
   const seenPaths = new Set<string>();
   request.sources.forEach((source, index) => {
     const role = roles[index]!;
@@ -368,10 +457,10 @@ export function validateFixedRigProcessingWorkerRequest(value: unknown): asserts
       throw new FixedRigProcessingWorkerProtocolError("source_identity_failed", "Worker authority source must be an object.");
     }
     assertExactKeys(source, [
-      "role", "label", "channel", "relativePath", "sha256", "byteSize", "imageWidth", "imageHeight",
+      "role", "captureRole", "label", "channel", "relativePath", "sha256", "byteSize", "imageWidth", "imageHeight",
       "mimeType", "timestamp", "sourceImageId", "sourceFrameId",
     ], `Worker ${role} source`);
-    if (source.role !== role || source.label !== roleLabel(request.identity.side, role)) {
+    if (source.role !== role || source.label !== roleLabel(request.identity.side, source.captureRole)) {
       throw new FixedRigProcessingWorkerProtocolError("source_identity_failed", "Worker authority source order or label is invalid.");
     }
     assertRelativePath(source.relativePath, `${role}.relativePath`);
@@ -472,7 +561,7 @@ async function resolveRequestSources(
   const roleCapture = (role: FixedRigProcessingWorkerSourceRole): BaslerFixedRigSideBatchRoleCapture => {
     const entry = resolved.find((candidate) => candidate.source.role === role)!;
     return {
-      role,
+      role: entry.source.captureRole,
       label: entry.source.label,
       channel: entry.source.channel,
       capture: minimalCapture(entry.filePath, entry.source),
@@ -529,7 +618,10 @@ export async function validateFixedRigProcessingWorkerAuthorityInput(
   }
   const captures = [authorityInput.allOn, authorityInput.acceptedProfile, ...authorityInput.channels];
   const roles = expectedRoles();
-  if (captures.length !== roles.length || captures.some((capture, index) => capture.role !== roles[index])) {
+  if (
+    captures.length !== roles.length
+    || captures.some((capture, index) => capture.role !== request.sources[index]?.captureRole)
+  ) {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Main processing authority roles were missing, duplicated, or reordered.");
   }
   for (const [index, roleCapture] of captures.entries()) {
@@ -540,6 +632,7 @@ export async function validateFixedRigProcessingWorkerAuthorityInput(
     if (
       !isContained(sideReal, expectedReal) || !isContained(sideReal, actualReal) ||
       path.relative(expectedReal, actualReal) !== "" ||
+      roleCapture.role !== source.captureRole ||
       roleCapture.label !== source.label ||
       JSON.stringify(roleCapture.channel) !== JSON.stringify(source.channel) ||
       capture.sha256 !== source.sha256 || capture.byteSize !== source.byteSize ||

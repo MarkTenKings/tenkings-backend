@@ -43,6 +43,8 @@ function setRect(target, left, top, width, height, value) {
 }
 
 function photometric(side, options = {}) {
+  const width = options.width ?? WIDTH;
+  const height = options.height ?? HEIGHT;
   const invalid = new Set(options.invalid ?? []);
   const glare = new Set(options.glare ?? []);
   const residual = options.directionalResidual ?? (() => 0.12);
@@ -52,29 +54,29 @@ function photometric(side, options = {}) {
     sourceSha256: SHA_A,
     flatFieldSourceEvidenceId: `flat-${index + 1}`,
     flatFieldSourceSha256: SHA_A,
-    correctedResponse: new Float32Array(WIDTH * HEIGHT).fill(0.5),
-    directionalResidual: plane(WIDTH, HEIGHT, (x, y, pixelIndex) =>
+    correctedResponse: new Float32Array(width * height).fill(0.5),
+    directionalResidual: plane(width, height, (x, y, pixelIndex) =>
       index < 4 ? residual(x, y, pixelIndex) : 0,
     ).data,
-    validDirectionalObservationMask: plane(WIDTH, HEIGHT, (_x, _y, pixelIndex) =>
+    validDirectionalObservationMask: plane(width, height, (_x, _y, pixelIndex) =>
       invalid.has(pixelIndex) ? 0 : 1,
     ).data,
-    saturationMask: new Uint8Array(WIDTH * HEIGHT),
-    underexposureMask: new Uint8Array(WIDTH * HEIGHT),
-    lowConfidenceMask: new Uint8Array(WIDTH * HEIGHT),
+    saturationMask: new Uint8Array(width * height),
+    underexposureMask: new Uint8Array(width * height),
+    lowConfidenceMask: new Uint8Array(width * height),
   }));
-  const invalidMask = plane(WIDTH, HEIGHT, (_x, _y, index) => invalid.has(index) ? 1 : 0).data;
-  const glareMask = plane(WIDTH, HEIGHT, (_x, _y, index) => glare.has(index) ? 1 : 0).data;
+  const invalidMask = plane(width, height, (_x, _y, index) => invalid.has(index) ? 1 : 0).data;
+  const glareMask = plane(width, height, (_x, _y, index) => glare.has(index) ? 1 : 0).data;
   const admissionExcludedCommonModeMask = options.admissionExcluded
-    ? plane(WIDTH, HEIGHT, (_x, _y, index) =>
+    ? plane(width, height, (_x, _y, index) =>
         options.admissionExcluded.includes(index) ? 1 : 0).data
     : undefined;
   return {
     version: "fixed_rig_photometric_evidence_v1",
     status: "computed",
     coordinateFrame: "normalized_card_portrait_pixels",
-    width: WIDTH,
-    height: HEIGHT,
+    width,
+    height,
     channelCount: 8,
     calibration: {
       profileId: "condition-calibration-v1",
@@ -88,34 +90,34 @@ function photometric(side, options = {}) {
     thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
     flatFieldCorrectionApplied: true,
     channels,
-    commonModeResponse: new Float32Array(WIDTH * HEIGHT).fill(0.5),
-    calibratedPatternScale: new Float32Array(WIDTH * HEIGHT),
-    calibratedPatternSimilarity: new Float32Array(WIDTH * HEIGHT),
-    usableDirectionalObservationCount: plane(WIDTH, HEIGHT, (_x, _y, index) =>
+    commonModeResponse: new Float32Array(width * height).fill(0.5),
+    calibratedPatternScale: new Float32Array(width * height),
+    calibratedPatternSimilarity: new Float32Array(width * height),
+    usableDirectionalObservationCount: plane(width, height, (_x, _y, index) =>
       invalid.has(index) ? 0 : 8,
     ).data,
-    clippingMask: new Uint8Array(WIDTH * HEIGHT),
+    clippingMask: new Uint8Array(width * height),
     commonModeSpecularMask: glareMask,
-    calibratedIlluminationPatternMask: new Uint8Array(WIDTH * HEIGHT),
+    calibratedIlluminationPatternMask: new Uint8Array(width * height),
     specularOrIlluminationMask: glareMask,
-    lowConfidenceMask: new Uint8Array(WIDTH * HEIGHT),
+    lowConfidenceMask: new Uint8Array(width * height),
     insufficientDirectionalObservationsMask: invalidMask,
     invalidIlluminationMask: invalidMask,
     ...(admissionExcludedCommonModeMask ? { admissionExcludedCommonModeMask } : {}),
     coverage: {
-      validPixelCount: WIDTH * HEIGHT - invalid.size,
-      totalPixelCount: WIDTH * HEIGHT,
-      validPixelFraction: (WIDTH * HEIGHT - invalid.size) / (WIDTH * HEIGHT),
+      validPixelCount: width * height - invalid.size,
+      totalPixelCount: width * height,
+      validPixelFraction: (width * height - invalid.size) / (width * height),
       clippedPixelFraction: 0,
-      commonModeSpecularPixelFraction: glare.size / (WIDTH * HEIGHT),
+      commonModeSpecularPixelFraction: glare.size / (width * height),
       calibratedPatternPixelFraction: 0,
-      invalidPixelFraction: invalid.size / (WIDTH * HEIGHT),
+      invalidPixelFraction: invalid.size / (width * height),
     },
     evidenceLimitations: [],
   };
 }
 
-function measurementCalibration() {
+function measurementCalibration(width = WIDTH, height = HEIGHT) {
   const profile = {
     schemaVersion: "ai-grader-mathematical-calibration-profile-v1",
     profileId: "condition-calibration-v1",
@@ -129,8 +131,8 @@ function measurementCalibration() {
     artifactId: "condition-calibration-artifact-v1",
     artifactSha256: SHA_A,
     finalizedAt: "2026-07-18T12:00:00.000Z",
-    normalizedWidthPx: WIDTH,
-    normalizedHeightPx: HEIGHT,
+    normalizedWidthPx: width,
+    normalizedHeightPx: height,
     mmPerPixelX: 1 / PIXELS_PER_MM,
     mmPerPixelY: 1 / PIXELS_PER_MM,
     scaleRelativeU95: 0.001,
@@ -179,28 +181,28 @@ function measurementCalibration() {
   };
 }
 
-function basePlanes() {
+function basePlanes(width = WIDTH, height = HEIGHT) {
   return {
-    normalizedLuminance: plane(WIDTH, HEIGHT, 0.5),
-    expectedOuterCardMask: plane(WIDTH, HEIGHT, 1),
-    materialPresenceConfidence: plane(WIDTH, HEIGHT, 1),
-    segmentationConfidence: plane(WIDTH, HEIGHT, 1),
-    boundaryConfidence: plane(WIDTH, HEIGHT, 1),
-    exposedFiberResponse: plane(WIDTH, HEIGHT, 0),
-    boundaryDeviationMm: plane(WIDTH, HEIGHT, 0),
-    deformationResponse: plane(WIDTH, HEIGHT, 0),
-    delaminationResponse: plane(WIDTH, HEIGHT, 0),
-    edgeRoughnessIndex: plane(WIDTH, HEIGHT, 0),
-    frayingResponse: plane(WIDTH, HEIGHT, 0),
-    scratchLineResponse: plane(WIDTH, HEIGHT, 0),
-    scuffTextureResponse: plane(WIDTH, HEIGHT, 0),
-    creaseLineResponse: plane(WIDTH, HEIGHT, 0),
-    chipDepthMm: plane(WIDTH, HEIGHT, 0),
-    reliefIndex: plane(WIDTH, HEIGHT, 0),
-    depthMm: plane(WIDTH, HEIGHT, 0),
-    registeredColorDeltaE: plane(WIDTH, HEIGHT, 0),
-    registeredPrintDeltaE: plane(WIDTH, HEIGHT, 0),
-    registeredResidueDeltaE: plane(WIDTH, HEIGHT, 0),
+    normalizedLuminance: plane(width, height, 0.5),
+    expectedOuterCardMask: plane(width, height, 1),
+    materialPresenceConfidence: plane(width, height, 1),
+    segmentationConfidence: plane(width, height, 1),
+    boundaryConfidence: plane(width, height, 1),
+    exposedFiberResponse: plane(width, height, 0),
+    boundaryDeviationMm: plane(width, height, 0),
+    deformationResponse: plane(width, height, 0),
+    delaminationResponse: plane(width, height, 0),
+    edgeRoughnessIndex: plane(width, height, 0),
+    frayingResponse: plane(width, height, 0),
+    scratchLineResponse: plane(width, height, 0),
+    scuffTextureResponse: plane(width, height, 0),
+    creaseLineResponse: plane(width, height, 0),
+    chipDepthMm: plane(width, height, 0),
+    reliefIndex: plane(width, height, 0),
+    depthMm: plane(width, height, 0),
+    registeredColorDeltaE: plane(width, height, 0),
+    registeredPrintDeltaE: plane(width, height, 0),
+    registeredResidueDeltaE: plane(width, height, 0),
   };
 }
 
@@ -499,4 +501,60 @@ test("printed-border condition can proceed without design-relative color while i
   const mismatch = buildFixedRigConditionSegmentationV1(mismatchInput);
   assert.equal(mismatch.status, "insufficient_evidence");
   assert.match(mismatch.reasons.join(" "), /identities do not match/i);
+});
+
+test("unavailable source color capability is neither a condition deduction nor clean evidence", () => {
+  const input = buildInput("front", {
+    unavailableModalities: ["design_relative_color", "metric_depth", "polarized_residue"],
+  });
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.equal(segmented.evidenceQualityLimitations.some((limitation) =>
+    limitation.code === "design_dependent_condition_evidence_unavailable" &&
+    limitation.requiresRecapture === false), true);
+  for (const category of ["stain", "print_defect", "foreign_material"]) {
+    const seed = segmented.surfaceCandidateSeeds.find((entry) => entry.category === category);
+    assert.ok(seed);
+    assert.equal(Array.from(seed.candidateMask.data).every((value) => value === 0), true);
+  }
+  assert.equal(segmented.invalidPixelsBecameDefects, false);
+  assert.equal(segmented.invalidPixelsProvedClean, false);
+});
+
+test("above-V8-limit scratch and crease components complete with unchanged segmentation policy", () => {
+  const width = 433;
+  const height = 937;
+  const planes = basePlanes(width, height);
+  planes.scratchLineResponse.data.fill(1);
+  planes.creaseLineResponse.data.fill(1);
+  planes.reliefIndex.data.fill(1);
+  const input = buildInput("front", {
+    photometricEvidence: photometric("front", { width, height }),
+    measurementCalibration: measurementCalibration(width, height),
+    planes,
+  });
+  input.designReference = {
+    ...input.designReference,
+    widthPx: width,
+    heightPx: height,
+  };
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  const scratch = segmented.surfaceCandidateSeeds.find(
+    (entry) => entry.category === "scratch",
+  );
+  const crease = segmented.surfaceCandidateSeeds.find(
+    (entry) => entry.category === "crease",
+  );
+  assert.ok(scratch);
+  assert.ok(crease);
+  assert.equal(scratch.candidateMask.data.length, 405_721);
+  assert.equal(crease.candidateMask.data.length, 405_721);
+  assert.equal(
+    crease.candidateMask.data.reduce(
+      (count, value) => count + Number(Boolean(value)),
+      0,
+    ),
+    405_721,
+  );
 });

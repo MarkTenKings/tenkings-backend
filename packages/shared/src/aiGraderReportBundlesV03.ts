@@ -160,16 +160,26 @@ const locationScoreSchema = z
 const elementScoreSchema = z.strictObject({
   score: mathematicalScoreV1Schema,
   startingScore: z.literal(10),
-  frontScore: mathematicalScoreV1Schema,
-  backScore: mathematicalScoreV1Schema,
+  frontScore: mathematicalScoreV1Schema.nullable(),
+  backScore: mathematicalScoreV1Schema.nullable(),
   aggregatePenalty: nonnegativeTwoDecimalSchema.max(
     MATHEMATICAL_GRADING_V1_MAXIMUM_SCORE_DEDUCTION,
-  ),
+  ).nullable(),
   locationScores: z.array(locationScoreSchema).max(32),
   findingIds: uniqueIdentifiers(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
   confidence: confidenceSchema,
   formula: safeTextSchema(1000),
   explanation: safeTextSchema(1000),
+  resolved: z.literal(true).optional(),
+}).superRefine((element, context) => {
+  if (!element.resolved &&
+      (element.frontScore === null || element.backScore === null || element.aggregatePenalty === null)) {
+    context.addIssue({
+      code: "custom",
+      path: ["resolved"],
+      message: "ordinary automated elements require complete side scores and aggregate penalty",
+    });
+  }
 });
 
 const finalGradeSchema = z.strictObject({
@@ -339,7 +349,9 @@ const centeringSideEvidenceSchema = z
       context.addIssue({ code: "custom", path: ["registration", "profile"], message: "must match the centering profile" });
     }
     if (side.profile === "registered_design_template_v1") {
-      if (!side.registrationEvidence) {
+      if (side.registration.transformType === "physical_margin_measurement") {
+        context.addIssue({ code: "custom", path: ["registration"], message: "registered design centering cannot use physical printed-border widths" });
+      } else if (!side.registrationEvidence) {
         context.addIssue({ code: "custom", path: ["registrationEvidence"], message: "registered design centering requires the exact correspondence-ledger and registration hashes" });
       } else if (
         side.registration.designReferenceId !== side.registrationEvidence.designReferenceId ||
@@ -556,6 +568,42 @@ const calibrationBundleAuthoritySchema = z.strictObject({
   }
 });
 
+const publicOperationalCalibrationAuthorizationSchema = z.strictObject({
+  schemaVersion: z.literal("ai-grader-calibration-operational-authorization-public-v1"),
+  status: z.literal("authorized"),
+  authorityId: safeTextSchema(256),
+  authoritySha256: sha256Schema,
+  authorityFileSha256: sha256Schema,
+  authorizedAt: z.string().datetime({ offset: true }),
+  subject: z.strictObject({
+    sessionId: safeTextSchema(256),
+    sessionStateSha256: sha256Schema,
+    sourceCaptureManifestSha256: sha256Schema,
+    sourceCapturePackageSha256: sha256Schema,
+    analysisSha256: sha256Schema,
+    analysisFileSha256: sha256Schema,
+    thresholdSetHash: z.literal(MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH),
+    physicalArtifactSha256: sha256Schema,
+    mathematicalAcceptanceFileSha256: sha256Schema,
+    mathematicalAcceptanceStatus: z.literal("rejected"),
+    mathematicalIsCalibrated: z.literal(false),
+    rigId: safeTextSchema(256),
+    profileId: safeTextSchema(256),
+    calibrationVersion: safeTextSchema(256),
+    finalizedAt: z.string().datetime({ offset: true }),
+    artifactId: safeTextSchema(256),
+  }),
+  issueCount: z.number().int().positive().max(10_000),
+  issueLedgerSha256: sha256Schema,
+});
+
+const publicOperationallyAuthorizedCalibrationProfileSchema =
+  mathematicalCalibrationProfileV1Schema.extend({
+    isCalibrated: z.literal(false),
+    status: z.literal("rejected"),
+    operationalAuthorization: publicOperationalCalibrationAuthorizationSchema,
+  });
+
 export const aiGraderReportBundleV03Schema = z
   .strictObject({
     schemaVersion: z.literal(AI_GRADER_REPORT_BUNDLE_V03_VERSION),
@@ -578,6 +626,7 @@ export const aiGraderReportBundleV03Schema = z
     calibrationProfile: z.union([
       mathematicalCalibrationProfileV1Schema,
       operationallyAcceptedMathematicalCalibrationProfileV1Schema,
+      publicOperationallyAuthorizedCalibrationProfileSchema,
     ]),
     calibrationActivationAuthority: aiGraderCalibrationActivationAuthorityV1Schema.optional(),
     calibrationBundleAuthority: calibrationBundleAuthoritySchema,
@@ -599,7 +648,17 @@ export const aiGraderReportBundleV03Schema = z
     limitations: z.array(safeTextSchema(500)).max(100).optional(),
   })
   .superRefine((bundle, context) => {
-    const calibration = validateMathematicalCalibrationForOperationalUseV1(bundle.calibrationProfile);
+    const publicOperationalAuthorization =
+      "operationalAuthorization" in bundle.calibrationProfile
+        ? bundle.calibrationProfile.operationalAuthorization
+        : undefined;
+    const calibration = publicOperationalAuthorization
+      ? {
+          valid: true as const,
+          isCalibrated: false,
+          isOperationallyAccepted: true,
+        }
+      : validateMathematicalCalibrationForOperationalUseV1(bundle.calibrationProfile);
     if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
       context.addIssue({
         code: "custom",
@@ -620,6 +679,28 @@ export const aiGraderReportBundleV03Schema = z
       });
     }
     if (calibration.isOperationallyAccepted) {
+      const ownerAuthorityMember = ownerAuthorityMembers[0];
+      if (publicOperationalAuthorization && (
+        !ownerAuthorityMember ||
+        ownerAuthorityMember.sha256 !== publicOperationalAuthorization.authorityFileSha256 ||
+        publicOperationalAuthorization.subject.physicalArtifactSha256 !==
+          bundle.calibrationProfile.artifactSha256 ||
+        publicOperationalAuthorization.subject.thresholdSetHash !==
+          bundle.calibrationProfile.thresholdSetHash ||
+        publicOperationalAuthorization.subject.rigId !== bundle.calibrationProfile.rigId ||
+        publicOperationalAuthorization.subject.profileId !== bundle.calibrationProfile.profileId ||
+        publicOperationalAuthorization.subject.calibrationVersion !==
+          bundle.calibrationProfile.calibrationVersion ||
+        publicOperationalAuthorization.subject.finalizedAt !==
+          bundle.calibrationProfile.finalizedAt ||
+        publicOperationalAuthorization.subject.artifactId !== bundle.calibrationProfile.artifactId
+      )) {
+        context.addIssue({
+          code: "custom",
+          path: ["calibrationProfile", "operationalAuthorization"],
+          message: "public operational authorization must bind the exact profile and bundle member",
+        });
+      }
       const activation = bundle.calibrationActivationAuthority;
       if (!activation) {
         context.addIssue({
@@ -1067,6 +1148,14 @@ export const aiGraderReportBundleV03Schema = z
         context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "registration", "profile"], message: "must match the selected centering profile" });
       }
       if (side.profile === "registered_design_template_v1") {
+        if (side.registration.transformType === "physical_margin_measurement") {
+          context.addIssue({
+            code: "custom",
+            path: ["centeringEvidence", sideName, "registration"],
+            message: "registered design centering cannot use physical printed-border widths",
+          });
+          return;
+        }
         const ledgerAsset = side.registrationEvidence
           ? assetsById.get(side.registrationEvidence.correspondenceLedgerAssetId.toLowerCase())
           : undefined;
@@ -1112,9 +1201,17 @@ export const aiGraderReportBundleV03Schema = z
             message: "registered-template centering requires the exact tenant/set/program/card/variant/parallel identity tuple",
           });
         }
+        const registrationDesignReferenceId =
+          "designReferenceId" in side.registration
+            ? side.registration.designReferenceId
+            : undefined;
+        const registrationDesignReferenceSha256 =
+          "designReferenceSha256" in side.registration
+            ? side.registration.designReferenceSha256
+            : undefined;
         const designReference = bundle.designReferences.find((reference) =>
-          reference.designReferenceId === side.registration.designReferenceId &&
-          reference.artifactSha256 === side.registration.designReferenceSha256,
+          reference.designReferenceId === registrationDesignReferenceId &&
+          reference.artifactSha256 === registrationDesignReferenceSha256,
         );
         if (!designReference) {
           context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "registration"], message: "must bind an exact approved design reference and hash" });
@@ -1159,6 +1256,17 @@ export const aiGraderReportBundleV03Schema = z
               });
             }
           }
+        }
+      } else if (side.registration.transformType === "physical_margin_measurement") {
+        if (!bundle.productionRelease.finalGrade.elements.centering.resolved ||
+            side.registration.profile !== "printed_border_v1" ||
+            side.registration.measurementUnit !== "mm" ||
+            side.registration.confidence !== 1) {
+          context.addIssue({
+            code: "custom",
+            path: ["centeringEvidence", sideName, "registration"],
+            message: "physical margin centering requires one resolved printed-border millimeter result",
+          });
         }
       } else if (side.registration.designReferenceId || side.registration.designReferenceSha256) {
         context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "registration"], message: "printed-border fitting must not claim a design template" });
@@ -1292,9 +1400,10 @@ export const aiGraderReportBundleV03Schema = z
         }
       }
     };
-    if (cornerLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount) {
+    if (!finalGrade.elements.corners.resolved &&
+        cornerLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount) {
       context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "corners", "locationScores"], message: "must contain all eight visible corner observations" });
-    } else {
+    } else if (!finalGrade.elements.corners.resolved) {
       validateLocationElement(
         "corners",
         cornerLocations,
@@ -1309,9 +1418,10 @@ export const aiGraderReportBundleV03Schema = z
       }
     }
     const edgeLocations = finalGrade.elements.edges.locationScores;
-    if (edgeLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount) {
+    if (!finalGrade.elements.edges.resolved &&
+        edgeLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount) {
       context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "edges", "locationScores"], message: "must contain all eight visible edge observations" });
-    } else {
+    } else if (!finalGrade.elements.edges.resolved) {
       validateLocationElement(
         "edges",
         edgeLocations,
@@ -1426,27 +1536,32 @@ export const aiGraderReportBundleV03Schema = z
           ));
       });
     };
-    validateObservationEvidence(
-      "corners",
-      bundle.conditionObservationEvidence.corners,
-      cornerLocations,
-      MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.locationsPerSide,
-    );
-    validateObservationEvidence(
-      "edges",
-      bundle.conditionObservationEvidence.edges,
-      edgeLocations,
-      MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.locationsPerSide,
-    );
+    if (!finalGrade.elements.corners.resolved) {
+      validateObservationEvidence(
+        "corners",
+        bundle.conditionObservationEvidence.corners,
+        cornerLocations,
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.locationsPerSide,
+      );
+    }
+    if (!finalGrade.elements.edges.resolved) {
+      validateObservationEvidence(
+        "edges",
+        bundle.conditionObservationEvidence.edges,
+        edgeLocations,
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.locationsPerSide,
+      );
+    }
     const surfaceDeduction = bundle.defectFindings
       .filter((finding) => finding.primaryElement === "surface")
       .reduce((sum, finding) => sum + finding.deduction, 0);
     const expectedSurface = roundMathematicalScoreV1(10 - surfaceDeduction);
-    if (finalGrade.elements.surface.score !== expectedSurface ||
+    if (!finalGrade.elements.surface.resolved &&
+        (finalGrade.elements.surface.score !== expectedSurface ||
         finalGrade.elements.surface.aggregatePenalty !== roundNonnegativeTwoDecimals(Math.min(
           MATHEMATICAL_GRADING_V1_MAXIMUM_SCORE_DEDUCTION,
           surfaceDeduction,
-        ))) {
+        )))) {
       context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "surface"], message: "must equal 10 minus unique surface deductions" });
     }
     for (const side of ["front", "back"] as const) {
@@ -1454,7 +1569,8 @@ export const aiGraderReportBundleV03Schema = z
         .filter((finding) => finding.primaryElement === "surface" && finding.side === side)
         .reduce((sum, finding) => sum + finding.deduction, 0);
       const expectedSideScore = roundMathematicalScoreV1(10 - sideDeduction);
-      if (finalGrade.elements.surface[side === "front" ? "frontScore" : "backScore"] !== expectedSideScore) {
+      if (!finalGrade.elements.surface.resolved &&
+          finalGrade.elements.surface[side === "front" ? "frontScore" : "backScore"] !== expectedSideScore) {
         context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "surface", `${side}Score`], message: "must equal 10 minus the side's unique physical deductions" });
       }
     }
@@ -1495,7 +1611,9 @@ export const aiGraderReportBundleV03Schema = z
     }
     const explainedFindingIds = new Set(finalGrade.whyNot10.flatMap((entry) => entry.findingIds.map((findingId) => findingId.toLowerCase())));
     bundle.defectFindings.forEach((finding, index) => {
-      if (finding.deduction > 0 && !explainedFindingIds.has(finding.findingId.toLowerCase())) {
+      if (finding.deduction > 0 &&
+          !finalGrade.elements[finding.primaryElement].resolved &&
+          !explainedFindingIds.has(finding.findingId.toLowerCase())) {
         context.addIssue({ code: "custom", path: ["defectFindings", index, "findingId"], message: "every physical deduction must appear in Why Not 10" });
       }
     });

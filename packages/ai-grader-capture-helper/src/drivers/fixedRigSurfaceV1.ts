@@ -21,6 +21,7 @@ import {
   type FixedRigSurfaceEvidenceThresholdsV1,
 } from "./fixedRigPhotometricEvidenceV1";
 import { deriveFixedRigMeasurementUncertaintyV1 } from "./fixedRigMeasurementUncertaintyV1";
+import { measureFixedRigPrincipalExtentsV1 } from "./fixedRigPrincipalExtentsV1";
 import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 type MathematicalEvidenceReferenceV1 = MathematicalMeasurementV1["evidence"][number];
@@ -527,36 +528,13 @@ function principalExtents(
   unitX: number,
   unitY: number,
 ): { length: number; width: number } {
-  if (!pixels.length) return { length: 0, width: 0 };
-  const points = pixels.map((pixel) => ({
-    x: (pixel % width) * unitX,
-    y: Math.floor(pixel / width) * unitY,
-  }));
-  const meanX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
-  const meanY = points.reduce((sum, point) => sum + point.y, 0) / points.length;
-  let xx = 0;
-  let xy = 0;
-  let yy = 0;
-  for (const point of points) {
-    const dx = point.x - meanX;
-    const dy = point.y - meanY;
-    xx += dx * dx;
-    xy += dx * dy;
-    yy += dy * dy;
-  }
-  const angle = 0.5 * Math.atan2(2 * xy, xx - yy);
-  const axis = { x: Math.cos(angle), y: Math.sin(angle) };
-  const perpendicular = { x: -axis.y, y: axis.x };
-  const along = points.map((point) => point.x * axis.x + point.y * axis.y);
-  const across = points.map((point) => point.x * perpendicular.x + point.y * perpendicular.y);
-  const pixelAlong = Math.hypot(unitX * axis.x, unitY * axis.y);
-  const pixelAcross = Math.hypot(unitX * perpendicular.x, unitY * perpendicular.y);
-  const extent = (values: number[], pixelFootprint: number) =>
-    Math.max(...values) - Math.min(...values) + pixelFootprint;
-  return {
-    length: round(Math.max(extent(along, pixelAlong), extent(across, pixelAcross))),
-    width: round(Math.min(extent(along, pixelAlong), extent(across, pixelAcross))),
-  };
+  const measured = measureFixedRigPrincipalExtentsV1(
+    pixels,
+    width,
+    unitX,
+    unitY,
+  );
+  return { length: round(measured.length), width: round(measured.width) };
 }
 
 function measureGeometry(
@@ -577,12 +555,18 @@ function measureGeometry(
       reliefIndex: 0,
     };
   }
-  const xs = validPixels.map((pixel) => pixel % width);
-  const ys = validPixels.map((pixel) => Math.floor(pixel / width));
-  const minimumX = Math.min(...xs);
-  const maximumX = Math.max(...xs);
-  const minimumY = Math.min(...ys);
-  const maximumY = Math.max(...ys);
+  let minimumX = Number.POSITIVE_INFINITY;
+  let maximumX = Number.NEGATIVE_INFINITY;
+  let minimumY = Number.POSITIVE_INFINITY;
+  let maximumY = Number.NEGATIVE_INFINITY;
+  for (const pixel of validPixels) {
+    const x = pixel % width;
+    const y = Math.floor(pixel / width);
+    minimumX = Math.min(minimumX, x);
+    maximumX = Math.max(maximumX, x);
+    minimumY = Math.min(minimumY, y);
+    maximumY = Math.max(maximumY, y);
+  }
   const pixelExtents = principalExtents(validPixels, width, 1, 1);
   const physicalExtents = principalExtents(
     validPixels,

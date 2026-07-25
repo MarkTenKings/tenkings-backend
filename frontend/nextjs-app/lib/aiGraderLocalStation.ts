@@ -48,6 +48,7 @@ export type AiGraderStationAction =
   | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
+  | "submit-operator-resolutions"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
   | "fail-queued-ocr";
@@ -208,6 +209,53 @@ export type AiGraderMathematicalFindingReviewV1 = {
   reviewedAt: string;
 };
 
+export type AiGraderOperatorResolutionElementV1 =
+  "centering" | "corners" | "edges" | "surface";
+
+export type AiGraderOperatorResolutionOriginalElementV1 = {
+  status: "computed" | "insufficient_evidence";
+  score: number | null;
+  explanation: string | null;
+  failureReasons: string[];
+  resultSha256: string;
+};
+
+export type AiGraderOperatorResolutionRequestV1 = {
+  schemaVersion: "operator_resolution_request_v1";
+  generatedAt: string;
+  requestSha256: string;
+  originalElements: Record<
+    AiGraderOperatorResolutionElementV1,
+    AiGraderOperatorResolutionOriginalElementV1
+  >;
+};
+
+export type AiGraderOperatorElementResolutionSubmissionV1 =
+  | {
+      element: "centering";
+      publicExplanation: string;
+      internalReason: string;
+      measurements: {
+        unit: "mm";
+        order: ["left", "right", "top", "bottom"];
+        front: [number, number, number, number];
+        back: [number, number, number, number];
+      };
+    }
+  | {
+      element: "corners" | "edges" | "surface";
+      score: number;
+      publicExplanation: string;
+      internalReason: string;
+    };
+
+export type AiGraderOperatorResolutionSubmissionV1 = {
+  schemaVersion: "operator_resolution_submission_v1";
+  requestSha256: string;
+  operatorConfirmed: true;
+  resolutions: AiGraderOperatorElementResolutionSubmissionV1[];
+};
+
 export type AiGraderMathematicalExecutionV1 =
   | {
       status: "processing";
@@ -215,6 +263,14 @@ export type AiGraderMathematicalExecutionV1 =
       attempt: number;
       v0FallbackUsed: false;
       reviewRequestSha256?: string;
+    }
+  | {
+      status: "operator_resolution_required";
+      completedAt: string;
+      attempt: number;
+      v0FallbackUsed: false;
+      request: AiGraderOperatorResolutionRequestV1;
+      unresolvedElements: AiGraderOperatorResolutionElementV1[];
     }
   | {
       status: "finding_review_required";
@@ -350,6 +406,7 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "operator_resolution_required"
   | "finding_review_required"
   | "insufficient_evidence"
   | "report_ready_needs_confirm"
@@ -1322,6 +1379,49 @@ function mathematicalBrowserInsufficientExecution(reason: string): AiGraderMathe
   };
 }
 
+function sanitizeOperatorResolutionRequest(
+  value: unknown,
+): AiGraderOperatorResolutionRequestV1 | undefined {
+  if (!stationRecord(value) ||
+      value.schemaVersion !== "operator_resolution_request_v1") return undefined;
+  const generatedAt = safeStationTimestamp(value.generatedAt);
+  const requestSha256 = exactMathematicalSha256(value.requestSha256);
+  if (!generatedAt || !requestSha256 || !stationRecord(value.originalElements)) return undefined;
+  const originalElements = {} as AiGraderOperatorResolutionRequestV1["originalElements"];
+  for (const element of ["centering", "corners", "edges", "surface"] as const) {
+    const original = value.originalElements[element];
+    if (!stationRecord(original) ||
+        (original.status !== "computed" && original.status !== "insufficient_evidence") ||
+        (original.status === "computed"
+          ? typeof original.score !== "number" ||
+            !Number.isFinite(original.score) ||
+            original.score < 1 ||
+            original.score > 10
+          : original.score !== null) ||
+        (original.explanation !== null && !safeStationText(original.explanation)) ||
+        !Array.isArray(original.failureReasons) ||
+        original.failureReasons.some((reason) => !safeStationText(reason)) ||
+        !exactMathematicalSha256(original.resultSha256)) {
+      return undefined;
+    }
+    originalElements[element] = {
+      status: original.status,
+      score: original.score as number | null,
+      explanation: original.explanation === null
+        ? null
+        : safeStationText(original.explanation)!,
+      failureReasons: original.failureReasons.map((reason) => safeStationText(reason)!),
+      resultSha256: original.resultSha256 as string,
+    };
+  }
+  return {
+    schemaVersion: "operator_resolution_request_v1",
+    generatedAt,
+    requestSha256,
+    originalElements,
+  };
+}
+
 function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExecutionV1 | undefined {
   if (!stationRecord(value)) return undefined;
   if (value.v0FallbackUsed !== false) {
@@ -1338,6 +1438,29 @@ function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExec
   }
   const completedAt = safeStationTimestamp(value.completedAt);
   if (!completedAt) return mathematicalBrowserInsufficientExecution("The bridge returned malformed Mathematical V1 completion metadata.");
+  if (value.status === "operator_resolution_required") {
+    const request = sanitizeOperatorResolutionRequest(value.request);
+    const unresolvedElements = Array.isArray(value.unresolvedElements)
+      ? value.unresolvedElements.filter(
+          (element): element is AiGraderOperatorResolutionElementV1 =>
+            element === "centering" || element === "corners" ||
+            element === "edges" || element === "surface",
+        )
+      : [];
+    if (!request || unresolvedElements.length !== new Set(unresolvedElements).size) {
+      return mathematicalBrowserInsufficientExecution(
+        "The bridge returned a malformed exact element-resolution request; no resolution is permitted.",
+      );
+    }
+    return {
+      status: "operator_resolution_required",
+      completedAt,
+      attempt,
+      v0FallbackUsed: false,
+      request,
+      unresolvedElements,
+    };
+  }
   if (value.status === "finding_review_required") {
     const reviewRequest = sanitizeMathematicalFindingReviewRequest(value.reviewRequest);
     if (!reviewRequest) {
@@ -1467,6 +1590,7 @@ const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState
   "back_positioning",
   "back_captured",
   "finalizing",
+  "operator_resolution_required",
   "finding_review_required",
   "insufficient_evidence",
   "report_ready_needs_confirm",
@@ -1644,6 +1768,7 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
   const rawMathematical = stationRecord(value.mathematicalV1) ? value.mathematicalV1 : undefined;
   const mathematicalStatus: AiGraderMathematicalExecutionV1["status"] | undefined = rawMathematical &&
     (rawMathematical.status === "processing" ||
+      rawMathematical.status === "operator_resolution_required" ||
       rawMathematical.status === "finding_review_required" ||
       rawMathematical.status === "completed" ||
       rawMathematical.status === "insufficient_evidence")
@@ -1714,6 +1839,7 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
     return undefined;
   }
   const pendingMathematicalEvidence =
+    mathematicalExecution?.status === "operator_resolution_required" ||
     mathematicalExecution?.status === "finding_review_required" ||
     mathematicalExecution?.status === "insufficient_evidence";
   if (latest.exists !== true && !pendingMathematicalEvidence) return undefined;
@@ -1772,7 +1898,9 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
     : [];
   const exactActiveReview = activeReview && items.some((item) => {
     const pendingMathematicalState =
-      item.state === "finding_review_required" || item.state === "insufficient_evidence";
+      item.state === "operator_resolution_required" ||
+      item.state === "finding_review_required" ||
+      item.state === "insufficient_evidence";
     const activeMathematicalStatus = activeReview.manifest.mathematicalV1?.execution?.status;
     return item.queueItemId === activeReview.queueItemId &&
       item.sessionId === activeReview.gradingSessionId &&
@@ -2495,6 +2623,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "discard-queue-item": "start_new_card",
   "bind-mathematical-grading-authority": "capture_front",
   "submit-mathematical-finding-reviews": "view_unified_report",
+  "submit-operator-resolutions": "view_unified_report",
   "begin-queued-ocr": "start_new_card",
   "complete-queued-ocr": "start_new_card",
   "fail-queued-ocr": "start_new_card",
@@ -2543,6 +2672,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "activate-queue-item", description: "Select one exact completed queued report for review without taking capture ownership." },
     { method: "POST", action: "bind-mathematical-grading-authority", description: "Bind exact Mathematical V1 card and centering authority before capture." },
     { method: "POST", action: "submit-mathematical-finding-reviews", description: "Submit one exact SHA-bound disposition for every measured finding." },
+    { method: "POST", action: "submit-operator-resolutions", description: "Submit an authenticated exact element-resolution authority." },
     { method: "POST", action: "begin-queued-ocr", description: "Atomically claim one exact eligible queued OCR lifecycle." },
     { method: "POST", action: "complete-queued-ocr", description: "Persist one safe OCR result for the exact claimed queue identity." },
     { method: "POST", action: "fail-queued-ocr", description: "Persist one explicit terminal OCR failure for the exact claimed queue identity." },
@@ -2950,6 +3080,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",
+    "submit-operator-resolutions",
     "begin-queued-ocr",
     "complete-queued-ocr",
     "fail-queued-ocr",

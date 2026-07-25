@@ -1691,7 +1691,7 @@ export const mathematicalDesignReferenceV1Schema = z
 
 export type MathematicalDesignReferenceV1 = z.infer<typeof mathematicalDesignReferenceV1Schema>;
 
-export const mathematicalCenteringRegistrationV1Schema = z
+const automatedMathematicalCenteringRegistrationV1Schema = z
   .strictObject({
     profile: z.enum(["printed_border_v1", "registered_design_template_v1"]),
     designReferenceId: identifierSchema.optional(),
@@ -1720,6 +1720,18 @@ export const mathematicalCenteringRegistrationV1Schema = z
       context.addIssue({ code: "custom", path: ["transformType"], message: "registered templates require a computed affine or homography transform" });
     }
   });
+
+const physicalMarginCenteringRegistrationV1Schema = z.strictObject({
+  profile: z.literal("printed_border_v1"),
+  transformType: z.literal("physical_margin_measurement"),
+  measurementUnit: z.literal("mm"),
+  confidence: z.literal(1),
+});
+
+export const mathematicalCenteringRegistrationV1Schema = z.union([
+  automatedMathematicalCenteringRegistrationV1Schema,
+  physicalMarginCenteringRegistrationV1Schema,
+]);
 
 export function validateMathematicalDesignReferenceV1(value: unknown) {
   return mathematicalDesignReferenceV1Schema.safeParse(value);

@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { AiGraderReportBundleV03 } from "@tenkings/shared";
+import {
+  calculateOverallGradeV1,
+  type AiGraderReportBundleV03,
+} from "@tenkings/shared";
 import AiGraderMathematicalReportV1 from "../components/ai-grader/AiGraderMathematicalReportV1";
 import { parseAiGraderMathematicalReportV1 } from "../lib/aiGraderMathematicalReportV1";
 import { buildAiGraderReportEditorialRevisionV1 } from "../lib/aiGraderReportRevision";
@@ -296,24 +299,38 @@ function displayBundle() {
 
 function ownerAcceptedDisplayBundle() {
   const bundle = displayBundle() as any;
-  const exceptionLedger = Array.from({ length: 36 }, (_, index) => ({
-    path: `certifiedAnalysis.exception${index + 1}`,
-    message: `Recorded mathematical exception message ${index + 1}.`,
-  }));
   bundle.calibrationProfile = {
     ...bundle.calibrationProfile,
     rigId: "fixed-rig-dell-v1",
     isCalibrated: false,
     status: "rejected",
-    operationalAcceptance: {
+    operationalAuthorization: {
+      schemaVersion: "ai-grader-calibration-operational-authorization-public-v1",
+      status: "authorized",
       authorityId: "ten-kings-owner-operational-acceptance-math-cal-v1-20260722-4cfa410c-01-v1",
-      authorityStatus: "OWNER_ACCEPTED_WITH_RECORDED_EXCEPTIONS",
       authoritySha256: sha("a"),
-      owner: { name: "Mark", organization: "Ten Kings", role: "product_owner" },
-      decisionAt: "2026-07-22T14:00:00.000Z",
-      reason: "Product owner directs operational use of the preserved calibration exactly as captured; all measurements, threshold exceptions, evidence hashes, and provenance must remain unchanged and visible.",
-      exceptionLedger,
-      exceptionLedgerSha256: sha("b"),
+      authorityFileSha256: sha("4"),
+      authorizedAt: "2026-07-22T14:00:00.000Z",
+      subject: {
+        sessionId: "calibration-session-1",
+        sessionStateSha256: sha("1"),
+        sourceCaptureManifestSha256: sha("2"),
+        sourceCapturePackageSha256: sha("3"),
+        analysisSha256: sha("4"),
+        analysisFileSha256: sha("5"),
+        thresholdSetHash: bundle.calibrationProfile.thresholdSetHash,
+        physicalArtifactSha256: bundle.calibrationProfile.artifactSha256,
+        mathematicalAcceptanceFileSha256: sha("6"),
+        mathematicalAcceptanceStatus: "rejected",
+        mathematicalIsCalibrated: false,
+        rigId: "fixed-rig-dell-v1",
+        profileId: bundle.calibrationProfile.profileId,
+        calibrationVersion: bundle.calibrationProfile.calibrationVersion,
+        finalizedAt: bundle.calibrationProfile.finalizedAt,
+        artifactId: bundle.calibrationProfile.artifactId,
+      },
+      issueCount: 36,
+      issueLedgerSha256: sha("b"),
     },
   };
   bundle.calibrationBundleAuthority.bundleManifestSha256 = sha("c");
@@ -389,7 +406,42 @@ test("owner-accepted calibration metadata remains internal and is not rendered o
   assert.doesNotMatch(html, /certifiedAnalysis\.exception36/);
   assert.doesNotMatch(html, /owner-accepted-activation-v1/);
   assert.doesNotMatch(html, /ecdsa-p256-sha256-ieee-p1363/);
+  assert.doesNotMatch(html, /provisional|insufficient|human|manual|exception|admission/i);
   assert.match(html, /Immutable grading provenance/);
+});
+
+test("resolved owner explanation appears verbatim in standard HTML with no private workflow wording", () => {
+  const bundle = ownerAcceptedDisplayBundle() as any;
+  bundle.productionRelease.finalGrade.elements.edges = {
+    ...bundle.productionRelease.finalGrade.elements.edges,
+    score: 9.15,
+    frontScore: null,
+    backScore: null,
+    aggregatePenalty: null,
+    explanation: "Edges show light wear along the lower border.",
+    resolved: true,
+  };
+  bundle.productionRelease.finalGrade.whyNot10 = [{
+    id: "why-not-10-resolved-edges",
+    element: "edges",
+    findingIds: [],
+    overlayAssetIds: ["front/true-view.png"],
+    explanation: "Edges show light wear along the lower border.",
+  }];
+  const recomposed = calculateOverallGradeV1({
+    centering: bundle.productionRelease.finalGrade.elements.centering.score,
+    corners: bundle.productionRelease.finalGrade.elements.corners.score,
+    edges: bundle.productionRelease.finalGrade.elements.edges.score,
+    surface: bundle.productionRelease.finalGrade.elements.surface.score,
+  });
+  Object.assign(bundle.productionRelease.finalGrade, recomposed);
+  bundle.productionRelease.label.labelGradeText = recomposed.labelGrade.toFixed(1);
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle }));
+  assert.match(html, /Edges show light wear along the lower border\./);
+  assert.match(html, new RegExp(recomposed.overall.toFixed(2)));
+  assert.match(html, new RegExp(`Label ${recomposed.labelGrade.toFixed(1)}`));
+  assert.doesNotMatch(html, /provisional|insufficient|human|manual|exception|admission/i);
+  assert.doesNotMatch(html, /internalReason|originalElements|resolutionAuthority/);
 });
 
 test("sealed common-mode admission internals do not leak limitation or review language", () => {

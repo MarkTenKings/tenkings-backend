@@ -71,6 +71,19 @@ export interface FixedRigCenteringSideInputV1 {
   evidence: FixedRigCenteringEvidenceReferenceV1[];
 }
 
+export interface FixedRigPhysicalMarginCenteringSideInputV1 {
+  side: "front" | "back";
+  calibration: MathematicalCalibrationProfileV1;
+  outerCutContour: FixedRigPointV1[];
+  measurementsMm: {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  };
+  evidence: FixedRigCenteringEvidenceReferenceV1[];
+}
+
 type FixedRigResolvedCenteringSideInputV1 = FixedRigCenteringSideInputV1 & {
   marginDifferenceU95Mm: { horizontal: number; vertical: number };
   marginDifferenceUncertaintyComponentsU95: {
@@ -828,6 +841,155 @@ export function buildFixedRigCenteringSideV1(
     },
     outer,
   );
+}
+
+/**
+ * Computes the ordinary printed-border centering result from authenticated
+ * physical border-width measurements. This seam accepts no score, uncertainty,
+ * confidence, fit, transform, or grade input; those values remain derived by
+ * the existing calibration and centering math.
+ */
+export function buildFixedRigPhysicalMarginCenteringSideV1(
+  input: FixedRigPhysicalMarginCenteringSideInputV1,
+): FixedRigCenteringSideResultV1 {
+  const calibration = validateMathematicalCalibrationForOperationalUseV1(input.calibration);
+  const fallbackInput: FixedRigCenteringSideInputV1 = {
+    side: input.side,
+    calibration: input.calibration,
+    outerCutContour: input.outerCutContour,
+    profileInput: {
+      profile: "printed_border_v1",
+      printBoundarySamples: { left: [], right: [], top: [], bottom: [] },
+    },
+    evidence: input.evidence,
+  };
+  if (!calibration.valid || (!calibration.isCalibrated && !calibration.isOperationallyAccepted)) {
+    return insufficient(fallbackInput, [
+      ...calibration.issues.map((issue) => `Calibration ${issue.path}: ${issue.message}`),
+      "A finalized calibration profile satisfying every manifest acceptance gate is mandatory.",
+    ]);
+  }
+  if (!input.evidence.length) {
+    return insufficient(fallbackInput, ["Centering measurements have no immutable source-evidence binding."]);
+  }
+  const outer = bounds(input.outerCutContour);
+  if (!outer || outer.left < 0 || outer.top < 0 ||
+      outer.right > input.calibration.normalizedWidthPx ||
+      outer.bottom > input.calibration.normalizedHeightPx) {
+    return insufficient(fallbackInput, [
+      "The normalized outer physical cut contour is missing, invalid, or outside the calibrated coordinate frame.",
+    ]);
+  }
+  const values = Object.values(input.measurementsMm);
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+    return insufficient(fallbackInput, ["Every physical printed-border width must be finite and nonnegative."]);
+  }
+  const outerWidthMm = (outer.right - outer.left) * input.calibration.mmPerPixelX;
+  const outerHeightMm = (outer.bottom - outer.top) * input.calibration.mmPerPixelY;
+  if (input.measurementsMm.left + input.measurementsMm.right >= outerWidthMm ||
+      input.measurementsMm.top + input.measurementsMm.bottom >= outerHeightMm) {
+    return insufficient(fallbackInput, [
+      "Physical printed-border widths must leave a positive printed region inside the measured outer cut.",
+    ]);
+  }
+  const observedMargins: FixedRigBoundaryMarginsV1 = {
+    left: {
+      mm: round(input.measurementsMm.left),
+      px: round(input.measurementsMm.left / input.calibration.mmPerPixelX),
+    },
+    right: {
+      mm: round(input.measurementsMm.right),
+      px: round(input.measurementsMm.right / input.calibration.mmPerPixelX),
+    },
+    top: {
+      mm: round(input.measurementsMm.top),
+      px: round(input.measurementsMm.top / input.calibration.mmPerPixelY),
+    },
+    bottom: {
+      mm: round(input.measurementsMm.bottom),
+      px: round(input.measurementsMm.bottom / input.calibration.mmPerPixelY),
+    },
+  };
+  const printed = {
+    left: outer.left + observedMargins.left.px,
+    right: outer.right - observedMargins.right.px,
+    top: outer.top + observedMargins.top.px,
+    bottom: outer.bottom - observedMargins.bottom.px,
+  };
+  const printedContour = [
+    { x: round(printed.left), y: round(printed.top) },
+    { x: round(printed.right), y: round(printed.top) },
+    { x: round(printed.right), y: round(printed.bottom) },
+    { x: round(printed.left), y: round(printed.bottom) },
+  ];
+  const horizontalUncertainty = deriveFixedRigMeasurementUncertaintyV1({
+    calibration: input.calibration,
+    kind: "margin_difference_mm",
+    measuredMeasurement: Math.abs(observedMargins.left.mm - observedMargins.right.mm),
+    axis: "x",
+  });
+  const verticalUncertainty = deriveFixedRigMeasurementUncertaintyV1({
+    calibration: input.calibration,
+    kind: "margin_difference_mm",
+    measuredMeasurement: Math.abs(observedMargins.top.mm - observedMargins.bottom.mm),
+    axis: "y",
+  });
+  const horizontal = calculateCenteringAxisV1(
+    observedMargins.left.mm,
+    observedMargins.right.mm,
+    horizontalUncertainty.u95,
+  );
+  const vertical = calculateCenteringAxisV1(
+    observedMargins.top.mm,
+    observedMargins.bottom.mm,
+    verticalUncertainty.u95,
+  );
+  const score = Math.min(horizontal.score, vertical.score);
+  const registration = mathematicalCenteringRegistrationV1Schema.parse({
+    profile: "printed_border_v1",
+    transformType: "physical_margin_measurement",
+    measurementUnit: "mm",
+    confidence: 1,
+  });
+  return {
+    version: FIXED_RIG_CENTERING_V1_VERSION,
+    status: "computed",
+    side: input.side,
+    profile: "printed_border_v1",
+    score,
+    startingScore: 10,
+    centeringDeduction: round(10 - score, 2),
+    thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    calibrationProfileId: input.calibration.profileId,
+    calibrationVersion: input.calibration.calibrationVersion,
+    calibrationArtifactSha256: input.calibration.artifactSha256,
+    outerCutContour: input.outerCutContour.map((point) => ({ ...point })),
+    printedDesignContour: printedContour,
+    observedMargins,
+    horizontal,
+    vertical,
+    u95Mm: {
+      horizontal: horizontalUncertainty.u95,
+      vertical: verticalUncertainty.u95,
+    },
+    u95ComponentsMm: {
+      calibratedMarginDifference: {
+        horizontal: horizontalUncertainty.u95,
+        vertical: verticalUncertainty.u95,
+      },
+      calibratedMarginDifferenceComponents: {
+        horizontal: { ...horizontalUncertainty.componentsU95 },
+        vertical: { ...verticalUncertainty.componentsU95 },
+      },
+    },
+    grade10ToleranceMm:
+      MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.grade10Tolerance.marginDifferenceMm,
+    registration,
+    measurementLines: measurementLines(outer, printed, observedMargins),
+    evidence: input.evidence.map((entry) => ({ ...entry })),
+    formula: "sideScore = min(horizontalAxisScore, verticalAxisScore)",
+  };
 }
 
 export type FixedRigCenteringElementResultV1 =

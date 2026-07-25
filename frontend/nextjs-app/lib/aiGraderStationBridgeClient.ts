@@ -31,7 +31,9 @@ import type {
   AiGraderExactDesignReferenceArtifact,
 } from "./aiGraderDesignReferenceClient";
 import {
+  aiGraderOperatorResolutionAuthenticationV1Schema,
   trustedPokemonCardFormatAuthorityV1Schema,
+  type AiGraderOperatorResolutionAuthenticationV1,
   type TrustedPokemonCardFormatAuthorityV1,
 } from "@tenkings/shared";
 
@@ -602,6 +604,57 @@ export async function resolveAiGraderTrustedPokemonCardFormatAuthorityV1(input: 
     throw new Error("Trusted Pokémon card-format authority returned an invalid identity artifact.");
   }
   return parsed.data;
+}
+
+export async function issueAiGraderOperatorResolutionAuthenticationV1(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  requestSha256: string;
+  idempotencyKey: string;
+  operatorResolutionSubmission: unknown;
+  headers: Record<string, string>;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderOperatorResolutionAuthenticationV1> {
+  const response = await fetchImpl(
+    "/api/admin/ai-grader/production/operator-resolution-authentication",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json", ...input.headers },
+      body: JSON.stringify({
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+        requestSha256: input.requestSha256,
+        idempotencyKey: input.idempotencyKey,
+        operatorResolutionSubmission: input.operatorResolutionSubmission,
+      }),
+    },
+  );
+  const payload = await response.json().catch(() => ({})) as {
+    ok?: unknown;
+    message?: unknown;
+    result?: { authentication?: unknown };
+  };
+  if (!response.ok || payload.ok !== true) {
+    throw new Error(
+      typeof payload.message === "string"
+        ? payload.message
+        : "Authenticated operator-resolution authority could not be issued.",
+    );
+  }
+  const authentication = aiGraderOperatorResolutionAuthenticationV1Schema.parse(
+    payload.result?.authentication,
+  );
+  if (
+    authentication.payload.queueItemId !== input.queueItemId ||
+    authentication.payload.gradingSessionId !== input.gradingSessionId ||
+    authentication.payload.reportId !== input.reportId ||
+    authentication.payload.requestSha256 !== input.requestSha256 ||
+    authentication.payload.idempotencyKey !== input.idempotencyKey
+  ) {
+    throw new Error("Authenticated operator-resolution authority identity mismatch.");
+  }
+  return authentication;
 }
 
 export function buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1(input: {

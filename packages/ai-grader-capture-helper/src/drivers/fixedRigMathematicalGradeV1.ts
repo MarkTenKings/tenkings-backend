@@ -29,6 +29,9 @@ import type {
   FixedRigSurfaceFindingV1,
   FixedRigSurfaceV1Result,
 } from "./fixedRigSurfaceV1";
+import type {
+  FixedRigOperatorElementResolutionAuthorityV1,
+} from "./fixedRigOperatorResolutionAuthorityV1";
 
 export const FIXED_RIG_MATHEMATICAL_GRADE_V1_VERSION =
   "fixed_rig_mathematical_grade_composer_v1" as const;
@@ -61,6 +64,11 @@ export interface BuildFixedRigMathematicalGradeV1Input {
    * caller-provided link or physical-defect ID as deduction authority.
    */
   physicalDefectDeduplication?: FixedRigPhysicalDefectDeduplicationV1[];
+  operatorResolutions?: Partial<Record<MathematicalGradingElementV1, {
+    authoritySha256: string;
+    resolution: FixedRigOperatorElementResolutionAuthorityV1;
+    publicEvidenceAssetIds: string[];
+  }>>;
 }
 
 export interface FixedRigGradeIssueV1 {
@@ -92,15 +100,17 @@ export interface FixedRigGradeElementScoreV1 {
   score: number;
   scoreText: string;
   startingScore: 10;
-  frontScore: number;
-  frontScoreText: string;
-  backScore: number;
-  backScoreText: string;
-  aggregatePenalty: number;
+  frontScore: number | null;
+  frontScoreText: string | null;
+  backScore: number | null;
+  backScoreText: string | null;
+  aggregatePenalty: number | null;
   locationScores: FixedRigGradeLocationScoreV1[];
   findingIds: string[];
   formula: string;
   explanation: string;
+  resolved?: true;
+  resolutionAuthoritySha256?: string;
 }
 
 export interface FixedRigComposedPhysicalFindingV1 {
@@ -314,7 +324,7 @@ function collectAvailabilityIssues(
     ["corners", input.corners],
     ["edges", input.edges],
   ] as const) {
-    if (result.status !== "computed") {
+    if (result.status !== "computed" && !input.operatorResolutions?.[element]) {
       issues.push({
         code: "recapture_required",
         element,
@@ -325,7 +335,7 @@ function collectAvailabilityIssues(
   }
   for (const side of ["front", "back"] as const) {
     const result = input.surface[side];
-    if (result.status !== "computed") {
+    if (result.status !== "computed" && !input.operatorResolutions?.surface) {
       const limitations = result.evidenceQualityLimitations.map((entry) => entry.message);
       issues.push({
         code: limitations.length ? "recapture_required" : "missing_element_evidence",
@@ -339,12 +349,14 @@ function collectAvailabilityIssues(
 }
 
 function conditionCandidates(
-  result: ComputedCondition,
+  result: FixedRigConditionElementResultV1,
   expectedElement: "corners" | "edges",
   calibration: MathematicalCalibrationProfileV1,
   issues: FixedRigGradeIssueV1[],
+  resolved: boolean,
 ): CandidateFindingV1[] {
-  if (result.element !== expectedElement || !thresholdMatches(result)) {
+  if (result.element !== expectedElement ||
+      (result.status === "computed" && !thresholdMatches(result))) {
     issues.push({
       code: "threshold_contract_mismatch",
       element: expectedElement,
@@ -362,11 +374,11 @@ function conditionCandidates(
   const actualKeys = result.observations.map(
     (observation) => `${observation.side}:${observation.location}`,
   );
-  if (
+  if (!resolved && (
     result.observations.length !== expectedKeys.size ||
     new Set(actualKeys).size !== actualKeys.length ||
     actualKeys.some((key) => !expectedKeys.has(key))
-  ) {
+  )) {
     issues.push({
       code: "missing_element_evidence",
       element: expectedElement,
@@ -375,6 +387,7 @@ function conditionCandidates(
   }
   const candidates: CandidateFindingV1[] = [];
   for (const observation of result.observations) {
+    if (observation.status !== "computed") continue;
     const actualCalibration = {
       profileId: observation.calibrationProfileId,
       version: observation.calibrationVersion,
@@ -1059,6 +1072,68 @@ function surfaceElementScore(
   };
 }
 
+function unresolvedConditionElementDetail(
+  element: "corners" | "edges",
+  result: FixedRigConditionElementResultV1,
+  retained: readonly CandidateFindingV1[],
+): FixedRigGradeElementScoreV1 {
+  const findings = retained.filter((finding) => finding.element === element);
+  const locationScores = result.observations
+    .filter((observation) => observation.status === "computed")
+    .map((observation) => {
+      const locationFindings = findings.filter((finding) =>
+        finding.side === observation.side && finding.location === observation.location);
+      const penalty = round(Math.min(
+        SCORE_MAXIMUM - SCORE_MINIMUM,
+        locationFindings.reduce((sum, finding) => sum + finding.deduction, 0),
+      ));
+      const score = roundMathematicalScoreV1(SCORE_MAXIMUM - penalty);
+      return {
+        side: observation.side,
+        location: observation.location,
+        score,
+        scoreText: scoreText(score),
+        penalty,
+        findingIds: locationFindings.map((finding) => finding.findingId),
+      };
+    });
+  return {
+    score: 10,
+    scoreText: "10.00",
+    startingScore: 10,
+    frontScore: null,
+    frontScoreText: null,
+    backScore: null,
+    backScoreText: null,
+    aggregatePenalty: null,
+    locationScores,
+    findingIds: findings.map((finding) => finding.findingId),
+    formula: element === "corners"
+      ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.formula
+      : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.formula,
+    explanation: "",
+  };
+}
+
+function applyResolvedElement(
+  element: MathematicalGradingElementV1,
+  source: FixedRigGradeElementScoreV1,
+  resolution: NonNullable<BuildFixedRigMathematicalGradeV1Input["operatorResolutions"]>[MathematicalGradingElementV1],
+): FixedRigGradeElementScoreV1 {
+  if (!resolution) return source;
+  const score = resolution.resolution.element === "centering"
+    ? source.score
+    : resolution.resolution.score;
+  return {
+    ...source,
+    score,
+    scoreText: scoreText(score),
+    explanation: resolution.resolution.publicExplanation,
+    resolved: true,
+    resolutionAuthoritySha256: resolution.authoritySha256,
+  };
+}
+
 function toComposedFinding(
   candidate: CandidateFindingV1,
   canonicalByFindingId: ReadonlyMap<string, string>,
@@ -1287,8 +1362,8 @@ export function buildFixedRigMathematicalGradeV1(
   if (availabilityIssues.length) return insufficient(availabilityIssues);
 
   const centering = input.centering as ComputedCentering;
-  const corners = input.corners as ComputedCondition;
-  const edges = input.edges as ComputedCondition;
+  const corners = input.corners;
+  const edges = input.edges;
   const issues: FixedRigGradeIssueV1[] = [];
   if (centering.front.side !== "front" || centering.back.side !== "back") {
     issues.push({
@@ -1305,11 +1380,23 @@ export function buildFixedRigMathematicalGradeV1(
     });
   }
   validateCentering(centering, calibration, issues);
-  validateConditionFormula(corners, "corners", issues);
-  validateConditionFormula(edges, "edges", issues);
+  if (corners.status === "computed") validateConditionFormula(corners, "corners", issues);
+  if (edges.status === "computed") validateConditionFormula(edges, "edges", issues);
   const candidates = [
-    ...conditionCandidates(corners, "corners", calibration, issues),
-    ...conditionCandidates(edges, "edges", calibration, issues),
+    ...conditionCandidates(
+      corners,
+      "corners",
+      calibration,
+      issues,
+      Boolean(input.operatorResolutions?.corners),
+    ),
+    ...conditionCandidates(
+      edges,
+      "edges",
+      calibration,
+      issues,
+      Boolean(input.operatorResolutions?.edges),
+    ),
     ...surfaceCandidates([input.surface.front, input.surface.back], calibration, issues),
   ];
   validateCandidateCalibration(candidates, calibration, issues);
@@ -1321,11 +1408,37 @@ export function buildFixedRigMathematicalGradeV1(
   const deduplicated = resolveDeduplication(candidates, issues);
   if (issues.length) return insufficient(issues);
 
-  const elements = {
+  const originalElements = {
     centering: centeringElementScore(centering),
-    corners: conditionElementScore("corners", corners, deduplicated.retained),
-    edges: conditionElementScore("edges", edges, deduplicated.retained),
+    corners: corners.status === "computed"
+      ? conditionElementScore("corners", corners, deduplicated.retained)
+      : unresolvedConditionElementDetail("corners", corners, deduplicated.retained),
+    edges: edges.status === "computed"
+      ? conditionElementScore("edges", edges, deduplicated.retained)
+      : unresolvedConditionElementDetail("edges", edges, deduplicated.retained),
     surface: surfaceElementScore(deduplicated.retained),
+  };
+  const elements = {
+    centering: applyResolvedElement(
+      "centering",
+      originalElements.centering,
+      input.operatorResolutions?.centering,
+    ),
+    corners: applyResolvedElement(
+      "corners",
+      originalElements.corners,
+      input.operatorResolutions?.corners,
+    ),
+    edges: applyResolvedElement(
+      "edges",
+      originalElements.edges,
+      input.operatorResolutions?.edges,
+    ),
+    surface: applyResolvedElement(
+      "surface",
+      originalElements.surface,
+      input.operatorResolutions?.surface,
+    ),
   };
   const findings = deduplicated.retained.map((candidate) =>
     toComposedFinding(candidate, deduplicated.canonicalByFindingId),
@@ -1348,10 +1461,31 @@ export function buildFixedRigMathematicalGradeV1(
     edges: elements.edges.score,
     surface: elements.surface.score,
   }, severeCaps);
-  const whyNot10 = [
+  const resolvedElements = new Set(
+    Object.entries(input.operatorResolutions ?? {})
+      .filter(([, resolution]) => Boolean(resolution))
+      .map(([element]) => element as MathematicalGradingElementV1),
+  );
+  const automaticWhyNot10 = [
     centeringWhyNot10(centering),
     ...findings.map(findingWhyNot10),
-  ].filter((entry): entry is FixedRigWhyNot10V1 => entry !== undefined);
+  ].filter((entry): entry is FixedRigWhyNot10V1 =>
+    entry !== undefined && !resolvedElements.has(entry.element));
+  const resolvedWhyNot10 = [...resolvedElements].flatMap((element): FixedRigWhyNot10V1[] => {
+    const resolution = input.operatorResolutions?.[element];
+    const resolvedSevereCap = findings.some((finding) =>
+      finding.element === element && finding.severeDefectCap !== undefined);
+    if (!resolution || (elements[element].score >= 10 && !resolvedSevereCap)) return [];
+    return [{
+      id: `why-not-10-resolved-${element}`,
+      element,
+      findingIds: [],
+      evidenceAssetIds: uniqueCaseInsensitive(resolution.publicEvidenceAssetIds),
+      deduction: round(10 - elements[element].score),
+      explanation: resolution.resolution.publicExplanation,
+    }];
+  });
+  const whyNot10 = [...automaticWhyNot10, ...resolvedWhyNot10];
   const whyNot10Summary = whyNot10.length
     ? `The grade is below 10.00 because ${whyNot10.length} exact measured deduction explanation(s) are listed; the overall is the minimum of weighted grade ${scoreText(overall.weightedGrade)}, weakest-element cap ${scoreText(overall.weakestElementCap)}${overall.applicableSevereDefectCap === undefined
         ? ""
