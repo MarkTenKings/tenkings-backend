@@ -1527,7 +1527,7 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   const startBlock = source.slice(source.indexOf("const startNewCard = async"), source.indexOf("const runStationCapture"));
   const localStartCall = startBlock.slice(
     startBlock.indexOf('"start-session"'),
-    startBlock.indexOf("await acceptStartedSession"),
+    startBlock.indexOf("acceptStartedSession(prepared, started"),
   );
   const backBlock = source.slice(source.indexOf("const captureBackAndContinue"), source.indexOf("const activateRapidQueueItem"));
   const prepublicationCardBlock = source.slice(source.indexOf("const createCardFromConfirmedIdentity"), source.indexOf("const searchCardItems"));
@@ -1553,6 +1553,14 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
       startBlock.indexOf("stagePreparedMathematicalDesignReferences"),
     "the exact persisted Start identity is verified before staging or draft caching",
   );
+  assert.ok(
+    startBlock.indexOf("acceptStartedSession(prepared, started") <
+      startBlock.indexOf("setCaptureBusy(null)") &&
+      startBlock.indexOf("setCaptureBusy(null)") <
+        startBlock.indexOf("stageStartedSessionReferences(prepared, started"),
+    "a verified local Start releases the button before reference staging continues",
+  );
+  assert.match(startBlock, /void stagePreparedMathematicalDesignReferences\(prepared, started\)\.catch/);
   assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+setCaptureBusy\(null\)/);
   assert.ok(
     activationBlock.indexOf("publicationReviewClaimRef.current") < activationBlock.indexOf("await runAction"),
