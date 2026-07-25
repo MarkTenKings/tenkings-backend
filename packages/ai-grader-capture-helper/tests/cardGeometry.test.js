@@ -769,14 +769,27 @@ test("live preview falls through to perimeter v3 when illuminated solid-plate se
   const imageBuffer = fs.readFileSync(darkPerimeterPath);
   const liveAttempts = [];
   const capturedAttempts = [];
+  const startedAt = performance.now();
+  const controllerIoTicks = [];
+  const controllerIoTimer = setInterval(() => controllerIoTicks.push(performance.now()), 25);
 
-  const live = await detectCardGeometryFromBuffer({
-    imageBuffer,
-    detectionPolicy: LIVE_PREVIEW_POLICY,
-    side: "front",
-    sourceFrameId: "live-policy-frame",
-    onDetectionAttempt: (observation) => liveAttempts.push(observation),
-  });
+  let live;
+  try {
+    live = await detectCardGeometryFromBuffer({
+      imageBuffer,
+      detectionPolicy: LIVE_PREVIEW_POLICY,
+      side: "front",
+      sourceFrameId: "live-policy-frame",
+      onDetectionAttempt: (observation) => liveAttempts.push(observation),
+    });
+  } finally {
+    clearInterval(controllerIoTimer);
+  }
+  const completedAt = performance.now();
+  const controllerIoCheckpoints = [startedAt, ...controllerIoTicks, completedAt];
+  const longestControllerIoGapMs = Math.max(
+    ...controllerIoCheckpoints.slice(1).map((value, index) => value - controllerIoCheckpoints[index]),
+  );
   const captured = await detectCardGeometryFromBuffer({
     imageBuffer,
     detectionPolicy: CAPTURED_EVIDENCE_POLICY,
@@ -792,6 +805,11 @@ test("live preview falls through to perimeter v3 when illuminated solid-plate se
     "solid_plate_color_component_pca_v2",
     "perimeter_gradient_rectangle_v3",
   ]);
+  assert.ok(controllerIoTicks.length > 0, "live perimeter detection did not yield for controller I/O");
+  assert.ok(
+    longestControllerIoGapMs < 250,
+    `live perimeter detection blocked controller I/O for ${longestControllerIoGapMs.toFixed(1)} ms`,
+  );
   assert.equal(captured.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
   assert.equal(captured.placementState, "ready");
   assert.equal(captured.detection.method, "perimeter_gradient_rectangle_v3");
