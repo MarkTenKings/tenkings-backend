@@ -388,7 +388,7 @@ function orchestratorIntendedOuterBoundary() {
   };
 }
 
-async function rawAllOnPng(intendedContour, marker) {
+async function rawAllOnPng(intendedContour, marker, options = {}) {
   const rawWidth = WIDTH + 16;
   const rawHeight = HEIGHT + 16;
   const bytes = Buffer.alloc(rawWidth * rawHeight * 3, 12);
@@ -397,6 +397,8 @@ async function rawAllOnPng(intendedContour, marker) {
       const normalizedX = rawX - 8 + 0.5;
       const normalizedY = rawY - 8 + 0.5;
       if (!pointInsideContour(normalizedX, normalizedY, intendedContour)) continue;
+      if (options.zeroOuterCut) continue;
+      if (options.partialOuterCut && rawX >= 65 && rawY >= 12) continue;
       const offset = (rawY * rawWidth + rawX) * 3;
       bytes[offset] = 100;
       bytes[offset + 1] = 100;
@@ -443,6 +445,10 @@ async function buildSide(root, side, profile, options = {}) {
   const rawAllOnBytes = await rawAllOnPng(
     intendedOuterBoundary.contour,
     side === "front" ? 1 : 2,
+    {
+      partialOuterCut: Boolean(options.partialOuterCut),
+      zeroOuterCut: Boolean(options.zeroOuterCut),
+    },
   );
   const designBytes = await rgbPng();
   const normalized = reportEvidence(
@@ -661,11 +667,15 @@ async function replaceWithSealedExposureBracket(root, sideName, side, options = 
 async function resolveOperatorCheckpoint(input, resolutions = [], inspectPending = undefined) {
   const pending = await buildFixedRigMathematicalCalibrationReportPackageV1(input);
   if (pending.status !== "operator_resolution_required") return pending;
-  assert.equal(
-    Number.isFinite(pending.request.originalElements.surface.score),
-    true,
-    "a computed original surface result must bind its actual numeric subgrade",
-  );
+  if (pending.request.originalElements.surface.status === "computed") {
+    assert.equal(
+      Number.isFinite(pending.request.originalElements.surface.score),
+      true,
+      "a computed original surface result must bind its actual numeric subgrade",
+    );
+  } else {
+    assert.equal(pending.request.originalElements.surface.score, null);
+  }
   inspectPending?.(pending);
   const deterministicReplay =
     await buildFixedRigMathematicalCalibrationReportPackageV1(input);
@@ -730,7 +740,10 @@ async function buildFixture(options = {}) {
       partialClipping: Boolean(options.partialClippingFront),
       fullyObscured: Boolean(options.fullyObscuredFront),
     }),
-    back: await buildSide(root, "back", calibration.profile),
+    back: await buildSide(root, "back", calibration.profile, {
+      partialOuterCut: Boolean(options.partialOuterCutBack),
+      zeroOuterCut: Boolean(options.zeroOuterCutBack),
+    }),
   };
   const sides = {
     front: await replaceWithSealedExposureBracket(
@@ -836,6 +849,128 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   assert.equal(scratchPlane.header.derivation, "fused_calibrated_detector");
   assert.ok(scratchPlane.header.sourceEvidence.some((entry) => entry.role === "all_on"));
   assert.equal(scratchPlane.header.heatmapUsedAsInput, false);
+});
+
+test("valid sealed evidence with 132 of 192 raw outer-cut sections routes all affected elements to operator resolution", async (t) => {
+  const fixture = await buildFixture({
+    partialOuterCutBack: true,
+    reportId: "mathematical-orchestrator-partial-outer-cut",
+    outputName: "partial-outer-cut-report-package",
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const resolutions = [
+    {
+      element: "centering",
+      publicExplanation: "Printed borders are evenly balanced on both sides.",
+      internalReason: "Owner supplied authenticated physical border measurements.",
+      measurements: {
+        unit: "mm",
+        order: ["left", "right", "top", "bottom"],
+        front: [2.1, 2.2, 2.4, 2.3],
+        back: [2.3, 2.2, 2.1, 2.4],
+      },
+    },
+    {
+      element: "corners",
+      score: 9.4,
+      publicExplanation: "Corners show slight wear at the upper left.",
+      internalReason: "Owner resolved the exact corner element.",
+    },
+    {
+      element: "edges",
+      score: 9.15,
+      publicExplanation: "Edges show light wear along the lower border.",
+      internalReason: "Owner resolved the exact edge element.",
+    },
+    {
+      element: "surface",
+      score: 8.75,
+      publicExplanation: "Surface shows a visible scuff near the center.",
+      internalReason: "Owner resolved the exact surface element.",
+    },
+  ];
+  const result = await resolveOperatorCheckpoint(
+    fixture.input,
+    resolutions,
+    (pending) => {
+      assert.deepEqual(pending.unresolvedElements, [
+        "centering",
+        "corners",
+        "edges",
+        "surface",
+      ]);
+      assert.match(
+        JSON.stringify(pending.request.originalElements),
+        /60 raw perimeter cross-sections lacked the manifest minimum gradient/i,
+      );
+      assert.doesNotMatch(
+        JSON.stringify(pending),
+        /requiresRecapture\"\s*:\s*true/,
+      );
+    },
+  );
+  assert.equal(
+    result.status,
+    "completed",
+    result.reasons?.join("; ") ?? JSON.stringify(result),
+  );
+  assert.equal(result.grade.elements.centering.resolved, true);
+  assert.equal(result.grade.elements.corners.score, 9.4);
+  assert.equal(result.grade.elements.edges.score, 9.15);
+  assert.equal(result.grade.elements.surface.score, 8.75);
+  const publicBundle = JSON.stringify(result.reportArtifact.bundle);
+  assert.ok(result.reportArtifact.bundle.centeringEvidence.front.outerCutContourAssetId);
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.outerCutContourAssetId,
+    undefined,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.outerCutGeometryEvidence,
+    undefined,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.publicAssets.some(
+      (asset) =>
+        asset.side === "back" &&
+        asset.evidenceRole === "outer_cut_contour",
+    ),
+    false,
+  );
+  assert.equal(
+    result.reportArtifact.assetPayloads.some(
+      (asset) => asset.id === "back/mathematical-v1/outer-cut-contour.png",
+    ),
+    false,
+  );
+  assert.deepEqual(result.reportArtifact.bundle.conditionObservationEvidence, {
+    corners: [],
+    edges: [],
+  });
+  assert.doesNotMatch(
+    publicBundle,
+    /back measured outer physical cut contour|provisional|insufficient|human|manual|exception|admission/i,
+  );
+});
+
+test("zero of 192 raw outer-cut sections remains a terminal hard failure", async (t) => {
+  const fixture = await buildFixture({
+    zeroOuterCutBack: true,
+    reportId: "mathematical-orchestrator-zero-outer-cut",
+    outputName: "zero-outer-cut-report-package",
+  });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const result =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(fixture.input);
+  assert.equal(result.status, "insufficient_evidence");
+  assert.equal(result.failedStage, "detector_plane_ingestion");
+  assert.equal(result.requiresRecapture, true);
+  assert.equal(result.reportPackage, null);
+  assert.equal(result.stationInput, null);
+  assert.equal(result.v0FallbackUsed, false);
+  assert.match(
+    result.reasons.join(" "),
+    /zero raw perimeter cross-sections|nonzero authenticated outer-cut support/i,
+  );
 });
 
 test("orchestrator rejects a self-rehashed authority whose embedded original differs from the exact request", async (t) => {
@@ -1115,6 +1250,20 @@ test("missing and hash-tampered immutable captures fail closed with no package o
   assert.equal(missingResult.status, "insufficient_evidence");
   assert.equal(missingResult.failedStage, "capture_evidence_ingestion");
   assert.equal(missingResult.reportPackage, null);
+
+  const malformedTransform = structuredClone(fixture.input);
+  malformedTransform.sides.back.rawToNormalizedTransform.transformSha256 =
+    "c".repeat(64);
+  malformedTransform.outputDir =
+    path.join(fixture.root, "malformed-transform-package");
+  const malformedTransformResult =
+    await buildFixedRigMathematicalCalibrationReportPackageV1(malformedTransform);
+  assert.equal(malformedTransformResult.status, "insufficient_evidence");
+  assert.equal(malformedTransformResult.failedStage, "capture_evidence_ingestion");
+  assert.equal(malformedTransformResult.requiresRecapture, true);
+  assert.equal(malformedTransformResult.reportPackage, null);
+  assert.equal(malformedTransformResult.stationInput, null);
+  assert.equal(malformedTransformResult.v0FallbackUsed, false);
 
   const legacy = structuredClone(fixture.input);
   legacy.gradingContract = "legacy_v0";

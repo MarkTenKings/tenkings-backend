@@ -916,7 +916,10 @@ function reportInput({
   }
   const corners = conditionResult("corners");
   const edges = conditionResult("edges");
-  const observationPresentations = conditionObservationPresentations(corners, edges);
+  const observationPresentations = conditionObservationPresentations(
+    corners,
+    ...(resolvedEdge ? [] : [edges]),
+  );
   const assets = [
     binding("front/normalized-card.png", "front", "normalized_card"),
     binding("back/normalized-card.png", "back", "normalized_card"),

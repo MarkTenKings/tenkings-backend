@@ -537,6 +537,7 @@ function surfaceCandidates(
   results: readonly FixedRigSurfaceV1Result[],
   calibration: MathematicalCalibrationProfileV1,
   issues: FixedRigGradeIssueV1[],
+  resolved: boolean,
 ): CandidateFindingV1[] {
   const candidates: CandidateFindingV1[] = [];
   const sides = results.map((result) => result.side);
@@ -612,6 +613,7 @@ function surfaceCandidates(
         message: `${result.side} surface must bind exactly one immutable source asset for each of the ${requiredChannels} calibrated directional channels.`,
       });
     }
+    if (result.status !== "computed" && resolved) continue;
     for (const finding of result.findings) {
       const candidate = validateSurfaceFinding(finding, result, calibration, issues);
       if (candidate) candidates.push(candidate);
@@ -1397,7 +1399,12 @@ export function buildFixedRigMathematicalGradeV1(
       issues,
       Boolean(input.operatorResolutions?.edges),
     ),
-    ...surfaceCandidates([input.surface.front, input.surface.back], calibration, issues),
+    ...surfaceCandidates(
+      [input.surface.front, input.surface.back],
+      calibration,
+      issues,
+      Boolean(input.operatorResolutions?.surface),
+    ),
   ];
   validateCandidateCalibration(candidates, calibration, issues);
   if (issues.length) return insufficient(issues);

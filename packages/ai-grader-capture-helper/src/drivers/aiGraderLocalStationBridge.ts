@@ -847,6 +847,11 @@ export interface AiGraderLocalStationBridgeManifest {
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
   gradingContract?: AiGraderGradingContract;
   mathematicalV1?: AiGraderLocalStationMathematicalV1State;
+  startOperationIdentity?: {
+    reportId: string;
+    gradingSessionId: string;
+    mathematicalAuthoritySha256: string;
+  };
   captureProfile: FixedRigCaptureProfile;
   captureProfileGuard: {
     oneRoadProductionFastRequired: true;
@@ -941,6 +946,14 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
   localOnly: true;
   loginRequired: false;
   hardwareActionsEnabled: boolean;
+  startSessionLifecycle: {
+    state: "idle" | "pending";
+    operation?: {
+      reportId: string;
+      gradingSessionId?: string;
+      mathematicalAuthoritySha256: string;
+    };
+  };
   mathematicalCalibration?: {
     ready: boolean;
     reason?: string;
@@ -1129,6 +1142,14 @@ export interface AiGraderLocalStationPreviewStatus {
   lastFrameAt?: string;
   lastError?: string;
   lastStopReason?: string;
+  cameraState?: {
+    verificationState: "pending" | "verified" | "failed";
+    sideEpoch: string;
+    expected: AiGraderPreviewCameraState;
+    observed?: AiGraderPreviewCameraState;
+    verifiedAt?: string;
+    lastError?: string;
+  };
   intentionalTransition: {
     active: boolean;
     kind?: "capture_front" | "capture_back";
@@ -1159,6 +1180,8 @@ export interface AiGraderLocalStationPreviewStatus {
       lastStartedAt?: string;
       lastCompletedAt?: string;
       lastError?: string;
+      detectorInvocationState?: "not_run" | "running" | "completed";
+      lastOutcome?: CardGeometryMetadata["placementState"];
     };
     explicitManualOverlayAvailable: true;
     previewFramesPersisted: false;
@@ -1377,6 +1400,7 @@ export interface AiGraderLiveLightingStatus {
     acknowledgedWriteCount: number;
     verificationComplete: boolean;
     verifiedAt?: string;
+    controllerMode?: "safe_off" | "asynchronous_continuous";
   };
   physicalState: {
     state: "unverified" | "safe_off_pending" | "safe_off_verified" | "positioning_light_verified";
@@ -1544,6 +1568,8 @@ export interface AiGraderLocalStationBridgeDependencies {
     timeoutMs: number;
     cameraIndex?: number;
     exposureUs: number;
+    gain: number;
+    pixelFormat: "Mono8";
     refreshIntervalMs: number;
     jpegQuality: number;
   }) => ChildProcessWithoutNullStreams;
@@ -2062,6 +2088,7 @@ function defaultPreviewGeometryStatus(
       latestFramePending: false,
       framesAnalyzed: 0,
       framesDroppedAsStale: 0,
+      detectorInvocationState: "not_run",
     },
     explicitManualOverlayAvailable: true,
     previewFramesPersisted: false,
@@ -2160,12 +2187,23 @@ function mockPreviewGeometry(
   };
 }
 
+export interface AiGraderPreviewCameraState {
+  exposureUs: number;
+  gain: number;
+  pixelFormat: "Mono8";
+  triggerMode: "Off";
+  exposureAuto: "Off";
+  gainAuto: "Off";
+  acquisitionMode: "Continuous";
+}
+
 export interface AiGraderPreviewJpegFrame {
   bytes: Buffer;
   capturedAt?: string;
   receivedAt: string;
   frameIndex?: number;
   timestampSource: "preview_capture_header" | "bridge_received";
+  cameraState?: AiGraderPreviewCameraState;
 }
 
 export class AiGraderPreviewJpegFrameAssembler {
@@ -2200,8 +2238,32 @@ export class AiGraderPreviewJpegFrameAssembler {
         const header = start > 0 ? this.buffered.subarray(0, start).toString("latin1") : "";
         const capturedAtValues = [...header.matchAll(/(?:^|\r?\n)X-AI-Grader-Captured-At:\s*([^\r\n]+)/gi)];
         const frameIndexValues = [...header.matchAll(/(?:^|\r?\n)X-AI-Grader-Frame-Index:\s*(\d+)/gi)];
+        const exactHeader = (name: string) =>
+          [...header.matchAll(new RegExp(`(?:^|\\r?\\n)${name}:\\s*([^\\r\\n]+)`, "gi"))]
+            .at(-1)?.[1]?.trim();
         const capturedAtCandidate = capturedAtValues.at(-1)?.[1]?.trim();
         const frameIndexCandidate = Number(frameIndexValues.at(-1)?.[1]);
+        const exposureUs = Number(exactHeader("X-AI-Grader-Camera-Exposure-Us"));
+        const gain = Number(exactHeader("X-AI-Grader-Camera-Gain"));
+        const pixelFormat = exactHeader("X-AI-Grader-Camera-Pixel-Format");
+        const triggerMode = exactHeader("X-AI-Grader-Camera-Trigger-Mode");
+        const exposureAuto = exactHeader("X-AI-Grader-Camera-Exposure-Auto");
+        const gainAuto = exactHeader("X-AI-Grader-Camera-Gain-Auto");
+        const acquisitionMode = exactHeader("X-AI-Grader-Camera-Acquisition-Mode");
+        const cameraState =
+          Number.isInteger(exposureUs) && exposureUs > 0 && Number.isFinite(gain) && gain >= 0 &&
+              pixelFormat === "Mono8" && triggerMode === "Off" && exposureAuto === "Off" &&
+              gainAuto === "Off" && acquisitionMode === "Continuous"
+            ? {
+                exposureUs,
+                gain,
+                pixelFormat,
+                triggerMode,
+                exposureAuto,
+                gainAuto,
+                acquisitionMode,
+              } satisfies AiGraderPreviewCameraState
+            : undefined;
         const receivedAt = new Date().toISOString();
         this.pendingFrameMetadata = {
           receivedAt,
@@ -2211,6 +2273,7 @@ export class AiGraderPreviewJpegFrameAssembler {
           ...(Number.isSafeInteger(frameIndexCandidate) && frameIndexCandidate >= 0
             ? { frameIndex: frameIndexCandidate }
             : {}),
+          ...(cameraState ? { cameraState } : {}),
         };
       }
       if (start > 0) this.buffered = this.buffered.subarray(start);
@@ -2686,6 +2749,19 @@ function defaultPreviewStatus(config: AiGraderLocalStationBridgeConfig): AiGrade
     activeSide: "front",
     sideEpoch,
     positioningLightReady: false,
+    cameraState: {
+      verificationState: "pending",
+      sideEpoch,
+      expected: {
+        exposureUs: config.exposureUs,
+        gain: config.gain,
+        pixelFormat: "Mono8",
+        triggerMode: "Off",
+        exposureAuto: "Off",
+        gainAuto: "Off",
+        acquisitionMode: "Continuous",
+      },
+    },
     intentionalTransition: { active: false },
     cardGeometry: defaultPreviewGeometryStatus(config, { side: "front", sideEpoch }),
     safety: {
@@ -4888,6 +4964,11 @@ export class AiGraderLocalStationBridgeService {
   private terminalLifecyclePending = 0;
   private lightingLifecycleChain: Promise<void> = Promise.resolve();
   private lightingLifecyclePending = 0;
+  private startSessionLifecyclePending = false;
+  private startSessionLifecycleOperation?: {
+    reportId: string;
+    mathematicalAuthoritySha256: string;
+  };
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private mathematicalCalibrationV1SessionId?: string;
@@ -5130,6 +5211,14 @@ export class AiGraderLocalStationBridgeService {
       loginRequired: false,
       frontCaptureReadiness: this.deriveFrontCaptureReadiness(),
       hardwareActionsEnabled: this.config.mode === "real",
+      startSessionLifecycle: {
+        state: this.startSessionLifecyclePending ? "pending" : "idle",
+        ...(this.startSessionLifecyclePending && this.startSessionLifecycleOperation
+          ? { operation: structuredClone(this.startSessionLifecycleOperation) }
+          : this.manifest.startOperationIdentity
+            ? { operation: structuredClone(this.manifest.startOperationIdentity) }
+            : {}),
+      },
       mathematicalCalibration: mathematicalCalibrationReadiness(
         this.config,
         this.dependencies.loadMathematicalCalibrationBundle ??
@@ -6929,6 +7018,8 @@ export class AiGraderLocalStationBridgeService {
         lastStartedAt: now,
         lastCompletedAt: now,
         lastError: undefined,
+        detectorInvocationState: "completed",
+        lastOutcome: geometry.placementState,
       },
     };
     if (geometry.placementState === "ready") {
@@ -7002,6 +7093,7 @@ export class AiGraderLocalStationBridgeService {
         inFlight: true,
         latestFramePending: false,
         lastStartedAt: startedAt,
+        detectorInvocationState: "running",
       },
     };
     const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
@@ -7036,6 +7128,7 @@ export class AiGraderLocalStationBridgeService {
             inFlight: false,
             lastCompletedAt: new Date(completedAtMs).toISOString(),
             lastError: "Preview geometry was rejected because its exact frame observation is missing, expired, or future-dated.",
+            detectorInvocationState: "completed",
           },
         };
         return;
@@ -7053,6 +7146,8 @@ export class AiGraderLocalStationBridgeService {
           lastFrameTimestampSource: pending.frameTimestampSource,
           lastCompletedAt: new Date(completedAtMs).toISOString(),
           lastError: undefined,
+          detectorInvocationState: "completed",
+          lastOutcome: boundGeometry.placementState,
         },
       };
       if (boundGeometry.placementState === "ready") {
@@ -7081,6 +7176,7 @@ export class AiGraderLocalStationBridgeService {
           lastDurationMs: Math.max(0, completedAtMs - this.previewGeometryLastStartedAtMs),
           lastCompletedAt: new Date(completedAtMs).toISOString(),
           lastError: "Preview geometry analysis could not analyze the latest encoded frame.",
+          detectorInvocationState: "completed",
         },
       };
     }).finally(() => {
@@ -8082,6 +8178,7 @@ export class AiGraderLocalStationBridgeService {
       acknowledgedWriteCount: queuedManifest.liveLighting.physicalState.acknowledgedWriteCount,
       verificationComplete: true,
       verifiedAt: queuedManifest.liveLighting.physicalState.verifiedAt ?? now,
+      controllerMode: "safe_off",
     };
     clean.liveLighting.physicalState = {
       ...queuedManifest.liveLighting.physicalState,
@@ -8114,6 +8211,7 @@ export class AiGraderLocalStationBridgeService {
       acknowledgedWriteCount: cancelledManifest.liveLighting.physicalState.acknowledgedWriteCount,
       verificationComplete: true,
       verifiedAt: cancelledManifest.liveLighting.physicalState.verifiedAt ?? now,
+      controllerMode: "safe_off",
     };
     clean.liveLighting.physicalState = {
       ...cancelledManifest.liveLighting.physicalState,
@@ -8147,6 +8245,7 @@ export class AiGraderLocalStationBridgeService {
       acknowledgedWriteCount: failedManifest.liveLighting.physicalState.acknowledgedWriteCount,
       verificationComplete: true,
       verifiedAt: failedManifest.liveLighting.physicalState.verifiedAt ?? now,
+      controllerMode: "safe_off",
     };
     clean.outputs.sessionDir = failedManifest.outputs.sessionDir;
     clean.outputs.manifestPath = failedManifest.outputs.manifestPath;
@@ -9908,6 +10007,13 @@ export class AiGraderLocalStationBridgeService {
     manifest.currentStep = "capture_front";
     if (manifest.gradingContract === "mathematical_calibration_v1" && request.mathematicalGradingAuthority) {
       this.bindMathematicalGradingAuthority(manifest, request.mathematicalGradingAuthority, request.calibrationActivationAuthority);
+      manifest.startOperationIdentity = {
+        reportId: manifest.reportId,
+        gradingSessionId: manifest.sessionId,
+        mathematicalAuthoritySha256: crypto.createHash("sha256")
+          .update(canonicalJsonV1(request.mathematicalGradingAuthority), "utf8")
+          .digest("hex"),
+      };
     }
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
@@ -10101,6 +10207,8 @@ export class AiGraderLocalStationBridgeService {
       timeoutMs: this.config.pylonTimeoutMs ?? 1800000,
       cameraIndex: this.config.cameraIndex,
       exposureUs: this.manifest.acceptedProfile.exposureUs,
+      gain: this.manifest.acceptedProfile.gain,
+      pixelFormat: "Mono8" as const,
       refreshIntervalMs: 100,
       jpegQuality: 72,
     };
@@ -10114,9 +10222,77 @@ export class AiGraderLocalStationBridgeService {
     return client.startOperatorPreviewMjpegStream({
       cameraIndex: input.cameraIndex,
       exposureUs: input.exposureUs,
+      gain: input.gain,
+      pixelFormat: input.pixelFormat,
       refreshIntervalMs: input.refreshIntervalMs,
       jpegQuality: input.jpegQuality,
     });
+  }
+
+  private expectedPreviewCameraState(): AiGraderPreviewCameraState {
+    return {
+      exposureUs: this.manifest.acceptedProfile.exposureUs,
+      gain: this.manifest.acceptedProfile.gain,
+      pixelFormat: "Mono8",
+      triggerMode: "Off",
+      exposureAuto: "Off",
+      gainAuto: "Off",
+      acquisitionMode: "Continuous",
+    };
+  }
+
+  private acceptPreviewCameraState(
+    observed: AiGraderPreviewCameraState | undefined,
+    binding: { sessionId: string; side: CardGeometrySide; sideEpoch: string },
+    verifiedAt: string,
+  ) {
+    const expected = this.expectedPreviewCameraState();
+    const matches = observed !== undefined &&
+      observed.exposureUs === expected.exposureUs &&
+      observed.gain === expected.gain &&
+      observed.pixelFormat === expected.pixelFormat &&
+      observed.triggerMode === expected.triggerMode &&
+      observed.exposureAuto === expected.exposureAuto &&
+      observed.gainAuto === expected.gainAuto &&
+      observed.acquisitionMode === expected.acquisitionMode;
+    if (
+      binding.sessionId !== this.manifest.sessionId ||
+      binding.side !== this.manifest.previewStatus.activeSide ||
+      binding.sideEpoch !== this.manifest.previewStatus.sideEpoch
+    ) return false;
+    if (!matches) {
+      const lastError =
+        "PYLON_PREVIEW_CAMERA_STATE_MISMATCH: Preview frame lacks exact canonical exposure, gain, Mono8, trigger-off, auto-off, and continuous-acquisition readback.";
+      this.updatePreviewStatus({
+        cameraState: {
+          verificationState: "failed",
+          sideEpoch: binding.sideEpoch,
+          expected,
+          ...(observed ? { observed } : {}),
+          lastError,
+        },
+        lastError,
+      });
+      return false;
+    }
+    if (
+      this.manifest.previewStatus.cameraState?.verificationState !== "verified" ||
+      this.manifest.previewStatus.cameraState.sideEpoch !== binding.sideEpoch
+    ) {
+      this.updatePreviewStatus({
+        cameraState: {
+          verificationState: "verified",
+          sideEpoch: binding.sideEpoch,
+          expected,
+          observed,
+          verifiedAt,
+        },
+      });
+      this.manifest.progressLog.push(
+        `${verifiedAt} ${binding.side} preview camera canonical transient state verified for epoch ${binding.sideEpoch}.`,
+      );
+    }
+    return true;
   }
 
   private startCalibrationPreviewProcess() {
@@ -10304,7 +10480,7 @@ export class AiGraderLocalStationBridgeService {
         channelValues,
       }),
       composeLeimacIdmuExplicitChannelWriteFrame({
-        name: "lightingOutput",
+        name: "asynchronousOutput",
         unit: this.config.leimacUnit ?? 1,
         channelValues: outputValues,
       }),
@@ -10657,6 +10833,7 @@ export class AiGraderLocalStationBridgeService {
       && live.status === 'on'
       && live.physicalState.state === 'positioning_light_verified'
       && live.applied.enabled === true
+      && live.applied.controllerMode === 'asynchronous_continuous'
       && live.applied.dutyPercent === profile.dutyPercent
       && live.applied.actualLeimacPwmStep === profile.actualLeimacPwmStep
       && live.applied.channels.join(',') === profile.channels.join(',');
@@ -10668,6 +10845,7 @@ export class AiGraderLocalStationBridgeService {
       && live.status === 'safe_off'
       && live.physicalState.state === 'safe_off_verified'
       && live.applied.enabled === false
+      && live.applied.controllerMode === 'safe_off'
       && live.applied.dutyPercent === 0
       && live.applied.actualLeimacPwmStep === 0
       && live.applied.channels.length === 0;
@@ -10687,6 +10865,7 @@ export class AiGraderLocalStationBridgeService {
         expectedWriteCount,
         acknowledgedWriteCount,
         verificationComplete: false,
+        controllerMode: undefined,
       },
       physicalState: {
         state: "unverified",
@@ -10717,6 +10896,7 @@ export class AiGraderLocalStationBridgeService {
         acknowledgedWriteCount: 0,
         verificationComplete: false,
         verifiedAt: undefined,
+        controllerMode: undefined,
       },
       physicalState: {
         state: "unverified",
@@ -10746,6 +10926,7 @@ export class AiGraderLocalStationBridgeService {
         acknowledgedWriteCount: 0,
         verificationComplete: false,
         verifiedAt: undefined,
+        controllerMode: undefined,
       },
       physicalState: {
         state: targetEnabled ? "unverified" : "safe_off_pending",
@@ -10801,6 +10982,7 @@ export class AiGraderLocalStationBridgeService {
       && current.sideEpoch === this.manifest.previewStatus.sideEpoch
       && current.profileIdentity === accepted.identity
       && applied.enabled
+      && applied.controllerMode === "asynchronous_continuous"
       && applied.dutyPercent === accepted.profile.dutyPercent
       && applied.actualLeimacPwmStep === accepted.profile.actualLeimacPwmStep
       && applied.channels.join(",") === accepted.profile.channels.join(",")
@@ -10857,6 +11039,7 @@ export class AiGraderLocalStationBridgeService {
           acknowledgedWriteCount: verification.acknowledgedWriteCount,
           verificationComplete: true,
           verifiedAt: appliedAt,
+          controllerMode: "asynchronous_continuous",
         },
         physicalState: {
           state: "positioning_light_verified",
@@ -10982,6 +11165,7 @@ export class AiGraderLocalStationBridgeService {
       && frameAgeMs <= BACK_POSITIONING_LIVE_FRAME_MAX_AGE_MS
       && this.manifest.liveLighting.physicalState.state === "positioning_light_verified"
       && this.manifest.liveLighting.applied.enabled
+      && this.manifest.liveLighting.applied.controllerMode === "asynchronous_continuous"
       && this.manifest.liveLighting.applied.verificationState === "verified"
       && this.manifest.liveLighting.applied.verificationComplete
       && this.manifest.liveLighting.applied.dutyPercent === accepted.profile.dutyPercent
@@ -11097,7 +11281,8 @@ export class AiGraderLocalStationBridgeService {
     const sameAsApplied =
       currentApplied.enabled === profile.enabled &&
       currentApplied.dutyPercent === profile.dutyPercent &&
-      currentApplied.channels.join(",") === profile.channels.join(",");
+      currentApplied.channels.join(",") === profile.channels.join(",") &&
+      currentApplied.controllerMode === (profile.enabled ? "asynchronous_continuous" : "safe_off");
     const acceptAppliedProfile = () => {
       if (!profile.enabled) return profile;
       this.manifest.acceptedProfile = validateProfile({
@@ -11148,6 +11333,7 @@ export class AiGraderLocalStationBridgeService {
           acknowledgedWriteCount: verification.acknowledgedWriteCount,
           verificationComplete: true,
           verifiedAt: appliedAt,
+          controllerMode: profile.enabled ? "asynchronous_continuous" : "safe_off",
         },
         physicalState: {
           state: profile.enabled ? "positioning_light_verified" : "safe_off_verified",
@@ -11286,6 +11472,7 @@ export class AiGraderLocalStationBridgeService {
         acknowledgedWriteCount: 0,
         verificationComplete: false,
         verifiedAt: undefined,
+        controllerMode: undefined,
       },
       physicalState: {
         state: "safe_off_pending",
@@ -11326,6 +11513,7 @@ export class AiGraderLocalStationBridgeService {
           acknowledgedWriteCount: verification.acknowledgedWriteCount,
           verificationComplete: true,
           verifiedAt,
+          controllerMode: "safe_off",
         },
         physicalState: {
           state: "safe_off_verified",
@@ -11403,6 +11591,7 @@ export class AiGraderLocalStationBridgeService {
       && positioning.sessionId === binding.sessionId
       && positioning.sideEpoch === binding.sideEpoch
       && this.manifest.liveLighting.applied.enabled
+      && this.manifest.liveLighting.applied.controllerMode === "asynchronous_continuous"
       && Boolean(this.postRestoreBackPreviewObservation(frameId))
     ) {
       this.updateBackPositioningLight({
@@ -12473,6 +12662,15 @@ export class AiGraderLocalStationBridgeService {
       lastFrameAt: undefined,
       lastError: undefined,
       lastStopReason: undefined,
+      ...(calibrationPreviewBound
+        ? {}
+        : {
+            cameraState: {
+              verificationState: "pending" as const,
+              sideEpoch: binding.sideEpoch,
+              expected: this.expectedPreviewCameraState(),
+            },
+          }),
     });
     if (calibrationPreviewBound) {
       const sessionStatus = calibrationPreviewContractVersion === "1.0.1"
@@ -12603,6 +12801,18 @@ export class AiGraderLocalStationBridgeService {
               || (!calibrationPreviewBound && binding.sideEpoch !== this.manifest.previewStatus.sideEpoch)
             ) {
               finish("preview epoch replaced");
+              return;
+            }
+            if (
+              !calibrationPreviewBound &&
+              !this.acceptPreviewCameraState(
+                frame.cameraState,
+                binding,
+                frame.capturedAt ?? frame.receivedAt,
+              )
+            ) {
+              this.stopPreviewProcessTree(child);
+              finish("preview camera-state error");
               return;
             }
             frameCount += 1;
@@ -14138,6 +14348,23 @@ export class AiGraderLocalStationBridgeService {
   }
 
   async action(action: AiGraderLocalStationBridgeAction, request: AiGraderLocalStationBridgeActionRequest = {}): Promise<AiGraderLocalStationBridgeStatus> {
+    const ownsStartSessionLifecycle = action === "start-session";
+    if (ownsStartSessionLifecycle) {
+      if (this.startSessionLifecyclePending) {
+        throw new Error("Start New Card is already pending; reconcile its definitive persisted outcome before retry.");
+      }
+      const reportId = this.canonicalCallerSuppliedReportId(request.reportId);
+      this.startSessionLifecycleOperation = reportId && request.mathematicalGradingAuthority
+        ? {
+            reportId,
+            mathematicalAuthoritySha256: crypto.createHash("sha256")
+              .update(canonicalJsonV1(request.mathematicalGradingAuthority), "utf8")
+              .digest("hex"),
+          }
+        : undefined;
+      this.startSessionLifecyclePending = true;
+    }
+    try {
     if (action === "capture-front") {
       this.assertMathematicalCaptureAuthority(this.manifest, "front");
       return this.atomicFrontCapture(request);
@@ -14336,6 +14563,9 @@ export class AiGraderLocalStationBridgeService {
       if (!request.mathematicalGradingAuthority) {
         throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
       }
+      if (!request.reportId) {
+        throw new Error("Start New Card requires a caller-bound report ID for exact retry reconciliation.");
+      }
       await this.createFreshSession({
         reportId: request.reportId,
         captureProfile: request.captureProfile,
@@ -14343,6 +14573,7 @@ export class AiGraderLocalStationBridgeService {
         gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
       }, now);
+      this.startSessionLifecyclePending = false;
       return this.status();
     }
 
@@ -14411,6 +14642,12 @@ export class AiGraderLocalStationBridgeService {
     });
 
     throw new Error(`Unsupported AI Grader station bridge action: ${action}`);
+    } finally {
+      if (ownsStartSessionLifecycle) {
+        this.startSessionLifecyclePending = false;
+        this.startSessionLifecycleOperation = undefined;
+      }
+    }
   }
 }
 

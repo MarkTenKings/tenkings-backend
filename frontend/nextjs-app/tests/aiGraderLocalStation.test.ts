@@ -12,6 +12,7 @@ import {
   aiGraderRapidItemPublishable,
   aiGraderReviewActivationAvailable,
   aiGraderStartNewCardAvailable,
+  aiGraderStartedSessionMatchesOperation,
   assertAiGraderRapidItemPublishable,
   buildAiGraderLocalStationStatus,
   completeAiGraderExactPublicationHandoff,
@@ -29,6 +30,7 @@ import {
   buildAiGraderQueuedOcrFailureRequest,
   buildAiGraderRapidPublicationEvidence,
   buildAiGraderRapidQueueActivationRequest,
+  callAiGraderStationBridge,
   fetchAiGraderStationBridgeHealth,
   initializeAiGraderQueuedOcrAttemptOwner,
   waitForAiGraderQueuedOcrAttemptOwnerLock,
@@ -949,8 +951,10 @@ test("Start New Card depends only on authoritative capture and lighting ownershi
     captureLockHeld: false,
     warmRunnerStatus: "processing" as const,
     currentStep: "start_new_card" as const,
+    startSessionLifecycleState: "idle" as const,
   };
   assert.equal(aiGraderStartNewCardAvailable(authoritative), true);
+  assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, startSessionLifecycleState: "pending" }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, captureLockHeld: true }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, currentStep: "capture_back" }), false);
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, currentStep: "session_complete" }), false);
@@ -1106,7 +1110,55 @@ test("one synchronous publication claim freezes review selection but never owns 
     captureLockHeld: false,
     warmRunnerStatus: "processing",
     currentStep: "start_new_card",
+    startSessionLifecycleState: "idle",
   }), true, "a hosted publication claim is not part of camera ownership");
+});
+
+test("cross-page Start reconciliation cannot adopt pending card A into card B draft", () => {
+  const pending = buildAiGraderLocalStationStatus();
+  pending.startSessionLifecycle = {
+    state: "pending",
+    operation: {
+      reportId: "report-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  };
+  assert.equal(aiGraderStartNewCardAvailable({
+    bridgeConnected: true,
+    captureBusy: false,
+    lightingRequestPending: false,
+    captureLockHeld: false,
+    warmRunnerStatus: "idle",
+    currentStep: "start_new_card",
+    startSessionLifecycleState: pending.startSessionLifecycle.state,
+  }), false);
+
+  const completed = buildAiGraderLocalStationStatus({ action: "start-session" });
+  completed.currentStep = "capture_front";
+  completed.sessionManifest.gradingSessionId = "session-card-a";
+  completed.sessionManifest.reportId = "report-card-a";
+  completed.startSessionLifecycle = {
+    state: "idle",
+    operation: {
+      reportId: "report-card-a",
+      gradingSessionId: "session-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  };
+  assert.equal(aiGraderStartedSessionMatchesOperation({
+    status: completed,
+    expected: {
+      reportId: "report-card-a",
+      mathematicalAuthoritySha256: "a".repeat(64),
+    },
+  }), true);
+  assert.equal(aiGraderStartedSessionMatchesOperation({
+    status: completed,
+    expected: {
+      reportId: "report-card-b",
+      mathematicalAuthoritySha256: "b".repeat(64),
+    },
+  }), false);
 });
 
 test("validated hosted publication acknowledges only the exact local item once before route verification failure", async () => {
@@ -1430,6 +1482,28 @@ test("production station rejects a version-compatible mock or contract bridge", 
   );
 });
 
+test("station action transport forwards the per-click abort signal", async () => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | null | undefined;
+  const result = await callAiGraderStationBridge({
+    baseUrl: "http://127.0.0.1:47652",
+    stationToken: "StationTokenStationTokenStationToken1234",
+    action: "status",
+    signal: controller.signal,
+  }, (async (_request, init) => {
+    observedSignal = init?.signal;
+    return new Response(JSON.stringify({
+      ok: true,
+      result: buildAiGraderLocalStationStatus(),
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch);
+  assert.equal(observedSignal, controller.signal);
+  assert.equal(result.currentStep, "start_new_card");
+});
+
 test("capture busy state leaves the live preview connected until the helper owns the atomic transition", () => {
   const effectStart = stationPageSource.indexOf("const positioningStepActive");
   const effectEnd = stationPageSource.indexOf("const expectedBinding", effectStart);
@@ -1450,7 +1524,11 @@ test("capture busy state leaves the live preview connected until the helper owns
 test("station source has no Single route, separate queue mutation, OCR retry, duplicate next control, or hosted mock station API", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(source, /stationCaptureMode|configure-rapid-capture|queue-current-card|retryOcrPrefill|Retry OCR|Start Next Grade|callStationContract/);
-  const startBlock = source.slice(source.indexOf("const startNewCard"), source.indexOf("const runStationCapture"));
+  const startBlock = source.slice(source.indexOf("const startNewCard = async"), source.indexOf("const runStationCapture"));
+  const localStartCall = startBlock.slice(
+    startBlock.indexOf('"start-session"'),
+    startBlock.indexOf("await acceptStartedSession"),
+  );
   const backBlock = source.slice(source.indexOf("const captureBackAndContinue"), source.indexOf("const activateRapidQueueItem"));
   const prepublicationCardBlock = source.slice(source.indexOf("const createCardFromConfirmedIdentity"), source.indexOf("const searchCardItems"));
   const activationBlock = source.slice(source.indexOf("const activateRapidQueueItem"), source.indexOf("const productionReleaseBody"));
@@ -1463,6 +1541,19 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   assert.doesNotMatch(startBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
   assert.doesNotMatch(backBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
   assert.doesNotMatch(startBlock, /publicationReviewClaim/);
+  assert.match(startBlock, /const startController = new AbortController\(\)/);
+  assert.match(startBlock, /window\.setTimeout\(\(\) => startController\.abort\(\), 30_000\)/);
+  assert.match(startBlock, /AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1[\s\S]+signal: startController\.signal/);
+  assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+localStartDispatched = true[\s\S]+"start-session"/);
+  assert.doesNotMatch(localStartCall, /startController\.signal/);
+  assert.match(startBlock, /startNewCardInFlightRef\.current/);
+  assert.match(startBlock, /runAction\("status"\)[\s\S]+startSessionLifecycle\?\.state !== "pending"/);
+  assert.ok(
+    startBlock.indexOf("aiGraderStartedSessionMatchesOperation") <
+      startBlock.indexOf("stagePreparedMathematicalDesignReferences"),
+    "the exact persisted Start identity is verified before staging or draft caching",
+  );
+  assert.match(startBlock, /window\.clearTimeout\(startTimeout\)[\s\S]+setCaptureBusy\(null\)/);
   assert.ok(
     activationBlock.indexOf("publicationReviewClaimRef.current") < activationBlock.indexOf("await runAction"),
     "review selection checks the synchronous publication claim before bridge activation",

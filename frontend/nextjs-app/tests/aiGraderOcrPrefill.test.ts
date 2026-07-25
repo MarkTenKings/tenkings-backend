@@ -760,6 +760,31 @@ test("OCR runtime maps Google and OpenAI failures to stable production categorie
       (error) => error instanceof AiGraderOcrFailure && error.code === entry.code,
     );
   }
+  const upstreamDiagnostic = {
+    status: 429,
+    requestId: "req_quota_123",
+    errorType: "insufficient_quota",
+    errorCode: "insufficient_quota",
+    errorParam: "account",
+    sanitizedMessage: "Quota unavailable.",
+  };
+  await assert.rejects(
+    runAiGraderOcrPrefillRuntime(input, {
+      async runOcr() { return ocr; },
+      async runStructuredExtraction() {
+        throw new AiGraderOcrStructuredExtractionError("non_2xx", upstreamDiagnostic);
+      },
+    }),
+    (error) => {
+      assert.ok(error instanceof AiGraderOcrFailure);
+      assert.equal(error.code, "AI_GRADER_OCR_OPENAI_NON_2XX");
+      assert.deepEqual(error.internalProviderDiagnostics, {
+        schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
+        openAiFailure: upstreamDiagnostic,
+      });
+      return true;
+    },
+  );
 });
 
 test("OCR runtime reports catalog infrastructure failure without exposing its cause", async () => {

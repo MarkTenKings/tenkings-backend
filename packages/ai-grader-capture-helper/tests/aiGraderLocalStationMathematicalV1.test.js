@@ -268,6 +268,86 @@ async function startMathematicalSession(service, authority = printedAuthority(),
   });
 }
 
+test("a delayed local start remains singular and exposes a definitive lifecycle for timeout reconciliation", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-delayed-start-lifecycle-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const service = createService(outputDir, async () => {
+    throw new Error("report builder is not used during Start New Card");
+  });
+  const originalCreateFreshSession = service.createFreshSession.bind(service);
+  let releaseStart;
+  const startRelease = new Promise((resolve) => {
+    releaseStart = resolve;
+  });
+  let markEntered;
+  const startEntered = new Promise((resolve) => {
+    markEntered = resolve;
+  });
+  let createCount = 0;
+  service.createFreshSession = async (...args) => {
+    createCount += 1;
+    markEntered();
+    await startRelease;
+    return originalCreateFreshSession(...args);
+  };
+
+  const authorityA = printedAuthority();
+  const authorityASha256 = sha256(canonicalJsonV1(authorityA));
+  const firstStart = startMathematicalSession(
+    service,
+    authorityA,
+    "delayed-start-report",
+  );
+  await startEntered;
+  assert.deepEqual(service.status().startSessionLifecycle, {
+    state: "pending",
+    operation: {
+      reportId: "delayed-start-report",
+      mathematicalAuthoritySha256: authorityASha256,
+    },
+  });
+  await assert.rejects(
+    startMathematicalSession(
+      service,
+      printedAuthority(),
+      "overlapping-start-report",
+    ),
+    /already pending|definitive persisted outcome/i,
+  );
+  assert.equal(createCount, 1);
+
+  releaseStart();
+  const completed = await firstStart;
+  assert.deepEqual(completed.startSessionLifecycle, {
+    state: "idle",
+    operation: {
+      reportId: "delayed-start-report",
+      gradingSessionId: completed.sessionManifest.gradingSessionId,
+      mathematicalAuthoritySha256: authorityASha256,
+    },
+  });
+  assert.equal(completed.currentStep, "capture_front");
+  assert.equal(completed.reportId, "delayed-start-report");
+  assert.equal(createCount, 1);
+  const persistedSessions = fs.readdirSync(outputDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("ai-grader-browser-station-session-"));
+  assert.equal(persistedSessions.length, 1);
+  const persisted = JSON.parse(fs.readFileSync(
+    path.join(outputDir, persistedSessions[0].name, "station-session.json"),
+    "utf8",
+  ));
+  assert.deepEqual(persisted.startOperationIdentity, {
+    reportId: "delayed-start-report",
+    gradingSessionId: completed.sessionManifest.gradingSessionId,
+    mathematicalAuthoritySha256: authorityASha256,
+  });
+  assert.equal(
+    JSON.stringify(persisted).includes("overlapping-start-report"),
+    false,
+    "card B never reaches persisted staging or cache identity",
+  );
+});
+
 function assetMetadata(assetId, evidenceRole, bytes, fileName, widthPx = 24, heightPx = 32) {
   return {
     assetId,

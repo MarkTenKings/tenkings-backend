@@ -7,6 +7,7 @@ const {
   buildFixedRigStandardTradingCardBoundaryV1,
   detectFixedRigRawBoundObservedOuterCutV1,
   verifyFixedRigRawBoundObservedOuterCutArtifactV1,
+  verifyFixedRigRawBoundOuterCutUnavailableAuditV1,
 } = require('../dist/drivers');
 
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -140,6 +141,13 @@ test('raw sensor outer-cut detector does not apply the corner margin to straight
     detectorInput(rawCardPlane(40, 420)),
   );
   assert.equal(result.status, 'insufficient_evidence');
+  assert.equal(result.failureKind, 'automatic_measurement_unavailable');
+  assert.equal(result.requiresRecapture, false);
+  assert.ok(result.unavailableAudit.supportedCrossSectionCount > 0);
+  assert.equal(
+    verifyFixedRigRawBoundOuterCutUnavailableAuditV1(result.unavailableAudit),
+    true,
+  );
   assert.match(result.reasons.join(' '), /gradient/i);
 });
 
@@ -168,7 +176,10 @@ test('raw sensor outer-cut detector fails closed when raw exterior evidence is a
     rawAllOnRgb: empty,
   });
   assert.equal(noBoundary.status, 'insufficient_evidence');
-  assert.match(noBoundary.reasons.join(' '), /gradient/i);
+  assert.equal(noBoundary.failureKind, 'invalid_input');
+  assert.equal(noBoundary.requiresRecapture, true);
+  assert.equal(noBoundary.unavailableAudit, undefined);
+  assert.match(noBoundary.reasons.join(' '), /zero raw perimeter|nonzero authenticated/i);
 
   const weakBoundary = rawCardPlane();
   for (let index = 0; index < weakBoundary.data.length; index += 1) {
@@ -183,12 +194,18 @@ test('raw sensor outer-cut detector fails closed when raw exterior evidence is a
     }),
   });
   assert.equal(weakResult.status, 'insufficient_evidence');
-  assert.match(weakResult.reasons.join(' '), /gradient/i);
+  assert.equal(weakResult.failureKind, 'invalid_input');
+  assert.equal(weakResult.requiresRecapture, true);
+  assert.equal(weakResult.unavailableAudit, undefined);
+  assert.match(weakResult.reasons.join(' '), /zero raw perimeter|nonzero authenticated/i);
 
   const changedIdentity = detectFixedRigRawBoundObservedOuterCutV1({
     ...input,
     rawAllOnAssetSha256: hash(Buffer.from('different-raw-file')),
   });
   assert.equal(changedIdentity.status, 'insufficient_evidence');
+  assert.equal(changedIdentity.failureKind, 'invalid_input');
+  assert.equal(changedIdentity.requiresRecapture, true);
+  assert.equal(changedIdentity.unavailableAudit, undefined);
   assert.match(changedIdentity.reasons.join(' '), /transform/i);
 });

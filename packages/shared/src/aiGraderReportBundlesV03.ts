@@ -317,7 +317,7 @@ const centeringSideEvidenceSchema = z
     score: mathematicalScoreV1Schema,
     horizontal: centeringAxisSchema,
     vertical: centeringAxisSchema,
-    outerCutContourAssetId: assetIdSchema,
+    outerCutContourAssetId: assetIdSchema.optional(),
     printedDesignContourAssetId: assetIdSchema,
     measurementOverlayAssetId: assetIdSchema,
     registration: mathematicalCenteringRegistrationV1Schema,
@@ -341,7 +341,7 @@ const centeringSideEvidenceSchema = z
       boundaryConfidence: fractionSchema,
       boundaryU95Mm: z.number().finite().nonnegative(),
       observedArtifact: observedOuterCutArtifactSchema,
-    }),
+    }).optional(),
     evidenceAssetIds: uniqueAssetIds(1),
   })
   .superRefine((side, context) => {
@@ -363,6 +363,13 @@ const centeringSideEvidenceSchema = z
       }
     } else if (side.registrationEvidence) {
       context.addIssue({ code: "custom", path: ["registrationEvidence"], message: "printed-border centering must not claim design-template registration evidence" });
+    }
+    if (Boolean(side.outerCutGeometryEvidence) !== Boolean(side.outerCutContourAssetId)) {
+      context.addIssue({
+        code: "custom",
+        path: ["outerCutContourAssetId"],
+        message: "must exist if and only if authenticated measured outer-cut geometry exists",
+      });
     }
   });
 
@@ -633,8 +640,8 @@ export const aiGraderReportBundleV03Schema = z
     designReferences: z.array(mathematicalDesignReferenceV1Schema).max(10),
     centeringEvidence: centeringEvidenceSchema,
     conditionObservationEvidence: z.strictObject({
-      corners: z.array(conditionObservationEvidenceSchema).length(8),
-      edges: z.array(conditionObservationEvidenceSchema).length(8),
+      corners: z.array(conditionObservationEvidenceSchema).max(8),
+      edges: z.array(conditionObservationEvidenceSchema).max(8),
     }),
     defectFindings: z.array(aiGraderPublishedDefectFindingV2Schema).max(AI_GRADER_DEFECT_FINDING_MAX_COUNT),
     deductionLedger: mathematicalDeductionLedgerV1Schema,
@@ -726,16 +733,21 @@ export const aiGraderReportBundleV03Schema = z
         });
       }
     }
-    const intendedProfileIds = new Set([
-      bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileId,
-      bundle.centeringEvidence.back.outerCutGeometryEvidence.intendedBoundaryProfileId,
-    ]);
-    const pokemonProfileSelected = intendedProfileIds.has(POKEMON_TCG_STANDARD_CORNER_PROFILE_ID);
+    const publicOuterCutGeometry = [
+      bundle.centeringEvidence.front.outerCutGeometryEvidence,
+      bundle.centeringEvidence.back.outerCutGeometryEvidence,
+    ].filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+    const intendedProfileIds = new Set(
+      publicOuterCutGeometry.map((entry) => entry.intendedBoundaryProfileId),
+    );
+    const pokemonProfileSelected =
+      publicOuterCutGeometry.length === 2 &&
+      intendedProfileIds.has(POKEMON_TCG_STANDARD_CORNER_PROFILE_ID);
     if (pokemonProfileSelected &&
         (intendedProfileIds.size !== 1 ||
-          bundle.centeringEvidence.front.outerCutGeometryEvidence.intendedBoundaryProfileVersion !==
+          bundle.centeringEvidence.front.outerCutGeometryEvidence?.intendedBoundaryProfileVersion !==
             POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION ||
-          bundle.centeringEvidence.back.outerCutGeometryEvidence.intendedBoundaryProfileVersion !==
+          bundle.centeringEvidence.back.outerCutGeometryEvidence?.intendedBoundaryProfileVersion !==
             POKEMON_TCG_STANDARD_CORNER_PROFILE_VERSION)) {
       context.addIssue({
         code: "custom",
@@ -799,6 +811,14 @@ export const aiGraderReportBundleV03Schema = z
       const findings = new Map(bundle.defectFindings.map((finding) => [finding.findingId, finding]));
       for (const [index, measurement] of production.measurements.entries()) {
         const sideGeometry = bundle.centeringEvidence[measurement.side].outerCutGeometryEvidence;
+        if (!sideGeometry) {
+          context.addIssue({
+            code: "custom",
+            path: ["pokemonStandardCornerAuthority", "productionMeasurementAuthority", "measurements", index],
+            message: "requires exact observed outer-cut geometry for its side",
+          });
+          continue;
+        }
         const observed = sideGeometry.observedArtifact;
         const calculation = calculateFindingDeductionV1({
           category: "corner_shape_deviation",
@@ -1090,59 +1110,69 @@ export const aiGraderReportBundleV03Schema = z
       if (side.score !== Math.min(side.horizontal.score, side.vertical.score)) {
         context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "score"], message: "must use the worse axis" });
       }
-      requireAssetRole(side.outerCutContourAssetId, sideName, "outer_cut_contour", ["centeringEvidence", sideName, "outerCutContourAssetId"]);
+      if (side.outerCutContourAssetId) {
+        requireAssetRole(side.outerCutContourAssetId, sideName, "outer_cut_contour", ["centeringEvidence", sideName, "outerCutContourAssetId"]);
+      }
       requireAssetRole(side.printedDesignContourAssetId, sideName, "printed_design_contour", ["centeringEvidence", sideName, "printedDesignContourAssetId"]);
       requireAssetRole(side.measurementOverlayAssetId, sideName, "centering_overlay", ["centeringEvidence", sideName, "measurementOverlayAssetId"]);
       side.evidenceAssetIds.forEach((assetId) => requireAsset(assetId, ["centeringEvidence", sideName, "evidenceAssetIds"]));
       const geometry = side.outerCutGeometryEvidence;
-      const observed = geometry.observedArtifact;
-      const rawAllOnAsset = assetsById.get(geometry.rawAllOnAssetId.toLowerCase());
-      const rawAllOnAssetHash = rawAllOnAsset?.sha256 ?? rawAllOnAsset?.checksumSha256;
-      const allOnAsset = assetsById.get(geometry.normalizedAllOnAssetId.toLowerCase());
-      const allOnAssetHash = allOnAsset?.sha256 ?? allOnAsset?.checksumSha256;
-      if (
-        geometry.observedContourSha256 !== observed.artifactSha256 ||
-        geometry.intendedContourSha256 !== observed.intendedBoundaryArtifactSha256 ||
-        geometry.intendedBoundaryProfileId !== observed.intendedBoundaryProfileId ||
-        geometry.intendedBoundaryProfileVersion !== observed.intendedBoundaryProfileVersion ||
-        geometry.observedContourPointCount !== observed.normalizedContour.length ||
-        geometry.observedContourDetectorId !== observed.detectorId ||
-        geometry.observedContourDetectorVersion !== observed.detectorVersion ||
-        geometry.rawAllOnAssetId !== observed.rawAllOnAssetId ||
-        geometry.rawAllOnAssetSha256 !== observed.rawAllOnAssetSha256 ||
-        geometry.rawAllOnScalarPlaneSha256 !== observed.rawAllOnScalarPlaneSha256 ||
-        geometry.rawToNormalizedTransformSha256 !== observed.rawToNormalizedTransformSha256 ||
-        geometry.normalizedAllOnAssetId !== observed.normalizedAllOnAssetId ||
-        geometry.normalizedAllOnAssetSha256 !== observed.normalizedAllOnAssetSha256 ||
-        geometry.boundaryConfidence !== observed.confidence ||
-        geometry.boundaryU95Mm !== observed.u95Mm ||
-        observed.supportedCrossSectionCount !== observed.crossSectionCount ||
-        observed.normalizedWidthPx !== bundle.calibrationProfile.normalizedWidthPx ||
-        observed.normalizedHeightPx !== bundle.calibrationProfile.normalizedHeightPx ||
-        observed.calibrationProfileId !== bundle.calibrationProfile.profileId ||
-        observed.calibrationVersion !== bundle.calibrationProfile.calibrationVersion ||
-        observed.calibrationSha256 !== bundle.calibrationProfile.artifactSha256 ||
-        Math.abs(observed.pixelsPerMmX - 1 / bundle.calibrationProfile.mmPerPixelX) > 1e-9 ||
-        Math.abs(observed.pixelsPerMmY - 1 / bundle.calibrationProfile.mmPerPixelY) > 1e-9 ||
-        observed.segmentationBoundaryU95Px !== bundle.calibrationProfile.segmentationBoundaryU95Px ||
-        !rawAllOnAssetHash ||
-        rawAllOnAssetHash.toLowerCase() !== observed.rawAllOnAssetSha256.toLowerCase() ||
-        !allOnAssetHash ||
-        allOnAssetHash.toLowerCase() !== observed.normalizedAllOnAssetSha256.toLowerCase() ||
-        !side.evidenceAssetIds.some((assetId) =>
-          assetId.toLowerCase() === observed.rawAllOnAssetId.toLowerCase()) ||
-        !side.evidenceAssetIds.some((assetId) =>
-          assetId.toLowerCase() === observed.normalizedAllOnAssetId.toLowerCase()) ||
-        observed.rawContour.some((point) =>
-          point.x > observed.rawWidthPx || point.y > observed.rawHeightPx) ||
-        observed.normalizedContour.some((point) =>
-          point.x > observed.normalizedWidthPx || point.y > observed.normalizedHeightPx)
-      ) {
+      if (!geometry && side.registration.transformType !== "physical_margin_measurement") {
         context.addIssue({
           code: "custom",
           path: ["centeringEvidence", sideName, "outerCutGeometryEvidence"],
-          message: "must retain the exact source-, calibration-, intended-format-, detector-, scale-, U95-, and contour-bound observed outer-cut artifact",
+          message: "may be absent only for authenticated physical-margin centering",
         });
+      } else if (geometry) {
+        const observed = geometry.observedArtifact;
+        const rawAllOnAsset = assetsById.get(geometry.rawAllOnAssetId.toLowerCase());
+        const rawAllOnAssetHash = rawAllOnAsset?.sha256 ?? rawAllOnAsset?.checksumSha256;
+        const allOnAsset = assetsById.get(geometry.normalizedAllOnAssetId.toLowerCase());
+        const allOnAssetHash = allOnAsset?.sha256 ?? allOnAsset?.checksumSha256;
+        if (
+          geometry.observedContourSha256 !== observed.artifactSha256 ||
+          geometry.intendedContourSha256 !== observed.intendedBoundaryArtifactSha256 ||
+          geometry.intendedBoundaryProfileId !== observed.intendedBoundaryProfileId ||
+          geometry.intendedBoundaryProfileVersion !== observed.intendedBoundaryProfileVersion ||
+          geometry.observedContourPointCount !== observed.normalizedContour.length ||
+          geometry.observedContourDetectorId !== observed.detectorId ||
+          geometry.observedContourDetectorVersion !== observed.detectorVersion ||
+          geometry.rawAllOnAssetId !== observed.rawAllOnAssetId ||
+          geometry.rawAllOnAssetSha256 !== observed.rawAllOnAssetSha256 ||
+          geometry.rawAllOnScalarPlaneSha256 !== observed.rawAllOnScalarPlaneSha256 ||
+          geometry.rawToNormalizedTransformSha256 !== observed.rawToNormalizedTransformSha256 ||
+          geometry.normalizedAllOnAssetId !== observed.normalizedAllOnAssetId ||
+          geometry.normalizedAllOnAssetSha256 !== observed.normalizedAllOnAssetSha256 ||
+          geometry.boundaryConfidence !== observed.confidence ||
+          geometry.boundaryU95Mm !== observed.u95Mm ||
+          observed.supportedCrossSectionCount !== observed.crossSectionCount ||
+          observed.normalizedWidthPx !== bundle.calibrationProfile.normalizedWidthPx ||
+          observed.normalizedHeightPx !== bundle.calibrationProfile.normalizedHeightPx ||
+          observed.calibrationProfileId !== bundle.calibrationProfile.profileId ||
+          observed.calibrationVersion !== bundle.calibrationProfile.calibrationVersion ||
+          observed.calibrationSha256 !== bundle.calibrationProfile.artifactSha256 ||
+          Math.abs(observed.pixelsPerMmX - 1 / bundle.calibrationProfile.mmPerPixelX) > 1e-9 ||
+          Math.abs(observed.pixelsPerMmY - 1 / bundle.calibrationProfile.mmPerPixelY) > 1e-9 ||
+          observed.segmentationBoundaryU95Px !== bundle.calibrationProfile.segmentationBoundaryU95Px ||
+          !rawAllOnAssetHash ||
+          rawAllOnAssetHash.toLowerCase() !== observed.rawAllOnAssetSha256.toLowerCase() ||
+          !allOnAssetHash ||
+          allOnAssetHash.toLowerCase() !== observed.normalizedAllOnAssetSha256.toLowerCase() ||
+          !side.evidenceAssetIds.some((assetId) =>
+            assetId.toLowerCase() === observed.rawAllOnAssetId.toLowerCase()) ||
+          !side.evidenceAssetIds.some((assetId) =>
+            assetId.toLowerCase() === observed.normalizedAllOnAssetId.toLowerCase()) ||
+          observed.rawContour.some((point) =>
+            point.x > observed.rawWidthPx || point.y > observed.rawHeightPx) ||
+          observed.normalizedContour.some((point) =>
+            point.x > observed.normalizedWidthPx || point.y > observed.normalizedHeightPx)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["centeringEvidence", sideName, "outerCutGeometryEvidence"],
+            message: "must retain the exact source-, calibration-, intended-format-, detector-, scale-, U95-, and contour-bound observed outer-cut artifact",
+          });
+        }
       }
       if (side.registration.profile !== side.profile) {
         context.addIssue({ code: "custom", path: ["centeringEvidence", sideName, "registration", "profile"], message: "must match the selected centering profile" });
@@ -1450,6 +1480,7 @@ export const aiGraderReportBundleV03Schema = z
         observation.side + ":" + observation.location,
       );
       if (
+        actualKeys.length !== expectedKeys.size ||
         new Set(actualKeys).size !== actualKeys.length ||
         actualKeys.some((key) => !expectedKeys.has(key))
       ) {
@@ -1543,6 +1574,12 @@ export const aiGraderReportBundleV03Schema = z
         cornerLocations,
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.locationsPerSide,
       );
+    } else if (bundle.conditionObservationEvidence.corners.length !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["conditionObservationEvidence", "corners"],
+        message: "must be empty when the corner element was resolved without fabricated detector observations",
+      });
     }
     if (!finalGrade.elements.edges.resolved) {
       validateObservationEvidence(
@@ -1551,6 +1588,12 @@ export const aiGraderReportBundleV03Schema = z
         edgeLocations,
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.locationsPerSide,
       );
+    } else if (bundle.conditionObservationEvidence.edges.length !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["conditionObservationEvidence", "edges"],
+        message: "must be empty when the edge element was resolved without fabricated detector observations",
+      });
     }
     const surfaceDeduction = bundle.defectFindings
       .filter((finding) => finding.primaryElement === "surface")

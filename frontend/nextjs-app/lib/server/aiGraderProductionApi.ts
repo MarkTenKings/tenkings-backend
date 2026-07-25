@@ -3011,7 +3011,18 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             })),
           });
         } catch (error) {
-          if (isRecord(error) && isAiGraderOcrFailureCode(error.code)) throw error;
+          if (isRecord(error) && isAiGraderOcrFailureCode(error.code)) {
+            if (error.internalProviderDiagnostics && deps.recordOcrProviderDiagnostics) {
+              try {
+                deps.recordOcrProviderDiagnostics(
+                  error.internalProviderDiagnostics as AiGraderOcrProviderDiagnostics,
+                );
+              } catch {
+                // Safe diagnostics recording must never alter terminal exact-item OCR semantics.
+              }
+            }
+            throw error;
+          }
           throw new AiGraderOcrFailure("AI_GRADER_OCR_INTERNAL_FAILED");
         }
         if (

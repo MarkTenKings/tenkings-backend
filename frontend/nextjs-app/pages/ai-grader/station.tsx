@@ -16,6 +16,7 @@ import {
   aiGraderRapidQueueIdentityMatches,
   aiGraderReviewActivationAvailable,
   aiGraderStartNewCardAvailable,
+  aiGraderStartedSessionMatchesOperation,
   assertAiGraderRapidItemPublishable,
   aiGraderAuthoritativeLiveLightingDraft,
   aiGraderCardPlacementLabel,
@@ -69,6 +70,7 @@ import {
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
+  hashAiGraderMathematicalGradingAuthorityV1,
   initializeAiGraderQueuedOcrAttemptOwner,
   issueAiGraderOperatorResolutionAuthenticationV1,
   openAiGraderStationPreviewStream,
@@ -956,6 +958,7 @@ export default function AiGraderStationPage() {
   const liveLightingAuthorityAcknowledged = lightingPhysicalStateAcknowledged(liveLighting);
   const [liveLightingRequestPending, setLiveLightingRequestPending] = useState(false);
   const liveLightingRequestPendingRef = useRef(false);
+  const startNewCardInFlightRef = useRef(false);
   const liveLightingApplyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPairingCode, setManualPairingCode] = useState("");
   const [advancedConnectOpen, setAdvancedConnectOpen] = useState(false);
@@ -2102,6 +2105,7 @@ export default function AiGraderStationPage() {
     captureLockHeld: warmRunner.captureLock.held,
     warmRunnerStatus: warmRunner.status,
     currentStep: status.currentStep,
+    startSessionLifecycleState: status.startSessionLifecycle?.state ?? "idle",
   });
   const liveLightingAvailable =
     bridgeConnected &&
@@ -2693,11 +2697,15 @@ export default function AiGraderStationPage() {
     }
   };
 
-  const runAction = async (action: AiGraderStationAction, body?: Record<string, unknown>) => {
+  const runAction = async (
+    action: AiGraderStationAction,
+    body?: Record<string, unknown>,
+    signal?: AbortSignal,
+  ) => {
     if (!bridgeConnected || !stationToken.trim()) {
       throw new Error("Connect the real Dell local station bridge before running station actions.");
     }
-    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body });
+    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body, signal });
     setStatus(next);
     reconcileBridgePreviewStatus(next.previewStatus);
     setLiveLighting(next.liveLighting);
@@ -2999,14 +3007,51 @@ export default function AiGraderStationPage() {
 
   const startNewCard = async () => {
     if (liveLightingRequestPendingRef.current) return;
+    if (startNewCardInFlightRef.current) return;
     if (!canStartNewCard) return;
+    startNewCardInFlightRef.current = true;
     setCaptureBusy("start");
     setError(null);
+    const startController = new AbortController();
+    const startTimeout = window.setTimeout(() => startController.abort(), 30_000);
+    let localStartDispatched = false;
+    let preparedForStart: Awaited<ReturnType<typeof prepareMathematicalAuthority>> | undefined;
+    let dispatchedStartIdentity: {
+      reportId: string;
+      mathematicalAuthoritySha256: string;
+    } | undefined;
+    const acceptStartedSession = async (
+      prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
+      started: AiGraderLocalStationStatus,
+      expected: {
+        reportId: string;
+        mathematicalAuthoritySha256: string;
+      },
+    ) => {
+      if (!aiGraderStartedSessionMatchesOperation({ status: started, expected })) {
+        throw new Error("Started session identity does not match the dispatched report and Mathematical V1 authority.");
+      }
+      await stagePreparedMathematicalDesignReferences(prepared, started);
+      preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
+        identityDraft: { ...identityDraft },
+        editedFields: new Set(identityEditedFieldsRef.current),
+        selectedCard,
+      });
+      setMathematicalAuthorityStatus({
+        status: "completed",
+        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
+      });
+    };
     try {
       const prepared = await prepareMathematicalAuthority();
+      preparedForStart = prepared;
       if (!prepared?.authority) {
         throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
       }
+      dispatchedStartIdentity = {
+        reportId: `ai-grader-${crypto.randomUUID()}`,
+        mathematicalAuthoritySha256: await hashAiGraderMathematicalGradingAuthorityV1(prepared.authority),
+      };
       const calibrationRigId = status.mathematicalCalibration?.rigId;
       if (!calibrationRigId) {
         throw new Error("Start New Card requires the exact local calibration rig identity.");
@@ -3018,6 +3063,7 @@ export default function AiGraderStationPage() {
           tenantId: prepared.authority.cardIdentity.tenantId,
           rigId: calibrationRigId,
         }),
+        signal: startController.signal,
       });
       const activationPayload = await activationResponse.json() as {
         ok?: boolean;
@@ -3027,6 +3073,8 @@ export default function AiGraderStationPage() {
       if (!activationResponse.ok || !activationPayload.ok || !activationPayload.authority) {
         throw new Error(activationPayload.message || "Start New Card requires one exact hosted ACTIVE calibration activation.");
       }
+      window.clearTimeout(startTimeout);
+      localStartDispatched = true;
       const started = await runAction(
         "start-session",
         buildAiGraderCaptureProfileRequest(
@@ -3034,24 +3082,49 @@ export default function AiGraderStationPage() {
           selectedGradingContract,
           prepared?.authority,
           activationPayload.authority,
+          dispatchedStartIdentity.reportId,
         ),
       );
-      await stagePreparedMathematicalDesignReferences(prepared, started);
-      preCaptureDraftBySessionRef.current.set(started.sessionManifest.gradingSessionId, {
-        identityDraft: { ...identityDraft },
-        editedFields: new Set(identityEditedFieldsRef.current),
-        selectedCard,
-      });
-      setMathematicalAuthorityStatus({
-        status: "completed",
-        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
-      });
+      await acceptStartedSession(prepared, started, dispatchedStartIdentity);
     } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Could not start an AI Grader card session.";
+      let reconciled: AiGraderLocalStationStatus | undefined;
+      if (localStartDispatched) {
+        for (;;) {
+          try {
+            const current = await runAction("status");
+            if (current.startSessionLifecycle?.state !== "pending") {
+              reconciled = current;
+              break;
+            }
+          } catch {
+            // The local start outcome remains pending until a fresh status request succeeds.
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+        }
+      }
+      if (
+        reconciled?.currentStep === "capture_front" &&
+        preparedForStart &&
+        dispatchedStartIdentity &&
+        aiGraderStartedSessionMatchesOperation({
+          status: reconciled,
+          expected: dispatchedStartIdentity,
+        })
+      ) {
+        await acceptStartedSession(preparedForStart, reconciled, dispatchedStartIdentity);
+        setError(null);
+        return;
+      }
+      const message = startController.signal.aborted && !localStartDispatched
+        ? "Start New Card timed out before a local session was dispatched. No local start is pending; retry obtains a fresh authority."
+        : requestError instanceof Error
+          ? requestError.message
+          : "Could not start an AI Grader card session.";
       setMathematicalAuthorityStatus({ status: "failed", message });
-      await runAction("status").catch(() => undefined);
       setError(message);
     } finally {
+      window.clearTimeout(startTimeout);
+      startNewCardInFlightRef.current = false;
       setCaptureBusy(null);
     }
   };

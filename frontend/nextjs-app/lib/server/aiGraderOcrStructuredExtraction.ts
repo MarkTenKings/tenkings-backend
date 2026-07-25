@@ -99,11 +99,16 @@ const ERROR_MESSAGES: Record<AiGraderOcrStructuredExtractionErrorCode, string> =
 
 export class AiGraderOcrStructuredExtractionError extends Error {
   readonly code: AiGraderOcrStructuredExtractionErrorCode;
+  readonly upstreamDiagnostic?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
 
-  constructor(code: AiGraderOcrStructuredExtractionErrorCode) {
+  constructor(
+    code: AiGraderOcrStructuredExtractionErrorCode,
+    upstreamDiagnostic?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic,
+  ) {
     super(ERROR_MESSAGES[code]);
     this.name = "AiGraderOcrStructuredExtractionError";
     this.code = code;
+    this.upstreamDiagnostic = upstreamDiagnostic;
   }
 }
 
@@ -113,6 +118,46 @@ const MAX_TOKENS_PER_SIDE = 250;
 const MAX_TOKEN_TEXT_CHARS = 80;
 const MAX_FIELD_TEXT_CHARS = 180;
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+function sanitizedUpstreamText(value: unknown, maximumLength: number) {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b/gi, "[redacted-credential]")
+    .replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=_-]+/gi, "[redacted-image]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximumLength);
+  return sanitized || undefined;
+}
+
+async function non2xxDiagnostic(response: Response) {
+  let payload: unknown;
+  try {
+    const text = (await response.text()).slice(0, 4096);
+    payload = JSON.parse(text);
+  } catch {
+    payload = undefined;
+  }
+  const error = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).error
+    : undefined;
+  const fields = error && typeof error === "object" && !Array.isArray(error)
+    ? error as Record<string, unknown>
+    : {};
+  const requestId = sanitizedUpstreamText(response.headers.get("x-request-id"), 200);
+  return {
+    status: response.status,
+    ...(requestId && /^[A-Za-z0-9._:-]+$/.test(requestId) ? { requestId } : {}),
+    ...(sanitizedUpstreamText(fields.type, 100) ? { errorType: sanitizedUpstreamText(fields.type, 100)! } : {}),
+    ...(sanitizedUpstreamText(fields.code, 100) ? { errorCode: sanitizedUpstreamText(fields.code, 100)! } : {}),
+    ...(sanitizedUpstreamText(fields.param, 100) ? { errorParam: sanitizedUpstreamText(fields.param, 100)! } : {}),
+    ...(sanitizedUpstreamText(fields.message, 300)
+      ? { sanitizedMessage: sanitizedUpstreamText(fields.message, 300)! }
+      : {}),
+  };
+}
 const MAX_TIMEOUT_MS = 30_000;
 export const AI_GRADER_OCR_MAX_OUTPUT_TOKENS = 2_400;
 
@@ -495,7 +540,9 @@ export async function runAiGraderOcrStructuredExtraction(
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) throw new AiGraderOcrStructuredExtractionError("non_2xx");
+  if (!response.ok) {
+    throw new AiGraderOcrStructuredExtractionError("non_2xx", await non2xxDiagnostic(response));
+  }
   let payload: unknown;
   try {
     payload = await response.json();

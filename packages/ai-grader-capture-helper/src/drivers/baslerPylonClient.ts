@@ -397,6 +397,8 @@ export interface BaslerOperatorPreviewWindowOptions {
 export interface BaslerOperatorPreviewMjpegStreamOptions {
   cameraIndex?: number;
   exposureUs?: number;
+  gain?: number;
+  pixelFormat?: "Mono8";
   refreshIntervalMs?: number;
   jpegQuality?: number;
 }
@@ -770,6 +772,8 @@ export class BaslerPylonClient {
       "-JpegQuality",
       String(jpegQuality),
       ...(options.exposureUs ? ["-ExposureUs", String(options.exposureUs)] : []),
+      ...(options.gain != null ? ["-Gain", String(options.gain)] : []),
+      ...(options.pixelFormat ? ["-PreviewPixelFormat", options.pixelFormat] : []),
     ];
     return spawn(this.config.powershellPath, args, {
       stdio: "pipe",
