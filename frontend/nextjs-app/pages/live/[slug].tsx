@@ -2,9 +2,12 @@ import Head from "next/head";
 import Link from "next/link";
 import { GetServerSideProps } from "next";
 import MuxPlayer from "@mux/mux-player-react";
+import { type FormEvent, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
+import { useSession } from "../../hooks/useSession";
 
 const embedForMedia = (videoUrl: string) => {
   if (/youtu\.be|youtube\.com/.test(videoUrl)) {
@@ -45,7 +48,54 @@ interface LiveRipPageProps {
 }
 
 export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
+  const { session } = useSession();
   const media = embedForMedia(liveRip.videoUrl);
+  const isAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
+  const canAssign = isAdmin && liveRip.status === "COMPLETE";
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
+  const [assignBusy, setAssignBusy] = useState(false);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+
+  const handleAssign = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!session || !canAssign) {
+      return;
+    }
+
+    setAssignBusy(true);
+    setAssignError(null);
+    setAssignSuccess(null);
+    try {
+      const response = await fetch(
+        `/api/live-rip/clips/${encodeURIComponent(liveRip.id)}/assign-and-send`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name: customerName,
+            phone: customerPhone,
+          }),
+        }
+      );
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Unable to assign this Live Rip");
+      }
+      setAssignSuccess(payload.message ?? "Live Rip assigned and claim text sent");
+      setCustomerName("");
+      setCustomerPhone("");
+    } catch (error) {
+      setAssignError(error instanceof Error ? error.message : "Unable to assign this Live Rip");
+    } finally {
+      setAssignBusy(false);
+    }
+  };
 
   const renderMedia = () => {
     if (liveRip.muxPlaybackId) {
@@ -161,6 +211,19 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
           >
             Back to live rips
           </Link>
+          {canAssign && (
+            <button
+              type="button"
+              onClick={() => {
+                setAssignError(null);
+                setAssignSuccess(null);
+                setAssignOpen(true);
+              }}
+              className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+            >
+              Assign &amp; Text Customer
+            </button>
+          )}
           {liveRip.location && (
             <Link
               href={`/locations#${liveRip.location.slug}`}
@@ -188,6 +251,77 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
           </section>
         )}
       </div>
+
+      {assignOpen && canAssign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-8 backdrop-blur-sm">
+          <form
+            onSubmit={handleAssign}
+            className="relative w-full max-w-md rounded-3xl border border-gold-500/30 bg-night-900 p-8 shadow-card"
+          >
+            <button
+              type="button"
+              onClick={() => setAssignOpen(false)}
+              className="absolute right-5 top-5 rounded-full border border-white/10 px-3 py-1 text-sm text-slate-400 transition hover:text-white"
+              aria-label="Close assignment dialog"
+            >
+              ×
+            </button>
+            <p className="text-xs uppercase tracking-[0.34em] text-gold-300">Recorded Live Rip</p>
+            <h2 className="mt-3 font-heading text-3xl uppercase tracking-[0.16em] text-white">
+              Assign &amp; Text Customer
+            </h2>
+            <p className="mt-3 text-sm text-slate-400">
+              Assign this recording and text the customer a secure, single-use claim link.
+            </p>
+
+            <div className="mt-6 space-y-4">
+              {assignError && (
+                <p className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                  {assignError}
+                </p>
+              )}
+              {assignSuccess && (
+                <p className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
+                  {assignSuccess}
+                </p>
+              )}
+              <label className="block text-sm text-slate-200">
+                Customer Name
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(event) => setCustomerName(event.target.value)}
+                  required
+                  maxLength={120}
+                  autoComplete="name"
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+                />
+              </label>
+              <label className="block text-sm text-slate-200">
+                Mobile Number
+                <input
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(event) => setCustomerPhone(event.target.value)}
+                  required
+                  autoComplete="tel"
+                  inputMode="tel"
+                  placeholder="+19165551212"
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-slate-600 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+                />
+              </label>
+            </div>
+
+            <button
+              type="submit"
+              disabled={assignBusy || !customerName.trim() || !customerPhone.trim()}
+              className="mt-7 w-full rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {assignBusy ? "Assigning & Sending…" : "Assign & Send SMS"}
+            </button>
+          </form>
+        </div>
+      )}
     </AppShell>
   );
 }

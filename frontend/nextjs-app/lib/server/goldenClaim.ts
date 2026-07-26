@@ -12,6 +12,7 @@ import {
 import { completeKioskSessionTransaction } from "./kioskCompletion";
 import { buildSiteUrl } from "./urls";
 import { requireUserSession, toUserErrorResponse } from "./session";
+import { sendSms } from "./sms";
 import {
   GOLDEN_TICKET_CONSENT_TEXT as DEFAULT_GOLDEN_TICKET_CONSENT_TEXT,
   GOLDEN_TICKET_CONSENT_TEXT_VERSION as DEFAULT_GOLDEN_TICKET_CONSENT_TEXT_VERSION,
@@ -833,42 +834,12 @@ async function sendGoldenTicketClaimSms(to: string, profileUrl: string) {
     return;
   }
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
-  const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
-  const fromNumber = process.env.TWILIO_SMS_FROM?.trim();
-
-  if (!accountSid || !authToken || (!messagingServiceSid && !fromNumber)) {
-    throw new Error("Outbound SMS is enabled but Twilio messaging credentials are incomplete");
-  }
-
   const template =
     process.env.GOLDEN_TICKET_CLAIM_SMS_TEMPLATE?.trim() ||
     "Welcome to the Hall, King. Your Golden Ticket reveal is live at {profileUrl}. Your prize ships within 3 business days.";
 
   const body = template.replaceAll("{profileUrl}", profileUrl);
-  const payload = new URLSearchParams();
-  payload.set("To", to);
-  payload.set("Body", body);
-  if (messagingServiceSid) {
-    payload.set("MessagingServiceSid", messagingServiceSid);
-  } else if (fromNumber) {
-    payload.set("From", fromNumber);
-  }
-
-  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: payload.toString(),
-  });
-
-  if (!response.ok) {
-    const message = await response.text().catch(() => "Twilio request failed");
-    throw new Error(message || "Twilio request failed");
-  }
+  await sendSms({ to, body });
 }
 
 export async function finalizeGoldenTicketClaim(req: NextApiRequest, code: string, input: GoldenTicketClaimInput) {

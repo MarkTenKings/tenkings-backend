@@ -12837,3 +12837,11 @@ Build Set Ops UI flow with:
 - Focused capture-helper validation passed: card geometry plus worker protocol `50/50`; retired bridge-path regression passed; launcher/common PowerShell parsing passed; capture-helper build passed; and `git diff --check` remained clean apart from line-ending notices.
 - Hardware-free replay `C:\Users\Mark\AppData\Local\Temp\tenkings-contour-three-wire-worker-20260726-001` exercised the actual production worker request, execution, response, and authority validator for both preserved sides. It retained the exact queue/session/report identity, identical Front/Back TIFF ledgers, exact worker source/source-set/contour hashes, reached `operator_resolution_required`, retained scores Centering `3.47`, Corners `10`, Edges `10`, Surface `10`, and produced all `20` authentic galleries (`2/8/8/2`).
 - The owner-deferred unseen corner/edge aggregation behavior was not changed. No unrelated formula, threshold, OCR, capture, lighting, calibration, public-report, queue, database, NFC, inventory, or owner-resolution behavior was changed. The unchanged candidate now requires the promised independent read-only review; its findings must be shown to Mark before any further correction.
+
+## Session Update (2026-07-26, Live Rip customer assignment production plan)
+
+- Isolated the reviewed Live Rip customer assignment MVP onto `codex/live-rip-customer-assignment-mvp` from current `origin/main` commit `9203b905`.
+- The focused branch contains the administrator assignment/SMS flow, secure phone-bound claim flow, exact `Live Rips` owner collection, Mux/static download support, and additive migration `20260726190000_live_rip_customer_assignment`.
+- Authorized plan: validate, commit, push, merge through required checks, sync the exact merged commit to the droplet, apply the additive migration through the documented production DB flow, verify the normal Vercel production deployment, and run the real end-to-end customer smoke test.
+- No destructive data operation is planned. The original dirty/conflicted AI Grader worktree remains untouched.
+- Isolated-branch validation passed: Prisma generate/validate, database build, 4/4 claim tests, targeted lint, `git diff --check`, and the exact Vercel build path with migrations disabled.

@@ -1,4 +1,6 @@
 import Head from "next/head";
+import Link from "next/link";
+import { useRouter } from "next/router";
 import { FormEvent, useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import AppShell from "../components/AppShell";
 import { CardImage } from "../components/CardImage";
@@ -56,6 +58,23 @@ interface CollectionItem {
   shippingRequest: ShippingRequestSummary | null;
 }
 
+interface CollectionLiveRip {
+  id: string;
+  slug: string;
+  title: string;
+  thumbnailUrl: string | null;
+  status: string;
+  processingState: "ready" | "processing";
+  recordedAt: string;
+  location: {
+    name: string;
+    slug: string;
+  } | null;
+  watchUrl: string | null;
+  canDownload: boolean;
+  downloadEndpoint: string;
+}
+
 interface ShippingFormState {
   recipientName: string;
   addressLine1: string;
@@ -100,7 +119,9 @@ const formatMinor = (value: number | null) => {
 };
 
 export default function CollectionPage() {
+  const router = useRouter();
   const { session, loading, ensureSession, updateWalletBalance, logout } = useSession();
+  const activeSection = router.query.section === "live-rips" ? "live-rips" : "cards";
   const [items, setItems] = useState<CollectionItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
@@ -114,6 +135,10 @@ export default function CollectionPage() {
   const [confirmBuybackItem, setConfirmBuybackItem] = useState<CollectionItem | null>(null);
   const [buybackBusyItems, setBuybackBusyItems] = useState<Record<string, boolean>>({});
   const [flash, setFlash] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [liveRips, setLiveRips] = useState<CollectionLiveRip[]>([]);
+  const [liveRipsLoading, setLiveRipsLoading] = useState(false);
+  const [liveRipsError, setLiveRipsError] = useState<string | null>(null);
+  const [downloadBusyId, setDownloadBusyId] = useState<string | null>(null);
 
   const processingFeeDisplay = useMemo(
     () => `${(PROCESSING_FEE_MINOR / 100).toFixed(2)} TKD`,
@@ -352,6 +377,103 @@ export default function CollectionPage() {
     }
   }, [ensureSession, logout, session]);
 
+  const loadLiveRips = useCallback(async () => {
+    if (!session) {
+      return;
+    }
+
+    const runFetch = async (token: string) => {
+      const response = await fetch("/api/collection/live-rips", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        liveRips?: CollectionLiveRip[];
+        message?: string;
+      };
+      if (response.status === 401) {
+        throw new AuthFailure(payload.message ?? "Session expired");
+      }
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Failed to load Live Rips");
+      }
+      setLiveRips(payload.liveRips ?? []);
+    };
+
+    setLiveRipsLoading(true);
+    setLiveRipsError(null);
+    try {
+      await runFetch(session.token);
+    } catch (error) {
+      if (error instanceof AuthFailure) {
+        logout();
+        try {
+          const refreshed = await ensureSession();
+          await runFetch(refreshed.token);
+          return;
+        } catch (refreshError) {
+          setLiveRipsError(
+            refreshError instanceof Error && refreshError.message !== "Authentication cancelled"
+              ? refreshError.message
+              : "Sign in to view your Live Rips"
+          );
+          return;
+        }
+      }
+      setLiveRipsError(error instanceof Error ? error.message : "Failed to load Live Rips");
+    } finally {
+      setLiveRipsLoading(false);
+    }
+  }, [ensureSession, logout, session]);
+
+  const downloadLiveRip = useCallback(
+    async (liveRip: CollectionLiveRip) => {
+      if (!session || !liveRip.canDownload) {
+        return;
+      }
+      setDownloadBusyId(liveRip.id);
+      setLiveRipsError(null);
+      try {
+        const response = await fetch(liveRip.downloadEndpoint, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          ready?: boolean;
+          downloadUrl?: string;
+          message?: string;
+        };
+        if (!response.ok || !payload.ready || !payload.downloadUrl) {
+          throw new Error(payload.message ?? "The download is not ready yet");
+        }
+        window.location.assign(payload.downloadUrl);
+      } catch (error) {
+        setLiveRipsError(error instanceof Error ? error.message : "Unable to download this Live Rip");
+      } finally {
+        setDownloadBusyId(null);
+      }
+    },
+    [session]
+  );
+
+  const shareLiveRip = useCallback(async (liveRip: CollectionLiveRip) => {
+    if (!liveRip.watchUrl) {
+      return;
+    }
+    const shareUrl = new URL(liveRip.watchUrl, window.location.origin).toString();
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: liveRip.title, url: shareUrl });
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+        setFlash({ type: "success", text: "Live Rip link copied." });
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name !== "AbortError") {
+        setLiveRipsError("Unable to share this Live Rip");
+      }
+    }
+  }, []);
+
   const handleInstantBuyback = useCallback(
     async (item: CollectionItem): Promise<boolean> => {
       if (item.status === "SOLD" || item.status === "REDEEMED") {
@@ -441,8 +563,12 @@ export default function CollectionPage() {
       ensureSession().catch(() => undefined);
       return;
     }
-    loadItems().catch(() => undefined);
-  }, [ensureSession, loadItems, loading, session]);
+    if (activeSection === "live-rips") {
+      loadLiveRips().catch(() => undefined);
+    } else {
+      loadItems().catch(() => undefined);
+    }
+  }, [activeSection, ensureSession, loadItems, loadLiveRips, loading, session]);
 
   useEffect(() => {
     if (!flash) {
@@ -561,33 +687,29 @@ export default function CollectionPage() {
           </p>
         </header>
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">TKD Wallet</p>
-            <p className="mt-2 text-3xl font-semibold text-gold-300">{walletBalanceDisplay}</p>
-            <p className="mt-2 text-xs text-slate-500">Instant buybacks and redemptions update this balance automatically.</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Active Collectibles</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{totals.ownedCount}</p>
-            <p className="mt-2 text-xs text-slate-500">Market value {formatMinor(totals.ownedValue)}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Sold / Redeemed</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{totals.soldCount}</p>
-            <p className="mt-2 text-xs text-slate-500">Value moved to TKD {totals.soldValue ? formatMinor(totals.soldValue) : "—"}</p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipped Home</p>
-            <p className="mt-2 text-3xl font-semibold text-white">{totals.shippedCount}</p>
-            <p className="mt-2 text-xs text-slate-500">Completed deliveries from the vault.</p>
-          </div>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipping Processing Fee</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{processingFeeDisplay}</p>
-          <p className="mt-2 text-xs text-slate-500">Added once per shipment. Set your own additional shipping fee during checkout.</p>
+        <div className="flex flex-wrap gap-3 border-b border-white/10 pb-5">
+          <Link
+            href="/collection"
+            aria-current={activeSection === "cards" ? "page" : undefined}
+            className={`rounded-full border px-6 py-2 text-xs font-semibold uppercase tracking-[0.3em] transition ${
+              activeSection === "cards"
+                ? "border-gold-500/60 bg-gold-500 text-night-900"
+                : "border-white/15 text-slate-300 hover:border-gold-400/50 hover:text-gold-200"
+            }`}
+          >
+            Cards
+          </Link>
+          <Link
+            href="/collection?section=live-rips"
+            aria-current={activeSection === "live-rips" ? "page" : undefined}
+            className={`rounded-full border px-6 py-2 text-xs font-semibold uppercase tracking-[0.3em] transition ${
+              activeSection === "live-rips"
+                ? "border-gold-500/60 bg-gold-500 text-night-900"
+                : "border-white/15 text-slate-300 hover:border-gold-400/50 hover:text-gold-200"
+            }`}
+          >
+            Live Rips
+          </Link>
         </div>
 
         {flash && (
@@ -602,41 +724,182 @@ export default function CollectionPage() {
           </div>
         )}
 
-        {itemsError && (
-          <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
-            {itemsError}
-          </div>
-        )}
+        {activeSection === "cards" ? (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">TKD Wallet</p>
+                <p className="mt-2 text-3xl font-semibold text-gold-300">{walletBalanceDisplay}</p>
+                <p className="mt-2 text-xs text-slate-500">Instant buybacks and redemptions update this balance automatically.</p>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Active Collectibles</p>
+                <p className="mt-2 text-3xl font-semibold text-white">{totals.ownedCount}</p>
+                <p className="mt-2 text-xs text-slate-500">Market value {formatMinor(totals.ownedValue)}</p>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Sold / Redeemed</p>
+                <p className="mt-2 text-3xl font-semibold text-white">{totals.soldCount}</p>
+                <p className="mt-2 text-xs text-slate-500">Value moved to TKD {totals.soldValue ? formatMinor(totals.soldValue) : "—"}</p>
+              </div>
+              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipped Home</p>
+                <p className="mt-2 text-3xl font-semibold text-white">{totals.shippedCount}</p>
+                <p className="mt-2 text-xs text-slate-500">Completed deliveries from the vault.</p>
+              </div>
+            </div>
 
-        {itemsLoading ? (
-          <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
-            Loading collection…
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
-            You haven’t pulled any cards yet. Open a mystery pack to get started!
-          </div>
+            <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipping Processing Fee</p>
+              <p className="mt-2 text-2xl font-semibold text-white">{processingFeeDisplay}</p>
+              <p className="mt-2 text-xs text-slate-500">Added once per shipment. Set your own additional shipping fee during checkout.</p>
+            </div>
+
+            {itemsError && (
+              <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
+                {itemsError}
+              </div>
+            )}
+
+            {itemsLoading ? (
+              <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
+                Loading collection…
+              </div>
+            ) : items.length === 0 ? (
+              <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
+                You haven’t pulled any cards yet. Open a mystery pack to get started!
+              </div>
+            ) : (
+              <div className="space-y-12">
+                {renderSection(
+                  "Vaulted cards",
+                  "Cards currently stored with Ten Kings. Tap a card to view details, SportsDB intel, and request shipping.",
+                  owned,
+                  "No vaulted cards yet—rip a pack to add something special to your collection."
+                )}
+                {renderSection(
+                  "Shipped",
+                  "Cards that have already been dispatched from the vault.",
+                  shipped,
+                  "No shipments yet. Once a request is fulfilled it will appear here."
+                )}
+                {renderSection(
+                  "Sold / Redeemed",
+                  "Cards you’ve sold or redeemed through Ten Kings.",
+                  sold,
+                  "You haven’t sold or redeemed any cards yet."
+                )}
+              </div>
+            )}
+          </>
         ) : (
-          <div className="space-y-12">
-            {renderSection(
-              "Vaulted cards",
-              "Cards currently stored with Ten Kings. Tap a card to view details, SportsDB intel, and request shipping.",
-              owned,
-              "No vaulted cards yet—rip a pack to add something special to your collection."
+          <section className="space-y-6">
+            <div>
+              <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">Live Rips</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                Watch, download, and share the Ten Kings Live Rip recordings assigned to your account.
+              </p>
+            </div>
+
+            {liveRipsError && (
+              <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
+                {liveRipsError}
+              </div>
             )}
-            {renderSection(
-              "Shipped",
-              "Cards that have already been dispatched from the vault.",
-              shipped,
-              "No shipments yet. Once a request is fulfilled it will appear here."
+
+            {liveRipsLoading ? (
+              <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
+                Loading Live Rips…
+              </div>
+            ) : liveRips.length === 0 ? (
+              <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-10 text-center text-sm text-slate-400">
+                No Live Rips have been assigned to your account yet.
+              </div>
+            ) : (
+              <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {liveRips.map((liveRip) => (
+                  <article
+                    key={liveRip.id}
+                    className="overflow-hidden rounded-3xl border border-white/10 bg-night-900/70 shadow-card"
+                  >
+                    <div
+                      className="aspect-video bg-night-900 bg-cover bg-center"
+                      style={
+                        liveRip.thumbnailUrl
+                          ? { backgroundImage: `url("${liveRip.thumbnailUrl.replaceAll('"', "%22")}")` }
+                          : undefined
+                      }
+                    >
+                      {!liveRip.thumbnailUrl && (
+                        <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-600">
+                          Ten Kings Live
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-4 p-5">
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs uppercase tracking-[0.28em] text-violet-300">
+                            {liveRip.location?.name ?? "Ten Kings Live"}
+                          </p>
+                          <span
+                            className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.24em] ${
+                              liveRip.processingState === "ready"
+                                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+                                : "border-amber-400/30 bg-amber-500/10 text-amber-200"
+                            }`}
+                          >
+                            {liveRip.processingState === "ready" ? "Ready" : "Processing"}
+                          </span>
+                        </div>
+                        <h3 className="mt-2 font-heading text-xl uppercase tracking-[0.14em] text-white">
+                          {liveRip.title}
+                        </h3>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Recorded {new Date(liveRip.recordedAt).toLocaleString()}
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        {liveRip.watchUrl ? (
+                          <Link
+                            href={liveRip.watchUrl}
+                            className="rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.26em] text-night-900 transition hover:bg-gold-400"
+                          >
+                            Watch
+                          </Link>
+                        ) : (
+                          <span className="rounded-full border border-white/10 px-4 py-2 text-[10px] uppercase tracking-[0.26em] text-slate-600">
+                            Watch Processing
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void downloadLiveRip(liveRip)}
+                          disabled={!liveRip.canDownload || downloadBusyId === liveRip.id}
+                          className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.26em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {downloadBusyId === liveRip.id
+                            ? "Preparing…"
+                            : liveRip.canDownload
+                              ? "Download"
+                              : "Download Processing"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void shareLiveRip(liveRip)}
+                          disabled={!liveRip.watchUrl}
+                          className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.26em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Share
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
             )}
-            {renderSection(
-              "Sold / Redeemed",
-              "Cards you’ve sold or redeemed through Ten Kings.",
-              sold,
-              "You haven’t sold or redeemed any cards yet."
-            )}
-          </div>
+          </section>
         )}
       </div>
 

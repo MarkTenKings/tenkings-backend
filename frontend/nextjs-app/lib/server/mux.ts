@@ -99,10 +99,19 @@ export interface MuxAssetPlayback {
   policy: string;
 }
 
+export interface MuxStaticRendition {
+  id: string;
+  status: "preparing" | "ready" | "errored" | "skipped";
+  resolution: string;
+  name: string;
+  ext: string;
+}
+
 export interface MuxAsset {
   id: string;
   status: string;
   playback_ids?: MuxAssetPlayback[];
+  static_renditions?: MuxStaticRendition[];
   duration?: number | null;
 }
 
@@ -119,33 +128,32 @@ export async function createMuxLiveStream(params: {
   }>;
 }) {
   const watermarkUrl = resolveMuxWatermarkImageUrl();
+  const newAssetSettings: Record<string, unknown> = {
+    playback_policies: ["public"],
+    static_renditions: [{ resolution: "highest" }],
+  };
   const body: Record<string, unknown> = {
     passthrough: params.passthrough,
     playback_policies: ["public"],
-    new_asset_settings: {
-      playback_policies: ["public"],
-    },
+    new_asset_settings: newAssetSettings,
     reconnect_window: 120,
   };
 
   if (watermarkUrl) {
-    body.new_asset_settings = {
-      playback_policies: ["public"],
-      inputs: [
-        {},
-        {
-          url: watermarkUrl,
-          overlay_settings: {
-            vertical_align: "bottom",
-            vertical_margin: "3%",
-            horizontal_align: "right",
-            horizontal_margin: "3%",
-            height: "8%",
-            opacity: "70%",
-          },
+    newAssetSettings.inputs = [
+      {},
+      {
+        url: watermarkUrl,
+        overlay_settings: {
+          vertical_align: "bottom",
+          vertical_margin: "3%",
+          horizontal_align: "right",
+          horizontal_margin: "3%",
+          height: "8%",
+          opacity: "70%",
         },
-      ],
-    };
+      },
+    ];
   }
 
   if (params.livestreamName) {
@@ -196,7 +204,7 @@ export async function updateMuxLiveStream(
   if (typeof options.assetPassthrough === "string") {
     body.new_asset_settings = {
       passthrough: options.assetPassthrough,
-      playback_policy: ["public"],
+      playback_policies: ["public"],
     };
   }
   if (!Object.keys(body).length) {
@@ -212,8 +220,29 @@ export async function getMuxAsset(assetId: string) {
   return muxRequest<MuxAsset>(`/assets/${assetId}`);
 }
 
+export async function ensureMuxHighestStaticRendition(assetId: string) {
+  const asset = await getMuxAsset(assetId);
+  const existing = asset.static_renditions?.find(
+    (rendition) => rendition.resolution === "highest" || rendition.name === "highest.mp4"
+  );
+  if (existing) {
+    return existing;
+  }
+
+  return muxRequest<MuxStaticRendition>(`/assets/${assetId}/static-renditions`, {
+    method: "POST",
+    body: JSON.stringify({ resolution: "highest" }),
+  });
+}
+
 export function buildMuxPlaybackUrl(playbackId: string, format: "m3u8" | "mp4" = "m3u8") {
   return `https://stream.mux.com/${playbackId}.${format}`;
+}
+
+export function buildMuxStaticRenditionUrl(playbackId: string, renditionName: string, downloadName: string) {
+  return `https://stream.mux.com/${encodeURIComponent(playbackId)}/${encodeURIComponent(
+    renditionName
+  )}?download=${encodeURIComponent(downloadName)}`;
 }
 
 export function getMuxWhipBaseUrl() {
