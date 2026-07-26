@@ -374,6 +374,11 @@ interface ComponentStats {
   sumYY: number;
   sumXY: number;
   sumDifference: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  touchesFrame: boolean;
 }
 
 interface DetectionCandidate {
@@ -591,6 +596,52 @@ function morphologyPass(
   return output;
 }
 
+function closeForegroundMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  return morphologyPass(
+    morphologyPass(mask, width, height, radius, "dilate"),
+    width,
+    height,
+    radius,
+    "erode",
+  );
+}
+
+function openForegroundMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  return morphologyPass(
+    morphologyPass(mask, width, height, radius, "erode"),
+    width,
+    height,
+    radius,
+    "dilate",
+  );
+}
+
+/**
+ * Add only observed boundary pixels immediately adjacent to the region
+ * evidence. This can seal small weak gaps in an already-owned material region,
+ * but a distant raw edge network can never create or nominate an object.
+ */
+function supportOwnedRegionBoundary(
+  regionMask: Uint8Array,
+  edgeStrength: Float32Array,
+  edgeSupportThreshold: number,
+  width: number,
+  height: number,
+): Uint8Array {
+  const proximity = morphologyPass(regionMask, width, height, 3, "dilate");
+  const supported = regionMask.slice();
+  const minimumBarrierStrength = Math.max(2, edgeSupportThreshold * 0.5);
+  for (let index = 0; index < regionMask.length; index += 1) {
+    if (
+      proximity[index] !== 0 &&
+      (edgeStrength[index] ?? 0) >= minimumBarrierStrength
+    ) {
+      supported[index] = 1;
+    }
+  }
+  return supported;
+}
+
 /** Fill only background regions enclosed by foreground. Border-connected plate pixels stay background. */
 function fillForegroundHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
   const borderBackground = new Uint8Array(mask.length);
@@ -626,44 +677,403 @@ function fillForegroundHoles(mask: Uint8Array, width: number, height: number): U
   return output;
 }
 
-async function locallyNormalizedEdgeEvidence(
+type BackgroundSurfaceCoefficients = readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+];
+
+interface BackgroundSurfaceSample {
+  terms: BackgroundSurfaceCoefficients;
+  red: number;
+  green: number;
+  blue: number;
+  exterior: boolean;
+  baseWeight: number;
+}
+
+interface LocallyModeledRegionEvidence {
+  differences: Uint8Array;
+  backgroundNoise: number;
+  contrastRange: number;
+  foregroundThreshold: number;
+  backgroundSurfaceMode: "constant" | "modeled";
+}
+
+interface RestrictedEdgeEvidence {
+  strength: Float32Array;
+  supportThreshold: number;
+}
+
+function backgroundSurfaceTerms(
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): BackgroundSurfaceCoefficients {
+  const normalizedX = width > 1 ? (2 * x) / (width - 1) - 1 : 0;
+  const normalizedY = height > 1 ? (2 * y) / (height - 1) - 1 : 0;
+  const normalizedRadius = Math.hypot(normalizedX, normalizedY);
+  return [
+    1,
+    normalizedX,
+    normalizedY,
+    normalizedX * normalizedX,
+    normalizedX * normalizedY,
+    normalizedY * normalizedY,
+    normalizedRadius,
+    normalizedX * normalizedRadius,
+    normalizedY * normalizedRadius,
+    normalizedRadius * normalizedRadius * normalizedRadius,
+    normalizedRadius * normalizedRadius * normalizedRadius * normalizedRadius,
+  ];
+}
+
+function solveLinearSystem(matrix: number[][], vector: number[]): number[] | undefined {
+  const size = vector.length;
+  const augmented = matrix.map((row, index) => [...row, vector[index] ?? 0]);
+  for (let column = 0; column < size; column += 1) {
+    let pivot = column;
+    for (let row = column + 1; row < size; row += 1) {
+      if (Math.abs(augmented[row]?.[column] ?? 0) > Math.abs(augmented[pivot]?.[column] ?? 0)) {
+        pivot = row;
+      }
+    }
+    if (Math.abs(augmented[pivot]?.[column] ?? 0) < 1e-9) return undefined;
+    if (pivot !== column) {
+      const next = augmented[column]!;
+      augmented[column] = augmented[pivot]!;
+      augmented[pivot] = next;
+    }
+    const pivotValue = augmented[column]?.[column] ?? 1;
+    for (let index = column; index <= size; index += 1) {
+      augmented[column]![index] = (augmented[column]?.[index] ?? 0) / pivotValue;
+    }
+    for (let row = 0; row < size; row += 1) {
+      if (row === column) continue;
+      const factor = augmented[row]?.[column] ?? 0;
+      if (Math.abs(factor) < 1e-12) continue;
+      for (let index = column; index <= size; index += 1) {
+        augmented[row]![index] =
+          (augmented[row]?.[index] ?? 0) - factor * (augmented[column]?.[index] ?? 0);
+      }
+    }
+  }
+  return augmented.map((row) => row[size] ?? 0);
+}
+
+function fitBackgroundSurfaceChannel(
+  samples: readonly BackgroundSurfaceSample[],
+  weights: readonly number[],
+  channel: "red" | "green" | "blue",
+): BackgroundSurfaceCoefficients | undefined {
+  const size = 11;
+  const matrix = Array.from({ length: size }, () => Array<number>(size).fill(0));
+  const vector = Array<number>(size).fill(0);
+  samples.forEach((sample, sampleIndex) => {
+    const weight = weights[sampleIndex] ?? 1;
+    const value = sample[channel];
+    for (let row = 0; row < size; row += 1) {
+      const rowTerm = sample.terms[row] ?? 0;
+      vector[row] = (vector[row] ?? 0) + weight * rowTerm * value;
+      for (let column = 0; column < size; column += 1) {
+        matrix[row]![column] =
+          (matrix[row]?.[column] ?? 0) +
+          weight * rowTerm * (sample.terms[column] ?? 0);
+      }
+    }
+  });
+  const solved = solveLinearSystem(matrix, vector);
+  return solved?.length === size
+    ? solved as unknown as BackgroundSurfaceCoefficients
+    : undefined;
+}
+
+function evaluateBackgroundSurface(
+  coefficients: BackgroundSurfaceCoefficients,
+  terms: BackgroundSurfaceCoefficients,
+): number {
+  let value = 0;
+  for (let index = 0; index < coefficients.length; index += 1) {
+    value += (coefficients[index] ?? 0) * (terms[index] ?? 0);
+  }
+  return clamp(value, 0, 255);
+}
+
+function median(values: readonly number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
+    : sorted[middle] ?? 0;
+}
+
+function fitRobustBackgroundSurface(
+  samples: readonly BackgroundSurfaceSample[],
+): {
+  red: BackgroundSurfaceCoefficients;
+  green: BackgroundSurfaceCoefficients;
+  blue: BackgroundSurfaceCoefficients;
+} | undefined {
+  if (samples.length < 64) return undefined;
+  let weights = Array<number>(samples.length).fill(1);
+  let red: BackgroundSurfaceCoefficients | undefined;
+  let green: BackgroundSurfaceCoefficients | undefined;
+  let blue: BackgroundSurfaceCoefficients | undefined;
+  weights = samples.map((sample) => sample.baseWeight);
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    red = fitBackgroundSurfaceChannel(samples, weights, "red");
+    green = fitBackgroundSurfaceChannel(samples, weights, "green");
+    blue = fitBackgroundSurfaceChannel(samples, weights, "blue");
+    if (!red || !green || !blue) return undefined;
+    const residuals = samples.map((sample) => {
+      const redResidual =
+        sample.red - evaluateBackgroundSurface(red!, sample.terms);
+      const greenResidual =
+        sample.green - evaluateBackgroundSurface(green!, sample.terms);
+      const blueResidual =
+        sample.blue - evaluateBackgroundSurface(blue!, sample.terms);
+      return Math.hypot(redResidual, greenResidual, blueResidual) / Math.sqrt(3);
+    });
+    const exteriorResiduals = residuals.filter((_, index) => samples[index]?.exterior);
+    const location = median(exteriorResiduals);
+    const absoluteDeviations = exteriorResiduals.map((value) => Math.abs(value - location));
+    const robustSigma = Math.max(0.25, median(absoluteDeviations) * 1.4826);
+    const cutoff = Math.max(1, location + robustSigma * 3);
+    weights = residuals.map((value, index) => {
+      const baseWeight = samples[index]?.baseWeight ?? 1;
+      return baseWeight * (value <= cutoff ? 1 : cutoff / Math.max(value, 1e-6));
+    });
+  }
+  return red && green && blue ? { red, green, blue } : undefined;
+}
+
+function locallyModeledRegionEvidence(
+  observationData: Buffer,
+  backgroundSampleData: Buffer,
+  channels: number,
+  width: number,
+  height: number,
+  borderSize: number,
+): LocallyModeledRegionEvidence | undefined {
+  const pixelCount = width * height;
+  const approximateBorderPixels =
+    Math.max(1, 2 * borderSize * width + 2 * borderSize * Math.max(0, height - 2 * borderSize));
+  const sampleStride = Math.max(1, Math.ceil(approximateBorderPixels / 24_000));
+  const interiorStride = Math.max(2, Math.ceil(Math.sqrt(pixelCount / 18_000)));
+  const samples: BackgroundSurfaceSample[] = [];
+  let observedBorderPixel = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const exterior =
+        x < borderSize || x >= width - borderSize ||
+        y < borderSize || y >= height - borderSize;
+      if (exterior) {
+        if (observedBorderPixel++ % sampleStride !== 0) continue;
+      } else if (x % interiorStride !== 0 || y % interiorStride !== 0) {
+        continue;
+      }
+      const offset = (y * width + x) * channels;
+      const red = backgroundSampleData[offset] ?? 0;
+      const green =
+        backgroundSampleData[offset + Math.min(1, channels - 1)] ?? red;
+      const blue =
+        backgroundSampleData[offset + Math.min(2, channels - 1)] ?? red;
+      samples.push({
+        terms: backgroundSurfaceTerms(x, y, width, height),
+        red,
+        green,
+        blue,
+        exterior,
+        baseWeight: exterior ? 1 : 0.1,
+      });
+    }
+  }
+  const exteriorSamples = samples.filter((sample) => sample.exterior);
+  const exteriorRed = exteriorSamples.map((sample) => sample.red);
+  const exteriorGreen = exteriorSamples.map((sample) => sample.green);
+  const exteriorBlue = exteriorSamples.map((sample) => sample.blue);
+  const exteriorRange = Math.max(
+    Math.max(...exteriorRed) - Math.min(...exteriorRed),
+    Math.max(...exteriorGreen) - Math.min(...exteriorGreen),
+    Math.max(...exteriorBlue) - Math.min(...exteriorBlue),
+  );
+  const constantCoefficients = (value: number): BackgroundSurfaceCoefficients =>
+    [value, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const backgroundSurfaceMode = exteriorRange <= 1 ? "constant" : "modeled";
+  const surface = backgroundSurfaceMode === "constant"
+    ? {
+        red: constantCoefficients(median(exteriorRed)),
+        green: constantCoefficients(median(exteriorGreen)),
+        blue: constantCoefficients(median(exteriorBlue)),
+      }
+    : fitRobustBackgroundSurface(samples);
+  if (!surface) return undefined;
+  // Region ownership is measured on a lightly smoothed image, while the
+  // background surface is learned from untouched sensor pixels. Estimate the
+  // small smoothing/color-pipeline offset from exterior background pixels so a
+  // flat plate does not become foreground merely because smoothing shifted all
+  // channels by a couple of code values.
+  const exteriorObservationOffsets = {
+    red: [] as number[],
+    green: [] as number[],
+    blue: [] as number[],
+  };
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (
+        x >= borderSize &&
+        x < width - borderSize &&
+        y >= borderSize &&
+        y < height - borderSize
+      ) {
+        continue;
+      }
+      const offset = (y * width + x) * channels;
+      const red = observationData[offset] ?? 0;
+      const green =
+        observationData[offset + Math.min(1, channels - 1)] ?? red;
+      const blue =
+        observationData[offset + Math.min(2, channels - 1)] ?? red;
+      const terms = backgroundSurfaceTerms(x, y, width, height);
+      exteriorObservationOffsets.red.push(
+        red - evaluateBackgroundSurface(surface.red, terms),
+      );
+      exteriorObservationOffsets.green.push(
+        green - evaluateBackgroundSurface(surface.green, terms),
+      );
+      exteriorObservationOffsets.blue.push(
+        blue - evaluateBackgroundSurface(surface.blue, terms),
+      );
+    }
+  }
+  const observationOffset = {
+    red: median(exteriorObservationOffsets.red),
+    green: median(exteriorObservationOffsets.green),
+    blue: median(exteriorObservationOffsets.blue),
+  };
+  const differences = new Uint8Array(pixelCount);
+  const differenceHistogram = new Uint32Array(256);
+  const borderDifferenceHistogram = new Uint32Array(256);
+  let borderDifferenceCount = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const offset = index * channels;
+      const red = observationData[offset] ?? 0;
+      const green =
+        observationData[offset + Math.min(1, channels - 1)] ?? red;
+      const blue =
+        observationData[offset + Math.min(2, channels - 1)] ?? red;
+      const terms = backgroundSurfaceTerms(x, y, width, height);
+      const difference = Math.round(clamp(
+        Math.hypot(
+          red -
+            clamp(
+              evaluateBackgroundSurface(surface.red, terms) +
+                observationOffset.red,
+              0,
+              255,
+            ),
+          green -
+            clamp(
+              evaluateBackgroundSurface(surface.green, terms) +
+                observationOffset.green,
+              0,
+              255,
+            ),
+          blue -
+            clamp(
+              evaluateBackgroundSurface(surface.blue, terms) +
+                observationOffset.blue,
+              0,
+              255,
+            ),
+        ) / Math.sqrt(3),
+        0,
+        255,
+      ));
+      differences[index] = difference;
+      differenceHistogram[difference] = (differenceHistogram[difference] ?? 0) + 1;
+      if (x < borderSize || x >= width - borderSize || y < borderSize || y >= height - borderSize) {
+        borderDifferenceHistogram[difference] =
+          (borderDifferenceHistogram[difference] ?? 0) + 1;
+        borderDifferenceCount += 1;
+      }
+    }
+  }
+  const backgroundLocation = histogramPercentile(
+    borderDifferenceHistogram,
+    Math.max(1, borderDifferenceCount),
+    0.5,
+  );
+  const backgroundUpper = histogramPercentile(
+    borderDifferenceHistogram,
+    Math.max(1, borderDifferenceCount),
+    0.8,
+  );
+  const robustBackgroundSpread = Math.max(0, backgroundUpper - backgroundLocation);
+  const backgroundNoise = Math.round(backgroundLocation + robustBackgroundSpread);
+  const contrastRange = histogramPercentile(
+    differenceHistogram,
+    Math.max(1, pixelCount),
+    0.99,
+  );
+  const foregroundThreshold = Math.round(
+    clamp(
+      Math.max(2, backgroundLocation + Math.max(1, robustBackgroundSpread * 2.5)),
+      2,
+      64,
+    ),
+  );
+  return {
+    differences,
+    backgroundNoise,
+    contrastRange,
+    foregroundThreshold,
+    backgroundSurfaceMode,
+  };
+}
+
+async function linearPixelEdgeEvidence(
   data: Buffer,
   channels: number,
   width: number,
   height: number,
   borderSize: number,
-): Promise<{
-  edgeMask: Uint8Array;
-  edgeStrength: Uint8Array;
-  backgroundNoise: number;
-  contrastRange: number;
-  foregroundThreshold: number;
-}> {
+): Promise<RestrictedEdgeEvidence> {
   const pixelCount = width * height;
-  const gammaLuma = Buffer.allocUnsafe(pixelCount);
+  const linearLuma = Buffer.allocUnsafe(pixelCount);
   for (let index = 0; index < pixelCount; index += 1) {
     const offset = index * channels;
     const red = data[offset] ?? 0;
     const green = data[offset + Math.min(1, channels - 1)] ?? red;
     const blue = data[offset + Math.min(2, channels - 1)] ?? red;
-    const luma = clamp(0.2126 * red + 0.7152 * green + 0.0722 * blue, 0, 255);
-    // Dark evidence needs relative, not absolute, separation. A monotonic
-    // gamma expansion preserves every pixel ordering while making the same
-    // physical edge measurable across the fixture's illumination falloff.
-    gammaLuma[index] = Math.round(255 * Math.pow(luma / 255, 0.35));
+    linearLuma[index] = Math.round(clamp(
+      0.2126 * red + 0.7152 * green + 0.0722 * blue,
+      0,
+      255,
+    ));
   }
-  const smoothed = await sharp(gammaLuma, {
+  const smoothed = await sharp(linearLuma, {
     raw: { width, height, channels: 1 },
   })
-    .blur(1.2)
+    .blur(0.8)
     .greyscale()
     .raw()
     .toBuffer();
-  const magnitude = new Float32Array(pixelCount);
-  const magnitudeHistogram = new Uint32Array(256);
-  const borderMagnitudeHistogram = new Uint32Array(256);
-  let magnitudeCount = 0;
-  let borderMagnitudeCount = 0;
+  const strength = new Float32Array(pixelCount);
+  const borderHistogram = new Uint32Array(256);
+  let borderCount = 0;
   for (let y = 1; y < height - 1; y += 1) {
     for (let x = 1; x < width - 1; x += 1) {
       const index = y * width + x;
@@ -678,102 +1088,129 @@ async function locallyNormalizedEdgeEvidence(
       const gradientX = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
       const gradientY = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
       const value = Math.hypot(gradientX, gradientY);
-      magnitude[index] = value;
-      const bucket = Math.round(clamp(value, 0, 255));
-      magnitudeHistogram[bucket] = (magnitudeHistogram[bucket] ?? 0) + 1;
-      magnitudeCount += 1;
+      strength[index] = value;
       if (x < borderSize || x >= width - borderSize || y < borderSize || y >= height - borderSize) {
-        borderMagnitudeHistogram[bucket] = (borderMagnitudeHistogram[bucket] ?? 0) + 1;
-        borderMagnitudeCount += 1;
-      }
-    }
-  }
-  const backgroundNoise = histogramPercentile(
-    borderMagnitudeHistogram,
-    Math.max(1, borderMagnitudeCount),
-    0.8,
-  );
-  const contrastRange = histogramPercentile(
-    magnitudeHistogram,
-    Math.max(1, magnitudeCount),
-    0.999,
-  );
-  const lowThreshold = clamp(Math.max(2, backgroundNoise * 1.2), 2, 80);
-  const highThreshold = clamp(
-    Math.max(lowThreshold + 1, lowThreshold * 2.4),
-    lowThreshold + 1,
-    160,
-  );
-  const suppressed = new Uint8Array(pixelCount);
-  for (let y = 1; y < height - 1; y += 1) {
-    for (let x = 1; x < width - 1; x += 1) {
-      const index = y * width + x;
-      const value = magnitude[index] ?? 0;
-      if (value < lowThreshold) continue;
-      const topLeft = smoothed[index - width - 1] ?? 0;
-      const top = smoothed[index - width] ?? 0;
-      const topRight = smoothed[index - width + 1] ?? 0;
-      const left = smoothed[index - 1] ?? 0;
-      const right = smoothed[index + 1] ?? 0;
-      const bottomLeft = smoothed[index + width - 1] ?? 0;
-      const bottom = smoothed[index + width] ?? 0;
-      const bottomRight = smoothed[index + width + 1] ?? 0;
-      const gradientX = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
-      const gradientY = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
-      let angle = Math.atan2(gradientY, gradientX) * 180 / Math.PI;
-      if (angle < 0) angle += 180;
-      let firstNeighbor = 0;
-      let secondNeighbor = 0;
-      if (angle < 22.5 || angle >= 157.5) {
-        firstNeighbor = magnitude[index - 1] ?? 0;
-        secondNeighbor = magnitude[index + 1] ?? 0;
-      } else if (angle < 67.5) {
-        firstNeighbor = magnitude[index - width + 1] ?? 0;
-        secondNeighbor = magnitude[index + width - 1] ?? 0;
-      } else if (angle < 112.5) {
-        firstNeighbor = magnitude[index - width] ?? 0;
-        secondNeighbor = magnitude[index + width] ?? 0;
-      } else {
-        firstNeighbor = magnitude[index - width - 1] ?? 0;
-        secondNeighbor = magnitude[index + width + 1] ?? 0;
-      }
-      if (value >= firstNeighbor && value >= secondNeighbor) {
-        suppressed[index] = Math.round(clamp(value, 0, 255));
-      }
-    }
-  }
-  const edgeMask = new Uint8Array(pixelCount);
-  const queue = new Int32Array(pixelCount);
-  let head = 0;
-  let tail = 0;
-  for (let y = borderSize; y < height - borderSize; y += 1) {
-    for (let x = borderSize; x < width - borderSize; x += 1) {
-      const index = y * width + x;
-      if ((suppressed[index] ?? 0) < highThreshold) continue;
-      edgeMask[index] = 1;
-      queue[tail++] = index;
-    }
-  }
-  while (head < tail) {
-    const index = queue[head++] ?? 0;
-    const x = index % width;
-    const y = Math.floor(index / width);
-    for (let neighborY = Math.max(borderSize, y - 1); neighborY <= Math.min(height - borderSize - 1, y + 1); neighborY += 1) {
-      for (let neighborX = Math.max(borderSize, x - 1); neighborX <= Math.min(width - borderSize - 1, x + 1); neighborX += 1) {
-        const neighbor = neighborY * width + neighborX;
-        if (edgeMask[neighbor] !== 0 || (suppressed[neighbor] ?? 0) < lowThreshold) continue;
-        edgeMask[neighbor] = 1;
-        queue[tail++] = neighbor;
+        const bucket = Math.round(clamp(value, 0, 255));
+        borderHistogram[bucket] = (borderHistogram[bucket] ?? 0) + 1;
+        borderCount += 1;
       }
     }
   }
   return {
-    edgeMask,
-    edgeStrength: suppressed,
-    backgroundNoise,
-    contrastRange,
-    foregroundThreshold: Math.round(highThreshold),
+    strength,
+    supportThreshold: Math.max(
+      12,
+      histogramPercentile(borderHistogram, Math.max(1, borderCount), 0.8) * 2,
+    ),
   };
+}
+
+function bilinearSample(
+  field: Float32Array,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+): number {
+  const clampedX = clamp(x, 0, width - 1);
+  const clampedY = clamp(y, 0, height - 1);
+  const left = Math.floor(clampedX);
+  const top = Math.floor(clampedY);
+  const right = Math.min(width - 1, left + 1);
+  const bottom = Math.min(height - 1, top + 1);
+  const blendX = clampedX - left;
+  const blendY = clampedY - top;
+  const topValue =
+    (field[top * width + left] ?? 0) * (1 - blendX) +
+    (field[top * width + right] ?? 0) * blendX;
+  const bottomValue =
+    (field[bottom * width + left] ?? 0) * (1 - blendX) +
+    (field[bottom * width + right] ?? 0) * blendX;
+  return topValue * (1 - blendY) + bottomValue * blendY;
+}
+
+function refineContourWithRestrictedEdges(
+  contour: readonly CardGeometryPoint[],
+  edgeStrength: Float32Array,
+  width: number,
+  height: number,
+  searchRadius: number,
+): CardGeometryPoint[] {
+  if (contour.length < 3 || searchRadius <= 0) return [...contour];
+  return contour.map((point, index) => {
+    const previous = contour[(index - 2 + contour.length) % contour.length]!;
+    const next = contour[(index + 2) % contour.length]!;
+    const tangentX = next.x - previous.x;
+    const tangentY = next.y - previous.y;
+    const tangentLength = Math.hypot(tangentX, tangentY);
+    if (tangentLength < 1e-6) return { ...point };
+    const normalX = -tangentY / tangentLength;
+    const normalY = tangentX / tangentLength;
+    let bestX = point.x;
+    let bestY = point.y;
+    let bestScore = bilinearSample(edgeStrength, width, height, point.x, point.y);
+    for (let distance = -searchRadius; distance <= searchRadius + 1e-9; distance += 0.25) {
+      const candidateX = point.x + normalX * distance;
+      const candidateY = point.y + normalY * distance;
+      if (candidateX < 1 || candidateX >= width - 1 || candidateY < 1 || candidateY >= height - 1) continue;
+      const strength = bilinearSample(edgeStrength, width, height, candidateX, candidateY);
+      const score = strength / (1 + Math.abs(distance) * 0.04);
+      if (score <= bestScore) continue;
+      bestScore = score;
+      bestX = candidateX;
+      bestY = candidateY;
+    }
+    return {
+      x: round(bestX, 6),
+      y: round(bestY, 6),
+    };
+  });
+}
+
+function contractContourToObservedBoundary(
+  contour: readonly CardGeometryPoint[],
+  edgeStrength: Float32Array,
+  supportThreshold: number,
+  width: number,
+  height: number,
+  searchRadius: number,
+): CardGeometryPoint[] {
+  if (contour.length < 3 || searchRadius <= 0) return [...contour];
+  const center = contour.reduce(
+    (sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }),
+    { x: 0, y: 0 },
+  );
+  center.x /= contour.length;
+  center.y /= contour.length;
+  const contracted = contour.map((point) => {
+    const deltaX = center.x - point.x;
+    const deltaY = center.y - point.y;
+    const length = Math.hypot(deltaX, deltaY);
+    if (length < 1e-6) return { ...point };
+    const directionX = deltaX / length;
+    const directionY = deltaY / length;
+    let best = { ...point };
+    let bestScore = bilinearSample(
+      edgeStrength,
+      width,
+      height,
+      point.x,
+      point.y,
+    );
+    for (let distance = 0.5; distance <= searchRadius; distance += 0.5) {
+      const x = point.x + directionX * distance;
+      const y = point.y + directionY * distance;
+      if (x < 1 || x >= width - 1 || y < 1 || y >= height - 1) break;
+      const strength = bilinearSample(edgeStrength, width, height, x, y);
+      const score = strength / (1 + distance * 0.005);
+      if (strength >= supportThreshold && score > bestScore) {
+        best = { x: round(x, 6), y: round(y, 6) };
+        bestScore = score;
+      }
+    }
+    return best;
+  });
+  return contracted;
 }
 
 function labelForegroundComponents(mask: Uint8Array, differences: Uint8Array, width: number, height: number): {
@@ -801,6 +1238,11 @@ function labelForegroundComponents(mask: Uint8Array, differences: Uint8Array, wi
       sumYY: 0,
       sumXY: 0,
       sumDifference: 0,
+      minX: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+      touchesFrame: false,
     };
 
     while (head < tail) {
@@ -814,6 +1256,13 @@ function labelForegroundComponents(mask: Uint8Array, differences: Uint8Array, wi
       stats.sumYY += y * y;
       stats.sumXY += x * y;
       stats.sumDifference += differences[index] ?? 0;
+      stats.minX = Math.min(stats.minX, x);
+      stats.maxX = Math.max(stats.maxX, x);
+      stats.minY = Math.min(stats.minY, y);
+      stats.maxY = Math.max(stats.maxY, y);
+      if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+        stats.touchesFrame = true;
+      }
 
       const top = Math.max(0, y - 1);
       const bottom = Math.min(height - 1, y + 1);
@@ -932,7 +1381,10 @@ async function attemptSolidPlateDetection(
   const borderRedHistogram = new Uint32Array(256);
   const borderGreenHistogram = new Uint32Array(256);
   const borderBlueHistogram = new Uint32Array(256);
-  const borderSize = Math.max(2, Math.round(Math.min(analysisWidth, analysisHeight) * 0.025));
+  const borderSize = Math.max(
+    2,
+    Math.round(Math.min(analysisWidth, analysisHeight) * 0.006),
+  );
   let borderCount = 0;
   for (let y = 0; y < analysisHeight; y += 1) {
     for (let x = 0; x < analysisWidth; x += 1) {
@@ -953,19 +1405,51 @@ async function attemptSolidPlateDetection(
     b: medianFromHistogram(borderBlueHistogram, borderCount),
   };
   const backgroundLuma = Math.round(0.2126 * backgroundColor.r + 0.7152 * backgroundColor.g + 0.0722 * backgroundColor.b);
-  const edgeEvidence = await locallyNormalizedEdgeEvidence(
+  const regionObservationData = await sharp(data, {
+    raw: { width: analysisWidth, height: analysisHeight, channels },
+  })
+    .blur(Math.max(2, Math.min(8, Math.min(analysisWidth, analysisHeight) * 0.006)))
+    .raw()
+    .toBuffer();
+  const regionEvidence = locallyModeledRegionEvidence(
+    regionObservationData,
     data,
     channels,
     analysisWidth,
     analysisHeight,
     borderSize,
   );
-  const differences = edgeEvidence.edgeStrength;
-  const backgroundNoise = edgeEvidence.backgroundNoise;
-  const contrastRange = edgeEvidence.contrastRange;
-  const foregroundThreshold = edgeEvidence.foregroundThreshold;
+  const diagnosticsWithoutRegion: CardGeometryDetectionDiagnostics = {
+    method: "solid_plate_color_component_pca_v2",
+    backgroundLuma,
+    backgroundColor,
+    backgroundNoise: 0,
+    contrastRange: 0,
+    foregroundThreshold: 0,
+    foregroundPixelFraction: 0,
+    expectedAspectRatio: thresholds.expectedAspectRatio,
+    analysisWidth,
+    analysisHeight,
+  };
+  if (!regionEvidence) {
+    return {
+      diagnostics: diagnosticsWithoutRegion,
+      reason: "The visible exterior background could not support a local illumination model.",
+    };
+  }
+  const edgeEvidence = await linearPixelEdgeEvidence(
+    data,
+    channels,
+    analysisWidth,
+    analysisHeight,
+    borderSize,
+  );
+  const differences = regionEvidence.differences;
+  const backgroundNoise = regionEvidence.backgroundNoise;
+  const contrastRange = regionEvidence.contrastRange;
+  const foregroundThreshold = regionEvidence.foregroundThreshold;
   const morphologyRadius = Math.round(
-    clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.0045), 1, 5),
+    clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.0025), 1, 4),
   );
   const diagnosticsBase: CardGeometryDetectionDiagnostics = {
     method: "solid_plate_color_component_pca_v2",
@@ -980,39 +1464,126 @@ async function attemptSolidPlateDetection(
     analysisWidth,
     analysisHeight,
   };
-  if (contrastRange < Math.max(8, foregroundThreshold * 1.25)) {
+  if (contrastRange < foregroundThreshold) {
     return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the solid base plate." };
   }
 
-  const initialMask = edgeEvidence.edgeMask;
-  const mask = fillForegroundHoles(
-    morphologyPass(initialMask, analysisWidth, analysisHeight, morphologyRadius, "dilate"),
+  const initialMask = new Uint8Array(pixelCount);
+  for (let index = 0; index < differences.length; index += 1) {
+    if ((differences[index] ?? 0) >= foregroundThreshold) initialMask[index] = 1;
+  }
+  const ownedRegionMask = supportOwnedRegionBoundary(
+    initialMask,
+    edgeEvidence.strength,
+    edgeEvidence.supportThreshold,
     analysisWidth,
     analysisHeight,
   );
+  const mask = closeForegroundMask(
+    openForegroundMask(
+      ownedRegionMask,
+      analysisWidth,
+      analysisHeight,
+      morphologyRadius,
+    ),
+    analysisWidth,
+    analysisHeight,
+    morphologyRadius,
+  );
+  // Morphology may leave a soft illumination bridge between a fully visible
+  // object and the image boundary. Clear only the one-pixel analysis frame so
+  // enclosed object ownership can be evaluated; the final observed contour is
+  // independently rejected below if it remains at the camera boundary.
+  for (let x = 0; x < analysisWidth; x += 1) {
+    mask[x] = 0;
+    mask[(analysisHeight - 1) * analysisWidth + x] = 0;
+  }
+  for (let y = 1; y < analysisHeight - 1; y += 1) {
+    mask[y * analysisWidth] = 0;
+    mask[y * analysisWidth + analysisWidth - 1] = 0;
+  }
   let foregroundCount = 0;
   for (const value of mask) foregroundCount += value;
   diagnosticsBase.foregroundPixelFraction = round(foregroundCount / Math.max(1, pixelCount), 6);
-  const { labels, components } = labelForegroundComponents(mask, differences, analysisWidth, analysisHeight);
+  const labeledRegion = labelForegroundComponents(mask, differences, analysisWidth, analysisHeight);
   // Absolute speck rejection only. Candidate admission must not assume the
   // expected product coverage, aspect ratio, rectangular fill, or corner type.
+  // A material region must be enclosed by observable exterior background;
+  // frame-connected candidates can never authorize capture.
   const minimumComponentPixels = 64;
   const componentScore = (entry: ComponentStats) => {
-    const componentCoverage = entry.count / Math.max(1, pixelCount);
+    const observedEnvelopeArea =
+      (entry.maxX - entry.minX + 1) * (entry.maxY - entry.minY + 1);
+    const componentCoverage = observedEnvelopeArea / Math.max(1, pixelCount);
     const contrastScore = clamp((entry.sumDifference / entry.count) / Math.max(1, foregroundThreshold * 2), 0, 1);
     return componentCoverage * (0.85 + 0.15 * contrastScore);
   };
-  const component = components
-    .filter((entry) => entry.count >= minimumComponentPixels)
+  const seedComponent = labeledRegion.components
+    .filter((entry) =>
+      entry.count >= minimumComponentPixels &&
+      !entry.touchesFrame &&
+      entry.minX >= 1 &&
+      entry.minY >= 1 &&
+      entry.maxX <= analysisWidth - 2 &&
+      entry.maxY <= analysisHeight - 2
+    )
     .sort((left, right) => componentScore(right) - componentScore(left) || right.count - left.count)[0];
-  if (!component) return { diagnostics: diagnosticsBase, reason: "No sufficiently large connected card candidate was found." };
+  if (!seedComponent) {
+    return {
+      diagnostics: diagnosticsBase,
+      reason: "No enclosed material region separated from the camera frame was found.",
+    };
+  }
+  const selectedSeedMask = new Uint8Array(pixelCount);
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (labeledRegion.labels[index] === seedComponent.label) selectedSeedMask[index] = 1;
+  }
+  const filledComponentMask = fillForegroundHoles(
+    selectedSeedMask,
+    analysisWidth,
+    analysisHeight,
+  );
+  const selectedComponentMask = openForegroundMask(
+    filledComponentMask,
+    analysisWidth,
+    analysisHeight,
+    Math.max(
+      morphologyRadius,
+      Math.round(Math.min(analysisWidth, analysisHeight) * 0.006),
+    ),
+  );
+  const selectedRegion = labelForegroundComponents(
+    selectedComponentMask,
+    differences,
+    analysisWidth,
+    analysisHeight,
+  );
+  const component = selectedRegion.components[0];
+  const labels = selectedRegion.labels;
+  if (!component || component.touchesFrame) {
+    return {
+      diagnostics: diagnosticsBase,
+      reason: "The observed material region is not fully separated from the camera frame.",
+    };
+  }
 
   const meanX = component.sumX / component.count;
   const meanY = component.sumY / component.count;
   const covarianceXX = component.sumXX / component.count - meanX * meanX;
   const covarianceYY = component.sumYY / component.count - meanY * meanY;
   const covarianceXY = component.sumXY / component.count - meanX * meanY;
-  const principalAngle = 0.5 * Math.atan2(2 * covarianceXY, covarianceXX - covarianceYY);
+  const covarianceTrace = covarianceXX + covarianceYY;
+  const covarianceDiscriminant = Math.hypot(
+    covarianceXX - covarianceYY,
+    2 * covarianceXY,
+  );
+  const isotropicObservedRegion =
+    covarianceTrace > 0 &&
+    covarianceDiscriminant / covarianceTrace < 0.05;
+  const principalAngle =
+    isotropicObservedRegion
+      ? Math.PI / 2
+      : 0.5 * Math.atan2(2 * covarianceXY, covarianceXX - covarianceYY);
   let longAxis = { x: Math.cos(principalAngle), y: Math.sin(principalAngle) };
   if (longAxis.y < 0 || (Math.abs(longAxis.y) < 1e-8 && longAxis.x < 0)) {
     longAxis = { x: -longAxis.x, y: -longAxis.y };
@@ -1038,52 +1609,18 @@ async function attemptSolidPlateDetection(
   const shortSide = maxShort - minShort + 1;
   const longSide = maxLong - minLong + 1;
   if (!Number.isFinite(shortSide) || !Number.isFinite(longSide) || shortSide < 8 || longSide < 8) {
-    return { diagnostics: diagnosticsBase, reason: "The detected component does not form a usable outer card rectangle." };
+    return { diagnostics: diagnosticsBase, reason: "The detected component does not form a usable physical material extent." };
   }
 
-  const analysisCorners: CardGeometryCorners = {
-    topLeft: {
-      x: meanX + shortAxis.x * minShort + longAxis.x * minLong,
-      y: meanY + shortAxis.y * minShort + longAxis.y * minLong,
-    },
-    topRight: {
-      x: meanX + shortAxis.x * maxShort + longAxis.x * minLong,
-      y: meanY + shortAxis.y * maxShort + longAxis.y * minLong,
-    },
-    bottomRight: {
-      x: meanX + shortAxis.x * maxShort + longAxis.x * maxLong,
-      y: meanY + shortAxis.y * maxShort + longAxis.y * maxLong,
-    },
-    bottomLeft: {
-      x: meanX + shortAxis.x * minShort + longAxis.x * maxLong,
-      y: meanY + shortAxis.y * minShort + longAxis.y * maxLong,
-    },
-  };
   const scaleX = prepared.orientedWidth / analysisWidth;
   const scaleY = prepared.orientedHeight / analysisHeight;
-  const corners: CardGeometryCorners = {
-    topLeft: scalePoint(analysisCorners.topLeft, scaleX, scaleY),
-    topRight: scalePoint(analysisCorners.topRight, scaleX, scaleY),
-    bottomRight: scalePoint(analysisCorners.bottomRight, scaleX, scaleY),
-    bottomLeft: scalePoint(analysisCorners.bottomLeft, scaleX, scaleY),
-  };
   const measuredAspectRatio = longSide / shortSide;
   const relativeAspectError = Math.abs(measuredAspectRatio - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
   const projectedArea = shortSide * longSide;
   const componentFill = component.count / Math.max(1, projectedArea);
   const cardCoverage = projectedArea / Math.max(1, analysisWidth * analysisHeight);
-  const selectedComponentMask = new Uint8Array(pixelCount);
   const scalarField = new Float32Array(pixelCount);
-  let selectedComponentTouchesFrame = false;
   for (let index = 0; index < pixelCount; index += 1) {
-    if (labels[index] === component.label) {
-      selectedComponentMask[index] = 1;
-      const x = index % analysisWidth;
-      const y = Math.floor(index / analysisWidth);
-      if (x === 0 || x === analysisWidth - 1 || y === 0 || y === analysisHeight - 1) {
-        selectedComponentTouchesFrame = true;
-      }
-    }
     scalarField[index] = selectedComponentMask[index] ?? 0;
   }
   const traced = traceFixedRigDenseContourV1({
@@ -1093,8 +1630,56 @@ async function attemptSolidPlateDetection(
     mask: selectedComponentMask,
     threshold: 0.5,
   });
-  const scaledContour = traced
-    ? scaleDenseContourV1(traced.contour, scaleX, scaleY)
+  const contractedAnalysisContour = traced &&
+    regionEvidence.backgroundSurfaceMode === "modeled"
+      ? contractContourToObservedBoundary(
+          traced.contour,
+          edgeEvidence.strength,
+          edgeEvidence.supportThreshold,
+          analysisWidth,
+          analysisHeight,
+          Math.round(Math.min(analysisWidth, analysisHeight) * 0.12),
+        )
+      : traced?.contour;
+  const refinedAnalysisContour = contractedAnalysisContour
+    ? refineContourWithRestrictedEdges(
+        contractedAnalysisContour,
+        edgeEvidence.strength,
+        analysisWidth,
+        analysisHeight,
+        Math.min(
+          16,
+          Math.max(
+            morphologyRadius + 1,
+            Math.round(Math.min(analysisWidth, analysisHeight) * 0.012),
+          ),
+        ),
+      )
+    : undefined;
+  const frameContourPointCount = refinedAnalysisContour?.reduce(
+    (count, point) =>
+      count + (
+      point.x <= 1 ||
+      point.x >= analysisWidth - 2 ||
+      point.y <= 1 ||
+      point.y >= analysisHeight - 2
+        ? 1
+        : 0
+      ),
+    0,
+  ) ?? 0;
+  if (
+    refinedAnalysisContour &&
+    frameContourPointCount >=
+      Math.max(8, Math.ceil(refinedAnalysisContour.length * 0.02))
+  ) {
+    return {
+      diagnostics: diagnosticsBase,
+      reason: "The observed material contour reaches the camera frame and is not fully visible.",
+    };
+  }
+  const scaledContour = refinedAnalysisContour
+    ? scaleDenseContourV1(refinedAnalysisContour, scaleX, scaleY)
     : undefined;
   const measuredContour = scaledContour
     ? measureFixedRigDenseContourV1({
@@ -1121,24 +1706,20 @@ async function attemptSolidPlateDetection(
           pixelsPerMmY: 1 / effectiveMmPerPixelY,
         })
       : undefined;
-  const supportSearchRadius = morphologyRadius + 1;
-  const strongSupportCount = traced?.contour.reduce((count, point) => {
-    const centerX = Math.round(point.x);
-    const centerY = Math.round(point.y);
-    for (let y = Math.max(0, centerY - supportSearchRadius); y <= Math.min(analysisHeight - 1, centerY + supportSearchRadius); y += 1) {
-      for (let x = Math.max(0, centerX - supportSearchRadius); x <= Math.min(analysisWidth - 1, centerX + supportSearchRadius); x += 1) {
-        if ((edgeEvidence.edgeStrength[y * analysisWidth + x] ?? 0) >= foregroundThreshold) {
-          return count + 1;
-        }
-      }
-    }
-    return count;
-  }, 0) ?? 0;
-  const strongSupportFraction = traced?.contour.length
-    ? strongSupportCount / traced.contour.length
+  const strongSupportCount = refinedAnalysisContour?.reduce((count, point) =>
+    count +
+    (bilinearSample(
+      edgeEvidence.strength,
+      analysisWidth,
+      analysisHeight,
+      point.x,
+      point.y,
+    ) >= edgeEvidence.supportThreshold ? 1 : 0), 0) ?? 0;
+  const strongSupportFraction = refinedAnalysisContour?.length
+    ? strongSupportCount / refinedAnalysisContour.length
     : 0;
   const observedDenseContour: CardGeometryObservedDenseContourV1 | undefined =
-    scaledContour && measuredContour
+    scaledContour && measuredContour && strongSupportCount > 0
       ? (() => {
           const contourSha256 = createHash("sha256")
             .update(JSON.stringify({
@@ -1251,9 +1832,8 @@ async function attemptSolidPlateDetection(
       )
     : 0;
   if (
-    (observedDenseContour && strongSupportCount === 0) ||
     (observedDenseContour && observedMaterialFill < 0.05) ||
-    (!observedDenseContour && !selectedComponentTouchesFrame)
+    !observedDenseContour
   ) {
     return {
       diagnostics: {
@@ -1266,19 +1846,57 @@ async function attemptSolidPlateDetection(
       reason: "No locally supported material boundary was observed against the base plate.",
     };
   }
-  const meanDifference = component.sumDifference / component.count;
+  const meanDifference = seedComponent.sumDifference / seedComponent.count;
   const contrastScore = clamp((meanDifference - foregroundThreshold * 0.8) / Math.max(4, foregroundThreshold * 1.5), 0, 1);
+  const contourBounds = measuredContour!.orientedBounds;
+  const contourCorners: CardGeometryCorners = isotropicObservedRegion
+    ? {
+        topLeft: {
+          x: contourBounds.center.x - contourBounds.widthMm / 2,
+          y: contourBounds.center.y - contourBounds.heightMm / 2,
+        },
+        topRight: {
+          x: contourBounds.center.x + contourBounds.widthMm / 2,
+          y: contourBounds.center.y - contourBounds.heightMm / 2,
+        },
+        bottomRight: {
+          x: contourBounds.center.x + contourBounds.widthMm / 2,
+          y: contourBounds.center.y + contourBounds.heightMm / 2,
+        },
+        bottomLeft: {
+          x: contourBounds.center.x - contourBounds.widthMm / 2,
+          y: contourBounds.center.y + contourBounds.heightMm / 2,
+        },
+      }
+    : {
+        topLeft: contourBounds.cornersMm[0],
+        topRight: contourBounds.cornersMm[1],
+        bottomRight: contourBounds.cornersMm[2],
+        bottomLeft: contourBounds.cornersMm[3],
+      };
+  const contourShortSide = contourBounds.widthMm;
+  const contourLongSide = contourBounds.heightMm;
+  const contourCoverage =
+    contourShortSide * contourLongSide /
+    Math.max(1, prepared.orientedWidth * prepared.orientedHeight);
+  const contourAspectRatio =
+    contourLongSide / Math.max(1e-6, contourShortSide);
+  const contourRelativeAspectError =
+    Math.abs(contourAspectRatio - thresholds.expectedAspectRatio) /
+    thresholds.expectedAspectRatio;
   const coverageScore =
-    cardCoverage < thresholds.minCardCoverage
-      ? clamp(cardCoverage / thresholds.minCardCoverage, 0, 1)
-      : cardCoverage > thresholds.maxCardCoverage
-        ? clamp((1 - cardCoverage) / Math.max(0.01, 1 - thresholds.maxCardCoverage), 0, 1)
+    contourCoverage < thresholds.minCardCoverage
+      ? clamp(contourCoverage / thresholds.minCardCoverage, 0, 1)
+      : contourCoverage > thresholds.maxCardCoverage
+        ? clamp((1 - contourCoverage) / Math.max(0.01, 1 - thresholds.maxCardCoverage), 0, 1)
         : 1;
   const contourScore = observedDenseContour
     ? clamp(0.45 + observedDenseContour.strongSupportFraction * 0.55, 0, 1)
     : 0;
   const confidence = round(0.55 * contourScore + 0.3 * contrastScore + 0.15 * coverageScore, 4);
-  const rotationDegrees = round(normalizeRotationDegrees((Math.atan2(shortAxis.y, shortAxis.x) * 180) / Math.PI), 3);
+  const rotationDegrees = round(normalizeRotationDegrees(
+    isotropicObservedRegion ? 0 : contourBounds.angleDegrees,
+  ), 3);
   const diagnostics: CardGeometryDetectionDiagnostics = {
     ...diagnosticsBase,
     componentPixelFraction: round(component.count / Math.max(1, pixelCount), 6),
@@ -1289,15 +1907,15 @@ async function attemptSolidPlateDetection(
   return {
     diagnostics,
     candidate: {
-      corners,
-      boundingBox: boundingBoxForCorners(corners),
+      corners: contourCorners,
+      boundingBox: boundingBoxForCorners(contourCorners),
       rotationDegrees,
       confidence,
-      shortSidePixels: shortSide * scaleX,
-      longSidePixels: longSide * scaleY,
-      cardCoverage,
-      measuredAspectRatio,
-      relativeAspectError,
+      shortSidePixels: contourShortSide,
+      longSidePixels: contourLongSide,
+      cardCoverage: contourCoverage,
+      measuredAspectRatio: contourAspectRatio,
+      relativeAspectError: contourRelativeAspectError,
       diagnostics,
       ...(observedDenseContour ? { observedDenseContour } : {}),
     },

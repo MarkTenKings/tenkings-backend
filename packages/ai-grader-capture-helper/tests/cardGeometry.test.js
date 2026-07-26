@@ -360,7 +360,18 @@ test("a visible contour with less than two-percent strong support remains a real
     detectionPolicy: CAPTURED_EVIDENCE_POLICY,
   });
 
-  assert.equal(geometry.placementState, "ready");
+  assert.equal(
+    geometry.placementState,
+    "ready",
+    JSON.stringify({
+      reason: geometry.adjustmentReason,
+      placement: geometry.placement,
+      detection: geometry.detection,
+      bounds: geometry.boundingBox,
+      support: geometry.observedDenseContour?.strongSupportFraction,
+      measurementsPx: geometry.observedDenseContour?.measurementsPx,
+    }),
+  );
   assert.ok(geometry.observedDenseContour);
   assert.equal(geometry.observedDenseContour.evidenceQuality, "limited");
   assert.ok(geometry.observedDenseContour.strongSupportFraction > 0);
@@ -571,7 +582,15 @@ test("detects solid cards on both matte black and matte white base plates", asyn
       detectionPolicy: CAPTURED_EVIDENCE_POLICY,
       side: "front",
     });
-    assert.equal(geometry.placementState, "ready", `${entry.name} should be Ready`);
+    assert.equal(
+      geometry.placementState,
+      "ready",
+      `${entry.name} should be Ready: ${JSON.stringify({
+        detection: geometry.detection,
+        warnings: geometry.warnings,
+        measurementsPx: geometry.observedDenseContour?.measurementsPx,
+      })}`,
+    );
     assert.equal(geometry.geometrySource, "detected");
     assert.equal(geometry.detection.method, "solid_plate_color_component_pca_v2");
     assert.ok(geometry.confidence >= geometry.placement.minReadyConfidence);
@@ -825,11 +844,29 @@ test("a fully visible card beyond the placement guides is Ready, while a clipped
   });
 
   assert.equal(flexible.placementState, "ready");
-  assert.equal(flexible.placement.withinCenterTolerance, false);
+  assert.equal(
+    flexible.placement.withinCenterTolerance,
+    false,
+    JSON.stringify({
+      corners: flexible.corners,
+      bounds: flexible.boundingBox,
+      placement: flexible.placement,
+      measurementsPx: flexible.observedDenseContour?.measurementsPx,
+    }),
+  );
   assert.equal(flexible.placement.withinSkewTolerance, false);
   assert.equal(flexible.placement.withinNormalizationSkewTolerance, true);
   assert.equal(flexible.placement.withinFrame, true);
-  assert.equal(clipped.geometrySource, "none");
+  assert.equal(
+    clipped.geometrySource,
+    "none",
+    JSON.stringify({
+      placementState: clipped.placementState,
+      bounds: clipped.boundingBox,
+      measurementsPx: clipped.observedDenseContour?.measurementsPx,
+      warnings: clipped.warnings,
+    }),
+  );
   assert.equal(clipped.placementState, "not_detected");
   assert.equal(clipped.adjustmentReason, "not_detected");
   assert.equal(clipped.observedDenseContour, undefined);
@@ -1140,7 +1177,16 @@ test("empty black, white, and gently shaded solid plates remain fail-closed Not 
       detectionPolicy: CAPTURED_EVIDENCE_POLICY,
       side: "front",
     });
-    assert.equal(geometry.placementState, "not_detected");
+    assert.equal(
+      geometry.placementState,
+      "not_detected",
+      `${path.basename(sourceImagePath)} must remain empty: ${JSON.stringify({
+        detection: geometry.detection,
+        bounds: geometry.boundingBox,
+        support: geometry.observedDenseContour?.strongSupportFraction,
+        measurementsPx: geometry.observedDenseContour?.measurementsPx,
+      })}`,
+    );
     assert.equal(geometry.geometrySource, "none");
     assert.equal(geometry.detectionUsed, false);
   }
