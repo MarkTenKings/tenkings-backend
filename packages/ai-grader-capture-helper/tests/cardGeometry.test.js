@@ -117,6 +117,30 @@ async function writeDirectionalPerimeterCard(filePath) {
   await sharp(svg).png().toFile(filePath);
 }
 
+async function writeUnevenDarkBackCard(filePath) {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <defs>
+        <linearGradient id="plate" x1="0" x2="1">
+          <stop offset="0" stop-color="#66696d"/>
+          <stop offset="1" stop-color="#070809"/>
+        </linearGradient>
+        <linearGradient id="card" x1="0" x2="1">
+          <stop offset="0" stop-color="#16191d"/>
+          <stop offset="1" stop-color="#020304"/>
+        </linearGradient>
+      </defs>
+      <rect width="800" height="1000" fill="url(#plate)"/>
+      <rect x="120" y="70" width="560" height="860" rx="22" fill="url(#card)"/>
+      <ellipse cx="400" cy="520" rx="210" ry="275" fill="none" stroke="#323940" stroke-width="38"/>
+      <circle cx="400" cy="520" r="82" fill="#747b82"/>
+      <path d="M180 260 Q400 110 620 260" fill="none" stroke="#444a51" stroke-width="28"/>
+      <path d="M180 790 Q400 940 620 790" fill="none" stroke="#252a30" stroke-width="28"/>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(filePath);
+}
+
 async function deterministicTexturedNoCardBuffer(options = {}) {
   const width = options.width ?? 1400;
   const height = options.height ?? 1000;
@@ -679,6 +703,31 @@ test("color-aware plate subtraction detects a low-luma-contrast card", async () 
   assert.equal(geometry.geometrySource, "detected");
   assert.ok(geometry.detectedCorners);
   assert.ok((geometry.detection.backgroundColor?.r ?? 255) < 40);
+});
+
+test("live dense contour detects a dark Back across a strong smooth illumination falloff", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "uneven-dark-back.png");
+  await writeUnevenDarkBackCard(rawPath);
+
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: LIVE_PREVIEW_POLICY,
+    side: "back",
+  });
+
+  assert.equal(geometry.placementState, "ready");
+  assert.equal(geometry.geometrySource, "detected");
+  assert.ok(geometry.observedDenseContour);
+  assert.ok(geometry.observedDenseContour.strongSupportFraction > 0);
+  assert.ok(Math.min(
+    geometry.observedDenseContour.measurementsPx.width,
+    geometry.observedDenseContour.measurementsPx.height,
+  ) > 520);
+  assert.ok(Math.max(
+    geometry.observedDenseContour.measurementsPx.width,
+    geometry.observedDenseContour.measurementsPx.height,
+  ) > 820);
 });
 
 test("dense material contour normalizes a dark captured perimeter without selecting bright artwork", async () => {
