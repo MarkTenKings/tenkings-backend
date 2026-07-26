@@ -141,6 +141,23 @@ async function writeUnevenDarkBackCard(filePath) {
   await sharp(svg).png().toFile(filePath);
 }
 
+async function writeFrameConnectedGlareNetworkCard(filePath) {
+  const svg = Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <rect width="800" height="1000" fill="#07090b"/>
+      <path
+        d="M 0 118 H 748 V 892 H 54 V 118 Z"
+        fill="none"
+        stroke="#59616a"
+        stroke-width="24"
+      />
+      <rect x="180" y="150" width="440" height="616" rx="8" fill="#eeeae0"/>
+      <rect x="222" y="198" width="356" height="500" rx="5" fill="#315079"/>
+    </svg>
+  `);
+  await sharp(svg).png().toFile(filePath);
+}
+
 async function deterministicTexturedNoCardBuffer(options = {}) {
   const width = options.width ?? 1400;
   const height = options.height ?? 1000;
@@ -823,6 +840,23 @@ test("dense-contour authority fails closed on deterministic full-frame texture w
   assert.equal(geometry.detectedCorners, null);
   assert.equal(geometry.detection.method, "solid_plate_color_component_pca_v2");
   assert.equal(geometry.observedDenseContour, undefined);
+});
+
+test("a frame-connected glare network cannot authorize a false enclosed contour", async () => {
+  const dir = tempDir();
+  const rawPath = path.join(dir, "frame-connected-glare-network.png");
+  await writeFrameConnectedGlareNetworkCard(rawPath);
+
+  const geometry = await detectCardGeometry({
+    sourceImagePath: rawPath,
+    detectionPolicy: LIVE_PREVIEW_POLICY,
+    side: "front",
+  });
+
+  assert.equal(geometry.placementState, "not_detected");
+  assert.equal(geometry.geometrySource, "none");
+  assert.equal(geometry.observedDenseContour, undefined);
+  assert.match(geometry.warnings.join(" "), /camera frame|enclosed material region/i);
 });
 
 test("a fully visible card beyond the placement guides is Ready, while a clipped card is Adjust Card", async () => {

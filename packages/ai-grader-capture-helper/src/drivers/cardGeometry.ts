@@ -1468,20 +1468,67 @@ async function attemptSolidPlateDetection(
     return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the solid base plate." };
   }
 
-  const initialMask = new Uint8Array(pixelCount);
+  // Region ownership begins with high-confidence material pixels. The lower
+  // foreground threshold remains useful for diagnostics, but it can include
+  // weak illumination/glare paths that join a real object to the camera frame.
+  // A stronger, image-derived threshold prevents those weak paths from
+  // nominating an object while preserving dark-card evidence.
+  const strongForegroundThreshold = Math.round(clamp(
+    Math.max(
+      foregroundThreshold + 1,
+      foregroundThreshold +
+        Math.max(1, (contrastRange - foregroundThreshold) * 0.3),
+    ),
+    foregroundThreshold + 1,
+    255,
+  ));
+  const strongRegionMask = new Uint8Array(pixelCount);
   for (let index = 0; index < differences.length; index += 1) {
-    if ((differences[index] ?? 0) >= foregroundThreshold) initialMask[index] = 1;
+    if ((differences[index] ?? 0) >= strongForegroundThreshold) {
+      strongRegionMask[index] = 1;
+    }
   }
-  const ownedRegionMask = supportOwnedRegionBoundary(
-    initialMask,
-    edgeEvidence.strength,
-    edgeEvidence.supportThreshold,
+  // The source frame is never altered. Label the naturally observed pixels
+  // first, then make every component connected to the camera frame background.
+  // This is intentionally different from erasing the outer row, which can turn
+  // a frame-connected environmental network into a false enclosed object.
+  const strongRegion = labelForegroundComponents(
+    strongRegionMask,
+    differences,
     analysisWidth,
     analysisHeight,
   );
-  const mask = closeForegroundMask(
+  const frameSeparatedStrongRegionMask = new Uint8Array(pixelCount);
+  const frameConnectedStrongLabels = new Set(
+    strongRegion.components
+      .filter((entry) => entry.touchesFrame)
+      .map((entry) => entry.label),
+  );
+  for (let index = 0; index < pixelCount; index += 1) {
+    const label = strongRegion.labels[index] ?? 0;
+    if (label !== 0 && !frameConnectedStrongLabels.has(label)) {
+      frameSeparatedStrongRegionMask[index] = 1;
+    }
+  }
+  const strongCoreMask = openForegroundMask(
+    frameSeparatedStrongRegionMask,
+    analysisWidth,
+    analysisHeight,
+    morphologyRadius,
+  );
+  const weakRegionMask = new Uint8Array(pixelCount);
+  for (let index = 0; index < differences.length; index += 1) {
+    if ((differences[index] ?? 0) >= foregroundThreshold) {
+      weakRegionMask[index] = 1;
+    }
+  }
+  // Region evidence alone decides ownership. Local edges are deliberately not
+  // admitted until after one naturally enclosed, strong-core-bearing region
+  // has been selected; therefore an environmental edge network cannot turn
+  // itself into foreground or join an owned core to the frame.
+  const regionOwnershipMask = closeForegroundMask(
     openForegroundMask(
-      ownedRegionMask,
+      weakRegionMask,
       analysisWidth,
       analysisHeight,
       morphologyRadius,
@@ -1490,44 +1537,48 @@ async function attemptSolidPlateDetection(
     analysisHeight,
     morphologyRadius,
   );
-  // Morphology may leave a soft illumination bridge between a fully visible
-  // object and the image boundary. Clear only the one-pixel analysis frame so
-  // enclosed object ownership can be evaluated; the final observed contour is
-  // independently rejected below if it remains at the camera boundary.
-  for (let x = 0; x < analysisWidth; x += 1) {
-    mask[x] = 0;
-    mask[(analysisHeight - 1) * analysisWidth + x] = 0;
-  }
-  for (let y = 1; y < analysisHeight - 1; y += 1) {
-    mask[y * analysisWidth] = 0;
-    mask[y * analysisWidth + analysisWidth - 1] = 0;
-  }
   let foregroundCount = 0;
-  for (const value of mask) foregroundCount += value;
+  for (const value of regionOwnershipMask) foregroundCount += value;
   diagnosticsBase.foregroundPixelFraction = round(foregroundCount / Math.max(1, pixelCount), 6);
-  const labeledRegion = labelForegroundComponents(mask, differences, analysisWidth, analysisHeight);
+  const labeledRegion = labelForegroundComponents(
+    regionOwnershipMask,
+    differences,
+    analysisWidth,
+    analysisHeight,
+  );
   // Absolute speck rejection only. Candidate admission must not assume the
   // expected product coverage, aspect ratio, rectangular fill, or corner type.
   // A material region must be enclosed by observable exterior background;
   // frame-connected candidates can never authorize capture.
   const minimumComponentPixels = 64;
-  const componentScore = (entry: ComponentStats) => {
-    const observedEnvelopeArea =
-      (entry.maxX - entry.minX + 1) * (entry.maxY - entry.minY + 1);
-    const componentCoverage = observedEnvelopeArea / Math.max(1, pixelCount);
-    const contrastScore = clamp((entry.sumDifference / entry.count) / Math.max(1, foregroundThreshold * 2), 0, 1);
-    return componentCoverage * (0.85 + 0.15 * contrastScore);
-  };
+  const coreEvidenceByLabel = new Float64Array(labeledRegion.components.length + 1);
+  const corePixelsByLabel = new Uint32Array(labeledRegion.components.length + 1);
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (strongCoreMask[index] === 0) continue;
+    const label = labeledRegion.labels[index] ?? 0;
+    if (label === 0) continue;
+    coreEvidenceByLabel[label] =
+      (coreEvidenceByLabel[label] ?? 0) +
+      Math.max(1, (differences[index] ?? 0) - strongForegroundThreshold + 1);
+    corePixelsByLabel[label] = (corePixelsByLabel[label] ?? 0) + 1;
+  }
+  const componentScore = (entry: ComponentStats) =>
+    coreEvidenceByLabel[entry.label] ?? 0;
   const seedComponent = labeledRegion.components
     .filter((entry) =>
       entry.count >= minimumComponentPixels &&
+      (corePixelsByLabel[entry.label] ?? 0) >= minimumComponentPixels &&
       !entry.touchesFrame &&
       entry.minX >= 1 &&
       entry.minY >= 1 &&
       entry.maxX <= analysisWidth - 2 &&
       entry.maxY <= analysisHeight - 2
     )
-    .sort((left, right) => componentScore(right) - componentScore(left) || right.count - left.count)[0];
+    .sort((left, right) =>
+      componentScore(right) - componentScore(left) ||
+      (corePixelsByLabel[right.label] ?? 0) -
+        (corePixelsByLabel[left.label] ?? 0)
+    )[0];
   if (!seedComponent) {
     return {
       diagnostics: diagnosticsBase,
@@ -1538,8 +1589,20 @@ async function attemptSolidPlateDetection(
   for (let index = 0; index < pixelCount; index += 1) {
     if (labeledRegion.labels[index] === seedComponent.label) selectedSeedMask[index] = 1;
   }
-  const filledComponentMask = fillForegroundHoles(
+  const edgeRefinedSeedMask = supportOwnedRegionBoundary(
     selectedSeedMask,
+    edgeEvidence.strength,
+    edgeEvidence.supportThreshold,
+    analysisWidth,
+    analysisHeight,
+  );
+  const filledComponentMask = fillForegroundHoles(
+    closeForegroundMask(
+      edgeRefinedSeedMask,
+      analysisWidth,
+      analysisHeight,
+      morphologyRadius,
+    ),
     analysisWidth,
     analysisHeight,
   );
@@ -1558,7 +1621,23 @@ async function attemptSolidPlateDetection(
     analysisWidth,
     analysisHeight,
   );
-  const component = selectedRegion.components[0];
+  const selectedCoreEvidenceByLabel = new Float64Array(
+    selectedRegion.components.length + 1,
+  );
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (strongCoreMask[index] === 0) continue;
+    const label = selectedRegion.labels[index] ?? 0;
+    if (label === 0) continue;
+    selectedCoreEvidenceByLabel[label] =
+      (selectedCoreEvidenceByLabel[label] ?? 0) +
+      Math.max(1, (differences[index] ?? 0) - strongForegroundThreshold + 1);
+  }
+  const component = selectedRegion.components
+    .filter((entry) => !entry.touchesFrame)
+    .sort((left, right) =>
+      (selectedCoreEvidenceByLabel[right.label] ?? 0) -
+      (selectedCoreEvidenceByLabel[left.label] ?? 0)
+    )[0];
   const labels = selectedRegion.labels;
   if (!component || component.touchesFrame) {
     return {
@@ -1659,23 +1738,24 @@ async function attemptSolidPlateDetection(
   const frameContourPointCount = refinedAnalysisContour?.reduce(
     (count, point) =>
       count + (
-      point.x <= 1 ||
-      point.x >= analysisWidth - 2 ||
-      point.y <= 1 ||
-      point.y >= analysisHeight - 2
-        ? 1
-        : 0
+        point.x <= 1 ||
+        point.x >= analysisWidth - 2 ||
+        point.y <= 1 ||
+        point.y >= analysisHeight - 2
+          ? 1
+          : 0
       ),
     0,
   ) ?? 0;
   if (
-    refinedAnalysisContour &&
-    frameContourPointCount >=
-      Math.max(8, Math.ceil(refinedAnalysisContour.length * 0.02))
+    !refinedAnalysisContour ||
+    frameContourPointCount > 0
   ) {
     return {
       diagnostics: diagnosticsBase,
-      reason: "The observed material contour reaches the camera frame and is not fully visible.",
+      reason: refinedAnalysisContour
+        ? "The observed material contour reaches the camera frame and is not fully visible."
+        : "The observed pixels did not form a genuinely closed material boundary.",
     };
   }
   const scaledContour = refinedAnalysisContour
