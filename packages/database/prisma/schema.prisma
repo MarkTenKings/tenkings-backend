@@ -627,6 +627,7 @@ model User {
   kioskSessions           KioskSession[]        @relation("KioskSessionUser")
   kioskClaims             KioskSession[]        @relation("KioskClaimedBy")
   liveRips                LiveRip[]             @relation("LiveRipUser")
+  liveRipsAssigned        LiveRip[]             @relation("LiveRipAssignedBy")
   liveRipConsents         LiveRipConsent[]
   scannedGoldenTickets    GoldenTicket[]        @relation("GoldenTicketScanner")
   goldenTicketConsents    GoldenTicketConsent[]
@@ -843,12 +844,20 @@ model LiveRip {
   whipUploadUrl  String?
   isGoldenTicket Boolean       @default(false)
   goldenTicketId String?       @unique
+  claimName String?
+  claimPhone String?
+  claimTokenHash String? @unique
+  claimExpiresAt DateTime?
+  claimedAt DateTime?
+  assignedByUserId String?
+  smsSentAt DateTime?
   startedAt      DateTime?
   endedAt        DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   location       Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   user           User?         @relation("LiveRipUser", fields: [userId], references: [id], onDelete: SetNull)
+  assignedBy User? @relation("LiveRipAssignedBy", fields: [assignedByUserId], references: [id], onDelete: SetNull)
   kioskSessionId String?       @unique
   kioskSession   KioskSession? @relation("KioskSessionLiveRip", fields: [kioskSessionId], references: [id], onDelete: SetNull)
   goldenTicket   GoldenTicket? @relation(fields: [goldenTicketId], references: [id], onDelete: SetNull)
@@ -857,6 +866,8 @@ model LiveRip {
   @@index([isGoldenTicket, createdAt])
   @@index([status, isGoldenTicket, createdAt])
   @@index([userId])
+  @@index([claimPhone])
+  @@index([assignedByUserId])
   @@index([muxStreamId])
 }
 

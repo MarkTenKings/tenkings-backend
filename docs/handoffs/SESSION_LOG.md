@@ -28498,3 +28498,36 @@ By enabling Rip It Live, I confirm:
 
 - Commit and push only the four scoped source/test files plus this handoff entry, merge one focused pull request to protected `main`, and verify the exact Vercel Production deployment.
 - Preserve the active failed Front session while the web deployment builds. Restart only the protected Production desktop helper after the owner cancels and read-only status proves sessionless `start_new_card`, preview/camera idle, no transition/capture/worker lock, safe-off verification, and an unchanged recognized empty Rapid queue.
+
+## 2026-07-26 - Live Rip customer assignment MVP production plan
+
+- Created isolated branch `codex/live-rip-customer-assignment-mvp` from current `origin/main` commit `9203b905`.
+- Transferred only the Live Rip customer assignment implementation from the pre-existing dirty/conflicted checkout. Unrelated AI Grader changes and its unresolved handoff-doc index state remain untouched in the original worktree.
+- Scope includes:
+  - administrator-only recorded-video assignment UI and server-authorized assignment/SMS endpoint;
+  - direct existing-user ownership plus phone-bound pending claims;
+  - seven-day SHA-256-hashed, single-use claim tokens and permanent claim attribution;
+  - exact `Live Rips` collection tab with owner-scoped listing, watch, download, share, and processing state;
+  - Mux highest static renditions for new recordings and supported on-demand creation for existing Mux assets;
+  - Prisma migration `20260726190000_live_rip_customer_assignment`.
+- Merge-readiness review corrected one Mux issue before isolation: static-rendition configuration is not sent through the existing generic live-stream `PATCH`; creation-time and existing-asset rendition paths use the documented Mux APIs.
+
+### Planned authorized production action
+
+- Validate the isolated branch, commit it, push it, open a focused pull request, and merge it to protected `main` after required checks pass.
+- Print branch and HEAD and confirm remote parity before production migration/deployment.
+- Sync the droplet checkout to the exact merged `origin/main` commit.
+- Apply the additive Prisma migration using the documented production database migration flow, then generate the Prisma client.
+- Allow the normal GitHub-triggered Vercel production deployment and verify the exact serving commit, affected routes, API authorization behavior, and public application health.
+- No destructive data operation is planned. The migration only adds nullable LiveRip columns, indexes, and an `ON DELETE SET NULL` assigned-by foreign key.
+- After deployment, run the real OBS → administrator assignment → SMS → logged-out authentication/claim → collection/watch/download → cross-customer isolation smoke test once Mark supplies the actual test phone/account.
+
+### Isolated-branch validation
+
+- Prisma client generation and schema validation passed.
+- `@tenkings/database` build passed.
+- Live Rip claim tests passed `4/4`, including token hashing, assignment validation, exact SMS copy, and error status behavior.
+- Targeted lint across all changed Live Rip, claim, collection, SMS, Mux, and API files passed with no warnings or errors.
+- `git diff --check` passed.
+- The exact `VERCEL_ENV=preview RUN_DB_MIGRATIONS=false pnpm vercel:build` path passed, including database/shared/browser-rip/capture-helper builds, Next.js production compilation, all expected Live Rip routes, and the final Sharp/calibration runtime trace check.
+- A direct fresh-checkout Next.js build initially stopped because current main requires the capture-helper workspace package to be built first; the official Vercel build path performs that prerequisite and passed. This was not a Live Rip code failure.
