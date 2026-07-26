@@ -105,3 +105,92 @@ test("activation evidence collision fails before any real hardware boundary", as
   assert.equal(lightingWriteCount, 0);
   assert.equal(service.status().warmRunnerStatus.captureLock.held, false);
 });
+
+test("real Start New Card binds the verified ACTIVE bundle to live contour calibration", async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-live-contour-calibration-"));
+  const bundleManifestSha256 = "a".repeat(64);
+  const calibrationArtifactSha256 = "b".repeat(64);
+  const activatedBundlePath = path.join(root, "activated-bundle.json");
+  const activationAuthority = {
+    bundleManifestSha256,
+  };
+  let assertedAuthority;
+  let loadedInput;
+  let freshSessionRequest;
+  const config = buildAiGraderLocalStationBridgeConfig({
+    ...realInput(),
+    outputDir: path.join(root, "helper-output"),
+    mathematicalCalibrationRigId: "fixed-rig-dell-v1",
+  });
+  const service = new AiGraderLocalStationBridgeService(config, undefined, undefined, {
+    writeLightingFrames: async () => [],
+    calibrationActivationRegistry: {
+      assertStartAuthority: async (value) => {
+        assertedAuthority = value;
+        return { bundlePath: activatedBundlePath };
+      },
+    },
+    loadMathematicalCalibrationBundle: (input) => {
+      loadedInput = input;
+      return {
+        authority: { bundleManifestSha256 },
+        profile: {
+          profileId: "active-preview-profile",
+          calibrationVersion: "active-preview-v1",
+          artifactSha256: calibrationArtifactSha256,
+          mmPerPixelX: 0.043,
+          mmPerPixelY: 0.044,
+          scaleRelativeU95: 0.002,
+          segmentationBoundaryU95Px: 1.5,
+          measurementRepeatability: {
+            linearMm: { u95: 0.08 },
+          },
+        },
+        physicalArtifact: {
+          inputs: {
+            lensModel: {
+              sourceWidthPx: 2048,
+              sourceHeightPx: 3072,
+            },
+          },
+        },
+      };
+    },
+  });
+  t.after(async () => fs.rm(root, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 50,
+  }));
+  service.createFreshSession = async (request) => {
+    freshSessionRequest = request;
+  };
+
+  await service.action("start-session", {
+    reportId: "active-preview-calibration-report",
+    captureProfile: "production_fast",
+    gradingContract: "mathematical_calibration_v1",
+    calibrationActivationAuthority: activationAuthority,
+    mathematicalGradingAuthority: {},
+  });
+
+  assert.equal(assertedAuthority, activationAuthority);
+  assert.equal(loadedInput.bundlePath, activatedBundlePath);
+  assert.equal(loadedInput.bundleSha256, bundleManifestSha256);
+  assert.equal(loadedInput.expectedRigId, "fixed-rig-dell-v1");
+  assert.deepEqual(freshSessionRequest.previewSensorPlaneCalibration, {
+    schemaVersion: "ten-kings-card-geometry-sensor-plane-calibration-v1",
+    profileId: "active-preview-profile",
+    calibrationVersion: "active-preview-v1",
+    calibrationArtifactSha256,
+    bundleManifestSha256,
+    sourceWidthPx: 2048,
+    sourceHeightPx: 3072,
+    mmPerPixelX: 0.043,
+    mmPerPixelY: 0.044,
+    scaleRelativeU95: 0.002,
+    segmentationBoundaryU95Px: 1.5,
+    linearMeasurementU95Mm: 0.08,
+  });
+});

@@ -28457,3 +28457,17 @@ By enabling Rip It Live, I confirm:
   - Back source-set `959c9ac7a8aece49f58489150ac0a3dabd58aee266ad44884c4efc97478b5f86`, native all-on source `c982ea874dd9bdd5af3cb5610ccfe0f1358f9f8d26cc02b954c3dbc9de4c26cb`, contour `114aff784cb06bb25c8a7d3eed51c009f484ac7c691a90c0c2300f05e81a017b`.
 - Replay reached `operator_resolution_required`, retained Centering `3.47`, Corners `10`, Edges `10`, Surface `10`, and produced all `20` authentic galleries (`2/8/8/2`). The explicitly owner-deferred unseen corner/edge aggregation behavior remains unchanged.
 - Next action is the promised independent read-only review of this unchanged candidate. Its report must be shared with Mark before any reviewer-requested corrective work.
+
+## 2026-07-26 - ACTIVE calibration live-contour handoff and compact preview UI
+
+- Started branch `codex/ai-grader-live-calibration-preview-20260726` from exact merged Production commit `b0a9029251565147a5629e51b7f6e73287374f98` for the owner-approved surgical correction only.
+- Root cause was confirmed on the exact active Production test session: Start New Card verified the signed ACTIVE calibration and received its verified local bundle path, but the live-preview resolver discarded that path and only consulted the intentionally empty legacy direct-bundle configuration. The dense contour therefore remained current, hash-bound, and placement-ready but had pixel measurements without `measurementsMm`; the unchanged browser safety gate correctly kept Capture Front disabled.
+- The verified ACTIVE bundle now produces one immutable sensor-plane calibration object at Start New Card and carries it into that exact fresh session. The existing contour implementation derives calibrated width, height, observed local radius/curvature, and private U95 from that object. Missing/invalid calibrated measurement still fails closed; no capture gate, lighting rule, contour threshold, expected-shape logic, or fallback was weakened or added.
+- The operator message now distinguishes missing calibration, lighting-controller acknowledgement, and stale detected-frame causes. A connected live preview renders only `LIVE • CONNECTED`; the measurement panel moved from the obstructed lower-left area to the upper-left.
+- Focused verification passed: capture-helper build; ACTIVE-calibration bridge wiring `5/5`; station and Mathematical station UI tests `64/64`; `git diff --check` with Windows line-ending notices only. The repository-wide frontend typecheck stopped on two pre-existing `ProcessEnv.NODE_ENV` typing errors in `aiGraderOperatorResolutionAuthentication.test.ts`; it reported no station-page error and that unrelated test was not changed.
+- The active Production session/report/queue, camera, lighting, calibration registry, and all persisted grading data remain unmodified. No helper install/restart, merge, or deployment has occurred yet.
+
+### Planned Production action
+
+- Push the exact green commit, merge its focused pull request into `origin/main`, allow the normal Vercel Production build without database migrations, and verify the deployed station source/route against that exact merge commit.
+- Do not restart the Production desktop helper while the owner’s current test card remains active at `capture_front`. After the owner returns the station to an authoritative sessionless `start_new_card` state, install/build the same exact merged commit, verify remote parity, restart only the desktop helper through its approved lifecycle, and confirm healthy/idle status before the owner’s next card.
