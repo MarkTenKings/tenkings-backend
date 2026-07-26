@@ -28466,3 +28466,8 @@ By enabling Rip It Live, I confirm:
 - The operator message now distinguishes missing calibration, lighting-controller acknowledgement, and stale detected-frame causes. A connected live preview renders only `LIVE • CONNECTED`; the measurement panel moved from the obstructed lower-left area to the upper-left.
 - Focused verification passed: capture-helper build; ACTIVE-calibration bridge wiring `5/5`; station and Mathematical station UI tests `64/64`; `git diff --check` with Windows line-ending notices only. The repository-wide frontend typecheck stopped on two pre-existing `ProcessEnv.NODE_ENV` typing errors in `aiGraderOperatorResolutionAuthentication.test.ts`; it reported no station-page error and that unrelated test was not changed.
 - The active Production session/report/queue, camera, lighting, calibration registry, and all persisted grading data remain unmodified. No helper install/restart, merge, or deployment has occurred yet.
+
+### Planned Production action
+
+- Push the exact green commit, merge its focused pull request into `origin/main`, allow the normal Vercel Production build without database migrations, and verify the deployed station source/route against that exact merge commit.
+- Do not restart the Production desktop helper while the owner’s current test card remains active at `capture_front`. After the owner returns the station to an authoritative sessionless `start_new_card` state, install/build the same exact merged commit, verify remote parity, restart only the desktop helper through its approved lifecycle, and confirm healthy/idle status before the owner’s next card.
