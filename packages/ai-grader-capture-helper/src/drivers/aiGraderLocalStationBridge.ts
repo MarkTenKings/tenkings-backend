@@ -2339,11 +2339,22 @@ function geometryHasCaptureAuthoritativeDenseContour(
   geometry: CardGeometryMetadata | undefined,
 ): geometry is CardGeometryMetadata {
   const contour = geometry?.observedDenseContour;
+  const contourIsStrictlyInsideSourceFrame = Boolean(
+    geometry &&
+      contour &&
+      contour.points.every((point) =>
+        point.x > 0 &&
+        point.x < geometry.image.width - 1 &&
+        point.y > 0 &&
+        point.y < geometry.image.height - 1
+      ),
+  );
   return Boolean(
     geometry &&
       contour &&
       contour.pointCount >= 16 &&
       contour.measurementsMm &&
+      contourIsStrictlyInsideSourceFrame &&
       verifyCardGeometryObservedDenseContourV1(
         contour,
         geometry.image.width,

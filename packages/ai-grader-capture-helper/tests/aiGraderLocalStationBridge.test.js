@@ -1821,6 +1821,41 @@ test("Atomic Back rejects malformed private assertion identities before capture 
   }
 });
 
+test("capture rejects a hash-valid dense contour that reaches the source frame", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-frame-contour-capture-gate-"));
+  try {
+    const { service } = configFor(outputDir);
+    await startHistoricalLegacyFixtureSession(service, {
+      reportId: "frame-contour-capture-gate-report",
+    });
+    const request = bindReadyPreview(service, "front", "frame-boundary");
+    const geometry = service.previewObservation("front", request.expectedFrameId).geometry;
+    const contour = geometry.observedDenseContour;
+    contour.points[0].x = 0;
+    contour.contourSha256 = crypto.createHash("sha256").update(JSON.stringify({
+      sourceAssetSha256: contour.sourceAssetSha256,
+      coordinateFrame: contour.coordinateFrame,
+      points: contour.points,
+    })).digest("hex");
+    const { measurementAuthoritySha256, ...measurementPayload } = contour.measurementsMm;
+    contour.measurementsMm.measurementAuthoritySha256 = crypto.createHash("sha256")
+      .update(JSON.stringify({
+        contourSha256: contour.contourSha256,
+        ...measurementPayload,
+      }))
+      .digest("hex");
+
+    await assert.rejects(
+      service.action("capture-front", request),
+      /exact calibrated, hash-verified dense contour/i,
+    );
+    assert.equal(service.manifest.outputs.frontPackageDir, undefined);
+    assert.equal(service.manifest.currentStep, "capture_front");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("active review projection strips every local Path/Dir/Folder and filesystem-shaped string", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-review-redaction-"));
   try {

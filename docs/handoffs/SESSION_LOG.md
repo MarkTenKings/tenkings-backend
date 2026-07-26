@@ -28485,3 +28485,16 @@ By enabling Rip It Live, I confirm:
 
 - Commit and push only the detector source, focused regression, and this handoff entry; merge the focused pull request to `origin/main`; allow the normal Vercel Production deployment; and verify the public station route against the exact merge commit.
 - Do not restart the Production desktop helper while the current card remains active. After the web deployment is verified, ask the owner to cancel this blocked test card. Restart only after read-only status proves sessionless `start_new_card`, camera/preview idle, no capture/transition/worker lock, safe-off verification, and an unchanged empty Rapid queue; then build and activate the helper at the exact merged commit for the owner’s next card.
+
+## 2026-07-26 - Frame-connected region ownership correction
+
+- Started isolated branch `codex/ai-grader-frame-connected-region-correction-20260726` from exact merged/deployed/runtime commit `61a07ca070135b998da1c056067c182cac830b18` for the owner-approved contour correction only. The active failed Production session/report remain preserved at Front capture and no hardware, lighting, background, capture/cancel, queue/report/database, calibration, or grading state was changed.
+- Removed the artificial one-pixel camera-frame erasure. Pixel region ownership now requires an image-derived strong interior core, classifies every naturally frame-connected region as background on the unmodified source frame, selects candidates by accumulated strong-core pixel evidence rather than bounding-envelope size, and admits local edge evidence only after one enclosed region owns the foreground.
+- Dense contour creation now rejects any missing/open contour and any contour point reaching the analysis frame. Atomic Front/Back capture independently requires every hash-valid calibrated dense-contour point to be strictly inside the source image, so a frame-reaching or out-of-frame contour cannot authorize capture.
+- No rectangle fallback, expected card size/shape authority, lighting behavior, calibration rule, contour measurement contract, or unrelated grading logic was added or changed.
+- Focused verification passed: capture-helper/shared/simulator build; matte black/white Front, 97%-height Front, prior-good corner localization, low-luma Front, uneven dark Back, dark captured perimeter, directional exterior lighting, full-frame no-card texture, clipped card, empty black/white/shaded plates, and the new frame-connected glare-network failure replay (`11/11`); independent frame-reaching capture invariant (`1/1`); and `git diff --check` with line-ending notices only.
+
+### Planned Production action
+
+- Commit and push only the four scoped source/test files plus this handoff entry, merge one focused pull request to protected `main`, and verify the exact Vercel Production deployment.
+- Preserve the active failed Front session while the web deployment builds. Restart only the protected Production desktop helper after the owner cancels and read-only status proves sessionless `start_new_card`, preview/camera idle, no transition/capture/worker lock, safe-off verification, and an unchanged recognized empty Rapid queue.
