@@ -11,6 +11,7 @@ import {
   collectAiGraderMathematicalReviewAssets,
   fetchAiGraderMathematicalReviewAsset,
   fetchAiGraderOperatorResolutionEvidenceAsset,
+  fetchAiGraderOperatorResolutionWorkspaceAsset,
   stageAiGraderMathematicalDesignReference,
   type AiGraderPreparedRegisteredDesignReferenceV1,
 } from "../lib/aiGraderStationBridgeClient";
@@ -24,6 +25,7 @@ import {
   type AiGraderMathematicalFindingReviewRequestV1,
   type AiGraderMathematicalGradingAuthorityV1,
   type AiGraderMathematicalReviewAssetMetadataV1,
+  type AiGraderOperatorResolutionWorkspaceAssetV1,
   type AiGraderQueuedOcrImage,
 } from "../lib/aiGraderLocalStation";
 
@@ -550,6 +552,62 @@ test("operator-resolution evidence fetch verifies exact identity, metadata, and 
   );
 });
 
+test("operator-resolution workspace images verify exact request metadata and SHA-256", async () => {
+  const expectedBytes = Uint8Array.from({ length: 48 }, (_, index) => index + 40);
+  const metadata: AiGraderOperatorResolutionWorkspaceAssetV1 = {
+    assetId: "operator-workspace.corners.front.top_left",
+    element: "corners",
+    side: "front",
+    location: "top_left",
+    evidenceRole: "corner_measurement_overlay",
+    sha256: sha256(expectedBytes),
+    fileName: "corners-front-top_left.png",
+    contentType: "image/png",
+    byteSize: expectedBytes.byteLength,
+    widthPx: 720,
+    heightPx: 720,
+    measurementSummary: [
+      "actual fitted radius 3.120 mm",
+      "private U95 0.080 mm",
+    ],
+  };
+  let observedUrl = "";
+  const fetched = await fetchAiGraderOperatorResolutionWorkspaceAsset({
+    baseUrl: "http://127.0.0.1:47652",
+    stationToken: "paired-token",
+    queueItemId: "queue-item-1",
+    gradingSessionId: "grading-session-1",
+    reportId: "report-1",
+    metadata,
+  }, (async (url) => {
+    observedUrl = String(url);
+    return new Response(expectedBytes, {
+      status: 200,
+      headers: {
+        "content-type": metadata.contentType,
+        "content-length": String(metadata.byteSize),
+        "x-ai-grader-queue-item-id": "queue-item-1",
+        "x-ai-grader-grading-session-id": "grading-session-1",
+        "x-ai-grader-report-id": "report-1",
+        "x-ai-grader-asset-id": metadata.assetId,
+        "x-ai-grader-sha256": metadata.sha256,
+        "x-ai-grader-side": metadata.side,
+        "x-ai-grader-evidence-role": metadata.evidenceRole,
+        "x-ai-grader-width-px": String(metadata.widthPx),
+        "x-ai-grader-height-px": String(metadata.heightPx),
+      },
+    });
+  }) as typeof fetch);
+  assert.equal(
+    observedUrl,
+    "http://127.0.0.1:47652/mathematical-v1/operator-resolution-assets" +
+      "?queueItemId=queue-item-1&gradingSessionId=grading-session-1&reportId=report-1" +
+      "&assetId=operator-workspace.corners.front.top_left",
+  );
+  assert.equal(fetched.metadata.assetId, metadata.assetId);
+  assert.equal(fetched.blob.size, metadata.byteSize);
+});
+
 function reviewRequest(): AiGraderMathematicalFindingReviewRequestV1 {
   const bytes = Uint8Array.from({ length: 32 }, (_, index) => index + 20);
   const trueView = reviewAsset("front-true-view", "normalized_card", bytes);
@@ -774,6 +832,31 @@ test("operator-resolution request display preserves exact originals without expo
                   resultSha256: resultSha256.surface,
                 },
               },
+            },
+            workspace: {
+              schemaVersion: "fixed_rig_operator_resolution_workspace_v1",
+              requestSha256,
+              galleries: {
+                centering: [{
+                  assetId: "operator-workspace.centering.front.full_card",
+                  element: "centering",
+                  side: "front",
+                  location: "full_card",
+                  evidenceRole: "centering_measurement_overlay",
+                  sha256: "f".repeat(64),
+                  fileName: "centering-front-full_card.png",
+                  contentType: "image/png",
+                  byteSize: 1024,
+                  widthPx: 1200,
+                  heightPx: 1680,
+                  measurementSummary: ["L 3.1 · R 3.2 mm"],
+                }],
+                corners: [],
+                edges: [],
+                surface: [],
+              },
+              hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted",
+              workspaceSha256: "9".repeat(64),
             },
             unresolvedElements: ["centering"],
             authority: {

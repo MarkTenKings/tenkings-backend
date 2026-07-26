@@ -84,6 +84,7 @@ export type FixedRigConditionPlaneProducerV1Result =
       planes: {
         normalizedLuminance: FixedRigScalarPlaneV1;
         expectedOuterCardMask: FixedRigScalarPlaneV1;
+        observedCardMaterialMask: FixedRigScalarPlaneV1;
         materialPresenceConfidence: FixedRigScalarPlaneV1;
         segmentationConfidence: FixedRigScalarPlaneV1;
         boundaryConfidence: FixedRigScalarPlaneV1;
@@ -575,6 +576,46 @@ function boxStatistic(
   return output;
 }
 
+function maskedBoxStatistic(
+  width: number,
+  height: number,
+  values: ArrayLike<number>,
+  support: ArrayLike<number>,
+  radiusX: number,
+  radiusY: number,
+): Float32Array {
+  const supportedValues = Float32Array.from(values, (value, index) =>
+    Number(support[index]) > 0 ? Number(value) : 0);
+  const countsIntegral = integralPlane(width, height, support);
+  const valuesIntegral = integralPlane(width, height, supportedValues);
+  const rectangleSum = (
+    integral: Float64Array,
+    left: number,
+    top: number,
+    right: number,
+    bottom: number,
+  ) => integral[bottom * (width + 1) + right]! -
+    integral[top * (width + 1) + right]! -
+    integral[bottom * (width + 1) + left]! +
+    integral[top * (width + 1) + left]!;
+  const output = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radiusY);
+    const bottom = Math.min(height, y + radiusY + 1);
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (Number(support[index]) <= 0) continue;
+      const left = Math.max(0, x - radiusX);
+      const right = Math.min(width, x + radiusX + 1);
+      const count = rectangleSum(countsIntegral, left, top, right, bottom);
+      if (count <= 0) continue;
+      output[index] =
+        rectangleSum(valuesIntegral, left, top, right, bottom) / count;
+    }
+  }
+  return output;
+}
+
 function localRms(
   width: number,
   height: number,
@@ -757,8 +798,45 @@ function registeredColorDifferences(input: {
   return { deltaE, lightnessDelta, chromaDelta, valid: input.valid };
 }
 
+/**
+ * Returns the continuous 0..1 two-axis support supplied by the exact
+ * calibrated light directions. A full, balanced ring approaches one. Parallel
+ * or near-parallel directions approach zero because repeated brightness
+ * samples from one direction cannot prove two-dimensional surface relief.
+ *
+ * This is evidence weighting, not an admission gate: visible card evidence
+ * still proceeds and produces a grade, while unsupported lighting variation
+ * cannot manufacture physical condition findings.
+ */
+function calibratedDirectionalDiversity(
+  calibration: FixedRigConditionMeasurementCalibrationV1,
+): number {
+  let xx = 0;
+  let xy = 0;
+  let yy = 0;
+  let totalWeight = 0;
+  for (const channel of calibration.profile.channels) {
+    const magnitude = Math.hypot(channel.direction.x, channel.direction.y);
+    if (!Number.isFinite(magnitude) || magnitude <= Number.EPSILON) continue;
+    const weight = clamp(channel.directionConfidence);
+    if (weight <= 0) continue;
+    const x = channel.direction.x / magnitude;
+    const y = channel.direction.y / magnitude;
+    xx += weight * x * x;
+    xy += weight * x * y;
+    yy += weight * y * y;
+    totalWeight += weight;
+  }
+  if (totalWeight <= Number.EPSILON) return 0;
+  xx /= totalWeight;
+  xy /= totalWeight;
+  yy /= totalWeight;
+  return clamp(2 * Math.sqrt(Math.max(0, xx * yy - xy * xy)));
+}
+
 function photometricRelief(
   evidence: FixedRigPhotometricEvidenceV1,
+  directionalDiversity: number,
 ): { range: Float32Array; relief: Float32Array; valid: Uint8Array } {
   const range = new Float32Array(evidence.width * evidence.height);
   const relief = new Float32Array(range.length);
@@ -769,7 +847,8 @@ function photometricRelief(
       .filter((channel) => channel.validDirectionalObservationMask[index])
       .map((channel) => Number(channel.directionalResidual[index]));
     if (samples.length < SURFACE_POLICY.minValidDirectionalObservations) continue;
-    const directionalRange = Math.max(...samples) - Math.min(...samples);
+    const directionalRange =
+      (Math.max(...samples) - Math.min(...samples)) * directionalDiversity;
     range[index] = directionalRange;
     relief[index] = clamp(directionalRange / POLICY.directional.reliefFullScale);
     valid[index] = 1;
@@ -918,6 +997,13 @@ export function buildFixedRigConditionPlanesV1(
     mmPerPixelX,
     mmPerPixelY,
   );
+  const distanceToObservedExterior = euclideanDistanceToExterior(
+    width,
+    height,
+    material,
+    mmPerPixelX,
+    mmPerPixelY,
+  );
   const distanceToIntendedMaterial = euclideanDistanceToMaterial(
     width,
     height,
@@ -951,20 +1037,27 @@ export function buildFixedRigConditionPlanesV1(
   }
   const segmentationConfidence = new Float32Array(pixelCount);
   const boundaryConfidence = new Float32Array(pixelCount);
+  const observedBoundaryBandMm =
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.conditionSegmentation
+      .regionGeometry.edgeRoiDepthMm;
   for (let index = 0; index < pixelCount; index += 1) {
-    const photometricConfidence = input.photometricEvidence.invalidIlluminationMask[index]
-      ? 0
-      : Math.min(
-          1,
-          Number(input.photometricEvidence.usableDirectionalObservationCount[index]) /
-            SURFACE_POLICY.minValidDirectionalObservations,
-        );
-    const confidence = Math.min(observedArtifact.confidence, photometricConfidence);
-    segmentationConfidence[index] = confidence;
-    boundaryConfidence[index] = confidence;
+    // Physical material/contour observability comes from the sealed raw-pixel
+    // contour. Directional-light quality is a separate modality and may limit
+    // texture evidence, but it cannot erase a boundary that the camera saw.
+    const confidence = observedArtifact.confidence;
+    const isObservedMaterial = Number(material[index]) > 0;
+    segmentationConfidence[index] = isObservedMaterial ? confidence : 0;
+    const boundaryDistanceMm = isObservedMaterial
+      ? Number(distanceToObservedExterior[index])
+      : Number(distanceToObservedMaterial[index]);
+    boundaryConfidence[index] =
+      boundaryDistanceMm <= observedBoundaryBandMm ? confidence : 0;
   }
 
-  const relief = photometricRelief(input.photometricEvidence);
+  const relief = photometricRelief(
+    input.photometricEvidence,
+    calibratedDirectionalDiversity(input.measurementCalibration),
+  );
   const scratch = orientedLineResponse({
     width,
     height,
@@ -985,15 +1078,41 @@ export function buildFixedRigConditionPlanesV1(
     tangentRadiusX: Math.max(1, Math.ceil(POLICY.directional.creaseTangentRadiusMm * pixelsPerMmX)),
     tangentRadiusY: Math.max(1, Math.ceil(POLICY.directional.creaseTangentRadiusMm * pixelsPerMmY)),
   });
-  const deformationMean = boxStatistic(
+  const deformationRadiusX = Math.max(
+    1,
+    Math.ceil(POLICY.directional.deformationWindowRadiusMm * pixelsPerMmX),
+  );
+  const deformationRadiusY = Math.max(
+    1,
+    Math.ceil(POLICY.directional.deformationWindowRadiusMm * pixelsPerMmY),
+  );
+  const deformationSupport = Uint8Array.from(relief.valid, (value, index) =>
+    Number(value) > 0 && Number(material[index]) > 0 ? 1 : 0);
+  const deformationMean = maskedBoxStatistic(
     width,
     height,
     relief.range,
-    Math.max(1, Math.ceil(POLICY.directional.deformationWindowRadiusMm * pixelsPerMmX)),
-    Math.max(1, Math.ceil(POLICY.directional.deformationWindowRadiusMm * pixelsPerMmY)),
+    deformationSupport,
+    deformationRadiusX,
+    deformationRadiusY,
+  );
+  const deformationContextMean = maskedBoxStatistic(
+    width,
+    height,
+    relief.range,
+    deformationSupport,
+    deformationRadiusX +
+      Math.max(1, Math.ceil(POLICY.directional.scuffWindowRadiusMm * pixelsPerMmX)),
+    deformationRadiusY +
+      Math.max(1, Math.ceil(POLICY.directional.scuffWindowRadiusMm * pixelsPerMmY)),
   );
   const deformation = Float32Array.from(deformationMean, (value, index) =>
-    relief.valid[index] ? clamp(value / POLICY.directional.reliefFullScale) : 0);
+    deformationSupport[index]
+      ? clamp(
+          Math.max(0, value - Number(deformationContextMean[index])) /
+            POLICY.directional.reliefFullScale,
+        )
+      : 0);
   const scuffRadiusX = Math.max(1, Math.ceil(POLICY.directional.scuffWindowRadiusMm * pixelsPerMmX));
   const scuffRadiusY = Math.max(1, Math.ceil(POLICY.directional.scuffWindowRadiusMm * pixelsPerMmY));
   const localReliefMean = boxStatistic(width, height, relief.range, scuffRadiusX, scuffRadiusY);
@@ -1005,14 +1124,12 @@ export function buildFixedRigConditionPlanesV1(
   const delamination = new Float32Array(pixelCount);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
-      const distanceToEnvelopeMm = Math.min(
-        (x + 0.5) * mmPerPixelX,
-        (width - x - 0.5) * mmPerPixelX,
-        (y + 0.5) * mmPerPixelY,
-        (height - y - 0.5) * mmPerPixelY,
-      );
       const index = y * width + x;
-      if (distanceToEnvelopeMm <= POLICY.directional.delaminationEdgeBandMm) {
+      if (
+        Number(material[index]) > 0 &&
+        Number(distanceToObservedExterior[index]) <=
+          POLICY.directional.delaminationEdgeBandMm
+      ) {
         delamination[index] = deformation[index]!;
       }
     }
@@ -1147,6 +1264,7 @@ export function buildFixedRigConditionPlanesV1(
     planes: {
       normalizedLuminance: plane(width, height, acceptedLuma),
       expectedOuterCardMask: plane(width, height, expectedMask),
+      observedCardMaterialMask: plane(width, height, material),
       materialPresenceConfidence: plane(width, height, material),
       segmentationConfidence: plane(width, height, segmentationConfidence),
       boundaryConfidence: plane(width, height, boundaryConfidence),

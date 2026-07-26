@@ -35,6 +35,7 @@ import {
   NORMALIZED_CARD_WIDTH_PIXELS,
   detectCardGeometry,
   normalizeCardImageWithGeometry,
+  verifyCardGeometryObservedDenseContourV1,
   type CardGeometryMetadata,
   type CardGeometryNormalizedArtifact,
   type CardGeometryNormalizationResult,
@@ -785,21 +786,6 @@ export interface FixedRigWarmSideCaptureBatch {
   verticalStartPx?: { x: number; y: number };
   verticalEndPx?: { x: number; y: number };
   cardBoundaryRect?: { x: number; y: number; width: number; height: number };
-  provisionalGeometryCorrection?: {
-    schemaVersion: "ten-kings-provisional-geometry-processing-v1";
-    status: "operator_accepted_geometry_only_controlled_evaluation";
-    isCalibrated: false;
-    artifactSha256: string;
-    acceptedMaximumHoldoutResidualPx: number;
-    observedMaximumHoldoutResidualPx: number;
-    originalBatch: BaslerFixedRigSideBatchResult;
-    derivatives: Array<{
-      role: BaslerFixedRigSideBatchRoleCapture["role"];
-      sourceSha256: string;
-      derivativeSha256: string;
-    }>;
-    limitations: string[];
-  };
 }
 
 export interface FixedRigWarmEvidencePackageResult {
@@ -3317,7 +3303,7 @@ const FIXED_RIG_MIN_NORMALIZATION_SOURCE_WIDTH_PIXELS = 1000;
 const FIXED_RIG_MIN_NORMALIZATION_SOURCE_HEIGHT_PIXELS = 1400;
 const FIXED_RIG_MAX_NORMALIZATION_UPSCALE = 1.2;
 const FIXED_RIG_SEMANTIC_ORIENTATION_WARNING =
-  "Rectangle geometry normalizes card shape and in-plane rotation, but cannot determine printed top versus a 180-degree reversal; the operator must keep the printed top toward the top of the preview.";
+  "The observed physical contour normalizes card shape and in-plane rotation, but cannot determine printed top versus a 180-degree reversal; the operator must keep the printed top toward the top of the preview.";
 
 function uniqueWarnings(warnings: Array<string | undefined>): string[] {
   return [...new Set(warnings.filter((warning): warning is string => Boolean(warning?.trim())))];
@@ -3525,7 +3511,7 @@ async function verifyRawCaptureIntegrity(
   return { verified: true, coordinateFrame: "basler_sensor_pixels", roles };
 }
 
-type FixedRigGeometryAuthorityRole = "all_on" | "accepted_profile" | `channel_${number}`;
+type FixedRigGeometryAuthorityRole = "all_on";
 
 export interface FixedRigGeometryAuthoritySource {
   role: FixedRigGeometryAuthorityRole;
@@ -3539,29 +3525,8 @@ export interface FixedRigGeometryAuthoritySource {
 
 export interface FixedRigFullResolutionGeometryAuthority {
   version: "fixed-rig-full-resolution-geometry-authority-v1";
-  primaryRole: "all_on";
-  authoritativeRole: FixedRigGeometryAuthorityRole;
-  resolution: "primary_all_on" | "secondary_accepted_profile_consensus";
+  resolution: "primary_all_on_dense_contour";
   source: FixedRigGeometryAuthoritySource;
-  consensus: {
-    required: boolean;
-    agreeingRoles: FixedRigGeometryAuthorityRole[];
-    maximumCornerDeltaPixels: number;
-    maximumRotationDeltaDegrees: number;
-  };
-  inspectedRoles: Array<{
-    role: FixedRigGeometryAuthorityRole;
-    authorityEligibility: "primary" | "secondary" | "directional_consensus";
-    sourceSha256: string;
-    sourceByteSize: number;
-    placementState: CardGeometryMetadata["placementState"];
-    adjustmentReason: CardGeometryMetadata["adjustmentReason"];
-    confidence: number;
-    corners: CardGeometryMetadata["corners"];
-    rotationDegrees: CardGeometryMetadata["rotationDegrees"];
-    detectionMethod: CardGeometryMetadata["detection"]["method"];
-    warnings: string[];
-  }>;
 }
 
 function geometryReadyForCapturedAuthority(geometry: CardGeometryMetadata): boolean {
@@ -3572,44 +3537,17 @@ function geometryReadyForCapturedAuthority(geometry: CardGeometryMetadata): bool
     geometry.detectionUsed === true &&
     geometry.manualOverrideUsed === false &&
     geometry.placementState === "ready" &&
+    geometry.observedDenseContour !== undefined &&
+    geometry.observedDenseContour.pointCount >= 16 &&
+    verifyCardGeometryObservedDenseContourV1(
+      geometry.observedDenseContour,
+      geometry.image.width,
+      geometry.image.height,
+    ) &&
     geometry.corners !== null &&
     geometry.rotationDegrees !== null &&
     Number.isFinite(geometry.rotationDegrees)
   );
-}
-
-function angularDistanceDegrees(left: number, right: number): number {
-  let delta = Math.abs(left - right) % 180;
-  if (delta > 90) delta = 180 - delta;
-  return delta;
-}
-
-function capturedGeometryAgreement(left: CardGeometryMetadata, right: CardGeometryMetadata): {
-  agrees: boolean;
-  maximumCornerDeltaPixels: number;
-  rotationDeltaDegrees: number;
-} {
-  if (!left.corners || !right.corners || left.rotationDegrees == null || right.rotationDegrees == null) {
-    return { agrees: false, maximumCornerDeltaPixels: Number.POSITIVE_INFINITY, rotationDeltaDegrees: Number.POSITIVE_INFINITY };
-  }
-  if (left.image.width !== right.image.width || left.image.height !== right.image.height) {
-    return { agrees: false, maximumCornerDeltaPixels: Number.POSITIVE_INFINITY, rotationDeltaDegrees: Number.POSITIVE_INFINITY };
-  }
-  const maximumCornerDeltaPixels = Math.max(
-    ...(["topLeft", "topRight", "bottomRight", "bottomLeft"] as const).map((corner) =>
-      Math.hypot(
-        left.corners![corner].x - right.corners![corner].x,
-        left.corners![corner].y - right.corners![corner].y,
-      ),
-    ),
-  );
-  const rotationDeltaDegrees = angularDistanceDegrees(left.rotationDegrees, right.rotationDegrees);
-  const cornerTolerance = Math.min(left.image.width, left.image.height) * 0.025;
-  return {
-    agrees: maximumCornerDeltaPixels <= cornerTolerance && rotationDeltaDegrees <= 3,
-    maximumCornerDeltaPixels: Math.round(maximumCornerDeltaPixels * 1000) / 1000,
-    rotationDeltaDegrees: Math.round(rotationDeltaDegrees * 1000) / 1000,
-  };
 }
 
 function geometryAuthoritySource(input: {
@@ -3632,159 +3570,35 @@ function geometryAuthoritySource(input: {
   };
 }
 
-function authorityInspection(input: {
-  role: FixedRigGeometryAuthorityRole;
-  eligibility: "primary" | "secondary" | "directional_consensus";
-  capture: BaslerCaptureStillResult;
-  geometry: CardGeometryMetadata;
-}) {
-  return {
-    role: input.role,
-    authorityEligibility: input.eligibility,
-    sourceSha256: input.capture.sha256,
-    sourceByteSize: input.capture.byteSize,
-    placementState: input.geometry.placementState,
-    adjustmentReason: input.geometry.adjustmentReason,
-    confidence: input.geometry.confidence,
-    corners: input.geometry.corners,
-    rotationDegrees: input.geometry.rotationDegrees,
-    detectionMethod: input.geometry.detection.method,
-    warnings: [...input.geometry.warnings],
-  };
-}
-
 export async function resolveFixedRigFullResolutionGeometryAuthorityInProcess(input: {
   packageId: string;
   side: FixedRigCardSide;
   allOn: BaslerFixedRigSideBatchResult["captures"]["allOn"];
-  acceptedProfile: BaslerFixedRigSideBatchResult["captures"]["acceptedProfile"];
-  channels: BaslerFixedRigSideBatchResult["captures"]["channels"];
 }): Promise<FixedRigFullResolutionGeometryAuthority> {
-  const roleDetection = async (
-    role: FixedRigGeometryAuthorityRole,
-    capture: BaslerCaptureStillResult,
-  ) => {
-    const source = geometryAuthoritySource({
-      packageId: input.packageId,
+  const allOn = geometryAuthoritySource({
+    packageId: input.packageId,
+    side: input.side,
+    role: "all_on",
+    capture: input.allOn.capture,
+    geometry: await detectCardGeometry({
+      sourceImagePath: input.allOn.capture.outputFilePath,
+      detectionPolicy: "captured_evidence_full",
       side: input.side,
-      role,
-      capture,
-      geometry: await detectCardGeometry({
-        sourceImagePath: capture.outputFilePath,
-        detectionPolicy: "captured_evidence_full",
-        side: input.side,
-        sourceImageId: `${input.packageId}-${input.side}-${role}`,
-        sourceFrameId: `${input.side}-${role}-${capture.sha256.slice(0, 16)}`,
-        timestamp: capture.timestamp,
-      }),
-    });
-    return source;
-  };
-  const [allOn, acceptedProfile] = await Promise.all([
-    roleDetection("all_on", input.allOn.capture),
-    roleDetection("accepted_profile", input.acceptedProfile.capture),
-  ]);
-  if (allOn.image.width !== acceptedProfile.image.width || allOn.image.height !== acceptedProfile.image.height) {
-    throw new Error(`AI Grader ${input.side} full-resolution geometry authority rejected mismatched all-on and accepted-profile dimensions; processing stopped.`);
-  }
-  const inspectedRoles = [
-    authorityInspection({ role: "all_on", eligibility: "primary", capture: input.allOn.capture, geometry: allOn.geometry }),
-    authorityInspection({ role: "accepted_profile", eligibility: "secondary", capture: input.acceptedProfile.capture, geometry: acceptedProfile.geometry }),
-  ];
-  const allOnReady = geometryReadyForCapturedAuthority(allOn.geometry);
-  const acceptedReady = geometryReadyForCapturedAuthority(acceptedProfile.geometry);
-  if (allOnReady) {
-    if (acceptedReady) {
-      const agreement = capturedGeometryAgreement(allOn.geometry, acceptedProfile.geometry);
-      return {
-        version: "fixed-rig-full-resolution-geometry-authority-v1",
-        primaryRole: "all_on",
-        authoritativeRole: "all_on",
-        resolution: "primary_all_on",
-        source: allOn,
-        consensus: {
-          required: false,
-          agreeingRoles: agreement.agrees ? ["all_on", "accepted_profile"] : ["all_on"],
-          maximumCornerDeltaPixels: agreement.agrees ? agreement.maximumCornerDeltaPixels : 0,
-          maximumRotationDeltaDegrees: agreement.agrees ? agreement.rotationDeltaDegrees : 0,
-        },
-        inspectedRoles,
-      };
-    }
-    return {
-      version: "fixed-rig-full-resolution-geometry-authority-v1",
-      primaryRole: "all_on",
-      authoritativeRole: "all_on",
-      resolution: "primary_all_on",
-      source: allOn,
-      consensus: {
-        required: false,
-        agreeingRoles: ["all_on"],
-        maximumCornerDeltaPixels: 0,
-        maximumRotationDeltaDegrees: 0,
-      },
-      inspectedRoles,
-    };
-  }
-  if (!acceptedReady) {
+      sourceImageId: `${input.packageId}-${input.side}-all_on`,
+      sourceFrameId: `${input.side}-all_on-${input.allOn.capture.sha256.slice(0, 16)}`,
+      timestamp: input.allOn.capture.timestamp,
+    }),
+  });
+  if (!geometryReadyForCapturedAuthority(allOn.geometry)) {
     const reason = allOn.geometry.warnings[0] ?? "all-on geometry was not Ready";
     throw new Error(
-      `AI Grader ${input.side} full-resolution geometry authority rejected the primary all-on frame and no safe accepted-profile recovery exists: ${reason}`,
+      `AI Grader ${input.side} full-resolution geometry authority requires the calibrated, hash-verified dense contour observed in the exact all-on pixels: ${reason}`,
     );
   }
-  // A secondary authority is intentionally stricter than the primary: one
-  // accepted-profile frame is insufficient. A directional captured role must
-  // independently reproduce the same geometry, and any ready disagreement is
-  // terminal rather than silently choosing a different rectangle.
-  const directionalSources = await Promise.all(
-    input.channels.map((role) => roleDetection(`channel_${Number(role.channel)}`, role.capture)),
-  );
-  const directionalReady = directionalSources.filter((source) => geometryReadyForCapturedAuthority(source.geometry));
-  for (const source of directionalSources) {
-    inspectedRoles.push(authorityInspection({
-      role: source.role,
-      eligibility: "directional_consensus",
-      capture: input.channels.find((role) => `channel_${Number(role.channel)}` === source.role)!.capture,
-      geometry: source.geometry,
-    }));
-  }
-  if (!directionalReady.length) {
-    throw new Error(
-      `AI Grader ${input.side} full-resolution geometry authority requires an accepted-profile and directional-role consensus when all-on detection is unavailable; processing stopped.`,
-    );
-  }
-  // Consensus must be pairwise, not merely close to the accepted profile.
-  // Otherwise two directional roles could be on opposite tolerance edges and
-  // silently authorize mutually conflicting captured rectangles.
-  const consensusSources = [acceptedProfile, ...directionalReady];
-  const pairwiseAgreements: Array<{ agreement: ReturnType<typeof capturedGeometryAgreement> }> = [];
-  for (let leftIndex = 0; leftIndex < consensusSources.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < consensusSources.length; rightIndex += 1) {
-      const agreement = capturedGeometryAgreement(
-        consensusSources[leftIndex]!.geometry,
-        consensusSources[rightIndex]!.geometry,
-      );
-      if (!agreement.agrees) {
-        throw new Error(`AI Grader ${input.side} full-resolution geometry authority found conflicting secondary captured-role candidates; processing stopped.`);
-      }
-      pairwiseAgreements.push({ agreement });
-    }
-  }
-  const maximumCornerDeltaPixels = Math.max(...pairwiseAgreements.map(({ agreement }) => agreement.maximumCornerDeltaPixels));
-  const maximumRotationDeltaDegrees = Math.max(...pairwiseAgreements.map(({ agreement }) => agreement.rotationDeltaDegrees));
   return {
     version: "fixed-rig-full-resolution-geometry-authority-v1",
-    primaryRole: "all_on",
-    authoritativeRole: "accepted_profile",
-    resolution: "secondary_accepted_profile_consensus",
-    source: acceptedProfile,
-    consensus: {
-      required: true,
-      agreeingRoles: ["accepted_profile", ...directionalReady.map((source) => source.role)],
-      maximumCornerDeltaPixels,
-      maximumRotationDeltaDegrees,
-    },
-    inspectedRoles,
+    resolution: "primary_all_on_dense_contour",
+    source: allOn,
   };
 }
 
@@ -3841,9 +3655,8 @@ export async function processFixedRigWarmSideBatch(
     verticalStartPx,
     verticalEndPx,
     cardBoundaryRect,
-    provisionalGeometryCorrection,
   } = captureBatch;
-  const originalBatch = provisionalGeometryCorrection?.originalBatch ?? batch;
+  const originalBatch = batch;
   const bracketCells = batch.captures.photometricBracket?.cells ?? [];
   const bracketRoles = bracketCells.flatMap((cell) => [
     ...cell.references,
@@ -3928,13 +3741,12 @@ export async function processFixedRigWarmSideBatch(
       packageId,
       side,
       allOn: batch.captures.allOn,
-      acceptedProfile: batch.captures.acceptedProfile,
-      channels: orderedChannelRoles,
     }));
+  const authoritativeCaptureRole = batch.captures.allOn;
   const normalizedCard = await timed("cropDeskew", () => {
     const normalizedOutputPath = path.join(sideDir, "normalized", `${side}-normalized-card.png`);
     return normalizeCardImageWithGeometry({
-      sourceImagePath: batch.captures.allOn.capture.outputFilePath,
+      sourceImagePath: authoritativeCaptureRole.capture.outputFilePath,
       normalizedOutputPath,
       geometry: fullResolutionGeometryAuthority.source.geometry,
     });
@@ -3942,18 +3754,10 @@ export async function processFixedRigWarmSideBatch(
   assertFullResolutionNormalizationUsable(normalizedCard, side);
   const authoritativeGeometry: CardGeometryMetadata = normalizedCard.geometry;
   const recordedGeometryAuthority: FixedRigFullResolutionGeometryAuthority = fullResolutionGeometryAuthority;
-  const authoritativeGeometryRole = recordedGeometryAuthority.authoritativeRole;
+  const authoritativeGeometryRole = "all_on" as const;
   const transformReusedForRoles = bracketRoles.length
-    ? (
-        authoritativeGeometryRole === "all_on"
-          ? ["accepted_profile", ...bracketRoles.map((role) => role.role)]
-          : ["all_on", ...bracketRoles.map((role) => role.role)]
-      )
-    : (
-        authoritativeGeometryRole === "all_on"
-          ? ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-          : ["dark_control", "all_on", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)]
-      );
+    ? ["accepted_profile", ...bracketRoles.map((role) => role.role)]
+    : ["dark_control", "accepted_profile", ...orderedChannelRoles.map((role) => `channel_${Number(role.channel)}`)];
   const normalizeVisibleRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     fileLabel: string,
@@ -3988,18 +3792,26 @@ export async function processFixedRigWarmSideBatch(
       ({ role, fileLabel }) => normalizeVisibleRole(role, fileLabel),
     )
   );
-  const darkControlRegistration = bracketRoles.length
-    ? undefined
-    : visibleRoleRegistrations[0]!;
-  const acceptedRegistration = bracketRoles.length
-    ? visibleRoleRegistrations[0]!
-    : visibleRoleRegistrations[1]!;
-  const channelRegistrations = bracketRoles.length
-    ? []
-    : visibleRoleRegistrations.slice(2);
-  const bracketRegistrations = bracketRoles.length
-    ? visibleRoleRegistrations.slice(1)
-    : [];
+  const visibleRoleRegistrationsByRole = new Map(
+    visibleRoleNormalizationInputs.map((entry, index) => [
+      entry.role.role,
+      visibleRoleRegistrations[index]!,
+    ]),
+  );
+  const normalizedArtifactForRole = (
+    role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
+  ): CardGeometryNormalizedArtifact => {
+    if (role.role === authoritativeGeometryRole) {
+      return normalizedCard.normalizedArtifact;
+    }
+    const registration = visibleRoleRegistrationsByRole.get(role.role);
+    if (!registration) {
+      throw new Error(
+        `AI Grader ${side} ${role.role} did not receive the authoritative side transform; processing stopped.`,
+      );
+    }
+    return registration.normalizedArtifact;
+  };
   const analyzeNormalizedRole = async (
     role: BaslerFixedRigSideBatchResult["captures"]["allOn"],
     analysisArtifact: CardGeometryNormalizedArtifact,
@@ -4029,20 +3841,29 @@ export async function processFixedRigWarmSideBatch(
   );
   const normalizedRoleAnalysisInputs = bracketRoles.length
     ? [
-        { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
-        { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
-        ...bracketRoles.map((role, index) => ({
+        { role: batch.captures.allOn, artifact: normalizedArtifactForRole(batch.captures.allOn) },
+        {
+          role: batch.captures.acceptedProfile,
+          artifact: normalizedArtifactForRole(batch.captures.acceptedProfile),
+        },
+        ...bracketRoles.map((role) => ({
           role,
-          artifact: bracketRegistrations[index]!.normalizedArtifact,
+          artifact: normalizedArtifactForRole(role),
         })),
       ]
     : [
-        { role: batch.captures.allOn, artifact: normalizedCard.normalizedArtifact },
-        { role: batch.captures.darkControl, artifact: darkControlRegistration!.normalizedArtifact },
-        { role: batch.captures.acceptedProfile, artifact: acceptedRegistration.normalizedArtifact },
-        ...orderedChannelRoles.map((role, index) => ({
+        { role: batch.captures.allOn, artifact: normalizedArtifactForRole(batch.captures.allOn) },
+        {
+          role: batch.captures.darkControl,
+          artifact: normalizedArtifactForRole(batch.captures.darkControl),
+        },
+        {
+          role: batch.captures.acceptedProfile,
+          artifact: normalizedArtifactForRole(batch.captures.acceptedProfile),
+        },
+        ...orderedChannelRoles.map((role) => ({
           role,
-          artifact: channelRegistrations[index]!.normalizedArtifact,
+          artifact: normalizedArtifactForRole(role),
         })),
       ];
   const normalizedRoleAnalyses = await timed("normalizedImageAnalysis", () =>
@@ -4234,7 +4055,7 @@ export async function processFixedRigWarmSideBatch(
       warnings: string[];
     };
     semanticOrientation: {
-      status: "not_resolved_from_rectangle_geometry";
+      status: "not_resolved_from_physical_contour";
       operatorRequirement: string;
       limitation: string;
     };
@@ -4281,7 +4102,7 @@ export async function processFixedRigWarmSideBatch(
       warnings: [...authoritativeGeometry.warnings],
     },
     semanticOrientation: {
-      status: "not_resolved_from_rectangle_geometry" as const,
+      status: "not_resolved_from_physical_contour" as const,
       operatorRequirement: "Keep the printed top of the card toward the top of the live preview before capture.",
       limitation: FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
     },
@@ -4325,7 +4146,7 @@ export async function processFixedRigWarmSideBatch(
       warnings: [...authoritativeGeometry.warnings],
     },
     semanticOrientation: {
-      status: "not_resolved_from_rectangle_geometry" as const,
+      status: "not_resolved_from_physical_contour" as const,
       operatorRequirement: "Keep the printed top of the card toward the top of the live preview before capture.",
       limitation: FIXED_RIG_SEMANTIC_ORIENTATION_WARNING,
     },
@@ -4335,10 +4156,7 @@ export async function processFixedRigWarmSideBatch(
       note: "Lossless normalized image operations are bounded to reduce Sharp worker and memory contention with live preview/back positioning.",
     },
     transform: {
-      method:
-        authoritativeGeometryRole === "all_on"
-          ? "authoritative_all_on_geometry_rotation_crop_canonical_resize_v1"
-          : "validated_secondary_captured_role_geometry_rotation_crop_canonical_resize_v1",
+      method: "authoritative_all_on_dense_contour_rotation_crop_canonical_resize_v1",
       geometryVersion: authoritativeGeometry.version,
       corners: authoritativeGeometry.corners,
       rotationDegrees: authoritativeGeometry.rotationDegrees,
@@ -4366,20 +4184,6 @@ export async function processFixedRigWarmSideBatch(
       },
     },
   };
-  const recordedProvisionalGeometryCorrection = provisionalGeometryCorrection
-    ? {
-        schemaVersion: provisionalGeometryCorrection.schemaVersion,
-        status: provisionalGeometryCorrection.status,
-        isCalibrated: false as const,
-        artifactSha256: provisionalGeometryCorrection.artifactSha256,
-        acceptedMaximumHoldoutResidualPx: provisionalGeometryCorrection.acceptedMaximumHoldoutResidualPx,
-        observedMaximumHoldoutResidualPx: provisionalGeometryCorrection.observedMaximumHoldoutResidualPx,
-        derivatives: provisionalGeometryCorrection.derivatives.map((entry) => ({ ...entry })),
-        limitations: [...provisionalGeometryCorrection.limitations],
-        rawSensorEvidencePreserved: true as const,
-        rollbackPath: "current_production_normalization" as const,
-      }
-    : undefined;
   const sideEvidence = {
     side,
     safeOffBeforeDark: originalBatch.leimac?.safeOffStart,
@@ -4413,7 +4217,6 @@ export async function processFixedRigWarmSideBatch(
     acquisitionFixtureCalibrationProfile,
     fixtureCalibrationProfile,
     rawEvidenceIntegrity,
-    ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
     surfaceAnalysis,
     diagnosticGrading,
   };
@@ -4447,7 +4250,6 @@ export async function processFixedRigWarmSideBatch(
     },
     analysisCoordinateSystem,
     rawEvidenceIntegrity,
-    ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
     captureTiming,
     processingTiming: {
       startedAt: processingStartedAt,
@@ -4477,9 +4279,7 @@ export async function processFixedRigWarmSideBatch(
     safeOffEnd: originalBatch.leimac?.safeOffEnd,
     [side]: sideEvidence,
     suggestedDinoLiteTargets: { status: "not_computed", reason: "surface anomaly detector not implemented yet" },
-    note: recordedProvisionalGeometryCorrection
-      ? `Warm fixed-rig V1 ${captureProfile} controlled geometry-only evaluation; isCalibrated=false, no final grade, certificate, photometric claim, or certified grading claim. Original sensor evidence and current normalization rollback are preserved.`
-      : `Warm fixed-rig V1 ${captureProfile} profile evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.`,
+    note: `Warm fixed-rig V1 ${captureProfile} profile evidence package only; no final grade, certificate, or certified grading claim. Full evidence roles preserved.`,
   };
   const manifestPath = path.join(packageDir, "manifest.json");
   const analysisPath = path.join(packageDir, "analysis.json");
@@ -4507,7 +4307,6 @@ export async function processFixedRigWarmSideBatch(
       analysisCoordinateSystem,
       acquisitionPlacementDiagnostics: sideEvidence.acquisitionPlacementDiagnostics,
       rawEvidenceIntegrity,
-      ...(recordedProvisionalGeometryCorrection ? { provisionalGeometryCorrection: recordedProvisionalGeometryCorrection } : {}),
       fixtureCalibrationProfile,
       surfaceAnalysis,
       diagnosticGrading,
@@ -4561,10 +4360,7 @@ function renderWarmFixedRigEvidencePackageReport(input: {
   const side = input.side;
   const sideTitle = side === "front" ? "Front" : "Back";
   const normalizedImage = input.sideEvidence.normalizedCard.normalizedArtifact?.localOutputPath;
-  const provisionalWarning = input.manifest.provisionalGeometryCorrection
-    ? `<p class="banner">Geometry-only operator-accepted controlled evaluation - isCalibrated=false - current Production normalization retained as rollback</p>`
-    : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p>${provisionalWarning}<p class="warn">The explicitly selected capture profile preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; normalized/display/ROI assets are derived outputs.</p><p>Execution path warm_full_forensic_runner. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Normalized Card</h2><p>Placement ${escapeHtml(input.sideEvidence.normalizedCard.geometry.placementState)}; geometry ${escapeHtml(input.sideEvidence.normalizedCard.geometry.geometrySource)}; capture ${escapeHtml(input.sideEvidence.normalizedCard.geometry.captureMode ?? "automatic_detection")}; rotation ${escapeHtml(input.sideEvidence.normalizedCard.geometry.rotationDegrees ?? "not detected")} degrees; confidence ${escapeHtml(input.sideEvidence.normalizedCard.geometry.confidence)}.</p>${normalizedImage ? `<img src="${escapeHtml(normalizedImage)}" alt="${side} normalized crop and deskew artifact">` : "<p>Automatic geometry did not produce a normalized artifact. Reposition and recapture, or use an explicit operator-confirmed manual capture override.</p>"}<h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, geometry: input.sideEvidence.normalizedCard.geometry, manifest: input.manifest }, null, 2))}</pre></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Warm Fixed-Rig V1 Evidence Package - Provisional Diagnostic</title><style>body{font-family:Arial,sans-serif;margin:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}img{max-width:100%;border:1px solid #aaa;background:#111}.warn{border-left:4px solid #a33;padding:8px 12px;background:#fff}.banner{border:2px solid #a33;background:#fff4f4;padding:12px 16px;font-weight:bold}table{border-collapse:collapse;width:100%;margin:8px 0 16px}td,th{border:1px solid #bbb;padding:6px 8px;text-align:left}</style></head><body><h1>Warm Fixed-Rig V1 Evidence Package</h1><p class="banner">Provisional Diagnostic Only - Not Certified - No Final Grade</p><p class="warn">The explicitly selected capture profile preserved dark control, all-on, accepted profile, and Leimac channels 1-8. Raw Basler evidence remains in sensor coordinates; normalized/display/ROI assets are derived outputs.</p><p>Execution path warm_full_forensic_runner. Duty ${escapeHtml(input.activeLightingProfile.selectedDutyPercent)}% PWM ${escapeHtml(input.activeLightingProfile.actualLeimacPwmStep)}; channels ${escapeHtml(input.activeLightingProfile.selectedChannels.join(", "))}; source ${escapeHtml(input.activeLightingProfile.profileSource)}.</p><h2>${sideTitle} Normalized Card</h2><p>Placement ${escapeHtml(input.sideEvidence.normalizedCard.geometry.placementState)}; geometry ${escapeHtml(input.sideEvidence.normalizedCard.geometry.geometrySource)}; capture ${escapeHtml(input.sideEvidence.normalizedCard.geometry.captureMode ?? "automatic_detection")}; rotation ${escapeHtml(input.sideEvidence.normalizedCard.geometry.rotationDegrees ?? "not detected")} degrees; confidence ${escapeHtml(input.sideEvidence.normalizedCard.geometry.confidence)}.</p>${normalizedImage ? `<img src="${escapeHtml(normalizedImage)}" alt="${side} normalized crop and deskew artifact">` : "<p>Automatic geometry did not produce a normalized artifact. Reposition and recapture, or use an explicit operator-confirmed manual capture override.</p>"}<h2>${sideTitle} Portrait Evidence</h2><img src="${escapeHtml(input.sideEvidence.displayImage.outputFilePath)}" alt="${side} portrait all-on"><img src="${escapeHtml(input.sideEvidence.overlayPreview.outputFilePath)}" alt="${side} portrait overlay"><p>Accepted profile raw capture: ${escapeHtml(input.sideEvidence.acceptedProfile.capture.outputFilePath)}</p><p>Rough profile: ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.status)}; pixel/mm ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelX ?? "not_computed")} x ${escapeHtml(input.sideEvidence.fixtureCalibrationProfile.mmPerPixelY ?? "not_computed")}; diagnostic grading ${escapeHtml(input.sideEvidence.diagnosticGrading.status)}; surface ${escapeHtml(input.sideEvidence.surfaceAnalysis.status)}; candidates ${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.length)}.</p><table><tr><th>Centering</th><td>${escapeHtml(input.sideEvidence.diagnosticGrading.centering.status)} score ${escapeHtml(input.sideEvidence.diagnosticGrading.centering.score ?? "not_computed")}</td></tr><tr><th>Corners</th><td>TL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topLeft.status)}, TR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.topRight.status)}, BR ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomRight.status)}, BL ${escapeHtml(input.sideEvidence.diagnosticGrading.corners.bottomLeft.status)}</td></tr><tr><th>Edges</th><td>T ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.top.status)}, R ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.right.status)}, B ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.bottom.status)}, L ${escapeHtml(input.sideEvidence.diagnosticGrading.edges.left.status)}</td></tr><tr><th>Surface candidates</th><td>${escapeHtml(input.sideEvidence.surfaceAnalysis.candidates.map((candidate) => `${candidate.candidateId} ${candidate.severityBand} ${candidate.anomalyProxyScore}`).join(", ") || "none")}</td></tr></table><h3>${sideTitle} 8-channel portrait displays</h3><div class="grid">${input.sideEvidence.channelDisplayImages.map((entry) => `<figure><img src="${escapeHtml(entry.displayImage.outputFilePath)}" alt="${side} channel ${entry.channel} portrait"><figcaption>${side} channel ${entry.channel}</figcaption></figure>`).join("")}</div><h2>ROI Crops</h2><div class="grid">${input.sideEvidence.roiCrops.map((crop) => `<figure><img src="${escapeHtml(crop.outputFilePath)}" alt="${escapeHtml(crop.roiId)}"><figcaption>${escapeHtml(crop.roiId)}</figcaption></figure>`).join("")}</div><h2>Diagnostic JSON</h2><pre>${escapeHtml(JSON.stringify({ diagnosticGrading: input.sideEvidence.diagnosticGrading, geometry: input.sideEvidence.normalizedCard.geometry, manifest: input.manifest }, null, 2))}</pre></body></html>`;
 }
 
 async function writeJsonArtifact(filePath: string, data: unknown): Promise<void> {

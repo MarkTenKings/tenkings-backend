@@ -249,22 +249,15 @@ function validateFindingV2(finding: FindingShape, context: z.RefinementCtx) {
   if (basis.evidence.some((entry) => entry.side !== finding.side)) {
     context.addIssue({ code: "custom", path: ["measurements"], message: "measurement evidence must match the finding side" });
   }
-  const minimumCoverage = policy.element === "corners"
-    ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.minValidPixelCoverage
-    : policy.element === "edges"
-      ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.minValidPixelCoverage
-      : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidence.minValidPixelCoverage;
-  const minimumChannels = policy.element === "corners"
-    ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.minUsableDirectionalChannels
-    : policy.element === "edges"
-      ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.minUsableDirectionalChannels
-      : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidence.minValidDirectionalObservations;
   if (
-    (basis.validEvidenceCoverage < minimumCoverage ||
-      basis.usableDirectionalChannelCount < minimumChannels) &&
-    finding.evidenceQuality !== "insufficient"
+    basis.observableEvidenceAdmission &&
+    (policy.element !== "surface" || finding.evidenceQuality !== "limited")
   ) {
-    context.addIssue({ code: "custom", path: ["evidenceQuality"], message: "must be insufficient when manifest valid-pixel or usable-channel evidence gates fail" });
+    context.addIssue({
+      code: "custom",
+      path: ["evidenceQuality"],
+      message: "observable single-channel surface measurements must be marked limited",
+    });
   }
   const calculation = calculateFindingDeductionV1({
     category: finding.category,

@@ -3,6 +3,8 @@ import type { FixedRigPhotometricEvidenceV1 } from "./fixedRigPhotometricEvidenc
 
 export const FIXED_RIG_COMMON_MODE_INTERIOR_ADMISSION_V1_VERSION =
   "fixed_rig_common_mode_interior_admission_v1" as const;
+export const FIXED_RIG_OBSERVABLE_LOCALIZED_EVIDENCE_ADMISSION_V1_VERSION =
+  "fixed_rig_observable_localized_evidence_admission_v1" as const;
 
 interface Component {
   pixels: number[];
@@ -140,6 +142,7 @@ export function applyFixedRigCommonModeInteriorAdmissionV1(input: {
   return {
     ...evidence,
     status: "computed",
+    admissionExcludedTopologyMask: admissionExcludedCommonModeMask,
     admissionExcludedCommonModeMask,
     admissionAdjustment: {
       version: FIXED_RIG_COMMON_MODE_INTERIOR_ADMISSION_V1_VERSION,
@@ -170,5 +173,57 @@ export function applyFixedRigCommonModeInteriorAdmissionV1(input: {
     evidenceLimitations: evidence.evidenceLimitations.filter(
       (limitation) => limitation.code !== "localized_ungradable_region",
     ),
+  };
+}
+
+/**
+ * Converts localized "fog" from a whole-side veto into excluded evidence.
+ *
+ * This does not make one invalid pixel valid, prove it clean, or allow it to
+ * become a defect. Only genuinely fully obscured evidence remains a
+ * measurement blocker. Ordinary partial/foggy coverage remains excluded from
+ * defect masks and is carried as private quality/U95 context.
+ */
+export function applyFixedRigObservableLocalizedEvidenceAdmissionV1(
+  evidence: FixedRigPhotometricEvidenceV1,
+): FixedRigPhotometricEvidenceV1 {
+  if (evidence.status === "computed") return evidence;
+  if (evidence.coverage.validPixelCount <= 0) return evidence;
+
+  const pixelCount = evidence.width * evidence.height;
+  const topologyMask = new Uint8Array(pixelCount);
+  let localizedUngradablePixelCount = 0;
+  for (const region of evidence.ungradableRegions) {
+    localizedUngradablePixelCount += region.pixelCount;
+  }
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (
+      evidence.gradeRelevantMask[index] &&
+      evidence.invalidIlluminationMask[index]
+    ) {
+      topologyMask[index] = 1;
+    }
+  }
+  return {
+    ...evidence,
+    status: "computed",
+    admissionExcludedTopologyMask: topologyMask,
+    observableEvidenceAdmission: {
+      version:
+        FIXED_RIG_OBSERVABLE_LOCALIZED_EVIDENCE_ADMISSION_V1_VERSION,
+      validPixelFraction: evidence.coverage.validPixelFraction,
+      invalidPixelFraction: evidence.coverage.invalidPixelFraction,
+      localizedUngradableRegionCount: evidence.ungradableRegions.length,
+      localizedUngradablePixelCount,
+      localizedPixelsRemainExcludedFromScoring: true,
+      scoreConfidenceMustUseValidCoverage: true,
+    },
+    evidenceLimitations: evidence.evidenceLimitations.map((limitation) => ({
+      ...limitation,
+      requiresRecapture: false,
+      message:
+        limitation.message +
+        " Invalid pixels remain excluded; observable measurements proceed with private reduced confidence/U95.",
+    })),
   };
 }

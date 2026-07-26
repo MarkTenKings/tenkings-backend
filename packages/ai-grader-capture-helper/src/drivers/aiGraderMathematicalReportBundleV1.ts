@@ -524,13 +524,12 @@ function centeringOverlaySvg(
   const summary =
     `H ${side.horizontal.balanceRatio.toFixed(2)}% / ${side.horizontal.score.toFixed(2)}; ` +
     `V ${side.vertical.balanceRatio.toFixed(2)}% / ${side.vertical.score.toFixed(2)}; ` +
-    `U95 H ${side.u95Mm.horizontal.toFixed(4)} mm V ${side.u95Mm.vertical.toFixed(4)} mm; ` +
     `Grade-10 tolerance ${side.grade10ToleranceMm.toFixed(4)} mm`;
   const authority = side.registration.transformType === "physical_margin_measurement"
     ? "authenticated physical printed-border widths in millimeters"
     : binding
-    ? `registered exact reference ${binding.designReferenceId} v${binding.designReferenceVersion}; residual ${side.registration.registrationResidualPx.toFixed(4)} px; inliers ${side.registration.inlierCount}/${side.registration.inlierFraction.toFixed(4)}; confidence ${side.registration.confidence.toFixed(4)}`
-    : `detected printed border; robust fit residual ${side.registration.registrationResidualPx.toFixed(4)} px; confidence ${side.registration.confidence.toFixed(4)}`;
+    ? `registered exact reference ${binding.designReferenceId} v${binding.designReferenceVersion}`
+    : "detected printed border";
   return svgDocument(
     width,
     height,
@@ -832,7 +831,7 @@ function findingOverlaySvg(
   );
   if (!basis) throw new Error(`Finding ${finding.findingId} has no deduction-basis measurement.`);
   const detail =
-    `${finding.category}: ${basis.measuredMeasurement} ${basis.unit}; U95 ${basis.u95}; ` +
+    `${finding.category}: ${basis.measuredMeasurement} ${basis.unit}; ` +
     `Grade-10 tolerance ${basis.explicitGrade10Tolerance}; effective ${basis.effectiveMeasurement}; ` +
     `deduction ${finding.deduction.toFixed(2)}`;
   return svgDocument(

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST } from '@tenkings/shared';
 import {
-  transformNormalizedPointToRawV1,
-  transformRawPointToNormalizedV1,
+  verifyCardGeometryNormalizedDenseContourV1,
+  verifyCardGeometryObservedDenseContourV1,
   verifyCardGeometryRawToNormalizedTransformV1,
+  type CardGeometryNormalizedDenseContourV1,
+  type CardGeometryObservedDenseContourV1,
   type CardGeometryRawToNormalizedTransformV1,
 } from './cardGeometry';
 import type { FixedRigPointV1 } from './fixedRigCenteringV1';
@@ -15,11 +17,9 @@ import type {
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID =
   'fixed_rig_raw_sensor_outer_cut_detector_v1' as const;
 export const FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION =
-  'fixed_rig_raw_sensor_outer_cut_detector_v1.2.0' as const;
+  'fixed_rig_raw_sensor_outer_cut_detector_v1.3.0' as const;
 export const FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION =
   'fixed-rig-raw-bound-observed-outer-cut-artifact-v1' as const;
-export const FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION =
-  'fixed-rig-raw-bound-outer-cut-unavailable-audit-v1' as const;
 
 export interface FixedRigRawBoundObservedOuterCutArtifactV1 {
   schemaVersion: typeof FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION;
@@ -46,6 +46,9 @@ export interface FixedRigRawBoundObservedOuterCutArtifactV1 {
   intendedBoundaryArtifactSha256: string;
   intendedBoundaryProfileId: string;
   intendedBoundaryProfileVersion: string;
+  contourAuthority: 'canonical_pixel_derived_dense_contour';
+  canonicalRawContourSha256: string;
+  canonicalNormalizedContourSha256: string;
   rawContour: FixedRigPointV1[];
   normalizedContour: FixedRigPointV1[];
   crossSectionCount: number;
@@ -62,52 +65,29 @@ export interface FixedRigRawBoundObservedOuterCutArtifactV1 {
   artifactSha256: string;
 }
 
-export interface FixedRigRawBoundOuterCutUnavailableAuditV1 {
-  schemaVersion: typeof FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION;
-  detectorId: typeof FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID;
-  detectorVersion: typeof FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION;
-  rawAllOnAssetId: string;
-  rawAllOnAssetSha256: string;
-  rawAllOnScalarPlaneSha256: string;
-  normalizedAllOnAssetId: string;
-  normalizedAllOnAssetSha256: string;
-  rawToNormalizedTransformSha256: string;
-  calibrationProfileId: string;
-  calibrationVersion: string;
-  calibrationSha256: string;
-  intendedBoundaryArtifactSha256: string;
-  intendedBoundaryProfileId: string;
-  intendedBoundaryProfileVersion: string;
-  crossSectionCount: number;
-  supportedCrossSectionCount: number;
-  unsupportedCrossSectionCount: number;
-  ambiguousCrossSectionCount: number;
-  minimumGradientDigitalUnits: number;
-  reasons: string[];
-  artifactSha256: string;
-}
-
 export type FixedRigRawBoundObservedOuterCutDetectionV1 =
   | { status: 'computed'; artifact: FixedRigRawBoundObservedOuterCutArtifactV1 }
   | {
       status: 'insufficient_evidence';
-      failureKind: 'invalid_input' | 'automatic_measurement_unavailable';
+      failureKind: 'invalid_input';
       reasons: string[];
-      requiresRecapture: boolean;
+      requiresRecapture: true;
       cardDefectDeduction: 0;
-      unavailableAudit?: FixedRigRawBoundOuterCutUnavailableAuditV1;
     };
 
-export interface DetectFixedRigRawBoundObservedOuterCutV1Input {
+export interface SealFixedRigCanonicalObservedOuterCutV1Input {
   rawAllOnRgb: FixedRigOuterCutRgbPlaneV1;
   rawAllOnAssetId: string;
   rawAllOnAssetSha256: string;
   normalizedAllOnAssetId: string;
   normalizedAllOnAssetSha256: string;
   rawToNormalizedTransform: CardGeometryRawToNormalizedTransformV1;
+  observedRawContour: CardGeometryObservedDenseContourV1;
+  observedNormalizedContour: CardGeometryNormalizedDenseContourV1;
   calibrationProfileId: string;
   calibrationVersion: string;
   calibrationSha256: string;
+  /** Comparison-only product profile. It cannot seed or alter the observation. */
   intendedBoundary: FixedRigIntendedOuterBoundaryAuthorityV1;
   pixelsPerMmX: number;
   pixelsPerMmY: number;
@@ -116,29 +96,17 @@ export interface DetectFixedRigRawBoundObservedOuterCutV1Input {
 
 const POLICY = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance
   .outerCutBoundaryMeasurement;
-const MAX_EFFECTIVE_SEARCH_MULTIPLIER = 4;
-const ROUNDED_CORNER_RECOVERY_MARGIN_MM = 0.2;
 
 function fail(
   reasons: string[],
-  unavailableAudit?: Omit<FixedRigRawBoundOuterCutUnavailableAuditV1, 'artifactSha256'>,
 ): FixedRigRawBoundObservedOuterCutDetectionV1 {
   const exactReasons = [...new Set(reasons)];
   return {
     status: 'insufficient_evidence',
-    failureKind: unavailableAudit ? 'automatic_measurement_unavailable' : 'invalid_input',
+    failureKind: 'invalid_input',
     reasons: exactReasons,
-    requiresRecapture: !unavailableAudit,
+    requiresRecapture: true,
     cardDefectDeduction: 0,
-    ...(unavailableAudit
-      ? {
-          unavailableAudit: {
-            ...unavailableAudit,
-            reasons: exactReasons,
-            artifactSha256: sha256({ ...unavailableAudit, reasons: exactReasons }),
-          },
-        }
-      : {}),
   };
 }
 
@@ -191,52 +159,6 @@ function intendedBoundarySha256(
   });
 }
 
-function signedPolygonArea(contour: readonly FixedRigPointV1[]): number {
-  let twiceArea = 0;
-  for (let index = 0; index < contour.length; index += 1) {
-    const current = contour[index]!;
-    const next = contour[(index + 1) % contour.length]!;
-    twiceArea += current.x * next.y - next.x * current.y;
-  }
-  return twiceArea / 2;
-}
-
-function sampleFullPerimeter(
-  contour: readonly FixedRigPointV1[],
-  count: number,
-): Array<{ point: FixedRigPointV1; tangent: FixedRigPointV1 }> {
-  const segments = contour.map((point, index) => {
-    const next = contour[(index + 1) % contour.length]!;
-    return { point, next, length: Math.hypot(next.x - point.x, next.y - point.y) };
-  }).filter((segment) => segment.length > 1e-9);
-  const perimeter = segments.reduce((sum, segment) => sum + segment.length, 0);
-  if (!(perimeter > 0)) return [];
-  const samples: Array<{ point: FixedRigPointV1; tangent: FixedRigPointV1 }> = [];
-  let segmentIndex = 0;
-  let segmentStart = 0;
-  for (let index = 0; index < count; index += 1) {
-    const target = perimeter * index / count;
-    while (segmentIndex < segments.length - 1 &&
-        segmentStart + segments[segmentIndex]!.length < target) {
-      segmentStart += segments[segmentIndex]!.length;
-      segmentIndex += 1;
-    }
-    const segment = segments[segmentIndex]!;
-    const mix = (target - segmentStart) / segment.length;
-    samples.push({
-      point: {
-        x: segment.point.x + (segment.next.x - segment.point.x) * mix,
-        y: segment.point.y + (segment.next.y - segment.point.y) * mix,
-      },
-      tangent: {
-        x: (segment.next.x - segment.point.x) / segment.length,
-        y: (segment.next.y - segment.point.y) / segment.length,
-      },
-    });
-  }
-  return samples;
-}
-
 function lumaAt(plane: FixedRigOuterCutRgbPlaneV1, x: number, y: number): number | undefined {
   if (x < 0 || y < 0 || x > plane.width - 1 || y > plane.height - 1) return undefined;
   const left = Math.floor(x);
@@ -280,66 +202,27 @@ function calibratedSegmentationBoundaryMm(input: {
   );
 }
 
-function normalizationAspectMismatchMm(
-  transform: CardGeometryRawToNormalizedTransformV1,
-  pixelsPerMmX: number,
-): number {
-  const expectedRawCropWidth = transform.crop.heightPx *
-    transform.outputWidthPx / transform.outputHeightPx;
-  const halfWidthMismatchRawPx = Math.abs(
-    transform.crop.widthPx - expectedRawCropWidth,
-  ) / 2;
-  const normalizedPixelsPerRawCropPixel =
-    transform.outputWidthPx / transform.crop.widthPx;
-  return halfWidthMismatchRawPx * normalizedPixelsPerRawCropPixel / pixelsPerMmX;
-}
-
-function sortedGradientCandidates(input: {
-  plane: FixedRigOuterCutRgbPlaneV1;
-  point: FixedRigPointV1;
-  normal: FixedRigPointV1;
-  searchPixels: number;
-}): Array<{ gradient: number; offset: number }> {
-  const candidates: Array<{ gradient: number; offset: number }> = [];
-  for (let offset = -input.searchPixels; offset < input.searchPixels; offset += 1) {
-    const first = lumaAt(
-      input.plane,
-      input.point.x + input.normal.x * offset,
-      input.point.y + input.normal.y * offset,
-    );
-    const second = lumaAt(
-      input.plane,
-      input.point.x + input.normal.x * (offset + 1),
-      input.point.y + input.normal.y * (offset + 1),
-    );
-    if (first === undefined || second === undefined) continue;
-    candidates.push({ gradient: Math.abs(second - first), offset: offset + 0.5 });
-  }
-  candidates.sort((left, right) => right.gradient - left.gradient ||
-    Math.abs(left.offset) - Math.abs(right.offset) || left.offset - right.offset);
-  return candidates;
-}
-
-function isRoundedCornerSample(tangent: FixedRigPointV1): boolean {
-  return Math.abs(tangent.x) > 1e-6 && Math.abs(tangent.y) > 1e-6;
-}
-
 export function verifyFixedRigRawBoundObservedOuterCutArtifactV1(
   artifact: FixedRigRawBoundObservedOuterCutArtifactV1,
 ): boolean {
   const { artifactSha256, ...payload } = artifact;
-  return isSha256(artifactSha256) && sha256(payload) === artifactSha256;
+  return artifact.contourAuthority === 'canonical_pixel_derived_dense_contour' &&
+    isSha256(artifact.canonicalRawContourSha256) &&
+    isSha256(artifact.canonicalNormalizedContourSha256) &&
+    isSha256(artifactSha256) &&
+    sha256(payload) === artifactSha256;
 }
 
-export function verifyFixedRigRawBoundOuterCutUnavailableAuditV1(
-  artifact: FixedRigRawBoundOuterCutUnavailableAuditV1,
-): boolean {
-  const { artifactSha256, ...payload } = artifact;
-  return isSha256(artifactSha256) && sha256(payload) === artifactSha256;
-}
-
-export function detectFixedRigRawBoundObservedOuterCutV1(
-  input: DetectFixedRigRawBoundObservedOuterCutV1Input,
+/**
+ * Seals the canonical pixel-derived contour into the mathematical grading
+ * contract. Expected product geometry is recorded only as comparison metadata:
+ * it never seeds, moves, clips, or vetoes an observed contour point.
+ *
+ * Local gradient support affects private confidence/U95 only. A visible
+ * contour remains measurable in ordinary low-contrast ("foggy") evidence.
+ */
+export function sealFixedRigCanonicalObservedOuterCutV1(
+  input: SealFixedRigCanonicalObservedOuterCutV1Input,
 ): FixedRigRawBoundObservedOuterCutDetectionV1 {
   const reasons: string[] = [];
   const plane = input.rawAllOnRgb;
@@ -360,6 +243,21 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
       transform.sourceWidthPx !== plane.width || transform.sourceHeightPx !== plane.height) {
     reasons.push('The hash-bound raw-to-normalized transform must name this exact raw all-on plane.');
   }
+  if (
+    input.observedRawContour.sourceAssetSha256 !== input.rawAllOnAssetSha256 ||
+    !verifyCardGeometryObservedDenseContourV1(
+      input.observedRawContour,
+      plane.width,
+      plane.height,
+    ) ||
+    !verifyCardGeometryNormalizedDenseContourV1({
+      contour: input.observedNormalizedContour,
+      observed: input.observedRawContour,
+      transform,
+    })
+  ) {
+    reasons.push('The canonical dense contour is malformed or not hash-bound through normalization.');
+  }
   if (!isIdentifier(input.calibrationProfileId) || !isIdentifier(input.calibrationVersion) ||
       !isSha256(input.calibrationSha256)) {
     reasons.push('Finalized calibration profile identity, version, and SHA-256 are required.');
@@ -368,13 +266,9 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
   if (!isIdentifier(intended.profileId) || !isIdentifier(intended.profileVersion) ||
       !isSha256(intended.artifactSha256) ||
       intended.coordinateFrame !== 'normalized_card_portrait_pixels' ||
-      intended.contour.length < 4 ||
-      intended.contour.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y) ||
-        point.x < 0 || point.x > transform.outputWidthPx ||
-        point.y < 0 || point.y > transform.outputHeightPx) ||
-      signedPolygonArea(intended.contour) === 0 ||
+      intended.contour.length < 3 ||
       intendedBoundarySha256(intended) !== intended.artifactSha256) {
-    reasons.push('The exact intended outer-boundary authority is malformed or its SHA-256 does not reproduce.');
+    reasons.push('The comparison-only intended outer-boundary authority is malformed.');
   }
   if (!Number.isFinite(input.pixelsPerMmX) || input.pixelsPerMmX <= 0 ||
       !Number.isFinite(input.pixelsPerMmY) || input.pixelsPerMmY <= 0 ||
@@ -384,174 +278,50 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
   }
   if (reasons.length) return fail(reasons);
 
-  const rawIntended = intended.contour.map((point) =>
-    transformNormalizedPointToRawV1(transform, point));
-  if (rawIntended.some((point) => point.x < 0 || point.x > plane.width - 1 ||
-      point.y < 0 || point.y > plane.height - 1)) {
-    return fail(['The intended perimeter search band is not contained in the raw sensor image.']);
-  }
-  const crossSectionCount = POLICY.crossSectionsPerSide * 4;
-  const perimeter = sampleFullPerimeter(rawIntended, crossSectionCount);
-  if (perimeter.length !== crossSectionCount) {
-    return fail(['The intended boundary could not be sampled across its complete raw perimeter.']);
-  }
-  const clockwise = signedPolygonArea(rawIntended) > 0;
-  const minimumGradient = POLICY.minimumDirectionalGradientDigitalUnits / 255;
-  const segmentationBoundaryMm = calibratedSegmentationBoundaryMm(input);
-  const geometryMismatchMm = normalizationAspectMismatchMm(
-    transform,
-    input.pixelsPerMmX,
-  );
-  // The manifest band remains the first and authoritative search. A failed
-  // nominal cross-section may use only the exact calibration U95 plus the
-  // measured 5:7 normalization mismatch to reach the same physical edge.
-  // This compensates upstream localization error without lowering the edge
-  // gradient, accepting a missing sample, or consulting another image.
-  const effectiveSearchHalfWidthMm = POLICY.searchHalfWidthMm +
-    segmentationBoundaryMm + geometryMismatchMm;
-  const maximumEffectiveSearchHalfWidthMm =
-    POLICY.searchHalfWidthMm * MAX_EFFECTIVE_SEARCH_MULTIPLIER;
-  if (effectiveSearchHalfWidthMm > maximumEffectiveSearchHalfWidthMm) {
-    return fail([
-      'The raw-to-normalized geometry mismatch exceeds the bounded outer-cut recovery envelope.',
-    ]);
-  }
-  const detectedRaw: FixedRigPointV1[] = [];
-  const gradients: number[] = [];
-  let unsupported = 0;
-  let ambiguous = 0;
-  for (const sample of perimeter) {
-    const normal = clockwise
-      ? { x: sample.tangent.y, y: -sample.tangent.x }
-      : { x: -sample.tangent.y, y: sample.tangent.x };
-    const mmPerNormalPixel = rawVectorLengthMm(
-      transform,
-      normal,
-      input.pixelsPerMmX,
-      input.pixelsPerMmY,
-    );
-    if (!(mmPerNormalPixel > 0)) {
-      unsupported += 1;
-      continue;
-    }
-    const nominalSearchPixels = Math.max(
-      1,
-      Math.ceil(POLICY.searchHalfWidthMm / mmPerNormalPixel),
-    );
-    const effectiveSearchPixels = Math.max(
-      nominalSearchPixels,
-      Math.ceil(effectiveSearchHalfWidthMm / mmPerNormalPixel),
-    );
-    const roundedCornerSearchPixels = isRoundedCornerSample(sample.tangent)
-      ? Math.max(
-          effectiveSearchPixels,
-          Math.ceil(
-            (effectiveSearchHalfWidthMm + ROUNDED_CORNER_RECOVERY_MARGIN_MM) /
-              mmPerNormalPixel,
-          ),
-        )
-      : effectiveSearchPixels;
-    let candidates = sortedGradientCandidates({
-      plane,
-      point: sample.point,
-      normal,
-      searchPixels: nominalSearchPixels,
-    });
-    let strongest = candidates[0];
-    if (!strongest || strongest.gradient < minimumGradient) {
-      // Recovery is deliberately staged: a supported nominal observation is
-      // never replaced by a farther artwork or glare transition.
-      candidates = sortedGradientCandidates({
-        plane,
-        point: sample.point,
-        normal,
-        searchPixels: effectiveSearchPixels,
-      });
-      strongest = candidates[0];
-    }
-    if ((!strongest || strongest.gradient < minimumGradient) &&
-        roundedCornerSearchPixels > effectiveSearchPixels) {
-      // Rounded-corner samples carry one additional, tightly bounded physical
-      // profile margin. Straight edges never receive it, and it is consulted
-      // only after both the manifest and calibrated geometry envelopes fail.
-      candidates = sortedGradientCandidates({
-        plane,
-        point: sample.point,
-        normal,
-        searchPixels: roundedCornerSearchPixels,
-      });
-      strongest = candidates[0];
-    }
-    if (!strongest || strongest.gradient < minimumGradient) {
-      unsupported += 1;
-      continue;
-    }
-    if (candidates.some((candidate, index) => index > 0 &&
-        candidate.gradient === strongest.gradient &&
-        Math.abs(candidate.offset - strongest.offset) > 1)) {
-      ambiguous += 1;
-      continue;
-    }
-    detectedRaw.push({
-      x: round(sample.point.x + normal.x * strongest.offset),
-      y: round(sample.point.y + normal.y * strongest.offset),
-    });
-    gradients.push(strongest.gradient * 255);
-  }
-  if (detectedRaw.length === 0) {
-    return fail([
-      'Zero raw perimeter cross-sections supplied authenticated detector support.',
-      'Nonzero authenticated outer-cut support is required before operator resolution.',
-    ]);
-  }
-  if (unsupported || ambiguous || detectedRaw.length !== crossSectionCount) {
-    const failureReasons = [
-      ...(unsupported ? [
-        unsupported + ' raw perimeter cross-sections lacked the manifest minimum gradient.',
-      ] : []),
-      ...(ambiguous ? [
-        ambiguous + ' raw perimeter cross-sections had tied boundary peaks.',
-      ] : []),
-      'Every physical edge and rounded-corner arc requires unambiguous raw exterior evidence.',
-    ];
-    return fail(failureReasons, {
-      schemaVersion: FIXED_RIG_RAW_BOUND_OUTER_CUT_UNAVAILABLE_AUDIT_V1_SCHEMA_VERSION,
-      detectorId: FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_ID,
-      detectorVersion: FIXED_RIG_RAW_SENSOR_OUTER_CUT_DETECTOR_V1_VERSION,
-      rawAllOnAssetId: input.rawAllOnAssetId,
-      rawAllOnAssetSha256: input.rawAllOnAssetSha256,
-      rawAllOnScalarPlaneSha256: scalarPlaneSha256(plane),
-      normalizedAllOnAssetId: input.normalizedAllOnAssetId,
-      normalizedAllOnAssetSha256: input.normalizedAllOnAssetSha256,
-      rawToNormalizedTransformSha256: transform.transformSha256,
-      calibrationProfileId: input.calibrationProfileId,
-      calibrationVersion: input.calibrationVersion,
-      calibrationSha256: input.calibrationSha256,
-      intendedBoundaryArtifactSha256: intended.artifactSha256,
-      intendedBoundaryProfileId: intended.profileId,
-      intendedBoundaryProfileVersion: intended.profileVersion,
-      crossSectionCount,
-      supportedCrossSectionCount: detectedRaw.length,
-      unsupportedCrossSectionCount: unsupported,
-      ambiguousCrossSectionCount: ambiguous,
-      minimumGradientDigitalUnits: POLICY.minimumDirectionalGradientDigitalUnits,
-      reasons: failureReasons,
-    });
-  }
-  const normalizedContour = detectedRaw.map((point) => {
-    const normalized = transformRawPointToNormalizedV1(transform, point);
-    return {
-      x: round(Math.max(0, Math.min(transform.outputWidthPx, normalized.x))),
-      y: round(Math.max(0, Math.min(transform.outputHeightPx, normalized.y))),
+  const rawContour = input.observedRawContour.points.map((point) => ({
+    x: point.x,
+    y: point.y,
+  }));
+  const normalizedContour = input.observedNormalizedContour.points.map((point) => ({
+    x: point.x,
+    y: point.y,
+  }));
+  const minimumGradient = POLICY.minimumDirectionalGradientDigitalUnits;
+  const gradients = rawContour.map((point, index) => {
+    const before = rawContour[(index - 1 + rawContour.length) % rawContour.length]!;
+    const after = rawContour[(index + 1) % rawContour.length]!;
+    const tangentLength = Math.hypot(after.x - before.x, after.y - before.y);
+    if (!(tangentLength > 1e-9)) return 0;
+    const normal = {
+      x: -(after.y - before.y) / tangentLength,
+      y: (after.x - before.x) / tangentLength,
     };
+    const first = lumaAt(plane, point.x - normal.x, point.y - normal.y);
+    const second = lumaAt(plane, point.x + normal.x, point.y + normal.y);
+    return first === undefined || second === undefined
+      ? 0
+      : Math.abs(second - first) * 255;
   });
-  const meanGradient = gradients.reduce((sum, value) => sum + value, 0) / gradients.length;
-  const minimumDetectedGradient = Math.min(...gradients);
-  const calibratedSegmentationBoundary = segmentationBoundaryMm;
-  const rawDetectorLocalization = POLICY.minimumResidualLimitPx * Math.max(
+  const supportedCrossSectionCount = gradients.filter(
+    (gradient) => gradient >= minimumGradient,
+  ).length;
+  const nonzeroGradients = gradients.filter((gradient) => gradient > 0);
+  const meanGradient = nonzeroGradients.length
+    ? nonzeroGradients.reduce((sum, value) => sum + value, 0) / nonzeroGradients.length
+    : 0;
+  const minimumDetectedGradient = nonzeroGradients.length
+    ? Math.min(...nonzeroGradients)
+    : 0;
+  const supportFraction = rawContour.length
+    ? supportedCrossSectionCount / rawContour.length
+    : 0;
+  const calibratedSegmentationBoundary = calibratedSegmentationBoundaryMm(input);
+  const baseLocalizationMm = POLICY.minimumResidualLimitPx * Math.max(
     rawVectorLengthMm(transform, { x: 1, y: 0 }, input.pixelsPerMmX, input.pixelsPerMmY),
     rawVectorLengthMm(transform, { x: 0, y: 1 }, input.pixelsPerMmX, input.pixelsPerMmY),
   );
+  const privateQualityPenalty = 1 + (1 - supportFraction) * 4;
+  const rawDetectorLocalization = baseLocalizationMm * privateQualityPenalty;
   const u95Mm = Math.hypot(calibratedSegmentationBoundary, rawDetectorLocalization);
   const payload = {
     schemaVersion: FIXED_RIG_RAW_BOUND_OBSERVED_OUTER_CUT_ARTIFACT_V1_SCHEMA_VERSION,
@@ -578,16 +348,22 @@ export function detectFixedRigRawBoundObservedOuterCutV1(
     intendedBoundaryArtifactSha256: intended.artifactSha256,
     intendedBoundaryProfileId: intended.profileId,
     intendedBoundaryProfileVersion: intended.profileVersion,
-    rawContour: detectedRaw,
+    contourAuthority: 'canonical_pixel_derived_dense_contour' as const,
+    canonicalRawContourSha256: input.observedRawContour.contourSha256,
+    canonicalNormalizedContourSha256: input.observedNormalizedContour.contourSha256,
+    rawContour,
     normalizedContour,
-    crossSectionCount,
-    supportedCrossSectionCount: detectedRaw.length,
-    minimumGradientDigitalUnits: POLICY.minimumDirectionalGradientDigitalUnits,
+    crossSectionCount: rawContour.length,
+    supportedCrossSectionCount,
+    minimumGradientDigitalUnits: minimumGradient,
     meanDetectedGradientDigitalUnits: round(meanGradient, 6),
     minimumDetectedGradientDigitalUnits: round(minimumDetectedGradient, 6),
     confidence: round(Math.min(
       1,
-      minimumDetectedGradient / POLICY.minimumDirectionalGradientDigitalUnits,
+      0.25 + 0.75 * Math.max(
+        supportFraction,
+        input.observedRawContour.strongSupportFraction,
+      ),
     ), 6),
     u95ComponentsMm: {
       calibratedSegmentationBoundary: round(calibratedSegmentationBoundary),

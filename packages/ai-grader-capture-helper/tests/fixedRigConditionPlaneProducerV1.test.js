@@ -19,7 +19,8 @@ const {
 } = require("../dist/drivers/fixedRigConditionPlaneProducerV1");
 const {
   CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1,
-  detectFixedRigRawBoundObservedOuterCutV1,
+  detectFixedRigShapeAgnosticContourV1,
+  sealFixedRigCanonicalObservedOuterCutV1,
   verifyFixedRigRawBoundObservedOuterCutArtifactV1,
 } = require("../dist/drivers");
 
@@ -122,7 +123,10 @@ function photometric(response, intendedContour = roundedRectangleContour()) {
   });
 }
 
-function measurementCalibration() {
+function measurementCalibration(directionForOffset = (offset) => {
+  const angle = offset * Math.PI / 4;
+  return { x: Math.cos(angle), y: Math.sin(angle) };
+}) {
   const angularU95 = 0.1;
   const directionConfidence = Math.round(
     Math.max(
@@ -167,10 +171,9 @@ function measurementCalibration() {
       colorDeltaE: { sampleCount: 20, u95: 0.001 },
     },
     channels: Array.from({ length: 8 }, (_, offset) => {
-      const angle = offset * Math.PI / 4;
       return {
         channelIndex: offset + 1,
-        direction: { x: Math.cos(angle), y: Math.sin(angle) },
+        direction: directionForOffset(offset),
         directionConfidence,
         directionMeasurementSampleCount: 3,
         directionAngularU95Degrees: angularU95,
@@ -249,13 +252,92 @@ function identityRawToNormalizedTransform() {
 }
 
 function detectRawOuterCut(rawAllOnRgb, intendedBoundary, measurement) {
-  return detectFixedRigRawBoundObservedOuterCutV1({
+  const observed = new Float32Array(rawAllOnRgb.width * rawAllOnRgb.height);
+  for (let index = 0; index < observed.length; index += 1) {
+    const offset = index * 3;
+    const luma =
+      0.2126 * Number(rawAllOnRgb.data[offset]) +
+      0.7152 * Number(rawAllOnRgb.data[offset + 1]) +
+      0.0722 * Number(rawAllOnRgb.data[offset + 2]);
+    // This is a producer-unit-test fixture, not a detector implementation.
+    // Reduce the synthetic artwork ramp to its known physical material mask
+    // before exercising the real shape-agnostic contour primitive.
+    observed[index] = luma > 0.02 ? 0.8 : 0.1;
+  }
+  const detected = detectFixedRigShapeAgnosticContourV1({
+    width: rawAllOnRgb.width,
+    height: rawAllOnRgb.height,
+    observed,
+    background: new Float32Array(observed.length).fill(0.1),
+    sourceAssetId: "front-raw-all-on",
+    sourceAssetSha256: SHA,
+    backgroundAssetId: "front-empty-fixture",
+    backgroundAssetSha256: "b".repeat(64),
+    calibrationProfileId: measurement.calibrationProfileId,
+    calibrationSha256: measurement.calibrationSha256,
+    pixelsPerMmX: measurement.pixelsPerMmX,
+    pixelsPerMmY: measurement.pixelsPerMmY,
+  });
+  if (detected.status !== "computed") return detected;
+  const points = detected.artifact.contour.map((point) => ({ x: point.x, y: point.y }));
+  const contourPayload = {
+    sourceAssetSha256: SHA,
+    coordinateFrame: "source_image_pixels",
+    points,
+  };
+  const rawContour = {
+    schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+    coordinateFrame: "source_image_pixels",
+    sourceAssetSha256: SHA,
+    points,
+    pointCount: points.length,
+    contourSha256: createHash("sha256")
+      .update(JSON.stringify(contourPayload), "utf8")
+      .digest("hex"),
+    strongSupportFraction:
+      detected.artifact.contourSupport.filter((entry) => entry.support === "strong").length /
+      points.length,
+    evidenceQuality: detected.artifact.contourSupport.some((entry) => entry.support === "strong")
+      ? "strong"
+      : "limited",
+    measurementsPx: {
+      width: detected.artifact.orientedBounds.widthMm * measurement.pixelsPerMmX,
+      height: detected.artifact.orientedBounds.heightMm * measurement.pixelsPerMmY,
+      perimeter: detected.artifact.contourPerimeterMm *
+        Math.sqrt(measurement.pixelsPerMmX * measurement.pixelsPerMmY),
+      enclosedArea: detected.artifact.enclosedAreaMm2 *
+        measurement.pixelsPerMmX * measurement.pixelsPerMmY,
+      angleDegrees: detected.artifact.orientedBounds.angleDegrees,
+      circularArcs: [],
+    },
+  };
+  const transform = identityRawToNormalizedTransform();
+  const normalizedPayload = {
+    sourceContourSha256: rawContour.contourSha256,
+    rawToNormalizedTransformSha256: transform.transformSha256,
+    coordinateFrame: "normalized_card_portrait_pixels",
+    points,
+  };
+  const normalizedContour = {
+    schemaVersion: "ten-kings-normalized-dense-contour-v1",
+    coordinateFrame: "normalized_card_portrait_pixels",
+    sourceContourSha256: rawContour.contourSha256,
+    rawToNormalizedTransformSha256: transform.transformSha256,
+    points,
+    pointCount: points.length,
+    contourSha256: createHash("sha256")
+      .update(JSON.stringify(normalizedPayload), "utf8")
+      .digest("hex"),
+  };
+  return sealFixedRigCanonicalObservedOuterCutV1({
     rawAllOnRgb,
     rawAllOnAssetId: "front-raw-all-on",
     rawAllOnAssetSha256: SHA,
     normalizedAllOnAssetId: "front-all-on",
     normalizedAllOnAssetSha256: SHA,
-    rawToNormalizedTransform: identityRawToNormalizedTransform(),
+    rawToNormalizedTransform: transform,
+    observedRawContour: rawContour,
+    observedNormalizedContour: normalizedContour,
     calibrationProfileId: measurement.calibrationProfileId,
     calibrationVersion: measurement.calibrationVersion,
     calibrationSha256: measurement.calibrationSha256,
@@ -364,7 +446,7 @@ function roundedRectangleContour(radius = 5, samplesPerCorner = 8, inset = 6) {
 test("producer derives clean physical planes from captures without caller detector-plane authority", () => {
   const first = buildFixedRigConditionPlanesV1(input());
   const second = buildFixedRigConditionPlanesV1(input());
-  assert.equal(first.status, "computed");
+  assert.equal(first.status, "computed", JSON.stringify(first));
   assert.equal(second.status, "computed");
   assert.equal(first.heatmapUsedAsInput, false);
   assert.equal(first.manualPlaneUsedAsInput, false);
@@ -434,7 +516,7 @@ test("intended authority and raw-bound observed-cut evidence fail closed", () =>
   assert.equal(verifyFixedRigRawBoundObservedOuterCutArtifactV1(artifactTamper), false);
 });
 
-test("two separated equal-gradient cut candidates are ambiguous and fail closed", () => {
+test("printed inner and outer transitions cannot revive the removed expected-profile search", () => {
   const contour = [
     { x: 10, y: 10 },
     { x: WIDTH - 10, y: 10 },
@@ -461,15 +543,20 @@ test("two separated equal-gradient cut candidates are ambiguous and fail closed"
     intendedOuterBoundary,
     measurementCalibration(),
   );
-  assert.equal(rawDetection.status, "insufficient_evidence");
-  assert.match(rawDetection.reasons.join(" "), /tied boundary peaks/i);
+  assert.equal(rawDetection.status, "computed", JSON.stringify(rawDetection));
+  assert.equal(
+    rawDetection.artifact.contourAuthority,
+    "canonical_pixel_derived_dense_contour",
+  );
   const result = buildFixedRigConditionPlanesV1(input({
     intendedOuterBoundary,
     normalizedAllOnRgb: separatedEqualEdges,
   }));
-  assert.equal(result.status, "insufficient_evidence");
-  assert.match(result.reasons.join(" "), /raw-sensor outer-cut artifact is required/i);
-  assert.equal(result.cardDefectDeduction, 0);
+  assert.equal(result.status, "computed", result.reasons?.join("; "));
+  assert.equal(
+    result.outerCutGeometryEvidence.observedArtifact.contourAuthority,
+    "canonical_pixel_derived_dense_contour",
+  );
 });
 
 test("hash-bound rounded intended boundary is rasterized instead of treating the frame as card", () => {
@@ -569,10 +656,46 @@ test("directional scratches and area-plus-relief dents remain measurable without
         : 0), roundedRectangleContour()),
   }));
   assert.equal(broad.status, "computed");
-  assert.ok(maximum(broad.planes.deformationResponse) >= 0.6);
+  assert.ok(
+    maximum(broad.planes.deformationResponse) >=
+      MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.conditionSegmentation
+        .evidenceThresholds.minimumDeformationResponse,
+  );
   assert.ok(maximum(broad.planes.reliefIndex) > 0);
   assert.equal(maximum(broad.planes.depthMm), 0);
   assert.ok(broad.unavailableModalities.includes("metric_depth"));
+});
+
+test("broad common illumination response cannot become a physical dent", () => {
+  const residuals = [0.18, 0.14, 0.1, 0.06, -0.06, -0.1, -0.14, -0.18];
+  const result = buildFixedRigConditionPlanesV1(input({
+    photometricEvidence: photometric((channel) =>
+      0.35 + residuals[channel - 1], roundedRectangleContour()),
+  }));
+  assert.equal(result.status, "computed");
+  assert.ok(maximum(result.planes.reliefIndex) > 0);
+  assert.ok(maximum(result.planes.deformationResponse) < 0.01);
+});
+
+test("near-parallel calibrated light directions cannot manufacture surface relief or block grading", () => {
+  const residuals = [0.18, 0.14, 0.1, 0.06, -0.06, -0.1, -0.14, -0.18];
+  const collapsedDirectionCalibration = measurementCalibration((offset) => {
+    const angle = -0.2 + offset * 0.001;
+    return { x: Math.cos(angle), y: Math.sin(angle) };
+  });
+  const result = buildFixedRigConditionPlanesV1(input({
+    measurementCalibration: collapsedDirectionCalibration,
+    photometricEvidence: photometric((channel, x, y) =>
+      0.35 + (x >= 16 && x <= 47 && y >= 30 && y <= 65
+        ? residuals[channel - 1]
+        : 0), roundedRectangleContour()),
+  }));
+  assert.equal(result.status, "computed");
+  assert.ok(maximum(result.planes.reliefIndex) < 0.01);
+  assert.equal(maximum(result.planes.scratchLineResponse), 0);
+  assert.ok(maximum(result.planes.scuffTextureResponse) < 0.01);
+  assert.equal(maximum(result.planes.creaseLineResponse), 0);
+  assert.ok(maximum(result.planes.deformationResponse) < 0.01);
 });
 
 test("missing approved design leaves design planes unavailable and unexplained color fails closed", () => {

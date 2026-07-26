@@ -288,6 +288,9 @@ const observedOuterCutArtifactSchema = z.strictObject({
   intendedBoundaryArtifactSha256: sha256Schema,
   intendedBoundaryProfileId: identifierSchema,
   intendedBoundaryProfileVersion: identifierSchema,
+  contourAuthority: z.literal("canonical_pixel_derived_dense_contour"),
+  canonicalRawContourSha256: sha256Schema,
+  canonicalNormalizedContourSha256: sha256Schema,
   rawContour: z.array(z.strictObject({
     x: z.number().finite().nonnegative(),
     y: z.number().finite().nonnegative(),
@@ -297,7 +300,7 @@ const observedOuterCutArtifactSchema = z.strictObject({
     y: z.number().finite().nonnegative(),
   })).min(4).max(10000),
   crossSectionCount: z.number().int().positive(),
-  supportedCrossSectionCount: z.number().int().positive(),
+  supportedCrossSectionCount: z.number().int().nonnegative(),
   minimumGradientDigitalUnits: z.number().finite().nonnegative(),
   meanDetectedGradientDigitalUnits: z.number().finite().nonnegative(),
   minimumDetectedGradientDigitalUnits: z.number().finite().nonnegative(),
@@ -1129,7 +1132,17 @@ export const aiGraderReportBundleV03Schema = z
         const rawAllOnAssetHash = rawAllOnAsset?.sha256 ?? rawAllOnAsset?.checksumSha256;
         const allOnAsset = assetsById.get(geometry.normalizedAllOnAssetId.toLowerCase());
         const allOnAssetHash = allOnAsset?.sha256 ?? allOnAsset?.checksumSha256;
+        const contourAuthorityFields = [
+          observed.contourAuthority,
+          observed.canonicalRawContourSha256,
+          observed.canonicalNormalizedContourSha256,
+        ];
+        const hasAnyContourAuthorityField = contourAuthorityFields.some((value) => value !== undefined);
+        const hasEveryContourAuthorityField = contourAuthorityFields.every((value) => value !== undefined);
         if (
+          hasAnyContourAuthorityField !== hasEveryContourAuthorityField ||
+          (hasEveryContourAuthorityField &&
+            observed.contourAuthority !== "canonical_pixel_derived_dense_contour") ||
           geometry.observedContourSha256 !== observed.artifactSha256 ||
           geometry.intendedContourSha256 !== observed.intendedBoundaryArtifactSha256 ||
           geometry.intendedBoundaryProfileId !== observed.intendedBoundaryProfileId ||
@@ -1145,7 +1158,9 @@ export const aiGraderReportBundleV03Schema = z
           geometry.normalizedAllOnAssetSha256 !== observed.normalizedAllOnAssetSha256 ||
           geometry.boundaryConfidence !== observed.confidence ||
           geometry.boundaryU95Mm !== observed.u95Mm ||
-          observed.supportedCrossSectionCount !== observed.crossSectionCount ||
+          observed.supportedCrossSectionCount > observed.crossSectionCount ||
+          (!hasEveryContourAuthorityField &&
+            observed.supportedCrossSectionCount !== observed.crossSectionCount) ||
           observed.normalizedWidthPx !== bundle.calibrationProfile.normalizedWidthPx ||
           observed.normalizedHeightPx !== bundle.calibrationProfile.normalizedHeightPx ||
           observed.calibrationProfileId !== bundle.calibrationProfile.profileId ||
@@ -1431,8 +1446,10 @@ export const aiGraderReportBundleV03Schema = z
       }
     };
     if (!finalGrade.elements.corners.resolved &&
-        cornerLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount) {
-      context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "corners", "locationScores"], message: "must contain all eight visible corner observations" });
+        (cornerLocations.length < 2 ||
+          cornerLocations.length > MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount ||
+          !["front", "back"].every((side) => cornerLocations.some((location) => location.side === side)))) {
+      context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "corners", "locationScores"], message: "must contain every observable corner, including at least one from each side" });
     } else if (!finalGrade.elements.corners.resolved) {
       validateLocationElement(
         "corners",
@@ -1441,7 +1458,10 @@ export const aiGraderReportBundleV03Schema = z
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.worstWeight,
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.averageWeight,
       );
-      const aggregation = aggregateCornerScoreV1(cornerLocations.map((location) => location.penalty));
+      const aggregation = aggregateCornerScoreV1(
+        cornerLocations.map((location) => location.penalty),
+        { allowObservableSubset: cornerLocations.length < 8 },
+      );
       if (finalGrade.elements.corners.score !== aggregation.score ||
           finalGrade.elements.corners.aggregatePenalty !== roundNonnegativeTwoDecimals(aggregation.aggregatePenalty)) {
         context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "corners"], message: "must match 0.65 worst plus 0.35 average aggregation" });
@@ -1449,8 +1469,10 @@ export const aiGraderReportBundleV03Schema = z
     }
     const edgeLocations = finalGrade.elements.edges.locationScores;
     if (!finalGrade.elements.edges.resolved &&
-        edgeLocations.length !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount) {
-      context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "edges", "locationScores"], message: "must contain all eight visible edge observations" });
+        (edgeLocations.length < 2 ||
+          edgeLocations.length > MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount ||
+          !["front", "back"].every((side) => edgeLocations.some((location) => location.side === side)))) {
+      context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "edges", "locationScores"], message: "must contain every observable edge, including at least one from each side" });
     } else if (!finalGrade.elements.edges.resolved) {
       validateLocationElement(
         "edges",
@@ -1459,7 +1481,10 @@ export const aiGraderReportBundleV03Schema = z
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.worstWeight,
         MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.averageWeight,
       );
-      const aggregation = aggregateEdgeScoreV1(edgeLocations.map((location) => location.penalty));
+      const aggregation = aggregateEdgeScoreV1(
+        edgeLocations.map((location) => location.penalty),
+        { allowObservableSubset: edgeLocations.length < 8 },
+      );
       if (finalGrade.elements.edges.score !== aggregation.score ||
           finalGrade.elements.edges.aggregatePenalty !== roundNonnegativeTwoDecimals(aggregation.aggregatePenalty)) {
         context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "elements", "edges"], message: "must match 0.60 worst plus 0.40 average aggregation" });
@@ -1472,9 +1497,7 @@ export const aiGraderReportBundleV03Schema = z
       canonicalLocations: readonly string[],
     ) => {
       const expectedKeys = new Set(
-        ["front", "back"].flatMap((side) =>
-          canonicalLocations.map((location) => side + ":" + location),
-        ),
+        locations.map((location) => location.side + ":" + location.location),
       );
       const actualKeys = observations.map((observation) =>
         observation.side + ":" + observation.location,
@@ -1487,7 +1510,7 @@ export const aiGraderReportBundleV03Schema = z
         context.addIssue({
           code: "custom",
           path: ["conditionObservationEvidence", element],
-          message: "must contain every canonical front/back physical observation exactly once",
+          message: "must contain every scored observable physical location exactly once",
         });
       }
       observations.forEach((observation, index) => {

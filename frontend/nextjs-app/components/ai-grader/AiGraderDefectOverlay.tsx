@@ -51,7 +51,7 @@ export default function AiGraderDefectOverlay({ image, findings, selectedFinding
   };
 
   return (
-    <div className="defect-overlay" aria-label="Normalized card with AI-detected provisional findings">
+    <div className="defect-overlay" aria-label="Normalized card with measured findings">
       <img
         src={image.renderUrl}
         alt={image.fileName ?? image.id ?? "Normalized card evidence"}
@@ -62,7 +62,7 @@ export default function AiGraderDefectOverlay({ image, findings, selectedFinding
           setFailedImageUrl(image.renderUrl);
         }}
       />
-      {projection ? <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={`${findings.length} provisional finding overlays`}>
+      {projection ? <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label={`${findings.length} measured finding overlays`}>
         <g transform={`translate(${projection.x} ${projection.y}) scale(${projection.width / 100} ${projection.height / 100})`}>
         {findings.map((finding) => {
           const label = defectFindingLabel(finding);

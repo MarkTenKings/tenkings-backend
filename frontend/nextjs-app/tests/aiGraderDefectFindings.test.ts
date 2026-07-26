@@ -101,6 +101,7 @@ test("overlay withholds interactive markers until the exact evidence image loads
   const html = renderToStaticMarkup(createElement(AiGraderDefectOverlay, { image, findings: [finding] }));
   assert.match(html, /<img[^>]*src="\/images\/card-pull-1.png"/);
   assert.doesNotMatch(html, /<svg|<rect|role="button"/);
-  assert.match(defectFindingLabel(finding), /82% confidence/);
+  assert.match(defectFindingLabel(finding), /Measured back surface anomaly finding/);
+  assert.doesNotMatch(defectFindingLabel(finding), /confidence|uncertainty|U95|provisional/i);
   assert.doesNotMatch(html, /data:image|localPath|stationToken/);
 });

@@ -5,6 +5,7 @@ import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignRe
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   type AiGraderCalibrationActivationAuthorityV1,
+  type MathematicalGradingElementV1,
   type TrustedPokemonCardFormatAuthorityV1,
 } from '@tenkings/shared';
 import {
@@ -29,7 +30,11 @@ import { loadFixedRigMathematicalCalibrationBundleV1 } from './fixedRigMathemati
 import type { FastCalibrationRuntimeContextV1_2 } from './fixedRigFastMathematicalCalibrationV1_2';
 import { buildFixedRigAutomaticDesignRegistrationV1 } from './fixedRigAutomaticDesignRegistrationV1';
 import {
+  verifyCardGeometryNormalizedDenseContourV1,
+  verifyCardGeometryObservedDenseContourV1,
   verifyCardGeometryRawToNormalizedTransformV1,
+  type CardGeometryNormalizedDenseContourV1,
+  type CardGeometryObservedDenseContourV1,
   type CardGeometryRawToNormalizedTransformV1,
 } from './cardGeometry';
 import {
@@ -98,6 +103,7 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
   queueItemId: string;
   operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
+  forcedOperatorReviewElements?: MathematicalGradingElementV1[];
   cardFormatAuthorityVerification?: {
     hmacKey: string;
     keyId: string;
@@ -112,12 +118,15 @@ type JsonObject = Record<string, unknown>;
 
 interface ParsedWarmSideV1 {
   rawAllOn: FixedRigExactReportEvidenceFileV1;
+  rawGeometryAuthority: FixedRigExactReportEvidenceFileV1;
+  geometryAuthorityRole: "all_on";
   normalizedAllOn: FixedRigExactReportEvidenceFileV1;
   normalizedCard: FixedRigExactReportEvidenceFileV1;
   photometricExposureBracket: NonNullable<
     FixedRigMathematicalCalibrationSideInputV1['photometricExposureBracket']
   >;
   rawToNormalizedTransform: FixedRigMathematicalCalibrationSideInputV1['rawToNormalizedTransform'];
+  observedOuterContour: FixedRigMathematicalCalibrationSideInputV1['observedOuterContour'];
   normalizedCardBytes: Buffer;
   geometry: Record<string, unknown>;
   geometryCaptureDecisions: Record<string, unknown>;
@@ -636,6 +645,35 @@ async function parseWarmSideV1(input: {
     assetId: input.side + '-raw-all-on',
     label: input.side + ' raw all-on',
   });
+  const geometryAuthority = object(
+    side.fullResolutionGeometryAuthority,
+    input.side + ' full-resolution geometry authority',
+  );
+  const geometryAuthoritySource = object(
+    geometryAuthority.source,
+    input.side + ' full-resolution geometry authority source',
+  );
+  const geometryAuthorityRole = string(
+    geometryAuthoritySource.role,
+    input.side + ' geometry authority role',
+  );
+  if (geometryAuthorityRole !== 'all_on') {
+    throw new Error(
+      input.side + ' geometry authority must be the calibrated dense contour from the exact all-on captured pixels.',
+    );
+  }
+  const rawGeometryAuthority = rawAllOn;
+  if (
+    geometryAuthoritySource.role !== geometryAuthorityRole ||
+    exactSha(
+      geometryAuthoritySource.sourceSha256,
+      input.side + ' geometry authority source SHA-256',
+    ) !== rawGeometryAuthority.sha256
+  ) {
+    throw new Error(
+      input.side + ' geometry authority source identity does not match its captured pixels.',
+    );
+  }
   const normalizedAllOnArtifact = object(
     allOn.analysisArtifact,
     input.side + ' normalized all-on artifact',
@@ -666,13 +704,43 @@ async function parseWarmSideV1(input: {
     normalizedCardArtifact.rawToNormalizedTransform,
     input.side + ' raw-to-normalized transform',
   ) as unknown as CardGeometryRawToNormalizedTransformV1;
+  const authorityNormalizedArtifact =
+    geometryAuthorityRole === 'all_on'
+      ? normalizedAllOnArtifact
+      : acceptedArtifact;
   if (
-    rawToNormalizedTransform.sourceSha256 !== rawAllOn.sha256 ||
+    rawToNormalizedTransform.sourceSha256 !== rawGeometryAuthority.sha256 ||
     !verifyCardGeometryRawToNormalizedTransformV1(rawToNormalizedTransform) ||
     rawToNormalizedTransform.transformSha256 !==
-      (normalizedAllOnArtifact.rawToNormalizedTransform as JsonObject | undefined)?.transformSha256
+      (authorityNormalizedArtifact.rawToNormalizedTransform as JsonObject | undefined)?.transformSha256
   ) {
-    throw new Error(input.side + ' all-on transform is not bound to the exact raw/normalized role.');
+    throw new Error(input.side + ' geometry transform is not bound to its exact captured authority role.');
+  }
+  const geometry = recordOrEmpty(normalizedCard.geometry);
+  const observedDenseContour = object(
+    geometry.observedDenseContour,
+    input.side + ' observed dense contour',
+  ) as unknown as CardGeometryObservedDenseContourV1;
+  const normalizedDenseContour = object(
+    normalizedCardArtifact.normalizedDenseContour,
+    input.side + ' normalized dense contour',
+  ) as unknown as CardGeometryNormalizedDenseContourV1;
+  if (
+    observedDenseContour.sourceAssetSha256 !== rawGeometryAuthority.sha256 ||
+    !verifyCardGeometryObservedDenseContourV1(
+      observedDenseContour,
+      rawToNormalizedTransform.sourceWidthPx,
+      rawToNormalizedTransform.sourceHeightPx,
+    ) ||
+    !verifyCardGeometryNormalizedDenseContourV1({
+      contour: normalizedDenseContour,
+      observed: observedDenseContour,
+      transform: rawToNormalizedTransform,
+    })
+  ) {
+    throw new Error(
+      input.side + ' observed dense contour is not exactly hash-bound through normalization.',
+    );
   }
   assertFixedRigReusedAuthoritativeTransformV1({
     artifact: acceptedArtifact,
@@ -860,6 +928,7 @@ async function parseWarmSideV1(input: {
   };
   const allFiles = [
     rawAllOn,
+    rawGeometryAuthority,
     normalizedAllOn,
     normalizedAccepted,
     ...bracketFiles,
@@ -868,16 +937,22 @@ async function parseWarmSideV1(input: {
     readExact(file.filePath, file.sha256, input.side + ' ' + file.assetId)));
   return {
     rawAllOn,
+    rawGeometryAuthority,
+    geometryAuthorityRole,
     normalizedAllOn,
     normalizedCard: normalizedAccepted,
     photometricExposureBracket,
     rawToNormalizedTransform,
+    observedOuterContour: {
+      raw: observedDenseContour,
+      normalized: normalizedDenseContour,
+    },
     normalizedCardBytes: await readExact(
       normalizedAccepted.filePath,
       normalizedAccepted.sha256,
       input.side + ' accepted-profile registration source',
     ),
-    geometry: recordOrEmpty(normalizedCard.geometry),
+    geometry,
     geometryCaptureDecisions: recordOrEmpty(manifest.geometryPolicy),
     captureTiming: recordOrEmpty(manifest.captureTiming),
     warmManifestSha256: exactSha(input.manifestSha256, input.side + ' warm manifest sha256'),
@@ -1073,7 +1148,10 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
   };
   const sideInput = (side: Side): FixedRigMathematicalCalibrationSideInputV1 => ({
     rawAllOn: warm[side].rawAllOn,
+    rawGeometryAuthority: warm[side].rawGeometryAuthority,
+    geometryAuthorityRole: warm[side].geometryAuthorityRole,
     rawToNormalizedTransform: warm[side].rawToNormalizedTransform,
+    observedOuterContour: warm[side].observedOuterContour,
     normalizedAllOn: warm[side].normalizedAllOn,
     normalizedCard: warm[side].normalizedCard,
     photometricExposureBracket: warm[side].photometricExposureBracket,
@@ -1135,6 +1213,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     },
     findingReviews: input.findingReviews,
     operatorResolutionAuthorities: input.operatorResolutionAuthorities,
+    forcedOperatorReviewElements: input.forcedOperatorReviewElements,
     report: {
       publication: input.authority.publication,
       geometry: {

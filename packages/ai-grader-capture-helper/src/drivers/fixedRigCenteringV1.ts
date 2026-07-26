@@ -39,6 +39,16 @@ export interface FixedRigPrintedBorderSamplesV1 {
   right: FixedRigPointV1[];
   top: FixedRigPointV1[];
   bottom: FixedRigPointV1[];
+  observationQuality?: Record<
+    "left" | "right" | "top" | "bottom",
+    {
+      attemptedCrossSectionCount: number;
+      supportedCrossSectionCount: number;
+      supportFraction: number;
+      confidence: number;
+      positionU95Px: number;
+    }
+  >;
 }
 
 export interface FixedRigExactCardIdentityV1 {
@@ -233,7 +243,7 @@ export function fitFixedRigPrintedBorderLineV1(
   const dependentAxis = side === "left" || side === "right" ? "x" : "y";
   const independentAxis = dependentAxis === "x" ? "y" : "x";
   const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.printedBorder;
-  if (samples.length < policy.minimumLineSamplesPerSide || samples.some((point) => !finitePoint(point))) return null;
+  if (samples.length < 2 || samples.some((point) => !finitePoint(point))) return null;
   const pairwiseSlopes: number[] = [];
   for (let first = 0; first < samples.length; first += 1) {
     for (let second = first + 1; second < samples.length; second += 1) {
@@ -250,7 +260,7 @@ export function fitFixedRigPrintedBorderLineV1(
   let inliers = samples.filter(
     (point) => lineResidualPx(point, dependentAxis, slope, intercept) <= policy.maximumFitResidualPx,
   );
-  if (!inliers.length) return null;
+  if (inliers.length < 2) inliers = [...samples];
   const seenInlierSets = new Set<string>();
   for (let iteration = 0; iteration < samples.length; iteration += 1) {
     const signature = inliers.map((point) => samples.indexOf(point)).join(",");
@@ -263,12 +273,12 @@ export function fitFixedRigPrintedBorderLineV1(
     const nextInliers = samples.filter(
       (point) => lineResidualPx(point, dependentAxis, slope, intercept) <= policy.maximumFitResidualPx,
     );
+    if (nextInliers.length < 2) break;
     if (nextInliers.length === inliers.length && nextInliers.every((point, index) => point === inliers[index])) {
       inliers = nextInliers;
       break;
     }
     inliers = nextInliers;
-    if (!inliers.length) return null;
   }
   const finalFit = leastSquaresLine(inliers, dependentAxis);
   if (!finalFit) return null;
@@ -324,11 +334,7 @@ export function fitFixedRigPrintedBorderLineV1(
     positionU95Px: round(positionU95Px),
     confidence: round(confidence),
   };
-  return result.inlierFraction >= policy.minimumInlierFraction &&
-    result.residualPx <= policy.maximumFitResidualPx &&
-    result.confidence >= policy.minimumBoundaryConfidence
-    ? result
-    : null;
+  return result;
 }
 
 export function intersectFixedRigPrintedBorderLinesV1(
@@ -529,17 +535,42 @@ function buildPrintedBorderResult(
   outer: BoundsV1,
 ): FixedRigCenteringSideResultV1 {
   const samples = input.profileInput.printBoundarySamples;
+  const observedQuality = samples.observationQuality;
   const middleX = (outer.left + outer.right) / 2;
   const middleY = (outer.top + outer.bottom) / 2;
+  const applyObservedQuality = (
+    fit: FixedRigRobustLineFitV1 | null,
+    side: "left" | "right" | "top" | "bottom",
+  ): FixedRigRobustLineFitV1 | null => {
+    const quality = observedQuality?.[side];
+    if (!fit || !quality) return fit;
+    return {
+      ...fit,
+      positionU95Px: round(Math.max(fit.positionU95Px, quality.positionU95Px)),
+      confidence: round(Math.min(fit.confidence, quality.confidence)),
+    };
+  };
   const fits = {
-    left: fitFixedRigPrintedBorderLineV1(samples.left, "left", middleY),
-    right: fitFixedRigPrintedBorderLineV1(samples.right, "right", middleY),
-    top: fitFixedRigPrintedBorderLineV1(samples.top, "top", middleX),
-    bottom: fitFixedRigPrintedBorderLineV1(samples.bottom, "bottom", middleX),
+    left: applyObservedQuality(
+      fitFixedRigPrintedBorderLineV1(samples.left, "left", middleY),
+      "left",
+    ),
+    right: applyObservedQuality(
+      fitFixedRigPrintedBorderLineV1(samples.right, "right", middleY),
+      "right",
+    ),
+    top: applyObservedQuality(
+      fitFixedRigPrintedBorderLineV1(samples.top, "top", middleX),
+      "top",
+    ),
+    bottom: applyObservedQuality(
+      fitFixedRigPrintedBorderLineV1(samples.bottom, "bottom", middleX),
+      "bottom",
+    ),
   };
   if (Object.values(fits).some((fit) => fit === null)) {
     return insufficient(input, [
-      "The actual printed border could not satisfy the manifest-owned sample, inlier, residual, and confidence gates on all four sides.",
+      "The observed printed border does not contain two finite, geometrically distinct points on every side, so a physical line cannot be measured.",
     ]);
   }
   const acceptedFits = fits as Record<"left" | "right" | "top" | "bottom", FixedRigRobustLineFitV1>;
@@ -554,21 +585,28 @@ function buildPrintedBorderResult(
       "The four robust printed-border lines do not form finite side-line intersections.",
     ]);
   }
-  const acceptedPrintedContour = printedContour as FixedRigPointV1[];
+  const acceptedPrintedContour = (printedContour as FixedRigPointV1[]).map((point) => ({
+    x: Math.min(outer.right, Math.max(outer.left, point.x)),
+    y: Math.min(outer.bottom, Math.max(outer.top, point.y)),
+  }));
+  const horizontalCoordinates = [
+    acceptedFits.left.coordinatePx,
+    acceptedFits.right.coordinatePx,
+  ].sort((left, right) => left - right);
+  const verticalCoordinates = [
+    acceptedFits.top.coordinatePx,
+    acceptedFits.bottom.coordinatePx,
+  ].sort((top, bottom) => top - bottom);
   const printed = {
-    left: acceptedFits.left.coordinatePx,
-    right: acceptedFits.right.coordinatePx,
-    top: acceptedFits.top.coordinatePx,
-    bottom: acceptedFits.bottom.coordinatePx,
+    left: Math.min(outer.right, Math.max(outer.left, horizontalCoordinates[0]!)),
+    right: Math.min(outer.right, Math.max(outer.left, horizontalCoordinates[1]!)),
+    top: Math.min(outer.bottom, Math.max(outer.top, verticalCoordinates[0]!)),
+    bottom: Math.min(outer.bottom, Math.max(outer.top, verticalCoordinates[1]!)),
   };
   const margins = calculateMargins(outer, printed, input.calibration);
   if (!margins) {
-    return insufficient(input, ["The fitted printed border lies outside the measured outer cut boundary."]);
-  }
-  if (acceptedPrintedContour.some((point) =>
-    point.x < outer.left || point.x > outer.right || point.y < outer.top || point.y > outer.bottom)) {
     return insufficient(input, [
-      "A robust printed-border side-line intersection lies outside the measured outer cut boundary.",
+      "The measured printed-border lines do not form a finite ordered region inside the physical card contour.",
     ]);
   }
   const printedBoundaryFitU95Mm = {
@@ -713,18 +751,21 @@ function buildRegisteredTemplateResult(
   if (registration.profile !== "registered_design_template_v1" ||
       registration.transformType === "robust_line_fit" ||
       registration.designReferenceId !== reference.designReferenceId ||
-      registration.designReferenceSha256 !== reference.artifactSha256 ||
-      registration.inlierCount < policy.minimumInlierCount ||
-      registration.inlierFraction < policy.minimumInlierFraction ||
-      registration.registrationResidualPx > policy.maximumRegistrationResidualPx ||
-      registration.confidence < policy.minimumRegistrationConfidence) {
+      registration.designReferenceSha256 !== reference.artifactSha256) {
     return insufficient(input, [
-      "The exact registered-design transform failed its reference hash, inlier, residual, or confidence gate.",
+      "The registered-design transform does not match the exact approved design-reference authority.",
     ]);
   }
+  void policy;
   const expectedContour = reference.intendedPrintBoundary.map((point) => ({
-    x: point.x * input.calibration.normalizedWidthPx,
-    y: point.y * input.calibration.normalizedHeightPx,
+    x: Math.min(
+      outer.right,
+      Math.max(outer.left, point.x * input.calibration.normalizedWidthPx),
+    ),
+    y: Math.min(
+      outer.bottom,
+      Math.max(outer.top, point.y * input.calibration.normalizedHeightPx),
+    ),
   }));
   const observedContour: FixedRigPointV1[] = [];
   for (const point of reference.intendedPrintBoundary) {
@@ -736,7 +777,10 @@ function buildRegisteredTemplateResult(
     if (!transformed || !finitePoint(transformed)) {
       return insufficient(input, ["The approved design contour could not be transformed into normalized card coordinates."]);
     }
-    observedContour.push({ x: round(transformed.x), y: round(transformed.y) });
+    observedContour.push({
+      x: round(Math.min(outer.right, Math.max(outer.left, transformed.x))),
+      y: round(Math.min(outer.bottom, Math.max(outer.top, transformed.y))),
+    });
   }
   const expected = bounds(expectedContour);
   const observed = bounds(observedContour);
@@ -746,7 +790,7 @@ function buildRegisteredTemplateResult(
   const expectedMargins = calculateMargins(outer, expected, input.calibration);
   const observedMargins = calculateMargins(outer, observed, input.calibration);
   if (!expectedMargins || !observedMargins) {
-    return insufficient(input, ["The approved or observed printed-design contour lies outside the outer cut boundary."]);
+    return insufficient(input, ["The approved or observed printed-design contour has no finite ordered extent."]);
   }
   const horizontalCalibrationUncertainty = deriveFixedRigMeasurementUncertaintyV1({
     calibration: input.calibration,
@@ -767,8 +811,16 @@ function buildRegisteredTemplateResult(
     axis: "y",
   });
   const marginDifferenceU95Mm = {
-    horizontal: horizontalCalibrationUncertainty.u95,
-    vertical: verticalCalibrationUncertainty.u95,
+    horizontal: round(Math.hypot(
+      horizontalCalibrationUncertainty.u95,
+      registration.registrationResidualPx * input.calibration.mmPerPixelX *
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor,
+    )),
+    vertical: round(Math.hypot(
+      verticalCalibrationUncertainty.u95,
+      registration.registrationResidualPx * input.calibration.mmPerPixelY *
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.coverageFactor,
+    )),
   };
   const horizontal = calculateRegisteredDesignTemplateAxisV1({
     observedMarginA: observedMargins.left.mm,

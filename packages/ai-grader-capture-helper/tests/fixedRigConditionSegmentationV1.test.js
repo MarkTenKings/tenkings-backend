@@ -71,6 +71,10 @@ function photometric(side, options = {}) {
     ? plane(width, height, (_x, _y, index) =>
         options.admissionExcluded.includes(index) ? 1 : 0).data
     : undefined;
+  const admissionExcludedTopologyMask = options.topologyAdmissionExcluded
+    ? plane(width, height, (_x, _y, index) =>
+        options.topologyAdmissionExcluded.includes(index) ? 1 : 0).data
+    : undefined;
   return {
     version: "fixed_rig_photometric_evidence_v1",
     status: "computed",
@@ -91,6 +95,7 @@ function photometric(side, options = {}) {
     flatFieldCorrectionApplied: true,
     channels,
     commonModeResponse: new Float32Array(width * height).fill(0.5),
+    staticAppearanceAmbiguityMask: new Uint8Array(width * height),
     calibratedPatternScale: new Float32Array(width * height),
     calibratedPatternSimilarity: new Float32Array(width * height),
     usableDirectionalObservationCount: plane(width, height, (_x, _y, index) =>
@@ -103,7 +108,9 @@ function photometric(side, options = {}) {
     lowConfidenceMask: new Uint8Array(width * height),
     insufficientDirectionalObservationsMask: invalidMask,
     invalidIlluminationMask: invalidMask,
+    ungradableRegions: [],
     ...(admissionExcludedCommonModeMask ? { admissionExcludedCommonModeMask } : {}),
+    ...(admissionExcludedTopologyMask ? { admissionExcludedTopologyMask } : {}),
     coverage: {
       validPixelCount: width * height - invalid.size,
       totalPixelCount: width * height,
@@ -185,6 +192,7 @@ function basePlanes(width = WIDTH, height = HEIGHT) {
   return {
     normalizedLuminance: plane(width, height, 0.5),
     expectedOuterCardMask: plane(width, height, 1),
+    observedCardMaterialMask: plane(width, height, 1),
     materialPresenceConfidence: plane(width, height, 1),
     segmentationConfidence: plane(width, height, 1),
     boundaryConfidence: plane(width, height, 1),
@@ -253,6 +261,7 @@ function buildInput(side = "front", overrides = {}) {
     },
     photometricEvidence: photometric(side),
     measurementCalibration: measurementCalibration(),
+    observedBoundaryU95Mm: 0.01,
     algorithmVersion: "mathematical-condition-v1.0.0",
     sourceEvidence: [
       {
@@ -276,15 +285,15 @@ test("condition detector identity and every source threshold are centralized", (
   assert.equal(policy.regionGeometry.edgeRoiDepthMm, 2);
   assert.equal(policy.evidenceThresholds.minimumScratchLineResponse, 0.6);
   assert.equal(policy.invalidPixelsMayBecomePhysicalDefects, false);
-  assert.equal(
-    policy.excludedEvidenceCoveragePolicy.minimumFullCardValidPixelCoverage,
-    0.7,
-  );
-  assert.equal(
-    policy.excludedEvidenceCoveragePolicy.minimumContiguousUngradableRegionPixels,
-    12,
-  );
   assert.equal(policy.excludedEvidenceCoveragePolicy.recoveredEvidenceMayProceed, true);
+  assert.match(
+    policy.excludedEvidenceCoveragePolicy.wholeSideVetoPolicy,
+    /never vetoes a sealed observed card contour/i,
+  );
+  assert.match(
+    policy.excludedEvidenceCoveragePolicy.localizedCoveragePolicy,
+    /never veto/i,
+  );
   assert.equal(policy.arbitrarySymmetryOrInternetReferenceAllowed, false);
 });
 
@@ -294,9 +303,9 @@ test("known-size corner whitening, chip, shape, deformation, delamination, and r
   setRect(input.planes.materialPresenceConfidence, 10, 2, 2, 2, 0.1);
   setRect(input.planes.chipDepthMm, 10, 2, 2, 2, 0.5);
   setRect(input.planes.boundaryDeviationMm, 14, 2, 2, 2, 0.25);
-  setRect(input.planes.deformationResponse, 18, 2, 2, 2, 0.5);
-  setRect(input.planes.delaminationResponse, 18, 6, 2, 2, 0.5);
-  setRect(input.planes.reliefIndex, 18, 10, 2, 2, 0.5);
+  setRect(input.planes.deformationResponse, 14, 2, 2, 2, 0.5);
+  setRect(input.planes.delaminationResponse, 14, 2, 2, 2, 0.5);
+  setRect(input.planes.reliefIndex, 14, 2, 2, 2, 0.5);
 
   const segmented = buildFixedRigConditionSegmentationV1(input);
   assert.equal(segmented.status, "computed");
@@ -330,6 +339,52 @@ test("known-size corner whitening, chip, shape, deformation, delamination, and r
   assert.ok(allMeasurements.some((entry) => entry.kind === "relief_index" && entry.measuredMeasurement === 0.5));
 });
 
+test("one photometric response cannot corroborate itself, while independent material evidence remains measurable", () => {
+  const reliefOnly = buildInput();
+  setRect(reliefOnly.planes.reliefIndex, 0, 0, WIDTH, 8, 0.5);
+  const ambiguous = buildFixedRigConditionSegmentationV1(reliefOnly);
+  assert.equal(ambiguous.status, "computed");
+  const ambiguousCorner = measureFixedRigCornerObservationV1(
+    ambiguous.cornerObservations.find((entry) => entry.location === "top_left"),
+  );
+  const ambiguousEdge = measureFixedRigEdgeObservationV1(
+    ambiguous.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(ambiguousCorner.status, "computed");
+  assert.equal(ambiguousEdge.status, "computed");
+  assert.equal(ambiguousCorner.findings.length, 0);
+  assert.equal(ambiguousEdge.findings.length, 0);
+
+  const circular = buildInput();
+  setRect(circular.planes.reliefIndex, 0, 0, WIDTH, 8, 0.5);
+  setRect(circular.planes.deformationResponse, 0, 0, WIDTH, 8, 0.5);
+  setRect(circular.planes.delaminationResponse, 0, 0, WIDTH, 8, 0.5);
+  const circularResult = buildFixedRigConditionSegmentationV1(circular);
+  assert.equal(circularResult.status, "computed");
+  const circularEdge = measureFixedRigEdgeObservationV1(
+    circularResult.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(circularEdge.status, "computed");
+  assert.equal(circularEdge.findings.length, 0);
+
+  const physical = buildInput();
+  setRect(physical.planes.reliefIndex, 0, 0, WIDTH, 8, 0.5);
+  setRect(physical.planes.deformationResponse, 0, 0, WIDTH, 8, 0.5);
+  setRect(physical.planes.exposedFiberResponse, 0, 0, WIDTH, 8, 0.8);
+  const corroborated = buildFixedRigConditionSegmentationV1(physical);
+  assert.equal(corroborated.status, "computed");
+  const measuredEdge = measureFixedRigEdgeObservationV1(
+    corroborated.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(measuredEdge.status, "computed");
+  assert.equal(measuredEdge.findings.length, 1);
+  assert.ok(measuredEdge.findings[0].featurePixelCounts.directionalRelief > 0);
+  assert.ok(measuredEdge.findings[0].measurements.some(
+    (measurement) => measurement.kind === "relief_index" &&
+      measurement.measuredMeasurement === 0.5,
+  ));
+});
+
 test("known-size top-edge damage measures exact length/depth without corner overlap", () => {
   const input = buildInput();
   setRect(input.planes.materialPresenceConfidence, 30, 0, 20, 2, 0.1);
@@ -345,6 +400,15 @@ test("known-size top-edge damage measures exact length/depth without corner over
   const measured = measureFixedRigEdgeObservationV1(top);
   assert.equal(measured.status, "computed");
   assert.equal(measured.findings.length, 1, "overlapping evidence is one physical component");
+  assert.equal(measured.findings[0].featurePixelCounts.damage, 0);
+  assert.equal(
+    [
+      measured.findings[0].finding.category,
+      ...measured.findings[0].finding.secondaryEvidenceCategories,
+    ].includes("edge_damage"),
+    false,
+    "specialized physical evidence is not copied into a duplicate generic edge-damage deduction",
+  );
   assert.ok(measured.findings[0].measurements.some((entry) =>
     entry.kind === "length_mm" && entry.measuredMeasurement === 5,
   ));
@@ -361,6 +425,32 @@ test("known-size top-edge damage measures exact length/depth without corner over
     [...segmented.cornerObservations[0].missingMaterialMask.data].reduce((sum, value) => sum + value, 0),
     0,
   );
+});
+
+test("private contour U95 removes only unsupported defect claims and never vetoes the grade", () => {
+  const lowU95 = buildInput();
+  setRect(lowU95.planes.edgeRoughnessIndex, 30, 0, 20, 2, 1);
+  setRect(lowU95.planes.frayingResponse, 30, 0, 20, 2, 1);
+  const lowResult = buildFixedRigConditionSegmentationV1(lowU95);
+  const lowEdge = measureFixedRigEdgeObservationV1(
+    lowResult.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(lowResult.status, "computed");
+  assert.equal(lowEdge.status, "computed");
+  assert.ok(lowEdge.findings.length > 0);
+
+  const highU95 = buildInput();
+  highU95.observedBoundaryU95Mm = 0.6;
+  setRect(highU95.planes.edgeRoughnessIndex, 30, 0, 20, 2, 1);
+  setRect(highU95.planes.frayingResponse, 30, 0, 20, 2, 1);
+  const highResult = buildFixedRigConditionSegmentationV1(highU95);
+  const highEdge = measureFixedRigEdgeObservationV1(
+    highResult.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(highResult.status, "computed");
+  assert.equal(highEdge.status, "computed");
+  assert.equal(highEdge.findings.length, 0);
+  assert.ok(highEdge.validEvidenceCoverage > 0);
 });
 
 test("surface source planes create measured scratch/scuff/dent/crease/stain/print/residue seeds and real deductions", () => {
@@ -412,7 +502,7 @@ test("surface source planes create measured scratch/scuff/dent/crease/stain/prin
   assert.ok(surface.score < 10, "real source evidence still deducts");
 });
 
-test("invalid evidence becomes neither a corner defect nor clean Grade-10 proof", () => {
+test("invalid evidence becomes neither a corner defect nor a whole-corner measurement veto", () => {
   const invalidPixel = 2 * WIDTH + 2;
   const input = buildInput("front", { photometricEvidence: photometric("front", { invalid: [invalidPixel] }) });
   input.planes.exposedFiberResponse.data[invalidPixel] = 1;
@@ -425,12 +515,14 @@ test("invalid evidence becomes neither a corner defect nor clean Grade-10 proof"
   const topLeft = segmented.cornerObservations.find((entry) => entry.location === "top_left");
   assert.equal(topLeft.whiteningMask.data[2 * topLeft.whiteningMask.width + 2], 0);
   const measured = measureFixedRigCornerObservationV1(topLeft);
-  assert.equal(measured.status, "insufficient_evidence");
-  assert.equal(measured.cardDefectDeduction, 0);
-  assert.match(measured.reasons.join(" "), /clean Grade-10.*complete valid-pixel coverage/i);
+  assert.equal(measured.status, "computed");
+  assert.equal(measured.penalty, 0);
+  assert.equal(measured.validEvidenceCoverage, 1);
+  assert.ok(segmented.validEvidenceCoverage < 1);
+  assert.equal(measured.findings.length, 0);
 });
 
-test("manifest coverage policy permits small excluded evidence but fails a contiguous ungradable region", () => {
+test("localized excluded evidence lowers private quality without a whole-side veto", () => {
   const small = buildInput();
   setRect(small.planes.segmentationConfidence, 30, 40, 11, 1, 0);
   const recovered = buildFixedRigConditionSegmentationV1(small);
@@ -442,14 +534,15 @@ test("manifest coverage policy permits small excluded evidence but fails a conti
 
   const obscured = buildInput();
   setRect(obscured.planes.segmentationConfidence, 30, 40, 4, 3, 0);
-  const insufficient = buildFixedRigConditionSegmentationV1(obscured);
-  assert.equal(insufficient.status, "insufficient_evidence");
-  assert.equal(insufficient.requiresRecapture, true);
-  assert.equal(insufficient.cardDefectDeduction, 0);
+  const measured = buildFixedRigConditionSegmentationV1(obscured);
+  assert.equal(measured.status, "computed");
+  assert.equal(measured.invalidPixelsBecameDefects, false);
+  assert.equal(measured.invalidPixelsProvedClean, false);
   assert.match(
-    insufficient.reasons.join(" "),
-    /contiguous expected-card region.*12-pixel ungradable threshold/i,
+    measured.evidenceQualityLimitations.map((entry) => entry.message).join(" "),
+    /coverage remains private evidence-quality context and does not erase observable measurements/i,
   );
+  assert.equal(measured.evidenceQualityLimitations[0].requiresRecapture, false);
 });
 
 test("admitted deep-interior common-mode region cannot re-fail topology or become a defect", () => {
@@ -469,12 +562,121 @@ test("admitted deep-interior common-mode region cannot re-fail topology or becom
   }
   const segmented = buildFixedRigConditionSegmentationV1(input);
   assert.equal(segmented.status, "computed");
-  assert.equal(segmented.validEvidenceCoverage, 1);
+  assert.equal(segmented.validEvidenceCoverage, 0.998229);
+  assert.equal(segmented.excludedExpectedPixelFraction, 0.001771);
+  assert.equal(segmented.evidenceQualityLimitations[0].requiresRecapture, false);
   assert.equal(admitted.every((index) =>
     segmented.conditionValidEvidenceMask.data[index] === 0), true);
   assert.equal(segmented.surfaceCandidateSeeds.every((seed) =>
     admitted.every((index) => seed.candidateMask.data[index] === 0)), true);
   assert.equal(segmented.invalidPixelsBecameDefects, false);
+});
+
+test("observable localized fog is excluded from scoring and lowers coverage without a whole-side veto", () => {
+  const fog = [];
+  for (let region = 0; region < 14; region += 1) {
+    const startX = 30 + (region % 4) * 10;
+    const startY = 30 + Math.floor(region / 4) * 10;
+    for (let offset = 0; offset < 12; offset += 1) {
+      fog.push(
+        (startY + Math.floor(offset / 4)) * WIDTH +
+        startX + (offset % 4),
+      );
+    }
+  }
+  const input = buildInput("front", {
+    photometricEvidence: photometric("front", {
+      invalid: fog,
+      topologyAdmissionExcluded: fog,
+    }),
+  });
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.equal(segmented.validEvidenceCoverage, (WIDTH * HEIGHT - fog.length) / (WIDTH * HEIGHT));
+  assert.equal(segmented.excludedExpectedPixelFraction, fog.length / (WIDTH * HEIGHT));
+  assert.equal(segmented.evidenceQualityLimitations[0].requiresRecapture, false);
+  assert.equal(fog.every((index) =>
+    segmented.conditionValidEvidenceMask.data[index] === 0), true);
+  assert.equal(segmented.invalidPixelsBecameDefects, false);
+  assert.equal(segmented.invalidPixelsProvedClean, false);
+});
+
+test("a visible sealed contour remains measurable when directional texture evidence is entirely foggy", () => {
+  const invalid = Array.from({ length: WIDTH * HEIGHT }, (_, index) => index);
+  const input = buildInput("front", {
+    photometricEvidence: photometric("front", { invalid }),
+  });
+  input.planes.exposedFiberResponse.data.fill(1);
+  input.planes.deformationResponse.data.fill(1);
+  input.planes.edgeRoughnessIndex.data.fill(1);
+
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.equal(
+    Array.from(segmented.conditionValidEvidenceMask.data).every((value) => value === 0),
+    true,
+  );
+
+  const corner = measureFixedRigCornerObservationV1(
+    segmented.cornerObservations.find((entry) => entry.location === "top_left"),
+  );
+  const edge = measureFixedRigEdgeObservationV1(
+    segmented.edgeObservations.find((entry) => entry.location === "top"),
+  );
+  assert.equal(corner.status, "computed", JSON.stringify(corner));
+  assert.equal(edge.status, "computed", JSON.stringify(edge));
+  assert.ok(corner.validEvidenceCoverage > 0);
+  assert.ok(edge.validEvidenceCoverage > 0);
+  assert.equal(corner.usableDirectionalChannelCount, 0);
+  assert.equal(edge.usableDirectionalChannelCount, 0);
+  assert.equal(corner.findings.length, 0);
+  assert.equal(edge.findings.length, 0);
+});
+
+test("private contour confidence below the old threshold does not erase observable corners or edges", () => {
+  const input = buildInput();
+  input.planes.boundaryConfidence.data.fill(0.68);
+
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  const corner = measureFixedRigCornerObservationV1(
+    segmented.cornerObservations.find((entry) => entry.location === "top_left"),
+  );
+  const edge = measureFixedRigEdgeObservationV1(
+    segmented.edgeObservations.find((entry) => entry.location === "top"),
+  );
+
+  assert.equal(segmented.status, "computed");
+  assert.equal(corner.status, "computed", JSON.stringify(corner));
+  assert.equal(edge.status, "computed", JSON.stringify(edge));
+  assert.ok(corner.validEvidenceCoverage > 0);
+  assert.ok(edge.validEvidenceCoverage > 0);
+  assert.ok(input.planes.boundaryConfidence.data[0] <
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.conditionSegmentation.evidenceThresholds.minimumBoundaryConfidence);
+});
+
+test("photometrically invalid pixels cannot become surface candidates", () => {
+  const invalid = [];
+  for (let y = 40; y < 44; y += 1) {
+    for (let x = 20; x < 30; x += 1) invalid.push(y * WIDTH + x);
+  }
+  const input = buildInput("front", {
+    photometricEvidence: photometric("front", { invalid }),
+  });
+  for (const index of invalid) {
+    input.planes.scratchLineResponse.data[index] = 1;
+    input.planes.scuffTextureResponse.data[index] = 1;
+    input.planes.deformationResponse.data[index] = 1;
+    input.planes.creaseLineResponse.data[index] = 1;
+    input.planes.reliefIndex.data[index] = 1;
+    input.planes.registeredColorDeltaE.data[index] = 10;
+    input.planes.registeredPrintDeltaE.data[index] = 10;
+    input.planes.registeredResidueDeltaE.data[index] = 10;
+  }
+
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.equal(segmented.surfaceCandidateSeeds.every((seed) =>
+    invalid.every((index) => seed.candidateMask.data[index] === 0)), true);
 });
 
 test("printed-border condition can proceed without design-relative color while identity mismatch fails", () => {

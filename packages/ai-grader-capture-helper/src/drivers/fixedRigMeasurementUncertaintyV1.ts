@@ -17,6 +17,8 @@ export interface DeriveFixedRigMeasurementUncertaintyV1Input {
   kind: MathematicalMeasurementKindV1;
   measuredMeasurement: number;
   axis?: FixedRigMeasurementAxisV1;
+  /** Observable fraction of the exact ROI. Omit only for non-image measurements. */
+  validEvidenceCoverage?: number;
 }
 
 export interface DerivedFixedRigMeasurementUncertaintyV1 {
@@ -30,6 +32,7 @@ export interface DerivedFixedRigMeasurementUncertaintyV1 {
   u95: number;
   source: "finalized_calibration_profile";
   formula: string;
+  validEvidenceCoverage?: number;
 }
 
 const LINEAR_KINDS = new Set<MathematicalMeasurementKindV1>([
@@ -176,6 +179,32 @@ export function deriveFixedRigMeasurementUncertaintyV1(
       `${input.kind} uncertainty must be derived from its physical source measurements, not supplied as a free-standing scalar.`,
     );
   }
+  if (input.validEvidenceCoverage !== undefined) {
+    if (
+      !Number.isFinite(input.validEvidenceCoverage) ||
+      input.validEvidenceCoverage <= 0 ||
+      input.validEvidenceCoverage > 1
+    ) {
+      throw new RangeError(
+        "Valid evidence coverage must be greater than zero and no greater than one.",
+      );
+    }
+    const coveragePenalty =
+      componentsU95.segmentationBoundary *
+      (1 - input.validEvidenceCoverage) /
+      Math.sqrt(input.validEvidenceCoverage);
+    componentsU95 = {
+      ...componentsU95,
+      segmentationBoundary: round(
+        Math.hypot(
+          componentsU95.segmentationBoundary,
+          coveragePenalty,
+        ),
+      ),
+    };
+    formula +=
+      "; segmentation boundary U95 is expanded by the observed ROI coverage";
+  }
   return {
     version: FIXED_RIG_MEASUREMENT_UNCERTAINTY_V1_VERSION,
     calibrationProfileId: profile.profileId,
@@ -187,5 +216,8 @@ export function deriveFixedRigMeasurementUncertaintyV1(
     u95: combineMeasurementUncertaintyU95(componentsU95),
     source: "finalized_calibration_profile",
     formula,
+    ...(input.validEvidenceCoverage !== undefined
+      ? { validEvidenceCoverage: round(input.validEvidenceCoverage) }
+      : {}),
   };
 }

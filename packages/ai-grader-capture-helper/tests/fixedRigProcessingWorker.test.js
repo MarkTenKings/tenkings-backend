@@ -277,8 +277,6 @@ function authorityInput(batch) {
     packageId: batch.packageId,
     side: batch.side,
     allOn: batch.batch.captures.allOn,
-    acceptedProfile: batch.batch.captures.acceptedProfile,
-    channels: batch.batch.captures.channels,
   };
 }
 
@@ -332,7 +330,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     assert.equal(response.ok, true);
     assert.deepEqual(response.identity, request.identity);
     assert.equal(response.authority.source.geometry.detectionPolicy, "captured_evidence_full");
-    assert.match(response.authority.source.geometry.detection.method, /v3/i);
+    assert.equal(response.authority.source.geometry.detection.method, "solid_plate_color_component_pca_v2");
     assert.equal(response.authority.source.geometry.placementState, "ready");
     assert.ok(eventLoopTicks >= 2, `expected event-loop progress during worker detection, observed ${eventLoopTicks} ticks`);
     const workerDurationMs = Date.now() - workerStartedAt;
@@ -348,7 +346,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     await controller.shutdown("test complete");
   });
 
-  await t.test("production runner consumes one revalidated authority and preserves v3 normalization and raw bytes", async () => {
+  await t.test("production runner consumes one revalidated dense authority and preserves normalization and raw bytes", async () => {
     const runner = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: fixture.root });
     let result;
     try {
@@ -384,7 +382,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
     const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
     assert.equal(authority.source.geometry.detectionPolicy, "captured_evidence_full");
-    assert.match(authority.source.geometry.detection.method, /v3/i);
+    assert.equal(authority.source.geometry.detection.method, "solid_plate_color_component_pca_v2");
     assert.equal(manifest.front.normalizedCard.geometry.placementState, "ready");
     assert.equal(fs.existsSync(manifest.front.normalizedCard.normalizedArtifact.localOutputPath), true);
     assert.deepEqual(fixture.sources.map(hash), immutableHashes);
@@ -407,7 +405,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
         captureBatch: tiffFixture.batch,
       });
       assert.equal(tiffResponse.authority.source.geometry.detectionPolicy, "captured_evidence_full");
-      assert.match(tiffResponse.authority.source.geometry.detection.method, /v3/i);
+      assert.equal(tiffResponse.authority.source.geometry.detection.method, "solid_plate_color_component_pca_v2");
       assert.equal(tiffResponse.authority.source.geometry.placementState, "ready");
       assert.equal(tiffResponse.authority.source.geometry.timestamp, TIMESTAMP);
     } finally {
@@ -583,18 +581,20 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       () => validateFixedRigProcessingWorkerRequest(forgedRoleOrder),
       /native capture roles are missing, duplicated, or out of order/i,
     );
-    const canonicalizedConsumer = authorityInput(bracketFixture.batch);
-    canonicalizedConsumer.channels = canonicalizedConsumer.channels.map((entry, index) => ({
-      ...entry,
-      role: `channel_${index + 1}`,
-    }));
+    const forbiddenSecondaryGeometryInputs = {
+      ...authorityInput(bracketFixture.batch),
+      acceptedProfile:
+        bracketFixture.batch.batch.captures.acceptedProfile,
+      channels:
+        bracketFixture.batch.batch.captures.channels,
+    };
     await assert.rejects(
       validateFixedRigProcessingWorkerAuthorityInput(
         bracketRequest,
-        canonicalizedConsumer,
+        forbiddenSecondaryGeometryInputs,
         bracketFixture.root,
       ),
-      /authority roles were missing, duplicated, or reordered/i,
+      /dense-contour authority input contains unsupported fields/i,
     );
 
     const unselectedLowExposureReference =
@@ -647,9 +647,9 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     equivalentTimestampBatch.batch.captures.allOn.capture.timestamp = "2026-07-09T16:00:00-04:00";
     await validateFixedRigProcessingWorkerAuthorityInput(request, authorityInput(equivalentTimestampBatch), fixture.root);
     const changedInput = authorityInput(fixture.batch);
-    changedInput.acceptedProfile = {
-      ...changedInput.acceptedProfile,
-      capture: { ...changedInput.acceptedProfile.capture, timestamp: "2026-07-09T20:00:01.000Z" },
+    changedInput.allOn = {
+      ...changedInput.allOn,
+      capture: { ...changedInput.allOn.capture, timestamp: "2026-07-09T20:00:01.000Z" },
     };
     await assert.rejects(
       validateFixedRigProcessingWorkerAuthorityInput(request, changedInput, fixture.root),
@@ -667,20 +667,21 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     );
   });
 
-  await t.test("authority validation rejects injected fields, dropped/duplicate roles, and altered PR92 consensus", () => {
+  await t.test("single-source dense authority rejects injected fields and altered source geometry", () => {
     validateFixedRigProcessingWorkerAuthority(request, response.authority);
-    for (const mutate of [
+    for (const [mutationIndex, mutate] of [
       (authority) => { authority.imageBody = "forbidden"; },
+      (authority) => { authority.consensus = { agreeingRoles: ["all_on"] }; },
+      (authority) => { authority.inspectedRoles = []; },
+      (authority) => { authority.primaryRole = "all_on"; },
+      (authority) => { authority.authoritativeRole = "all_on"; },
       (authority) => { authority.source.geometry.localPath = "C:\\private\\card.png"; },
       (authority) => { authority.source.geometry.placement.unexpected = true; },
       (authority) => { authority.source.geometry.detection.unexpected = true; },
       (authority) => { authority.source.geometry.corners.topLeft.z = 1; },
-      (authority) => { authority.inspectedRoles.pop(); },
-      (authority) => { authority.inspectedRoles[1] = clone(authority.inspectedRoles[0]); },
-      (authority) => { authority.consensus.maximumCornerDeltaPixels += 0.5; },
       (authority) => { authority.source.geometry.corners.topLeft.x += 2; },
       (authority) => { authority.source.geometry.boundingBox.x += 1; },
-      (authority) => { authority.consensus.agreeingRoles = ["all_on"]; },
+      (authority) => { authority.source.role = "accepted_profile"; },
       (authority) => {
         authority.source.image.coordinateFrame = "data:image/png;base64,AAAA";
         authority.source.geometry.image.coordinateFrame = "data:image/png;base64,AAAA";
@@ -688,7 +689,6 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       (authority) => { authority.source.geometry.semanticOrientation.basis = "https://private.invalid/geometry"; },
       (authority) => { authority.source.geometry.semanticOrientation.contentUprightVerified = "false"; },
       (authority) => { authority.source.geometry.warnings = ["diagnostic at /private/captured/card.png"]; },
-      (authority) => { authority.inspectedRoles[0].warnings = ["file:///C:/private/card.png"]; },
       (authority) => { authority.source.geometry.warnings = ["data:image/png;base64,AAAA"]; },
       (authority) => { authority.source.geometry.warnings = ["source=https://private.invalid/card"]; },
       (authority) => { authority.source.geometry.warnings = ["path=/srv/private/card.png"]; },
@@ -704,7 +704,7 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
       (authority) => { authority.source.geometry.placement.withinFrame = "true"; },
       (authority) => { authority.source.geometry.placement.centerOffsetPixels.x = Number.POSITIVE_INFINITY; },
       (authority) => {
-        authority.source.geometry.placement.minReadyConfidence = 1;
+        authority.source.geometry.placement.minReadyConfidence = 2;
         authority.source.geometry.placement.confidenceReady = true;
       },
       (authority) => {
@@ -712,38 +712,17 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
         authority.source.geometry.placement.withinNormalizationSkewTolerance = true;
       },
       (authority) => { authority.source.geometry.detection.analysisWidth = "960"; },
-      (authority) => { authority.source.geometry.detection.method = "manual_override_no_automatic_detection"; },
-      (authority) => { authority.source.geometry.detection.perimeterSidePolarity[0] = "unknown"; },
+      (authority) => { authority.source.geometry.detection.method = "perimeter_gradient_rectangle_v3"; },
       (authority) => {
-        const detection = authority.source.geometry.detection;
-        if (detection.method === "perimeter_gradient_rectangle_v3") delete detection.perimeterGradientStrength;
-        else delete detection.componentPixelFraction;
+        authority.source.geometry.detection.perimeterGradientStrength = 10;
       },
-      (authority) => {
-        const detection = authority.source.geometry.detection;
-        if (detection.method === "perimeter_gradient_rectangle_v3") detection.backgroundColor = { r: 0, g: 0, b: 0 };
-        else detection.perimeterGradientStrength = 10;
-      },
-      (authority) => { authority.inspectedRoles[0].placementState = "automatic"; },
-      (authority) => { authority.inspectedRoles[0].confidence = 2; },
-      (authority) => {
-        const inspection = authority.inspectedRoles.find((candidate) => candidate.role !== authority.authoritativeRole)
-          ?? authority.inspectedRoles[0];
-        inspection.placementState = "not_detected";
-        inspection.adjustmentReason = "low_confidence";
-        inspection.corners = null;
-        inspection.rotationDegrees = null;
-      },
-      (authority) => {
-        const inspection = authority.inspectedRoles.find((candidate) => candidate.role !== authority.authoritativeRole)
-          ?? authority.inspectedRoles[0];
-        inspection.placementState = "adjust_card";
-        inspection.adjustmentReason = "not_detected";
-      },
-    ]) {
+    ].entries()) {
       const authority = clone(response.authority);
       mutate(authority);
-      assert.throws(() => validateFixedRigProcessingWorkerAuthority(request, authority));
+      assert.throws(
+        () => validateFixedRigProcessingWorkerAuthority(request, authority),
+        `authority mutation ${mutationIndex} must be rejected`,
+      );
     }
     for (const warning of [
       "card.png",
@@ -754,9 +733,22 @@ test("compiled fixed-rig processing worker is isolated, exact, bounded, and term
     ]) {
       const authority = clone(response.authority);
       authority.source.geometry.warnings = [warning];
-      authority.inspectedRoles.find((inspection) => inspection.role === authority.authoritativeRole).warnings = [warning];
       assert.throws(() => validateFixedRigProcessingWorkerAuthority(request, authority));
     }
+  });
+
+  await t.test("worker accepts an exact dense contour when aspect, coverage, and confidence diagnostics are imperfect", () => {
+    const foggyAuthority = clone(response.authority);
+    foggyAuthority.source.geometry.confidence = 0.1;
+    foggyAuthority.source.geometry.placement.withinAspectTolerance = false;
+    foggyAuthority.source.geometry.placement.withinCoverageTolerance = false;
+    foggyAuthority.source.geometry.placement.confidenceReady = false;
+    delete foggyAuthority.source.geometry.detection.expectedAspectRatio;
+    delete foggyAuthority.source.geometry.detection.relativeAspectError;
+
+    assert.doesNotThrow(() =>
+      validateFixedRigProcessingWorkerAuthority(request, foggyAuthority));
+    assert.ok(foggyAuthority.source.geometry.observedDenseContour);
   });
 
   await t.test("one active plus twenty pending side jobs is bounded and shutdown drains all without overlap", async () => {

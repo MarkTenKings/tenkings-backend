@@ -26,7 +26,6 @@ import {
   type FixedRigWarmProcessingResult,
   type FixedRigWarmProcessingSubmission,
 } from "./fixedRigProcessingWorker";
-import { applyProvisionalMathematicalGeometryV1 } from "./provisionalMathematicalGeometryV1";
 import { FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION } from "./fixedRigProcessingWorkerProtocol";
 import {
   buildLeimacIdmuSafeOffFrames,
@@ -107,7 +106,10 @@ import {
 } from "@tenkings/shared";
 import {
   detectCardGeometryFromBuffer,
+  verifyCardGeometryObservedDenseContourV1,
+  verifyCardGeometrySensorPlaneCalibrationV1,
   type CardGeometryMetadata,
+  type CardGeometrySensorPlaneCalibrationV1,
   type CardGeometrySide,
   type CardPlacementState,
 } from "./cardGeometry";
@@ -199,6 +201,9 @@ import type {
   FixedRigMathematicalFindingReviewAssetV1,
   FixedRigMathematicalFindingReviewRequestV1,
   FixedRigMathematicalFindingReviewV1,
+  FixedRigOperatorResolutionWorkspaceAssetMetadataV1,
+  FixedRigOperatorResolutionWorkspaceAssetV1,
+  FixedRigOperatorResolutionWorkspaceV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
 import {
   FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
@@ -320,6 +325,23 @@ export interface AiGraderLocalStationMathematicalReviewAssetV1 {
   filePath: string;
 }
 
+export interface AiGraderLocalStationOperatorResolutionWorkspaceAssetV1 {
+  assetId: string;
+  requestSha256: string;
+  element: "centering" | "corners" | "edges" | "surface";
+  side: "front" | "back";
+  location: string;
+  evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
+  fileName: string;
+  contentType: "image/png";
+  sha256: string;
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+  measurementSummary: string[];
+  filePath: string;
+}
+
 type MathematicalCompletedResultV1 = Extract<
   BuildFixedRigMathematicalCalibrationStationPackageV1Result,
   { status: "completed" }
@@ -353,6 +375,7 @@ export type AiGraderLocalStationMathematicalExecutionV1 =
       attempt: number;
       v0FallbackUsed: false;
       request: FixedRigOperatorResolutionRequestV1;
+      workspace: FixedRigOperatorResolutionWorkspaceV1;
       unresolvedElements: Array<"centering" | "corners" | "edges" | "surface">;
     }
   | {
@@ -387,6 +410,10 @@ export interface AiGraderLocalStationMathematicalV1State {
   stagedDesignReferences: Partial<Record<"front" | "back", AiGraderLocalStationStagedDesignReferenceV1>>;
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   reviewAssets?: Record<string, AiGraderLocalStationMathematicalReviewAssetV1>;
+  operatorResolutionWorkspaceAssets?: Record<
+    string,
+    AiGraderLocalStationOperatorResolutionWorkspaceAssetV1
+  >;
   submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   operatorResolutionReceipts?: Array<{
     idempotencyKey: string;
@@ -773,8 +800,6 @@ export interface AiGraderLocalStationBridgeConfigInput {
   mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
   mathematicalCalibrationV1_2LocalAuthorityConfig?:
     Omit<DurableMathematicalCalibrationV1_2LocalSessionAuthorityConfig, "outputRoot"> & { outputRoot?: string };
-  provisionalGeometryArtifactPath?: string;
-  provisionalGeometryArtifactSha256?: string;
   cardFormatAuthorityHmacKey?: string;
   cardFormatAuthorityHmacKeyId?: string;
 }
@@ -829,8 +854,6 @@ export interface AiGraderLocalStationBridgeConfig {
   mathematicalCalibrationBundleSha256?: string;
   mathematicalCalibrationRuntimeContext?: FastCalibrationRuntimeContextV1_2;
   mathematicalCalibrationV1_2Authority?: MathematicalCalibrationV1_2LocalSessionAuthority;
-  provisionalGeometryArtifactPath?: string;
-  provisionalGeometryArtifactSha256?: string;
   cardFormatAuthorityHmacKey?: string;
   cardFormatAuthorityHmacKeyId?: string;
 }
@@ -977,13 +1000,6 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     observation?: AiGraderCalibrationWorkstationObservationV1;
     receipt?: AiGraderCalibrationWorkstationReceiptV1;
     authority?: AiGraderCalibrationActivationAuthorityV1;
-  };
-  provisionalGeometry: {
-    active: boolean;
-    status: "disabled" | "geometry_only_controlled_evaluation";
-    isCalibrated: false;
-    artifactSha256?: string;
-    certifiedMathematicalV1Unaffected: true;
   };
   frontCaptureReadiness: AiGraderFrontCaptureReadiness;
   stationUrl: string;
@@ -2319,6 +2335,23 @@ function parseCaptureTriggerMode(value: AiGraderCaptureTriggerMode | undefined):
   throw new Error("AI Grader capture trigger mode must be operator or auto.");
 }
 
+function geometryHasCaptureAuthoritativeDenseContour(
+  geometry: CardGeometryMetadata | undefined,
+): geometry is CardGeometryMetadata {
+  const contour = geometry?.observedDenseContour;
+  return Boolean(
+    geometry &&
+      contour &&
+      contour.pointCount >= 16 &&
+      contour.measurementsMm &&
+      verifyCardGeometryObservedDenseContourV1(
+        contour,
+        geometry.image.width,
+        geometry.image.height,
+      ),
+  );
+}
+
 function validatedCaptureTriggerAt(value: string | undefined, actionReceivedAt: string): string {
   const receivedMs = Date.parse(actionReceivedAt);
   if (typeof value !== "string" || !Number.isFinite(receivedMs)) return actionReceivedAt;
@@ -2478,23 +2511,6 @@ export function buildAiGraderLocalStationBridgeConfig(
         outputRoot: localAuthorityOutputRoot,
       })
       : undefined);
-  const provisionalGeometryArtifactPath = firstNonEmpty(
-    input.provisionalGeometryArtifactPath,
-    env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH,
-  );
-  const provisionalGeometryArtifactSha256 = firstNonEmpty(
-    input.provisionalGeometryArtifactSha256,
-    env.AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256,
-  );
-  if (Boolean(provisionalGeometryArtifactPath) !== Boolean(provisionalGeometryArtifactSha256)) {
-    throw new Error("AI Grader provisional geometry artifact path and SHA-256 must be configured together.");
-  }
-  if (provisionalGeometryArtifactPath && !path.isAbsolute(provisionalGeometryArtifactPath)) {
-    throw new Error("AI Grader provisional geometry artifact path must be absolute.");
-  }
-  if (provisionalGeometryArtifactSha256 && !/^[a-f0-9]{64}$/.test(provisionalGeometryArtifactSha256)) {
-    throw new Error("AI Grader provisional geometry artifact SHA-256 must be exact lowercase hexadecimal.");
-  }
   const cardFormatAuthorityHmacKey = firstNonEmpty(
     input.cardFormatAuthorityHmacKey,
     env.AI_GRADER_CARD_FORMAT_AUTHORITY_HMAC_KEY,
@@ -2574,8 +2590,6 @@ export function buildAiGraderLocalStationBridgeConfig(
     mathematicalCalibrationBundleSha256,
     mathematicalCalibrationRuntimeContext: input.mathematicalCalibrationRuntimeContext,
     mathematicalCalibrationV1_2Authority,
-    provisionalGeometryArtifactPath,
-    provisionalGeometryArtifactSha256,
     cardFormatAuthorityHmacKey,
     cardFormatAuthorityHmacKeyId,
   };
@@ -3729,18 +3743,7 @@ function createDefaultWarmForensicRunner(config: AiGraderLocalStationBridgeConfi
   const processing = createFixedRigWarmForensicProcessingRunner({ allowedOutputRoot: config.outputDir });
   return {
     captureSide: captureFixedRigWarmSideBatch,
-    processSide: (batch, context) => {
-      if (!config.provisionalGeometryArtifactPath || !config.provisionalGeometryArtifactSha256) {
-        return processing.processSide(batch, context);
-      }
-      const submissionReady = applyProvisionalMathematicalGeometryV1(batch, {
-        artifactPath: config.provisionalGeometryArtifactPath,
-        artifactSha256: config.provisionalGeometryArtifactSha256,
-      }).then((corrected) => ({ submission: processing.processSide(corrected, context) }));
-      const admission = submissionReady.then(({ submission }) => submission.admission);
-      const result = submissionReady.then(({ submission }) => submission);
-      return Object.assign(result, { admission });
-    },
+    processSide: (batch, context) => processing.processSide(batch, context),
     cancelSession: processing.cancelSession,
     shutdownProcessingWorker: processing.shutdownProcessingWorker,
     processingWorkerStatus: processing.processingWorkerStatus,
@@ -4593,6 +4596,262 @@ function safeQueuedOcrResultText(value: unknown, label: string, maxLength: numbe
   return value;
 }
 
+const AI_GRADER_EYES_SCHEMA_VERSION = "ai_grader_eyes_semantic_observer_v1" as const;
+const AI_GRADER_EYES_SIDES = ["front", "back"] as const;
+const AI_GRADER_EYES_ELEMENTS = ["centering", "corners", "edges", "surface"] as const;
+const AI_GRADER_EYES_SEMANTIC_STATES = [
+  "printed_border_supported",
+  "artwork_or_layout_not_border",
+  "no_coherent_printed_border",
+  "no_visible_physical_concern",
+  "visible_physical_concern",
+  "unclear",
+] as const;
+
+function safeQueuedOcrEyesReceipt(
+  value: unknown,
+  expectedImages?: readonly AiGraderQueuedOcrImage[],
+): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Queued OCR EYES receipt is invalid.");
+  }
+  const receipt = value as Record<string, unknown>;
+  const observed = receipt.status === "observed";
+  const expectedKeys = observed
+    ? [
+        "schemaVersion", "status", "requestedModel", "actualModel", "requestSha256",
+        "imageBindings", "observations", "reviewElements", "metricAuthority",
+        "wholeCardFailureAuthority", "providerElapsedMs",
+      ]
+    : [
+        "schemaVersion", "status", "requestSha256", "imageBindings", "observations",
+        "reviewElements", "metricAuthority", "wholeCardFailureAuthority", "reason",
+      ];
+  if (!exactObjectKeys(receipt, expectedKeys)) {
+    throw new Error("Queued OCR EYES receipt shape is invalid.");
+  }
+  if (
+    receipt.schemaVersion !== AI_GRADER_EYES_SCHEMA_VERSION ||
+    (receipt.status !== "observed" && receipt.status !== "unavailable") ||
+    receipt.metricAuthority !== "deterministic_calibrated_pixels_only" ||
+    receipt.wholeCardFailureAuthority !== false
+  ) {
+    throw new Error("Queued OCR EYES authority contract is invalid.");
+  }
+  if (
+    !Array.isArray(receipt.imageBindings) ||
+    receipt.imageBindings.length !== 2
+  ) {
+    throw new Error("Queued OCR EYES image bindings are invalid.");
+  }
+  const imageBindings = receipt.imageBindings.map((binding, index) => {
+    if (!exactObjectKeys(binding, ["side", "checksumSha256", "evidenceRef"])) {
+      throw new Error("Queued OCR EYES image binding shape is invalid.");
+    }
+    const side = AI_GRADER_EYES_SIDES[index];
+    const checksumSha256 = String(binding.checksumSha256 ?? "").toLowerCase();
+    if (
+      binding.side !== side ||
+      binding.evidenceRef !== `image.${side}` ||
+      !/^[a-f0-9]{64}$/.test(checksumSha256)
+    ) {
+      throw new Error("Queued OCR EYES image binding identity is invalid.");
+    }
+    const expected = expectedImages?.find((image) => image.side === side);
+    if (expected && checksumSha256 !== expected.checksumSha256.toLowerCase()) {
+      throw new Error("Queued OCR EYES image binding checksum does not match exact normalized evidence.");
+    }
+    return { side, checksumSha256, evidenceRef: `image.${side}` };
+  });
+  const expectedRequestSha256 = crypto.createHash("sha256")
+    .update(canonicalJsonV1({
+      schemaVersion: AI_GRADER_EYES_SCHEMA_VERSION,
+      imageBindings,
+      semanticElements: AI_GRADER_EYES_ELEMENTS,
+      metricAuthority: "deterministic_calibrated_pixels_only",
+    }), "utf8")
+    .digest("hex");
+  if (
+    typeof receipt.requestSha256 !== "string" ||
+    receipt.requestSha256.toLowerCase() !== expectedRequestSha256
+  ) {
+    throw new Error("Queued OCR EYES request SHA-256 does not match its exact image bindings.");
+  }
+
+  if (!observed) {
+    if (
+      !Array.isArray(receipt.observations) ||
+      receipt.observations.length !== 0 ||
+      !Array.isArray(receipt.reviewElements) ||
+      receipt.reviewElements.length !== 0 ||
+      !["not_configured", "timeout", "provider_unavailable", "invalid_response"].includes(String(receipt.reason))
+    ) {
+      throw new Error("Queued OCR unavailable EYES receipt is invalid.");
+    }
+    return {
+      schemaVersion: AI_GRADER_EYES_SCHEMA_VERSION,
+      status: "unavailable",
+      requestSha256: expectedRequestSha256,
+      imageBindings,
+      observations: [],
+      reviewElements: [],
+      metricAuthority: "deterministic_calibrated_pixels_only",
+      wholeCardFailureAuthority: false,
+      reason: receipt.reason,
+    };
+  }
+
+  if (
+    !Array.isArray(receipt.observations) ||
+    receipt.observations.length !== AI_GRADER_EYES_ELEMENTS.length
+  ) {
+    throw new Error("Queued OCR observed EYES receipt must contain four ordered observations.");
+  }
+  const observations = receipt.observations.map((observation, index) => {
+    if (!exactObjectKeys(observation, [
+      "element", "semanticState", "challengeDeterministicInterpretation",
+      "requiresOperatorReview", "confidence", "evidenceRefs", "rationale",
+    ])) {
+      throw new Error("Queued OCR EYES observation shape is invalid.");
+    }
+    const element = AI_GRADER_EYES_ELEMENTS[index];
+    const semanticState = String(observation.semanticState);
+    const centeringState = [
+      "printed_border_supported",
+      "artwork_or_layout_not_border",
+      "no_coherent_printed_border",
+      "unclear",
+    ].includes(semanticState);
+    const conditionState = [
+      "no_visible_physical_concern",
+      "visible_physical_concern",
+      "unclear",
+    ].includes(semanticState);
+    if (
+      observation.element !== element ||
+      !AI_GRADER_EYES_SEMANTIC_STATES.includes(semanticState as any) ||
+      (element === "centering" ? !centeringState : !conditionState) ||
+      typeof observation.challengeDeterministicInterpretation !== "boolean" ||
+      typeof observation.requiresOperatorReview !== "boolean" ||
+      observation.requiresOperatorReview !== (
+        observation.challengeDeterministicInterpretation ||
+        semanticState === "unclear"
+      ) ||
+      typeof observation.confidence !== "number" ||
+      !Number.isFinite(observation.confidence) ||
+      observation.confidence < 0 ||
+      observation.confidence > 1 ||
+      !Array.isArray(observation.evidenceRefs) ||
+      observation.evidenceRefs.length < 1 ||
+      observation.evidenceRefs.length > 2
+    ) {
+      throw new Error(`Queued OCR EYES ${element} observation is invalid.`);
+    }
+    const evidenceRefs = observation.evidenceRefs.map(String);
+    if (
+      new Set(evidenceRefs).size !== evidenceRefs.length ||
+      evidenceRefs.some((reference) =>
+        reference !== "image.front" && reference !== "image.back")
+    ) {
+      throw new Error(`Queued OCR EYES ${element} evidence references are invalid.`);
+    }
+    return {
+      element,
+      semanticState,
+      challengeDeterministicInterpretation: observation.challengeDeterministicInterpretation,
+      requiresOperatorReview: observation.requiresOperatorReview,
+      confidence: observation.confidence,
+      evidenceRefs,
+      rationale: safeQueuedOcrResultText(
+        observation.rationale,
+        `EYES ${element} rationale`,
+        240,
+      ),
+    };
+  });
+  const expectedReviewElements = observations
+    .filter((observation) => observation.requiresOperatorReview)
+    .map((observation) => observation.element);
+  if (
+    !Array.isArray(receipt.reviewElements) ||
+    receipt.reviewElements.length !== expectedReviewElements.length ||
+    receipt.reviewElements.some((element, index) =>
+      element !== expectedReviewElements[index])
+  ) {
+    throw new Error("Queued OCR EYES review elements do not match its exact observations.");
+  }
+  const safeModel = (model: unknown, label: string) => {
+    if (
+      typeof model !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(model)
+    ) throw new Error(`Queued OCR EYES ${label} is invalid.`);
+    return model;
+  };
+  if (
+    typeof receipt.providerElapsedMs !== "number" ||
+    !Number.isInteger(receipt.providerElapsedMs) ||
+    receipt.providerElapsedMs < 0 ||
+    receipt.providerElapsedMs > 60_000
+  ) {
+    throw new Error("Queued OCR EYES provider elapsed time is invalid.");
+  }
+  return {
+    schemaVersion: AI_GRADER_EYES_SCHEMA_VERSION,
+    status: "observed",
+    requestedModel: safeModel(receipt.requestedModel, "requested model"),
+    actualModel: safeModel(receipt.actualModel, "actual model"),
+    requestSha256: expectedRequestSha256,
+    imageBindings,
+    observations,
+    reviewElements: expectedReviewElements,
+    metricAuthority: "deterministic_calibrated_pixels_only",
+    wholeCardFailureAuthority: false,
+    providerElapsedMs: receipt.providerElapsedMs,
+  };
+}
+
+function effectiveQueuedOcrEyesReviewElements(
+  eyesValue: unknown,
+  pendingRequest?: FixedRigOperatorResolutionRequestV1,
+): Array<(typeof AI_GRADER_EYES_ELEMENTS)[number]> {
+  if (!eyesValue || typeof eyesValue !== "object" || Array.isArray(eyesValue)) return [];
+  const eyes = eyesValue as Record<string, unknown>;
+  if (
+    eyes.status !== "observed" ||
+    !Array.isArray(eyes.reviewElements) ||
+    !Array.isArray(eyes.observations)
+  ) return [];
+  const effective = new Set<(typeof AI_GRADER_EYES_ELEMENTS)[number]>();
+  for (const element of eyes.reviewElements) {
+    if (AI_GRADER_EYES_ELEMENTS.includes(element as any)) {
+      effective.add(element as (typeof AI_GRADER_EYES_ELEMENTS)[number]);
+    }
+  }
+  for (const observationValue of eyes.observations) {
+    if (!pendingRequest) break;
+    if (!observationValue || typeof observationValue !== "object" || Array.isArray(observationValue)) continue;
+    const observation = observationValue as Record<string, unknown>;
+    const element = observation.element;
+    if (!AI_GRADER_EYES_ELEMENTS.includes(element as any)) continue;
+    const typedElement = element as (typeof AI_GRADER_EYES_ELEMENTS)[number];
+    const original = pendingRequest.originalElements[typedElement];
+    if (!original) continue;
+    const automatedConcern = original.score !== null && original.score < 10;
+    const semanticState = observation.semanticState;
+    const semanticMismatch =
+      (typedElement === "centering" && (
+        (semanticState === "artwork_or_layout_not_border" && original.status === "computed") ||
+        (semanticState === "printed_border_supported" && original.status !== "computed")
+      )) ||
+      (typedElement !== "centering" && (
+        (semanticState === "no_visible_physical_concern" && automatedConcern) ||
+        (semanticState === "visible_physical_concern" && !automatedConcern)
+      ));
+    if (semanticMismatch) effective.add(typedElement);
+  }
+  return AI_GRADER_EYES_ELEMENTS.filter((element) => effective.has(element));
+}
+
 function exactHostedPublicationEvidence(
   value: unknown,
   identity: { queueItemId: string; gradingSessionId: string; reportId: string },
@@ -4622,28 +4881,46 @@ function exactHostedPublicationEvidence(
 function safeQueuedOcrResult(
   value: unknown,
   identity: { queueItemId: string; gradingSessionId: string; reportId: string },
+  options: {
+    expectedImages?: readonly AiGraderQueuedOcrImage[];
+    requireEyes?: boolean;
+  } = {},
 ): Record<string, unknown> {
-  const topLevelKeys = [
+  const requiredTopLevelKeys = [
     "queueItemId", "gradingSessionId", "reportId", "status", "humanConfirmationRequired",
     "inventoryMutationPerformed", "publishMutationPerformed", "sourceSides", "fields",
     "reviewFieldNames", "provenance", "warnings",
   ] as const;
-  if (!exactObjectKeys(value, topLevelKeys)) throw new Error("Queued OCR result shape is invalid.");
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Queued OCR result shape is invalid.");
+  }
+  const queuedResult = value as Record<string, unknown>;
+  const actualTopLevelKeys = Object.keys(queuedResult);
   if (
-    value.queueItemId !== identity.queueItemId
-    || value.gradingSessionId !== identity.gradingSessionId
-    || value.reportId !== identity.reportId
-    || value.status !== "prefill_ready"
-    || value.humanConfirmationRequired !== true
-    || value.inventoryMutationPerformed !== false
-    || value.publishMutationPerformed !== false
+    requiredTopLevelKeys.some((key) => !actualTopLevelKeys.includes(key)) ||
+    actualTopLevelKeys.some((key) =>
+      !requiredTopLevelKeys.includes(key as any) && key !== "eyes")
+  ) {
+    throw new Error("Queued OCR result shape is invalid.");
+  }
+  if (options.requireEyes && !actualTopLevelKeys.includes("eyes")) {
+    throw new Error("Queued OCR result requires its exact non-metric EYES receipt.");
+  }
+  if (
+    queuedResult.queueItemId !== identity.queueItemId
+    || queuedResult.gradingSessionId !== identity.gradingSessionId
+    || queuedResult.reportId !== identity.reportId
+    || queuedResult.status !== "prefill_ready"
+    || queuedResult.humanConfirmationRequired !== true
+    || queuedResult.inventoryMutationPerformed !== false
+    || queuedResult.publishMutationPerformed !== false
   ) {
     throw new Error("Queued OCR result identity or mutation authority does not match the exact queue item.");
   }
-  if (!Array.isArray(value.sourceSides) || value.sourceSides.length !== 2 || value.sourceSides[0] !== "front" || value.sourceSides[1] !== "back") {
+  if (!Array.isArray(queuedResult.sourceSides) || queuedResult.sourceSides.length !== 2 || queuedResult.sourceSides[0] !== "front" || queuedResult.sourceSides[1] !== "back") {
     throw new Error("Queued OCR result must bind exact front and back source sides.");
   }
-  const resultFields = value.fields;
+  const resultFields = queuedResult.fields;
   if (!exactObjectKeys(resultFields, AI_GRADER_QUEUED_OCR_FIELD_NAMES)) {
     throw new Error("Queued OCR result fields are invalid.");
   }
@@ -4700,23 +4977,23 @@ function safeQueuedOcrResult(
     }];
   }));
   if (
-    !Array.isArray(value.reviewFieldNames)
-    || value.reviewFieldNames.length > AI_GRADER_QUEUED_OCR_FIELD_NAMES.length
-    || value.reviewFieldNames.some((name) => !AI_GRADER_QUEUED_OCR_FIELD_NAMES.includes(name as any))
-    || new Set(value.reviewFieldNames).size !== value.reviewFieldNames.length
+    !Array.isArray(queuedResult.reviewFieldNames)
+    || queuedResult.reviewFieldNames.length > AI_GRADER_QUEUED_OCR_FIELD_NAMES.length
+    || queuedResult.reviewFieldNames.some((name) => !AI_GRADER_QUEUED_OCR_FIELD_NAMES.includes(name as any))
+    || new Set(queuedResult.reviewFieldNames).size !== queuedResult.reviewFieldNames.length
   ) {
     throw new Error("Queued OCR review field names are invalid.");
   }
-  const reviewFieldNames = value.reviewFieldNames as string[];
+  const reviewFieldNames = queuedResult.reviewFieldNames as string[];
   const expectedReviewFieldNames = AI_GRADER_QUEUED_OCR_FIELD_NAMES.filter((fieldName) => (fields[fieldName] as Record<string, unknown>).reviewRequired === true);
   if (
     reviewFieldNames.length !== expectedReviewFieldNames.length
     || expectedReviewFieldNames.some((fieldName) => !reviewFieldNames.includes(fieldName))
   ) throw new Error("Queued OCR review field names do not match exact structured review requirements.");
-  if (!exactObjectKeys(value.provenance, ["ocrEngine", "attributeExtractor", "structuredExtractor", "structuredExtractionModel", "setLookupUsed", "setIdentificationUsed"])) {
+  if (!exactObjectKeys(queuedResult.provenance, ["ocrEngine", "attributeExtractor", "structuredExtractor", "structuredExtractionModel", "setLookupUsed", "setIdentificationUsed"])) {
     throw new Error("Queued OCR provenance is invalid.");
   }
-  const provenance = value.provenance;
+  const provenance = queuedResult.provenance;
   if (
     provenance.ocrEngine !== "google_vision_document_text_detection_url_only"
     || provenance.attributeExtractor !== "@tenkings/shared/extractCardAttributes"
@@ -4728,10 +5005,13 @@ function safeQueuedOcrResult(
   ) {
     throw new Error("Queued OCR provenance flags are invalid.");
   }
-  if (!Array.isArray(value.warnings) || value.warnings.length > 24) {
+  if (!Array.isArray(queuedResult.warnings) || queuedResult.warnings.length > 24) {
     throw new Error("Queued OCR warnings are invalid.");
   }
-  const warnings = value.warnings.map((warning) => safeQueuedOcrResultText(warning, "warning", 500));
+  const warnings = queuedResult.warnings.map((warning) => safeQueuedOcrResultText(warning, "warning", 500));
+  const eyes = actualTopLevelKeys.includes("eyes")
+    ? safeQueuedOcrEyesReceipt(queuedResult.eyes, options.expectedImages)
+    : undefined;
   return structuredClone({
     queueItemId: identity.queueItemId,
     gradingSessionId: identity.gradingSessionId,
@@ -4751,6 +5031,7 @@ function safeQueuedOcrResult(
       setLookupUsed: provenance.setLookupUsed,
       setIdentificationUsed: provenance.setIdentificationUsed,
     },
+    ...(eyes ? { eyes } : {}),
     warnings,
   });
 }
@@ -4940,6 +5221,8 @@ export class AiGraderLocalStationBridgeService {
     epoch: number;
   };
   private previewGeometryAnalysisInFlight = false;
+  private previewSensorPlaneCalibrationResolved = false;
+  private previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
   private previewGeometryTimer?: ReturnType<typeof setTimeout>;
   private previewGeometryLastStartedAtMs = 0;
   private previewGeometryEpoch = 0;
@@ -5233,17 +5516,6 @@ export class AiGraderLocalStationBridgeService {
           : {}),
         ...(this.calibrationActivationReceipt ? { receipt: this.calibrationActivationReceipt } : {}),
         ...(this.calibrationActivationAuthority ? { authority: this.calibrationActivationAuthority } : {}),
-      },
-      provisionalGeometry: {
-        active: Boolean(this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256),
-        status: this.config.provisionalGeometryArtifactPath && this.config.provisionalGeometryArtifactSha256
-          ? "geometry_only_controlled_evaluation"
-          : "disabled",
-        isCalibrated: false,
-        ...(this.config.provisionalGeometryArtifactSha256
-          ? { artifactSha256: this.config.provisionalGeometryArtifactSha256 }
-          : {}),
-        certifiedMathematicalV1Unaffected: true,
       },
       stationUrl: this.stationUrl,
       nextAction,
@@ -5927,10 +6199,6 @@ export class AiGraderLocalStationBridgeService {
     }
     const geometry = manifest.previewStatus.cardGeometry[side];
     const placementState = geometry?.placementState ?? "not_detected";
-    const detectedCorners = geometry?.detectedCorners ?? geometry?.corners;
-    const detectedPoints = detectedCorners
-      ? [detectedCorners.topLeft, detectedCorners.topRight, detectedCorners.bottomRight, detectedCorners.bottomLeft]
-      : [];
     const decisionAtMs = Date.parse(timestamp);
     const geometryAtMs = Date.parse(geometry?.timestamp ?? "");
     const geometryAgeMs = decisionAtMs - geometryAtMs;
@@ -5947,15 +6215,7 @@ export class AiGraderLocalStationBridgeService {
       && geometry.detectionUsed === true
       && geometry.manualOverrideUsed !== true
       && geometryFresh
-      && detectedPoints.length === 4
-      && detectedPoints.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-      && Boolean(geometry.boundingBox)
-      && Number.isFinite(geometry.boundingBox?.x)
-      && Number.isFinite(geometry.boundingBox?.y)
-      && Number.isFinite(geometry.boundingBox?.width)
-      && Number.isFinite(geometry.boundingBox?.height)
-      && Number(geometry.boundingBox?.width) > 0
-      && Number(geometry.boundingBox?.height) > 0;
+      && geometryHasCaptureAuthoritativeDenseContour(geometry);
     if (!validDetectedGeometry) {
       const freshnessDetail = geometry && !geometryFresh
         ? ` The latest detected frame is stale (${Number.isFinite(geometryAgeMs) ? Math.max(0, Math.round(geometryAgeMs)) : "unknown"} ms old); wait for a fresh live outline.`
@@ -6347,16 +6607,14 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Atomic Front Capture retained frame/geometry observation is stale or future-dated.");
     }
     if (request.geometryCaptureMode === "detected_geometry") {
-      const corners = geometry.detectedCorners ?? geometry.corners;
       if (
         geometry.placementState !== "ready"
         || geometry.geometrySource !== "detected"
         || geometry.detectionUsed !== true
         || geometry.manualOverrideUsed === true
-        || !corners
-        || !geometry.boundingBox
+        || !geometryHasCaptureAuthoritativeDenseContour(geometry)
       ) {
-        throw new Error(`Atomic Front Capture detected mode requires exact authoritative Ready geometry; current state is ${geometry.placementState}.`);
+        throw new Error(`Atomic Front Capture detected mode requires an exact calibrated, hash-verified dense contour; current state is ${geometry.placementState}.`);
       }
     }
     return {
@@ -6737,16 +6995,14 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Atomic Back Capture retained frame/geometry observation is stale or future-dated.");
     }
     if (request.geometryCaptureMode === "detected_geometry") {
-      const corners = geometry.detectedCorners ?? geometry.corners;
       if (
         geometry.placementState !== "ready"
         || geometry.geometrySource !== "detected"
         || geometry.detectionUsed !== true
         || geometry.manualOverrideUsed === true
-        || !corners
-        || !geometry.boundingBox
+        || !geometryHasCaptureAuthoritativeDenseContour(geometry)
       ) {
-        throw new Error(`Atomic Back Capture detected mode requires exact authoritative Ready geometry; current state is ${geometry.placementState}.`);
+        throw new Error(`Atomic Back Capture detected mode requires an exact calibrated, hash-verified dense contour; current state is ${geometry.placementState}.`);
       }
     }
     return {
@@ -7098,6 +7354,8 @@ export class AiGraderLocalStationBridgeService {
       },
     };
     const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
+    const sensorPlaneCalibration =
+      this.resolvePreviewSensorPlaneCalibration();
     void detectPreviewCardGeometry({
       imageBuffer: pending.frame,
       fileName: "preview-frame.jpg",
@@ -7106,6 +7364,7 @@ export class AiGraderLocalStationBridgeService {
       sourceFrameId: pending.frameId,
       timestamp: pending.frameCapturedAt,
       detectionPolicy: "live_preview_fast",
+      ...(sensorPlaneCalibration ? { sensorPlaneCalibration } : {}),
     }).then((geometry) => {
       if (
         pending.epoch !== this.previewGeometryEpoch
@@ -7189,6 +7448,80 @@ export class AiGraderLocalStationBridgeService {
       }
       this.pumpPreviewGeometryAnalysis();
     });
+  }
+
+  private resolvePreviewSensorPlaneCalibration():
+    | CardGeometrySensorPlaneCalibrationV1
+    | undefined {
+    if (this.previewSensorPlaneCalibrationResolved) {
+      return this.previewSensorPlaneCalibration;
+    }
+    this.previewSensorPlaneCalibrationResolved = true;
+    if (
+      !this.config.mathematicalCalibrationBundlePath ||
+      !this.config.mathematicalCalibrationBundleSha256
+    ) {
+      return undefined;
+    }
+    try {
+      const loader =
+        this.dependencies.loadMathematicalCalibrationBundle ??
+        loadFixedRigMathematicalCalibrationBundleV1;
+      const loaded = loader({
+        bundlePath: this.config.mathematicalCalibrationBundlePath,
+        bundleSha256: this.config.mathematicalCalibrationBundleSha256,
+        expectedRigId: this.config.mathematicalCalibrationRigId,
+        ...(this.config.mathematicalCalibrationRuntimeContext
+          ? {
+              expectedRuntimeContext:
+                this.config.mathematicalCalibrationRuntimeContext,
+            }
+          : {}),
+      });
+      const physicalInputs =
+        loaded.physicalArtifact.inputs &&
+        typeof loaded.physicalArtifact.inputs === "object" &&
+        !Array.isArray(loaded.physicalArtifact.inputs)
+          ? loaded.physicalArtifact.inputs as Record<string, unknown>
+          : undefined;
+      const lensModel =
+        physicalInputs?.lensModel &&
+        typeof physicalInputs.lensModel === "object" &&
+        !Array.isArray(physicalInputs.lensModel)
+          ? physicalInputs.lensModel as Record<string, unknown>
+          : undefined;
+      const calibration: CardGeometrySensorPlaneCalibrationV1 = {
+        schemaVersion:
+          "ten-kings-card-geometry-sensor-plane-calibration-v1",
+        profileId: loaded.profile.profileId,
+        calibrationVersion: loaded.profile.calibrationVersion,
+        calibrationArtifactSha256: loaded.profile.artifactSha256,
+        bundleManifestSha256:
+          loaded.authority.bundleManifestSha256,
+        sourceWidthPx:
+          typeof lensModel?.sourceWidthPx === "number"
+            ? lensModel.sourceWidthPx
+            : Number.NaN,
+        sourceHeightPx:
+          typeof lensModel?.sourceHeightPx === "number"
+            ? lensModel.sourceHeightPx
+            : Number.NaN,
+        mmPerPixelX: loaded.profile.mmPerPixelX,
+        mmPerPixelY: loaded.profile.mmPerPixelY,
+        scaleRelativeU95: loaded.profile.scaleRelativeU95,
+        segmentationBoundaryU95Px:
+          loaded.profile.segmentationBoundaryU95Px,
+        linearMeasurementU95Mm:
+          loaded.profile.measurementRepeatability.linearMm.u95,
+      };
+      if (!verifyCardGeometrySensorPlaneCalibrationV1(calibration)) {
+        return undefined;
+      }
+      this.previewSensorPlaneCalibration = calibration;
+      return calibration;
+    } catch {
+      return undefined;
+    }
   }
 
   private bindMathematicalGradingAuthority(
@@ -7687,10 +8020,188 @@ export class AiGraderLocalStationBridgeService {
     return Object.fromEntries(registry);
   }
 
+  private async buildOperatorResolutionWorkspaceAssetRegistry(
+    manifest: AiGraderLocalStationBridgeManifest,
+    request: FixedRigOperatorResolutionRequestV1,
+    workspace: FixedRigOperatorResolutionWorkspaceV1,
+    producedAssets: readonly FixedRigOperatorResolutionWorkspaceAssetV1[],
+  ): Promise<Record<string, AiGraderLocalStationOperatorResolutionWorkspaceAssetV1>> {
+    const sessionDir = manifest.outputs.sessionDir;
+    if (!sessionDir || !manifest.sessionId || !manifest.reportId ||
+        workspace.requestSha256 !== request.requestSha256 ||
+        !SHA256_LOWERCASE_RE.test(workspace.workspaceSha256)) {
+      throw new Error(
+        "Operator-resolution workspace is not bound to the exact station request/session/report.",
+      );
+    }
+    const { workspaceSha256: _workspaceSha256, ...workspacePayload } = workspace;
+    const reproducedWorkspaceSha256 = crypto.createHash("sha256")
+      .update(`${canonicalJsonV1(workspacePayload)}\n`, "utf8")
+      .digest("hex");
+    if (reproducedWorkspaceSha256 !== workspace.workspaceSha256) {
+      throw new Error("Operator-resolution workspace SHA-256 does not reproduce.");
+    }
+    const metadata = Object.values(workspace.galleries).flat();
+    const exactGallerySlots = {
+      centering: (["front", "back"] as const).map((side) =>
+        `${side}:full_card`),
+      corners: (["front", "back"] as const).flatMap((side) =>
+        ["top_left", "top_right", "bottom_right", "bottom_left"].map(
+          (location) => `${side}:${location}`,
+        )),
+      edges: (["front", "back"] as const).flatMap((side) =>
+        ["top", "right", "bottom", "left"].map(
+          (location) => `${side}:${location}`,
+        )),
+      surface: (["front", "back"] as const).map((side) =>
+        `${side}:full_card`),
+    } satisfies Record<
+      keyof FixedRigOperatorResolutionWorkspaceV1["galleries"],
+      string[]
+    >;
+    for (const element of [
+      "centering",
+      "corners",
+      "edges",
+      "surface",
+    ] as const) {
+      const actualSlots = workspace.galleries[element].map(
+        (asset) => `${asset.side}:${asset.location}`,
+      );
+      if (
+        actualSlots.length !== exactGallerySlots[element].length ||
+        new Set(actualSlots).size !== actualSlots.length ||
+        exactGallerySlots[element].some((slot) => !actualSlots.includes(slot)) ||
+        workspace.galleries[element].some((asset) => asset.element !== element)
+      ) {
+        throw new Error(
+          `Operator-resolution ${element} gallery must contain every exact Front/Back slot once.`,
+        );
+      }
+    }
+    if (metadata.length !== 20) {
+      throw new Error(
+        "Operator-resolution workspace must contain exactly 2 centering, 8 corner, 8 edge, and 2 surface images.",
+      );
+    }
+    const expected = new Map<string, FixedRigOperatorResolutionWorkspaceAssetMetadataV1>();
+    for (const asset of metadata) {
+      const key = asset.assetId.toLowerCase();
+      if (
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(asset.assetId) ||
+        !SHA256_LOWERCASE_RE.test(asset.sha256) ||
+        asset.contentType !== "image/png" ||
+        path.basename(asset.fileName) !== asset.fileName ||
+        !Number.isSafeInteger(asset.byteSize) ||
+        asset.byteSize <= 0 ||
+        asset.byteSize > MATHEMATICAL_REVIEW_ASSET_MAX_BYTES ||
+        !Number.isSafeInteger(asset.widthPx) ||
+        asset.widthPx <= 0 ||
+        !Number.isSafeInteger(asset.heightPx) ||
+        asset.heightPx <= 0 ||
+        !Array.isArray(asset.measurementSummary) ||
+        asset.measurementSummary.length > 8 ||
+        asset.measurementSummary.some((line) =>
+          typeof line !== "string" || !line.trim() || line.length > 500) ||
+        expected.has(key)
+      ) {
+        throw new Error("Operator-resolution workspace contains malformed or duplicate asset metadata.");
+      }
+      expected.set(key, asset);
+    }
+    const metadataMatches = (
+      left: FixedRigOperatorResolutionWorkspaceAssetMetadataV1,
+      right: FixedRigOperatorResolutionWorkspaceAssetV1,
+    ) =>
+      left.assetId === right.assetId &&
+      left.element === right.element &&
+      left.side === right.side &&
+      left.location === right.location &&
+      left.evidenceRole === right.evidenceRole &&
+      left.sha256 === right.sha256 &&
+      left.fileName === right.fileName &&
+      left.contentType === right.contentType &&
+      left.byteSize === right.byteSize &&
+      left.widthPx === right.widthPx &&
+      left.heightPx === right.heightPx &&
+      canonicalJsonV1(left.measurementSummary) ===
+        canonicalJsonV1(right.measurementSummary);
+    const produced = new Map<string, Buffer>();
+    let totalByteSize = 0;
+    for (const asset of producedAssets) {
+      const expectedAsset = expected.get(asset.assetId.toLowerCase());
+      if (!expectedAsset || !Buffer.isBuffer(asset.bytes) ||
+          !metadataMatches(expectedAsset, asset) ||
+          produced.has(asset.assetId.toLowerCase())) {
+        throw new Error(
+          "Station adapter returned an extra, duplicate, or metadata-mismatched operator workspace asset.",
+        );
+      }
+      const bytes = Buffer.from(asset.bytes);
+      if (
+        bytes.byteLength !== asset.byteSize ||
+        crypto.createHash("sha256").update(bytes).digest("hex") !== asset.sha256
+      ) {
+        throw new Error("Operator workspace asset bytes do not match their exact metadata.");
+      }
+      totalByteSize += bytes.byteLength;
+      produced.set(asset.assetId.toLowerCase(), bytes);
+    }
+    if (produced.size !== expected.size ||
+        totalByteSize > MATHEMATICAL_REVIEW_ASSET_TOTAL_MAX_BYTES) {
+      throw new Error("Operator workspace assets are incomplete or exceed the bounded aggregate size.");
+    }
+    const workspaceDir = path.join(
+      sessionDir,
+      "mathematical-v1-operator-resolution",
+      workspace.workspaceSha256,
+    );
+    if (!isSubpath(workspaceDir, sessionDir) ||
+        !isSubpath(workspaceDir, this.config.outputDir)) {
+      throw new Error("Operator workspace asset directory escaped station authority.");
+    }
+    await mkdir(workspaceDir, { recursive: true });
+    const registry = new Map<
+      string,
+      AiGraderLocalStationOperatorResolutionWorkspaceAssetV1
+    >();
+    for (const [index, asset] of [...expected.values()]
+      .sort((left, right) => left.assetId.localeCompare(right.assetId))
+      .entries()) {
+      const bytes = produced.get(asset.assetId.toLowerCase())!;
+      const filePath = path.join(
+        workspaceDir,
+        `${String(index + 1).padStart(4, "0")}.png`,
+      );
+      if (!isSubpath(filePath, workspaceDir)) {
+        throw new Error("Operator workspace asset path escaped its exact request.");
+      }
+      try {
+        await writeFile(filePath, bytes, { flag: "wx" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      }
+      const readback = await readFile(filePath);
+      if (
+        readback.byteLength !== asset.byteSize ||
+        crypto.createHash("sha256").update(readback).digest("hex") !== asset.sha256
+      ) {
+        throw new Error("Operator workspace asset readback changed after generation.");
+      }
+      registry.set(asset.assetId, {
+        ...structuredClone(asset),
+        requestSha256: workspace.requestSha256,
+        filePath,
+      });
+    }
+    return Object.fromEntries(registry);
+  }
+
   private async runMathematicalStationPackage(
     manifest: AiGraderLocalStationBridgeManifest,
     findingReviews?: FixedRigMathematicalFindingReviewV1[],
     eventTimeFloor?: string,
+    forcedOperatorReviewElements?: Array<(typeof AI_GRADER_EYES_ELEMENTS)[number]>,
   ): Promise<AiGraderLocalStationMathematicalExecutionV1> {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
         !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
@@ -7791,6 +8302,9 @@ export class AiGraderLocalStationBridgeService {
         ...(operatorResolutionAuthorities.length ? {
           operatorResolutionAuthorities,
         } : {}),
+        ...(forcedOperatorReviewElements?.length ? {
+          forcedOperatorReviewElements: [...forcedOperatorReviewElements],
+        } : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
         throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
@@ -7816,6 +8330,8 @@ export class AiGraderLocalStationBridgeService {
     }
 
     let reviewAssets: Record<string, AiGraderLocalStationMathematicalReviewAssetV1> | undefined;
+    let operatorWorkspaceAssets:
+      Record<string, AiGraderLocalStationOperatorResolutionWorkspaceAssetV1> | undefined;
     if (result.status === "finding_review_required") {
       try {
         reviewAssets = await this.buildMathematicalReviewAssetRegistry(
@@ -7842,11 +8358,40 @@ export class AiGraderLocalStationBridgeService {
           stationInput: null,
         };
       }
+    } else if (result.status === "operator_resolution_required") {
+      try {
+        operatorWorkspaceAssets =
+          await this.buildOperatorResolutionWorkspaceAssetRegistry(
+            manifest,
+            result.request,
+            result.workspace,
+            result.workspaceAssets,
+          );
+      } catch (error) {
+        result = {
+          version: "fixed_rig_mathematical_calibration_orchestrator_v1",
+          status: "insufficient_evidence",
+          gradingContract: "mathematical_calibration_v1",
+          v0FallbackUsed: false,
+          failedStage: "report_adaptation",
+          reasons: [
+            "The operator image workspace could not be exposed from exact immutable sources: " +
+            (error instanceof Error ? error.message : "unknown workspace-asset binding error"),
+          ],
+          requiresRecapture: false,
+          requiresApprovedDesignReference: false,
+          requiresCalibration: false,
+          requiresImplementationCorrection: true,
+          reportPackage: null,
+          stationInput: null,
+        };
+      }
     }
     const completedAt =
       operatorResolutionLogicalEventTimeV1(startedAt);
     if (result.status === "completed") {
       delete manifest.mathematicalV1.reviewAssets;
+      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
       this.applyMathematicalReportPackage(manifest, result.reportPackage);
       manifest.outputs.unifiedReportDir = result.reportPackage.outputDir;
       manifest.outputs.unifiedReportPath = result.reportPackage.bundlePath;
@@ -7867,6 +8412,7 @@ export class AiGraderLocalStationBridgeService {
       );
     } else if (result.status === "finding_review_required") {
       manifest.mathematicalV1.reviewAssets = reviewAssets;
+      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
       manifest.mathematicalV1.execution = {
         status: "finding_review_required",
         completedAt,
@@ -7882,12 +8428,15 @@ export class AiGraderLocalStationBridgeService {
       );
     } else if (result.status === "operator_resolution_required") {
       delete manifest.mathematicalV1.reviewAssets;
+      manifest.mathematicalV1.operatorResolutionWorkspaceAssets =
+        operatorWorkspaceAssets;
       manifest.mathematicalV1.execution = {
         status: "operator_resolution_required",
         completedAt,
         attempt,
         v0FallbackUsed: false,
         request: structuredClone(result.request),
+        workspace: structuredClone(result.workspace),
         unresolvedElements: [...result.unresolvedElements],
       };
       manifest.progressLog.push(
@@ -7896,6 +8445,7 @@ export class AiGraderLocalStationBridgeService {
       );
     } else {
       delete manifest.mathematicalV1.reviewAssets;
+      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
       manifest.mathematicalV1.execution = {
         status: "insufficient_evidence",
         completedAt,
@@ -8712,6 +9262,9 @@ export class AiGraderLocalStationBridgeService {
           queueItemId: item.queueItemId,
           gradingSessionId: item.sessionId,
           reportId: item.reportId,
+        }, {
+          expectedImages: item.ocr.images,
+          requireEyes: true,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Queued OCR result failed exact safe-result validation.";
@@ -8739,6 +9292,40 @@ export class AiGraderLocalStationBridgeService {
       return { value: undefined, manifests: [manifest] };
     });
     if (verificationFailure) throw new Error(verificationFailure);
+    const completedItem = this.exactQueuedItem(request);
+    const completedManifest = await this.exactQueuedManifest(completedItem);
+    if (completedManifest.mathematicalV1?.execution?.status === "completed") {
+      const possiblePendingRequest =
+        completedManifest.mathematicalV1.execution.operatorResolutionRequest;
+      const pendingRequest = verifyFixedRigOperatorResolutionRequestV1(possiblePendingRequest)
+        ? possiblePendingRequest
+        : undefined;
+      const forcedOperatorReviewElements = effectiveQueuedOcrEyesReviewElements(
+        completedItem.ocr.result?.eyes,
+        pendingRequest,
+      );
+      if (forcedOperatorReviewElements.length) {
+        const execution = await this.runMathematicalStationPackage(
+          completedManifest,
+          undefined,
+          undefined,
+          forcedOperatorReviewElements,
+        );
+        if (execution.status !== "operator_resolution_required") {
+          throw new Error(
+            "Named EYES challenges did not reopen the exact operator-resolution workspace.",
+          );
+        }
+        this.transitionRapidWorkflow(
+          completedManifest,
+          "operator_resolution_required",
+          "Non-metric EYES challenged " +
+            forcedOperatorReviewElements.join(", ") +
+            "; the completed mathematics remains immutable and the named elements require exact human review.",
+        );
+        await this.syncQueuedManifest(completedManifest);
+      }
+    }
   }
 
   private async failQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
@@ -9424,6 +10011,12 @@ export class AiGraderLocalStationBridgeService {
         !manifest.mathematicalV1) {
       throw new Error("Operator resolution is available only for an exact Mathematical V1 queued session.");
     }
+    if (item.ocr.state !== "succeeded") {
+      throw new Error(
+        "Exact element resolution is waiting for the one-pass OCR/EYES observation receipt. " +
+        "EYES remains non-metric and cannot fail the card, but its named review challenges must arrive before the human commits.",
+      );
+    }
     assertRealReady(this.config, manifest);
     const pendingRequest = this.operatorResolutionRequest(manifest);
     const submission = parseFixedRigOperatorResolutionSubmissionV1(
@@ -9435,6 +10028,26 @@ export class AiGraderLocalStationBridgeService {
     );
     if (submission.requestSha256 !== pendingRequest.requestSha256) {
       throw new Error("Operator resolution submission is stale or bound to different evidence.");
+    }
+    const effectiveEyesReviewElements = effectiveQueuedOcrEyesReviewElements(
+      item.ocr.result?.eyes,
+      pendingRequest,
+    );
+    if (effectiveEyesReviewElements.length) {
+      const submittedElements = new Set(
+        submission.resolutions.map((resolution) => resolution.element),
+      );
+      const missingEyesReviewElements = effectiveEyesReviewElements.filter(
+        (element) =>
+          !submittedElements.has(element as any),
+      );
+      if (missingEyesReviewElements.length) {
+        throw new Error(
+          "Operator resolution must explicitly resolve the named EYES semantic review element(s): " +
+          missingEyesReviewElements.join(", ") +
+          ". EYES cannot set a metric or grade; it requires the human to decide against the exact images.",
+        );
+      }
     }
     const submissionSha256 = hashFixedRigOperatorResolutionValueV1(submission);
     const existingReceipt = manifest.mathematicalV1.operatorResolutionReceipts?.find(
@@ -13139,13 +13752,27 @@ export class AiGraderLocalStationBridgeService {
   async operatorResolutionEvidenceAsset(
     identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
     side: string | undefined,
-  ): Promise<{
-    item: PersistedAiGraderRapidCaptureQueueItem;
-    image: PersistedAiGraderQueuedOcrImage;
-    bytes: Buffer;
-  }> {
-    if (side !== "front" && side !== "back") {
-      throw new Error("Operator-resolution evidence side must be front or back.");
+    assetId?: string,
+  ): Promise<
+    | {
+        item: PersistedAiGraderRapidCaptureQueueItem;
+        image: PersistedAiGraderQueuedOcrImage;
+        bytes: Buffer;
+      }
+    | {
+        item: PersistedAiGraderRapidCaptureQueueItem;
+        workspaceAsset: AiGraderLocalStationOperatorResolutionWorkspaceAssetV1;
+        bytes: Buffer;
+      }
+  > {
+    const wantsSide = side === "front" || side === "back";
+    const wantsWorkspaceAsset =
+      typeof assetId === "string" &&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(assetId);
+    if (wantsSide === wantsWorkspaceAsset) {
+      throw new Error(
+        "Operator-resolution evidence requires exactly one Front/Back side or workspace asset ID.",
+      );
     }
     const item = this.exactQueuedItem(identity);
     if (this.activeQueueItemId !== item.queueItemId) {
@@ -13164,6 +13791,36 @@ export class AiGraderLocalStationBridgeService {
       );
     }
     this.operatorResolutionRequest(manifest);
+    const execution = manifest.mathematicalV1.execution;
+    if (wantsWorkspaceAsset) {
+      const namedByWorkspace = Object.values(execution.workspace.galleries)
+        .flat()
+        .some((candidate) => candidate.assetId === assetId);
+      const workspaceAsset =
+        manifest.mathematicalV1.operatorResolutionWorkspaceAssets?.[assetId!];
+      if (
+        !namedByWorkspace ||
+        !workspaceAsset ||
+        !manifest.outputs.sessionDir ||
+        !isSubpath(workspaceAsset.filePath, manifest.outputs.sessionDir) ||
+        !isSubpath(workspaceAsset.filePath, this.config.outputDir)
+      ) {
+        throw new Error(
+          "Requested operator workspace image is not an exact hash-bound asset in the pending request.",
+        );
+      }
+      const bytes = await readFile(workspaceAsset.filePath);
+      if (
+        bytes.byteLength !== workspaceAsset.byteSize ||
+        crypto.createHash("sha256").update(bytes).digest("hex") !==
+          workspaceAsset.sha256
+      ) {
+        throw new Error(
+          "Operator workspace image changed after exact request generation.",
+        );
+      }
+      return { item, workspaceAsset, bytes };
+    }
     if (
       item.ocr.state !== "succeeded" ||
       !item.ocr.images ||
@@ -14758,7 +15415,7 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-queue-item-id,x-ai-grader-grading-session-id,x-ai-grader-report-id,x-ai-grader-reference-id,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role,x-ai-grader-width-px,x-ai-grader-height-px"
+    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-queue-item-id,x-ai-grader-grading-session-id,x-ai-grader-report-id,x-ai-grader-reference-id,x-ai-grader-request-sha256,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role,x-ai-grader-width-px,x-ai-grader-height-px"
   );
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");
@@ -15434,14 +16091,49 @@ export function createAiGraderLocalStationBridgeHttpServer(
         const gradingSessionId = url.searchParams.get("gradingSessionId") ?? "";
         const reportId = url.searchParams.get("reportId") ?? "";
         const side = url.searchParams.get("side") ?? "";
-        if (url.searchParams.size !== 4 || !queueItemId || !gradingSessionId || !reportId || !side) {
-          throw new Error("Operator-resolution evidence requires only exact queueItemId, gradingSessionId, reportId, and side parameters.");
+        const assetId = url.searchParams.get("assetId") ?? "";
+        if (
+          url.searchParams.size !== 4 ||
+          !queueItemId ||
+          !gradingSessionId ||
+          !reportId ||
+          Boolean(side) === Boolean(assetId)
+        ) {
+          throw new Error(
+            "Operator-resolution evidence requires exact queueItemId, gradingSessionId, reportId, and one side or assetId parameter.",
+          );
         }
         const asset = await service.operatorResolutionEvidenceAsset({
           queueItemId,
           gradingSessionId,
           reportId,
-        }, side);
+        }, side || undefined, assetId || undefined);
+        if ("workspaceAsset" in asset) {
+          return sendBinary(
+            res,
+            200,
+            asset.bytes,
+            origin,
+            config,
+            asset.workspaceAsset.contentType,
+            {
+              "X-AI-Grader-Queue-Item-Id": asset.item.queueItemId,
+              "X-AI-Grader-Grading-Session-Id": asset.item.sessionId,
+              "X-AI-Grader-Report-Id": asset.item.reportId,
+              "X-AI-Grader-Asset-Id": asset.workspaceAsset.assetId,
+              "X-AI-Grader-Request-SHA256":
+                asset.workspaceAsset.requestSha256,
+              "X-AI-Grader-SHA256": asset.workspaceAsset.sha256,
+              "X-AI-Grader-Side": asset.workspaceAsset.side,
+              "X-AI-Grader-Evidence-Role":
+                asset.workspaceAsset.evidenceRole,
+              "X-AI-Grader-Width-Px":
+                String(asset.workspaceAsset.widthPx),
+              "X-AI-Grader-Height-Px":
+                String(asset.workspaceAsset.heightPx),
+            },
+          );
+        }
         return sendBinary(
           res,
           200,

@@ -369,21 +369,17 @@ function ownerAcceptedDisplayBundle() {
   return bundle as AiGraderReportBundleV03;
 }
 
-test("V1 report renders exact scores, subscores, formulas, and evidence limitations separately", () => {
+test("V1 public report renders measured scores, subscores, formulas, and exact evidence without private quality terms", () => {
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle: displayBundle() }));
   assert.match(html, /9\.58/);
   assert.match(html, /Label 9\.6/);
   assert.match(html, /Starting score|Start/);
   assert.match(html, /Front, back, and location subscores/);
   assert.match(html, /top left/);
-  assert.match(html, /Evidence-quality limitations/);
-  assert.match(html, /deduction 0\.00/);
-  assert.match(html, /common mode specular glare/);
-  assert.match(html, /Published evidence replay/);
+  assert.doesNotMatch(html, /Evidence-quality limitations|common mode specular glare/);
+  assert.match(html, /Vision evidence replay/);
   assert.match(html, /Immutable grading provenance/);
-  assert.match(html, /Exact deduction formula/);
-  assert.match(html, /linear clamped/);
-  assert.match(html, /0\.55 &lt;= max\(0\.05, 0\.08\)/);
+  assert.doesNotMatch(html, /confidence|uncertainty|U95|provisional/i);
   assert.doesNotMatch(html, /Finding review|Human finding review/);
   assert.match(html, /Exact immutable deduction overlay for finding surface-scratch-front-1/);
   assert.match(html, /href="\/api\/evidence\/deduction-overlay"/);
@@ -488,7 +484,7 @@ test("sealed common-mode admission internals do not leak limitation or review la
       "Internal admission exception avoids provisional or insufficient evidence and human review.",
   };
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle }));
-  assert.match(html, /No evidence-quality limitation recorded/);
+  assert.doesNotMatch(html, /evidence-quality|confidence|uncertainty|U95/i);
   assert.doesNotMatch(html, /provisional|insufficient|human|exception|admission/i);
 });
 
