@@ -2169,6 +2169,9 @@ export default function AiGraderStationPage() {
         nowMs: previewFreshnessNow,
       })
     : aiGraderPreviewDetectedCaptureReady(previewEpochState, previewFreshnessNow);
+  const calibratedContourMeasurementsReady = Boolean(
+    activePreviewCardGeometry?.observedDenseContour?.measurementsMm,
+  );
   const detectedGeometryReady =
     cardPlacementState === "ready" &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
@@ -2179,7 +2182,7 @@ export default function AiGraderStationPage() {
           activePreviewCardGeometry.observedDenseContour.points.length &&
         activePreviewCardGeometry.observedDenseContour.points.length >= 16 &&
         activePreviewCardGeometry.observedDenseContour.contourSha256 &&
-        activePreviewCardGeometry.observedDenseContour.measurementsMm,
+        calibratedContourMeasurementsReady,
     ) &&
     previewFrameFresh &&
     detectedGeometryFresh &&
@@ -2269,8 +2272,14 @@ export default function AiGraderStationPage() {
       ? status.frontCaptureReadiness.message
     : status.sessionManifest.frontCaptured
       ? "Front captured. Follow the back-card prompt in the camera view."
+      : detectedGeometryVisible && !calibratedContourMeasurementsReady
+        ? "Waiting for calibrated measurements from the current contour."
+      : !lightingPositioningCompletelyAcknowledged(liveLighting)
+        ? "Waiting for exact lighting controller acknowledgement."
+      : !previewFrameFresh || !detectedPreviewCaptureReady
+        ? "Waiting for a fresh detected front frame."
       : !canStartGrading
-          ? "Wait for a fresh detected front frame and exact controller acknowledgement."
+          ? cardPlacementGuidance
           : previewGeometrySide !== "front"
             ? "Finish the current back capture before starting another front."
             : cardPlacementGuidance;
@@ -4938,6 +4947,10 @@ export default function AiGraderStationPage() {
         : previewStatus.status === "error"
           ? previewStatus.lastError ?? "The local preview stream is not available."
           : "The local Dell bridge will stream Basler preview frames here when connected.";
+  const compactLiveCameraStatus =
+    bridgeConnected &&
+    previewStatus.status === "live" &&
+    !warmRunnerCapturing;
 
   if (workArea === "finish") {
     const finishFrontReady = Boolean(selectedFinishItem?.slabPhotos.frontUploaded || slabUploads.front?.status === "uploaded");
@@ -5479,10 +5492,16 @@ export default function AiGraderStationPage() {
             <div className={`card-geometry-badge ${cardPlacementState}`} role="status" aria-live="polite">
               {cardPlacementLabel}
             </div>
-            <div className="camera-status">
-              <span>{bridgeStatusLabel}</span>
-              <strong>{previewStatusLabel}</strong>
-              <p>{previewStatusDetail}</p>
+            <div className={`camera-status${compactLiveCameraStatus ? " compact-live" : ""}`}>
+              {compactLiveCameraStatus ? (
+                <strong>LIVE <span aria-hidden="true">•</span> CONNECTED</strong>
+              ) : (
+                <>
+                  <span>{bridgeStatusLabel}</span>
+                  <strong>{previewStatusLabel}</strong>
+                  <p>{previewStatusDetail}</p>
+                </>
+              )}
             </div>
           </div>
 
@@ -7446,7 +7465,7 @@ export default function AiGraderStationPage() {
           position: absolute;
           z-index: 4;
           left: 18px;
-          bottom: 18px;
+          top: 18px;
           display: grid;
           gap: 2px;
           padding: 8px 10px;
@@ -7548,6 +7567,30 @@ export default function AiGraderStationPage() {
           margin: 8px 0 0;
           color: #bbb4a8;
           line-height: 1.5;
+        }
+        .camera-status.compact-live {
+          left: 18px;
+          bottom: 18px;
+          max-width: none;
+          padding: 7px 10px;
+          border: 1px solid rgba(34, 197, 94, 0.55);
+          border-radius: 999px;
+          background: rgba(8, 10, 12, 0.84);
+        }
+        .camera-status.compact-live strong {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin: 0;
+          color: #86efac;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.12em;
+        }
+        .camera-status.compact-live strong span {
+          color: #22c55e;
+          font-size: 10px;
+          letter-spacing: 0;
         }
         .connect-scrim,
         .flip-scrim {

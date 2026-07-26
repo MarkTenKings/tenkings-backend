@@ -7464,64 +7464,77 @@ export class AiGraderLocalStationBridgeService {
       return undefined;
     }
     try {
-      const loader =
-        this.dependencies.loadMathematicalCalibrationBundle ??
-        loadFixedRigMathematicalCalibrationBundleV1;
-      const loaded = loader({
-        bundlePath: this.config.mathematicalCalibrationBundlePath,
-        bundleSha256: this.config.mathematicalCalibrationBundleSha256,
-        expectedRigId: this.config.mathematicalCalibrationRigId,
-        ...(this.config.mathematicalCalibrationRuntimeContext
-          ? {
-              expectedRuntimeContext:
-                this.config.mathematicalCalibrationRuntimeContext,
-            }
-          : {}),
-      });
-      const physicalInputs =
-        loaded.physicalArtifact.inputs &&
-        typeof loaded.physicalArtifact.inputs === "object" &&
-        !Array.isArray(loaded.physicalArtifact.inputs)
-          ? loaded.physicalArtifact.inputs as Record<string, unknown>
-          : undefined;
-      const lensModel =
-        physicalInputs?.lensModel &&
-        typeof physicalInputs.lensModel === "object" &&
-        !Array.isArray(physicalInputs.lensModel)
-          ? physicalInputs.lensModel as Record<string, unknown>
-          : undefined;
-      const calibration: CardGeometrySensorPlaneCalibrationV1 = {
-        schemaVersion:
-          "ten-kings-card-geometry-sensor-plane-calibration-v1",
-        profileId: loaded.profile.profileId,
-        calibrationVersion: loaded.profile.calibrationVersion,
-        calibrationArtifactSha256: loaded.profile.artifactSha256,
-        bundleManifestSha256:
-          loaded.authority.bundleManifestSha256,
-        sourceWidthPx:
-          typeof lensModel?.sourceWidthPx === "number"
-            ? lensModel.sourceWidthPx
-            : Number.NaN,
-        sourceHeightPx:
-          typeof lensModel?.sourceHeightPx === "number"
-            ? lensModel.sourceHeightPx
-            : Number.NaN,
-        mmPerPixelX: loaded.profile.mmPerPixelX,
-        mmPerPixelY: loaded.profile.mmPerPixelY,
-        scaleRelativeU95: loaded.profile.scaleRelativeU95,
-        segmentationBoundaryU95Px:
-          loaded.profile.segmentationBoundaryU95Px,
-        linearMeasurementU95Mm:
-          loaded.profile.measurementRepeatability.linearMm.u95,
-      };
-      if (!verifyCardGeometrySensorPlaneCalibrationV1(calibration)) {
-        return undefined;
-      }
+      const calibration = this.loadPreviewSensorPlaneCalibration(
+        this.config.mathematicalCalibrationBundlePath,
+        this.config.mathematicalCalibrationBundleSha256,
+      );
       this.previewSensorPlaneCalibration = calibration;
       return calibration;
     } catch {
       return undefined;
     }
+  }
+
+  private loadPreviewSensorPlaneCalibration(
+    bundlePath: string,
+    bundleSha256: string,
+  ): CardGeometrySensorPlaneCalibrationV1 {
+    const loader =
+      this.dependencies.loadMathematicalCalibrationBundle ??
+      loadFixedRigMathematicalCalibrationBundleV1;
+    const loaded = loader({
+      bundlePath,
+      bundleSha256,
+      expectedRigId: this.config.mathematicalCalibrationRigId,
+      ...(this.config.mathematicalCalibrationRuntimeContext
+        ? {
+            expectedRuntimeContext:
+              this.config.mathematicalCalibrationRuntimeContext,
+          }
+        : {}),
+    });
+    const physicalInputs =
+      loaded.physicalArtifact.inputs &&
+      typeof loaded.physicalArtifact.inputs === "object" &&
+      !Array.isArray(loaded.physicalArtifact.inputs)
+        ? loaded.physicalArtifact.inputs as Record<string, unknown>
+        : undefined;
+    const lensModel =
+      physicalInputs?.lensModel &&
+      typeof physicalInputs.lensModel === "object" &&
+      !Array.isArray(physicalInputs.lensModel)
+        ? physicalInputs.lensModel as Record<string, unknown>
+        : undefined;
+    const calibration: CardGeometrySensorPlaneCalibrationV1 = {
+      schemaVersion:
+        "ten-kings-card-geometry-sensor-plane-calibration-v1",
+      profileId: loaded.profile.profileId,
+      calibrationVersion: loaded.profile.calibrationVersion,
+      calibrationArtifactSha256: loaded.profile.artifactSha256,
+      bundleManifestSha256:
+        loaded.authority.bundleManifestSha256,
+      sourceWidthPx:
+        typeof lensModel?.sourceWidthPx === "number"
+          ? lensModel.sourceWidthPx
+          : Number.NaN,
+      sourceHeightPx:
+        typeof lensModel?.sourceHeightPx === "number"
+          ? lensModel.sourceHeightPx
+          : Number.NaN,
+      mmPerPixelX: loaded.profile.mmPerPixelX,
+      mmPerPixelY: loaded.profile.mmPerPixelY,
+      scaleRelativeU95: loaded.profile.scaleRelativeU95,
+      segmentationBoundaryU95Px:
+        loaded.profile.segmentationBoundaryU95Px,
+      linearMeasurementU95Mm:
+        loaded.profile.measurementRepeatability.linearMm.u95,
+    };
+    if (!verifyCardGeometrySensorPlaneCalibrationV1(calibration)) {
+      throw new Error(
+        "The exact activated mathematical calibration cannot produce live contour measurements.",
+      );
+    }
+    return calibration;
   }
 
   private bindMathematicalGradingAuthority(
@@ -10558,6 +10571,7 @@ export class AiGraderLocalStationBridgeService {
       gradingContract?: AiGraderGradingContract;
       calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+      previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
     },
     now = new Date().toISOString(),
   ) {
@@ -10574,6 +10588,7 @@ export class AiGraderLocalStationBridgeService {
       gradingContract?: AiGraderGradingContract;
       calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+      previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
     },
     now = new Date().toISOString(),
   ) {
@@ -10632,6 +10647,10 @@ export class AiGraderLocalStationBridgeService {
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
     this.manifest = manifest;
+    this.previewSensorPlaneCalibration = request.previewSensorPlaneCalibration;
+    this.previewSensorPlaneCalibrationResolved = Boolean(
+      request.previewSensorPlaneCalibration,
+    );
     this.frontCaptureOperations.clear();
     this.frontCaptureInFlightKey = undefined;
     this.backCaptureOperations.clear();
@@ -15250,11 +15269,21 @@ export class AiGraderLocalStationBridgeService {
           "Legacy V0 and an omitted grading contract are prohibited.",
         );
       }
+      let previewSensorPlaneCalibration:
+        | CardGeometrySensorPlaneCalibrationV1
+        | undefined;
       if (this.config.mode === "real") {
         if (!this.dependencies.calibrationActivationRegistry || !request.calibrationActivationAuthority) {
           throw new Error("Start New Card requires exact hosted/local calibration activation authority; configured bundle fallback is prohibited.");
         }
-        await this.dependencies.calibrationActivationRegistry.assertStartAuthority(request.calibrationActivationAuthority);
+        const activationBinding =
+          await this.dependencies.calibrationActivationRegistry.assertStartAuthority(
+            request.calibrationActivationAuthority,
+          );
+        previewSensorPlaneCalibration = this.loadPreviewSensorPlaneCalibration(
+          activationBinding.bundlePath,
+          request.calibrationActivationAuthority.bundleManifestSha256,
+        );
       } else {
         const readiness = mathematicalCalibrationReadiness(
           this.config,
@@ -15277,6 +15306,7 @@ export class AiGraderLocalStationBridgeService {
         calibrationActivationAuthority: request.calibrationActivationAuthority,
         gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
+        previewSensorPlaneCalibration,
       }, now);
       this.startSessionLifecyclePending = false;
       return this.status();
