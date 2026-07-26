@@ -1,30 +1,26 @@
-const assert = require('node:assert/strict');
-const { createHash } = require('node:crypto');
-const { test } = require('node:test');
+const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
+const { test } = require("node:test");
 
+const drivers = require("../dist/drivers");
 const {
   CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1,
   buildFixedRigStandardTradingCardBoundaryV1,
-  detectFixedRigRawBoundObservedOuterCutV1,
+  sealFixedRigCanonicalObservedOuterCutV1,
   verifyFixedRigRawBoundObservedOuterCutArtifactV1,
-  verifyFixedRigRawBoundOuterCutUnavailableAuditV1,
-} = require('../dist/drivers');
+} = drivers;
 
-const hash = (value) => createHash('sha256').update(value).digest('hex');
-const canonicalHash = (value) => hash(Buffer.from(JSON.stringify(value), 'utf8'));
+const hash = (value) => createHash("sha256").update(value).digest("hex");
+const canonicalHash = (value) => hash(Buffer.from(JSON.stringify(value), "utf8"));
 
-function transformFor(rawSha256, crop = {
-  leftPx: 100,
-  topPx: 140,
-  widthPx: 800,
-  heightPx: 1120,
-}) {
+function transformFor(rawSha256) {
+  const crop = { leftPx: 100, topPx: 140, widthPx: 800, heightPx: 1120 };
   const scaleX = 1200 / crop.widthPx;
   const scaleY = 1680 / crop.heightPx;
   const payload = {
     schemaVersion: CARD_GEOMETRY_RAW_TO_NORMALIZED_TRANSFORM_V1,
     sourceSha256: rawSha256,
-    sourceCoordinateFrame: 'auto_oriented_raw_image_pixels',
+    sourceCoordinateFrame: "auto_oriented_raw_image_pixels",
     sourceWidthPx: 1000,
     sourceHeightPx: 1400,
     autoOrientApplied: true,
@@ -32,59 +28,30 @@ function transformFor(rawSha256, crop = {
     rotatedWidthPx: 1000,
     rotatedHeightPx: 1400,
     crop,
-    outputCoordinateFrame: 'normalized_card_portrait_pixels',
+    outputCoordinateFrame: "normalized_card_portrait_pixels",
     outputWidthPx: 1200,
     outputHeightPx: 1680,
     matrix: [
-      scaleX,
-      0,
-      -scaleX * crop.leftPx,
-      0,
-      scaleY,
-      -scaleY * crop.topPx,
-      0,
-      0,
-      1,
+      scaleX, 0, -scaleX * crop.leftPx,
+      0, scaleY, -scaleY * crop.topPx,
+      0, 0, 1,
     ],
   };
   return { ...payload, transformSha256: canonicalHash(payload) };
 }
 
-function rawCardPlane(radius = 40, halfWidth = 400) {
-  const width = 1000;
-  const height = 1400;
-  const data = new Float32Array(width * height * 3);
-  const centerX = 500;
-  const centerY = 700;
-  const halfHeight = 560;
-  for (let y = 0; y < height; y += 1) {
-    for (let x = 0; x < width; x += 1) {
-      const qx = Math.abs(x + 0.5 - centerX) - (halfWidth - radius);
-      const qy = Math.abs(y + 0.5 - centerY) - (halfHeight - radius);
-      const signedDistance = Math.hypot(Math.max(qx, 0), Math.max(qy, 0)) +
-        Math.min(Math.max(qx, qy), 0) - radius;
-      const value = 1 / (1 + Math.exp(signedDistance * 2));
-      const offset = (y * width + x) * 3;
-      data[offset] = value;
-      data[offset + 1] = value;
-      data[offset + 2] = value;
-    }
-  }
-  return { width, height, data };
-}
-
-function detectorInput(rawAllOnRgb, crop) {
-  const rawSha256 = hash(Buffer.from('exact-raw-all-on-file'));
+function detectorInput(rawAllOnRgb) {
+  const rawSha256 = hash(Buffer.from("exact-raw-all-on-file"));
   return {
     rawAllOnRgb,
-    rawAllOnAssetId: 'front-raw-all-on',
+    rawAllOnAssetId: "front-raw-all-on",
     rawAllOnAssetSha256: rawSha256,
-    normalizedAllOnAssetId: 'front-normalized-all-on',
-    normalizedAllOnAssetSha256: hash(Buffer.from('exact-normalized-all-on-file')),
-    rawToNormalizedTransform: transformFor(rawSha256, crop),
-    calibrationProfileId: 'fixed-rig-profile-v1',
-    calibrationVersion: 'calibration-v1',
-    calibrationSha256: hash(Buffer.from('finalized-calibration-profile')),
+    normalizedAllOnAssetId: "front-normalized-all-on",
+    normalizedAllOnAssetSha256: hash(Buffer.from("exact-normalized-all-on-file")),
+    rawToNormalizedTransform: transformFor(rawSha256),
+    calibrationProfileId: "fixed-rig-profile-v1",
+    calibrationVersion: "calibration-v1",
+    calibrationSha256: hash(Buffer.from("finalized-calibration-profile")),
     intendedBoundary: buildFixedRigStandardTradingCardBoundaryV1({
       normalizedWidthPx: 1200,
       normalizedHeightPx: 1680,
@@ -95,117 +62,147 @@ function detectorInput(rawAllOnRgb, crop) {
   };
 }
 
-test('raw sensor outer-cut detector searches raw exterior pixels and emits a transform-bound contour', () => {
-  const input = detectorInput(rawCardPlane());
-  const result = detectFixedRigRawBoundObservedOuterCutV1(input);
-  assert.equal(result.status, 'computed');
-  assert.equal(verifyFixedRigRawBoundObservedOuterCutArtifactV1(result.artifact), true);
-  assert.equal(result.artifact.rawAllOnAssetSha256, input.rawAllOnAssetSha256);
-  assert.equal(
-    result.artifact.rawToNormalizedTransformSha256,
-    input.rawToNormalizedTransform.transformSha256,
-  );
-  assert.equal(result.artifact.crossSectionCount, 192);
-  assert.equal(result.artifact.supportedCrossSectionCount, 192);
-  assert.equal(result.artifact.rawContour.length, 192);
-  assert.equal(result.artifact.normalizedContour.length, 192);
-  assert.ok(result.artifact.u95ComponentsMm.rawDetectorLocalization > 0);
-  assert.ok(result.artifact.u95Mm >
-    result.artifact.u95ComponentsMm.calibratedSegmentationBoundary);
-});
-
-test('raw sensor outer-cut detector recovers exact strong edges from bounded normalization geometry mismatch', () => {
-  const input = detectorInput(rawCardPlane(), {
-    leftPx: 80,
-    topPx: 140,
-    widthPx: 840,
-    heightPx: 1120,
-  });
-  const result = detectFixedRigRawBoundObservedOuterCutV1(input);
-  assert.equal(result.status, 'computed');
-  assert.equal(result.artifact.supportedCrossSectionCount, 192);
-  assert.ok(result.artifact.minimumDetectedGradientDigitalUnits >= 4);
-});
-
-test('raw sensor outer-cut detector applies only the narrow rounded-corner recovery margin', () => {
-  const result = detectFixedRigRawBoundObservedOuterCutV1(
-    detectorInput(rawCardPlane(75)),
-  );
-  assert.equal(result.status, 'computed', JSON.stringify(result));
-  assert.equal(result.artifact.supportedCrossSectionCount, 192);
-  assert.ok(result.artifact.minimumDetectedGradientDigitalUnits >= 4);
-});
-
-test('raw sensor outer-cut detector does not apply the corner margin to straight edges', () => {
-  const result = detectFixedRigRawBoundObservedOuterCutV1(
-    detectorInput(rawCardPlane(40, 420)),
-  );
-  assert.equal(result.status, 'insufficient_evidence');
-  assert.equal(result.failureKind, 'automatic_measurement_unavailable');
-  assert.equal(result.requiresRecapture, false);
-  assert.ok(result.unavailableAudit.supportedCrossSectionCount > 0);
-  assert.equal(
-    verifyFixedRigRawBoundOuterCutUnavailableAuditV1(result.unavailableAudit),
-    true,
-  );
-  assert.match(result.reasons.join(' '), /gradient/i);
-});
-
-test('raw sensor outer-cut detector rejects normalization mismatch beyond its bounded recovery envelope', () => {
-  const result = detectFixedRigRawBoundObservedOuterCutV1(
-    detectorInput(rawCardPlane(), {
-      leftPx: 50,
-      topPx: 350,
-      widthPx: 900,
-      heightPx: 700,
-    }),
-  );
-  assert.equal(result.status, 'insufficient_evidence');
-  assert.match(result.reasons.join(' '), /bounded outer-cut recovery envelope/i);
-});
-
-test('raw sensor outer-cut detector fails closed when raw exterior evidence is absent or transform identity is changed', () => {
-  const input = detectorInput(rawCardPlane());
-  const empty = {
-    width: input.rawAllOnRgb.width,
-    height: input.rawAllOnRgb.height,
-    data: new Float32Array(input.rawAllOnRgb.data.length).fill(0.5),
+function canonicalObservedContour(input, rawPoints, strongSupportFraction = 0.1) {
+  const rawPayload = {
+    sourceAssetSha256: input.rawAllOnAssetSha256,
+    coordinateFrame: "source_image_pixels",
+    points: rawPoints,
   };
-  const noBoundary = detectFixedRigRawBoundObservedOuterCutV1({
-    ...input,
-    rawAllOnRgb: empty,
-  });
-  assert.equal(noBoundary.status, 'insufficient_evidence');
-  assert.equal(noBoundary.failureKind, 'invalid_input');
-  assert.equal(noBoundary.requiresRecapture, true);
-  assert.equal(noBoundary.unavailableAudit, undefined);
-  assert.match(noBoundary.reasons.join(' '), /zero raw perimeter|nonzero authenticated/i);
+  const raw = {
+    schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+    coordinateFrame: "source_image_pixels",
+    sourceAssetSha256: input.rawAllOnAssetSha256,
+    points: rawPoints,
+    pointCount: rawPoints.length,
+    contourSha256: canonicalHash(rawPayload),
+    strongSupportFraction,
+    evidenceQuality: strongSupportFraction >= 0.65 ? "strong" : "limited",
+    measurementsPx: {
+      width: 800,
+      height: 1120,
+      perimeter: 3000,
+      enclosedArea: 700000,
+      angleDegrees: 0,
+      circularArcs: [],
+    },
+  };
+  const [a, b, c, d, e, f] = input.rawToNormalizedTransform.matrix;
+  const normalizedPoints = rawPoints.map(({ x, y }) => ({
+    x: Number((a * x + b * y + c).toFixed(6)),
+    y: Number((d * x + e * y + f).toFixed(6)),
+  }));
+  const normalizedPayload = {
+    sourceContourSha256: raw.contourSha256,
+    rawToNormalizedTransformSha256: input.rawToNormalizedTransform.transformSha256,
+    coordinateFrame: "normalized_card_portrait_pixels",
+    points: normalizedPoints,
+  };
+  const normalized = {
+    schemaVersion: "ten-kings-normalized-dense-contour-v1",
+    coordinateFrame: "normalized_card_portrait_pixels",
+    sourceContourSha256: raw.contourSha256,
+    rawToNormalizedTransformSha256: input.rawToNormalizedTransform.transformSha256,
+    points: normalizedPoints,
+    pointCount: normalizedPoints.length,
+    contourSha256: canonicalHash(normalizedPayload),
+  };
+  return { raw, normalized };
+}
 
-  const weakBoundary = rawCardPlane();
-  for (let index = 0; index < weakBoundary.data.length; index += 1) {
-    weakBoundary.data[index] = 0.5 + (weakBoundary.data[index] - 0.5) * 0.02;
-  }
-  const weakResult = detectFixedRigRawBoundObservedOuterCutV1({
-    ...detectorInput(weakBoundary, {
-      leftPx: 80,
-      topPx: 140,
-      widthPx: 840,
-      heightPx: 1120,
-    }),
-  });
-  assert.equal(weakResult.status, 'insufficient_evidence');
-  assert.equal(weakResult.failureKind, 'invalid_input');
-  assert.equal(weakResult.requiresRecapture, true);
-  assert.equal(weakResult.unavailableAudit, undefined);
-  assert.match(weakResult.reasons.join(' '), /zero raw perimeter|nonzero authenticated/i);
+test("the expected-profile search detector is physically absent from the runtime export", () => {
+  assert.equal(drivers.detectFixedRigRawBoundObservedOuterCutV1, undefined);
+});
 
-  const changedIdentity = detectFixedRigRawBoundObservedOuterCutV1({
-    ...input,
-    rawAllOnAssetSha256: hash(Buffer.from('different-raw-file')),
+test("canonical contour sealing measures foggy visible geometry without an expected-profile gate", () => {
+  const fog = {
+    width: 1000,
+    height: 1400,
+    data: new Float32Array(1000 * 1400 * 3).fill(0.5),
+  };
+  const input = detectorInput(fog);
+  const rawPoints = Array.from({ length: 96 }, (_, index) => {
+    const angle = index * Math.PI * 2 / 96;
+    return {
+      x: Number((500 + Math.cos(angle) * 360).toFixed(6)),
+      y: Number((700 + Math.sin(angle) * 500).toFixed(6)),
+    };
   });
-  assert.equal(changedIdentity.status, 'insufficient_evidence');
-  assert.equal(changedIdentity.failureKind, 'invalid_input');
-  assert.equal(changedIdentity.requiresRecapture, true);
-  assert.equal(changedIdentity.unavailableAudit, undefined);
-  assert.match(changedIdentity.reasons.join(' '), /transform/i);
+  const contour = canonicalObservedContour(input, rawPoints, 0.08);
+  const result = sealFixedRigCanonicalObservedOuterCutV1({
+    ...input,
+    observedRawContour: contour.raw,
+    observedNormalizedContour: contour.normalized,
+  });
+
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.artifact.contourAuthority, "canonical_pixel_derived_dense_contour");
+  assert.equal(result.artifact.canonicalRawContourSha256, contour.raw.contourSha256);
+  assert.equal(
+    result.artifact.canonicalNormalizedContourSha256,
+    contour.normalized.contourSha256,
+  );
+  assert.deepEqual(result.artifact.rawContour, rawPoints);
+  assert.equal(result.artifact.supportedCrossSectionCount, 0);
+  assert.ok(result.artifact.confidence > 0);
+  assert.ok(result.artifact.u95Mm > 0);
+  assert.equal(verifyFixedRigRawBoundObservedOuterCutArtifactV1(result.artifact), true);
+});
+
+test("canonical contour sealing rejects transform or contour mutation instead of re-detecting", () => {
+  const plane = {
+    width: 1000,
+    height: 1400,
+    data: new Float32Array(1000 * 1400 * 3).fill(0.5),
+  };
+  const input = detectorInput(plane);
+  const rawPoints = [
+    { x: 100, y: 140 },
+    { x: 900, y: 140 },
+    { x: 900, y: 1260 },
+    { x: 100, y: 1260 },
+  ];
+  const contour = canonicalObservedContour(input, rawPoints, 1);
+  const result = sealFixedRigCanonicalObservedOuterCutV1({
+    ...input,
+    observedRawContour: contour.raw,
+    observedNormalizedContour: {
+      ...contour.normalized,
+      points: contour.normalized.points.map((point, index) =>
+        index === 0 ? { ...point, x: point.x + 1 } : point),
+    },
+  });
+
+  assert.equal(result.status, "insufficient_evidence");
+  assert.match(result.reasons.join(" "), /hash-bound through normalization/i);
+});
+
+test("even a checksum-resealed legacy expected-profile artifact is rejected", () => {
+  const plane = {
+    width: 1000,
+    height: 1400,
+    data: new Float32Array(1000 * 1400 * 3).fill(0.5),
+  };
+  const input = detectorInput(plane);
+  const contour = canonicalObservedContour(input, [
+    { x: 100, y: 140 },
+    { x: 900, y: 140 },
+    { x: 900, y: 1260 },
+    { x: 100, y: 1260 },
+  ], 1);
+  const sealed = sealFixedRigCanonicalObservedOuterCutV1({
+    ...input,
+    observedRawContour: contour.raw,
+    observedNormalizedContour: contour.normalized,
+  });
+  assert.equal(sealed.status, "computed");
+  const { artifactSha256: _oldHash, ...canonicalPayload } = sealed.artifact;
+  const legacyPayload = {
+    ...canonicalPayload,
+    contourAuthority: "legacy_expected_profile_search",
+  };
+  const legacy = {
+    ...legacyPayload,
+    artifactSha256: canonicalHash(legacyPayload),
+  };
+  assert.equal(verifyFixedRigRawBoundObservedOuterCutArtifactV1(legacy), false);
 });

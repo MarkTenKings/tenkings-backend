@@ -48,6 +48,20 @@ async function writeBlank(filePath) {
   await sharp({ create: { width: 800, height: 1000, channels: 3, background: "#202226" } }).png().toFile(filePath);
 }
 
+async function shapePreviewBuffer(shape) {
+  const body = shape === "circle"
+    ? '<circle cx="400" cy="500" r="250" fill="#eeeeee"/>'
+    : shape === "triangle"
+      ? '<path d="M400 175 L675 760 L125 760 Z" fill="#eeeeee"/>'
+      : '<path d="M220 190 L580 190 L700 500 L580 810 L220 810 L100 500 Z" fill="#eeeeee"/>';
+  return sharp(Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <rect width="800" height="1000" fill="#15171a"/>
+      ${body}
+    </svg>
+  `)).png().toBuffer();
+}
+
 /**
  * Regression fixture for a captured all-on failure mode: the card perimeter
  * is dark but real, while interior artwork has much stronger contrast. The
@@ -187,6 +201,146 @@ test("runtime detector boundaries reject missing or unknown policies before imag
     }),
     /detectionPolicy must be live_preview_fast or captured_evidence_full/,
   );
+});
+
+for (const shape of ["circle", "triangle", "hexagon"]) {
+  test(`live preview exposes the observed dense ${shape} boundary without rectangular-shape admission`, async () => {
+    const geometry = await detectCardGeometryFromBuffer({
+      imageBuffer: await shapePreviewBuffer(shape),
+      fileName: `${shape}.png`,
+      side: "front",
+      sourceImageId: `shape-${shape}`,
+      sourceFrameId: `shape-${shape}-frame`,
+      timestamp: "2026-07-25T00:00:00.000Z",
+      detectionPolicy: LIVE_PREVIEW_POLICY,
+    });
+    assert.equal(geometry.geometrySource, "detected");
+    assert.ok(geometry.observedDenseContour);
+    assert.equal(geometry.observedDenseContour.coordinateFrame, "source_image_pixels");
+    assert.equal(geometry.observedDenseContour.sourceAssetSha256.length, 64);
+    assert.equal(geometry.observedDenseContour.contourSha256.length, 64);
+    assert.ok(geometry.observedDenseContour.pointCount > 100);
+    assert.ok(geometry.observedDenseContour.measurementsPx.width > 400);
+    assert.ok(geometry.observedDenseContour.measurementsPx.height > 400);
+  });
+}
+
+function polygonArea(points) {
+  return Math.abs(points.reduce((sum, point, index) => {
+    const next = points[(index + 1) % points.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0)) / 2;
+}
+
+function hasNoConsecutiveDuplicateContourPoints(points) {
+  return points.every((point, index) => {
+    const next = points[(index + 1) % points.length];
+    return point.x !== next.x || point.y !== next.y;
+  });
+}
+
+for (const shape of ["circle", "triangle", "hexagon"]) {
+  test(`captured normalization preserves the complete ${shape} contour and its physical area`, async () => {
+    const dir = tempDir();
+    const rawPath = path.join(dir, `${shape}-raw.png`);
+    const normalizedPath = path.join(dir, `${shape}-normalized.png`);
+    fs.writeFileSync(rawPath, await shapePreviewBuffer(shape));
+    const result = await detectAndNormalizeCardImage({
+      sourceImagePath: rawPath,
+      normalizedOutputPath: normalizedPath,
+      side: "front",
+      sourceImageId: `captured-${shape}`,
+      sourceFrameId: `captured-${shape}-frame`,
+      timestamp: "2026-07-25T00:00:00.000Z",
+      detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+    });
+    assert.equal(result.geometry.placementState, "ready");
+    assert.ok(result.geometry.observedDenseContour);
+    assert.ok(result.normalizedArtifact?.normalizedDenseContour);
+    const rawContour = result.geometry.observedDenseContour;
+    const normalizedContour = result.normalizedArtifact.normalizedDenseContour;
+    assert.equal(hasNoConsecutiveDuplicateContourPoints(rawContour.points), true);
+    assert.equal(hasNoConsecutiveDuplicateContourPoints(normalizedContour.points), true);
+    assert.equal(normalizedContour.pointCount, rawContour.pointCount);
+    assert.equal(normalizedContour.sourceContourSha256, rawContour.contourSha256);
+    assert.equal(
+      normalizedContour.rawToNormalizedTransformSha256,
+      result.normalizedArtifact.rawToNormalizedTransform.transformSha256,
+    );
+    assert.ok(normalizedContour.points.every(({ x, y }) =>
+      x >= 0 && x <= NORMALIZED_CARD_WIDTH_PIXELS &&
+      y >= 0 && y <= NORMALIZED_CARD_HEIGHT_PIXELS));
+    const transformedArea = polygonArea(rawContour.points) *
+      result.normalizedArtifact.scaleX *
+      result.normalizedArtifact.scaleY;
+    assert.ok(
+      Math.abs(polygonArea(normalizedContour.points) - transformedArea) /
+        Math.max(transformedArea, 1) < 0.0001,
+      "the hash-bound normalized contour must preserve the complete physical shape",
+    );
+  });
+}
+
+test("live dense contour reports hash-bound calibrated millimeters and private U95 without a shape profile", async () => {
+  const geometry = await detectCardGeometryFromBuffer({
+    imageBuffer: await shapePreviewBuffer("circle"),
+    fileName: "calibrated-circle.png",
+    side: "front",
+    sourceImageId: "calibrated-circle",
+    sourceFrameId: "calibrated-circle-frame",
+    timestamp: "2026-07-25T00:00:00.000Z",
+    detectionPolicy: LIVE_PREVIEW_POLICY,
+    sensorPlaneCalibration: {
+      schemaVersion: "ten-kings-card-geometry-sensor-plane-calibration-v1",
+      profileId: "test-exact-profile",
+      calibrationVersion: "test-v1",
+      calibrationArtifactSha256: "a".repeat(64),
+      bundleManifestSha256: "b".repeat(64),
+      sourceWidthPx: 800,
+      sourceHeightPx: 1000,
+      mmPerPixelX: 0.1,
+      mmPerPixelY: 0.1,
+      scaleRelativeU95: 0.005,
+      segmentationBoundaryU95Px: 1.5,
+      linearMeasurementU95Mm: 0.01,
+    },
+  });
+  const measurement = geometry.observedDenseContour?.measurementsMm;
+  assert.ok(measurement);
+  assert.equal(measurement.measurementAuthoritySha256.length, 64);
+  assert.ok(measurement.width > 49 && measurement.width < 51);
+  assert.ok(measurement.height > 49 && measurement.height < 51);
+  assert.ok(measurement.circularArcs.some((arc) => arc.radiusMm > 24 && arc.radiusMm < 26));
+  assert.ok(measurement.privateUncertaintyU95.widthMm > 0);
+  assert.equal(
+    measurement.privateUncertaintyU95.basis,
+    "calibrated_scale_boundary_and_repeatability_rss",
+  );
+});
+
+test("a visible contour with less than two-percent strong support remains a real limited-quality measurement", async () => {
+  const imageBuffer = await sharp(Buffer.from(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="800" height="1000">
+      <rect width="800" height="1000" fill="#202226"/>
+      <rect x="120" y="100" width="560" height="800" rx="20" fill="#222324"/>
+      <rect x="397" y="100" width="6" height="10" fill="#dddddd"/>
+    </svg>
+  `)).png().toBuffer();
+  const geometry = await detectCardGeometryFromBuffer({
+    imageBuffer,
+    fileName: "foggy-visible-contour.png",
+    side: "front",
+    sourceImageId: "foggy-visible-contour",
+    sourceFrameId: "foggy-visible-contour-frame",
+    timestamp: "2026-07-25T00:00:00.000Z",
+    detectionPolicy: CAPTURED_EVIDENCE_POLICY,
+  });
+
+  assert.equal(geometry.placementState, "ready");
+  assert.ok(geometry.observedDenseContour);
+  assert.equal(geometry.observedDenseContour.evidenceQuality, "limited");
+  assert.ok(geometry.observedDenseContour.strongSupportFraction > 0);
+  assert.ok(geometry.observedDenseContour.strongSupportFraction < 0.02);
 });
 
 async function imageRegionStats(filePath, rect) {
@@ -469,7 +623,7 @@ test("synthetic outer-corner localization stays close to known rotated-card grou
   }
 });
 
-test("fixed-rig scale envelope rejects a tiny card or same-color outer border instead of locking inner artwork Ready", async () => {
+test("expected scale and aspect remain advisory when a complete physical contour is visible", async () => {
   const dir = tempDir();
   const tinyPath = path.join(dir, "tiny-card.png");
   const matchingBorderPath = path.join(dir, "matching-border.png");
@@ -494,11 +648,14 @@ test("fixed-rig scale envelope rejects a tiny card or same-color outer border in
     side: "front",
   });
 
-  assert.equal(tiny.placementState, "adjust_card");
-  assert.equal(tiny.adjustmentReason, "unsafe_scale");
+  assert.equal(tiny.placementState, "ready");
+  assert.equal(tiny.adjustmentReason, null);
   assert.equal(tiny.placement.withinCoverageTolerance, false);
-  assert.notEqual(matchingBorder.placementState, "ready");
+  assert.ok(tiny.observedDenseContour);
+  assert.equal(matchingBorder.placementState, "ready");
   assert.equal(matchingBorder.placement.withinCoverageTolerance, false);
+  assert.ok(matchingBorder.observedDenseContour);
+  assert.match(matchingBorder.warnings.join(" "), /comparison profile|coverage/i);
 });
 
 test("color-aware plate subtraction detects a low-luma-contrast card", async () => {
@@ -524,7 +681,7 @@ test("color-aware plate subtraction detects a low-luma-contrast card", async () 
   assert.ok((geometry.detection.backgroundColor?.r ?? 255) < 40);
 });
 
-test("perimeter-gradient authority normalizes a dark captured perimeter without lowering solid-plate thresholds", async () => {
+test("dense material contour normalizes a dark captured perimeter without selecting bright artwork", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "dark-perimeter-captured-frame.png");
   const normalizedPath = path.join(dir, "dark-perimeter-normalized.png");
@@ -540,13 +697,16 @@ test("perimeter-gradient authority normalizes a dark captured perimeter without 
 
   assert.equal(result.geometry.placementState, "ready");
   assert.equal(result.geometry.geometrySource, "detected");
-  assert.equal(result.geometry.detection.method, "perimeter_gradient_rectangle_v3");
-  assert.ok(result.geometry.detection.perimeterGradientStrength >= 8.4);
-  assert.equal(result.geometry.detection.perimeterSideStrengths.length, 4);
-  assert.equal(result.geometry.detection.perimeterSideStrengths.every((value) => value >= 1.4), true);
-  assert.equal(result.geometry.detection.perimeterSignedSideStrengths.length, 4);
-  assert.equal(result.geometry.detection.perimeterSignedSideStrengths.every((value) => Math.abs(value) >= 1.2), true);
-  assert.equal(result.geometry.detection.perimeterSidePolarityConsistency.every((value) => value >= 0.8), true);
+  assert.equal(result.geometry.detection.method, "solid_plate_color_component_pca_v2");
+  assert.ok(result.geometry.observedDenseContour);
+  assert.ok(Math.min(
+    result.geometry.observedDenseContour.measurementsPx.width,
+    result.geometry.observedDenseContour.measurementsPx.height,
+  ) > 650);
+  assert.ok(Math.max(
+    result.geometry.observedDenseContour.measurementsPx.width,
+    result.geometry.observedDenseContour.measurementsPx.height,
+  ) > 900);
   assert.ok(result.geometry.detectedCorners);
   assert.ok(result.normalizedArtifact);
   assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
@@ -555,7 +715,7 @@ test("perimeter-gradient authority normalizes a dark captured perimeter without 
   assert.equal((await sharp(normalizedPath).metadata()).height, NORMALIZED_CARD_HEIGHT_PIXELS);
 });
 
-test("perimeter-gradient authority accepts independently coherent directional edge signs without requiring a global polarity", async () => {
+test("dense material contour survives directional exterior lighting without a global polarity assumption", async () => {
   const dir = tempDir();
   const rawPath = path.join(dir, "directional-perimeter.png");
   const normalizedPath = path.join(dir, "directional-perimeter-normalized.png");
@@ -569,15 +729,21 @@ test("perimeter-gradient authority accepts independently coherent directional ed
   });
 
   assert.equal(result.geometry.placementState, "ready");
-  assert.equal(result.geometry.detection.method, "perimeter_gradient_rectangle_v3");
-  assert.equal(result.geometry.detection.perimeterSidePolarityConsistency.every((value) => value >= 0.8), true);
-  assert.equal(new Set(result.geometry.detection.perimeterSidePolarity).size > 1, true);
-  assert.ok(result.geometry.detection.perimeterProvisionalCandidateCount > 0);
+  assert.equal(result.geometry.detection.method, "solid_plate_color_component_pca_v2");
+  assert.ok(result.geometry.observedDenseContour);
+  assert.ok(Math.min(
+    result.geometry.observedDenseContour.measurementsPx.width,
+    result.geometry.observedDenseContour.measurementsPx.height,
+  ) > 650);
+  assert.ok(Math.max(
+    result.geometry.observedDenseContour.measurementsPx.width,
+    result.geometry.observedDenseContour.measurementsPx.height,
+  ) > 900);
   assert.equal((await sharp(normalizedPath).metadata()).width, NORMALIZED_CARD_WIDTH_PIXELS);
   assert.equal((await sharp(normalizedPath).metadata()).height, NORMALIZED_CARD_HEIGHT_PIXELS);
 });
 
-test("perimeter-gradient authority fails closed on deterministic full-frame texture with no card", async () => {
+test("dense-contour authority fails closed on deterministic full-frame texture with no card", async () => {
   const geometry = await detectCardGeometryFromBuffer({
     imageBuffer: await deterministicTexturedNoCardBuffer(),
     detectionPolicy: CAPTURED_EVIDENCE_POLICY,
@@ -587,9 +753,8 @@ test("perimeter-gradient authority fails closed on deterministic full-frame text
 
   assert.equal(geometry.placementState, "not_detected");
   assert.equal(geometry.detectedCorners, null);
-  assert.equal(geometry.detection.method, "perimeter_gradient_rectangle_v3");
-  assert.match(geometry.warnings.join(" "), /side_polarity_coherence/i);
-  assert.deepEqual(geometry.detection.perimeterClosestRejectedCandidate?.reasons, ["side_polarity_coherence"]);
+  assert.equal(geometry.detection.method, "solid_plate_color_component_pca_v2");
+  assert.equal(geometry.observedDenseContour, undefined);
 });
 
 test("a fully visible card beyond the placement guides is Ready, while a clipped card is Adjust Card", async () => {
@@ -615,10 +780,10 @@ test("a fully visible card beyond the placement guides is Ready, while a clipped
   assert.equal(flexible.placement.withinSkewTolerance, false);
   assert.equal(flexible.placement.withinNormalizationSkewTolerance, true);
   assert.equal(flexible.placement.withinFrame, true);
-  assert.equal(clipped.geometrySource, "detected");
-  assert.equal(clipped.placementState, "adjust_card");
-  assert.equal(clipped.adjustmentReason, "outside_frame");
-  assert.equal(clipped.placement.withinFrame, false);
+  assert.equal(clipped.geometrySource, "none");
+  assert.equal(clipped.placementState, "not_detected");
+  assert.equal(clipped.adjustmentReason, "not_detected");
+  assert.equal(clipped.observedDenseContour, undefined);
 });
 
 test("the broad rotation envelope allows close-enough placement but fails closed beyond safe normalization", async () => {
@@ -710,10 +875,25 @@ test("normalization emits the fixed 1200x1680 coordinate space and records inter
   assert.equal(metadata.height, NORMALIZED_CARD_HEIGHT_PIXELS);
   assert.equal(result.normalizedArtifact.upscaled, true);
   assert.equal(result.normalizedArtifact.geometricResamplingApplied, true);
-  assert.ok(result.normalizedArtifact.sourceCropWidth <= 144);
-  assert.ok(result.normalizedArtifact.sourceCropHeight <= 200);
+  // Dense-contour normalization retains a small exterior safety margin instead
+  // of clipping the measured edge to the old four-corner crop.
+  assert.ok(result.normalizedArtifact.sourceCropWidth >= 140);
+  assert.ok(result.normalizedArtifact.sourceCropWidth <= 154);
+  assert.ok(result.normalizedArtifact.sourceCropHeight >= 196);
+  assert.ok(result.normalizedArtifact.sourceCropHeight <= 210);
   assert.ok(result.normalizedArtifact.scaleX > 1);
   assert.ok(result.normalizedArtifact.scaleY > 1);
+  assert.ok(Math.abs(
+    result.normalizedArtifact.scaleX - result.normalizedArtifact.scaleY,
+  ) < 0.01, "physical shape must not be stretched to the 5:7 envelope");
+  assert.equal(
+    result.normalizedArtifact.rawToNormalizedTransform.outputPlacement.fit,
+    "contain_preserve_physical_shape",
+  );
+  assert.ok(result.normalizedArtifact.normalizedDenseContour);
+  assert.ok(result.normalizedArtifact.normalizedDenseContour.points.every(({ x, y }) =>
+    x >= 0 && x <= NORMALIZED_CARD_WIDTH_PIXELS &&
+    y >= 0 && y <= NORMALIZED_CARD_HEIGHT_PIXELS));
   assert.equal(result.rawEvidencePreserved, true);
   assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
 });
@@ -762,7 +942,7 @@ test("reuses one Ready geometry transform on another same-dimension forensic fra
   );
 });
 
-test("live preview falls through to perimeter v3 when illuminated solid-plate segmentation rejects the card", async () => {
+test("live preview and captured evidence use only the dense low-contrast material contour", async () => {
   const dir = tempDir();
   const darkPerimeterPath = path.join(dir, "policy-dark-perimeter.png");
   await writeDarkPerimeterCard(darkPerimeterPath, { angle: -3, offsetX: 24, offsetY: -12 });
@@ -801,26 +981,20 @@ test("live preview falls through to perimeter v3 when illuminated solid-plate se
 
   assert.equal(live.detectionPolicy, LIVE_PREVIEW_POLICY);
   assert.equal(live.placementState, "ready");
-  assert.equal(live.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.equal(live.detection.method, "solid_plate_color_component_pca_v2");
   assert.deepEqual(liveAttempts.map(({ method }) => method), [
     "solid_plate_color_component_pca_v2",
-    "perimeter_gradient_rectangle_v3",
   ]);
-  assert.ok(controllerIoTicks.length > 0, "live perimeter detection did not yield for controller I/O");
-  assert.ok(
-    longestControllerIoGapMs < 250,
-    `live perimeter detection blocked controller I/O for ${longestControllerIoGapMs.toFixed(1)} ms`,
-  );
+  assert.ok(live.observedDenseContour);
   assert.ok(
     liveElapsedMs < 1_800,
     `live perimeter detection exceeded the two-second retained-frame window: ${liveElapsedMs.toFixed(1)} ms`,
   );
   assert.equal(captured.detectionPolicy, CAPTURED_EVIDENCE_POLICY);
   assert.equal(captured.placementState, "ready");
-  assert.equal(captured.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.equal(captured.detection.method, "solid_plate_color_component_pca_v2");
   assert.deepEqual(capturedAttempts.map(({ method }) => method), [
     "solid_plate_color_component_pca_v2",
-    "perimeter_gradient_rectangle_v3",
   ]);
   for (const observation of [...liveAttempts, ...capturedAttempts]) {
     assert.equal(Number.isFinite(observation.elapsedMs), true);

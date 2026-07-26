@@ -61,6 +61,7 @@ export interface FixedRigConditionDesignRegistrationV1 {
 export interface FixedRigConditionSourcePlanesV1 {
   normalizedLuminance?: FixedRigScalarPlaneV1;
   expectedOuterCardMask?: FixedRigScalarPlaneV1;
+  observedCardMaterialMask?: FixedRigScalarPlaneV1;
   materialPresenceConfidence?: FixedRigScalarPlaneV1;
   segmentationConfidence?: FixedRigScalarPlaneV1;
   boundaryConfidence?: FixedRigScalarPlaneV1;
@@ -88,6 +89,12 @@ export interface BuildFixedRigConditionSegmentationV1Input {
   designRegistration?: FixedRigConditionDesignRegistrationV1;
   photometricEvidence: FixedRigPhotometricEvidenceV1;
   measurementCalibration: FixedRigConditionMeasurementCalibrationV1;
+  /**
+   * Private U95 of the exact hash-bound observed outer contour. It reduces
+   * geometric defect claims that are smaller than the contour's localization
+   * uncertainty; it never vetoes the observation or prevents a grade.
+   */
+  observedBoundaryU95Mm: number;
   algorithmVersion: string;
   sourceEvidence: EvidenceReferenceV1[];
   planes: FixedRigConditionSourcePlanesV1;
@@ -150,6 +157,7 @@ const SURFACE_POLICY = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidenc
 const REQUIRED_PLANE_NAMES = [
   "normalizedLuminance",
   "expectedOuterCardMask",
+  "observedCardMaterialMask",
   "materialPresenceConfidence",
   "segmentationConfidence",
   "boundaryConfidence",
@@ -172,6 +180,7 @@ const REQUIRED_PLANE_NAMES = [
 
 const FRACTION_PLANE_NAMES = new Set<keyof FixedRigConditionSourcePlanesV1>([
   "normalizedLuminance",
+  "observedCardMaterialMask",
   "materialPresenceConfidence",
   "segmentationConfidence",
   "boundaryConfidence",
@@ -243,8 +252,12 @@ function validatePlane(
       reasons.push(`Source plane ${name} contains a value outside its calibrated nonnegative domain.`);
       break;
     }
-    if (name === "expectedOuterCardMask" && value !== 0 && value !== 1) {
-      reasons.push("expectedOuterCardMask must be an exact binary cut-boundary raster.");
+    if (
+      (name === "expectedOuterCardMask" || name === "observedCardMaterialMask") &&
+      value !== 0 &&
+      value !== 1
+    ) {
+      reasons.push(`${name} must be an exact binary physical-boundary raster.`);
       break;
     }
   }
@@ -305,6 +318,9 @@ function validateInput(input: BuildFixedRigConditionSegmentationV1Input): string
     !Number.isFinite(calibration.pixelsPerMmY) || calibration.pixelsPerMmY <= 0
   ) {
     reasons.push("Condition segmentation requires positive finalized pixel/mm scales.");
+  }
+  if (!Number.isFinite(input.observedBoundaryU95Mm) || input.observedBoundaryU95Mm < 0) {
+    reasons.push("Observed contour U95 must be a finite nonnegative physical measurement.");
   }
   if (!isIdentifier(input.algorithmVersion)) reasons.push("Algorithm version is not a valid immutable identifier.");
   if (!input.sourceEvidence.length) reasons.push("Condition segmentation requires immutable normalized-source evidence.");
@@ -559,9 +575,12 @@ interface BuiltFeaturePlanesV1 {
   shapeDeviationPx: FixedRigScalarPlaneV1;
   deformation: FixedRigScalarPlaneV1;
   delamination: FixedRigScalarPlaneV1;
+  physicalDeformation: FixedRigScalarPlaneV1;
+  physicalDelamination: FixedRigScalarPlaneV1;
   roughness: FixedRigScalarPlaneV1;
   fraying: FixedRigScalarPlaneV1;
   relief: FixedRigScalarPlaneV1;
+  physicalRelief: FixedRigScalarPlaneV1;
   edgeDamage: FixedRigScalarPlaneV1;
   edgeChip: FixedRigScalarPlaneV1;
   surfaceMasks: Record<FixedRigSurfaceCategoryV1, FixedRigScalarPlaneV1>;
@@ -577,12 +596,20 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     !photometric.invalidIlluminationMask[index] &&
     Number(planes.segmentationConfidence.data[index]) >= thresholds.minimumSegmentationConfidence,
   );
+  // A sealed physical contour is observable geometry even when its private
+  // confidence is below the former automatic-admission threshold. Confidence
+  // still contributes to U95/private evidence quality, but it must not erase a
+  // visible corner or edge. Zero remains the only "no observed boundary here"
+  // value.
   const boundaryValid = maskFrom(width, height, (index) =>
-    Number(conditionValid.data[index]) > 0 &&
-    Number(planes.boundaryConfidence.data[index]) >= thresholds.minimumBoundaryConfidence,
+    Number(planes.boundaryConfidence.data[index]) > 0,
+  );
+  const photometricBoundaryValid = maskFrom(width, height, (index) =>
+    Number(boundaryValid.data[index]) > 0 &&
+    Number(conditionValid.data[index]) > 0,
   );
   const whitening = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
+    Number(photometricBoundaryValid.data[index]) > 0 &&
     Number(planes.exposedFiberResponse.data[index]) >= thresholds.minimumExposedFiberResponse,
   );
   const boundaryMaterialLossToleranceMm = Math.max(
@@ -601,11 +628,16 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
       kind: "depth_mm",
       measuredMeasurement: measuredDepthMm,
     }).u95;
-    return measuredDepthMm > grade10BufferV1(depthU95, boundaryMaterialLossToleranceMm);
+    return measuredDepthMm >
+      grade10BufferV1(
+        Math.max(depthU95, input.observedBoundaryU95Mm),
+        boundaryMaterialLossToleranceMm,
+      );
   });
   const shapeDeviation = maskFrom(width, height, (index) =>
     Number(boundaryValid.data[index]) > 0 &&
-    Number(planes.boundaryDeviationMm.data[index]) >= thresholds.minimumBoundaryShapeDeviationMm,
+    Number(planes.boundaryDeviationMm.data[index]) >
+      input.observedBoundaryU95Mm + thresholds.minimumBoundaryShapeDeviationMm,
   );
   const geometricPixelsPerMm = Math.sqrt(
     input.measurementCalibration.pixelsPerMmX * input.measurementCalibration.pixelsPerMmY,
@@ -615,32 +647,72 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     (value) => Number(value) * geometricPixelsPerMm,
   ));
   const deformation = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
+    Number(photometricBoundaryValid.data[index]) > 0 &&
     Number(planes.deformationResponse.data[index]) >= thresholds.minimumDeformationResponse,
   );
   const delamination = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
+    Number(photometricBoundaryValid.data[index]) > 0 &&
     Number(planes.delaminationResponse.data[index]) >= thresholds.minimumDelaminationResponse,
   );
-  const roughness = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
-    Number(planes.edgeRoughnessIndex.data[index]) >= thresholds.minimumEdgeRoughnessIndex,
-  );
-  const fraying = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
-    Number(planes.frayingResponse.data[index]) >= thresholds.minimumFrayingResponse,
-  );
+  const boundaryRoughnessFullScaleMm =
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.conditionPlaneProducer
+      .boundary.boundaryRoughnessFullScaleMm;
+  const roughness = maskFrom(width, height, (index) => {
+    const observedRoughnessMm =
+      Number(planes.edgeRoughnessIndex.data[index]) * boundaryRoughnessFullScaleMm;
+    const effectiveRoughness = Math.max(
+      0,
+      observedRoughnessMm - input.observedBoundaryU95Mm,
+    ) / boundaryRoughnessFullScaleMm;
+    return Number(photometricBoundaryValid.data[index]) > 0 &&
+      effectiveRoughness >= thresholds.minimumEdgeRoughnessIndex;
+  });
+  const fraying = maskFrom(width, height, (index) => {
+    const observedFrayingMm =
+      Number(planes.frayingResponse.data[index]) * boundaryRoughnessFullScaleMm;
+    const effectiveFraying = Math.max(
+      0,
+      observedFrayingMm - input.observedBoundaryU95Mm,
+    ) / boundaryRoughnessFullScaleMm;
+    return Number(photometricBoundaryValid.data[index]) > 0 &&
+      effectiveFraying >= thresholds.minimumFrayingResponse;
+  });
   const relief = maskFrom(width, height, (index) =>
-    Number(boundaryValid.data[index]) > 0 &&
+    Number(photometricBoundaryValid.data[index]) > 0 &&
     Number(planes.reliefIndex.data[index]) >= thresholds.minimumDirectionalReliefIndex,
+  );
+  // Relief, deformation, and delamination all originate from the same
+  // directional photometric response. They cannot corroborate one another.
+  // Only independently observed material loss, exposed fiber, or
+  // uncertainty-significant contour geometry can turn those photometric
+  // responses into a physical corner/edge condition finding.
+  const independentlyObservedPhysicalBoundary = maskFrom(width, height, (index) =>
+    Number(whitening.data[index]) > 0 ||
+    Number(missing.data[index]) > 0 ||
+    Number(shapeDeviation.data[index]) > 0 ||
+    Number(roughness.data[index]) > 0 ||
+    Number(fraying.data[index]) > 0,
+  );
+  const physicalDeformation = maskFrom(width, height, (index) =>
+    Number(deformation.data[index]) > 0 &&
+    Number(independentlyObservedPhysicalBoundary.data[index]) > 0,
+  );
+  const physicalDelamination = maskFrom(width, height, (index) =>
+    Number(delamination.data[index]) > 0 &&
+    Number(independentlyObservedPhysicalBoundary.data[index]) > 0,
+  );
+  const physicalRelief = maskFrom(width, height, (index) =>
+    Number(relief.data[index]) > 0 &&
+    Number(independentlyObservedPhysicalBoundary.data[index]) > 0,
   );
   const edgeChip = maskFrom(width, height, (index) =>
     Number(missing.data[index]) > 0 &&
     Number(planes.chipDepthMm.data[index]) >= thresholds.minimumEdgeChipDepthMm,
   );
-  const edgeDamage = union(width, height, [
-    whitening, missing, deformation, delamination, roughness, fraying, relief,
-  ]);
+  // "edge_damage" is reserved for a future independent unclassified physical
+  // detector. Specialized evidence must not be copied into this generic mask,
+  // otherwise one defect is measured and deducted twice.
+  const edgeDamage = maskFrom(width, height, () => false);
 
   const directionalAnomaly = maskFrom(width, height, (index) =>
     photometric.channels.some((channel) =>
@@ -648,7 +720,8 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     ),
   );
   const scratchRaw = maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.scratchLineResponse.data[index]) >= thresholds.minimumScratchLineResponse &&
     Number(directionalAnomaly.data[index]) === 1,
   );
@@ -663,7 +736,8 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
       geometry.widthMm <= SURFACE_POLICY.maximumScratchWidthMm;
   });
   const scuffRaw = maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.scuffTextureResponse.data[index]) >= thresholds.minimumScuffTextureResponse &&
     Number(directionalAnomaly.data[index]) === 1,
   );
@@ -674,13 +748,15 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     (component) => component.pixels.length * pixelAreaMm2 >= SURFACE_POLICY.minimumScuffAreaMm2,
   );
   const dentRaw = maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.deformationResponse.data[index]) >= thresholds.minimumDeformationResponse &&
     Number(planes.reliefIndex.data[index]) >= SURFACE_POLICY.minimumDentReliefIndex,
   );
   const dent = filterComponents(dentRaw, () => true);
   const creaseRaw = maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.creaseLineResponse.data[index]) >= thresholds.minimumCreaseLineResponse &&
     Number(planes.reliefIndex.data[index]) >= thresholds.minimumDirectionalReliefIndex &&
     Number(directionalAnomaly.data[index]) === 1,
@@ -693,15 +769,18 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     ).lengthMm >= SURFACE_POLICY.minimumCreaseLengthMm,
   );
   const stain = filterComponents(maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.registeredColorDeltaE.data[index]) >= SURFACE_POLICY.minimumStainDeltaE,
   ), () => true);
   const printDefect = filterComponents(maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.registeredPrintDeltaE.data[index]) >= SURFACE_POLICY.minimumPrintDefectDeltaE,
   ), () => true);
   const foreignMaterial = filterComponents(maskFrom(width, height, (index) =>
-    Number(planes.expectedOuterCardMask.data[index]) === 1 &&
+    Number(conditionValid.data[index]) === 1 &&
+    Number(planes.observedCardMaterialMask.data[index]) === 1 &&
     Number(planes.registeredResidueDeltaE.data[index]) >= SURFACE_POLICY.minimumResidueDeltaE,
   ), () => true);
   return {
@@ -713,9 +792,12 @@ function buildFeaturePlanes(input: BuildFixedRigConditionSegmentationV1Input): B
     shapeDeviationPx,
     deformation,
     delamination,
+    physicalDeformation,
+    physicalDelamination,
     roughness,
     fraying,
     relief,
+    physicalRelief,
     edgeDamage,
     edgeChip,
     surfaceMasks: { scratch, scuff, dent, crease, stain, print_defect: printDefect, foreign_material: foreignMaterial },
@@ -756,10 +838,10 @@ function cornerObservation(input: {
     missingMaterialMask: crop(features.missing, box.x, box.y, box.width, box.height),
     shapeDeviationMask: crop(features.shapeDeviation, box.x, box.y, box.width, box.height),
     shapeDeviationPx: crop(features.shapeDeviationPx, box.x, box.y, box.width, box.height),
-    deformationMask: crop(features.deformation, box.x, box.y, box.width, box.height),
-    delaminationMask: crop(features.delamination, box.x, box.y, box.width, box.height),
+    deformationMask: crop(features.physicalDeformation, box.x, box.y, box.width, box.height),
+    delaminationMask: crop(features.physicalDelamination, box.x, box.y, box.width, box.height),
     directionalReliefIndex: crop(source.reliefIndex, box.x, box.y, box.width, box.height),
-    directionalReliefMask: crop(features.relief, box.x, box.y, box.width, box.height),
+    directionalReliefMask: crop(features.physicalRelief, box.x, box.y, box.width, box.height),
   };
 }
 
@@ -800,10 +882,10 @@ function edgeObservation(input: {
     roughnessMask: crop(features.roughness, box.x, box.y, box.width, box.height),
     roughnessIndex: crop(source.edgeRoughnessIndex, box.x, box.y, box.width, box.height),
     frayingMask: crop(features.fraying, box.x, box.y, box.width, box.height),
-    delaminationMask: crop(features.delamination, box.x, box.y, box.width, box.height),
-    deformationMask: crop(features.deformation, box.x, box.y, box.width, box.height),
+    delaminationMask: crop(features.physicalDelamination, box.x, box.y, box.width, box.height),
+    deformationMask: crop(features.physicalDeformation, box.x, box.y, box.width, box.height),
     directionalReliefIndex: crop(source.reliefIndex, box.x, box.y, box.width, box.height),
-    directionalReliefMask: crop(features.relief, box.x, box.y, box.width, box.height),
+    directionalReliefMask: crop(features.physicalRelief, box.x, box.y, box.width, box.height),
   };
 }
 
@@ -815,7 +897,6 @@ function assessConditionEvidenceCoverage(
   invalidExpectedPixelCount: number;
   validEvidenceCoverage: number;
   excludedExpectedPixelFraction: number;
-  contiguousUngradableRegionPixelCounts: number[];
 } {
   const invalidExpectedMask = maskFrom(
     expectedOuterCardMask.width,
@@ -835,7 +916,6 @@ function assessConditionEvidenceCoverage(
     invalidExpectedPixelCount,
     expectedPixelCount,
   );
-  const coveragePolicy = CONDITION_POLICY.excludedEvidenceCoveragePolicy;
   return {
     expectedPixelCount,
     invalidExpectedPixelCount,
@@ -844,10 +924,6 @@ function assessConditionEvidenceCoverage(
       expectedPixelCount,
     ),
     excludedExpectedPixelFraction,
-    contiguousUngradableRegionPixelCounts: components(invalidExpectedMask)
-      .map((component) => component.pixels.length)
-      .filter((pixelCount) =>
-        pixelCount >= coveragePolicy.minimumContiguousUngradableRegionPixels),
   };
 }
 
@@ -888,47 +964,79 @@ export function buildFixedRigConditionSegmentationV1(
   if (reasons.length) return insufficient(input.side, reasons);
 
   const features = buildFeaturePlanes(input);
-  const admissionCoverageMask = input.photometricEvidence.admissionExcludedCommonModeMask
-    ? maskFrom(width, height, (index) =>
-        Number(features.conditionValid.data[index]) === 1 ||
-        Number(input.photometricEvidence.admissionExcludedCommonModeMask![index]) === 1)
-    : features.conditionValid;
-  const conditionCoverage = assessConditionEvidenceCoverage(
-    input.planes.expectedOuterCardMask!,
-    admissionCoverageMask,
+  const scoringCoverage = assessConditionEvidenceCoverage(
+    input.planes.observedCardMaterialMask!,
+    features.conditionValid,
   );
-  const coveragePolicy = CONDITION_POLICY.excludedEvidenceCoveragePolicy;
-  const coverageReasons: string[] = [];
-  if (
-    conditionCoverage.validEvidenceCoverage <
-      coveragePolicy.minimumFullCardValidPixelCoverage
-  ) {
-    coverageReasons.push(
-      'Full-card condition valid-evidence coverage ' +
-      conditionCoverage.validEvidenceCoverage +
-      ' is below the manifest minimum ' +
-      coveragePolicy.minimumFullCardValidPixelCoverage +
-      '.',
-    );
+  const observedMaterial = input.planes.observedCardMaterialMask!;
+  let observedLeft = width;
+  let observedRight = -1;
+  let observedTop = height;
+  let observedBottom = -1;
+  for (let index = 0; index < observedMaterial.data.length; index += 1) {
+    if (Number(observedMaterial.data[index]) !== 1) continue;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    observedLeft = Math.min(observedLeft, x);
+    observedRight = Math.max(observedRight, x);
+    observedTop = Math.min(observedTop, y);
+    observedBottom = Math.max(observedBottom, y);
   }
-  if (conditionCoverage.contiguousUngradableRegionPixelCounts.length > 0) {
-    coverageReasons.push(
-      'Condition evidence contains ' +
-      conditionCoverage.contiguousUngradableRegionPixelCounts.length +
-      ' contiguous expected-card region(s) at or above the manifest ' +
-      coveragePolicy.minimumContiguousUngradableRegionPixels +
-      '-pixel ungradable threshold.',
-    );
+  if (observedRight < observedLeft || observedBottom < observedTop) {
+    return insufficient(input.side, ["The canonical observed material contour contains no pixels."]);
   }
-  if (coverageReasons.length) return insufficient(input.side, coverageReasons);
+  const boundedBox = (left: number, top: number, right: number, bottom: number) => {
+    const x = Math.max(0, Math.floor(left));
+    const y = Math.max(0, Math.floor(top));
+    const boundedRight = Math.min(width, Math.ceil(right));
+    const boundedBottom = Math.min(height, Math.ceil(bottom));
+    return {
+      x,
+      y,
+      width: Math.max(1, boundedRight - x),
+      height: Math.max(1, boundedBottom - y),
+    };
+  };
   const cornerBoxes: Array<{
     location: FixedRigCornerObservationInputV1["location"];
     box: { x: number; y: number; width: number; height: number };
   }> = [
-    { location: "top_left", box: { x: 0, y: 0, width: cornerWidth, height: cornerHeight } },
-    { location: "top_right", box: { x: width - cornerWidth, y: 0, width: cornerWidth, height: cornerHeight } },
-    { location: "bottom_right", box: { x: width - cornerWidth, y: height - cornerHeight, width: cornerWidth, height: cornerHeight } },
-    { location: "bottom_left", box: { x: 0, y: height - cornerHeight, width: cornerWidth, height: cornerHeight } },
+    {
+      location: "top_left",
+      box: boundedBox(
+        observedLeft - edgeDepthX,
+        observedTop - edgeDepthY,
+        observedLeft + cornerWidth,
+        observedTop + cornerHeight,
+      ),
+    },
+    {
+      location: "top_right",
+      box: boundedBox(
+        observedRight - cornerWidth,
+        observedTop - edgeDepthY,
+        observedRight + edgeDepthX + 1,
+        observedTop + cornerHeight,
+      ),
+    },
+    {
+      location: "bottom_right",
+      box: boundedBox(
+        observedRight - cornerWidth,
+        observedBottom - cornerHeight,
+        observedRight + edgeDepthX + 1,
+        observedBottom + edgeDepthY + 1,
+      ),
+    },
+    {
+      location: "bottom_left",
+      box: boundedBox(
+        observedLeft - edgeDepthX,
+        observedBottom - cornerHeight,
+        observedLeft + cornerWidth,
+        observedBottom + edgeDepthY + 1,
+      ),
+    },
   ];
   const edgeBoxes: Array<{
     location: FixedRigEdgeObservationInputV1["location"];
@@ -936,19 +1044,39 @@ export function buildFixedRigConditionSegmentationV1(
   }> = [
     {
       location: "top",
-      box: { x: edgeEndX, y: 0, width: width - 2 * edgeEndX, height: edgeDepthY },
+      box: boundedBox(
+        observedLeft + edgeEndX,
+        observedTop - edgeDepthY,
+        observedRight - edgeEndX + 1,
+        observedTop + edgeDepthY,
+      ),
     },
     {
       location: "right",
-      box: { x: width - edgeDepthX, y: edgeEndY, width: edgeDepthX, height: height - 2 * edgeEndY },
+      box: boundedBox(
+        observedRight - edgeDepthX,
+        observedTop + edgeEndY,
+        observedRight + edgeDepthX + 1,
+        observedBottom - edgeEndY + 1,
+      ),
     },
     {
       location: "bottom",
-      box: { x: edgeEndX, y: height - edgeDepthY, width: width - 2 * edgeEndX, height: edgeDepthY },
+      box: boundedBox(
+        observedLeft + edgeEndX,
+        observedBottom - edgeDepthY,
+        observedRight - edgeEndX + 1,
+        observedBottom + edgeDepthY + 1,
+      ),
     },
     {
       location: "left",
-      box: { x: 0, y: edgeEndY, width: edgeDepthX, height: height - 2 * edgeEndY },
+      box: boundedBox(
+        observedLeft - edgeDepthX,
+        observedTop + edgeEndY,
+        observedLeft + edgeDepthX,
+        observedBottom - edgeEndY + 1,
+      ),
     },
   ];
   const cornerObservations = cornerBoxes.map(({ location, box }) =>
@@ -983,13 +1111,13 @@ export function buildFixedRigConditionSegmentationV1(
   const evidenceQualityLimitations: Extract<
     FixedRigConditionSegmentationV1Result,
     { status: "computed" }
-  >["evidenceQualityLimitations"] = conditionCoverage.invalidExpectedPixelCount
+  >["evidenceQualityLimitations"] = scoringCoverage.invalidExpectedPixelCount
     ? [{
         code: "invalid_condition_evidence_excluded",
-        affectedPixelFraction: conditionCoverage.excludedExpectedPixelFraction,
+        affectedPixelFraction: scoringCoverage.excludedExpectedPixelFraction,
         requiresRecapture: false,
         message:
-          "Invalid condition pixels were excluded with zero damage deduction; remaining valid evidence passed the manifest full-card and localized-region recapture gates.",
+          "Invalid condition pixels were excluded with zero damage deduction; coverage remains private evidence-quality context and does not erase observable measurements.",
       }]
     : [];
   if (
@@ -1030,9 +1158,9 @@ export function buildFixedRigConditionSegmentationV1(
       ? {}
       : { surfaceDepthMm: source.depthMm }),
     surfaceReliefIndex: source.reliefIndex,
-    validEvidenceCoverage: conditionCoverage.validEvidenceCoverage,
+    validEvidenceCoverage: scoringCoverage.validEvidenceCoverage,
     excludedExpectedPixelFraction:
-      conditionCoverage.excludedExpectedPixelFraction,
+      scoringCoverage.excludedExpectedPixelFraction,
     evidenceQualityLimitations,
     invalidPixelsBecameDefects: false,
     invalidPixelsProvedClean: false,

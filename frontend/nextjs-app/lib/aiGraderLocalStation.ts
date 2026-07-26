@@ -302,6 +302,36 @@ export type AiGraderOperatorResolutionSubmissionV1 = {
   resolutions: AiGraderOperatorElementResolutionSubmissionV1[];
 };
 
+export type AiGraderOperatorResolutionWorkspaceAssetV1 = {
+  assetId: string;
+  element: AiGraderOperatorResolutionElementV1;
+  side: "front" | "back";
+  location: string;
+  evidenceRole:
+    | "centering_measurement_overlay"
+    | "corner_measurement_overlay"
+    | "edge_measurement_overlay"
+    | "surface_measurement_overlay";
+  sha256: string;
+  fileName: string;
+  contentType: "image/png";
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+  measurementSummary: string[];
+};
+
+export type AiGraderOperatorResolutionWorkspaceV1 = {
+  schemaVersion: "fixed_rig_operator_resolution_workspace_v1";
+  requestSha256: string;
+  galleries: Record<
+    AiGraderOperatorResolutionElementV1,
+    AiGraderOperatorResolutionWorkspaceAssetV1[]
+  >;
+  hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted";
+  workspaceSha256: string;
+};
+
 export type AiGraderMathematicalExecutionV1 =
   | {
       status: "processing";
@@ -316,6 +346,7 @@ export type AiGraderMathematicalExecutionV1 =
       attempt: number;
       v0FallbackUsed: false;
       request: AiGraderOperatorResolutionRequestV1;
+      workspace: AiGraderOperatorResolutionWorkspaceV1;
       unresolvedElements: AiGraderOperatorResolutionElementV1[];
     }
   | {
@@ -1486,6 +1517,96 @@ function sanitizeOperatorResolutionRequest(
   };
 }
 
+function sanitizeOperatorResolutionWorkspace(
+  value: unknown,
+): AiGraderOperatorResolutionWorkspaceV1 | undefined {
+  if (
+    !stationRecord(value) ||
+    value.schemaVersion !== "fixed_rig_operator_resolution_workspace_v1" ||
+    value.hashPolicy !== "sha256-canonical-json-with-workspaceSha256-omitted" ||
+    !stationRecord(value.galleries)
+  ) {
+    return undefined;
+  }
+  const requestSha256 = exactMathematicalSha256(value.requestSha256);
+  const workspaceSha256 = exactMathematicalSha256(value.workspaceSha256);
+  if (!requestSha256 || !workspaceSha256) return undefined;
+  const roleFor = {
+    centering: "centering_measurement_overlay",
+    corners: "corner_measurement_overlay",
+    edges: "edge_measurement_overlay",
+    surface: "surface_measurement_overlay",
+  } as const;
+  const galleries = {} as AiGraderOperatorResolutionWorkspaceV1["galleries"];
+  const seen = new Set<string>();
+  let total = 0;
+  for (const element of ["centering", "corners", "edges", "surface"] as const) {
+    const rawAssets = value.galleries[element];
+    if (!Array.isArray(rawAssets)) return undefined;
+    const assets: AiGraderOperatorResolutionWorkspaceAssetV1[] = [];
+    for (const raw of rawAssets) {
+      if (!stationRecord(raw)) return undefined;
+      const assetId = safeMathematicalIdentityText(raw.assetId);
+      const location = safeMathematicalIdentityText(raw.location);
+      const fileName = safeMathematicalIdentityText(raw.fileName);
+      const sha256 = exactMathematicalSha256(raw.sha256);
+      const byteSize = positiveMathematicalInteger(raw.byteSize, 64 * 1024 * 1024);
+      const widthPx = positiveMathematicalInteger(raw.widthPx, 20_000);
+      const heightPx = positiveMathematicalInteger(raw.heightPx, 20_000);
+      const measurementSummary = Array.isArray(raw.measurementSummary)
+        ? raw.measurementSummary.map(safeStationText)
+          .filter((line): line is string => Boolean(line))
+        : [];
+      const rawMeasurementSummaryLength = Array.isArray(raw.measurementSummary)
+        ? raw.measurementSummary.length
+        : -1;
+      if (
+        !assetId ||
+        !location ||
+        !fileName ||
+        !sha256 ||
+        !byteSize ||
+        !widthPx ||
+        !heightPx ||
+        raw.element !== element ||
+        (raw.side !== "front" && raw.side !== "back") ||
+        raw.evidenceRole !== roleFor[element] ||
+        raw.contentType !== "image/png" ||
+        measurementSummary.length !== rawMeasurementSummaryLength ||
+        measurementSummary.length > 8 ||
+        seen.has(assetId)
+      ) {
+        return undefined;
+      }
+      seen.add(assetId);
+      total += 1;
+      assets.push({
+        assetId,
+        element,
+        side: raw.side,
+        location,
+        evidenceRole: roleFor[element],
+        sha256,
+        fileName,
+        contentType: "image/png",
+        byteSize,
+        widthPx,
+        heightPx,
+        measurementSummary,
+      });
+    }
+    galleries[element] = assets;
+  }
+  if (total < 1 || total > 64) return undefined;
+  return {
+    schemaVersion: "fixed_rig_operator_resolution_workspace_v1",
+    requestSha256,
+    galleries,
+    hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted",
+    workspaceSha256,
+  };
+}
+
 function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExecutionV1 | undefined {
   if (!stationRecord(value)) return undefined;
   if (value.v0FallbackUsed !== false) {
@@ -1504,6 +1625,7 @@ function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExec
   if (!completedAt) return mathematicalBrowserInsufficientExecution("The bridge returned malformed Mathematical V1 completion metadata.");
   if (value.status === "operator_resolution_required") {
     const request = sanitizeOperatorResolutionRequest(value.request);
+    const workspace = sanitizeOperatorResolutionWorkspace(value.workspace);
     const unresolvedElements = Array.isArray(value.unresolvedElements)
       ? value.unresolvedElements.filter(
           (element): element is AiGraderOperatorResolutionElementV1 =>
@@ -1511,7 +1633,12 @@ function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExec
             element === "edges" || element === "surface",
         )
       : [];
-    if (!request || unresolvedElements.length !== new Set(unresolvedElements).size) {
+    if (
+      !request ||
+      !workspace ||
+      workspace.requestSha256 !== request.requestSha256 ||
+      unresolvedElements.length !== new Set(unresolvedElements).size
+    ) {
       return mathematicalBrowserInsufficientExecution(
         "The bridge returned a malformed exact element-resolution request; no resolution is permitted.",
       );
@@ -1522,6 +1649,7 @@ function sanitizeMathematicalExecution(value: unknown): AiGraderMathematicalExec
       attempt,
       v0FallbackUsed: false,
       request,
+      workspace,
       unresolvedElements,
     };
   }
@@ -2249,6 +2377,59 @@ export type AiGraderPreviewGeometryCorners = {
   bottomLeft: AiGraderPreviewGeometryPoint;
 };
 export type AiGraderPreviewGeometryBoundingBox = { x: number; y: number; width: number; height: number };
+export type AiGraderPreviewObservedDenseContour = {
+  schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1";
+  coordinateFrame: "source_image_pixels";
+  sourceAssetSha256: string;
+  points: AiGraderPreviewGeometryPoint[];
+  pointCount: number;
+  contourSha256: string;
+  strongSupportFraction: number;
+  evidenceQuality: "strong" | "limited";
+  measurementsPx: {
+    width: number;
+    height: number;
+    perimeter: number;
+    enclosedArea: number;
+    angleDegrees: number;
+    circularArcs: Array<{
+      radiusPx: number;
+      sweepDegrees: number;
+      radialResidualPx: number;
+      sampleCount: number;
+    }>;
+  };
+  measurementsMm?: {
+    measurementAuthoritySha256: string;
+    calibration: {
+      profileId: string;
+      calibrationVersion: string;
+      calibrationArtifactSha256: string;
+      bundleManifestSha256: string;
+      sourceWidthPx: number;
+      sourceHeightPx: number;
+      effectiveMmPerPixelX: number;
+      effectiveMmPerPixelY: number;
+    };
+    width: number;
+    height: number;
+    perimeter: number;
+    enclosedArea: number;
+    angleDegrees: number;
+    circularArcs: Array<{
+      radiusMm: number;
+      sweepDegrees: number;
+      radialResidualMm: number;
+      sampleCount: number;
+    }>;
+    privateUncertaintyU95: {
+      widthMm: number;
+      heightMm: number;
+      radiusMm: number;
+      basis: "calibrated_scale_boundary_and_repeatability_rss";
+    };
+  };
+};
 
 /**
  * Path-free subset of capture-helper CardGeometryMetadata that is safe to
@@ -2266,6 +2447,7 @@ export type AiGraderPreviewCardGeometrySummary = {
   detectionUsed: boolean;
   corners: AiGraderPreviewGeometryCorners | null;
   detectedCorners: AiGraderPreviewGeometryCorners | null;
+  observedDenseContour?: AiGraderPreviewObservedDenseContour;
   boundingBox: AiGraderPreviewGeometryBoundingBox | null;
   rotationDegrees: number | null;
   skewDegrees: number | null;
@@ -2329,6 +2511,225 @@ function sanitizePreviewGeometryBoundingBox(value: unknown): AiGraderPreviewGeom
     : { x, y, width, height };
 }
 
+function sanitizePreviewObservedDenseContour(value: unknown): AiGraderPreviewObservedDenseContour | undefined {
+  if (!previewGeometryRecord(value)) return undefined;
+  if (
+    value.schemaVersion !== "ten-kings-card-geometry-observed-dense-contour-v1" ||
+    value.coordinateFrame !== "source_image_pixels" ||
+    typeof value.sourceAssetSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.sourceAssetSha256) ||
+    typeof value.contourSha256 !== "string" ||
+    !/^[a-f0-9]{64}$/.test(value.contourSha256) ||
+    !Array.isArray(value.points) ||
+    value.points.length < 3 ||
+    value.points.length > 8192
+  ) {
+    return undefined;
+  }
+  const points = value.points.map(sanitizePreviewGeometryPoint);
+  if (points.some((point) => !point)) return undefined;
+  const pointCount = previewGeometryNumber(value.pointCount);
+  const strongSupportFraction = previewGeometryNumber(value.strongSupportFraction);
+  const measurements = previewGeometryRecord(value.measurementsPx)
+    ? value.measurementsPx
+    : undefined;
+  if (
+    pointCount !== points.length ||
+    strongSupportFraction === undefined ||
+    strongSupportFraction < 0 ||
+    strongSupportFraction > 1 ||
+    !measurements
+  ) {
+    return undefined;
+  }
+  const width = previewGeometryNumber(measurements.width);
+  const height = previewGeometryNumber(measurements.height);
+  const perimeter = previewGeometryNumber(measurements.perimeter);
+  const enclosedArea = previewGeometryNumber(measurements.enclosedArea);
+  const angleDegrees = previewGeometryNumber(measurements.angleDegrees);
+  if (
+    width === undefined || width <= 0 ||
+    height === undefined || height <= 0 ||
+    perimeter === undefined || perimeter <= 0 ||
+    enclosedArea === undefined || enclosedArea <= 0 ||
+    angleDegrees === undefined
+  ) {
+    return undefined;
+  }
+  const circularArcs = Array.isArray(measurements.circularArcs)
+    ? measurements.circularArcs.slice(0, 32).flatMap((entry) => {
+        if (!previewGeometryRecord(entry)) return [];
+        const radiusPx = previewGeometryNumber(entry.radiusPx);
+        const sweepDegrees = previewGeometryNumber(entry.sweepDegrees);
+        const radialResidualPx = previewGeometryNumber(entry.radialResidualPx);
+        const sampleCount = previewGeometryNumber(entry.sampleCount);
+        return radiusPx !== undefined && radiusPx > 0 &&
+          sweepDegrees !== undefined &&
+          radialResidualPx !== undefined && radialResidualPx >= 0 &&
+          sampleCount !== undefined && Number.isSafeInteger(sampleCount) && sampleCount > 0
+          ? [{ radiusPx, sweepDegrees, radialResidualPx, sampleCount }]
+          : [];
+      })
+    : [];
+  const physical = previewGeometryRecord(value.measurementsMm)
+    ? value.measurementsMm
+    : undefined;
+  const physicalCalibration =
+    physical && previewGeometryRecord(physical.calibration)
+      ? physical.calibration
+      : undefined;
+  const privateUncertainty =
+    physical && previewGeometryRecord(physical.privateUncertaintyU95)
+      ? physical.privateUncertaintyU95
+      : undefined;
+  const safeCalibrationIdentifier = (entry: unknown) =>
+    typeof entry === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(entry)
+      ? entry
+      : undefined;
+  const physicalCircularArcs =
+    physical && Array.isArray(physical.circularArcs)
+      ? physical.circularArcs.slice(0, 32).flatMap((entry) => {
+          if (!previewGeometryRecord(entry)) return [];
+          const radiusMm = previewGeometryNumber(entry.radiusMm);
+          const sweepDegrees = previewGeometryNumber(entry.sweepDegrees);
+          const radialResidualMm =
+            previewGeometryNumber(entry.radialResidualMm);
+          const sampleCount = previewGeometryNumber(entry.sampleCount);
+          return radiusMm !== undefined && radiusMm > 0 &&
+            sweepDegrees !== undefined &&
+            radialResidualMm !== undefined && radialResidualMm >= 0 &&
+            sampleCount !== undefined &&
+            Number.isSafeInteger(sampleCount) &&
+            sampleCount > 0
+            ? [{ radiusMm, sweepDegrees, radialResidualMm, sampleCount }]
+            : [];
+        })
+      : [];
+  const physicalMeasurement = (() => {
+    if (!physical || !physicalCalibration || !privateUncertainty) {
+      return undefined;
+    }
+    const measurementAuthoritySha256 =
+      typeof physical.measurementAuthoritySha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(physical.measurementAuthoritySha256)
+        ? physical.measurementAuthoritySha256
+        : undefined;
+    const profileId = safeCalibrationIdentifier(
+      physicalCalibration.profileId,
+    );
+    const calibrationVersion = safeCalibrationIdentifier(
+      physicalCalibration.calibrationVersion,
+    );
+    const calibrationArtifactSha256 =
+      typeof physicalCalibration.calibrationArtifactSha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(
+        physicalCalibration.calibrationArtifactSha256,
+      )
+        ? physicalCalibration.calibrationArtifactSha256
+        : undefined;
+    const bundleManifestSha256 =
+      typeof physicalCalibration.bundleManifestSha256 === "string" &&
+      /^[a-f0-9]{64}$/.test(physicalCalibration.bundleManifestSha256)
+        ? physicalCalibration.bundleManifestSha256
+        : undefined;
+    const sourceWidthPx = previewGeometryNumber(
+      physicalCalibration.sourceWidthPx,
+    );
+    const sourceHeightPx = previewGeometryNumber(
+      physicalCalibration.sourceHeightPx,
+    );
+    const effectiveMmPerPixelX = previewGeometryNumber(
+      physicalCalibration.effectiveMmPerPixelX,
+    );
+    const effectiveMmPerPixelY = previewGeometryNumber(
+      physicalCalibration.effectiveMmPerPixelY,
+    );
+    const physicalWidth = previewGeometryNumber(physical.width);
+    const physicalHeight = previewGeometryNumber(physical.height);
+    const physicalPerimeter = previewGeometryNumber(physical.perimeter);
+    const physicalArea = previewGeometryNumber(physical.enclosedArea);
+    const physicalAngle = previewGeometryNumber(physical.angleDegrees);
+    const widthU95Mm = previewGeometryNumber(privateUncertainty.widthMm);
+    const heightU95Mm = previewGeometryNumber(privateUncertainty.heightMm);
+    const radiusU95Mm = previewGeometryNumber(privateUncertainty.radiusMm);
+    if (
+      !measurementAuthoritySha256 ||
+      !profileId ||
+      !calibrationVersion ||
+      !calibrationArtifactSha256 ||
+      !bundleManifestSha256 ||
+      sourceWidthPx === undefined ||
+      !Number.isSafeInteger(sourceWidthPx) ||
+      sourceWidthPx <= 0 ||
+      sourceHeightPx === undefined ||
+      !Number.isSafeInteger(sourceHeightPx) ||
+      sourceHeightPx <= 0 ||
+      effectiveMmPerPixelX === undefined ||
+      effectiveMmPerPixelX <= 0 ||
+      effectiveMmPerPixelY === undefined ||
+      effectiveMmPerPixelY <= 0 ||
+      physicalWidth === undefined ||
+      physicalWidth <= 0 ||
+      physicalHeight === undefined ||
+      physicalHeight <= 0 ||
+      physicalPerimeter === undefined ||
+      physicalPerimeter <= 0 ||
+      physicalArea === undefined ||
+      physicalArea <= 0 ||
+      physicalAngle === undefined ||
+      widthU95Mm === undefined ||
+      widthU95Mm < 0 ||
+      heightU95Mm === undefined ||
+      heightU95Mm < 0 ||
+      radiusU95Mm === undefined ||
+      radiusU95Mm < 0 ||
+      privateUncertainty.basis !==
+        "calibrated_scale_boundary_and_repeatability_rss"
+    ) {
+      return undefined;
+    }
+    return {
+      measurementAuthoritySha256,
+      calibration: {
+        profileId,
+        calibrationVersion,
+        calibrationArtifactSha256,
+        bundleManifestSha256,
+        sourceWidthPx,
+        sourceHeightPx,
+        effectiveMmPerPixelX,
+        effectiveMmPerPixelY,
+      },
+      width: physicalWidth,
+      height: physicalHeight,
+      perimeter: physicalPerimeter,
+      enclosedArea: physicalArea,
+      angleDegrees: physicalAngle,
+      circularArcs: physicalCircularArcs,
+      privateUncertaintyU95: {
+        widthMm: widthU95Mm,
+        heightMm: heightU95Mm,
+        radiusMm: radiusU95Mm,
+        basis:
+          "calibrated_scale_boundary_and_repeatability_rss" as const,
+      },
+    };
+  })();
+  return {
+    schemaVersion: value.schemaVersion,
+    coordinateFrame: value.coordinateFrame,
+    sourceAssetSha256: value.sourceAssetSha256,
+    points: points as AiGraderPreviewGeometryPoint[],
+    pointCount: points.length,
+    contourSha256: value.contourSha256,
+    strongSupportFraction,
+    evidenceQuality: value.evidenceQuality === "strong" ? "strong" : "limited",
+    measurementsPx: { width, height, perimeter, enclosedArea, angleDegrees, circularArcs },
+    ...(physicalMeasurement ? { measurementsMm: physicalMeasurement } : {}),
+  };
+}
+
 function sanitizePreviewGeometrySourceFrameId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -2381,6 +2782,7 @@ export function sanitizeAiGraderPreviewCardGeometry(
         : "none";
   const corners = sanitizePreviewGeometryCorners(value.corners);
   const detectedCorners = sanitizePreviewGeometryCorners(value.detectedCorners);
+  const observedDenseContour = sanitizePreviewObservedDenseContour(value.observedDenseContour);
   const rotationDegrees = previewGeometryNumber(value.rotationDegrees) ?? null;
   const skewDegrees = previewGeometryNumber(value.skewDegrees) ?? null;
   const confidenceValue = previewGeometryNumber(value.confidence) ?? 0;
@@ -2406,6 +2808,7 @@ export function sanitizeAiGraderPreviewCardGeometry(
     detectionUsed: value.detectionUsed === true,
     corners,
     detectedCorners,
+    ...(observedDenseContour ? { observedDenseContour } : {}),
     boundingBox: sanitizePreviewGeometryBoundingBox(value.boundingBox),
     rotationDegrees,
     skewDegrees,

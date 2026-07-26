@@ -103,6 +103,38 @@ export type AiGraderOcrPrefillResult = {
     setLookupUsed: boolean;
     setIdentificationUsed: boolean;
   };
+  eyes?: {
+    schemaVersion: "ai_grader_eyes_semantic_observer_v1";
+    status: "observed" | "unavailable";
+    requestSha256: string;
+    imageBindings: Array<{
+      side: "front" | "back";
+      checksumSha256: string;
+      evidenceRef: "image.front" | "image.back";
+    }>;
+    observations: Array<{
+      element: "centering" | "corners" | "edges" | "surface";
+      semanticState:
+        | "printed_border_supported"
+        | "artwork_or_layout_not_border"
+        | "no_coherent_printed_border"
+        | "no_visible_physical_concern"
+        | "visible_physical_concern"
+        | "unclear";
+      challengeDeterministicInterpretation: boolean;
+      requiresOperatorReview: boolean;
+      confidence: number;
+      evidenceRefs: Array<"image.front" | "image.back">;
+      rationale: string;
+    }>;
+    reviewElements: Array<"centering" | "corners" | "edges" | "surface">;
+    metricAuthority: "deterministic_calibrated_pixels_only";
+    wholeCardFailureAuthority: false;
+    requestedModel?: string;
+    actualModel?: string;
+    providerElapsedMs?: number;
+    reason?: "not_configured" | "timeout" | "provider_unavailable" | "invalid_response";
+  };
   warnings: string[];
 };
 
@@ -253,6 +285,7 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
   ) as AiGraderOcrPrefillResult["fields"];
   const reviewFieldNames = safeReviewFieldNames(result.reviewFieldNames, fields);
   const provenance = safeOcrProvenance(result.provenance);
+  const eyes = result.eyes ? safeEyesReceipt(result.eyes) : undefined;
   const warnings = safeOcrWarnings(result.warnings);
   return {
     queueItemId: result.queueItemId,
@@ -266,12 +299,96 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
     fields,
     reviewFieldNames,
     provenance,
+    ...(eyes ? { eyes } : {}),
     warnings,
   };
 }
 
 export function aiGraderOcrPrefillReportMetadata(result: AiGraderOcrPrefillResult): Record<string, unknown> {
-  return safeAiGraderOcrPrefillResult(result) as unknown as Record<string, unknown>;
+  const { eyes: _privateEyes, ...publicMetadata } = safeAiGraderOcrPrefillResult(result);
+  return publicMetadata as unknown as Record<string, unknown>;
+}
+
+function safeEyesReceipt(value: NonNullable<AiGraderOcrPrefillResult["eyes"]>) {
+  if (
+    value.schemaVersion !== "ai_grader_eyes_semantic_observer_v1" ||
+    (value.status !== "observed" && value.status !== "unavailable") ||
+    !/^[a-f0-9]{64}$/.test(value.requestSha256) ||
+    value.metricAuthority !== "deterministic_calibrated_pixels_only" ||
+    value.wholeCardFailureAuthority !== false ||
+    !Array.isArray(value.imageBindings) ||
+    value.imageBindings.length !== 2
+  ) {
+    throw new Error("Invalid EYES receipt contract.");
+  }
+  const elements = ["centering", "corners", "edges", "surface"] as const;
+  const bindings = value.imageBindings.map((binding, index) => {
+    const side = index === 0 ? "front" : "back";
+    if (
+      binding.side !== side ||
+      binding.evidenceRef !== `image.${side}` ||
+      !/^[a-f0-9]{64}$/.test(binding.checksumSha256)
+    ) {
+      throw new Error("Invalid EYES image binding.");
+    }
+    return { ...binding };
+  });
+  if (value.status === "unavailable") {
+    if (
+      value.observations.length !== 0 ||
+      value.reviewElements.length !== 0 ||
+      !["not_configured", "timeout", "provider_unavailable", "invalid_response"].includes(String(value.reason))
+    ) {
+      throw new Error("Invalid unavailable EYES receipt.");
+    }
+    return { ...value, imageBindings: bindings, observations: [], reviewElements: [] };
+  }
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(String(value.requestedModel ?? "")) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(String(value.actualModel ?? "")) ||
+    typeof value.providerElapsedMs !== "number" ||
+    !Number.isFinite(value.providerElapsedMs) ||
+    value.providerElapsedMs < 0 ||
+    value.observations.length !== 4
+  ) {
+    throw new Error("Invalid observed EYES receipt.");
+  }
+  const observations = value.observations.map((observation, index) => {
+    const centeringState = observation.semanticState === "printed_border_supported" ||
+      observation.semanticState === "artwork_or_layout_not_border" ||
+      observation.semanticState === "no_coherent_printed_border" ||
+      observation.semanticState === "unclear";
+    const conditionState = observation.semanticState === "no_visible_physical_concern" ||
+      observation.semanticState === "visible_physical_concern" ||
+      observation.semanticState === "unclear";
+    if (
+      observation.element !== elements[index] ||
+      (observation.element === "centering" ? !centeringState : !conditionState) ||
+      observation.requiresOperatorReview !==
+        (observation.challengeDeterministicInterpretation || observation.semanticState === "unclear") ||
+      typeof observation.confidence !== "number" ||
+      !Number.isFinite(observation.confidence) ||
+      observation.confidence < 0 ||
+      observation.confidence > 1 ||
+      !Array.isArray(observation.evidenceRefs) ||
+      observation.evidenceRefs.length < 1 ||
+      observation.evidenceRefs.length > 2 ||
+      observation.evidenceRefs.some((ref) => ref !== "image.front" && ref !== "image.back")
+    ) {
+      throw new Error("Invalid EYES element observation.");
+    }
+    const rationale = safeBoundedOcrText(observation.rationale, 240);
+    return { ...observation, rationale };
+  });
+  const reviewElements = observations.filter((observation) => observation.requiresOperatorReview)
+    .map((observation) => observation.element);
+  if (
+    value.reviewElements.length !== reviewElements.length ||
+    value.reviewElements.some((element, index) => element !== reviewElements[index])
+  ) {
+    throw new Error("EYES review elements do not match observations.");
+  }
+  return { ...value, imageBindings: bindings, observations, reviewElements };
 }
 
 type AiGraderOcrExactIdentity = {

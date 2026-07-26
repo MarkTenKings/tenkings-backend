@@ -2,6 +2,7 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  MATHEMATICAL_OBSERVABLE_EVIDENCE_ADMISSION_V1_VERSION,
   buildMathematicalMeasurementV1,
   calculateApplicableSevereDefectCapV1,
   calculateFindingDeductionV1,
@@ -99,7 +100,7 @@ export interface FixedRigSurfaceFindingV1 {
   deductionBasisMeasurementId: string;
   deductionCalculation: FindingDeductionCalculationV1;
   deduction: number;
-  evidenceQuality: "sufficient";
+  evidenceQuality: "sufficient" | "limited";
   validEvidenceCoverage: number;
   glareOrIlluminationOverlapFraction: number;
   calibratedPatternOverlapFraction: number;
@@ -115,6 +116,7 @@ export interface FixedRigSuppressedSurfaceCandidateV1 {
   categories: FixedRigSurfaceCategoryV1[];
   reason:
     | "calibrated_illumination_pattern"
+    | "static_appearance_explained"
     | "glare_explained"
     | "insufficient_valid_coverage"
     | "insufficient_multi_channel_evidence";
@@ -123,6 +125,7 @@ export interface FixedRigSuppressedSurfaceCandidateV1 {
   validEvidenceCoverage: number;
   glareOrIlluminationOverlapFraction: number;
   calibratedPatternOverlapFraction: number;
+  staticAppearanceOverlapFraction: number;
   corroboratingChannels: number[];
   requiresRecapture: boolean;
   cardDefectDeduction: 0;
@@ -156,7 +159,7 @@ export interface FixedRigSurfaceV1Result {
   evidenceQualityLimitations: Array<{
     code: "surface_region_ungradable" | "surface_fully_obscured" | "surface_global_coverage_insufficient";
     regionId: string;
-    requiresRecapture: true;
+    requiresRecapture: boolean;
     message: string;
   }>;
   heatmap: {
@@ -214,7 +217,9 @@ interface CandidateEvidenceStats {
   validEvidenceCoverage: number;
   glareOrIlluminationOverlapFraction: number;
   calibratedPatternOverlapFraction: number;
+  staticAppearanceOverlapFraction: number;
   corroboratingChannels: number[];
+  channelSupportFractions: Array<{ channel: number; fraction: number }>;
   alternateChannelRecoveryUsed: boolean;
 }
 
@@ -306,6 +311,9 @@ function validateInput(
   assertIdentifier("calibrationVersion", input.calibration.calibrationVersion);
   if (input.depthMm) assertPlane("depthMm", input.depthMm, evidence.width, evidence.height);
   if (input.reliefIndex) assertPlane("reliefIndex", input.reliefIndex, evidence.width, evidence.height);
+  if (evidence.staticAppearanceAmbiguityMask.length !== evidence.width * evidence.height) {
+    throw new Error("Static-appearance ambiguity mask must exactly match the normalized-card frame.");
+  }
   const seedIds = new Set<string>();
   for (const seed of input.candidateSeeds) {
     assertIdentifier("seedId", seed.seedId);
@@ -484,7 +492,11 @@ function buildCandidateEvidenceStats(
   const calibratedPatternPixels = group.pixels.filter(
     (pixel) => evidence.calibratedIlluminationPatternMask[pixel],
   ).length;
+  const staticAppearancePixels = group.pixels.filter(
+    (pixel) => evidence.staticAppearanceAmbiguityMask[pixel],
+  ).length;
   const corroboratingChannels: number[] = [];
+  const channelSupportFractions: Array<{ channel: number; fraction: number }> = [];
   for (const channel of evidence.channels) {
     let supportingPixels = 0;
     for (const pixel of validPixels) {
@@ -497,9 +509,11 @@ function buildCandidateEvidenceStats(
         : Math.abs(channel.directionalResidual[pixel] ?? 0) >= thresholds.directionalResidualThreshold;
       if (supported) supportingPixels += 1;
     }
+    const supportFraction = fraction(supportingPixels, validPixels.length);
+    channelSupportFractions.push({ channel: channel.channel, fraction: supportFraction });
     if (
       validPixels.length > 0 &&
-      supportingPixels / validPixels.length >= thresholds.corroboratingPixelFraction
+      supportFraction >= thresholds.corroboratingPixelFraction
     ) {
       corroboratingChannels.push(channel.channel);
     }
@@ -517,7 +531,9 @@ function buildCandidateEvidenceStats(
     validEvidenceCoverage,
     glareOrIlluminationOverlapFraction,
     calibratedPatternOverlapFraction: fraction(calibratedPatternPixels, group.pixels.length),
+    staticAppearanceOverlapFraction: fraction(staticAppearancePixels, group.pixels.length),
     corroboratingChannels,
+    channelSupportFractions,
     alternateChannelRecoveryUsed,
   };
 }
@@ -682,23 +698,71 @@ function makeMeasurement(input: {
   evidence: MathematicalEvidenceReferenceV1[];
   stats: CandidateEvidenceStats;
 }): MathematicalMeasurementV1 {
+  const measuredMeasurement = round(input.value);
+  const derived = deriveFixedRigMeasurementUncertaintyV1({
+    calibration: input.buildInput.calibration.profile,
+    kind: input.kind,
+    measuredMeasurement,
+  }).componentsU95;
+  const surfacePolicy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidence;
+  const observedDirectionalChannelCount = input.stats.corroboratingChannels.length;
+  const observableSingleChannel =
+    observedDirectionalChannelCount >= 1 &&
+    observedDirectionalChannelCount < surfacePolicy.minCorroboratingChannels &&
+    input.stats.validEvidenceCoverage > 0 &&
+    Math.max(...input.stats.channelSupportFractions.map((entry) => entry.fraction), 0) > 0;
+  const uncertaintyInflationU95 = observableSingleChannel
+    ? round(Math.max(
+        derived.measurementRepeatability,
+        measuredMeasurement *
+          (1 - observedDirectionalChannelCount /
+            surfacePolicy.minValidDirectionalObservations),
+      ))
+    : 0;
+  const uncertaintyComponentsU95 = observableSingleChannel
+    ? {
+        ...derived,
+        lightingChannelConfidence: round(Math.hypot(
+          derived.lightingChannelConfidence,
+          uncertaintyInflationU95,
+        )),
+      }
+    : derived;
   return buildMathematicalMeasurementV1({
     measurementId: input.measurementId,
     kind: input.kind,
     unit: input.unit,
-    measuredMeasurement: round(input.value),
-    uncertaintyComponentsU95: deriveFixedRigMeasurementUncertaintyV1({
-      calibration: input.buildInput.calibration.profile,
-      kind: input.kind,
-      measuredMeasurement: round(input.value),
-    }).componentsU95,
+    measuredMeasurement,
+    uncertaintyComponentsU95,
     explicitGrade10Tolerance: input.explicitGrade10Tolerance,
     calibrationProfileId: input.buildInput.calibration.calibrationProfileId,
     calibrationVersion: input.buildInput.calibration.calibrationVersion,
     algorithmVersion: input.buildInput.algorithmVersion,
     evidence: input.evidence,
     validEvidenceCoverage: input.stats.validEvidenceCoverage,
-    usableDirectionalChannelCount: input.stats.corroboratingChannels.length,
+    usableDirectionalChannelCount: observedDirectionalChannelCount,
+    ...(observableSingleChannel ? {
+      observableEvidenceAdmission: {
+        schemaVersion: MATHEMATICAL_OBSERVABLE_EVIDENCE_ADMISSION_V1_VERSION,
+        reason: "single_directional_channel_surface_observation" as const,
+        observedDirectionalChannelCount,
+        candidateCorroboratingChannelRequirement:
+          surfacePolicy.minCorroboratingChannels,
+        nominalMeasurementDirectionalChannelCount:
+          surfacePolicy.minValidDirectionalObservations,
+        requiredCalibratedChannelCount:
+          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount,
+        strongestChannelSupportFraction: Math.max(
+          ...input.stats.channelSupportFractions.map((entry) => entry.fraction),
+          0,
+        ),
+        minimumChannelSupportFraction:
+          surfacePolicy.corroboratingPixelFraction,
+        uncertaintyInflationU95,
+        confidenceFormula:
+          "min(validEvidenceCoverage, observedDirectionalChannelCount / requiredCalibratedChannelCount)" as const,
+      },
+    } : {}),
   });
 }
 
@@ -792,10 +856,18 @@ function suppressionForCandidate(
       stats.validEvidenceCoverage >= thresholds.minValidPixelCoverage;
     return {
       reason: "calibrated_illumination_pattern",
-      requiresRecapture: !alternateEvidenceResolvesRegion,
+      requiresRecapture: false,
       message: alternateEvidenceResolvesRegion
         ? "The candidate is substantially explained by the calibrated channel-selective illumination signature; valid alternate observations resolve the region and it receives no physical-damage deduction."
-        : "The candidate is substantially explained by calibrated illumination, but valid alternate observations do not resolve the region; recapture is required and no physical-damage deduction is made.",
+        : "The candidate is substantially explained by calibrated illumination and is excluded without blocking observable measurements elsewhere; no physical-damage deduction is made.",
+    };
+  }
+  if (stats.staticAppearanceOverlapFraction >= thresholds.glareSuppressionOverlapFraction) {
+    return {
+      reason: "static_appearance_explained",
+      requiresRecapture: false,
+      message:
+        "The candidate follows a static printed-appearance boundary in the registered common-mode card image. It remains internal ambiguity context, receives no physical-damage deduction, and does not block observable measurements elsewhere.",
     };
   }
   if (
@@ -804,22 +876,32 @@ function suppressionForCandidate(
   ) {
     return {
       reason: "glare_explained",
-      requiresRecapture: true,
-      message: "Glare/specular evidence explains the candidate and alternate channels do not resolve the region; recapture is required.",
+      requiresRecapture: false,
+      message: "Glare/specular evidence explains the candidate, so it is excluded without blocking observable measurements elsewhere.",
     };
   }
-  if (stats.validEvidenceCoverage < thresholds.minValidPixelCoverage) {
+  if (stats.validPixels.length === 0) {
     return {
       reason: "insufficient_valid_coverage",
-      requiresRecapture: true,
-      message: "Candidate statistics have insufficient valid-pixel coverage; invalid capture pixels cannot be graded as clean or damaged.",
+      requiresRecapture: false,
+      message: "This local candidate contains no observable pixels and is excluded; it does not block measurements elsewhere.",
     };
   }
-  if (stats.corroboratingChannels.length < thresholds.minCorroboratingChannels) {
+  if (
+    stats.corroboratingChannels.length < thresholds.minCorroboratingChannels &&
+    stats.corroboratingChannels.length < 1
+  ) {
+    const strongest = [...stats.channelSupportFractions].sort((left, right) =>
+      right.fraction - left.fraction || left.channel - right.channel)[0];
     return {
       reason: "insufficient_multi_channel_evidence",
-      requiresRecapture: true,
-      message: "The candidate lacks the manifest-required independent channel corroboration and cannot deduct.",
+      requiresRecapture: false,
+      message:
+        "The local candidate has no observable directional-channel support and is excluded without blocking the card. " +
+        `${stats.corroboratingChannels.length}/${thresholds.minCorroboratingChannels} channels passed; ` +
+        `strongest channel support ${strongest?.fraction ?? 0} ` +
+        `(required ${thresholds.corroboratingPixelFraction}); valid coverage ` +
+        `${stats.validEvidenceCoverage}.`,
     };
   }
   return undefined;
@@ -827,8 +909,9 @@ function suppressionForCandidate(
 
 /**
  * Scores physical surface condition from validated source evidence. Evidence
- * quality can withhold a score but can never subtract condition points. Every
- * physical component is merged to one primary category before summation.
+ * quality changes private confidence/U95 but can withhold a score only when
+ * the complete surface is genuinely unobservable. Every physical component
+ * is merged to one primary category before summation.
  */
 export function buildFixedRigSurfaceV1(
   input: BuildFixedRigSurfaceV1Input,
@@ -873,19 +956,12 @@ export function buildFixedRigSurfaceV1(
         validEvidenceCoverage: stats.validEvidenceCoverage,
         glareOrIlluminationOverlapFraction: stats.glareOrIlluminationOverlapFraction,
         calibratedPatternOverlapFraction: stats.calibratedPatternOverlapFraction,
+        staticAppearanceOverlapFraction: stats.staticAppearanceOverlapFraction,
         corroboratingChannels: stats.corroboratingChannels,
         requiresRecapture: suppression.requiresRecapture,
         cardDefectDeduction: 0,
         message: suppression.message,
       });
-      if (suppression.requiresRecapture) {
-        evidenceQualityLimitations.push({
-          code: "surface_region_ungradable",
-          regionId: candidateId,
-          requiresRecapture: true,
-          message: suppression.message,
-        });
-      }
       return;
     }
 
@@ -911,6 +987,9 @@ export function buildFixedRigSurfaceV1(
     const physicalDefectId = `surface-${input.side}-physical-${findings.length + 1}`;
     const box = geometry.boundingBoxPx;
     const cap = calculateApplicableSevereDefectCapV1(primary.category, primary.measurements);
+    const observableSingleChannel = primary.measurements.some(
+      (measurement) => Boolean(measurement.observableEvidenceAdmission),
+    );
     findings.push({
       findingId,
       physicalDefectId,
@@ -946,7 +1025,7 @@ export function buildFixedRigSurfaceV1(
       deductionBasisMeasurementId: primary.deductionBasis.measurementId,
       deductionCalculation: primary.calculation,
       deduction: primary.calculation.deduction,
-      evidenceQuality: "sufficient",
+      evidenceQuality: observableSingleChannel ? "limited" : "sufficient",
       validEvidenceCoverage: stats.validEvidenceCoverage,
       glareOrIlluminationOverlapFraction: stats.glareOrIlluminationOverlapFraction,
       calibratedPatternOverlapFraction: stats.calibratedPatternOverlapFraction,
@@ -955,28 +1034,41 @@ export function buildFixedRigSurfaceV1(
       ...(cap === undefined ? {} : { severeDefectCap: cap }),
       explanation:
         `${primary.category} measured ${primary.deductionBasis.measuredMeasurement} ${primary.deductionBasis.unit}; ` +
-        `U95 ${primary.deductionBasis.u95}, effective ${primary.deductionBasis.effectiveMeasurement}, ` +
-        `exact deduction ${primary.calculation.deduction.toFixed(2)}.`,
+        `effective measurement ${primary.deductionBasis.effectiveMeasurement}; ` +
+        `exact deduction ${primary.calculation.deduction.toFixed(2)}.` +
+        (observableSingleChannel
+          ? " One observable directional channel supported this visible measurement."
+          : ""),
     });
   });
 
-  if (photometric.coverage.validPixelFraction <= thresholds.fullyObscuredCoverageThreshold) {
+  for (const region of photometric.ungradableRegions) {
+    evidenceQualityLimitations.push({
+      code: "surface_region_ungradable",
+      regionId: region.regionId,
+      requiresRecapture: false,
+      message:
+        "This local region contains no observable directional pixels and remains excluded; observable measurements elsewhere still produce the surface grade.",
+    });
+  }
+  const fullyObscured = photometric.coverage.validPixelCount <= 0;
+  if (fullyObscured) {
     evidenceQualityLimitations.push({
       code: "surface_fully_obscured",
       regionId: `surface-${input.side}-full-card`,
       requiresRecapture: true,
-      message: "Usable full-surface coverage is at or below the fully-obscured threshold; no clean/perfect score is issued.",
+      message: "The calibrated card mask contains zero observable directional pixels; no physical surface measurement can be issued.",
     });
   } else if (photometric.coverage.validPixelFraction < thresholds.minValidPixelCoverage) {
     evidenceQualityLimitations.push({
       code: "surface_global_coverage_insufficient",
       regionId: `surface-${input.side}-full-card`,
-      requiresRecapture: true,
-      message: "Full-surface valid-pixel coverage is below the calibrated scoring threshold.",
+      requiresRecapture: false,
+      message: "Full-surface valid-pixel coverage is limited; observable measurements remain scored and the limitation is private quality context.",
     });
   }
   const status =
-    photometric.status === "computed" && evidenceQualityLimitations.length === 0
+    !fullyObscured
       ? "computed"
       : "insufficient_evidence";
   const totalDeduction = round(findings.reduce((sum, finding) => sum + finding.deduction, 0), 2);

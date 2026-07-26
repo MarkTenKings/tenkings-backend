@@ -85,7 +85,10 @@ import {
   buildFixedRigExposureBracketFusionV1,
   type FixedRigExposureBracketPlaneV1,
 } from "./fixedRigExposureBracketFusionV1";
-import { applyFixedRigCommonModeInteriorAdmissionV1 } from "./fixedRigPhotometricAdmissionV1";
+import {
+  applyFixedRigCommonModeInteriorAdmissionV1,
+  applyFixedRigObservableLocalizedEvidenceAdmissionV1,
+} from "./fixedRigPhotometricAdmissionV1";
 import type { FixedRigPhysicalCalibrationArtifactV1 } from "./fixedRigPhysicalCalibrationV1";
 import {
   buildFixedRigSurfaceV1,
@@ -94,12 +97,13 @@ import {
 } from "./fixedRigSurfaceV1";
 import {
   verifyCardGeometryRawToNormalizedTransformV1,
+  type CardGeometryNormalizedDenseContourV1,
+  type CardGeometryObservedDenseContourV1,
   type CardGeometryRawToNormalizedTransformV1,
 } from './cardGeometry';
+import { measureFixedRigDenseContourV1 } from "./fixedRigShapeAgnosticContourV1";
 import {
-  detectFixedRigRawBoundObservedOuterCutV1,
-  verifyFixedRigRawBoundOuterCutUnavailableAuditV1,
-  type FixedRigRawBoundOuterCutUnavailableAuditV1,
+  sealFixedRigCanonicalObservedOuterCutV1,
 } from './fixedRigRawSensorOuterCutDetectorV1';
 import {
   buildFixedRigOperatorResolutionRequestV1,
@@ -186,7 +190,14 @@ export type FixedRigMathematicalCenteringSideEvidenceV1 =
 
 export interface FixedRigMathematicalCalibrationSideInputV1 {
   rawAllOn: FixedRigExactReportEvidenceFileV1;
+  /** Exact captured pixels from which the canonical physical contour was observed. */
+  rawGeometryAuthority?: FixedRigExactReportEvidenceFileV1;
+  geometryAuthorityRole?: "all_on" | "accepted_profile";
   rawToNormalizedTransform: CardGeometryRawToNormalizedTransformV1;
+  observedOuterContour: {
+    raw: CardGeometryObservedDenseContourV1;
+    normalized: CardGeometryNormalizedDenseContourV1;
+  };
   normalizedAllOn: FixedRigExactReportEvidenceFileV1;
   normalizedCard: FixedRigExactReportEvidenceFileV1;
   /** Required only for the legacy direct-photometric test seam. */
@@ -235,6 +246,45 @@ export interface FixedRigMathematicalFindingReviewAssetMetadataV1 {
 export interface FixedRigMathematicalFindingReviewAssetV1
   extends FixedRigMathematicalFindingReviewAssetMetadataV1 {
   bytes: Buffer;
+}
+
+export const FIXED_RIG_OPERATOR_RESOLUTION_WORKSPACE_V1_VERSION =
+  "fixed_rig_operator_resolution_workspace_v1" as const;
+
+export interface FixedRigOperatorResolutionWorkspaceAssetMetadataV1 {
+  assetId: string;
+  element: MathematicalGradingElementV1;
+  side: Side;
+  location: string;
+  evidenceRole:
+    | "centering_measurement_overlay"
+    | "corner_measurement_overlay"
+    | "edge_measurement_overlay"
+    | "surface_measurement_overlay";
+  sha256: string;
+  fileName: string;
+  contentType: "image/png";
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+  /** Operator-only values. Public reports use the final measurements without U95/confidence disclosure. */
+  measurementSummary: string[];
+}
+
+export interface FixedRigOperatorResolutionWorkspaceAssetV1
+  extends FixedRigOperatorResolutionWorkspaceAssetMetadataV1 {
+  bytes: Buffer;
+}
+
+export interface FixedRigOperatorResolutionWorkspaceV1 {
+  schemaVersion: typeof FIXED_RIG_OPERATOR_RESOLUTION_WORKSPACE_V1_VERSION;
+  requestSha256: string;
+  galleries: Record<
+    MathematicalGradingElementV1,
+    FixedRigOperatorResolutionWorkspaceAssetMetadataV1[]
+  >;
+  hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted";
+  workspaceSha256: string;
 }
 
 export interface FixedRigMathematicalFindingReviewRequestV1 {
@@ -315,6 +365,12 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   physicalDefectDeduplication?: FixedRigPhysicalDefectDeduplicationV1[];
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
   operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
+  /**
+   * Non-metric semantic EYES challenges that must return to the human review
+   * workspace even when prior mathematical resolutions produced a completed
+   * grade. EYES supplies no measurement or score.
+   */
+  forcedOperatorReviewElements?: MathematicalGradingElementV1[];
   report: {
     publication: {
       certId: string;
@@ -408,6 +464,8 @@ export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result =
       v0FallbackUsed: false;
       failedStage: "operator_resolution";
       request: FixedRigOperatorResolutionRequestV1;
+      workspace: FixedRigOperatorResolutionWorkspaceV1;
+      workspaceAssets: FixedRigOperatorResolutionWorkspaceAssetV1[];
       unresolvedElements: MathematicalGradingElementV1[];
       reportPackage: null;
       stationInput: null;
@@ -697,16 +755,10 @@ interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
 }
 
 interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
-  automaticMeasurementUnavailable:
-    | {
-        detector: "raw_sensor_outer_cut";
-        reasons: string[];
-        audit: FixedRigRawBoundOuterCutUnavailableAuditV1;
-      }
-    | {
-        detector: "photometric_evidence";
-        reasons: string[];
-      };
+  automaticMeasurementUnavailable: {
+    detector: "photometric_evidence";
+    reasons: string[];
+  };
   condition: null;
   outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1 | null;
   centering: FixedRigCenteringSideResultV1;
@@ -816,13 +868,26 @@ async function ingestSideV1(input: {
     `${side} raw sensor all-on capture`,
     'capture_evidence_ingestion',
   );
+  const rawGeometryAuthority =
+    sideInput.rawGeometryAuthority ?? sideInput.rawAllOn;
+  const geometryAuthorityRole =
+    sideInput.geometryAuthorityRole ?? "all_on";
+  const rawGeometryAuthorityBytes =
+    rawGeometryAuthority.sha256.toLowerCase() ===
+    sideInput.rawAllOn.sha256.toLowerCase()
+      ? rawAllOnBytes
+      : await readExactFileV1(
+          rawGeometryAuthority,
+          `${side} raw sensor ${geometryAuthorityRole} geometry authority`,
+          "capture_evidence_ingestion",
+        );
   const rawToNormalizedTransform = sideInput.rawToNormalizedTransform;
   if (!verifyCardGeometryRawToNormalizedTransformV1(rawToNormalizedTransform) ||
-      rawToNormalizedTransform.sourceSha256 !== sideInput.rawAllOn.sha256.toLowerCase() ||
+      rawToNormalizedTransform.sourceSha256 !== rawGeometryAuthority.sha256.toLowerCase() ||
+      sideInput.observedOuterContour.raw.sourceAssetSha256 !== rawGeometryAuthority.sha256.toLowerCase() ||
       rawToNormalizedTransform.outputWidthPx !== profile.normalizedWidthPx ||
       rawToNormalizedTransform.outputHeightPx !== profile.normalizedHeightPx) {
-    return fail('capture_evidence_ingestion', `${side} raw all-on evidence is not bound to the exact recorded normalization transform.`, {
-      requiresRecapture: true,
+    return fail('capture_evidence_ingestion', `${side} geometry authority pixels, contour, and normalization transform do not share one exact source identity.`, {
       requiresImplementationCorrection: true,
     });
   }
@@ -864,12 +929,12 @@ async function ingestSideV1(input: {
       });
     }
   }
-  const rawAllOnRgb = await decodeRgbPlaneV1({
-    bytes: rawAllOnBytes,
+  const rawGeometryAuthorityRgb = await decodeRgbPlaneV1({
+    bytes: rawGeometryAuthorityBytes,
     width: rawToNormalizedTransform.sourceWidthPx,
     height: rawToNormalizedTransform.sourceHeightPx,
     sensorMaximumValue: input.sensorMaximumValue,
-    label: `${side} raw sensor all-on capture`,
+    label: `${side} raw sensor ${geometryAuthorityRole} geometry authority`,
   });
   const normalizedRgb = await decodeRgbPlaneV1({
     bytes: normalizedBytes,
@@ -954,6 +1019,22 @@ async function ingestSideV1(input: {
       heightPx: profile.normalizedHeightPx,
     },
   ];
+  if (
+    rawGeometryAuthority.sha256.toLowerCase() !==
+    sideInput.rawAllOn.sha256.toLowerCase()
+  ) {
+    assetBindings.push({
+      id: rawGeometryAuthority.assetId,
+      side,
+      evidenceRole: "other_evidence",
+      fileName: rawGeometryAuthority.fileName,
+      contentType: rawGeometryAuthority.contentType,
+      bytes: rawGeometryAuthorityBytes,
+      sha256: rawGeometryAuthority.sha256.toLowerCase(),
+      widthPx: rawToNormalizedTransform.sourceWidthPx,
+      heightPx: rawToNormalizedTransform.sourceHeightPx,
+    });
+  }
   if (designBytes) {
     const artifact = sideInput.designReferenceArtifact!;
     assetBindings.push({
@@ -1184,14 +1265,18 @@ async function ingestSideV1(input: {
   let gradeRelevantMask: FixedRigScalarPlaneV1;
   let expectedOuterCardMaskBytes: Buffer;
   let expectedOuterCardMask: FixedRigScalarPlaneV1;
+  let observedCardMaterialMaskBytes: Buffer;
+  let observedCardMaterialMask: FixedRigScalarPlaneV1;
   const intendedOuterBoundary = sideInput.intendedOuterBoundary;
-  const observedCut = detectFixedRigRawBoundObservedOuterCutV1({
-    rawAllOnRgb,
-    rawAllOnAssetId: sideInput.rawAllOn.assetId,
-    rawAllOnAssetSha256: sideInput.rawAllOn.sha256.toLowerCase(),
+  const observedCut = sealFixedRigCanonicalObservedOuterCutV1({
+    rawAllOnRgb: rawGeometryAuthorityRgb,
+    rawAllOnAssetId: rawGeometryAuthority.assetId,
+    rawAllOnAssetSha256: rawGeometryAuthority.sha256.toLowerCase(),
     normalizedAllOnAssetId: sideInput.normalizedAllOn.assetId,
     normalizedAllOnAssetSha256: sideInput.normalizedAllOn.sha256.toLowerCase(),
     rawToNormalizedTransform,
+    observedRawContour: sideInput.observedOuterContour.raw,
+    observedNormalizedContour: sideInput.observedOuterContour.normalized,
     calibrationProfileId: profile.profileId,
     calibrationVersion: profile.calibrationVersion,
     calibrationSha256: profile.artifactSha256.toLowerCase(),
@@ -1201,20 +1286,16 @@ async function ingestSideV1(input: {
     segmentationBoundaryU95Px: profile.segmentationBoundaryU95Px,
   });
   if (observedCut.status !== 'computed') {
-    if (
-      observedCut.failureKind !== "automatic_measurement_unavailable" ||
-      !observedCut.unavailableAudit ||
-      !verifyFixedRigRawBoundOuterCutUnavailableAuditV1(observedCut.unavailableAudit)
-    ) {
-      return fail(
-        'detector_plane_ingestion',
-        `${side} raw-sensor outer-cut evidence is invalid: ${observedCut.reasons.join('; ')}`,
-        { requiresRecapture: true },
-      );
-    }
+    return fail(
+      'detector_plane_ingestion',
+      `${side} canonical raw-sensor outer-cut evidence is invalid: ${observedCut.reasons.join('; ')}`,
+      { requiresRecapture: true },
+    );
   }
   const expectedOuterCardMaskAssetId =
     `${side}/mathematical-v1/detector-planes/expectedOuterCardMask.tkplane`;
+  const observedCardMaterialMaskAssetId =
+    `${side}/mathematical-v1/detector-planes/observedCardMaterialMask.tkplane`;
   const conditionEvidenceDomainMaskAssetId =
     `${side}/mathematical-v1/detector-planes/conditionEvidenceDomainMask.json`;
   try {
@@ -1254,15 +1335,59 @@ async function ingestSideV1(input: {
       },
       plane: expectedOuterCardMask,
     });
+    if (observedCut.status !== "computed") {
+      throw new OrchestrationFailureV1(
+        "detector_plane_ingestion",
+        `${side} canonical observed contour is unavailable.`,
+        { requiresImplementationCorrection: true },
+      );
+    }
+    observedCardMaterialMask = buildFixedRigExpectedOuterCardMaskV1({
+      width: profile.normalizedWidthPx,
+      height: profile.normalizedHeightPx,
+      outerCutContour: observedCut.artifact.normalizedContour,
+    });
+    if (!Array.from(observedCardMaterialMask.data).some((value) => Number(value) === 1)) {
+      return fail("detector_plane_ingestion", `${side} observed dense contour contains no card-material pixels.`, {
+        requiresImplementationCorrection: true,
+      });
+    }
+    observedCardMaterialMaskBytes = encodeFixedRigCalibratedDetectorPlaneV1({
+      header: {
+        schemaVersion: FIXED_RIG_CALIBRATED_DETECTOR_PLANE_V1_VERSION,
+        assetId: observedCardMaterialMaskAssetId,
+        side,
+        planeName: "observedCardMaterialMask",
+        coordinateFrame: "normalized_card_portrait_pixels",
+        width: profile.normalizedWidthPx,
+        height: profile.normalizedHeightPx,
+        dataType: "float32le",
+        detector: {
+          id: observedCut.artifact.detectorId,
+          version: observedCut.artifact.detectorVersion,
+        },
+        calibration: {
+          profileId: profile.profileId,
+          version: profile.calibrationVersion,
+          sha256: profile.artifactSha256.toLowerCase(),
+        },
+        derivation: "normalized_physical_segmentation",
+        sourceEvidence: [normalizedReference],
+        heatmapUsedAsInput: false,
+        manualOverrideUsed: false,
+      },
+      plane: observedCardMaterialMask,
+    });
   } catch (error) {
     if (error instanceof OrchestrationFailureV1) throw error;
     return fail("detector_plane_ingestion", `${side} grade-relevant outer-card mask could not be produced: ${safeMessage(error)}.`, {
       requiresImplementationCorrection: true,
     });
   }
-  // Photometric admission is card material only. Raw exterior evidence remains
-  // independently bound to the outer-cut detector above.
-  gradeRelevantMask = expectedOuterCardMask;
+  // Photometric admission follows observed physical material. The expected
+  // product profile remains comparison-only and cannot add/remove pixels from
+  // the measurement domain.
+  gradeRelevantMask = observedCardMaterialMask;
   const conditionEvidenceDomainMaskBytes = canonicalJsonBytes({
     schemaVersion: "fixed-rig-condition-evidence-domain-mask-v1",
     assetId: conditionEvidenceDomainMaskAssetId,
@@ -1273,9 +1398,10 @@ async function ingestSideV1(input: {
     calibrationProfileId: profile.profileId,
     calibrationVersion: profile.calibrationVersion,
     calibrationSha256: profile.artifactSha256,
-    intendedBoundaryArtifactSha256: intendedOuterBoundary.artifactSha256,
-    derivation: "complete_bounded_capture_domain_including_outer_cut_search_evidence",
-    dataEncoding: "expected_outer_card_mask",
+    observedContourArtifactSha256:
+      observedCut.status === "computed" ? observedCut.artifact.artifactSha256 : null,
+    derivation: "canonical_pixel_derived_observed_card_material_domain",
+    dataEncoding: "observed_card_material_mask",
     manualOverrideUsed: false,
   });
   const conditionEvidenceDomainMaskSha256 =
@@ -1308,10 +1434,10 @@ async function ingestSideV1(input: {
       calibration: input.photometricCalibration,
       darkControl,
       gradeRelevantMask,
-      gradeRelevantMaskSourceEvidenceId: expectedOuterCardMaskAssetId,
-      gradeRelevantMaskSourceSha256: sha256(expectedOuterCardMaskBytes),
+      gradeRelevantMaskSourceEvidenceId: observedCardMaterialMaskAssetId,
+      gradeRelevantMaskSourceSha256: sha256(observedCardMaterialMaskBytes),
     });
-    photometric = fusion
+    const commonModeAdmitted = fusion
       ? applyFixedRigCommonModeInteriorAdmissionV1({
           evidence: computed,
           pixelsPerMmX: sideInput.measurementCalibration.pixelsPerMmX,
@@ -1321,91 +1447,12 @@ async function ingestSideV1(input: {
           selectedFusedClippingMask: fusion.selectedFusedClippingMask,
         })
       : computed;
+    photometric =
+      applyFixedRigObservableLocalizedEvidenceAdmissionV1(commonModeAdmitted);
   } catch (error) {
     return fail("photometric_evidence", `Unable to compute ${side} calibrated photometric evidence: ${safeMessage(error)}.`, {
       requiresImplementationCorrection: true,
     });
-  }
-  if (observedCut.status !== "computed") {
-    const unavailableAudit = observedCut.unavailableAudit;
-    if (!unavailableAudit) {
-      return fail("detector_plane_ingestion", `${side} automatic outer-cut audit is missing.`, {
-        requiresImplementationCorrection: true,
-      });
-    }
-    const reasons = observedCut.reasons.map((reason) =>
-      `${side} raw-sensor outer-cut: ${reason}`);
-    const centering: FixedRigCenteringSideResultV1 = {
-      version: FIXED_RIG_CENTERING_V1_VERSION,
-      status: "insufficient_evidence",
-      side,
-      profile: sideInput.centering.profileInput.profile,
-      score: null,
-      requiresRecaptureOrApprovedReference: true,
-      reasons,
-      cardDefectDeduction: 0,
-    };
-    const surface: FixedRigSurfaceV1Result = {
-      version: FIXED_RIG_SURFACE_V1_VERSION,
-      photometricEvidenceVersion: photometric.version,
-      status: "insufficient_evidence",
-      side,
-      score: null,
-      startingScore: 10,
-      totalDeduction: 0,
-      formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surface.formula,
-      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
-      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
-      calibrationProfileId: sideInput.measurementCalibration.calibrationProfileId,
-      calibrationVersion: sideInput.measurementCalibration.calibrationVersion,
-      calibrationSha256: sideInput.measurementCalibration.calibrationSha256,
-      sourceEvidence: photometric.channels.map((channel) => ({
-        assetId: channel.sourceEvidenceId,
-        sha256: channel.sourceSha256,
-        side,
-        role: "directional_channel",
-        regionId: `${side}-full-surface`,
-        channelIndex: channel.channel,
-      })),
-      findings: [],
-      suppressedCandidates: [],
-      evidenceQualityLimitations: [{
-        code: "surface_global_coverage_insufficient",
-        regionId: `${side}-full-surface`,
-        requiresRecapture: true,
-        message: reasons.join(" "),
-      }],
-      heatmap: {
-        role: "visualization_only",
-        source: "valid_directional_residuals",
-        usedAsIndependentGradingEvidence: false,
-        response: new Float32Array(photometric.width * photometric.height),
-      },
-      connectedComponentCount: 0,
-      uniquePhysicalFindingCount: 0,
-      applicableSevereDefectCaps: [],
-      noDoubleDeduction: true,
-    };
-    return {
-      side,
-      input: sideInput,
-      normalizedBytes,
-      normalizedReference,
-      channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
-      detectorPlaneSha256s: {},
-      assetBindings,
-      photometric,
-      automaticMeasurementUnavailable: {
-        detector: "raw_sensor_outer_cut",
-        reasons: [...observedCut.reasons],
-        audit: unavailableAudit,
-      },
-      condition: null,
-      outerCutGeometryEvidence: null,
-      centering,
-      surface,
-      visualizationAssetIds: null,
-    };
   }
   if (photometric.status !== "computed") {
     const reasons = photometric.evidenceLimitations.length
@@ -1539,6 +1586,17 @@ async function ingestSideV1(input: {
       requiresImplementationCorrection: true,
     });
   }
+  if (
+    produced.planes.observedCardMaterialMask.width !== observedCardMaterialMask.width ||
+    produced.planes.observedCardMaterialMask.height !== observedCardMaterialMask.height ||
+    Array.from(produced.planes.observedCardMaterialMask.data).some(
+      (value, index) => Number(value) !== Number(observedCardMaterialMask.data[index]),
+    )
+  ) {
+    return fail("detector_plane_ingestion", `${side} full detector production did not reproduce the canonical observed material mask.`, {
+      requiresImplementationCorrection: true,
+    });
+  }
   const planes: FixedRigConditionSourcePlanesV1 = produced.planes;
   const planeReferences: EvidenceReferenceV1[] = [];
   const detectorPlaneSha256s: Record<string, string> = {};
@@ -1549,7 +1607,9 @@ async function ingestSideV1(input: {
     try {
       fileBytes = planeName === "expectedOuterCardMask"
         ? expectedOuterCardMaskBytes
-        : encodeFixedRigCalibratedDetectorPlaneV1({
+        : planeName === "observedCardMaterialMask"
+          ? observedCardMaterialMaskBytes
+          : encodeFixedRigCalibratedDetectorPlaneV1({
         header: {
           schemaVersion: FIXED_RIG_CALIBRATED_DETECTOR_PLANE_V1_VERSION,
           assetId: planeAssetId,
@@ -1619,6 +1679,7 @@ async function ingestSideV1(input: {
     designRegistration: sideInput.designRegistration,
     photometricEvidence: photometric,
     measurementCalibration: sideInput.measurementCalibration,
+    observedBoundaryU95Mm: produced.outerCutGeometryEvidence.boundaryU95Mm,
     algorithmVersion: sideInput.algorithmVersion,
     sourceEvidence,
     planes,
@@ -2151,6 +2212,597 @@ async function scalarResponsePngV1(input: {
     .toBuffer();
 }
 
+function xmlTextV1(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+function overlayPointPathV1(input: {
+  points: readonly FixedRigPointV1[];
+  crop?: { x: number; y: number; width: number; height: number };
+  outputWidth: number;
+  outputHeight: number;
+  close?: boolean;
+}): string {
+  if (!input.points.length) return "";
+  const crop = input.crop ?? {
+    x: 0,
+    y: 0,
+    width: input.outputWidth,
+    height: input.outputHeight,
+  };
+  const sx = input.outputWidth / crop.width;
+  const sy = input.outputHeight / crop.height;
+  const transformed = input.points.map((point) => ({
+    x: (point.x - crop.x) * sx,
+    y: (point.y - crop.y) * sy,
+  }));
+  return transformed.map((point, index) =>
+    `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(" ") + (input.close === false ? "" : " Z");
+}
+
+function measurementTextV1(measurement: MathematicalMeasurementV1): string {
+  const value = Number(measurement.measuredMeasurement.toFixed(4));
+  const u95 = Number(measurement.u95.toFixed(4));
+  return `${measurement.kind}: ${value} ${measurement.unit} (private U95 ${u95} ${measurement.unit})`;
+}
+
+function conditionObservationForV1(input: {
+  observations: readonly FixedRigConditionObservationResultV1[];
+  side: Side;
+  location: string;
+}): Extract<FixedRigConditionObservationResultV1, { status: "computed" }> | undefined {
+  const observation = input.observations.find((candidate) =>
+    candidate.side === input.side &&
+    candidate.location === input.location &&
+    candidate.status === "computed");
+  return observation?.status === "computed" ? observation : undefined;
+}
+
+function cornerArcForLocationV1(input: {
+  contour: readonly FixedRigPointV1[];
+  calibration: FixedRigConditionMeasurementCalibrationV1;
+  location: string;
+}): {
+  centerPx: FixedRigPointV1;
+  pointPx: FixedRigPointV1;
+  radiusMm: number;
+  radialResidualMm: number;
+  sweepDegrees: number;
+} | undefined {
+  const measured = measureFixedRigDenseContourV1({
+    contour: input.contour,
+    pixelsPerMmX: input.calibration.pixelsPerMmX,
+    pixelsPerMmY: input.calibration.pixelsPerMmY,
+  });
+  if (!measured) return undefined;
+  const center = measured.orientedBounds.center;
+  const quadrantMatches = (point: FixedRigPointV1) => {
+    const left = point.x <= center.x;
+    const top = point.y <= center.y;
+    return input.location === "top_left" ? left && top
+      : input.location === "top_right" ? !left && top
+      : input.location === "bottom_right" ? !left && !top
+      : left && !top;
+  };
+  const containsArcPosition = (position: number, start: number, end: number) =>
+    end >= start ? position >= start && position <= end : position >= start || position <= end;
+  const candidates = measured.circularArcs.flatMap((arc) => {
+    const samples = measured.curvatureSamples.filter((sample) =>
+      containsArcPosition(
+        sample.arcPositionMm,
+        arc.startArcPositionMm,
+        arc.endArcPositionMm,
+      ) && quadrantMatches(sample.pointMm));
+    if (!samples.length) return [];
+    const sample = samples[Math.floor(samples.length / 2)]!;
+    return [{ arc, sample }];
+  }).filter(({ arc }) =>
+    arc.radiusMm > 0.1 &&
+    arc.radiusMm < Math.max(
+      measured.orientedBounds.widthMm,
+      measured.orientedBounds.heightMm,
+    ) / 2 &&
+    arc.sweepDegrees >= 10);
+  candidates.sort((left, right) =>
+    left.arc.radialResidualMm - right.arc.radialResidualMm ||
+    right.arc.sampleCount - left.arc.sampleCount);
+  const selected = candidates[0];
+  if (!selected) return undefined;
+  return {
+    centerPx: {
+      x: selected.arc.centerMm.x * input.calibration.pixelsPerMmX,
+      y: selected.arc.centerMm.y * input.calibration.pixelsPerMmY,
+    },
+    pointPx: {
+      x: selected.sample.pointMm.x * input.calibration.pixelsPerMmX,
+      y: selected.sample.pointMm.y * input.calibration.pixelsPerMmY,
+    },
+    radiusMm: selected.arc.radiusMm,
+    radialResidualMm: selected.arc.radialResidualMm,
+    sweepDegrees: selected.arc.sweepDegrees,
+  };
+}
+
+function workspaceAssetMetadataV1(
+  asset: FixedRigOperatorResolutionWorkspaceAssetV1,
+): FixedRigOperatorResolutionWorkspaceAssetMetadataV1 {
+  const { bytes: _bytes, ...metadata } = asset;
+  return metadata;
+}
+
+async function operatorWorkspaceOverlayAssetV1(input: {
+  side: IngestedSideComputedV1;
+  element: MathematicalGradingElementV1;
+  location: string;
+  evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
+  measurementSummary: string[];
+  crop?: { x: number; y: number; width: number; height: number };
+  outputWidth?: number;
+  outputHeight?: number;
+  contour?: readonly FixedRigPointV1[];
+  secondaryContour?: readonly FixedRigPointV1[];
+  measurementLines?: Array<{
+    start: FixedRigPointV1;
+    end: FixedRigPointV1;
+    label: string;
+  }>;
+  measurementArc?: {
+    centerPx: FixedRigPointV1;
+    pointPx: FixedRigPointV1;
+    radiusMm: number;
+  };
+  findingBoxes?: Array<{ x: number; y: number; width: number; height: number }>;
+  surfaceHeatmap?: Float32Array;
+}): Promise<FixedRigOperatorResolutionWorkspaceAssetV1> {
+  const sourceWidth = input.side.condition.width;
+  const sourceHeight = input.side.condition.height;
+  const crop = input.crop ?? { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
+  const outputWidth = input.outputWidth ?? crop.width;
+  const outputHeight = input.outputHeight ?? crop.height;
+  const sx = outputWidth / crop.width;
+  const sy = outputHeight / crop.height;
+  const toOutput = (point: FixedRigPointV1) => ({
+    x: (point.x - crop.x) * sx,
+    y: (point.y - crop.y) * sy,
+  });
+  const contourPath = overlayPointPathV1({
+    points: input.contour ?? input.side.outerCutGeometryEvidence.observedArtifact.normalizedContour,
+    crop,
+    outputWidth,
+    outputHeight,
+  });
+  const secondaryPath = input.secondaryContour?.length
+    ? overlayPointPathV1({
+        points: input.secondaryContour,
+        crop,
+        outputWidth,
+        outputHeight,
+      })
+    : "";
+  const lineMarkup = (input.measurementLines ?? []).map((line) => {
+    const start = toOutput(line.start);
+    const end = toOutput(line.end);
+    const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+    return [
+      `<line x1="${start.x}" y1="${start.y}" x2="${end.x}" y2="${end.y}" stroke="#ffd84d" stroke-width="4"/>`,
+      `<circle cx="${start.x}" cy="${start.y}" r="6" fill="#ffd84d"/>`,
+      `<circle cx="${end.x}" cy="${end.y}" r="6" fill="#ffd84d"/>`,
+      `<text x="${middle.x + 8}" y="${middle.y - 8}" class="measure">${xmlTextV1(line.label)}</text>`,
+    ].join("");
+  }).join("");
+  const arcMarkup = input.measurementArc
+    ? (() => {
+        const center = toOutput(input.measurementArc!.centerPx);
+        const point = toOutput(input.measurementArc!.pointPx);
+        const rx =
+          input.measurementArc!.radiusMm *
+          input.side.input.measurementCalibration.pixelsPerMmX * sx;
+        const ry =
+          input.measurementArc!.radiusMm *
+          input.side.input.measurementCalibration.pixelsPerMmY * sy;
+        return [
+          `<ellipse cx="${center.x}" cy="${center.y}" rx="${rx}" ry="${ry}" fill="none" stroke="#ff9f43" stroke-width="4" stroke-dasharray="10 7"/>`,
+          `<line x1="${center.x}" y1="${center.y}" x2="${point.x}" y2="${point.y}" stroke="#ff9f43" stroke-width="4"/>`,
+          `<circle cx="${center.x}" cy="${center.y}" r="7" fill="#ff9f43"/>`,
+          `<text x="${point.x + 10}" y="${point.y - 10}" class="measure">R ${input.measurementArc!.radiusMm.toFixed(3)} mm</text>`,
+        ].join("");
+      })()
+    : "";
+  const boxesMarkup = (input.findingBoxes ?? []).map((box) => {
+    const point = toOutput({ x: box.x, y: box.y });
+    return `<rect x="${point.x}" y="${point.y}" width="${box.width * sx}" height="${box.height * sy}" fill="none" stroke="#ff5c5c" stroke-width="4"/>`;
+  }).join("");
+  const headerHeight = Math.max(64, Math.round(outputHeight * 0.065));
+  const textSize = Math.max(20, Math.round(Math.min(outputWidth, outputHeight) * 0.028));
+  const summary = input.measurementSummary.slice(0, 3);
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${outputWidth}" height="${outputHeight}">
+      <style>
+        .title{font:bold ${textSize}px Arial,sans-serif;fill:#fff}
+        .measure{font:bold ${Math.max(16, textSize - 4)}px Arial,sans-serif;fill:#fff;paint-order:stroke;stroke:#000;stroke-width:4px;stroke-linejoin:round}
+      </style>
+      <path d="${contourPath}" fill="none" stroke="#20e8ff" stroke-width="4"/>
+      ${secondaryPath ? `<path d="${secondaryPath}" fill="none" stroke="#ffd84d" stroke-width="4"/>` : ""}
+      ${lineMarkup}${arcMarkup}${boxesMarkup}
+      <rect x="0" y="${outputHeight - headerHeight}" width="${outputWidth}" height="${headerHeight}" fill="#050707" fill-opacity="0.84"/>
+      <text x="18" y="${outputHeight - headerHeight + textSize + 5}" class="title">${xmlTextV1(`${input.side.side.toUpperCase()} ${input.element.toUpperCase()} · ${input.location.replace(/_/g, " ")}`)}</text>
+      ${summary.map((line, index) =>
+        `<text x="18" y="${outputHeight - headerHeight + textSize + 31 + index * (textSize + 2)}" class="measure">${xmlTextV1(line)}</text>`).join("")}
+    </svg>`,
+    "utf8",
+  );
+  let base = sharp(input.side.normalizedBytes, { failOn: "error" }).extract({
+    left: crop.x,
+    top: crop.y,
+    width: crop.width,
+    height: crop.height,
+  });
+  if (outputWidth !== crop.width || outputHeight !== crop.height) {
+    base = base.resize(outputWidth, outputHeight, {
+      fit: "fill",
+      kernel: sharp.kernel.lanczos3,
+    });
+  }
+  const composites: sharp.OverlayOptions[] = [];
+  if (input.surfaceHeatmap) {
+    const response = input.surfaceHeatmap;
+    let maximum = 0;
+    for (const value of response) maximum = Math.max(maximum, Math.abs(Number(value)));
+    maximum = Math.max(maximum, Number.EPSILON);
+    const rgba = Buffer.alloc(sourceWidth * sourceHeight * 4);
+    for (let index = 0; index < sourceWidth * sourceHeight; index += 1) {
+      const value = Math.max(0, Math.min(1, Math.abs(Number(response[index])) / maximum));
+      rgba[index * 4] = 255;
+      rgba[index * 4 + 1] = Math.round(220 * (1 - value));
+      rgba[index * 4 + 2] = 32;
+      rgba[index * 4 + 3] = Math.round(18 + 112 * value);
+    }
+    const heatmap = await sharp(rgba, {
+      raw: { width: sourceWidth, height: sourceHeight, channels: 4 },
+    }).extract({
+      left: crop.x,
+      top: crop.y,
+      width: crop.width,
+      height: crop.height,
+    }).resize(outputWidth, outputHeight, { fit: "fill" }).png().toBuffer();
+    composites.push({ input: heatmap, blend: "over" });
+  }
+  composites.push({ input: svg, blend: "over" });
+  const bytes = await base.composite(composites)
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  const safeLocation = input.location.replace(/[^A-Za-z0-9_-]/g, "-");
+  const assetId = `operator-workspace.${input.element}.${input.side.side}.${safeLocation}`;
+  return {
+    assetId,
+    element: input.element,
+    side: input.side.side,
+    location: input.location,
+    evidenceRole: input.evidenceRole,
+    sha256: sha256(bytes),
+    fileName: `${input.element}-${input.side.side}-${safeLocation}.png`,
+    contentType: "image/png",
+    byteSize: bytes.byteLength,
+    widthPx: outputWidth,
+    heightPx: outputHeight,
+    measurementSummary: [...input.measurementSummary],
+    bytes,
+  };
+}
+
+async function operatorWorkspacePlaceholderAssetV1(input: {
+  side: IngestedSideV1;
+  element: MathematicalGradingElementV1;
+  location: string;
+  evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
+}): Promise<FixedRigOperatorResolutionWorkspaceAssetV1> {
+  const sourceWidth = input.side.input.rawToNormalizedTransform.outputWidthPx;
+  const sourceHeight = input.side.input.rawToNormalizedTransform.outputHeightPx;
+  const crop =
+    input.element === "corners" || input.element === "edges"
+      ? roiOrigin({
+          element: input.element,
+          location: input.location,
+          width: sourceWidth,
+          height: sourceHeight,
+          calibration: input.side.input.measurementCalibration,
+        })
+      : { x: 0, y: 0, width: sourceWidth, height: sourceHeight };
+  const horizontalEdge =
+    input.element === "edges" &&
+    (input.location === "top" || input.location === "bottom");
+  const outputWidth =
+    input.element === "corners" ? 720
+      : input.element === "edges" ? (horizontalEdge ? 1000 : 420)
+        : crop.width;
+  const outputHeight =
+    input.element === "corners" ? 720
+      : input.element === "edges" ? (horizontalEdge ? 420 : 1000)
+        : crop.height;
+  const title = `${input.side.side.toUpperCase()} ${input.element.toUpperCase()} · ${input.location.replace(/_/g, " ")}`;
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${outputWidth}" height="${outputHeight}">
+      <rect width="100%" height="100%" fill="#050707" fill-opacity="0.56"/>
+      <rect x="24" y="${Math.max(24, Math.floor(outputHeight * 0.36))}" width="${Math.max(1, outputWidth - 48)}" height="${Math.max(120, Math.floor(outputHeight * 0.28))}" rx="18" fill="#111719" fill-opacity="0.94" stroke="#ffd84d" stroke-width="3"/>
+      <text x="48" y="${Math.max(72, Math.floor(outputHeight * 0.44))}" fill="#ffffff" font-family="Arial,sans-serif" font-size="${Math.max(20, Math.floor(Math.min(outputWidth, outputHeight) * 0.045))}" font-weight="700">${xmlTextV1(title)}</text>
+      <text x="48" y="${Math.max(112, Math.floor(outputHeight * 0.51))}" fill="#ffd84d" font-family="Arial,sans-serif" font-size="${Math.max(18, Math.floor(Math.min(outputWidth, outputHeight) * 0.038))}" font-weight="700">NO AUTOMATIC MEASUREMENT IN THIS EXACT SLOT</text>
+      <text x="48" y="${Math.max(148, Math.floor(outputHeight * 0.58))}" fill="#ffffff" font-family="Arial,sans-serif" font-size="${Math.max(16, Math.floor(Math.min(outputWidth, outputHeight) * 0.032))}">Use the preserved image and exact element resolution.</text>
+    </svg>`,
+    "utf8",
+  );
+  const bytes = await sharp(input.side.normalizedBytes, { failOn: "error" })
+    .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
+    .resize(outputWidth, outputHeight, {
+      fit: "fill",
+      kernel: sharp.kernel.lanczos3,
+    })
+    .composite([{ input: svg, blend: "over" }])
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  const safeLocation = input.location.replace(/[^A-Za-z0-9_-]/g, "-");
+  return {
+    assetId: `operator-workspace.${input.element}.${input.side.side}.${safeLocation}`,
+    element: input.element,
+    side: input.side.side,
+    location: input.location,
+    evidenceRole: input.evidenceRole,
+    sha256: sha256(bytes),
+    fileName: `${input.element}-${input.side.side}-${safeLocation}.png`,
+    contentType: "image/png",
+    byteSize: bytes.byteLength,
+    widthPx: outputWidth,
+    heightPx: outputHeight,
+    measurementSummary: [
+      "No automatic measurement was produced for this exact location.",
+      "The gallery slot is preserved and the original normalized pixels remain available.",
+    ],
+    bytes,
+  };
+}
+
+async function buildOperatorResolutionWorkspaceV1(input: {
+  request: FixedRigOperatorResolutionRequestV1;
+  sides: Record<Side, IngestedSideV1>;
+  cornerObservations: FixedRigConditionObservationResultV1[];
+  edgeObservations: FixedRigConditionObservationResultV1[];
+}): Promise<{
+  workspace: FixedRigOperatorResolutionWorkspaceV1;
+  assets: FixedRigOperatorResolutionWorkspaceAssetV1[];
+}> {
+  const assets: FixedRigOperatorResolutionWorkspaceAssetV1[] = [];
+  for (const sideName of ["front", "back"] as const) {
+    const side = input.sides[sideName];
+    if (sideAutomaticallyUnavailableV1(side)) continue;
+    const contour = side.outerCutGeometryEvidence.observedArtifact.normalizedContour;
+    if (side.centering.status === "computed") {
+      const centering = side.centering;
+      assets.push(await operatorWorkspaceOverlayAssetV1({
+        side,
+        element: "centering",
+        location: "full_card",
+        evidenceRole: "centering_measurement_overlay",
+        contour,
+        secondaryContour: centering.printedDesignContour,
+        measurementLines: centering.measurementLines.map((line) => ({
+          start: line.start,
+          end: line.end,
+          label: `${line.side} ${line.millimeters.toFixed(3)} mm`,
+        })),
+        measurementSummary: [
+          `L ${centering.observedMargins.left.mm.toFixed(3)} · R ${centering.observedMargins.right.mm.toFixed(3)} mm`,
+          `T ${centering.observedMargins.top.mm.toFixed(3)} · B ${centering.observedMargins.bottom.mm.toFixed(3)} mm`,
+          `private U95 H ${centering.u95Mm.horizontal.toFixed(3)} · V ${centering.u95Mm.vertical.toFixed(3)} mm`,
+        ],
+      }));
+    }
+    for (const location of ["top_left", "top_right", "bottom_right", "bottom_left"] as const) {
+      const observation = conditionObservationForV1({
+        observations: input.cornerObservations,
+        side: sideName,
+        location,
+      });
+      if (!observation) continue;
+      const crop = roiOrigin({
+        element: "corners",
+        location,
+        width: side.condition.width,
+        height: side.condition.height,
+        calibration: side.input.measurementCalibration,
+      });
+      const arc = cornerArcForLocationV1({
+        contour,
+        calibration: side.input.measurementCalibration,
+        location,
+      });
+      const measurement = observation.cornerContourDeviation?.measurement;
+      assets.push(await operatorWorkspaceOverlayAssetV1({
+        side,
+        element: "corners",
+        location,
+        evidenceRole: "corner_measurement_overlay",
+        crop,
+        outputWidth: 720,
+        outputHeight: 720,
+        contour,
+        ...(arc ? {
+          measurementArc: {
+            centerPx: arc.centerPx,
+            pointPx: arc.pointPx,
+            radiusMm: arc.radiusMm,
+          },
+        } : {}),
+        findingBoxes: observation.findings.map((finding) => ({
+          x: crop.x + finding.boundingBoxPx.x,
+          y: crop.y + finding.boundingBoxPx.y,
+          width: finding.boundingBoxPx.width,
+          height: finding.boundingBoxPx.height,
+        })),
+        measurementSummary: [
+          ...(arc
+            ? [`actual fitted radius ${arc.radiusMm.toFixed(3)} mm · residual ${arc.radialResidualMm.toFixed(3)} mm`]
+            : ["actual contour shown; no stable circular arc fit"]),
+          ...(measurement ? [measurementTextV1(measurement)] : []),
+          ...(observation.findings.length
+            ? [`measured categories ${[...new Set(observation.findings.map(
+                (finding) => finding.finding.category,
+              ))].join(", ")}`]
+            : []),
+          `measured findings ${observation.findings.length} · private coverage ${(observation.validEvidenceCoverage * 100).toFixed(1)}%`,
+        ],
+      }));
+    }
+    for (const location of ["top", "right", "bottom", "left"] as const) {
+      const observation = conditionObservationForV1({
+        observations: input.edgeObservations,
+        side: sideName,
+        location,
+      });
+      if (!observation) continue;
+      const crop = roiOrigin({
+        element: "edges",
+        location,
+        width: side.condition.width,
+        height: side.condition.height,
+        calibration: side.input.measurementCalibration,
+      });
+      const horizontal = location === "top" || location === "bottom";
+      const measurements = observation.findings.flatMap((finding) => finding.measurements)
+        .slice(0, 2)
+        .map(measurementTextV1);
+      assets.push(await operatorWorkspaceOverlayAssetV1({
+        side,
+        element: "edges",
+        location,
+        evidenceRole: "edge_measurement_overlay",
+        crop,
+        outputWidth: horizontal ? 1000 : 420,
+        outputHeight: horizontal ? 420 : 1000,
+        contour,
+        findingBoxes: observation.findings.map((finding) => ({
+          x: crop.x + finding.boundingBoxPx.x,
+          y: crop.y + finding.boundingBoxPx.y,
+          width: finding.boundingBoxPx.width,
+          height: finding.boundingBoxPx.height,
+        })),
+        measurementSummary: [
+          ...measurements,
+          ...(observation.findings.length
+            ? [`measured categories ${[...new Set(observation.findings.map(
+                (finding) => finding.finding.category,
+              ))].join(", ")}`]
+            : []),
+          `measured findings ${observation.findings.length} · deduction ${observation.penalty.toFixed(2)}`,
+          `private coverage ${(observation.validEvidenceCoverage * 100).toFixed(1)}% · channels ${observation.usableDirectionalChannelCount}`,
+        ],
+      }));
+    }
+    const surfaceMeasurements = side.surface.findings.flatMap((finding) => finding.measurements)
+      .slice(0, 2)
+      .map(measurementTextV1);
+    const surfaceCategoryCounts = [...side.surface.findings.reduce(
+      (counts, finding) => counts.set(
+        finding.category,
+        (counts.get(finding.category) ?? 0) + 1,
+      ),
+      new Map<string, number>(),
+    ).entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([category, count]) => `${category} ${count}`)
+      .join(", ");
+    assets.push(await operatorWorkspaceOverlayAssetV1({
+      side,
+      element: "surface",
+      location: "full_card",
+      evidenceRole: "surface_measurement_overlay",
+      contour,
+      surfaceHeatmap: side.surface.heatmap.response,
+      findingBoxes: side.surface.findings.map((finding) => ({
+        ...finding.overlay.boundingBoxPx,
+      })),
+      measurementSummary: [
+        ...surfaceMeasurements,
+        ...(surfaceCategoryCounts ? [`measured categories ${surfaceCategoryCounts}`] : []),
+        `measured findings ${side.surface.findings.length} · deduction ${side.surface.totalDeduction.toFixed(2)}`,
+        `private limited-evidence regions ${side.surface.evidenceQualityLimitations.length}`,
+      ],
+    }));
+  }
+  const expectedSlots: Array<{
+    side: Side;
+    element: MathematicalGradingElementV1;
+    location: string;
+    evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
+  }> = (["front", "back"] as const).flatMap((side) => [
+    {
+      side,
+      element: "centering" as const,
+      location: "full_card",
+      evidenceRole: "centering_measurement_overlay" as const,
+    },
+    ...(["top_left", "top_right", "bottom_right", "bottom_left"] as const).map((location) => ({
+      side,
+      element: "corners" as const,
+      location,
+      evidenceRole: "corner_measurement_overlay" as const,
+    })),
+    ...(["top", "right", "bottom", "left"] as const).map((location) => ({
+      side,
+      element: "edges" as const,
+      location,
+      evidenceRole: "edge_measurement_overlay" as const,
+    })),
+    {
+      side,
+      element: "surface" as const,
+      location: "full_card",
+      evidenceRole: "surface_measurement_overlay" as const,
+    },
+  ]);
+  for (const slot of expectedSlots) {
+    if (assets.some((asset) =>
+      asset.side === slot.side &&
+      asset.element === slot.element &&
+      asset.location === slot.location)) continue;
+    assets.push(await operatorWorkspacePlaceholderAssetV1({
+      side: input.sides[slot.side],
+      element: slot.element,
+      location: slot.location,
+      evidenceRole: slot.evidenceRole,
+    }));
+  }
+  const slotOrder = new Map(
+    expectedSlots.map((slot, index) => [
+      `${slot.element}:${slot.side}:${slot.location}`,
+      index,
+    ]),
+  );
+  assets.sort((left, right) =>
+    (slotOrder.get(`${left.element}:${left.side}:${left.location}`) ?? Number.MAX_SAFE_INTEGER) -
+    (slotOrder.get(`${right.element}:${right.side}:${right.location}`) ?? Number.MAX_SAFE_INTEGER),
+  );
+  const galleries = {
+    centering: assets.filter((asset) => asset.element === "centering").map(workspaceAssetMetadataV1),
+    corners: assets.filter((asset) => asset.element === "corners").map(workspaceAssetMetadataV1),
+    edges: assets.filter((asset) => asset.element === "edges").map(workspaceAssetMetadataV1),
+    surface: assets.filter((asset) => asset.element === "surface").map(workspaceAssetMetadataV1),
+  };
+  const payload = {
+    schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_WORKSPACE_V1_VERSION,
+    requestSha256: input.request.requestSha256,
+    galleries,
+    hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted" as const,
+  };
+  return {
+    workspace: {
+      ...payload,
+      workspaceSha256: sha256(canonicalJsonBytes(payload)),
+    },
+    assets,
+  };
+}
+
 function directionalResidualMagnitudeV1(
   photometric: FixedRigPhotometricEvidenceV1,
 ): Float32Array {
@@ -2312,7 +2964,11 @@ async function buildPreparedFindingPresentationsV1(input: {
         captureProfileVersion: input.captureProfileVersion,
       },
       confidence: evidenceDerivedFindingConfidenceV1(finding),
-      evidenceQuality: "sufficient",
+      evidenceQuality: finding.measurements.some(
+        (measurement) => Boolean(measurement.observableEvidenceAdmission),
+      )
+        ? "limited"
+        : "sufficient",
       trueViewAssetId: side.input.normalizedCard.assetId,
       segmentationMaskAssetId,
       confidenceMaskAssetId,
@@ -2770,7 +3426,8 @@ function deriveEvidenceQualityLimitationsV1(
       if (candidate.requiresRecapture) return;
       const commonMode =
         candidate.reason === "glare_explained" ||
-        candidate.reason === "calibrated_illumination_pattern";
+        candidate.reason === "calibrated_illumination_pattern" ||
+        candidate.reason === "static_appearance_explained";
       limitations.push({
         limitationId: `${sideName}-suppressed-candidate-${index + 1}`,
         side: sideName,
@@ -2789,6 +3446,28 @@ function deriveEvidenceQualityLimitationsV1(
             ]
           : [side.visualizationAssetIds.confidenceMask],
         explanation: candidate.message,
+      });
+    });
+    side.surface.findings.forEach((finding) => {
+      const limited = finding.measurements.some(
+        (measurement) => Boolean(measurement.observableEvidenceAdmission),
+      );
+      if (!limited) return;
+      limitations.push({
+        limitationId: `${sideName}-${finding.findingId}-observable-channel-limit`,
+        side: sideName,
+        regionId: finding.regionId,
+        classification: "low_confidence",
+        validEvidenceCoverage: finding.validEvidenceCoverage,
+        excludedPixelFraction: Math.max(0, 1 - finding.validEvidenceCoverage),
+        recoveredFromAlternateChannels: false,
+        recaptureRequired: false,
+        evidenceAssetIds: [
+          side.visualizationAssetIds.confidenceMask,
+          ...side.channelAssetIds,
+        ],
+        explanation:
+          "The visible surface measurement is final and calibration-bound, but only one strong directional channel supported it; the report therefore carries low confidence and an inflated U95.",
       });
     });
   }
@@ -2858,15 +3537,12 @@ function operatorResolutionBindingV1(input: {
       });
     }
     const availableOuterCut = input.sides[side].outerCutGeometryEvidence;
-    const unavailable = input.sides[side].automaticMeasurementUnavailable;
     const authenticatedOuterCutArtifactSha256 = availableOuterCut?.observedContourSha256 ??
-      (unavailable?.detector === "raw_sensor_outer_cut"
-        ? unavailable.audit.artifactSha256
-        : fail(
-            "operator_resolution",
-            `${side} operator resolution requires authenticated outer-cut provenance.`,
-            { requiresImplementationCorrection: true },
-          ));
+      fail(
+        "operator_resolution",
+        `${side} operator resolution requires authenticated outer-cut provenance.`,
+        { requiresImplementationCorrection: true },
+      );
     return {
       rawAllOnAssetId: source.rawAllOn.assetId,
       rawAllOnSha256: source.rawAllOn.sha256.toLowerCase(),
@@ -3101,9 +3777,19 @@ function deriveReportConfidenceV1(input: {
     centeringRegistrationConfidence("front"),
     centeringRegistrationConfidence("back"),
   );
+  const surfaceFindingConfidences = (["front", "back"] as const).flatMap((side) =>
+    input.sides[side].surface.findings.flatMap((finding) =>
+      finding.measurements.map((measurement) => Math.min(
+        measurement.validEvidenceCoverage,
+        measurement.usableDirectionalChannelCount /
+          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount,
+      )),
+    ),
+  );
   const surfaceCoverage = Math.min(
     input.sides.front.photometric.coverage.validPixelFraction,
     input.sides.back.photometric.coverage.validPixelFraction,
+    ...(surfaceFindingConfidences.length ? surfaceFindingConfidences : [1]),
   );
   const raw = {
     centering: centeringCoverage,
@@ -3317,7 +4003,18 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         sides.back.centering,
       );
     }
-    const unresolvedElements: MathematicalGradingElementV1[] = [
+    const forcedOperatorReviewElements = [
+      ...new Set(input.forcedOperatorReviewElements ?? []),
+    ];
+    if (forcedOperatorReviewElements.some((element) =>
+      !["centering", "corners", "edges", "surface"].includes(element))) {
+      throw new OrchestrationFailureV1(
+        "input_contract",
+        "Forced operator review elements contain an unsupported mathematical element.",
+        { requiresImplementationCorrection: true },
+      );
+    }
+    const unresolvedElements: MathematicalGradingElementV1[] = [...new Set([
       ...(centering.status === "computed" ? [] : ["centering" as const]),
       ...(corners.status === "computed" || cornersResolution ? [] : ["corners" as const]),
       ...(edges.status === "computed" || edgesResolution ? [] : ["edges" as const]),
@@ -3327,8 +4024,15 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           ? []
           : ["surface" as const]
       ),
-    ];
+      ...forcedOperatorReviewElements,
+    ])];
     if (!authorities.length || unresolvedElements.length) {
+      const operatorWorkspace = await buildOperatorResolutionWorkspaceV1({
+        request: operatorResolutionRequest,
+        sides: originalSides,
+        cornerObservations,
+        edgeObservations,
+      });
       return {
         version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
         status: "operator_resolution_required",
@@ -3336,6 +4040,8 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         v0FallbackUsed: false,
         failedStage: "operator_resolution",
         request: operatorResolutionRequest,
+        workspace: operatorWorkspace.workspace,
+        workspaceAssets: operatorWorkspace.assets,
         unresolvedElements,
         reportPackage: null,
         stationInput: null,

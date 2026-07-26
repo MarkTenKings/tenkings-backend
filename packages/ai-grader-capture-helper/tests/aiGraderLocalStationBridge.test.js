@@ -206,6 +206,71 @@ function bindReadyPreview(service, side, frameSuffix) {
     bottomRight: { x: box.x + box.width, y: box.y + box.height },
     bottomLeft: { x: box.x, y: box.y + box.height },
   };
+  const points = [];
+  for (let index = 0; index < 8; index += 1) {
+    const fraction = index / 8;
+    points.push({ x: box.x + box.width * fraction, y: box.y });
+    points.push({ x: box.x + box.width, y: box.y + box.height * fraction });
+    points.push({ x: box.x + box.width * (1 - fraction), y: box.y + box.height });
+    points.push({ x: box.x, y: box.y + box.height * (1 - fraction) });
+  }
+  const sourceAssetSha256 = crypto.createHash("sha256")
+    .update(`preview-${side}-${frameSuffix}`)
+    .digest("hex");
+  const contourSha256 = crypto.createHash("sha256").update(JSON.stringify({
+    sourceAssetSha256,
+    coordinateFrame: "source_image_pixels",
+    points,
+  })).digest("hex");
+  const physicalMeasurementPayload = {
+    calibration: {
+      profileId: "fixture-sensor-plane",
+      calibrationVersion: "fixture-v1",
+      calibrationArtifactSha256: crypto.createHash("sha256").update("fixture-calibration").digest("hex"),
+      bundleManifestSha256: crypto.createHash("sha256").update("fixture-bundle").digest("hex"),
+      sourceWidthPx: 900,
+      sourceHeightPx: 1260,
+      effectiveMmPerPixelX: 63.5 / box.width,
+      effectiveMmPerPixelY: 88.9 / box.height,
+    },
+    width: 63.5,
+    height: 88.9,
+    perimeter: 304.8,
+    enclosedArea: 5645.15,
+    angleDegrees: 0,
+    circularArcs: [],
+    privateUncertaintyU95: {
+      widthMm: 0.08,
+      heightMm: 0.08,
+      radiusMm: 0.05,
+      basis: "calibrated_scale_boundary_and_repeatability_rss",
+    },
+  };
+  const observedDenseContour = {
+    schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+    coordinateFrame: "source_image_pixels",
+    sourceAssetSha256,
+    points,
+    pointCount: points.length,
+    contourSha256,
+    strongSupportFraction: 0.92,
+    evidenceQuality: "strong",
+    measurementsPx: {
+      width: box.width,
+      height: box.height,
+      perimeter: 2 * (box.width + box.height),
+      enclosedArea: box.width * box.height,
+      angleDegrees: 0,
+      circularArcs: [],
+    },
+    measurementsMm: {
+      ...physicalMeasurementPayload,
+      measurementAuthoritySha256: crypto.createHash("sha256").update(JSON.stringify({
+        contourSha256,
+        ...physicalMeasurementPayload,
+      })).digest("hex"),
+    },
+  };
   const geometry = {
     version: "ten-kings-card-geometry-v1",
     detectionPolicy: "live_preview_fast",
@@ -219,6 +284,7 @@ function bindReadyPreview(service, side, frameSuffix) {
     manualOverrideUsed: false,
     corners,
     detectedCorners: corners,
+    observedDenseContour,
     boundingBox: box,
     rotationDegrees: 0,
     skewDegrees: 0,
@@ -442,6 +508,42 @@ async function processedNormalizedSide(side, packageDir, color = side === "front
   };
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
+}
+
+function unavailableEyesReceipt(item) {
+  const imageBindings = [...item.ocr.images]
+    .sort((left, right) => left.side === "front" ? -1 : 1)
+    .map((image) => ({
+      side: image.side,
+      checksumSha256: image.checksumSha256,
+      evidenceRef: `image.${image.side}`,
+    }));
+  const requestSha256 = crypto.createHash("sha256").update(canonicalJson({
+    schemaVersion: "ai_grader_eyes_semantic_observer_v1",
+    imageBindings,
+    semanticElements: ["centering", "corners", "edges", "surface"],
+    metricAuthority: "deterministic_calibrated_pixels_only",
+  }), "utf8").digest("hex");
+  return {
+    schemaVersion: "ai_grader_eyes_semantic_observer_v1",
+    status: "unavailable",
+    requestSha256,
+    imageBindings,
+    observations: [],
+    reviewElements: [],
+    metricAuthority: "deterministic_calibrated_pixels_only",
+    wholeCardFailureAuthority: false,
+    reason: "not_configured",
+  };
+}
+
 function safeOcrResult(item) {
   return {
     queueItemId: item.queueItemId,
@@ -468,6 +570,7 @@ function safeOcrResult(item) {
       setLookupUsed: false,
       setIdentificationUsed: false,
     },
+    eyes: unavailableEyesReceipt(item),
     warnings: [],
   };
 }
@@ -529,8 +632,6 @@ test("station launcher passes the exact production_fast capture profile pair", (
     launcherSource.includes('"--capture-profile", "production_fast"'),
     true,
   );
-  assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_PATH/);
-  assert.match(launcherSource, /AI_GRADER_PROVISIONAL_GEOMETRY_ARTIFACT_SHA256/);
   assert.match(bridgeSource, /return await service\.streamPreview\(req, res, origin\)/);
 });
 
@@ -546,39 +647,41 @@ test("station status preserves the configured rig identity while real activation
   });
 });
 
-test("provisional geometry is an explicit paired geometry-only opt-in and never claims calibration", () => {
-  const outputDir = path.join(os.tmpdir(), "tenkings-provisional-geometry-config");
-  const artifactPath = path.join(outputDir, "provisional-geometry.json");
-  const artifactSha256 = "a".repeat(64);
-  assert.throws(
-    () => configFor(outputDir, {}, { provisionalGeometryArtifactPath: artifactPath }),
-    /path and SHA-256 must be configured together/i,
+test("retired warped-image geometry cannot enter the launcher, bridge config, status, or side-processing runner", () => {
+  const outputDir = path.join(os.tmpdir(), "tenkings-native-all-on-geometry-config");
+  const launcherSource = fs.readFileSync(
+    path.resolve(__dirname, "../../../scripts/ai-grader/start-local-station-bridge.ps1"),
+    "utf8",
   );
+  const commonLauncherSource = fs.readFileSync(
+    path.resolve(__dirname, "../../../scripts/ai-grader/ai-grader-local-bridge-common.ps1"),
+    "utf8",
+  );
+  const retiredNames = [
+    "PROVISIONAL_GEOMETRY",
+    "ProvisionalGeometryArtifact",
+    "provisionalGeometryArtifact",
+    "provisionalGeometryCorrection",
+    "applyProvisionalMathematicalGeometryV1",
+  ];
+  for (const retiredName of retiredNames) {
+    assert.equal(launcherSource.includes(retiredName), false, `launcher retains ${retiredName}`);
+    assert.equal(commonLauncherSource.includes(retiredName), false, `common launcher retains ${retiredName}`);
+    assert.equal(bridgeSource.includes(retiredName), false, `station bridge retains ${retiredName}`);
+  }
   const { config, service } = configFor(outputDir, {}, {
-    provisionalGeometryArtifactPath: artifactPath,
-    provisionalGeometryArtifactSha256: artifactSha256,
+    provisionalGeometryArtifactPath: path.join(outputDir, "retired.json"),
+    provisionalGeometryArtifactSha256: "a".repeat(64),
   });
-  assert.equal(config.provisionalGeometryArtifactPath, artifactPath);
-  assert.equal(config.provisionalGeometryArtifactSha256, artifactSha256);
-  assert.deepEqual(service.status().provisionalGeometry, {
-    active: true,
-    status: "geometry_only_controlled_evaluation",
-    isCalibrated: false,
-    artifactSha256,
-    certifiedMathematicalV1Unaffected: true,
-  });
-
+  assert.equal(config.provisionalGeometryArtifactPath, undefined);
+  assert.equal(config.provisionalGeometryArtifactSha256, undefined);
+  assert.equal(service.status().provisionalGeometry, undefined);
   const defaultRunnerSource = bridgeSource.match(
     /function createDefaultWarmForensicRunner[\s\S]+?(?=\nfunction cloneManifest)/,
   )?.[0];
   assert.ok(defaultRunnerSource, "default warm forensic runner source must remain inspectable");
   assert.match(defaultRunnerSource, /captureSide:\s*captureFixedRigWarmSideBatch/);
-  assert.match(defaultRunnerSource, /processSide:[\s\S]+applyProvisionalMathematicalGeometryV1/);
-  assert.doesNotMatch(
-    defaultRunnerSource,
-    /captureSide:\s*async[\s\S]+applyProvisionalMathematicalGeometryV1/,
-    "Rapid queue capture identities must remain the original immutable TIFF evidence",
-  );
+  assert.match(defaultRunnerSource, /processSide:\s*\\?\(batch, context\\?\)\s*=>\s*processing\.processSide\(batch, context\)/);
 });
 
 test("Start New Card applies configured lighting and returns Capture Front lighting-ready", async () => {
@@ -1246,14 +1349,78 @@ test("successful exact OCR survives reload as succeeded and cannot be claimed ag
     const { service, item } = await createEligibleQueuedFixture(outputDir, "success-reload");
     const identity = { queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId };
     const attempt = { ...identity, attemptOwnerId: "ocr-attempt-owner-reload" };
+    const exactResult = safeOcrResult(item);
     await service.action("begin-queued-ocr", attempt);
-    await service.action("complete-queued-ocr", { ...attempt, result: safeOcrResult(item) });
-    assert.equal(service.status().rapidCaptureQueue.items[0].ocr.state, "succeeded");
+    await service.action("complete-queued-ocr", { ...attempt, result: exactResult });
+    const completed = service.status().rapidCaptureQueue.items[0].ocr;
+    assert.equal(completed.state, "succeeded");
+    assert.deepEqual(completed.result.eyes, exactResult.eyes);
     const reloaded = new AiGraderLocalStationBridgeService(service.config);
-    assert.equal(reloaded.status().rapidCaptureQueue.items[0].ocr.state, "succeeded");
+    const reloadedOcr = reloaded.status().rapidCaptureQueue.items[0].ocr;
+    assert.equal(reloadedOcr.state, "succeeded");
+    assert.deepEqual(reloadedOcr.result.eyes, exactResult.eyes);
     await assert.rejects(reloaded.action("begin-queued-ocr", attempt), /one allowed execution/i);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("queued OCR rejects an EYES receipt whose exact image checksum or request hash is altered", async () => {
+  const checksumOutputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-eyes-checksum-"));
+  const requestOutputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-eyes-request-"));
+  try {
+    const checksumFixture = await createEligibleQueuedFixture(checksumOutputDir, "eyes-checksum");
+    const checksumIdentity = {
+      queueItemId: checksumFixture.item.queueItemId,
+      gradingSessionId: checksumFixture.item.sessionId,
+      reportId: checksumFixture.item.reportId,
+    };
+    const checksumAttempt = {
+      ...checksumIdentity,
+      attemptOwnerId: "ocr-attempt-owner-eyes-checksum",
+    };
+    const wrongChecksum = safeOcrResult(checksumFixture.item);
+    wrongChecksum.eyes.imageBindings[0].checksumSha256 = "f".repeat(64);
+    await checksumFixture.service.action("begin-queued-ocr", checksumAttempt);
+    await assert.rejects(
+      checksumFixture.service.action("complete-queued-ocr", {
+        ...checksumAttempt,
+        result: wrongChecksum,
+      }),
+      /checksum does not match exact normalized evidence/i,
+    );
+    assert.equal(
+      checksumFixture.service.status().rapidCaptureQueue.items[0].ocr.state,
+      "failed",
+    );
+
+    const requestFixture = await createEligibleQueuedFixture(requestOutputDir, "eyes-request");
+    const requestIdentity = {
+      queueItemId: requestFixture.item.queueItemId,
+      gradingSessionId: requestFixture.item.sessionId,
+      reportId: requestFixture.item.reportId,
+    };
+    const requestAttempt = {
+      ...requestIdentity,
+      attemptOwnerId: "ocr-attempt-owner-eyes-request",
+    };
+    const wrongRequest = safeOcrResult(requestFixture.item);
+    wrongRequest.eyes.requestSha256 = "0".repeat(64);
+    await requestFixture.service.action("begin-queued-ocr", requestAttempt);
+    await assert.rejects(
+      requestFixture.service.action("complete-queued-ocr", {
+        ...requestAttempt,
+        result: wrongRequest,
+      }),
+      /request SHA-256 does not match its exact image bindings/i,
+    );
+    assert.equal(
+      requestFixture.service.status().rapidCaptureQueue.items[0].ocr.state,
+      "failed",
+    );
+  } finally {
+    fs.rmSync(checksumOutputDir, { recursive: true, force: true });
+    fs.rmSync(requestOutputDir, { recursive: true, force: true });
   }
 });
 

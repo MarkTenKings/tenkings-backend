@@ -499,7 +499,7 @@ test("clean calibrated front/back evidence produces four exact 10.00 elements an
   assert.equal(result.surfaceSourceEvidence.front.length, 8);
   assert.equal(result.surfaceSourceEvidence.back.length, 8);
   assert.equal(result.noDoubleDeduction, true);
-  assert.match(result.whyNot10Summary, /No card-condition defect was measured/);
+  assert.match(result.whyNot10Summary, /No card-condition defect produced a positive deduction/);
 });
 
 test("overall uses exact weights, weakest plus 0.50, and the lowest severe-defect cap", () => {
@@ -534,7 +534,8 @@ test("overall uses exact weights, weakest plus 0.50, and the lowest severe-defec
   );
   assert.equal(result.deductionLedger.entries[0].deduction, 5.14);
   assert.equal(result.whyNot10[0].findingIds[0], crease.findingId);
-  assert.match(result.whyNot10[0].explanation, /U95 0.*exact deduction 5\.14/);
+  assert.match(result.whyNot10[0].explanation, /effective measurement 20.*exact deduction 5\.14/);
+  assert.doesNotMatch(result.whyNot10[0].explanation, /confidence|uncertainty|U95/i);
 });
 
 test("caller-provided front/back registration cannot suppress two opposite-surface deductions", () => {
@@ -696,7 +697,8 @@ test("centering deduction remains physical-design evidence and activates weakest
   assert.equal(result.overall, 5.28);
   assert.equal(result.deductionLedger.entries.length, 0);
   assert.equal(result.whyNot10[0].element, "centering");
-  assert.match(result.whyNot10[0].explanation, /balance 50\.08%.*U95 0\.03121 mm/);
+  assert.match(result.whyNot10[0].explanation, /balance 50\.08%.*Grade-10 tolerance 0\.05 mm/);
+  assert.doesNotMatch(result.whyNot10[0].explanation, /confidence|uncertainty|U95/i);
 });
 
 test("all eight corner locations contribute by exact worst-plus-average aggregation", () => {

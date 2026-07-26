@@ -237,7 +237,7 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   );
   assert.equal(
     manifest.analysisCoordinateSystem.semanticOrientation.status,
-    "not_resolved_from_rectangle_geometry",
+    "not_resolved_from_physical_contour",
   );
   assert.match(manifest.analysisCoordinateSystem.semanticOrientation.limitation, /cannot determine printed top/i);
   assert.equal(manifest.analysisCoordinateSystem.normalizedCoordinateOutcome.framingStatus, "pass");
@@ -245,7 +245,7 @@ test("production_fast warm processing preserves all forensic roles and writes ge
     manifest.analysisCoordinateSystem.normalizedCoordinateOutcome.note,
     /does not replace or upgrade source geometry confidence/i,
   );
-  assert.equal(manifest.analysisCoordinateSystem.transform.method, "authoritative_all_on_geometry_rotation_crop_canonical_resize_v1");
+  assert.equal(manifest.analysisCoordinateSystem.transform.method, "authoritative_all_on_dense_contour_rotation_crop_canonical_resize_v1");
   assert.deepEqual(manifest.analysisCoordinateSystem.transform.outputImage, { width: 1200, height: 1680 });
   assert.equal(manifest.analysisCoordinateSystem.transform.sourceResolutionGate.status, "pass");
   assert.equal(manifest.analysisCoordinateSystem.transform.sourceResolutionGate.minimumSourceWidthPixels, 1000);
@@ -329,7 +329,7 @@ test("production_fast warm processing preserves all forensic roles and writes ge
   assert.equal(manifest.front.fixtureCalibrationProfile.sourceGeometry.placementState, "ready");
   assert.equal(
     manifest.front.fixtureCalibrationProfile.semanticOrientation.status,
-    "not_resolved_from_rectangle_geometry",
+    "not_resolved_from_physical_contour",
   );
   assert.equal(
     manifest.front.fixtureCalibrationProfile.normalizedCoordinateOutcome.sourceGeometryQualityPreservedSeparately,
@@ -420,12 +420,12 @@ test("legacy fixture boundary cannot silently normalize an undetected card and f
       rawPath,
       cardBoundaryRect: { x: 100, y: 140, width: 300, height: 420 },
     }), TEST_ONLY_CAPTURED_AUTHORITY),
-    /full-resolution geometry authority rejected the primary all-on frame.*no usable card-perimeter gradient/i,
+    /full-resolution geometry authority requires the calibrated, hash-verified dense contour observed in the exact all-on pixels.*contrast is too low/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
 });
 
-test("dark captured all-on perimeter remains the primary full-resolution authority and records captured-role consensus", async () => {
+test("dark captured all-on dense contour is the sole full-resolution geometry authority", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-dark-perimeter-primary-"));
   const packageDir = path.join(root, "package-front");
   const sideDir = path.join(packageDir, "front");
@@ -443,21 +443,25 @@ test("dark captured all-on perimeter remains the primary full-resolution authori
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
 
-  assert.equal(manifest.front.normalizedCard.geometry.detection.method, "perimeter_gradient_rectangle_v3");
+  assert.equal(manifest.front.normalizedCard.geometry.detection.method, "solid_plate_color_component_pca_v2");
   assert.equal(manifest.analysisCoordinateSystem.authoritativeGeometryRole, "all_on");
-  assert.equal(manifest.analysisCoordinateSystem.transform.method, "authoritative_all_on_geometry_rotation_crop_canonical_resize_v1");
-  assert.equal(authority.primaryRole, "all_on");
-  assert.equal(authority.authoritativeRole, "all_on");
-  assert.equal(authority.resolution, "primary_all_on");
-  assert.deepEqual(authority.consensus.agreeingRoles, ["all_on", "accepted_profile"]);
+  assert.equal(manifest.analysisCoordinateSystem.transform.method, "authoritative_all_on_dense_contour_rotation_crop_canonical_resize_v1");
+  assert.equal(authority.resolution, "primary_all_on_dense_contour");
   assert.equal(authority.source.role, "all_on");
+  assert.equal("primaryRole" in authority, false);
+  assert.equal("authoritativeRole" in authority, false);
+  assert.equal("consensus" in authority, false);
+  assert.equal("inspectedRoles" in authority, false);
   assert.equal(typeof authority.source.sourceSha256, "string");
   assert.equal(authority.source.geometry.corners !== null, true);
-  assert.equal(manifest.geometryPolicy.fullResolutionGeometryAuthority.authoritativeRole, "all_on");
+  assert.equal(
+    manifest.geometryPolicy.fullResolutionGeometryAuthority.source.role,
+    "all_on",
+  );
   assert.deepEqual(fs.readFileSync(rawPath), rawBefore);
 });
 
-test("accepted-profile recovery requires an independent agreeing directional captured role when all-on is unavailable", async () => {
+test("accepted-profile and directional contours cannot recover unavailable all-on geometry", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-secondary-geometry-authority-"));
   const packageDir = path.join(root, "package-front");
   const sideDir = path.join(packageDir, "front");
@@ -472,28 +476,20 @@ test("accepted-profile recovery requires an independent agreeing directional cap
   ]);
   const rolePaths = [blankPath, blankPath, acceptedPath, directionalPath, blankPath, blankPath, blankPath, blankPath, blankPath, blankPath, blankPath];
 
-  const result = await processFixedRigWarmSideBatch(warmBatchInput({
-    packageId: "synthetic-secondary-geometry-authority",
-    packageDir,
-    sideDir,
-    rawPath: blankPath,
-    rolePaths,
-  }), TEST_ONLY_CAPTURED_AUTHORITY);
-  const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
-  const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
-
-  assert.equal(manifest.analysisCoordinateSystem.authoritativeGeometryRole, "accepted_profile");
-  assert.equal(manifest.analysisCoordinateSystem.transform.method, "validated_secondary_captured_role_geometry_rotation_crop_canonical_resize_v1");
-  assert.equal(authority.resolution, "secondary_accepted_profile_consensus");
-  assert.equal(authority.authoritativeRole, "accepted_profile");
-  assert.equal(authority.consensus.required, true);
-  assert.equal(authority.consensus.agreeingRoles.includes("accepted_profile"), true);
-  assert.equal(authority.consensus.agreeingRoles.includes("channel_1"), true);
-  assert.equal(manifest.front.normalizedCard.normalizedArtifact.sourceSha256, manifest.front.allOn.capture.sha256);
-  assert.equal(manifest.rawEvidenceIntegrity.roles.every((role) => role.preserved), true);
+  await assert.rejects(
+    processFixedRigWarmSideBatch(warmBatchInput({
+      packageId: "synthetic-secondary-geometry-authority",
+      packageDir,
+      sideDir,
+      rawPath: blankPath,
+      rolePaths,
+    }), TEST_ONLY_CAPTURED_AUTHORITY),
+    /requires the calibrated, hash-verified dense contour observed in the exact all-on pixels.*contrast is too low/i,
+  );
+  assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
 });
 
-test("secondary authority rejects directional roles that each match accepted-profile but conflict pairwise", async () => {
+test("directional rectangle agreement never runs when exact all-on geometry is unavailable", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-secondary-pairwise-conflict-"));
   const packageDir = path.join(root, "package-front");
   const sideDir = path.join(packageDir, "front");
@@ -532,12 +528,12 @@ test("secondary authority rejects directional roles that each match accepted-pro
       rawPath: blankPath,
       rolePaths,
     }), TEST_ONLY_CAPTURED_AUTHORITY),
-    /full-resolution geometry authority found conflicting secondary captured-role candidates/i,
+    /requires the calibrated, hash-verified dense contour observed in the exact all-on pixels.*contrast is too low/i,
   );
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), false);
 });
 
-test("conflicting secondary accepted-profile geometry does not block Ready primary all-on authority", async () => {
+test("accepted-profile geometry is forensic evidence only and never participates in all-on authority", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-conflicting-geometry-authority-"));
   const packageDir = path.join(root, "package-front");
   const sideDir = path.join(packageDir, "front");
@@ -559,10 +555,10 @@ test("conflicting secondary accepted-profile geometry does not block Ready prima
   }), TEST_ONLY_CAPTURED_AUTHORITY);
   const manifest = JSON.parse(fs.readFileSync(result.manifestPath, "utf8"));
   const authority = manifest.analysisCoordinateSystem.fullResolutionGeometryAuthority;
-  assert.equal(authority.resolution, "primary_all_on");
-  assert.equal(authority.authoritativeRole, "all_on");
-  assert.deepEqual(authority.consensus.agreeingRoles, ["all_on"]);
-  assert.equal(authority.inspectedRoles[1].placementState, "ready");
+  assert.equal(authority.resolution, "primary_all_on_dense_contour");
+  assert.equal(authority.source.role, "all_on");
+  assert.equal("consensus" in authority, false);
+  assert.equal("inspectedRoles" in authority, false);
   assert.equal(fs.existsSync(path.join(sideDir, "normalized", "front-normalized-card.png")), true);
 });
 

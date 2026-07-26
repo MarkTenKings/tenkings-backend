@@ -35,7 +35,7 @@ export function defectFindingPolygonPoints(shape: Extract<AiGraderDefectFindingS
 
 export function defectFindingLabel(finding: AiGraderDefectFindingV1) {
   const category = finding.category.replace(/_/g, " ");
-  return `AI-detected provisional ${finding.side} ${category} finding, ${finding.severity.band} severity, ${Math.round(finding.confidence * 100)}% confidence, review ${finding.review.status}`;
+  return `Measured ${finding.side} ${category} finding, ${finding.severity.band} severity, review ${finding.review.status}`;
 }
 
 export function defectFindingsForExactImage(findings: AiGraderDefectFindingV1[], assetId: string | undefined) {

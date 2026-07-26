@@ -7,6 +7,7 @@ const test = require("node:test");
 
 const {
   applyFixedRigCommonModeInteriorAdmissionV1,
+  applyFixedRigObservableLocalizedEvidenceAdmissionV1,
 } = require("../dist/drivers/fixedRigPhotometricAdmissionV1");
 const {
   buildFixedRigExposureBracketFusionV1,
@@ -198,6 +199,96 @@ test("admission remains fail-closed at every literal boundary", () => {
   }
 });
 
+test("observable localized gaps reduce confidence without vetoing the whole side", () => {
+  const width = 600;
+  const regions = Array.from({ length: 86 }, (_, index) =>
+    componentPixels(
+      width,
+      40 + (index % 10) * 45,
+      30 + Math.floor(index / 10) * 45,
+      12,
+    ));
+  const original = evidence({ regions });
+  const result =
+    applyFixedRigObservableLocalizedEvidenceAdmissionV1(original);
+  assert.equal(result.status, "computed");
+  assert.equal(
+    result.observableEvidenceAdmission.localizedUngradableRegionCount,
+    86,
+  );
+  assert.equal(
+    result.observableEvidenceAdmission.localizedUngradablePixelCount,
+    86 * 12,
+  );
+  assert.equal(
+    result.admissionExcludedTopologyMask.reduce((sum, value) => sum + value, 0),
+    86 * 12,
+  );
+  assert.equal(
+    result.invalidIlluminationMask.reduce((sum, value) => sum + value, 0),
+    86 * 12,
+    "admission never makes foggy pixels grade-valid",
+  );
+  assert.equal(
+    result.evidenceLimitations.every((limitation) =>
+      limitation.code !== "localized_ungradable_region" ||
+      limitation.requiresRecapture === false),
+    true,
+  );
+});
+
+test("every nonzero observable coverage remains measurable while zero observable pixels stop", () => {
+  const foggy = evidence({ validPixelFraction: 0.69 });
+  foggy.evidenceLimitations.push({
+    code: "insufficient_valid_coverage",
+    affectedPixelFraction: 0.31,
+    requiresRecapture: true,
+    message: "global percentage gate",
+  });
+  const measured =
+    applyFixedRigObservableLocalizedEvidenceAdmissionV1(foggy);
+  assert.equal(measured.status, "computed");
+  assert.equal(measured.observableEvidenceAdmission.validPixelFraction, 0.69);
+  assert.equal(
+    measured.evidenceLimitations.every((limitation) =>
+      limitation.requiresRecapture === false),
+    true,
+    "coverage percentages remain private quality context and cannot veto observable pixels",
+  );
+
+  const lowCoverage = evidence({ validPixelFraction: 0.3 });
+  lowCoverage.evidenceLimitations.push({
+    code: "fully_obscured",
+    affectedPixelFraction: 0.7,
+    requiresRecapture: true,
+    message: "legacy percentage label",
+  });
+  const lowCoverageMeasured =
+    applyFixedRigObservableLocalizedEvidenceAdmissionV1(lowCoverage);
+  assert.equal(lowCoverageMeasured.status, "computed");
+  assert.equal(lowCoverageMeasured.observableEvidenceAdmission.validPixelFraction, 0.3);
+  assert.equal(
+    lowCoverageMeasured.evidenceLimitations.every((limitation) =>
+      limitation.requiresRecapture === false),
+    true,
+    "a legacy percentage label cannot veto nonzero observable pixels",
+  );
+
+  const obscured = evidence({ validPixelFraction: 0 });
+  obscured.coverage.validPixelCount = 0;
+  obscured.coverage.invalidPixelFraction = 1;
+  obscured.evidenceLimitations.push({
+    code: "fully_obscured",
+    affectedPixelFraction: 1,
+    requiresRecapture: true,
+    message: "no physical measurement can be observed",
+  });
+  const stopped =
+    applyFixedRigObservableLocalizedEvidenceAdmissionV1(obscured);
+  assert.equal(stopped.status, "insufficient_evidence");
+  assert.equal(stopped.observableEvidenceAdmission, undefined);
+});
+
 function plane(width, height, value) {
   return { width, height, data: new Float32Array(width * height).fill(value) };
 }
@@ -331,6 +422,65 @@ test("tau1 bracket selects the highest eligible nonclipped source and blank evid
   });
   assert.equal(nonDirectional.status, "insufficient_evidence");
   assert.deepEqual(Array.from(nonDirectional.lowConfidenceMask), [1, 1, 1, 1]);
+});
+
+test("radiometric bracket estimates above sensor full scale are common-mode normalized, not promoted to relief", () => {
+  const width = 2;
+  const height = 2;
+  const responses = [2.4, 2.2, 2.1, 2, 1.9, 1.8, 1.7, 1.6];
+  const result = buildFixedRigPhotometricEvidenceV1({
+    channels: responses.map((response, index) => ({
+      channel: index + 1,
+      image: plane(width, height, 0),
+      channelConfidence: 1,
+      sourceEvidenceId: `channel-${index + 1}`,
+      sourceSha256: SHA,
+      fusedObservation: {
+        correctedResponse: new Float32Array(width * height).fill(response),
+        eligibleMask: new Uint8Array(width * height).fill(1),
+        clippingMask: new Uint8Array(width * height),
+        selectedExposureUs: new Uint32Array(width * height).fill(15000),
+        sourceEvidenceIds: [
+          `channel-${index + 1}-15000`,
+          `channel-${index + 1}-30000`,
+          `channel-${index + 1}-37500`,
+        ],
+        sourceSha256s: [SHA, SHA, SHA],
+      },
+    })),
+    calibration: {
+      calibrationProfileId: "calibration",
+      calibrationVersion: "v1",
+      calibrationSha256: SHA,
+      coordinateFrame: "normalized_card_portrait_pixels",
+      width,
+      height,
+      sensorMaximumValue: 255,
+      isFinalized: true,
+      isCalibrated: true,
+      flatFieldChannels: Array.from({ length: 8 }, (_, index) => ({
+        channel: index + 1,
+        relativeResponse: plane(width, height, 1),
+        sourceEvidenceId: `flat-${index + 1}`,
+        sourceSha256: SHA,
+      })),
+      illuminationPatternChannels: Array.from({ length: 8 }, (_, index) => ({
+        channel: index + 1,
+        expectedDirectionalResidual: plane(width, height, 0),
+        sourceEvidenceId: `pattern-${index + 1}`,
+        sourceSha256: SHA,
+      })),
+      sourceEvidenceIds: [],
+    },
+    darkControl: plane(width, height, 0),
+    gradeRelevantMask: plane(width, height, 1),
+    gradeRelevantMaskSourceEvidenceId: "expected-card-mask",
+    gradeRelevantMaskSourceSha256: SHA,
+  });
+  assert.equal(result.status, "computed");
+  assert.ok(Math.abs(result.commonModeResponse[0] - 1.95) < 1e-6);
+  assert.ok(Math.abs(result.channels[0].directionalResidual[0]) < 0.24);
+  assert.ok(Math.abs(result.channels[7].directionalResidual[0]) < 0.19);
 });
 
 function transformFor(sourceSha256, matrix = [1, 0, 0, 0, 1, 0, 0, 0, 1]) {

@@ -906,6 +906,52 @@ test("manual geometry fallback cannot enter the display contract", () => {
   assert.equal(geometry?.captureMode, "none");
 });
 
+test("dense observed preview contour is retained with bounded measurements and no path authority", () => {
+  const points = [
+    { x: 10.5, y: 20.5 },
+    { x: 110.5, y: 20.5 },
+    { x: 110.5, y: 170.5 },
+    { x: 10.5, y: 170.5 },
+  ];
+  const geometry = sanitizeAiGraderPreviewCardGeometry({
+    version: "ten-kings-card-geometry-v1",
+    side: "front",
+    placementState: "ready",
+    geometrySource: "detected",
+    captureMode: "automatic_detection",
+    confidenceBasis: "automatic_detection",
+    detectionUsed: true,
+    confidence: 0.91,
+    observedDenseContour: {
+      schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+      coordinateFrame: "source_image_pixels",
+      sourceAssetSha256: "a".repeat(64),
+      contourSha256: "b".repeat(64),
+      points,
+      pointCount: points.length,
+      strongSupportFraction: 0.73,
+      evidenceQuality: "strong",
+      measurementsPx: {
+        width: 100,
+        height: 150,
+        perimeter: 500,
+        enclosedArea: 15000,
+        angleDegrees: 0,
+        circularArcs: [{
+          radiusPx: 12.4,
+          sweepDegrees: 86,
+          radialResidualPx: 0.7,
+          sampleCount: 14,
+        }],
+      },
+      localPath: "C:\\must-not-pass.png",
+    },
+  }, "front");
+  assert.deepEqual(geometry?.observedDenseContour?.points, points);
+  assert.equal(geometry?.observedDenseContour?.measurementsPx.circularArcs[0]?.radiusPx, 12.4);
+  assert.equal("localPath" in (geometry?.observedDenseContour ?? {}), false);
+});
+
 test("capture request binds exact session, report, side, epoch, and frame without a browser intent gate", async () => {
   const assertion = aiGraderCaptureAssertionFromFrame({
     frame: { sessionId: "session-1", side: "front", sideEpoch: "front-epoch-1", frameId: "frame-9" },

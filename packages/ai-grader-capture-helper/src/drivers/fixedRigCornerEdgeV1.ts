@@ -132,7 +132,8 @@ export interface FixedRigConditionObservationInsufficientV1 {
   penalty: null;
   findings: [];
   reasons: string[];
-  requiresRecapture: true;
+  observationState: "invalid" | "unobserved_zero_coverage";
+  requiresRecapture: boolean;
   cardDefectDeduction: 0;
 }
 
@@ -464,6 +465,9 @@ function buildMeasurementCandidate(input: {
       calibration: input.observation.calibration.profile,
       kind: input.kind,
       measuredMeasurement: round(input.measuredMeasurement),
+      validEvidenceCoverage: observationCoverage(
+        binaryMask(input.observation.validEvidenceMask)!,
+      ),
     }).componentsU95,
     explicitGrade10Tolerance: policy.grade10Tolerance,
     calibrationProfileId: input.observation.calibration.calibrationProfileId,
@@ -542,7 +546,7 @@ function buildFinding(input: {
     secondaryEvidenceCategories: secondaryCategories,
     explanation:
       `${primary.category} measured ${primary.measurement.measuredMeasurement} ${primary.measurement.unit}; ` +
-      `U95 ${primary.measurement.u95}, effective ${primary.measurement.effectiveMeasurement}, ` +
+      `effective measurement ${primary.measurement.effectiveMeasurement}; ` +
       `reference ${primary.calculation.referenceMeasurement}, exact deduction ${primary.calculation.deduction}.`,
   });
   return {
@@ -596,6 +600,9 @@ function buildAuxiliaryMeasurement(input: {
       calibration: input.observation.calibration.profile,
       kind: input.kind,
       measuredMeasurement: round(input.measuredMeasurement),
+      validEvidenceCoverage: observationCoverage(
+        binaryMask(input.observation.validEvidenceMask)!,
+      ),
     }).componentsU95,
     explicitGrade10Tolerance: input.explicitGrade10Tolerance,
     calibrationProfileId: input.observation.calibration.calibrationProfileId,
@@ -613,6 +620,8 @@ function insufficientObservation(input: {
   location: string;
   regionId: string;
   reasons: string[];
+  observationState?: "invalid" | "unobserved_zero_coverage";
+  requiresRecapture?: boolean;
 }): FixedRigConditionObservationInsufficientV1 {
   return {
     version: FIXED_RIG_CORNER_EDGE_V1_VERSION,
@@ -624,7 +633,8 @@ function insufficientObservation(input: {
     penalty: null,
     findings: [],
     reasons: input.reasons,
-    requiresRecapture: true,
+    observationState: input.observationState ?? "invalid",
+    requiresRecapture: input.requiresRecapture ?? true,
     cardDefectDeduction: 0,
   };
 }
@@ -669,16 +679,7 @@ export function measureFixedRigCornerObservationV1(
   const [valid, whitening, missing, shape, deformation, delamination, relief] =
     binaryPlanes as Uint8Array[];
   const coverage = observationCoverage(valid!);
-  const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners;
   const reasons: string[] = [];
-  if (coverage < policy.minValidPixelCoverage) {
-    reasons.push(`Valid corner evidence coverage ${coverage} is below ${policy.minValidPixelCoverage}.`);
-  }
-  if (input.usableDirectionalChannelCount < policy.minUsableDirectionalChannels) {
-    reasons.push(
-      `Usable directional channels ${input.usableDirectionalChannelCount} are below ${policy.minUsableDirectionalChannels}.`,
-    );
-  }
   if (!input.evidence.length) reasons.push("Corner observation has no immutable evidence references.");
   const cornerCalibrationIssue = calibrationIssue(input.calibration);
   if (cornerCalibrationIssue) reasons.push(cornerCalibrationIssue);
@@ -688,6 +689,19 @@ export function measureFixedRigCornerObservationV1(
   const featureMasks = [whitening!, missing!, shape!, deformation!, delamination!, relief!];
   if (invalidCandidateOverlap(valid!, featureMasks)) {
     reasons.push("A detected corner candidate overlaps invalid capture pixels and cannot be graded as condition.");
+  }
+  if (!reasons.length && coverage === 0) {
+    return insufficientObservation({
+      element: "corners",
+      side: input.side,
+      location: input.location,
+      regionId: input.regionId,
+      reasons: [
+        "No verified pixels were observable in this exact corner ROI; it is excluded from the score rather than treated as defect-free.",
+      ],
+      observationState: "unobserved_zero_coverage",
+      requiresRecapture: false,
+    });
   }
   if (reasons.length) {
     return insufficientObservation({
@@ -732,6 +746,7 @@ export function measureFixedRigCornerObservationV1(
       calibration: input.calibration.profile,
       kind: "shape_deviation_mm",
       measuredMeasurement: contourMeasuredMm,
+      validEvidenceCoverage: coverage,
     }).componentsU95,
     explicitGrade10Tolerance: contourPolicy.grade10Tolerance,
     calibrationProfileId: input.calibration.calibrationProfileId,
@@ -805,12 +820,6 @@ export function measureFixedRigCornerObservationV1(
     if (finding) findings.push(finding);
   }
   const penalty = round(findings.reduce((sum, finding) => sum + finding.deduction, 0), 2);
-  if (!findings.length && coverage < 1) {
-    return insufficientObservation({
-      element: "corners", side: input.side, location: input.location, regionId: input.regionId,
-      reasons: ["A clean Grade-10 corner observation requires complete valid-pixel coverage."],
-    });
-  }
   const categoriesFor = (finding: FixedRigPhysicalFindingV1) => new Set([
     finding.finding.category,
     ...finding.secondaryCategoryEvidence,
@@ -879,16 +888,7 @@ export function measureFixedRigEdgeObservationV1(
   const [valid, damage, chip, whitening, roughness, fraying, delamination, deformation, relief] =
     binaryPlanes as Uint8Array[];
   const coverage = observationCoverage(valid!);
-  const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges;
   const reasons: string[] = [];
-  if (coverage < policy.minValidPixelCoverage) {
-    reasons.push(`Valid edge evidence coverage ${coverage} is below ${policy.minValidPixelCoverage}.`);
-  }
-  if (input.usableDirectionalChannelCount < policy.minUsableDirectionalChannels) {
-    reasons.push(
-      `Usable directional channels ${input.usableDirectionalChannelCount} are below ${policy.minUsableDirectionalChannels}.`,
-    );
-  }
   if (!input.evidence.length) reasons.push("Edge observation has no immutable evidence references.");
   const edgeCalibrationIssue = calibrationIssue(input.calibration);
   if (edgeCalibrationIssue) reasons.push(edgeCalibrationIssue);
@@ -898,6 +898,19 @@ export function measureFixedRigEdgeObservationV1(
   const featureMasks = [damage!, chip!, whitening!, roughness!, fraying!, delamination!, deformation!, relief!];
   if (invalidCandidateOverlap(valid!, featureMasks)) {
     reasons.push("A detected edge candidate overlaps invalid capture pixels and cannot be graded as condition.");
+  }
+  if (!reasons.length && coverage === 0) {
+    return insufficientObservation({
+      element: "edges",
+      side: input.side,
+      location: input.location,
+      regionId: input.regionId,
+      reasons: [
+        "No verified pixels were observable in this exact edge ROI; it is excluded from the score rather than treated as defect-free.",
+      ],
+      observationState: "unobserved_zero_coverage",
+      requiresRecapture: false,
+    });
   }
   if (reasons.length) {
     return insufficientObservation({
@@ -996,12 +1009,6 @@ export function measureFixedRigEdgeObservationV1(
     if (finding) findings.push(finding);
   }
   const penalty = round(findings.reduce((sum, finding) => sum + finding.deduction, 0), 2);
-  if (!findings.length && coverage < 1) {
-    return insufficientObservation({
-      element: "edges", side: input.side, location: input.location, regionId: input.regionId,
-      reasons: ["A clean Grade-10 edge observation requires complete valid-pixel coverage."],
-    });
-  }
   return {
     version: FIXED_RIG_CORNER_EDGE_V1_VERSION,
     status: "computed",
@@ -1036,6 +1043,12 @@ export type FixedRigConditionElementResultV1 =
       aggregatePenalty: number;
       aggregation: PenaltyAggregationV1;
       observations: FixedRigConditionObservationComputedV1[];
+      unobservedLocations: Array<{
+        side: "front" | "back";
+        location: string;
+        regionId: string;
+        reasons: string[];
+      }>;
       locationSubscores: Array<{
         side: "front" | "back";
         location: string;
@@ -1221,8 +1234,38 @@ function aggregateConditionElement(input: {
   }
   for (const observation of input.observations) {
     if (observation.element !== input.element) reasons.push(`Observation ${observation.regionId} has the wrong element.`);
-    if (observation.status === "insufficient_evidence") {
+    if (
+      observation.status === "insufficient_evidence" &&
+      observation.observationState !== "unobserved_zero_coverage"
+    ) {
       reasons.push(...observation.reasons.map((reason) => `${observation.side} ${observation.location}: ${reason}`));
+    }
+  }
+  const observations = input.observations.filter(
+    (
+      observation,
+    ): observation is FixedRigConditionObservationComputedV1 =>
+      observation.status === "computed",
+  );
+  const unobservedLocations = input.observations.flatMap((observation) =>
+    observation.status === "insufficient_evidence" &&
+    observation.observationState === "unobserved_zero_coverage"
+      ? [{
+          side: observation.side,
+          location: observation.location,
+          regionId: observation.regionId,
+          reasons: [...observation.reasons],
+        }]
+      : [],
+  );
+  for (const side of ["front", "back"] as const) {
+    if (
+      !observations.some((observation) => observation.side === side) &&
+      !reasons.length
+    ) {
+      reasons.push(
+        `${side} contains no observable ${input.element} location; exact targeted resolution is required for this subgrade.`,
+      );
     }
   }
   if (reasons.length) {
@@ -1236,7 +1279,6 @@ function aggregateConditionElement(input: {
       cardDefectDeduction: 0,
     };
   }
-  const observations = input.observations as FixedRigConditionObservationComputedV1[];
   const findingOwners = new Map<string, { observationIndex: number; finding: FixedRigPhysicalFindingV1 }>();
   observations.forEach((observation, observationIndex) => observation.findings.forEach((finding) => {
     findingOwners.set(finding.finding.findingId, { observationIndex, finding });
@@ -1294,8 +1336,8 @@ function aggregateConditionElement(input: {
   });
   const penalties = locationSubscores.map((location) => location.deduplicatedPenalty);
   const aggregation = input.element === "corners"
-    ? aggregateCornerScoreV1(penalties)
-    : aggregateEdgeScoreV1(penalties);
+    ? aggregateCornerScoreV1(penalties, { allowObservableSubset: unobservedLocations.length > 0 })
+    : aggregateEdgeScoreV1(penalties, { allowObservableSubset: unobservedLocations.length > 0 });
   const severeDefectCaps = [...new Set(observations.flatMap((observation) =>
     observation.findings.flatMap((finding) => finding.severeDefectCap === undefined ? [] : [finding.severeDefectCap]),
   ))].sort((left, right) => left - right);
@@ -1308,6 +1350,7 @@ function aggregateConditionElement(input: {
     aggregatePenalty: aggregation.aggregatePenalty,
     aggregation,
     observations,
+    unobservedLocations,
     locationSubscores,
     crossSideDeduplication,
     severeDefectCaps,

@@ -3008,6 +3008,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             images: input.images.map((image) => ({
               side: image.side,
               url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
+              checksumSha256: image.checksumSha256,
             })),
           });
         } catch (error) {
@@ -3051,6 +3052,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           fields: runtimeResult.fields,
           reviewFieldNames: runtimeResult.reviewFieldNames,
           provenance: runtimeResult.provenance,
+          ...(runtimeResult.eyes ? { eyes: runtimeResult.eyes } : {}),
           warnings: runtimeResult.warnings,
         };
         assertOcrPrefillResultSafe(safeResult);

@@ -21,12 +21,19 @@ import {
   type AiGraderOcrStructuredValue,
 } from "./aiGraderOcrStructuredExtraction";
 import { AiGraderOcrFailure } from "../aiGraderOcrFailure";
+import {
+  runAiGraderEyesSemanticObservation,
+  unavailableAiGraderEyesReceipt,
+  type AiGraderEyesReceipt,
+  type AiGraderEyesSourceImage,
+} from "./aiGraderEyesSemanticObserver";
 
 export type AiGraderOcrPrefillSide = "front" | "back";
 
 export type AiGraderOcrPrefillSourceImage = {
   side: AiGraderOcrPrefillSide;
   url: string;
+  checksumSha256?: string;
 };
 
 export type AiGraderOcrPrefillFieldValue = string | boolean | null;
@@ -75,6 +82,7 @@ export type AiGraderOcrPrefillResult = {
     setLookupUsed: boolean;
     setIdentificationUsed: boolean;
   };
+  eyes?: AiGraderEyesReceipt;
   warnings: string[];
 };
 
@@ -84,6 +92,9 @@ export type AiGraderOcrProviderDiagnostics = {
   openAiElapsedMs?: number;
   totalProviderElapsedMs?: number;
   actualOpenAiModel?: string;
+  eyesElapsedMs?: number;
+  actualEyesModel?: string;
+  eyesUnavailableReason?: string;
   openAiFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
 };
 
@@ -97,6 +108,7 @@ export type AiGraderOcrPrefillRuntimeDependencies = {
     options?: { timeoutMs: number }
   ) => Promise<OcrResponse>;
   runStructuredExtraction?: typeof runAiGraderOcrStructuredExtraction;
+  runEyes?: typeof runAiGraderEyesSemanticObservation;
   identifySet?: typeof identifySetByCardIdentity;
   lookupSet?: typeof lookupSetByCardIdentity;
   now?: () => number;
@@ -421,6 +433,20 @@ export async function runAiGraderOcrPrefillRuntime(
   const now = dependencies.now ?? Date.now;
   const providerStartedAt = now();
   const providerDeadline = providerStartedAt + providerTimeBudgetMs(dependencies.providerTimeBudgetMs);
+  const eyesSources = images.every((image) => /^[a-f0-9]{64}$/.test(String(image.checksumSha256 ?? "")))
+    ? images.map((image) => ({
+        side: image.side,
+        url: image.url,
+        checksumSha256: String(image.checksumSha256),
+      })) as AiGraderEyesSourceImage[]
+    : null;
+  const eyesStartedAt = now();
+  const eyesPromise = eyesSources
+    ? (dependencies.runEyes ?? runAiGraderEyesSemanticObservation)(
+        { images: eyesSources },
+        { timeoutMs: 20_000 },
+      ).catch((error) => unavailableAiGraderEyesReceipt(eyesSources, error))
+    : undefined;
   const googleStartedAt = now();
   let ocr: OcrResponse;
   try {
@@ -525,6 +551,10 @@ export async function runAiGraderOcrPrefillRuntime(
   const warnings = reviewFieldNames.length
     ? ["Unknown or conflicting OCR fields require operator review."]
     : [];
+  const eyes = eyesPromise ? await eyesPromise : undefined;
+  if (eyes?.status === "observed" && eyes.reviewElements.length) {
+    warnings.push(`EYES requests operator review for: ${eyes.reviewElements.join(", ")}.`);
+  }
   return {
     queueItemId: input.queueItemId,
     gradingSessionId: input.gradingSessionId,
@@ -544,6 +574,7 @@ export async function runAiGraderOcrPrefillRuntime(
       setLookupUsed: Boolean(lookup),
       setIdentificationUsed: Boolean(identified),
     },
+    ...(eyes ? { eyes } : {}),
     warnings,
     internalProviderDiagnostics: {
       schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
@@ -551,6 +582,14 @@ export async function runAiGraderOcrPrefillRuntime(
       openAiElapsedMs,
       totalProviderElapsedMs: boundedProviderElapsedMs(now() - providerStartedAt),
       actualOpenAiModel: structured.actualModel,
+      ...(eyes
+        ? {
+            eyesElapsedMs: boundedProviderElapsedMs(now() - eyesStartedAt),
+            ...(eyes.status === "observed"
+              ? { actualEyesModel: eyes.actualModel }
+              : { eyesUnavailableReason: eyes.reason }),
+          }
+        : {}),
     },
   };
 }

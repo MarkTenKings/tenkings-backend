@@ -115,6 +115,9 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
         openAiElapsedMs: diagnostics.openAiElapsedMs,
         totalProviderElapsedMs: diagnostics.totalProviderElapsedMs,
         actualOpenAiModel: diagnostics.actualOpenAiModel,
+        eyesElapsedMs: diagnostics.eyesElapsedMs,
+        actualEyesModel: diagnostics.actualEyesModel,
+        eyesUnavailableReason: diagnostics.eyesUnavailableReason,
         ...(diagnostics.openAiFailure
           ? {
               upstreamStatus: diagnostics.openAiFailure.status,

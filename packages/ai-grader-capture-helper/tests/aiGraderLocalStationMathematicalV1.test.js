@@ -475,6 +475,71 @@ function bindReadyPreview(service, side, suffix) {
     bottomRight: { x: box.x + box.width, y: box.y + box.height },
     bottomLeft: { x: box.x, y: box.y + box.height },
   };
+  const points = [];
+  for (let index = 0; index < 8; index += 1) {
+    const fraction = index / 8;
+    points.push({ x: box.x + box.width * fraction, y: box.y });
+    points.push({ x: box.x + box.width, y: box.y + box.height * fraction });
+    points.push({ x: box.x + box.width * (1 - fraction), y: box.y + box.height });
+    points.push({ x: box.x, y: box.y + box.height * (1 - fraction) });
+  }
+  const sourceAssetSha256 = crypto.createHash("sha256")
+    .update(`preview-${side}-${suffix}`)
+    .digest("hex");
+  const contourSha256 = crypto.createHash("sha256").update(JSON.stringify({
+    sourceAssetSha256,
+    coordinateFrame: "source_image_pixels",
+    points,
+  })).digest("hex");
+  const physicalMeasurementPayload = {
+    calibration: {
+      profileId: "fixture-sensor-plane",
+      calibrationVersion: "fixture-v1",
+      calibrationArtifactSha256: crypto.createHash("sha256").update("fixture-calibration").digest("hex"),
+      bundleManifestSha256: crypto.createHash("sha256").update("fixture-bundle").digest("hex"),
+      sourceWidthPx: 900,
+      sourceHeightPx: 1260,
+      effectiveMmPerPixelX: 63.5 / box.width,
+      effectiveMmPerPixelY: 88.9 / box.height,
+    },
+    width: 63.5,
+    height: 88.9,
+    perimeter: 304.8,
+    enclosedArea: 5645.15,
+    angleDegrees: 0,
+    circularArcs: [],
+    privateUncertaintyU95: {
+      widthMm: 0.08,
+      heightMm: 0.08,
+      radiusMm: 0.05,
+      basis: "calibrated_scale_boundary_and_repeatability_rss",
+    },
+  };
+  const observedDenseContour = {
+    schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+    coordinateFrame: "source_image_pixels",
+    sourceAssetSha256,
+    points,
+    pointCount: points.length,
+    contourSha256,
+    strongSupportFraction: 0.92,
+    evidenceQuality: "strong",
+    measurementsPx: {
+      width: box.width,
+      height: box.height,
+      perimeter: 2 * (box.width + box.height),
+      enclosedArea: box.width * box.height,
+      angleDegrees: 0,
+      circularArcs: [],
+    },
+    measurementsMm: {
+      ...physicalMeasurementPayload,
+      measurementAuthoritySha256: crypto.createHash("sha256").update(JSON.stringify({
+        contourSha256,
+        ...physicalMeasurementPayload,
+      })).digest("hex"),
+    },
+  };
   const geometry = {
     version: "ten-kings-card-geometry-v1",
     detectionPolicy: "live_preview_fast",
@@ -488,6 +553,7 @@ function bindReadyPreview(service, side, suffix) {
     manualOverrideUsed: false,
     corners,
     detectedCorners: corners,
+    observedDenseContour,
     boundingBox: box,
     rotationDegrees: 0,
     skewDegrees: 0,
@@ -687,6 +753,68 @@ function installSimulatedMathematicalCapture(service, includeReviewSources = fal
   return warmSources;
 }
 
+function canonicalJson(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
+}
+
+function unavailableEyesReceipt(item) {
+  const imageBindings = [...item.ocr.images]
+    .sort((left, right) => left.side === "front" ? -1 : 1)
+    .map((image) => ({
+      side: image.side,
+      checksumSha256: image.checksumSha256,
+      evidenceRef: `image.${image.side}`,
+    }));
+  const requestSha256 = crypto.createHash("sha256").update(canonicalJson({
+    schemaVersion: "ai_grader_eyes_semantic_observer_v1",
+    imageBindings,
+    semanticElements: ["centering", "corners", "edges", "surface"],
+    metricAuthority: "deterministic_calibrated_pixels_only",
+  }), "utf8").digest("hex");
+  return {
+    schemaVersion: "ai_grader_eyes_semantic_observer_v1",
+    status: "unavailable",
+    requestSha256,
+    imageBindings,
+    observations: [],
+    reviewElements: [],
+    metricAuthority: "deterministic_calibrated_pixels_only",
+    wholeCardFailureAuthority: false,
+    reason: "not_configured",
+  };
+}
+
+function observedEyesReceipt(item, reviewElements = []) {
+  const { reason: _reason, ...base } = unavailableEyesReceipt(item);
+  const observations = ["centering", "corners", "edges", "surface"].map((element) => ({
+    element,
+    semanticState: element === "centering"
+      ? "printed_border_supported"
+      : "no_visible_physical_concern",
+    challengeDeterministicInterpretation: reviewElements.includes(element),
+    requiresOperatorReview: reviewElements.includes(element),
+    confidence: 0.95,
+    evidenceRefs: ["image.front", "image.back"],
+    rationale: reviewElements.includes(element)
+      ? `Exact ${element} images require a human semantic decision.`
+      : `No semantic ${element} challenge was observed in the exact images.`,
+  }));
+  return {
+    ...base,
+    status: "observed",
+    requestedModel: "gpt-5.6-sol",
+    actualModel: "gpt-5.6-sol",
+    observations,
+    reviewElements,
+    providerElapsedMs: 1200,
+  };
+}
+
 function safeOcrResult(item) {
   return {
     queueItemId: item.queueItemId,
@@ -713,6 +841,7 @@ function safeOcrResult(item) {
       setLookupUsed: false,
       setIdentificationUsed: false,
     },
+    eyes: unavailableEyesReceipt(item),
     warnings: [],
   };
 }
@@ -765,9 +894,12 @@ async function captureMathematicalCard(service, authority, reportId, suffix) {
   assert.equal(released.sessionId, undefined);
   await service.reportWorker;
   await service.rapidMutationChain;
+  const mutableItem = service.rapidQueue.items.find((candidate) => candidate.reportId === reportId);
+  assert.ok(mutableItem, `Expected durable queue item for ${reportId}.`);
+  assert.equal(mutableItem.sessionId, gradingSessionId);
+  assert.deepEqual(mutableItem.ocr.images?.map((image) => image.side), ["front", "back"]);
+  const manifest = service.queuedManifests.get(mutableItem.queueItemId);
   const item = service.status().rapidCaptureQueue.items.find((candidate) => candidate.reportId === reportId);
-  assert.ok(item, `Expected durable queue item for ${reportId}.`);
-  assert.equal(item.sessionId, gradingSessionId);
   return {
     item,
     identity: {
@@ -775,8 +907,30 @@ async function captureMathematicalCard(service, authority, reportId, suffix) {
       gradingSessionId: item.sessionId,
       reportId: item.reportId,
     },
-    manifest: service.queuedManifests.get(item.queueItemId),
+    manifest,
   };
+}
+
+async function completeFixtureOcr(service, queued, suffix, reviewElements) {
+  const mutableItem = service.rapidQueue.items.find(
+    (item) => item.queueItemId === queued.item.queueItemId,
+  );
+  const result = safeOcrResult(mutableItem);
+  if (reviewElements !== undefined) {
+    result.eyes = observedEyesReceipt(mutableItem, reviewElements);
+  }
+  const attempt = {
+    ...queued.identity,
+    attemptOwnerId: `fixture-eyes-${suffix}`,
+  };
+  await service.action("begin-queued-ocr", attempt);
+  const completed = await service.action("complete-queued-ocr", {
+    ...attempt,
+    result,
+  });
+  return completed.rapidCaptureQueue.items.find(
+    (item) => item.queueItemId === queued.item.queueItemId,
+  );
 }
 
 function fakeGrade() {
@@ -944,6 +1098,60 @@ function operatorResolutionRequestFixture(input) {
 }
 
 function operatorResolutionRequiredResult(input, request) {
+  const exactSlots = {
+    centering: ["front:full_card", "back:full_card"],
+    corners: [
+      "front:top_left", "front:top_right", "front:bottom_right", "front:bottom_left",
+      "back:top_left", "back:top_right", "back:bottom_right", "back:bottom_left",
+    ],
+    edges: [
+      "front:top", "front:right", "front:bottom", "front:left",
+      "back:top", "back:right", "back:bottom", "back:left",
+    ],
+    surface: ["front:full_card", "back:full_card"],
+  };
+  const evidenceRoles = {
+    centering: "centering_measurement_overlay",
+    corners: "corner_measurement_overlay",
+    edges: "edge_measurement_overlay",
+    surface: "surface_condition_overlay",
+  };
+  const workspaceAssets = Object.entries(exactSlots).flatMap(([element, slots]) =>
+    slots.map((slot) => {
+      const [side, location] = slot.split(":");
+      const bytes = Buffer.from(`exact-operator-${element}-${side}-${location}-overlay`);
+      return {
+        assetId: `operator-workspace.${element}.${side}.${location}`,
+        element,
+        side,
+        location,
+        evidenceRole: evidenceRoles[element],
+        sha256: sha256(bytes),
+        fileName: `${element}-${side}-${location}.png`,
+        contentType: "image/png",
+        byteSize: bytes.byteLength,
+        widthPx: 1200,
+        heightPx: 1680,
+        measurementSummary: [
+          element === "centering"
+            ? "L 2.100 · R 2.200 mm"
+            : "Exact slot is present for operator inspection.",
+        ],
+        bytes,
+      };
+    }),
+  );
+  const workspacePayload = {
+    schemaVersion: "fixed_rig_operator_resolution_workspace_v1",
+    requestSha256: request.requestSha256,
+    galleries: Object.fromEntries(Object.keys(exactSlots).map((element) => [
+      element,
+      workspaceAssets
+        .filter((asset) => asset.element === element)
+        .map(({ bytes: _bytes, ...metadata }) => metadata),
+    ])),
+    hashPolicy: "sha256-canonical-json-with-workspaceSha256-omitted",
+  };
   return {
     version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
     status: "operator_resolution_required",
@@ -951,6 +1159,13 @@ function operatorResolutionRequiredResult(input, request) {
     v0FallbackUsed: false,
     failedStage: "operator_resolution",
     request,
+    workspace: {
+      ...workspacePayload,
+      workspaceSha256: sha256(
+        Buffer.from(canonicalJsonV1(workspacePayload) + "\n", "utf8"),
+      ),
+    },
+    workspaceAssets,
     unresolvedElements: ["centering"],
     reportPackage: null,
     stationInput: null,
@@ -1301,6 +1516,117 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
   }
 });
 
+test("a late named EYES challenge reopens an already completed exact item for operator resolution", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-late-eyes-resolution-"));
+  const calls = [];
+  try {
+    const service = createService(outputDir, async (input) => {
+      calls.push(input);
+      if (!input.forcedOperatorReviewElements?.length) return completedResult(input);
+      const request = operatorResolutionRequestFixture(input);
+      return {
+        ...operatorResolutionRequiredResult(input, request),
+        unresolvedElements: [...input.forcedOperatorReviewElements],
+      };
+    });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "late-eyes-resolution-report",
+      "late-eyes-resolution",
+    );
+    assert.equal(queued.manifest.mathematicalV1.execution.status, "completed");
+    assert.equal(queued.item.state, "finalizing");
+
+    const completedOcrItem = await completeFixtureOcr(
+      service,
+      queued,
+      "late-eyes-resolution",
+      ["edges"],
+    );
+
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].forcedOperatorReviewElements, ["edges"]);
+    assert.equal(completedOcrItem.state, "operator_resolution_required");
+    assert.equal(completedOcrItem.mathematicalV1.status, "operator_resolution_required");
+    const exactManifest = service.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(exactManifest.mathematicalV1.execution.status, "operator_resolution_required");
+    assert.deepEqual(exactManifest.mathematicalV1.execution.unresolvedElements, ["edges"]);
+    assert.equal(
+      Object.keys(exactManifest.mathematicalV1.operatorResolutionWorkspaceAssets).length,
+      20,
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("a named EYES semantic challenge requires that exact element while EYES remains non-metric", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-eyes-resolution-"));
+  let pendingRequest;
+  try {
+    const service = createService(outputDir, async (input) => {
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      return operatorResolutionRequiredResult(input, pendingRequest);
+    });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "eyes-resolution-report",
+      "eyes-resolution",
+    );
+    await completeFixtureOcr(service, queued, "eyes-resolution", ["edges"]);
+    await service.action("activate-queue-item", queued.identity);
+
+    const centeringResolution = {
+      element: "centering",
+      publicExplanation: "Printed borders are evenly balanced on both sides.",
+      internalReason: "The exact bound centering images were reviewed.",
+      measurements: {
+        unit: "mm",
+        order: ["left", "right", "top", "bottom"],
+        front: [2.1, 2.2, 2.3, 2.4],
+        back: [2.4, 2.3, 2.2, 2.1],
+      },
+    };
+    const missing = {
+      ...queued.identity,
+      idempotencyKey: "eyes-resolution-missing-edges",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [centeringResolution],
+      },
+      operatorAuthentication: null,
+    };
+    await assert.rejects(
+      service.action("submit-operator-resolutions", missing),
+      /named EYES semantic review element\(s\): edges/i,
+    );
+
+    const includesChallenge = structuredClone(missing);
+    includesChallenge.idempotencyKey = "eyes-resolution-includes-edges";
+    includesChallenge.operatorResolutionSubmission.resolutions.push({
+      element: "edges",
+      score: 8.75,
+      publicExplanation: "The exact edge images show light handling wear.",
+      internalReason: "The human resolved the EYES edge challenge against the hash-bound images.",
+    });
+    await assert.rejects(
+      service.action("submit-operator-resolutions", includesChallenge),
+      /expected object, received null/i,
+      "including the named element must pass EYES validation and reach authentication",
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("operator element resolution is authenticated, durable, fail-closed, and idempotently resumes the same queue item", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-resolution-"));
   let pendingRequest;
@@ -1331,6 +1657,12 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     assert.equal(
       queued.manifest.mathematicalV1.execution.request.requestSha256,
       pendingRequest.requestSha256,
+    );
+    await completeFixtureOcr(
+      service,
+      queued,
+      "operator-resolution",
+      ["corners"],
     );
     await service.action("activate-queue-item", queued.identity);
 
@@ -1544,7 +1876,11 @@ test("operator element resolution is authenticated, durable, fail-closed, and id
     const completedItem = completed.rapidCaptureQueue.items.find(
       (item) => item.queueItemId === queued.item.queueItemId,
     );
-    assert.equal(completedItem.state, "finalizing");
+    assert.equal(
+      completedItem.state,
+      "report_ready_needs_confirm",
+      "a completed mathematical rerun with its exact OCR/EYES receipt is ready for owner confirmation",
+    );
     assert.equal(completedItem.mathematicalV1.status, "completed");
     assert.equal(adapterCalls, 2);
     assert.equal(releaseTracker.callCount, 1);
@@ -1658,6 +1994,36 @@ test("operator element resolution serves only the active exact item's verified n
       assert.equal(served.bytes.byteLength, expected.byteSize);
       assert.equal(sha256(served.bytes), expected.checksumSha256);
     }
+    const workspaceAssetId = pendingRequest
+      ? "operator-workspace.centering.front.full_card"
+      : null;
+    assert.ok(workspaceAssetId);
+    const workspaceServed = await service.operatorResolutionEvidenceAsset(
+      queued.identity,
+      undefined,
+      workspaceAssetId,
+    );
+    assert.equal(workspaceServed.item.queueItemId, queued.item.queueItemId);
+    assert.equal(workspaceServed.workspaceAsset.assetId, workspaceAssetId);
+    assert.equal(
+      workspaceServed.workspaceAsset.requestSha256,
+      pendingRequest.requestSha256,
+    );
+    assert.equal(workspaceServed.workspaceAsset.evidenceRole, "centering_measurement_overlay");
+    assert.equal(workspaceServed.workspaceAsset.widthPx, 1200);
+    assert.equal(workspaceServed.workspaceAsset.heightPx, 1680);
+    assert.equal(
+      sha256(workspaceServed.bytes),
+      workspaceServed.workspaceAsset.sha256,
+    );
+    await assert.rejects(
+      service.operatorResolutionEvidenceAsset(
+        queued.identity,
+        undefined,
+        "operator-workspace.centering.front.not-exact",
+      ),
+      /not an exact hash-bound asset/i,
+    );
     await assert.rejects(
       service.operatorResolutionEvidenceAsset(
         { ...queued.identity, reportId: "wrong-report" },
@@ -1696,6 +2062,7 @@ test("valid positive-skew operator authentication completes with nondecreasing d
       "operator-positive-skew-report",
       "operator-positive-skew",
     );
+    await completeFixtureOcr(service, queued, "operator-positive-skew");
     await service.action("activate-queue-item", queued.identity);
     const action = {
       ...queued.identity,
@@ -1774,6 +2141,7 @@ test("concurrent exact operator-resolution duplicates have one durable rerun cla
       "operator-concurrent-same-report",
       "operator-concurrent-same",
     );
+    await completeFixtureOcr(service, queued, "operator-concurrent-same");
     await service.action("activate-queue-item", queued.identity);
     const action = {
       ...queued.identity,
@@ -1873,6 +2241,7 @@ test("concurrent different operator-resolution authorities cannot append behind 
       "operator-concurrent-different-report",
       "operator-concurrent-different",
     );
+    await completeFixtureOcr(service, queued, "operator-concurrent-different");
     await service.action("activate-queue-item", queued.identity);
     const first = {
       ...queued.identity,
@@ -1966,6 +2335,7 @@ test("a crash immediately after release write resumes from one deterministic byt
       "operator-release-crash-report",
       "operator-release-crash",
     );
+    await completeFixtureOcr(service, queued, "operator-release-crash");
     await service.action("activate-queue-item", queued.identity);
     const action = {
       ...queued.identity,

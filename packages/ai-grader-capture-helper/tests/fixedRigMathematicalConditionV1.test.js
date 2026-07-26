@@ -232,20 +232,20 @@ test("physical calibration propagates ruler U95 and rejects target dimension err
 });
 
 test("physical calibration rejects declared directions without physical point uncertainty", () => {
-  const declared = buildAcceptedCalibration((input) => {
-    input.channels[0].directionMeasurementSamples[0].measurementMethod =
-      "operator_declared_direction_v1";
-  });
-  assert.equal(declared.status, "rejected");
-  assert.ok(declared.issues.some((issue) =>
-    issue.path === "channels.0.directionMeasurementSamples"));
+  assert.throws(
+    () => buildAcceptedCalibration((input) => {
+      input.channels[0].directionMeasurementSamples[0].measurementMethod =
+        "operator_declared_direction_v1";
+    }),
+    /direction vector must be normalized|directionAngularU95Degrees/,
+  );
 
-  const missingU95 = buildAcceptedCalibration((input) => {
-    delete input.channels[0].directionMeasurementSamples[0].pointU95Mm;
-  });
-  assert.equal(missingU95.status, "rejected");
-  assert.ok(missingU95.issues.some((issue) =>
-    issue.path === "channels.0.directionMeasurementSamples"));
+  assert.throws(
+    () => buildAcceptedCalibration((input) => {
+      delete input.channels[0].directionMeasurementSamples[0].pointU95Mm;
+    }),
+    /direction vector must be normalized|directionAngularU95Degrees/,
+  );
 });
 
 function canonical(value) {
@@ -561,6 +561,37 @@ test("printed-border centering robustly fits tilted 2-D sides, intersects them, 
   assert.equal(result.score, 10);
 });
 
+test("foggy printed-border samples still produce a genuine measurement with private quality and U95", () => {
+  const foggySamples = (axis, coordinate) => [
+    ...lineSamples(axis, coordinate).map((point, index) => axis === "x"
+      ? { ...point, x: point.x + (index % 2 === 0 ? 0.15 : -0.15) }
+      : { ...point, y: point.y + (index % 2 === 0 ? 0.15 : -0.15) }),
+    ...Array.from({ length: 8 }, (_, index) => axis === "x"
+      ? { x: coordinate + (index % 2 === 0 ? 30 : -30), y: 70 + index * 145 }
+      : { x: 70 + index * 105, y: coordinate + (index % 2 === 0 ? 30 : -30) }),
+  ];
+  const result = buildFixedRigCenteringSideV1({
+    ...printedCenteringInput("front", {
+      left: 100, right: 800, top: 100, bottom: 1300,
+    }),
+    profileInput: {
+      profile: "printed_border_v1",
+      printBoundarySamples: {
+        left: foggySamples("x", 100),
+        right: foggySamples("x", 800),
+        top: foggySamples("y", 100),
+        bottom: foggySamples("y", 1300),
+      },
+    },
+  });
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.ok(result.robustLineFits.left.inlierFraction < 1);
+  assert.ok(result.robustLineFits.left.confidence < 1);
+  assert.ok(result.u95ComponentsMm.printedBoundaryFit.horizontal > 0);
+  assert.ok(Math.abs(result.observedMargins.left.mm - 10) < 0.01);
+  assert.ok(Math.abs(result.observedMargins.right.mm - 20) < 0.01);
+});
+
 test("registered-template centering preserves intentional asymmetry and scores only registration error", () => {
   const calibration = buildAcceptedCalibration().profile;
   const artifactBytes = Buffer.from("registered-centering-approved-reference");
@@ -755,16 +786,56 @@ test("contour, whitening, material loss, deformation, delamination, and other da
   assert.equal(new Set(groups.flat()).size, groups.flat().length);
 });
 
-test("an invalid clean-corner region cannot masquerade as a Grade 10", () => {
+test("an invalid corner pixel is excluded while the observable corner still measures", () => {
   const result = cornerObservation("front", "top_left", {
     validEvidenceMask: plane(10, 10, (x, y) => x === 0 && y === 0 ? 0 : 1),
   });
-  assert.equal(result.status, "insufficient_evidence");
-  assert.equal(result.score, undefined);
-  assert.equal(result.cardDefectDeduction, 0);
+  assert.equal(result.status, "computed");
+  assert.equal(result.penalty, 0);
+  assert.equal(result.validEvidenceCoverage, 0.99);
+  assert.equal(result.findings.length, 0);
 });
 
-function edgeObservation(side, location, damaged = false, mirrorDamage = false) {
+test("zero-coverage corners are excluded instead of receiving a free 10", () => {
+  const locations = ["top_left", "top_right", "bottom_right", "bottom_left"];
+  const observations = ["front", "back"].flatMap((side) =>
+    locations.map((location) =>
+      cornerObservation(side, location, {
+        validEvidenceMask:
+          side === "front" && location === "top_left"
+            ? plane(10, 10, 0)
+            : plane(10, 10, 1),
+      })));
+  const unseen = observations[0];
+  assert.equal(unseen.status, "insufficient_evidence");
+  assert.equal(unseen.observationState, "unobserved_zero_coverage");
+  assert.equal(unseen.requiresRecapture, false);
+  const element = aggregateFixedRigCornersV1(observations);
+  assert.equal(element.status, "computed");
+  assert.equal(element.locationSubscores.length, 7);
+  assert.equal(element.unobservedLocations.length, 1);
+  assert.equal(
+    element.locationSubscores.some((location) =>
+      location.side === "front" && location.location === "top_left"),
+    false,
+  );
+});
+
+test("partial corner visibility expands private U95 without blocking measurement", () => {
+  const fullyVisible = cornerObservation("front", "top_left");
+  const foggy = cornerObservation("front", "top_left", {
+    validEvidenceMask: plane(10, 10, (x, y) => x < 5 && y < 5 ? 1 : 0),
+  });
+  assert.equal(fullyVisible.status, "computed");
+  assert.equal(foggy.status, "computed");
+  assert.equal(foggy.validEvidenceCoverage, 0.25);
+  assert.ok(
+    foggy.cornerContourDeviation.measurement.u95 >
+      fullyVisible.cornerContourDeviation.measurement.u95,
+  );
+});
+
+function edgeObservation(side, location, damaged = false, mirrorDamage = false, options = {}) {
   const width = 20;
   const height = 5;
   const regionId = `${side}-${location}-edge`;
@@ -785,7 +856,7 @@ function edgeObservation(side, location, damaged = false, mirrorDamage = false) 
     detectorVersion: "edge-detector-v1.0.0",
     algorithmVersion: "edge-measurement-v1.0.0",
     calibration: conditionCalibration(),
-    validEvidenceMask: plane(width, height, 1),
+    validEvidenceMask: options.validEvidenceMask ?? plane(width, height, 1),
     usableDirectionalChannelCount: 3,
     confidence: 0.95,
     evidence: measurementEvidence(side, regionId),
@@ -802,6 +873,23 @@ function edgeObservation(side, location, damaged = false, mirrorDamage = false) 
     directionalReliefMask: plane(width, height, 0),
   });
 }
+
+test("zero-coverage edges are excluded instead of receiving a free 10", () => {
+  const observations = eightEdgeObservations();
+  observations[0] = edgeObservation(
+    "front",
+    "top",
+    false,
+    false,
+    { validEvidenceMask: plane(20, 5, 0) },
+  );
+  assert.equal(observations[0].status, "insufficient_evidence");
+  assert.equal(observations[0].observationState, "unobserved_zero_coverage");
+  const element = aggregateFixedRigEdgesV1(observations);
+  assert.equal(element.status, "computed");
+  assert.equal(element.locationSubscores.length, 7);
+  assert.equal(element.unobservedLocations.length, 1);
+});
 
 function eightEdgeObservations(
   damagedFrontTop = true,

@@ -9,6 +9,7 @@ import type {
   AiGraderMathematicalFindingReviewV1,
   AiGraderMathematicalGradingAuthorityV1,
   AiGraderMathematicalReviewAssetMetadataV1,
+  AiGraderOperatorResolutionWorkspaceAssetV1,
   AiGraderQueuedOcrImage,
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
@@ -1182,6 +1183,80 @@ export async function fetchAiGraderOperatorResolutionEvidenceAsset(input: {
     side: image.side,
     image,
     blob: new Blob([bytes], { type: image.mimeType }),
+  };
+}
+
+export type AiGraderFetchedOperatorResolutionWorkspaceAssetV1 = {
+  metadata: AiGraderOperatorResolutionWorkspaceAssetV1;
+  blob: Blob;
+};
+
+export async function fetchAiGraderOperatorResolutionWorkspaceAsset(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  metadata: AiGraderOperatorResolutionWorkspaceAssetV1;
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<AiGraderFetchedOperatorResolutionWorkspaceAssetV1> {
+  const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
+  if (!input.stationToken.trim()) throw new Error("AI Grader station bridge token is required.");
+  const identity = exactRapidQueueIdentity(input);
+  const metadata = input.metadata;
+  const response = await fetchImpl(
+    baseUrl + "/mathematical-v1/operator-resolution-assets?queueItemId=" +
+      encodeURIComponent(identity.queueItemId) +
+      "&gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
+      "&reportId=" + encodeURIComponent(identity.reportId) +
+      "&assetId=" + encodeURIComponent(metadata.assetId),
+    {
+      method: "GET",
+      headers: { "x-ai-grader-station-token": input.stationToken },
+      signal: input.signal,
+    },
+  );
+  if (!response.ok) {
+    throw await bridgeFailure(
+      response,
+      "The exact operator-resolution measurement image could not be read.",
+    );
+  }
+  const contentLength = Number(response.headers.get("content-length"));
+  const widthPx = Number(response.headers.get("x-ai-grader-width-px"));
+  const heightPx = Number(response.headers.get("x-ai-grader-height-px"));
+  if (
+    !Number.isSafeInteger(contentLength) ||
+    contentLength !== metadata.byteSize ||
+    contentLength <= 0 ||
+    contentLength > AI_GRADER_MATHEMATICAL_BINARY_MAX_BYTES ||
+    response.headers.get("content-type") !== metadata.contentType ||
+    response.headers.get("x-ai-grader-asset-id") !== metadata.assetId ||
+    response.headers.get("x-ai-grader-queue-item-id") !== identity.queueItemId ||
+    response.headers.get("x-ai-grader-grading-session-id") !== identity.gradingSessionId ||
+    response.headers.get("x-ai-grader-report-id") !== identity.reportId ||
+    response.headers.get("x-ai-grader-sha256") !== metadata.sha256 ||
+    response.headers.get("x-ai-grader-side") !== metadata.side ||
+    response.headers.get("x-ai-grader-evidence-role") !== metadata.evidenceRole ||
+    widthPx !== metadata.widthPx ||
+    heightPx !== metadata.heightPx
+  ) {
+    throw new Error(
+      "The operator measurement image headers do not match the exact hash-bound workspace.",
+    );
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (
+    bytes.byteLength !== metadata.byteSize ||
+    await browserSha256Hex(bytes) !== metadata.sha256
+  ) {
+    throw new Error(
+      "The operator measurement image body does not match its exact SHA-256 and byte authority.",
+    );
+  }
+  return {
+    metadata,
+    blob: new Blob([bytes], { type: metadata.contentType }),
   };
 }
 

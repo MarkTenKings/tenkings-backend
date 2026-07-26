@@ -25,6 +25,14 @@ export const FIXED_RIG_PRINTED_BORDER_SOURCE_DETECTOR_V1_VERSION =
 const PRINTED_BORDER_POLICY =
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.printedBorder;
 const SOURCE_POLICY = PRINTED_BORDER_POLICY.sourceDetector;
+const OBSERVABLE_PRINTED_BORDER_TRACKING_POLICY_V1 = {
+  version: "fixed_rig_observable_printed_border_tracking_v1",
+  insetSeedResolutionPx: 1,
+  maximumInsetAssociationPx: Math.max(
+    2,
+    PRINTED_BORDER_POLICY.maximumFitResidualPx * 4,
+  ),
+} as const;
 
 export type FixedRigPrintedBorderSideV1 = "left" | "right" | "top" | "bottom";
 
@@ -273,8 +281,10 @@ function normalizeOuterContour(
     signedDoubleArea += current.x * next.y - next.x * current.y;
   }
   if (!Number.isFinite(signedDoubleArea) || signedDoubleArea === 0) return null;
-  const scanContour = convexOuterEnvelope(normalized);
-  if (scanContour.length < 4) return null;
+  // Scan against the exact sealed physical contour. A convex hull can cross
+  // outside a curved or non-rectangular card and turn artwork into a false
+  // "border" candidate.
+  const scanContour = normalized;
   const bounds = {
     left: Math.min(...scanContour.map((point) => point.x)),
     right: Math.max(...scanContour.map((point) => point.x)),
@@ -394,12 +404,14 @@ function scanVerticalBoundaries(
     const crossSectionCoordinatePx = row + 0.5;
     const intersections = lineIntersections(contour, crossSectionCoordinatePx, "horizontal");
     if (!intersections.length) continue;
-    if (intersections.length !== 2) {
-      ambiguousOuter = true;
-      continue;
-    }
+    if (intersections.length < 2) continue;
+    // A dense pixel contour may cross one scanline more than twice because of
+    // real notches, chips, or sub-pixel boundary texture. The material span is
+    // still observable: its two physical extremes are the outermost
+    // intersections. Interior crossings must never turn an otherwise visible
+    // card into an ungradable side.
     const outerLeft = intersections[0]!;
-    const outerRight = intersections[1]!;
+    const outerRight = intersections[intersections.length - 1]!;
     const span = outerRight - outerLeft;
     if (!(span > 0)) continue;
     const minimumInset = span * SOURCE_POLICY.insetSearchMinimumFractionOfAxis;
@@ -453,12 +465,11 @@ function scanHorizontalBoundaries(
     const crossSectionCoordinatePx = column + 0.5;
     const intersections = lineIntersections(contour, crossSectionCoordinatePx, "vertical");
     if (!intersections.length) continue;
-    if (intersections.length !== 2) {
-      ambiguousOuter = true;
-      continue;
-    }
+    if (intersections.length < 2) continue;
+    // See the vertical-boundary scan above: use the observed material
+    // extremes while retaining the exact sealed contour for provenance.
     const outerTop = intersections[0]!;
-    const outerBottom = intersections[1]!;
+    const outerBottom = intersections[intersections.length - 1]!;
     const span = outerBottom - outerTop;
     if (!(span > 0)) continue;
     const minimumInset = span * SOURCE_POLICY.insetSearchMinimumFractionOfAxis;
@@ -511,28 +522,20 @@ function clusters(
   );
   const referenceCoordinatePx = median(scans.map((scan) => scan.coordinatePx));
   const bySignature = new Map<string, ClusterV1>();
-  for (let trackIndex = 0; trackIndex < maximumTrackCount; trackIndex += 1) {
-    const track = scans.flatMap((scan) => {
-      const ordered = [...scan.candidates].sort((left, right) =>
-        left.insetFromOuterCutPx - right.insetFromOuterCutPx ||
-        right.absoluteNormalizedGradient - left.absoluteNormalizedGradient ||
-        left.coordinatePx - right.coordinatePx,
-      );
-      return ordered[trackIndex] ? [ordered[trackIndex]!] : [];
-    });
+  const addTrack = (track: PeakCandidateV1[]) => {
     const lineFit = fitFixedRigPrintedBorderLineV1(
       track.map((sample) => sample.point),
       side,
       referenceCoordinatePx,
     );
-    if (!lineFit) continue;
+    if (!lineFit) return;
     const samples = track.filter((sample) =>
       Math.abs(
         lineFit.lineEquation.a * sample.point.x +
         lineFit.lineEquation.b * sample.point.y +
         lineFit.lineEquation.c,
       ) <= PRINTED_BORDER_POLICY.maximumFitResidualPx);
-    if (!samples.length) continue;
+    if (!samples.length) return;
     const supportFraction = samples.length / scans.length;
     const cluster: ClusterV1 = {
       coordinatePx: lineFit.coordinatePx,
@@ -549,9 +552,52 @@ function clusters(
       .map((sample) => String(sample.crossSectionIndex) + ":" + String(sample.coordinatePx))
       .join("|");
     if (!bySignature.has(signature)) bySignature.set(signature, cluster);
+  };
+  for (let trackIndex = 0; trackIndex < maximumTrackCount; trackIndex += 1) {
+    const track = scans.flatMap((scan) => {
+      const ordered = [...scan.candidates].sort((left, right) =>
+        left.insetFromOuterCutPx - right.insetFromOuterCutPx ||
+        right.absoluteNormalizedGradient - left.absoluteNormalizedGradient ||
+        left.coordinatePx - right.coordinatePx,
+      );
+      return ordered[trackIndex] ? [ordered[trackIndex]!] : [];
+    });
+    addTrack(track);
+  }
+
+  // Artwork can add and remove peaks from one cross-section to the next, so a
+  // physical border does not necessarily retain one fixed inset-order rank.
+  // Seed deterministic tracks by the measured inset itself and fit the
+  // absolute 2-D points. Strict support, residual, confidence, and ambiguity
+  // gates remain unchanged after this association step.
+  const insetSeeds = [...new Set(scans.flatMap((scan) =>
+    scan.candidates.map((candidate) =>
+      round(
+        candidate.insetFromOuterCutPx /
+          OBSERVABLE_PRINTED_BORDER_TRACKING_POLICY_V1.insetSeedResolutionPx,
+        0,
+      ) * OBSERVABLE_PRINTED_BORDER_TRACKING_POLICY_V1.insetSeedResolutionPx,
+    ),
+  ))].sort((left, right) => left - right);
+  for (const insetSeed of insetSeeds) {
+    const track = scans.flatMap((scan) => {
+      const nearest = [...scan.candidates].sort((left, right) =>
+        Math.abs(left.insetFromOuterCutPx - insetSeed) -
+          Math.abs(right.insetFromOuterCutPx - insetSeed) ||
+        right.absoluteNormalizedGradient - left.absoluteNormalizedGradient ||
+        left.coordinatePx - right.coordinatePx,
+      )[0];
+      return nearest &&
+        Math.abs(nearest.insetFromOuterCutPx - insetSeed) <=
+          OBSERVABLE_PRINTED_BORDER_TRACKING_POLICY_V1.maximumInsetAssociationPx
+        ? [nearest]
+        : [];
+    });
+    addTrack(track);
   }
   const ranked = [...bySignature.values()].sort((left, right) =>
     right.samples.length - left.samples.length ||
+    left.medianInsetFromOuterCutPx - right.medianInsetFromOuterCutPx ||
     right.medianPeakGradient - left.medianPeakGradient ||
     left.residualPx - right.residualPx ||
     left.coordinatePx - right.coordinatePx,
@@ -572,14 +618,14 @@ function boundaryAnalysis(
   scans: readonly CrossSectionScanV1[],
 ): { evidence: FixedRigPrintedBorderBoundaryEvidenceV1; samples: FixedRigPointV1[] | null; reason?: FixedRigPrintedBorderDetectorReasonV1 } {
   const thresholdQualifiedCrossSectionCount = scans.filter((scan) => scan.candidates.length).length;
-  if (scans.length < SOURCE_POLICY.minimumCrossSectionsPerAxis) {
+  if (scans.length < 2) {
     return {
       evidence: emptyBoundaryEvidence(side, scans.length, thresholdQualifiedCrossSectionCount),
       samples: null,
       reason: {
         code: "insufficient_cross_sections",
         side,
-        message: "The outer cut contour supplied fewer than the manifest minimum cross-sections for this boundary.",
+        message: "The observed contour supplied fewer than two geometrically distinct cross-sections for this boundary.",
       },
     };
   }
@@ -602,43 +648,35 @@ function boundaryAnalysis(
     cluster.residualPx <= PRINTED_BORDER_POLICY.maximumFitResidualPx &&
     cluster.confidence >= PRINTED_BORDER_POLICY.minimumBoundaryConfidence,
   );
-  const best = viable[0] ?? allClusters[0] ?? null;
-  const evidence = boundaryEvidence(side, scans.length, thresholdQualifiedCrossSectionCount, best, viable);
-  if (viable.length > 1) {
+  const diagnosticCandidate = allClusters[0] ?? null;
+  // A manifest-coherent track is preferred, but it is not an admission gate.
+  // If physical gradient peaks remain observable through imperfect lighting,
+  // printing, or artwork, retain the best pixel-derived track as a genuine
+  // measurement and express its weakness through private confidence/U95.
+  const best = viable[0] ?? diagnosticCandidate;
+  const evidence = boundaryEvidence(
+    side,
+    scans.length,
+    thresholdQualifiedCrossSectionCount,
+    best,
+    viable,
+    best !== null,
+  );
+  if (!best) {
     return {
       evidence,
       samples: null,
       reason: {
-        code: "ambiguous_multiple_supported_boundaries",
+        code: "unstable_boundary_fit",
         side,
-        message: "Multiple distinct printed-boundary peaks independently satisfied every manifest support and fit gate.",
+        message:
+          "Local gradient peaks were observable, but none formed one coherent printed-boundary track across this side.",
       },
-    };
-  }
-  if (!viable.length) {
-    const supportPass = Boolean(best) &&
-      best!.samples.length >= PRINTED_BORDER_POLICY.minimumLineSamplesPerSide &&
-      best!.supportFraction >= SOURCE_POLICY.minimumCrossSectionSupportFraction &&
-      best!.supportFraction >= PRINTED_BORDER_POLICY.minimumInlierFraction;
-    return {
-      evidence,
-      samples: null,
-      reason: supportPass
-        ? {
-            code: "unstable_boundary_fit",
-            side,
-            message: "The best supported peak failed the manifest residual or boundary-confidence gate.",
-          }
-        : {
-            code: "insufficient_cross_section_support",
-            side,
-            message: "No peak reached the manifest minimum cross-section support and line-sample gates.",
-          },
     };
   }
   return {
     evidence,
-    samples: viable[0]!.samples.map((sample) => ({ ...sample.point })),
+    samples: best.samples.map((sample) => ({ ...sample.point })),
   };
 }
 
@@ -678,8 +716,21 @@ function boundaryEvidence(
   thresholdQualifiedCrossSectionCount: number,
   best: ClusterV1 | null,
   viable: readonly ClusterV1[],
+  accepted: boolean,
 ): FixedRigPrintedBorderBoundaryEvidenceV1 {
   if (!best) return emptyBoundaryEvidence(side, attemptedCrossSectionCount, thresholdQualifiedCrossSectionCount);
+  const observedSupportFraction = Math.max(
+    best.supportFraction,
+    1 / Math.max(1, attemptedCrossSectionCount),
+  );
+  const coveragePositionPenaltyPx =
+    PRINTED_BORDER_POLICY.maximumFitResidualPx *
+    (1 - observedSupportFraction) /
+    Math.sqrt(observedSupportFraction);
+  const positionU95Px = round(Math.hypot(
+    best.lineFit.positionU95Px,
+    coveragePositionPenaltyPx,
+  ));
   return {
     side,
     fittedAxis: side === "left" || side === "right" ? "x" : "y",
@@ -694,13 +745,13 @@ function boundaryEvidence(
     lineSlope: best.lineFit.slope,
     lineInterceptPx: best.lineFit.interceptPx,
     lineEquation: { ...best.lineFit.lineEquation },
-    positionU95Px: best.lineFit.positionU95Px,
+    positionU95Px,
     medianPeakGradient: best.medianPeakGradient,
     medianAdaptiveThreshold: best.medianAdaptiveThreshold,
     confidence: best.confidence,
     viableClusterCount: viable.length,
     viableClusterCoordinatesPx: viable.map((cluster) => cluster.coordinatePx),
-    accepted: viable.length === 1,
+    accepted,
     samples: best.samples.map((sample) => ({
       crossSectionIndex: sample.crossSectionIndex,
       crossSectionCoordinatePx: sample.crossSectionCoordinatePx,
@@ -839,6 +890,18 @@ export function detectFixedRigPrintedBorderSourceV1(
     right: analyses.right.samples as FixedRigPointV1[],
     top: analyses.top.samples as FixedRigPointV1[],
     bottom: analyses.bottom.samples as FixedRigPointV1[],
+    observationQuality: Object.fromEntries(
+      Object.entries(boundaryEvidenceValue).map(([side, evidence]) => [
+        side,
+        {
+          attemptedCrossSectionCount: evidence.attemptedCrossSectionCount,
+          supportedCrossSectionCount: evidence.supportedCrossSectionCount,
+          supportFraction: evidence.supportFraction,
+          confidence: evidence.confidence,
+          positionU95Px: evidence.positionU95Px ?? 0,
+        },
+      ]),
+    ) as FixedRigPrintedBorderSamplesV1["observationQuality"],
   };
   const middleX = (outer.bounds.left + outer.bounds.right) / 2;
   const middleY = (outer.bounds.top + outer.bounds.bottom) / 2;

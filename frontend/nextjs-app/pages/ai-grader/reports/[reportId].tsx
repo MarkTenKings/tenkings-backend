@@ -34,7 +34,7 @@ import {
 } from "../../../lib/aiGraderReportRevision";
 
 const ELEMENT_LABELS = ["centering", "corners", "edges", "surface"] as const;
-const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Confidence", "Evidence Replay"] as const;
+const LAB_MODES = ["True View", "Surface Vision", "Heatmap", "Light Sweep", "Measurement", "Evidence Replay"] as const;
 type LabMode = (typeof LAB_MODES)[number];
 type LabSide = "front" | "back";
 type FailedMachineReportShell = {
@@ -300,9 +300,6 @@ function labImageForMode(
   }
   if (mode === "Measurement") {
     return findReportImage(images, [side, "overlay"]) ?? findReportImage(images, [side, "roi"]) ?? findReportImage(images, [side, "measurement"]);
-  }
-  if (mode === "Confidence") {
-    return findReportImage(images, [side, "confidence"]) ?? findReportImage(images, [side, "normal"]);
   }
   const refs =
     typeof candidate === "object" && candidate !== null && "evidenceRefs" in candidate && Array.isArray(candidate.evidenceRefs)
@@ -673,7 +670,7 @@ export default function AiGraderReportViewerPage() {
           <div className="grade-panel">
             <p className="eyebrow">{reviewedRevision ? "Effective Human-Reviewed Grade" : reportIsFinal ? "Final AI-Grader Grade V0" : "Provisional Diagnostic Grade"}</p>
             <strong>{scoreText(reviewedRevision?.calculation.overall ?? finalGrade?.overall ?? story?.overall)}</strong>
-            <span>{reviewedRevision ? "Admin adjudicated" : `Confidence ${finalGrade?.confidence.band ?? story?.confidence?.band ?? "pending"}`}</span>
+            {reviewedRevision ? <span>Admin adjudicated</span> : null}
             {reviewedRevision ? <small className="machine-value">Immutable machine overall: {scoreText(finalGrade?.overall ?? story?.overall)}</small> : null}
             <p>
               {reviewedContent.reportSummary ?? (reportIsFinal
@@ -758,7 +755,7 @@ export default function AiGraderReportViewerPage() {
               )}
               {sideDefectFindings.length ? (
                 <div className="finding-list" aria-label={`${selectedLabSide} defect findings`}>
-                  <h3>Provisional findings</h3>
+                  <h3>Measured findings</h3>
                   {sideDefectFindings.map((finding, index) => (
                     <button
                       type="button"
@@ -771,7 +768,7 @@ export default function AiGraderReportViewerPage() {
                     </button>
                   ))}
                   <p>{selectedFinding?.explanation}</p>
-                  <small>{selectedFinding ? `${Math.round(selectedFinding.confidence * 100)}% detector confidence; ${selectedFinding.review.status}` : ""}</small>
+                  <small>{selectedFinding ? selectedFinding.review.status : ""}</small>
                   {missingExactFindingEvidence ? <strong className="finding-unavailable">Exact normalized-card evidence is unavailable; no overlay is shown.</strong> : null}
                 </div>
               ) : null}
@@ -938,7 +935,7 @@ export default function AiGraderReportViewerPage() {
             <div className="section-head">
               <p className="eyebrow">Evidence Gates</p>
               <h2>Publish and grade readiness</h2>
-              <p>Failed gates explain why a provisional or final report is blocked. Accepted warnings reduce confidence.</p>
+              <p>Failed gates explain why a report is blocked. Evidence-quality details remain in the private operator workspace.</p>
             </div>
             <div className="gate-list">
               {provisionalGateRows.map((gate, index) => (
@@ -955,8 +952,8 @@ export default function AiGraderReportViewerPage() {
 
         <section className="elements">
           <div className="section-head">
-            <p className="eyebrow">Element Diagnostics</p>
-            <h2>Provisional scoring by element</h2>
+            <p className="eyebrow">Element Results</p>
+            <h2>Scoring by element</h2>
           </div>
           <div className="element-grid">
             {ELEMENT_LABELS.map((element) => {
@@ -976,7 +973,6 @@ export default function AiGraderReportViewerPage() {
                       <p>{finalResult?.explanation ?? result?.explanation ?? "Insufficient machine evidence."}</p>
                     </details>
                   ) : null}
-                  <em>{finalResult?.confidence ?? result?.confidence ?? "pending"} confidence</em>
                 </article>
               );
             })}

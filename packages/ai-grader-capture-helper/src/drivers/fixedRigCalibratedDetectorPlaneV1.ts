@@ -17,6 +17,7 @@ const SHA256 = /^[a-f0-9]{64}$/;
 
 export const FIXED_RIG_CONDITION_DETECTOR_PLANE_NAMES_V1 = [
   "expectedOuterCardMask",
+  "observedCardMaterialMask",
   "materialPresenceConfidence",
   "segmentationConfidence",
   "boundaryConfidence",

@@ -371,18 +371,25 @@ function conditionCandidates(
       expectedLocations.map((location) => `${side}:${location}`),
     ),
   );
-  const actualKeys = result.observations.map(
-    (observation) => `${observation.side}:${observation.location}`,
-  );
+  const actualKeys = [
+    ...result.observations.map(
+      (observation) => `${observation.side}:${observation.location}`,
+    ),
+    ...(result.status === "computed"
+      ? result.unobservedLocations.map(
+          (observation) => `${observation.side}:${observation.location}`,
+        )
+      : []),
+  ];
   if (!resolved && (
-    result.observations.length !== expectedKeys.size ||
+    actualKeys.length !== expectedKeys.size ||
     new Set(actualKeys).size !== actualKeys.length ||
     actualKeys.some((key) => !expectedKeys.has(key))
   )) {
     issues.push({
       code: "missing_element_evidence",
       element: expectedElement,
-      message: `${expectedElement} must contain exactly one calibrated observation for every front/back location.`,
+      message: `${expectedElement} must account for every front/back location as observed or explicitly unobserved.`,
     });
   }
   const candidates: CandidateFindingV1[] = [];
@@ -951,8 +958,8 @@ function conditionElementScore(
   });
   const penalties = locationScores.map((location) => location.penalty);
   const aggregation = element === "corners"
-    ? aggregateCornerScoreV1(penalties)
-    : aggregateEdgeScoreV1(penalties);
+    ? aggregateCornerScoreV1(penalties, { allowObservableSubset: penalties.length < 8 })
+    : aggregateEdgeScoreV1(penalties, { allowObservableSubset: penalties.length < 8 });
   const frontPenalties = locationScores
     .filter((location) => location.side === "front")
     .map((location) => location.penalty);
@@ -1244,7 +1251,7 @@ function centeringWhyNot10(
     explanation:
       `Centering deducted ${centering.centeringDeduction.toFixed(2)}. The limiting ${worst.side} ${worstAxis.name} axis measured margins ` +
       `${worstAxis.value.marginA} mm and ${worstAxis.value.marginB} mm, balance ${worstAxis.value.balanceRatio.toFixed(2)}%, ` +
-      `with U95 ${worstAxis.value.differenceU95} mm and Grade-10 tolerance ${worst.grade10ToleranceMm} mm.`,
+      `with Grade-10 tolerance ${worst.grade10ToleranceMm} mm.`,
   };
 }
 
@@ -1266,7 +1273,7 @@ function findingWhyNot10(
     deduction: finding.deduction,
     explanation:
       `${finding.side} ${finding.location} ${finding.category} measured ${basis.measuredMeasurement} ${basis.unit}; ` +
-      `U95 ${basis.u95}, Grade-10 tolerance ${basis.explicitGrade10Tolerance}, effective measurement ${basis.effectiveMeasurement}, ` +
+      `Grade-10 tolerance ${basis.explicitGrade10Tolerance}, effective measurement ${basis.effectiveMeasurement}, ` +
       `normalized severity ${finding.normalizedSeverity}, exact deduction ${finding.deduction.toFixed(2)}.`,
   };
 }
@@ -1283,10 +1290,14 @@ function validateConditionFormula(
     result.aggregation.formula !== formula ||
     result.score !== result.aggregation.score ||
     result.aggregatePenalty !== result.aggregation.aggregatePenalty ||
-    result.locationSubscores.length !==
+    result.locationSubscores.length < 2 ||
+    result.locationSubscores.length >
       (element === "corners"
         ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.requiredObservationCount
         : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.requiredObservationCount) ||
+    !["front", "back"].every((side) =>
+      result.locationSubscores.some((location) => location.side === side)
+    ) ||
     !result.noDoubleDeduction
   ) {
     issues.push({
@@ -1497,7 +1508,7 @@ export function buildFixedRigMathematicalGradeV1(
     ? `The grade is below 10.00 because ${whyNot10.length} exact measured deduction explanation(s) are listed; the overall is the minimum of weighted grade ${scoreText(overall.weightedGrade)}, weakest-element cap ${scoreText(overall.weakestElementCap)}${overall.applicableSevereDefectCap === undefined
         ? ""
         : `, and severe-defect cap ${scoreText(overall.applicableSevereDefectCap)}`}.`
-    : "No card-condition defect was measured beyond its certified U95/Grade-10 buffer; every required region retained sufficient calibrated evidence.";
+    : "No card-condition defect produced a positive deduction; all observable measurements were evaluated by the Grade-10 formula.";
 
   return {
     version: FIXED_RIG_MATHEMATICAL_GRADE_V1_VERSION,

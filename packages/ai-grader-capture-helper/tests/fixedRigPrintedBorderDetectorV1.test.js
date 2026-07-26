@@ -193,6 +193,59 @@ test("tilted printed border is retained as four robust 2-D lines and exact side-
   assert.ok(built.centering.u95ComponentsMm.printedBoundaryFit.horizontal > 0);
 });
 
+test("coherent printed border survives changing artwork peak rank across cross-sections", () => {
+  const source = plane((x, y) => {
+    let value = x >= 10 && x <= 109 && y >= 12 && y <= 147 ? 0.82 : 0.18;
+    if (y % 4 === 0 && x >= 4 && x <= 5) value = 0.64;
+    if (y % 5 === 0 && x >= 114 && x <= 115) value = 0.68;
+    if (x % 4 === 0 && y >= 5 && y <= 6) value = 0.62;
+    if (x % 5 === 0 && y >= 153 && y <= 154) value = 0.66;
+    return value;
+  });
+  const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.boundaryEvidence.left.accepted, true);
+  assert.equal(result.boundaryEvidence.right.accepted, true);
+  assert.equal(result.boundaryEvidence.top.accepted, true);
+  assert.equal(result.boundaryEvidence.bottom.accepted, true);
+  const expected = [
+    { x: 9.5, y: 11.5 },
+    { x: 109.5, y: 11.5 },
+    { x: 109.5, y: 147.5 },
+    { x: 9.5, y: 147.5 },
+  ];
+  result.detectedPrintContour.forEach((point, index) => {
+    assert.ok(Math.abs(point.x - expected[index].x) < 0.1);
+    assert.ok(Math.abs(point.y - expected[index].y) < 0.1);
+  });
+});
+
+test("dense concave contour cross-sections use their observed material extremes instead of vetoing centering", () => {
+  const source = plane((x, y) =>
+    x >= 10 && x <= 109 && y >= 12 && y <= 147 ? 0.85 : 0.15);
+  const result = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    outerCutContour: [
+      { x: 0, y: 0 },
+      { x: WIDTH - 1, y: 0 },
+      { x: WIDTH - 1, y: HEIGHT - 1 },
+      { x: 62, y: HEIGHT - 1 },
+      { x: 62, y: 130 },
+      { x: 58, y: 130 },
+      { x: 58, y: HEIGHT - 1 },
+      { x: 0, y: HEIGHT - 1 },
+    ],
+  });
+
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.conditionDeduction, 0);
+  assert.equal(
+    result.reasons?.some((reason) => /more than two intersections/i.test(reason.message)) ?? false,
+    false,
+  );
+});
+
 test("absent border returns explicit insufficient evidence and never a condition deduction", () => {
   const result = detectFixedRigPrintedBorderSourceV1(detectorInput(plane(0.5)));
   assert.equal(result.status, "insufficient_evidence");
@@ -216,7 +269,7 @@ test("absent border returns explicit insufficient evidence and never a condition
   assert.equal(built.centering.cardDefectDeduction, 0);
 });
 
-test("spatially incoherent noisy artwork cannot masquerade as a printed border", () => {
+test("incoherent sparse peaks still yield an observable measurement with private low-confidence uncertainty", () => {
   const source = plane(0.4);
   for (let y = 1; y < HEIGHT - 1; y += 1) {
     source.data[y * WIDTH + 3 + (y * 7) % 20] = 0.95;
@@ -227,27 +280,26 @@ test("spatially incoherent noisy artwork cannot masquerade as a printed border",
     source.data[(HEIGHT - 4 - (x * 17) % 25) * WIDTH + x] = 0.95;
   }
   const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
-  assert.equal(result.status, "insufficient_evidence");
-  assert.equal(result.profileInput, null);
+  assert.equal(result.status, "computed", JSON.stringify(result));
   assert.equal(result.conditionDeduction, 0);
-  assert.equal(result.reasons.some((reason) =>
-    reason.code === "insufficient_cross_section_support" ||
-    reason.code === "no_threshold_qualified_gradient"), true);
-  assert.equal(Object.values(result.boundaryEvidence).some((entry) => entry.accepted), false);
+  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.accepted === true), true);
+  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.viableClusterCount === 0), true);
+  assert.ok(result.confidence < 0.2);
+  assert.ok(Object.values(result.boundaryEvidence).every((entry) =>
+    entry.positionU95Px > entry.fitResidualPx));
 });
 
-test("multiple fully supported nested boundaries are reported as ambiguous instead of guessed", () => {
+test("multiple fully supported nested boundaries select the outermost observed physical border without a shape profile", () => {
   const source = plane((x, y) => {
     if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
     if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
     return 0.1;
   });
   const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
-  assert.equal(result.status, "insufficient_evidence");
-  assert.equal(result.profileInput, null);
-  assert.equal(result.reasons.some((reason) =>
-    reason.code === "ambiguous_multiple_supported_boundaries"), true);
+  assert.equal(result.status, "computed", JSON.stringify(result));
   assert.equal(result.boundaryEvidence.left.viableClusterCount, 2);
   assert.deepEqual(result.boundaryEvidence.left.viableClusterCoordinatesPx, [6.5, 10.5]);
+  assert.equal(result.boundaryEvidence.left.medianCoordinatePx, 6.5);
+  assert.equal(result.boundaryEvidence.left.accepted, true);
   assert.equal(result.conditionDeduction, 0);
 });

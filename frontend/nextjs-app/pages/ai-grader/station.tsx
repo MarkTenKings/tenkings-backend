@@ -33,11 +33,12 @@ import {
   type AiGraderOperatorElementResolutionSubmissionV1,
   type AiGraderOperatorResolutionElementV1,
   type AiGraderOperatorResolutionRequestV1,
+  type AiGraderOperatorResolutionWorkspaceAssetV1,
+  type AiGraderOperatorResolutionWorkspaceV1,
   type AiGraderOperatorResolutionSubmissionV1,
   type AiGraderMathematicalReviewAssetMetadataV1,
   type AiGraderCaptureTriggerMode,
   type AiGraderPreviewCardGeometryBySide,
-  type AiGraderPreviewGeometryPoint,
   type AiGraderPreviewGeometrySide,
   type AiGraderWarmRunnerPhase,
   type AiGraderLocalReportHistory,
@@ -67,6 +68,7 @@ import {
   collectAiGraderMathematicalReviewAssets,
   fetchAiGraderMathematicalReviewAsset,
   fetchAiGraderOperatorResolutionEvidenceAsset,
+  fetchAiGraderOperatorResolutionWorkspaceAsset,
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
@@ -287,11 +289,17 @@ type OperatorResolutionEvidenceView = {
   objectUrl: string;
 };
 
+type OperatorResolutionWorkspaceView = {
+  metadata: AiGraderOperatorResolutionWorkspaceAssetV1;
+  objectUrl: string;
+};
+
 type OperatorResolutionEvidenceState = {
   status: "idle" | "loading" | "ready" | "error";
   message: string;
   requestSha256?: string;
   images: Partial<Record<"front" | "back", OperatorResolutionEvidenceView>>;
+  workspaceAssets: Record<string, OperatorResolutionWorkspaceView>;
 };
 
 type FinishQueueStatus = "needs_slab_photos" | "needs_ebay_evaluate" | "needs_inventory" | "complete";
@@ -830,46 +838,6 @@ function rapidQueueTerminalFailureCopy(item: {
   return `${punctuatedMessage} This failed item is not available for review or publication in the station.`;
 }
 
-function pointToward(
-  from: AiGraderPreviewGeometryPoint,
-  toward: AiGraderPreviewGeometryPoint,
-  distance: number
-): AiGraderPreviewGeometryPoint {
-  const dx = toward.x - from.x;
-  const dy = toward.y - from.y;
-  const length = Math.hypot(dx, dy);
-  if (length <= 0) return { ...from };
-  const scale = Math.min(0.45, distance / length);
-  return { x: from.x + dx * scale, y: from.y + dy * scale };
-}
-
-function midpoint(
-  first: AiGraderPreviewGeometryPoint,
-  second: AiGraderPreviewGeometryPoint
-): AiGraderPreviewGeometryPoint {
-  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
-}
-
-function centeredAxisLine(
-  center: AiGraderPreviewGeometryPoint,
-  from: AiGraderPreviewGeometryPoint,
-  toward: AiGraderPreviewGeometryPoint,
-  halfLength: number
-) {
-  const dx = toward.x - from.x;
-  const dy = toward.y - from.y;
-  const length = Math.hypot(dx, dy);
-  if (length <= 0) return null;
-  const unitX = dx / length;
-  const unitY = dy / length;
-  return {
-    x1: center.x - unitX * halfLength,
-    y1: center.y - unitY * halfLength,
-    x2: center.x + unitX * halfLength,
-    y2: center.y + unitY * halfLength,
-  };
-}
-
 const emptyFinishQueue: FinishQueueResult = {
   source: "persisted_records",
   orderedBy: "publishedAt_asc_createdAt_asc",
@@ -1030,6 +998,7 @@ export default function AiGraderStationPage() {
       status: "idle",
       message: "No exact element-resolution evidence is pending.",
       images: {},
+      workspaceAssets: {},
     });
   const operatorResolutionEvidenceObjectUrlsRef = useRef<string[]>([]);
   const operatorResolutionEvidenceImagesRef = useRef<AiGraderQueuedOcrImage[] | undefined>(
@@ -1038,6 +1007,8 @@ export default function AiGraderStationPage() {
   const operatorResolutionRequestRef = useRef<AiGraderOperatorResolutionRequestV1 | undefined>(
     undefined,
   );
+  const operatorResolutionWorkspaceRef =
+    useRef<AiGraderOperatorResolutionWorkspaceV1 | undefined>(undefined);
   const operatorResolutionQueueIdentityRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [operatorResolutionDraftState, setOperatorResolutionDraftState] =
     useState<OperatorResolutionDraft>(() => operatorResolutionDraft());
@@ -1107,6 +1078,10 @@ export default function AiGraderStationPage() {
     mathematicalExecution?.status === "operator_resolution_required"
       ? mathematicalExecution.request
       : undefined;
+  const operatorResolutionWorkspace: AiGraderOperatorResolutionWorkspaceV1 | undefined =
+    mathematicalExecution?.status === "operator_resolution_required"
+      ? mathematicalExecution.workspace
+      : undefined;
   const operatorResolutionEvidenceImages =
     operatorResolutionRequest &&
     activeReviewItem?.state === "operator_resolution_required" &&
@@ -1124,8 +1099,18 @@ export default function AiGraderStationPage() {
     ].join(":"))
     .sort()
     .join("|") ?? "";
+  const operatorResolutionWorkspaceFingerprint = operatorResolutionWorkspace
+    ? [
+        operatorResolutionWorkspace.workspaceSha256,
+        ...Object.values(operatorResolutionWorkspace.galleries)
+          .flat()
+          .map((asset) => `${asset.assetId}:${asset.sha256}:${asset.byteSize}`)
+          .sort(),
+      ].join("|")
+    : "";
   operatorResolutionEvidenceImagesRef.current = operatorResolutionEvidenceImages;
   operatorResolutionRequestRef.current = operatorResolutionRequest;
+  operatorResolutionWorkspaceRef.current = operatorResolutionWorkspace;
   operatorResolutionQueueIdentityRef.current = activeReviewQueueIdentity;
   const mathematicalReviewRequest: AiGraderMathematicalFindingReviewRequestV1 | undefined =
     mathematicalExecution?.status === "finding_review_required"
@@ -1334,6 +1319,7 @@ export default function AiGraderStationPage() {
         status: "idle",
         message: "No exact element-resolution evidence is pending.",
         images: {},
+        workspaceAssets: {},
       });
       return;
     }
@@ -1344,6 +1330,7 @@ export default function AiGraderStationPage() {
         requestSha256: request.requestSha256,
         message: "The pending element-resolution request has no exact active queue identity.",
         images: {},
+        workspaceAssets: {},
       });
       return;
     }
@@ -1359,6 +1346,7 @@ export default function AiGraderStationPage() {
         message:
           "The exact succeeded normalized Front and Back evidence is not available for this review.",
         images: {},
+        workspaceAssets: {},
       });
       return;
     }
@@ -1368,30 +1356,57 @@ export default function AiGraderStationPage() {
         requestSha256: request.requestSha256,
         message: "Connect the paired Dell bridge to verify the exact Front and Back evidence.",
         images: {},
+        workspaceAssets: {},
       });
       return;
     }
     const controller = new AbortController();
     let cancelled = false;
     const objectUrls: string[] = [];
+    const workspace = operatorResolutionWorkspaceRef.current;
+    if (!workspace || workspace.requestSha256 !== request.requestSha256) {
+      setOperatorResolutionEvidence({
+        status: "error",
+        requestSha256: request.requestSha256,
+        message: "The exact image-first measurement workspace is unavailable or identity-mismatched.",
+        images: {},
+        workspaceAssets: {},
+      });
+      return;
+    }
+    const workspaceMetadata = Object.values(workspace.galleries).flat();
     setOperatorResolutionEvidence({
       status: "loading",
       requestSha256: request.requestSha256,
-      message: "Loading and SHA-256 verifying the exact normalized Front and Back images.",
+      message:
+        "Loading and SHA-256 verifying the exact card views and subgrade measurement images.",
       images: {},
+      workspaceAssets: {},
     });
     void (async () => {
       try {
-        const fetchedImages = await Promise.all(images.map((image) =>
-          fetchAiGraderOperatorResolutionEvidenceAsset({
-            baseUrl: bridgeUrl,
-            stationToken,
-            queueItemId: queueIdentity.queueItemId,
-            gradingSessionId: queueIdentity.gradingSessionId,
-            reportId: queueIdentity.reportId,
-            image,
-            signal: controller.signal,
-          })));
+        const [fetchedImages, fetchedWorkspace] = await Promise.all([
+          Promise.all(images.map((image) =>
+            fetchAiGraderOperatorResolutionEvidenceAsset({
+              baseUrl: bridgeUrl,
+              stationToken,
+              queueItemId: queueIdentity.queueItemId,
+              gradingSessionId: queueIdentity.gradingSessionId,
+              reportId: queueIdentity.reportId,
+              image,
+              signal: controller.signal,
+            }))),
+          Promise.all(workspaceMetadata.map((metadata) =>
+            fetchAiGraderOperatorResolutionWorkspaceAsset({
+              baseUrl: bridgeUrl,
+              stationToken,
+              queueItemId: queueIdentity.queueItemId,
+              gradingSessionId: queueIdentity.gradingSessionId,
+              reportId: queueIdentity.reportId,
+              metadata,
+              signal: controller.signal,
+            }))),
+        ]);
         if (cancelled) return;
         const views: Partial<Record<"front" | "back", OperatorResolutionEvidenceView>> = {};
         for (const fetched of fetchedImages) {
@@ -1403,14 +1418,24 @@ export default function AiGraderStationPage() {
             objectUrl,
           };
         }
+        const workspaceViews: Record<string, OperatorResolutionWorkspaceView> = {};
+        for (const fetched of fetchedWorkspace) {
+          const objectUrl = window.URL.createObjectURL(fetched.blob);
+          objectUrls.push(objectUrl);
+          workspaceViews[fetched.metadata.assetId] = {
+            metadata: fetched.metadata,
+            objectUrl,
+          };
+        }
         if (cancelled) return;
         operatorResolutionEvidenceObjectUrlsRef.current = [...objectUrls];
         setOperatorResolutionEvidence({
           status: "ready",
           requestSha256: request.requestSha256,
           message:
-            "Front and Back matched the exact queue identity, dimensions, byte count, and SHA-256.",
+            "Card views and every subgrade image matched the exact request, dimensions, byte count, and SHA-256.",
           images: views,
+          workspaceAssets: workspaceViews,
         });
       } catch (requestError) {
         for (const objectUrl of objectUrls) window.URL.revokeObjectURL(objectUrl);
@@ -1422,6 +1447,7 @@ export default function AiGraderStationPage() {
             ? requestError.message
             : "Exact element-resolution evidence verification failed.",
           images: {},
+          workspaceAssets: {},
         });
       }
     })();
@@ -1442,6 +1468,7 @@ export default function AiGraderStationPage() {
     bridgeUrl,
     operatorResolutionEvidenceFingerprint,
     operatorResolutionRequest?.requestSha256,
+    operatorResolutionWorkspaceFingerprint,
     stationToken,
   ]);
 
@@ -1976,6 +2003,30 @@ export default function AiGraderStationPage() {
         ];
       })
     : [];
+  const eyesReceipt = ocrPrefillState.result?.eyes;
+  const eyesObservations = eyesReceipt?.status === "observed" ? eyesReceipt.observations : [];
+  const eyesObservationByElement = new Map(
+    eyesObservations.map((observation) => [observation.element, observation]),
+  );
+  const eyesReviewElements = new Set<AiGraderOperatorResolutionElementV1>(
+    eyesReceipt?.status === "observed" ? eyesReceipt.reviewElements : [],
+  );
+  if (operatorResolutionRequest) {
+    for (const observation of eyesObservations) {
+      const original = operatorResolutionRequest.originalElements[observation.element];
+      const automatedConcern = original.score !== null && original.score < 10;
+      const semanticMismatch =
+        (observation.element === "centering" && (
+          (observation.semanticState === "artwork_or_layout_not_border" && original.status === "computed") ||
+          (observation.semanticState === "printed_border_supported" && original.status !== "computed")
+        )) ||
+        (observation.element !== "centering" && (
+          (observation.semanticState === "no_visible_physical_concern" && automatedConcern) ||
+          (observation.semanticState === "visible_physical_concern" && !automatedConcern)
+        ));
+      if (semanticMismatch) eyesReviewElements.add(observation.element);
+    }
+  }
 
   useEffect(() => {
     if (workArea !== "finish" || !selectedFinishItem) return;
@@ -2122,45 +2173,68 @@ export default function AiGraderStationPage() {
     cardPlacementState === "ready" &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
     activePreviewCardGeometry.detectionUsed === true &&
+    Boolean(
+      activePreviewCardGeometry.observedDenseContour &&
+        activePreviewCardGeometry.observedDenseContour.pointCount ===
+          activePreviewCardGeometry.observedDenseContour.points.length &&
+        activePreviewCardGeometry.observedDenseContour.points.length >= 16 &&
+        activePreviewCardGeometry.observedDenseContour.contourSha256 &&
+        activePreviewCardGeometry.observedDenseContour.measurementsMm,
+    ) &&
     previewFrameFresh &&
     detectedGeometryFresh &&
     detectedPreviewCaptureReady &&
     (previewGeometrySide !== "back" || backPositioningPhysicallyVerified);
-  const cardGeometryCorners = activePreviewCardGeometry?.corners ?? activePreviewCardGeometry?.detectedCorners ?? null;
   const cardGeometryFrameSize = activePreviewCardGeometry?.image ?? reportOverlayFrameSize;
-  const cardGeometryPolygonPoints = cardGeometryCorners
-    ? [
-        cardGeometryCorners.topLeft,
-        cardGeometryCorners.topRight,
-        cardGeometryCorners.bottomRight,
-        cardGeometryCorners.bottomLeft,
-      ]
-    : [];
+  const cardGeometryContour = activePreviewCardGeometry?.observedDenseContour;
+  const cardGeometryContourPoints = cardGeometryContour?.points ?? [];
   const detectedGeometryVisible =
-    cardGeometryPolygonPoints.length === 4 &&
+    cardGeometryContourPoints.length >= 3 &&
     activePreviewCardGeometry?.geometrySource === "detected" &&
     activePreviewCardGeometry.detectionUsed === true;
   const detectedGeometryDominant = detectedGeometryVisible;
-  const cardGeometryCueLength = Math.max(14, Math.min(cardGeometryFrameSize.width, cardGeometryFrameSize.height) * 0.026);
-  const cardGeometryCornerBrackets = cardGeometryPolygonPoints.map((corner, index, points) => ({
-    corner,
-    towardPrevious: pointToward(corner, points[(index + points.length - 1) % points.length], cardGeometryCueLength),
-    towardNext: pointToward(corner, points[(index + 1) % points.length], cardGeometryCueLength),
-  }));
-  const cardGeometryEdgeMidpoints = cardGeometryPolygonPoints.map((point, index, points) =>
-    midpoint(point, points[(index + 1) % points.length])
-  );
-  const cardGeometryCenter = cardGeometryPolygonPoints.length === 4
-    ? {
-        x: cardGeometryPolygonPoints.reduce((sum, point) => sum + point.x, 0) / 4,
-        y: cardGeometryPolygonPoints.reduce((sum, point) => sum + point.y, 0) / 4,
-      }
-    : null;
-  const cardGeometryCenterAxes = cardGeometryCenter && cardGeometryEdgeMidpoints.length === 4
-    ? [
-        centeredAxisLine(cardGeometryCenter, cardGeometryEdgeMidpoints[3], cardGeometryEdgeMidpoints[1], cardGeometryCueLength * 0.72),
-        centeredAxisLine(cardGeometryCenter, cardGeometryEdgeMidpoints[0], cardGeometryEdgeMidpoints[2], cardGeometryCueLength * 0.72),
-      ].filter((axis): axis is NonNullable<typeof axis> => Boolean(axis))
+  const calibratedContourMeasurements = cardGeometryContour?.measurementsMm;
+  const observedRadiusMillimeters =
+    calibratedContourMeasurements?.circularArcs
+      .filter((arc) => arc.sweepDegrees >= 20)
+      .map((arc) => arc.radiusMm)
+      .slice(0, 4) ?? [];
+  const observedRadiusPixels =
+    cardGeometryContour?.measurementsPx.circularArcs
+      .filter((arc) => arc.sweepDegrees >= 20)
+      .map((arc) => arc.radiusPx)
+      .slice(0, 4) ?? [];
+  const cardGeometryMeasurementLabel = cardGeometryContour
+    ? calibratedContourMeasurements
+      ? [
+          `${calibratedContourMeasurements.width.toFixed(
+            2,
+          )} mm × ${calibratedContourMeasurements.height.toFixed(2)} mm`,
+          observedRadiusMillimeters.length
+            ? `measured local radius ${observedRadiusMillimeters
+                .map((value) => value.toFixed(2))
+                .join(" / ")} mm`
+            : "no circular arc observed",
+          `private U95 ±${calibratedContourMeasurements.privateUncertaintyU95.widthMm.toFixed(
+            2,
+          )} mm width / ±${calibratedContourMeasurements.privateUncertaintyU95.heightMm.toFixed(
+            2,
+          )} mm height`,
+          `${Math.round(
+            cardGeometryContour.strongSupportFraction * 100,
+          )}% observed boundary support · ${cardGeometryContour.evidenceQuality}`,
+        ]
+      : [
+          `${cardGeometryContour.measurementsPx.width.toFixed(
+            1,
+          )} px × ${cardGeometryContour.measurementsPx.height.toFixed(1)} px`,
+          observedRadiusPixels.length
+            ? `observed radius ${observedRadiusPixels
+                .map((value) => value.toFixed(1))
+                .join(" / ")} px`
+            : "no circular arc observed",
+          "physical calibration binding unavailable for this preview frame",
+        ]
     : [];
   const canStartGrading =
     bridgeConnected &&
@@ -3603,9 +3677,12 @@ export default function AiGraderStationPage() {
       setError("Element resolution requires the activated exact queue/session/report item and request.");
       return;
     }
-    const unresolved = new Set(mathematicalExecution?.status === "operator_resolution_required"
-      ? mathematicalExecution.unresolvedElements
-      : []);
+    const unresolved = new Set([
+      ...(mathematicalExecution?.status === "operator_resolution_required"
+        ? mathematicalExecution.unresolvedElements
+        : []),
+      ...eyesReviewElements,
+    ]);
     const resolutions: AiGraderOperatorElementResolutionSubmissionV1[] = [];
     for (const element of OPERATOR_RESOLUTION_ELEMENTS) {
       const draft = operatorResolutionDraftState.elements[element];
@@ -5378,48 +5455,25 @@ export default function AiGraderStationPage() {
                   />
                 ))}
               </svg>
-              {cardGeometryPolygonPoints.length === 4 ? (
+              {detectedGeometryVisible ? (
                 <svg
                   className={`card-geometry-overlay ${cardPlacementState}`}
                   viewBox={`0 0 ${cardGeometryFrameSize.width} ${cardGeometryFrameSize.height}`}
                   focusable="false"
                 >
-                  <polygon points={cardGeometryPolygonPoints.map((corner) => `${corner.x},${corner.y}`).join(" ")} />
-                  {cardGeometryCornerBrackets.map((bracket, index) => (
-                    <polyline
-                      className="card-geometry-corner-bracket"
-                      key={`corner-${index}`}
-                      points={`${bracket.towardPrevious.x},${bracket.towardPrevious.y} ${bracket.corner.x},${bracket.corner.y} ${bracket.towardNext.x},${bracket.towardNext.y}`}
-                    />
-                  ))}
-                  {cardGeometryEdgeMidpoints.map((edgeMidpoint, index) => (
-                    <circle
-                      className="card-geometry-edge-midpoint"
-                      key={`edge-${index}`}
-                      cx={edgeMidpoint.x}
-                      cy={edgeMidpoint.y}
-                      r={Math.max(3, cardGeometryFrameSize.width * 0.0032)}
-                    />
-                  ))}
-                  {cardGeometryCenterAxes.map((axis, index) => (
-                    <line
-                      className="card-geometry-center-axis"
-                      key={`axis-${index}`}
-                      x1={axis.x1}
-                      y1={axis.y1}
-                      x2={axis.x2}
-                      y2={axis.y2}
-                    />
-                  ))}
-                  {cardGeometryCenter ? (
-                    <circle
-                      className="card-geometry-center-point"
-                      cx={cardGeometryCenter.x}
-                      cy={cardGeometryCenter.y}
-                      r={Math.max(2.5, cardGeometryFrameSize.width * 0.0025)}
-                    />
-                  ) : null}
+                  <polyline
+                    className="card-geometry-observed-contour"
+                    points={[
+                      ...cardGeometryContourPoints,
+                      cardGeometryContourPoints[0],
+                    ].map((point) => `${point?.x},${point?.y}`).join(" ")}
+                  />
                 </svg>
+              ) : null}
+              {cardGeometryMeasurementLabel.length ? (
+                <div className={`card-geometry-measurements ${cardPlacementState}`}>
+                  {cardGeometryMeasurementLabel.map((line) => <span key={line}>{line}</span>)}
+                </div>
               ) : null}
             </div>
             <div className={`card-geometry-badge ${cardPlacementState}`} role="status" aria-live="polite">
@@ -5588,11 +5642,17 @@ export default function AiGraderStationPage() {
                 {OPERATOR_RESOLUTION_ELEMENTS.map((element) => {
                   const original = operatorResolutionRequest.originalElements[element];
                   const draft = operatorResolutionDraftState.elements[element];
-                  const required = mathematicalExecution?.status === "operator_resolution_required" &&
-                    mathematicalExecution.unresolvedElements.includes(element);
+                  const eyesObservation = eyesObservationByElement.get(element);
+                  const eyesReviewRequired = eyesReviewElements.has(element);
+                  const required = (
+                    mathematicalExecution?.status === "operator_resolution_required" &&
+                    mathematicalExecution.unresolvedElements.includes(element)
+                  ) || eyesReviewRequired;
                   const failureSummary = summarizeAiGraderOperatorFailureReasons(
                     original.failureReasons,
                   );
+                  const measurementImages =
+                    operatorResolutionWorkspace?.galleries[element] ?? [];
                   return (
                     <article className="mathematical-finding-review" key={element}>
                       <header>
@@ -5603,6 +5663,77 @@ export default function AiGraderStationPage() {
                         <strong>{original.score === null ? "No score" : original.score.toFixed(2)}</strong>
                       </header>
                       {original.explanation ? <p>{original.explanation}</p> : null}
+                      {eyesObservation ? (
+                        <section
+                          className={`operator-eyes-observation ${eyesReviewRequired ? "review" : "clear"}`}
+                          aria-label={`${formatStationValue(element)} private EYES observation`}
+                        >
+                          <div>
+                            <strong>GPT-5.6 EYES · private semantic check</strong>
+                            <span>
+                              {eyesReviewRequired ? "Human decision required" : "No semantic challenge"}
+                            </span>
+                          </div>
+                          <p>
+                            {formatStationValue(eyesObservation.semanticState)} ·{" "}
+                            {Math.round(eyesObservation.confidence * 100)}% private confidence
+                          </p>
+                          <small>{eyesObservation.rationale}</small>
+                          <small>
+                            EYES can point out artwork, printing, lighting, or a visible concern.
+                            It cannot move the contour, set a measurement, score a subgrade, or fail the card.
+                          </small>
+                        </section>
+                      ) : null}
+                      {measurementImages.length ? (
+                        <section
+                          className={`operator-subgrade-gallery ${element}`}
+                          aria-label={`${formatStationValue(element)} measurement images`}
+                        >
+                          <div className="operator-subgrade-gallery-head">
+                            <strong>{formatStationValue(element)} image evidence</strong>
+                            <span>
+                              {measurementImages.length} exact hash-bound image
+                              {measurementImages.length === 1 ? "" : "s"}
+                            </span>
+                          </div>
+                          <div className="operator-subgrade-gallery-grid">
+                            {measurementImages.map((metadata) => {
+                              const view =
+                                operatorResolutionEvidence.workspaceAssets[metadata.assetId];
+                              return (
+                                <figure key={metadata.assetId}>
+                                  {view ? (
+                                    <img
+                                      src={view.objectUrl}
+                                      alt={`${formatStationValue(metadata.side)} ${formatStationValue(element)} ${formatStationValue(metadata.location)} measured evidence`}
+                                      width={metadata.widthPx}
+                                      height={metadata.heightPx}
+                                    />
+                                  ) : (
+                                    <div className="operator-evidence-placeholder">
+                                      {operatorResolutionEvidence.status === "loading"
+                                        ? "Verifying measurement image…"
+                                        : "Measurement image unavailable"}
+                                    </div>
+                                  )}
+                                  <figcaption>
+                                    <strong>
+                                      {formatStationValue(metadata.side)} ·{" "}
+                                      {formatStationValue(metadata.location)}
+                                    </strong>
+                                    <ul>
+                                      {metadata.measurementSummary.map((line) => (
+                                        <li key={line}>{line}</li>
+                                      ))}
+                                    </ul>
+                                  </figcaption>
+                                </figure>
+                              );
+                            })}
+                          </div>
+                        </section>
+                      ) : null}
                       {original.failureReasons.length ? (
                         <>
                           <div className="operator-resolution-summary">
@@ -6544,6 +6675,38 @@ export default function AiGraderStationPage() {
                         <span className="review">Review {ocrPrefillState.result.reviewFieldNames.length}</span>
                       ) : null}
                     </div>
+                    {eyesReceipt ? (
+                      <div className={`eyes-observer ${eyesReceipt.status}`}>
+                        <div className="ocr-prefill-heading">
+                          <strong>Private GPT-5.6 EYES</strong>
+                          <span>{eyesReceipt.status === "observed" ? "Observed" : "Non-blocking unavailable"}</span>
+                        </div>
+                        {eyesReceipt.status === "observed" ? (
+                          <>
+                            <div className="eyes-observations" aria-label="Private semantic subgrade observations">
+                              {eyesObservations.map((observation) => (
+                                <div
+                                  key={observation.element}
+                                  className={observation.requiresOperatorReview ? "review" : ""}
+                                >
+                                  <strong>{formatStationValue(observation.element)}</strong>
+                                  <span>{formatStationValue(observation.semanticState)}</span>
+                                  <small>{observation.rationale}</small>
+                                </div>
+                              ))}
+                            </div>
+                            <small>
+                              EYES can challenge only the named subgrade. Calibrated pixels remain the measurement authority;
+                              EYES cannot create a grade or fail the whole card.
+                            </small>
+                          </>
+                        ) : (
+                          <small>
+                            EYES did not answer ({formatStationValue(eyesReceipt.reason)}). Deterministic grading continues unchanged.
+                          </small>
+                        )}
+                      </div>
+                    ) : null}
                     <small>The single Approve & Publish action remains the human authority.</small>
                   </>
                 ) : null}
@@ -7267,45 +7430,38 @@ export default function AiGraderStationPage() {
           overflow: visible;
           filter: drop-shadow(0 0 5px rgba(0, 0, 0, 0.85));
         }
-        .card-geometry-overlay polygon {
-          fill: rgba(255, 183, 0, 0.05);
+        .card-geometry-overlay .card-geometry-observed-contour {
+          fill: rgba(255, 183, 0, 0.035);
           stroke: #ffb700;
           stroke-width: 4;
           stroke-linejoin: round;
-          vector-effect: non-scaling-stroke;
-        }
-        .card-geometry-overlay .card-geometry-corner-bracket,
-        .card-geometry-overlay .card-geometry-center-axis {
-          fill: none;
-          stroke: #ffb700;
           stroke-linecap: round;
-          stroke-linejoin: round;
           vector-effect: non-scaling-stroke;
         }
-        .card-geometry-overlay .card-geometry-corner-bracket {
-          stroke-width: 9;
-        }
-        .card-geometry-overlay .card-geometry-center-axis {
-          stroke-width: 3;
-        }
-        .card-geometry-overlay .card-geometry-edge-midpoint,
-        .card-geometry-overlay .card-geometry-center-point {
-          fill: #ffb700;
-          stroke: #111;
-          stroke-width: 2;
-          vector-effect: non-scaling-stroke;
-        }
-        .card-geometry-overlay.ready polygon {
+        .card-geometry-overlay.ready .card-geometry-observed-contour {
           fill: rgba(34, 197, 94, 0.08);
           stroke: #22c55e;
         }
-        .card-geometry-overlay.ready .card-geometry-corner-bracket,
-        .card-geometry-overlay.ready .card-geometry-center-axis {
-          stroke: #22c55e;
+        .card-geometry-measurements {
+          position: absolute;
+          z-index: 4;
+          left: 18px;
+          bottom: 18px;
+          display: grid;
+          gap: 2px;
+          padding: 8px 10px;
+          border: 1px solid rgba(255, 183, 0, 0.6);
+          border-radius: 8px;
+          background: rgba(8, 10, 12, 0.82);
+          color: #ffd166;
+          font-family: var(--font-mono, ui-monospace, monospace);
+          font-size: 11px;
+          line-height: 1.35;
+          pointer-events: none;
         }
-        .card-geometry-overlay.ready .card-geometry-edge-midpoint,
-        .card-geometry-overlay.ready .card-geometry-center-point {
-          fill: #22c55e;
+        .card-geometry-measurements.ready {
+          border-color: rgba(34, 197, 94, 0.7);
+          color: #86efac;
         }
         .card-geometry-badge {
           position: absolute;
@@ -8019,6 +8175,47 @@ export default function AiGraderStationPage() {
           color: #ffe1a1;
           background: rgba(255, 183, 0, 0.09);
         }
+        .eyes-observer {
+          display: grid;
+          gap: 7px;
+          padding: 8px;
+          border: 1px solid rgba(112, 191, 255, 0.24);
+          border-radius: 6px;
+          background: rgba(35, 96, 145, 0.09);
+        }
+        .eyes-observer.unavailable {
+          border-color: rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.03);
+        }
+        .eyes-observations {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .eyes-observations > div {
+          display: grid;
+          gap: 2px;
+          padding: 7px;
+          border: 1px solid rgba(91, 255, 157, 0.2);
+          border-radius: 6px;
+          background: rgba(91, 255, 157, 0.04);
+        }
+        .eyes-observations > div.review {
+          border-color: rgba(255, 183, 0, 0.36);
+          background: rgba(255, 183, 0, 0.08);
+        }
+        .eyes-observations strong {
+          font-size: 10px;
+          text-transform: uppercase;
+        }
+        .eyes-observations span {
+          color: #d9d4c9;
+          font-size: 10px;
+        }
+        .eyes-observations small {
+          color: #aaa69b;
+          font-size: 9px;
+        }
         .confirmed-downstream {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -8659,9 +8856,101 @@ export default function AiGraderStationPage() {
           color: #9d9688;
           text-align: right;
         }
+        .operator-subgrade-gallery {
+          margin: 14px 0 18px;
+          padding: 12px;
+          border: 1px solid rgba(32, 232, 255, 0.24);
+          border-radius: 8px;
+          background: rgba(32, 232, 255, 0.035);
+        }
+        .operator-subgrade-gallery-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+          color: #dfe8e8;
+        }
+        .operator-subgrade-gallery-head span {
+          color: #8aa0a0;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+        }
+        .operator-subgrade-gallery-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .operator-subgrade-gallery.corners .operator-subgrade-gallery-grid,
+        .operator-subgrade-gallery.edges .operator-subgrade-gallery-grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        .operator-subgrade-gallery figure {
+          min-width: 0;
+          margin: 0;
+          padding: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          background: #050706;
+        }
+        .operator-subgrade-gallery img,
+        .operator-subgrade-gallery .operator-evidence-placeholder {
+          display: block;
+          width: 100%;
+          height: min(44vh, 520px);
+          min-height: 180px;
+          object-fit: contain;
+          border-radius: 4px;
+          background: #010202;
+        }
+        .operator-subgrade-gallery figcaption {
+          padding: 8px 2px 0;
+          color: #ddd3b7;
+          font-size: 11px;
+        }
+        .operator-subgrade-gallery figcaption ul {
+          margin: 6px 0 0;
+          padding-left: 16px;
+          color: #9eaaa8;
+          line-height: 1.35;
+        }
+        @media (max-width: 1100px) {
+          .operator-subgrade-gallery.corners .operator-subgrade-gallery-grid,
+          .operator-subgrade-gallery.edges .operator-subgrade-gallery-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+          }
+        }
         .operator-resolution-list {
           display: grid;
           gap: 14px;
+        }
+        .operator-eyes-observation {
+          display: grid;
+          gap: 6px;
+          margin: 12px 0;
+          padding: 11px 12px;
+          border: 1px solid rgba(32, 232, 255, 0.24);
+          border-left: 3px solid #20e8ff;
+          background: rgba(32, 232, 255, 0.045);
+        }
+        .operator-eyes-observation.review {
+          border-color: rgba(224, 189, 108, 0.38);
+          border-left-color: #e0bd6c;
+          background: rgba(224, 189, 108, 0.07);
+        }
+        .operator-eyes-observation > div {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .operator-eyes-observation span,
+        .operator-eyes-observation small {
+          color: #aeb9b8;
+        }
+        .operator-eyes-observation p,
+        .operator-eyes-observation small {
+          margin: 0;
         }
         .operator-resolution-summary {
           margin: 12px 0;

@@ -3,6 +3,10 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import sharp from "sharp";
+import {
+  measureFixedRigDenseContourV1,
+  traceFixedRigDenseContourV1,
+} from "./fixedRigShapeAgnosticContourV1";
 
 export const CARD_GEOMETRY_VERSION = "ten-kings-card-geometry-v1";
 export const STANDARD_CARD_WIDTH_INCHES = 2.5;
@@ -27,7 +31,7 @@ export type AiGraderCardGeometryDetectionPolicy = "live_preview_fast" | "capture
 
 export interface CardGeometryDetectionAttemptObservation {
   detectionPolicy: AiGraderCardGeometryDetectionPolicy;
-  method: "solid_plate_color_component_pca_v2" | "perimeter_gradient_rectangle_v3";
+  method: "solid_plate_color_component_pca_v2";
   outcome: "candidate" | "no_candidate";
   /** Non-authoritative diagnostic duration, never persisted in geometry metadata. */
   elapsedMs: number;
@@ -52,6 +56,90 @@ export interface CardGeometryBoundingBox {
   height: number;
 }
 
+export interface CardGeometryObservedDenseContourV1 {
+  schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1";
+  coordinateFrame: "source_image_pixels";
+  sourceAssetSha256: string;
+  points: readonly CardGeometryPoint[];
+  pointCount: number;
+  contourSha256: string;
+  strongSupportFraction: number;
+  evidenceQuality: "strong" | "limited";
+  measurementsPx: {
+    width: number;
+    height: number;
+    perimeter: number;
+    enclosedArea: number;
+    angleDegrees: number;
+    circularArcs: readonly {
+      radiusPx: number;
+      sweepDegrees: number;
+      radialResidualPx: number;
+      sampleCount: number;
+    }[];
+  };
+  /**
+   * Physical measurements are present only when the exact active rig
+   * calibration has been bound to the source sensor coordinate frame.
+   * They are private operator evidence; public reports must not expose U95.
+   */
+  measurementsMm?: {
+    measurementAuthoritySha256: string;
+    calibration: {
+      profileId: string;
+      calibrationVersion: string;
+      calibrationArtifactSha256: string;
+      bundleManifestSha256: string;
+      sourceWidthPx: number;
+      sourceHeightPx: number;
+      effectiveMmPerPixelX: number;
+      effectiveMmPerPixelY: number;
+    };
+    width: number;
+    height: number;
+    perimeter: number;
+    enclosedArea: number;
+    angleDegrees: number;
+    circularArcs: readonly {
+      radiusMm: number;
+      sweepDegrees: number;
+      radialResidualMm: number;
+      sampleCount: number;
+    }[];
+    privateUncertaintyU95: {
+      widthMm: number;
+      heightMm: number;
+      radiusMm: number;
+      basis: "calibrated_scale_boundary_and_repeatability_rss";
+    };
+  };
+}
+
+export interface CardGeometrySensorPlaneCalibrationV1 {
+  schemaVersion: "ten-kings-card-geometry-sensor-plane-calibration-v1";
+  profileId: string;
+  calibrationVersion: string;
+  calibrationArtifactSha256: string;
+  bundleManifestSha256: string;
+  sourceWidthPx: number;
+  sourceHeightPx: number;
+  mmPerPixelX: number;
+  mmPerPixelY: number;
+  scaleRelativeU95: number;
+  segmentationBoundaryU95Px: number;
+  linearMeasurementU95Mm: number;
+}
+
+export interface CardGeometryNormalizedDenseContourV1 {
+  schemaVersion: "ten-kings-normalized-dense-contour-v1";
+  coordinateFrame: "normalized_card_portrait_pixels";
+  sourceContourSha256: string;
+  rawToNormalizedTransformSha256: string;
+  points: readonly CardGeometryPoint[];
+  pointCount: number;
+  contourSha256: string;
+}
+
 export interface CardGeometryThresholds {
   maxCenterOffsetInches: number;
   /** Preferred placement guide. Rotation beyond this may still be normalization-safe. */
@@ -72,7 +160,6 @@ export interface CardGeometryDetectionDiagnostics {
   method:
     | "adaptive_border_contrast_connected_component_pca_v1"
     | "solid_plate_color_component_pca_v2"
-    | "perimeter_gradient_rectangle_v3"
     | "opencv_find_chessboard_corners_sb_v1"
     ;
   backgroundLuma: number;
@@ -89,42 +176,6 @@ export interface CardGeometryDetectionDiagnostics {
   relativeAspectError?: number;
   analysisWidth: number;
   analysisHeight: number;
-  /** Present only for the fail-closed perimeter-gradient fallback. */
-  perimeterGradientStrength?: number;
-  perimeterSideStrengths?: [number, number, number, number];
-  /** Mean interior-versus-exterior transition per captured perimeter side. */
-  perimeterSignedSideStrengths?: [number, number, number, number];
-  /** Fraction of transition energy that agrees with each side's dominant polarity. */
-  perimeterSidePolarityConsistency?: [number, number, number, number];
-  /** Dominant captured interior/exterior polarity for each independently gated side. */
-  perimeterSidePolarity?: [
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-  ];
-  /** Candidates admitted only to local refinement; never accepted geometry. */
-  perimeterProvisionalCandidateCount?: number;
-  /** Path-free rejection evidence for a failed full-resolution perimeter search. */
-  perimeterClosestRejectedCandidate?: {
-    reasons: Array<
-      "coverage" | "aspect" | "clearance" | "side_gradient" |
-      "side_signed_gradient" | "side_polarity_coherence" | "total_gradient"
-    >;
-    measuredAspectRatio: number;
-    cardCoverage: number;
-    clearance: number;
-    sideStrengths: [number, number, number, number];
-    signedSideStrengths: [number, number, number, number];
-    sidePolarityConsistency: [number, number, number, number];
-    sidePolarity: [
-      "lighter_inside" | "darker_inside",
-      "lighter_inside" | "darker_inside",
-      "lighter_inside" | "darker_inside",
-      "lighter_inside" | "darker_inside",
-    ];
-  };
-  perimeterCandidateCount?: number;
 }
 
 export interface CardGeometryPlacementEvaluation {
@@ -174,6 +225,11 @@ export interface CardGeometryMetadata {
   manualOverrideUsed: boolean;
   corners: CardGeometryCorners | null;
   detectedCorners: CardGeometryCorners | null;
+  /**
+   * Dense observed material boundary. This is the visible edge authority for
+   * preview; four-corner geometry remains only a placement/legacy transform.
+   */
+  observedDenseContour?: CardGeometryObservedDenseContourV1;
   boundingBox: CardGeometryBoundingBox | null;
   rotationDegrees: number | null;
   skewDegrees: number | null;
@@ -210,6 +266,12 @@ export interface DetectCardGeometryInput {
   sourceFrameId?: string;
   timestamp?: string;
   thresholds?: Partial<CardGeometryThresholds>;
+  /**
+   * Exact active calibration for the full Basler sensor plane. Preview frames
+   * may be downsampled; buildGeometry scales this authority into the analyzed
+   * source frame without changing the physical measurement.
+   */
+  sensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
   /** Test/diagnostic observability only. Exceptions cannot alter detector results. */
   onDetectionAttempt?: (observation: CardGeometryDetectionAttemptObservation) => void;
 }
@@ -243,6 +305,7 @@ export interface CardGeometryNormalizedArtifact extends CardGeometryArtifactMeta
   sourceSha256: string;
   deskewAppliedDegrees: number;
   rawToNormalizedTransform: CardGeometryRawToNormalizedTransformV1;
+  normalizedDenseContour?: CardGeometryNormalizedDenseContourV1;
 }
 
 export interface CardGeometryRawToNormalizedTransformV1 {
@@ -259,6 +322,13 @@ export interface CardGeometryRawToNormalizedTransformV1 {
   outputCoordinateFrame: "normalized_card_portrait_pixels";
   outputWidthPx: number;
   outputHeightPx: number;
+  outputPlacement?: {
+    fit: "contain_preserve_physical_shape";
+    leftPx: number;
+    topPx: number;
+    widthPx: number;
+    heightPx: number;
+  };
   /** Row-major affine 3x3 matrix mapping source boundary coordinates to normalized coordinates. */
   matrix: [number, number, number, number, number, number, 0, 0, 1];
   transformSha256: string;
@@ -317,6 +387,7 @@ interface DetectionCandidate {
   measuredAspectRatio: number;
   relativeAspectError: number;
   diagnostics: CardGeometryDetectionDiagnostics;
+  observedDenseContour?: CardGeometryObservedDenseContourV1;
 }
 
 interface DetectionAttempt {
@@ -640,6 +711,31 @@ function scalePoint(point: CardGeometryPoint, scaleX: number, scaleY: number): C
   return { x: round(point.x * scaleX, 3), y: round(point.y * scaleY, 3) };
 }
 
+function scaleDenseContourV1(
+  contour: readonly CardGeometryPoint[],
+  scaleX: number,
+  scaleY: number,
+): CardGeometryPoint[] | undefined {
+  const scaled: CardGeometryPoint[] = [];
+  for (const point of contour) {
+    const next = {
+      x: round(point.x * scaleX, 6),
+      y: round(point.y * scaleY, 6),
+    };
+    const previous = scaled.at(-1);
+    if (previous?.x === next.x && previous.y === next.y) continue;
+    scaled.push(next);
+  }
+  if (
+    scaled.length > 1 &&
+    scaled[0]!.x === scaled.at(-1)!.x &&
+    scaled[0]!.y === scaled.at(-1)!.y
+  ) {
+    scaled.pop();
+  }
+  return scaled.length >= 3 ? scaled : undefined;
+}
+
 function boundingBoxForCorners(corners: CardGeometryCorners): CardGeometryBoundingBox {
   const points = [corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft];
   const xs = points.map((point) => point.x);
@@ -654,7 +750,26 @@ function boundingBoxForCorners(corners: CardGeometryCorners): CardGeometryBoundi
   };
 }
 
-async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: CardGeometryThresholds): Promise<DetectionAttempt> {
+function boundingBoxForPoints(
+  points: readonly CardGeometryPoint[],
+): CardGeometryBoundingBox {
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  return {
+    x: round(left, 3),
+    y: round(top, 3),
+    width: round(Math.max(...xs) - left, 3),
+    height: round(Math.max(...ys) - top, 3),
+  };
+}
+
+async function attemptSolidPlateDetection(
+  prepared: PreparedImage,
+  thresholds: CardGeometryThresholds,
+  sensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1,
+): Promise<DetectionAttempt> {
   const scale = Math.min(1, thresholds.analysisMaxDimension / Math.max(prepared.orientedWidth, prepared.orientedHeight));
   const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
   const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
@@ -722,7 +837,14 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
   // 80th percentile remains representative of a solid plate until a large
   // fraction of the frame perimeter is obstructed, which must never be Ready.
   const backgroundNoise = histogramPercentile(borderDifferenceHistogram, borderDifferenceCount, 0.8);
-  const foregroundThreshold = Math.round(clamp(Math.max(4, backgroundNoise * 2.5, contrastRange * 0.22), 4, 80));
+  // Plate noise, not interior artwork contrast, sets the material-separation
+  // threshold. Letting the 95th-percentile artwork contrast raise this value
+  // can erase a real low-contrast outer cut and select only bright printing.
+  // The two-level floor is below ordinary visible Mono8 separation while the
+  // measured plate-noise multiplier still rejects a truly uniform fixture.
+  const foregroundThreshold = Math.round(
+    clamp(Math.max(2, backgroundNoise * 3.5), 2, 80),
+  );
   const morphologyRadius = Math.round(clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.003), 1, 4));
   const diagnosticsBase: CardGeometryDetectionDiagnostics = {
     method: "solid_plate_color_component_pca_v2",
@@ -737,7 +859,7 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
     analysisWidth,
     analysisHeight,
   };
-  if (contrastRange < Math.max(4, backgroundNoise * 1.5)) {
+  if (contrastRange < Math.max(1, backgroundNoise * 1.25)) {
     return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the solid base plate." };
   }
 
@@ -755,28 +877,13 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
   for (const value of mask) foregroundCount += value;
   diagnosticsBase.foregroundPixelFraction = round(foregroundCount / Math.max(1, pixelCount), 6);
   const { labels, components } = labelForegroundComponents(mask, differences, analysisWidth, analysisHeight);
-  const minimumComponentPixels = Math.max(64, Math.round(pixelCount * thresholds.minCardCoverage * 0.2));
+  // Absolute speck rejection only. Candidate admission must not assume the
+  // expected product coverage, aspect ratio, rectangular fill, or corner type.
+  const minimumComponentPixels = 64;
   const componentScore = (entry: ComponentStats) => {
-    const meanX = entry.sumX / entry.count;
-    const meanY = entry.sumY / entry.count;
-    const covarianceXX = Math.max(0, entry.sumXX / entry.count - meanX * meanX);
-    const covarianceYY = Math.max(0, entry.sumYY / entry.count - meanY * meanY);
-    const covarianceXY = entry.sumXY / entry.count - meanX * meanY;
-    const trace = covarianceXX + covarianceYY;
-    const root = Math.sqrt(Math.max(0, (covarianceXX - covarianceYY) ** 2 + 4 * covarianceXY ** 2));
-    const major = Math.max(0.000001, (trace + root) / 2);
-    const minor = Math.max(0.000001, (trace - root) / 2);
-    const estimatedAspect = Math.sqrt(major / minor);
-    const relativeAspectError = Math.abs(estimatedAspect - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
-    const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError * 2), 0, 1);
     const componentCoverage = entry.count / Math.max(1, pixelCount);
-    const coverageScore = componentCoverage < thresholds.minCardCoverage
-      ? clamp(componentCoverage / thresholds.minCardCoverage, 0, 1)
-      : componentCoverage > thresholds.maxCardCoverage
-        ? clamp((1 - componentCoverage) / Math.max(0.01, 1 - thresholds.maxCardCoverage), 0, 1)
-        : 1;
     const contrastScore = clamp((entry.sumDifference / entry.count) / Math.max(1, foregroundThreshold * 2), 0, 1);
-    return 0.55 * aspectScore + 0.3 * coverageScore + 0.15 * contrastScore;
+    return componentCoverage * (0.85 + 0.15 * contrastScore);
   };
   const component = components
     .filter((entry) => entry.count >= minimumComponentPixels)
@@ -848,7 +955,169 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
   const projectedArea = shortSide * longSide;
   const componentFill = component.count / Math.max(1, projectedArea);
   const cardCoverage = projectedArea / Math.max(1, analysisWidth * analysisHeight);
-  if (componentFill < 0.82) {
+  const selectedComponentMask = new Uint8Array(pixelCount);
+  const scalarField = new Float32Array(pixelCount);
+  let selectedComponentTouchesFrame = false;
+  for (let index = 0; index < pixelCount; index += 1) {
+    if (labels[index] === component.label) {
+      selectedComponentMask[index] = 1;
+      const x = index % analysisWidth;
+      const y = Math.floor(index / analysisWidth);
+      if (x === 0 || x === analysisWidth - 1 || y === 0 || y === analysisHeight - 1) {
+        selectedComponentTouchesFrame = true;
+      }
+    }
+    scalarField[index] = (differences[index] ?? 0) / 255;
+  }
+  const traced = traceFixedRigDenseContourV1({
+    width: analysisWidth,
+    height: analysisHeight,
+    field: scalarField,
+    mask: selectedComponentMask,
+    threshold: foregroundThreshold / 255,
+  });
+  const scaledContour = traced
+    ? scaleDenseContourV1(traced.contour, scaleX, scaleY)
+    : undefined;
+  const measuredContour = scaledContour
+    ? measureFixedRigDenseContourV1({
+        contour: scaledContour,
+        pixelsPerMmX: 1,
+        pixelsPerMmY: 1,
+      })
+    : undefined;
+  const effectiveMmPerPixelX = sensorPlaneCalibration
+    ? sensorPlaneCalibration.mmPerPixelX *
+      (sensorPlaneCalibration.sourceWidthPx / prepared.orientedWidth)
+    : undefined;
+  const effectiveMmPerPixelY = sensorPlaneCalibration
+    ? sensorPlaneCalibration.mmPerPixelY *
+      (sensorPlaneCalibration.sourceHeightPx / prepared.orientedHeight)
+    : undefined;
+  const measuredPhysicalContour =
+    scaledContour &&
+    effectiveMmPerPixelX &&
+    effectiveMmPerPixelY
+      ? measureFixedRigDenseContourV1({
+          contour: scaledContour,
+          pixelsPerMmX: 1 / effectiveMmPerPixelX,
+          pixelsPerMmY: 1 / effectiveMmPerPixelY,
+        })
+      : undefined;
+  const strongSupportCount =
+    traced?.contourSupport.filter((entry) => entry.support === "strong").length ?? 0;
+  const strongSupportFraction = traced?.contourSupport.length
+    ? strongSupportCount / traced.contourSupport.length
+    : 0;
+  const observedDenseContour: CardGeometryObservedDenseContourV1 | undefined =
+    scaledContour && measuredContour
+      ? (() => {
+          const contourSha256 = createHash("sha256")
+            .update(JSON.stringify({
+              sourceAssetSha256: prepared.rawArtifact.sha256,
+              coordinateFrame: "source_image_pixels",
+              points: scaledContour,
+            }), "utf8")
+            .digest("hex");
+          const physicalMeasurementPayload =
+            sensorPlaneCalibration &&
+            measuredPhysicalContour &&
+            effectiveMmPerPixelX &&
+            effectiveMmPerPixelY
+              ? {
+                  calibration: {
+                    profileId: sensorPlaneCalibration.profileId,
+                    calibrationVersion: sensorPlaneCalibration.calibrationVersion,
+                    calibrationArtifactSha256:
+                      sensorPlaneCalibration.calibrationArtifactSha256,
+                    bundleManifestSha256:
+                      sensorPlaneCalibration.bundleManifestSha256,
+                    sourceWidthPx: sensorPlaneCalibration.sourceWidthPx,
+                    sourceHeightPx: sensorPlaneCalibration.sourceHeightPx,
+                    effectiveMmPerPixelX: round(effectiveMmPerPixelX, 9),
+                    effectiveMmPerPixelY: round(effectiveMmPerPixelY, 9),
+                  },
+                  width: round(measuredPhysicalContour.orientedBounds.widthMm, 4),
+                  height: round(measuredPhysicalContour.orientedBounds.heightMm, 4),
+                  perimeter: round(measuredPhysicalContour.contourPerimeterMm, 4),
+                  enclosedArea: round(measuredPhysicalContour.enclosedAreaMm2, 4),
+                  angleDegrees:
+                    measuredPhysicalContour.orientedBounds.angleDegrees,
+                  circularArcs: measuredPhysicalContour.circularArcs.map((arc) => ({
+                    radiusMm: round(arc.radiusMm, 4),
+                    sweepDegrees: arc.sweepDegrees,
+                    radialResidualMm: round(arc.radialResidualMm, 4),
+                    sampleCount: arc.sampleCount,
+                  })),
+                  privateUncertaintyU95: {
+                    widthMm: round(Math.hypot(
+                      measuredPhysicalContour.orientedBounds.widthMm *
+                        sensorPlaneCalibration.scaleRelativeU95,
+                      sensorPlaneCalibration.segmentationBoundaryU95Px *
+                        effectiveMmPerPixelX,
+                      sensorPlaneCalibration.linearMeasurementU95Mm,
+                    ), 4),
+                    heightMm: round(Math.hypot(
+                      measuredPhysicalContour.orientedBounds.heightMm *
+                        sensorPlaneCalibration.scaleRelativeU95,
+                      sensorPlaneCalibration.segmentationBoundaryU95Px *
+                        effectiveMmPerPixelY,
+                      sensorPlaneCalibration.linearMeasurementU95Mm,
+                    ), 4),
+                    radiusMm: round(Math.hypot(
+                      (measuredPhysicalContour.circularArcs[0]?.radiusMm ?? 0) *
+                        sensorPlaneCalibration.scaleRelativeU95,
+                      sensorPlaneCalibration.segmentationBoundaryU95Px *
+                        Math.max(effectiveMmPerPixelX, effectiveMmPerPixelY),
+                      sensorPlaneCalibration.linearMeasurementU95Mm,
+                    ), 4),
+                    basis:
+                      "calibrated_scale_boundary_and_repeatability_rss" as const,
+                  },
+                }
+              : undefined;
+          return {
+          schemaVersion: "ten-kings-card-geometry-observed-dense-contour-v1",
+          coordinateFrame: "source_image_pixels",
+          sourceAssetSha256: prepared.rawArtifact.sha256,
+          points: scaledContour,
+          pointCount: scaledContour.length,
+          contourSha256,
+          strongSupportFraction: round(strongSupportFraction, 5),
+          evidenceQuality: strongSupportFraction >= 0.65 ? "strong" : "limited",
+          measurementsPx: {
+            width: round(measuredContour.orientedBounds.widthMm, 3),
+            height: round(measuredContour.orientedBounds.heightMm, 3),
+            perimeter: round(measuredContour.contourPerimeterMm, 3),
+            enclosedArea: round(measuredContour.enclosedAreaMm2, 3),
+            angleDegrees: measuredContour.orientedBounds.angleDegrees,
+            circularArcs: measuredContour.circularArcs.map((arc) => ({
+              radiusPx: round(arc.radiusMm, 3),
+              sweepDegrees: arc.sweepDegrees,
+              radialResidualPx: round(arc.radialResidualMm, 3),
+              sampleCount: arc.sampleCount,
+            })),
+          },
+          ...(physicalMeasurementPayload
+            ? {
+                measurementsMm: {
+                  ...physicalMeasurementPayload,
+                  measurementAuthoritySha256: createHash("sha256")
+                    .update(JSON.stringify({
+                      contourSha256,
+                      ...physicalMeasurementPayload,
+                    }), "utf8")
+                    .digest("hex"),
+                },
+              }
+            : {}),
+        };
+        })()
+      : undefined;
+  if (
+    (observedDenseContour && strongSupportCount === 0) ||
+    (!observedDenseContour && !selectedComponentTouchesFrame)
+  ) {
     return {
       diagnostics: {
         ...diagnosticsBase,
@@ -857,12 +1126,10 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
         measuredAspectRatio: round(measuredAspectRatio, 5),
         relativeAspectError: round(relativeAspectError, 5),
       },
-      reason: "The solid-plate foreground candidate does not have enough rectangular edge support to be a card.",
+      reason: "No locally supported material boundary was observed against the base plate.",
     };
   }
   const meanDifference = component.sumDifference / component.count;
-  const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError * 1.5), 0, 1);
-  const fillScore = clamp((componentFill - 0.25) / 0.65, 0, 1);
   const contrastScore = clamp((meanDifference - foregroundThreshold * 0.8) / Math.max(4, foregroundThreshold * 1.5), 0, 1);
   const coverageScore =
     cardCoverage < thresholds.minCardCoverage
@@ -870,7 +1137,10 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
       : cardCoverage > thresholds.maxCardCoverage
         ? clamp((1 - cardCoverage) / Math.max(0.01, 1 - thresholds.maxCardCoverage), 0, 1)
         : 1;
-  const confidence = round(0.38 * aspectScore + 0.28 * fillScore + 0.19 * contrastScore + 0.15 * coverageScore, 4);
+  const contourScore = observedDenseContour
+    ? clamp(0.45 + observedDenseContour.strongSupportFraction * 0.55, 0, 1)
+    : 0;
+  const confidence = round(0.55 * contourScore + 0.3 * contrastScore + 0.15 * coverageScore, 4);
   const rotationDegrees = round(normalizeRotationDegrees((Math.atan2(shortAxis.y, shortAxis.x) * 180) / Math.PI), 3);
   const diagnostics: CardGeometryDetectionDiagnostics = {
     ...diagnosticsBase,
@@ -892,659 +1162,41 @@ async function attemptSolidPlateDetection(prepared: PreparedImage, thresholds: C
       measuredAspectRatio,
       relativeAspectError,
       diagnostics,
+      ...(observedDenseContour ? { observedDenseContour } : {}),
     },
   };
 }
 
-/**
- * The primary solid-plate segmentation deliberately rejects weak, fragmented
- * foreground masks so artwork cannot become a card boundary. Some legitimate
- * dark-on-dark full-resolution captures instead retain a coherent outer
- * perimeter while the interior has much stronger artwork contrast. This
- * fallback fits that captured perimeter only when every side of a standard
- * card rectangle has independently measured gradient support.
- *
- * It is intentionally a separate, stricter authority rather than a lower
- * solid-plate threshold: no browser rectangle, fixture rectangle, or preview
- * coordinates participate in this path.
- */
-const PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION = 512;
-const LIVE_PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION = 256;
-const PERIMETER_GRADIENT_MIN_SIDE_STRENGTH = 1.4;
-const PERIMETER_GRADIENT_MIN_TOTAL_STRENGTH = 8.4;
-const PERIMETER_GRADIENT_MIN_SIGNED_SIDE_STRENGTH = 1.2;
-const PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY = 0.8;
-const PERIMETER_GRADIENT_ANGLE_DEGREES = [-30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 30] as const;
-const LIVE_PERIMETER_GRADIENT_ANGLE_DEGREES = [-15, -10, -5, 0, 5, 10, 15] as const;
-const PERIMETER_GRADIENT_ASPECT_FACTORS = [0.86, 0.93, 1, 1.07, 1.14] as const;
-const LIVE_PERIMETER_GRADIENT_ASPECT_FACTORS = [0.93, 1, 1.07] as const;
-
-interface PerimeterGradientScore {
-  sideStrengths: [number, number, number, number];
-  sideSignedStrengths: [number, number, number, number];
-  sidePolarityConsistency: [number, number, number, number];
-  sidePolarity: [
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-    "lighter_inside" | "darker_inside",
-  ];
-  totalStrength: number;
-  clearance: number;
-  corners: CardGeometryCorners;
-  longAxis: CardGeometryPoint;
-  shortAxis: CardGeometryPoint;
-}
-
-interface PerimeterGradientCandidate extends PerimeterGradientScore {
-  centerX: number;
-  centerY: number;
-  longSide: number;
-  shortSide: number;
-  aspectRatio: number;
-  coverage: number;
-  angleDegrees: number;
-}
-
-function lumaForRgb(red: number, green: number, blue: number): number {
-  return Math.round(0.2126 * red + 0.7152 * green + 0.0722 * blue);
-}
-
-interface PerimeterGradientLineScore {
-  strength: number;
-  signedStrength: number;
-  polarityConsistency: number;
-  polarity: "lighter_inside" | "darker_inside";
-}
-
-function perimeterGradientLineScore(input: {
-  luma: Uint8Array;
-  width: number;
-  height: number;
-  base: CardGeometryPoint;
-  normal: CardGeometryPoint;
-  span: CardGeometryPoint;
-  sampleCount: number;
-}): PerimeterGradientLineScore {
-  const sample = (x: number, y: number) => {
-    const boundedX = clamp(Math.round(x), 0, input.width - 1);
-    const boundedY = clamp(Math.round(y), 0, input.height - 1);
-    return input.luma[boundedY * input.width + boundedX] ?? 0;
-  };
-  const absoluteValues: number[] = [];
-  let signedTotal = 0;
-  let positiveEnergy = 0;
-  let negativeEnergy = 0;
-  // Two analysis pixels keeps the test localized to an observed edge while
-  // remaining stable after the capped full-resolution analysis resize.
-  const offset = 2;
-  for (let index = 0; index < input.sampleCount; index += 1) {
-    const position = (index + 0.5) / input.sampleCount - 0.5;
-    const x = input.base.x + input.span.x * position;
-    const y = input.base.y + input.span.y * position;
-    const signedDifference =
-      sample(x - input.normal.x * offset, y - input.normal.y * offset) -
-      sample(x + input.normal.x * offset, y + input.normal.y * offset);
-    absoluteValues.push(Math.abs(signedDifference));
-    signedTotal += signedDifference;
-    if (signedDifference >= 1) positiveEnergy += signedDifference;
-    if (signedDifference <= -1) negativeEnergy += -signedDifference;
-  }
-  absoluteValues.sort((left, right) => left - right);
-  // Edge glare can be localized, while an invisible boundary cannot be
-  // rescued by a few bright pixels. Require support across the strongest 60%
-  // of evenly-spaced samples from the full captured frame.
-  const supported = absoluteValues.slice(Math.floor(absoluteValues.length * 0.4));
-  const strength = supported.reduce((sum, value) => sum + value, 0) / Math.max(1, supported.length);
-  const polarity = positiveEnergy >= negativeEnergy ? "lighter_inside" : "darker_inside";
-  const observedEnergy = positiveEnergy + negativeEnergy;
-  const agreeingEnergy = polarity === "lighter_inside" ? positiveEnergy : negativeEnergy;
-  return {
-    strength: round(strength, 4),
-    signedStrength: round(signedTotal / Math.max(1, input.sampleCount), 4),
-    polarityConsistency: round(agreeingEnergy / Math.max(1, observedEnergy), 4),
-    polarity,
-  };
-}
-
-function perimeterGradientCorners(input: {
-  centerX: number;
-  centerY: number;
-  longSide: number;
-  shortSide: number;
-  angleDegrees: number;
-  imageLandscape: boolean;
-}): { corners: CardGeometryCorners; longAxis: CardGeometryPoint; shortAxis: CardGeometryPoint } {
-  const baseAngleRadians = input.imageLandscape ? 0 : Math.PI / 2;
-  const angleRadians = baseAngleRadians + (input.angleDegrees * Math.PI) / 180;
-  let longAxis = { x: Math.cos(angleRadians), y: Math.sin(angleRadians) };
-  // Keep the same deterministic axis branch as the PCA authority. This is
-  // essential for Dell landscape normalization to preserve operator-top.
-  if (longAxis.y < 0 || (Math.abs(longAxis.y) < 1e-8 && longAxis.x < 0)) {
-    longAxis = { x: -longAxis.x, y: -longAxis.y };
-  }
-  const shortAxis = { x: longAxis.y, y: -longAxis.x };
-  const shortHalf = input.shortSide / 2;
-  const longHalf = input.longSide / 2;
-  return {
-    longAxis,
-    shortAxis,
-    corners: {
-      topLeft: {
-        x: input.centerX - shortAxis.x * shortHalf - longAxis.x * longHalf,
-        y: input.centerY - shortAxis.y * shortHalf - longAxis.y * longHalf,
-      },
-      topRight: {
-        x: input.centerX + shortAxis.x * shortHalf - longAxis.x * longHalf,
-        y: input.centerY + shortAxis.y * shortHalf - longAxis.y * longHalf,
-      },
-      bottomRight: {
-        x: input.centerX + shortAxis.x * shortHalf + longAxis.x * longHalf,
-        y: input.centerY + shortAxis.y * shortHalf + longAxis.y * longHalf,
-      },
-      bottomLeft: {
-        x: input.centerX - shortAxis.x * shortHalf + longAxis.x * longHalf,
-        y: input.centerY - shortAxis.y * shortHalf + longAxis.y * longHalf,
-      },
-    },
-  };
-}
-
-function scorePerimeterGradientCandidate(input: {
-  luma: Uint8Array;
-  width: number;
-  height: number;
-  centerX: number;
-  centerY: number;
-  longSide: number;
-  shortSide: number;
-  angleDegrees: number;
-  imageLandscape: boolean;
-}): PerimeterGradientScore {
-  const { corners, longAxis, shortAxis } = perimeterGradientCorners(input);
-  const sideScores = [
-    perimeterGradientLineScore({
-      luma: input.luma,
-      width: input.width,
-      height: input.height,
-      base: {
-        x: input.centerX + shortAxis.x * input.shortSide / 2,
-        y: input.centerY + shortAxis.y * input.shortSide / 2,
-      },
-      normal: shortAxis,
-      span: { x: longAxis.x * input.longSide, y: longAxis.y * input.longSide },
-      sampleCount: 32,
-    }),
-    perimeterGradientLineScore({
-      luma: input.luma,
-      width: input.width,
-      height: input.height,
-      base: {
-        x: input.centerX - shortAxis.x * input.shortSide / 2,
-        y: input.centerY - shortAxis.y * input.shortSide / 2,
-      },
-      normal: { x: -shortAxis.x, y: -shortAxis.y },
-      span: { x: longAxis.x * input.longSide, y: longAxis.y * input.longSide },
-      sampleCount: 32,
-    }),
-    perimeterGradientLineScore({
-      luma: input.luma,
-      width: input.width,
-      height: input.height,
-      base: {
-        x: input.centerX + longAxis.x * input.longSide / 2,
-        y: input.centerY + longAxis.y * input.longSide / 2,
-      },
-      normal: longAxis,
-      span: { x: shortAxis.x * input.shortSide, y: shortAxis.y * input.shortSide },
-      sampleCount: 24,
-    }),
-    perimeterGradientLineScore({
-      luma: input.luma,
-      width: input.width,
-      height: input.height,
-      base: {
-        x: input.centerX - longAxis.x * input.longSide / 2,
-        y: input.centerY - longAxis.y * input.longSide / 2,
-      },
-      normal: { x: -longAxis.x, y: -longAxis.y },
-      span: { x: shortAxis.x * input.shortSide, y: shortAxis.y * input.shortSide },
-      sampleCount: 24,
-    }),
-  ] as const;
-  const sideStrengths = sideScores.map((score) => score.strength) as [number, number, number, number];
-  const sideSignedStrengths = sideScores.map((score) => score.signedStrength) as [number, number, number, number];
-  const sidePolarityConsistency = sideScores.map((score) => score.polarityConsistency) as [number, number, number, number];
-  const sidePolarity = sideScores.map((score) => score.polarity) as PerimeterGradientScore["sidePolarity"];
-  const clearance = Math.min(
-    ...[corners.topLeft, corners.topRight, corners.bottomRight, corners.bottomLeft].flatMap((point) => [
-      point.x,
-      point.y,
-      input.width - point.x,
-      input.height - point.y,
-    ]),
-  );
-  return {
-    sideStrengths,
-    sideSignedStrengths,
-    sidePolarityConsistency,
-    sidePolarity,
-    totalStrength: round(sideStrengths.reduce((sum, value) => sum + value, 0), 4),
-    clearance: round(clearance, 4),
-    corners,
-    longAxis,
-    shortAxis,
-  };
-}
-
-type PerimeterGradientGateFailure =
-  | "coverage"
-  | "aspect"
-  | "clearance"
-  | "side_gradient"
-  | "side_signed_gradient"
-  | "side_polarity_coherence"
-  | "total_gradient";
-
-function perimeterGradientGateFailures(input: {
-  candidate: PerimeterGradientCandidate;
-  thresholds: CardGeometryThresholds;
-  imageWidth: number;
-  imageHeight: number;
-}): PerimeterGradientGateFailure[] {
-  const relativeAspectError = Math.abs(input.candidate.aspectRatio - input.thresholds.expectedAspectRatio) / input.thresholds.expectedAspectRatio;
-  const edgeClearance = Math.min(input.imageWidth, input.imageHeight) * input.thresholds.minEdgeClearanceRatio;
-  const failures: PerimeterGradientGateFailure[] = [];
-  if (input.candidate.coverage < input.thresholds.minCardCoverage || input.candidate.coverage > input.thresholds.maxCardCoverage) {
-    failures.push("coverage");
-  }
-  if (relativeAspectError > input.thresholds.maxRelativeAspectError) failures.push("aspect");
-  if (input.candidate.clearance < edgeClearance) failures.push("clearance");
-  if (!input.candidate.sideStrengths.every((strength) => strength >= PERIMETER_GRADIENT_MIN_SIDE_STRENGTH)) {
-    failures.push("side_gradient");
-  }
-  if (!input.candidate.sideSignedStrengths.every((strength) => Math.abs(strength) >= PERIMETER_GRADIENT_MIN_SIGNED_SIDE_STRENGTH)) {
-    failures.push("side_signed_gradient");
-  }
-  if (!input.candidate.sidePolarityConsistency.every((consistency) => consistency >= PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY)) {
-    failures.push("side_polarity_coherence");
-  }
-  if (input.candidate.totalStrength < PERIMETER_GRADIENT_MIN_TOTAL_STRENGTH) failures.push("total_gradient");
-  return failures;
-}
-
-function candidateWithinPerimeterGates(input: {
-  candidate: PerimeterGradientCandidate;
-  thresholds: CardGeometryThresholds;
-  imageWidth: number;
-  imageHeight: number;
-}): boolean {
-  return perimeterGradientGateFailures(input).length === 0;
-}
-
-function centerValues(length: number, step: number, maxCenterOffsetRatio = 1): number[] {
-  const values = new Set<number>();
-  const center = length / 2;
-  for (let offset = -Math.ceil(length / step); offset <= Math.ceil(length / step); offset += 1) {
-    const value = round(center + offset * step, 3);
-    if (
-      value > 0
-      && value < length
-      && Math.abs(value - center) <= length * maxCenterOffsetRatio
-    ) values.add(value);
-  }
-  return [...values].sort((left, right) => left - right);
-}
-
-async function attemptPerimeterGradientDetection(
-  prepared: PreparedImage,
-  thresholds: CardGeometryThresholds,
-  detectionPolicy: AiGraderCardGeometryDetectionPolicy,
-): Promise<DetectionAttempt> {
-  let scoredCandidatesSinceYield = 0;
-  let lastControllerIoYieldAt = performance.now();
-  const yieldForControllerIoIfDue = async () => {
-    scoredCandidatesSinceYield += 1;
-    if (scoredCandidatesSinceYield < 16 || performance.now() - lastControllerIoYieldAt < 8) return;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    scoredCandidatesSinceYield = 0;
-    lastControllerIoYieldAt = performance.now();
-  };
-  const livePreview = detectionPolicy === "live_preview_fast";
-  const analysisMaxDimension = livePreview
-    ? LIVE_PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION
-    : PERIMETER_GRADIENT_ANALYSIS_MAX_DIMENSION;
-  const angleCandidates = livePreview
-    ? LIVE_PERIMETER_GRADIENT_ANGLE_DEGREES
-    : PERIMETER_GRADIENT_ANGLE_DEGREES;
-  const aspectFactors = livePreview
-    ? LIVE_PERIMETER_GRADIENT_ASPECT_FACTORS
-    : PERIMETER_GRADIENT_ASPECT_FACTORS;
-  const maxCenterOffsetRatio = livePreview ? 0.25 : 1;
-  const scale = Math.min(1, analysisMaxDimension / Math.max(prepared.orientedWidth, prepared.orientedHeight));
-  const analysisWidth = Math.max(32, Math.round(prepared.orientedWidth * scale));
-  const analysisHeight = Math.max(32, Math.round(prepared.orientedHeight * scale));
-  const { data, info } = await sharp(prepared.rawBytes)
-    .autoOrient()
-    .resize(analysisWidth, analysisHeight, { fit: "fill" })
-    .removeAlpha()
-    .toColourspace("srgb")
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-  const channels = info.channels;
-  const luma = new Uint8Array(analysisWidth * analysisHeight);
-  const borderHistogram = new Uint32Array(256);
-  const differenceHistogram = new Uint32Array(256);
-  const borderSize = Math.max(2, Math.round(Math.min(analysisWidth, analysisHeight) * 0.025));
-  let borderCount = 0;
-  for (let index = 0; index < luma.length; index += 1) {
-    const offset = index * channels;
-    const red = data[offset] ?? 0;
-    const green = data[offset + Math.min(1, channels - 1)] ?? red;
-    const blue = data[offset + Math.min(2, channels - 1)] ?? red;
-    const value = lumaForRgb(red, green, blue);
-    luma[index] = value;
-    const x = index % analysisWidth;
-    const y = Math.floor(index / analysisWidth);
-    if (x < borderSize || x >= analysisWidth - borderSize || y < borderSize || y >= analysisHeight - borderSize) {
-      borderHistogram[value] = (borderHistogram[value] ?? 0) + 1;
-      borderCount += 1;
-    }
-  }
-  const backgroundLuma = medianFromHistogram(borderHistogram, borderCount);
-  for (const value of luma) {
-    const difference = Math.abs(value - backgroundLuma);
-    differenceHistogram[difference] = (differenceHistogram[difference] ?? 0) + 1;
-  }
-  const contrastRange = histogramPercentile(differenceHistogram, luma.length, 0.95);
-  const diagnosticsBase: CardGeometryDetectionDiagnostics = {
-    method: "perimeter_gradient_rectangle_v3",
-    backgroundLuma,
-    contrastRange,
-    foregroundThreshold: PERIMETER_GRADIENT_MIN_SIDE_STRENGTH,
-    foregroundPixelFraction: 0,
-    expectedAspectRatio: thresholds.expectedAspectRatio,
-    analysisWidth,
-    analysisHeight,
-  };
-  if (contrastRange < 2) {
-    return {
-      diagnostics: diagnosticsBase,
-      reason: "The captured full-resolution frame has no usable card-perimeter gradient.",
-    };
-  }
-
-  const imageLandscape = analysisWidth >= analysisHeight;
-  const area = analysisWidth * analysisHeight;
-  const coarseSizeStep = Math.max(12, Math.round(Math.min(analysisWidth, analysisHeight) * 0.045));
-  const coarseCenterStep = Math.max(18, Math.round(Math.min(analysisWidth, analysisHeight) * 0.055));
-  const coarseCandidates: PerimeterGradientCandidate[] = [];
-  const provisionalCoarseCandidates: PerimeterGradientCandidate[] = [];
-  let closestRejectedCandidate: { candidate: PerimeterGradientCandidate; failures: PerimeterGradientGateFailure[] } | undefined;
-  const recordCandidate = (candidate: PerimeterGradientCandidate) => {
-    const failures = perimeterGradientGateFailures({
-      candidate,
-      thresholds,
-      imageWidth: analysisWidth,
-      imageHeight: analysisHeight,
-    });
-    if (!failures.length) {
-      coarseCandidates.push(candidate);
-      return;
-    }
-    // A coarse lattice can land a few analysis pixels away from a real weak
-    // edge. It may seed local refinement only when every other captured-frame
-    // gate already passes; the original signed threshold still governs the
-    // final candidate and is never waived for normalization.
-    if (failures.every((failure) => failure === "side_signed_gradient")) {
-      provisionalCoarseCandidates.push(candidate);
-    }
-    const structuralFailures = new Set<PerimeterGradientGateFailure>(["coverage", "aspect", "clearance"]);
-    const currentStructuralFailureCount = failures.filter((failure) => structuralFailures.has(failure)).length;
-    const previousStructuralFailureCount = closestRejectedCandidate
-      ? closestRejectedCandidate.failures.filter((failure) => structuralFailures.has(failure)).length
-      : Number.POSITIVE_INFINITY;
-    if (
-      !closestRejectedCandidate ||
-      currentStructuralFailureCount < previousStructuralFailureCount ||
-      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length < closestRejectedCandidate.failures.length) ||
-      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length === closestRejectedCandidate.failures.length && candidate.totalStrength > closestRejectedCandidate.candidate.totalStrength) ||
-      (currentStructuralFailureCount === previousStructuralFailureCount && failures.length === closestRejectedCandidate.failures.length && candidate.totalStrength === closestRejectedCandidate.candidate.totalStrength && candidate.coverage > closestRejectedCandidate.candidate.coverage)
-    ) {
-      closestRejectedCandidate = { candidate, failures };
-    }
-  };
-  const closestRejectionDiagnostics = () => {
-    if (!closestRejectedCandidate) return undefined;
-    const candidate = closestRejectedCandidate.candidate;
-    return {
-      reasons: closestRejectedCandidate.failures,
-      measuredAspectRatio: round(candidate.aspectRatio, 5),
-      cardCoverage: round(candidate.coverage, 5),
-      clearance: round(candidate.clearance, 4),
-      sideStrengths: candidate.sideStrengths,
-      signedSideStrengths: candidate.sideSignedStrengths,
-      sidePolarityConsistency: candidate.sidePolarityConsistency,
-      sidePolarity: candidate.sidePolarity,
-    };
-  };
-  for (const aspectFactor of aspectFactors) {
-    const aspectRatio = thresholds.expectedAspectRatio * aspectFactor;
-    const minShort = Math.sqrt((thresholds.minCardCoverage * area) / aspectRatio);
-    const maxShort = Math.sqrt((thresholds.maxCardCoverage * area) / aspectRatio);
-    for (let shortSide = minShort; shortSide <= maxShort; shortSide += coarseSizeStep) {
-      const longSide = shortSide * aspectRatio;
-      const coverage = (longSide * shortSide) / area;
-      for (const angleDegrees of angleCandidates) {
-        for (const centerX of centerValues(analysisWidth, coarseCenterStep, maxCenterOffsetRatio)) {
-          for (const centerY of centerValues(analysisHeight, coarseCenterStep, maxCenterOffsetRatio)) {
-            const score = scorePerimeterGradientCandidate({
-              luma,
-              width: analysisWidth,
-              height: analysisHeight,
-              centerX,
-              centerY,
-              longSide,
-              shortSide,
-              angleDegrees,
-              imageLandscape,
-            });
-            const candidate: PerimeterGradientCandidate = {
-              ...score,
-              centerX,
-              centerY,
-              longSide,
-              shortSide,
-              aspectRatio,
-              coverage,
-              angleDegrees,
-            };
-            recordCandidate(candidate);
-            await yieldForControllerIoIfDue();
-          }
-        }
-      }
-    }
-  }
-  if (!coarseCandidates.length && !provisionalCoarseCandidates.length) {
-    const closest = closestRejectionDiagnostics();
-    return {
-      diagnostics: {
-        ...diagnosticsBase,
-        perimeterCandidateCount: 0,
-        perimeterProvisionalCandidateCount: 0,
-        ...(closest ? { perimeterClosestRejectedCandidate: closest } : {}),
-      },
-      reason: closest
-        ? `No complete four-edge card perimeter passed the captured-frame gates; the closest candidate failed: ${closest.reasons.join(", ")}.`
-        : "No complete four-edge card perimeter had a usable captured-frame gradient.",
-    };
-  }
-  // Rank by the known physical card aspect first, then choose the largest
-  // matching perimeter so a frame or fixture boundary cannot outrank the card.
-  const rankPerimeterCandidates = (left: PerimeterGradientCandidate, right: PerimeterGradientCandidate) =>
-    Math.abs(left.aspectRatio - thresholds.expectedAspectRatio) - Math.abs(right.aspectRatio - thresholds.expectedAspectRatio)
-    || right.coverage - left.coverage
-    || right.totalStrength - left.totalStrength
-    || left.angleDegrees - right.angleDegrees;
-  const refinementSeeds = coarseCandidates.length ? coarseCandidates : provisionalCoarseCandidates;
-  refinementSeeds.sort(rankPerimeterCandidates);
-  const coarse = refinementSeeds[0]!;
-  const refinedCandidates: PerimeterGradientCandidate[] = [];
-  if (candidateWithinPerimeterGates({ candidate: coarse, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
-    refinedCandidates.push(coarse);
-  }
-  const refineCoverageFloor = Math.max(thresholds.minCardCoverage, coarse.coverage - 0.035);
-  for (const deltaAngle of [-3, 0, 3]) {
-    for (const deltaAspect of [-0.04, 0, 0.04]) {
-      const aspectRatio = coarse.aspectRatio + deltaAspect;
-      if (aspectRatio <= 0) continue;
-      for (const deltaShort of [-12, -6, 0, 6, 12]) {
-        const shortSide = coarse.shortSide + deltaShort;
-        if (shortSide <= 0) continue;
-        const longSide = shortSide * aspectRatio;
-        const coverage = (longSide * shortSide) / area;
-        if (coverage < refineCoverageFloor || coverage > thresholds.maxCardCoverage) continue;
-        for (const deltaX of [-12, -6, 0, 6, 12]) {
-          for (const deltaY of [-12, -6, 0, 6, 12]) {
-            const centerX = coarse.centerX + deltaX;
-            const centerY = coarse.centerY + deltaY;
-            const score = scorePerimeterGradientCandidate({
-              luma,
-              width: analysisWidth,
-              height: analysisHeight,
-              centerX,
-              centerY,
-              longSide,
-              shortSide,
-              angleDegrees: coarse.angleDegrees + deltaAngle,
-              imageLandscape,
-            });
-            const candidate: PerimeterGradientCandidate = {
-              ...score,
-              centerX,
-              centerY,
-              longSide,
-              shortSide,
-              aspectRatio,
-              coverage,
-              angleDegrees: coarse.angleDegrees + deltaAngle,
-            };
-            if (candidateWithinPerimeterGates({ candidate, thresholds, imageWidth: analysisWidth, imageHeight: analysisHeight })) {
-              refinedCandidates.push(candidate);
-            }
-            await yieldForControllerIoIfDue();
-          }
-        }
-      }
-    }
-  }
-  refinedCandidates.sort(rankPerimeterCandidates);
-  if (!refinedCandidates.length) {
-    const closest = closestRejectionDiagnostics();
-    return {
-      diagnostics: {
-        ...diagnosticsBase,
-        perimeterCandidateCount: coarseCandidates.length,
-        perimeterProvisionalCandidateCount: provisionalCoarseCandidates.length,
-        ...(closest ? { perimeterClosestRejectedCandidate: closest } : {}),
-      },
-      reason: closest
-        ? `No complete four-edge card perimeter passed after local refinement; the closest candidate failed: ${closest.reasons.join(", ")}.`
-        : "No complete four-edge card perimeter passed local refinement.",
-    };
-  }
-  const selected = refinedCandidates[0]!;
-  const scaleX = prepared.orientedWidth / analysisWidth;
-  const scaleY = prepared.orientedHeight / analysisHeight;
-  const corners: CardGeometryCorners = {
-    topLeft: scalePoint(selected.corners.topLeft, scaleX, scaleY),
-    topRight: scalePoint(selected.corners.topRight, scaleX, scaleY),
-    bottomRight: scalePoint(selected.corners.bottomRight, scaleX, scaleY),
-    bottomLeft: scalePoint(selected.corners.bottomLeft, scaleX, scaleY),
-  };
-  const relativeAspectError = Math.abs(selected.aspectRatio - thresholds.expectedAspectRatio) / thresholds.expectedAspectRatio;
-  const meanSideStrength = selected.totalStrength / 4;
-  const gradientStrengthScore = clamp(
-    (meanSideStrength - PERIMETER_GRADIENT_MIN_SIDE_STRENGTH) / Math.max(0.1, 8 - PERIMETER_GRADIENT_MIN_SIDE_STRENGTH),
-    0,
-    1,
-  );
-  // This score is evaluated only after every absolute, signed, and per-side
-  // polarity gate above has passed. Each side is independently checked because
-  // directional illumination can reverse an otherwise valid local transition;
-  // browser and preview geometry never participate in this decision.
-  const polarityCoherenceScore = clamp(
-    (Math.min(...selected.sidePolarityConsistency) - PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY) /
-      Math.max(0.01, 1 - PERIMETER_GRADIENT_MIN_POLARITY_CONSISTENCY),
-    0,
-    1,
-  );
-  const edgeScore = clamp(gradientStrengthScore * 0.4 + polarityCoherenceScore * 0.6, 0, 1);
-  const aspectScore = clamp(1 - relativeAspectError / Math.max(0.01, thresholds.maxRelativeAspectError), 0, 1);
-  const coverageScore =
-    selected.coverage < thresholds.minCardCoverage
-      ? 0
-      : selected.coverage > thresholds.maxCardCoverage
-        ? 0
-        : 1;
-  const confidence = round(0.32 * aspectScore + 0.22 * coverageScore + 0.31 * edgeScore + 0.15, 4);
-  const rotationDegrees = round(normalizeRotationDegrees((Math.atan2(selected.shortAxis.y, selected.shortAxis.x) * 180) / Math.PI), 3);
-  const diagnostics: CardGeometryDetectionDiagnostics = {
-    ...diagnosticsBase,
-    measuredAspectRatio: round(selected.aspectRatio, 5),
-    relativeAspectError: round(relativeAspectError, 5),
-    perimeterGradientStrength: round(selected.totalStrength, 4),
-    perimeterSideStrengths: selected.sideStrengths,
-    perimeterSignedSideStrengths: selected.sideSignedStrengths,
-    perimeterSidePolarityConsistency: selected.sidePolarityConsistency,
-    perimeterSidePolarity: selected.sidePolarity,
-    perimeterCandidateCount: refinedCandidates.length,
-    perimeterProvisionalCandidateCount: provisionalCoarseCandidates.length,
-  };
-  return {
-    diagnostics,
-    candidate: {
-      corners,
-      boundingBox: boundingBoxForCorners(corners),
-      rotationDegrees,
-      confidence,
-      shortSidePixels: selected.shortSide * scaleX,
-      longSidePixels: selected.longSide * scaleY,
-      cardCoverage: selected.coverage,
-      measuredAspectRatio: selected.aspectRatio,
-      relativeAspectError,
-      diagnostics,
-    },
-  };
-}
 
 async function attemptDetection(
   prepared: PreparedImage,
   thresholds: CardGeometryThresholds,
   detectionPolicy: AiGraderCardGeometryDetectionPolicy,
   observer: DetectCardGeometryInput["onDetectionAttempt"],
+  sensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1,
 ): Promise<DetectionAttempt> {
   const solidPlateStartedAt = performance.now();
-  const solidPlate = await attemptSolidPlateDetection(prepared, thresholds);
+  const solidPlate = await attemptSolidPlateDetection(
+    prepared,
+    thresholds,
+    sensorPlaneCalibration,
+  );
   reportDetectionAttempt(observer, {
     detectionPolicy,
     method: "solid_plate_color_component_pca_v2",
     outcome: solidPlate.candidate ? "candidate" : "no_candidate",
   }, solidPlateStartedAt);
-  if (solidPlate.candidate) return solidPlate;
-
-  const perimeterStartedAt = performance.now();
-  const perimeter = await attemptPerimeterGradientDetection(prepared, thresholds, detectionPolicy);
-  reportDetectionAttempt(observer, {
-    detectionPolicy,
-    method: "perimeter_gradient_rectangle_v3",
-    outcome: perimeter.candidate ? "candidate" : "no_candidate",
-  }, perimeterStartedAt);
-  if (perimeter.candidate) return perimeter;
+  // A dense pixel-derived material boundary is the geometry authority. Product
+  // aspect, rectangular coverage, and the legacy four-side fit are comparison
+  // diagnostics only and may never replace an observed arbitrary shape.
+  if (solidPlate.candidate?.observedDenseContour) {
+    return solidPlate;
+  }
   return {
-    diagnostics: perimeter.diagnostics,
-    reason: perimeter.reason ?? solidPlate.reason ?? "No reliable captured-frame card geometry was detected.",
+    diagnostics: solidPlate.diagnostics,
+    reason:
+      solidPlate.reason ??
+      "No dense pixel-derived physical boundary was observed in the captured frame.",
   };
 }
 
@@ -1560,6 +1212,7 @@ function placementEvaluation(input: {
   imageWidth: number;
   imageHeight: number;
   thresholds: CardGeometryThresholds;
+  observedDenseContour?: CardGeometryObservedDenseContourV1;
 }): CardGeometryPlacementEvaluation {
   const points = [input.corners.topLeft, input.corners.topRight, input.corners.bottomRight, input.corners.bottomLeft];
   const cardCenterX = points.reduce((sum, point) => sum + point.x, 0) / points.length;
@@ -1570,12 +1223,20 @@ function placementEvaluation(input: {
     (input.shortSidePixels / STANDARD_CARD_WIDTH_INCHES + input.longSidePixels / STANDARD_CARD_HEIGHT_INCHES) / 2;
   const inchX = offsetX / Math.max(1, pixelsPerInch);
   const inchY = offsetY / Math.max(1, pixelsPerInch);
-  const edgeClearance = Math.min(input.imageWidth, input.imageHeight) * input.thresholds.minEdgeClearanceRatio;
+  const edgeClearance = input.observedDenseContour
+    ? 1
+    : Math.min(input.imageWidth, input.imageHeight) *
+      input.thresholds.minEdgeClearanceRatio;
+  const observedBounds = input.observedDenseContour
+    ? boundingBoxForPoints(input.observedDenseContour.points)
+    : input.boundingBox;
   const withinFrame =
-    input.boundingBox.x >= edgeClearance &&
-    input.boundingBox.y >= edgeClearance &&
-    input.boundingBox.x + input.boundingBox.width <= input.imageWidth - edgeClearance &&
-    input.boundingBox.y + input.boundingBox.height <= input.imageHeight - edgeClearance;
+    observedBounds.x >= edgeClearance &&
+    observedBounds.y >= edgeClearance &&
+    observedBounds.x + observedBounds.width <=
+      input.imageWidth - edgeClearance &&
+    observedBounds.y + observedBounds.height <=
+      input.imageHeight - edgeClearance;
   return {
     centerOffsetPixels: {
       x: round(offsetX, 3),
@@ -1624,24 +1285,25 @@ function emptyPlacement(thresholds: CardGeometryThresholds): CardGeometryPlaceme
   };
 }
 
-function placementState(placement: CardGeometryPlacementEvaluation): CardPlacementState {
-  return placement.withinAspectTolerance &&
-    placement.withinCoverageTolerance &&
-    placement.withinFrame &&
+function placementState(
+  placement: CardGeometryPlacementEvaluation,
+  hasObservedDenseContour: boolean,
+): CardPlacementState {
+  return placement.withinFrame &&
     placement.withinNormalizationSkewTolerance &&
-    placement.confidenceReady
+    hasObservedDenseContour
     ? "ready"
     : "adjust_card";
 }
 
 function placementAdjustmentReason(
   placement: CardGeometryPlacementEvaluation,
+  hasObservedDenseContour: boolean,
 ): CardGeometryAdjustmentReason | null {
   if (!placement.withinFrame) return "outside_frame";
-  if (!placement.withinCoverageTolerance) return "unsafe_scale";
   if (!placement.withinNormalizationSkewTolerance) return "rotate_top_up";
-  if (!placement.withinAspectTolerance) return "wrong_aspect";
-  if (!placement.confidenceReady) return "low_confidence";
+  if (!hasObservedDenseContour && !placement.withinCoverageTolerance) return "unsafe_scale";
+  if (!hasObservedDenseContour && !placement.confidenceReady) return "low_confidence";
   return null;
 }
 
@@ -1656,7 +1318,9 @@ function placementWarnings(placement: CardGeometryPlacementEvaluation, _source: 
   if (!placement.withinNormalizationSkewTolerance) {
     warnings.push("Card rotation is outside the safe automatic-normalization envelope; rotate the printed top toward the top of the preview.");
   }
-  if (!placement.withinAspectTolerance) warnings.push("Detected card aspect ratio is outside tolerance.");
+  if (!placement.withinAspectTolerance) {
+    warnings.push("Observed material shape differs from the comparison profile; the observed contour remains authoritative.");
+  }
   if (!placement.withinCoverageTolerance) warnings.push("Detected card coverage is outside the safe normalization range.");
   if (!placement.withinFrame) warnings.push("Card is too close to an image edge for safe normalization.");
   if (!placement.confidenceReady) warnings.push("Card detection confidence is below the Ready threshold.");
@@ -1665,13 +1329,32 @@ function placementWarnings(placement: CardGeometryPlacementEvaluation, _source: 
 
 async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedImage): Promise<CardGeometryMetadata> {
   const detectionPolicy = requireDetectionPolicy(input.detectionPolicy);
+  if (
+    input.sensorPlaneCalibration &&
+    !verifyCardGeometrySensorPlaneCalibrationV1(
+      input.sensorPlaneCalibration,
+    )
+  ) {
+    throw new Error(
+      "sensorPlaneCalibration must be one exact calibrated Basler sensor-plane binding.",
+    );
+  }
   const thresholds = normalizeThresholds(input.thresholds);
   const timestamp = normalizeTimestamp(input.timestamp);
 
-  const detection = await attemptDetection(prepared, thresholds, detectionPolicy, input.onDetectionAttempt);
+  const detection = await attemptDetection(
+    prepared,
+    thresholds,
+    detectionPolicy,
+    input.onDetectionAttempt,
+    input.sensorPlaneCalibration,
+  );
 
   const candidate = detection.candidate;
-  if (!candidate || candidate.confidence < thresholds.minDetectionConfidence) {
+  if (
+    !candidate ||
+    !candidate.observedDenseContour
+  ) {
     return {
       version: CARD_GEOMETRY_VERSION,
       detectionPolicy,
@@ -1700,7 +1383,10 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
       },
       placement: emptyPlacement(thresholds),
       detection: detection.diagnostics,
-      warnings: [detection.reason ?? "No reliable four-corner card geometry was detected."],
+      warnings: [
+        detection.reason ??
+          "No dense pixel-derived physical card boundary was detected.",
+      ],
     };
   }
 
@@ -1716,13 +1402,18 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     imageWidth: prepared.orientedWidth,
     imageHeight: prepared.orientedHeight,
     thresholds,
+    observedDenseContour: candidate.observedDenseContour,
   });
+  const hasObservedDenseContour = Boolean(candidate.observedDenseContour);
   return {
     version: CARD_GEOMETRY_VERSION,
     detectionPolicy,
     side: input.side,
-    placementState: placementState(placement),
-    adjustmentReason: placementAdjustmentReason(placement),
+    placementState: placementState(placement, hasObservedDenseContour),
+    adjustmentReason: placementAdjustmentReason(
+      placement,
+      hasObservedDenseContour,
+    ),
     geometrySource: "detected",
     captureMode: "automatic_detection",
     confidenceBasis: "automatic_detection",
@@ -1730,6 +1421,9 @@ async function buildGeometry(input: DetectCardGeometryInput, prepared: PreparedI
     manualOverrideUsed: false,
     corners: candidate.corners,
     detectedCorners: candidate.corners,
+    ...(candidate.observedDenseContour
+      ? { observedDenseContour: candidate.observedDenseContour }
+      : {}),
     boundingBox: candidate.boundingBox,
     rotationDegrees: candidate.rotationDegrees,
     skewDegrees: round(
@@ -1805,12 +1499,20 @@ function buildRawToNormalizedTransformV1(input: {
   cropHeightPx: number;
   outputWidthPx: number;
   outputHeightPx: number;
+  outputContentLeftPx?: number;
+  outputContentTopPx?: number;
+  outputContentWidthPx?: number;
+  outputContentHeightPx?: number;
 }): CardGeometryRawToNormalizedTransformV1 {
   const radians = (input.deskewClockwiseDegrees * Math.PI) / 180;
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
-  const scaleX = input.outputWidthPx / input.cropWidthPx;
-  const scaleY = input.outputHeightPx / input.cropHeightPx;
+  const outputContentLeftPx = input.outputContentLeftPx ?? 0;
+  const outputContentTopPx = input.outputContentTopPx ?? 0;
+  const outputContentWidthPx = input.outputContentWidthPx ?? input.outputWidthPx;
+  const outputContentHeightPx = input.outputContentHeightPx ?? input.outputHeightPx;
+  const scaleX = outputContentWidthPx / input.cropWidthPx;
+  const scaleY = outputContentHeightPx / input.cropHeightPx;
   const rotatedOffsetX = input.rotatedWidthPx / 2 -
     cosine * input.sourceWidthPx / 2 + sine * input.sourceHeightPx / 2;
   const rotatedOffsetY = input.rotatedHeightPx / 2 -
@@ -1834,13 +1536,20 @@ function buildRawToNormalizedTransformV1(input: {
     outputCoordinateFrame: 'normalized_card_portrait_pixels',
     outputWidthPx: input.outputWidthPx,
     outputHeightPx: input.outputHeightPx,
+    outputPlacement: {
+      fit: "contain_preserve_physical_shape",
+      leftPx: outputContentLeftPx,
+      topPx: outputContentTopPx,
+      widthPx: outputContentWidthPx,
+      heightPx: outputContentHeightPx,
+    },
     matrix: [
       round(scaleX * cosine, 12),
       round(-scaleX * sine, 12),
-      round(scaleX * (rotatedOffsetX - input.cropLeftPx), 12),
+      round(outputContentLeftPx + scaleX * (rotatedOffsetX - input.cropLeftPx), 12),
       round(scaleY * sine, 12),
       round(scaleY * cosine, 12),
-      round(scaleY * (rotatedOffsetY - input.cropTopPx), 12),
+      round(outputContentTopPx + scaleY * (rotatedOffsetY - input.cropTopPx), 12),
       0,
       0,
       1,
@@ -1855,6 +1564,169 @@ export function verifyCardGeometryRawToNormalizedTransformV1(
   const { transformSha256, ...payload } = transform;
   return /^[a-f0-9]{64}$/.test(transformSha256) &&
     rawToNormalizedTransformSha256(payload) === transformSha256;
+}
+
+function isExactSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function isFiniteContourPoint(point: CardGeometryPoint): boolean {
+  return Number.isFinite(point.x) && Number.isFinite(point.y);
+}
+
+export function verifyCardGeometrySensorPlaneCalibrationV1(
+  calibration: CardGeometrySensorPlaneCalibrationV1,
+): boolean {
+  return calibration.schemaVersion ===
+      "ten-kings-card-geometry-sensor-plane-calibration-v1" &&
+    calibration.profileId.trim().length > 0 &&
+    calibration.calibrationVersion.trim().length > 0 &&
+    isExactSha256(calibration.calibrationArtifactSha256) &&
+    isExactSha256(calibration.bundleManifestSha256) &&
+    Number.isSafeInteger(calibration.sourceWidthPx) &&
+    calibration.sourceWidthPx > 0 &&
+    Number.isSafeInteger(calibration.sourceHeightPx) &&
+    calibration.sourceHeightPx > 0 &&
+    Number.isFinite(calibration.mmPerPixelX) &&
+    calibration.mmPerPixelX > 0 &&
+    Number.isFinite(calibration.mmPerPixelY) &&
+    calibration.mmPerPixelY > 0 &&
+    Number.isFinite(calibration.scaleRelativeU95) &&
+    calibration.scaleRelativeU95 >= 0 &&
+    Number.isFinite(calibration.segmentationBoundaryU95Px) &&
+    calibration.segmentationBoundaryU95Px >= 0 &&
+    Number.isFinite(calibration.linearMeasurementU95Mm) &&
+    calibration.linearMeasurementU95Mm >= 0;
+}
+
+export function verifyCardGeometryObservedDenseContourV1(
+  contour: CardGeometryObservedDenseContourV1,
+  sourceWidthPx?: number,
+  sourceHeightPx?: number,
+): boolean {
+  if (
+    contour.schemaVersion !== "ten-kings-card-geometry-observed-dense-contour-v1" ||
+    contour.coordinateFrame !== "source_image_pixels" ||
+    !isExactSha256(contour.sourceAssetSha256) ||
+    !isExactSha256(contour.contourSha256) ||
+    !Number.isSafeInteger(contour.pointCount) ||
+    contour.pointCount < 3 ||
+    contour.pointCount > 32768 ||
+    contour.points.length !== contour.pointCount ||
+    contour.points.some((point) =>
+      !isFiniteContourPoint(point) ||
+      (sourceWidthPx !== undefined && (point.x < 0 || point.x > sourceWidthPx)) ||
+      (sourceHeightPx !== undefined && (point.y < 0 || point.y > sourceHeightPx))
+    ) ||
+    !Number.isFinite(contour.strongSupportFraction) ||
+    contour.strongSupportFraction < 0 ||
+    contour.strongSupportFraction > 1 ||
+    !["strong", "limited"].includes(contour.evidenceQuality)
+  ) {
+    return false;
+  }
+  const expectedSha256 = createHash("sha256")
+    .update(JSON.stringify({
+      sourceAssetSha256: contour.sourceAssetSha256,
+      coordinateFrame: contour.coordinateFrame,
+      points: contour.points,
+    }), "utf8")
+    .digest("hex");
+  if (expectedSha256 !== contour.contourSha256) return false;
+  if (!contour.measurementsMm) return true;
+  const measurement = contour.measurementsMm;
+  if (
+    !isExactSha256(measurement.measurementAuthoritySha256) ||
+    !isExactSha256(measurement.calibration.calibrationArtifactSha256) ||
+    !isExactSha256(measurement.calibration.bundleManifestSha256) ||
+    !Number.isSafeInteger(measurement.calibration.sourceWidthPx) ||
+    measurement.calibration.sourceWidthPx <= 0 ||
+    !Number.isSafeInteger(measurement.calibration.sourceHeightPx) ||
+    measurement.calibration.sourceHeightPx <= 0 ||
+    [
+      measurement.calibration.effectiveMmPerPixelX,
+      measurement.calibration.effectiveMmPerPixelY,
+      measurement.width,
+      measurement.height,
+      measurement.perimeter,
+      measurement.enclosedArea,
+      measurement.angleDegrees,
+      measurement.privateUncertaintyU95.widthMm,
+      measurement.privateUncertaintyU95.heightMm,
+      measurement.privateUncertaintyU95.radiusMm,
+    ].some((value) => !Number.isFinite(value)) ||
+    measurement.width <= 0 ||
+    measurement.height <= 0 ||
+    measurement.perimeter <= 0 ||
+    measurement.enclosedArea <= 0 ||
+    measurement.privateUncertaintyU95.basis !==
+      "calibrated_scale_boundary_and_repeatability_rss" ||
+    measurement.circularArcs.some((arc) =>
+      !Number.isFinite(arc.radiusMm) ||
+      arc.radiusMm <= 0 ||
+      !Number.isFinite(arc.sweepDegrees) ||
+      !Number.isFinite(arc.radialResidualMm) ||
+      arc.radialResidualMm < 0 ||
+      !Number.isSafeInteger(arc.sampleCount) ||
+      arc.sampleCount < 3
+    )
+  ) {
+    return false;
+  }
+  const { measurementAuthoritySha256, ...measurementPayload } = measurement;
+  return createHash("sha256")
+    .update(JSON.stringify({
+      contourSha256: contour.contourSha256,
+      ...measurementPayload,
+    }), "utf8")
+    .digest("hex") === measurementAuthoritySha256;
+}
+
+export function verifyCardGeometryNormalizedDenseContourV1(input: {
+  contour: CardGeometryNormalizedDenseContourV1;
+  observed: CardGeometryObservedDenseContourV1;
+  transform: CardGeometryRawToNormalizedTransformV1;
+}): boolean {
+  const { contour, observed, transform } = input;
+  if (
+    !verifyCardGeometryRawToNormalizedTransformV1(transform) ||
+    !verifyCardGeometryObservedDenseContourV1(
+      observed,
+      transform.sourceWidthPx,
+      transform.sourceHeightPx,
+    ) ||
+    contour.schemaVersion !== "ten-kings-normalized-dense-contour-v1" ||
+    contour.coordinateFrame !== "normalized_card_portrait_pixels" ||
+    contour.sourceContourSha256 !== observed.contourSha256 ||
+    contour.rawToNormalizedTransformSha256 !== transform.transformSha256 ||
+    !isExactSha256(contour.contourSha256) ||
+    !Number.isSafeInteger(contour.pointCount) ||
+    contour.pointCount !== observed.pointCount ||
+    contour.points.length !== contour.pointCount ||
+    contour.points.some((point) =>
+      !isFiniteContourPoint(point) ||
+      point.x < 0 ||
+      point.x > transform.outputWidthPx ||
+      point.y < 0 ||
+      point.y > transform.outputHeightPx
+    )
+  ) {
+    return false;
+  }
+  const expectedSha256 = createHash("sha256")
+    .update(JSON.stringify({
+      sourceContourSha256: contour.sourceContourSha256,
+      rawToNormalizedTransformSha256: contour.rawToNormalizedTransformSha256,
+      coordinateFrame: contour.coordinateFrame,
+      points: contour.points,
+    }), "utf8")
+    .digest("hex");
+  if (expectedSha256 !== contour.contourSha256) return false;
+  return contour.points.every((point, index) => {
+    const expected = transformRawPointToNormalizedV1(transform, observed.points[index]!);
+    return Math.abs(point.x - expected.x) <= 1e-5 &&
+      Math.abs(point.y - expected.y) <= 1e-5;
+  });
 }
 
 export function transformRawPointToNormalizedV1(
@@ -1928,12 +1800,15 @@ async function normalizePreparedImage(
     .rotate(deskewDegrees, { background: { ...background, alpha: 1 } })
     .png()
     .toBuffer({ resolveWithObject: true });
-  const transformed = [
-    geometry.corners.topLeft,
-    geometry.corners.topRight,
-    geometry.corners.bottomRight,
-    geometry.corners.bottomLeft,
-  ].map((point) =>
+  const rawBoundaryPoints = geometry.observedDenseContour?.points.length
+    ? geometry.observedDenseContour.points
+    : [
+        geometry.corners.topLeft,
+        geometry.corners.topRight,
+        geometry.corners.bottomRight,
+        geometry.corners.bottomLeft,
+      ];
+  const transformed = rawBoundaryPoints.map((point) =>
     transformPointForRotation(
       point,
       prepared.orientedWidth,
@@ -1943,17 +1818,49 @@ async function normalizePreparedImage(
       deskewDegrees,
     ),
   );
-  const left = clamp(Math.floor(Math.min(...transformed.map((point) => point.x))), 0, rotated.info.width - 1);
-  const top = clamp(Math.floor(Math.min(...transformed.map((point) => point.y))), 0, rotated.info.height - 1);
-  const right = clamp(Math.ceil(Math.max(...transformed.map((point) => point.x))), left + 1, rotated.info.width);
-  const bottom = clamp(Math.ceil(Math.max(...transformed.map((point) => point.y))), top + 1, rotated.info.height);
+  const contourPaddingPx = geometry.observedDenseContour ? 2 : 0;
+  const left = clamp(
+    Math.floor(Math.min(...transformed.map((point) => point.x)) - contourPaddingPx),
+    0,
+    rotated.info.width - 1,
+  );
+  const top = clamp(
+    Math.floor(Math.min(...transformed.map((point) => point.y)) - contourPaddingPx),
+    0,
+    rotated.info.height - 1,
+  );
+  const right = clamp(
+    Math.ceil(Math.max(...transformed.map((point) => point.x)) + contourPaddingPx),
+    left + 1,
+    rotated.info.width,
+  );
+  const bottom = clamp(
+    Math.ceil(Math.max(...transformed.map((point) => point.y)) + contourPaddingPx),
+    top + 1,
+    rotated.info.height,
+  );
   const cropWidth = right - left;
   const cropHeight = bottom - top;
   if (cropWidth < 5 || cropHeight < 7) throw new Error("Detected card geometry is too small to create a 5:7 normalized artifact.");
   const targetWidth = NORMALIZED_CARD_WIDTH_PIXELS;
   const targetHeight = NORMALIZED_CARD_HEIGHT_PIXELS;
-  const geometricResamplingApplied = cropWidth !== targetWidth || cropHeight !== targetHeight;
-  const upscaled = targetWidth > cropWidth || targetHeight > cropHeight;
+  const resizedContent = await sharp(rotated.data)
+    .extract({ left, top, width: cropWidth, height: cropHeight })
+    .resize({
+      width: targetWidth,
+      height: targetHeight,
+      fit: "inside",
+      withoutEnlargement: false,
+      kernel: sharp.kernel.lanczos3,
+    })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  const contentWidth = resizedContent.info.width;
+  const contentHeight = resizedContent.info.height;
+  const contentLeft = Math.floor((targetWidth - contentWidth) / 2);
+  const contentTop = Math.floor((targetHeight - contentHeight) / 2);
+  const geometricResamplingApplied = cropWidth !== contentWidth || cropHeight !== contentHeight;
+  const upscaled = contentWidth > cropWidth || contentHeight > cropHeight;
   const compressionLevel = Math.round(clamp(input.pngCompressionLevel ?? 6, 0, 9));
   const rawToNormalizedTransform = buildRawToNormalizedTransformV1({
     sourceSha256: prepared.rawArtifact.sha256,
@@ -1968,12 +1875,47 @@ async function normalizePreparedImage(
     cropHeightPx: cropHeight,
     outputWidthPx: targetWidth,
     outputHeightPx: targetHeight,
+    outputContentLeftPx: contentLeft,
+    outputContentTopPx: contentTop,
+    outputContentWidthPx: contentWidth,
+    outputContentHeightPx: contentHeight,
   });
-  await sharp(rotated.data)
-    .extract({ left, top, width: cropWidth, height: cropHeight })
-    .resize(targetWidth, targetHeight, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+  await sharp({
+    create: {
+      width: targetWidth,
+      height: targetHeight,
+      channels: 3,
+      background,
+    },
+  })
+    .composite([{ input: resizedContent.data, left: contentLeft, top: contentTop }])
     .png({ compressionLevel, adaptiveFiltering: true })
     .toFile(outputResolved);
+  const normalizedDenseContour = geometry.observedDenseContour
+    ? (() => {
+        const points = geometry.observedDenseContour.points.map((point) => {
+          const normalized = transformRawPointToNormalizedV1(rawToNormalizedTransform, point);
+          return { x: round(normalized.x, 6), y: round(normalized.y, 6) };
+        });
+        const contourSha256 = createHash("sha256")
+          .update(JSON.stringify({
+            sourceContourSha256: geometry.observedDenseContour.contourSha256,
+            rawToNormalizedTransformSha256: rawToNormalizedTransform.transformSha256,
+            coordinateFrame: "normalized_card_portrait_pixels",
+            points,
+          }), "utf8")
+          .digest("hex");
+        return {
+          schemaVersion: "ten-kings-normalized-dense-contour-v1" as const,
+          coordinateFrame: "normalized_card_portrait_pixels" as const,
+          sourceContourSha256: geometry.observedDenseContour.contourSha256,
+          rawToNormalizedTransformSha256: rawToNormalizedTransform.transformSha256,
+          points,
+          pointCount: points.length,
+          contourSha256,
+        };
+      })()
+    : undefined;
   const [bytes, outputStats, outputMetadata] = await Promise.all([
     readFile(outputResolved),
     stat(outputResolved),
@@ -1993,12 +1935,13 @@ async function normalizePreparedImage(
     upscaled,
     sourceCropWidth: cropWidth,
     sourceCropHeight: cropHeight,
-    scaleX: round(targetWidth / cropWidth, 6),
-    scaleY: round(targetHeight / cropHeight, 6),
+    scaleX: round(contentWidth / cropWidth, 6),
+    scaleY: round(contentHeight / cropHeight, 6),
     coordinateFrame: "normalized_card_portrait_pixels",
     sourceSha256: prepared.rawArtifact.sha256,
     deskewAppliedDegrees: round(deskewDegrees, 3),
     rawToNormalizedTransform,
+    ...(normalizedDenseContour ? { normalizedDenseContour } : {}),
   };
 }
 
@@ -2029,6 +1972,12 @@ function assertReusableGeometry(geometry: CardGeometryMetadata, prepared: Prepar
     geometry.manualOverrideUsed === false;
   if (
     !coherentDetectedGeometry ||
+    !geometry.observedDenseContour ||
+    !verifyCardGeometryObservedDenseContourV1(
+      geometry.observedDenseContour,
+      prepared.orientedWidth,
+      prepared.orientedHeight,
+    ) ||
     !geometry.corners ||
     geometry.rotationDegrees == null ||
     !Number.isFinite(geometry.rotationDegrees)

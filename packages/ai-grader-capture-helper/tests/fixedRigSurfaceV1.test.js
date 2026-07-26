@@ -407,6 +407,98 @@ test("a calibrated synthetic scratch produces exact measurements, U95, and a ded
   assert.equal(result.score, 9.53);
 });
 
+test("printed artwork boundaries are internal ambiguity, while a physical response away from artwork still scores", () => {
+  const width = 48;
+  const height = 32;
+  const printedBoundaryCandidate = mask(width, height, (x, y) =>
+    x === 16 && y >= 6 && y < 26);
+  const physicalScratch = mask(width, height, (x, y) =>
+    y === 15 && x >= 26 && x < 42);
+  const directional = [-0.22, -0.16, -0.1, 0.1, 0.16, 0.22, 0, 0];
+  const photometric = buildPhotometric({
+    width,
+    height,
+    responses: (channel, x, _y, pixel) => {
+      const staticPrintedAppearance = x >= 16 && x < 22 ? 0.68 : 0.35;
+      const candidateResponse =
+        Number(printedBoundaryCandidate.data[pixel]) > 0 ||
+        Number(physicalScratch.data[pixel]) > 0
+          ? directional[channel - 1]
+          : 0;
+      return staticPrintedAppearance + candidateResponse;
+    },
+  });
+  const result = buildSurface("back", photometric, [
+    seed({
+      side: "back",
+      id: "printed-boundary-response",
+      category: "scratch",
+      candidateMask: printedBoundaryCandidate,
+    }),
+    seed({
+      side: "back",
+      id: "physical-scratch-away-from-print",
+      category: "scratch",
+      candidateMask: physicalScratch,
+    }),
+  ]);
+
+  assert.equal(result.status, "computed");
+  assert.equal(result.suppressedCandidates.length, 1);
+  assert.equal(result.suppressedCandidates[0].reason, "static_appearance_explained");
+  assert.equal(result.suppressedCandidates[0].requiresRecapture, false);
+  assert.equal(result.suppressedCandidates[0].cardDefectDeduction, 0);
+  assert.equal(result.suppressedCandidates[0].staticAppearanceOverlapFraction, 1);
+  assert.equal(result.findings.length, 1);
+  assert.deepEqual(result.findings[0].sourceSeedIds, [
+    "seed-physical-scratch-away-from-print",
+  ]);
+  assert.ok(result.findings[0].deduction > 0);
+});
+
+test("one strong visible directional channel produces a final limited surface measurement", () => {
+  const width = 20;
+  const height = 20;
+  const candidate = mask(width, height, (x, y) =>
+    x >= 7 && x <= 10 && y >= 8 && y <= 11);
+  const photometric = buildPhotometric({
+    width,
+    height,
+    responses: (channel, _x, _y, pixel) =>
+      0.35 + (
+        channel === 1 && Number(candidate.data[pixel]) > 0
+          ? 0.2
+          : 0
+      ),
+  });
+  const result = buildSurface("front", photometric, [
+    seed({
+      side: "front",
+      id: "observable-single-channel",
+      category: "scratch",
+      candidateMask: candidate,
+    }),
+  ]);
+
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.score !== null, true);
+  assert.equal(result.suppressedCandidates.length, 0);
+  assert.equal(result.findings.length, 1);
+  assert.equal(result.findings[0].evidenceQuality, "limited");
+  const measurement = result.findings[0].measurements.find((entry) =>
+    entry.measurementId === result.findings[0].deductionBasisMeasurementId);
+  assert.ok(measurement);
+  assert.equal(measurement.usableDirectionalChannelCount, 1);
+  assert.equal(
+    measurement.observableEvidenceAdmission.reason,
+    "single_directional_channel_surface_observation",
+  );
+  assert.equal(measurement.observableEvidenceAdmission.strongestChannelSupportFraction, 1);
+  assert.ok(measurement.observableEvidenceAdmission.uncertaintyInflationU95 > 0);
+  assert.match(result.findings[0].explanation, /observable directional channel/);
+  assert.doesNotMatch(result.findings[0].explanation, /confidence|uncertainty|U95/i);
+});
+
 test("above-V8-limit full-mask surface component completes exact geometry measurement", () => {
   const width = 433;
   const height = 937;
@@ -474,7 +566,7 @@ test("fully obscured evidence is explicit insufficient evidence and never a fals
   ));
 });
 
-test("a localized fully obscured region with high global coverage is never a false 10", () => {
+test("a localized unobservable region is excluded without vetoing the observable surface", () => {
   const width = 48;
   const height = 32;
   const photometric = buildPhotometric({
@@ -489,8 +581,12 @@ test("a localized fully obscured region with high global coverage is never a fal
   assert.equal(photometric.ungradableRegions.length, 1);
   assert.equal(photometric.ungradableRegions[0].pixelCount, 16);
   assert.equal(photometric.status, "insufficient_evidence");
-  assert.equal(result.status, "insufficient_evidence");
-  assert.equal(result.score, null);
+  assert.equal(result.status, "computed");
+  assert.equal(result.score, 10);
+  assert.ok(result.evidenceQualityLimitations.some((limitation) =>
+    limitation.code === "surface_region_ungradable" &&
+    limitation.requiresRecapture === false,
+  ));
 });
 
 test("overlapping scratch/scuff evidence merges to one physical finding and one deduction", () => {

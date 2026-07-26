@@ -139,6 +139,12 @@ export interface FixedRigPhotometricEvidenceV1 {
   channels: FixedRigCorrectedPhotometricChannelV1[];
   /** Median registered response across usable channels before residual removal. */
   commonModeResponse: Float32Array;
+  /**
+   * Static printed-appearance boundaries observed in the common-mode image.
+   * This is ambiguity context only: it cannot invalidate evidence, create a
+   * defect, prove a region clean, or block a grade.
+   */
+  staticAppearanceAmbiguityMask: Uint8Array;
   /** Best-fit scale of the calibrated channel-selective illumination vector. */
   calibratedPatternScale: Float32Array;
   /** Cosine similarity to the calibrated channel-selective illumination vector. */
@@ -153,6 +159,11 @@ export interface FixedRigPhotometricEvidenceV1 {
   invalidIlluminationMask: Uint8Array;
   /** Pixels admitted only for topology; they remain excluded from all scoring. */
   admissionExcludedCommonModeMask?: Uint8Array;
+  /**
+   * Observable localized gaps admitted only so they cannot veto the entire
+   * side. These pixels remain invalid for every detector and measurement.
+   */
+  admissionExcludedTopologyMask?: Uint8Array;
   admissionAdjustment?: {
     version: "fixed_rig_common_mode_interior_admission_v1";
     region: { x: number; y: number; width: number; height: number; pixelCount: number };
@@ -162,6 +173,15 @@ export interface FixedRigPhotometricEvidenceV1 {
     selectedFusedClippingPixelCount: number;
     allInvalidPixelsExclusivelyCommonMode: true;
     deepInterior: true;
+  };
+  observableEvidenceAdmission?: {
+    version: "fixed_rig_observable_localized_evidence_admission_v1";
+    validPixelFraction: number;
+    invalidPixelFraction: number;
+    localizedUngradableRegionCount: number;
+    localizedUngradablePixelCount: number;
+    localizedPixelsRemainExcludedFromScoring: true;
+    scoreConfidenceMustUseValidCoverage: true;
   };
   gradeRelevantMask: Uint8Array;
   gradeRelevantMaskSourceEvidenceId: string;
@@ -357,6 +377,54 @@ function quantile(values: readonly number[], q: number): number {
   const upper = Math.ceil(position);
   const mix = position - lower;
   return (sorted[lower] ?? 0) * (1 - mix) + (sorted[upper] ?? 0) * mix;
+}
+
+function buildStaticAppearanceAmbiguityMask(
+  commonModeResponse: Float32Array,
+  gradeRelevantMask: Uint8Array,
+  width: number,
+  height: number,
+  minimumContrast: number,
+): Uint8Array {
+  const boundary = new Uint8Array(width * height);
+  const neighbors = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],             [1, 0],
+    [-1, 1],  [0, 1],   [1, 1],
+  ] as const;
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      if (!gradeRelevantMask[index]) continue;
+      const center = commonModeResponse[index] ?? 0;
+      let maximumContrast = 0;
+      for (const [dx, dy] of neighbors) {
+        const adjacent = (y + dy) * width + x + dx;
+        if (!gradeRelevantMask[adjacent]) continue;
+        maximumContrast = Math.max(
+          maximumContrast,
+          Math.abs(center - (commonModeResponse[adjacent] ?? 0)),
+        );
+      }
+      if (maximumContrast >= minimumContrast) boundary[index] = 1;
+    }
+  }
+
+  // Small registration differences between directional channels appear next
+  // to, rather than exactly on, a printed boundary. A one-pixel neighborhood
+  // identifies that ambiguity without changing any valid-evidence mask.
+  const ambiguity = new Uint8Array(boundary);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      if (!boundary[index]) continue;
+      for (const [dx, dy] of neighbors) {
+        const adjacent = (y + dy) * width + x + dx;
+        if (gradeRelevantMask[adjacent]) ambiguity[adjacent] = 1;
+      }
+    }
+  }
+  return ambiguity;
 }
 
 function ungradableRegions(
@@ -713,7 +781,19 @@ export function buildFixedRigPhotometricEvidenceV1(
     // The common-mode baseline is computed only from usable observations.
     // Reusing a median that includes clipped/underexposed channels would let
     // evidence-quality failures leak back into the directional residual.
-    const observedCentered = responses.map((response) => response - commonMode);
+    //
+    // Exposure-bracket fusion is radiometric and can legitimately estimate a
+    // response above the normalized sensor maximum when a shorter unclipped
+    // exposure is scaled to the target exposure. Divide the centered response
+    // by that measured common mode only when it exceeds one sensor-full-scale
+    // unit. Otherwise bright printed artwork and global illumination strength
+    // can masquerade as large physical relief merely because the selected
+    // bracket cell used a shorter exposure. This is continuous response
+    // normalization, not an evidence gate.
+    const residualNormalization = Math.max(1, commonMode);
+    const observedCentered = responses.map(
+      (response) => (response - commonMode) / residualNormalization,
+    );
     const expected = orderedInputs.map((channel) =>
       Number(patternByChannel.get(channel.channel)?.expectedDirectionalResidual.data[index] ?? 0),
     );
@@ -824,6 +904,13 @@ export function buildFixedRigPhotometricEvidenceV1(
     thresholds.minimumUngradableRegionPixels,
     gradeRelevantPixelCount,
   );
+  const staticAppearanceAmbiguityMask = buildStaticAppearanceAmbiguityMask(
+    commonModeResponse,
+    gradeRelevantMask,
+    calibration.width,
+    calibration.height,
+    thresholds.directionalResidualThreshold,
+  );
   const evidenceLimitations: FixedRigPhotometricEvidenceV1["evidenceLimitations"] = [];
   if (clippedPixelFraction > thresholds.maxClippedPixelFraction) {
     evidenceLimitations.push({
@@ -901,6 +988,7 @@ export function buildFixedRigPhotometricEvidenceV1(
     flatFieldCorrectionApplied: true,
     channels: correctedChannels,
     commonModeResponse,
+    staticAppearanceAmbiguityMask,
     calibratedPatternScale,
     calibratedPatternSimilarity,
     usableDirectionalObservationCount,

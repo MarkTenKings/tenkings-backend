@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from "react";
 import AiGraderDefectOverlay from "../AiGraderDefectOverlay";
 import {
-  cinematicConfidenceText,
   cinematicEvidenceImage,
   cinematicFindingLabel,
   cinematicFindingsForExactImage,
@@ -37,7 +36,6 @@ function EvidenceImage({ image, title }: { image: CinematicImage; title: string 
 }
 
 function FindingDetail({ finding }: { finding: CinematicFinding }) {
-  const confidence = cinematicConfidenceText(finding.finding.confidence);
   const measurements = cinematicMeasurementRows(finding.measurements);
   return (
     <div className={styles.findingDetail} aria-live="polite">
@@ -45,7 +43,6 @@ function FindingDetail({ finding }: { finding: CinematicFinding }) {
       <h3>{cinematicFindingLabel(finding)}</h3>
       <dl>
         <div><dt>Severity</dt><dd>{finding.finding.severity.band}</dd></div>
-        {confidence ? <div><dt>Confidence</dt><dd>{confidence}</dd></div> : null}
         <div><dt>Review</dt><dd className={finding.statusLabel === "Confirmed" ? styles.confirmed : styles.candidate}>{finding.statusLabel}</dd></div>
         {measurements.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
       </dl>
@@ -150,7 +147,6 @@ export default function CinematicReport({ report, fixture = false }: Props) {
   const [museumSide, setMuseumSide] = useState<CinematicSide>(report.images.front?.trueView ? "front" : "back");
   const firstEvidenceSide: CinematicSide = report.images.front?.trueView || report.findings.front.length ? "front" : "back";
   const generatedDate = displayDate(report.generatedAt);
-  const confidence = cinematicConfidenceText(report.grade?.confidenceScore);
   const hasMuseum = Boolean(report.images.front?.trueView || report.images.back?.trueView);
   const hasLab = hasMuseum || report.findings.front.length > 0 || report.findings.back.length > 0;
   return (
@@ -167,7 +163,6 @@ export default function CinematicReport({ report, fixture = false }: Props) {
         {report.grade ? <div className={styles.scoreBlock}>
           <span>TK Score</span>
           <strong>{report.grade.tkScore}</strong>
-          {confidence ? <small>{"Confidence \u00b7 "}{confidence}{report.grade.confidenceBand ? ` \u00b7 ${report.grade.confidenceBand}` : ""}</small> : null}
           {report.grade.reportLabelId ? <small>{"Report label ID \u00b7 "}{report.grade.reportLabelId}</small> : null}
         </div> : null}
       </section>
@@ -178,7 +173,6 @@ export default function CinematicReport({ report, fixture = false }: Props) {
           {report.grade.elements.map((element) => <article key={element.key}>
             <span>{ELEMENT_LABEL[element.key]}</span>
             <strong>{Math.round(element.score * 100)}</strong>
-            {element.confidence ? <small>{element.confidence}</small> : null}
             {element.explanation ? <p>{element.explanation}</p> : null}
           </article>)}
         </div>

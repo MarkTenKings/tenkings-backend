@@ -10,6 +10,7 @@ import {
   type FixedRigFullResolutionGeometryAuthorityInput,
   type FixedRigWarmSideCaptureBatch,
 } from "./baslerFixedRigV1";
+import { verifyCardGeometryObservedDenseContourV1 } from "./cardGeometry";
 
 export const FIXED_RIG_PROCESSING_WORKER_PROTOCOL_VERSION =
   "fixed-rig-geometry-processing-worker-v1" as const;
@@ -572,8 +573,6 @@ async function resolveRequestSources(
       packageId: request.identity.packageId,
       side: request.identity.side,
       allOn: roleCapture("all_on"),
-      acceptedProfile: roleCapture("accepted_profile"),
-      channels: expectedRoles().slice(2).map((role) => roleCapture(role)),
     },
     async verifyUnchanged() {
       for (const entry of resolved) {
@@ -604,6 +603,11 @@ export async function validateFixedRigProcessingWorkerAuthorityInput(
   allowedOutputRoot: string,
 ): Promise<void> {
   validateFixedRigProcessingWorkerRequest(request);
+  assertExactKeys(
+    authorityInput,
+    ["packageId", "side", "allOn"],
+    "Main processing dense-contour authority input",
+  );
   if (authorityInput.packageId !== request.identity.packageId || authorityInput.side !== request.identity.side) {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Main processing requested a different package or side authority.");
   }
@@ -616,41 +620,32 @@ export async function validateFixedRigProcessingWorkerAuthorityInput(
   ) {
     throw new FixedRigProcessingWorkerProtocolError("containment_failed", "Main processing package containment changed after worker revalidation.");
   }
-  const captures = [authorityInput.allOn, authorityInput.acceptedProfile, ...authorityInput.channels];
-  const roles = expectedRoles();
+  const source = request.sources.find((candidate) => candidate.role === "all_on");
+  if (!source) {
+    throw new FixedRigProcessingWorkerProtocolError(
+      "authority_identity_failed",
+      "Main processing authority omitted the exact all-on source.",
+    );
+  }
+  const roleCapture = authorityInput.allOn;
+  const capture = roleCapture.capture;
+  const expectedReal = await realpath(path.join(sideReal, ...source.relativePath.split("/")));
+  const actualReal = await realpath(capture.outputFilePath);
   if (
-    captures.length !== roles.length
-    || captures.some((capture, index) => capture.role !== request.sources[index]?.captureRole)
+    !isContained(sideReal, expectedReal) || !isContained(sideReal, actualReal) ||
+    path.relative(expectedReal, actualReal) !== "" ||
+    roleCapture.role !== source.captureRole ||
+    roleCapture.label !== source.label ||
+    JSON.stringify(roleCapture.channel) !== JSON.stringify(source.channel) ||
+    capture.sha256 !== source.sha256 || capture.byteSize !== source.byteSize ||
+    capture.imageWidth !== source.imageWidth || capture.imageHeight !== source.imageHeight ||
+    capture.mimeType !== source.mimeType ||
+    canonicalTimestamp(capture.timestamp, source.role) !== source.timestamp
   ) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Main processing authority roles were missing, duplicated, or reordered.");
-  }
-  for (const [index, roleCapture] of captures.entries()) {
-    const source = request.sources[index]!;
-    const capture = roleCapture.capture;
-    const expectedReal = await realpath(path.join(sideReal, ...source.relativePath.split("/")));
-    const actualReal = await realpath(capture.outputFilePath);
-    if (
-      !isContained(sideReal, expectedReal) || !isContained(sideReal, actualReal) ||
-      path.relative(expectedReal, actualReal) !== "" ||
-      roleCapture.role !== source.captureRole ||
-      roleCapture.label !== source.label ||
-      JSON.stringify(roleCapture.channel) !== JSON.stringify(source.channel) ||
-      capture.sha256 !== source.sha256 || capture.byteSize !== source.byteSize ||
-      capture.imageWidth !== source.imageWidth || capture.imageHeight !== source.imageHeight ||
-      capture.mimeType !== source.mimeType || canonicalTimestamp(capture.timestamp, source.role) !== source.timestamp
-    ) {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `Main processing ${source.role} input did not match its revalidated worker source.`);
-    }
-  }
-}
-
-function sameOrderedRoles(actual: readonly string[], expected: readonly string[]): boolean {
-  return actual.length === expected.length && actual.every((role, index) => role === expected[index]);
-}
-
-function assertFiniteNonNegative(value: unknown, label: string, maximum: number): void {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `${label} is outside its bounded range.`);
+    throw new FixedRigProcessingWorkerProtocolError(
+      "authority_identity_failed",
+      "Main processing all-on input did not match its revalidated worker source.",
+    );
   }
 }
 
@@ -680,13 +675,6 @@ function assertBoundedTextArray(value: unknown, label: string, maximumItems = 10
   }
 }
 
-function assertNumberTuple(value: unknown, label: string, minimum: number, maximum: number): void {
-  if (!Array.isArray(value) || value.length !== 4) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `${label} was not an exact four-value tuple.`);
-  }
-  value.forEach((entry, index) => assertFiniteBounded(entry, `${label}[${index}]`, minimum, maximum));
-}
-
 function authorityStringContainsForbiddenValue(value: string): boolean {
   return (
     /[\u0000-\u001f\u007f]/.test(value) ||
@@ -707,7 +695,7 @@ function authorityStringContainsForbiddenValue(value: string): boolean {
   );
 }
 
-function assertPathFreeAuthorityValue(value: unknown, depth = 0): void {
+function assertPathFreeAuthorityValue(value: unknown, depth = 0, maximumArrayItems = 500): void {
   if (depth > 16) {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority nesting exceeded its bounded protocol.");
   }
@@ -725,7 +713,7 @@ function assertPathFreeAuthorityValue(value: unknown, depth = 0): void {
     return;
   }
   if (Array.isArray(value)) {
-    if (value.length > 500) {
+    if (value.length > maximumArrayItems) {
       throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority array exceeded its bounded protocol.");
     }
     value.forEach((entry) => assertPathFreeAuthorityValue(entry, depth + 1));
@@ -737,26 +725,19 @@ function assertPathFreeAuthorityValue(value: unknown, depth = 0): void {
   if (Object.keys(value).length > 100) {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority object exceeded its bounded protocol.");
   }
+  const isObservedDenseContour =
+    (value as { schemaVersion?: unknown }).schemaVersion ===
+    "ten-kings-card-geometry-observed-dense-contour-v1";
   for (const [key, entry] of Object.entries(value)) {
     if (/(?:path|file|uri|url|body|blob|buffer|base64|bytes|binary|payload)/i.test(key) && key !== "sourceByteSize") {
       throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority included a forbidden path or image-body field.");
     }
-    assertPathFreeAuthorityValue(entry, depth + 1);
+    assertPathFreeAuthorityValue(
+      entry,
+      depth + 1,
+      isObservedDenseContour && key === "points" ? 32_768 : 500,
+    );
   }
-}
-
-function cornerDelta(
-  left: NonNullable<FixedRigFullResolutionGeometryAuthority["inspectedRoles"][number]["corners"]>,
-  right: NonNullable<FixedRigFullResolutionGeometryAuthority["inspectedRoles"][number]["corners"]>,
-): number {
-  return Math.max(...(["topLeft", "topRight", "bottomRight", "bottomLeft"] as const).map((corner) =>
-    Math.hypot(left[corner].x - right[corner].x, left[corner].y - right[corner].y)));
-}
-
-function rotationDelta(left: number, right: number): number {
-  let delta = Math.abs(left - right) % 180;
-  if (delta > 90) delta = 180 - delta;
-  return delta;
 }
 
 function assertFinitePoint(value: unknown, label: string): void {
@@ -809,24 +790,6 @@ function assertPlacementOffset(value: unknown, label: string, maximum: number): 
   assertFiniteBounded(offset.maxAxis, `${label}.maxAxis`, 0, maximum);
 }
 
-function assertPolarityTuple(value: unknown, label: string): void {
-  if (!Array.isArray(value) || value.length !== 4) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `${label} was not an exact four-value tuple.`);
-  }
-  value.forEach((entry, index) => assertExactEnum(entry, ["lighter_inside", "darker_inside"], `${label}[${index}]`));
-}
-
-function assertReasonList(value: unknown, label: string): void {
-  const allowed = [
-    "coverage", "aspect", "clearance", "side_gradient", "side_signed_gradient",
-    "side_polarity_coherence", "total_gradient",
-  ];
-  if (!Array.isArray(value) || value.length > allowed.length || new Set(value).size !== value.length) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `${label} was malformed.`);
-  }
-  value.forEach((entry, index) => assertExactEnum(entry, allowed, `${label}[${index}]`));
-}
-
 export function validateFixedRigProcessingWorkerAuthority(
   request: FixedRigProcessingWorkerRequest,
   authority: FixedRigFullResolutionGeometryAuthority,
@@ -834,12 +797,11 @@ export function validateFixedRigProcessingWorkerAuthority(
   if (!authority || typeof authority !== "object") {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker geometry authority was missing.");
   }
-  assertExactKeys(authority, ["version", "primaryRole", "authoritativeRole", "resolution", "source", "consensus", "inspectedRoles"], "Worker authority");
-  if (!authority.source || typeof authority.source !== "object" || !authority.consensus || typeof authority.consensus !== "object") {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority source or consensus was missing.");
+  assertExactKeys(authority, ["version", "resolution", "source"], "Worker authority");
+  if (!authority.source || typeof authority.source !== "object") {
+    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority source was missing.");
   }
   assertExactKeys(authority.source, ["role", "sourceSha256", "sourceByteSize", "sourceImageId", "sourceFrameId", "image", "geometry"], "Worker authority source");
-  assertExactKeys(authority.consensus, ["required", "agreeingRoles", "maximumCornerDeltaPixels", "maximumRotationDeltaDegrees"], "Worker authority consensus");
   if (!authority.source.image || typeof authority.source.image !== "object" || !authority.source.geometry || typeof authority.source.geometry !== "object") {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority geometry or image metadata was missing.");
   }
@@ -854,7 +816,7 @@ export function validateFixedRigProcessingWorkerAuthority(
     "version", "detectionPolicy", "side", "placementState", "adjustmentReason", "geometrySource", "captureMode",
     "confidenceBasis", "detectionUsed", "manualOverrideUsed", "corners", "detectedCorners", "boundingBox",
     "rotationDegrees", "skewDegrees", "confidence", "sourceImageId", "sourceFrameId", "timestamp", "image",
-    "semanticOrientation", "placement", "detection", "warnings",
+    "semanticOrientation", "placement", "detection", "observedDenseContour", "warnings",
   ], "Worker authority geometry");
   if (!geometry.image || typeof geometry.image !== "object" || !geometry.semanticOrientation || typeof geometry.semanticOrientation !== "object" ||
       !geometry.placement || typeof geometry.placement !== "object" || !geometry.detection || typeof geometry.detection !== "object") {
@@ -899,19 +861,19 @@ export function validateFixedRigProcessingWorkerAuthority(
     }
   }
   if (
-    geometry.placement.withinFrame !== true || geometry.placement.withinAspectTolerance !== true ||
-    geometry.placement.withinCoverageTolerance !== true || geometry.placement.withinNormalizationSkewTolerance !== true ||
-    geometry.placement.confidenceReady !== true
+    geometry.placement.withinFrame !== true ||
+    geometry.placement.withinNormalizationSkewTolerance !== true
   ) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker Ready geometry contradicted its placement gates.");
+    throw new FixedRigProcessingWorkerProtocolError(
+      "authority_identity_failed",
+      "Worker Ready geometry contradicted its physical frame or normalization-skew envelope.",
+    );
   }
   const reportedSkew = geometry.skewDegrees as number;
-  const expectedConfidenceReady = geometry.confidence >= geometry.placement.minReadyConfidence;
   const expectedSkewReady = Math.abs(reportedSkew) <= geometry.placement.maxSkewDegrees + 0.25;
   const expectedNormalizationSkewReady =
     Math.abs(reportedSkew) <= geometry.placement.maxNormalizationSkewDegrees + 0.25;
   if (
-    geometry.placement.confidenceReady !== expectedConfidenceReady ||
     geometry.placement.withinSkewTolerance !== expectedSkewReady ||
     geometry.placement.withinNormalizationSkewTolerance !== expectedNormalizationSkewReady ||
     geometry.placement.maxNormalizationSkewDegrees < geometry.placement.maxSkewDegrees
@@ -921,40 +883,22 @@ export function validateFixedRigProcessingWorkerAuthority(
   assertAllowedKeys(geometry.detection, [
     "method", "backgroundLuma", "backgroundColor", "backgroundNoise", "contrastRange", "foregroundThreshold",
     "foregroundPixelFraction", "morphologyRadius", "componentPixelFraction", "rectangularFill", "measuredAspectRatio",
-    "expectedAspectRatio", "relativeAspectError", "analysisWidth", "analysisHeight", "perimeterGradientStrength",
-    "perimeterSideStrengths", "perimeterSignedSideStrengths", "perimeterSidePolarityConsistency", "perimeterSidePolarity",
-    "perimeterProvisionalCandidateCount", "perimeterClosestRejectedCandidate", "perimeterCandidateCount",
+    "expectedAspectRatio", "relativeAspectError", "analysisWidth", "analysisHeight",
   ], "Worker geometry detection");
   assertExactEnum(
     geometry.detection.method,
-    ["solid_plate_color_component_pca_v2", "perimeter_gradient_rectangle_v3"],
+    ["solid_plate_color_component_pca_v2"],
     "Worker geometry detection method",
   );
-  if (geometry.detection.method === "solid_plate_color_component_pca_v2") {
-    assertExactKeys(geometry.detection, [
-      "method", "backgroundLuma", "backgroundColor", "backgroundNoise", "contrastRange", "foregroundThreshold",
-      "foregroundPixelFraction", "morphologyRadius", "componentPixelFraction", "rectangularFill", "measuredAspectRatio",
-      "expectedAspectRatio", "relativeAspectError", "analysisWidth", "analysisHeight",
-    ], "Worker Ready solid-plate diagnostics");
-  } else {
-    assertExactKeys(geometry.detection, [
-      "method", "backgroundLuma", "contrastRange", "foregroundThreshold", "foregroundPixelFraction",
-      "expectedAspectRatio", "analysisWidth", "analysisHeight", "measuredAspectRatio", "relativeAspectError",
-      "perimeterGradientStrength", "perimeterSideStrengths", "perimeterSignedSideStrengths",
-      "perimeterSidePolarityConsistency", "perimeterSidePolarity", "perimeterCandidateCount",
-      "perimeterProvisionalCandidateCount",
-    ], "Worker Ready perimeter diagnostics");
-  }
   assertFiniteBounded(geometry.detection.backgroundLuma, "Worker detection background luma", 0, 255);
   assertFiniteBounded(geometry.detection.contrastRange, "Worker detection contrast range", 0, 255);
   assertFiniteBounded(geometry.detection.foregroundThreshold, "Worker detection threshold", 0, 255);
   assertFiniteBounded(geometry.detection.foregroundPixelFraction, "Worker foreground fraction", 0, 1);
-  assertFiniteBounded(geometry.detection.expectedAspectRatio, "Worker expected aspect ratio", 1, 10);
   assertFiniteBounded(geometry.detection.analysisWidth, "Worker detection analysis width", 1, MAX_IMAGE_DIMENSION, true);
   assertFiniteBounded(geometry.detection.analysisHeight, "Worker detection analysis height", 1, MAX_IMAGE_DIMENSION, true);
   for (const [key, maximum] of [
     ["backgroundNoise", 255], ["componentPixelFraction", 1], ["rectangularFill", 1],
-    ["measuredAspectRatio", 10], ["relativeAspectError", 10], ["perimeterGradientStrength", 2_048],
+    ["measuredAspectRatio", 10], ["relativeAspectError", 10],
   ] as const) {
     const value = geometry.detection[key];
     if (value !== undefined) assertFiniteBounded(value, `Worker detection ${key}`, 0, maximum);
@@ -962,21 +906,8 @@ export function validateFixedRigProcessingWorkerAuthority(
   if (geometry.detection.morphologyRadius !== undefined) {
     assertFiniteBounded(geometry.detection.morphologyRadius, "Worker detection morphology radius", 0, 100, true);
   }
-  for (const key of ["perimeterCandidateCount", "perimeterProvisionalCandidateCount"] as const) {
-    const value = geometry.detection[key];
-    if (value !== undefined) assertFiniteBounded(value, `Worker detection ${key}`, 0, 10_000_000, true);
-  }
-  if (geometry.detection.perimeterSideStrengths !== undefined) {
-    assertNumberTuple(geometry.detection.perimeterSideStrengths, "Worker perimeter side strengths", 0, 255);
-  }
-  if (geometry.detection.perimeterSignedSideStrengths !== undefined) {
-    assertNumberTuple(geometry.detection.perimeterSignedSideStrengths, "Worker signed perimeter side strengths", -255, 255);
-  }
-  if (geometry.detection.perimeterSidePolarityConsistency !== undefined) {
-    assertNumberTuple(geometry.detection.perimeterSidePolarityConsistency, "Worker perimeter polarity consistency", 0, 1);
-  }
-  if (geometry.detection.perimeterSidePolarity !== undefined) {
-    assertPolarityTuple(geometry.detection.perimeterSidePolarity, "Worker perimeter polarity");
+  if (geometry.detection.expectedAspectRatio !== undefined) {
+    assertFiniteBounded(geometry.detection.expectedAspectRatio, "Worker expected aspect ratio", 1, 10);
   }
   assertFiniteCorners(geometry.corners, "Worker geometry corners");
   if (geometry.detectedCorners === null || geometry.detectedCorners === undefined) {
@@ -1023,47 +954,13 @@ export function validateFixedRigProcessingWorkerAuthority(
     assertFiniteBounded(geometry.detection.backgroundColor.g, "Worker background green", 0, 255, true);
     assertFiniteBounded(geometry.detection.backgroundColor.b, "Worker background blue", 0, 255, true);
   }
-  if (geometry.detection.perimeterClosestRejectedCandidate !== undefined) {
-    const rejected = geometry.detection.perimeterClosestRejectedCandidate;
-    if (!rejected || typeof rejected !== "object") {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker rejected-candidate diagnostics were malformed.");
-    }
-    assertExactKeys(rejected, [
-      "reasons", "measuredAspectRatio", "cardCoverage", "clearance", "sideStrengths", "signedSideStrengths",
-      "sidePolarityConsistency", "sidePolarity",
-    ], "Worker rejected-candidate diagnostics");
-    assertReasonList(rejected.reasons, "Worker rejected-candidate reasons");
-    assertFiniteBounded(rejected.measuredAspectRatio, "Worker rejected-candidate aspect ratio", 0, 10);
-    assertFiniteBounded(rejected.cardCoverage, "Worker rejected-candidate coverage", 0, 1);
-    assertFiniteBounded(rejected.clearance, "Worker rejected-candidate clearance", 0, MAX_IMAGE_DIMENSION);
-    assertNumberTuple(rejected.sideStrengths, "Worker rejected-candidate side strengths", 0, 255);
-    assertNumberTuple(rejected.signedSideStrengths, "Worker rejected-candidate signed strengths", -255, 255);
-    assertNumberTuple(rejected.sidePolarityConsistency, "Worker rejected-candidate polarity consistency", 0, 1);
-    assertPolarityTuple(rejected.sidePolarity, "Worker rejected-candidate polarity");
-  }
-  if (geometry.detection.method === "perimeter_gradient_rectangle_v3") {
-    for (const value of [
-      geometry.detection.perimeterGradientStrength,
-      geometry.detection.perimeterSideStrengths,
-      geometry.detection.perimeterSignedSideStrengths,
-      geometry.detection.perimeterSidePolarityConsistency,
-      geometry.detection.perimeterSidePolarity,
-      geometry.detection.perimeterCandidateCount,
-      geometry.detection.perimeterProvisionalCandidateCount,
-    ]) {
-      if (value === undefined) {
-        throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker Ready perimeter authority omitted required diagnostics.");
-      }
-    }
-  }
-  const source = request.sources.find((candidate) => candidate.role === authority.authoritativeRole);
-  const allOnSource = request.sources[0]!;
-  const acceptedSource = request.sources[1]!;
+  const source = request.sources.find((candidate) => candidate.role === "all_on");
+  const observedDenseContour = authority.source.geometry.observedDenseContour;
   if (
     authority.version !== "fixed-rig-full-resolution-geometry-authority-v1" ||
     !source ||
-    authority.primaryRole !== "all_on" ||
-    authority.source.role !== source.role ||
+    authority.resolution !== "primary_all_on_dense_contour" ||
+    authority.source.role !== "all_on" ||
     authority.source.sourceSha256 !== source.sha256 ||
     authority.source.sourceByteSize !== source.byteSize ||
     authority.source.sourceImageId !== source.sourceImageId ||
@@ -1083,163 +980,18 @@ export function validateFixedRigProcessingWorkerAuthority(
     authority.source.geometry.confidenceBasis !== "automatic_detection" ||
     authority.source.geometry.detectionUsed !== true || authority.source.geometry.manualOverrideUsed !== false ||
     authority.source.geometry.placementState !== "ready" || authority.source.geometry.corners === null ||
-    authority.source.geometry.rotationDegrees === null || !Number.isFinite(authority.source.geometry.rotationDegrees)
+    authority.source.geometry.rotationDegrees === null || !Number.isFinite(authority.source.geometry.rotationDegrees) ||
+    !observedDenseContour ||
+    observedDenseContour.pointCount < 16 ||
+    !verifyCardGeometryObservedDenseContourV1(
+      observedDenseContour,
+      source.imageWidth,
+      source.imageHeight,
+    )
   ) {
     throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker geometry authority did not match the exact captured source identity.");
   }
   assertCornersWithinImage(authority.source.geometry.corners, source.imageWidth, source.imageHeight, "Worker authoritative corners");
-  if (allOnSource.imageWidth !== acceptedSource.imageWidth || allOnSource.imageHeight !== acceptedSource.imageHeight) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority primary captured-role dimensions did not match.");
-  }
-  if (!Array.isArray(authority.inspectedRoles) || !Array.isArray(authority.consensus?.agreeingRoles)) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority inspection or consensus metadata is missing.");
-  }
-  if (typeof authority.consensus.required !== "boolean" || authority.inspectedRoles.length > expectedRoles().length) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority consensus primitives were invalid.");
-  }
-  const inspectedRoles = authority.inspectedRoles.map((inspection) => inspection.role);
-  const agreeingRoles = authority.consensus.agreeingRoles;
-  if (new Set(inspectedRoles).size !== inspectedRoles.length || new Set(agreeingRoles).size !== agreeingRoles.length) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority contains duplicate inspected or agreeing roles.");
-  }
-  for (const inspection of authority.inspectedRoles) {
-    if (!inspection || typeof inspection !== "object") {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority inspection was malformed.");
-    }
-    assertExactKeys(inspection, [
-      "role", "authorityEligibility", "sourceSha256", "sourceByteSize", "placementState", "adjustmentReason",
-      "confidence", "corners", "rotationDegrees", "detectionMethod", "warnings",
-    ], "Worker authority inspection");
-    const inspectedSource = request.sources.find((candidate) => candidate.role === inspection.role);
-    const expectedEligibility = inspection.role === "all_on"
-      ? "primary"
-      : inspection.role === "accepted_profile" ? "secondary" : "directional_consensus";
-    if (
-      !inspectedSource || inspection.authorityEligibility !== expectedEligibility ||
-      inspection.sourceSha256 !== inspectedSource.sha256 || inspection.sourceByteSize !== inspectedSource.byteSize ||
-      typeof inspection.confidence !== "number" || !Number.isFinite(inspection.confidence)
-    ) {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority inspection did not match its exact source role.");
-    }
-    assertExactEnum(inspection.placementState, ["not_detected", "adjust_card", "ready"], `Worker ${inspection.role} placement state`);
-    if (inspection.placementState === "ready") {
-      if (inspection.adjustmentReason !== null || inspection.corners === null || inspection.rotationDegrees === null) {
-        throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `Worker ${inspection.role} Ready inspection contradicted its geometry or reason.`);
-      }
-    } else if (inspection.placementState === "not_detected") {
-      if (inspection.adjustmentReason !== "not_detected" || inspection.corners !== null || inspection.rotationDegrees !== null) {
-        throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `Worker ${inspection.role} not-detected inspection contradicted its geometry or reason.`);
-      }
-    } else {
-      assertExactEnum(inspection.adjustmentReason, [
-        "outside_frame", "unsafe_scale", "rotate_top_up", "wrong_aspect", "low_confidence",
-      ], `Worker ${inspection.role} adjustment reason`);
-      if (inspection.corners === null || inspection.rotationDegrees === null) {
-        throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", `Worker ${inspection.role} Adjust Card inspection omitted detected geometry.`);
-      }
-    }
-    assertFiniteBounded(inspection.confidence, `Worker ${inspection.role} confidence`, 0, 1);
-    assertExactEnum(
-      inspection.detectionMethod,
-      ["solid_plate_color_component_pca_v2", "perimeter_gradient_rectangle_v3"],
-      `Worker ${inspection.role} detection method`,
-    );
-    assertBoundedTextArray(inspection.warnings, `Worker ${inspection.role} warnings`);
-    if (inspection.corners !== null) assertFiniteCorners(inspection.corners, `Worker ${inspection.role} inspection corners`);
-    if (inspection.rotationDegrees !== null) {
-      assertFiniteBounded(inspection.rotationDegrees, `Worker ${inspection.role} rotation`, -180, 180);
-    }
-    if (inspection.placementState === "ready" && inspection.corners !== null) {
-      assertCornersWithinImage(inspection.corners, inspectedSource.imageWidth, inspectedSource.imageHeight, `Worker ${inspection.role} inspection corners`);
-    }
-  }
-  const authoritativeInspection = authority.inspectedRoles.find((inspection) => inspection.role === authority.authoritativeRole);
-  if (
-    !authoritativeInspection ||
-    authoritativeInspection.placementState !== authority.source.geometry.placementState ||
-    authoritativeInspection.adjustmentReason !== authority.source.geometry.adjustmentReason ||
-    authoritativeInspection.confidence !== authority.source.geometry.confidence ||
-    JSON.stringify(authoritativeInspection.corners) !== JSON.stringify(authority.source.geometry.corners) ||
-    authoritativeInspection.rotationDegrees !== authority.source.geometry.rotationDegrees ||
-    authoritativeInspection.detectionMethod !== authority.source.geometry.detection.method ||
-    JSON.stringify(authoritativeInspection.warnings) !== JSON.stringify(authority.source.geometry.warnings)
-  ) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authoritative inspection did not match its geometry source.");
-  }
-  for (const role of agreeingRoles) {
-    const inspection = authority.inspectedRoles.find((candidate) => candidate.role === role);
-    if (!inspection || inspection.placementState !== "ready" || !inspection.corners || inspection.rotationDegrees == null) {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker consensus included a source that was not inspected Ready.");
-    }
-  }
-  if (authority.resolution === "primary_all_on") {
-    const allOnInspection = authority.inspectedRoles[0];
-    const acceptedInspection = authority.inspectedRoles[1];
-    const acceptedAgrees = Boolean(
-      allOnInspection?.placementState === "ready" && allOnInspection.corners && allOnInspection.rotationDegrees != null &&
-      acceptedInspection?.placementState === "ready" && acceptedInspection.corners && acceptedInspection.rotationDegrees != null &&
-      cornerDelta(allOnInspection.corners, acceptedInspection.corners) <= Math.min(allOnSource.imageWidth, allOnSource.imageHeight) * 0.025 &&
-      rotationDelta(allOnInspection.rotationDegrees, acceptedInspection.rotationDegrees) <= 3
-    );
-    const expectedAgreeing = acceptedAgrees ? ["all_on", "accepted_profile"] : ["all_on"];
-    if (
-      authority.authoritativeRole !== "all_on" || authority.consensus.required !== false ||
-      !sameOrderedRoles(inspectedRoles, ["all_on", "accepted_profile"]) ||
-      !sameOrderedRoles(agreeingRoles, expectedAgreeing)
-    ) {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Primary worker authority did not preserve exact all-on inspection and consensus semantics.");
-    }
-  } else if (authority.resolution === "secondary_accepted_profile_consensus") {
-    const expectedAgreeing = [
-      "accepted_profile",
-      ...authority.inspectedRoles.filter((inspection) => /^channel_[1-8]$/.test(inspection.role) && inspection.placementState === "ready").map((inspection) => inspection.role),
-    ];
-    if (
-      authority.authoritativeRole !== "accepted_profile" || authority.consensus.required !== true ||
-      !sameOrderedRoles(inspectedRoles, expectedRoles()) || agreeingRoles[0] !== "accepted_profile" ||
-      agreeingRoles.length < 2 || agreeingRoles.includes("all_on") ||
-      agreeingRoles.slice(1).some((role) => !/^channel_[1-8]$/.test(role)) ||
-      !sameOrderedRoles(agreeingRoles, expectedAgreeing) || authority.inspectedRoles[0]?.placementState === "ready"
-    ) {
-      throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Secondary worker authority did not preserve exact captured-role consensus semantics.");
-    }
-  } else {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker authority cannot claim a manual or unknown resolution.");
-  }
-  assertFiniteNonNegative(authority.consensus.maximumCornerDeltaPixels, "Worker consensus corner delta", MAX_IMAGE_DIMENSION);
-  assertFiniteNonNegative(authority.consensus.maximumRotationDeltaDegrees, "Worker consensus rotation delta", 180);
-  const agreeingInspections = agreeingRoles.map((role) => authority.inspectedRoles.find((inspection) => inspection.role === role)!);
-  const agreeingSources = agreeingRoles.map((role) => request.sources.find((candidate) => candidate.role === role)!);
-  if (agreeingSources.some((candidate) =>
-    candidate.imageWidth !== agreeingSources[0]!.imageWidth || candidate.imageHeight !== agreeingSources[0]!.imageHeight)) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker consensus claimed agreement across mismatched source dimensions.");
-  }
-  let expectedMaximumCornerDelta = 0;
-  let expectedMaximumRotationDelta = 0;
-  for (let leftIndex = 0; leftIndex < agreeingInspections.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < agreeingInspections.length; rightIndex += 1) {
-      const left = agreeingInspections[leftIndex]!;
-      const right = agreeingInspections[rightIndex]!;
-      const currentCornerDelta = cornerDelta(left.corners!, right.corners!);
-      const currentRotationDelta = rotationDelta(left.rotationDegrees!, right.rotationDegrees!);
-      const leftSource = request.sources.find((candidate) => candidate.role === left.role)!;
-      const rightSource = request.sources.find((candidate) => candidate.role === right.role)!;
-      const tolerance = Math.min(leftSource.imageWidth, leftSource.imageHeight, rightSource.imageWidth, rightSource.imageHeight) * 0.025;
-      if (currentCornerDelta > tolerance || currentRotationDelta > 3) {
-        throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker consensus sources did not agree pairwise.");
-      }
-      expectedMaximumCornerDelta = Math.max(expectedMaximumCornerDelta, currentCornerDelta);
-      expectedMaximumRotationDelta = Math.max(expectedMaximumRotationDelta, currentRotationDelta);
-    }
-  }
-  const roundedCornerDelta = Math.round(expectedMaximumCornerDelta * 1000) / 1000;
-  const roundedRotationDelta = Math.round(expectedMaximumRotationDelta * 1000) / 1000;
-  if (
-    authority.consensus.maximumCornerDeltaPixels !== roundedCornerDelta ||
-    authority.consensus.maximumRotationDeltaDegrees !== roundedRotationDelta
-  ) {
-    throw new FixedRigProcessingWorkerProtocolError("authority_identity_failed", "Worker consensus metrics did not match the inspected captured roles.");
-  }
   assertPathFreeAuthorityValue(authority);
   const serialized = JSON.stringify(authority);
   if (

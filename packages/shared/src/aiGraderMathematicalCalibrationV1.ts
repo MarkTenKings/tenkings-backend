@@ -471,15 +471,15 @@ const manifestWithoutHash = {
     invalidPixelsMayProveCleanCondition: false,
     invalidPixelsMayBecomePhysicalDefects: false,
     excludedEvidenceCoveragePolicy: {
-      minimumFullCardValidPixelCoverage: 0.7,
-      minimumContiguousUngradableRegionPixels: 12,
       recoveredEvidenceMayProceed: true,
-      recaptureFormula:
-        'recaptureRequired = validEvidenceCoverage < 0.70 OR any contiguous expected-card region with invalid condition evidence contains at least 12 pixels',
+      wholeSideVetoPolicy:
+        'condition-evidence coverage never vetoes a sealed observed card contour; a missing observed material contour remains a genuinely unusable capture',
+      localizedCoveragePolicy:
+        'localized invalid regions of any size remain excluded from scoring and lower private evidence quality only; they never veto the observable side',
       alternateChannelRecoveryRule:
         'a pixel remains condition-valid when at least surfaceEvidence.minValidDirectionalObservations calibrated non-glare channels remain usable; invalid observations from other channels reduce confidence only',
       computedLimitationRule:
-        'excluded expected-card pixels below both recapture gates are visible evidence-quality limitations with zero condition deduction and recaptureRequired=false',
+        'all excluded expected-card pixels are private visible evidence-quality limitations with zero condition deduction and recaptureRequired=false',
     },
     designDifferencePolicy: "exact_approved_registered_design_artifact_only",
     arbitrarySymmetryOrInternetReferenceAllowed: false,
@@ -596,7 +596,7 @@ const manifestWithoutHash = {
       scuffTextureResponse:
         "clamp(localRms(highPassRelief) / reliefFullScale, 0, 1)",
       deformationResponse:
-        "clamp(localMean(relief) / reliefFullScale, 0, 1)",
+        "clamp(max(0, supportedLocalMean(relief, deformationWindowRadiusMm) - supportedLocalMean(relief, deformationWindowRadiusMm + scuffWindowRadiusMm)) / reliefFullScale, 0, 1); support is the observed material with valid calibrated directional evidence",
       delaminationResponse:
         "deformationResponse within delaminationEdgeBandMm",
       edgeRoughnessIndex:
@@ -952,6 +952,28 @@ export const mathematicalEvidenceReferenceV1Schema = z.strictObject({
   ).optional(),
 });
 
+export const MATHEMATICAL_OBSERVABLE_EVIDENCE_ADMISSION_V1_VERSION =
+  "mathematical_observable_evidence_admission_v1" as const;
+
+export const mathematicalObservableEvidenceAdmissionV1Schema = z.strictObject({
+  schemaVersion: z.literal(MATHEMATICAL_OBSERVABLE_EVIDENCE_ADMISSION_V1_VERSION),
+  reason: z.literal("single_directional_channel_surface_observation"),
+  observedDirectionalChannelCount: z.number().int().min(1).max(
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount,
+  ),
+  candidateCorroboratingChannelRequirement: z.number().int().positive(),
+  nominalMeasurementDirectionalChannelCount: z.number().int().positive(),
+  requiredCalibratedChannelCount: z.literal(
+    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount,
+  ),
+  strongestChannelSupportFraction: fractionSchema,
+  minimumChannelSupportFraction: fractionSchema,
+  uncertaintyInflationU95: finiteNonnegativeSchema,
+  confidenceFormula: z.literal(
+    "min(validEvidenceCoverage, observedDirectionalChannelCount / requiredCalibratedChannelCount)",
+  ),
+});
+
 export const mathematicalMeasurementV1Schema = z
   .strictObject({
     schemaVersion: z.literal(MATHEMATICAL_MEASUREMENT_V1_SCHEMA_VERSION),
@@ -974,6 +996,7 @@ export const mathematicalMeasurementV1Schema = z
     usableDirectionalChannelCount: z.number().int().min(0).max(
       MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.calibrationAcceptance.requiredChannelCount,
     ),
+    observableEvidenceAdmission: mathematicalObservableEvidenceAdmissionV1Schema.optional(),
   })
   .superRefine((measurement, context) => {
     const combined = combineMeasurementUncertaintyU95(measurement.uncertaintyComponentsU95);
@@ -989,6 +1012,26 @@ export const mathematicalMeasurementV1Schema = z
     const assetKeys = measurement.evidence.map((entry) => `${entry.assetId.toLowerCase()}:${entry.regionId.toLowerCase()}:${entry.channelIndex ?? 0}`);
     if (new Set(assetKeys).size !== assetKeys.length) {
       context.addIssue({ code: "custom", path: ["evidence"], message: "must not contain duplicate evidence bindings" });
+    }
+    const observable = measurement.observableEvidenceAdmission;
+    if (observable) {
+      if (
+        observable.observedDirectionalChannelCount !==
+          measurement.usableDirectionalChannelCount ||
+        observable.observedDirectionalChannelCount >=
+          observable.nominalMeasurementDirectionalChannelCount ||
+        observable.strongestChannelSupportFraction <
+          observable.minimumChannelSupportFraction ||
+        measurement.uncertaintyComponentsU95.lightingChannelConfidence <
+          observable.uncertaintyInflationU95
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["observableEvidenceAdmission"],
+          message:
+            "must bind the actual limited channel count, supported observation, and uncertainty inflation",
+        });
+      }
     }
   });
 
@@ -1201,8 +1244,12 @@ function aggregateObservationPenaltyV1(
   worstWeight: number,
   averageWeight: number,
   formula: string,
+  allowObservableSubset = false,
 ): PenaltyAggregationV1 {
-  if (penalties.length !== requiredCount) {
+  if (
+    penalties.length !== requiredCount &&
+    (!allowObservableSubset || penalties.length < 2 || penalties.length > requiredCount)
+  ) {
     throw new RangeError(`Exactly ${requiredCount} observation penalties are required.`);
   }
   if (penalties.some((value) => !Number.isFinite(value) || value < 0)) {
@@ -1217,11 +1264,16 @@ function aggregateObservationPenaltyV1(
     worstPenalty: roundHalfAwayFromZero(worstPenalty, 6),
     averagePenalty: roundHalfAwayFromZero(averagePenalty, 6),
     observationPenalties: [...penalties],
-    formula,
+    formula: allowObservableSubset && penalties.length !== requiredCount
+      ? `${formula} Applied to ${penalties.length} observable physical locations; unobserved zero-coverage locations are excluded, never scored as defect-free.`
+      : formula,
   };
 }
 
-export function aggregateCornerScoreV1(penalties: readonly number[]): PenaltyAggregationV1 {
+export function aggregateCornerScoreV1(
+  penalties: readonly number[],
+  options: Readonly<{ allowObservableSubset?: boolean }> = {},
+): PenaltyAggregationV1 {
   const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners;
   return aggregateObservationPenaltyV1(
     penalties,
@@ -1229,10 +1281,14 @@ export function aggregateCornerScoreV1(penalties: readonly number[]): PenaltyAgg
     policy.worstWeight,
     policy.averageWeight,
     policy.formula,
+    options.allowObservableSubset === true,
   );
 }
 
-export function aggregateEdgeScoreV1(penalties: readonly number[]): PenaltyAggregationV1 {
+export function aggregateEdgeScoreV1(
+  penalties: readonly number[],
+  options: Readonly<{ allowObservableSubset?: boolean }> = {},
+): PenaltyAggregationV1 {
   const policy = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges;
   return aggregateObservationPenaltyV1(
     penalties,
@@ -1240,6 +1296,7 @@ export function aggregateEdgeScoreV1(penalties: readonly number[]): PenaltyAggre
     policy.worstWeight,
     policy.averageWeight,
     policy.formula,
+    options.allowObservableSubset === true,
   );
 }
 
@@ -1788,22 +1845,15 @@ export const mathematicalFindingV1Schema = z
     if (basis.calibrationProfileId !== finding.calibrationProfileId || basis.calibrationVersion !== finding.calibrationVersion) {
       context.addIssue({ code: "custom", path: ["measurements"], message: "must use the finding calibration profile and version" });
     }
-    const minimumCoverage = policy.element === "corners"
-      ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.minValidPixelCoverage
-      : policy.element === "edges"
-        ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.minValidPixelCoverage
-        : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidence.minValidPixelCoverage;
-    const minimumChannels = policy.element === "corners"
-      ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.corners.minUsableDirectionalChannels
-      : policy.element === "edges"
-        ? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.edges.minUsableDirectionalChannels
-        : MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.surfaceEvidence.minValidDirectionalObservations;
     if (
-      (basis.validEvidenceCoverage < minimumCoverage ||
-        basis.usableDirectionalChannelCount < minimumChannels) &&
-      finding.evidenceQuality !== "insufficient"
+      basis.observableEvidenceAdmission &&
+      (policy.element !== "surface" || finding.evidenceQuality !== "limited")
     ) {
-      context.addIssue({ code: "custom", path: ["evidenceQuality"], message: "must be insufficient when manifest valid-pixel or usable-channel evidence gates fail" });
+      context.addIssue({
+        code: "custom",
+        path: ["evidenceQuality"],
+        message: "observable single-channel surface measurements must be marked limited",
+      });
     }
     const calculation = calculateFindingDeductionV1({
       category: finding.category,
