@@ -12845,3 +12845,12 @@ Build Set Ops UI flow with:
 - Authorized plan: validate, commit, push, merge through required checks, sync the exact merged commit to the droplet, apply the additive migration through the documented production DB flow, verify the normal Vercel production deployment, and run the real end-to-end customer smoke test.
 - No destructive data operation is planned. The original dirty/conflicted AI Grader worktree remains untouched.
 - Isolated-branch validation passed: Prisma generate/validate, database build, 4/4 claim tests, targeted lint, `git diff --check`, and the exact Vercel build path with migrations disabled.
+
+## Session Update (2026-07-26, Live Rip customer assignment Production completion)
+
+- PR `#175` merged the green focused implementation into protected `main` at exact commit `d52fc4ba8b6cf9bb3e468ca8db6f3dbf17c59c6d`; post-merge GitHub CI run `30219068787` passed.
+- Authorized Vercel Production deployment `4ucSsW8Ymi8bLBHMmtwJzyoynVqy` applied additive migration `20260726190000_live_rip_customer_assignment`, reported all migrations successfully applied, completed successfully, and became the current `collect.tenkings.co` deployment for source `d52fc4b`.
+- The temporary Production-only `RUN_DB_MIGRATIONS` variable was removed after success. No restart, destructive set operation, or destructive database operation occurred.
+- Production pages `/live`, `/collection?section=live-rips`, and `/claim/live-rip/not-a-real-production-claim-token` returned `200`; all four new protected assignment/collection/claim/download API probes returned `401` without authentication.
+- Planned handoff action: merge these documentation-only Production results through protected `main`, then verify the ordinary Vercel deployment runs with migrations disabled and becomes healthy. No restart is planned.
+- The full real customer acceptance path still needs the actual authorized phone/account value: record or select one Production clip, assign it as an administrator, receive the exact SMS, authenticate/claim when applicable, and verify owner-only collection/watch/download access.

@@ -28531,3 +28531,17 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` passed.
 - The exact `VERCEL_ENV=preview RUN_DB_MIGRATIONS=false pnpm vercel:build` path passed, including database/shared/browser-rip/capture-helper builds, Next.js production compilation, all expected Live Rip routes, and the final Sharp/calibration runtime trace check.
 - A direct fresh-checkout Next.js build initially stopped because current main requires the capture-helper workspace package to be built first; the official Vercel build path performs that prerequisite and passed. This was not a Live Rip code failure.
+
+## 2026-07-26 - Live Rip customer assignment MVP production completion
+
+- Focused implementation commit `dbaf1fce` passed every required PR check and was merged through PR `#175` into protected `main` as `d52fc4ba8b6cf9bb3e468ca8db6f3dbf17c59c6d` at `2026-07-26T20:28:59Z`.
+- PR evidence was green: install/build, disposable PostgreSQL migration chain, all eight Docker image builds, Vercel preview, and Vercel preview comments. Post-merge GitHub CI run `30219068787` also completed successfully.
+- The one-time Production-only sensitive variable `RUN_DB_MIGRATIONS=true` was added in Vercel for the authorized migration redeploy. Deployment `4ucSsW8Ymi8bLBHMmtwJzyoynVqy` built exact source `d52fc4b`, applied `20260726190000_live_rip_customer_assignment`, reported `All migrations have been successfully applied`, completed in `1m 41s`, became `Ready`, and was promoted as the current Production deployment for `collect.tenkings.co`.
+- `RUN_DB_MIGRATIONS` was removed from the Vercel project immediately after the successful migration deployment. No restart or destructive database operation was performed.
+- Production-safe smoke evidence:
+  - `GET /live` returned `200`;
+  - `GET /collection?section=live-rips` returned `200`;
+  - `GET /claim/live-rip/not-a-real-production-claim-token` returned `200`;
+  - unauthenticated assignment, Live Rips collection, claim, and download API requests each returned `401`.
+- Planned handoff action: commit and merge these evidence-only handoff updates through protected `main`; allow the normal Vercel build with `RUN_DB_MIGRATIONS` absent, verify it skips migrations and reaches `Ready`, and make no restart.
+- The original dirty/conflicted AI Grader worktree remains untouched. The only unexecuted acceptance item is the real OBS-to-SMS-to-claim customer test because the authorized test phone/account value was not included in the conversation.
