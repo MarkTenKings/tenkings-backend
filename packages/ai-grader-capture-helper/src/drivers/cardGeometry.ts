@@ -591,10 +591,6 @@ function morphologyPass(
   return output;
 }
 
-function closeForegroundMask(mask: Uint8Array, width: number, height: number, radius: number): Uint8Array {
-  return morphologyPass(morphologyPass(mask, width, height, radius, "dilate"), width, height, radius, "erode");
-}
-
 /** Fill only background regions enclosed by foreground. Border-connected plate pixels stay background. */
 function fillForegroundHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
   const borderBackground = new Uint8Array(mask.length);
@@ -628,6 +624,156 @@ function fillForegroundHoles(mask: Uint8Array, width: number, height: number): U
     if (output[index] === 0 && borderBackground[index] === 0) output[index] = 1;
   }
   return output;
+}
+
+async function locallyNormalizedEdgeEvidence(
+  data: Buffer,
+  channels: number,
+  width: number,
+  height: number,
+  borderSize: number,
+): Promise<{
+  edgeMask: Uint8Array;
+  edgeStrength: Uint8Array;
+  backgroundNoise: number;
+  contrastRange: number;
+  foregroundThreshold: number;
+}> {
+  const pixelCount = width * height;
+  const gammaLuma = Buffer.allocUnsafe(pixelCount);
+  for (let index = 0; index < pixelCount; index += 1) {
+    const offset = index * channels;
+    const red = data[offset] ?? 0;
+    const green = data[offset + Math.min(1, channels - 1)] ?? red;
+    const blue = data[offset + Math.min(2, channels - 1)] ?? red;
+    const luma = clamp(0.2126 * red + 0.7152 * green + 0.0722 * blue, 0, 255);
+    // Dark evidence needs relative, not absolute, separation. A monotonic
+    // gamma expansion preserves every pixel ordering while making the same
+    // physical edge measurable across the fixture's illumination falloff.
+    gammaLuma[index] = Math.round(255 * Math.pow(luma / 255, 0.35));
+  }
+  const smoothed = await sharp(gammaLuma, {
+    raw: { width, height, channels: 1 },
+  })
+    .blur(1.2)
+    .greyscale()
+    .raw()
+    .toBuffer();
+  const magnitude = new Float32Array(pixelCount);
+  const magnitudeHistogram = new Uint32Array(256);
+  const borderMagnitudeHistogram = new Uint32Array(256);
+  let magnitudeCount = 0;
+  let borderMagnitudeCount = 0;
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      const topLeft = smoothed[index - width - 1] ?? 0;
+      const top = smoothed[index - width] ?? 0;
+      const topRight = smoothed[index - width + 1] ?? 0;
+      const left = smoothed[index - 1] ?? 0;
+      const right = smoothed[index + 1] ?? 0;
+      const bottomLeft = smoothed[index + width - 1] ?? 0;
+      const bottom = smoothed[index + width] ?? 0;
+      const bottomRight = smoothed[index + width + 1] ?? 0;
+      const gradientX = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
+      const gradientY = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
+      const value = Math.hypot(gradientX, gradientY);
+      magnitude[index] = value;
+      const bucket = Math.round(clamp(value, 0, 255));
+      magnitudeHistogram[bucket] = (magnitudeHistogram[bucket] ?? 0) + 1;
+      magnitudeCount += 1;
+      if (x < borderSize || x >= width - borderSize || y < borderSize || y >= height - borderSize) {
+        borderMagnitudeHistogram[bucket] = (borderMagnitudeHistogram[bucket] ?? 0) + 1;
+        borderMagnitudeCount += 1;
+      }
+    }
+  }
+  const backgroundNoise = histogramPercentile(
+    borderMagnitudeHistogram,
+    Math.max(1, borderMagnitudeCount),
+    0.8,
+  );
+  const contrastRange = histogramPercentile(
+    magnitudeHistogram,
+    Math.max(1, magnitudeCount),
+    0.999,
+  );
+  const lowThreshold = clamp(Math.max(2, backgroundNoise * 1.2), 2, 80);
+  const highThreshold = clamp(
+    Math.max(lowThreshold + 1, lowThreshold * 2.4),
+    lowThreshold + 1,
+    160,
+  );
+  const suppressed = new Uint8Array(pixelCount);
+  for (let y = 1; y < height - 1; y += 1) {
+    for (let x = 1; x < width - 1; x += 1) {
+      const index = y * width + x;
+      const value = magnitude[index] ?? 0;
+      if (value < lowThreshold) continue;
+      const topLeft = smoothed[index - width - 1] ?? 0;
+      const top = smoothed[index - width] ?? 0;
+      const topRight = smoothed[index - width + 1] ?? 0;
+      const left = smoothed[index - 1] ?? 0;
+      const right = smoothed[index + 1] ?? 0;
+      const bottomLeft = smoothed[index + width - 1] ?? 0;
+      const bottom = smoothed[index + width] ?? 0;
+      const bottomRight = smoothed[index + width + 1] ?? 0;
+      const gradientX = -topLeft + topRight - 2 * left + 2 * right - bottomLeft + bottomRight;
+      const gradientY = -topLeft - 2 * top - topRight + bottomLeft + 2 * bottom + bottomRight;
+      let angle = Math.atan2(gradientY, gradientX) * 180 / Math.PI;
+      if (angle < 0) angle += 180;
+      let firstNeighbor = 0;
+      let secondNeighbor = 0;
+      if (angle < 22.5 || angle >= 157.5) {
+        firstNeighbor = magnitude[index - 1] ?? 0;
+        secondNeighbor = magnitude[index + 1] ?? 0;
+      } else if (angle < 67.5) {
+        firstNeighbor = magnitude[index - width + 1] ?? 0;
+        secondNeighbor = magnitude[index + width - 1] ?? 0;
+      } else if (angle < 112.5) {
+        firstNeighbor = magnitude[index - width] ?? 0;
+        secondNeighbor = magnitude[index + width] ?? 0;
+      } else {
+        firstNeighbor = magnitude[index - width - 1] ?? 0;
+        secondNeighbor = magnitude[index + width + 1] ?? 0;
+      }
+      if (value >= firstNeighbor && value >= secondNeighbor) {
+        suppressed[index] = Math.round(clamp(value, 0, 255));
+      }
+    }
+  }
+  const edgeMask = new Uint8Array(pixelCount);
+  const queue = new Int32Array(pixelCount);
+  let head = 0;
+  let tail = 0;
+  for (let y = borderSize; y < height - borderSize; y += 1) {
+    for (let x = borderSize; x < width - borderSize; x += 1) {
+      const index = y * width + x;
+      if ((suppressed[index] ?? 0) < highThreshold) continue;
+      edgeMask[index] = 1;
+      queue[tail++] = index;
+    }
+  }
+  while (head < tail) {
+    const index = queue[head++] ?? 0;
+    const x = index % width;
+    const y = Math.floor(index / width);
+    for (let neighborY = Math.max(borderSize, y - 1); neighborY <= Math.min(height - borderSize - 1, y + 1); neighborY += 1) {
+      for (let neighborX = Math.max(borderSize, x - 1); neighborX <= Math.min(width - borderSize - 1, x + 1); neighborX += 1) {
+        const neighbor = neighborY * width + neighborX;
+        if (edgeMask[neighbor] !== 0 || (suppressed[neighbor] ?? 0) < lowThreshold) continue;
+        edgeMask[neighbor] = 1;
+        queue[tail++] = neighbor;
+      }
+    }
+  }
+  return {
+    edgeMask,
+    edgeStrength: suppressed,
+    backgroundNoise,
+    contrastRange,
+    foregroundThreshold: Math.round(highThreshold),
+  };
 }
 
 function labelForegroundComponents(mask: Uint8Array, differences: Uint8Array, width: number, height: number): {
@@ -807,45 +953,20 @@ async function attemptSolidPlateDetection(
     b: medianFromHistogram(borderBlueHistogram, borderCount),
   };
   const backgroundLuma = Math.round(0.2126 * backgroundColor.r + 0.7152 * backgroundColor.g + 0.0722 * backgroundColor.b);
-  const differenceHistogram = new Uint32Array(256);
-  const borderDifferenceHistogram = new Uint32Array(256);
-  const differences = new Uint8Array(pixelCount);
-  let borderDifferenceCount = 0;
-  for (let index = 0; index < pixelCount; index += 1) {
-    const offset = index * channels;
-    const red = data[offset] ?? 0;
-    const green = data[offset + Math.min(1, channels - 1)] ?? red;
-    const blue = data[offset + Math.min(2, channels - 1)] ?? red;
-    const difference = Math.round(
-      Math.sqrt(
-        (red - backgroundColor.r) ** 2 +
-        (green - backgroundColor.g) ** 2 +
-        (blue - backgroundColor.b) ** 2,
-      ) / Math.sqrt(3),
-    );
-    differences[index] = difference;
-    differenceHistogram[difference] = (differenceHistogram[difference] ?? 0) + 1;
-    const x = index % analysisWidth;
-    const y = Math.floor(index / analysisWidth);
-    if (x < borderSize || x >= analysisWidth - borderSize || y < borderSize || y >= analysisHeight - borderSize) {
-      borderDifferenceHistogram[difference] = (borderDifferenceHistogram[difference] ?? 0) + 1;
-      borderDifferenceCount += 1;
-    }
-  }
-  const contrastRange = histogramPercentile(differenceHistogram, pixelCount, 0.95);
-  // A clipped/edge-adjacent card can occupy part of the border sample. The
-  // 80th percentile remains representative of a solid plate until a large
-  // fraction of the frame perimeter is obstructed, which must never be Ready.
-  const backgroundNoise = histogramPercentile(borderDifferenceHistogram, borderDifferenceCount, 0.8);
-  // Plate noise, not interior artwork contrast, sets the material-separation
-  // threshold. Letting the 95th-percentile artwork contrast raise this value
-  // can erase a real low-contrast outer cut and select only bright printing.
-  // The two-level floor is below ordinary visible Mono8 separation while the
-  // measured plate-noise multiplier still rejects a truly uniform fixture.
-  const foregroundThreshold = Math.round(
-    clamp(Math.max(2, backgroundNoise * 3.5), 2, 80),
+  const edgeEvidence = await locallyNormalizedEdgeEvidence(
+    data,
+    channels,
+    analysisWidth,
+    analysisHeight,
+    borderSize,
   );
-  const morphologyRadius = Math.round(clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.003), 1, 4));
+  const differences = edgeEvidence.edgeStrength;
+  const backgroundNoise = edgeEvidence.backgroundNoise;
+  const contrastRange = edgeEvidence.contrastRange;
+  const foregroundThreshold = edgeEvidence.foregroundThreshold;
+  const morphologyRadius = Math.round(
+    clamp(Math.round(Math.min(analysisWidth, analysisHeight) * 0.0045), 1, 5),
+  );
   const diagnosticsBase: CardGeometryDetectionDiagnostics = {
     method: "solid_plate_color_component_pca_v2",
     backgroundLuma,
@@ -859,17 +980,13 @@ async function attemptSolidPlateDetection(
     analysisWidth,
     analysisHeight,
   };
-  if (contrastRange < Math.max(1, backgroundNoise * 1.25)) {
+  if (contrastRange < Math.max(8, foregroundThreshold * 1.25)) {
     return { diagnostics: diagnosticsBase, reason: "Image contrast is too low to distinguish the card from the solid base plate." };
   }
 
-  const initialMask = new Uint8Array(pixelCount);
-  for (let index = 0; index < differences.length; index += 1) {
-    if ((differences[index] ?? 0) < foregroundThreshold) continue;
-    initialMask[index] = 1;
-  }
+  const initialMask = edgeEvidence.edgeMask;
   const mask = fillForegroundHoles(
-    closeForegroundMask(initialMask, analysisWidth, analysisHeight, morphologyRadius),
+    morphologyPass(initialMask, analysisWidth, analysisHeight, morphologyRadius, "dilate"),
     analysisWidth,
     analysisHeight,
   );
@@ -967,14 +1084,14 @@ async function attemptSolidPlateDetection(
         selectedComponentTouchesFrame = true;
       }
     }
-    scalarField[index] = (differences[index] ?? 0) / 255;
+    scalarField[index] = selectedComponentMask[index] ?? 0;
   }
   const traced = traceFixedRigDenseContourV1({
     width: analysisWidth,
     height: analysisHeight,
     field: scalarField,
     mask: selectedComponentMask,
-    threshold: foregroundThreshold / 255,
+    threshold: 0.5,
   });
   const scaledContour = traced
     ? scaleDenseContourV1(traced.contour, scaleX, scaleY)
@@ -1004,10 +1121,21 @@ async function attemptSolidPlateDetection(
           pixelsPerMmY: 1 / effectiveMmPerPixelY,
         })
       : undefined;
-  const strongSupportCount =
-    traced?.contourSupport.filter((entry) => entry.support === "strong").length ?? 0;
-  const strongSupportFraction = traced?.contourSupport.length
-    ? strongSupportCount / traced.contourSupport.length
+  const supportSearchRadius = morphologyRadius + 1;
+  const strongSupportCount = traced?.contour.reduce((count, point) => {
+    const centerX = Math.round(point.x);
+    const centerY = Math.round(point.y);
+    for (let y = Math.max(0, centerY - supportSearchRadius); y <= Math.min(analysisHeight - 1, centerY + supportSearchRadius); y += 1) {
+      for (let x = Math.max(0, centerX - supportSearchRadius); x <= Math.min(analysisWidth - 1, centerX + supportSearchRadius); x += 1) {
+        if ((edgeEvidence.edgeStrength[y * analysisWidth + x] ?? 0) >= foregroundThreshold) {
+          return count + 1;
+        }
+      }
+    }
+    return count;
+  }, 0) ?? 0;
+  const strongSupportFraction = traced?.contour.length
+    ? strongSupportCount / traced.contour.length
     : 0;
   const observedDenseContour: CardGeometryObservedDenseContourV1 | undefined =
     scaledContour && measuredContour
@@ -1114,8 +1242,17 @@ async function attemptSolidPlateDetection(
         };
         })()
       : undefined;
+  const observedMaterialFill = observedDenseContour
+    ? observedDenseContour.measurementsPx.enclosedArea /
+      Math.max(
+        1,
+        observedDenseContour.measurementsPx.width *
+          observedDenseContour.measurementsPx.height,
+      )
+    : 0;
   if (
     (observedDenseContour && strongSupportCount === 0) ||
+    (observedDenseContour && observedMaterialFill < 0.05) ||
     (!observedDenseContour && !selectedComponentTouchesFrame)
   ) {
     return {
