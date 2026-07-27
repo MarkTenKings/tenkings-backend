@@ -2042,6 +2042,7 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-consecutive-preview-restore-"));
   const lightingWrites = [];
   let syntheticReady;
+  let fingerprintFill = 32;
   try {
     const { service } = configFor(outputDir, {
       writeLightingFrames: async (frames) => {
@@ -2054,6 +2055,12 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
         sourceImageId: input.sourceImageId,
         sourceFrameId: input.sourceFrameId,
         timestamp: input.timestamp,
+      }),
+      buildPreviewFrameStabilityFingerprint: async () => ({
+        version: "ten-kings-preview-frame-stability-v1",
+        width: 96,
+        height: 128,
+        pixels: Buffer.alloc(96 * 128, fingerprintFill),
       }),
     });
     service.enqueueRapidFinalization = () => {};
@@ -2108,16 +2115,19 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
       service.acceptPreviewCameraState(observedCameraState, binding, request.captureTriggerAt),
       true,
     );
-    const frameId = "card-2-back-detectable-frame";
-    service.notePreviewFrame(1, binding, frameId, request.captureTriggerAt);
-    service.queuePreviewGeometryAnalysis(
-      Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
-      1,
-      request.captureTriggerAt,
-      "preview_capture_header",
-      frameId,
-      binding,
-    );
+    for (let frameIndex = 1; frameIndex <= 3; frameIndex += 1) {
+      const frameId = `card-2-back-detectable-frame-${frameIndex}`;
+      service.notePreviewFrame(frameIndex, binding, frameId, request.captureTriggerAt);
+      service.queuePreviewGeometryAnalysis(
+        Buffer.from([0xff, 0xd8, frameIndex, 0xff, 0xd9]),
+        frameIndex,
+        request.captureTriggerAt,
+        "preview_capture_header",
+        frameId,
+        binding,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
     for (let attempt = 0; attempt < 50; attempt += 1) {
       if (manifest.previewStatus.cardGeometry.analysis.detectorInvocationState === "completed") break;
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -2127,6 +2137,42 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
     assert.equal(manifest.previewStatus.cardGeometry.analysis.detectorInvocationState, "completed");
     assert.equal(manifest.previewStatus.cardGeometry.analysis.framesAnalyzed, 1);
     assert.equal(manifest.previewStatus.cardGeometry.analysis.lastOutcome, "ready");
+    assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
+
+    fingerprintFill = 220;
+    service.notePreviewFrame(4, binding, "card-2-back-moving-frame", request.captureTriggerAt);
+    service.queuePreviewGeometryAnalysis(
+      Buffer.from([0xff, 0xd8, 4, 0xff, 0xd9]),
+      4,
+      request.captureTriggerAt,
+      "preview_capture_header",
+      "card-2-back-moving-frame",
+      binding,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(manifest.previewStatus.cardGeometry.back, undefined);
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.motionState, "moving");
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.lastOutcome, undefined);
+
+    for (let frameIndex = 5; frameIndex <= 6; frameIndex += 1) {
+      const frameId = `card-2-back-restabilized-frame-${frameIndex}`;
+      service.notePreviewFrame(frameIndex, binding, frameId, request.captureTriggerAt);
+      service.queuePreviewGeometryAnalysis(
+        Buffer.from([0xff, 0xd8, frameIndex, 0xff, 0xd9]),
+        frameIndex,
+        request.captureTriggerAt,
+        "preview_capture_header",
+        frameId,
+        binding,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      if (manifest.previewStatus.cardGeometry.analysis.framesAnalyzed === 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.framesAnalyzed, 2);
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.motionState, "stable");
     assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
