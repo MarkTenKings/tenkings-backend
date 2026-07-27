@@ -1802,6 +1802,7 @@ export type AiGraderQueuedOcrDescriptor = {
   }>;
   centeringCandidates?: Array<{
     side: "front" | "back";
+    edge: "left" | "right" | "top" | "bottom";
     candidateId: string;
     deterministicInputSha256: string;
     selectedByDefault: boolean;

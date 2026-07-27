@@ -343,6 +343,38 @@ test("an exact hash-bound EYES candidate reruns through the same deterministic m
   assert.notDeepEqual(rerun.detectedPrintContour, initial.detectedPrintContour);
 });
 
+test("four exact hash-bound EYES edge candidates rerun through the same deterministic measurement engine", () => {
+  const source = plane((x, y) => {
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
+    return 0.1;
+  });
+  const initial = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(initial.status, "computed", JSON.stringify(initial));
+  const edges = ["left", "right", "top", "bottom"];
+  const selectedEdges = Object.fromEntries(edges.map((edge) => {
+    const candidates = initial.edgeCandidates.filter(
+      (candidate) => candidate.edge === edge,
+    );
+    assert.equal(candidates.length, 2, `${edge} candidate count`);
+    const selected = candidates[1];
+    return [edge, {
+      candidateId: selected.candidateId,
+      deterministicInputSha256: selected.deterministicInputSha256,
+    }];
+  }));
+
+  const rerun = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    selectedCandidate: { edgeCandidates: selectedEdges },
+  });
+  assert.equal(rerun.status, "computed", JSON.stringify(rerun));
+  assert.equal(rerun.selectionSource, "eyes_exact_candidate");
+  assert.match(rerun.formula, /EYES exact edge-ID selection/);
+  assert.notDeepEqual(rerun.detectedPrintContour, initial.detectedPrintContour);
+  assert.equal(rerun.profileInput.profile, "printed_border_v1");
+});
+
 test("a stale or invented EYES candidate fails closed and cannot supply measurements", () => {
   const source = plane((x, y) => {
     if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;

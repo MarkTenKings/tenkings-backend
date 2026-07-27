@@ -306,32 +306,28 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
 });
 
 test("EYES centering finalize verifies exact normalized and candidate overlays without rerunning OCR", async () => {
-  const candidateImages = [
-    {
-      side: "front",
-      artifactRole: "centering_candidate_overlay",
-      candidateId: "front-candidate-1",
-      deterministicInputSha256: "1".repeat(64),
-      fileName: "front-candidate-1.png",
-      mimeType: "image/png",
-      checksumSha256: sha256("front-candidate"),
-      byteSize: 4096,
-      widthPx: 1200,
-      heightPx: 1680,
-    },
-    {
-      side: "back",
-      artifactRole: "centering_candidate_overlay",
-      candidateId: "back-candidate-1",
-      deterministicInputSha256: "2".repeat(64),
-      fileName: "back-candidate-1.png",
-      mimeType: "image/png",
-      checksumSha256: sha256("back-candidate"),
-      byteSize: 4096,
-      widthPx: 1200,
-      heightPx: 1680,
-    },
-  ];
+  const candidateImages = (["front", "back"] as const).flatMap(
+    (side, sideIndex) =>
+      (["left", "right", "top", "bottom"] as const).map(
+        (edge, edgeIndex) => {
+          const index = sideIndex * 4 + edgeIndex + 1;
+          const candidateId = `${side}-${edge}-candidate-1`;
+          return {
+            side,
+            edge,
+            artifactRole: "centering_candidate_overlay" as const,
+            candidateId,
+            deterministicInputSha256: index.toString(16).repeat(64),
+            fileName: `${candidateId}.png`,
+            mimeType: "image/png" as const,
+            checksumSha256: sha256(candidateId),
+            byteSize: 4096,
+            widthPx: 1200,
+            heightPx: 1680,
+          };
+        },
+      ),
+  );
   let ocrCalls = 0;
   let eyesCalls = 0;
   let verifiedCalls = 0;
@@ -389,10 +385,10 @@ test("EYES centering finalize verifies exact normalized and candidate overlays w
       assert.equal(input.images.length, 2);
       assert.deepEqual(
         input.candidates.map((candidate) => candidate.candidateId).sort(),
-        ["back-candidate-1", "front-candidate-1"],
+        candidateImages.map((candidate) => candidate.candidateId).sort(),
       );
       return {
-        schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+        schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1",
         status: "observed",
         requestedModel: "gpt-5.6-sol",
         actualModel: "gpt-5.6-sol-2026-07-01",
@@ -422,7 +418,7 @@ test("EYES centering finalize verifies exact normalized and candidate overlays w
   );
   assert.equal(initRes.statusCodeValue, 200);
   const initBody = initRes.jsonBody as any;
-  assert.equal(initBody.result.uploadPlan.length, 4);
+  assert.equal(initBody.result.uploadPlan.length, 10);
 
   const finalizeRes = mockResponse();
   await handler(
@@ -442,7 +438,7 @@ test("EYES centering finalize verifies exact normalized and candidate overlays w
     (finalizeRes.jsonBody as any).operation,
     "aiGraderEyesCenteringFinalize",
   );
-  assert.equal(verifiedCalls, 4);
+  assert.equal(verifiedCalls, 10);
   assert.equal(eyesCalls, 1);
   assert.equal(ocrCalls, 0);
 });

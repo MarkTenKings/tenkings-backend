@@ -4958,7 +4958,7 @@ function safeQueuedOcrEyesCenteringSelection(
     throw new Error("Queued OCR EYES centering receipt shape is invalid.");
   }
   if (
-    value.schemaVersion !== "ai_grader_eyes_centering_candidate_selection_v1" ||
+    value.schemaVersion !== "ai_grader_eyes_centering_edge_candidate_selection_v1" ||
     value.status !== "observed" ||
     value.metricAuthority !== "deterministic_calibrated_pixels_only" ||
     value.coordinateAuthority !== false ||
@@ -4991,6 +4991,8 @@ function safeQueuedOcrEyesCenteringSelection(
   const expectedCandidates = [...expectedLedger.candidates]
     .sort((left, right) =>
       left.side.localeCompare(right.side) ||
+      ["left", "right", "top", "bottom"].indexOf(left.edge) -
+        ["left", "right", "top", "bottom"].indexOf(right.edge) ||
       left.candidateId.localeCompare(right.candidateId));
   if (
     !Array.isArray(value.candidateBindings) ||
@@ -5001,15 +5003,18 @@ function safeQueuedOcrEyesCenteringSelection(
     const binding = receiptCandidateBindings[index];
     if (
       !exactObjectKeys(binding, [
-        "side", "candidateId", "checksumSha256", "deterministicInputSha256",
+        "side", "edge", "candidateId", "checksumSha256",
+        "deterministicInputSha256",
       ]) ||
       binding.side !== candidate.side ||
+      binding.edge !== candidate.edge ||
       binding.candidateId !== candidate.candidateId ||
       binding.checksumSha256 !== candidate.sha256 ||
       binding.deterministicInputSha256 !== candidate.deterministicInputSha256
     ) throw new Error("Queued OCR EYES centering candidate binding is stale or invented.");
     return {
       side: candidate.side,
+      edge: candidate.edge,
       candidateId: candidate.candidateId,
       checksumSha256: candidate.sha256,
       deterministicInputSha256: candidate.deterministicInputSha256,
@@ -5017,7 +5022,7 @@ function safeQueuedOcrEyesCenteringSelection(
   });
   const expectedRequestSha256 = crypto.createHash("sha256")
     .update(canonicalJsonV1({
-      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1",
       sourceImageBindings,
       candidateBindings,
       metricAuthority: "deterministic_calibrated_pixels_only",
@@ -5028,13 +5033,15 @@ function safeQueuedOcrEyesCenteringSelection(
   if (value.requestSha256 !== expectedRequestSha256) {
     throw new Error("Queued OCR EYES centering request hash does not reproduce.");
   }
-  if (!Array.isArray(value.decisions) || value.decisions.length !== 2) {
+  if (!Array.isArray(value.decisions) || value.decisions.length !== 8) {
     throw new Error("Queued OCR EYES centering decisions are incomplete.");
   }
   const decisions = value.decisions.map((decision, index) => {
-    const side = (["front", "back"] as const)[index];
+    const edges = ["left", "right", "top", "bottom"] as const;
+    const side = (["front", "back"] as const)[Math.floor(index / edges.length)]!;
+    const edge = edges[index % edges.length]!;
     if (!exactObjectKeys(decision, [
-      "side", "decision", "candidateId", "confidence", "rationale",
+      "side", "edge", "decision", "candidateId", "confidence", "rationale",
     ])) throw new Error("Queued OCR EYES centering decision shape is invalid.");
     const decisionType = String(decision.decision);
     const selected = decision.candidateId === null
@@ -5042,6 +5049,7 @@ function safeQueuedOcrEyesCenteringSelection(
       : String(decision.candidateId);
     if (
       decision.side !== side ||
+      decision.edge !== edge ||
       !["select_candidate", "reject_all", "unclear"].includes(decisionType) ||
       typeof decision.confidence !== "number" ||
       !Number.isFinite(decision.confidence) ||
@@ -5050,11 +5058,14 @@ function safeQueuedOcrEyesCenteringSelection(
       (decisionType === "select_candidate"
         ? !selected ||
           !candidateBindings.some((candidate) =>
-            candidate.side === side && candidate.candidateId === selected)
+            candidate.side === side &&
+            candidate.edge === edge &&
+            candidate.candidateId === selected)
         : selected !== null)
     ) throw new Error("Queued OCR EYES centering decision is invalid.");
     return {
       side,
+      edge,
       decision: decisionType,
       candidateId: selected,
       confidence: decision.confidence,
@@ -5072,7 +5083,7 @@ function safeQueuedOcrEyesCenteringSelection(
     value.providerElapsedMs > 60_000
   ) throw new Error("Queued OCR EYES centering elapsed time is invalid.");
   return {
-    schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+    schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1",
     status: "observed",
     requestedModel: safeModel(value.requestedModel),
     actualModel: safeModel(value.actualModel),
@@ -8524,9 +8535,10 @@ export class AiGraderLocalStationBridgeService {
     }
     const expected = new Map<string, FixedRigEyesCenteringCandidateAssetMetadataV1>();
     for (const asset of ledger.candidates) {
-      const key = `${asset.side}:${asset.candidateId}`;
+      const key = `${asset.side}:${asset.edge}:${asset.candidateId}`;
       if (
         (asset.side !== "front" && asset.side !== "back") ||
+        !["left", "right", "top", "bottom"].includes(asset.edge) ||
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(asset.candidateId) ||
         !SHA256_LOWERCASE_RE.test(asset.deterministicInputSha256) ||
         !SHA256_LOWERCASE_RE.test(asset.sha256) ||
@@ -8544,18 +8556,20 @@ export class AiGraderLocalStationBridgeService {
       expected.set(key, asset);
     }
     if (
-      expected.size < 2 ||
-      !ledger.candidates.some((asset) => asset.side === "front") ||
-      !ledger.candidates.some((asset) => asset.side === "back") ||
-      ledger.candidates.filter((asset) => asset.side === "front").length > 6 ||
-      ledger.candidates.filter((asset) => asset.side === "back").length > 6
+      expected.size < 8 ||
+      (["front", "back"] as const).some((side) =>
+        (["left", "right", "top", "bottom"] as const).some((edge) => {
+          const count = ledger.candidates.filter((asset) =>
+            asset.side === side && asset.edge === edge).length;
+          return count < 1 || count > 3;
+        }))
     ) {
-      throw new Error("EYES centering candidate ledger requires one to six candidates per side.");
+      throw new Error("EYES centering candidate ledger requires one to three candidates per side edge.");
     }
     const produced = new Map<string, FixedRigEyesCenteringCandidateAssetV1>();
     let totalBytes = 0;
     for (const asset of producedAssets) {
-      const key = `${asset.side}:${asset.candidateId}`;
+      const key = `${asset.side}:${asset.edge}:${asset.candidateId}`;
       const metadata = expected.get(key);
       if (
         !metadata ||
@@ -8595,9 +8609,10 @@ export class AiGraderLocalStationBridgeService {
     for (const [index, metadata] of [...expected.values()]
       .sort((left, right) =>
         left.side.localeCompare(right.side) ||
+        left.edge.localeCompare(right.edge) ||
         left.candidateId.localeCompare(right.candidateId))
       .entries()) {
-      const key = `${metadata.side}:${metadata.candidateId}`;
+      const key = `${metadata.side}:${metadata.edge}:${metadata.candidateId}`;
       const bytes = produced.get(key)!.bytes;
       const filePath = path.join(candidateDir, `${String(index + 1).padStart(2, "0")}.png`);
       try {
@@ -9614,10 +9629,12 @@ export class AiGraderLocalStationBridgeService {
     bytes: Buffer;
   }> {
     const ledger = manifest.mathematicalV1?.eyesCenteringCandidateLedger;
-    const key = `${side}:${candidateId}`;
-    const asset = manifest.mathematicalV1?.eyesCenteringCandidateAssets?.[key];
     const metadata = ledger?.candidates.find((candidate) =>
       candidate.side === side && candidate.candidateId === candidateId);
+    const key = metadata
+      ? `${side}:${metadata.edge}:${candidateId}`
+      : `${side}:unknown:${candidateId}`;
+    const asset = manifest.mathematicalV1?.eyesCenteringCandidateAssets?.[key];
     const sessionDir = manifest.outputs.sessionDir;
     if (
       !ledger ||
@@ -9905,23 +9922,38 @@ export class AiGraderLocalStationBridgeService {
       let selectionChanged = false;
       let centeringReviewRequired = false;
       for (const side of ["front", "back"] as const) {
-        const decision = decisions.find((entry) => entry.side === side);
-        if (decision?.decision === "select_candidate") {
+        const selectedEdges = {} as Extract<
+          FixedRigPrintedBorderCandidateSelectionV1,
+          { edgeCandidates: unknown }
+        >["edgeCandidates"];
+        let completeSide = true;
+        for (const edge of ["left", "right", "top", "bottom"] as const) {
+          const decision = decisions.find((entry) =>
+            entry.side === side && entry.edge === edge);
+          if (decision?.decision !== "select_candidate") {
+            completeSide = false;
+            continue;
+          }
           const candidate = completedManifest.mathematicalV1
             .eyesCenteringCandidateLedger.candidates.find((entry) =>
               entry.side === side &&
+              entry.edge === edge &&
               entry.candidateId === decision.candidateId);
           if (!candidate) {
             throw new Error(
-              "Persisted EYES selection escaped the exact deterministic candidate ledger.",
+              "Persisted EYES edge selection escaped the exact deterministic candidate ledger.",
             );
           }
-          selections[side] = {
+          selectedEdges[edge] = {
             candidateId: candidate.candidateId,
             deterministicInputSha256:
               candidate.deterministicInputSha256,
           };
           if (!candidate.selectedByDefault) selectionChanged = true;
+        }
+        if (completeSide) {
+          selections[side] = { edgeCandidates: selectedEdges };
+          selectionChanged = true;
         } else {
           centeringReviewRequired = true;
         }
@@ -9970,7 +10002,7 @@ export class AiGraderLocalStationBridgeService {
                 : completedItem.ocr.state === "succeeded"
                   ? "report_ready_needs_confirm"
                   : "finalizing",
-          "EYES selected only exact hash-bound border candidates; the deterministic engine reproduced the ledger and completed its one allowed remeasurement pass.",
+          "EYES selected only exact hash-bound per-edge border candidates; the deterministic engine reproduced the ledger and completed its one allowed remeasurement pass.",
         );
         await this.syncQueuedManifest(completedManifest);
       } else {
