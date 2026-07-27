@@ -28826,3 +28826,12 @@ By enabling Rip It Live, I confirm:
 - Commit and push only the centering viewer/ruler UI, optional exact segment binding, final centering-overlay presentation, focused regressions, and this audit entry. Open one focused protected PR and merge after required checks.
 - Allow the normal GitHub/Vercel Production deployment with migrations disabled, then verify the public and exact-deployment station assets.
 - Do not mutate, resolve, publish, discard, or reuse the owner's existing queue/session/report. Because durable segment handling also changes the local helper, do not update or restart the Dell helper while that historical card remains active. After the owner clears it, require a fresh read-only idle gate before advancing and restarting only the helper.
+
+### Observed Production result
+
+- PR `#193` merged through protected `main` as exact merge commit `e4f7037c6a2092cb3df13432c0828753608aac5c`.
+- All 12 required PR checks passed, including Install & Build, Vercel Preview, disposable PostgreSQL migration-chain verification, and all eight Docker image builds.
+- GitHub/Vercel Production deployment `5631241170` succeeded for that merge at `2026-07-27T22:57:02Z`.
+- The public and exact-deployment station assets are byte-identical: Next.js build `c93KWGFxVH4crbEmhm_bj`, bundle `station-df4b305fa4f8cf46.js`, `314,411` bytes, SHA-256 `8372cc4d527116632c813a63ee7ca431a3b4a2f408af6aab7839895190b9a011`.
+- The browser correction is live. The Dell helper was deliberately not updated or restarted because the owner's pre-rollout card remains active in operator review. The owner must not submit that card with the new segment payload; after the owner clears it, the helper requires the documented read-only idle gate before activation.
+- No card, queue, report, owner resolution, publication, discard, database, storage, calibration, capture, camera/lighting hardware, or unrelated runtime was mutated during the browser rollout.
