@@ -18,6 +18,7 @@ import {
   type FixedRigMathematicalFindingReviewV1,
   type FixedRigMathematicalOrchestrationStageV1,
 } from './fixedRigMathematicalCalibrationOrchestratorV1';
+import type { FixedRigPrintedBorderCandidateSelectionV1 } from './fixedRigPrintedBorderDetectorV1';
 import type {
   FixedRigOperatorResolutionAuthorityV1,
   FixedRigOperatorResolutionNativeRoleV1,
@@ -104,6 +105,9 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
   queueItemId: string;
   operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
   forcedOperatorReviewElements?: MathematicalGradingElementV1[];
+  eyesCenteringSelections?: Partial<
+    Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+  >;
   cardFormatAuthorityVerification?: {
     hmacKey: string;
     keyId: string;
@@ -1214,6 +1218,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     findingReviews: input.findingReviews,
     operatorResolutionAuthorities: input.operatorResolutionAuthorities,
     forcedOperatorReviewElements: input.forcedOperatorReviewElements,
+    eyesCenteringSelections: input.eyesCenteringSelections,
     report: {
       publication: input.authority.publication,
       geometry: {

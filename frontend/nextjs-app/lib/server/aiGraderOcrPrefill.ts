@@ -22,11 +22,17 @@ import {
 } from "./aiGraderOcrStructuredExtraction";
 import { AiGraderOcrFailure } from "../aiGraderOcrFailure";
 import {
+  AiGraderEyesError,
   runAiGraderEyesSemanticObservation,
   unavailableAiGraderEyesReceipt,
   type AiGraderEyesReceipt,
   type AiGraderEyesSourceImage,
 } from "./aiGraderEyesSemanticObserver";
+import {
+  runAiGraderEyesCenteringSelection,
+  type AiGraderEyesCenteringCandidateOverlay,
+  type AiGraderEyesCenteringCandidateSelectionReceipt,
+} from "./aiGraderEyesCenteringCandidateSelection";
 
 export type AiGraderOcrPrefillSide = "front" | "back";
 
@@ -83,6 +89,7 @@ export type AiGraderOcrPrefillResult = {
     setIdentificationUsed: boolean;
   };
   eyes?: AiGraderEyesReceipt;
+  eyesCenteringSelection?: AiGraderEyesCenteringCandidateSelectionReceipt;
   warnings: string[];
 };
 
@@ -95,6 +102,7 @@ export type AiGraderOcrProviderDiagnostics = {
   eyesElapsedMs?: number;
   actualEyesModel?: string;
   eyesUnavailableReason?: string;
+  eyesUpstreamFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
   openAiFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
 };
 
@@ -109,6 +117,7 @@ export type AiGraderOcrPrefillRuntimeDependencies = {
   ) => Promise<OcrResponse>;
   runStructuredExtraction?: typeof runAiGraderOcrStructuredExtraction;
   runEyes?: typeof runAiGraderEyesSemanticObservation;
+  runEyesCenteringSelection?: typeof runAiGraderEyesCenteringSelection;
   identifySet?: typeof identifySetByCardIdentity;
   lookupSet?: typeof lookupSetByCardIdentity;
   now?: () => number;
@@ -116,9 +125,14 @@ export type AiGraderOcrPrefillRuntimeDependencies = {
 };
 
 const REVIEW_CONFIDENCE_THRESHOLD = 0.8;
-export const AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS = 45_000;
+// Keep five seconds of route headroom beneath the Production API's immutable
+// 60-second ceiling for upload verification, validation, serialization, and
+// the response itself. Each provider also remains independently bounded.
+export const AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS = 55_000;
 const AI_GRADER_GOOGLE_TIME_BUDGET_MS = 12_000;
 const AI_GRADER_OPENAI_TIME_BUDGET_MS = 30_000;
+const AI_GRADER_EYES_TIME_BUDGET_MS = 10_000;
+const AI_GRADER_EYES_CENTERING_TIME_BUDGET_MS = 11_000;
 
 function boundedProviderElapsedMs(value: number) {
   if (!Number.isFinite(value) || value < 0) return 0;
@@ -414,6 +428,7 @@ export async function runAiGraderOcrPrefillRuntime(
     gradingSessionId: string;
     reportId: string;
     images: AiGraderOcrPrefillSourceImage[];
+    centeringCandidates?: AiGraderEyesCenteringCandidateOverlay[];
   },
   dependencies: AiGraderOcrPrefillRuntimeDependencies = {}
 ): Promise<AiGraderOcrPrefillRuntimeResult> {
@@ -440,13 +455,6 @@ export async function runAiGraderOcrPrefillRuntime(
         checksumSha256: String(image.checksumSha256),
       })) as AiGraderEyesSourceImage[]
     : null;
-  const eyesStartedAt = now();
-  const eyesPromise = eyesSources
-    ? (dependencies.runEyes ?? runAiGraderEyesSemanticObservation)(
-        { images: eyesSources },
-        { timeoutMs: 20_000 },
-      ).catch((error) => unavailableAiGraderEyesReceipt(eyesSources, error))
-    : undefined;
   const googleStartedAt = now();
   let ocr: OcrResponse;
   try {
@@ -485,6 +493,53 @@ export async function runAiGraderOcrPrefillRuntime(
     throw openAiFailure(error);
   }
   const openAiElapsedMs = boundedProviderElapsedMs(now() - openAiStartedAt);
+  let eyesCenteringSelection:
+    AiGraderEyesCenteringCandidateSelectionReceipt | undefined;
+  if (eyesSources && input.centeringCandidates?.length) {
+    try {
+      const timeoutMs = Math.min(
+        AI_GRADER_EYES_CENTERING_TIME_BUDGET_MS,
+        remainingProviderMs(providerDeadline, now),
+      );
+      if (timeoutMs < 1) throw new AiGraderEyesError("timeout");
+      eyesCenteringSelection = await (
+        dependencies.runEyesCenteringSelection ??
+        runAiGraderEyesCenteringSelection
+      )(
+        {
+          images: eyesSources,
+          candidates: input.centeringCandidates,
+        },
+        { timeoutMs },
+      );
+    } catch {
+      // Candidate selection is advisory and fail-closed. The deterministic
+      // default remains unchanged and human element review remains available.
+    }
+  }
+  let eyes: AiGraderEyesReceipt | undefined;
+  let eyesElapsedMs: number | undefined;
+  let eyesUpstreamFailure: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic | undefined;
+  if (eyesSources) {
+    const eyesStartedAt = now();
+    try {
+      const timeoutMs = Math.min(
+        AI_GRADER_EYES_TIME_BUDGET_MS,
+        remainingProviderMs(providerDeadline, now),
+      );
+      if (timeoutMs < 1) throw new AiGraderEyesError("timeout");
+      eyes = await (dependencies.runEyes ?? runAiGraderEyesSemanticObservation)(
+        { images: eyesSources },
+        { timeoutMs },
+      );
+    } catch (error) {
+      eyes = unavailableAiGraderEyesReceipt(eyesSources, error);
+      if (error instanceof AiGraderEyesError) {
+        eyesUpstreamFailure = error.upstreamDiagnostic;
+      }
+    }
+    eyesElapsedMs = boundedProviderElapsedMs(now() - eyesStartedAt);
+  }
   const baseFields: AiGraderOcrPrefillFields = {
     category: outputField(structured.fields.category),
     playerName: outputField(structured.fields.playerName),
@@ -551,7 +606,6 @@ export async function runAiGraderOcrPrefillRuntime(
   const warnings = reviewFieldNames.length
     ? ["Unknown or conflicting OCR fields require operator review."]
     : [];
-  const eyes = eyesPromise ? await eyesPromise : undefined;
   if (eyes?.status === "observed" && eyes.reviewElements.length) {
     warnings.push(`EYES requests operator review for: ${eyes.reviewElements.join(", ")}.`);
   }
@@ -575,6 +629,7 @@ export async function runAiGraderOcrPrefillRuntime(
       setIdentificationUsed: Boolean(identified),
     },
     ...(eyes ? { eyes } : {}),
+    ...(eyesCenteringSelection ? { eyesCenteringSelection } : {}),
     warnings,
     internalProviderDiagnostics: {
       schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",
@@ -584,10 +639,11 @@ export async function runAiGraderOcrPrefillRuntime(
       actualOpenAiModel: structured.actualModel,
       ...(eyes
         ? {
-            eyesElapsedMs: boundedProviderElapsedMs(now() - eyesStartedAt),
+            eyesElapsedMs,
             ...(eyes.status === "observed"
               ? { actualEyesModel: eyes.actualModel }
               : { eyesUnavailableReason: eyes.reason }),
+            ...(eyesUpstreamFailure ? { eyesUpstreamFailure } : {}),
           }
         : {}),
     },

@@ -755,6 +755,7 @@ const OCR_PREFILL_FIELD_LABELS = {
 } as const;
 
 const RAPID_REVIEWABLE_STATES = new Set<string>([
+  "identity_resolution_required",
   "operator_resolution_required",
   "finding_review_required",
   "insufficient_evidence",
@@ -762,6 +763,8 @@ const RAPID_REVIEWABLE_STATES = new Set<string>([
   "confirmed_needs_publish",
 ]);
 const RAPID_PROCESSING_STATES = new Set<string>(["front_captured", "front_processing", "back_positioning", "back_captured", "finalizing"]);
+const AI_GRADER_OCR_FIRST_AUTHORITY_SHA256 =
+  "eb453220fff9a1b4605eb832384aba4764dc83a9f562fc9d0a23990f1bfcc034";
 
 const OPERATOR_RESOLUTION_ELEMENTS: AiGraderOperatorResolutionElementV1[] = [
   "centering",
@@ -965,6 +968,7 @@ export default function AiGraderStationPage() {
   const activeReviewIdentityRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
   const queuedOcrRunningRef = useRef<Set<string>>(new Set());
+  const eyesCenteringRunningRef = useRef<Set<string>>(new Set());
   const queuedOcrInterruptedHandledRef = useRef<Set<string>>(new Set());
   const queuedOcrAttemptOwnerClaimRef = useRef<AiGraderQueuedOcrAttemptOwnerClaim | null>(null);
   const [queuedOcrAttemptOwner, setQueuedOcrAttemptOwner] = useState<QueuedOcrAttemptOwnerState>({
@@ -1121,7 +1125,12 @@ export default function AiGraderStationPage() {
       ? mathematicalExecution.reviewIssues
       : [];
   const cleanSessionMathematicalV1 = status.mathematicalV1;
-  const mathematicalAuthorityBound = Boolean(cleanSessionMathematicalV1?.gradingAuthority);
+  const displayedMathematicalV1 =
+    cleanSessionMathematicalV1 ??
+    activeReviewManifest?.mathematicalV1;
+  const mathematicalAuthorityBound = Boolean(
+    displayedMathematicalV1?.gradingAuthority,
+  );
 
   useEffect(() => {
     setOperatorResolutionDraftState(operatorResolutionDraft(operatorResolutionRequest));
@@ -2335,14 +2344,21 @@ export default function AiGraderStationPage() {
   const mathematicalStartBlocked =
     mathematicalCalibrationBlocked ||
     (selectedGradingContract === "mathematical_calibration_v1" &&
-      !mathematicalAuthorityDraftComplete);
+      !mathematicalAuthorityDraftComplete &&
+      (
+        mathematicalAuthorityDraft.profiles.front !== "printed_border_v1" ||
+        mathematicalAuthorityDraft.profiles.back !== "printed_border_v1"
+      ));
   const mathematicalAuthorityActionRequired =
-    status.gradingContract === "mathematical_calibration_v1" &&
-    status.currentStep === "capture_front" &&
-    !status.sessionManifest.frontCaptured &&
+    activeReviewItem?.state === "identity_resolution_required" ||
     (
-      status.frontCaptureReadiness.code === "mathematical_authority_required" ||
-      status.frontCaptureReadiness.code === "design_reference_staging_required"
+      status.gradingContract === "mathematical_calibration_v1" &&
+      status.currentStep === "capture_front" &&
+      !status.sessionManifest.frontCaptured &&
+      (
+        status.frontCaptureReadiness.code === "mathematical_authority_required" ||
+        status.frontCaptureReadiness.code === "design_reference_staging_required"
+      )
     );
   const mathematicalReviewAllDispositioned = Boolean(
     mathematicalReviewRequest &&
@@ -2795,6 +2811,85 @@ export default function AiGraderStationPage() {
   ]);
 
   useEffect(() => {
+    const eyesItem = rapidQueueItems.find((item) =>
+      item.ocr.state === "succeeded" &&
+      item.mathematicalV1?.eyesCenteringSelectionState ===
+        "eligible");
+    if (
+      !eyesItem ||
+      !bridgeConnected ||
+      !stationToken.trim() ||
+      sessionLoading ||
+      !session?.token
+    ) return;
+    const identity = {
+      queueItemId: eyesItem.queueItemId,
+      gradingSessionId: eyesItem.sessionId,
+      reportId: eyesItem.reportId,
+    };
+    const identityKey = [
+      identity.queueItemId,
+      identity.gradingSessionId,
+      identity.reportId,
+      "eyes-centering",
+    ].join(":");
+    if (eyesCenteringRunningRef.current.has(identityKey)) return;
+    eyesCenteringRunningRef.current.add(identityKey);
+    let active = true;
+    void (async () => {
+      try {
+        const actor = await verifyProductionSession(session.token);
+        if (!active) return;
+        setProductionAuthActor(actor);
+        const result =
+          await runAiGraderOcrPrefillFromLocalReport({
+            baseUrl: bridgeUrl,
+            stationToken,
+            ...identity,
+            authHeaders: buildAdminHeaders(session.token),
+            mode: "eyes_selection",
+          });
+        if (!active) return;
+        const completed = await callAiGraderStationBridge({
+          baseUrl: bridgeUrl,
+          stationToken,
+          action: "complete-eyes-centering-selection",
+          body: { ...identity, result },
+        });
+        if (!active) return;
+        setStatus(completed);
+      } catch (selectionError) {
+        if (!active) return;
+        setError(
+          (
+            "EYES could not complete its exact border-candidate review; deterministic measurements remain unchanged and no candidate was accepted: " +
+            (selectionError instanceof Error
+              ? selectionError.message
+              : "unknown EYES failure")
+          ).slice(0, 750),
+        );
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [
+    rapidQueueItems
+      .map((item) =>
+        [
+          item.queueItemId,
+          item.ocr.state,
+          item.mathematicalV1?.eyesCenteringSelectionState ?? "",
+        ].join(":"))
+      .join("|"),
+    bridgeConnected,
+    bridgeUrl,
+    session?.token,
+    sessionLoading,
+    stationToken,
+  ]);
+
+  useEffect(() => {
     if (!activeReview || !activeReviewItem) return;
     const identityKey = [activeReview.queueItemId, activeReview.gradingSessionId, activeReview.reportId].join(":");
     if (activeReviewIdentityRef.current !== identityKey) {
@@ -2826,6 +2921,43 @@ export default function AiGraderStationPage() {
             result,
             operatorEditedFields: identityEditedFieldsRef.current,
           }).draft);
+        setMathematicalAuthorityDraft((current) => {
+          const supportedText = (
+            field:
+              | "playerName"
+              | "cardName"
+              | "productSet"
+              | "cardNumber"
+              | "parallel"
+              | "insert",
+          ) => {
+            const observed = result.fields[field];
+            return observed.state === "supported" &&
+              typeof observed.value === "string"
+              ? observed.value.trim()
+              : "";
+          };
+          const tcg =
+            result.fields.category.state === "supported" &&
+            result.fields.category.value === "tcg";
+          return {
+            ...current,
+            cardFormatProfile: tcg
+              ? "pokemon_tcg_standard"
+              : "generic_standard",
+            title:
+              supportedText(tcg ? "cardName" : "playerName") ||
+              current.title,
+            setId:
+              supportedText("productSet") || current.setId,
+            programId:
+              supportedText("insert") || current.programId || "base",
+            cardNumber:
+              supportedText("cardNumber") || current.cardNumber,
+            parallelId:
+              supportedText("parallel") || current.parallelId,
+          };
+        });
         setOcrPrefillState({
           status: "ready",
           reportId: result.reportId,
@@ -3190,11 +3322,19 @@ export default function AiGraderStationPage() {
   };
 
   const bindMathematicalAuthorityForActiveSession = async () => {
-    if (status.gradingContract !== "mathematical_calibration_v1" ||
-        status.currentStep !== "capture_front" ||
-        status.sessionManifest.frontCaptured ||
-        status.sessionManifest.backCaptured) {
-      setError("Exact Mathematical V1 authority can bind only to the fresh pre-capture session.");
+    const ocrFirstReview =
+      activeReviewItem?.state === "identity_resolution_required" &&
+      activeReviewQueueIdentity &&
+      activeReviewItem.ocr.state === "succeeded";
+    const preCaptureBinding =
+      status.gradingContract === "mathematical_calibration_v1" &&
+      status.currentStep === "capture_front" &&
+      !status.sessionManifest.frontCaptured &&
+      !status.sessionManifest.backCaptured;
+    if (!ocrFirstReview && !preCaptureBinding) {
+      setError(
+        "Exact Mathematical V1 authority can bind only before capture or to the exact OCR identity-review item before grading.",
+      );
       return;
     }
     setBusy("mathematical-authority");
@@ -3206,7 +3346,17 @@ export default function AiGraderStationPage() {
     try {
       const prepared = await prepareMathematicalAuthority();
       let boundStatus = status;
-      if (!cleanSessionMathematicalV1) {
+      if (ocrFirstReview && activeReviewQueueIdentity) {
+        boundStatus = await runAction(
+          "bind-mathematical-grading-authority",
+          {
+            ...activeReviewQueueIdentity,
+            ...buildAiGraderMathematicalAuthorityBindingRequest(
+              prepared.authority,
+            ),
+          },
+        );
+      } else if (!cleanSessionMathematicalV1) {
         boundStatus = await runAction(
           "bind-mathematical-grading-authority",
           buildAiGraderMathematicalAuthorityBindingRequest(prepared.authority),
@@ -3216,14 +3366,21 @@ export default function AiGraderStationPage() {
       ) {
         throw new Error("The active Mathematical V1 authority is immutable and does not match this draft.");
       }
-      const stagedStatus = await stagePreparedMathematicalDesignReferences(prepared, boundStatus);
+      const stagedStatus = ocrFirstReview
+        ? boundStatus
+        : await stagePreparedMathematicalDesignReferences(
+            prepared,
+            boundStatus,
+          );
       if (!stagedStatus.frontCaptureReadiness.ready &&
           stagedStatus.frontCaptureReadiness.code === "design_reference_staging_required") {
         throw new Error(stagedStatus.frontCaptureReadiness.message);
       }
       setMathematicalAuthorityStatus({
         status: "completed",
-        message: "Exact Mathematical V1 identity and per-side centering authority are bound; registered bytes are staged and hash verified.",
+        message: ocrFirstReview
+          ? "OCR-assisted identity is bound. Deterministic grading and the bounded EYES border-candidate review are running."
+          : "Exact Mathematical V1 identity and per-side centering authority are bound; registered bytes are staged and hash verified.",
       });
     } catch (requestError) {
       const message = requestError instanceof Error
@@ -3277,12 +3434,15 @@ export default function AiGraderStationPage() {
     const startTimeout = window.setTimeout(() => startController.abort(), 30_000);
     let localStartDispatched = false;
     let preparedForStart: Awaited<ReturnType<typeof prepareMathematicalAuthority>> | undefined;
+    const ocrFirstStart =
+      !mathematicalAuthorityDraftComplete &&
+      mathematicalAuthorityDraft.profiles.front === "printed_border_v1" &&
+      mathematicalAuthorityDraft.profiles.back === "printed_border_v1";
     let dispatchedStartIdentity: {
       reportId: string;
       mathematicalAuthoritySha256: string;
     } | undefined;
     const acceptStartedSession = (
-      prepared: Awaited<ReturnType<typeof prepareMathematicalAuthority>>,
       started: AiGraderLocalStationStatus,
       expected: {
         reportId: string;
@@ -3298,8 +3458,10 @@ export default function AiGraderStationPage() {
         selectedCard,
       });
       setMathematicalAuthorityStatus({
-        status: "completed",
-        message: "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
+        status: ocrFirstStart ? "pending" : "completed",
+        message: ocrFirstStart
+          ? "Capture is ready. OCR will fill card information after Front and Back; grading stays blocked until you confirm it."
+          : "Card information is bound once for grading, publishing, labels, reports, comps, and inventory.",
       });
     };
     const stageStartedSessionReferences = (
@@ -3315,14 +3477,20 @@ export default function AiGraderStationPage() {
       });
     };
     try {
-      const prepared = await prepareMathematicalAuthority();
+      const prepared = ocrFirstStart
+        ? undefined
+        : await prepareMathematicalAuthority();
       preparedForStart = prepared;
-      if (!prepared?.authority) {
+      if (!ocrFirstStart && !prepared?.authority) {
         throw new Error("Start New Card requires exact Mathematical V1 card authority before calibration activation preflight.");
       }
       dispatchedStartIdentity = {
         reportId: `ai-grader-${crypto.randomUUID()}`,
-        mathematicalAuthoritySha256: await hashAiGraderMathematicalGradingAuthorityV1(prepared.authority),
+        mathematicalAuthoritySha256: prepared?.authority
+          ? await hashAiGraderMathematicalGradingAuthorityV1(
+              prepared.authority,
+            )
+          : AI_GRADER_OCR_FIRST_AUTHORITY_SHA256,
       };
       const calibrationRigId = status.mathematicalCalibration?.rigId;
       if (!calibrationRigId) {
@@ -3332,7 +3500,8 @@ export default function AiGraderStationPage() {
         method: "POST",
         headers: await productionAuthHeaders({ "content-type": "application/json" }, "verify exact calibration activation"),
         body: JSON.stringify({
-          tenantId: prepared.authority.cardIdentity.tenantId,
+          tenantId:
+            prepared?.authority.cardIdentity.tenantId ?? "ten-kings",
           rigId: calibrationRigId,
         }),
         signal: startController.signal,
@@ -3355,12 +3524,13 @@ export default function AiGraderStationPage() {
           prepared?.authority,
           activationPayload.authority,
           dispatchedStartIdentity.reportId,
+          ocrFirstStart ? "printed_border_v1" : undefined,
         ),
       );
-      acceptStartedSession(prepared, started, dispatchedStartIdentity);
+      acceptStartedSession(started, dispatchedStartIdentity);
       startNewCardInFlightRef.current = false;
       setCaptureBusy(null);
-      stageStartedSessionReferences(prepared, started);
+      if (prepared) stageStartedSessionReferences(prepared, started);
     } catch (requestError) {
       let reconciled: AiGraderLocalStationStatus | undefined;
       if (localStartDispatched) {
@@ -3379,17 +3549,18 @@ export default function AiGraderStationPage() {
       }
       if (
         reconciled?.currentStep === "capture_front" &&
-        preparedForStart &&
         dispatchedStartIdentity &&
         aiGraderStartedSessionMatchesOperation({
           status: reconciled,
           expected: dispatchedStartIdentity,
         })
       ) {
-        acceptStartedSession(preparedForStart, reconciled, dispatchedStartIdentity);
+        acceptStartedSession(reconciled, dispatchedStartIdentity);
         startNewCardInFlightRef.current = false;
         setCaptureBusy(null);
-        stageStartedSessionReferences(preparedForStart, reconciled);
+        if (preparedForStart) {
+          stageStartedSessionReferences(preparedForStart, reconciled);
+        }
         setError(null);
         return;
       }
@@ -6339,19 +6510,19 @@ export default function AiGraderStationPage() {
                   </div>
                   <strong>{mathematicalAuthorityBound ? "Used throughout this card" : "One form / all outputs"}</strong>
                 </div>
-                {cleanSessionMathematicalV1?.gradingAuthority ? (
+                {displayedMathematicalV1?.gradingAuthority ? (
                   <div className="mathematical-bound-summary">
-                    <strong>{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.title}</strong>
+                    <strong>{displayedMathematicalV1.gradingAuthority.cardIdentity.title}</strong>
                     <span>
-                      {cleanSessionMathematicalV1.gradingAuthority.cardIdentity.tenantId} /
-                      {" "}{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.setId} /
-                      {" "}{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.programId} /
-                      {" "}{cleanSessionMathematicalV1.gradingAuthority.cardIdentity.cardNumber}
+                      {displayedMathematicalV1.gradingAuthority.cardIdentity.tenantId} /
+                      {" "}{displayedMathematicalV1.gradingAuthority.cardIdentity.setId} /
+                      {" "}{displayedMathematicalV1.gradingAuthority.cardIdentity.programId} /
+                      {" "}{displayedMathematicalV1.gradingAuthority.cardIdentity.cardNumber}
                     </span>
                     <small>
-                      Format {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.cardFormatId)} ·{" "}
-                      Front {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.front.centering.profile)} ·
-                      {" "}Back {formatStationValue(cleanSessionMathematicalV1.gradingAuthority.sides.back.centering.profile)}
+                      Format {formatStationValue(displayedMathematicalV1.gradingAuthority.cardFormatId)} ·{" "}
+                      Front {formatStationValue(displayedMathematicalV1.gradingAuthority.sides.front.centering.profile)} ·
+                      {" "}Back {formatStationValue(displayedMathematicalV1.gradingAuthority.sides.back.centering.profile)}
                     </small>
                   </div>
                 ) : null}
@@ -6468,7 +6639,11 @@ export default function AiGraderStationPage() {
                 </div>
                 {identityDraftMissing.length ? (
                   <p className="status-note">
-                    Required before Start New Card: {identityDraftMissing.join(", ")}.
+                    {mathematicalAuthorityDraft.profiles.front === "printed_border_v1" &&
+                    mathematicalAuthorityDraft.profiles.back === "printed_border_v1"
+                      ? "Optional before capture—OCR will suggest: "
+                      : "Required before Start New Card: "}
+                    {identityDraftMissing.join(", ")}.
                   </p>
                 ) : null}
                 {mathematicalAuthorityActionRequired ? (

@@ -89,6 +89,11 @@ import type {
 import {
   effectiveAiGraderOcrModel,
 } from "./aiGraderOcrStructuredExtraction";
+import type {
+  AiGraderEyesCenteringCandidateOverlay,
+  AiGraderEyesCenteringCandidateSelectionReceipt,
+} from "./aiGraderEyesCenteringCandidateSelection";
+import type { AiGraderEyesSourceImage } from "./aiGraderEyesSemanticObserver";
 import { aiGraderNfcProgrammingReadiness, aiGraderNfcRequired } from "./aiGraderNfcPolicy";
 import type { AiGraderPublicNfcRegistration } from "./aiGraderNfcPublic";
 import { readAiGraderNfcStatusesForReports } from "./aiGraderNfcReadProjection";
@@ -252,7 +257,9 @@ export type AiGraderOcrPrefillImageUpload = {
   gradingSessionId: string;
   reportId: string;
   side: AiGraderOcrPrefillSide;
-  artifactRole: "normalized_card";
+  artifactRole: "normalized_card" | "centering_candidate_overlay";
+  candidateId?: string;
+  deterministicInputSha256?: string;
   fileName: string;
   mimeType: string;
   checksumSha256: string;
@@ -417,7 +424,18 @@ export type AiGraderProductionApiDependencies = {
     gradingSessionId: string;
     reportId: string;
     images: AiGraderOcrPrefillSourceImage[];
+    centeringCandidates?: Array<{
+      side: AiGraderOcrPrefillSide;
+      candidateId: string;
+      url: string;
+      checksumSha256: string;
+      deterministicInputSha256: string;
+    }>;
   }): Promise<AiGraderOcrPrefillResult & { internalProviderDiagnostics?: AiGraderOcrProviderDiagnostics }>;
+  runEyesCenteringSelection?(input: {
+    images: AiGraderEyesSourceImage[];
+    candidates: AiGraderEyesCenteringCandidateOverlay[];
+  }): Promise<AiGraderEyesCenteringCandidateSelectionReceipt>;
   recordOcrProviderDiagnostics?(diagnostics: AiGraderOcrProviderDiagnostics): void;
   runComps?(input: {
     reportId: string;
@@ -1989,6 +2007,9 @@ function parseOcrPrefillImageMetadata(
   }
   const side = stringValue(value.side, "") as AiGraderOcrPrefillSide;
   const artifactRole = stringValue(value.artifactRole, "");
+  const candidateId = stringValue(value.candidateId, "");
+  const deterministicInputSha256 =
+    stringValue(value.deterministicInputSha256, "").toLowerCase();
   const fileName = stringValue(value.fileName, "");
   const mimeType = stringValue(value.mimeType, "").toLowerCase();
   const checksumSha256 = stringValue(value.checksumSha256, "").toLowerCase();
@@ -1997,9 +2018,27 @@ function parseOcrPrefillImageMetadata(
   const heightPx = Math.round(numericValue(value.heightPx, 0));
   const storageKey = allowStorageKey ? stringValue(value.storageKey, "") : "";
   if (side !== "front" && side !== "back") throw new Error(`images[${index}].side must be front or back.`);
-  if (artifactRole !== "normalized_card") throw new Error(`images[${index}].artifactRole must be normalized_card.`);
-  if (fileName !== `${side}-normalized-card.png`) {
-    throw new Error(`images[${index}].fileName must be the exact safe PNG file name ${side}-normalized-card.png.`);
+  if (
+    artifactRole !== "normalized_card" &&
+    artifactRole !== "centering_candidate_overlay"
+  ) {
+    throw new Error(`images[${index}].artifactRole is unsupported.`);
+  }
+  if (artifactRole === "normalized_card" && (
+    fileName !== `${side}-normalized-card.png` ||
+    candidateId ||
+    deterministicInputSha256
+  )) {
+    throw new Error(
+      `images[${index}].fileName must be the exact safe PNG file name ${side}-normalized-card.png.`,
+    );
+  }
+  if (artifactRole === "centering_candidate_overlay" && (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(candidateId) ||
+    fileName !== `${candidateId}.png` ||
+    !/^[a-f0-9]{64}$/.test(deterministicInputSha256)
+  )) {
+    throw new Error(`images[${index}] centering-candidate identity is invalid.`);
   }
   if (mimeType !== "image/png") throw new Error(`images[${index}].mimeType must be image/png.`);
   if (widthPx !== 1200 || heightPx !== 1680) {
@@ -2017,7 +2056,10 @@ function parseOcrPrefillImageMetadata(
     gradingSessionId,
     reportId,
     side,
-    artifactRole: "normalized_card",
+    artifactRole,
+    ...(artifactRole === "centering_candidate_overlay"
+      ? { candidateId, deterministicInputSha256 }
+      : {}),
     fileName,
     mimeType,
     checksumSha256,
@@ -2034,20 +2076,51 @@ function buildOcrPrefillStorageKey(image: Omit<AiGraderOcrPrefillImageUpload, "s
     gradingSessionId: image.gradingSessionId,
     reportId: image.reportId,
   })).slice(0, 24);
-  return `ai-grader/reports/${safeStorageSegment(image.reportId)}/ocr-prefill/${safeStorageSegment(image.queueItemId)}-${exactIdentityDigest}/${safeStorageSegment(image.gradingSessionId)}/${image.side}-normalized-${image.checksumSha256.slice(0, 16)}-${image.fileName}`;
+  const role = image.artifactRole === "normalized_card"
+    ? "normalized"
+    : `candidate-${safeStorageSegment(image.candidateId!)}`;
+  return `ai-grader/reports/${safeStorageSegment(image.reportId)}/ocr-prefill/${safeStorageSegment(image.queueItemId)}-${exactIdentityDigest}/${safeStorageSegment(image.gradingSessionId)}/${image.side}-${role}-${image.checksumSha256.slice(0, 16)}-${image.fileName}`;
 }
 
 function normalizeOcrPrefillImages(images: AiGraderOcrPrefillImageUpload[]) {
-  const sides = new Set(images.map((image) => image.side));
-  if (images.length !== 2 || sides.size !== 2 || !sides.has("front") || !sides.has("back")) {
+  const normalized = images.filter((image) => image.artifactRole === "normalized_card");
+  const candidates = images.filter((image) =>
+    image.artifactRole === "centering_candidate_overlay");
+  const sides = new Set(normalized.map((image) => image.side));
+  if (normalized.length !== 2 || sides.size !== 2 || !sides.has("front") || !sides.has("back")) {
     throw new Error("OCR prefill requires exactly one normalized front image and one normalized back image.");
+  }
+  if (candidates.length) {
+    for (const side of ["front", "back"] as const) {
+      const count = candidates.filter((image) => image.side === side).length;
+      if (count < 1 || count > 6) {
+        throw new Error("EYES centering candidates require one to six exact overlays per side.");
+      }
+    }
+  }
+  const identities = new Set<string>();
+  for (const image of images) {
+    const identity = `${image.side}:${image.artifactRole}:${image.candidateId ?? ""}`;
+    if (identities.has(identity)) throw new Error("OCR prefill upload identities are duplicated.");
+    identities.add(identity);
   }
   return [...images]
     .map((image) => ({
       ...image,
       storageKey: buildOcrPrefillStorageKey(image),
     }))
-    .sort((left, right) => (left.side === right.side ? 0 : left.side === "front" ? -1 : 1));
+    .sort((left, right) =>
+      (left.side === right.side
+        ? 0
+        : left.side === "front"
+          ? -1
+          : 1) ||
+      (left.artifactRole === right.artifactRole
+        ? 0
+        : left.artifactRole === "normalized_card"
+          ? -1
+          : 1) ||
+      String(left.candidateId ?? "").localeCompare(String(right.candidateId ?? "")));
 }
 
 function ocrPrefillUploadSessionId(identity: AiGraderOcrExactIdentity, images: AiGraderOcrPrefillImageUpload[]) {
@@ -2055,9 +2128,23 @@ function ocrPrefillUploadSessionId(identity: AiGraderOcrExactIdentity, images: A
     stableStringify({
       ...identity,
       reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
-      images: images.map(({ side, artifactRole, storageKey, checksumSha256, byteSize, mimeType, widthPx, heightPx }) => ({
+      images: images.map(({
         side,
         artifactRole,
+        candidateId,
+        deterministicInputSha256,
+        storageKey,
+        checksumSha256,
+        byteSize,
+        mimeType,
+        widthPx,
+        heightPx,
+      }) => ({
+        side,
+        artifactRole,
+        ...(artifactRole === "centering_candidate_overlay"
+          ? { candidateId, deterministicInputSha256 }
+          : {}),
         storageKey,
         checksumSha256,
         byteSize,
@@ -2691,6 +2778,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           "publish-finalize",
           "ocr-prefill-init",
           "ocr-prefill-finalize",
+          "eyes-centering-finalize",
           "create-card-from-report",
           "history",
           "finish-queue",
@@ -2737,6 +2825,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       "publish-finalize",
       "ocr-prefill-init",
       "ocr-prefill-finalize",
+      "eyes-centering-finalize",
       "create-card-from-report",
       "history",
       "finish-queue",
@@ -2787,6 +2876,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         key === "publish-finalize" ||
         key === "ocr-prefill-init" ||
         key === "ocr-prefill-finalize" ||
+        key === "eyes-centering-finalize" ||
         key === "create-card-from-report" ||
         key === "render-label-sheet-pdf" ||
         key === "render-label-sheet-cut-svg" ||
@@ -2978,7 +3068,11 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
         const input = parseOcrPrefillBody(req.body, true);
         for (const image of input.images) {
           const verified = await deps.verifyUploadedArtifact({
-            artifactId: `ocr-prefill:${input.queueItemId}:${input.gradingSessionId}:${input.reportId}:${image.side}`,
+            artifactId:
+              `ocr-prefill:${input.queueItemId}:${input.gradingSessionId}:${input.reportId}:` +
+              (image.artifactRole === "normalized_card"
+                ? image.side
+                : `${image.side}:centering_candidate_overlay:${image.candidateId}`),
             storageKey: image.storageKey,
             checksumSha256: image.checksumSha256,
             byteSize: image.byteSize,
@@ -3005,11 +3099,24 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             queueItemId: input.queueItemId,
             gradingSessionId: input.gradingSessionId,
             reportId: input.reportId,
-            images: input.images.map((image) => ({
+            images: input.images
+              .filter((image) => image.artifactRole === "normalized_card")
+              .map((image) => ({
               side: image.side,
               url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
               checksumSha256: image.checksumSha256,
             })),
+            centeringCandidates: input.images
+              .filter((image) =>
+                image.artifactRole === "centering_candidate_overlay")
+              .map((image) => ({
+                side: image.side,
+                candidateId: image.candidateId!,
+                url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
+                checksumSha256: image.checksumSha256,
+                deterministicInputSha256:
+                  image.deterministicInputSha256!,
+              })),
           });
         } catch (error) {
           if (isRecord(error) && isAiGraderOcrFailureCode(error.code)) {
@@ -3053,6 +3160,12 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           reviewFieldNames: runtimeResult.reviewFieldNames,
           provenance: runtimeResult.provenance,
           ...(runtimeResult.eyes ? { eyes: runtimeResult.eyes } : {}),
+          ...(runtimeResult.eyesCenteringSelection
+            ? {
+                eyesCenteringSelection:
+                  runtimeResult.eyesCenteringSelection,
+              }
+            : {}),
           warnings: runtimeResult.warnings,
         };
         assertOcrPrefillResultSafe(safeResult);
@@ -3062,6 +3175,88 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           enabled: true,
           operation: "aiGraderOcrPrefillFinalize",
           result: safeResult,
+        });
+      }
+      if (key === "eyes-centering-finalize") {
+        if (!deps.verifyUploadedArtifact) {
+          throw new Error(
+            "AI Grader EYES centering upload verification is not configured.",
+          );
+        }
+        if (!deps.runEyesCenteringSelection) {
+          throw new Error(
+            "AI Grader EYES centering runtime is not configured.",
+          );
+        }
+        const input = parseOcrPrefillBody(req.body, true);
+        const candidates = input.images.filter(
+          (image) =>
+            image.artifactRole === "centering_candidate_overlay",
+        );
+        if (!candidates.length) {
+          throw new Error(
+            "EYES centering requires the exact deterministic candidate overlays.",
+          );
+        }
+        for (const image of input.images) {
+          const verified = await deps.verifyUploadedArtifact({
+            artifactId:
+              `eyes-centering:${input.queueItemId}:${input.gradingSessionId}:${input.reportId}:` +
+              `${image.side}:${image.artifactRole}:${image.candidateId ?? "normalized"}`,
+            storageKey: image.storageKey,
+            checksumSha256: image.checksumSha256,
+            byteSize: image.byteSize,
+            contentType: image.mimeType,
+            sourceImageWidthPx: image.widthPx,
+            sourceImageHeightPx: image.heightPx,
+          });
+          assertAiGraderStorageArtifactIntegrity({
+            verified,
+            expectedByteSize: image.byteSize,
+            expectedContentType: image.mimeType,
+            expectedChecksumSha256: image.checksumSha256,
+            label: "EYES centering " + image.side + " image",
+          });
+          if (
+            verified.widthPx !== image.widthPx ||
+            verified.heightPx !== image.heightPx
+          ) {
+            throw new Error(
+              "Storage-decoded EYES centering image dimensions mismatch.",
+            );
+          }
+        }
+        const receipt = await deps.runEyesCenteringSelection({
+          images: input.images
+            .filter((image) => image.artifactRole === "normalized_card")
+            .map((image) => ({
+              side: image.side,
+              url: safeOcrSourceUrl(
+                deps.publicUrlFor(image.storageKey),
+              ),
+              checksumSha256: image.checksumSha256,
+            })),
+          candidates: candidates.map((image) => ({
+            side: image.side,
+            candidateId: image.candidateId!,
+            url: safeOcrSourceUrl(
+              deps.publicUrlFor(image.storageKey),
+            ),
+            checksumSha256: image.checksumSha256,
+            deterministicInputSha256:
+              image.deterministicInputSha256!,
+          })),
+        });
+        assertSmallJsonPayload(
+          receipt,
+          AI_GRADER_PRODUCTION_VERCEL_PAYLOAD_LIMIT_BYTES,
+          "AI Grader EYES centering result",
+        );
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "aiGraderEyesCenteringFinalize",
+          result: receipt,
         });
       }
       if (key === "upload-slab-photo") {

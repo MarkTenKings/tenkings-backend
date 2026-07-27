@@ -210,7 +210,11 @@ import type {
   FixedRigOperatorResolutionWorkspaceAssetMetadataV1,
   FixedRigOperatorResolutionWorkspaceAssetV1,
   FixedRigOperatorResolutionWorkspaceV1,
+  FixedRigEyesCenteringCandidateAssetMetadataV1,
+  FixedRigEyesCenteringCandidateAssetV1,
+  FixedRigEyesCenteringCandidateLedgerV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
+import type { FixedRigPrintedBorderCandidateSelectionV1 } from "./fixedRigPrintedBorderDetectorV1";
 import {
   FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID,
   verifyTrustedPokemonCardFormatAuthorityV1,
@@ -267,6 +271,10 @@ const MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES = 64 * 1024 * 1024;
 const MATHEMATICAL_REVIEW_ASSET_MAX_BYTES = 64 * 1024 * 1024;
 const MATHEMATICAL_REVIEW_ASSET_TOTAL_MAX_BYTES = 512 * 1024 * 1024;
 const SHA256_LOWERCASE_RE = /^[a-f0-9]{64}$/;
+const AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1 =
+  "ten-kings-ai-grader-ocr-first-printed-border-v1" as const;
+const AI_GRADER_OCR_FIRST_AUTHORITY_SHA256 =
+  "eb453220fff9a1b4605eb832384aba4764dc83a9f562fc9d0a23990f1bfcc034" as const;
 
 export type AiGraderLocalStationBridgeMode = "mock" | "real";
 
@@ -350,6 +358,11 @@ export interface AiGraderLocalStationOperatorResolutionWorkspaceAssetV1 {
   filePath: string;
 }
 
+export interface AiGraderLocalStationEyesCenteringCandidateAssetV1
+  extends FixedRigEyesCenteringCandidateAssetMetadataV1 {
+  filePath: string;
+}
+
 type MathematicalCompletedResultV1 = Extract<
   BuildFixedRigMathematicalCalibrationStationPackageV1Result,
   { status: "completed" }
@@ -422,6 +435,16 @@ export interface AiGraderLocalStationMathematicalV1State {
     string,
     AiGraderLocalStationOperatorResolutionWorkspaceAssetV1
   >;
+  eyesCenteringCandidateLedger?: FixedRigEyesCenteringCandidateLedgerV1;
+  eyesCenteringCandidateAssets?: Record<
+    string,
+    AiGraderLocalStationEyesCenteringCandidateAssetV1
+  >;
+  eyesCenteringSelections?: Partial<
+    Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+  >;
+  eyesCenteringSelectionReceipt?: Record<string, unknown>;
+  eyesCenteringRemeasurementPassCount?: number;
   submittedFindingReviews?: FixedRigMathematicalFindingReviewV1[];
   operatorResolutionReceipts?: Array<{
     idempotencyKey: string;
@@ -464,6 +487,7 @@ export type AiGraderLocalStationBridgeAction =
   | "submit-operator-resolutions"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
+  | "complete-eyes-centering-selection"
   | "fail-queued-ocr"
   | "mathematical-calibration-rig-input";
 
@@ -473,6 +497,7 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "identity_resolution_required"
   | "finding_review_required"
   | "operator_resolution_required"
   | "insufficient_evidence"
@@ -500,6 +525,7 @@ export interface AiGraderRapidCaptureQueueItem {
   autoPublished: false;
   mathematicalV1?: {
     status: AiGraderLocalStationMathematicalExecutionV1["status"];
+    eyesCenteringSelectionState?: "eligible" | "completed";
     reviewRequestSha256?: string;
     failedStage?: MathematicalInsufficientResultV1["failedStage"];
     reasons?: string[];
@@ -878,6 +904,13 @@ export interface AiGraderLocalStationBridgeManifest {
   acceptedProfile: AiGraderLocalStationAcceptedProfile;
   gradingContract?: AiGraderGradingContract;
   mathematicalV1?: AiGraderLocalStationMathematicalV1State;
+  pendingOcrIdentityV1?: {
+    schemaVersion: "ten-kings-ai-grader-ocr-first-printed-border-v1";
+    frontCenteringProfile: "printed_border_v1";
+    backCenteringProfile: "printed_border_v1";
+    calibrationActivationAuthority: AiGraderCalibrationActivationAuthorityV1;
+    startedAt: string;
+  };
   startOperationIdentity?: {
     reportId: string;
     gradingSessionId: string;
@@ -1544,6 +1577,7 @@ export interface AiGraderLocalStationBridgeActionRequest {
   captureProfile?: FixedRigCaptureProfile;
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+  ocrFirstIdentityBinding?: "printed_border_v1";
   mathematicalReviewRequestSha256?: string;
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   calibrationObservationAuthority?: AiGraderCalibrationObservationAuthorityV1;
@@ -3359,6 +3393,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "submit-operator-resolutions", hardwareAccess: false, description: "Submit one authenticated versioned element-resolution authority and resume the same durable queue item without recapture." },
     { method: "POST", action: "begin-queued-ocr", hardwareAccess: false, description: "Claim one exact eligible queued OCR item once." },
     { method: "POST", action: "complete-queued-ocr", hardwareAccess: false, description: "Persist one safe exact-item OCR result." },
+    { method: "POST", action: "complete-eyes-centering-selection", hardwareAccess: false, description: "Persist one hash-bound EYES candidate receipt and run at most one deterministic remeasurement pass." },
     { method: "POST", action: "fail-queued-ocr", hardwareAccess: false, description: "Persist one explicit terminal exact-item OCR failure." },
     { method: "GET", action: "queued-ocr-descriptor", path: "/rapid-queue/{queueItemId}/ocr", hardwareAccess: false, description: "Read exact verified normalized-PNG OCR descriptors." },
     { method: "GET", action: "queued-ocr-asset", path: "/rapid-queue/{queueItemId}/ocr/asset", hardwareAccess: false, description: "Read one exact freshly verified normalized-PNG body." },
@@ -3828,6 +3863,7 @@ function rapidCaptureQueuePath(config: AiGraderLocalStationBridgeConfig) {
 
 const RAPID_WORKFLOW_STATES = new Set<AiGraderRapidCaptureWorkflowState>([
   "front_captured", "front_processing", "back_positioning", "back_captured", "finalizing",
+  "identity_resolution_required",
   "finding_review_required", "operator_resolution_required", "insufficient_evidence",
   "report_ready_needs_confirm", "confirmed_needs_publish", "published", "failed",
 ]);
@@ -4284,12 +4320,32 @@ function persistedMathematicalRapidQueueSummary(
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Persisted Mathematical Rapid summary must be an exact object.");
   }
-  const raw = value as Record<string, unknown>;
+  const persisted = value as Record<string, unknown>;
+  const eyesCenteringSelectionState =
+    persisted.eyesCenteringSelectionState === "eligible" ||
+    persisted.eyesCenteringSelectionState === "completed"
+      ? persisted.eyesCenteringSelectionState
+      : undefined;
+  if (
+    persisted.eyesCenteringSelectionState !== undefined &&
+    !eyesCenteringSelectionState
+  ) {
+    throw new Error(
+      "Persisted Mathematical Rapid EYES selection state is invalid.",
+    );
+  }
+  const raw = { ...persisted };
+  delete raw.eyesCenteringSelectionState;
   if (raw.status === "completed") {
     if (!exactObjectKeys(raw, ["status"])) {
       throw new Error("Persisted completed Mathematical Rapid summary has unknown fields.");
     }
-    return { status: "completed" };
+    return {
+      status: "completed",
+      ...(eyesCenteringSelectionState
+        ? { eyesCenteringSelectionState }
+        : {}),
+    };
   }
   if (raw.status === "processing") {
     if (!exactObjectKeys(raw, raw.reviewRequestSha256 === undefined
@@ -4303,6 +4359,9 @@ function persistedMathematicalRapidQueueSummary(
     }
     return {
       status: "processing",
+      ...(eyesCenteringSelectionState
+        ? { eyesCenteringSelectionState }
+        : {}),
       ...(typeof raw.reviewRequestSha256 === "string"
         ? { reviewRequestSha256: raw.reviewRequestSha256 }
         : {}),
@@ -4316,6 +4375,9 @@ function persistedMathematicalRapidQueueSummary(
     }
     return {
       status: "finding_review_required",
+      ...(eyesCenteringSelectionState
+        ? { eyesCenteringSelectionState }
+        : {}),
       reviewRequestSha256: raw.reviewRequestSha256,
     };
   }
@@ -4327,6 +4389,9 @@ function persistedMathematicalRapidQueueSummary(
     }
     return {
       status: "operator_resolution_required",
+      ...(eyesCenteringSelectionState
+        ? { eyesCenteringSelectionState }
+        : {}),
       reviewRequestSha256: raw.reviewRequestSha256,
     };
   }
@@ -4355,6 +4420,9 @@ function persistedMathematicalRapidQueueSummary(
     }
     return {
       status: "insufficient_evidence",
+      ...(eyesCenteringSelectionState
+        ? { eyesCenteringSelectionState }
+        : {}),
       failedStage: raw.failedStage as MathematicalInsufficientResultV1["failedStage"],
       reasons: [...raw.reasons] as string[],
       requiresRecapture: raw.requiresRecapture,
@@ -4891,6 +4959,150 @@ function effectiveQueuedOcrEyesReviewElements(
   return AI_GRADER_EYES_ELEMENTS.filter((element) => effective.has(element));
 }
 
+function safeQueuedOcrEyesCenteringSelection(
+  value: unknown,
+  expectedImages: readonly AiGraderQueuedOcrImage[],
+  expectedLedger: FixedRigEyesCenteringCandidateLedgerV1,
+): Record<string, unknown> {
+  const keys = [
+    "schemaVersion", "status", "requestedModel", "actualModel",
+    "requestSha256", "sourceImageBindings", "candidateBindings",
+    "decisions", "metricAuthority", "coordinateAuthority",
+    "maximumRemeasurementPasses", "providerElapsedMs",
+  ];
+  if (!exactObjectKeys(value, keys)) {
+    throw new Error("Queued OCR EYES centering receipt shape is invalid.");
+  }
+  if (
+    value.schemaVersion !== "ai_grader_eyes_centering_candidate_selection_v1" ||
+    value.status !== "observed" ||
+    value.metricAuthority !== "deterministic_calibrated_pixels_only" ||
+    value.coordinateAuthority !== false ||
+    value.maximumRemeasurementPasses !== 2
+  ) {
+    throw new Error("Queued OCR EYES centering authority is invalid.");
+  }
+  const safeModel = (model: unknown) => {
+    if (
+      typeof model !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(model)
+    ) throw new Error("Queued OCR EYES centering model is invalid.");
+    return model;
+  };
+  const sourceImageBindings = (["front", "back"] as const).map((side, index) => {
+    const binding = Array.isArray(value.sourceImageBindings)
+      ? value.sourceImageBindings[index]
+      : undefined;
+    const expected = expectedImages.find((image) => image.side === side);
+    if (!expected) {
+      throw new Error("Queued OCR EYES centering source image is unavailable.");
+    }
+    if (
+      !exactObjectKeys(binding, ["side", "checksumSha256"]) ||
+      binding.side !== side ||
+      binding.checksumSha256 !== expected?.checksumSha256
+    ) throw new Error("Queued OCR EYES centering source binding is invalid.");
+    return { side, checksumSha256: expected.checksumSha256 };
+  });
+  const expectedCandidates = [...expectedLedger.candidates]
+    .sort((left, right) =>
+      left.side.localeCompare(right.side) ||
+      left.candidateId.localeCompare(right.candidateId));
+  if (
+    !Array.isArray(value.candidateBindings) ||
+    value.candidateBindings.length !== expectedCandidates.length
+  ) throw new Error("Queued OCR EYES centering candidate bindings are incomplete.");
+  const receiptCandidateBindings = value.candidateBindings as unknown[];
+  const candidateBindings = expectedCandidates.map((candidate, index) => {
+    const binding = receiptCandidateBindings[index];
+    if (
+      !exactObjectKeys(binding, [
+        "side", "candidateId", "checksumSha256", "deterministicInputSha256",
+      ]) ||
+      binding.side !== candidate.side ||
+      binding.candidateId !== candidate.candidateId ||
+      binding.checksumSha256 !== candidate.sha256 ||
+      binding.deterministicInputSha256 !== candidate.deterministicInputSha256
+    ) throw new Error("Queued OCR EYES centering candidate binding is stale or invented.");
+    return {
+      side: candidate.side,
+      candidateId: candidate.candidateId,
+      checksumSha256: candidate.sha256,
+      deterministicInputSha256: candidate.deterministicInputSha256,
+    };
+  });
+  const expectedRequestSha256 = crypto.createHash("sha256")
+    .update(canonicalJsonV1({
+      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      sourceImageBindings,
+      candidateBindings,
+      metricAuthority: "deterministic_calibrated_pixels_only",
+      coordinateAuthority: false,
+      maximumRemeasurementPasses: 2,
+    }), "utf8")
+    .digest("hex");
+  if (value.requestSha256 !== expectedRequestSha256) {
+    throw new Error("Queued OCR EYES centering request hash does not reproduce.");
+  }
+  if (!Array.isArray(value.decisions) || value.decisions.length !== 2) {
+    throw new Error("Queued OCR EYES centering decisions are incomplete.");
+  }
+  const decisions = value.decisions.map((decision, index) => {
+    const side = (["front", "back"] as const)[index];
+    if (!exactObjectKeys(decision, [
+      "side", "decision", "candidateId", "confidence", "rationale",
+    ])) throw new Error("Queued OCR EYES centering decision shape is invalid.");
+    const decisionType = String(decision.decision);
+    const selected = decision.candidateId === null
+      ? null
+      : String(decision.candidateId);
+    if (
+      decision.side !== side ||
+      !["select_candidate", "reject_all", "unclear"].includes(decisionType) ||
+      typeof decision.confidence !== "number" ||
+      !Number.isFinite(decision.confidence) ||
+      decision.confidence < 0 ||
+      decision.confidence > 1 ||
+      (decisionType === "select_candidate"
+        ? !selected ||
+          !candidateBindings.some((candidate) =>
+            candidate.side === side && candidate.candidateId === selected)
+        : selected !== null)
+    ) throw new Error("Queued OCR EYES centering decision is invalid.");
+    return {
+      side,
+      decision: decisionType,
+      candidateId: selected,
+      confidence: decision.confidence,
+      rationale: safeQueuedOcrResultText(
+        decision.rationale,
+        `EYES ${side} centering rationale`,
+        240,
+      ),
+    };
+  });
+  if (
+    typeof value.providerElapsedMs !== "number" ||
+    !Number.isInteger(value.providerElapsedMs) ||
+    value.providerElapsedMs < 0 ||
+    value.providerElapsedMs > 60_000
+  ) throw new Error("Queued OCR EYES centering elapsed time is invalid.");
+  return {
+    schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+    status: "observed",
+    requestedModel: safeModel(value.requestedModel),
+    actualModel: safeModel(value.actualModel),
+    requestSha256: expectedRequestSha256,
+    sourceImageBindings,
+    candidateBindings,
+    decisions,
+    metricAuthority: "deterministic_calibrated_pixels_only",
+    coordinateAuthority: false,
+    maximumRemeasurementPasses: 2,
+    providerElapsedMs: value.providerElapsedMs,
+  };
+}
+
 function exactHostedPublicationEvidence(
   value: unknown,
   identity: { queueItemId: string; gradingSessionId: string; reportId: string },
@@ -4923,6 +5135,7 @@ function safeQueuedOcrResult(
   options: {
     expectedImages?: readonly AiGraderQueuedOcrImage[];
     requireEyes?: boolean;
+    expectedEyesCenteringLedger?: FixedRigEyesCenteringCandidateLedgerV1;
   } = {},
 ): Record<string, unknown> {
   const requiredTopLevelKeys = [
@@ -4938,7 +5151,9 @@ function safeQueuedOcrResult(
   if (
     requiredTopLevelKeys.some((key) => !actualTopLevelKeys.includes(key)) ||
     actualTopLevelKeys.some((key) =>
-      !requiredTopLevelKeys.includes(key as any) && key !== "eyes")
+      !requiredTopLevelKeys.includes(key as any) &&
+      key !== "eyes" &&
+      key !== "eyesCenteringSelection")
   ) {
     throw new Error("Queued OCR result shape is invalid.");
   }
@@ -5051,6 +5266,15 @@ function safeQueuedOcrResult(
   const eyes = actualTopLevelKeys.includes("eyes")
     ? safeQueuedOcrEyesReceipt(queuedResult.eyes, options.expectedImages)
     : undefined;
+  const eyesCenteringSelection = actualTopLevelKeys.includes(
+    "eyesCenteringSelection",
+  ) && options.expectedImages && options.expectedEyesCenteringLedger
+    ? safeQueuedOcrEyesCenteringSelection(
+        queuedResult.eyesCenteringSelection,
+        options.expectedImages,
+        options.expectedEyesCenteringLedger,
+      )
+    : undefined;
   return structuredClone({
     queueItemId: identity.queueItemId,
     gradingSessionId: identity.gradingSessionId,
@@ -5071,6 +5295,7 @@ function safeQueuedOcrResult(
       setIdentificationUsed: provenance.setIdentificationUsed,
     },
     ...(eyes ? { eyes } : {}),
+    ...(eyesCenteringSelection ? { eyesCenteringSelection } : {}),
     warnings,
   });
 }
@@ -5410,15 +5635,20 @@ export class AiGraderLocalStationBridgeService {
       return result('capture_blocked', 'Front capture is unavailable because this session already has evidence or a terminal capture/processing failure.');
     }
     if (gradingContractFor(this.manifest) === "mathematical_calibration_v1") {
-      if (!this.manifest.mathematicalV1) {
+      if (
+        !this.manifest.mathematicalV1 &&
+        this.manifest.pendingOcrIdentityV1?.schemaVersion !==
+          AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1
+      ) {
         return result(
           'mathematical_authority_required',
           'Bind the exact Mathematical V1 card and centering/design-reference authority before Capture Front; publication remains bridge-derived.',
         );
       }
-      const centering = this.manifest.mathematicalV1.gradingAuthority.sides.front.centering;
-      if (centering.profile === "registered_design_template_v1" &&
-          !this.manifest.mathematicalV1.stagedDesignReferences.front) {
+      const centering =
+        this.manifest.mathematicalV1?.gradingAuthority.sides.front.centering;
+      if (centering?.profile === "registered_design_template_v1" &&
+          !this.manifest.mathematicalV1?.stagedDesignReferences.front) {
         return result(
           'design_reference_staging_required',
           'Stage the exact approved Front design-reference bytes before Capture Front.',
@@ -7741,6 +7971,7 @@ export class AiGraderLocalStationBridgeService {
     manifest: AiGraderLocalStationBridgeManifest,
     value: unknown,
     calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
+    options?: { ocrFirstQueued?: boolean },
   ): void {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
       throw new Error("Mathematical grading authority can bind only to an explicit Mathematical V1 session.");
@@ -7748,24 +7979,56 @@ export class AiGraderLocalStationBridgeService {
     if (!manifest.sessionId || !manifest.reportId || !manifest.createdAt) {
       throw new Error("Mathematical grading authority requires one exact active station session.");
     }
-    if (manifest.outputs.frontPackageDir || manifest.outputs.backPackageDir ||
-        manifest.mathematicalV1?.execution || Object.keys(manifest.mathematicalV1?.stagedDesignReferences ?? {}).length) {
-      throw new Error("Mathematical grading authority is immutable after staging, capture, or grading starts.");
-    }
     if (manifest.mathematicalV1) {
       throw new Error("Mathematical grading authority is already bound to this exact session.");
     }
-    manifest.mathematicalV1 = newLocalMathematicalV1State(
-      validateLocalMathematicalGradingAuthorityV1(value, {
+    const validated = validateLocalMathematicalGradingAuthorityV1(value, {
         hmacKey: this.config.cardFormatAuthorityHmacKey,
         keyId: this.config.cardFormatAuthorityHmacKeyId,
-      }),
+      });
+    const pendingOcr = manifest.pendingOcrIdentityV1;
+    if (options?.ocrFirstQueued) {
+      if (
+        !pendingOcr ||
+        pendingOcr.schemaVersion !== AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1 ||
+        pendingOcr.frontCenteringProfile !== "printed_border_v1" ||
+        pendingOcr.backCenteringProfile !== "printed_border_v1" ||
+        !manifest.outputs.frontPackageDir ||
+        !manifest.outputs.backPackageDir
+      ) {
+        throw new Error(
+          "OCR-first Mathematical authority can bind only after exact Front/Back capture and before any grading or design-reference staging.",
+        );
+      }
+      if (
+        validated.sides.front.centering.profile !== "printed_border_v1" ||
+        validated.sides.back.centering.profile !== "printed_border_v1"
+      ) {
+        throw new Error(
+          "OCR-first capture is limited to printed-border centering on both sides; registered-template authority must bind before capture.",
+        );
+      }
+    } else if (
+      manifest.outputs.frontPackageDir ||
+      manifest.outputs.backPackageDir
+    ) {
+      throw new Error("Mathematical grading authority is immutable after staging, capture, or grading starts.");
+    }
+    manifest.mathematicalV1 = newLocalMathematicalV1State(
+      validated,
       manifest.createdAt,
-      calibrationActivationAuthority,
+      options?.ocrFirstQueued
+        ? pendingOcr?.calibrationActivationAuthority
+        : calibrationActivationAuthority,
     );
+    if (options?.ocrFirstQueued) {
+      delete manifest.pendingOcrIdentityV1;
+    }
     manifest.progressLog.push(
       new Date().toISOString() +
-      " Exact Mathematical V1 card and centering/design-reference authority bound before capture; no caller publication or registration transform was accepted.",
+      (options?.ocrFirstQueued
+        ? " Exact OCR-assisted Mathematical V1 identity bound after capture and before grading; printed-border authority remained unchanged and no caller measurement or publication transform was accepted."
+        : " Exact Mathematical V1 card and centering/design-reference authority bound before capture; no caller publication or registration transform was accepted."),
     );
   }
 
@@ -7816,6 +8079,17 @@ export class AiGraderLocalStationBridgeService {
     side: "front" | "back",
   ): void {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1") return;
+    if (
+      !manifest.mathematicalV1 &&
+      manifest.pendingOcrIdentityV1?.schemaVersion ===
+        AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1 &&
+      manifest.pendingOcrIdentityV1.frontCenteringProfile ===
+        "printed_border_v1" &&
+      manifest.pendingOcrIdentityV1.backCenteringProfile ===
+        "printed_border_v1"
+    ) {
+      return;
+    }
     this.verifyStagedDesignReferenceSync(manifest, side);
   }
 
@@ -8410,11 +8684,134 @@ export class AiGraderLocalStationBridgeService {
     return Object.fromEntries(registry);
   }
 
+  private async buildEyesCenteringCandidateAssetRegistry(
+    manifest: AiGraderLocalStationBridgeManifest,
+    ledger: FixedRigEyesCenteringCandidateLedgerV1,
+    producedAssets: readonly FixedRigEyesCenteringCandidateAssetV1[],
+  ): Promise<Record<string, AiGraderLocalStationEyesCenteringCandidateAssetV1>> {
+    const sessionDir = manifest.outputs.sessionDir;
+    if (
+      !sessionDir ||
+      !manifest.sessionId ||
+      !manifest.reportId ||
+      ledger.schemaVersion !== "fixed_rig_eyes_centering_candidate_ledger_v1" ||
+      ledger.metricAuthority !== "deterministic_calibrated_pixels_only" ||
+      ledger.coordinateAuthority !== false ||
+      ledger.maximumRemeasurementPasses !== 2 ||
+      !SHA256_LOWERCASE_RE.test(ledger.ledgerSha256)
+    ) {
+      throw new Error("EYES centering candidate ledger is not bound to the exact mathematical session.");
+    }
+    const { ledgerSha256: _ledgerSha256, ...ledgerPayload } = ledger;
+    const reproduced = crypto.createHash("sha256")
+      .update(`${canonicalJsonV1(ledgerPayload)}\n`, "utf8")
+      .digest("hex");
+    if (reproduced !== ledger.ledgerSha256) {
+      throw new Error("EYES centering candidate ledger SHA-256 does not reproduce.");
+    }
+    const expected = new Map<string, FixedRigEyesCenteringCandidateAssetMetadataV1>();
+    for (const asset of ledger.candidates) {
+      const key = `${asset.side}:${asset.candidateId}`;
+      if (
+        (asset.side !== "front" && asset.side !== "back") ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(asset.candidateId) ||
+        !SHA256_LOWERCASE_RE.test(asset.deterministicInputSha256) ||
+        !SHA256_LOWERCASE_RE.test(asset.sha256) ||
+        asset.contentType !== "image/png" ||
+        path.basename(asset.fileName) !== asset.fileName ||
+        !Number.isSafeInteger(asset.byteSize) ||
+        asset.byteSize <= 0 ||
+        asset.byteSize > MATHEMATICAL_REVIEW_ASSET_MAX_BYTES ||
+        asset.widthPx !== 1200 ||
+        asset.heightPx !== 1680 ||
+        expected.has(key)
+      ) {
+        throw new Error("EYES centering candidate metadata is malformed or duplicated.");
+      }
+      expected.set(key, asset);
+    }
+    if (
+      expected.size < 2 ||
+      !ledger.candidates.some((asset) => asset.side === "front") ||
+      !ledger.candidates.some((asset) => asset.side === "back") ||
+      ledger.candidates.filter((asset) => asset.side === "front").length > 6 ||
+      ledger.candidates.filter((asset) => asset.side === "back").length > 6
+    ) {
+      throw new Error("EYES centering candidate ledger requires one to six candidates per side.");
+    }
+    const produced = new Map<string, FixedRigEyesCenteringCandidateAssetV1>();
+    let totalBytes = 0;
+    for (const asset of producedAssets) {
+      const key = `${asset.side}:${asset.candidateId}`;
+      const metadata = expected.get(key);
+      if (
+        !metadata ||
+        produced.has(key) ||
+        !Buffer.isBuffer(asset.bytes) ||
+        asset.sha256 !== metadata.sha256 ||
+        asset.deterministicInputSha256 !== metadata.deterministicInputSha256 ||
+        asset.fileName !== metadata.fileName ||
+        asset.byteSize !== metadata.byteSize ||
+        asset.widthPx !== metadata.widthPx ||
+        asset.heightPx !== metadata.heightPx ||
+        asset.selectedByDefault !== metadata.selectedByDefault ||
+        asset.bytes.byteLength !== metadata.byteSize ||
+        crypto.createHash("sha256").update(asset.bytes).digest("hex") !== metadata.sha256
+      ) {
+        throw new Error("EYES centering candidate bytes do not match their exact ledger.");
+      }
+      totalBytes += asset.bytes.byteLength;
+      produced.set(key, asset);
+    }
+    if (
+      produced.size !== expected.size ||
+      totalBytes > MATHEMATICAL_REVIEW_ASSET_TOTAL_MAX_BYTES
+    ) {
+      throw new Error("EYES centering candidate assets are incomplete or exceed their bounded size.");
+    }
+    const candidateDir = path.join(
+      sessionDir,
+      "mathematical-v1-eyes-centering",
+      ledger.ledgerSha256,
+    );
+    if (!isSubpath(candidateDir, sessionDir) || !isSubpath(candidateDir, this.config.outputDir)) {
+      throw new Error("EYES centering candidate directory escaped station authority.");
+    }
+    await mkdir(candidateDir, { recursive: true });
+    const registry = new Map<string, AiGraderLocalStationEyesCenteringCandidateAssetV1>();
+    for (const [index, metadata] of [...expected.values()]
+      .sort((left, right) =>
+        left.side.localeCompare(right.side) ||
+        left.candidateId.localeCompare(right.candidateId))
+      .entries()) {
+      const key = `${metadata.side}:${metadata.candidateId}`;
+      const bytes = produced.get(key)!.bytes;
+      const filePath = path.join(candidateDir, `${String(index + 1).padStart(2, "0")}.png`);
+      try {
+        await writeFile(filePath, bytes, { flag: "wx" });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+      }
+      const readback = await readFile(filePath);
+      if (
+        readback.byteLength !== metadata.byteSize ||
+        crypto.createHash("sha256").update(readback).digest("hex") !== metadata.sha256
+      ) {
+        throw new Error("EYES centering candidate readback changed after generation.");
+      }
+      registry.set(key, { ...structuredClone(metadata), filePath });
+    }
+    return Object.fromEntries(registry);
+  }
+
   private async runMathematicalStationPackage(
     manifest: AiGraderLocalStationBridgeManifest,
     findingReviews?: FixedRigMathematicalFindingReviewV1[],
     eventTimeFloor?: string,
     forcedOperatorReviewElements?: Array<(typeof AI_GRADER_EYES_ELEMENTS)[number]>,
+    eyesCenteringSelections?: Partial<
+      Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+    >,
   ): Promise<AiGraderLocalStationMathematicalExecutionV1> {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
         !manifest.mathematicalV1 || !manifest.sessionId || !manifest.reportId) {
@@ -8518,6 +8915,14 @@ export class AiGraderLocalStationBridgeService {
         ...(forcedOperatorReviewElements?.length ? {
           forcedOperatorReviewElements: [...forcedOperatorReviewElements],
         } : {}),
+        ...((eyesCenteringSelections ?? manifest.mathematicalV1.eyesCenteringSelections)
+          ? {
+              eyesCenteringSelections: structuredClone(
+                eyesCenteringSelections ??
+                manifest.mathematicalV1.eyesCenteringSelections,
+              ),
+            }
+          : {}),
       });
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
         throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
@@ -8545,6 +8950,39 @@ export class AiGraderLocalStationBridgeService {
     let reviewAssets: Record<string, AiGraderLocalStationMathematicalReviewAssetV1> | undefined;
     let operatorWorkspaceAssets:
       Record<string, AiGraderLocalStationOperatorResolutionWorkspaceAssetV1> | undefined;
+    let eyesCenteringCandidateAssets:
+      Record<string, AiGraderLocalStationEyesCenteringCandidateAssetV1> | undefined;
+    if (
+      result.eyesCenteringCandidateLedger &&
+      result.eyesCenteringCandidateAssets
+    ) {
+      try {
+        eyesCenteringCandidateAssets =
+          await this.buildEyesCenteringCandidateAssetRegistry(
+            manifest,
+            result.eyesCenteringCandidateLedger,
+            result.eyesCenteringCandidateAssets,
+          );
+      } catch (error) {
+        result = {
+          version: "fixed_rig_mathematical_calibration_orchestrator_v1",
+          status: "insufficient_evidence",
+          gradingContract: "mathematical_calibration_v1",
+          v0FallbackUsed: false,
+          failedStage: "report_adaptation",
+          reasons: [
+            "The private EYES centering candidates could not be exposed from exact deterministic sources: " +
+            (error instanceof Error ? error.message : "unknown candidate-ledger binding error"),
+          ],
+          requiresRecapture: false,
+          requiresApprovedDesignReference: false,
+          requiresCalibration: false,
+          requiresImplementationCorrection: true,
+          reportPackage: null,
+          stationInput: null,
+        };
+      }
+    }
     if (result.status === "finding_review_required") {
       try {
         reviewAssets = await this.buildMathematicalReviewAssetRegistry(
@@ -8602,6 +9040,15 @@ export class AiGraderLocalStationBridgeService {
     }
     const completedAt =
       operatorResolutionLogicalEventTimeV1(startedAt);
+    if (
+      result.eyesCenteringCandidateLedger &&
+      eyesCenteringCandidateAssets
+    ) {
+      manifest.mathematicalV1.eyesCenteringCandidateLedger =
+        structuredClone(result.eyesCenteringCandidateLedger);
+      manifest.mathematicalV1.eyesCenteringCandidateAssets =
+        eyesCenteringCandidateAssets;
+    }
     if (result.status === "completed") {
       delete manifest.mathematicalV1.reviewAssets;
       delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
@@ -9052,6 +9499,15 @@ export class AiGraderLocalStationBridgeService {
     item.updatedAt = event.at;
     item.history = [...item.history, event].slice(-100);
     item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
+    if (
+      item.mathematicalV1 &&
+      manifest.mathematicalV1?.eyesCenteringCandidateLedger
+    ) {
+      item.mathematicalV1.eyesCenteringSelectionState =
+        manifest.mathematicalV1.eyesCenteringSelectionReceipt
+          ? "completed"
+          : "eligible";
+    }
     if (state !== "failed") delete item.error;
     this.queuedManifests.set(queueItemId, manifest);
   }
@@ -9121,6 +9577,15 @@ export class AiGraderLocalStationBridgeService {
       item.updatedAt = manifest.updatedAt;
       item.history = [...manifest.rapidCapture.workflowHistory];
       item.mathematicalV1 = mathematicalRapidQueueSummary(manifest.mathematicalV1?.execution);
+      if (
+        item.mathematicalV1 &&
+        manifest.mathematicalV1?.eyesCenteringCandidateLedger
+      ) {
+        item.mathematicalV1.eyesCenteringSelectionState =
+          manifest.mathematicalV1.eyesCenteringSelectionReceipt
+            ? "completed"
+            : "eligible";
+      }
       item.error = item.state === "failed" ? manifest.warnings.at(-1) ?? item.error : undefined;
       this.queuedManifests.set(queueItemId, manifest);
       return { value: undefined, manifests: [manifest] };
@@ -9327,6 +9792,45 @@ export class AiGraderLocalStationBridgeService {
     return bytes;
   }
 
+  private async verifiedQueuedEyesCenteringCandidate(
+    manifest: AiGraderLocalStationBridgeManifest,
+    side: "front" | "back",
+    candidateId: string,
+  ): Promise<{
+    asset: AiGraderLocalStationEyesCenteringCandidateAssetV1;
+    bytes: Buffer;
+  }> {
+    const ledger = manifest.mathematicalV1?.eyesCenteringCandidateLedger;
+    const key = `${side}:${candidateId}`;
+    const asset = manifest.mathematicalV1?.eyesCenteringCandidateAssets?.[key];
+    const metadata = ledger?.candidates.find((candidate) =>
+      candidate.side === side && candidate.candidateId === candidateId);
+    const sessionDir = manifest.outputs.sessionDir;
+    if (
+      !ledger ||
+      !asset ||
+      !metadata ||
+      !sessionDir ||
+      !isSubpath(asset.filePath, sessionDir) ||
+      !isSubpath(asset.filePath, this.config.outputDir)
+    ) {
+      throw new Error("Queued EYES centering candidate is not bound to the exact session ledger.");
+    }
+    const bytes = await readFile(asset.filePath);
+    const dimensions = pngDimensions(bytes);
+    if (
+      bytes.byteLength !== metadata.byteSize ||
+      crypto.createHash("sha256").update(bytes).digest("hex") !== metadata.sha256 ||
+      dimensions?.width !== metadata.widthPx ||
+      dimensions.height !== metadata.heightPx ||
+      asset.sha256 !== metadata.sha256 ||
+      asset.deterministicInputSha256 !== metadata.deterministicInputSha256
+    ) {
+      throw new Error("Queued EYES centering candidate failed fresh hash, size, or dimension verification.");
+    }
+    return { asset, bytes };
+  }
+
   private applyQueuedOcrFailure(
     item: PersistedAiGraderRapidCaptureQueueItem,
     manifest: AiGraderLocalStationBridgeManifest,
@@ -9478,6 +9982,8 @@ export class AiGraderLocalStationBridgeService {
         }, {
           expectedImages: item.ocr.images,
           requireEyes: true,
+          expectedEyesCenteringLedger:
+            manifest.mathematicalV1?.eyesCenteringCandidateLedger,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Queued OCR result failed exact safe-result validation.";
@@ -9495,7 +10001,16 @@ export class AiGraderLocalStationBridgeService {
         completedAt: now,
         result,
       });
-      if (manifest.currentStep === "label_data_ready") {
+      if (
+        manifest.pendingOcrIdentityV1?.schemaVersion ===
+        AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1
+      ) {
+        this.transitionRapidWorkflow(
+          manifest,
+          "identity_resolution_required",
+          "OCR suggestions are ready. Operator identity confirmation is required before deterministic grading can start.",
+        );
+      } else if (manifest.currentStep === "label_data_ready") {
         this.transitionRapidWorkflow(
           manifest,
           "report_ready_needs_confirm",
@@ -9507,6 +10022,14 @@ export class AiGraderLocalStationBridgeService {
     if (verificationFailure) throw new Error(verificationFailure);
     const completedItem = this.exactQueuedItem(request);
     const completedManifest = await this.exactQueuedManifest(completedItem);
+    const centeringReceipt = completedItem.ocr.result?.eyesCenteringSelection;
+    if (centeringReceipt) {
+      await this.applyQueuedEyesCenteringSelection(
+        completedItem,
+        completedManifest,
+        centeringReceipt,
+      );
+    }
     if (completedManifest.mathematicalV1?.execution?.status === "completed") {
       const possiblePendingRequest =
         completedManifest.mathematicalV1.execution.operatorResolutionRequest;
@@ -9541,6 +10064,107 @@ export class AiGraderLocalStationBridgeService {
     }
   }
 
+  private async applyQueuedEyesCenteringSelection(
+    completedItem: PersistedAiGraderRapidCaptureQueueItem,
+    completedManifest: AiGraderLocalStationBridgeManifest,
+    centeringReceipt: unknown,
+  ): Promise<void> {
+    if (
+      !centeringReceipt ||
+      typeof centeringReceipt !== "object" ||
+      Array.isArray(centeringReceipt) ||
+      !completedItem.ocr.images ||
+      !completedManifest.mathematicalV1?.eyesCenteringCandidateLedger ||
+      (completedManifest.mathematicalV1.eyesCenteringRemeasurementPassCount ??
+        1) >= 2
+    ) return;
+    const receipt = safeQueuedOcrEyesCenteringSelection(
+      centeringReceipt,
+      completedItem.ocr.images,
+      completedManifest.mathematicalV1.eyesCenteringCandidateLedger,
+    );
+      const decisions = Array.isArray(receipt.decisions)
+        ? receipt.decisions as Array<Record<string, unknown>>
+        : [];
+      const selections: Partial<
+        Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+      > = {};
+      let selectionChanged = false;
+      let centeringReviewRequired = false;
+      for (const side of ["front", "back"] as const) {
+        const decision = decisions.find((entry) => entry.side === side);
+        if (decision?.decision === "select_candidate") {
+          const candidate = completedManifest.mathematicalV1
+            .eyesCenteringCandidateLedger.candidates.find((entry) =>
+              entry.side === side &&
+              entry.candidateId === decision.candidateId);
+          if (!candidate) {
+            throw new Error(
+              "Persisted EYES selection escaped the exact deterministic candidate ledger.",
+            );
+          }
+          selections[side] = {
+            candidateId: candidate.candidateId,
+            deterministicInputSha256:
+              candidate.deterministicInputSha256,
+          };
+          if (!candidate.selectedByDefault) selectionChanged = true;
+        } else {
+          centeringReviewRequired = true;
+        }
+      }
+      completedManifest.mathematicalV1.eyesCenteringSelectionReceipt =
+        structuredClone(receipt);
+      completedManifest.mathematicalV1.eyesCenteringSelections =
+        structuredClone(selections);
+      completedManifest.mathematicalV1
+        .eyesCenteringRemeasurementPassCount = 2;
+      if (selectionChanged || centeringReviewRequired) {
+        const execution = await this.runMathematicalStationPackage(
+          completedManifest,
+          undefined,
+          undefined,
+          centeringReviewRequired ? ["centering"] : undefined,
+          selections,
+        );
+        if (execution.status === "completed") {
+          const release = await this.writeProductionReleaseForManifest(
+            completedManifest,
+            {
+              operatorId: "eyes-centering-deterministic-remeasurement",
+              warningsAccepted: true,
+              overrideReason:
+                "One hash-bound EYES candidate-selection pass completed deterministic remeasurement before owner confirmation.",
+            },
+          );
+          if (
+            release.reportId !== completedManifest.reportId ||
+            release.gradingSessionId !== completedManifest.sessionId
+          ) {
+            throw new Error(
+              "EYES centering remeasurement release identity does not match the exact queued item.",
+            );
+          }
+        }
+        this.transitionRapidWorkflow(
+          completedManifest,
+          execution.status === "operator_resolution_required"
+            ? "operator_resolution_required"
+            : execution.status === "finding_review_required"
+              ? "finding_review_required"
+              : execution.status === "insufficient_evidence"
+                ? "insufficient_evidence"
+                : completedItem.ocr.state === "succeeded"
+                  ? "report_ready_needs_confirm"
+                  : "finalizing",
+          "EYES selected only exact hash-bound border candidates; the deterministic engine reproduced the ledger and completed its one allowed remeasurement pass.",
+        );
+        await this.syncQueuedManifest(completedManifest);
+      } else {
+        await writeSessionManifest(completedManifest);
+      }
+  }
+
   private async failQueuedOcr(request: AiGraderLocalStationBridgeActionRequest): Promise<void> {
     const attemptOwnerId = queuedOcrAttemptOwnerId(request.attemptOwnerId);
     const failure = safeQueuedOcrFailure(request.failure);
@@ -9562,28 +10186,99 @@ export class AiGraderLocalStationBridgeService {
   async queuedOcrDescriptor(identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string }) {
     const item = this.exactQueuedItem(identity);
     const manifest = await this.exactQueuedManifest(item);
-    if (!["eligible", "in_flight"].includes(item.ocr.state) || !item.ocr.images || item.ocr.images.length !== 2) {
+    const eyesSelectionEligible =
+      item.ocr.state === "succeeded" &&
+      Boolean(manifest.mathematicalV1?.eyesCenteringCandidateLedger) &&
+      !manifest.mathematicalV1?.eyesCenteringSelectionReceipt;
+    if (
+      (!["eligible", "in_flight"].includes(item.ocr.state) &&
+        !eyesSelectionEligible) ||
+      !item.ocr.images ||
+      item.ocr.images.length !== 2
+    ) {
       throw new Error("Queued OCR descriptor is unavailable for this exact item state.");
     }
     for (const image of item.ocr.images) await this.verifiedQueuedOcrImage(item, manifest, image);
+    const centeringCandidates =
+      manifest.mathematicalV1?.eyesCenteringCandidateLedger?.candidates ?? [];
+    for (const candidate of centeringCandidates) {
+      await this.verifiedQueuedEyesCenteringCandidate(
+        manifest,
+        candidate.side,
+        candidate.candidateId,
+      );
+    }
     return {
       queueItemId: item.queueItemId,
       gradingSessionId: item.sessionId,
       reportId: item.reportId,
-      status: item.ocr.state as "eligible" | "in_flight",
+      status: eyesSelectionEligible
+        ? "eyes_selection_eligible" as const
+        : item.ocr.state as "eligible" | "in_flight",
       images: item.ocr.images.map(({ localPath: _localPath, ...image }) => image),
+      centeringCandidates: centeringCandidates.map((candidate) =>
+        structuredClone(candidate)),
+      eyesCenteringCandidateLedgerSha256:
+        manifest.mathematicalV1?.eyesCenteringCandidateLedger?.ledgerSha256,
     };
+  }
+
+  private async completeQueuedEyesCenteringSelection(
+    request: AiGraderLocalStationBridgeActionRequest,
+  ): Promise<void> {
+    const item = this.exactQueuedItem(request);
+    if (
+      item.ocr.state !== "succeeded" ||
+      !item.ocr.images ||
+      !request.result
+    ) {
+      throw new Error(
+        "EYES centering completion requires the exact OCR-succeeded queued item and one receipt.",
+      );
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    if (
+      !manifest.mathematicalV1?.eyesCenteringCandidateLedger ||
+      manifest.mathematicalV1.eyesCenteringSelectionReceipt
+    ) {
+      throw new Error(
+        "EYES centering completion requires one unconsumed deterministic candidate ledger.",
+      );
+    }
+    await this.applyQueuedEyesCenteringSelection(
+      item,
+      manifest,
+      request.result,
+    );
+    await this.syncQueuedManifest(manifest);
   }
 
   async queuedOcrAsset(
     identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
     side: string | undefined,
+    candidateId?: string | undefined,
   ) {
     if (side !== "front" && side !== "back") throw new Error("Queued OCR asset side must be front or back.");
     const item = this.exactQueuedItem(identity);
     const manifest = await this.exactQueuedManifest(item);
-    if (!["eligible", "in_flight"].includes(item.ocr.state) || !item.ocr.images) {
+    const eyesSelectionEligible =
+      item.ocr.state === "succeeded" &&
+      Boolean(manifest.mathematicalV1?.eyesCenteringCandidateLedger) &&
+      !manifest.mathematicalV1?.eyesCenteringSelectionReceipt;
+    if (
+      (!["eligible", "in_flight"].includes(item.ocr.state) &&
+        !eyesSelectionEligible) ||
+      !item.ocr.images
+    ) {
       throw new Error("Queued OCR asset is unavailable for this exact item state.");
+    }
+    if (candidateId) {
+      const candidate = await this.verifiedQueuedEyesCenteringCandidate(
+        manifest,
+        side,
+        candidateId,
+      );
+      return { item, candidate: candidate.asset, bytes: candidate.bytes };
     }
     const image = item.ocr.images.find((candidate) => candidate.side === side);
     if (!image) throw new Error(`Queued OCR ${side} asset is missing.`);
@@ -9627,7 +10322,6 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private startRapidBackgroundForReleasedCard(queueItemId: string): void {
-    this.observeRapidOcrEligibility(queueItemId);
     this.enqueueRapidFinalization(queueItemId);
   }
 
@@ -9639,10 +10333,50 @@ export class AiGraderLocalStationBridgeService {
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
         try {
-          await this.observeRapidOcrEligibility(queueItemId);
+          if (
+            manifest.pendingOcrIdentityV1?.schemaVersion ===
+            AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1
+          ) {
+            await this.observeRapidOcrEligibility(queueItemId);
+            if (item.ocr.state === "succeeded") {
+              this.transitionRapidWorkflow(
+                manifest,
+                "identity_resolution_required",
+                "OCR suggestions are ready. Operator identity confirmation is required before deterministic grading can start.",
+              );
+              await this.syncQueuedManifest(manifest);
+            }
+            return;
+          }
           const reportId = manifest.reportId ?? "local-report";
           if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
-            const execution = await this.runMathematicalStationPackage(manifest);
+            let execution = await this.runMathematicalStationPackage(manifest);
+            await this.observeRapidOcrEligibility(queueItemId);
+            if (
+              execution.status === "completed" &&
+              item.ocr.state === "succeeded"
+            ) {
+              const possiblePendingRequest =
+                execution.operatorResolutionRequest;
+              const pendingRequest = verifyFixedRigOperatorResolutionRequestV1(
+                possiblePendingRequest,
+              )
+                ? possiblePendingRequest
+                : undefined;
+              const forcedOperatorReviewElements =
+                effectiveQueuedOcrEyesReviewElements(
+                  item.ocr.result?.eyes,
+                  pendingRequest,
+                );
+              if (forcedOperatorReviewElements.length) {
+                execution = await this.runMathematicalStationPackage(
+                  manifest,
+                  undefined,
+                  undefined,
+                  forcedOperatorReviewElements,
+                );
+              }
+            }
             if (execution.status === "operator_resolution_required") {
               this.transitionRapidWorkflow(
                 manifest,
@@ -9677,6 +10411,7 @@ export class AiGraderLocalStationBridgeService {
               throw new Error("Mathematical V1 Rapid processing did not reach a durable terminal state.");
             }
           } else {
+            await this.observeRapidOcrEligibility(queueItemId);
             const result = await this.runWarmReport(manifest);
             manifest.outputs.unifiedReportDir = result.payload?.report?.packageDir ?? dirnameIfFile(extractUnifiedReportPath(result.payload));
             manifest.outputs.unifiedReportPath = extractUnifiedReportPath(result.payload);
@@ -9916,6 +10651,7 @@ export class AiGraderLocalStationBridgeService {
   private async activateRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest) {
     const item = this.exactQueuedItem(request);
     if (![
+      "identity_resolution_required",
       "finding_review_required",
       "operator_resolution_required",
       "insufficient_evidence",
@@ -10771,6 +11507,7 @@ export class AiGraderLocalStationBridgeService {
       gradingContract?: AiGraderGradingContract;
       calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+      ocrFirstIdentityBinding?: "printed_border_v1";
       previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
     },
     now = new Date().toISOString(),
@@ -10788,6 +11525,7 @@ export class AiGraderLocalStationBridgeService {
       gradingContract?: AiGraderGradingContract;
       calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
       mathematicalGradingAuthority?: AiGraderLocalStationMathematicalGradingAuthorityV1;
+      ocrFirstIdentityBinding?: "printed_border_v1";
       previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
     },
     now = new Date().toISOString(),
@@ -10843,6 +11581,28 @@ export class AiGraderLocalStationBridgeService {
           .update(canonicalJsonV1(request.mathematicalGradingAuthority), "utf8")
           .digest("hex"),
       };
+    } else if (
+      manifest.gradingContract === "mathematical_calibration_v1" &&
+      request.ocrFirstIdentityBinding === "printed_border_v1" &&
+      request.calibrationActivationAuthority
+    ) {
+      manifest.pendingOcrIdentityV1 = {
+        schemaVersion: AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1,
+        frontCenteringProfile: "printed_border_v1",
+        backCenteringProfile: "printed_border_v1",
+        calibrationActivationAuthority:
+          structuredClone(request.calibrationActivationAuthority),
+        startedAt: now,
+      };
+      manifest.startOperationIdentity = {
+        reportId: manifest.reportId,
+        gradingSessionId: manifest.sessionId,
+        mathematicalAuthoritySha256:
+          AI_GRADER_OCR_FIRST_AUTHORITY_SHA256,
+      };
+      manifest.progressLog.push(
+        `${now} OCR-first identity is pending. Capture is limited to deterministic printed-border centering; grading remains blocked until exact OCR-assisted identity is operator-bound.`,
+      );
     }
     manifest.warmRunnerStatus.sessionId = manifest.sessionId;
     manifest.warmRunnerStatus.status = "warming";
@@ -15278,12 +16038,20 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("Start New Card is already pending; reconcile its definitive persisted outcome before retry.");
       }
       const reportId = this.canonicalCallerSuppliedReportId(request.reportId);
-      this.startSessionLifecycleOperation = reportId && request.mathematicalGradingAuthority
+      this.startSessionLifecycleOperation = reportId && (
+        request.mathematicalGradingAuthority ||
+        request.ocrFirstIdentityBinding === "printed_border_v1"
+      )
         ? {
             reportId,
-            mathematicalAuthoritySha256: crypto.createHash("sha256")
-              .update(canonicalJsonV1(request.mathematicalGradingAuthority), "utf8")
-              .digest("hex"),
+            mathematicalAuthoritySha256: request.mathematicalGradingAuthority
+              ? crypto.createHash("sha256")
+                  .update(
+                    canonicalJsonV1(request.mathematicalGradingAuthority),
+                    "utf8",
+                  )
+                  .digest("hex")
+              : AI_GRADER_OCR_FIRST_AUTHORITY_SHA256,
           }
         : undefined;
       this.startSessionLifecyclePending = true;
@@ -15494,8 +16262,15 @@ export class AiGraderLocalStationBridgeService {
           throw new Error(`Mathematical Calibration V1 is not ready: ${readiness.reason ?? "finalized calibration evidence is unavailable"}. No V0 fallback is permitted.`);
         }
       }
-      if (!request.mathematicalGradingAuthority) {
-        throw new Error("Mathematical V1 Start New Card requires exact card and centering/design-reference authority; publication remains bridge-derived.");
+      const ocrFirstIdentity =
+        request.ocrFirstIdentityBinding === "printed_border_v1";
+      if (
+        Boolean(request.mathematicalGradingAuthority) ===
+        Boolean(ocrFirstIdentity)
+      ) {
+        throw new Error(
+          "Start New Card requires exactly one identity path: bound Mathematical authority or OCR-first printed-border identity.",
+        );
       }
       if (!request.reportId) {
         throw new Error("Start New Card requires a caller-bound report ID for exact retry reconciliation.");
@@ -15506,9 +16281,66 @@ export class AiGraderLocalStationBridgeService {
         calibrationActivationAuthority: request.calibrationActivationAuthority,
         gradingContract: request.gradingContract,
         mathematicalGradingAuthority: request.mathematicalGradingAuthority,
+        ocrFirstIdentityBinding: request.ocrFirstIdentityBinding,
         previewSensorPlaneCalibration,
       }, now);
       this.startSessionLifecyclePending = false;
+      return this.status();
+    }
+    if (action === "complete-eyes-centering-selection") {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["queueItemId", "gradingSessionId", "reportId", "result"],
+      );
+      await this.completeQueuedEyesCenteringSelection(request);
+      return this.status();
+    }
+
+    if (
+      action === "bind-mathematical-grading-authority" &&
+      (request.queueItemId ||
+        request.gradingSessionId ||
+        request.reportId)
+    ) {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        [
+          "queueItemId",
+          "gradingSessionId",
+          "reportId",
+          "mathematicalGradingAuthority",
+        ],
+      );
+      if (!request.mathematicalGradingAuthority) {
+        throw new Error(
+          "OCR-first Mathematical authority binding requires one exact mathematicalGradingAuthority.",
+        );
+      }
+      const item = this.exactQueuedItem(request);
+      if (
+        item.state !== "identity_resolution_required" ||
+        item.ocr.state !== "succeeded"
+      ) {
+        throw new Error(
+          "OCR-first Mathematical authority can bind only to the exact identity-resolution item after OCR succeeds.",
+        );
+      }
+      const queuedManifest = await this.exactQueuedManifest(item);
+      this.bindMathematicalGradingAuthority(
+        queuedManifest,
+        request.mathematicalGradingAuthority,
+        undefined,
+        { ocrFirstQueued: true },
+      );
+      this.transitionRapidWorkflow(
+        queuedManifest,
+        "finalizing",
+        "Operator-confirmed OCR identity is bound. Deterministic grading and the bounded EYES candidate-selection pass may now run.",
+      );
+      await this.syncQueuedManifest(queuedManifest);
+      this.startRapidBackgroundForReleasedCard(item.queueItemId);
       return this.status();
     }
 
@@ -15524,6 +16356,11 @@ export class AiGraderLocalStationBridgeService {
     }
 
     if (action === "bind-mathematical-grading-authority") {
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["mathematicalGradingAuthority"],
+      );
       if (!request.mathematicalGradingAuthority) {
         throw new Error("Binding Mathematical V1 authority requires one exact mathematicalGradingAuthority.");
       }
@@ -15608,6 +16445,7 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "submit-operator-resolutions",
     "begin-queued-ocr",
     "complete-queued-ocr",
+    "complete-eyes-centering-selection",
     "fail-queued-ocr",
   ].includes(value);
 }
@@ -16393,7 +17231,19 @@ export function createAiGraderLocalStationBridgeHttpServer(
           queueItemId,
           gradingSessionId: url.searchParams.get("gradingSessionId") ?? undefined,
           reportId: url.searchParams.get("reportId") ?? undefined,
-        }, url.searchParams.get("side") ?? undefined);
+        }, url.searchParams.get("side") ?? undefined, url.searchParams.get("candidateId") ?? undefined);
+        if (asset.candidate) {
+          return sendBinary(res, 200, asset.bytes, origin, config, "image/png", {
+            "X-AI-Grader-Queue-Item-Id": asset.item.queueItemId,
+            "X-AI-Grader-Grading-Session-Id": asset.item.sessionId,
+            "X-AI-Grader-Report-Id": asset.item.reportId,
+            "X-AI-Grader-Side": asset.candidate.side,
+            "X-AI-Grader-SHA256": asset.candidate.sha256,
+            "X-AI-Grader-Candidate-Id": asset.candidate.candidateId,
+            "X-AI-Grader-Deterministic-Input-SHA256":
+              asset.candidate.deterministicInputSha256,
+          });
+        }
         return sendBinary(res, 200, asset.bytes, origin, config, "image/png", {
           "X-AI-Grader-Queue-Item-Id": asset.item.queueItemId,
           "X-AI-Grader-Grading-Session-Id": asset.item.sessionId,

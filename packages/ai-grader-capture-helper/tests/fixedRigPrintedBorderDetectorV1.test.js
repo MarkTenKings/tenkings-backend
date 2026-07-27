@@ -269,7 +269,7 @@ test("absent border returns explicit insufficient evidence and never a condition
   assert.equal(built.centering.cardDefectDeduction, 0);
 });
 
-test("incoherent sparse peaks still yield an observable measurement with private low-confidence uncertainty", () => {
+test("incoherent sparse peaks fail closed instead of becoming centering measurement authority", () => {
   const source = plane(0.4);
   for (let y = 1; y < HEIGHT - 1; y += 1) {
     source.data[y * WIDTH + 3 + (y * 7) % 20] = 0.95;
@@ -280,13 +280,14 @@ test("incoherent sparse peaks still yield an observable measurement with private
     source.data[(HEIGHT - 4 - (x * 17) % 25) * WIDTH + x] = 0.95;
   }
   const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
-  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.status, "insufficient_evidence", JSON.stringify(result));
+  assert.equal(result.profileInput, null);
+  assert.deepEqual(result.detectedPrintContour, []);
   assert.equal(result.conditionDeduction, 0);
-  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.accepted === true), true);
+  assert.equal(result.requiresRecaptureOrRegisteredDesignReference, true);
+  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.accepted === false), true);
   assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.viableClusterCount === 0), true);
-  assert.ok(result.confidence < 0.2);
-  assert.ok(Object.values(result.boundaryEvidence).every((entry) =>
-    entry.positionU95Px > entry.fitResidualPx));
+  assert.equal(result.reasons.every((reason) => reason.code === "unstable_boundary_fit"), true);
 });
 
 test("multiple fully supported nested boundaries select the outermost observed physical border without a shape profile", () => {
@@ -300,6 +301,90 @@ test("multiple fully supported nested boundaries select the outermost observed p
   assert.equal(result.boundaryEvidence.left.viableClusterCount, 2);
   assert.deepEqual(result.boundaryEvidence.left.viableClusterCoordinatesPx, [6.5, 10.5]);
   assert.equal(result.boundaryEvidence.left.medianCoordinatePx, 6.5);
+  assert.equal(result.boundaryEvidence.left.accepted, true);
+  assert.equal(result.candidates.length, 6);
+  assert.equal(result.selectedCandidateId, result.candidates[0].candidateId);
+  assert.equal(result.selectionSource, "deterministic_default");
+  assert.equal(
+    new Set(result.candidates.map((candidate) => candidate.candidateId)).size,
+    result.candidates.length,
+  );
+  assert.equal(
+    result.candidates.every((candidate) =>
+      /^[a-f0-9]{64}$/.test(candidate.deterministicInputSha256)),
+    true,
+  );
+  assert.equal(result.conditionDeduction, 0);
+});
+
+test("an exact hash-bound EYES candidate reruns through the same deterministic measurement engine", () => {
+  const source = plane((x, y) => {
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
+    return 0.1;
+  });
+  const initial = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(initial.status, "computed", JSON.stringify(initial));
+  const selected = initial.candidates[1];
+  assert.ok(selected);
+
+  const rerun = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    selectedCandidate: {
+      candidateId: selected.candidateId,
+      deterministicInputSha256: selected.deterministicInputSha256,
+    },
+  });
+  assert.equal(rerun.status, "computed", JSON.stringify(rerun));
+  assert.equal(rerun.selectedCandidateId, selected.candidateId);
+  assert.equal(rerun.selectionSource, "eyes_exact_candidate");
+  assert.deepEqual(rerun.detectedPrintContour, selected.detectedPrintContour);
+  assert.deepEqual(rerun.profileInput, selected.profileInput);
+  assert.notDeepEqual(rerun.detectedPrintContour, initial.detectedPrintContour);
+});
+
+test("a stale or invented EYES candidate fails closed and cannot supply measurements", () => {
+  const source = plane((x, y) => {
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
+    return 0.1;
+  });
+  const initial = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(initial.status, "computed", JSON.stringify(initial));
+  const selected = initial.candidates[1];
+  const rejected = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    selectedCandidate: {
+      candidateId: selected.candidateId,
+      deterministicInputSha256: "f".repeat(64),
+    },
+  });
+  assert.equal(rejected.status, "insufficient_evidence");
+  assert.equal(rejected.profileInput, null);
+  assert.deepEqual(rejected.detectedPrintContour, []);
+  assert.equal(
+    rejected.reasons.some((reason) =>
+      reason.code === "invalid_candidate_selection"),
+    true,
+  );
+  assert.equal(rejected.conditionDeduction, 0);
+});
+
+test("outermost valid border wins even when deeper artwork has more supporting samples", () => {
+  const source = plane((x, y) => {
+    const outerVerticalVisible = y % 5 !== 0;
+    const outerHorizontalVisible = x % 5 !== 0;
+    if (
+      (outerVerticalVisible && (x >= 7 && x <= 10 || x >= 109 && x <= 112)) ||
+      (outerHorizontalVisible && (y >= 8 && y <= 11 || y >= 148 && y <= 151))
+    ) return 0.5;
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    return 0.1;
+  });
+  const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.ok(result.boundaryEvidence.left.viableClusterCount >= 2, JSON.stringify(result.boundaryEvidence.left));
+  assert.ok(Math.abs(result.boundaryEvidence.left.medianCoordinatePx - 6.5) < 0.1);
   assert.equal(result.boundaryEvidence.left.accepted, true);
   assert.equal(result.conditionDeduction, 0);
 });

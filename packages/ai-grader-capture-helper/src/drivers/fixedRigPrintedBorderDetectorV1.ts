@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
@@ -86,6 +87,24 @@ export interface FixedRigPrintedBorderBoundaryEvidenceV1 {
   samples: FixedRigPrintedBorderCrossSectionEvidenceV1[];
 }
 
+export interface FixedRigPrintedBorderCandidateV1 {
+  candidateId: string;
+  deterministicInputSha256: string;
+  rank: number;
+  profileInput: Extract<FixedRigCenteringProfileInputV1, { profile: "printed_border_v1" }>;
+  detectedPrintContour: FixedRigPointV1[];
+  confidence: number;
+  boundaryEvidence: Record<
+    FixedRigPrintedBorderSideV1,
+    FixedRigPrintedBorderBoundaryEvidenceV1
+  >;
+}
+
+export interface FixedRigPrintedBorderCandidateSelectionV1 {
+  candidateId: string;
+  deterministicInputSha256: string;
+}
+
 export type FixedRigPrintedBorderDetectorReasonCodeV1 =
   | "invalid_source_plane"
   | "missing_all_on_evidence"
@@ -95,6 +114,7 @@ export type FixedRigPrintedBorderDetectorReasonCodeV1 =
   | "insufficient_cross_section_support"
   | "unstable_boundary_fit"
   | "ambiguous_multiple_supported_boundaries"
+  | "invalid_candidate_selection"
   | "invalid_detected_boundary";
 
 export interface FixedRigPrintedBorderDetectorReasonV1 {
@@ -108,6 +128,7 @@ export interface DetectFixedRigPrintedBorderSourceV1Input {
   flatFieldNormalizedAllOnLuminance: FixedRigScalarPlaneV1;
   outerCutContour: FixedRigPointV1[];
   evidence: FixedRigCenteringEvidenceReferenceV1[];
+  selectedCandidate?: FixedRigPrintedBorderCandidateSelectionV1;
 }
 
 interface FixedRigPrintedBorderDetectorBaseV1 {
@@ -122,6 +143,7 @@ interface FixedRigPrintedBorderDetectorBaseV1 {
   thresholds: FixedRigPrintedBorderDetectorThresholdsV1;
   outerCutContour: FixedRigPointV1[];
   boundaryEvidence: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>>;
+  candidates: FixedRigPrintedBorderCandidateV1[];
   evidence: FixedRigCenteringEvidenceReferenceV1[];
   conditionDeduction: 0;
 }
@@ -131,6 +153,8 @@ export interface FixedRigPrintedBorderDetectorComputedV1
   status: "computed";
   profileInput: Extract<FixedRigCenteringProfileInputV1, { profile: "printed_border_v1" }>;
   detectedPrintContour: FixedRigPointV1[];
+  selectedCandidateId: string;
+  selectionSource: "deterministic_default" | "eyes_exact_candidate";
   confidence: number;
   formula:
     "per-cross-section adaptive absolute-gradient threshold; inset-ordered candidate tracks; deterministic robust 2-D line fit; side-line intersections";
@@ -178,6 +202,14 @@ interface ClusterV1 {
   samples: PeakCandidateV1[];
   lineFit: FixedRigRobustLineFitV1;
 }
+
+const PRINTED_BORDER_CANDIDATE_SIDES = [
+  "left",
+  "right",
+  "top",
+  "bottom",
+] as const satisfies readonly FixedRigPrintedBorderSideV1[];
+const MAXIMUM_PRINTED_BORDER_CANDIDATES = 6;
 
 function round(value: number, decimals = 6): number {
   const factor = 10 ** decimals;
@@ -596,8 +628,9 @@ function clusters(
     addTrack(track);
   }
   const ranked = [...bySignature.values()].sort((left, right) =>
-    right.samples.length - left.samples.length ||
+    Number(isViableBoundaryCluster(right)) - Number(isViableBoundaryCluster(left)) ||
     left.medianInsetFromOuterCutPx - right.medianInsetFromOuterCutPx ||
+    right.samples.length - left.samples.length ||
     right.medianPeakGradient - left.medianPeakGradient ||
     left.residualPx - right.residualPx ||
     left.coordinatePx - right.coordinatePx,
@@ -613,15 +646,44 @@ function clusters(
   return distinct;
 }
 
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${canonicalJson(entry)}`)
+    .join(",")}}`;
+}
+
+function sha256Canonical(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
+}
+
+function isViableBoundaryCluster(cluster: ClusterV1): boolean {
+  return (
+    cluster.samples.length >= PRINTED_BORDER_POLICY.minimumLineSamplesPerSide &&
+    cluster.supportFraction >= SOURCE_POLICY.minimumCrossSectionSupportFraction &&
+    cluster.supportFraction >= PRINTED_BORDER_POLICY.minimumInlierFraction &&
+    cluster.residualPx <= PRINTED_BORDER_POLICY.maximumFitResidualPx &&
+    cluster.confidence >= PRINTED_BORDER_POLICY.minimumBoundaryConfidence
+  );
+}
+
 function boundaryAnalysis(
   side: FixedRigPrintedBorderSideV1,
   scans: readonly CrossSectionScanV1[],
-): { evidence: FixedRigPrintedBorderBoundaryEvidenceV1; samples: FixedRigPointV1[] | null; reason?: FixedRigPrintedBorderDetectorReasonV1 } {
+): {
+  evidence: FixedRigPrintedBorderBoundaryEvidenceV1;
+  samples: FixedRigPointV1[] | null;
+  viableClusters: ClusterV1[];
+  reason?: FixedRigPrintedBorderDetectorReasonV1;
+} {
   const thresholdQualifiedCrossSectionCount = scans.filter((scan) => scan.candidates.length).length;
   if (scans.length < 2) {
     return {
       evidence: emptyBoundaryEvidence(side, scans.length, thresholdQualifiedCrossSectionCount),
       samples: null,
+      viableClusters: [],
       reason: {
         code: "insufficient_cross_sections",
         side,
@@ -633,6 +695,7 @@ function boundaryAnalysis(
     return {
       evidence: emptyBoundaryEvidence(side, scans.length, 0),
       samples: null,
+      viableClusters: [],
       reason: {
         code: "no_threshold_qualified_gradient",
         side,
@@ -641,19 +704,13 @@ function boundaryAnalysis(
     };
   }
   const allClusters = clusters(scans, side);
-  const viable = allClusters.filter((cluster) =>
-    cluster.samples.length >= PRINTED_BORDER_POLICY.minimumLineSamplesPerSide &&
-    cluster.supportFraction >= SOURCE_POLICY.minimumCrossSectionSupportFraction &&
-    cluster.supportFraction >= PRINTED_BORDER_POLICY.minimumInlierFraction &&
-    cluster.residualPx <= PRINTED_BORDER_POLICY.maximumFitResidualPx &&
-    cluster.confidence >= PRINTED_BORDER_POLICY.minimumBoundaryConfidence,
-  );
-  const diagnosticCandidate = allClusters[0] ?? null;
-  // A manifest-coherent track is preferred, but it is not an admission gate.
-  // If physical gradient peaks remain observable through imperfect lighting,
-  // printing, or artwork, retain the best pixel-derived track as a genuine
-  // measurement and express its weakness through private confidence/U95.
-  const best = viable[0] ?? diagnosticCandidate;
+  const viable = allClusters.filter(isViableBoundaryCluster);
+  // A printed-border result is measurement authority, not a diagnostic hint.
+  // Never promote a sparse or incoherent artwork gradient merely because it
+  // is the best of otherwise invalid tracks. Among manifest-valid tracks the
+  // first coherent boundary encountered from the physical cut is the printed
+  // border; deeper coherent tracks are artwork/layout candidates.
+  const best = viable[0] ?? null;
   const evidence = boundaryEvidence(
     side,
     scans.length,
@@ -666,6 +723,7 @@ function boundaryAnalysis(
     return {
       evidence,
       samples: null,
+      viableClusters: [],
       reason: {
         code: "unstable_boundary_fit",
         side,
@@ -677,6 +735,7 @@ function boundaryAnalysis(
   return {
     evidence,
     samples: best.samples.map((sample) => ({ ...sample.point })),
+    viableClusters: viable,
   };
 }
 
@@ -763,6 +822,184 @@ function boundaryEvidence(
   };
 }
 
+type FixedRigPrintedBorderBoundaryAnalysisV1 = ReturnType<
+  typeof boundaryAnalysis
+>;
+
+function candidateIndexVectors(
+  viable: Record<FixedRigPrintedBorderSideV1, readonly ClusterV1[]>,
+): number[][] {
+  const vectors: number[][] = [[0, 0, 0, 0]];
+  for (let sideIndex = 0; sideIndex < PRINTED_BORDER_CANDIDATE_SIDES.length; sideIndex += 1) {
+    const side = PRINTED_BORDER_CANDIDATE_SIDES[sideIndex]!;
+    if (viable[side].length > 1) {
+      const vector = [0, 0, 0, 0];
+      vector[sideIndex] = 1;
+      vectors.push(vector);
+    }
+  }
+  if (PRINTED_BORDER_CANDIDATE_SIDES.every((side) => viable[side].length > 1)) {
+    vectors.push([1, 1, 1, 1]);
+  }
+  for (let depth = 2; vectors.length < MAXIMUM_PRINTED_BORDER_CANDIDATES; depth += 1) {
+    let added = false;
+    for (
+      let sideIndex = 0;
+      sideIndex < PRINTED_BORDER_CANDIDATE_SIDES.length &&
+      vectors.length < MAXIMUM_PRINTED_BORDER_CANDIDATES;
+      sideIndex += 1
+    ) {
+      const side = PRINTED_BORDER_CANDIDATE_SIDES[sideIndex]!;
+      if (viable[side].length <= depth) continue;
+      const vector = [0, 0, 0, 0];
+      vector[sideIndex] = depth;
+      vectors.push(vector);
+      added = true;
+    }
+    if (!added) break;
+  }
+  return vectors.slice(0, MAXIMUM_PRINTED_BORDER_CANDIDATES);
+}
+
+function printedBorderCandidate(
+  input: DetectFixedRigPrintedBorderSourceV1Input,
+  outer: { contour: FixedRigPointV1[]; bounds: BoundsV1 },
+  analyses: Record<
+    FixedRigPrintedBorderSideV1,
+    FixedRigPrintedBorderBoundaryAnalysisV1
+  >,
+  indexes: readonly number[],
+  rank: number,
+): FixedRigPrintedBorderCandidateV1 | null {
+  const selected = Object.fromEntries(
+    PRINTED_BORDER_CANDIDATE_SIDES.map((side, index) => [
+      side,
+      analyses[side].viableClusters[indexes[index] ?? 0],
+    ]),
+  ) as Record<FixedRigPrintedBorderSideV1, ClusterV1 | undefined>;
+  if (PRINTED_BORDER_CANDIDATE_SIDES.some((side) => !selected[side])) return null;
+  const clusters = selected as Record<FixedRigPrintedBorderSideV1, ClusterV1>;
+  const boundaryEvidenceValue = Object.fromEntries(
+    PRINTED_BORDER_CANDIDATE_SIDES.map((side) => [
+      side,
+      boundaryEvidence(
+        side,
+        analyses[side].evidence.attemptedCrossSectionCount,
+        analyses[side].evidence.thresholdQualifiedCrossSectionCount,
+        clusters[side],
+        analyses[side].viableClusters,
+        true,
+      ),
+    ]),
+  ) as Record<
+    FixedRigPrintedBorderSideV1,
+    FixedRigPrintedBorderBoundaryEvidenceV1
+  >;
+  const printBoundarySamples: FixedRigPrintedBorderSamplesV1 = {
+    left: clusters.left.samples.map((sample) => ({ ...sample.point })),
+    right: clusters.right.samples.map((sample) => ({ ...sample.point })),
+    top: clusters.top.samples.map((sample) => ({ ...sample.point })),
+    bottom: clusters.bottom.samples.map((sample) => ({ ...sample.point })),
+    observationQuality: Object.fromEntries(
+      PRINTED_BORDER_CANDIDATE_SIDES.map((side) => {
+        const evidence = boundaryEvidenceValue[side];
+        return [side, {
+          attemptedCrossSectionCount: evidence.attemptedCrossSectionCount,
+          supportedCrossSectionCount: evidence.supportedCrossSectionCount,
+          supportFraction: evidence.supportFraction,
+          confidence: evidence.confidence,
+          positionU95Px: evidence.positionU95Px ?? 0,
+        }];
+      }),
+    ) as FixedRigPrintedBorderSamplesV1["observationQuality"],
+  };
+  const detectedPrintContour = [
+    intersectFixedRigPrintedBorderLinesV1(clusters.left.lineFit, clusters.top.lineFit),
+    intersectFixedRigPrintedBorderLinesV1(clusters.right.lineFit, clusters.top.lineFit),
+    intersectFixedRigPrintedBorderLinesV1(clusters.right.lineFit, clusters.bottom.lineFit),
+    intersectFixedRigPrintedBorderLinesV1(clusters.left.lineFit, clusters.bottom.lineFit),
+  ];
+  const coordinates = {
+    left: clusters.left.lineFit.coordinatePx,
+    right: clusters.right.lineFit.coordinatePx,
+    top: clusters.top.lineFit.coordinatePx,
+    bottom: clusters.bottom.lineFit.coordinatePx,
+  };
+  if (
+    !(coordinates.right > coordinates.left && coordinates.bottom > coordinates.top) ||
+    coordinates.left < outer.bounds.left ||
+    coordinates.right > outer.bounds.right ||
+    coordinates.top < outer.bounds.top ||
+    coordinates.bottom > outer.bounds.bottom ||
+    detectedPrintContour.some((point) => point === null) ||
+    detectedPrintContour.some((point) => point !== null && (
+      point.x < outer.bounds.left ||
+      point.x > outer.bounds.right ||
+      point.y < outer.bounds.top ||
+      point.y > outer.bounds.bottom
+    ))
+  ) return null;
+  const deterministicInputSha256 = sha256Canonical({
+    version: FIXED_RIG_PRINTED_BORDER_SOURCE_DETECTOR_V1_VERSION,
+    thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+    side: input.side,
+    evidence: [...input.evidence].sort((left, right) =>
+      canonicalJson(left).localeCompare(canonicalJson(right))),
+    outerCutContour: outer.contour,
+    candidateIndexes: [...indexes],
+    printBoundarySamples,
+    detectedPrintContour,
+  });
+  return {
+    candidateId: `${input.side}-border-${deterministicInputSha256.slice(0, 16)}`,
+    deterministicInputSha256,
+    rank,
+    profileInput: { profile: "printed_border_v1", printBoundarySamples },
+    detectedPrintContour: detectedPrintContour as FixedRigPointV1[],
+    confidence: round(
+      Math.min(...PRINTED_BORDER_CANDIDATE_SIDES.map(
+        (side) => boundaryEvidenceValue[side].confidence,
+      )),
+    ),
+    boundaryEvidence: boundaryEvidenceValue,
+  };
+}
+
+function printedBorderCandidates(
+  input: DetectFixedRigPrintedBorderSourceV1Input,
+  outer: { contour: FixedRigPointV1[]; bounds: BoundsV1 },
+  analyses: Record<
+    FixedRigPrintedBorderSideV1,
+    FixedRigPrintedBorderBoundaryAnalysisV1
+  >,
+): FixedRigPrintedBorderCandidateV1[] {
+  const viable: Record<
+    FixedRigPrintedBorderSideV1,
+    readonly ClusterV1[]
+  > = {
+    left: analyses.left.viableClusters,
+    right: analyses.right.viableClusters,
+    top: analyses.top.viableClusters,
+    bottom: analyses.bottom.viableClusters,
+  };
+  if (PRINTED_BORDER_CANDIDATE_SIDES.some((side) => viable[side].length === 0)) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return candidateIndexVectors(viable).flatMap((indexes, rank) => {
+    const candidate = printedBorderCandidate(
+      input,
+      outer,
+      analyses,
+      indexes,
+      rank,
+    );
+    if (!candidate || seen.has(candidate.deterministicInputSha256)) return [];
+    seen.add(candidate.deterministicInputSha256);
+    return [candidate];
+  });
+}
+
 function sourcePlaneIsValid(plane: FixedRigScalarPlaneV1): boolean {
   if (
     !Number.isInteger(plane.width) ||
@@ -796,6 +1033,7 @@ function baseResult(
   height: number,
   outerCutContour: FixedRigPointV1[],
   boundaryEvidenceValue: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>>,
+  candidates: FixedRigPrintedBorderCandidateV1[] = [],
 ): FixedRigPrintedBorderDetectorBaseV1 {
   return {
     version: FIXED_RIG_PRINTED_BORDER_SOURCE_DETECTOR_V1_VERSION,
@@ -809,6 +1047,7 @@ function baseResult(
     thresholds: thresholds(),
     outerCutContour: outerCutContour.map((point) => ({ ...point })),
     boundaryEvidence: boundaryEvidenceValue,
+    candidates: candidates.map((candidate) => structuredClone(candidate)),
     evidence: input.evidence.map((entry) => ({ ...entry })),
     conditionDeduction: 0,
   };
@@ -819,11 +1058,19 @@ function insufficient(
   reasons: FixedRigPrintedBorderDetectorReasonV1[],
   outerCutContour: FixedRigPointV1[] = [],
   boundaryEvidenceValue: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>> = {},
+  candidates: FixedRigPrintedBorderCandidateV1[] = [],
 ): FixedRigPrintedBorderDetectorInsufficientV1 {
   const plane = input.flatFieldNormalizedAllOnLuminance;
   const confidenceValues = Object.values(boundaryEvidenceValue).map((entry) => entry?.confidence ?? 0);
   return {
-    ...baseResult(input, plane.width, plane.height, outerCutContour, boundaryEvidenceValue),
+    ...baseResult(
+      input,
+      plane.width,
+      plane.height,
+      outerCutContour,
+      boundaryEvidenceValue,
+      candidates,
+    ),
     status: "insufficient_evidence",
     profileInput: null,
     detectedPrintContour: [],
@@ -884,76 +1131,46 @@ export function detectFixedRigPrintedBorderSourceV1(
   };
   const reasons = Object.values(analyses).flatMap((analysis) => analysis.reason ? [analysis.reason] : []);
   if (reasons.length) return insufficient(input, reasons, outer.contour, boundaryEvidenceValue);
-
-  const printBoundarySamples: FixedRigPrintedBorderSamplesV1 = {
-    left: analyses.left.samples as FixedRigPointV1[],
-    right: analyses.right.samples as FixedRigPointV1[],
-    top: analyses.top.samples as FixedRigPointV1[],
-    bottom: analyses.bottom.samples as FixedRigPointV1[],
-    observationQuality: Object.fromEntries(
-      Object.entries(boundaryEvidenceValue).map(([side, evidence]) => [
-        side,
-        {
-          attemptedCrossSectionCount: evidence.attemptedCrossSectionCount,
-          supportedCrossSectionCount: evidence.supportedCrossSectionCount,
-          supportFraction: evidence.supportFraction,
-          confidence: evidence.confidence,
-          positionU95Px: evidence.positionU95Px ?? 0,
-        },
-      ]),
-    ) as FixedRigPrintedBorderSamplesV1["observationQuality"],
-  };
-  const middleX = (outer.bounds.left + outer.bounds.right) / 2;
-  const middleY = (outer.bounds.top + outer.bounds.bottom) / 2;
-  const lineFits = {
-    left: fitFixedRigPrintedBorderLineV1(printBoundarySamples.left, "left", middleY),
-    right: fitFixedRigPrintedBorderLineV1(printBoundarySamples.right, "right", middleY),
-    top: fitFixedRigPrintedBorderLineV1(printBoundarySamples.top, "top", middleX),
-    bottom: fitFixedRigPrintedBorderLineV1(printBoundarySamples.bottom, "bottom", middleX),
-  };
-  if (Object.values(lineFits).some((fit) => fit === null)) {
-    return insufficient(input, [{
-      code: "unstable_boundary_fit",
-      message: "The accepted candidate tracks did not reproduce four manifest-compliant robust 2-D lines.",
-    }], outer.contour, boundaryEvidenceValue);
-  }
-  const acceptedLineFits = lineFits as Record<
-    FixedRigPrintedBorderSideV1,
-    FixedRigRobustLineFitV1
-  >;
-  const coordinates = {
-    left: acceptedLineFits.left.coordinatePx,
-    right: acceptedLineFits.right.coordinatePx,
-    top: acceptedLineFits.top.coordinatePx,
-    bottom: acceptedLineFits.bottom.coordinatePx,
-  };
-  const detectedPrintContour = [
-    intersectFixedRigPrintedBorderLinesV1(acceptedLineFits.left, acceptedLineFits.top),
-    intersectFixedRigPrintedBorderLinesV1(acceptedLineFits.right, acceptedLineFits.top),
-    intersectFixedRigPrintedBorderLinesV1(acceptedLineFits.right, acceptedLineFits.bottom),
-    intersectFixedRigPrintedBorderLinesV1(acceptedLineFits.left, acceptedLineFits.bottom),
-  ];
-  if (
-    !(coordinates.right > coordinates.left && coordinates.bottom > coordinates.top) ||
-    coordinates.left < outer.bounds.left || coordinates.right > outer.bounds.right ||
-    coordinates.top < outer.bounds.top || coordinates.bottom > outer.bounds.bottom ||
-    detectedPrintContour.some((point) => point === null) ||
-    detectedPrintContour.some((point) => point !== null && (
-      point.x < outer.bounds.left || point.x > outer.bounds.right ||
-      point.y < outer.bounds.top || point.y > outer.bounds.bottom
-    ))
-  ) {
+  const candidates = printedBorderCandidates(input, outer, analyses);
+  if (!candidates.length) {
     return insufficient(input, [{
       code: "invalid_detected_boundary",
-      message: "The supported peaks did not form one nondegenerate printed boundary inside the outer cut contour.",
-    }], outer.contour, boundaryEvidenceValue);
+      message:
+        "The manifest-valid side tracks did not form any nondegenerate full printed-boundary candidate inside the physical cut.",
+    }], outer.contour, boundaryEvidenceValue, candidates);
+  }
+  const selected = input.selectedCandidate
+    ? candidates.find((candidate) =>
+        candidate.candidateId === input.selectedCandidate!.candidateId &&
+        candidate.deterministicInputSha256 ===
+          input.selectedCandidate!.deterministicInputSha256)
+    : candidates[0];
+  if (!selected) {
+    return insufficient(input, [{
+      code: "invalid_candidate_selection",
+      message:
+        "The EYES-selected candidate ID/input hash is absent from the freshly reproduced deterministic candidate ledger.",
+    }], outer.contour, boundaryEvidenceValue, candidates);
   }
   return {
-    ...baseResult(input, plane.width, plane.height, outer.contour, boundaryEvidenceValue),
+    ...baseResult(
+      input,
+      plane.width,
+      plane.height,
+      outer.contour,
+      selected.boundaryEvidence,
+      candidates,
+    ),
     status: "computed",
-    profileInput: { profile: "printed_border_v1", printBoundarySamples },
-    detectedPrintContour: detectedPrintContour as FixedRigPointV1[],
-    confidence: round(Math.min(...Object.values(boundaryEvidenceValue).map((entry) => entry.confidence))),
+    profileInput: structuredClone(selected.profileInput),
+    detectedPrintContour: selected.detectedPrintContour.map((point) => ({
+      ...point,
+    })),
+    selectedCandidateId: selected.candidateId,
+    selectionSource: input.selectedCandidate
+      ? "eyes_exact_candidate"
+      : "deterministic_default",
+    confidence: selected.confidence,
     formula:
       "per-cross-section adaptive absolute-gradient threshold; inset-ordered candidate tracks; deterministic robust 2-D line fit; side-line intersections",
   };
@@ -962,6 +1179,7 @@ export function detectFixedRigPrintedBorderSourceV1(
 export interface BuildFixedRigPrintedBorderCenteringSideV1Input
   extends Omit<FixedRigCenteringSideInputV1, "profileInput"> {
   flatFieldNormalizedAllOnLuminance: FixedRigScalarPlaneV1;
+  selectedCandidate?: FixedRigPrintedBorderCandidateSelectionV1;
 }
 
 export interface BuiltFixedRigPrintedBorderCenteringSideV1 {
@@ -978,6 +1196,9 @@ export function buildFixedRigPrintedBorderCenteringSideV1(
     flatFieldNormalizedAllOnLuminance: input.flatFieldNormalizedAllOnLuminance,
     outerCutContour: input.outerCutContour,
     evidence: input.evidence,
+    ...(input.selectedCandidate
+      ? { selectedCandidate: { ...input.selectedCandidate } }
+      : {}),
   });
   if (detector.status === "insufficient_evidence") {
     return {

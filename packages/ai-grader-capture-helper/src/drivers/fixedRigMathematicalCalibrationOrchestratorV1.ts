@@ -52,7 +52,11 @@ import {
   type FixedRigCenteringProfileInputV1,
   type FixedRigPointV1,
 } from "./fixedRigCenteringV1";
-import { buildFixedRigPrintedBorderCenteringSideV1 } from "./fixedRigPrintedBorderDetectorV1";
+import {
+  buildFixedRigPrintedBorderCenteringSideV1,
+  type FixedRigPrintedBorderCandidateSelectionV1,
+  type FixedRigPrintedBorderDetectorResultV1,
+} from "./fixedRigPrintedBorderDetectorV1";
 import {
   buildFixedRigConditionSegmentationV1,
   type FixedRigConditionDesignRegistrationV1,
@@ -119,6 +123,35 @@ import {
 
 export const FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION =
   "fixed_rig_mathematical_calibration_orchestrator_v1" as const;
+export const FIXED_RIG_EYES_CENTERING_CANDIDATE_LEDGER_V1_VERSION =
+  "fixed_rig_eyes_centering_candidate_ledger_v1" as const;
+
+export interface FixedRigEyesCenteringCandidateAssetMetadataV1 {
+  side: "front" | "back";
+  candidateId: string;
+  deterministicInputSha256: string;
+  selectedByDefault: boolean;
+  fileName: string;
+  contentType: "image/png";
+  sha256: string;
+  byteSize: number;
+  widthPx: number;
+  heightPx: number;
+}
+
+export interface FixedRigEyesCenteringCandidateAssetV1
+  extends FixedRigEyesCenteringCandidateAssetMetadataV1 {
+  bytes: Buffer;
+}
+
+export interface FixedRigEyesCenteringCandidateLedgerV1 {
+  schemaVersion: typeof FIXED_RIG_EYES_CENTERING_CANDIDATE_LEDGER_V1_VERSION;
+  candidates: FixedRigEyesCenteringCandidateAssetMetadataV1[];
+  ledgerSha256: string;
+  metricAuthority: "deterministic_calibrated_pixels_only";
+  coordinateAuthority: false;
+  maximumRemeasurementPasses: 2;
+}
 export const FIXED_RIG_MATHEMATICAL_FINDING_REVIEW_REQUEST_V1_VERSION =
   "fixed_rig_mathematical_finding_review_request_v1" as const;
 
@@ -371,6 +404,13 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
    * grade. EYES supplies no measurement or score.
    */
   forcedOperatorReviewElements?: MathematicalGradingElementV1[];
+  /**
+   * Optional exact EYES selections. The detector must freshly reproduce both
+   * the candidate ID and deterministic-input hash before remeasurement.
+   */
+  eyesCenteringSelections?: Partial<
+    Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+  >;
   report: {
     publication: {
       certId: string;
@@ -425,7 +465,7 @@ export interface FixedRigMathematicalCalibrationOrchestrationSummaryV1 {
   };
 }
 
-export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result =
+export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result = (
   | {
       version: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION;
       status: "completed";
@@ -483,7 +523,15 @@ export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result =
       requiresImplementationCorrection: boolean;
       reportPackage: null;
       stationInput: null;
-    };
+    }
+) & {
+  /**
+   * Private, non-report candidate evidence for the hosted EYES selector.
+   * These assets never become metric, grading, or publication authority.
+   */
+  eyesCenteringCandidateLedger?: FixedRigEyesCenteringCandidateLedgerV1;
+  eyesCenteringCandidateAssets?: FixedRigEyesCenteringCandidateAssetV1[];
+};
 
 class OrchestrationFailureV1 extends Error {
   constructor(
@@ -527,6 +575,81 @@ function canonical(value: unknown): unknown {
 
 function canonicalJsonBytes(value: unknown): Buffer {
   return Buffer.from(`${JSON.stringify(canonical(value))}\n`, "utf8");
+}
+
+function svgPolyline(points: readonly FixedRigPointV1[]): string {
+  return points.map((point) => `${point.x.toFixed(3)},${point.y.toFixed(3)}`).join(" ");
+}
+
+async function buildEyesCenteringCandidateAssetsV1(input: {
+  side: Side;
+  normalizedBytes: Buffer;
+  widthPx: number;
+  heightPx: number;
+  detector: FixedRigPrintedBorderDetectorResultV1;
+}): Promise<FixedRigEyesCenteringCandidateAssetV1[]> {
+  if (!input.detector.candidates.length) return [];
+  const selectedCandidateId = input.detector.status === "computed"
+    ? input.detector.selectedCandidateId
+    : null;
+  return Promise.all(input.detector.candidates.map(async (candidate) => {
+    const candidatePath = svgPolyline([
+      ...candidate.detectedPrintContour,
+      candidate.detectedPrintContour[0]!,
+    ]);
+    const cutPath = svgPolyline([
+      ...input.detector.outerCutContour,
+      input.detector.outerCutContour[0]!,
+    ]);
+    const svg = Buffer.from(
+      `<svg width="${input.widthPx}" height="${input.heightPx}" viewBox="0 0 ${input.widthPx} ${input.heightPx}" xmlns="http://www.w3.org/2000/svg">` +
+      `<polyline points="${cutPath}" fill="none" stroke="#ffffff" stroke-opacity=".72" stroke-width="3"/>` +
+      `<polyline points="${candidatePath}" fill="none" stroke="#00f5ff" stroke-width="8" stroke-linejoin="round"/>` +
+      `<rect x="24" y="24" width="620" height="76" rx="12" fill="#000000" fill-opacity=".82"/>` +
+      `<text x="48" y="76" fill="#00f5ff" font-family="monospace" font-size="34" font-weight="700">${candidate.candidateId}</text>` +
+      `</svg>`,
+      "utf8",
+    );
+    const bytes = await sharp(input.normalizedBytes, { failOn: "error" })
+      .composite([{ input: svg, blend: "over" }])
+      .png()
+      .toBuffer();
+    return {
+      side: input.side,
+      candidateId: candidate.candidateId,
+      deterministicInputSha256: candidate.deterministicInputSha256,
+      selectedByDefault: candidate.candidateId === selectedCandidateId,
+      fileName: `${candidate.candidateId}.png`,
+      contentType: "image/png" as const,
+      sha256: sha256(bytes),
+      byteSize: bytes.byteLength,
+      widthPx: input.widthPx,
+      heightPx: input.heightPx,
+      bytes,
+    };
+  }));
+}
+
+function buildEyesCenteringCandidateLedgerV1(
+  assets: readonly FixedRigEyesCenteringCandidateAssetV1[],
+): FixedRigEyesCenteringCandidateLedgerV1 | undefined {
+  if (!assets.length) return undefined;
+  const candidates = assets
+    .map(({ bytes: _bytes, ...metadata }) => structuredClone(metadata))
+    .sort((left, right) =>
+      left.side.localeCompare(right.side) ||
+      left.candidateId.localeCompare(right.candidateId));
+  const authority = {
+    schemaVersion: FIXED_RIG_EYES_CENTERING_CANDIDATE_LEDGER_V1_VERSION,
+    candidates,
+    metricAuthority: "deterministic_calibrated_pixels_only" as const,
+    coordinateAuthority: false as const,
+    maximumRemeasurementPasses: 2 as const,
+  };
+  return {
+    ...authority,
+    ledgerSha256: sha256(canonicalJsonBytes(authority)),
+  };
 }
 
 function assertCalibrationBundleAuthorityV1(
@@ -737,6 +860,8 @@ interface IngestedSideBaseV1 {
   detectorPlaneSha256s: Record<string, string>;
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
   photometric: FixedRigPhotometricEvidenceV1;
+  printedBorderDetector?: FixedRigPrintedBorderDetectorResultV1;
+  eyesCenteringCandidateAssets: FixedRigEyesCenteringCandidateAssetV1[];
 }
 
 interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
@@ -795,6 +920,7 @@ async function ingestSideV1(input: {
   profile: MathematicalCalibrationProfileV1;
   photometricCalibration: FixedRigPhotometricCalibrationProfileV1;
   sensorMaximumValue: number;
+  selectedCenteringCandidate?: FixedRigPrintedBorderCandidateSelectionV1;
 }): Promise<IngestedSideV1> {
   const { side, sideInput, profile } = input;
   const rawSideInput = sideInput as unknown as Record<string, unknown>;
@@ -1542,6 +1668,7 @@ async function ingestSideV1(input: {
       },
       assetBindings,
       photometric,
+      eyesCenteringCandidateAssets: [],
       automaticMeasurementUnavailable: {
         detector: "photometric_evidence",
         reasons,
@@ -1718,21 +1845,37 @@ async function ingestSideV1(input: {
     ...(designReference ? [designReference] : []),
     planeReferenceByName.get("expectedOuterCardMask")!,
   ];
-  const centering = sideInput.centering.profileInput.profile === "printed_border_v1"
+  const printedBorder = sideInput.centering.profileInput.profile === "printed_border_v1"
     ? buildFixedRigPrintedBorderCenteringSideV1({
         side,
         calibration: profile,
         outerCutContour: produced.outerCutGeometryEvidence.observedArtifact.normalizedContour,
         flatFieldNormalizedAllOnLuminance: rgbLuminancePlaneV1(allOnRgb),
         evidence: centeringEvidence,
-      }).centering
-    : buildFixedRigCenteringSideV1({
+        ...(input.selectedCenteringCandidate
+          ? { selectedCandidate: input.selectedCenteringCandidate }
+          : {}),
+      })
+    : undefined;
+  const centering = printedBorder?.centering ?? buildFixedRigCenteringSideV1({
         side,
         calibration: profile,
         outerCutContour: produced.outerCutGeometryEvidence.observedArtifact.normalizedContour,
-        profileInput: sideInput.centering.profileInput,
+        profileInput: sideInput.centering.profileInput as Extract<
+          FixedRigCenteringProfileInputV1,
+          { profile: "registered_design_template_v1" }
+        >,
         evidence: centeringEvidence,
       });
+  const eyesCenteringCandidateAssets = printedBorder
+    ? await buildEyesCenteringCandidateAssetsV1({
+        side,
+        normalizedBytes,
+        widthPx: profile.normalizedWidthPx,
+        heightPx: profile.normalizedHeightPx,
+        detector: printedBorder.detector,
+      })
+    : [];
   const surface = buildFixedRigSurfaceV1({
     side,
     photometricEvidence: photometric,
@@ -1839,6 +1982,8 @@ async function ingestSideV1(input: {
     detectorPlaneSha256s,
     assetBindings,
     photometric,
+    ...(printedBorder ? { printedBorderDetector: printedBorder.detector } : {}),
+    eyesCenteringCandidateAssets,
     condition,
     outerCutGeometryEvidence: produced.outerCutGeometryEvidence,
     centering,
@@ -3918,6 +4063,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       profile: input.calibration.finalizedProfile,
       photometricCalibration,
       sensorMaximumValue: input.calibration.sensorMaximumValue,
+      selectedCenteringCandidate: input.eyesCenteringSelections?.front,
     });
     const back = await ingestSideV1({
       side: "back",
@@ -3926,7 +4072,14 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       profile: input.calibration.finalizedProfile,
       photometricCalibration,
       sensorMaximumValue: input.calibration.sensorMaximumValue,
+      selectedCenteringCandidate: input.eyesCenteringSelections?.back,
     });
+    const eyesCenteringCandidateAssets = [
+      ...front.eyesCenteringCandidateAssets,
+      ...back.eyesCenteringCandidateAssets,
+    ];
+    const eyesCenteringCandidateLedger =
+      buildEyesCenteringCandidateLedgerV1(eyesCenteringCandidateAssets);
     const originalSides = { front, back };
     const originalCentering = fuseFixedRigCenteringFrontBackV1(front.centering, back.centering);
     const computedSides = [front, back].filter(
@@ -4045,6 +4198,12 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         unresolvedElements,
         reportPackage: null,
         stationInput: null,
+        ...(eyesCenteringCandidateLedger
+          ? {
+              eyesCenteringCandidateLedger,
+              eyesCenteringCandidateAssets,
+            }
+          : {}),
       };
     }
     if (centering.status !== "computed") {
@@ -4160,6 +4319,12 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         operatorResolutionRequest,
         reportPackage: null,
         stationInput: null,
+        ...(eyesCenteringCandidateLedger
+          ? {
+              eyesCenteringCandidateLedger,
+              eyesCenteringCandidateAssets,
+            }
+          : {}),
       };
     }
     const findingPresentations = finalizeFindingPresentationsV1({
@@ -4343,6 +4508,12 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       orchestrationTraceSha256: sha256(traceBytes),
       summary,
       operatorResolutionRequest,
+      ...(eyesCenteringCandidateLedger
+        ? {
+            eyesCenteringCandidateLedger,
+            eyesCenteringCandidateAssets,
+          }
+        : {}),
     };
   } catch (error) {
     if (error instanceof OrchestrationFailureV1) return buildInsufficientResultV1(error);

@@ -1573,7 +1573,7 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
   const startBlock = source.slice(source.indexOf("const startNewCard = async"), source.indexOf("const runStationCapture"));
   const localStartCall = startBlock.slice(
     startBlock.indexOf('"start-session"'),
-    startBlock.indexOf("acceptStartedSession(prepared, started"),
+    startBlock.indexOf("acceptStartedSession(started, dispatchedStartIdentity"),
   );
   const backBlock = source.slice(source.indexOf("const captureBackAndContinue"), source.indexOf("const activateRapidQueueItem"));
   const prepublicationCardBlock = source.slice(source.indexOf("const createCardFromConfirmedIdentity"), source.indexOf("const searchCardItems"));
@@ -1600,7 +1600,7 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
     "the exact persisted Start identity is verified before staging or draft caching",
   );
   assert.ok(
-    startBlock.indexOf("acceptStartedSession(prepared, started") <
+    startBlock.indexOf("acceptStartedSession(started, dispatchedStartIdentity") <
       startBlock.indexOf("setCaptureBusy(null)") &&
       startBlock.indexOf("setCaptureBusy(null)") <
         startBlock.indexOf("stageStartedSessionReferences(prepared, started"),

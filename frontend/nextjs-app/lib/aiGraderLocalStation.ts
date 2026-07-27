@@ -51,6 +51,7 @@ export type AiGraderStationAction =
   | "submit-operator-resolutions"
   | "begin-queued-ocr"
   | "complete-queued-ocr"
+  | "complete-eyes-centering-selection"
   | "fail-queued-ocr";
 
 export type AiGraderCaptureProfile = "production_fast";
@@ -483,6 +484,7 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "identity_resolution_required"
   | "operator_resolution_required"
   | "finding_review_required"
   | "insufficient_evidence"
@@ -521,6 +523,7 @@ export type AiGraderRapidCaptureQueueItem = {
   autoPublished: false;
   mathematicalV1?: {
     status: AiGraderMathematicalExecutionV1["status"];
+    eyesCenteringSelectionState?: "eligible" | "completed";
     reviewRequestSha256?: string;
     failedStage?: string;
     reasons?: string[];
@@ -1782,6 +1785,7 @@ const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState
   "back_positioning",
   "back_captured",
   "finalizing",
+  "identity_resolution_required",
   "operator_resolution_required",
   "finding_review_required",
   "insufficient_evidence",
@@ -1969,6 +1973,15 @@ function sanitizeAiGraderRapidCaptureQueueItem(value: unknown): AiGraderRapidCap
   const mathematicalV1: AiGraderRapidCaptureQueueItem["mathematicalV1"] = mathematicalStatus
     ? {
         status: mathematicalStatus,
+        ...(
+          rawMathematical?.eyesCenteringSelectionState === "eligible" ||
+          rawMathematical?.eyesCenteringSelectionState === "completed"
+            ? {
+                eyesCenteringSelectionState:
+                  rawMathematical.eyesCenteringSelectionState,
+              }
+            : {}
+        ),
         ...(exactMathematicalSha256(rawMathematical?.reviewRequestSha256)
           ? { reviewRequestSha256: exactMathematicalSha256(rawMathematical?.reviewRequestSha256) }
           : {}),
@@ -2093,12 +2106,16 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
       item.state === "operator_resolution_required" ||
       item.state === "finding_review_required" ||
       item.state === "insufficient_evidence";
+    const pendingIdentityState =
+      item.state === "identity_resolution_required";
     const activeMathematicalStatus = activeReview.manifest.mathematicalV1?.execution?.status;
     return item.queueItemId === activeReview.queueItemId &&
       item.sessionId === activeReview.gradingSessionId &&
       item.reportId === activeReview.reportId &&
       item.state !== "failed" &&
-      (item.ocr.state === "succeeded" || pendingMathematicalState) &&
+      (item.ocr.state === "succeeded" ||
+        pendingMathematicalState ||
+        pendingIdentityState) &&
       (!pendingMathematicalState ||
         (item.mathematicalV1?.status === item.state && activeMathematicalStatus === item.state));
   })
@@ -3130,6 +3147,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "submit-operator-resolutions": "view_unified_report",
   "begin-queued-ocr": "start_new_card",
   "complete-queued-ocr": "start_new_card",
+  "complete-eyes-centering-selection": "start_new_card",
   "fail-queued-ocr": "start_new_card",
 };
 
@@ -3179,6 +3197,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "submit-operator-resolutions", description: "Submit an authenticated exact element-resolution authority." },
     { method: "POST", action: "begin-queued-ocr", description: "Atomically claim one exact eligible queued OCR lifecycle." },
     { method: "POST", action: "complete-queued-ocr", description: "Persist one safe OCR result for the exact claimed queue identity." },
+    { method: "POST", action: "complete-eyes-centering-selection", description: "Persist one hash-bound EYES candidate receipt and run the single deterministic remeasurement pass." },
     { method: "POST", action: "fail-queued-ocr", description: "Persist one explicit terminal OCR failure for the exact claimed queue identity." },
     { method: "GET", action: "latest-report", description: "Read latest report location." },
     { method: "GET", action: "session-manifest", description: "Read station session manifest." },
@@ -3587,6 +3606,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "submit-operator-resolutions",
     "begin-queued-ocr",
     "complete-queued-ocr",
+    "complete-eyes-centering-selection",
     "fail-queued-ocr",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;

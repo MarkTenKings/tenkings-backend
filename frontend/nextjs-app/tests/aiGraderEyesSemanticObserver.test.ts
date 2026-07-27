@@ -136,3 +136,40 @@ test("EYES provider failure produces a non-blocking receipt with no review or wh
   assert.deepEqual(receipt.reviewElements, []);
   assert.equal(receipt.wholeCardFailureAuthority, false);
 });
+
+test("EYES retains only bounded sanitized OpenAI non-2xx diagnostics", async () => {
+  await assert.rejects(
+    runAiGraderEyesSemanticObservation({ images }, {
+      env: { OPENAI_API_KEY: "redacted-test-key" },
+      async fetchImpl() {
+        return new Response(JSON.stringify({
+          error: {
+            type: "rate_limit_error",
+            code: "rate_limit_exceeded",
+            param: "requests",
+            message:
+              "Retry https://provider.test/path with sk-secret-value-12345678 and " +
+              "data:image/png;base64,AAAA.",
+          },
+        }), {
+          status: 429,
+          headers: { "x-request-id": "req_eyes_safe_123" },
+        });
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof AiGraderEyesError);
+      assert.equal(error.code, "non_2xx");
+      assert.deepEqual(error.upstreamDiagnostic, {
+        status: 429,
+        requestId: "req_eyes_safe_123",
+        errorType: "rate_limit_error",
+        errorCode: "rate_limit_exceeded",
+        errorParam: "requests",
+        sanitizedMessage:
+          "Retry [redacted-url] with [redacted-credential] and [redacted-image].",
+      });
+      return true;
+    },
+  );
+});
