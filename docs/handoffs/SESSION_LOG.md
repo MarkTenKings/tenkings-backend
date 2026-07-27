@@ -28841,3 +28841,17 @@ By enabling Rip It Live, I confirm:
 - Only the Dell capture helper was stopped. Loopback port `47652` released before restart, and restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-required, `production_fast`, calibration activation configured, sessionless `start_new_card`, preview `not_started`, camera ownership `idle`, no active transition, capture lock clear, warm runner idle, and capture/processing/report/Rapid queues all empty. Runtime HEAD is the exact functional merge and the runtime worktree is clean.
 - No camera/lighting operation, capture/cancel, card creation, calibration change, identity/owner resolution, publication/discard, queue/report/database/storage mutation, NFC, inventory, or unrelated service action occurred during helper activation.
+
+## 2026-07-27 - Centering ruler browser style-scope correction candidate
+
+- The owner's fresh Production acceptance card is exact session `ai-grader-browser-station-session-2026-07-27T231747232Z-session`, report `ai-grader-003a572b-e0b8-40cf-b376-7260be1c9b9e`, and queue item `ai-grader-browser-station-session-2026-07-27T231747232Z-session-rapid-card`, currently preserved at `operator_resolution_required` for centering.
+- Read-only inspection of the signed-in Production tab reproduced the failure. The parent-owned Front/Back stack rule applied, but every ruler-child selector compiled with styled-jsx scope `.jsx-209a11c8e6ab147` while the child component's canvas, image, SVG, line, circle, and text nodes had no matching scope class. The SVG therefore flowed below the image, computed measurement-line stroke was `none`, SVG pointer events remained `auto`, and zoom changed only the container width while the image retained its fixed dimensions.
+- The ruler event logic was active despite the invisible presentation. Production DOM state showed a changed Front zoom value, completed Front/Back left values, a pending first point, and invisible SVG line/text nodes. Repeating two-click measurements without a visibly selected margin overwrote the active Left value, leaving the other six fields empty.
+- The contained correction makes only the ruler child selectors global under their existing unique class names, so the image and SVG share one responsive canvas and the existing markers, live line, fixed lines, labels, pointer behavior, and zoom rules apply. After each completed two-click measurement, the tool selects the next unfinished margin, preventing sequential measurements from silently overwriting Left.
+- No helper, detector, EYES, OCR, centering formula, threshold, operator-resolution authority, queue state, report, database, storage, calibration, capture, camera/lighting hardware, publication, or other subgrade behavior changes.
+
+### Planned authorized Production action
+
+- Run the focused Mathematical station regression, the optimized frontend Production build, and `git diff --check`.
+- Commit and push only the station ruler presentation/sequence correction, focused regression, and this audit record; open one protected PR and merge after required checks.
+- Verify the resulting Production deployment, public/exact station bundle, and live computed ruler styles. This is browser-only; do not restart the Dell helper or mutate the preserved card, its draft resolution, any queue/report/database/storage state, calibration, capture, publication, or hardware.

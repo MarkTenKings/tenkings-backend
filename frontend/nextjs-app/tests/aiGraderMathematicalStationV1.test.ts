@@ -281,6 +281,19 @@ test("centering ruler stacks exact sides, zooms from fit width, and persists vis
   assert.match(source, /width: `\$\{zoom \* 100\}%`/);
   assert.match(source, /aspectRatio: `\$\{view\.image\.widthPx\} \/ \$\{view\.image\.heightPx\}`/);
   assert.match(source, /\.centering-measurement-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(
+    source,
+    /:global\(\.centering-measurement-canvas img\)[\s\S]*?width: 100%;[\s\S]*?height: 100%/,
+  );
+  assert.match(
+    source,
+    /:global\(\.centering-measurement-canvas line\) \{[\s\S]*?stroke: #20e8ff/,
+  );
+  assert.match(
+    source,
+    /const nextMargin =[\s\S]*?candidateIndex > index && !values\[candidateIndex\][\s\S]*?if \(nextMargin\) setActiveMargin\(nextMargin\)/,
+  );
+  assert.doesNotMatch(source, /^\s*\.centering-measurement-canvas (?:img|svg|line|circle|text)/m);
   assert.match(source, /onMouseMove=\{\(event\) => \{/);
   assert.match(source, /<g className="live-measurement">/);
   assert.match(source, /className="pending"/);

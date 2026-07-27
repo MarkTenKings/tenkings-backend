@@ -943,6 +943,16 @@ function CenteringMeasurementTool({
     setFirstPoint(null);
     setPointerPoint(null);
     onMeasurement(index, mm.toFixed(2), line);
+    const nextMargin =
+      CENTERING_MARGIN_NAMES.find(
+        (_margin, candidateIndex) =>
+          candidateIndex > index && !values[candidateIndex],
+      ) ??
+      CENTERING_MARGIN_NAMES.find(
+        (_margin, candidateIndex) =>
+          candidateIndex !== index && !values[candidateIndex],
+      );
+    if (nextMargin) setActiveMargin(nextMargin);
   };
   const liveLine = firstPoint && pointerPoint
     ? {
@@ -965,7 +975,7 @@ function CenteringMeasurementTool({
           <strong>{formatStationValue(side)} measuring tool</strong>
           <span>
             Choose a margin, then click its outer cut edge and inner printed
-            border.
+            border. Each completed line selects the next unfinished margin.
           </span>
         </div>
         <label>
@@ -9660,56 +9670,56 @@ export default function AiGraderStationPage() {
           grid-template-columns: minmax(0, 1fr);
           gap: 18px;
         }
-        .centering-measurement-tool {
+        :global(.centering-measurement-tool) {
           min-width: 0;
           padding: 12px;
           border: 1px solid rgba(32, 232, 255, 0.28);
           border-radius: 8px;
           background: rgba(32, 232, 255, 0.035);
         }
-        .centering-measurement-tool-head {
+        :global(.centering-measurement-tool-head) {
           display: flex;
           align-items: end;
           justify-content: space-between;
           gap: 12px;
         }
-        .centering-measurement-tool-head strong,
-        .centering-measurement-tool-head span {
+        :global(.centering-measurement-tool-head strong),
+        :global(.centering-measurement-tool-head span) {
           display: block;
         }
-        .centering-measurement-tool-head span,
-        .centering-measurement-tool-head label,
-        .centering-measurement-instruction {
+        :global(.centering-measurement-tool-head span),
+        :global(.centering-measurement-tool-head label),
+        :global(.centering-measurement-instruction) {
           color: #aeb9b8;
           font-size: 11px;
         }
-        .centering-measurement-tool-head input {
+        :global(.centering-measurement-tool-head input) {
           display: block;
           width: 150px;
         }
-        .centering-measurement-margin-buttons {
+        :global(.centering-measurement-margin-buttons) {
           display: grid;
           grid-template-columns: repeat(4, minmax(0, 1fr));
           gap: 6px;
           margin: 10px 0;
         }
-        .centering-measurement-margin-buttons button {
+        :global(.centering-measurement-margin-buttons button) {
           min-width: 0;
           padding: 7px 4px;
           border-color: rgba(255, 255, 255, 0.16);
           color: #d9d4c9;
           font-size: 10px;
         }
-        .centering-measurement-margin-buttons button.active {
+        :global(.centering-measurement-margin-buttons button.active) {
           border-color: #20e8ff;
           color: #20e8ff;
           box-shadow: inset 0 0 0 1px rgba(32, 232, 255, 0.28);
         }
-        .centering-measurement-instruction {
+        :global(.centering-measurement-instruction) {
           min-height: 18px;
           margin: 0 0 8px;
         }
-        .centering-measurement-viewport {
+        :global(.centering-measurement-viewport) {
           width: 100%;
           height: min(70vh, 820px);
           overflow: auto;
@@ -9717,56 +9727,56 @@ export default function AiGraderStationPage() {
           border-radius: 5px;
           background: #010201;
         }
-        .centering-measurement-canvas {
+        :global(.centering-measurement-canvas) {
           position: relative;
           min-width: 100%;
           transform-origin: top left;
         }
-        .centering-measurement-canvas img,
-        .centering-measurement-canvas svg {
+        :global(.centering-measurement-canvas img),
+        :global(.centering-measurement-canvas svg) {
           position: absolute;
           inset: 0;
           display: block;
           width: 100%;
           height: 100%;
         }
-        .centering-measurement-canvas img {
+        :global(.centering-measurement-canvas img) {
           cursor: crosshair;
           user-select: none;
         }
-        .centering-measurement-canvas svg {
+        :global(.centering-measurement-canvas svg) {
           pointer-events: none;
           overflow: visible;
         }
-        .centering-measurement-canvas line {
+        :global(.centering-measurement-canvas line) {
           stroke: #20e8ff;
           stroke-width: 5;
           filter: drop-shadow(0 1px 2px #000);
         }
-        .centering-measurement-canvas line.live {
+        :global(.centering-measurement-canvas line.live) {
           stroke: #ffd584;
           stroke-dasharray: 16 10;
         }
-        .centering-measurement-canvas circle {
+        :global(.centering-measurement-canvas circle) {
           fill: #20e8ff;
           stroke: #061014;
           stroke-width: 4;
         }
-        .centering-measurement-canvas circle.pending {
+        :global(.centering-measurement-canvas circle.pending) {
           fill: #ffd584;
         }
-        .centering-measurement-canvas circle.pointer {
+        :global(.centering-measurement-canvas circle.pointer) {
           fill: #ffffff;
           stroke: #ffd584;
         }
-        .centering-measurement-canvas text {
+        :global(.centering-measurement-canvas text) {
           fill: #ffffff;
           stroke: #000000;
           stroke-width: 6;
           paint-order: stroke;
           font: 700 24px monospace;
         }
-        .centering-measurement-canvas text.live {
+        :global(.centering-measurement-canvas text.live) {
           fill: #ffd584;
         }
         .mathematical-finding-list {
