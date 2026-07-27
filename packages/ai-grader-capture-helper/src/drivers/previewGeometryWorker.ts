@@ -84,11 +84,18 @@ function isBoundGeometryResponse(
     typeof response.geometry !== "object"
   ) return false;
   const geometry = response.geometry as CardGeometryMetadata;
+  const geometryTimestampMs = Date.parse(geometry.timestamp);
+  const inputTimestampMs =
+    typeof input.timestamp === "string"
+      ? Date.parse(input.timestamp)
+      : Number.NaN;
   return (
     geometry.side === input.side &&
     geometry.detectionPolicy === input.detectionPolicy &&
     geometry.sourceFrameId === input.sourceFrameId &&
-    geometry.timestamp === input.timestamp
+    Number.isFinite(geometryTimestampMs) &&
+    Number.isFinite(inputTimestampMs) &&
+    geometryTimestampMs === inputTimestampMs
   );
 }
 
