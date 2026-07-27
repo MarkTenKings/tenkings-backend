@@ -751,6 +751,23 @@ async function resolveOperatorCheckpoint(input, resolutions = [], inspectPending
   return buildFixedRigMathematicalCalibrationReportPackageV1(input);
 }
 
+function operatorCenteringSegments(front, back) {
+  const build = (values) => [
+    { margin: "left", start: { x: 8, y: 460 }, end: { x: 8 + values[0] * 1200 / 63.5, y: 460 } },
+    { margin: "right", start: { x: 1192, y: 760 }, end: { x: 1192 - values[1] * 1200 / 63.5, y: 760 } },
+    { margin: "top", start: { x: 340, y: 8 }, end: { x: 340, y: 8 + values[2] * 1680 / 88.9 } },
+    { margin: "bottom", start: { x: 880, y: 1672 }, end: { x: 880, y: 1672 - values[3] * 1680 / 88.9 } },
+  ];
+  return {
+    coordinateFrame: "normalized_card_portrait_pixels",
+    widthPx: 1200,
+    heightPx: 1680,
+    order: ["left", "right", "top", "bottom"],
+    front: build(front),
+    back: build(back),
+  };
+}
+
 async function buildFixture(options = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-orchestrator-"));
   const calibration = buildCalibrationArtifacts();
@@ -923,6 +940,10 @@ test("a localized low-contrast outer-cut area preserves computed elements and th
         order: ["left", "right", "top", "bottom"],
         front: [2.1, 2.2, 2.4, 2.3],
         back: [2.3, 2.2, 2.1, 2.4],
+        segments: operatorCenteringSegments(
+          [2.1, 2.2, 2.4, 2.3],
+          [2.3, 2.2, 2.1, 2.4],
+        ),
       },
     },
     {
@@ -977,6 +998,11 @@ test("a localized low-contrast outer-cut area preserves computed elements and th
   assert.equal(result.grade.elements.corners.score, 9.4);
   assert.equal(result.grade.elements.edges.score, 9.15);
   assert.equal(result.grade.elements.surface.score, 8.75);
+  assert.deepEqual(
+    fixture.input.operatorResolutionAuthorities[0].resolutions[0]
+      .measurements.segments.front[0],
+    resolutions[0].measurements.segments.front[0],
+  );
   const publicBundle = JSON.stringify(result.reportArtifact.bundle);
   assert.ok(result.reportArtifact.bundle.centeringEvidence.front.outerCutContourAssetId);
   assert.ok(result.reportArtifact.bundle.centeringEvidence.back.outerCutContourAssetId);

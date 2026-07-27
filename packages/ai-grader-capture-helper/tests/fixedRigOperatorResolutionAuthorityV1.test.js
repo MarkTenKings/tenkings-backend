@@ -109,6 +109,39 @@ function submission(requestSha256) {
   };
 }
 
+function measurementSegments(front, back) {
+  const build = (values) => [
+    {
+      margin: "left",
+      start: { x: 0, y: 460 },
+      end: { x: values[0] * 1200 / 63.5, y: 460 },
+    },
+    {
+      margin: "right",
+      start: { x: 1200, y: 760 },
+      end: { x: 1200 - values[1] * 1200 / 63.5, y: 760 },
+    },
+    {
+      margin: "top",
+      start: { x: 340, y: 0 },
+      end: { x: 340, y: values[2] * 1680 / 88.9 },
+    },
+    {
+      margin: "bottom",
+      start: { x: 880, y: 1680 },
+      end: { x: 880, y: 1680 - values[3] * 1680 / 88.9 },
+    },
+  ];
+  return {
+    coordinateFrame: "normalized_card_portrait_pixels",
+    widthPx: 1200,
+    heightPx: 1680,
+    order: ["left", "right", "top", "bottom"],
+    front: build(front),
+    back: build(back),
+  };
+}
+
 test("strict submission accepts all four legal element forms and preserves owner text", () => {
   const pending = request();
   const candidate = submission(pending.requestSha256);
@@ -215,6 +248,50 @@ test("centering rejects wrong unit, order, count, negatives, impossible sums, an
       () => parseFixedRigOperatorResolutionSubmissionV1(candidate, dimensions),
     );
   }
+});
+
+test("centering preserves complete canonical ruler segments without making them scoring authority", () => {
+  const pending = request();
+  const candidate = submission(pending.requestSha256);
+  const centering = candidate.resolutions[0].measurements;
+  centering.segments = measurementSegments(centering.front, centering.back);
+  const parsed = parseFixedRigOperatorResolutionSubmissionV1(
+    candidate,
+    { width: 63.5, height: 88.9 },
+  );
+  assert.deepEqual(parsed.resolutions[0].measurements.segments, centering.segments);
+  assert.deepEqual(parsed.resolutions[0].measurements.front, [2.1, 2.2, 2.4, 2.3]);
+});
+
+test("centering ruler segments reject nonperpendicular or millimeter-mismatched overlays", () => {
+  const pending = request();
+  const dimensions = { width: 63.5, height: 88.9 };
+  const nonperpendicular = submission(pending.requestSha256);
+  const firstMeasurements = nonperpendicular.resolutions[0].measurements;
+  firstMeasurements.segments = measurementSegments(
+    firstMeasurements.front,
+    firstMeasurements.back,
+  );
+  firstMeasurements.segments.front[0].end.y += 1;
+  assert.throws(
+    () => parseFixedRigOperatorResolutionSubmissionV1(
+      nonperpendicular,
+      dimensions,
+    ),
+    /perpendicular/,
+  );
+
+  const mismatched = submission(pending.requestSha256);
+  const secondMeasurements = mismatched.resolutions[0].measurements;
+  secondMeasurements.segments = measurementSegments(
+    secondMeasurements.front,
+    secondMeasurements.back,
+  );
+  secondMeasurements.segments.back[3].end.y -= 40;
+  assert.throws(
+    () => parseFixedRigOperatorResolutionSubmissionV1(mismatched, dimensions),
+    /does not reproduce/,
+  );
 });
 
 test("authority is canonical, bound, chained, and keeps private rationale separate", () => {

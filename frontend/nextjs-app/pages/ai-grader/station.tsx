@@ -788,6 +788,16 @@ type OperatorResolutionElementDraft = {
   internalReason: string;
 };
 
+const CENTERING_MARGIN_NAMES = ["left", "right", "top", "bottom"] as const;
+type CenteringMarginName = (typeof CENTERING_MARGIN_NAMES)[number];
+type CenteringToolPoint = { x: number; y: number };
+type CenteringToolLine = {
+  margin: CenteringMarginName;
+  start: CenteringToolPoint;
+  end: CenteringToolPoint;
+  mm: number;
+};
+
 type OperatorResolutionDraft = {
   confirmed: boolean;
   elements: Record<AiGraderOperatorResolutionElementV1, OperatorResolutionElementDraft>;
@@ -795,6 +805,10 @@ type OperatorResolutionDraft = {
     front: [string, string, string, string];
     back: [string, string, string, string];
   };
+  centeringSegments: Record<
+    "front" | "back",
+    Partial<Record<CenteringMarginName, CenteringToolLine>>
+  >;
 };
 
 function operatorResolutionDraft(
@@ -823,47 +837,47 @@ function operatorResolutionDraft(
       front: ["", "", "", ""],
       back: ["", "", "", ""],
     },
+    centeringSegments: {
+      front: {},
+      back: {},
+    },
   };
 }
-
-const CENTERING_MARGIN_NAMES = ["left", "right", "top", "bottom"] as const;
-type CenteringMarginName = (typeof CENTERING_MARGIN_NAMES)[number];
-type CenteringToolPoint = { x: number; y: number };
-type CenteringToolLine = {
-  margin: CenteringMarginName;
-  start: CenteringToolPoint;
-  end: CenteringToolPoint;
-  mm: number;
-};
 
 function CenteringMeasurementTool({
   side,
   view,
   values,
+  lines,
   disabled,
   onMeasurement,
+  onClear,
 }: {
   side: "front" | "back";
   view?: OperatorResolutionEvidenceView;
   values: [string, string, string, string];
+  lines: Partial<Record<CenteringMarginName, CenteringToolLine>>;
   disabled: boolean;
-  onMeasurement(index: number, value: string): void;
+  onMeasurement(index: number, value: string, line: CenteringToolLine): void;
+  onClear(): void;
 }) {
-  const [zoom, setZoom] = useState(1.5);
+  const [zoom, setZoom] = useState(1);
   const [activeMargin, setActiveMargin] =
     useState<CenteringMarginName>("left");
   const [firstPoint, setFirstPoint] = useState<CenteringToolPoint | null>(null);
-  const [lines, setLines] = useState<
-    Partial<Record<CenteringMarginName, CenteringToolLine>>
-  >({});
+  const [pointerPoint, setPointerPoint] =
+    useState<CenteringToolPoint | null>(null);
   useEffect(() => {
     setFirstPoint(null);
-    setLines({});
+    setPointerPoint(null);
   }, [view?.image.checksumSha256]);
-  const clickImage = (event: ReactMouseEvent<HTMLImageElement>) => {
-    if (!view || disabled) return;
+  const pointFromImageEvent = (
+    event: ReactMouseEvent<HTMLImageElement>,
+  ): CenteringToolPoint | null => {
+    if (!view) return null;
     const rect = event.currentTarget.getBoundingClientRect();
-    const point = {
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
       x: Math.max(
         0,
         Math.min(
@@ -879,35 +893,68 @@ function CenteringMeasurementTool({
         ),
       ),
     };
-    if (!firstPoint) {
-      setFirstPoint(point);
-      return;
-    }
+  };
+  const projectedPoint = (
+    start: CenteringToolPoint,
+    pointer: CenteringToolPoint,
+  ): CenteringToolPoint => {
+    const horizontal =
+      activeMargin === "left" || activeMargin === "right";
+    return horizontal
+      ? { x: pointer.x, y: start.y }
+      : { x: start.x, y: pointer.y };
+  };
+  const measurementForPoints = (
+    start: CenteringToolPoint,
+    end: CenteringToolPoint,
+  ): number => {
+    if (!view) return 0;
     const horizontal =
       activeMargin === "left" || activeMargin === "right";
     const pixels = Math.abs(
-      horizontal ? point.x - firstPoint.x : point.y - firstPoint.y,
+      horizontal ? end.x - start.x : end.y - start.y,
     );
     const physicalSpanMm = horizontal ? 63.5 : 88.9;
     const imageSpanPx = horizontal
       ? view.image.widthPx
       : view.image.heightPx;
-    const mm = Math.round(
+    return Math.round(
       pixels * physicalSpanMm / imageSpanPx * 100,
     ) / 100;
+  };
+  const clickImage = (event: ReactMouseEvent<HTMLImageElement>) => {
+    if (!view || disabled) return;
+    const point = pointFromImageEvent(event);
+    if (!point) return;
+    if (!firstPoint) {
+      setFirstPoint(point);
+      setPointerPoint(point);
+      return;
+    }
+    const end = projectedPoint(firstPoint, point);
+    const mm = measurementForPoints(firstPoint, end);
     const index = CENTERING_MARGIN_NAMES.indexOf(activeMargin);
-    setLines((current) => ({
-      ...current,
-      [activeMargin]: {
+    const line = {
+      margin: activeMargin,
+      start: firstPoint,
+      end,
+      mm,
+    };
+    setFirstPoint(null);
+    setPointerPoint(null);
+    onMeasurement(index, mm.toFixed(2), line);
+  };
+  const liveLine = firstPoint && pointerPoint
+    ? {
         margin: activeMargin,
         start: firstPoint,
-        end: point,
-        mm,
-      },
-    }));
-    setFirstPoint(null);
-    onMeasurement(index, mm.toFixed(2));
-  };
+        end: projectedPoint(firstPoint, pointerPoint),
+        mm: measurementForPoints(
+          firstPoint,
+          projectedPoint(firstPoint, pointerPoint),
+        ),
+      }
+    : null;
   return (
     <section
       className="centering-measurement-tool"
@@ -943,6 +990,7 @@ function CenteringMeasurementTool({
             onClick={() => {
               setActiveMargin(margin);
               setFirstPoint(null);
+              setPointerPoint(null);
             }}
             disabled={disabled || !view}
           >
@@ -961,8 +1009,8 @@ function CenteringMeasurementTool({
           <div
             className="centering-measurement-canvas"
             style={{
-              width: `${view.image.widthPx * zoom}px`,
-              height: `${view.image.heightPx * zoom}px`,
+              width: `${zoom * 100}%`,
+              aspectRatio: `${view.image.widthPx} / ${view.image.heightPx}`,
             }}
           >
             <img
@@ -971,6 +1019,11 @@ function CenteringMeasurementTool({
               width={view.image.widthPx}
               height={view.image.heightPx}
               onClick={clickImage}
+              onMouseMove={(event) => {
+                if (!firstPoint || disabled) return;
+                setPointerPoint(pointFromImageEvent(event));
+              }}
+              onMouseLeave={() => setPointerPoint(null)}
               draggable={false}
             />
             <svg
@@ -980,6 +1033,7 @@ function CenteringMeasurementTool({
               {Object.values(lines).map((line) => line ? (
                 <g key={line.margin}>
                   <line
+                    className="fixed"
                     x1={line.start.x}
                     y1={line.start.y}
                     x2={line.end.x}
@@ -995,6 +1049,36 @@ function CenteringMeasurementTool({
                   </text>
                 </g>
               ) : null)}
+              {liveLine ? (
+                <g className="live-measurement">
+                  <line
+                    className="live"
+                    x1={liveLine.start.x}
+                    y1={liveLine.start.y}
+                    x2={liveLine.end.x}
+                    y2={liveLine.end.y}
+                  />
+                  <circle
+                    className="pending"
+                    cx={liveLine.start.x}
+                    cy={liveLine.start.y}
+                    r="12"
+                  />
+                  <circle
+                    className="pointer"
+                    cx={liveLine.end.x}
+                    cy={liveLine.end.y}
+                    r="12"
+                  />
+                  <text
+                    className="live"
+                    x={(liveLine.start.x + liveLine.end.x) / 2}
+                    y={(liveLine.start.y + liveLine.end.y) / 2 - 16}
+                  >
+                    {liveLine.margin} {liveLine.mm.toFixed(2)} mm
+                  </text>
+                </g>
+              ) : null}
               {firstPoint ? (
                 <circle
                   className="pending"
@@ -1016,9 +1100,8 @@ function CenteringMeasurementTool({
         className="link-button"
         onClick={() => {
           setFirstPoint(null);
-          setLines({});
-          CENTERING_MARGIN_NAMES.forEach((_margin, index) =>
-            onMeasurement(index, ""));
+          setPointerPoint(null);
+          onClear();
         }}
         disabled={disabled}
       >
@@ -4151,6 +4234,31 @@ export default function AiGraderStationPage() {
           setError("Centering requires eight physically possible nonnegative millimeter measurements.");
           return;
         }
+        const segmentSide = (side: "front" | "back") => {
+          const segments = CENTERING_MARGIN_NAMES.map((margin) => {
+            const line = operatorResolutionDraftState.centeringSegments[side][margin];
+            if (!line) return null;
+            const canonicalPoint = (point: CenteringToolPoint) => ({
+              x: Math.round(point.x * 10_000) / 10_000,
+              y: Math.round(point.y * 10_000) / 10_000,
+            });
+            return {
+              margin,
+              start: canonicalPoint(line.start),
+              end: canonicalPoint(line.end),
+            };
+          });
+          return segments.every((segment) => segment !== null)
+            ? segments as [
+                NonNullable<(typeof segments)[number]>,
+                NonNullable<(typeof segments)[number]>,
+                NonNullable<(typeof segments)[number]>,
+                NonNullable<(typeof segments)[number]>,
+              ]
+            : null;
+        };
+        const frontSegments = segmentSide("front");
+        const backSegments = segmentSide("back");
         resolutions.push({
           element,
           publicExplanation: draft.publicExplanation,
@@ -4160,6 +4268,18 @@ export default function AiGraderStationPage() {
             order: ["left", "right", "top", "bottom"],
             front,
             back,
+            ...(frontSegments && backSegments
+              ? {
+                  segments: {
+                    coordinateFrame: "normalized_card_portrait_pixels" as const,
+                    widthPx: 1200 as const,
+                    heightPx: 1680 as const,
+                    order: ["left", "right", "top", "bottom"] as const,
+                    front: frontSegments,
+                    back: backSegments,
+                  },
+                }
+              : {}),
           },
         });
       } else {
@@ -6235,8 +6355,9 @@ export default function AiGraderStationPage() {
                                     side={side}
                                     view={operatorResolutionEvidence.images[side]}
                                     values={operatorResolutionDraftState.centering[side]}
+                                    lines={operatorResolutionDraftState.centeringSegments[side]}
                                     disabled={busy !== null}
-                                    onMeasurement={(index, value) =>
+                                    onMeasurement={(index, value, line) =>
                                       setOperatorResolutionDraftState((current) => {
                                         const measurements = [
                                           ...current.centering[side],
@@ -6249,8 +6370,28 @@ export default function AiGraderStationPage() {
                                             ...current.centering,
                                             [side]: measurements,
                                           },
+                                          centeringSegments: {
+                                            ...current.centeringSegments,
+                                            [side]: {
+                                              ...current.centeringSegments[side],
+                                              [line.margin]: line,
+                                            },
+                                          },
                                         };
                                       })}
+                                    onClear={() =>
+                                      setOperatorResolutionDraftState((current) => ({
+                                        ...current,
+                                        confirmed: false,
+                                        centering: {
+                                          ...current.centering,
+                                          [side]: ["", "", "", ""],
+                                        },
+                                        centeringSegments: {
+                                          ...current.centeringSegments,
+                                          [side]: {},
+                                        },
+                                      }))}
                                   />
                                 ))}
                               </div>
@@ -6267,13 +6408,21 @@ export default function AiGraderStationPage() {
                                         onChange={(event) => setOperatorResolutionDraftState((current) => {
                                           const measurements = [...current.centering[side]] as
                                             [string, string, string, string];
+                                          const remainingSegments = {
+                                            ...current.centeringSegments[side],
+                                          };
                                           measurements[index] = event.target.value;
+                                          delete remainingSegments[margin];
                                           return {
                                             ...current,
                                             confirmed: false,
                                             centering: {
                                               ...current.centering,
                                               [side]: measurements,
+                                            },
+                                            centeringSegments: {
+                                              ...current.centeringSegments,
+                                              [side]: remainingSegments,
                                             },
                                           };
                                         })}
@@ -9508,8 +9657,8 @@ export default function AiGraderStationPage() {
         }
         .centering-measurement-tools {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 12px;
+          grid-template-columns: minmax(0, 1fr);
+          gap: 18px;
         }
         .centering-measurement-tool {
           min-width: 0;
@@ -9562,7 +9711,7 @@ export default function AiGraderStationPage() {
         }
         .centering-measurement-viewport {
           width: 100%;
-          height: min(62vh, 700px);
+          height: min(70vh, 820px);
           overflow: auto;
           border: 1px solid rgba(255, 255, 255, 0.13);
           border-radius: 5px;
@@ -9570,6 +9719,7 @@ export default function AiGraderStationPage() {
         }
         .centering-measurement-canvas {
           position: relative;
+          min-width: 100%;
           transform-origin: top left;
         }
         .centering-measurement-canvas img,
@@ -9593,6 +9743,10 @@ export default function AiGraderStationPage() {
           stroke-width: 5;
           filter: drop-shadow(0 1px 2px #000);
         }
+        .centering-measurement-canvas line.live {
+          stroke: #ffd584;
+          stroke-dasharray: 16 10;
+        }
         .centering-measurement-canvas circle {
           fill: #20e8ff;
           stroke: #061014;
@@ -9601,12 +9755,19 @@ export default function AiGraderStationPage() {
         .centering-measurement-canvas circle.pending {
           fill: #ffd584;
         }
+        .centering-measurement-canvas circle.pointer {
+          fill: #ffffff;
+          stroke: #ffd584;
+        }
         .centering-measurement-canvas text {
           fill: #ffffff;
           stroke: #000000;
           stroke-width: 6;
           paint-order: stroke;
           font: 700 24px monospace;
+        }
+        .centering-measurement-canvas text.live {
+          fill: #ffd584;
         }
         .mathematical-finding-list {
           display: grid;

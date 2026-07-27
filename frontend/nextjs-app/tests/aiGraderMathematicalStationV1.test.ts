@@ -275,6 +275,22 @@ test("Production station exposes one strict operator element-resolution boundary
   assert.doesNotMatch(source, /labelGrade\s*:/);
 });
 
+test("centering ruler stacks exact sides, zooms from fit width, and persists visible segments", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(source, /const \[zoom, setZoom\] = useState\(1\)/);
+  assert.match(source, /width: `\$\{zoom \* 100\}%`/);
+  assert.match(source, /aspectRatio: `\$\{view\.image\.widthPx\} \/ \$\{view\.image\.heightPx\}`/);
+  assert.match(source, /\.centering-measurement-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\)/);
+  assert.match(source, /onMouseMove=\{\(event\) => \{/);
+  assert.match(source, /<g className="live-measurement">/);
+  assert.match(source, /className="pending"/);
+  assert.match(source, /className="pointer"/);
+  assert.match(source, /centeringSegments:/);
+  assert.match(source, /coordinateFrame: "normalized_card_portrait_pixels"/);
+  assert.match(source, /widthPx: 1200 as const/);
+  assert.match(source, /heightPx: 1680 as const/);
+});
+
 test("operator element resolution is image-first and condenses repeated directional-evidence failures", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(
