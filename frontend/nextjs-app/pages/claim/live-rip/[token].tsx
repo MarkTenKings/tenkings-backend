@@ -48,6 +48,23 @@ export default function LiveRipClaimPage() {
     }
 
     try {
+      setClaimState("loading");
+      setMessage("Checking your Live Rip claim…");
+      const validationResponse = await fetch(
+        `/api/live-rip/claims/${encodeURIComponent(token)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: { Accept: "application/json" },
+        }
+      );
+      const validationPayload = (await validationResponse.json().catch(() => ({}))) as {
+        message?: string;
+      };
+      if (!validationResponse.ok) {
+        throw new Error(validationPayload.message ?? "This Live Rip claim link is unavailable");
+      }
+
       let activeSession = session;
       if (!activeSession) {
         setClaimState("auth");

@@ -28746,3 +28746,26 @@ By enabling Rip It Live, I confirm:
 - GitHub Production deployment `5629244339` succeeded. The changed shared sanitizer chunk is public and byte-identical to the exact deployment: `5848-47dd38aed6aa8a4b.js`, `100,727` bytes, SHA-256 `16e080504d7d10a2c4476c54d7225225975c9adab0d181db3193b078e88dce25`. The prior deployment served distinct sanitizer chunk `5848-0674eb77aa815361.js`, proving the correction changed the intended browser code.
 - The station entry bundle remains byte-identical between public and exact deployment: `station-4afc46863cac35b2.js`, `306,641` bytes, SHA-256 `7981a5ee3384011b9b994978e3fbf6a62d710af37e4df5cbf475390b60405830`.
 - No Dell helper update/restart or card, queue, report, OCR, database, storage, calibration, capture, identity-resolution, publication, discard, or hardware mutation occurred. The exact preserved card remains available for the owner's hard-refresh acceptance.
+
+## 2026-07-27 - Live Rip customer QR claim and video-wall replay candidate
+
+- Started isolated branch `codex/live-rip-qr-claim` from current protected `origin/main`; the pre-existing dirty/conflicted workstation checkout and the earlier Live Rip review worktree were not modified.
+- Replaced the administrator’s required name/phone “Assign & Text Customer” interaction on a recorded `/live/[slug]` video with `Show Customer Claim QR`. The modal renders a local `qrcode` package QR at `320 × 320`, provides the same secure URL for copy, and reports creating, ready, claimed, expired, unavailable, and unexpected-error states.
+- Reused the existing `/claim/live-rip/[token]` page, in-place Ten Kings sign-in/signup flow, `LiveRip` ownership and hashed-token fields, authenticated owner-scoped Collections API, and actual redirect `/collection?section=live-rips`. The existing SMS endpoint and helper remain intact but are no longer required by the primary admin UI.
+- Added the admin-authorized `GET`/`POST /api/live-rip/clips/[clipId]/claim-link` route. QR tokens use 32 cryptographically random bytes, are stored only as SHA-256 hashes, expire after 15 minutes, rotate when a new QR is explicitly generated, and are invalidated after one atomic authenticated claim. A claimed or already-owned Live Rip cannot be reassigned by this path.
+- Preserved legacy phone-bound SMS claim behavior while allowing the new QR path to assign only to the authenticated scanner. Public token inspection is non-identifying and non-cacheable; the final claim ignores browser-supplied customer identity and derives ownership only from the authenticated session.
+- Restricted the public `/api/live-rips` response to an explicit safe field list. It no longer serializes customer phone/name, claim hashes, assignment metadata, ownership IDs, or stream credentials.
+- Verified the existing live media path rather than rebuilding it: `/kiosk/display` configures OBS with the session’s Mux ingest, starts streaming through the active stages, renders the Mux live playback on the stage display, and the signed Mux `video.asset.ready` webhook binds the processed recording to the `LiveRip`.
+- Closed the physical video-wall standby gap: the kiosk display now polls for the latest 12 processed, non–Golden Ticket recordings at its own location and loops them sequentially. A new recording is eligible only after the Mux asset and playback ID exist (or it is a direct MP4); the pre-existing attract video remains the empty-library presentation.
+- No Prisma schema change or database migration is required.
+- Validation passed:
+  - focused claim tests: `8/8`;
+  - focused lint for all changed application files: zero warnings or errors;
+  - `git diff --check`;
+  - full production-equivalent `scripts/vercel-build.sh` with migrations disabled, including Prisma generation, database/shared/browser-rip/capture-helper builds, Next.js lint/type validation and optimized build, and the AI Grader runtime trace verifier. Build output contained only pre-existing unrelated lint/browser-data/optional-sharp warnings.
+
+### Planned authorized Production action
+
+- Commit and push this bounded Live Rip change, open one focused pull request, allow the normal protected checks, and merge it to protected `main` when green.
+- Allow the normal Vercel Production deployment with `RUN_DB_MIGRATIONS` absent/false. No database migration or DigitalOcean service restart is planned.
+- Verify the merged commit and deployment, then smoke-test the public Live Rip feed, `/live`, claim route behavior without a token, Collections sign-in boundary, and kiosk display route. The final real QR scan/claim and physical camera/OBS/video-wall acceptance remain owner-operated because they require an authenticated administrator/customer and the SER/OBS hardware.

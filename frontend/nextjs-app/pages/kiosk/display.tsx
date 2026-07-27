@@ -16,6 +16,14 @@ interface DisplayResponse {
   session: SerializedKioskSession | null;
 }
 
+interface VideoWallLiveRip {
+  id: string;
+  title: string;
+  videoUrl: string;
+  muxPlaybackId: string | null;
+  replayReady: boolean;
+}
+
 type HelperIntent = "info" | "success" | "error";
 
 type RevealDetails = {
@@ -56,6 +64,7 @@ type RuntimeObsConfig = {
 };
 
 const POLL_INTERVAL_MS = 4000;
+const VIDEO_WALL_POLL_INTERVAL_MS = 15000;
 const TIMER_TICK_MS = 1000;
 const MANUAL_REVEAL_DURATION_MS = Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_MS ?? 10000);
 const MANUAL_REVEAL_COOLDOWN_MS = Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_COOLDOWN_MS ?? 5000);
@@ -223,6 +232,10 @@ export default function KioskDisplayPage() {
   const [obsConfigLoading, setObsConfigLoading] = useState(true);
   const [obsConfigError, setObsConfigError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const replayVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [videoWallRips, setVideoWallRips] = useState<VideoWallLiveRip[]>([]);
+  const videoWallRipsRef = useRef<VideoWallLiveRip[]>([]);
+  const [currentVideoWallRipId, setCurrentVideoWallRipId] = useState<string | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const configuringObsRef = useRef<string | null>(null);
   const [obsConfiguredSessionId, setObsConfiguredSessionId] = useState<string | null>(null);
@@ -334,6 +347,31 @@ export default function KioskDisplayPage() {
   const showLiveVideo = Boolean(
     session?.muxPlaybackId && session?.status && ["COUNTDOWN", "LIVE"].includes(session.status)
   );
+  const currentVideoWallRip =
+    videoWallRips.find((liveRip) => liveRip.id === currentVideoWallRipId) ??
+    videoWallRips[0] ??
+    null;
+  const currentVideoWallPlaybackId = currentVideoWallRip?.muxPlaybackId ?? null;
+  const currentVideoWallUrl = currentVideoWallRip?.videoUrl ?? null;
+
+  const advanceVideoWallRip = useCallback(() => {
+    setCurrentVideoWallRipId((currentId) => {
+      const readyRips = videoWallRipsRef.current;
+      if (readyRips.length === 0) {
+        return null;
+      }
+      if (readyRips.length === 1) {
+        const video = replayVideoRef.current;
+        if (video) {
+          video.currentTime = 0;
+          video.play().catch(() => undefined);
+        }
+        return readyRips[0].id;
+      }
+      const currentIndex = readyRips.findIndex((liveRip) => liveRip.id === currentId);
+      return readyRips[(currentIndex + 1) % readyRips.length]?.id ?? readyRips[0].id;
+    });
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
@@ -399,6 +437,100 @@ export default function KioskDisplayPage() {
       hls = null;
     };
   }, [session?.muxPlaybackId, showLiveVideo]);
+
+  useEffect(() => {
+    const targetLocationId = display?.location.id;
+    if (!targetLocationId) {
+      return;
+    }
+
+    let cancelled = false;
+    const fetchVideoWallRips = async () => {
+      try {
+        const params = new URLSearchParams({
+          locationId: targetLocationId,
+          replayReady: "true",
+          limit: "12",
+        });
+        const response = await fetch(`/api/live-rips?${params.toString()}`, { cache: "no-store" });
+        const payload = (await response.json().catch(() => ({}))) as {
+          liveRips?: VideoWallLiveRip[];
+        };
+        if (!response.ok) {
+          throw new Error("Unable to refresh the Live Rip replay loop");
+        }
+        if (cancelled) {
+          return;
+        }
+        const readyRips = (payload.liveRips ?? []).filter((liveRip) => liveRip.replayReady);
+        videoWallRipsRef.current = readyRips;
+        setVideoWallRips(readyRips);
+        setCurrentVideoWallRipId((currentId) =>
+          currentId && readyRips.some((liveRip) => liveRip.id === currentId)
+            ? currentId
+            : readyRips[0]?.id ?? null
+        );
+      } catch (fetchError) {
+        if (!cancelled) {
+          console.warn("[kiosk-display] failed to refresh replay loop", fetchError);
+        }
+      }
+    };
+
+    void fetchVideoWallRips();
+    const pollTimer = window.setInterval(() => {
+      void fetchVideoWallRips();
+    }, VIDEO_WALL_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollTimer);
+    };
+  }, [display?.location.id]);
+
+  useEffect(() => {
+    const video = replayVideoRef.current;
+    if (!video || session || manualReveal || !currentVideoWallUrl) {
+      if (video) {
+        video.removeAttribute("src");
+        video.load();
+      }
+      return;
+    }
+
+    const playbackUrl = currentVideoWallPlaybackId
+      ? buildMuxPlaybackUrl(currentVideoWallPlaybackId)
+      : currentVideoWallUrl;
+    let destroyed = false;
+    let hls: HlsInstance | null = null;
+
+    if (!playbackUrl.includes(".m3u8") || video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = playbackUrl;
+      video.play().catch(() => undefined);
+      return () => {
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    void (async () => {
+      const Hls = await ensureHls();
+      if (!Hls || destroyed || !Hls.isSupported()) {
+        advanceVideoWallRip();
+        return;
+      }
+      hls = new Hls();
+      hls.loadSource(playbackUrl);
+      hls.attachMedia(video);
+      video.play().catch(() => undefined);
+    })();
+
+    return () => {
+      destroyed = true;
+      hls?.destroy();
+      hls = null;
+    };
+  }, [advanceVideoWallRip, currentVideoWallPlaybackId, currentVideoWallUrl, manualReveal, session]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -1119,7 +1251,24 @@ export default function KioskDisplayPage() {
         Waiting for the next rip at {display?.location.name ?? "this kiosk"}. Trigger a pack from the operator console or scan here and this
         screen jumps to the countdown automatically.
       </p>
-      {ATTRACT_VIDEO_URL ? (
+      {currentVideoWallRip ? (
+        <div className="relative mt-4 w-full max-w-4xl overflow-hidden rounded-[3rem] border border-white/10 bg-black/40 shadow-card">
+          <video
+            ref={replayVideoRef}
+            className="aspect-video w-full bg-black object-contain"
+            autoPlay
+            muted
+            playsInline
+            onEnded={advanceVideoWallRip}
+          />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-8 pb-6 pt-16 text-left">
+            <p className="text-xs uppercase tracking-[0.38em] text-gold-300">Recent Live Rip</p>
+            <p className="mt-2 font-heading text-2xl uppercase tracking-[0.12em] text-white">
+              {currentVideoWallRip.title}
+            </p>
+          </div>
+        </div>
+      ) : ATTRACT_VIDEO_URL ? (
         <video className="mt-4 w-full max-w-4xl rounded-[3rem] border border-white/10 bg-black/40 shadow-card" autoPlay muted loop playsInline>
           <source src={ATTRACT_VIDEO_URL} />
         </video>
