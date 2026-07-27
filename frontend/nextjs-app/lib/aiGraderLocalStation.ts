@@ -2043,11 +2043,6 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
         mathematicalExecution.reviewRequest.reportId !== reportId)) {
     return undefined;
   }
-  const pendingMathematicalEvidence =
-    mathematicalExecution?.status === "operator_resolution_required" ||
-    mathematicalExecution?.status === "finding_review_required" ||
-    mathematicalExecution?.status === "insufficient_evidence";
-  if (latest.exists !== true && !pendingMathematicalEvidence) return undefined;
   const safeReportBundle = browserSafeStationRecord(manifest.reportBundle);
   const candidateReportBundle = safeReportBundle as unknown as AiGraderStationReportBundle | undefined;
   const reportBundle = safeReportBundle &&
@@ -2113,6 +2108,9 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
       item.sessionId === activeReview.gradingSessionId &&
       item.reportId === activeReview.reportId &&
       item.state !== "failed" &&
+      (activeReview.manifest.latestReport.exists ||
+        pendingMathematicalState ||
+        pendingIdentityState) &&
       (item.ocr.state === "succeeded" ||
         pendingMathematicalState ||
         pendingIdentityState) &&
