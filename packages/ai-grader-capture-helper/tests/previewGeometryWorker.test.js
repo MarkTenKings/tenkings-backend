@@ -17,7 +17,10 @@ test("preview geometry worker returns an exact-frame-bound detector result", asy
   })
     .jpeg({ quality: 90 })
     .toBuffer();
-  const timestamp = "2026-07-27T04:00:00.000Z";
+  // The real Basler/.NET preview header carries seven fractional digits.
+  // Card geometry canonicalizes the same instant through Date#toISOString,
+  // so worker binding must compare the instant rather than the raw spelling.
+  const timestamp = "2026-07-27T04:00:00.1234567Z";
   const geometry = await runPreviewGeometryWorkerAnalysis({
     imageBuffer,
     fileName: "preview-frame.jpg",
@@ -30,7 +33,7 @@ test("preview geometry worker returns an exact-frame-bound detector result", asy
 
   assert.equal(geometry.side, "front");
   assert.equal(geometry.sourceFrameId, "worker-frame-1");
-  assert.equal(geometry.timestamp, timestamp);
+  assert.equal(geometry.timestamp, "2026-07-27T04:00:00.123Z");
   assert.equal(geometry.detectionPolicy, "live_preview_fast");
   assert.ok(["not_detected", "adjust_card", "ready"].includes(geometry.placementState));
 });
