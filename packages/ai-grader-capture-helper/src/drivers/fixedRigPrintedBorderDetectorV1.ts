@@ -596,8 +596,9 @@ function clusters(
     addTrack(track);
   }
   const ranked = [...bySignature.values()].sort((left, right) =>
-    right.samples.length - left.samples.length ||
+    Number(isViableBoundaryCluster(right)) - Number(isViableBoundaryCluster(left)) ||
     left.medianInsetFromOuterCutPx - right.medianInsetFromOuterCutPx ||
+    right.samples.length - left.samples.length ||
     right.medianPeakGradient - left.medianPeakGradient ||
     left.residualPx - right.residualPx ||
     left.coordinatePx - right.coordinatePx,
@@ -611,6 +612,16 @@ function clusters(
     distinct.push(candidate);
   });
   return distinct;
+}
+
+function isViableBoundaryCluster(cluster: ClusterV1): boolean {
+  return (
+    cluster.samples.length >= PRINTED_BORDER_POLICY.minimumLineSamplesPerSide &&
+    cluster.supportFraction >= SOURCE_POLICY.minimumCrossSectionSupportFraction &&
+    cluster.supportFraction >= PRINTED_BORDER_POLICY.minimumInlierFraction &&
+    cluster.residualPx <= PRINTED_BORDER_POLICY.maximumFitResidualPx &&
+    cluster.confidence >= PRINTED_BORDER_POLICY.minimumBoundaryConfidence
+  );
 }
 
 function boundaryAnalysis(
@@ -641,19 +652,13 @@ function boundaryAnalysis(
     };
   }
   const allClusters = clusters(scans, side);
-  const viable = allClusters.filter((cluster) =>
-    cluster.samples.length >= PRINTED_BORDER_POLICY.minimumLineSamplesPerSide &&
-    cluster.supportFraction >= SOURCE_POLICY.minimumCrossSectionSupportFraction &&
-    cluster.supportFraction >= PRINTED_BORDER_POLICY.minimumInlierFraction &&
-    cluster.residualPx <= PRINTED_BORDER_POLICY.maximumFitResidualPx &&
-    cluster.confidence >= PRINTED_BORDER_POLICY.minimumBoundaryConfidence,
-  );
-  const diagnosticCandidate = allClusters[0] ?? null;
-  // A manifest-coherent track is preferred, but it is not an admission gate.
-  // If physical gradient peaks remain observable through imperfect lighting,
-  // printing, or artwork, retain the best pixel-derived track as a genuine
-  // measurement and express its weakness through private confidence/U95.
-  const best = viable[0] ?? diagnosticCandidate;
+  const viable = allClusters.filter(isViableBoundaryCluster);
+  // A printed-border result is measurement authority, not a diagnostic hint.
+  // Never promote a sparse or incoherent artwork gradient merely because it
+  // is the best of otherwise invalid tracks. Among manifest-valid tracks the
+  // first coherent boundary encountered from the physical cut is the printed
+  // border; deeper coherent tracks are artwork/layout candidates.
+  const best = viable[0] ?? null;
   const evidence = boundaryEvidence(
     side,
     scans.length,

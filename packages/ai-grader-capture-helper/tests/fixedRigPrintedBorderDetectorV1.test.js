@@ -269,7 +269,7 @@ test("absent border returns explicit insufficient evidence and never a condition
   assert.equal(built.centering.cardDefectDeduction, 0);
 });
 
-test("incoherent sparse peaks still yield an observable measurement with private low-confidence uncertainty", () => {
+test("incoherent sparse peaks fail closed instead of becoming centering measurement authority", () => {
   const source = plane(0.4);
   for (let y = 1; y < HEIGHT - 1; y += 1) {
     source.data[y * WIDTH + 3 + (y * 7) % 20] = 0.95;
@@ -280,13 +280,14 @@ test("incoherent sparse peaks still yield an observable measurement with private
     source.data[(HEIGHT - 4 - (x * 17) % 25) * WIDTH + x] = 0.95;
   }
   const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
-  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.equal(result.status, "insufficient_evidence", JSON.stringify(result));
+  assert.equal(result.profileInput, null);
+  assert.deepEqual(result.detectedPrintContour, []);
   assert.equal(result.conditionDeduction, 0);
-  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.accepted === true), true);
+  assert.equal(result.requiresRecaptureOrRegisteredDesignReference, true);
+  assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.accepted === false), true);
   assert.equal(Object.values(result.boundaryEvidence).every((entry) => entry.viableClusterCount === 0), true);
-  assert.ok(result.confidence < 0.2);
-  assert.ok(Object.values(result.boundaryEvidence).every((entry) =>
-    entry.positionU95Px > entry.fitResidualPx));
+  assert.equal(result.reasons.every((reason) => reason.code === "unstable_boundary_fit"), true);
 });
 
 test("multiple fully supported nested boundaries select the outermost observed physical border without a shape profile", () => {
@@ -300,6 +301,25 @@ test("multiple fully supported nested boundaries select the outermost observed p
   assert.equal(result.boundaryEvidence.left.viableClusterCount, 2);
   assert.deepEqual(result.boundaryEvidence.left.viableClusterCoordinatesPx, [6.5, 10.5]);
   assert.equal(result.boundaryEvidence.left.medianCoordinatePx, 6.5);
+  assert.equal(result.boundaryEvidence.left.accepted, true);
+  assert.equal(result.conditionDeduction, 0);
+});
+
+test("outermost valid border wins even when deeper artwork has more supporting samples", () => {
+  const source = plane((x, y) => {
+    const outerVerticalVisible = y % 5 !== 0;
+    const outerHorizontalVisible = x % 5 !== 0;
+    if (
+      (outerVerticalVisible && (x >= 7 && x <= 10 || x >= 109 && x <= 112)) ||
+      (outerHorizontalVisible && (y >= 8 && y <= 11 || y >= 148 && y <= 151))
+    ) return 0.5;
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    return 0.1;
+  });
+  const result = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(result.status, "computed", JSON.stringify(result));
+  assert.ok(result.boundaryEvidence.left.viableClusterCount >= 2, JSON.stringify(result.boundaryEvidence.left));
+  assert.ok(Math.abs(result.boundaryEvidence.left.medianCoordinatePx - 6.5) < 0.1);
   assert.equal(result.boundaryEvidence.left.accepted, true);
   assert.equal(result.conditionDeduction, 0);
 });

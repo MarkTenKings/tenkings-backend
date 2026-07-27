@@ -21,6 +21,7 @@ import {
 } from "../lib/aiGraderOcrFailure";
 import { AiGraderGoogleVisionError } from "../lib/server/googleVisionOcr";
 import { AiGraderOcrStructuredExtractionError } from "../lib/server/aiGraderOcrStructuredExtraction";
+import { AiGraderEyesError } from "../lib/server/aiGraderEyesSemanticObserver";
 import {
   sha256Base64ToHex,
   sha256HexToBase64,
@@ -706,11 +707,74 @@ test("OCR runtime enforces provider phase limits inside one Vercel-compatible bu
       } as any;
     },
   });
-  assert.equal(AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS, 45_000);
+  assert.equal(AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS, 55_000);
   assert.deepEqual(observedTimeouts, [12_000, 30_000]);
   assert.equal(result.provenance.structuredExtractionModel, "gpt-5.6-sol-2026-07-01");
   assert.equal(result.internalProviderDiagnostics.actualOpenAiModel, "gpt-5.6-sol-2026-07-01");
   assert.equal("requestedModel" in result.provenance, false);
+});
+
+test("OCR runtime runs EYES after structured extraction and preserves safe EYES provider diagnostics", async () => {
+  const phases: string[] = [];
+  const unknown = { state: "unknown" as const, value: null, confidence: 0, evidenceRefs: [] };
+  const eyesDiagnostic = {
+    status: 429,
+    requestId: "req_eyes_rate_limit_123",
+    errorType: "rate_limit_error",
+    errorCode: "rate_limit_exceeded",
+  };
+  const result = await runAiGraderOcrPrefillRuntime({
+    reportId: "serialized-eyes",
+    images: [
+      {
+        side: "front",
+        url: "https://cdn.tenkings.test/front.png",
+        checksumSha256: "a".repeat(64),
+      },
+      {
+        side: "back",
+        url: "https://cdn.tenkings.test/back.png",
+        checksumSha256: "b".repeat(64),
+      },
+    ],
+  }, {
+    now: () => 1_000,
+    async runOcr() {
+      phases.push("google");
+      return {
+        results: [
+          { id: "front", text: "", confidence: 0, tokens: [] },
+          { id: "back", text: "", confidence: 0, tokens: [] },
+        ],
+        combined_text: "",
+      };
+    },
+    async runStructuredExtraction() {
+      assert.deepEqual(phases, ["google"]);
+      phases.push("structured");
+      return {
+        requestedModel: "gpt-5.6-sol",
+        actualModel: "gpt-5.6-sol-2026-07-01",
+        providerElapsedMs: 0,
+        evidence: { sides: [], heuristicHints: {} },
+        fields: {
+          category: unknown, playerName: unknown, cardName: unknown, year: unknown,
+          manufacturer: unknown, sport: unknown, game: unknown, productSet: unknown,
+          cardNumber: unknown, insert: unknown, parallel: unknown, numbered: unknown,
+          autograph: unknown, memorabilia: unknown,
+        },
+      } as any;
+    },
+    async runEyes() {
+      assert.deepEqual(phases, ["google", "structured"]);
+      phases.push("eyes");
+      throw new AiGraderEyesError("non_2xx", eyesDiagnostic);
+    },
+  });
+  assert.deepEqual(phases, ["google", "structured", "eyes"]);
+  assert.equal(result.eyes?.status, "unavailable");
+  assert.equal(result.eyes?.reason, "provider_unavailable");
+  assert.deepEqual(result.internalProviderDiagnostics.eyesUpstreamFailure, eyesDiagnostic);
 });
 
 test("OCR runtime maps Google and OpenAI failures to stable production categories", async () => {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AiGraderOcrUpstreamFailureDiagnostic } from "../aiGraderOcrFailure";
 
 export const AI_GRADER_EYES_SCHEMA_VERSION = "ai_grader_eyes_semantic_observer_v1" as const;
 export const AI_GRADER_EYES_MODEL_ENV = "AI_GRADER_EYES_MODEL";
@@ -79,12 +80,55 @@ export type AiGraderEyesErrorCode =
 
 export class AiGraderEyesError extends Error {
   readonly code: AiGraderEyesErrorCode;
+  readonly upstreamDiagnostic?: AiGraderOcrUpstreamFailureDiagnostic;
 
-  constructor(code: AiGraderEyesErrorCode) {
+  constructor(code: AiGraderEyesErrorCode, upstreamDiagnostic?: AiGraderOcrUpstreamFailureDiagnostic) {
     super(`AI Grader EYES ${code}.`);
     this.name = "AiGraderEyesError";
     this.code = code;
+    this.upstreamDiagnostic = upstreamDiagnostic;
   }
+}
+
+function sanitizedUpstreamText(value: unknown, maximumLength: number) {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b/gi, "[redacted-credential]")
+    .replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=_-]+/gi, "[redacted-image]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximumLength);
+  return sanitized || undefined;
+}
+
+async function non2xxDiagnostic(response: Response): Promise<AiGraderOcrUpstreamFailureDiagnostic> {
+  let payload: unknown;
+  try {
+    payload = JSON.parse((await response.text()).slice(0, 4096));
+  } catch {
+    payload = undefined;
+  }
+  const error = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).error
+    : undefined;
+  const fields = error && typeof error === "object" && !Array.isArray(error)
+    ? error as Record<string, unknown>
+    : {};
+  const requestId = sanitizedUpstreamText(response.headers.get("x-request-id"), 200);
+  const errorType = sanitizedUpstreamText(fields.type, 100);
+  const errorCode = sanitizedUpstreamText(fields.code, 100);
+  const errorParam = sanitizedUpstreamText(fields.param, 100);
+  const sanitizedMessage = sanitizedUpstreamText(fields.message, 300);
+  return {
+    status: response.status,
+    ...(requestId && /^[A-Za-z0-9._:-]+$/.test(requestId) ? { requestId } : {}),
+    ...(errorType ? { errorType } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorParam ? { errorParam } : {}),
+    ...(sanitizedMessage ? { sanitizedMessage } : {}),
+  };
 }
 
 const OUTPUT_SCHEMA = {
@@ -389,7 +433,9 @@ export async function runAiGraderEyesSemanticObservation(
   } finally {
     clearTimeout(timeout);
   }
-  if (!response.ok) throw new AiGraderEyesError("non_2xx");
+  if (!response.ok) {
+    throw new AiGraderEyesError("non_2xx", await non2xxDiagnostic(response));
+  }
   let payload: unknown;
   try {
     payload = await response.json();
