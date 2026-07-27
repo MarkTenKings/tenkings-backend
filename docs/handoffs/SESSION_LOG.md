@@ -28706,3 +28706,16 @@ By enabling Rip It Live, I confirm:
 - Only the Dell desktop helper was stopped. Loopback port `47652` reached zero listeners before restart. Restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-gated, `production_fast`, calibration activation configured, sessionless `start_new_card`, preview `not_started`, camera ownership `idle`, no active transition, capture lock clear, warm runner idle, and capture/processing/report/active Rapid queues all empty.
 - No camera, lighting, capture/cancel, calibration, identity/owner-resolution, publication/discard, queue/report/database/storage, NFC, inventory, or unrelated product action occurred. The prior failed acceptance session/report were not reused or mutated. The only remaining step is the owner's fresh Production acceptance card.
+
+## 2026-07-27 - Open for Review focus corrective candidate
+
+- The owner's fresh Production card succeeded through front/back contour detection, capture, OCR, and queued processing in exact session `ai-grader-browser-station-session-2026-07-27T191649350Z-session` and report `ai-grader-906a4ecf-3917-46e9-88ce-c5931767fb44`, then reached `identity_resolution_required`.
+- Read-only helper evidence proved the owner's `Open for Review` click succeeded and persisted that exact queue/session/report as `activeReview`. The browser handler intentionally performed only in-place activation and UI-state reset; it had no route navigation, scroll, or focus action. The existing OCR-assisted Card Information form is immediately above the review queue, so the successful click appeared to do nothing at the retained scroll position.
+- The correction is confined to the station page. After exact identity-review activation succeeds, it scrolls the existing Card Information form into view, visibly marks it active, and focuses the first enabled unresolved required field (or the form itself when none remain). Later measured-finding and element-resolution review states retain their existing detailed workspaces.
+- No bridge action, queue transition, OCR, EYES, deterministic grading, calibration, capture/preview, report, publication, database, storage, or hardware behavior changes.
+
+### Planned authorized Production action
+
+- Run only the focused Mathematical station regression covering the review handoff, the frontend TypeScript/build check required for the changed page, and `git diff --check`.
+- Commit and push only the station UI handoff, its focused regression, and this audit record; open one focused PR and merge it through protected `main`.
+- Verify the resulting Production deployment and station bundle. This browser-only correction requires no Dell helper update or restart and must not mutate the preserved card or any review decision.
