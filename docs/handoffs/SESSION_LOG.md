@@ -28739,3 +28739,10 @@ By enabling Rip It Live, I confirm:
 
 - Run only the changed frontend build/type check and `git diff --check`, then merge the two-line sanitizer correction, its focused regression, and this audit record through one focused protected-main PR.
 - Verify the exact Production deployment and station bundle. This is browser-only; do not restart the Dell helper or mutate/discard the preserved card, queue, report, OCR result, database, storage, calibration, capture, publication, or hardware state.
+
+### Observed Production result
+
+- PR `#188` merged as functional browser commit `75bbb3a4a1cfe9fac5afaaed699b7eb1991adb08`; focused sanitizer tests passed `46/46`, the frontend Production build passed, and `git diff --check` passed.
+- GitHub Production deployment `5629244339` succeeded. The changed shared sanitizer chunk is public and byte-identical to the exact deployment: `5848-47dd38aed6aa8a4b.js`, `100,727` bytes, SHA-256 `16e080504d7d10a2c4476c54d7225225975c9adab0d181db3193b078e88dce25`. The prior deployment served distinct sanitizer chunk `5848-0674eb77aa815361.js`, proving the correction changed the intended browser code.
+- The station entry bundle remains byte-identical between public and exact deployment: `station-4afc46863cac35b2.js`, `306,641` bytes, SHA-256 `7981a5ee3384011b9b994978e3fbf6a62d710af37e4df5cbf475390b60405830`.
+- No Dell helper update/restart or card, queue, report, OCR, database, storage, calibration, capture, identity-resolution, publication, discard, or hardware mutation occurred. The exact preserved card remains available for the owner's hard-refresh acceptance.
