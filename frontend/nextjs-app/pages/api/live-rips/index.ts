@@ -3,8 +3,61 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import { toUserErrorResponse } from "../../../lib/server/session";
 
-const withLocation = (liveRip: any) => ({
-  ...liveRip,
+const publicLiveRipSelect = Prisma.validator<Prisma.LiveRipSelect>()({
+  id: true,
+  slug: true,
+  title: true,
+  description: true,
+  videoUrl: true,
+  thumbnailUrl: true,
+  locationId: true,
+  status: true,
+  featured: true,
+  viewCount: true,
+  muxAssetId: true,
+  muxPlaybackId: true,
+  isGoldenTicket: true,
+  startedAt: true,
+  endedAt: true,
+  createdAt: true,
+  updatedAt: true,
+  location: {
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  },
+});
+
+type PublicLiveRip = Prisma.LiveRipGetPayload<{ select: typeof publicLiveRipSelect }>;
+
+const isReplayReady = (liveRip: PublicLiveRip) =>
+  liveRip.status === "COMPLETE" &&
+  !liveRip.isGoldenTicket &&
+  Boolean(
+    (liveRip.muxAssetId && liveRip.muxPlaybackId) ||
+      /\.mp4(?:$|\?)/i.test(liveRip.videoUrl)
+  );
+
+const toPublicLiveRip = (liveRip: PublicLiveRip) => ({
+  id: liveRip.id,
+  slug: liveRip.slug,
+  title: liveRip.title,
+  description: liveRip.description,
+  videoUrl: liveRip.videoUrl,
+  thumbnailUrl: liveRip.thumbnailUrl,
+  locationId: liveRip.locationId,
+  status: liveRip.status,
+  featured: liveRip.featured,
+  viewCount: liveRip.viewCount,
+  muxPlaybackId: liveRip.muxPlaybackId,
+  isGoldenTicket: liveRip.isGoldenTicket,
+  replayReady: isReplayReady(liveRip),
+  startedAt: liveRip.startedAt,
+  endedAt: liveRip.endedAt,
+  createdAt: liveRip.createdAt,
+  updatedAt: liveRip.updatedAt,
   location: liveRip.location
     ? {
         id: liveRip.location.id,
@@ -24,45 +77,76 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const locationId = Array.isArray(req.query.locationId) ? req.query.locationId[0] : req.query.locationId;
     const featured = Array.isArray(req.query.featured) ? req.query.featured[0] : req.query.featured;
     const slug = Array.isArray(req.query.slug) ? req.query.slug[0] : req.query.slug;
+    const replayReady = Array.isArray(req.query.replayReady) ? req.query.replayReady[0] : req.query.replayReady;
+    const rawLimit = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : null;
+    const limit =
+      parsedLimit && Number.isFinite(parsedLimit) ? Math.min(Math.max(parsedLimit, 1), 50) : undefined;
 
     const liveRips = await prisma.liveRip.findMany({
       where: {
         locationId: locationId ? locationId : undefined,
         featured: featured ? featured === "true" : undefined,
         slug: slug ? slug : undefined,
-        OR: [
+        status: replayReady === "true" ? "COMPLETE" : undefined,
+        isGoldenTicket: replayReady === "true" ? false : undefined,
+        AND: [
           {
-            kioskSession: {
-              is: null,
-            },
-          },
-          {
-            kioskSession: {
-              is: {
-                status: {
-                  not: "CANCELLED",
+            OR: [
+              {
+                kioskSession: {
+                  is: null,
                 },
               },
-            },
+              {
+                kioskSession: {
+                  is: {
+                    status: {
+                      not: "CANCELLED",
+                    },
+                  },
+                },
+              },
+            ],
           },
+          ...(replayReady === "true"
+            ? [
+                {
+                  OR: [
+                    {
+                      muxAssetId: { not: null },
+                      muxPlaybackId: { not: null },
+                    },
+                    {
+                      videoUrl: { contains: ".mp4" },
+                    },
+                  ],
+                },
+              ]
+            : []),
         ],
       },
-      include: {
-        location: true,
-      },
+      select: publicLiveRipSelect,
       orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
-      take: slug ? 1 : undefined,
+      take: slug ? 1 : limit,
+    });
+
+    const publicLiveRips = liveRips.map(toPublicLiveRip).filter((liveRip) => {
+      if (replayReady !== "true") {
+        return true;
+      }
+      return liveRip.replayReady;
     });
 
     if (slug) {
-      const liveRip = liveRips[0];
+      const liveRip = publicLiveRips[0];
       if (!liveRip) {
         return res.status(404).json({ message: "Live rip not found" });
       }
-      return res.status(200).json({ liveRip: withLocation(liveRip) });
+      return res.status(200).json({ liveRip });
     }
 
-    return res.status(200).json({ liveRips: liveRips.map(withLocation) });
+    return res.status(200).json({ liveRips: publicLiveRips });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
       return res.status(200).json({ liveRips: [] });

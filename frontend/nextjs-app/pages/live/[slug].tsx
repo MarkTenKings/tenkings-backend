@@ -2,7 +2,8 @@ import Head from "next/head";
 import Link from "next/link";
 import { GetServerSideProps } from "next";
 import MuxPlayer from "@mux/mux-player-react";
-import { type FormEvent, useState } from "react";
+import QRCode from "qrcode";
+import { useCallback, useEffect, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
@@ -37,6 +38,7 @@ interface LiveRipPageProps {
     thumbnailUrl: string | null;
     muxPlaybackId: string | null;
     status: string;
+    isClaimed: boolean;
     location: {
       id: string;
       name: string;
@@ -47,55 +49,146 @@ interface LiveRipPageProps {
   more: Array<{ slug: string; title: string }>;
 }
 
+type QrClaimState = "creating" | "ready" | "claimed" | "expired" | "unavailable" | "error";
+
 export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
   const { session } = useSession();
   const media = embedForMedia(liveRip.videoUrl);
   const isAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
-  const canAssign = isAdmin && liveRip.status === "COMPLETE";
-  const [assignOpen, setAssignOpen] = useState(false);
-  const [customerName, setCustomerName] = useState("");
-  const [customerPhone, setCustomerPhone] = useState("");
-  const [assignBusy, setAssignBusy] = useState(false);
-  const [assignError, setAssignError] = useState<string | null>(null);
-  const [assignSuccess, setAssignSuccess] = useState<string | null>(null);
+  const canManageClaim = isAdmin && liveRip.status === "COMPLETE";
+  const [claimOpen, setClaimOpen] = useState(false);
+  const [claimState, setClaimState] = useState<QrClaimState>(
+    liveRip.isClaimed ? "claimed" : "creating"
+  );
+  const [claimUrl, setClaimUrl] = useState<string | null>(null);
+  const [claimExpiresAt, setClaimExpiresAt] = useState<string | null>(null);
+  const [claimMessage, setClaimMessage] = useState<string | null>(null);
+  const [copyComplete, setCopyComplete] = useState(false);
+  const [isClaimed, setIsClaimed] = useState(liveRip.isClaimed);
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  const handleAssign = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!session || !canAssign) {
+  const generateClaimQr = useCallback(async () => {
+    if (!session || !canManageClaim || isClaimed) {
       return;
     }
 
-    setAssignBusy(true);
-    setAssignError(null);
-    setAssignSuccess(null);
+    setClaimState("creating");
+    setClaimMessage(null);
+    setClaimUrl(null);
+    setClaimExpiresAt(null);
+    setCopyComplete(false);
     try {
       const response = await fetch(
-        `/api/live-rip/clips/${encodeURIComponent(liveRip.id)}/assign-and-send`,
+        `/api/live-rip/clips/${encodeURIComponent(liveRip.id)}/claim-link`,
         {
           method: "POST",
           headers: {
             Authorization: `Bearer ${session.token}`,
-            "Content-Type": "application/json",
           },
-          body: JSON.stringify({
-            name: customerName,
-            phone: customerPhone,
-          }),
         }
       );
-      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        claim?: {
+          claimUrl?: string;
+          claimExpiresAt?: string;
+        };
+      };
       if (!response.ok) {
-        throw new Error(payload.message ?? "Unable to assign this Live Rip");
+        if (response.status === 409 && /already.*claimed/i.test(payload.message ?? "")) {
+          setIsClaimed(true);
+          setClaimState("claimed");
+          return;
+        }
+        if (response.status === 404) {
+          setClaimState("unavailable");
+          setClaimMessage(payload.message ?? "This Live Rip video is unavailable.");
+          return;
+        }
+        throw new Error(payload.message ?? "Unable to create the customer claim QR");
       }
-      setAssignSuccess(payload.message ?? "Live Rip assigned and claim text sent");
-      setCustomerName("");
-      setCustomerPhone("");
+      if (!payload.claim?.claimUrl || !payload.claim.claimExpiresAt) {
+        throw new Error("The secure claim link was not returned");
+      }
+      setClaimUrl(payload.claim.claimUrl);
+      setClaimExpiresAt(payload.claim.claimExpiresAt);
+      setClaimState("ready");
     } catch (error) {
-      setAssignError(error instanceof Error ? error.message : "Unable to assign this Live Rip");
-    } finally {
-      setAssignBusy(false);
+      setClaimState("error");
+      setClaimMessage(
+        error instanceof Error ? error.message : "Unable to create the customer claim QR"
+      );
     }
-  };
+  }, [canManageClaim, isClaimed, liveRip.id, session]);
+
+  useEffect(() => {
+    const canvas = qrCanvasRef.current;
+    if (!canvas || claimState !== "ready" || !claimUrl) {
+      return;
+    }
+
+    QRCode.toCanvas(canvas, claimUrl, {
+      width: 320,
+      margin: 2,
+      errorCorrectionLevel: "M",
+      color: {
+        dark: "#000000",
+        light: "#ffffff",
+      },
+    }).catch((error) => {
+      console.error("[live-rip-claim] failed to render QR", error);
+      setClaimState("error");
+      setClaimMessage("Unable to display the customer claim QR");
+    });
+  }, [claimState, claimUrl]);
+
+  useEffect(() => {
+    if (!claimOpen || claimState !== "ready" || !session) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const response = await fetch(
+          `/api/live-rip/clips/${encodeURIComponent(liveRip.id)}/claim-link`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${session.token}`,
+              Accept: "application/json",
+            },
+          }
+        );
+        const payload = (await response.json().catch(() => ({}))) as {
+          claim?: { status?: QrClaimState };
+        };
+        if (!response.ok || cancelled) {
+          return;
+        }
+        if (payload.claim?.status === "claimed") {
+          setIsClaimed(true);
+          setClaimState("claimed");
+        } else if (payload.claim?.status === "expired") {
+          setClaimState("expired");
+        } else if (payload.claim?.status === "unavailable") {
+          setClaimState("unavailable");
+        }
+      } catch (error) {
+        // Keep the QR visible through transient polling failures.
+      }
+    };
+
+    const interval = window.setInterval(() => {
+      void loadStatus();
+    }, 2000);
+    void loadStatus();
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [claimOpen, claimState, liveRip.id, session]);
 
   const renderMedia = () => {
     if (liveRip.muxPlaybackId) {
@@ -211,17 +304,21 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
           >
             Back to live rips
           </Link>
-          {canAssign && (
+          {canManageClaim && (
             <button
               type="button"
+              disabled={isClaimed}
               onClick={() => {
-                setAssignError(null);
-                setAssignSuccess(null);
-                setAssignOpen(true);
+                setClaimOpen(true);
+                if (isClaimed) {
+                  setClaimState("claimed");
+                  return;
+                }
+                void generateClaimQr();
               }}
-              className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+              className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
             >
-              Assign &amp; Text Customer
+              {isClaimed ? "Live Rip Claimed" : "Show Customer Claim QR"}
             </button>
           )}
           {liveRip.location && (
@@ -252,74 +349,150 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
         )}
       </div>
 
-      {assignOpen && canAssign && (
+      {claimOpen && canManageClaim && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-8 backdrop-blur-sm">
-          <form
-            onSubmit={handleAssign}
-            className="relative w-full max-w-md rounded-3xl border border-gold-500/30 bg-night-900 p-8 shadow-card"
-          >
+          <section className="relative max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-gold-500/30 bg-night-900 p-8 text-center shadow-card">
             <button
               type="button"
-              onClick={() => setAssignOpen(false)}
+              onClick={() => setClaimOpen(false)}
               className="absolute right-5 top-5 rounded-full border border-white/10 px-3 py-1 text-sm text-slate-400 transition hover:text-white"
-              aria-label="Close assignment dialog"
+              aria-label="Close customer claim QR"
             >
               ×
             </button>
             <p className="text-xs uppercase tracking-[0.34em] text-gold-300">Recorded Live Rip</p>
             <h2 className="mt-3 font-heading text-3xl uppercase tracking-[0.16em] text-white">
-              Assign &amp; Text Customer
+              Scan to Save Your Live Rip
             </h2>
             <p className="mt-3 text-sm text-slate-400">
-              Assign this recording and text the customer a secure, single-use claim link.
+              Scan this QR code to add the video to your Ten Kings account.
             </p>
 
-            <div className="mt-6 space-y-4">
-              {assignError && (
-                <p className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                  {assignError}
-                </p>
-              )}
-              {assignSuccess && (
-                <p className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  {assignSuccess}
-                </p>
-              )}
-              <label className="block text-sm text-slate-200">
-                Customer Name
-                <input
-                  type="text"
-                  value={customerName}
-                  onChange={(event) => setCustomerName(event.target.value)}
-                  required
-                  maxLength={120}
-                  autoComplete="name"
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
+            <div className="mt-6 overflow-hidden rounded-2xl border border-white/10 bg-black/30 text-left">
+              {liveRip.thumbnailUrl ? (
+                <div
+                  className="aspect-video bg-cover bg-center"
+                  style={{
+                    backgroundImage: `url("${liveRip.thumbnailUrl.replaceAll('"', "%22")}")`,
+                  }}
                 />
-              </label>
-              <label className="block text-sm text-slate-200">
-                Mobile Number
-                <input
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(event) => setCustomerPhone(event.target.value)}
-                  required
-                  autoComplete="tel"
-                  inputMode="tel"
-                  placeholder="+19165551212"
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white placeholder:text-slate-600 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30"
-                />
-              </label>
+              ) : null}
+              <div className="p-4">
+                <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                  Selected recording
+                </p>
+                <p className="mt-2 font-heading text-xl uppercase tracking-[0.12em] text-white">
+                  {liveRip.title}
+                </p>
+              </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={assignBusy || !customerName.trim() || !customerPhone.trim()}
-              className="mt-7 w-full rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {assignBusy ? "Assigning & Sending…" : "Assign & Send SMS"}
-            </button>
-          </form>
+            <div className="mt-6 flex min-h-[360px] flex-col items-center justify-center">
+              {claimState === "creating" ? (
+                <>
+                  <div className="h-12 w-12 animate-spin rounded-full border-2 border-gold-500/20 border-t-gold-400" />
+                  <p className="mt-5 text-sm text-slate-300">Creating secure claim QR…</p>
+                </>
+              ) : null}
+
+              {claimState === "ready" && claimUrl ? (
+                <>
+                  <canvas
+                    ref={qrCanvasRef}
+                    className="h-[320px] w-[320px] max-w-full rounded-2xl bg-white"
+                    aria-label="Customer Live Rip claim QR code"
+                  />
+                  <p className="mt-4 text-xs uppercase tracking-[0.24em] text-slate-500">
+                    Secure single-use link · expires in 15 minutes
+                  </p>
+                  {claimExpiresAt ? (
+                    <p className="mt-2 text-xs text-slate-600">
+                      Valid until {new Date(claimExpiresAt).toLocaleTimeString()}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
+
+              {claimState === "claimed" ? (
+                <div className="w-full rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-5 py-8 text-emerald-100">
+                  <p className="font-heading text-2xl uppercase tracking-[0.14em]">
+                    This Live Rip has already been claimed.
+                  </p>
+                  <p className="mt-3 text-sm text-emerald-200/80">
+                    The video is now in the customer&apos;s Live Rips collection.
+                  </p>
+                </div>
+              ) : null}
+
+              {claimState === "expired" ? (
+                <div className="w-full rounded-2xl border border-amber-500/40 bg-amber-500/10 px-5 py-8 text-amber-100">
+                  <p className="font-heading text-2xl uppercase tracking-[0.14em]">
+                    Claim QR expired
+                  </p>
+                  <p className="mt-3 text-sm text-amber-200/80">
+                    Create a fresh QR while the customer is ready to scan.
+                  </p>
+                </div>
+              ) : null}
+
+              {claimState === "unavailable" ? (
+                <div className="w-full rounded-2xl border border-rose-500/40 bg-rose-500/10 px-5 py-8 text-rose-100">
+                  <p className="font-heading text-2xl uppercase tracking-[0.14em]">
+                    Video unavailable
+                  </p>
+                  <p className="mt-3 text-sm text-rose-200/80">
+                    {claimMessage ?? "This recording cannot be claimed right now."}
+                  </p>
+                </div>
+              ) : null}
+
+              {claimState === "error" ? (
+                <div className="w-full rounded-2xl border border-rose-500/40 bg-rose-500/10 px-5 py-8 text-rose-100">
+                  <p className="font-heading text-2xl uppercase tracking-[0.14em]">
+                    Unable to create QR
+                  </p>
+                  <p className="mt-3 text-sm text-rose-200/80">
+                    {claimMessage ?? "Unexpected server error"}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              {claimState === "ready" && claimUrl ? (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(claimUrl);
+                      setCopyComplete(true);
+                    } catch (error) {
+                      setClaimMessage("Unable to copy the claim link");
+                    }
+                  }}
+                  className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                >
+                  {copyComplete ? "Claim Link Copied" : "Copy Claim Link"}
+                </button>
+              ) : null}
+              {(claimState === "expired" || claimState === "error") && !isClaimed ? (
+                <button
+                  type="button"
+                  onClick={() => void generateClaimQr()}
+                  className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                >
+                  Generate New QR
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setClaimOpen(false)}
+                className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </AppShell>
@@ -395,6 +568,7 @@ export const getServerSideProps: GetServerSideProps<LiveRipPageProps> = async (c
         thumbnailUrl: liveRip.thumbnailUrl,
         muxPlaybackId: liveRip.muxPlaybackId ?? null,
         status: liveRip.status,
+        isClaimed: Boolean(liveRip.claimedAt || liveRip.userId),
         location: liveRip.location,
         createdAt: liveRip.createdAt.toISOString(),
       },

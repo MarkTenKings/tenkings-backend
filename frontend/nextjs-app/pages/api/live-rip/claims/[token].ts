@@ -1,13 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   claimLiveRipForUser,
+  inspectLiveRipClaimToken,
   toLiveRipClaimError,
 } from "../../../../lib/server/liveRipClaim";
 import { requireUserSession } from "../../../../lib/server/session";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
+  res.setHeader("Cache-Control", "no-store");
+
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ success: false, message: "Method not allowed" });
   }
 
@@ -17,6 +20,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
+    if (req.method === "GET") {
+      const claim = await inspectLiveRipClaimToken(token);
+      return res.status(200).json({
+        success: true,
+        message: "Live Rip claim link is ready",
+        claim,
+      });
+    }
+
     const session = await requireUserSession(req);
     const claim = await claimLiveRipForUser({
       token,
