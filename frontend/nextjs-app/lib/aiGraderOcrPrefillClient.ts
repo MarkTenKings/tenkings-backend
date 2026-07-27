@@ -135,8 +135,39 @@ export type AiGraderOcrPrefillResult = {
     providerElapsedMs?: number;
     reason?: "not_configured" | "timeout" | "provider_unavailable" | "invalid_response";
   };
+  eyesCenteringSelection?: {
+    schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1";
+    status: "observed";
+    requestedModel: string;
+    actualModel: string;
+    requestSha256: string;
+    sourceImageBindings: Array<{
+      side: "front" | "back";
+      checksumSha256: string;
+    }>;
+    candidateBindings: Array<{
+      side: "front" | "back";
+      candidateId: string;
+      checksumSha256: string;
+      deterministicInputSha256: string;
+    }>;
+    decisions: Array<{
+      side: "front" | "back";
+      decision: "select_candidate" | "reject_all" | "unclear";
+      candidateId: string | null;
+      confidence: number;
+      rationale: string;
+    }>;
+    metricAuthority: "deterministic_calibrated_pixels_only";
+    coordinateAuthority: false;
+    maximumRemeasurementPasses: 2;
+    providerElapsedMs: number;
+  };
   warnings: string[];
 };
+
+export type AiGraderEyesCenteringSelectionReceipt =
+  NonNullable<AiGraderOcrPrefillResult["eyesCenteringSelection"]>;
 
 export type AiGraderOcrPrefillState = {
   status: "idle" | "waiting" | "running" | "ready" | "failed";
@@ -158,7 +189,9 @@ type OcrUploadPlan = {
   gradingSessionId: string;
   reportId: string;
   side: "front" | "back";
-  artifactRole: "normalized_card";
+  artifactRole: "normalized_card" | "centering_candidate_overlay";
+  candidateId?: string;
+  deterministicInputSha256?: string;
   fileName: string;
   mimeType: string;
   checksumSha256: string;
@@ -191,7 +224,9 @@ type OcrInitResult = {
       gradingSessionId: string;
       reportId: string;
       side: "front" | "back";
-      artifactRole: "normalized_card";
+      artifactRole: "normalized_card" | "centering_candidate_overlay";
+      candidateId?: string;
+      deterministicInputSha256?: string;
       fileName: string;
       mimeType: string;
       checksumSha256: string;
@@ -286,6 +321,9 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
   const reviewFieldNames = safeReviewFieldNames(result.reviewFieldNames, fields);
   const provenance = safeOcrProvenance(result.provenance);
   const eyes = result.eyes ? safeEyesReceipt(result.eyes) : undefined;
+  const eyesCenteringSelection = result.eyesCenteringSelection
+    ? safeEyesCenteringSelectionReceipt(result.eyesCenteringSelection)
+    : undefined;
   const warnings = safeOcrWarnings(result.warnings);
   return {
     queueItemId: result.queueItemId,
@@ -300,13 +338,73 @@ export function safeAiGraderOcrPrefillResult(result: AiGraderOcrPrefillResult): 
     reviewFieldNames,
     provenance,
     ...(eyes ? { eyes } : {}),
+    ...(eyesCenteringSelection ? { eyesCenteringSelection } : {}),
     warnings,
   };
 }
 
 export function aiGraderOcrPrefillReportMetadata(result: AiGraderOcrPrefillResult): Record<string, unknown> {
-  const { eyes: _privateEyes, ...publicMetadata } = safeAiGraderOcrPrefillResult(result);
+  const {
+    eyes: _privateEyes,
+    eyesCenteringSelection: _privateEyesCentering,
+    ...publicMetadata
+  } = safeAiGraderOcrPrefillResult(result);
   return publicMetadata as unknown as Record<string, unknown>;
+}
+
+function safeEyesCenteringSelectionReceipt(
+  value: NonNullable<AiGraderOcrPrefillResult["eyesCenteringSelection"]>,
+) {
+  if (
+    value.schemaVersion !== "ai_grader_eyes_centering_candidate_selection_v1" ||
+    value.status !== "observed" ||
+    !/^[a-f0-9]{64}$/.test(value.requestSha256) ||
+    value.metricAuthority !== "deterministic_calibrated_pixels_only" ||
+    value.coordinateAuthority !== false ||
+    value.maximumRemeasurementPasses !== 2 ||
+    !Array.isArray(value.sourceImageBindings) ||
+    value.sourceImageBindings.length !== 2 ||
+    !Array.isArray(value.candidateBindings) ||
+    value.candidateBindings.length < 2 ||
+    value.candidateBindings.length > 12 ||
+    !Array.isArray(value.decisions) ||
+    value.decisions.length !== 2 ||
+    !Number.isFinite(value.providerElapsedMs) ||
+    value.providerElapsedMs < 0
+  ) {
+    throw new Error("Invalid EYES centering selection receipt.");
+  }
+  const candidateIds = new Set(
+    value.candidateBindings.map((binding) => {
+      if (
+        (binding.side !== "front" && binding.side !== "back") ||
+        !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(binding.candidateId) ||
+        !/^[a-f0-9]{64}$/.test(binding.checksumSha256) ||
+        !/^[a-f0-9]{64}$/.test(binding.deterministicInputSha256)
+      ) throw new Error("Invalid EYES centering candidate binding.");
+      return `${binding.side}:${binding.candidateId}`;
+    }),
+  );
+  value.decisions.forEach((decision, index) => {
+    const side = index === 0 ? "front" : "back";
+    if (
+      decision.side !== side ||
+      !["select_candidate", "reject_all", "unclear"].includes(decision.decision) ||
+      !Number.isFinite(decision.confidence) ||
+      decision.confidence < 0 ||
+      decision.confidence > 1 ||
+      typeof decision.rationale !== "string" ||
+      !decision.rationale.trim() ||
+      decision.rationale.length > 240 ||
+      (decision.decision === "select_candidate"
+        ? !decision.candidateId ||
+          !candidateIds.has(`${side}:${decision.candidateId}`)
+        : decision.candidateId !== null)
+    ) {
+      throw new Error("Invalid EYES centering decision.");
+    }
+  });
+  return structuredClone(value);
 }
 
 function safeEyesReceipt(value: NonNullable<AiGraderOcrPrefillResult["eyes"]>) {
@@ -516,11 +614,15 @@ function safeOcrWarnings(value: unknown) {
   return value.map((warning) => safeBoundedOcrText(warning, 500));
 }
 
-function safeQueuedOcrDescriptor(value: unknown, expected: AiGraderOcrExactIdentity): AiGraderQueuedOcrDescriptor {
+function safeQueuedOcrDescriptor(
+  value: unknown,
+  expected: AiGraderOcrExactIdentity,
+  expectedStatus: "in_flight" | "eyes_selection_eligible" = "in_flight",
+): AiGraderQueuedOcrDescriptor {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("invalid queued OCR descriptor");
   const descriptor = value as Partial<AiGraderQueuedOcrDescriptor>;
   if (!sameExactOcrIdentity(descriptor as AiGraderOcrExactIdentity, expected) ||
-      descriptor.status !== "in_flight" ||
+      descriptor.status !== expectedStatus ||
       !Array.isArray(descriptor.images) || descriptor.images.length !== 2) {
     throw new Error("queued OCR identity or lifecycle mismatch");
   }
@@ -546,7 +648,43 @@ function safeQueuedOcrDescriptor(value: unknown, expected: AiGraderOcrExactIdent
     };
   });
   if (!sides.has("front") || !sides.has("back")) throw new Error("queued OCR requires both exact sides");
-  return { ...expected, status: descriptor.status, images };
+  const centeringCandidates = Array.isArray(descriptor.centeringCandidates)
+    ? descriptor.centeringCandidates.map((candidate) => {
+        if (
+          !candidate ||
+          (candidate.side !== "front" && candidate.side !== "back") ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(candidate.candidateId) ||
+          candidate.fileName !== `${candidate.candidateId}.png` ||
+          candidate.contentType !== "image/png" ||
+          candidate.widthPx !== 1200 ||
+          candidate.heightPx !== 1680 ||
+          !/^[a-f0-9]{64}$/.test(candidate.sha256) ||
+          !/^[a-f0-9]{64}$/.test(candidate.deterministicInputSha256) ||
+          !Number.isSafeInteger(candidate.byteSize) ||
+          candidate.byteSize <= 0
+        ) {
+          throw new Error("queued EYES centering candidate descriptor is invalid");
+        }
+        return structuredClone(candidate);
+      })
+    : [];
+  if (centeringCandidates.length) {
+    for (const side of ["front", "back"] as const) {
+      const count = centeringCandidates.filter((candidate) =>
+        candidate.side === side).length;
+      if (count < 1 || count > 6) {
+        throw new Error("queued EYES centering candidates are incomplete");
+      }
+    }
+  }
+  return {
+    ...expected,
+    status: descriptor.status,
+    images,
+    centeringCandidates,
+    eyesCenteringCandidateLedgerSha256:
+      descriptor.eyesCenteringCandidateLedgerSha256,
+  };
 }
 
 function hex(bytes: Uint8Array) {
@@ -594,20 +732,36 @@ function isOcrInitResult(value: unknown, expected: AiGraderOcrExactIdentity): va
   const uploadSessionId = result.uploadSessionId;
   const uploadPlan = result.uploadPlan;
   const finalizeImages = finalize?.images;
-  const exactSides = (entries: Array<{ side?: unknown }>) =>
-    entries.length === 2 && entries[0]?.side !== entries[1]?.side &&
-    entries.every((entry) => entry.side === "front" || entry.side === "back");
+  const exactArtifacts = (entries: Array<{
+    side?: unknown;
+    artifactRole?: unknown;
+    candidateId?: unknown;
+  }>) => {
+    const normalized = entries.filter((entry) =>
+      entry.artifactRole === "normalized_card");
+    const identities = new Set(entries.map((entry) =>
+      `${entry.side}:${entry.artifactRole}:${entry.candidateId ?? ""}`));
+    return normalized.length === 2 &&
+      normalized[0]?.side !== normalized[1]?.side &&
+      entries.every((entry) =>
+        (entry.side === "front" || entry.side === "back") &&
+        (entry.artifactRole === "normalized_card" ||
+          entry.artifactRole === "centering_candidate_overlay")) &&
+      identities.size === entries.length;
+  };
   return sameExactOcrIdentity(result as AiGraderOcrExactIdentity, expected) &&
     result.reportProducerContractVersion === AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION &&
     typeof uploadSessionId === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(uploadSessionId) &&
     result.humanConfirmationRequired === true &&
-    Array.isArray(uploadPlan) && exactSides(uploadPlan) &&
+    Array.isArray(uploadPlan) && exactArtifacts(uploadPlan) &&
     uploadPlan.every((image) => sameExactOcrIdentity(image, expected)) &&
     typeof finalize === "object" && finalize !== null &&
     sameExactOcrIdentity(finalize as AiGraderOcrExactIdentity, expected) &&
     finalize.reportProducerContractVersion === AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION &&
     finalize.uploadSessionId === uploadSessionId &&
-    Array.isArray(finalizeImages) && exactSides(finalizeImages) &&
+    Array.isArray(finalizeImages) &&
+    finalizeImages.length === uploadPlan.length &&
+    exactArtifacts(finalizeImages) &&
     finalizeImages.every((image) => sameExactOcrIdentity(image, expected));
 }
 
@@ -627,7 +781,9 @@ function safeOcrResult(value: unknown, identity: AiGraderOcrExactIdentity) {
   }
 }
 
-export async function runAiGraderOcrPrefillFromLocalReport(
+export async function runAiGraderOcrPrefillFromLocalReport<
+  TMode extends "ocr" | "eyes_selection" = "ocr",
+>(
   input: {
     baseUrl: string;
     stationToken: string;
@@ -635,6 +791,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     gradingSessionId: string;
     reportId: string;
     authHeaders: Record<string, string>;
+    mode?: TMode;
   },
   dependencies: {
     fetchImpl?: typeof fetch;
@@ -643,7 +800,11 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     digestSha256?: (bytes: ArrayBuffer) => Promise<string>;
     uploadDirect?: typeof uploadAiGraderArtifactDirectly;
   } = {}
-): Promise<AiGraderOcrPrefillResult> {
+): Promise<
+  TMode extends "eyes_selection"
+    ? AiGraderEyesCenteringSelectionReceipt
+    : AiGraderOcrPrefillResult
+> {
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const fetchDescriptor = dependencies.fetchDescriptor ?? fetchAiGraderQueuedOcrDescriptor;
   const fetchAsset = dependencies.fetchAsset ?? fetchAiGraderQueuedOcrAsset;
@@ -666,7 +827,13 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       stationToken: input.stationToken,
       ...identity,
     });
-    descriptor = safeQueuedOcrDescriptor(fetched, identity);
+    descriptor = safeQueuedOcrDescriptor(
+      fetched,
+      identity,
+      input.mode === "eyes_selection"
+        ? "eyes_selection_eligible"
+        : "in_flight",
+    );
   } catch {
     throw new AiGraderOcrPrefillStageError("descriptor_fetch");
   }
@@ -675,6 +842,9 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     gradingSessionId: string;
     reportId: string;
     side: "front" | "back";
+    artifactRole: "normalized_card" | "centering_candidate_overlay";
+    candidateId?: string;
+    deterministicInputSha256?: string;
     bytes: ArrayBuffer;
     fileName: string;
     mimeType: string;
@@ -707,6 +877,7 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       localImages.push({
         ...identity,
         side,
+        artifactRole: "normalized_card",
         bytes: fetched.bytes,
         fileName: image.fileName,
         mimeType: "image/png",
@@ -719,6 +890,52 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       throw new AiGraderOcrPrefillStageError(side === "front" ? "front_asset_fetch" : "back_asset_fetch");
     }
   }
+  for (const candidate of descriptor.centeringCandidates ?? []) {
+    try {
+      const fetched = await fetchAsset({
+        baseUrl: input.baseUrl,
+        stationToken: input.stationToken,
+        ...identity,
+        side: candidate.side,
+        candidateId: candidate.candidateId,
+      });
+      const checksumSha256 = (await digestSha256(fetched.bytes)).toLowerCase();
+      if (
+        fetched.candidateId !== candidate.candidateId ||
+        fetched.deterministicInputSha256 !==
+          candidate.deterministicInputSha256 ||
+        String(fetched.checksumSha256 ?? "").toLowerCase() !==
+          candidate.sha256 ||
+        checksumSha256 !== candidate.sha256 ||
+        fetched.bytes.byteLength !== candidate.byteSize ||
+        normalizedMimeType(fetched.contentType) !== "image/png"
+      ) {
+        throw new Error("invalid local EYES candidate metadata");
+      }
+      localImages.push({
+        ...identity,
+        side: candidate.side,
+        artifactRole: "centering_candidate_overlay",
+        candidateId: candidate.candidateId,
+        deterministicInputSha256: candidate.deterministicInputSha256,
+        bytes: fetched.bytes,
+        fileName: candidate.fileName,
+        mimeType: "image/png",
+        checksumSha256,
+        byteSize: candidate.byteSize,
+        widthPx: 1200,
+        heightPx: 1680,
+      });
+    } catch {
+      throw new AiGraderOcrPrefillStageError("descriptor_fetch");
+    }
+  }
+  if (
+    input.mode === "eyes_selection" &&
+    !(descriptor.centeringCandidates?.length)
+  ) {
+    throw new AiGraderOcrPrefillStageError("descriptor_fetch");
+  }
   const authHeaders = { ...input.authHeaders, "content-type": "application/json" };
   let init: OcrInitResult;
   try {
@@ -728,12 +945,14 @@ export async function runAiGraderOcrPrefillFromLocalReport(
       body: JSON.stringify({
         ...identity,
         reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
-        images: localImages.map(({ queueItemId, gradingSessionId, reportId, side, fileName, mimeType, checksumSha256, byteSize, widthPx, heightPx }) => ({
+        images: localImages.map(({ queueItemId, gradingSessionId, reportId, side, artifactRole, candidateId, deterministicInputSha256, fileName, mimeType, checksumSha256, byteSize, widthPx, heightPx }) => ({
           queueItemId,
           gradingSessionId,
           reportId,
           side,
-          artifactRole: "normalized_card",
+          artifactRole,
+          candidateId,
+          deterministicInputSha256,
           fileName,
           mimeType,
           checksumSha256,
@@ -753,11 +972,20 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     throw new AiGraderOcrPrefillStageError("init");
   }
   const validatedUploads = localImages.map((localImage) => {
-    const plan = init.uploadPlan.find((entry) => entry.side === localImage.side);
-    const finalizeImage = init.requiredFinalizeManifest.images.find((entry) => entry.side === localImage.side);
+    const plan = init.uploadPlan.find((entry) =>
+      entry.side === localImage.side &&
+      entry.artifactRole === localImage.artifactRole &&
+      entry.candidateId === localImage.candidateId);
+    const finalizeImage = init.requiredFinalizeManifest.images.find((entry) =>
+      entry.side === localImage.side &&
+      entry.artifactRole === localImage.artifactRole &&
+      entry.candidateId === localImage.candidateId);
     if (!plan || !sameExactOcrIdentity(plan, identity) ||
         !finalizeImage || !sameExactOcrIdentity(finalizeImage, identity) ||
-        plan.artifactRole !== "normalized_card" || plan.mimeType !== "image/png" ||
+        plan.artifactRole !== localImage.artifactRole ||
+        plan.candidateId !== localImage.candidateId ||
+        plan.deterministicInputSha256 !== localImage.deterministicInputSha256 ||
+        plan.mimeType !== "image/png" ||
         plan.fileName !== localImage.fileName ||
         plan.checksumSha256 !== localImage.checksumSha256 || plan.byteSize !== localImage.byteSize ||
         plan.widthPx !== 1200 || plan.heightPx !== 1680 || plan.uploadMethod !== "PUT" ||
@@ -789,11 +1017,16 @@ export async function runAiGraderOcrPrefillFromLocalReport(
   }
   let finalizeResponse: Response;
   try {
-    finalizeResponse = await fetchImpl("/api/admin/ai-grader/production/ocr-prefill-finalize", {
+    finalizeResponse = await fetchImpl(
+      input.mode === "eyes_selection"
+        ? "/api/admin/ai-grader/production/eyes-centering-finalize"
+        : "/api/admin/ai-grader/production/ocr-prefill-finalize",
+      {
       method: "POST",
       headers: authHeaders,
       body: JSON.stringify(init.requiredFinalizeManifest),
-    });
+      },
+    );
   } catch {
     throw new AiGraderOcrPrefillStageError("finalize");
   }
@@ -810,7 +1043,21 @@ export async function runAiGraderOcrPrefillFromLocalReport(
     throw new AiGraderOcrPrefillStageError("finalize");
   }
   if (finalizePayload?.ok !== true) throw new AiGraderOcrPrefillStageError("ocr_response");
-  return safeOcrResult(finalizePayload.result, identity);
+  if (input.mode === "eyes_selection") {
+    try {
+      return safeEyesCenteringSelectionReceipt(
+        finalizePayload.result as AiGraderEyesCenteringSelectionReceipt,
+      ) as TMode extends "eyes_selection"
+        ? AiGraderEyesCenteringSelectionReceipt
+        : AiGraderOcrPrefillResult;
+    } catch {
+      throw new AiGraderOcrPrefillStageError("ocr_response");
+    }
+  }
+  return safeOcrResult(finalizePayload.result, identity) as TMode extends
+    "eyes_selection"
+    ? AiGraderEyesCenteringSelectionReceipt
+    : AiGraderOcrPrefillResult;
 }
 
 export function mergeAiGraderOcrPrefillIntoIdentityDraft<T extends AiGraderIdentityDraftLike>(input: {

@@ -305,6 +305,148 @@ test("OCR prefill uses authenticated direct storage init/finalize without invent
   assert.equal(persistCalls, 0);
 });
 
+test("EYES centering finalize verifies exact normalized and candidate overlays without rerunning OCR", async () => {
+  const candidateImages = [
+    {
+      side: "front",
+      artifactRole: "centering_candidate_overlay",
+      candidateId: "front-candidate-1",
+      deterministicInputSha256: "1".repeat(64),
+      fileName: "front-candidate-1.png",
+      mimeType: "image/png",
+      checksumSha256: sha256("front-candidate"),
+      byteSize: 4096,
+      widthPx: 1200,
+      heightPx: 1680,
+    },
+    {
+      side: "back",
+      artifactRole: "centering_candidate_overlay",
+      candidateId: "back-candidate-1",
+      deterministicInputSha256: "2".repeat(64),
+      fileName: "back-candidate-1.png",
+      mimeType: "image/png",
+      checksumSha256: sha256("back-candidate"),
+      byteSize: 4096,
+      widthPx: 1200,
+      heightPx: 1680,
+    },
+  ];
+  let ocrCalls = 0;
+  let eyesCalls = 0;
+  let verifiedCalls = 0;
+  const handler = createAiGraderProductionApiHandler({
+    env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
+    async requireAdminSession() {
+      throw new Error("not used");
+    },
+    async requireProductionActor(_req, action) {
+      return {
+        type: "service_account",
+        role: "ai_grader_service",
+        serviceAccountId: "eyes-centering-test",
+        scopes: ["publish"],
+        audit: {
+          actorType: "service_account",
+          action,
+          requestedAt: "2026-07-27T04:00:00.000Z",
+        },
+      };
+    },
+    publicUrlFor(storageKey) {
+      return `https://cdn.tenkings.test/${storageKey}`;
+    },
+    async presignUpload({ storageKey, contentType, checksumSha256 }) {
+      return {
+        storageKey,
+        uploadUrl: `https://uploads.tenkings.test/${storageKey}`,
+        uploadMethod: "PUT",
+        uploadHeaders: {
+          "Content-Type": contentType,
+          "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+        },
+        publicUrl: `https://cdn.tenkings.test/${storageKey}`,
+      };
+    },
+    async verifyUploadedArtifact(input) {
+      verifiedCalls += 1;
+      return {
+        ok: true,
+        storageKey: input.storageKey,
+        byteSize: input.byteSize,
+        contentType: input.contentType,
+        checksumSha256: input.checksumSha256,
+        widthPx: input.sourceImageWidthPx,
+        heightPx: input.sourceImageHeightPx,
+      };
+    },
+    async runOcrPrefill() {
+      ocrCalls += 1;
+      throw new Error("EYES-only finalize must not rerun OCR");
+    },
+    async runEyesCenteringSelection(input) {
+      eyesCalls += 1;
+      assert.equal(input.images.length, 2);
+      assert.deepEqual(
+        input.candidates.map((candidate) => candidate.candidateId).sort(),
+        ["back-candidate-1", "front-candidate-1"],
+      );
+      return {
+        schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+        status: "observed",
+        requestedModel: "gpt-5.6-sol",
+        actualModel: "gpt-5.6-sol-2026-07-01",
+        requestSha256: "a".repeat(64),
+        sourceImageBindings: [],
+        candidateBindings: [],
+        decisions: [],
+        metricAuthority: "deterministic_calibrated_pixels_only",
+        coordinateAuthority: false,
+        maximumRemeasurementPasses: 2,
+        providerElapsedMs: 10,
+      } as any;
+    },
+    async persist() {
+      throw new Error("EYES-only finalize must not persist or publish");
+    },
+  });
+
+  const reportId = "eyes-centering-only";
+  const initRes = mockResponse();
+  await handler(
+    mockRequest("POST", ["ocr-prefill-init"], {
+      reportId,
+      images: [...normalizedImages(), ...candidateImages],
+    }),
+    initRes,
+  );
+  assert.equal(initRes.statusCodeValue, 200);
+  const initBody = initRes.jsonBody as any;
+  assert.equal(initBody.result.uploadPlan.length, 4);
+
+  const finalizeRes = mockResponse();
+  await handler(
+    mockRequest(
+      "POST",
+      ["eyes-centering-finalize"],
+      initBody.result.requiredFinalizeManifest,
+    ),
+    finalizeRes,
+  );
+  assert.equal(
+    finalizeRes.statusCodeValue,
+    200,
+    JSON.stringify(finalizeRes.jsonBody),
+  );
+  assert.equal(
+    (finalizeRes.jsonBody as any).operation,
+    "aiGraderEyesCenteringFinalize",
+  );
+  assert.equal(verifiedCalls, 4);
+  assert.equal(eyesCalls, 1);
+  assert.equal(ocrCalls, 0);
+});
+
 test("hosted OCR rejects queue, grading-session, or report drift at init, finalize, and provider result", async () => {
   let presignCalls = 0;
   let verifyCalls = 0;

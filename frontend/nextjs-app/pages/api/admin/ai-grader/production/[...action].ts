@@ -38,6 +38,7 @@ import {
   renderAiGraderLabelSheetPdfRuntime,
 } from "../../../../../lib/server/aiGraderLabelSheetRuntime";
 import { runAiGraderOcrPrefillRuntime } from "../../../../../lib/server/aiGraderOcrPrefill";
+import { runAiGraderEyesCenteringSelection } from "../../../../../lib/server/aiGraderEyesCenteringCandidateSelection";
 
 export const config = {
   maxDuration: 60,
@@ -108,6 +109,7 @@ export default function handler(req: NextApiRequest, res: NextApiResponse) {
     createCardFromReport: createAiGraderCardFromReportRuntime,
     finalizeSlabbedPhotoUpload: finalizeAiGraderSlabbedPhotoUploadRuntime,
     runOcrPrefill: runAiGraderOcrPrefillRuntime,
+    runEyesCenteringSelection: runAiGraderEyesCenteringSelection,
     recordOcrProviderDiagnostics(diagnostics) {
       console.info("AI Grader OCR provider diagnostics", {
         schemaVersion: diagnostics.schemaVersion,

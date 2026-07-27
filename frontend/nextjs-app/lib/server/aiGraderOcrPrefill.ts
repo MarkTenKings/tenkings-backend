@@ -28,6 +28,11 @@ import {
   type AiGraderEyesReceipt,
   type AiGraderEyesSourceImage,
 } from "./aiGraderEyesSemanticObserver";
+import {
+  runAiGraderEyesCenteringSelection,
+  type AiGraderEyesCenteringCandidateOverlay,
+  type AiGraderEyesCenteringCandidateSelectionReceipt,
+} from "./aiGraderEyesCenteringCandidateSelection";
 
 export type AiGraderOcrPrefillSide = "front" | "back";
 
@@ -84,6 +89,7 @@ export type AiGraderOcrPrefillResult = {
     setIdentificationUsed: boolean;
   };
   eyes?: AiGraderEyesReceipt;
+  eyesCenteringSelection?: AiGraderEyesCenteringCandidateSelectionReceipt;
   warnings: string[];
 };
 
@@ -111,6 +117,7 @@ export type AiGraderOcrPrefillRuntimeDependencies = {
   ) => Promise<OcrResponse>;
   runStructuredExtraction?: typeof runAiGraderOcrStructuredExtraction;
   runEyes?: typeof runAiGraderEyesSemanticObservation;
+  runEyesCenteringSelection?: typeof runAiGraderEyesCenteringSelection;
   identifySet?: typeof identifySetByCardIdentity;
   lookupSet?: typeof lookupSetByCardIdentity;
   now?: () => number;
@@ -124,7 +131,8 @@ const REVIEW_CONFIDENCE_THRESHOLD = 0.8;
 export const AI_GRADER_OCR_PROVIDER_TIME_BUDGET_MS = 55_000;
 const AI_GRADER_GOOGLE_TIME_BUDGET_MS = 12_000;
 const AI_GRADER_OPENAI_TIME_BUDGET_MS = 30_000;
-const AI_GRADER_EYES_TIME_BUDGET_MS = 20_000;
+const AI_GRADER_EYES_TIME_BUDGET_MS = 10_000;
+const AI_GRADER_EYES_CENTERING_TIME_BUDGET_MS = 11_000;
 
 function boundedProviderElapsedMs(value: number) {
   if (!Number.isFinite(value) || value < 0) return 0;
@@ -420,6 +428,7 @@ export async function runAiGraderOcrPrefillRuntime(
     gradingSessionId: string;
     reportId: string;
     images: AiGraderOcrPrefillSourceImage[];
+    centeringCandidates?: AiGraderEyesCenteringCandidateOverlay[];
   },
   dependencies: AiGraderOcrPrefillRuntimeDependencies = {}
 ): Promise<AiGraderOcrPrefillRuntimeResult> {
@@ -484,6 +493,30 @@ export async function runAiGraderOcrPrefillRuntime(
     throw openAiFailure(error);
   }
   const openAiElapsedMs = boundedProviderElapsedMs(now() - openAiStartedAt);
+  let eyesCenteringSelection:
+    AiGraderEyesCenteringCandidateSelectionReceipt | undefined;
+  if (eyesSources && input.centeringCandidates?.length) {
+    try {
+      const timeoutMs = Math.min(
+        AI_GRADER_EYES_CENTERING_TIME_BUDGET_MS,
+        remainingProviderMs(providerDeadline, now),
+      );
+      if (timeoutMs < 1) throw new AiGraderEyesError("timeout");
+      eyesCenteringSelection = await (
+        dependencies.runEyesCenteringSelection ??
+        runAiGraderEyesCenteringSelection
+      )(
+        {
+          images: eyesSources,
+          candidates: input.centeringCandidates,
+        },
+        { timeoutMs },
+      );
+    } catch {
+      // Candidate selection is advisory and fail-closed. The deterministic
+      // default remains unchanged and human element review remains available.
+    }
+  }
   let eyes: AiGraderEyesReceipt | undefined;
   let eyesElapsedMs: number | undefined;
   let eyesUpstreamFailure: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic | undefined;
@@ -596,6 +629,7 @@ export async function runAiGraderOcrPrefillRuntime(
       setIdentificationUsed: Boolean(identified),
     },
     ...(eyes ? { eyes } : {}),
+    ...(eyesCenteringSelection ? { eyesCenteringSelection } : {}),
     warnings,
     internalProviderDiagnostics: {
       schemaVersion: "ai-grader-ocr-provider-diagnostics-v1",

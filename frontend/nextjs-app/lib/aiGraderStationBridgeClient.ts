@@ -369,6 +369,7 @@ export type AiGraderStationBridgeActionRequestBody = {
   queueItemId?: string;
   gradingContract?: AiGraderGradingContract;
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1;
+  ocrFirstIdentityBinding?: "printed_border_v1";
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   bundleManifestSha256?: string;
   mathematicalReviewRequestSha256?: string;
@@ -395,14 +396,20 @@ export function buildAiGraderCaptureProfileRequest(
   mathematicalGradingAuthority?: AiGraderMathematicalGradingAuthorityV1,
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1,
   reportId?: string,
-) {
+  ocrFirstIdentityBinding?: "printed_border_v1",
+): AiGraderStationBridgeActionRequestBody {
   if (gradingContract !== "mathematical_calibration_v1") {
     throw new Error(
       "Start New Card requires the explicit Mathematical Calibration V1 contract; Legacy V0 and omitted contracts are prohibited.",
     );
   }
-  if (!mathematicalGradingAuthority) {
-    throw new Error("Mathematical V1 Start New Card requires exact card and centering authority.");
+  if (
+    Boolean(mathematicalGradingAuthority) ===
+    Boolean(ocrFirstIdentityBinding === "printed_border_v1")
+  ) {
+    throw new Error(
+      "Start New Card requires exactly one identity path: bound Mathematical authority or OCR-first printed-border identity.",
+    );
   }
   if (!calibrationActivationAuthority) {
     throw new Error("Start New Card requires exact hosted/local ACTIVE calibration authority; no configured-bundle fallback is permitted.");
@@ -413,7 +420,9 @@ export function buildAiGraderCaptureProfileRequest(
   return {
     captureProfile,
     gradingContract,
-    mathematicalGradingAuthority,
+    ...(mathematicalGradingAuthority
+      ? { mathematicalGradingAuthority }
+      : { ocrFirstIdentityBinding: "printed_border_v1" as const }),
     calibrationActivationAuthority,
     ...(reportId ? { reportId } : {}),
   } satisfies AiGraderStationBridgeActionRequestBody;
@@ -1780,7 +1789,7 @@ export type AiGraderQueuedOcrDescriptor = {
   queueItemId: string;
   gradingSessionId: string;
   reportId: string;
-  status: "eligible" | "in_flight";
+  status: "eligible" | "in_flight" | "eyes_selection_eligible";
   images: Array<{
     side: "front" | "back";
     artifactRole: "normalized_card";
@@ -1791,6 +1800,19 @@ export type AiGraderQueuedOcrDescriptor = {
     widthPx: 1200;
     heightPx: 1680;
   }>;
+  centeringCandidates?: Array<{
+    side: "front" | "back";
+    candidateId: string;
+    deterministicInputSha256: string;
+    selectedByDefault: boolean;
+    fileName: string;
+    contentType: "image/png";
+    sha256: string;
+    byteSize: number;
+    widthPx: 1200;
+    heightPx: 1680;
+  }>;
+  eyesCenteringCandidateLedgerSha256?: string;
 };
 
 export async function fetchAiGraderQueuedOcrDescriptor(input: {
@@ -1817,6 +1839,7 @@ export async function fetchAiGraderQueuedOcrAsset(input: {
   gradingSessionId: string;
   reportId: string;
   side: "front" | "back";
+  candidateId?: string;
 }, fetchImpl: typeof fetch = fetch): Promise<{
   queueItemId: string;
   gradingSessionId: string;
@@ -1826,6 +1849,8 @@ export async function fetchAiGraderQueuedOcrAsset(input: {
   contentType: string;
   byteSize: number;
   checksumSha256?: string;
+  candidateId?: string;
+  deterministicInputSha256?: string;
 }> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   const identity = exactRapidQueueIdentity(input);
@@ -1834,7 +1859,10 @@ export async function fetchAiGraderQueuedOcrAsset(input: {
     baseUrl + "/rapid-queue/" + encodeURIComponent(identity.queueItemId) +
       "/ocr/asset?gradingSessionId=" + encodeURIComponent(identity.gradingSessionId) +
       "&reportId=" + encodeURIComponent(identity.reportId) +
-      "&side=" + input.side,
+      "&side=" + input.side +
+      (input.candidateId
+        ? "&candidateId=" + encodeURIComponent(input.candidateId)
+        : ""),
     {
       method: "GET",
       headers: { "x-ai-grader-station-token": input.stationToken },
@@ -1864,6 +1892,11 @@ export async function fetchAiGraderQueuedOcrAsset(input: {
     contentType: response.headers.get("content-type") ?? "application/octet-stream",
     byteSize: bytes.byteLength,
     checksumSha256: response.headers.get("x-ai-grader-sha256") ?? undefined,
+    candidateId:
+      response.headers.get("x-ai-grader-candidate-id") ?? undefined,
+    deterministicInputSha256:
+      response.headers.get("x-ai-grader-deterministic-input-sha256") ??
+      undefined,
   };
 }
 

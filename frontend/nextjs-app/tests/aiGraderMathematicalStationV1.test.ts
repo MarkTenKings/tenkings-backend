@@ -168,7 +168,7 @@ test("initial Mathematical V1 request uses the one-road production_fast profile 
   assert.equal(serialized.includes("confidence"), false);
   assert.throws(
     () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1"),
-    /requires exact card and centering authority/i,
+    /requires exactly one identity path: bound Mathematical authority or OCR-first printed-border identity/i,
   );
   assert.throws(
     () => buildAiGraderCaptureProfileRequest("production_fast", "mathematical_calibration_v1", authority),
@@ -364,7 +364,7 @@ test("queued Mathematical review state and assets bind to the exact activated qu
   assert.match(reviewStateBlock, /const cleanSessionMathematicalV1 = status\.mathematicalV1/);
   assert.match(
     reviewStateBlock,
-    /const mathematicalAuthorityBound = Boolean\(cleanSessionMathematicalV1\?\.gradingAuthority\)/,
+    /const displayedMathematicalV1 =[\s\S]*?cleanSessionMathematicalV1 \?\?[\s\S]*?activeReviewManifest\?\.mathematicalV1[\s\S]*?const mathematicalAuthorityBound = Boolean\([\s\S]*?displayedMathematicalV1\?\.gradingAuthority/,
   );
 
   const assetEffectStart = source.indexOf("const request = mathematicalReviewRequest;", reviewStateEnd);

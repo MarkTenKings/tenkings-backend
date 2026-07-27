@@ -28584,3 +28584,27 @@ By enabling Rip It Live, I confirm:
 - The resulting receipt explicitly preserves deterministic calibrated pixels as the only metric authority, grants EYES no coordinate authority, and caps the future deterministic remeasurement loop at two passes.
 - Focused candidate-contract tests pass `6/6`; focused lint and `git diff --check` pass.
 - This is the safe contract boundary, not yet the complete runtime loop. Remaining implementation is to expose hash-bound deterministic border candidates/overlays from the helper, invoke this selector, accept only a bound candidate ID, and have the deterministic engine perform the remeasurement. OCR-first intake remains a separate lifecycle change and is not part of this checkpoint.
+
+## 2026-07-27 - EYES remeasurement and OCR-first Production rollout candidate
+
+- Completed the owner-approved critical-path follow-up on isolated branch `codex/ai-grader-eyes-centering-20260727`; no unrelated product surface, calibration policy, grading formula, database schema, capture behavior, lighting behavior, or publication authority was changed.
+- The deterministic printed-border engine now emits at most six complete, freshly reproducible, hash-bound border candidates per side and matching labeled PNG overlays. The default remains deterministic and outermost-first.
+- Hosted GPT-5.6 EYES can inspect only the two exact normalized images and those exact labeled overlays. Its receipt may choose a supplied candidate ID, reject all, or declare the side unclear. It cannot return coordinates, dimensions, measurements, scores, or grades.
+- The helper validates the exact source/candidate checksums and deterministic-input hashes, permits one additional deterministic measurement pass only, and freshly reproduces any selected candidate before it can affect centering. `reject_all` or `unclear` forces deterministic centering into owner element review rather than silently retaining a visually challenged result.
+- Release preparation is refreshed after the EYES-controlled deterministic pass, and exact session/report identity is checked before the queue can advance to owner confirmation.
+- Printed-border cards may now start capture without manually entering identity. Front and Back immutable evidence and normalized images complete first; OCR then suggests card identity, the queue stops at `identity_resolution_required`, and deterministic grading remains blocked until the owner confirms and binds that exact identity. Registered-template centering still requires its exact authority before capture.
+- Focused validation passed:
+  - Next.js AI Grader station/OCR/Mathematical tests: `82/82`;
+  - EYES semantic and candidate-contract tests: `10/10`;
+  - station bridge lifecycle, queue, OCR, capture, reload, and concurrency tests: `44/44`;
+  - combined Mathematical/orchestrator/printed-border tests: `39/40`, with the sole Windows temporary-directory cleanup race passing immediately when rerun alone;
+  - capture-helper build and Next.js Production build.
+- The repository-wide helper run completed `704/710` with `2` intentional skips and four failures outside the changed product logic: three fake-camera process-contention timeouts caused by Node running camera-heavy files concurrently (the same cases pass in the sequential `44/44` bridge file and one report-bundle case passed alone), plus the pre-existing V1.1 checkerboard fixture assertion in an unchanged calibration file. No camera/calibration lifecycle code was changed to mask those test-runner conditions.
+- `git diff --check` passed with Windows line-ending notices only. No hardware command, capture/cancel action, lighting command, calibration/data/queue/report/database mutation, deployment, merge, or helper restart occurred during implementation and validation.
+
+### Planned Production action
+
+- Commit and push only this bounded AI Grader implementation and its tests/docs, open one focused pull request, require normal protected-branch checks, and merge once green.
+- Allow the normal Vercel Production deployment with `RUN_DB_MIGRATIONS` absent/false. Verify the public station route and exact station bundle against the merged commit. No database migration or Production storage canary is planned.
+- Before Dell activation, perform a fresh read-only gate proving the owner's discarded card is gone, the recognized Rapid queue is empty, the bridge is sessionless at `start_new_card`, preview/camera and transition/capture locks are idle, and the processing worker is idle.
+- Only after that gate, install and build the exact merged commit, confirm `origin/main` parity, restart only the protected desktop capture helper, and verify healthy token-gated local-only runtime at the exact merged commit. Do not operate the camera, lighting, or capture path during activation.

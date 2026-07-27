@@ -12,6 +12,8 @@ export const AI_GRADER_EYES_CENTERING_SELECTION_SCHEMA_VERSION =
 const SIDES = ["front", "back"] as const;
 const DECISIONS = ["select_candidate", "reject_all", "unclear"] as const;
 const MAXIMUM_CANDIDATES_PER_SIDE = 6;
+const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
+const DEFAULT_TIMEOUT_MS = 11_000;
 
 export type AiGraderEyesCenteringSide = (typeof SIDES)[number];
 export type AiGraderEyesCenteringDecision = (typeof DECISIONS)[number];
@@ -404,4 +406,73 @@ export function defaultAiGraderEyesCenteringSelectionModel(
   );
   if (!model) throw new AiGraderEyesError("invalid_config");
   return model;
+}
+
+export async function runAiGraderEyesCenteringSelection(
+  input: {
+    images: AiGraderEyesSourceImage[];
+    candidates: AiGraderEyesCenteringCandidateOverlay[];
+  },
+  dependencies: {
+    env?: Record<string, string | undefined>;
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    now?: () => number;
+  } = {},
+): Promise<AiGraderEyesCenteringCandidateSelectionReceipt> {
+  const env = dependencies.env ?? process.env;
+  const apiKey = String(env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) throw new AiGraderEyesError("missing_config");
+  const requestedModel = defaultAiGraderEyesCenteringSelectionModel(env);
+  const request = buildAiGraderEyesCenteringSelectionRequest({
+    model: requestedModel,
+    images: input.images,
+    candidates: input.candidates,
+  });
+  const now = dependencies.now ?? Date.now;
+  const startedAt = now();
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(dependencies.timeoutMs)
+    ? Math.max(1, Math.min(20_000, Math.round(dependencies.timeoutMs!)))
+    : DEFAULT_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await (dependencies.fetchImpl ?? fetch)(
+      OPENAI_RESPONSES_ENDPOINT,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (
+      controller.signal.aborted ||
+      (error instanceof Error && error.name === "AbortError")
+    ) {
+      throw new AiGraderEyesError("timeout");
+    }
+    throw new AiGraderEyesError("network");
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) throw new AiGraderEyesError("non_2xx");
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new AiGraderEyesError("malformed_response");
+  }
+  return parseAiGraderEyesCenteringSelectionResponse({
+    payload,
+    images: input.images,
+    candidates: input.candidates,
+    requestedModel,
+    providerElapsedMs: now() - startedAt,
+  });
 }

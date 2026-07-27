@@ -302,7 +302,72 @@ test("multiple fully supported nested boundaries select the outermost observed p
   assert.deepEqual(result.boundaryEvidence.left.viableClusterCoordinatesPx, [6.5, 10.5]);
   assert.equal(result.boundaryEvidence.left.medianCoordinatePx, 6.5);
   assert.equal(result.boundaryEvidence.left.accepted, true);
+  assert.equal(result.candidates.length, 6);
+  assert.equal(result.selectedCandidateId, result.candidates[0].candidateId);
+  assert.equal(result.selectionSource, "deterministic_default");
+  assert.equal(
+    new Set(result.candidates.map((candidate) => candidate.candidateId)).size,
+    result.candidates.length,
+  );
+  assert.equal(
+    result.candidates.every((candidate) =>
+      /^[a-f0-9]{64}$/.test(candidate.deterministicInputSha256)),
+    true,
+  );
   assert.equal(result.conditionDeduction, 0);
+});
+
+test("an exact hash-bound EYES candidate reruns through the same deterministic measurement engine", () => {
+  const source = plane((x, y) => {
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
+    return 0.1;
+  });
+  const initial = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(initial.status, "computed", JSON.stringify(initial));
+  const selected = initial.candidates[1];
+  assert.ok(selected);
+
+  const rerun = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    selectedCandidate: {
+      candidateId: selected.candidateId,
+      deterministicInputSha256: selected.deterministicInputSha256,
+    },
+  });
+  assert.equal(rerun.status, "computed", JSON.stringify(rerun));
+  assert.equal(rerun.selectedCandidateId, selected.candidateId);
+  assert.equal(rerun.selectionSource, "eyes_exact_candidate");
+  assert.deepEqual(rerun.detectedPrintContour, selected.detectedPrintContour);
+  assert.deepEqual(rerun.profileInput, selected.profileInput);
+  assert.notDeepEqual(rerun.detectedPrintContour, initial.detectedPrintContour);
+});
+
+test("a stale or invented EYES candidate fails closed and cannot supply measurements", () => {
+  const source = plane((x, y) => {
+    if (x >= 11 && x <= 108 && y >= 12 && y <= 147) return 0.9;
+    if (x >= 7 && x <= 112 && y >= 8 && y <= 151) return 0.5;
+    return 0.1;
+  });
+  const initial = detectFixedRigPrintedBorderSourceV1(detectorInput(source));
+  assert.equal(initial.status, "computed", JSON.stringify(initial));
+  const selected = initial.candidates[1];
+  const rejected = detectFixedRigPrintedBorderSourceV1({
+    ...detectorInput(source),
+    selectedCandidate: {
+      candidateId: selected.candidateId,
+      deterministicInputSha256: "f".repeat(64),
+    },
+  });
+  assert.equal(rejected.status, "insufficient_evidence");
+  assert.equal(rejected.profileInput, null);
+  assert.deepEqual(rejected.detectedPrintContour, []);
+  assert.equal(
+    rejected.reasons.some((reason) =>
+      reason.code === "invalid_candidate_selection"),
+    true,
+  );
+  assert.equal(rejected.conditionDeduction, 0);
 });
 
 test("outermost valid border wins even when deeper artwork has more supporting samples", () => {

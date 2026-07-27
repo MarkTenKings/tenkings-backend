@@ -1516,6 +1516,198 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
   }
 });
 
+test("OCR-first printed-border capture blocks grading until exact identity confirmation, then resumes deterministic grading once", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-ocr-first-"));
+  const calls = [];
+  try {
+    const service = createService(outputDir, async (input) => {
+      calls.push(input);
+      return completedResult(input);
+    });
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service);
+
+    const started = await service.action("start-session", {
+      reportId: "ocr-first-math-report",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      ocrFirstIdentityBinding: "printed_border_v1",
+      calibrationActivationAuthority: {
+        bundleManifestSha256: BUNDLE_SHA256,
+      },
+    });
+    assert.equal(started.currentStep, "capture_front");
+    assert.equal(service.manifest.mathematicalV1, undefined);
+    assert.equal(
+      service.manifest.pendingOcrIdentityV1?.schemaVersion,
+      "ten-kings-ai-grader-ocr-first-printed-border-v1",
+    );
+
+    const gradingSessionId = service.status().sessionId;
+    await service.action(
+      "capture-front",
+      bindReadyPreview(service, "front", "ocr-first"),
+    );
+    await service.action(
+      "capture-back",
+      bindReadyPreview(service, "back", "ocr-first"),
+    );
+    await service.reportWorker;
+    await service.rapidMutationChain;
+
+    const mutableItem = service.rapidQueue.items.find(
+      (candidate) => candidate.reportId === "ocr-first-math-report",
+    );
+    assert.ok(mutableItem);
+    assert.equal(mutableItem.sessionId, gradingSessionId);
+    assert.equal(mutableItem.ocr.state, "eligible");
+    assert.equal(calls.length, 0, "no grading runs before OCR identity confirmation");
+
+    const identity = {
+      queueItemId: mutableItem.queueItemId,
+      gradingSessionId: mutableItem.sessionId,
+      reportId: mutableItem.reportId,
+    };
+    const attempt = {
+      ...identity,
+      attemptOwnerId: "ocr-first-exact-owner",
+    };
+    await service.action("begin-queued-ocr", attempt);
+    const ocrCompleted = await service.action("complete-queued-ocr", {
+      ...attempt,
+      result: safeOcrResult(mutableItem),
+    });
+    const identityItem = ocrCompleted.rapidCaptureQueue.items.find(
+      (candidate) => candidate.queueItemId === mutableItem.queueItemId,
+    );
+    assert.equal(identityItem.state, "identity_resolution_required");
+    assert.equal(calls.length, 0);
+
+    await service.action("bind-mathematical-grading-authority", {
+      ...identity,
+      mathematicalGradingAuthority: printedAuthority(),
+    });
+    await service.reportWorker;
+    await service.rapidMutationChain;
+
+    const ready = service.status().rapidCaptureQueue.items.find(
+      (candidate) => candidate.queueItemId === mutableItem.queueItemId,
+    );
+    assert.equal(calls.length, 1);
+    assert.equal(ready.ocr.state, "succeeded");
+    assert.equal(ready.state, "report_ready_needs_confirm");
+    const manifest = service.queuedManifests.get(mutableItem.queueItemId);
+    assert.equal(manifest.pendingOcrIdentityV1, undefined);
+    assert.equal(
+      manifest.mathematicalV1.gradingAuthority.cardIdentity.title,
+      "Mathematical station fixture",
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("EYES reject-all cannot silently keep centering; it forces one deterministic centering review pass and refreshes release state", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-eyes-reject-"));
+  const calls = [];
+  try {
+    const service = createService(outputDir, async (input) => {
+      calls.push(input);
+      return completedResult(input);
+    });
+    const release = installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "eyes-reject-math-report",
+      "eyes-reject",
+    );
+    await completeFixtureOcr(service, queued, "eyes-reject");
+
+    const item = service.rapidQueue.items.find(
+      (candidate) => candidate.queueItemId === queued.item.queueItemId,
+    );
+    const manifest = service.queuedManifests.get(item.queueItemId);
+    const candidates = [
+      {
+        side: "front",
+        candidateId: "front-default",
+        sha256: "a".repeat(64),
+        deterministicInputSha256: "1".repeat(64),
+        selectedByDefault: true,
+      },
+      {
+        side: "back",
+        candidateId: "back-default",
+        sha256: "b".repeat(64),
+        deterministicInputSha256: "2".repeat(64),
+        selectedByDefault: true,
+      },
+    ];
+    manifest.mathematicalV1.eyesCenteringCandidateLedger = {
+      candidates,
+      ledgerSha256: "c".repeat(64),
+    };
+    const sourceImageBindings = ["front", "back"].map((side) => ({
+      side,
+      checksumSha256: item.ocr.images.find((image) => image.side === side)
+        .checksumSha256,
+    }));
+    const candidateBindings = [...candidates]
+      .sort((left, right) =>
+        left.side.localeCompare(right.side) ||
+        left.candidateId.localeCompare(right.candidateId))
+      .map((candidate) => ({
+        side: candidate.side,
+        candidateId: candidate.candidateId,
+        checksumSha256: candidate.sha256,
+        deterministicInputSha256: candidate.deterministicInputSha256,
+      }));
+    const requestSha256 = sha256(Buffer.from(canonicalJson({
+      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      sourceImageBindings,
+      candidateBindings,
+      metricAuthority: "deterministic_calibrated_pixels_only",
+      coordinateAuthority: false,
+      maximumRemeasurementPasses: 2,
+    }), "utf8"));
+    const receipt = {
+      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      status: "observed",
+      requestedModel: "gpt-5.6-sol",
+      actualModel: "gpt-5.6-sol-2026-07-01",
+      requestSha256,
+      sourceImageBindings,
+      candidateBindings,
+      decisions: ["front", "back"].map((side) => ({
+        side,
+        decision: "reject_all",
+        candidateId: null,
+        confidence: 0.9,
+        rationale: "No supplied contour follows the true printed border.",
+      })),
+      metricAuthority: "deterministic_calibrated_pixels_only",
+      coordinateAuthority: false,
+      maximumRemeasurementPasses: 2,
+      providerElapsedMs: 250,
+    };
+
+    await service.applyQueuedEyesCenteringSelection(item, manifest, receipt);
+
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].forcedOperatorReviewElements, ["centering"]);
+    assert.equal(
+      manifest.mathematicalV1.eyesCenteringRemeasurementPassCount,
+      2,
+    );
+    assert.equal(item.state, "report_ready_needs_confirm");
+    assert.equal(release.callCount, 2);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("a late named EYES challenge reopens an already completed exact item for operator resolution", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-late-eyes-resolution-"));
   const calls = [];

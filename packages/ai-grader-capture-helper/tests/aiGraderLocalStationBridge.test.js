@@ -1133,7 +1133,9 @@ test("Card 2 reaches Capture Front while Card 1 exact TIFF-to-PNG promises are d
   const held = {};
   try {
     const { service } = configFor(outputDir);
-    service.enqueueRapidFinalization = () => {};
+    service.enqueueRapidFinalization = (queueItemId) => {
+      void service.observeRapidOcrEligibility(queueItemId);
+    };
     installSimulatedPublicCapture(service, {
       processing: (side, _manifest, packageDir) => new Promise((resolve) => {
         held[side] = async () => resolve(await processedNormalizedSide(side, packageDir));
@@ -1160,7 +1162,9 @@ test("Front-before-Back and immediate Back processing failures fail only the exa
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), `tenkings-${failedSide}-processing-failure-`));
     try {
       const { service } = configFor(outputDir);
-      service.enqueueRapidFinalization = () => {};
+      service.enqueueRapidFinalization = (queueItemId) => {
+        void service.observeRapidOcrEligibility(queueItemId);
+      };
       installSimulatedPublicCapture(service, {
         processing: (side, _manifest, packageDir) => side === failedSide
           ? Promise.reject(new Error(`intentional ${side} TIFF-to-PNG failure`))
@@ -1188,7 +1192,9 @@ test("Rapid OCR eligibility reconstructs normalized PNG paths from the productio
   let releaseBackProcessing;
   try {
     const { service } = configFor(outputDir);
-    service.enqueueRapidFinalization = () => {};
+    service.enqueueRapidFinalization = (queueItemId) => {
+      void service.observeRapidOcrEligibility(queueItemId);
+    };
     installSimulatedPublicCapture(service, {
       processing: (side, _manifest, packageDir) => side === "front"
         ? processedNormalizedSide(side, packageDir)
