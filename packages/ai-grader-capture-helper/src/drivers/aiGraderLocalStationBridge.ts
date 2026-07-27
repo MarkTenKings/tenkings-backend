@@ -114,6 +114,12 @@ import {
   type CardPlacementState,
 } from "./cardGeometry";
 import {
+  buildPreviewFrameStabilityFingerprint,
+  comparePreviewFrameStability,
+  type PreviewFrameStabilityFingerprint,
+} from "./previewFrameStability";
+import { runPreviewGeometryWorkerAnalysis } from "./previewGeometryWorker";
+import {
   cloneAiGraderCaptureTiming,
   createAiGraderCaptureTimingMetadata,
   recordAiGraderCaptureTimingEvent,
@@ -247,10 +253,12 @@ const ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT = 64;
 const ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const ATOMIC_CAPTURE_ASSERTION_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE = /(?:token|secret|bearer|authorization|presign|x-amz|localhost|(?:\d{1,3}\.){3}\d{1,3})/i;
-// The Basler preview runs at roughly 4-5 fps on the Dell. Geometry analysis is
-// latest-frame-only, so a 125 ms cadence can inspect every delivered frame
-// without building a queue while avoiding the former fixed half-second lag.
-const PREVIEW_GEOMETRY_THROTTLE_MS = 125;
+// Live video remains camera-rate. Two consecutive low-resolution stable frame
+// comparisons admit one authoritative full detector run in an isolated worker.
+const PREVIEW_GEOMETRY_THROTTLE_MS = 0;
+const PREVIEW_GEOMETRY_STABLE_FRAME_COUNT = 2;
+const PREVIEW_GEOMETRY_REFRESH_MS = 1_000;
+const PREVIEW_GEOMETRY_RETRY_MS = 500;
 const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
 const CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS = 10_000;
 const PREVIEW_JPEG_BUFFER_LIMIT_BYTES = 12 * 1024 * 1024;
@@ -1198,6 +1206,10 @@ export interface AiGraderLocalStationPreviewStatus {
       lastError?: string;
       detectorInvocationState?: "not_run" | "running" | "completed";
       lastOutcome?: CardGeometryMetadata["placementState"];
+      motionState: "observing" | "moving" | "stable";
+      stableFrameCount: number;
+      stableFrameCountRequired: number;
+      lastMotionAt?: string;
     };
     explicitManualOverlayAvailable: true;
     previewFramesPersisted: false;
@@ -1286,6 +1298,18 @@ interface AcknowledgedMathematicalCalibrationDisplayedFrameV1 extends Mathematic
 type ActiveMathematicalCalibrationCaptureAuthorizationV1 = MathematicalCalibrationCaptureAuthorizationV1;
 
 type AiGraderPreviewGeometryStatus = AiGraderLocalStationPreviewStatus["cardGeometry"];
+
+type AiGraderPreviewFrameCandidate = {
+  frame: Buffer;
+  frameIndex: number;
+  frameCapturedAt: string;
+  frameTimestampSource: "preview_capture_header" | "bridge_received";
+  side: CardGeometrySide;
+  sessionId: string;
+  sideEpoch: string;
+  frameId: string;
+  epoch: number;
+};
 
 export interface AiGraderLiveLightingProfile {
   enabled: boolean;
@@ -1572,6 +1596,7 @@ export type AiGraderLocalStationRealHardwareBoundary =
 
 export interface AiGraderLocalStationBridgeDependencies {
   detectPreviewCardGeometry?: typeof detectCardGeometryFromBuffer;
+  buildPreviewFrameStabilityFingerprint?: typeof buildPreviewFrameStabilityFingerprint;
   detectMathematicalCalibrationPreviewCheckerboard?: typeof detectMathematicalCalibrationPreviewCheckerboard;
   writeLightingFrames?: (
     frames: readonly LeimacIdmuWriteFrame[]
@@ -2105,6 +2130,9 @@ function defaultPreviewGeometryStatus(
       framesAnalyzed: 0,
       framesDroppedAsStale: 0,
       detectorInvocationState: "not_run",
+      motionState: "observing",
+      stableFrameCount: 0,
+      stableFrameCountRequired: PREVIEW_GEOMETRY_STABLE_FRAME_COUNT,
     },
     explicitManualOverlayAvailable: true,
     previewFramesPersisted: false,
@@ -5220,21 +5248,18 @@ export class AiGraderLocalStationBridgeService {
   private rapidMutationChain: Promise<void> = Promise.resolve();
   private operatorResolutionRerunClaims = new Map<string, string>();
   private activeQueueItemId?: string;
-  private previewGeometryPending?: {
-    frame: Buffer;
-    frameIndex: number;
-    frameCapturedAt: string;
-    frameTimestampSource: "preview_capture_header" | "bridge_received";
-    side: CardGeometrySide;
-    sessionId: string;
-    sideEpoch: string;
-    frameId: string;
-    epoch: number;
-  };
+  private previewGeometryPending?: AiGraderPreviewFrameCandidate;
+  private previewStabilityPending?: AiGraderPreviewFrameCandidate;
+  private previewStabilityAnalysisInFlight = false;
+  private previewStabilityBaseline?: PreviewFrameStabilityFingerprint;
+  private previewStableFrameCount = 0;
+  private previewMotionGeneration = 0;
+  private previewGeometryAnalyzedGeneration?: number;
+  private previewGeometryLastAcceptedFrameAtMs = 0;
+  private previewGeometryRetryAfterMs = 0;
   private previewGeometryAnalysisInFlight = false;
   private previewSensorPlaneCalibrationResolved = false;
   private previewSensorPlaneCalibration?: CardGeometrySensorPlaneCalibrationV1;
-  private previewGeometryTimer?: ReturnType<typeof setTimeout>;
   private previewGeometryLastStartedAtMs = 0;
   private previewGeometryEpoch = 0;
   private previewStreamSequence = 0;
@@ -6338,8 +6363,13 @@ export class AiGraderLocalStationBridgeService {
     this.previewGeometryEpoch += 1;
     this.previewObservations = [];
     this.previewGeometryPending = undefined;
-    if (this.previewGeometryTimer) clearTimeout(this.previewGeometryTimer);
-    this.previewGeometryTimer = undefined;
+    this.previewStabilityPending = undefined;
+    this.previewStabilityBaseline = undefined;
+    this.previewStableFrameCount = 0;
+    this.previewMotionGeneration = 0;
+    this.previewGeometryAnalyzedGeneration = undefined;
+    this.previewGeometryLastAcceptedFrameAtMs = 0;
+    this.previewGeometryRetryAfterMs = 0;
     this.previewGeometryLastStartedAtMs = 0;
     const sessionId = this.manifest.sessionId;
     const sideEpoch = buildPreviewSideEpoch(sessionId, side, this.previewGeometryEpoch);
@@ -7311,8 +7341,8 @@ export class AiGraderLocalStationBridgeService {
     if (!this.retainPreviewObservation(binding, frameId, frameCapturedAt)) return;
     const side = binding.side;
     const current = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
-    const stalePending = Boolean(this.previewGeometryPending);
-    this.previewGeometryPending = {
+    const stalePending = Boolean(this.previewStabilityPending);
+    this.previewStabilityPending = {
       frame,
       frameIndex,
       frameCapturedAt,
@@ -7333,23 +7363,172 @@ export class AiGraderLocalStationBridgeService {
         framesDroppedAsStale: current.analysis.framesDroppedAsStale + (stalePending ? 1 : 0),
       },
     };
-    this.pumpPreviewGeometryAnalysis();
+    this.pumpPreviewStabilityAnalysis();
+  }
+
+  private previewFrameCandidateIsCurrent(
+    pending: AiGraderPreviewFrameCandidate,
+  ): boolean {
+    return (
+      pending.epoch === this.previewGeometryEpoch &&
+      pending.sessionId === this.manifest.sessionId &&
+      pending.side === this.manifest.previewStatus.activeSide &&
+      pending.sideEpoch === this.manifest.previewStatus.sideEpoch
+    );
+  }
+
+  private pumpPreviewStabilityAnalysis() {
+    if (
+      this.previewStabilityAnalysisInFlight ||
+      !this.previewStabilityPending
+    ) return;
+    const pending = this.previewStabilityPending;
+    this.previewStabilityPending = undefined;
+    this.previewStabilityAnalysisInFlight = true;
+    const buildFingerprint =
+      this.dependencies.buildPreviewFrameStabilityFingerprint ??
+      buildPreviewFrameStabilityFingerprint;
+    void buildFingerprint(pending.frame).then((fingerprint) => {
+      if (!this.previewFrameCandidateIsCurrent(pending)) return;
+      const previous = this.previewStabilityBaseline;
+      this.previewStabilityBaseline = fingerprint;
+      const latest =
+        this.manifest.previewStatus.cardGeometry ??
+        defaultPreviewGeometryStatus(this.config);
+      if (!previous) {
+        this.previewStableFrameCount = 0;
+        this.manifest.previewStatus.cardGeometry = {
+          ...latest,
+          analysis: {
+            ...latest.analysis,
+            latestFramePending: Boolean(
+              this.previewStabilityPending || this.previewGeometryPending,
+            ),
+            motionState: "observing",
+            stableFrameCount: 0,
+          },
+        };
+        return;
+      }
+      const comparison = comparePreviewFrameStability(previous, fingerprint);
+      if (!comparison.stable) {
+        this.previewStableFrameCount = 0;
+        this.previewMotionGeneration += 1;
+        this.previewGeometryAnalyzedGeneration = undefined;
+        this.previewGeometryLastAcceptedFrameAtMs = 0;
+        this.previewGeometryPending = undefined;
+        delete latest[pending.side];
+        this.manifest.previewStatus.cardGeometry = {
+          ...latest,
+          analysis: {
+            ...latest.analysis,
+            latestFramePending: Boolean(this.previewStabilityPending),
+            detectorInvocationState: this.previewGeometryAnalysisInFlight
+              ? "running"
+              : "not_run",
+            lastOutcome: undefined,
+            motionState: "moving",
+            stableFrameCount: 0,
+            lastMotionAt: pending.frameCapturedAt,
+          },
+        };
+        return;
+      }
+      this.previewStableFrameCount = Math.min(
+        PREVIEW_GEOMETRY_STABLE_FRAME_COUNT,
+        this.previewStableFrameCount + 1,
+      );
+      this.manifest.previewStatus.cardGeometry = {
+        ...latest,
+        analysis: {
+          ...latest.analysis,
+          motionState: "stable",
+          stableFrameCount: this.previewStableFrameCount,
+        },
+      };
+      if (
+        this.previewStableFrameCount <
+          PREVIEW_GEOMETRY_STABLE_FRAME_COUNT ||
+        Date.now() < this.previewGeometryRetryAfterMs
+      ) return;
+      const frameCapturedAtMs = Date.parse(pending.frameCapturedAt);
+      const refreshDue =
+        this.previewGeometryAnalyzedGeneration !==
+          this.previewMotionGeneration ||
+        (
+          Number.isFinite(frameCapturedAtMs) &&
+          frameCapturedAtMs - this.previewGeometryLastAcceptedFrameAtMs >=
+            PREVIEW_GEOMETRY_REFRESH_MS
+        );
+      if (!refreshDue) return;
+      this.previewGeometryPending = pending;
+      this.pumpPreviewGeometryAnalysis();
+    }).catch(() => {
+      if (!this.previewFrameCandidateIsCurrent(pending)) return;
+      this.previewStabilityBaseline = undefined;
+      this.previewStableFrameCount = 0;
+      const latest =
+        this.manifest.previewStatus.cardGeometry ??
+        defaultPreviewGeometryStatus(this.config);
+      delete latest[pending.side];
+      this.manifest.previewStatus.cardGeometry = {
+        ...latest,
+        analysis: {
+          ...latest.analysis,
+          lastError:
+            "Preview motion analysis could not inspect the latest encoded frame.",
+          detectorInvocationState: "not_run",
+          lastOutcome: undefined,
+          motionState: "observing",
+          stableFrameCount: 0,
+        },
+      };
+    }).finally(() => {
+      this.previewStabilityAnalysisInFlight = false;
+      const latest = this.manifest.previewStatus.cardGeometry;
+      if (latest) {
+        latest.analysis.latestFramePending = Boolean(
+          this.previewStabilityPending || this.previewGeometryPending,
+        );
+      }
+      this.pumpPreviewStabilityAnalysis();
+    });
   }
 
   private pumpPreviewGeometryAnalysis() {
     if (this.previewGeometryAnalysisInFlight || !this.previewGeometryPending) return;
-    const waitMs = Math.max(0, this.previewGeometryLastStartedAtMs + PREVIEW_GEOMETRY_THROTTLE_MS - Date.now());
-    if (waitMs > 0) {
-      if (!this.previewGeometryTimer) {
-        this.previewGeometryTimer = setTimeout(() => {
-          this.previewGeometryTimer = undefined;
-          this.pumpPreviewGeometryAnalysis();
-        }, waitMs);
+    if (Date.now() < this.previewGeometryRetryAfterMs) {
+      this.previewGeometryPending = undefined;
+      const latest = this.manifest.previewStatus.cardGeometry;
+      if (latest) {
+        latest.analysis.latestFramePending = Boolean(
+          this.previewStabilityPending,
+        );
+      }
+      return;
+    }
+    const pendingCapturedAtMs = Date.parse(
+      this.previewGeometryPending.frameCapturedAt,
+    );
+    if (
+      this.previewGeometryAnalyzedGeneration ===
+        this.previewMotionGeneration &&
+      Number.isFinite(pendingCapturedAtMs) &&
+      pendingCapturedAtMs - this.previewGeometryLastAcceptedFrameAtMs <
+        PREVIEW_GEOMETRY_REFRESH_MS
+    ) {
+      this.previewGeometryPending = undefined;
+      const latest = this.manifest.previewStatus.cardGeometry;
+      if (latest) {
+        latest.analysis.latestFramePending = Boolean(
+          this.previewStabilityPending,
+        );
       }
       return;
     }
     const pending = this.previewGeometryPending;
     this.previewGeometryPending = undefined;
+    const motionGeneration = this.previewMotionGeneration;
     this.previewGeometryAnalysisInFlight = true;
     this.previewGeometryLastStartedAtMs = Date.now();
     const startedAt = new Date(this.previewGeometryLastStartedAtMs).toISOString();
@@ -7364,7 +7543,9 @@ export class AiGraderLocalStationBridgeService {
         detectorInvocationState: "running",
       },
     };
-    const detectPreviewCardGeometry = this.dependencies.detectPreviewCardGeometry ?? detectCardGeometryFromBuffer;
+    const detectPreviewCardGeometry =
+      this.dependencies.detectPreviewCardGeometry ??
+      runPreviewGeometryWorkerAnalysis;
     const sensorPlaneCalibration =
       this.resolvePreviewSensorPlaneCalibration();
     void detectPreviewCardGeometry({
@@ -7378,10 +7559,9 @@ export class AiGraderLocalStationBridgeService {
       ...(sensorPlaneCalibration ? { sensorPlaneCalibration } : {}),
     }).then((geometry) => {
       if (
-        pending.epoch !== this.previewGeometryEpoch
-        || pending.sessionId !== this.manifest.sessionId
-        || pending.side !== this.manifest.previewStatus.activeSide
-        || pending.sideEpoch !== this.manifest.previewStatus.sideEpoch
+        !this.previewFrameCandidateIsCurrent(pending) ||
+        motionGeneration !== this.previewMotionGeneration ||
+        this.previewStableFrameCount < PREVIEW_GEOMETRY_STABLE_FRAME_COUNT
       ) return;
       const completedAtMs = Date.now();
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
@@ -7421,6 +7601,11 @@ export class AiGraderLocalStationBridgeService {
           lastOutcome: boundGeometry.placementState,
         },
       };
+      this.previewGeometryAnalyzedGeneration = motionGeneration;
+      this.previewGeometryLastAcceptedFrameAtMs = Date.parse(
+        pending.frameCapturedAt,
+      );
+      this.previewGeometryRetryAfterMs = 0;
       if (boundGeometry.placementState === "ready") {
         this.recordCaptureTimingEvent(this.manifest, {
           id: "edge_detection_ready",
@@ -7435,6 +7620,8 @@ export class AiGraderLocalStationBridgeService {
         || pending.sideEpoch !== this.manifest.previewStatus.sideEpoch
       ) return;
       const completedAtMs = Date.now();
+      this.previewGeometryRetryAfterMs =
+        completedAtMs + PREVIEW_GEOMETRY_RETRY_MS;
       const latest = this.manifest.previewStatus.cardGeometry ?? defaultPreviewGeometryStatus(this.config);
       // Never retain a prior Ready outline after a decoder/detector failure.
       // The operator must see a fresh analyzed frame before capture can pass.
@@ -7455,7 +7642,9 @@ export class AiGraderLocalStationBridgeService {
       const latest = this.manifest.previewStatus.cardGeometry;
       if (latest) {
         latest.analysis.inFlight = false;
-        latest.analysis.latestFramePending = Boolean(this.previewGeometryPending);
+        latest.analysis.latestFramePending = Boolean(
+          this.previewStabilityPending || this.previewGeometryPending,
+        );
       }
       this.pumpPreviewGeometryAnalysis();
     });

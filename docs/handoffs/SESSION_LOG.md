@@ -28545,3 +28545,18 @@ By enabling Rip It Live, I confirm:
   - unauthenticated assignment, Live Rips collection, claim, and download API requests each returned `401`.
 - Planned handoff action: commit and merge these evidence-only handoff updates through protected `main`; allow the normal Vercel build with `RUN_DB_MIGRATIONS` absent, verify it skips migrations and reaches `Ready`, and make no restart.
 - The original dirty/conflicted AI Grader worktree remains untouched. The only unexecuted acceptance item is the real OBS-to-SMS-to-claim customer test because the authorized test phone/account value was not included in the conversation.
+
+## 2026-07-27 - Stillness-gated live-preview detector candidate
+
+- Started isolated branch `codex/ai-grader-stillness-preview-20260727` from exact merged/deployed/runtime commit `9203b90515da1fb491d05161327818adfdf6806f` for the owner-approved live-preview latency correction only. No push, merge, deployment, helper install/restart, Production mutation, capture/cancel, lighting command, calibration change, queue/report/database mutation, or hardware action occurred.
+- Preserved the single existing camera stream. Every preview frame now feeds a tiny `96 x 128` grayscale motion fingerprint that has no geometry, measurement, capture, or grading authority. Movement immediately invalidates any prior green result; two consecutive stable comparisons admit one latest-frame-only analysis.
+- The exact existing `live_preview_fast` geometry detector now runs outside the bridge event loop in an isolated worker thread. Its result is accepted only while the exact session, side, side epoch, frame identity, and motion generation remain current. Stable scenes refresh the same authoritative result once per second so the existing two-second freshness and capture gate remain unchanged.
+- The worker owns no camera, lighting, filesystem, queue, capture, calibration, or report state. No detector algorithm, contour threshold, normalized evidence, measurement, capture authorization, grading formula, OCR, EYES, or operator-resolution contract changed.
+- Verification passed: capture-helper/shared/simulator build; complete scoped bridge, card-geometry, stability, and worker regression suite `83/83`; explicit event-loop-progress regression during authoritative detection; movement invalidation and stillness re-authorization regression; and `git diff --check` with Windows line-ending notices only.
+- This remains a local undeployed candidate. A Dell camera-rate/stillness acceptance test is required after any separately authorized rollout before claiming measured real-world latency.
+
+### Planned Production action
+
+- Rebase the isolated stillness-gated preview candidate onto the current protected `origin/main`, preserving the owner's independently merged Live Rip work. Commit and push only the capture-helper preview worker/stability implementation, its focused tests, and this handoff record; merge one focused pull request and verify the exact Vercel Production deployment.
+- Before changing the Dell runtime, perform a fresh read-only preflight and require no active capture transition or capture lock, camera/preview ownership released, warm runner idle, and no queue mutation in progress. Preserve the owner's current unpublished review report unchanged. Build the exact merged helper commit, restart only through the protected launcher, and verify exact commit parity plus healthy token-gated local-only status before any owner test.
+- No capture/cancel, lighting command, physical-card operation, owner-resolution change, report publication/discard, calibration change, database/schema migration, credential/environment change, or unrelated Production mutation is part of this rollout.
