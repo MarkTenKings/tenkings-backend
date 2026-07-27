@@ -287,6 +287,24 @@ export type AiGraderOperatorElementResolutionSubmissionV1 =
         order: ["left", "right", "top", "bottom"];
         front: [number, number, number, number];
         back: [number, number, number, number];
+        segments?: {
+          coordinateFrame: "normalized_card_portrait_pixels";
+          widthPx: 1200;
+          heightPx: 1680;
+          order: ["left", "right", "top", "bottom"];
+          front: [
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+          ];
+          back: [
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+            AiGraderOperatorCenteringMeasurementSegmentV1,
+          ];
+        };
       };
     }
   | {
@@ -295,6 +313,12 @@ export type AiGraderOperatorElementResolutionSubmissionV1 =
       publicExplanation: string;
       internalReason: string;
     };
+
+export type AiGraderOperatorCenteringMeasurementSegmentV1 = {
+  margin: "left" | "right" | "top" | "bottom";
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+};
 
 export type AiGraderOperatorResolutionSubmissionV1 = {
   schemaVersion: "operator_resolution_submission_v1";

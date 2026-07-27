@@ -83,7 +83,33 @@ export interface FixedRigOperatorCenteringResolutionSubmissionV1 {
     order: typeof MM_ORDER;
     front: [number, number, number, number];
     back: [number, number, number, number];
+    segments?: FixedRigOperatorCenteringMeasurementSegmentsV1;
   };
+}
+
+export interface FixedRigOperatorCenteringMeasurementSegmentV1 {
+  margin: (typeof MM_ORDER)[number];
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}
+
+export interface FixedRigOperatorCenteringMeasurementSegmentsV1 {
+  coordinateFrame: "normalized_card_portrait_pixels";
+  widthPx: 1200;
+  heightPx: 1680;
+  order: typeof MM_ORDER;
+  front: [
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+  ];
+  back: [
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+    FixedRigOperatorCenteringMeasurementSegmentV1,
+  ];
 }
 
 export interface FixedRigOperatorScoredResolutionSubmissionV1 {
@@ -202,13 +228,104 @@ function exactMillimeters(value: unknown, label: string): number {
   return value;
 }
 
+function exactCoordinate(
+  value: unknown,
+  maximum: number,
+  label: string,
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value) ||
+      value < 0 || value > maximum) {
+    throw new Error(`${label} must be a finite normalized-card pixel coordinate.`);
+  }
+  return value;
+}
+
+function centeringMeasurementSegments(
+  value: unknown,
+  measured: Record<Side, [number, number, number, number]>,
+  cardDimensionsMm: { width: number; height: number },
+): FixedRigOperatorCenteringMeasurementSegmentsV1 {
+  if (!isRecord(value)) throw new Error("Centering measurement segments must be an exact object.");
+  exactKeys(
+    value,
+    ["coordinateFrame", "widthPx", "heightPx", "order", "front", "back"],
+    "Centering measurement segments",
+  );
+  if (value.coordinateFrame !== "normalized_card_portrait_pixels" ||
+      value.widthPx !== 1200 || value.heightPx !== 1680 ||
+      !Array.isArray(value.order) || value.order.length !== MM_ORDER.length ||
+      value.order.some((entry, index) => entry !== MM_ORDER[index])) {
+    throw new Error(
+      "Centering measurement segments require the exact canonical 1200x1680 normalized-card frame and margin order.",
+    );
+  }
+  const result = {} as Pick<
+    FixedRigOperatorCenteringMeasurementSegmentsV1,
+    "front" | "back"
+  >;
+  for (const side of ["front", "back"] as const) {
+    const raw = value[side];
+    if (!Array.isArray(raw) || raw.length !== MM_ORDER.length) {
+      throw new Error(`${side} centering requires exactly four measurement segments.`);
+    }
+    result[side] = raw.map((candidate, index) => {
+      const margin = MM_ORDER[index];
+      if (!isRecord(candidate)) {
+        throw new Error(`${side} ${margin} measurement segment must be exact.`);
+      }
+      exactKeys(candidate, ["margin", "start", "end"], `${side} ${margin} measurement segment`);
+      if (candidate.margin !== margin ||
+          !isRecord(candidate.start) || !isRecord(candidate.end)) {
+        throw new Error(`${side} ${margin} measurement segment has an invalid margin or point.`);
+      }
+      exactKeys(candidate.start, ["x", "y"], `${side} ${margin} segment start`);
+      exactKeys(candidate.end, ["x", "y"], `${side} ${margin} segment end`);
+      const start = {
+        x: exactCoordinate(candidate.start.x, 1200, `${side} ${margin} start x`),
+        y: exactCoordinate(candidate.start.y, 1680, `${side} ${margin} start y`),
+      };
+      const end = {
+        x: exactCoordinate(candidate.end.x, 1200, `${side} ${margin} end x`),
+        y: exactCoordinate(candidate.end.y, 1680, `${side} ${margin} end y`),
+      };
+      const horizontal = margin === "left" || margin === "right";
+      if ((horizontal && start.y !== end.y) || (!horizontal && start.x !== end.x)) {
+        throw new Error(`${side} ${margin} measurement segment must be perpendicular to its margin.`);
+      }
+      const pixels = Math.abs(horizontal ? end.x - start.x : end.y - start.y);
+      const segmentMm = pixels *
+        (horizontal ? cardDimensionsMm.width / 1200 : cardDimensionsMm.height / 1680);
+      if (pixels <= 0 || Math.abs(segmentMm - measured[side][index]) > 0.011) {
+        throw new Error(
+          `${side} ${margin} measurement segment does not reproduce its submitted millimeter value.`,
+        );
+      }
+      return { margin, start, end };
+    }) as FixedRigOperatorCenteringMeasurementSegmentsV1[typeof side];
+  }
+  return {
+    coordinateFrame: "normalized_card_portrait_pixels",
+    widthPx: 1200,
+    heightPx: 1680,
+    order: MM_ORDER,
+    front: result.front,
+    back: result.back,
+  };
+}
+
 function measurements(
   value: unknown,
   cardWidthMm: number,
   cardHeightMm: number,
 ): FixedRigOperatorCenteringResolutionSubmissionV1["measurements"] {
   if (!isRecord(value)) throw new Error("Centering measurements must be an exact object.");
-  exactKeys(value, ["unit", "order", "front", "back"], "Centering measurements");
+  exactKeys(
+    value,
+    value.segments === undefined
+      ? ["unit", "order", "front", "back"]
+      : ["unit", "order", "front", "back", "segments"],
+    "Centering measurements",
+  );
   if (value.unit !== "mm" || !Array.isArray(value.order) ||
       value.order.length !== MM_ORDER.length ||
       value.order.some((entry, index) => entry !== MM_ORDER[index])) {
@@ -228,7 +345,21 @@ function measurements(
     }
     result[side] = parsed;
   }
-  return { unit: "mm", order: MM_ORDER, front: result.front, back: result.back };
+  return {
+    unit: "mm",
+    order: MM_ORDER,
+    front: result.front,
+    back: result.back,
+    ...(value.segments === undefined
+      ? {}
+      : {
+          segments: centeringMeasurementSegments(
+            value.segments,
+            result,
+            { width: cardWidthMm, height: cardHeightMm },
+          ),
+        }),
+  };
 }
 
 export function parseFixedRigOperatorResolutionSubmissionV1(

@@ -28804,3 +28804,25 @@ By enabling Rip It Live, I confirm:
 - Allow the normal GitHub/Vercel Production deployment with migrations disabled. Verify the public and exact-deployment station assets.
 - Before Dell activation, perform a fresh authenticated read-only idle gate. Require no active card transition or capture lock, camera/preview ownership released, the warm runner idle, and capture/processing/report/active Rapid queues empty.
 - Only after that idle gate, advance the clean dedicated runtime to the exact merged functional commit, build it, update only the protected launcher commit pin, and restart only the Dell helper. Verify exact commit parity plus healthy token-gated local-only `production_fast` status without operating camera/lighting, starting/capturing/canceling a card, altering calibration, submitting owner resolution, publishing/discarding, or mutating queue/report/database/storage.
+
+## 2026-07-27 - Centering ruler responsive viewer and durable overlay candidate
+
+- Owner acceptance of the first centering ruler proved the measurement workflow but exposed three contained UI defects: Front and Back were forced into two 1200-CSS-pixel columns, the nominal zoom scale was tied directly to source pixels instead of panel width, and the first click/live pointer had no visible ruler orientation.
+- The centering workspace now stacks Front and Back in separate full-width panels. `1x` is the panel's fit width and `1.25x` through `4x` enlarge that same canonical image inside the existing scrollable viewport.
+- The first click remains visible as a gold anchor. Pointer movement draws a live perpendicular gold ruler with a real-time millimeter label; the second click fixes cyan endpoints, line, margin name, and millimeter label. Completed left/right/top/bottom lines remain visible for both sides.
+- Complete ruler geometry is optionally embedded in the existing centering operator-resolution measurements as eight exact canonical `1200x1680` normalized-card segments. The helper validates frame, order, bounds, perpendicular axis, and reproduction of the existing millimeter values. The segments add no score, grade, confidence, coordinate-detection, or workflow authority and add no new gate; submissions without segments retain the previous millimeter-only behavior.
+- The existing deterministic physical-margin centering calculation continues to use only the eight submitted millimeter values. When the optional segments are present, those exact endpoints replace only the four presentation lines per side. The existing final centering-overlay generator now renders endpoint markers plus adjacent millimeter labels for automatic and operator-resolved measurements alike.
+- No camera, preview, capture, OCR, EYES selection, detector, centering formula, threshold, queue state, database, storage, publication, calibration, other subgrade, or unrelated product behavior changed.
+- Focused validation passed:
+  - capture-helper TypeScript build;
+  - strict operator-resolution authority suite `8/8`;
+  - exact operator-centering segment-to-report orchestration `1/1`;
+  - Mathematical station suite `21/21`;
+  - optimized Next.js Production build;
+  - `git diff --check` with Windows line-ending notices only.
+
+### Planned authorized Production action
+
+- Commit and push only the centering viewer/ruler UI, optional exact segment binding, final centering-overlay presentation, focused regressions, and this audit entry. Open one focused protected PR and merge after required checks.
+- Allow the normal GitHub/Vercel Production deployment with migrations disabled, then verify the public and exact-deployment station assets.
+- Do not mutate, resolve, publish, discard, or reuse the owner's existing queue/session/report. Because durable segment handling also changes the local helper, do not update or restart the Dell helper while that historical card remains active. After the owner clears it, require a fresh read-only idle gate before advancing and restarting only the helper.

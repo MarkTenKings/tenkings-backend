@@ -514,9 +514,16 @@ function centeringOverlaySvg(
     : "";
   const lines = side.measurementLines.map((line, index) => {
     const y = 34 + index * 24;
+    const labelX = (line.start.x + line.end.x) / 2;
+    const labelY = (line.start.y + line.end.y) / 2 - 14;
     return `<g data-measurement-id="${xmlText(line.id)}">` +
       `<line x1="${svgNumber(line.start.x)}" y1="${svgNumber(line.start.y)}" ` +
       `x2="${svgNumber(line.end.x)}" y2="${svgNumber(line.end.y)}" stroke="#00e5ff" stroke-width="3"/>` +
+      `<circle cx="${svgNumber(line.start.x)}" cy="${svgNumber(line.start.y)}" r="7" fill="#00e5ff" stroke="#061014" stroke-width="3"/>` +
+      `<circle cx="${svgNumber(line.end.x)}" cy="${svgNumber(line.end.y)}" r="7" fill="#00e5ff" stroke="#061014" stroke-width="3"/>` +
+      `<text x="${svgNumber(labelX)}" y="${svgNumber(labelY)}" text-anchor="middle" ` +
+      `font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#ffffff" stroke="#000000" stroke-width="4" paint-order="stroke">` +
+      `${xmlText(line.side)} ${line.millimeters.toFixed(2)} mm</text>` +
       `<text x="12" y="${y}" font-family="Arial,sans-serif" font-size="17" fill="#ffffff">` +
       `${xmlText(line.side)} ${line.pixels.toFixed(3)} px = ${line.millimeters.toFixed(4)} mm</text></g>`;
   }).join("");

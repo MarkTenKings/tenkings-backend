@@ -4150,7 +4150,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       const measuredSide = (side: Side) => {
         const [left, right, top, bottom] = centeringResolution.measurements[side];
         const source = originalSides[side];
-        return buildFixedRigPhysicalMarginCenteringSideV1({
+        const result = buildFixedRigPhysicalMarginCenteringSideV1({
           side,
           calibration: input.calibration.finalizedProfile,
           outerCutContour:
@@ -4168,6 +4168,24 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
             source.normalizedReference,
           ],
         });
+        const submittedSegments = centeringResolution.measurements.segments?.[side];
+        if (result.status !== "computed" || !submittedSegments) return result;
+        const submittedMeasurements = { left, right, top, bottom };
+        return {
+          ...result,
+          measurementLines: submittedSegments.map((segment) => ({
+            id: `centering-margin-${segment.margin}`,
+            side: segment.margin,
+            start: { ...segment.start },
+            end: { ...segment.end },
+            pixels: Math.abs(
+              segment.margin === "left" || segment.margin === "right"
+                ? segment.end.x - segment.start.x
+                : segment.end.y - segment.start.y,
+            ),
+            millimeters: submittedMeasurements[segment.margin],
+          })),
+        };
       };
       sides = {
         front: { ...front, centering: measuredSide("front") },
