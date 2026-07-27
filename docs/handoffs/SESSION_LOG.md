@@ -28726,3 +28726,16 @@ By enabling Rip It Live, I confirm:
 - PR `#186` merged as functional browser commit `42b13ea8f0980208b5584202cb3281c46c8c0221`.
 - GitHub Production deployment `5628981729` succeeded. The public and exact-deployment station bundles are byte-identical: `station-4afc46863cac35b2.js`, `306,641` bytes, SHA-256 `7981a5ee3384011b9b994978e3fbf6a62d710af37e4df5cbf475390b60405830`.
 - No Dell helper update/restart or card, queue, report, database, storage, calibration, capture, identity-resolution, publication, discard, or hardware mutation was performed.
+
+## 2026-07-27 - Identity-review active-review sanitizer correction candidate
+
+- The owner hard-refreshed Production and `Open for Review` stopped with `Rapid Capture review activation returned a different queue/session/report identity`.
+- Fresh authenticated read-only helper evidence proves the helper did not return a different card. Its `activeQueueItemId`, `activeReview`, and sole queue item all match exact queue `ai-grader-browser-station-session-2026-07-27T191649350Z-session-rapid-card`, session `ai-grader-browser-station-session-2026-07-27T191649350Z-session`, and report `ai-grader-906a4ecf-3917-46e9-88ce-c5931767fb44`; the item remains `identity_resolution_required` with succeeded OCR.
+- Root cause is confined to the browser display sanitizer. It rejected any active review with `latestReport.exists=false` unless a Mathematical execution review existed. That omitted the normal OCR identity-confirmation checkpoint, where the final report correctly does not exist yet. The outer exact-item validator already recognized `identity_resolution_required`, but it never received the candidate active review because the inner sanitizer had removed it first.
+- The correction defers the unmaterialized-report decision to the existing exact-item validator and permits it only for exact identity-resolution or Mathematical review states. A normal non-pending item with `latestReport.exists=false`, a mismatched identity, failed OCR, or failed item remains rejected.
+- The focused sanitizer regression passes `46/46`, and the patched sanitizer was replayed read-only against the exact live helper response: it preserves the exact active review and still reports `latestReport.exists=false`.
+
+### Planned authorized Production action
+
+- Run only the changed frontend build/type check and `git diff --check`, then merge the two-line sanitizer correction, its focused regression, and this audit record through one focused protected-main PR.
+- Verify the exact Production deployment and station bundle. This is browser-only; do not restart the Dell helper or mutate/discard the preserved card, queue, report, OCR result, database, storage, calibration, capture, publication, or hardware state.

@@ -746,6 +746,66 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
   assert.equal(queue.activeReview?.manifest.productionRelease?.gradingSessionId, "session-1");
 });
 
+test("exact OCR identity review remains active before the final report is materialized", () => {
+  const pendingIdentityReview = {
+    activeQueueItemId: "queue-identity-review",
+    activeReview: {
+      queueItemId: "queue-identity-review",
+      gradingSessionId: "session-identity-review",
+      reportId: "report-identity-review",
+      manifest: {
+        currentStep: "prompt_flip_card",
+        latestReport: { reportId: "report-identity-review", exists: false },
+      },
+    },
+    items: [{
+      queueItemId: "queue-identity-review",
+      sessionId: "session-identity-review",
+      reportId: "report-identity-review",
+      state: "identity_resolution_required",
+      queuedAt: "2026-07-27T19:18:50.000Z",
+      updatedAt: "2026-07-27T19:18:51.000Z",
+      history: [],
+      ocr: {
+        state: "succeeded",
+        updatedAt: "2026-07-27T19:18:51.000Z",
+        attemptCount: 1,
+        attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+        eligibleAt: "2026-07-27T19:18:49.000Z",
+        startedAt: "2026-07-27T19:18:50.000Z",
+        completedAt: "2026-07-27T19:18:51.000Z",
+        images: ["front", "back"].map((side) => ({
+          side,
+          artifactRole: "normalized_card",
+          fileName: `${side}-normalized-card.png`,
+          mimeType: "image/png",
+          checksumSha256: side === "front" ? "a".repeat(64) : "b".repeat(64),
+          byteSize: 1024,
+          widthPx: 1200,
+          heightPx: 1680,
+        })),
+        result: {
+          queueItemId: "queue-identity-review",
+          gradingSessionId: "session-identity-review",
+          reportId: "report-identity-review",
+          status: "prefill_ready",
+        },
+      },
+    }],
+  };
+
+  const sanitized = sanitizeAiGraderRapidCaptureQueue(pendingIdentityReview);
+  assert.equal(sanitized.activeQueueItemId, "queue-identity-review");
+  assert.equal(sanitized.activeReview?.queueItemId, "queue-identity-review");
+  assert.equal(sanitized.activeReview?.gradingSessionId, "session-identity-review");
+  assert.equal(sanitized.activeReview?.reportId, "report-identity-review");
+  assert.equal(sanitized.activeReview?.manifest.latestReport.exists, false);
+
+  const nonPending = structuredClone(pendingIdentityReview);
+  nonPending.items[0].state = "report_ready_needs_confirm";
+  assert.equal(sanitizeAiGraderRapidCaptureQueue(nonPending).activeReview, undefined);
+});
+
 test("valid one-side normalized evidence remains waiting while the exact Back PNG is still processing", () => {
   const queue = sanitizeAiGraderRapidCaptureQueue({
     items: [{
