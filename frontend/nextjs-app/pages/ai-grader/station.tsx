@@ -966,6 +966,8 @@ export default function AiGraderStationPage() {
   const reviewDraftCacheRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
   const preCaptureDraftBySessionRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
   const activeReviewIdentityRef = useRef<string | null>(null);
+  const mathematicalAuthorityReviewRef = useRef<HTMLElement | null>(null);
+  const revealedIdentityReviewRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
   const queuedOcrRunningRef = useRef<Set<string>>(new Set());
   const eyesCenteringRunningRef = useRef<Set<string>>(new Set());
@@ -1076,6 +1078,10 @@ export default function AiGraderStationPage() {
         item.sessionId === activeReview.gradingSessionId &&
         item.reportId === activeReview.reportId)
     : undefined;
+  const activeReviewQueueItemId = activeReview?.queueItemId;
+  const activeReviewGradingSessionId = activeReview?.gradingSessionId;
+  const activeReviewReportId = activeReview?.reportId;
+  const activeReviewItemState = activeReviewItem?.state;
   const activeReviewManifest = activeReviewItem ? activeReview?.manifest : undefined;
   const mathematicalExecution = activeReviewManifest?.mathematicalV1?.execution;
   const operatorResolutionRequest: AiGraderOperatorResolutionRequestV1 | undefined =
@@ -2994,6 +3000,39 @@ export default function AiGraderStationPage() {
     activeReview?.gradingSessionId,
     activeReview?.reportId,
     activeReviewItem?.ocr.updatedAt,
+  ]);
+
+  useEffect(() => {
+    if (
+      !activeReviewQueueItemId ||
+      !activeReviewGradingSessionId ||
+      !activeReviewReportId ||
+      activeReviewItemState !== "identity_resolution_required"
+    ) return;
+    const identityKey = [
+      activeReviewQueueItemId,
+      activeReviewGradingSessionId,
+      activeReviewReportId,
+    ].join(":");
+    if (revealedIdentityReviewRef.current === identityKey) return;
+    revealedIdentityReviewRef.current = identityKey;
+    const animationFrame = window.requestAnimationFrame(() => {
+      const review = mathematicalAuthorityReviewRef.current;
+      if (!review) return;
+      review.scrollIntoView({ behavior: "smooth", block: "start" });
+      const firstUnresolved = Array.from(
+        review.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+          "input[required]:not([disabled]), select[required]:not([disabled])",
+        ),
+      ).find((control) => !control.value.trim());
+      (firstUnresolved ?? review).focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [
+    activeReviewQueueItemId,
+    activeReviewGradingSessionId,
+    activeReviewReportId,
+    activeReviewItemState,
   ]);
 
   const signInForProduction = async () => {
@@ -6502,7 +6541,16 @@ export default function AiGraderStationPage() {
             </div>
             {selectedGradingContract === "mathematical_calibration_v1" ||
             status.gradingContract === "mathematical_calibration_v1" ? (
-              <section className="mathematical-authority">
+              <section
+                ref={mathematicalAuthorityReviewRef}
+                className={activeReviewItem?.state === "identity_resolution_required"
+                  ? "mathematical-authority active-review"
+                  : "mathematical-authority"}
+                tabIndex={-1}
+                aria-label={activeReviewItem?.state === "identity_resolution_required"
+                  ? "Active card identity review"
+                  : "Card information"}
+              >
                 <div className="capture-settings-head">
                   <div>
                     <p className="eyebrow">Card Information</p>
@@ -8931,6 +8979,13 @@ export default function AiGraderStationPage() {
           border: 1px solid rgba(224, 189, 108, 0.28);
           border-radius: 8px;
           background: rgba(224, 189, 108, 0.055);
+          scroll-margin-top: 16px;
+        }
+        .mathematical-authority.active-review {
+          border-color: rgba(224, 189, 108, 0.82);
+          background: rgba(224, 189, 108, 0.11);
+          box-shadow: 0 0 0 2px rgba(224, 189, 108, 0.16);
+          outline: none;
         }
         .mathematical-identity-grid,
         .mathematical-profile-grid {

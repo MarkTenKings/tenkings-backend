@@ -350,6 +350,22 @@ test("Mathematical review activation accepts V1 review states without weakening 
   );
 });
 
+test("OCR identity review activation reveals and focuses the existing Card Information form", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(source, /const mathematicalAuthorityReviewRef = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(source, /const revealedIdentityReviewRef = useRef<string \| null>\(null\)/);
+  assert.match(source, /activeReviewItemState !== "identity_resolution_required"/);
+  assert.match(source, /revealedIdentityReviewRef\.current === identityKey/);
+  assert.match(source, /mathematicalAuthorityReviewRef\.current/);
+  assert.match(source, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+  assert.match(source, /querySelectorAll<HTMLInputElement \| HTMLSelectElement>/);
+  assert.match(source, /\(firstUnresolved \?\? review\)\.focus\(\{ preventScroll: true \}\)/);
+  assert.match(source, /window\.cancelAnimationFrame\(animationFrame\)/);
+  assert.match(source, /ref=\{mathematicalAuthorityReviewRef\}/);
+  assert.match(source, /"mathematical-authority active-review"/);
+  assert.match(source, /aria-label=\{activeReviewItem\?\.state === "identity_resolution_required"/);
+});
+
 test("queued Mathematical review state and assets bind to the exact activated queue identity", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   const reviewStateStart = source.indexOf("const activeReview = status.rapidCaptureQueue.activeReview;");
