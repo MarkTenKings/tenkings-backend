@@ -8,6 +8,9 @@ export const PREVIEW_FRAME_STABILITY_HEIGHT = 128;
 const CHANGED_PIXEL_DELTA = 6;
 const MAX_STABLE_MEAN_ABSOLUTE_DELTA = 0.85;
 const MAX_STABLE_CHANGED_PIXEL_FRACTION = 0.012;
+const MIN_PHOTOMETRIC_VARIANCE = 1e-6;
+const MIN_PHOTOMETRIC_SCALE = 0.5;
+const MAX_PHOTOMETRIC_SCALE = 2;
 
 export interface PreviewFrameStabilityFingerprint {
   version: typeof PREVIEW_FRAME_STABILITY_VERSION;
@@ -77,10 +80,37 @@ export function comparePreviewFrameStability(
 ): PreviewFrameStabilityComparison {
   verifyFingerprint(previous);
   verifyFingerprint(current);
+  let previousTotal = 0;
+  let currentTotal = 0;
+  for (let index = 0; index < current.pixels.length; index += 1) {
+    previousTotal += previous.pixels[index];
+    currentTotal += current.pixels[index];
+  }
+  const previousMean = previousTotal / previous.pixels.length;
+  const currentMean = currentTotal / current.pixels.length;
+  let previousVariance = 0;
+  let covariance = 0;
+  for (let index = 0; index < current.pixels.length; index += 1) {
+    const previousCentered = previous.pixels[index] - previousMean;
+    previousVariance += previousCentered * previousCentered;
+    covariance += previousCentered * (current.pixels[index] - currentMean);
+  }
+  const photometricScale = Math.min(
+    MAX_PHOTOMETRIC_SCALE,
+    Math.max(
+      MIN_PHOTOMETRIC_SCALE,
+      previousVariance > MIN_PHOTOMETRIC_VARIANCE
+        ? covariance / previousVariance
+        : 1,
+    ),
+  );
+  const photometricOffset = currentMean - photometricScale * previousMean;
   let absoluteDelta = 0;
   let changedPixels = 0;
   for (let index = 0; index < current.pixels.length; index += 1) {
-    const delta = Math.abs(current.pixels[index] - previous.pixels[index]);
+    const alignedPrevious =
+      photometricScale * previous.pixels[index] + photometricOffset;
+    const delta = Math.abs(current.pixels[index] - alignedPrevious);
     absoluteDelta += delta;
     if (delta >= CHANGED_PIXEL_DELTA) changedPixels += 1;
   }

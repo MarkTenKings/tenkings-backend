@@ -49,3 +49,23 @@ test("tiny stability fingerprint distinguishes a stopped card from meaningful mo
   assert.ok(moving.meanAbsoluteDelta > stopped.meanAbsoluteDelta);
   assert.ok(moving.changedPixelFraction > stopped.changedPixelFraction);
 });
+
+test("tiny stability fingerprint ignores bounded whole-frame lighting variation", async () => {
+  const stationary = await testFrame(200);
+  const lightingShifted = await sharp(stationary)
+    .linear(1.02, 2)
+    .jpeg({ quality: 90 })
+    .toBuffer();
+  const moved = await testFrame(230);
+  const movedLightingShifted = await sharp(moved)
+    .linear(1.02, 2)
+    .jpeg({ quality: 90 })
+    .toBuffer();
+
+  const first = await buildPreviewFrameStabilityFingerprint(stationary);
+  const relit = await buildPreviewFrameStabilityFingerprint(lightingShifted);
+  const shifted = await buildPreviewFrameStabilityFingerprint(movedLightingShifted);
+
+  assert.equal(comparePreviewFrameStability(first, relit).stable, true);
+  assert.equal(comparePreviewFrameStability(first, shifted).stable, false);
+});
