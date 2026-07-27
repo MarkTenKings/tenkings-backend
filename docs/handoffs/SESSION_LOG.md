@@ -28649,3 +28649,24 @@ By enabling Rip It Live, I confirm:
 - Only the Dell desktop helper was stopped. Loopback port `47652` reached zero listeners before restart. Restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-required, `production_fast`, calibration activation configured for `fixed-rig-dell-v1`, sessionless `start_new_card`, preview `not_started`, camera ownership `idle`, no active transition, capture lock clear, warm runner idle, and capture/processing/report/Rapid queues all empty. Runtime HEAD equals `origin/main` and the runtime worktree is clean.
 - No camera, lighting, capture/cancel, calibration, identity/owner-resolution, publication/discard, report/database/storage, NFC, inventory, or unrelated hardware/product action occurred. The failed acceptance card was not reused. The only remaining step is the owner's next fresh corrected Production acceptance card.
+
+## 2026-07-27 - Preview contour flicker surgical corrective candidate
+
+- The owner tested the corrected Production runtime in exact session `ai-grader-browser-station-session-2026-07-27T180654894Z-session` and report `ai-grader-3a65db1a-96c4-477c-a130-aa4cd0253daf`. Authoritative contour detection now runs and returns the correct green card outline, but the outline intermittently disappears for roughly one second while the physical card remains stopped, then returns without operator motion. The session/report remain preserved and unmodified.
+- Read-only live telemetry and direct UI observation proved that the isolated authoritative geometry worker remains healthy. The flicker occurs earlier: ordinary Basler preview photometric variation crosses the lightweight `96x128` grayscale motion threshold for one sample, and the bridge immediately deletes the last accepted geometry result. Two later stable samples rerun the authoritative worker and restore the same contour.
+- The correction is confined to the preview motion gate and its tests. The tiny-frame comparator removes one bounded whole-frame affine brightness/contrast shift before applying the existing residual-motion thresholds. The bridge now requires two consecutive moving comparisons before invalidating an accepted contour, while still requiring two consecutive stable comparisons before authoritative detection can run.
+- A single noisy or relit preview sample therefore cannot erase the green contour. Sustained spatial movement still clears it after two preview comparisons and increments the same motion-generation binding before any new authoritative result can be accepted. No detector coordinates, contour thresholds, capture authority, calibration, camera/lighting lifecycle, OCR, EYES, deterministic measurement, grading, identity, queue, report, database, or storage behavior changed.
+- Validation passed:
+  - capture-helper TypeScript build;
+  - full station bridge lifecycle/queue/capture/preview regression file `44/44`;
+  - tiny-frame stability suite `2/2`, including stopped-card whole-frame relighting and relit spatial movement;
+  - focused contour-retention regression proving one transient unstable frame retains geometry, consecutive real movement clears it, and renewed stillness restores authoritative geometry;
+  - `git diff --check` with Windows line-ending notices only.
+- No Production code, helper runtime, camera/lighting hardware, active card, queue, report, database, storage, calibration, owner action, deployment, merge, or protected launcher has been changed during diagnosis and validation.
+
+### Planned authorized Production action
+
+- Commit and push only the preview motion comparator, the two-sample contour invalidation hysteresis, their regressions, and this audit record. Open one focused pull request, require normal protected checks, and merge only when they pass.
+- Allow and verify the normal GitHub/Vercel Production deployment with migrations disabled. This helper-only correction is not expected to alter the browser station bundle.
+- Before Dell activation, perform a fresh authenticated read-only gate. Preserve the current acceptance session/report, require preview/camera ownership to be released, no active transition or capture lock, the warm runner idle, and capture/processing/report/Rapid queues empty.
+- Only after that idle gate, build the exact merged commit in the clean dedicated runtime, update only the protected launcher commit pin, stop and restart only the Dell helper, and verify exact commit parity plus healthy token-gated local-only `production_fast` status. Do not operate camera/lighting hardware, capture/cancel a card, submit identity or owner resolution, publish/discard, alter calibration, or mutate queue/report/database/storage.

@@ -258,9 +258,11 @@ const ATOMIC_CAPTURE_IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/
 const ATOMIC_CAPTURE_ASSERTION_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE = /(?:token|secret|bearer|authorization|presign|x-amz|localhost|(?:\d{1,3}\.){3}\d{1,3})/i;
 // Live video remains camera-rate. Two consecutive low-resolution stable frame
-// comparisons admit one authoritative full detector run in an isolated worker.
+// comparisons admit one authoritative full detector run in an isolated worker;
+// two consecutive moving comparisons invalidate an accepted result.
 const PREVIEW_GEOMETRY_THROTTLE_MS = 0;
 const PREVIEW_GEOMETRY_STABLE_FRAME_COUNT = 2;
+const PREVIEW_GEOMETRY_MOVING_FRAME_COUNT = 2;
 const PREVIEW_GEOMETRY_REFRESH_MS = 1_000;
 const PREVIEW_GEOMETRY_RETRY_MS = 500;
 const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
@@ -5478,6 +5480,7 @@ export class AiGraderLocalStationBridgeService {
   private previewStabilityAnalysisInFlight = false;
   private previewStabilityBaseline?: PreviewFrameStabilityFingerprint;
   private previewStableFrameCount = 0;
+  private previewMovingFrameCount = 0;
   private previewMotionGeneration = 0;
   private previewGeometryAnalyzedGeneration?: number;
   private previewGeometryLastAcceptedFrameAtMs = 0;
@@ -6596,6 +6599,7 @@ export class AiGraderLocalStationBridgeService {
     this.previewStabilityPending = undefined;
     this.previewStabilityBaseline = undefined;
     this.previewStableFrameCount = 0;
+    this.previewMovingFrameCount = 0;
     this.previewMotionGeneration = 0;
     this.previewGeometryAnalyzedGeneration = undefined;
     this.previewGeometryLastAcceptedFrameAtMs = 0;
@@ -7621,12 +7625,13 @@ export class AiGraderLocalStationBridgeService {
     void buildFingerprint(pending.frame).then((fingerprint) => {
       if (!this.previewFrameCandidateIsCurrent(pending)) return;
       const previous = this.previewStabilityBaseline;
-      this.previewStabilityBaseline = fingerprint;
       const latest =
         this.manifest.previewStatus.cardGeometry ??
         defaultPreviewGeometryStatus(this.config);
       if (!previous) {
+        this.previewStabilityBaseline = fingerprint;
         this.previewStableFrameCount = 0;
+        this.previewMovingFrameCount = 0;
         this.manifest.previewStatus.cardGeometry = {
           ...latest,
           analysis: {
@@ -7643,6 +7648,26 @@ export class AiGraderLocalStationBridgeService {
       const comparison = comparePreviewFrameStability(previous, fingerprint);
       if (!comparison.stable) {
         this.previewStableFrameCount = 0;
+        this.previewMovingFrameCount = Math.min(
+          PREVIEW_GEOMETRY_MOVING_FRAME_COUNT,
+          this.previewMovingFrameCount + 1,
+        );
+        if (
+          this.previewMovingFrameCount <
+          PREVIEW_GEOMETRY_MOVING_FRAME_COUNT
+        ) {
+          this.manifest.previewStatus.cardGeometry = {
+            ...latest,
+            analysis: {
+              ...latest.analysis,
+              latestFramePending: Boolean(this.previewStabilityPending),
+              motionState: "observing",
+              stableFrameCount: 0,
+            },
+          };
+          return;
+        }
+        this.previewStabilityBaseline = fingerprint;
         this.previewMotionGeneration += 1;
         this.previewGeometryAnalyzedGeneration = undefined;
         this.previewGeometryLastAcceptedFrameAtMs = 0;
@@ -7664,6 +7689,8 @@ export class AiGraderLocalStationBridgeService {
         };
         return;
       }
+      this.previewStabilityBaseline = fingerprint;
+      this.previewMovingFrameCount = 0;
       this.previewStableFrameCount = Math.min(
         PREVIEW_GEOMETRY_STABLE_FRAME_COUNT,
         this.previewStableFrameCount + 1,
@@ -7697,6 +7724,7 @@ export class AiGraderLocalStationBridgeService {
       if (!this.previewFrameCandidateIsCurrent(pending)) return;
       this.previewStabilityBaseline = undefined;
       this.previewStableFrameCount = 0;
+      this.previewMovingFrameCount = 0;
       const latest =
         this.manifest.previewStatus.cardGeometry ??
         defaultPreviewGeometryStatus(this.config);

@@ -2048,7 +2048,7 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-consecutive-preview-restore-"));
   const lightingWrites = [];
   let syntheticReady;
-  let fingerprintFill = 32;
+  let fingerprintShift = 0;
   try {
     const { service } = configFor(outputDir, {
       writeLightingFrames: async (frames) => {
@@ -2066,7 +2066,13 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
         version: "ten-kings-preview-frame-stability-v1",
         width: 96,
         height: 128,
-        pixels: Buffer.alloc(96 * 128, fingerprintFill),
+        pixels: Buffer.from(
+          Array.from(
+            { length: 96 * 128 },
+            (_, index) =>
+              ((index % 96) + fingerprintShift) % 96 < 48 ? 32 : 220,
+          ),
+        ),
       }),
     });
     service.enqueueRapidFinalization = () => {};
@@ -2145,14 +2151,55 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
     assert.equal(manifest.previewStatus.cardGeometry.analysis.lastOutcome, "ready");
     assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
 
-    fingerprintFill = 220;
-    service.notePreviewFrame(4, binding, "card-2-back-moving-frame", request.captureTriggerAt);
+    fingerprintShift = 24;
+    service.notePreviewFrame(4, binding, "card-2-back-motion-candidate-frame", request.captureTriggerAt);
     service.queuePreviewGeometryAnalysis(
       Buffer.from([0xff, 0xd8, 4, 0xff, 0xd9]),
       4,
       request.captureTriggerAt,
       "preview_capture_header",
-      "card-2-back-moving-frame",
+      "card-2-back-motion-candidate-frame",
+      binding,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.motionState, "observing");
+
+    fingerprintShift = 0;
+    service.notePreviewFrame(5, binding, "card-2-back-transient-recovered-frame", request.captureTriggerAt);
+    service.queuePreviewGeometryAnalysis(
+      Buffer.from([0xff, 0xd8, 5, 0xff, 0xd9]),
+      5,
+      request.captureTriggerAt,
+      "preview_capture_header",
+      "card-2-back-transient-recovered-frame",
+      binding,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
+    assert.equal(manifest.previewStatus.cardGeometry.analysis.motionState, "stable");
+
+    fingerprintShift = 24;
+    service.notePreviewFrame(6, binding, "card-2-back-moving-frame-1", request.captureTriggerAt);
+    service.queuePreviewGeometryAnalysis(
+      Buffer.from([0xff, 0xd8, 6, 0xff, 0xd9]),
+      6,
+      request.captureTriggerAt,
+      "preview_capture_header",
+      "card-2-back-moving-frame-1",
+      binding,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(manifest.previewStatus.cardGeometry.back.placementState, "ready");
+
+    fingerprintShift = 48;
+    service.notePreviewFrame(7, binding, "card-2-back-moving-frame-2", request.captureTriggerAt);
+    service.queuePreviewGeometryAnalysis(
+      Buffer.from([0xff, 0xd8, 7, 0xff, 0xd9]),
+      7,
+      request.captureTriggerAt,
+      "preview_capture_header",
+      "card-2-back-moving-frame-2",
       binding,
     );
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -2160,7 +2207,7 @@ test("two consecutive Front-to-Back cards restore a fresh Back preview epoch, ca
     assert.equal(manifest.previewStatus.cardGeometry.analysis.motionState, "moving");
     assert.equal(manifest.previewStatus.cardGeometry.analysis.lastOutcome, undefined);
 
-    for (let frameIndex = 5; frameIndex <= 6; frameIndex += 1) {
+    for (let frameIndex = 8; frameIndex <= 9; frameIndex += 1) {
       const frameId = `card-2-back-restabilized-frame-${frameIndex}`;
       service.notePreviewFrame(frameIndex, binding, frameId, request.captureTriggerAt);
       service.queuePreviewGeometryAnalysis(
