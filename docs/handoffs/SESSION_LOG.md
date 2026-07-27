@@ -28682,3 +28682,16 @@ By enabling Rip It Live, I confirm:
 - Only the Dell desktop helper was stopped. Loopback port `47652` reached zero listeners before restart. Restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-gated, hardware actions configured, `production_fast`, calibration activation configured for `fixed-rig-dell-v1`, sessionless `start_new_card`, preview `not_started`, camera ownership `idle`, no active transition, capture lock clear, warm runner idle, and capture/processing/report/active Rapid queues all empty. Runtime HEAD equals `origin/main` and the runtime worktree is clean.
 - No camera, lighting, capture/cancel, calibration, identity/owner-resolution, publication/discard, report/database/storage, NFC, inventory, or unrelated hardware/product action occurred. The prior acceptance session/report were not reused or mutated. The only remaining step is the owner's next fresh corrected Production acceptance card.
+
+## 2026-07-27 - Single preview worker restoration candidate
+
+- Real Production acceptance after PR `#182` still showed the green contour flickering on a stopped card. The owner rejected the split lightweight-stability/isolated-geometry-worker design and explicitly authorized a fast, bounded restoration of the last-known-good single preview/authoritative-contour path.
+- The restoration is traced exactly to parent commit `d33ba75b96021c5f94da6233e6ef0a53b5b8a4c8`, before split-design commit `57fcfe0929abae2c7b39e1f95b012d4fca8350e6`. Live Basler frames again enter one latest-frame-only authoritative detector path at the prior `125 ms` throttle; the lightweight fingerprint gate, isolated geometry worker, and their exports/tests are removed.
+- Unrelated OCR-first intake, GPT-5.6 EYES candidate selection, deterministic remeasurement, grading, calibration, camera/lighting lifecycle, capture authority, queues, reports, database, storage, and browser station code are unchanged.
+- Intentionally narrow validation passed: the capture-helper TypeScript build and the two focused bridge regressions covering the one-path source invariant plus fresh Front/Back authoritative contour analysis. `git diff --check` passed with Windows line-ending notices only. No broad engine, database, service, or repository-wide test run was performed, per owner direction.
+
+### Planned authorized Production action
+
+- Commit and push only this exact preview rollback and audit record, open one focused protected PR, and merge after the repository-required checks.
+- Verify the normal helper-only Production deployment; no migration is needed and the browser station bundle is expected to remain unchanged.
+- Perform a fresh read-only Dell idle gate, then update the clean runtime, protected launcher commit pin, and restart only the helper. Do not operate camera/lighting hardware, capture/cancel a card, alter calibration, submit identity/owner resolution, publish/discard, or mutate queues/reports/database/storage.
