@@ -28780,3 +28780,27 @@ By enabling Rip It Live, I confirm:
 - The Production OBS configuration endpoint reports OBS integration enabled with a configured WebSocket target, password, and Live scene on both the public and exact deployments. Code inspection confirms the kiosk display applies the session-specific Mux ingest and calls OBS `StartStream` for `COUNTDOWN`, `LIVE`, and `REVEAL`, while displaying the Mux live playback during the customer’s rip. Mux’s signed `video.asset.ready` webhook remains the recording-finalization authority.
 - The live Production replay query for an existing location returned HTTP `200` with two processed recordings; every returned item was `replayReady=true`, the 12-item maximum was respected, and zero Golden Ticket recordings were present. The kiosk polls this query every 15 seconds and loops each finite recording to the next.
 - Software deployment and remote read-only verification are complete. A physical end-to-end acceptance—camera image/audio, OBS connection from the SER machine, real customer QR scan/sign-in, and visible wall handoff—was not fabricated remotely and remains the owner’s final on-site test.
+
+## 2026-07-27 - Guided centering remeasurement and operator ruler candidate
+
+- The owner completed a fresh Production card through front/back contour detection, OCR identity confirmation, and processing in exact session `ai-grader-browser-station-session-2026-07-27T191649350Z-session` and report `ai-grader-906a4ecf-3917-46e9-88ce-c5931767fb44`. Centering reached operator resolution because each printed-border side exposed local gradient peaks but no complete manifest-qualified four-edge track. The existing whole-contour EYES ledger therefore contained no selectable candidate, and the operator workspace exposed the eight millimeter fields without an image measurement tool.
+- The contained EYES correction retains up to three deterministic observed line hypotheses independently for each left/right/top/bottom edge on Front and Back. Each candidate is bound to its side, edge, exact detector input hash, overlay hash, source image, outer cut, and existing detector evidence.
+- GPT-5.6 EYES receives the exact normalized Front/Back source images plus only those labeled deterministic per-edge overlays. It may select one exact supplied candidate ID for each edge, reject all, or return unclear. It still has no coordinate, distance, measurement, score, grade, calibration, or remeasurement authority.
+- A complete eight-edge selection is freshly reproduced by the helper and passed into the unchanged deterministic robust-line/intersection centering engine for the existing single remeasurement pass. Incomplete or rejected selection continues into the existing centering operator-resolution state. No new queue state, workflow gate, scoring formula, threshold, fallback grade, calibration, capture, camera/lighting, OCR, database, storage, publication, or report authority was added.
+- The existing centering operator workspace now presents the exact verified normalized Front and Back images in zoomable `1x`-`4x` viewports. For each side, the grader chooses left/right/top/bottom and clicks the observed outer cut edge and inner printed border. The browser maps both clicks back to the exact `1200x1680` canonical image coordinates and uses the same protected `63.5x88.9 mm` normalized card geometry to populate the existing eight millimeter fields. The fields remain directly editable and submit through the unchanged operator-resolution endpoint and deterministic rerun, which produces the normal score and measurement overlays.
+- Directly affected validation passed:
+  - capture-helper TypeScript build;
+  - printed-border detector suite `11/11`, including exact four-edge hash-bound remeasurement;
+  - Mathematical local-station bridge suite `20/20`, including EYES rejection and operator-resolution lifecycle;
+  - hosted EYES selection contract suite `6/6`;
+  - hosted OCR/EYES upload/finalize suite `18/18`;
+  - optimized Next.js Production build, after building the local browser-rip workspace dependency;
+  - `git diff --check` with Windows line-ending notices only.
+- No card, queue, report, database, storage, calibration, capture, camera/lighting hardware, helper runtime, Production deployment, publication, discard, or owner resolution was mutated during implementation and validation.
+
+### Planned authorized Production action
+
+- Commit and push only the per-edge EYES candidate contract, deterministic remeasurement binding, centering ruler UI, focused tests, and this audit record. Open one focused protected PR and merge only after required CI passes.
+- Allow the normal GitHub/Vercel Production deployment with migrations disabled. Verify the public and exact-deployment station assets.
+- Before Dell activation, perform a fresh authenticated read-only idle gate. Require no active card transition or capture lock, camera/preview ownership released, the warm runner idle, and capture/processing/report/active Rapid queues empty.
+- Only after that idle gate, advance the clean dedicated runtime to the exact merged functional commit, build it, update only the protected launcher commit pin, and restart only the Dell helper. Verify exact commit parity plus healthy token-gated local-only `production_fast` status without operating camera/lighting, starting/capturing/canceling a card, altering calibration, submitting owner resolution, publishing/discarding, or mutating queue/report/database/storage.

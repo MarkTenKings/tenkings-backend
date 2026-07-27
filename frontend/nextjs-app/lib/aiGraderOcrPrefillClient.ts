@@ -136,7 +136,7 @@ export type AiGraderOcrPrefillResult = {
     reason?: "not_configured" | "timeout" | "provider_unavailable" | "invalid_response";
   };
   eyesCenteringSelection?: {
-    schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1";
+    schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1";
     status: "observed";
     requestedModel: string;
     actualModel: string;
@@ -147,12 +147,14 @@ export type AiGraderOcrPrefillResult = {
     }>;
     candidateBindings: Array<{
       side: "front" | "back";
+      edge: "left" | "right" | "top" | "bottom";
       candidateId: string;
       checksumSha256: string;
       deterministicInputSha256: string;
     }>;
     decisions: Array<{
       side: "front" | "back";
+      edge: "left" | "right" | "top" | "bottom";
       decision: "select_candidate" | "reject_all" | "unclear";
       candidateId: string | null;
       confidence: number;
@@ -190,6 +192,7 @@ type OcrUploadPlan = {
   reportId: string;
   side: "front" | "back";
   artifactRole: "normalized_card" | "centering_candidate_overlay";
+  edge?: "left" | "right" | "top" | "bottom";
   candidateId?: string;
   deterministicInputSha256?: string;
   fileName: string;
@@ -225,6 +228,7 @@ type OcrInitResult = {
       reportId: string;
       side: "front" | "back";
       artifactRole: "normalized_card" | "centering_candidate_overlay";
+      edge?: "left" | "right" | "top" | "bottom";
       candidateId?: string;
       deterministicInputSha256?: string;
       fileName: string;
@@ -356,7 +360,7 @@ function safeEyesCenteringSelectionReceipt(
   value: NonNullable<AiGraderOcrPrefillResult["eyesCenteringSelection"]>,
 ) {
   if (
-    value.schemaVersion !== "ai_grader_eyes_centering_candidate_selection_v1" ||
+    value.schemaVersion !== "ai_grader_eyes_centering_edge_candidate_selection_v1" ||
     value.status !== "observed" ||
     !/^[a-f0-9]{64}$/.test(value.requestSha256) ||
     value.metricAuthority !== "deterministic_calibrated_pixels_only" ||
@@ -365,10 +369,10 @@ function safeEyesCenteringSelectionReceipt(
     !Array.isArray(value.sourceImageBindings) ||
     value.sourceImageBindings.length !== 2 ||
     !Array.isArray(value.candidateBindings) ||
-    value.candidateBindings.length < 2 ||
-    value.candidateBindings.length > 12 ||
+    value.candidateBindings.length < 8 ||
+    value.candidateBindings.length > 24 ||
     !Array.isArray(value.decisions) ||
-    value.decisions.length !== 2 ||
+    value.decisions.length !== 8 ||
     !Number.isFinite(value.providerElapsedMs) ||
     value.providerElapsedMs < 0
   ) {
@@ -378,17 +382,21 @@ function safeEyesCenteringSelectionReceipt(
     value.candidateBindings.map((binding) => {
       if (
         (binding.side !== "front" && binding.side !== "back") ||
+        !["left", "right", "top", "bottom"].includes(binding.edge) ||
         !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(binding.candidateId) ||
         !/^[a-f0-9]{64}$/.test(binding.checksumSha256) ||
         !/^[a-f0-9]{64}$/.test(binding.deterministicInputSha256)
       ) throw new Error("Invalid EYES centering candidate binding.");
-      return `${binding.side}:${binding.candidateId}`;
+      return `${binding.side}:${binding.edge}:${binding.candidateId}`;
     }),
   );
   value.decisions.forEach((decision, index) => {
-    const side = index === 0 ? "front" : "back";
+    const edges = ["left", "right", "top", "bottom"] as const;
+    const side = index < edges.length ? "front" : "back";
+    const edge = edges[index % edges.length]!;
     if (
       decision.side !== side ||
+      decision.edge !== edge ||
       !["select_candidate", "reject_all", "unclear"].includes(decision.decision) ||
       !Number.isFinite(decision.confidence) ||
       decision.confidence < 0 ||
@@ -398,7 +406,7 @@ function safeEyesCenteringSelectionReceipt(
       decision.rationale.length > 240 ||
       (decision.decision === "select_candidate"
         ? !decision.candidateId ||
-          !candidateIds.has(`${side}:${decision.candidateId}`)
+          !candidateIds.has(`${side}:${edge}:${decision.candidateId}`)
         : decision.candidateId !== null)
     ) {
       throw new Error("Invalid EYES centering decision.");
@@ -653,6 +661,7 @@ function safeQueuedOcrDescriptor(
         if (
           !candidate ||
           (candidate.side !== "front" && candidate.side !== "back") ||
+          !["left", "right", "top", "bottom"].includes(candidate.edge) ||
           !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(candidate.candidateId) ||
           candidate.fileName !== `${candidate.candidateId}.png` ||
           candidate.contentType !== "image/png" ||
@@ -670,10 +679,12 @@ function safeQueuedOcrDescriptor(
     : [];
   if (centeringCandidates.length) {
     for (const side of ["front", "back"] as const) {
-      const count = centeringCandidates.filter((candidate) =>
-        candidate.side === side).length;
-      if (count < 1 || count > 6) {
-        throw new Error("queued EYES centering candidates are incomplete");
+      for (const edge of ["left", "right", "top", "bottom"] as const) {
+        const count = centeringCandidates.filter((candidate) =>
+          candidate.side === side && candidate.edge === edge).length;
+        if (count < 1 || count > 3) {
+          throw new Error("queued EYES centering edge candidates are incomplete");
+        }
       }
     }
   }
@@ -843,6 +854,7 @@ export async function runAiGraderOcrPrefillFromLocalReport<
     reportId: string;
     side: "front" | "back";
     artifactRole: "normalized_card" | "centering_candidate_overlay";
+    edge?: "left" | "right" | "top" | "bottom";
     candidateId?: string;
     deterministicInputSha256?: string;
     bytes: ArrayBuffer;
@@ -916,6 +928,7 @@ export async function runAiGraderOcrPrefillFromLocalReport<
         ...identity,
         side: candidate.side,
         artifactRole: "centering_candidate_overlay",
+        edge: candidate.edge,
         candidateId: candidate.candidateId,
         deterministicInputSha256: candidate.deterministicInputSha256,
         bytes: fetched.bytes,
@@ -945,12 +958,13 @@ export async function runAiGraderOcrPrefillFromLocalReport<
       body: JSON.stringify({
         ...identity,
         reportProducerContractVersion: AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION,
-        images: localImages.map(({ queueItemId, gradingSessionId, reportId, side, artifactRole, candidateId, deterministicInputSha256, fileName, mimeType, checksumSha256, byteSize, widthPx, heightPx }) => ({
+        images: localImages.map(({ queueItemId, gradingSessionId, reportId, side, artifactRole, edge, candidateId, deterministicInputSha256, fileName, mimeType, checksumSha256, byteSize, widthPx, heightPx }) => ({
           queueItemId,
           gradingSessionId,
           reportId,
           side,
           artifactRole,
+          edge,
           candidateId,
           deterministicInputSha256,
           fileName,
@@ -983,6 +997,7 @@ export async function runAiGraderOcrPrefillFromLocalReport<
     if (!plan || !sameExactOcrIdentity(plan, identity) ||
         !finalizeImage || !sameExactOcrIdentity(finalizeImage, identity) ||
         plan.artifactRole !== localImage.artifactRole ||
+        plan.edge !== localImage.edge ||
         plan.candidateId !== localImage.candidateId ||
         plan.deterministicInputSha256 !== localImage.deterministicInputSha256 ||
         plan.mimeType !== "image/png" ||
@@ -992,7 +1007,9 @@ export async function runAiGraderOcrPrefillFromLocalReport<
         typeof plan.storageKey !== "string" || !plan.storageKey || plan.storageKey.length > 1024 ||
         typeof plan.uploadUrl !== "string" || !plan.uploadUrl ||
         !plan.uploadHeaders || typeof plan.uploadHeaders !== "object" || Array.isArray(plan.uploadHeaders) ||
-        finalizeImage.artifactRole !== plan.artifactRole || finalizeImage.fileName !== plan.fileName ||
+        finalizeImage.artifactRole !== plan.artifactRole ||
+        finalizeImage.edge !== plan.edge ||
+        finalizeImage.fileName !== plan.fileName ||
         finalizeImage.mimeType !== plan.mimeType || finalizeImage.checksumSha256 !== plan.checksumSha256 ||
         finalizeImage.byteSize !== plan.byteSize || finalizeImage.widthPx !== plan.widthPx ||
         finalizeImage.heightPx !== plan.heightPx || finalizeImage.storageKey !== plan.storageKey) {

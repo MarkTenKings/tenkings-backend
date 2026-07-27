@@ -1,6 +1,12 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import {
   AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -818,6 +824,208 @@ function operatorResolutionDraft(
       back: ["", "", "", ""],
     },
   };
+}
+
+const CENTERING_MARGIN_NAMES = ["left", "right", "top", "bottom"] as const;
+type CenteringMarginName = (typeof CENTERING_MARGIN_NAMES)[number];
+type CenteringToolPoint = { x: number; y: number };
+type CenteringToolLine = {
+  margin: CenteringMarginName;
+  start: CenteringToolPoint;
+  end: CenteringToolPoint;
+  mm: number;
+};
+
+function CenteringMeasurementTool({
+  side,
+  view,
+  values,
+  disabled,
+  onMeasurement,
+}: {
+  side: "front" | "back";
+  view?: OperatorResolutionEvidenceView;
+  values: [string, string, string, string];
+  disabled: boolean;
+  onMeasurement(index: number, value: string): void;
+}) {
+  const [zoom, setZoom] = useState(1.5);
+  const [activeMargin, setActiveMargin] =
+    useState<CenteringMarginName>("left");
+  const [firstPoint, setFirstPoint] = useState<CenteringToolPoint | null>(null);
+  const [lines, setLines] = useState<
+    Partial<Record<CenteringMarginName, CenteringToolLine>>
+  >({});
+  useEffect(() => {
+    setFirstPoint(null);
+    setLines({});
+  }, [view?.image.checksumSha256]);
+  const clickImage = (event: ReactMouseEvent<HTMLImageElement>) => {
+    if (!view || disabled) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {
+      x: Math.max(
+        0,
+        Math.min(
+          view.image.widthPx,
+          (event.clientX - rect.left) * view.image.widthPx / rect.width,
+        ),
+      ),
+      y: Math.max(
+        0,
+        Math.min(
+          view.image.heightPx,
+          (event.clientY - rect.top) * view.image.heightPx / rect.height,
+        ),
+      ),
+    };
+    if (!firstPoint) {
+      setFirstPoint(point);
+      return;
+    }
+    const horizontal =
+      activeMargin === "left" || activeMargin === "right";
+    const pixels = Math.abs(
+      horizontal ? point.x - firstPoint.x : point.y - firstPoint.y,
+    );
+    const physicalSpanMm = horizontal ? 63.5 : 88.9;
+    const imageSpanPx = horizontal
+      ? view.image.widthPx
+      : view.image.heightPx;
+    const mm = Math.round(
+      pixels * physicalSpanMm / imageSpanPx * 100,
+    ) / 100;
+    const index = CENTERING_MARGIN_NAMES.indexOf(activeMargin);
+    setLines((current) => ({
+      ...current,
+      [activeMargin]: {
+        margin: activeMargin,
+        start: firstPoint,
+        end: point,
+        mm,
+      },
+    }));
+    setFirstPoint(null);
+    onMeasurement(index, mm.toFixed(2));
+  };
+  return (
+    <section
+      className="centering-measurement-tool"
+      aria-label={`${formatStationValue(side)} calibrated centering measurement tool`}
+    >
+      <div className="centering-measurement-tool-head">
+        <div>
+          <strong>{formatStationValue(side)} measuring tool</strong>
+          <span>
+            Choose a margin, then click its outer cut edge and inner printed
+            border.
+          </span>
+        </div>
+        <label>
+          Zoom {zoom.toFixed(1)}×
+          <input
+            type="range"
+            min="1"
+            max="4"
+            step="0.25"
+            value={zoom}
+            onChange={(event) => setZoom(Number(event.target.value))}
+            disabled={disabled}
+          />
+        </label>
+      </div>
+      <div className="centering-measurement-margin-buttons">
+        {CENTERING_MARGIN_NAMES.map((margin, index) => (
+          <button
+            key={margin}
+            type="button"
+            className={activeMargin === margin ? "active" : ""}
+            onClick={() => {
+              setActiveMargin(margin);
+              setFirstPoint(null);
+            }}
+            disabled={disabled || !view}
+          >
+            {formatStationValue(margin)}
+            {values[index] ? ` · ${values[index]} mm` : ""}
+          </button>
+        ))}
+      </div>
+      <p className="centering-measurement-instruction" aria-live="polite">
+        {firstPoint
+          ? `First ${activeMargin} point set. Click the opposite boundary to measure.`
+          : `Measuring ${activeMargin}. First click the outer cut edge.`}
+      </p>
+      {view ? (
+        <div className="centering-measurement-viewport">
+          <div
+            className="centering-measurement-canvas"
+            style={{
+              width: `${view.image.widthPx * zoom}px`,
+              height: `${view.image.heightPx * zoom}px`,
+            }}
+          >
+            <img
+              src={view.objectUrl}
+              alt={`${formatStationValue(side)} exact normalized card for centering measurement`}
+              width={view.image.widthPx}
+              height={view.image.heightPx}
+              onClick={clickImage}
+              draggable={false}
+            />
+            <svg
+              viewBox={`0 0 ${view.image.widthPx} ${view.image.heightPx}`}
+              aria-hidden="true"
+            >
+              {Object.values(lines).map((line) => line ? (
+                <g key={line.margin}>
+                  <line
+                    x1={line.start.x}
+                    y1={line.start.y}
+                    x2={line.end.x}
+                    y2={line.end.y}
+                  />
+                  <circle cx={line.start.x} cy={line.start.y} r="10" />
+                  <circle cx={line.end.x} cy={line.end.y} r="10" />
+                  <text
+                    x={(line.start.x + line.end.x) / 2}
+                    y={(line.start.y + line.end.y) / 2 - 16}
+                  >
+                    {line.margin} {line.mm.toFixed(2)} mm
+                  </text>
+                </g>
+              ) : null)}
+              {firstPoint ? (
+                <circle
+                  className="pending"
+                  cx={firstPoint.x}
+                  cy={firstPoint.y}
+                  r="12"
+                />
+              ) : null}
+            </svg>
+          </div>
+        </div>
+      ) : (
+        <div className="operator-evidence-placeholder">
+          Exact normalized {side} image unavailable.
+        </div>
+      )}
+      <button
+        type="button"
+        className="link-button"
+        onClick={() => {
+          setFirstPoint(null);
+          setLines({});
+          CENTERING_MARGIN_NAMES.forEach((_margin, index) =>
+            onMeasurement(index, ""));
+        }}
+        disabled={disabled}
+      >
+        Clear {side} measurements
+      </button>
+    </section>
+  );
 }
 
 function exactCardItemSelection(selection: CardSelectionState | null) {
@@ -6019,20 +6227,21 @@ export default function AiGraderStationPage() {
                       {draft.enabled ? (
                         <div className="operator-resolution-fields">
                           {element === "centering" ? (
-                            <div className="mathematical-profile-grid">
-                              {(["front", "back"] as const).flatMap((side) =>
-                                (["left", "right", "top", "bottom"] as const).map((margin, index) => (
-                                  <label key={`${side}-${margin}`}>
-                                    {formatStationValue(side)} {margin} (mm)
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={operatorResolutionDraftState.centering[side][index]}
-                                      onChange={(event) => setOperatorResolutionDraftState((current) => {
-                                        const measurements = [...current.centering[side]] as
-                                          [string, string, string, string];
-                                        measurements[index] = event.target.value;
+                            <>
+                              <div className="centering-measurement-tools">
+                                {(["front", "back"] as const).map((side) => (
+                                  <CenteringMeasurementTool
+                                    key={side}
+                                    side={side}
+                                    view={operatorResolutionEvidence.images[side]}
+                                    values={operatorResolutionDraftState.centering[side]}
+                                    disabled={busy !== null}
+                                    onMeasurement={(index, value) =>
+                                      setOperatorResolutionDraftState((current) => {
+                                        const measurements = [
+                                          ...current.centering[side],
+                                        ] as [string, string, string, string];
+                                        measurements[index] = value;
                                         return {
                                           ...current,
                                           confirmed: false,
@@ -6042,12 +6251,39 @@ export default function AiGraderStationPage() {
                                           },
                                         };
                                       })}
-                                      disabled={busy !== null}
-                                    />
-                                  </label>
-                                )),
-                              )}
-                            </div>
+                                  />
+                                ))}
+                              </div>
+                              <div className="mathematical-profile-grid">
+                                {(["front", "back"] as const).flatMap((side) =>
+                                  CENTERING_MARGIN_NAMES.map((margin, index) => (
+                                    <label key={`${side}-${margin}`}>
+                                      {formatStationValue(side)} {margin} (mm)
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        value={operatorResolutionDraftState.centering[side][index]}
+                                        onChange={(event) => setOperatorResolutionDraftState((current) => {
+                                          const measurements = [...current.centering[side]] as
+                                            [string, string, string, string];
+                                          measurements[index] = event.target.value;
+                                          return {
+                                            ...current,
+                                            confirmed: false,
+                                            centering: {
+                                              ...current.centering,
+                                              [side]: measurements,
+                                            },
+                                          };
+                                        })}
+                                        disabled={busy !== null}
+                                      />
+                                    </label>
+                                  )),
+                                )}
+                              </div>
+                            </>
                           ) : (
                             <label>
                               Final {formatStationValue(element)} subgrade
@@ -9270,6 +9506,108 @@ export default function AiGraderStationPage() {
           gap: 10px;
           margin-top: 10px;
         }
+        .centering-measurement-tools {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+        .centering-measurement-tool {
+          min-width: 0;
+          padding: 12px;
+          border: 1px solid rgba(32, 232, 255, 0.28);
+          border-radius: 8px;
+          background: rgba(32, 232, 255, 0.035);
+        }
+        .centering-measurement-tool-head {
+          display: flex;
+          align-items: end;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .centering-measurement-tool-head strong,
+        .centering-measurement-tool-head span {
+          display: block;
+        }
+        .centering-measurement-tool-head span,
+        .centering-measurement-tool-head label,
+        .centering-measurement-instruction {
+          color: #aeb9b8;
+          font-size: 11px;
+        }
+        .centering-measurement-tool-head input {
+          display: block;
+          width: 150px;
+        }
+        .centering-measurement-margin-buttons {
+          display: grid;
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 6px;
+          margin: 10px 0;
+        }
+        .centering-measurement-margin-buttons button {
+          min-width: 0;
+          padding: 7px 4px;
+          border-color: rgba(255, 255, 255, 0.16);
+          color: #d9d4c9;
+          font-size: 10px;
+        }
+        .centering-measurement-margin-buttons button.active {
+          border-color: #20e8ff;
+          color: #20e8ff;
+          box-shadow: inset 0 0 0 1px rgba(32, 232, 255, 0.28);
+        }
+        .centering-measurement-instruction {
+          min-height: 18px;
+          margin: 0 0 8px;
+        }
+        .centering-measurement-viewport {
+          width: 100%;
+          height: min(62vh, 700px);
+          overflow: auto;
+          border: 1px solid rgba(255, 255, 255, 0.13);
+          border-radius: 5px;
+          background: #010201;
+        }
+        .centering-measurement-canvas {
+          position: relative;
+          transform-origin: top left;
+        }
+        .centering-measurement-canvas img,
+        .centering-measurement-canvas svg {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        .centering-measurement-canvas img {
+          cursor: crosshair;
+          user-select: none;
+        }
+        .centering-measurement-canvas svg {
+          pointer-events: none;
+          overflow: visible;
+        }
+        .centering-measurement-canvas line {
+          stroke: #20e8ff;
+          stroke-width: 5;
+          filter: drop-shadow(0 1px 2px #000);
+        }
+        .centering-measurement-canvas circle {
+          fill: #20e8ff;
+          stroke: #061014;
+          stroke-width: 4;
+        }
+        .centering-measurement-canvas circle.pending {
+          fill: #ffd584;
+        }
+        .centering-measurement-canvas text {
+          fill: #ffffff;
+          stroke: #000000;
+          stroke-width: 6;
+          paint-order: stroke;
+          font: 700 24px monospace;
+        }
         .mathematical-finding-list {
           display: grid;
           gap: 18px;
@@ -9424,6 +9762,7 @@ export default function AiGraderStationPage() {
           }
           .mathematical-review-head,
           .operator-evidence-grid,
+          .centering-measurement-tools,
           .mathematical-identity-grid,
           .mathematical-profile-grid,
           .mathematical-mask-grid,

@@ -1629,25 +1629,27 @@ test("EYES reject-all cannot silently keep centering; it forces one deterministi
       (candidate) => candidate.queueItemId === queued.item.queueItemId,
     );
     const manifest = service.queuedManifests.get(item.queueItemId);
-    const candidates = [
-      {
-        side: "front",
-        candidateId: "front-default",
-        sha256: "a".repeat(64),
-        deterministicInputSha256: "1".repeat(64),
-        selectedByDefault: true,
-      },
-      {
-        side: "back",
-        candidateId: "back-default",
-        sha256: "b".repeat(64),
-        deterministicInputSha256: "2".repeat(64),
-        selectedByDefault: true,
-      },
-    ];
+    const edges = ["left", "right", "top", "bottom"];
+    const candidates = ["front", "back"].flatMap((side, sideIndex) =>
+      edges.map((edge, edgeIndex) => {
+        const index = sideIndex * edges.length + edgeIndex;
+        return {
+          side,
+          edge,
+          candidateId: `${side}-${edge}-default`,
+          sha256: (index + 1).toString(16).repeat(64),
+          deterministicInputSha256: (index + 9).toString(16).repeat(64),
+          selectedByDefault: true,
+        };
+      }),
+    );
     manifest.mathematicalV1.eyesCenteringCandidateLedger = {
+      schemaVersion: "fixed_rig_eyes_centering_candidate_ledger_v1",
       candidates,
       ledgerSha256: "c".repeat(64),
+      metricAuthority: "deterministic_calibrated_pixels_only",
+      coordinateAuthority: false,
+      maximumRemeasurementPasses: 2,
     };
     const sourceImageBindings = ["front", "back"].map((side) => ({
       side,
@@ -1657,15 +1659,17 @@ test("EYES reject-all cannot silently keep centering; it forces one deterministi
     const candidateBindings = [...candidates]
       .sort((left, right) =>
         left.side.localeCompare(right.side) ||
+        edges.indexOf(left.edge) - edges.indexOf(right.edge) ||
         left.candidateId.localeCompare(right.candidateId))
       .map((candidate) => ({
         side: candidate.side,
+        edge: candidate.edge,
         candidateId: candidate.candidateId,
         checksumSha256: candidate.sha256,
         deterministicInputSha256: candidate.deterministicInputSha256,
       }));
     const requestSha256 = sha256(Buffer.from(canonicalJson({
-      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1",
       sourceImageBindings,
       candidateBindings,
       metricAuthority: "deterministic_calibrated_pixels_only",
@@ -1673,20 +1677,21 @@ test("EYES reject-all cannot silently keep centering; it forces one deterministi
       maximumRemeasurementPasses: 2,
     }), "utf8"));
     const receipt = {
-      schemaVersion: "ai_grader_eyes_centering_candidate_selection_v1",
+      schemaVersion: "ai_grader_eyes_centering_edge_candidate_selection_v1",
       status: "observed",
       requestedModel: "gpt-5.6-sol",
       actualModel: "gpt-5.6-sol-2026-07-01",
       requestSha256,
       sourceImageBindings,
       candidateBindings,
-      decisions: ["front", "back"].map((side) => ({
+      decisions: ["front", "back"].flatMap((side) => edges.map((edge) => ({
         side,
+        edge,
         decision: "reject_all",
         candidateId: null,
         confidence: 0.9,
         rationale: "No supplied contour follows the true printed border.",
-      })),
+      }))),
       metricAuthority: "deterministic_calibrated_pixels_only",
       coordinateAuthority: false,
       maximumRemeasurementPasses: 2,

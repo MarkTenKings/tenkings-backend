@@ -100,10 +100,34 @@ export interface FixedRigPrintedBorderCandidateV1 {
   >;
 }
 
-export interface FixedRigPrintedBorderCandidateSelectionV1 {
+export interface FixedRigPrintedBorderWholeCandidateSelectionV1 {
   candidateId: string;
   deterministicInputSha256: string;
 }
+
+export interface FixedRigPrintedBorderEdgeCandidateV1 {
+  edge: FixedRigPrintedBorderSideV1;
+  candidateId: string;
+  deterministicInputSha256: string;
+  rank: number;
+  confidence: number;
+  manifestViable: boolean;
+  boundaryEvidence: FixedRigPrintedBorderBoundaryEvidenceV1;
+}
+
+export interface FixedRigPrintedBorderEdgeCandidateSelectionV1 {
+  edgeCandidates: Record<
+    FixedRigPrintedBorderSideV1,
+    {
+      candidateId: string;
+      deterministicInputSha256: string;
+    }
+  >;
+}
+
+export type FixedRigPrintedBorderCandidateSelectionV1 =
+  | FixedRigPrintedBorderWholeCandidateSelectionV1
+  | FixedRigPrintedBorderEdgeCandidateSelectionV1;
 
 export type FixedRigPrintedBorderDetectorReasonCodeV1 =
   | "invalid_source_plane"
@@ -144,6 +168,7 @@ interface FixedRigPrintedBorderDetectorBaseV1 {
   outerCutContour: FixedRigPointV1[];
   boundaryEvidence: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>>;
   candidates: FixedRigPrintedBorderCandidateV1[];
+  edgeCandidates: FixedRigPrintedBorderEdgeCandidateV1[];
   evidence: FixedRigCenteringEvidenceReferenceV1[];
   conditionDeduction: 0;
 }
@@ -157,7 +182,8 @@ export interface FixedRigPrintedBorderDetectorComputedV1
   selectionSource: "deterministic_default" | "eyes_exact_candidate";
   confidence: number;
   formula:
-    "per-cross-section adaptive absolute-gradient threshold; inset-ordered candidate tracks; deterministic robust 2-D line fit; side-line intersections";
+    | "per-cross-section adaptive absolute-gradient threshold; inset-ordered candidate tracks; deterministic robust 2-D line fit; side-line intersections"
+    | "per-cross-section adaptive absolute-gradient threshold; EYES exact edge-ID selection; deterministic robust 2-D line fit; side-line intersections";
 }
 
 export interface FixedRigPrintedBorderDetectorInsufficientV1
@@ -210,6 +236,7 @@ const PRINTED_BORDER_CANDIDATE_SIDES = [
   "bottom",
 ] as const satisfies readonly FixedRigPrintedBorderSideV1[];
 const MAXIMUM_PRINTED_BORDER_CANDIDATES = 6;
+const MAXIMUM_PRINTED_BORDER_EDGE_CANDIDATES = 3;
 
 function round(value: number, decimals = 6): number {
   const factor = 10 ** decimals;
@@ -676,6 +703,7 @@ function boundaryAnalysis(
   evidence: FixedRigPrintedBorderBoundaryEvidenceV1;
   samples: FixedRigPointV1[] | null;
   viableClusters: ClusterV1[];
+  candidateClusters: ClusterV1[];
   reason?: FixedRigPrintedBorderDetectorReasonV1;
 } {
   const thresholdQualifiedCrossSectionCount = scans.filter((scan) => scan.candidates.length).length;
@@ -684,6 +712,7 @@ function boundaryAnalysis(
       evidence: emptyBoundaryEvidence(side, scans.length, thresholdQualifiedCrossSectionCount),
       samples: null,
       viableClusters: [],
+      candidateClusters: [],
       reason: {
         code: "insufficient_cross_sections",
         side,
@@ -696,6 +725,7 @@ function boundaryAnalysis(
       evidence: emptyBoundaryEvidence(side, scans.length, 0),
       samples: null,
       viableClusters: [],
+      candidateClusters: [],
       reason: {
         code: "no_threshold_qualified_gradient",
         side,
@@ -705,6 +735,10 @@ function boundaryAnalysis(
   }
   const allClusters = clusters(scans, side);
   const viable = allClusters.filter(isViableBoundaryCluster);
+  const candidateClusters = allClusters.slice(
+    0,
+    MAXIMUM_PRINTED_BORDER_EDGE_CANDIDATES,
+  );
   // A printed-border result is measurement authority, not a diagnostic hint.
   // Never promote a sparse or incoherent artwork gradient merely because it
   // is the best of otherwise invalid tracks. Among manifest-valid tracks the
@@ -724,6 +758,7 @@ function boundaryAnalysis(
       evidence,
       samples: null,
       viableClusters: [],
+      candidateClusters,
       reason: {
         code: "unstable_boundary_fit",
         side,
@@ -736,6 +771,7 @@ function boundaryAnalysis(
     evidence,
     samples: best.samples.map((sample) => ({ ...sample.point })),
     viableClusters: viable,
+    candidateClusters,
   };
 }
 
@@ -870,13 +906,18 @@ function printedBorderCandidate(
   >,
   indexes: readonly number[],
   rank: number,
+  selectedClusters?: Record<FixedRigPrintedBorderSideV1, ClusterV1>,
+  selectedEdgeBindings?: Record<
+    FixedRigPrintedBorderSideV1,
+    { candidateId: string; deterministicInputSha256: string }
+  >,
 ): FixedRigPrintedBorderCandidateV1 | null {
-  const selected = Object.fromEntries(
-    PRINTED_BORDER_CANDIDATE_SIDES.map((side, index) => [
-      side,
-      analyses[side].viableClusters[indexes[index] ?? 0],
-    ]),
-  ) as Record<FixedRigPrintedBorderSideV1, ClusterV1 | undefined>;
+  const selected = selectedClusters ?? Object.fromEntries(
+      PRINTED_BORDER_CANDIDATE_SIDES.map((side, index) => [
+        side,
+        analyses[side].viableClusters[indexes[index] ?? 0],
+      ]),
+    ) as Record<FixedRigPrintedBorderSideV1, ClusterV1 | undefined>;
   if (PRINTED_BORDER_CANDIDATE_SIDES.some((side) => !selected[side])) return null;
   const clusters = selected as Record<FixedRigPrintedBorderSideV1, ClusterV1>;
   const boundaryEvidenceValue = Object.fromEntries(
@@ -947,6 +988,7 @@ function printedBorderCandidate(
       canonicalJson(left).localeCompare(canonicalJson(right))),
     outerCutContour: outer.contour,
     candidateIndexes: [...indexes],
+    ...(selectedEdgeBindings ? { selectedEdgeBindings } : {}),
     printBoundarySamples,
     detectedPrintContour,
   });
@@ -963,6 +1005,55 @@ function printedBorderCandidate(
     ),
     boundaryEvidence: boundaryEvidenceValue,
   };
+}
+
+interface FixedRigPrintedBorderEdgeCandidateRecordV1 {
+  candidate: FixedRigPrintedBorderEdgeCandidateV1;
+  cluster: ClusterV1;
+}
+
+function printedBorderEdgeCandidateRecords(
+  input: DetectFixedRigPrintedBorderSourceV1Input,
+  outer: { contour: FixedRigPointV1[]; bounds: BoundsV1 },
+  analyses: Record<
+    FixedRigPrintedBorderSideV1,
+    FixedRigPrintedBorderBoundaryAnalysisV1
+  >,
+): FixedRigPrintedBorderEdgeCandidateRecordV1[] {
+  return PRINTED_BORDER_CANDIDATE_SIDES.flatMap((edge) =>
+    analyses[edge].candidateClusters.map((cluster, rank) => {
+      const evidence = boundaryEvidence(
+        edge,
+        analyses[edge].evidence.attemptedCrossSectionCount,
+        analyses[edge].evidence.thresholdQualifiedCrossSectionCount,
+        cluster,
+        analyses[edge].viableClusters,
+        isViableBoundaryCluster(cluster),
+      );
+      const deterministicInputSha256 = sha256Canonical({
+        version: FIXED_RIG_PRINTED_BORDER_SOURCE_DETECTOR_V1_VERSION,
+        thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+        side: input.side,
+        edge,
+        evidence: [...input.evidence].sort((left, right) =>
+          canonicalJson(left).localeCompare(canonicalJson(right))),
+        outerCutContour: outer.contour,
+        boundaryEvidence: evidence,
+      });
+      return {
+        candidate: {
+          edge,
+          candidateId:
+            `${input.side}-${edge}-edge-${deterministicInputSha256.slice(0, 16)}`,
+          deterministicInputSha256,
+          rank,
+          confidence: cluster.confidence,
+          manifestViable: isViableBoundaryCluster(cluster),
+          boundaryEvidence: evidence,
+        },
+        cluster,
+      };
+    }));
 }
 
 function printedBorderCandidates(
@@ -1034,6 +1125,7 @@ function baseResult(
   outerCutContour: FixedRigPointV1[],
   boundaryEvidenceValue: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>>,
   candidates: FixedRigPrintedBorderCandidateV1[] = [],
+  edgeCandidates: FixedRigPrintedBorderEdgeCandidateV1[] = [],
 ): FixedRigPrintedBorderDetectorBaseV1 {
   return {
     version: FIXED_RIG_PRINTED_BORDER_SOURCE_DETECTOR_V1_VERSION,
@@ -1048,6 +1140,7 @@ function baseResult(
     outerCutContour: outerCutContour.map((point) => ({ ...point })),
     boundaryEvidence: boundaryEvidenceValue,
     candidates: candidates.map((candidate) => structuredClone(candidate)),
+    edgeCandidates: edgeCandidates.map((candidate) => structuredClone(candidate)),
     evidence: input.evidence.map((entry) => ({ ...entry })),
     conditionDeduction: 0,
   };
@@ -1059,6 +1152,7 @@ function insufficient(
   outerCutContour: FixedRigPointV1[] = [],
   boundaryEvidenceValue: Partial<Record<FixedRigPrintedBorderSideV1, FixedRigPrintedBorderBoundaryEvidenceV1>> = {},
   candidates: FixedRigPrintedBorderCandidateV1[] = [],
+  edgeCandidates: FixedRigPrintedBorderEdgeCandidateV1[] = [],
 ): FixedRigPrintedBorderDetectorInsufficientV1 {
   const plane = input.flatFieldNormalizedAllOnLuminance;
   const confidenceValues = Object.values(boundaryEvidenceValue).map((entry) => entry?.confidence ?? 0);
@@ -1070,6 +1164,7 @@ function insufficient(
       outerCutContour,
       boundaryEvidenceValue,
       candidates,
+      edgeCandidates,
     ),
     status: "insufficient_evidence",
     profileInput: null,
@@ -1129,28 +1224,127 @@ export function detectFixedRigPrintedBorderSourceV1(
     top: analyses.top.evidence,
     bottom: analyses.bottom.evidence,
   };
+  const edgeCandidateRecords = printedBorderEdgeCandidateRecords(
+    input,
+    outer,
+    analyses,
+  );
+  const edgeCandidates = edgeCandidateRecords.map(({ candidate }) => candidate);
+  if (input.selectedCandidate && "edgeCandidates" in input.selectedCandidate) {
+    const selectedEdgeCandidates = input.selectedCandidate.edgeCandidates;
+    const selectedRecords = Object.fromEntries(
+      PRINTED_BORDER_CANDIDATE_SIDES.map((edge) => {
+        const selection = selectedEdgeCandidates[edge];
+        const record = edgeCandidateRecords.find(({ candidate }) =>
+          candidate.edge === edge &&
+          candidate.candidateId === selection?.candidateId &&
+          candidate.deterministicInputSha256 ===
+            selection?.deterministicInputSha256);
+        return [edge, record];
+      }),
+    ) as Record<
+      FixedRigPrintedBorderSideV1,
+      FixedRigPrintedBorderEdgeCandidateRecordV1 | undefined
+    >;
+    if (PRINTED_BORDER_CANDIDATE_SIDES.some((edge) => !selectedRecords[edge])) {
+      return insufficient(input, [{
+        code: "invalid_candidate_selection",
+        message:
+          "An EYES-selected edge candidate ID/input hash is absent from the freshly reproduced deterministic edge ledger.",
+      }], outer.contour, boundaryEvidenceValue, [], edgeCandidates);
+    }
+    const records = selectedRecords as Record<
+      FixedRigPrintedBorderSideV1,
+      FixedRigPrintedBorderEdgeCandidateRecordV1
+    >;
+    const selectedEdgeBindings = Object.fromEntries(
+      PRINTED_BORDER_CANDIDATE_SIDES.map((edge) => [
+        edge,
+        {
+          candidateId: records[edge].candidate.candidateId,
+          deterministicInputSha256:
+            records[edge].candidate.deterministicInputSha256,
+        },
+      ]),
+    ) as FixedRigPrintedBorderEdgeCandidateSelectionV1["edgeCandidates"];
+    const selected = printedBorderCandidate(
+      input,
+      outer,
+      analyses,
+      [0, 0, 0, 0],
+      0,
+      Object.fromEntries(
+        PRINTED_BORDER_CANDIDATE_SIDES.map((edge) => [
+          edge,
+          records[edge].cluster,
+        ]),
+      ) as Record<FixedRigPrintedBorderSideV1, ClusterV1>,
+      selectedEdgeBindings,
+    );
+    if (!selected) {
+      return insufficient(input, [{
+        code: "invalid_detected_boundary",
+        message:
+          "The exact EYES-selected deterministic edge tracks did not form one ordered printed boundary inside the physical cut.",
+      }], outer.contour, boundaryEvidenceValue, [], edgeCandidates);
+    }
+    return {
+      ...baseResult(
+        input,
+        plane.width,
+        plane.height,
+        outer.contour,
+        selected.boundaryEvidence,
+        [selected],
+        edgeCandidates,
+      ),
+      status: "computed",
+      profileInput: structuredClone(selected.profileInput),
+      detectedPrintContour: selected.detectedPrintContour.map((point) => ({
+        ...point,
+      })),
+      selectedCandidateId: selected.candidateId,
+      selectionSource: "eyes_exact_candidate",
+      confidence: selected.confidence,
+      formula:
+        "per-cross-section adaptive absolute-gradient threshold; EYES exact edge-ID selection; deterministic robust 2-D line fit; side-line intersections",
+    };
+  }
   const reasons = Object.values(analyses).flatMap((analysis) => analysis.reason ? [analysis.reason] : []);
-  if (reasons.length) return insufficient(input, reasons, outer.contour, boundaryEvidenceValue);
+  if (reasons.length) {
+    return insufficient(
+      input,
+      reasons,
+      outer.contour,
+      boundaryEvidenceValue,
+      [],
+      edgeCandidates,
+    );
+  }
   const candidates = printedBorderCandidates(input, outer, analyses);
   if (!candidates.length) {
     return insufficient(input, [{
       code: "invalid_detected_boundary",
       message:
         "The manifest-valid side tracks did not form any nondegenerate full printed-boundary candidate inside the physical cut.",
-    }], outer.contour, boundaryEvidenceValue, candidates);
+    }], outer.contour, boundaryEvidenceValue, candidates, edgeCandidates);
   }
-  const selected = input.selectedCandidate
+  const selectedWholeCandidate = input.selectedCandidate &&
+      !("edgeCandidates" in input.selectedCandidate)
+    ? input.selectedCandidate
+    : undefined;
+  const selected = selectedWholeCandidate
     ? candidates.find((candidate) =>
-        candidate.candidateId === input.selectedCandidate!.candidateId &&
+        candidate.candidateId === selectedWholeCandidate.candidateId &&
         candidate.deterministicInputSha256 ===
-          input.selectedCandidate!.deterministicInputSha256)
+          selectedWholeCandidate.deterministicInputSha256)
     : candidates[0];
   if (!selected) {
     return insufficient(input, [{
       code: "invalid_candidate_selection",
       message:
         "The EYES-selected candidate ID/input hash is absent from the freshly reproduced deterministic candidate ledger.",
-    }], outer.contour, boundaryEvidenceValue, candidates);
+    }], outer.contour, boundaryEvidenceValue, candidates, edgeCandidates);
   }
   return {
     ...baseResult(
@@ -1160,6 +1354,7 @@ export function detectFixedRigPrintedBorderSourceV1(
       outer.contour,
       selected.boundaryEvidence,
       candidates,
+      edgeCandidates,
     ),
     status: "computed",
     profileInput: structuredClone(selected.profileInput),
@@ -1167,7 +1362,7 @@ export function detectFixedRigPrintedBorderSourceV1(
       ...point,
     })),
     selectedCandidateId: selected.candidateId,
-    selectionSource: input.selectedCandidate
+    selectionSource: selectedWholeCandidate
       ? "eyes_exact_candidate"
       : "deterministic_default",
     confidence: selected.confidence,

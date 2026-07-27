@@ -128,6 +128,7 @@ export const FIXED_RIG_EYES_CENTERING_CANDIDATE_LEDGER_V1_VERSION =
 
 export interface FixedRigEyesCenteringCandidateAssetMetadataV1 {
   side: "front" | "back";
+  edge: "left" | "right" | "top" | "bottom";
   candidateId: string;
   deterministicInputSha256: string;
   selectedByDefault: boolean;
@@ -588,15 +589,22 @@ async function buildEyesCenteringCandidateAssetsV1(input: {
   heightPx: number;
   detector: FixedRigPrintedBorderDetectorResultV1;
 }): Promise<FixedRigEyesCenteringCandidateAssetV1[]> {
-  if (!input.detector.candidates.length) return [];
-  const selectedCandidateId = input.detector.status === "computed"
-    ? input.detector.selectedCandidateId
-    : null;
-  return Promise.all(input.detector.candidates.map(async (candidate) => {
-    const candidatePath = svgPolyline([
-      ...candidate.detectedPrintContour,
-      candidate.detectedPrintContour[0]!,
-    ]);
+  if (!input.detector.edgeCandidates.length) return [];
+  return Promise.all(input.detector.edgeCandidates.map(async (candidate) => {
+    const evidence = candidate.boundaryEvidence;
+    const slope = evidence.lineSlope;
+    const intercept = evidence.lineInterceptPx;
+    if (slope === null || intercept === null) return null;
+    const line = candidate.edge === "left" || candidate.edge === "right"
+      ? [
+          { x: intercept, y: 0 },
+          { x: slope * (input.heightPx - 1) + intercept, y: input.heightPx - 1 },
+        ]
+      : [
+          { x: 0, y: intercept },
+          { x: input.widthPx - 1, y: slope * (input.widthPx - 1) + intercept },
+        ];
+    const candidatePath = svgPolyline(line);
     const cutPath = svgPolyline([
       ...input.detector.outerCutContour,
       input.detector.outerCutContour[0]!,
@@ -605,8 +613,9 @@ async function buildEyesCenteringCandidateAssetsV1(input: {
       `<svg width="${input.widthPx}" height="${input.heightPx}" viewBox="0 0 ${input.widthPx} ${input.heightPx}" xmlns="http://www.w3.org/2000/svg">` +
       `<polyline points="${cutPath}" fill="none" stroke="#ffffff" stroke-opacity=".72" stroke-width="3"/>` +
       `<polyline points="${candidatePath}" fill="none" stroke="#00f5ff" stroke-width="8" stroke-linejoin="round"/>` +
-      `<rect x="24" y="24" width="620" height="76" rx="12" fill="#000000" fill-opacity=".82"/>` +
-      `<text x="48" y="76" fill="#00f5ff" font-family="monospace" font-size="34" font-weight="700">${candidate.candidateId}</text>` +
+      `<rect x="24" y="24" width="920" height="112" rx="12" fill="#000000" fill-opacity=".82"/>` +
+      `<text x="48" y="72" fill="#ffffff" font-family="monospace" font-size="30" font-weight="700">${input.side.toUpperCase()} ${candidate.edge.toUpperCase()} EDGE</text>` +
+      `<text x="48" y="112" fill="#00f5ff" font-family="monospace" font-size="24" font-weight="700">${candidate.candidateId}</text>` +
       `</svg>`,
       "utf8",
     );
@@ -616,9 +625,10 @@ async function buildEyesCenteringCandidateAssetsV1(input: {
       .toBuffer();
     return {
       side: input.side,
+      edge: candidate.edge,
       candidateId: candidate.candidateId,
       deterministicInputSha256: candidate.deterministicInputSha256,
-      selectedByDefault: candidate.candidateId === selectedCandidateId,
+      selectedByDefault: candidate.manifestViable && candidate.rank === 0,
       fileName: `${candidate.candidateId}.png`,
       contentType: "image/png" as const,
       sha256: sha256(bytes),
@@ -627,17 +637,29 @@ async function buildEyesCenteringCandidateAssetsV1(input: {
       heightPx: input.heightPx,
       bytes,
     };
-  }));
+  })).then((assets) =>
+    assets.filter(
+      (asset): asset is FixedRigEyesCenteringCandidateAssetV1 =>
+        asset !== null,
+    ));
 }
 
 function buildEyesCenteringCandidateLedgerV1(
   assets: readonly FixedRigEyesCenteringCandidateAssetV1[],
 ): FixedRigEyesCenteringCandidateLedgerV1 | undefined {
-  if (!assets.length) return undefined;
+  if (
+    (["front", "back"] as const).some((side) =>
+      (["left", "right", "top", "bottom"] as const).some((edge) => {
+        const count = assets.filter((asset) =>
+          asset.side === side && asset.edge === edge).length;
+        return count < 1 || count > 3;
+      }))
+  ) return undefined;
   const candidates = assets
     .map(({ bytes: _bytes, ...metadata }) => structuredClone(metadata))
     .sort((left, right) =>
       left.side.localeCompare(right.side) ||
+      left.edge.localeCompare(right.edge) ||
       left.candidateId.localeCompare(right.candidateId));
   const authority = {
     schemaVersion: FIXED_RIG_EYES_CENTERING_CANDIDATE_LEDGER_V1_VERSION,

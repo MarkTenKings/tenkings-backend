@@ -258,6 +258,7 @@ export type AiGraderOcrPrefillImageUpload = {
   reportId: string;
   side: AiGraderOcrPrefillSide;
   artifactRole: "normalized_card" | "centering_candidate_overlay";
+  edge?: "left" | "right" | "top" | "bottom";
   candidateId?: string;
   deterministicInputSha256?: string;
   fileName: string;
@@ -426,6 +427,7 @@ export type AiGraderProductionApiDependencies = {
     images: AiGraderOcrPrefillSourceImage[];
     centeringCandidates?: Array<{
       side: AiGraderOcrPrefillSide;
+      edge: "left" | "right" | "top" | "bottom";
       candidateId: string;
       url: string;
       checksumSha256: string;
@@ -2007,6 +2009,7 @@ function parseOcrPrefillImageMetadata(
   }
   const side = stringValue(value.side, "") as AiGraderOcrPrefillSide;
   const artifactRole = stringValue(value.artifactRole, "");
+  const edge = stringValue(value.edge, "");
   const candidateId = stringValue(value.candidateId, "");
   const deterministicInputSha256 =
     stringValue(value.deterministicInputSha256, "").toLowerCase();
@@ -2026,6 +2029,7 @@ function parseOcrPrefillImageMetadata(
   }
   if (artifactRole === "normalized_card" && (
     fileName !== `${side}-normalized-card.png` ||
+    edge ||
     candidateId ||
     deterministicInputSha256
   )) {
@@ -2034,6 +2038,7 @@ function parseOcrPrefillImageMetadata(
     );
   }
   if (artifactRole === "centering_candidate_overlay" && (
+    !["left", "right", "top", "bottom"].includes(edge) ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$/.test(candidateId) ||
     fileName !== `${candidateId}.png` ||
     !/^[a-f0-9]{64}$/.test(deterministicInputSha256)
@@ -2058,7 +2063,11 @@ function parseOcrPrefillImageMetadata(
     side,
     artifactRole,
     ...(artifactRole === "centering_candidate_overlay"
-      ? { candidateId, deterministicInputSha256 }
+      ? {
+          edge: edge as "left" | "right" | "top" | "bottom",
+          candidateId,
+          deterministicInputSha256,
+        }
       : {}),
     fileName,
     mimeType,
@@ -2092,9 +2101,14 @@ function normalizeOcrPrefillImages(images: AiGraderOcrPrefillImageUpload[]) {
   }
   if (candidates.length) {
     for (const side of ["front", "back"] as const) {
-      const count = candidates.filter((image) => image.side === side).length;
-      if (count < 1 || count > 6) {
-        throw new Error("EYES centering candidates require one to six exact overlays per side.");
+      for (const edge of ["left", "right", "top", "bottom"] as const) {
+        const count = candidates.filter((image) =>
+          image.side === side && image.edge === edge).length;
+        if (count < 1 || count > 3) {
+          throw new Error(
+            "EYES centering candidates require one to three exact overlays per side edge.",
+          );
+        }
       }
     }
   }
@@ -2131,6 +2145,7 @@ function ocrPrefillUploadSessionId(identity: AiGraderOcrExactIdentity, images: A
       images: images.map(({
         side,
         artifactRole,
+        edge,
         candidateId,
         deterministicInputSha256,
         storageKey,
@@ -2143,7 +2158,7 @@ function ocrPrefillUploadSessionId(identity: AiGraderOcrExactIdentity, images: A
         side,
         artifactRole,
         ...(artifactRole === "centering_candidate_overlay"
-          ? { candidateId, deterministicInputSha256 }
+          ? { edge, candidateId, deterministicInputSha256 }
           : {}),
         storageKey,
         checksumSha256,
@@ -3111,6 +3126,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
                 image.artifactRole === "centering_candidate_overlay")
               .map((image) => ({
                 side: image.side,
+                edge: image.edge!,
                 candidateId: image.candidateId!,
                 url: safeOcrSourceUrl(deps.publicUrlFor(image.storageKey)),
                 checksumSha256: image.checksumSha256,
@@ -3238,6 +3254,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
             })),
           candidates: candidates.map((image) => ({
             side: image.side,
+            edge: image.edge!,
             candidateId: image.candidateId!,
             url: safeOcrSourceUrl(
               deps.publicUrlFor(image.storageKey),

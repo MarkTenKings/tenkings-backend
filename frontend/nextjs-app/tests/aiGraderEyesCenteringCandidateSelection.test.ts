@@ -24,29 +24,33 @@ const images: AiGraderEyesSourceImage[] = [
   },
 ];
 
-const candidates: AiGraderEyesCenteringCandidateOverlay[] = [
-  {
-    side: "front",
-    candidateId: "front-outer",
-    url: "https://cdn.tenkings.test/front-outer.png",
-    checksumSha256: "c".repeat(64),
-    deterministicInputSha256: "1".repeat(64),
-  },
-  {
-    side: "front",
-    candidateId: "front-inner",
-    url: "https://cdn.tenkings.test/front-inner.png",
-    checksumSha256: "d".repeat(64),
-    deterministicInputSha256: "2".repeat(64),
-  },
-  {
-    side: "back",
-    candidateId: "back-outer",
-    url: "https://cdn.tenkings.test/back-outer.png",
-    checksumSha256: "e".repeat(64),
-    deterministicInputSha256: "3".repeat(64),
-  },
-];
+const edges = ["left", "right", "top", "bottom"] as const;
+const candidates: AiGraderEyesCenteringCandidateOverlay[] = (
+  ["front", "back"] as const
+).flatMap((side, sideIndex) =>
+  edges.map((edge, edgeIndex) => {
+    const hex = ((sideIndex * edges.length + edgeIndex + 1) % 16)
+      .toString(16);
+    return {
+      side,
+      edge,
+      candidateId: `${side}-${edge}-primary`,
+      url: `https://cdn.tenkings.test/${side}-${edge}-primary.png`,
+      checksumSha256: hex.repeat(64),
+      deterministicInputSha256: ((Number.parseInt(hex, 16) + 8) % 16)
+        .toString(16)
+        .repeat(64),
+    };
+  }),
+);
+candidates.push({
+  side: "front",
+  edge: "left",
+  candidateId: "front-left-secondary",
+  url: "https://cdn.tenkings.test/front-left-secondary.png",
+  checksumSha256: "e".repeat(64),
+  deterministicInputSha256: "f".repeat(64),
+});
 
 function response(decisions: unknown) {
   return {
@@ -62,22 +66,16 @@ function response(decisions: unknown) {
   };
 }
 
-const validDecisions = [
-  {
-    side: "front",
-    decision: "select_candidate",
-    candidateId: "front-outer",
+const validDecisions = (["front", "back"] as const).flatMap((side) =>
+  edges.map((edge) => ({
+    side,
+    edge,
+    decision: "select_candidate" as const,
+    candidateId: `${side}-${edge}-primary`,
     confidence: 0.94,
-    rationale: "The line follows the coherent outer printed border.",
-  },
-  {
-    side: "back",
-    decision: "reject_all",
-    candidateId: null,
-    confidence: 0.81,
-    rationale: "The supplied line follows artwork rather than the printed border.",
-  },
-];
+    rationale: `The line follows the coherent ${edge} printed border.`,
+  })),
+);
 
 test("candidate-selection request shows only exact hash-bound sources and overlays at original detail", () => {
   const request = buildAiGraderEyesCenteringSelectionRequest({
@@ -105,10 +103,16 @@ test("candidate-selection request shows only exact hash-bound sources and overla
     imageInputs.map((entry: any) => entry.image_url),
     [
       images[0]!.url,
-      candidates[1]!.url,
       candidates[0]!.url,
-      images[1]!.url,
+      candidates[8]!.url,
+      candidates[1]!.url,
       candidates[2]!.url,
+      candidates[3]!.url,
+      images[1]!.url,
+      candidates[4]!.url,
+      candidates[5]!.url,
+      candidates[6]!.url,
+      candidates[7]!.url,
     ],
   );
 
@@ -139,8 +143,8 @@ test("candidate-selection receipt grants no coordinate or measurement authority"
     providerElapsedMs: 1_234.4,
   });
 
-  assert.equal(receipt.decisions[0]!.candidateId, "front-outer");
-  assert.equal(receipt.decisions[1]!.decision, "reject_all");
+  assert.equal(receipt.decisions[0]!.candidateId, "front-left-primary");
+  assert.equal(receipt.decisions[7]!.candidateId, "back-bottom-primary");
   assert.equal(receipt.metricAuthority, "deterministic_calibrated_pixels_only");
   assert.equal(receipt.coordinateAuthority, false);
   assert.equal(receipt.maximumRemeasurementPasses, 2);
@@ -153,7 +157,7 @@ test("candidate-selection receipt grants no coordinate or measurement authority"
 
 test("candidate-selection rejects an invented candidate ID", () => {
   const invented = structuredClone(validDecisions);
-  invented[0]!.candidateId = "front-invented";
+  invented[0]!.candidateId = "front-left-invented";
   assert.throws(
     () => parseAiGraderEyesCenteringSelectionResponse({
       payload: response(invented),
@@ -189,7 +193,7 @@ test("select requires an exact candidate and reject or unclear requires null", (
   const selectWithoutCandidate = structuredClone(validDecisions);
   selectWithoutCandidate[0]!.candidateId = null;
   const rejectWithCandidate = structuredClone(validDecisions);
-  rejectWithCandidate[1]!.candidateId = "back-outer";
+  rejectWithCandidate[7]!.decision = "reject_all";
 
   for (const invalid of [selectWithoutCandidate, rejectWithCandidate]) {
     assert.throws(

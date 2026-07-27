@@ -7,19 +7,22 @@ import {
 } from "./aiGraderEyesSemanticObserver";
 
 export const AI_GRADER_EYES_CENTERING_SELECTION_SCHEMA_VERSION =
-  "ai_grader_eyes_centering_candidate_selection_v1" as const;
+  "ai_grader_eyes_centering_edge_candidate_selection_v1" as const;
 
 const SIDES = ["front", "back"] as const;
+const EDGES = ["left", "right", "top", "bottom"] as const;
 const DECISIONS = ["select_candidate", "reject_all", "unclear"] as const;
-const MAXIMUM_CANDIDATES_PER_SIDE = 6;
+const MAXIMUM_CANDIDATES_PER_EDGE = 3;
 const OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses";
 const DEFAULT_TIMEOUT_MS = 11_000;
 
 export type AiGraderEyesCenteringSide = (typeof SIDES)[number];
+export type AiGraderEyesCenteringEdge = (typeof EDGES)[number];
 export type AiGraderEyesCenteringDecision = (typeof DECISIONS)[number];
 
 export type AiGraderEyesCenteringCandidateOverlay = {
   side: AiGraderEyesCenteringSide;
+  edge: AiGraderEyesCenteringEdge;
   candidateId: string;
   url: string;
   checksumSha256: string;
@@ -28,6 +31,7 @@ export type AiGraderEyesCenteringCandidateOverlay = {
 
 export type AiGraderEyesCenteringCandidateDecision = {
   side: AiGraderEyesCenteringSide;
+  edge: AiGraderEyesCenteringEdge;
   decision: AiGraderEyesCenteringDecision;
   candidateId: string | null;
   confidence: number;
@@ -46,6 +50,7 @@ export type AiGraderEyesCenteringCandidateSelectionReceipt = {
   }>;
   candidateBindings: Array<{
     side: AiGraderEyesCenteringSide;
+    edge: AiGraderEyesCenteringEdge;
     candidateId: string;
     checksumSha256: string;
     deterministicInputSha256: string;
@@ -64,13 +69,14 @@ const OUTPUT_SCHEMA = {
   properties: {
     decisions: {
       type: "array",
-      minItems: 2,
-      maxItems: 2,
+      minItems: 8,
+      maxItems: 8,
       items: {
         type: "object",
         additionalProperties: false,
         required: [
           "side",
+          "edge",
           "decision",
           "candidateId",
           "confidence",
@@ -78,6 +84,7 @@ const OUTPUT_SCHEMA = {
         ],
         properties: {
           side: { type: "string", enum: [...SIDES] },
+          edge: { type: "string", enum: [...EDGES] },
           decision: { type: "string", enum: [...DECISIONS] },
           candidateId: { type: ["string", "null"] },
           confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -142,22 +149,27 @@ function normalizedCandidates(
 ) {
   const ordered = [...candidates].sort((left, right) =>
     SIDES.indexOf(left.side) - SIDES.indexOf(right.side) ||
+    EDGES.indexOf(left.edge) - EDGES.indexOf(right.edge) ||
     left.candidateId.localeCompare(right.candidateId));
   const seen = new Set<string>();
   for (const side of SIDES) {
-    const sideCandidates = ordered.filter((candidate) => candidate.side === side);
-    if (
-      sideCandidates.length < 1 ||
-      sideCandidates.length > MAXIMUM_CANDIDATES_PER_SIDE
-    ) {
-      throw new AiGraderEyesError("invalid_input");
+    for (const edge of EDGES) {
+      const edgeCandidates = ordered.filter((candidate) =>
+        candidate.side === side && candidate.edge === edge);
+      if (
+        edgeCandidates.length < 1 ||
+        edgeCandidates.length > MAXIMUM_CANDIDATES_PER_EDGE
+      ) {
+        throw new AiGraderEyesError("invalid_input");
+      }
     }
   }
   for (const candidate of ordered) {
     const candidateId = safeCandidateId(candidate.candidateId);
-    const identity = `${candidate.side}:${candidateId}`;
+    const identity = `${candidate.side}:${candidate.edge}:${candidateId}`;
     if (
       !SIDES.includes(candidate.side) ||
+      !EDGES.includes(candidate.edge) ||
       !candidateId ||
       candidateId !== candidate.candidateId ||
       seen.has(identity) ||
@@ -184,6 +196,7 @@ function candidateBindings(
 ) {
   return candidates.map((candidate) => ({
     side: candidate.side,
+    edge: candidate.edge,
     candidateId: candidate.candidateId,
     checksumSha256: candidate.checksumSha256,
     deterministicInputSha256: candidate.deterministicInputSha256,
@@ -224,14 +237,15 @@ export function buildAiGraderEyesCenteringSelectionRequest(input: {
     text:
       `You are the non-metric EYES candidate selector for a calibrated trading-card grader. ` +
       `The exact request receipt is ${requestSha256}. ` +
-      `For each side, inspect the source image and its labeled deterministic candidate overlays. ` +
-      `Select a candidate only when its labeled line follows the real printed border around the card. ` +
+      `For each side and each edge, inspect the source image and its labeled deterministic edge-candidate overlays. ` +
+      `Select one candidate only when its labeled line follows that real printed border edge around the card. ` +
       `Reject all when every candidate follows artwork, layout, glare, shadow, the physical cut edge, ` +
       `or when the card has no coherent printed border. Use unclear when the images cannot support a decision. ` +
       `You may return only an exact supplied candidateId or null. Never create coordinates, move a boundary, ` +
       `estimate dimensions, calculate centering, score, grade, or perform remeasurement. ` +
       `Deterministic calibrated pixels remain the only metric authority. ` +
-      `Return exactly two decisions in this order: front, back.`,
+      `Return exactly eight decisions in this order: front left, front right, front top, front bottom, ` +
+      `back left, back right, back top, back bottom.`,
   }];
   for (const side of SIDES) {
     const source = images.find((image) => image.side === side)!;
@@ -248,7 +262,7 @@ export function buildAiGraderEyesCenteringSelectionRequest(input: {
       content.push({
         type: "input_text",
         text:
-          `${side} deterministic candidate ${candidate.candidateId}; overlay SHA-256 ` +
+          `${side} ${candidate.edge} deterministic edge candidate ${candidate.candidateId}; overlay SHA-256 ` +
           `${candidate.checksumSha256}; deterministic input SHA-256 ` +
           `${candidate.deterministicInputSha256}.`,
       });
@@ -325,7 +339,7 @@ export function parseAiGraderEyesCenteringSelectionResponse(input: {
     Array.isArray(parsed) ||
     Object.keys(parsed).join(",") !== "decisions" ||
     !Array.isArray((parsed as Record<string, unknown>).decisions) ||
-    ((parsed as Record<string, unknown>).decisions as unknown[]).length !== 2
+    ((parsed as Record<string, unknown>).decisions as unknown[]).length !== 8
   ) {
     throw new AiGraderEyesError("malformed_response");
   }
@@ -337,8 +351,9 @@ export function parseAiGraderEyesCenteringSelectionResponse(input: {
       const row = value as Record<string, unknown>;
       if (
         Object.keys(row).join(",") !==
-          "side,decision,candidateId,confidence,rationale" ||
-        row.side !== SIDES[index] ||
+          "side,edge,decision,candidateId,confidence,rationale" ||
+        row.side !== SIDES[Math.floor(index / EDGES.length)] ||
+        row.edge !== EDGES[index % EDGES.length] ||
         !DECISIONS.includes(row.decision as AiGraderEyesCenteringDecision) ||
         typeof row.confidence !== "number" ||
         !Number.isFinite(row.confidence) ||
@@ -356,6 +371,7 @@ export function parseAiGraderEyesCenteringSelectionResponse(input: {
           !candidateId ||
           !candidates.some((candidate) =>
             candidate.side === row.side &&
+            candidate.edge === row.edge &&
             candidate.candidateId === candidateId)
         )) ||
         (decision !== "select_candidate" && candidateId !== null)
@@ -364,6 +380,7 @@ export function parseAiGraderEyesCenteringSelectionResponse(input: {
       }
       return {
         side: row.side as AiGraderEyesCenteringSide,
+        edge: row.edge as AiGraderEyesCenteringEdge,
         decision,
         candidateId,
         confidence: Number(row.confidence.toFixed(3)),
