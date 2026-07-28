@@ -639,6 +639,13 @@ test("station bridge is one loopback production_fast road and exposes no removed
   }
 });
 
+test("browser-visible EYES candidate responses expose their exact binding headers", () => {
+  assert.match(
+    bridgeSource,
+    /Access-Control-Expose-Headers"[\s\S]{0,1000}x-ai-grader-candidate-id[\s\S]{0,200}x-ai-grader-deterministic-input-sha256/,
+  );
+});
+
 test("station launcher passes the exact production_fast capture profile pair", () => {
   const launcherSource = fs.readFileSync(
     path.resolve(__dirname, "../../../scripts/ai-grader/start-local-station-bridge.ps1"),
