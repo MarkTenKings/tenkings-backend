@@ -165,23 +165,56 @@ test("the worker boundary rejects cross-card results without applying them and e
   );
 });
 
-test("inner Mathematical result identities and output paths cannot escape the admitted snapshot", async () => {
+test("completed owner-authorized Production results accept their distinct calibration session and contain every card identity", async () => {
   const parentAppliedResults = [];
+  const containedInput = fixtureInput("worker-report-inner-output-valid");
   const contained = await
     buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
-      fixtureInput("worker-report-inner-output-valid"),
+      containedInput,
       { workerPath, timeoutMs: 2_000 },
     );
   assert.equal(contained.status, "completed");
   assert.equal(
     contained.reportPackage.outputDir,
-    fixtureInput("worker-report-inner-output-valid").outputDir,
+    containedInput.outputDir,
+  );
+  assert.equal(
+    contained.reportArtifact.bundle.calibrationProfile
+      .operationalAuthorization.subject.sessionId,
+    "calibration-session-distinct-from-card-session",
+  );
+  assert.notEqual(
+    contained.reportArtifact.bundle.calibrationProfile
+      .operationalAuthorization.subject.sessionId,
+    containedInput.gradingSessionId,
+    "The owner-authorized calibration session is not the card grading session.",
   );
   for (const corruption of [
-    "inner-identity-queue",
-    "inner-identity-session",
-    "inner-identity-report",
-    "inner-output-station-session",
+    "inner-card-identity-checkpoint-queue",
+    "inner-card-identity-checkpoint-session",
+    "inner-card-identity-checkpoint-report",
+    "inner-card-identity-artifact-bundle-report",
+    "inner-card-identity-artifact-pokemon-session",
+    "inner-card-identity-artifact-pokemon-report",
+    "inner-card-identity-envelope-session",
+    "inner-card-identity-envelope-bundle-report",
+    "inner-card-identity-envelope-pokemon-session",
+    "inner-card-identity-envelope-pokemon-report",
+    "inner-card-identity-manifest-session",
+    "inner-card-identity-manifest-report",
+    "inner-card-identity-checksums-session",
+    "inner-card-identity-checksums-report",
+    "inner-card-identity-completed-operator-queue",
+    "inner-card-identity-completed-operator-session",
+    "inner-card-identity-completed-operator-report",
+    "finding-review-session",
+    "finding-review-report",
+    "finding-review-finding-operator-queue",
+    "finding-review-finding-operator-session",
+    "finding-review-finding-operator-report",
+    "operator-required-required-operator-queue",
+    "operator-required-required-operator-session",
+    "operator-required-required-operator-report",
   ]) {
     await assert.rejects(
       buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
@@ -195,6 +228,11 @@ test("inner Mathematical result identities and output paths cannot escape the ad
         error.code === "identity_mismatch",
     );
   }
+  assert.deepEqual(parentAppliedResults, []);
+});
+
+test("completed Mathematical output paths cannot escape the admitted directory", async () => {
+  const parentAppliedResults = [];
   for (const corruption of [
     "inner-output-bundle-path",
     "inner-output-station-path",

@@ -252,55 +252,86 @@ function pathIsWithin(root: string, candidate: string): boolean {
       !relative.startsWith(`..${path.sep}`));
 }
 
-function validateResultIdentityMembers(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function exactCardBindingMatches(
   value: unknown,
   identity: MathematicalStationWorkerIdentityV1,
 ): boolean {
-  if (!value || typeof value !== "object") return true;
-  const seen = new Set<object>();
-  const pending: unknown[] = [value];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (!current || typeof current !== "object") continue;
-    if (seen.has(current)) continue;
-    seen.add(current);
-    if (ArrayBuffer.isView(current) || current instanceof ArrayBuffer) continue;
-    if (Array.isArray(current)) {
-      pending.push(...current);
-      continue;
-    }
-    const record = current as Record<string, unknown>;
-    for (const [key, member] of Object.entries(record)) {
-      if (
-        key === "queueItemId" &&
-        (typeof member !== "string" || member !== identity.queueItemId)
-      ) {
-        return false;
-      }
-      if (
-        key === "gradingSessionId" &&
-        (typeof member !== "string" || member !== identity.gradingSessionId)
-      ) {
-        return false;
-      }
-      if (
-        key === "sessionId" &&
-        (typeof member !== "string" || member !== identity.gradingSessionId)
-      ) {
-        return false;
-      }
-      if (
-        key === "reportId" &&
-        (typeof member !== "string" || member !== identity.reportId)
-      ) {
-        return false;
-      }
-      if (member && typeof member === "object") {
-        pending.push(member);
-      }
-    }
+  return isRecord(value) &&
+    value.queueItemId === identity.queueItemId &&
+    value.gradingSessionId === identity.gradingSessionId &&
+    value.reportId === identity.reportId;
+}
+
+function operatorResolutionRequestIdentityMatches(
+  value: unknown,
+  identity: MathematicalStationWorkerIdentityV1,
+): boolean {
+  return isRecord(value) &&
+    exactCardBindingMatches(value.binding, identity);
+}
+
+function reportBundleIdentityMatches(
+  value: unknown,
+  identity: MathematicalStationWorkerIdentityV1,
+): boolean {
+  if (!isRecord(value) || value.reportId !== identity.reportId) return false;
+  const pokemonAuthority = value.pokemonStandardCornerAuthority;
+  if (pokemonAuthority === undefined) return true;
+  if (!isRecord(pokemonAuthority)) return false;
+  const productionAuthority = pokemonAuthority.productionMeasurementAuthority;
+  if (!isRecord(productionAuthority) || !isRecord(productionAuthority.artifact)) {
+    return false;
   }
-  return true;
+  return productionAuthority.artifact.gradingSessionId ===
+      identity.gradingSessionId &&
+    productionAuthority.artifact.reportId === identity.reportId;
+}
+
+function validateResultIdentityMembers(
+  result: BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  identity: MathematicalStationWorkerIdentityV1,
+): boolean {
+  if (
+    result.analysisCheckpoint !== undefined &&
+    !exactCardBindingMatches(result.analysisCheckpoint, identity)
+  ) {
+    return false;
+  }
+  if (result.status === "finding_review_required") {
+    return result.reviewRequest.gradingSessionId === identity.gradingSessionId &&
+      result.reviewRequest.reportId === identity.reportId &&
+      operatorResolutionRequestIdentityMatches(
+        result.operatorResolutionRequest,
+        identity,
+      );
+  }
+  if (result.status === "operator_resolution_required") {
+    return operatorResolutionRequestIdentityMatches(result.request, identity);
+  }
+  if (result.status === "insufficient_evidence") return true;
+  return (
+    reportBundleIdentityMatches(result.reportArtifact.bundle, identity) &&
+    result.reportPackage.envelope.gradingSessionId ===
+      identity.gradingSessionId &&
+    reportBundleIdentityMatches(
+      result.reportPackage.envelope.reportBundle,
+      identity,
+    ) &&
+    result.reportPackage.assetManifest.gradingSessionId ===
+      identity.gradingSessionId &&
+    result.reportPackage.assetManifest.reportId === identity.reportId &&
+    result.reportPackage.checksums.gradingSessionId ===
+      identity.gradingSessionId &&
+    result.reportPackage.checksums.reportId === identity.reportId &&
+    operatorResolutionRequestIdentityMatches(
+      result.operatorResolutionRequest,
+      identity,
+    )
+  );
 }
 
 function validateResultOutputPaths(
