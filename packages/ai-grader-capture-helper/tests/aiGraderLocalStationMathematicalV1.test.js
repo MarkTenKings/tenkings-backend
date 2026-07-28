@@ -1169,6 +1169,10 @@ function operatorResolutionRequiredResult(input, request) {
     unresolvedElements: ["centering"],
     reportPackage: null,
     stationInput: null,
+    analysisCheckpoint: {
+      fixture: "exact-first-pass-analysis",
+      requestSha256: request.requestSha256,
+    },
   };
 }
 
@@ -2228,7 +2232,16 @@ test("operator element resolution serves only the active exact item's verified n
       ),
       /does not match the exact persisted queue\/session\/report triple/i,
     );
-    service.activeQueueItemId = null;
+    const released = await service.action("release-queue-item", queued.identity);
+    assert.equal(released.rapidCaptureQueue.activeQueueItemId, undefined);
+    assert.equal(released.rapidCaptureQueue.activeReview, undefined);
+    assert.equal(
+      released.rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === queued.item.queueItemId,
+      ).state,
+      "operator_resolution_required",
+      "review release must not mutate the persisted Finish Cards queue item",
+    );
     await assert.rejects(
       service.operatorResolutionEvidenceAsset(queued.identity, "front"),
       /currently activated queue\/session\/report triple/i,
@@ -2249,6 +2262,11 @@ test("valid positive-skew operator authentication completes with nondecreasing d
       if (!input.operatorResolutionAuthorities?.length) {
         return operatorResolutionRequiredResult(input, pendingRequest);
       }
+      assert.equal(
+        input.analysisCheckpoint?.requestSha256,
+        pendingRequest.requestSha256,
+        "same-process operator resolution must resume the exact first-pass analysis checkpoint",
+      );
       return completedResult(input, pendingRequest);
     });
     const releaseTracker = installMathematicalReleaseStub(service);
@@ -2299,6 +2317,88 @@ test("valid positive-skew operator authentication completes with nondecreasing d
     assert.ok(
       Date.parse(receipt.completedAt) >=
         Date.parse(receipt.releasePlan.finalizedAt),
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("operator rerun insufficient evidence reaches a durable terminal state without reopening the consumed request", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-operator-insufficient-"));
+  let pendingRequest;
+  try {
+    const service = createService(outputDir, async (input) => {
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      if (!input.operatorResolutionAuthorities?.length) {
+        return operatorResolutionRequiredResult(input, pendingRequest);
+      }
+      assert.equal(
+        input.analysisCheckpoint?.requestSha256,
+        pendingRequest.requestSha256,
+      );
+      return {
+        version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
+        status: "insufficient_evidence",
+        gradingContract: "mathematical_calibration_v1",
+        v0FallbackUsed: false,
+        failedStage: "report_adaptation",
+        reasons: ["Exact report adaptation could not complete."],
+        requiresRecapture: false,
+        requiresApprovedDesignReference: false,
+        requiresCalibration: false,
+        requiresImplementationCorrection: true,
+        reportPackage: null,
+        stationInput: null,
+      };
+    });
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-insufficient-report",
+      "operator-insufficient",
+    );
+    await completeFixtureOcr(service, queued, "operator-insufficient");
+    await service.action("activate-queue-item", queued.identity);
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-insufficient-key",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "Exact insufficient-evidence finalization regression.",
+        }],
+      },
+    };
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
+
+    const completed = await service.action("submit-operator-resolutions", action);
+    const item = completed.rapidCaptureQueue.items.find(
+      (candidate) => candidate.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(item.state, "insufficient_evidence");
+    const manifest = service.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(manifest.mathematicalV1.execution.status, "insufficient_evidence");
+    assert.equal(
+      manifest.mathematicalV1.execution.operatorResolutionRequest.requestSha256,
+      pendingRequest.requestSha256,
+    );
+    assert.equal(
+      manifest.mathematicalV1.operatorResolutionReceipts[0].phase,
+      "rerun_completed",
+    );
+    assert.match(
+      manifest.mathematicalV1.operatorResolutionReceipts[0].completedAt,
+      /^\d{4}-\d{2}-\d{2}T/,
     );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });

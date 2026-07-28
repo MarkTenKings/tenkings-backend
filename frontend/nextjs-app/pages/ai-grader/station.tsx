@@ -155,7 +155,7 @@ import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
-type RapidItemOperation = "review" | "publish" | "discard";
+type RapidItemOperation = "review" | "release" | "publish" | "discard";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -4273,6 +4273,13 @@ export default function AiGraderStationPage() {
       })) {
         throw new Error("Back capture did not return the exact card durably queued with clean capture ownership.");
       }
+      resetReviewUiState();
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "idle",
+        message:
+          "Prior card is durably queued for background processing. Start New Card is ready for the next capture.",
+      });
     } catch (requestError) {
       const message = requestError instanceof Error ? requestError.message : "Capture Back or durable queue commit failed.";
       await runAction("status").catch(() => undefined);
@@ -4323,6 +4330,52 @@ export default function AiGraderStationPage() {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {
       setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: undefined }));
+    }
+  };
+
+  const releaseRapidQueueItem = async (
+    item: (typeof status.rapidCaptureQueue.items)[number],
+  ) => {
+    setRapidItemOperations((current) => ({
+      ...current,
+      [item.queueItemId]: "release",
+    }));
+    setError(null);
+    try {
+      const next = await runAction(
+        "release-queue-item",
+        buildAiGraderRapidQueueActivationRequest({
+          queueItemId: item.queueItemId,
+          gradingSessionId: item.sessionId,
+          reportId: item.reportId,
+        }),
+      );
+      if (
+        next.rapidCaptureQueue.activeQueueItemId ||
+        next.rapidCaptureQueue.activeReview
+      ) {
+        throw new Error(
+          "Rapid Capture review release did not return to the capture workspace.",
+        );
+      }
+      resetReviewUiState();
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "idle",
+        message:
+          "Review remains in Finish Cards. Start New Card is ready for the next capture.",
+      });
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Rapid Capture review could not be closed.",
+      );
+    } finally {
+      setRapidItemOperations((current) => ({
+        ...current,
+        [item.queueItemId]: undefined,
+      }));
     }
   };
 
@@ -7396,13 +7449,19 @@ export default function AiGraderStationPage() {
                       <div className="rapid-queue-actions">
                         <button
                           type="button"
-                          onClick={() => void activateRapidQueueItem(item)}
-                          disabled={!reviewable || active || Boolean(itemOperation) || !aiGraderReviewActivationAvailable(publicationReviewClaim)}
+                          onClick={() => void (
+                            active
+                              ? releaseRapidQueueItem(item)
+                              : activateRapidQueueItem(item)
+                          )}
+                          disabled={!reviewable || Boolean(itemOperation) || !aiGraderReviewActivationAvailable(publicationReviewClaim)}
                         >
                           {published
                             ? "Published"
                             : active
-                              ? "Active"
+                              ? itemOperation === "release"
+                                ? "Returning to Capture"
+                                : "Continue Grading Cards"
                               : itemOperation === "review"
                                 ? "Opening"
                                 : item.state === "operator_resolution_required"

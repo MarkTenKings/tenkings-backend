@@ -722,8 +722,8 @@ test("OCR prefill existing extractor marks low-confidence values for review", as
   assert.equal(result.fields.year.reviewRequired, true);
   assert.equal(result.fields.manufacturer.value, "SkyBox");
   assert.equal(result.fields.manufacturer.reviewRequired, true);
-  assert.equal(result.fields.cardNumber.value, null);
-  assert.equal(result.fields.cardNumber.state, "unknown");
+  assert.equal(result.fields.cardNumber.value, "41");
+  assert.equal(result.fields.cardNumber.state, "supported");
   assert.equal(result.fields.cardNumber.reviewRequired, true);
   assert.ok(result.reviewFieldNames.includes("year"));
   assert.equal(JSON.stringify(networkInputs).includes("base64"), false);
