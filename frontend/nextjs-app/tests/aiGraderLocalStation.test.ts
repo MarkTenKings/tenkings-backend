@@ -8,6 +8,7 @@ import {
   aiGraderAtomicBackQueueReleaseMatches,
   aiGraderApproveAndPublishEligible,
   aiGraderAuthoritativeLiveLightingDraft,
+  aiGraderMergeBackgroundQueueStatus,
   aiGraderRapidQueueIdentityMatches,
   aiGraderRapidItemPublishable,
   aiGraderReviewActivationAvailable,
@@ -258,6 +259,7 @@ function createEligibleOcrBehaviorHarness(input: {
   const defaultCompletedStatus = behavioralStatus([
     { ...item, ocr: { state: "succeeded", attemptOwnerId: OCR_ATTEMPT_OWNER_ID } },
   ]);
+  let currentStatus = behavioralStatus([item]);
   const scope: Record<string, unknown> = {
     nextEligibleOcrQueueItemId: item.queueItemId,
     nextEligibleOcrSessionId: item.sessionId,
@@ -316,8 +318,16 @@ function createEligibleOcrBehaviorHarness(input: {
       return {};
     },
     AiGraderOcrPrefillStageError: class AiGraderOcrPrefillStageError extends Error {},
-    setStatus(status: BehavioralStationStatus) {
-      input.setStatus?.(status);
+    aiGraderMergeBackgroundQueueStatus,
+    setStatus(
+      update:
+        | BehavioralStationStatus
+        | ((current: BehavioralStationStatus) => BehavioralStationStatus),
+    ) {
+      currentStatus = typeof update === "function"
+        ? update(currentStatus)
+        : update;
+      input.setStatus?.(currentStatus);
     },
   };
   const eligibleEffect = stationUseEffectExpression('action: "begin-queued-ocr"');
@@ -1067,6 +1077,33 @@ test("Start New Card depends only on authoritative capture and lighting ownershi
   assert.equal(aiGraderStartNewCardAvailable({ ...authoritative, lightingRequestPending: true }), false);
 });
 
+test("background queue refresh cannot overwrite an active capture session or preview binding", () => {
+  const current = buildAiGraderLocalStationStatus();
+  current.currentStep = "capture_front";
+  current.sessionManifest.status = "hardware_pending";
+  current.sessionManifest.gradingSessionId = "active-capture-session";
+  current.sessionManifest.reportId = "active-capture-report";
+  current.previewStatus.status = "live";
+  current.previewStatus.sessionId = "active-capture-session";
+  current.previewStatus.activeSide = "front";
+  current.previewStatus.sideEpoch = "front-active-epoch";
+
+  const background = buildAiGraderLocalStationStatus();
+  background.currentStep = "start_new_card";
+  background.previewStatus.status = "not_started";
+  const backgroundQueue = background.rapidCaptureQueue;
+
+  const merged = aiGraderMergeBackgroundQueueStatus(current, background);
+  assert.equal(merged.currentStep, "capture_front");
+  assert.equal(merged.sessionManifest.gradingSessionId, "active-capture-session");
+  assert.equal(merged.sessionManifest.reportId, "active-capture-report");
+  assert.equal(merged.previewStatus.status, "live");
+  assert.equal(merged.previewStatus.sessionId, "active-capture-session");
+  assert.equal(merged.previewStatus.sideEpoch, "front-active-epoch");
+  assert.equal(merged.rapidCaptureQueue, backgroundQueue);
+  assert.notEqual(merged.rapidCaptureQueue, current.rapidCaptureQueue);
+});
+
 test("queued OCR selects one eligible item only when no exact item is already in flight", () => {
   const eligible = {
     queueItemId: "queue-eligible",
@@ -1625,6 +1662,30 @@ test("capture busy state leaves the live preview connected until the helper owns
   assert.match(previewEligibilityBlock, /status\.warmRunnerStatus\.status !== "capturing"/);
   assert.match(captureBlock, /setCaptureBusy\(side\)/);
   assert.match(captureBlock, /runAiGraderCapture\(/);
+});
+
+test("background queue orchestration is capture-state isolated and preview activation is exact-session bound", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  const queueStart = source.indexOf("const nextEligibleOcrItem");
+  const queueEnd = source.indexOf("if (!activeReview || !activeReviewItem)", queueStart);
+  const queueBlock = source.slice(queueStart, queueEnd);
+  const previewStart = source.indexOf("const positioningStepActive");
+  const previewEnd = source.indexOf("const currentStep = useMemo", previewStart);
+  const previewBlock = source.slice(previewStart, previewEnd);
+  const startCardStart = source.indexOf("const startNewCard = async");
+  const startCardEnd = source.indexOf("const runStationCapture", startCardStart);
+  const startCardBlock = source.slice(startCardStart, startCardEnd);
+
+  assert.match(queueBlock, /aiGraderMergeBackgroundQueueStatus\(current, begun\)/);
+  assert.match(queueBlock, /aiGraderMergeBackgroundQueueStatus\(current, completed\)/);
+  assert.match(queueBlock, /aiGraderMergeBackgroundQueueStatus\(current, failed\)/);
+  assert.doesNotMatch(queueBlock, /setStatus\((begun|completed|failed|refreshed)\)/);
+  assert.match(previewBlock, /previewActivationRevision/);
+  assert.match(previewBlock, /previewStatus\.sessionId/);
+  assert.match(previewBlock, /previewStatus\.sideEpoch/);
+  assert.match(previewBlock, /PREVIEW_FIRST_FRAME_TIMEOUT_MS/);
+  assert.match(previewBlock, /reconnecting automatically/);
+  assert.match(startCardBlock, /setPreviewActivationRevision\(\(current\) => current \+ 1\)/);
 });
 
 test("station source has no Single route, separate queue mutation, OCR retry, duplicate next control, or hosted mock station API", () => {

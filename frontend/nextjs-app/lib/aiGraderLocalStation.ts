@@ -3081,6 +3081,16 @@ export function aiGraderStartedSessionMatchesOperation(input: {
     operation?.mathematicalAuthoritySha256 === input.expected.mathematicalAuthoritySha256;
 }
 
+export function aiGraderMergeBackgroundQueueStatus(
+  current: AiGraderLocalStationStatus,
+  background: AiGraderLocalStationStatus,
+): AiGraderLocalStationStatus {
+  return {
+    ...current,
+    rapidCaptureQueue: background.rapidCaptureQueue,
+  };
+}
+
 export function selectNextSerializedAiGraderOcrItem(items: AiGraderRapidCaptureQueueItem[]) {
   if (items.some((item) => item.ocr.state === "in_flight")) return undefined;
   return items

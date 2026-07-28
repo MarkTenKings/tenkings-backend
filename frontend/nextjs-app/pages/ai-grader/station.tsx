@@ -21,6 +21,7 @@ import {
   AI_GRADER_STATION_STEPS,
   aiGraderAtomicBackQueueReleaseMatches,
   aiGraderApproveAndPublishEligible,
+  aiGraderMergeBackgroundQueueStatus,
   aiGraderRapidItemPublishable,
   aiGraderRapidQueueIdentityMatches,
   aiGraderReviewActivationAvailable,
@@ -664,6 +665,8 @@ const REPORT_OVERLAY_CARD_HEIGHT_RATIO = 0.97;
 const REPORT_OVERLAY_CARD_ASPECT_RATIO = 2.5 / 3.5;
 const PREVIEW_GEOMETRY_STATUS_POLL_MS = 200;
 const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
+const PREVIEW_FIRST_FRAME_TIMEOUT_MS = 8000;
+const PREVIEW_RECONNECT_DELAY_MS = 500;
 const REPORT_OVERLAY_ROI_RATIOS = [
   { id: "top-left-corner", type: "corner", x: 0, y: 0, width: 0.18, height: 0.18 },
   { id: "top-right-corner", type: "corner", x: 0.82, y: 0, width: 0.18, height: 0.18 },
@@ -1462,6 +1465,7 @@ export default function AiGraderStationPage() {
   const [bridgeConnectionState, setBridgeConnectionState] = useState<BridgeConnectionState>("checking");
   const [previewStatus, setPreviewStatus] = useState(status.previewStatus);
   const [previewFreshnessNow, setPreviewFreshnessNow] = useState(() => Date.now());
+  const [previewActivationRevision, setPreviewActivationRevision] = useState(0);
   const previewLastLiveFrameAtRef = useRef(0);
   const previewControllerRef = useRef<AbortController | null>(null);
   const previewReaderPromiseRef = useRef<Promise<unknown> | null>(null);
@@ -2214,6 +2218,28 @@ export default function AiGraderStationPage() {
     const isCurrent = () => !cancelled && previewAttemptGenerationRef.current === generation;
     const controller = new AbortController();
     previewControllerRef.current = controller;
+    let firstFrameSeen = false;
+    let reconnectTimer: number | null = null;
+    const scheduleReconnect = () => {
+      if (!isCurrent() || reconnectTimer !== null) return;
+      reconnectTimer = window.setTimeout(() => {
+        reconnectTimer = null;
+        if (isCurrent()) {
+          setPreviewActivationRevision((current) => current + 1);
+        }
+      }, PREVIEW_RECONNECT_DELAY_MS);
+    };
+    const firstFrameTimer = window.setTimeout(() => {
+      if (!isCurrent() || firstFrameSeen) return;
+      setPreviewStatus((current) => ({
+        ...current,
+        status: "error",
+        cameraOwnership: "released",
+        lastError: "Preview did not deliver a first frame for the active session; reconnecting automatically.",
+      }));
+      controller.abort();
+      scheduleReconnect();
+    }, PREVIEW_FIRST_FRAME_TIMEOUT_MS);
 
     const readPreview = async () => {
       try {
@@ -2238,6 +2264,8 @@ export default function AiGraderStationPage() {
               if (!isCurrent()) return;
               const frameBinding = sanitizeAiGraderPreviewFrameBinding(frame);
               if (!frameBinding || !aiGraderPreviewBindingMatches(frameBinding, expectedBinding)) return;
+              firstFrameSeen = true;
+              window.clearTimeout(firstFrameTimer);
               const objectUrl = window.URL.createObjectURL(frame.blob);
               const receivedAtMs = Date.now();
               const transition = applyPreviewEpochEvent({
@@ -2284,6 +2312,7 @@ export default function AiGraderStationPage() {
                 cameraOwnership: "released",
                 lastStopReason: "Preview stream ended. Start New Card or Capture will establish the next explicit state.",
               }));
+              scheduleReconnect();
             },
             onAbort() {
               if (isCurrent()) clearPreviewDisplay("stopped");
@@ -2300,6 +2329,7 @@ export default function AiGraderStationPage() {
                 cameraOwnership: "released",
                 lastError: streamError.message,
               }));
+              scheduleReconnect();
             },
           },
         );
@@ -2318,7 +2348,9 @@ export default function AiGraderStationPage() {
           cameraOwnership: "released",
           lastError: requestError instanceof Error ? requestError.message : "AI Grader preview stream is unavailable.",
         }));
+        scheduleReconnect();
       } finally {
+        window.clearTimeout(firstFrameTimer);
         if (previewControllerRef.current === controller) previewControllerRef.current = null;
       }
     };
@@ -2327,12 +2359,18 @@ export default function AiGraderStationPage() {
     return () => {
       cancelled = true;
       previewAttemptGenerationRef.current += 1;
+      window.clearTimeout(firstFrameTimer);
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       controller.abort();
       if (previewControllerRef.current === controller) previewControllerRef.current = null;
     };
   }, [
     bridgeConnected,
     bridgeUrl,
+    previewActivationRevision,
+    previewStatus.activeSide,
+    previewStatus.sessionId,
+    previewStatus.sideEpoch,
     stationToken,
     status.currentStep,
     status.sessionManifest.backCaptured,
@@ -2967,7 +3005,10 @@ export default function AiGraderStationPage() {
       pending = true;
       try {
         const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action: "status" });
-        if (!cancelled) setStatus(next);
+        if (!cancelled) {
+          setStatus((current) =>
+            aiGraderMergeBackgroundQueueStatus(current, next));
+        }
       } catch {
         // Queue polling is advisory. The explicit capture controls remain authoritative.
       } finally {
@@ -3155,7 +3196,8 @@ export default function AiGraderStationPage() {
           throw new Error("The exact queued OCR item was not durably claimed by this tab.");
         }
         claimed = true;
-        setStatus(begun);
+        setStatus((current) =>
+          aiGraderMergeBackgroundQueueStatus(current, begun));
         const result = await runAiGraderOcrPrefillFromLocalReport({
           baseUrl: bridgeUrl,
           stationToken,
@@ -3170,7 +3212,8 @@ export default function AiGraderStationPage() {
           body: buildAiGraderQueuedOcrCompletionRequest({ ...identity, attemptOwnerId, result }),
         });
         if (!ownsLiveAttempt()) return;
-        setStatus(completed);
+        setStatus((current) =>
+          aiGraderMergeBackgroundQueueStatus(current, completed));
       } catch (requestError) {
         if (!ownsLiveAttempt()) return;
         const typedFailure = requestError instanceof AiGraderOcrPrefillStageError ? requestError : null;
@@ -3186,7 +3229,10 @@ export default function AiGraderStationPage() {
             item.queueItemId === identity.queueItemId &&
             item.sessionId === identity.gradingSessionId &&
             item.reportId === identity.reportId);
-          if (refreshed) setStatus(refreshed);
+          if (refreshed) {
+            setStatus((current) =>
+              aiGraderMergeBackgroundQueueStatus(current, refreshed));
+          }
           // An observed in-flight attempt can belong to another live tab. Only the
           // exact tab that received and validated the durable claim may fail it.
           if (!persisted || persisted.ocr.state === "eligible") {
@@ -3212,7 +3258,8 @@ export default function AiGraderStationPage() {
             }),
           });
           if (!ownsLiveAttempt()) return;
-          setStatus(failed);
+          setStatus((current) =>
+            aiGraderMergeBackgroundQueueStatus(current, failed));
         } catch (persistenceError) {
           if (!ownsLiveAttempt()) return;
           wakeInterruptedRecovery = true;
@@ -3295,7 +3342,10 @@ export default function AiGraderStationPage() {
           action: "status",
         });
         if (!active || abortController.signal.aborted) return;
-        if (active) setStatus(refreshed);
+        if (active) {
+          setStatus((current) =>
+            aiGraderMergeBackgroundQueueStatus(current, refreshed));
+        }
         const exactInFlight = refreshed.rapidCaptureQueue.items.find((item) =>
           item.queueItemId === identity.queueItemId &&
           item.sessionId === identity.gradingSessionId &&
@@ -3317,7 +3367,10 @@ export default function AiGraderStationPage() {
             },
           }),
         });
-        if (active) setStatus(failed);
+        if (active) {
+          setStatus((current) =>
+            aiGraderMergeBackgroundQueueStatus(current, failed));
+        }
       } catch (persistenceError) {
         if (abortController.signal.aborted || !active) return;
         const persistenceMessage = persistenceError instanceof Error
@@ -3396,7 +3449,8 @@ export default function AiGraderStationPage() {
           body: { ...identity, result },
         });
         if (!active) return;
-        setStatus(completed);
+        setStatus((current) =>
+          aiGraderMergeBackgroundQueueStatus(current, completed));
       } catch (selectionError) {
         if (!active) return;
         setError(
@@ -4029,6 +4083,7 @@ export default function AiGraderStationPage() {
         editedFields: new Set(identityEditedFieldsRef.current),
         selectedCard,
       });
+      setPreviewActivationRevision((current) => current + 1);
       setMathematicalAuthorityStatus({
         status: ocrFirstStart ? "pending" : "completed",
         message: ocrFirstStart

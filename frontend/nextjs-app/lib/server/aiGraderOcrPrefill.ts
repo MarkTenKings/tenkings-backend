@@ -33,6 +33,7 @@ import {
   type AiGraderEyesCenteringCandidateOverlay,
   type AiGraderEyesCenteringCandidateSelectionReceipt,
 } from "./aiGraderEyesCenteringCandidateSelection";
+import { aiGraderOcrFieldRequiresReview } from "../aiGraderOcrReviewContract";
 
 export type AiGraderOcrPrefillSide = "front" | "back";
 
@@ -124,7 +125,6 @@ export type AiGraderOcrPrefillRuntimeDependencies = {
   providerTimeBudgetMs?: number;
 };
 
-const REVIEW_CONFIDENCE_THRESHOLD = 0.8;
 // Keep five seconds of route headroom beneath the Production API's immutable
 // 60-second ceiling for upload verification, validation, serialization, and
 // the response itself. Each provider also remains independently bounded.
@@ -153,12 +153,17 @@ function outputField<T extends AiGraderOcrPrefillFieldValue>(
   field: AiGraderOcrStructuredField<T>
 ): AiGraderOcrPrefillField<T> {
   const confidence = roundedConfidence(field.confidence);
+  const evidenceRefs = Array.from(new Set(field.evidenceRefs));
   return {
     state: field.state,
     value: field.state === "supported" ? field.value : null as T,
     confidence,
-    reviewRequired: field.state !== "supported" || confidence < REVIEW_CONFIDENCE_THRESHOLD,
-    evidenceRefs: Array.from(new Set(field.evidenceRefs)),
+    reviewRequired: aiGraderOcrFieldRequiresReview({
+      state: field.state,
+      confidence,
+      evidenceRefs,
+    }),
+    evidenceRefs,
   };
 }
 
@@ -172,12 +177,17 @@ function reviewedField<T extends AiGraderOcrPrefillFieldValue>(
   }
 ): AiGraderOcrPrefillField<T> {
   const confidence = roundedConfidence(input.confidence ?? field.confidence);
+  const evidenceRefs = Array.from(new Set([...field.evidenceRefs, input.evidenceRef]));
   return {
     state: input.state,
     value: input.state === "supported" ? input.value : null as T,
     confidence,
-    reviewRequired: input.state !== "supported" || confidence < REVIEW_CONFIDENCE_THRESHOLD,
-    evidenceRefs: Array.from(new Set([...field.evidenceRefs, input.evidenceRef])),
+    reviewRequired: aiGraderOcrFieldRequiresReview({
+      state: input.state,
+      confidence,
+      evidenceRefs,
+    }),
+    evidenceRefs,
   };
 }
 
@@ -277,12 +287,17 @@ function reviewableUnresolvedCatalogField(
     typeof field.value === "string" &&
     field.value.trim()
   ) {
+    const evidenceRefs = Array.from(new Set([...field.evidenceRefs, evidenceRef]));
     return {
       ...field,
       state: "supported" as const,
       value: field.value.trim(),
-      reviewRequired: true,
-      evidenceRefs: Array.from(new Set([...field.evidenceRefs, evidenceRef])),
+      reviewRequired: aiGraderOcrFieldRequiresReview({
+        state: "supported",
+        confidence: field.confidence,
+        evidenceRefs,
+      }),
+      evidenceRefs,
     };
   }
   return unsupportedCatalogField(field, state, evidenceRef);

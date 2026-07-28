@@ -7,6 +7,7 @@ import {
   resolveAiGraderCatalogOption,
   type AiGraderOcrPrefillFields,
 } from "../lib/server/aiGraderOcrPrefill";
+import { safeAiGraderOcrPrefillResult } from "../lib/aiGraderOcrPrefillClient";
 
 function supported<T extends string | boolean>(value: T, confidence = 0.92) {
   return {
@@ -176,6 +177,55 @@ test("unresolved catalog matching preserves extracted OCR values for explicit op
   assert.equal(none.cardNumber.state, "supported");
   assert.equal(none.cardNumber.value, "41");
   assert.equal(none.cardNumber.reviewRequired, true);
+});
+
+test("unresolved supported catalog values survive the exact server-to-browser OCR contract", () => {
+  const canonical = canonicalizeAiGraderOcrCatalog({
+    fields: fields(),
+    category: "sport",
+    identified: identified({
+      setId: null,
+      setName: null,
+      playerName: null,
+      cardNumber: null,
+      confidence: "none",
+      candidateCount: 0,
+    }),
+    lookup: lookup({
+      match: "none",
+      setId: null,
+      insertLabel: null,
+      scopedParallels: [],
+    }),
+  });
+  const result = safeAiGraderOcrPrefillResult({
+    queueItemId: "queue-round-trip",
+    gradingSessionId: "session-round-trip",
+    reportId: "report-round-trip",
+    status: "prefill_ready",
+    humanConfirmationRequired: true,
+    inventoryMutationPerformed: false,
+    publishMutationPerformed: false,
+    sourceSides: ["front", "back"],
+    fields: canonical,
+    reviewFieldNames: Object.entries(canonical)
+      .filter(([, field]) => field.reviewRequired)
+      .map(([fieldName]) => fieldName),
+    provenance: {
+      ocrEngine: "google_vision_document_text_detection_url_only",
+      attributeExtractor: "@tenkings/shared/extractCardAttributes",
+      structuredExtractor: "openai_responses_strict_json_schema",
+      structuredExtractionModel: "gpt-5.6-sol",
+      setLookupUsed: true,
+      setIdentificationUsed: true,
+    },
+    warnings: ["Human review required."],
+  });
+
+  assert.equal(result.fields.playerName.value, "Michael Jordan");
+  assert.equal(result.fields.playerName.reviewRequired, true);
+  assert.equal(result.fields.cardNumber.value, "41");
+  assert.equal(result.fields.cardNumber.reviewRequired, true);
 });
 
 test("unresolved catalog matching keeps absent OCR fields blank", () => {

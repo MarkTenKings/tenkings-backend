@@ -28933,3 +28933,23 @@ By enabling Rip It Live, I confirm:
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-required, `production_fast`, calibration activation configured, sessionless `start_new_card`, preview `not_started`, camera ownership idle, no active transition or capture lock, warm runner idle, and capture/processing/report queues empty. Runtime HEAD is the exact functional merge and the runtime worktree is clean.
 - Restart released only the in-memory active-review selection. The exact prior queue/session/report remains persisted at `operator_resolution_required` with succeeded OCR and was not resolved, discarded, published, or otherwise mutated.
 - No camera/lighting operation, capture/cancel, card creation, calibration change, identity/owner resolution, publication/discard, queue/report/database/storage mutation, NFC, inventory, or unrelated service action occurred.
+
+## 2026-07-28 - OCR response-contract and concurrent capture-state correction candidate
+
+- Two fresh Production cards reached the same terminal `OCR Prefill response was invalid or incomplete` failure. Read-only reproduction established an exact contract mismatch: server catalog canonicalization intentionally preserved independently supported OCR text as review-required when catalog resolution was unresolved, while the browser validator still required every supported field at confidence `>= 0.8` to set `reviewRequired=false`.
+- Server canonicalization and browser validation now share one review-requirement function. Supported OCR text remains review-required when its exact evidence includes an unresolved catalog marker, while unknown, disagreement, and low-confidence behavior remains unchanged. The client also preserves a bounded contract-validation detail so any future schema mismatch identifies the rejected field instead of collapsing to the generic terminal message.
+- Background Rapid queue polling, queued OCR lifecycle updates, interrupted-attempt recovery, and EYES queue completion now merge only the authoritative `rapidCaptureQueue` subtree into current browser state. They cannot overwrite a newly active capture session, preview binding, current capture step, or camera state with a stale background response.
+- A newly accepted Start New Card session explicitly activates its exact preview binding. The preview stream has an eight-second first-frame watchdog and bounded automatic reconnect trigger, preventing a successful session start from remaining indefinitely at `Waiting for a fresh detected front frame` when the browser never establishes or unexpectedly loses the first stream.
+- Focused validation passed:
+  - OCR catalog, browser response-contract, and station lifecycle suites `69/69`;
+  - OCR provider-prefill and structured-extraction suites `23/23`;
+  - changed AI Grader files produced no TypeScript errors;
+  - `git diff --check` passed with Windows line-ending notices only.
+- The repository-wide Next.js build still stops at the pre-existing unrelated `lib/server/liveRipClaim.ts` `claimedAt` type error before bundling. No changed AI Grader file produced a new build or type error.
+- No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication/discard, calibration, queue/report/database/storage mutation, helper restart, Production deployment, or unrelated product action occurred during implementation and focused validation.
+
+### Planned authorized Production action
+
+- Commit and push only this shared OCR response contract, background queue-state isolation, exact-session preview activation/reconnect correction, its focused regressions, and this audit entry.
+- Open one focused protected PR and merge only after the repository-required checks pass. Allow and verify the normal GitHub/Vercel Production deployment with migrations disabled.
+- This correction changes only browser/serverless Next.js code and does not alter the Dell capture-helper runtime or protocol. Do not restart or repin the helper, and do not mutate any existing failed card or queue item.
