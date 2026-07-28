@@ -264,13 +264,14 @@ test("Production station exposes one strict operator element-resolution boundary
   assert.match(source, /unit: "mm"/);
   assert.match(source, /order: \["left", "right", "top", "bottom"\]/);
   assert.match(source, /element,\s*score: Number\(draft\.score\)/);
-  assert.match(source, /publicExplanation: draft\.publicExplanation/);
-  assert.match(source, /internalReason: draft\.internalReason/);
+  assert.match(source, /const publicExplanation = draft\.publicExplanation\.trim\(\)/);
+  assert.match(source, /const internalReason = draft\.internalReason\.trim\(\)/);
+  assert.match(source, /publicExplanation,\s*internalReason,/);
   assert.match(
     source,
     /OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN\s*=\s*\/\(\?:provisional\|insufficient\|human\|manual\|exception\|admission\)\/i/,
   );
-  assert.match(source, /OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN\.test\(draft\.publicExplanation\)/);
+  assert.match(source, /OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN\.test\(publicExplanation\)/);
   assert.doesNotMatch(source, /overallGrade\s*:/);
   assert.doesNotMatch(source, /labelGrade\s*:/);
 });
@@ -298,10 +299,24 @@ test("centering ruler stacks exact sides, zooms from fit width, and persists vis
   assert.match(source, /<g className="live-measurement">/);
   assert.match(source, /className="pending"/);
   assert.match(source, /className="pointer"/);
+  assert.match(
+    source,
+    /line\.margin === "right"[\s\S]*?textAnchor: "end"/,
+  );
+  assert.match(
+    source,
+    /:global\(\.centering-measurement-canvas circle\) \{[\s\S]*?fill: transparent/,
+  );
+  assert.match(source, /r=\{12 \/ zoom\}/);
   assert.match(source, /centeringSegments:/);
   assert.match(source, /coordinateFrame: "normalized_card_portrait_pixels"/);
   assert.match(source, /widthPx: 1200 as const/);
   assert.match(source, /heightPx: 1680 as const/);
+  assert.match(source, /function CenteringResolutionPreview\(/);
+  assert.match(source, /Calculated centering preview/);
+  assert.match(source, /fuseCenteringFrontBackV1\(frontScore, backScore\)/);
+  assert.match(source, /DEFAULT_CENTERING_PUBLIC_EXPLANATION/);
+  assert.match(source, /DEFAULT_CENTERING_INTERNAL_REASON/);
 });
 
 test("operator element resolution is image-first and condenses repeated directional-evidence failures", () => {

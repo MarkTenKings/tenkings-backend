@@ -16328,7 +16328,7 @@ function setCors(res: http.ServerResponse, origin: string | undefined, config: A
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
-    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-queue-item-id,x-ai-grader-grading-session-id,x-ai-grader-report-id,x-ai-grader-reference-id,x-ai-grader-request-sha256,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role,x-ai-grader-width-px,x-ai-grader-height-px"
+    "x-ai-grader-session-id,x-ai-grader-preview-side,x-ai-grader-preview-epoch,x-ai-grader-frame-id,x-ai-grader-queue-item-id,x-ai-grader-grading-session-id,x-ai-grader-report-id,x-ai-grader-reference-id,x-ai-grader-request-sha256,x-ai-grader-sha256,x-ai-grader-asset-id,x-ai-grader-side,x-ai-grader-evidence-role,x-ai-grader-width-px,x-ai-grader-height-px,x-ai-grader-candidate-id,x-ai-grader-deterministic-input-sha256"
   );
   res.setHeader("Access-Control-Allow-Private-Network", "true");
   res.setHeader("Access-Control-Max-Age", "600");

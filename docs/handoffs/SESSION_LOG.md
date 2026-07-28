@@ -28865,3 +28865,23 @@ By enabling Rip It Live, I confirm:
 - The public and exact-deployment station assets are byte-identical: bundle `station-27ecb755749eccc0.js`, `315,062` bytes, SHA-256 `70c8090a88cd5c937d638c8e5f57a6a0fe08d27f77ecf51126d6cae8386ddd7b`.
 - Direct Production bundle inspection confirms the shared ruler image/SVG selector and visible cyan line selector are present without a styled-jsx scope suffix, the prior scoped ruler-selector leak is absent, and the next-unfinished-margin copy/behavior is present.
 - This was browser-only. The Dell helper was not updated or restarted. The preserved card, its unsaved draft, queue/report/database/storage state, calibration, capture, camera/lighting hardware, publication, and unrelated runtime were not mutated.
+
+## 2026-07-27 - Centering ruler completion and EYES candidate-header correction candidate
+
+- The owner's fresh Production acceptance proved the ruler presentation fix but exposed four contained issues: solid endpoint markers obscured the crosshair, right-edge labels rendered outside the visible canvas, completing eight measurements did not present the calculated centering result/overlay before submission, and harmless whitespace could invalidate the public/internal explanations.
+- The ruler now uses hollow fixed/live endpoint rings, keeps marker and label size stable while zooming, and places left/right labels inward so real-time measurements stay visible at both card edges.
+- Once all eight valid millimeter measurements exist, the station displays an editable calculated centering preview with separate Front/Back scores and full-card measurement overlays. Empty public/internal explanation fields receive safe descriptive defaults; existing operator text is never overwritten. The activated helper remains authoritative on submission and the existing centering formula, thresholds, resolution authority, and final report generation remain unchanged.
+- Exact read-only inspection also found the EYES centering candidate failure: the helper returned `x-ai-grader-candidate-id` and `x-ai-grader-deterministic-input-sha256`, but omitted both from `Access-Control-Expose-Headers`. Chrome hid those response headers, so the station rejected otherwise bound candidates and surfaced the generic descriptor error. The two existing binding headers are now browser-visible; candidate data, selection authority, hashing, OCR, and all other EYES behavior are unchanged.
+- No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication/discard, calibration, queue/report/database/storage mutation, score formula change, new workflow gate, or unrelated component change occurred.
+- Focused validation passed:
+  - shared and capture-helper TypeScript builds;
+  - local station bridge suite `45/45`;
+  - station, OCR, structured extraction, semantic observer, and EYES centering candidate-selection suites;
+  - optimized Next.js Production build;
+  - `git diff --check` with Windows line-ending notices only.
+
+### Planned authorized Production action
+
+- Commit and push only the ruler presentation/preview/defaults, the two CORS-exposed EYES binding headers, focused regressions, and this audit entry. Open one focused protected PR and merge after required checks.
+- Allow the normal GitHub/Vercel Production deployment with migrations disabled and verify the deployed station asset.
+- Do not mutate or reuse the owner's active queue/session/report. Because the header correction changes the local helper, defer helper advancement/restart until the owner clears the current card and a fresh read-only idle gate passes.

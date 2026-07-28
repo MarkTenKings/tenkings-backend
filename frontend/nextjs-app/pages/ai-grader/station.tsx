@@ -9,6 +9,9 @@ import {
 } from "react";
 import {
   AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
+  calculateCenteringAxisV1,
+  fuseCenteringFrontBackV1,
+  fuseCenteringSideAxesV1,
   type AiGraderCalibrationActivationAuthorityV1,
 } from "@tenkings/shared";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
@@ -780,6 +783,10 @@ const OPERATOR_RESOLUTION_ELEMENTS: AiGraderOperatorResolutionElementV1[] = [
 ];
 const OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN =
   /(?:provisional|insufficient|human|manual|exception|admission)/i;
+const DEFAULT_CENTERING_PUBLIC_EXPLANATION =
+  "Front and back border measurements support the calculated centering subgrade.";
+const DEFAULT_CENTERING_INTERNAL_REASON =
+  "Resolved from eight calibrated normalized-card border measurements and their bound ruler segments.";
 
 type OperatorResolutionElementDraft = {
   enabled: boolean;
@@ -797,6 +804,92 @@ type CenteringToolLine = {
   end: CenteringToolPoint;
   mm: number;
 };
+
+type CenteringMeasurementPreview = {
+  frontScore: number;
+  backScore: number;
+  score: number;
+};
+
+function buildCenteringMeasurementPreview(
+  values: OperatorResolutionDraft["centering"],
+): CenteringMeasurementPreview | null {
+  const parseSide = (
+    side: "front" | "back",
+  ): [number, number, number, number] | null => {
+    const parsed = values[side].map((entry) => Number(entry));
+    if (
+      parsed.length !== 4 ||
+      parsed.some((entry) => !Number.isFinite(entry) || entry < 0) ||
+      parsed[0] + parsed[1] >= 63.5 ||
+      parsed[2] + parsed[3] >= 88.9
+    ) {
+      return null;
+    }
+    return parsed as [number, number, number, number];
+  };
+  const sideScore = (
+    measurements: [number, number, number, number],
+  ) => fuseCenteringSideAxesV1(
+    calculateCenteringAxisV1(measurements[0], measurements[1], 0).score,
+    calculateCenteringAxisV1(measurements[2], measurements[3], 0).score,
+  );
+  const front = parseSide("front");
+  const back = parseSide("back");
+  if (!front || !back) return null;
+  const frontScore = sideScore(front);
+  const backScore = sideScore(back);
+  return {
+    frontScore,
+    backScore,
+    score: fuseCenteringFrontBackV1(frontScore, backScore),
+  };
+}
+
+function centeringMeasurementLabelPlacement(
+  line: CenteringToolLine,
+  widthPx: number,
+  heightPx: number,
+  zoom: number,
+): {
+  x: number;
+  y: number;
+  textAnchor: "start" | "middle" | "end";
+} {
+  const offset = 22 / zoom;
+  const verticalPadding = 30 / zoom;
+  const midpointX = (line.start.x + line.end.x) / 2;
+  const midpointY = (line.start.y + line.end.y) / 2;
+  const clampedY = Math.max(
+    verticalPadding,
+    Math.min(heightPx - verticalPadding, midpointY),
+  );
+  if (line.margin === "left") {
+    return {
+      x: Math.min(widthPx - offset, Math.max(line.start.x, line.end.x) + offset),
+      y: clampedY,
+      textAnchor: "start",
+    };
+  }
+  if (line.margin === "right") {
+    return {
+      x: Math.max(offset, Math.min(line.start.x, line.end.x) - offset),
+      y: clampedY,
+      textAnchor: "end",
+    };
+  }
+  const horizontalPadding = 130 / zoom;
+  return {
+    x: Math.max(
+      horizontalPadding,
+      Math.min(widthPx - horizontalPadding, midpointX),
+    ),
+    y: line.margin === "top"
+      ? Math.min(heightPx - verticalPadding, Math.max(line.start.y, line.end.y) + verticalPadding)
+      : Math.max(verticalPadding, Math.min(line.start.y, line.end.y) - verticalPadding),
+    textAnchor: "middle",
+  };
+}
 
 type OperatorResolutionDraft = {
   confirmed: boolean;
@@ -1040,61 +1133,98 @@ function CenteringMeasurementTool({
               viewBox={`0 0 ${view.image.widthPx} ${view.image.heightPx}`}
               aria-hidden="true"
             >
-              {Object.values(lines).map((line) => line ? (
-                <g key={line.margin}>
-                  <line
-                    className="fixed"
-                    x1={line.start.x}
-                    y1={line.start.y}
-                    x2={line.end.x}
-                    y2={line.end.y}
-                  />
-                  <circle cx={line.start.x} cy={line.start.y} r="10" />
-                  <circle cx={line.end.x} cy={line.end.y} r="10" />
-                  <text
-                    x={(line.start.x + line.end.x) / 2}
-                    y={(line.start.y + line.end.y) / 2 - 16}
-                  >
-                    {line.margin} {line.mm.toFixed(2)} mm
-                  </text>
-                </g>
-              ) : null)}
-              {liveLine ? (
-                <g className="live-measurement">
-                  <line
-                    className="live"
-                    x1={liveLine.start.x}
-                    y1={liveLine.start.y}
-                    x2={liveLine.end.x}
-                    y2={liveLine.end.y}
-                  />
-                  <circle
-                    className="pending"
-                    cx={liveLine.start.x}
-                    cy={liveLine.start.y}
-                    r="12"
-                  />
-                  <circle
-                    className="pointer"
-                    cx={liveLine.end.x}
-                    cy={liveLine.end.y}
-                    r="12"
-                  />
-                  <text
-                    className="live"
-                    x={(liveLine.start.x + liveLine.end.x) / 2}
-                    y={(liveLine.start.y + liveLine.end.y) / 2 - 16}
-                  >
-                    {liveLine.margin} {liveLine.mm.toFixed(2)} mm
-                  </text>
-                </g>
-              ) : null}
+              {Object.values(lines).map((line) => {
+                if (!line) return null;
+                const label = centeringMeasurementLabelPlacement(
+                  line,
+                  view.image.widthPx,
+                  view.image.heightPx,
+                  zoom,
+                );
+                return (
+                  <g key={line.margin}>
+                    <line
+                      className="fixed"
+                      x1={line.start.x}
+                      y1={line.start.y}
+                      x2={line.end.x}
+                      y2={line.end.y}
+                    />
+                    <circle
+                      cx={line.start.x}
+                      cy={line.start.y}
+                      r={10 / zoom}
+                    />
+                    <circle
+                      cx={line.end.x}
+                      cy={line.end.y}
+                      r={10 / zoom}
+                    />
+                    <text
+                      x={label.x}
+                      y={label.y}
+                      textAnchor={label.textAnchor}
+                      dominantBaseline="middle"
+                      style={{
+                        fontSize: `${24 / zoom}px`,
+                        strokeWidth: 6 / zoom,
+                      }}
+                    >
+                      {line.margin} {line.mm.toFixed(2)} mm
+                    </text>
+                  </g>
+                );
+              })}
+              {liveLine ? (() => {
+                const label = centeringMeasurementLabelPlacement(
+                  liveLine,
+                  view.image.widthPx,
+                  view.image.heightPx,
+                  zoom,
+                );
+                return (
+                  <g className="live-measurement">
+                    <line
+                      className="live"
+                      x1={liveLine.start.x}
+                      y1={liveLine.start.y}
+                      x2={liveLine.end.x}
+                      y2={liveLine.end.y}
+                    />
+                    <circle
+                      className="pending"
+                      cx={liveLine.start.x}
+                      cy={liveLine.start.y}
+                      r={12 / zoom}
+                    />
+                    <circle
+                      className="pointer"
+                      cx={liveLine.end.x}
+                      cy={liveLine.end.y}
+                      r={12 / zoom}
+                    />
+                    <text
+                      className="live"
+                      x={label.x}
+                      y={label.y}
+                      textAnchor={label.textAnchor}
+                      dominantBaseline="middle"
+                      style={{
+                        fontSize: `${24 / zoom}px`,
+                        strokeWidth: 6 / zoom,
+                      }}
+                    >
+                      {liveLine.margin} {liveLine.mm.toFixed(2)} mm
+                    </text>
+                  </g>
+                );
+              })() : null}
               {firstPoint ? (
                 <circle
                   className="pending"
                   cx={firstPoint.x}
                   cy={firstPoint.y}
-                  r="12"
+                  r={12 / zoom}
                 />
               ) : null}
             </svg>
@@ -1117,6 +1247,108 @@ function CenteringMeasurementTool({
       >
         Clear {side} measurements
       </button>
+    </section>
+  );
+}
+
+function CenteringResolutionPreview({
+  values,
+  lines,
+  views,
+}: {
+  values: OperatorResolutionDraft["centering"];
+  lines: OperatorResolutionDraft["centeringSegments"];
+  views: Partial<Record<"front" | "back", OperatorResolutionEvidenceView>>;
+}) {
+  const preview = buildCenteringMeasurementPreview(values);
+  if (!preview) return null;
+  return (
+    <section
+      className="centering-resolution-preview"
+      aria-label="Calculated centering subgrade preview"
+    >
+      <div className="centering-resolution-preview-head">
+        <div>
+          <span>Calculated centering preview</span>
+          <strong>{preview.score.toFixed(2)} / 10</strong>
+        </div>
+        <p>
+          Front {preview.frontScore.toFixed(2)} / 10 · Back{" "}
+          {preview.backScore.toFixed(2)} / 10. Edit any measurement to
+          recalculate. The activated helper performs the authoritative
+          calibration-bound calculation when you submit.
+        </p>
+      </div>
+      <div className="centering-resolution-preview-grid">
+        {(["front", "back"] as const).map((side) => {
+          const view = views[side];
+          return (
+            <article key={side}>
+              <strong>{formatStationValue(side)} centering overlay</strong>
+              {view ? (
+                <div
+                  className="centering-resolution-preview-canvas"
+                  style={{
+                    aspectRatio:
+                      `${view.image.widthPx} / ${view.image.heightPx}`,
+                  }}
+                >
+                  <img
+                    src={view.objectUrl}
+                    alt={`${formatStationValue(side)} centering preview`}
+                  />
+                  <svg
+                    viewBox={`0 0 ${view.image.widthPx} ${view.image.heightPx}`}
+                    aria-hidden="true"
+                  >
+                    {Object.values(lines[side]).map((line) => {
+                      if (!line) return null;
+                      const label = centeringMeasurementLabelPlacement(
+                        line,
+                        view.image.widthPx,
+                        view.image.heightPx,
+                        1,
+                      );
+                      return (
+                        <g key={line.margin}>
+                          <line
+                            x1={line.start.x}
+                            y1={line.start.y}
+                            x2={line.end.x}
+                            y2={line.end.y}
+                          />
+                          <circle
+                            cx={line.start.x}
+                            cy={line.start.y}
+                            r="10"
+                          />
+                          <circle
+                            cx={line.end.x}
+                            cy={line.end.y}
+                            r="10"
+                          />
+                          <text
+                            x={label.x}
+                            y={label.y}
+                            textAnchor={label.textAnchor}
+                            dominantBaseline="middle"
+                          >
+                            {line.margin} {line.mm.toFixed(2)} mm
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                </div>
+              ) : (
+                <div className="operator-evidence-placeholder">
+                  Exact normalized {side} image unavailable.
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -4213,17 +4445,16 @@ export default function AiGraderStationPage() {
         }
         continue;
       }
-      if (draft.publicExplanation !== draft.publicExplanation.trim() ||
-          !draft.publicExplanation ||
-          draft.publicExplanation.length > 1000 ||
-          OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN.test(draft.publicExplanation)) {
+      const publicExplanation = draft.publicExplanation.trim();
+      const internalReason = draft.internalReason.trim();
+      if (!publicExplanation ||
+          publicExplanation.length > 1000 ||
+          OPERATOR_PUBLIC_EXPLANATION_FORBIDDEN.test(publicExplanation)) {
         setError(`${formatStationValue(element)} public explanation is invalid or contains prohibited workflow wording.`);
         return;
       }
-      if (draft.internalReason !== draft.internalReason.trim() ||
-          !draft.internalReason ||
-          draft.internalReason.length > 2000) {
-        setError(`${formatStationValue(element)} internal rationale is required and must be trimmed.`);
+      if (!internalReason || internalReason.length > 2000) {
+        setError(`${formatStationValue(element)} internal rationale is required.`);
         return;
       }
       if (element === "centering") {
@@ -4271,8 +4502,8 @@ export default function AiGraderStationPage() {
         const backSegments = segmentSide("back");
         resolutions.push({
           element,
-          publicExplanation: draft.publicExplanation,
-          internalReason: draft.internalReason,
+          publicExplanation,
+          internalReason,
           measurements: {
             unit: "mm",
             order: ["left", "right", "top", "bottom"],
@@ -4300,8 +4531,8 @@ export default function AiGraderStationPage() {
         resolutions.push({
           element,
           score: Number(draft.score),
-          publicExplanation: draft.publicExplanation,
-          internalReason: draft.internalReason,
+          publicExplanation,
+          internalReason,
         });
       }
     }
@@ -6373,13 +6604,35 @@ export default function AiGraderStationPage() {
                                           ...current.centering[side],
                                         ] as [string, string, string, string];
                                         measurements[index] = value;
+                                        const centering = {
+                                          ...current.centering,
+                                          [side]: measurements,
+                                        };
+                                        const complete = (["front", "back"] as const)
+                                          .every((candidateSide) =>
+                                            centering[candidateSide].every(
+                                              (measurement) => measurement !== "",
+                                            ));
+                                        const centeringElement =
+                                          current.elements.centering;
                                         return {
                                           ...current,
                                           confirmed: false,
-                                          centering: {
-                                            ...current.centering,
-                                            [side]: measurements,
-                                          },
+                                          centering,
+                                          elements: complete
+                                            ? {
+                                                ...current.elements,
+                                                centering: {
+                                                  ...centeringElement,
+                                                  publicExplanation:
+                                                    centeringElement.publicExplanation ||
+                                                    DEFAULT_CENTERING_PUBLIC_EXPLANATION,
+                                                  internalReason:
+                                                    centeringElement.internalReason ||
+                                                    DEFAULT_CENTERING_INTERNAL_REASON,
+                                                },
+                                              }
+                                            : current.elements,
                                           centeringSegments: {
                                             ...current.centeringSegments,
                                             [side]: {
@@ -6405,6 +6658,11 @@ export default function AiGraderStationPage() {
                                   />
                                 ))}
                               </div>
+                              <CenteringResolutionPreview
+                                values={operatorResolutionDraftState.centering}
+                                lines={operatorResolutionDraftState.centeringSegments}
+                                views={operatorResolutionEvidence.images}
+                              />
                               <div className="mathematical-profile-grid">
                                 {(["front", "back"] as const).flatMap((side) =>
                                   CENTERING_MARGIN_NAMES.map((margin, index) => (
@@ -9751,6 +10009,7 @@ export default function AiGraderStationPage() {
         :global(.centering-measurement-canvas line) {
           stroke: #20e8ff;
           stroke-width: 5;
+          vector-effect: non-scaling-stroke;
           filter: drop-shadow(0 1px 2px #000);
         }
         :global(.centering-measurement-canvas line.live) {
@@ -9758,15 +10017,18 @@ export default function AiGraderStationPage() {
           stroke-dasharray: 16 10;
         }
         :global(.centering-measurement-canvas circle) {
-          fill: #20e8ff;
-          stroke: #061014;
-          stroke-width: 4;
+          fill: transparent;
+          stroke: #20e8ff;
+          stroke-width: 3;
+          vector-effect: non-scaling-stroke;
+          filter: drop-shadow(0 1px 2px #000);
         }
         :global(.centering-measurement-canvas circle.pending) {
-          fill: #ffd584;
+          fill: transparent;
+          stroke: #ffd584;
         }
         :global(.centering-measurement-canvas circle.pointer) {
-          fill: #ffffff;
+          fill: transparent;
           stroke: #ffd584;
         }
         :global(.centering-measurement-canvas text) {
@@ -9774,10 +10036,100 @@ export default function AiGraderStationPage() {
           stroke: #000000;
           stroke-width: 6;
           paint-order: stroke;
-          font: 700 24px monospace;
+          font-family: monospace;
+          font-weight: 700;
         }
         :global(.centering-measurement-canvas text.live) {
           fill: #ffd584;
+        }
+        :global(.centering-resolution-preview) {
+          display: grid;
+          gap: 12px;
+          padding: 14px;
+          border: 1px solid rgba(255, 213, 132, 0.42);
+          border-radius: 8px;
+          background: rgba(255, 213, 132, 0.045);
+        }
+        :global(.centering-resolution-preview-head) {
+          display: grid;
+          grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
+          align-items: center;
+          gap: 16px;
+        }
+        :global(.centering-resolution-preview-head span),
+        :global(.centering-resolution-preview-head strong) {
+          display: block;
+        }
+        :global(.centering-resolution-preview-head span) {
+          color: #ffd584;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        :global(.centering-resolution-preview-head strong) {
+          margin-top: 4px;
+          color: #ffffff;
+          font-size: 28px;
+        }
+        :global(.centering-resolution-preview-head p) {
+          color: #c9c3b4;
+          font-size: 12px;
+          line-height: 1.45;
+        }
+        :global(.centering-resolution-preview-grid) {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
+        }
+        :global(.centering-resolution-preview-grid article) {
+          min-width: 0;
+        }
+        :global(.centering-resolution-preview-grid article > strong) {
+          display: block;
+          margin-bottom: 7px;
+          color: #f7f0dc;
+          font-size: 12px;
+        }
+        :global(.centering-resolution-preview-canvas) {
+          position: relative;
+          width: 100%;
+          overflow: hidden;
+          border: 1px solid rgba(255, 255, 255, 0.13);
+          border-radius: 5px;
+          background: #010201;
+        }
+        :global(.centering-resolution-preview-canvas img),
+        :global(.centering-resolution-preview-canvas svg) {
+          position: absolute;
+          inset: 0;
+          display: block;
+          width: 100%;
+          height: 100%;
+        }
+        :global(.centering-resolution-preview-canvas svg) {
+          pointer-events: none;
+        }
+        :global(.centering-resolution-preview-canvas line) {
+          stroke: #20e8ff;
+          stroke-width: 5;
+          vector-effect: non-scaling-stroke;
+          filter: drop-shadow(0 1px 2px #000);
+        }
+        :global(.centering-resolution-preview-canvas circle) {
+          fill: transparent;
+          stroke: #20e8ff;
+          stroke-width: 3;
+          vector-effect: non-scaling-stroke;
+        }
+        :global(.centering-resolution-preview-canvas text) {
+          fill: #ffffff;
+          stroke: #000000;
+          stroke-width: 6;
+          paint-order: stroke;
+          font-family: monospace;
+          font-size: 24px;
+          font-weight: 700;
         }
         .mathematical-finding-list {
           display: grid;
@@ -9934,6 +10286,8 @@ export default function AiGraderStationPage() {
           .mathematical-review-head,
           .operator-evidence-grid,
           .centering-measurement-tools,
+          :global(.centering-resolution-preview-grid),
+          :global(.centering-resolution-preview-head),
           .mathematical-identity-grid,
           .mathematical-profile-grid,
           .mathematical-mask-grid,
