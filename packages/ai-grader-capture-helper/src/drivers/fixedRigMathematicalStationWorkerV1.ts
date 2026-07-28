@@ -15,6 +15,12 @@ import {
 import {
   FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
+import {
+  AI_GRADER_MATHEMATICAL_REPORT_ASSET_MANIFEST_FILE,
+  AI_GRADER_MATHEMATICAL_REPORT_BUNDLE_FILE,
+  AI_GRADER_MATHEMATICAL_REPORT_CHECKSUMS_FILE,
+  AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_FILE,
+} from "./aiGraderMathematicalReportPackageV1";
 
 const MATHEMATICAL_STATION_WORKER_PROTOCOL_VERSION =
   "ten-kings-fixed-rig-mathematical-station-worker-v1" as const;
@@ -69,6 +75,8 @@ export interface FixedRigMathematicalStationWorkerOptionsV1 {
   workerPath?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** Test-only observation of the actual Worker lifecycle. */
+  onWorkerLifecycle?: (state: "started" | "exited") => void;
 }
 
 export interface FixedRigMathematicalStationWorkerPoolOptionsV1 {
@@ -77,6 +85,8 @@ export interface FixedRigMathematicalStationWorkerPoolOptionsV1 {
   timeoutMs?: number;
   maxConcurrency?: number;
   maxAdmitted?: number;
+  /** Test-only observation of the actual Worker lifecycle. */
+  onWorkerLifecycle?: (state: "started" | "exited") => void;
 }
 
 export interface FixedRigMathematicalStationWorkerPoolStatusV1 {
@@ -234,6 +244,166 @@ function validMathematicalStationResult(
   );
 }
 
+function pathIsWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" ||
+    (!path.isAbsolute(relative) &&
+      relative !== ".." &&
+      !relative.startsWith(`..${path.sep}`));
+}
+
+function validateResultIdentityMembers(
+  value: unknown,
+  identity: MathematicalStationWorkerIdentityV1,
+): boolean {
+  if (!value || typeof value !== "object") return true;
+  const seen = new Set<object>();
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (ArrayBuffer.isView(current) || current instanceof ArrayBuffer) continue;
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    const record = current as Record<string, unknown>;
+    for (const [key, member] of Object.entries(record)) {
+      if (
+        key === "queueItemId" &&
+        (typeof member !== "string" || member !== identity.queueItemId)
+      ) {
+        return false;
+      }
+      if (
+        key === "gradingSessionId" &&
+        (typeof member !== "string" || member !== identity.gradingSessionId)
+      ) {
+        return false;
+      }
+      if (
+        key === "sessionId" &&
+        (typeof member !== "string" || member !== identity.gradingSessionId)
+      ) {
+        return false;
+      }
+      if (
+        key === "reportId" &&
+        (typeof member !== "string" || member !== identity.reportId)
+      ) {
+        return false;
+      }
+      if (member && typeof member === "object") {
+        pending.push(member);
+      }
+    }
+  }
+  return true;
+}
+
+function validateResultOutputPaths(
+  result: BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  outputDir: string,
+): boolean {
+  const exactOutputDir = path.resolve(outputDir);
+  if (result.status !== "completed") {
+    return result.reportPackage === null && result.stationInput === null;
+  }
+  if (
+    !path.isAbsolute(result.stationInput.mathematicalReportPackagePath) ||
+    !path.isAbsolute(result.reportPackage.outputDir) ||
+    path.resolve(result.stationInput.mathematicalReportPackagePath) !==
+      exactOutputDir ||
+    path.resolve(result.reportPackage.outputDir) !== exactOutputDir
+  ) {
+    return false;
+  }
+  const expectedPackagePaths: Array<[string, string]> = [
+    [
+      result.reportPackage.bundlePath,
+      path.join(exactOutputDir, AI_GRADER_MATHEMATICAL_REPORT_BUNDLE_FILE),
+    ],
+    [
+      result.reportPackage.envelopePath,
+      path.join(exactOutputDir, AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_FILE),
+    ],
+    [
+      result.reportPackage.assetManifestPath,
+      path.join(
+        exactOutputDir,
+        AI_GRADER_MATHEMATICAL_REPORT_ASSET_MANIFEST_FILE,
+      ),
+    ],
+    [
+      result.reportPackage.checksumsPath,
+      path.join(exactOutputDir, AI_GRADER_MATHEMATICAL_REPORT_CHECKSUMS_FILE),
+    ],
+  ];
+  if (expectedPackagePaths.some(([observed, expected]) =>
+    path.resolve(observed) !== expected)) {
+    return false;
+  }
+  const pending: unknown[] = [result.reportPackage];
+  const seen = new Set<object>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || typeof current !== "object") continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+    if (ArrayBuffer.isView(current) || current instanceof ArrayBuffer) continue;
+    if (Array.isArray(current)) {
+      pending.push(...current);
+      continue;
+    }
+    for (const [key, member] of Object.entries(
+      current as Record<string, unknown>,
+    )) {
+      if (typeof member === "string") {
+        if (key === "relativePath" || key.endsWith("File")) {
+          if (
+            path.isAbsolute(member) ||
+            !pathIsWithin(exactOutputDir, path.resolve(exactOutputDir, member))
+          ) {
+            return false;
+          }
+        } else if (
+          key === "path" ||
+          key === "outputDir" ||
+          key.endsWith("Path") ||
+          key.endsWith("Directory") ||
+          key.endsWith("Dir")
+        ) {
+          if (
+            !path.isAbsolute(member) ||
+            !pathIsWithin(exactOutputDir, path.resolve(member))
+          ) {
+            return false;
+          }
+        }
+      } else if (member && typeof member === "object") {
+        pending.push(member);
+      }
+    }
+  }
+  return true;
+}
+
+function validateMathematicalStationResultContainment(
+  result: BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+  identity: MathematicalStationWorkerIdentityV1,
+  outputDir: string,
+): "identity_mismatch" | "path_mismatch" | null {
+  if (!validateResultIdentityMembers(result, identity)) {
+    return "identity_mismatch";
+  }
+  if (!validateResultOutputPaths(result, outputDir)) {
+    return "path_mismatch";
+  }
+  return null;
+}
+
 export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
   input: BuildFixedRigMathematicalCalibrationStationPackageV1Input,
   options: FixedRigMathematicalStationWorkerOptionsV1 = {},
@@ -283,20 +453,27 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
   }
 
   return new Promise((resolve, reject) => {
-    let settled = false;
+    let exited = false;
     let worker: Worker;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort = () => {};
-    const finish = (
-      error?: FixedRigMathematicalStationWorkerErrorV1,
-      result?: BuildFixedRigMathematicalCalibrationStationPackageV1Result,
-    ) => {
-      if (settled) return;
-      settled = true;
+    let terminationRequested = false;
+    let outcome:
+      | {
+          error: FixedRigMathematicalStationWorkerErrorV1;
+          result?: never;
+        }
+      | {
+          error?: never;
+          result: BuildFixedRigMathematicalCalibrationStationPackageV1Result;
+        }
+      | undefined;
+    const settleAfterExit = () => {
+      if (!exited) return;
       if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
-      if (error) reject(error);
-      else if (result) resolve(result);
+      if (outcome?.error) reject(outcome.error);
+      else if (outcome?.result) resolve(outcome.result);
       else {
         reject(
           new FixedRigMathematicalStationWorkerErrorV1(
@@ -305,14 +482,42 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
           ),
         );
       }
+    };
+    const requestTermination = () => {
+      if (terminationRequested || exited) return;
+      terminationRequested = true;
       void worker.terminate().catch(() => undefined);
     };
+    const recordOutcome = (
+      error?: FixedRigMathematicalStationWorkerErrorV1,
+      result?: BuildFixedRigMathematicalCalibrationStationPackageV1Result,
+      terminate = false,
+    ) => {
+      if (outcome) {
+        if (terminate && error && outcome.result) outcome = { error };
+        if (terminate) requestTermination();
+        settleAfterExit();
+        return;
+      }
+      if (error) outcome = { error };
+      else if (result) outcome = { result };
+      else outcome = {
+        error: new FixedRigMathematicalStationWorkerErrorV1(
+          "crash",
+          "Mathematical processing worker ended without one validated result.",
+        ),
+      };
+      if (terminate) requestTermination();
+      settleAfterExit();
+    };
     onAbort = () =>
-      finish(
+      recordOutcome(
         new FixedRigMathematicalStationWorkerErrorV1(
           "shutdown",
           "Mathematical processing worker was cancelled during helper shutdown.",
         ),
+        undefined,
+        true,
       );
     try {
       worker = new Worker(options.workerPath ?? __filename, {
@@ -324,6 +529,11 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
         stdout: false,
         stderr: false,
       });
+      try {
+        options.onWorkerLifecycle?.("started");
+      } catch {
+        // Test-only observation cannot own worker execution.
+      }
     } catch {
       reject(
         new FixedRigMathematicalStationWorkerErrorV1(
@@ -335,11 +545,13 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
     }
     timer = setTimeout(
       () =>
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "timeout",
             "Mathematical processing worker exceeded its bounded runtime.",
           ),
+          undefined,
+          true,
         ),
       timeoutMs,
     );
@@ -347,25 +559,29 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
     if (options.signal?.aborted) onAbort();
     worker.once("message", (message: unknown) => {
       if (!exactResponseShape(message)) {
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "malformed_response",
             "Mathematical processing worker returned a malformed response.",
           ),
+          undefined,
+          true,
         );
         return;
       }
       if (!identitiesMatch(message.identity, identity)) {
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "identity_mismatch",
             "Mathematical processing worker returned a cross-card response.",
           ),
+          undefined,
+          true,
         );
         return;
       }
       if (!message.ok) {
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "processing_failed",
             safeWorkerFailure(message.error.message),
@@ -379,27 +595,51 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
           Buffer.from(message.payload),
         ) as BuildFixedRigMathematicalCalibrationStationPackageV1Result;
       } catch {
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "malformed_response",
             "Mathematical processing worker result could not be decoded.",
           ),
+          undefined,
+          true,
         );
         return;
       }
       if (!validMathematicalStationResult(result)) {
-        finish(
+        recordOutcome(
           new FixedRigMathematicalStationWorkerErrorV1(
             "malformed_response",
             "Mathematical processing worker result violated the strict V1 contract.",
           ),
+          undefined,
+          true,
         );
         return;
       }
-      finish(undefined, result);
+      const containmentIssue = validateMathematicalStationResultContainment(
+        result,
+        identity,
+        input.outputDir,
+      );
+      if (containmentIssue) {
+        recordOutcome(
+          new FixedRigMathematicalStationWorkerErrorV1(
+            containmentIssue === "identity_mismatch"
+              ? "identity_mismatch"
+              : "malformed_response",
+            containmentIssue === "identity_mismatch"
+              ? "Mathematical processing worker result contained a cross-card identity."
+              : "Mathematical processing worker result contained an invalid output path.",
+          ),
+          undefined,
+          true,
+        );
+        return;
+      }
+      recordOutcome(undefined, result);
     });
     worker.once("error", () => {
-      finish(
+      recordOutcome(
         new FixedRigMathematicalStationWorkerErrorV1(
           "crash",
           "Mathematical processing worker crashed.",
@@ -407,16 +647,34 @@ export function buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
       );
     });
     worker.once("exit", (code) => {
-      if (!settled) {
-        finish(
-          new FixedRigMathematicalStationWorkerErrorV1(
+      try {
+        options.onWorkerLifecycle?.("exited");
+      } catch {
+        // Test-only observation cannot own worker settlement.
+      }
+      exited = true;
+      if (!outcome) {
+        outcome = {
+          error: new FixedRigMathematicalStationWorkerErrorV1(
             "crash",
             code === 0
               ? "Mathematical processing worker exited without one validated result."
               : "Mathematical processing worker exited unexpectedly.",
           ),
-        );
+        };
+      } else if (
+        code !== 0 &&
+        outcome.result &&
+        !terminationRequested
+      ) {
+        outcome = {
+          error: new FixedRigMathematicalStationWorkerErrorV1(
+            "crash",
+            "Mathematical processing worker exited unexpectedly.",
+          ),
+        };
       }
+      settleAfterExit();
     });
   });
 }
@@ -435,8 +693,10 @@ export class FixedRigMathematicalStationWorkerPoolV1 {
   private readonly pending: FixedRigMathematicalStationWorkerPoolJobV1[] = [];
   private readonly admittedIdentities = new Set<string>();
   private readonly activeControllers = new Map<string, AbortController>();
+  private readonly activeJobs = new Map<string, Promise<void>>();
   private active = 0;
   private stopped = false;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(
     options: FixedRigMathematicalStationWorkerPoolOptionsV1 = {},
@@ -472,6 +732,9 @@ export class FixedRigMathematicalStationWorkerPoolV1 {
     this.workerOptions = {
       ...(options.workerPath ? { workerPath: options.workerPath } : {}),
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.onWorkerLifecycle
+        ? { onWorkerLifecycle: options.onWorkerLifecycle }
+        : {}),
     };
   }
 
@@ -545,7 +808,8 @@ export class FixedRigMathematicalStationWorkerPoolV1 {
     });
   }
 
-  shutdown(): void {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.stopped = true;
     const error = new FixedRigMathematicalStationWorkerErrorV1(
       "shutdown",
@@ -558,6 +822,10 @@ export class FixedRigMathematicalStationWorkerPoolV1 {
     for (const controller of this.activeControllers.values()) {
       controller.abort();
     }
+    this.shutdownPromise = Promise.allSettled(
+      [...this.activeJobs.values()],
+    ).then(() => undefined);
+    return this.shutdownPromise;
   }
 
   private pump(): void {
@@ -570,22 +838,24 @@ export class FixedRigMathematicalStationWorkerPoolV1 {
       const controller = new AbortController();
       this.active += 1;
       this.activeControllers.set(job.identityKey, controller);
-      void buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
+      const finishActiveJob = () => {
+        this.active -= 1;
+        this.activeControllers.delete(job.identityKey);
+        this.activeJobs.delete(job.identityKey);
+        this.admittedIdentities.delete(job.identityKey);
+        this.pump();
+      };
+      const activeJob = buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
         job.input,
         { ...this.workerOptions, signal: controller.signal },
       ).then((result) => {
-        this.active -= 1;
-        this.activeControllers.delete(job.identityKey);
-        this.admittedIdentities.delete(job.identityKey);
-        this.pump();
+        finishActiveJob();
         job.resolve(result);
       }, (error) => {
-        this.active -= 1;
-        this.activeControllers.delete(job.identityKey);
-        this.admittedIdentities.delete(job.identityKey);
-        this.pump();
+        finishActiveJob();
         job.reject(error);
       });
+      this.activeJobs.set(job.identityKey, activeJob);
     }
   }
 }

@@ -23,6 +23,8 @@ import {
   aiGraderApproveAndPublishEligible,
   aiGraderMergeBackgroundQueueStatus,
   aiGraderRapidItemPublishable,
+  aiGraderRapidQueueIdentityKey,
+  aiGraderRapidQueueIdentityOperationActive,
   aiGraderRapidQueueIdentityMatches,
   aiGraderReviewActivationAvailable,
   aiGraderStartNewCardAvailable,
@@ -157,6 +159,7 @@ type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
 type StationWorkArea = "grade" | "finish";
 type RapidItemOperation = "review" | "release" | "publish" | "discard";
+type ReviewRerunOperation = "finding-review" | "operator-resolution";
 type ProductionPublishState = {
   status: "idle" | "pending" | "published" | "disabled" | "error";
   message: string;
@@ -1455,6 +1458,8 @@ export default function AiGraderStationPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [captureBusy, setCaptureBusy] = useState<"start" | "front" | "back" | "cancel" | null>(null);
   const [rapidItemOperations, setRapidItemOperations] = useState<Record<string, RapidItemOperation | undefined>>({});
+  const [reviewRerunOperations, setReviewRerunOperations] =
+    useState<Record<string, ReviewRerunOperation | undefined>>({});
   const [discardCandidate, setDiscardCandidate] = useState<AiGraderRapidCaptureQueueItem | null>(null);
   const publicationReviewClaimRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [publicationReviewClaim, setPublicationReviewClaim] = useState<AiGraderRapidQueueIdentity | null>(null);
@@ -1503,6 +1508,8 @@ export default function AiGraderStationPage() {
   const reviewDraftCacheRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
   const preCaptureDraftBySessionRef = useRef<Map<string, IdentityDraftSnapshot>>(new Map());
   const activeReviewIdentityRef = useRef<string | null>(null);
+  const currentActiveReviewIdentityKeyRef = useRef<string | null>(null);
+  const reviewRerunOperationClaimsRef = useRef<Set<string>>(new Set());
   const mathematicalAuthorityReviewRef = useRef<HTMLElement | null>(null);
   const revealedIdentityReviewRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
@@ -1555,10 +1562,10 @@ export default function AiGraderStationPage() {
   const operatorResolutionQueueIdentityRef = useRef<AiGraderRapidQueueIdentity | null>(null);
   const [operatorResolutionDraftState, setOperatorResolutionDraftState] =
     useState<OperatorResolutionDraft>(() => operatorResolutionDraft());
-  const operatorResolutionIdempotencyRef = useRef<{
+  const operatorResolutionIdempotencyRef = useRef<Map<string, {
     submission: string;
     key: string;
-  } | null>(null);
+  }>>(new Map());
   const [identityStatus, setIdentityStatus] = useState<StepState>({
     status: "idle",
     message: "Card information has not yet been linked to a Ten Kings CardAsset/Item.",
@@ -1609,6 +1616,18 @@ export default function AiGraderStationPage() {
     gradingSessionId: activeReview.gradingSessionId,
     reportId: activeReview.reportId,
   } : null;
+  const activeReviewQueueIdentityKey = activeReviewQueueIdentity
+    ? aiGraderRapidQueueIdentityKey(activeReviewQueueIdentity)
+    : null;
+  currentActiveReviewIdentityKeyRef.current = activeReviewQueueIdentityKey;
+  const activeReviewRerunOperation = activeReviewQueueIdentityKey
+    ? reviewRerunOperations[activeReviewQueueIdentityKey]
+    : undefined;
+  const activeReviewInteractionBusy = busy !== null ||
+    aiGraderRapidQueueIdentityOperationActive(
+      reviewRerunOperations,
+      activeReviewQueueIdentity,
+    );
   const activeReviewItem = activeReview
     ? status.rapidCaptureQueue.items.find((item) =>
         item.queueItemId === activeReview.queueItemId &&
@@ -1677,7 +1696,6 @@ export default function AiGraderStationPage() {
 
   useEffect(() => {
     setOperatorResolutionDraftState(operatorResolutionDraft(operatorResolutionRequest));
-    operatorResolutionIdempotencyRef.current = null;
   }, [operatorResolutionRequest?.requestSha256]);
 
   const revokeMathematicalReviewObjectUrls = () => {
@@ -3522,9 +3540,15 @@ export default function AiGraderStationPage() {
 
   useEffect(() => {
     if (!activeReview || !activeReviewItem) return;
-    const identityKey = [activeReview.queueItemId, activeReview.gradingSessionId, activeReview.reportId].join(":");
-    if (activeReviewIdentityRef.current !== identityKey) {
-      activeReviewIdentityRef.current = identityKey;
+    const exactIdentity = {
+      queueItemId: activeReview.queueItemId,
+      gradingSessionId: activeReview.gradingSessionId,
+      reportId: activeReview.reportId,
+    };
+    const activeIdentityKey = aiGraderRapidQueueIdentityKey(exactIdentity);
+    const identityKey = activeIdentityKey;
+    if (activeReviewIdentityRef.current !== activeIdentityKey) {
+      activeReviewIdentityRef.current = activeIdentityKey;
       hydratedOcrIdentityRef.current = null;
       const cached = reviewDraftCacheRef.current.get(identityKey);
       const preCapture = preCaptureDraftBySessionRef.current.get(activeReview.gradingSessionId);
@@ -3640,11 +3664,11 @@ export default function AiGraderStationPage() {
       !activeReviewReportId ||
       activeReviewItemState !== "identity_resolution_required"
     ) return;
-    const identityKey = [
-      activeReviewQueueItemId,
-      activeReviewGradingSessionId,
-      activeReviewReportId,
-    ].join(":");
+    const identityKey = aiGraderRapidQueueIdentityKey({
+      queueItemId: activeReviewQueueItemId,
+      gradingSessionId: activeReviewGradingSessionId,
+      reportId: activeReviewReportId,
+    });
     if (revealedIdentityReviewRef.current === identityKey) return;
     revealedIdentityReviewRef.current = identityKey;
     const animationFrame = window.requestAnimationFrame(() => {
@@ -3763,21 +3787,35 @@ export default function AiGraderStationPage() {
   const runAction = async (
     action: AiGraderStationAction,
     body?: Record<string, unknown>,
-    signal?: AbortSignal,
+    options: {
+      signal?: AbortSignal;
+      preserveActiveReview?: boolean;
+    } = {},
   ) => {
     if (!bridgeConnected || !stationToken.trim()) {
       throw new Error("Connect the real Dell local station bridge before running station actions.");
     }
-    const next = await callAiGraderStationBridge({ baseUrl: bridgeUrl, stationToken, action, body, signal });
-    setStatus(next);
-    reconcileBridgePreviewStatus(next.previewStatus);
-    setLiveLighting(next.liveLighting);
-    setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
-    setProfileDraft({
-      dutyPercent: next.acceptedProfile.dutyPercent,
-      exposureUs: next.acceptedProfile.exposureUs,
-      gain: next.acceptedProfile.gain,
+    const next = await callAiGraderStationBridge({
+      baseUrl: bridgeUrl,
+      stationToken,
+      action,
+      body,
+      signal: options.signal,
     });
+    if (options.preserveActiveReview) {
+      setStatus((current) =>
+        aiGraderMergeBackgroundQueueStatus(current, next));
+    } else {
+      setStatus(next);
+      reconcileBridgePreviewStatus(next.previewStatus);
+      setLiveLighting(next.liveLighting);
+      setLiveLightingDraft(aiGraderAuthoritativeLiveLightingDraft(next.liveLighting));
+      setProfileDraft({
+        dutyPercent: next.acceptedProfile.dutyPercent,
+        exposureUs: next.acceptedProfile.exposureUs,
+        gain: next.acceptedProfile.gain,
+      });
+    }
     return next;
   };
 
@@ -4405,11 +4443,7 @@ export default function AiGraderStationPage() {
       return;
     }
     if (activeReview) {
-      const currentIdentityKey = [
-        activeReview.queueItemId,
-        activeReview.gradingSessionId,
-        activeReview.reportId,
-      ].join(":");
+      const currentIdentityKey = aiGraderRapidQueueIdentityKey(activeReview);
       reviewDraftCacheRef.current.set(currentIdentityKey, {
         identityDraft: { ...identityDraft },
         editedFields: new Set(identityEditedFieldsRef.current),
@@ -4488,7 +4522,11 @@ export default function AiGraderStationPage() {
     const wasActive = item.queueItemId === activeReview?.queueItemId &&
       item.sessionId === activeReview.gradingSessionId &&
       item.reportId === activeReview.reportId;
-    const draftKey = [item.queueItemId, item.sessionId, item.reportId].join(":");
+    const draftKey = aiGraderRapidQueueIdentityKey({
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+    });
     setRapidItemOperations((current) => ({ ...current, [item.queueItemId]: "discard" }));
     setError(null);
     try {
@@ -4541,7 +4579,17 @@ export default function AiGraderStationPage() {
       setError("Finding review requires the activated exact queue/session/report item and matching immutable request SHA-256.");
       return;
     }
-    setBusy("mathematical-review");
+    const submissionIdentity = { ...activeReviewQueueIdentity };
+    const submissionIdentityKey = aiGraderRapidQueueIdentityKey(submissionIdentity);
+    if (reviewRerunOperationClaimsRef.current.has(submissionIdentityKey)) {
+      setError("This exact card already has a Mathematical V1 rerun in progress.");
+      return;
+    }
+    reviewRerunOperationClaimsRef.current.add(submissionIdentityKey);
+    setReviewRerunOperations((current) => ({
+      ...current,
+      [submissionIdentityKey]: "finding-review",
+    }));
     setError(null);
     try {
       const reviewed = await runAction(
@@ -4554,13 +4602,14 @@ export default function AiGraderStationPage() {
             warningsAccepted: true,
             overrideReason: "Operator reviewed exact hash-bound Mathematical V1 evidence and explicitly dispositioned every measured finding.",
           }),
-          ...activeReviewQueueIdentity,
+          ...submissionIdentity,
         },
+        { preserveActiveReview: true },
       );
       const reviewedItem = reviewed.rapidCaptureQueue.items.find((item) =>
-        item.queueItemId === activeReviewQueueIdentity.queueItemId &&
-        item.sessionId === activeReviewQueueIdentity.gradingSessionId &&
-        item.reportId === activeReviewQueueIdentity.reportId);
+        item.queueItemId === submissionIdentity.queueItemId &&
+        item.sessionId === submissionIdentity.gradingSessionId &&
+        item.reportId === submissionIdentity.reportId);
       if (reviewedItem?.state === "finding_review_required" ||
           reviewedItem?.state === "insufficient_evidence") return;
       if (reviewedItem?.mathematicalV1?.status !== "completed") {
@@ -4571,10 +4620,16 @@ export default function AiGraderStationPage() {
       const message = requestError instanceof Error
         ? requestError.message
         : "Mathematical V1 finding reviews could not be submitted.";
-      await runAction("status").catch(() => undefined);
-      setError(message);
+      await runAction("status", undefined, { preserveActiveReview: true }).catch(() => undefined);
+      if (currentActiveReviewIdentityKeyRef.current === submissionIdentityKey) {
+        setError(message);
+      }
     } finally {
-      setBusy(null);
+      reviewRerunOperationClaimsRef.current.delete(submissionIdentityKey);
+      setReviewRerunOperations((current) =>
+        current[submissionIdentityKey] === "finding-review"
+          ? { ...current, [submissionIdentityKey]: undefined }
+          : current);
     }
   };
 
@@ -4585,6 +4640,8 @@ export default function AiGraderStationPage() {
       setError("Element resolution requires the activated exact queue/session/report item and request.");
       return;
     }
+    const submissionIdentity = { ...activeReviewQueueIdentity };
+    const submissionIdentityKey = aiGraderRapidQueueIdentityKey(submissionIdentity);
     const unresolved = new Set([
       ...(mathematicalExecution?.status === "operator_resolution_required"
         ? mathematicalExecution.unresolvedElements
@@ -4702,13 +4759,25 @@ export default function AiGraderStationPage() {
       operatorConfirmed: true,
       resolutions,
     };
+    if (reviewRerunOperationClaimsRef.current.has(submissionIdentityKey)) {
+      setError("This exact card already has a Mathematical V1 rerun in progress.");
+      return;
+    }
+    reviewRerunOperationClaimsRef.current.add(submissionIdentityKey);
     const serialized = JSON.stringify(submission);
-    const prior = operatorResolutionIdempotencyRef.current;
+    const idempotencyIdentityKey = `${submissionIdentityKey}:${request.requestSha256}`;
+    const prior = operatorResolutionIdempotencyRef.current.get(idempotencyIdentityKey);
     const idempotencyKey = prior?.submission === serialized
       ? prior.key
       : `operator-resolution-${crypto.randomUUID()}`;
-    operatorResolutionIdempotencyRef.current = { submission: serialized, key: idempotencyKey };
-    setBusy("operator-resolution");
+    operatorResolutionIdempotencyRef.current.set(
+      idempotencyIdentityKey,
+      { submission: serialized, key: idempotencyKey },
+    );
+    setReviewRerunOperations((current) => ({
+      ...current,
+      [submissionIdentityKey]: "operator-resolution",
+    }));
     setError(null);
     try {
       await requireProductionSession(
@@ -4716,7 +4785,7 @@ export default function AiGraderStationPage() {
       );
       const operatorAuthentication =
         await issueAiGraderOperatorResolutionAuthenticationV1({
-          ...activeReviewQueueIdentity,
+          ...submissionIdentity,
           requestSha256: request.requestSha256,
           idempotencyKey,
           operatorResolutionSubmission: submission,
@@ -4726,19 +4795,25 @@ export default function AiGraderStationPage() {
           ),
         });
       await runAction("submit-operator-resolutions", {
-        ...activeReviewQueueIdentity,
+        ...submissionIdentity,
         idempotencyKey,
         operatorResolutionSubmission: submission,
         operatorAuthentication,
-      });
+      }, { preserveActiveReview: true });
     } catch (requestError) {
       const message = requestError instanceof Error
         ? requestError.message
         : "Exact element resolutions could not be committed.";
-      await runAction("status").catch(() => undefined);
-      setError(message);
+      await runAction("status", undefined, { preserveActiveReview: true }).catch(() => undefined);
+      if (currentActiveReviewIdentityKeyRef.current === submissionIdentityKey) {
+        setError(message);
+      }
     } finally {
-      setBusy(null);
+      reviewRerunOperationClaimsRef.current.delete(submissionIdentityKey);
+      setReviewRerunOperations((current) =>
+        current[submissionIdentityKey] === "operator-resolution"
+          ? { ...current, [submissionIdentityKey]: undefined }
+          : current);
     }
   };
 
@@ -6737,7 +6812,7 @@ export default function AiGraderStationPage() {
                               },
                             },
                           }))}
-                          disabled={busy !== null}
+                          disabled={activeReviewInteractionBusy}
                         />
                         Resolve this element
                       </label>
@@ -6753,7 +6828,7 @@ export default function AiGraderStationPage() {
                                     view={operatorResolutionEvidence.images[side]}
                                     values={operatorResolutionDraftState.centering[side]}
                                     lines={operatorResolutionDraftState.centeringSegments[side]}
-                                    disabled={busy !== null}
+                                    disabled={activeReviewInteractionBusy}
                                     onMeasurement={(index, value, line) =>
                                       setOperatorResolutionDraftState((current) => {
                                         const measurements = [
@@ -6850,7 +6925,7 @@ export default function AiGraderStationPage() {
                                             },
                                           };
                                         })}
-                                        disabled={busy !== null}
+                                        disabled={activeReviewInteractionBusy}
                                       />
                                     </label>
                                   )),
@@ -6877,7 +6952,7 @@ export default function AiGraderStationPage() {
                                     },
                                   },
                                 }))}
-                                disabled={busy !== null}
+                                disabled={activeReviewInteractionBusy}
                               />
                             </label>
                           )}
@@ -6897,7 +6972,7 @@ export default function AiGraderStationPage() {
                                   },
                                 },
                               }))}
-                              disabled={busy !== null}
+                              disabled={activeReviewInteractionBusy}
                             />
                           </label>
                           <label>
@@ -6916,7 +6991,7 @@ export default function AiGraderStationPage() {
                                   },
                                 },
                               }))}
-                              disabled={busy !== null}
+                              disabled={activeReviewInteractionBusy}
                             />
                           </label>
                         </div>
@@ -6933,7 +7008,7 @@ export default function AiGraderStationPage() {
                     ...current,
                     confirmed: event.target.checked,
                   }))}
-                  disabled={busy !== null}
+                  disabled={activeReviewInteractionBusy}
                 />
                 I confirm these exact element results and explanations.
               </label>
@@ -6941,9 +7016,9 @@ export default function AiGraderStationPage() {
                 type="button"
                 className="primary"
                 onClick={() => void submitOperatorResolutions()}
-                disabled={busy !== null || !operatorResolutionDraftState.confirmed}
+                disabled={activeReviewInteractionBusy || !operatorResolutionDraftState.confirmed}
               >
-                {busy === "operator-resolution"
+                {activeReviewRerunOperation === "operator-resolution"
                   ? "Authenticating and Rerunning"
                   : "Commit Exact Resolution and Rerun"}
               </button>
@@ -7060,7 +7135,7 @@ export default function AiGraderStationPage() {
                               ? event.target.value
                               : undefined,
                           }))}
-                          disabled={busy !== null || mathematicalReviewAssets.status !== "ready"}
+                          disabled={activeReviewInteractionBusy || mathematicalReviewAssets.status !== "ready"}
                         >
                           <option value="">Select one</option>
                           <option value="confirmed">Confirmed as measured</option>
@@ -7076,12 +7151,14 @@ export default function AiGraderStationPage() {
                 className="primary"
                 onClick={() => void submitMathematicalFindingReviews()}
                 disabled={
-                  busy !== null ||
+                  activeReviewInteractionBusy ||
                   mathematicalReviewAssets.status !== "ready" ||
                   !mathematicalReviewAllDispositioned
                 }
               >
-                {busy === "mathematical-review" ? "Submitting and Rerunning" : "Submit Exact Reviews and Rerun"}
+                {activeReviewRerunOperation === "finding-review"
+                  ? "Submitting and Rerunning"
+                  : "Submit Exact Reviews and Rerun"}
               </button>
               <p>
                 Submission contains only one confirmed/adjusted disposition per finding, the exact request SHA-256,

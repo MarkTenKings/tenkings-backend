@@ -567,6 +567,25 @@ export type AiGraderRapidQueueIdentity = {
   reportId: string;
 };
 
+export function aiGraderRapidQueueIdentityKey(
+  identity: AiGraderRapidQueueIdentity,
+) {
+  return JSON.stringify([
+    identity.queueItemId,
+    identity.gradingSessionId,
+    identity.reportId,
+  ]);
+}
+
+export function aiGraderRapidQueueIdentityOperationActive(
+  operations: Readonly<Record<string, unknown>>,
+  identity: AiGraderRapidQueueIdentity | null | undefined,
+) {
+  return identity
+    ? operations[aiGraderRapidQueueIdentityKey(identity)] !== undefined
+    : false;
+}
+
 export function aiGraderRapidQueueIdentityMatches(
   left: AiGraderRapidQueueIdentity | null | undefined,
   right: AiGraderRapidQueueIdentity | null | undefined,
@@ -3104,7 +3123,11 @@ export function aiGraderMergeBackgroundQueueStatus(
 ): AiGraderLocalStationStatus {
   const currentItems = new Map(
     current.rapidCaptureQueue.items.map((item) => [
-      [item.queueItemId, item.sessionId, item.reportId].join(":"),
+      aiGraderRapidQueueIdentityKey({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+      }),
       item,
     ]),
   );
@@ -3117,11 +3140,11 @@ export function aiGraderMergeBackgroundQueueStatus(
   } as const;
   const backgroundItemIdentities = new Set<string>();
   const mergedItems = background.rapidCaptureQueue.items.map((backgroundItem) => {
-    const identityKey = [
-      backgroundItem.queueItemId,
-      backgroundItem.sessionId,
-      backgroundItem.reportId,
-    ].join(":");
+    const identityKey = aiGraderRapidQueueIdentityKey({
+      queueItemId: backgroundItem.queueItemId,
+      gradingSessionId: backgroundItem.sessionId,
+      reportId: backgroundItem.reportId,
+    });
     backgroundItemIdentities.add(identityKey);
     const currentItem = currentItems.get(
       identityKey,
@@ -3140,11 +3163,11 @@ export function aiGraderMergeBackgroundQueueStatus(
     return backgroundItem;
   });
   for (const currentItem of current.rapidCaptureQueue.items) {
-    const identityKey = [
-      currentItem.queueItemId,
-      currentItem.sessionId,
-      currentItem.reportId,
-    ].join(":");
+    const identityKey = aiGraderRapidQueueIdentityKey({
+      queueItemId: currentItem.queueItemId,
+      gradingSessionId: currentItem.sessionId,
+      reportId: currentItem.reportId,
+    });
     if (!backgroundItemIdentities.has(identityKey)) {
       mergedItems.push(currentItem);
     }

@@ -1822,7 +1822,7 @@ test("independent OCR-first review binds release immediately and overlap determi
   }
 });
 
-test("real helper HTTP remains responsive for independent review and Start New Card while deterministic workers run", async () => {
+test("real bind-route worker jobs leave HTTP review and Start New Card responsive", async () => {
   const outputDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "tenkings-math-worker-http-responsive-"),
   );
@@ -1849,16 +1849,52 @@ test("real helper HTTP remains responsive for independent review and Start New C
       },
     );
     installSimulatedMathematicalCapture(fixtureService, true);
-    const cardA = await captureMathematicalCard(
-      fixtureService,
-      printedAuthority(),
-      "http-responsive-card-a",
+    const captureOcrFirst = async (reportId, suffix) => {
+      await fixtureService.action("start-session", {
+        reportId,
+        captureProfile: "production_fast",
+        gradingContract: "mathematical_calibration_v1",
+        ocrFirstIdentityBinding: "printed_border_v1",
+        calibrationActivationAuthority: {
+          bundleManifestSha256: BUNDLE_SHA256,
+        },
+      });
+      await fixtureService.action(
+        "capture-front",
+        bindReadyPreview(fixtureService, "front", suffix),
+      );
+      await fixtureService.action(
+        "capture-back",
+        bindReadyPreview(fixtureService, "back", suffix),
+      );
+      await fixtureService.reportWorker;
+      await fixtureService.rapidMutationChain;
+      const item = fixtureService.status().rapidCaptureQueue.items.find(
+        (candidate) => candidate.reportId === reportId,
+      );
+      assert.ok(item);
+      const queued = {
+        item,
+        identity: {
+          queueItemId: item.queueItemId,
+          gradingSessionId: item.sessionId,
+          reportId: item.reportId,
+        },
+      };
+      const completed = await completeFixtureOcr(
+        fixtureService,
+        queued,
+        suffix,
+      );
+      assert.equal(completed.state, "identity_resolution_required");
+      return queued;
+    };
+    const cardA = await captureOcrFirst(
+      "http-responsive-card-a-hold-long",
       "http-responsive-a",
     );
-    const cardB = await captureMathematicalCard(
-      fixtureService,
-      printedAuthority(),
-      "http-responsive-card-b",
+    const cardB = await captureOcrFirst(
+      "http-responsive-card-b-hold-long",
       "http-responsive-b",
     );
     const cardC = await captureMathematicalCard(
@@ -1867,7 +1903,6 @@ test("real helper HTTP remains responsive for independent review and Start New C
       "http-responsive-card-c",
       "http-responsive-c",
     );
-    assert.equal(cardB.item.state, "insufficient_evidence");
     assert.equal(cardC.item.state, "operator_resolution_required");
 
     const workerPool = new FixedRigMathematicalStationWorkerPoolV1({
@@ -1879,32 +1914,6 @@ test("real helper HTTP remains responsive for independent review and Start New C
       maxConcurrency: 2,
       maxAdmitted: 25,
     });
-    const workerInput = (card) => ({
-      authority: {},
-      gradingSessionId: card.identity.gradingSessionId,
-      generatedAt: "2026-07-28T00:00:00.000Z",
-      reportId: card.identity.reportId,
-      outputDir: path.join(
-        outputDir,
-        "held-worker-output",
-        card.identity.reportId,
-      ),
-      captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
-      calibration: {},
-      warmSides: {},
-      queueItemId: card.identity.queueItemId,
-      fixtureHoldMs: 2_000,
-    });
-    const runningA = workerPool.run(workerInput(cardA));
-    const runningB = workerPool.run(workerInput(cardB));
-    assert.deepEqual(workerPool.status(), {
-      limit: 2,
-      active: 2,
-      queued: 0,
-      admitted: 2,
-      admittedLimit: 25,
-    });
-
     let hardwareBoundaries = 0;
     server = createAiGraderLocalStationBridgeHttpServer({
       enabled: true,
@@ -1949,14 +1958,72 @@ test("real helper HTTP remains responsive for independent review and Start New C
       return response.body.result;
     };
 
-    const openedB = await requestWhileWorkersHeld(
+    const openedA = await postStationAction(
+      server,
+      "activate-queue-item",
+      cardA.identity,
+    );
+    assert.equal(openedA.statusCode, 200, JSON.stringify(openedA.body));
+    const boundAStartedAt = Date.now();
+    const boundA = await postStationAction(
+      server,
+      "bind-mathematical-grading-authority",
+      {
+        ...cardA.identity,
+        mathematicalGradingAuthority: printedAuthority(),
+      },
+    );
+    assert.equal(boundA.statusCode, 200, JSON.stringify(boundA.body));
+    assert.equal(Date.now() - boundAStartedAt < 750, true);
+
+    const openedB = await postStationAction(
+      server,
       "activate-queue-item",
       cardB.identity,
     );
+    assert.equal(openedB.statusCode, 200, JSON.stringify(openedB.body));
     assert.equal(
-      openedB.rapidCaptureQueue.activeReview.queueItemId,
+      openedB.body.result.rapidCaptureQueue.activeReview.queueItemId,
       cardB.identity.queueItemId,
     );
+    const boundBStartedAt = Date.now();
+    const boundB = await postStationAction(
+      server,
+      "bind-mathematical-grading-authority",
+      {
+        ...cardB.identity,
+        mathematicalGradingAuthority: printedAuthority(),
+      },
+    );
+    assert.equal(boundB.statusCode, 200, JSON.stringify(boundB.body));
+    assert.equal(Date.now() - boundBStartedAt < 750, true);
+
+    for (
+      let attempt = 0;
+      attempt < 100 && workerPool.status().active < 2;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.deepEqual(workerPool.status(), {
+      limit: 2,
+      active: 2,
+      queued: 0,
+      admitted: 2,
+      admittedLimit: 25,
+    });
+    assert.deepEqual(
+      new Set(workerPool.admittedIdentities),
+      new Set([cardA, cardB].map((card) => [
+        card.identity.queueItemId,
+        card.identity.gradingSessionId,
+        card.identity.reportId,
+      ].join("\u0000"))),
+      "both bind routes must admit their own immutable exact-card job",
+    );
+
+    const liveStatus = await requestWhileWorkersHeld("status", {});
+    assert.equal(liveStatus.rapidCaptureQueue.backgroundConcurrency.active, 2);
 
     const openedC = await requestWhileWorkersHeld(
       "activate-queue-item",
@@ -1982,7 +2049,14 @@ test("real helper HTTP remains responsive for independent review and Start New C
     assert.equal(started.currentStep, "capture_front");
     assert.equal(hardwareBoundaries, 0);
 
-    await Promise.all([runningA, runningB]);
+    for (
+      let attempt = 0;
+      attempt < 500 && workerPool.status().admitted > 0;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(workerPool.status().admitted, 0);
   } finally {
     if (server?.listening) await closeServer(server);
     fs.rmSync(outputDir, {
@@ -2899,6 +2973,146 @@ test("concurrent exact operator-resolution duplicates have one durable rerun cla
   } finally {
     releaseRerun();
     fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("intentional shutdown restores a resumable operator receipt without false grading evidence or later writes", async () => {
+  const outputDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-math-operator-shutdown-resume-"),
+  );
+  let pendingRequest;
+  let service;
+  try {
+    service = createService(outputDir, async (input) => {
+      pendingRequest ??= operatorResolutionRequestFixture(input);
+      return operatorResolutionRequiredResult(input, pendingRequest);
+    });
+    installSimulatedMathematicalCapture(service, true);
+    const queued = await captureMathematicalCard(
+      service,
+      printedAuthority(),
+      "operator-shutdown-resume-hold-long",
+      "operator-shutdown-resume",
+    );
+    await completeFixtureOcr(
+      service,
+      queued,
+      "operator-shutdown-resume",
+    );
+    await service.action("activate-queue-item", queued.identity);
+
+    const workerPool = new FixedRigMathematicalStationWorkerPoolV1({
+      workerPath: path.resolve(
+        __dirname,
+        "fixtures/fixedRigMathematicalStationWorkerFixture.js",
+      ),
+      timeoutMs: 5_000,
+      maxConcurrency: 2,
+      maxAdmitted: 25,
+    });
+    delete service.dependencies.buildMathematicalStationPackage;
+    service.mathematicalStationWorkerPool = workerPool;
+
+    const action = {
+      ...queued.identity,
+      idempotencyKey: "operator-shutdown-resume-key",
+      operatorResolutionSubmission: {
+        schemaVersion: FIXED_RIG_OPERATOR_RESOLUTION_SUBMISSION_V1_VERSION,
+        requestSha256: pendingRequest.requestSha256,
+        operatorConfirmed: true,
+        resolutions: [{
+          element: "corners",
+          score: 8.03,
+          publicExplanation: "Corners show slight wear at the upper left.",
+          internalReason: "Intentional helper shutdown resumability regression.",
+        }],
+      },
+    };
+    action.operatorAuthentication = operatorAuthentication(
+      action,
+      "authenticated-owner-1",
+      new Date(Date.now() + 4_000),
+    );
+
+    const submitting = service.action(
+      "submit-operator-resolutions",
+      action,
+    );
+    for (
+      let attempt = 0;
+      attempt < 100 && workerPool.status().active < 1;
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(workerPool.status().active, 1);
+    const shuttingDown = service.shutdown(
+      "intentional mathematical operator-resume test shutdown",
+    );
+    await assert.rejects(submitting, /intentional helper shutdown/i);
+    await shuttingDown;
+
+    assert.deepEqual(workerPool.status(), {
+      limit: 2,
+      active: 0,
+      queued: 0,
+      admitted: 0,
+      admittedLimit: 25,
+    });
+    assert.equal(service.mathematicalStationJobs.size, 0);
+    assert.equal(service.mathematicalActionJobs.size, 0);
+    const manifest = service.queuedManifests.get(queued.item.queueItemId);
+    assert.equal(
+      manifest.mathematicalV1.execution.status,
+      "operator_resolution_required",
+    );
+    assert.equal(manifest.rapidCapture.workflowState, "operator_resolution_required");
+    assert.equal(manifest.mathematicalV1.operatorResolutionReceipts.length, 1);
+    const receipt = manifest.mathematicalV1.operatorResolutionReceipts[0];
+    assert.equal(receipt.phase, "authority_committed");
+    assert.equal(receipt.releasePlan, null);
+    assert.equal(receipt.completedAt, null);
+    assert.equal(
+      service.status().rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === queued.item.queueItemId,
+      ).state,
+      "operator_resolution_required",
+    );
+
+    const manifestPath = manifest.outputs.manifestPath;
+    const queuePath = path.join(outputDir, "rapid-capture-queue.json");
+    const manifestAfterShutdown = fs.readFileSync(manifestPath);
+    const queueAfterShutdown = fs.readFileSync(queuePath);
+    const persisted = JSON.parse(manifestAfterShutdown.toString("utf8"));
+    assert.equal(
+      persisted.mathematicalV1.execution.status,
+      "operator_resolution_required",
+    );
+    assert.equal(
+      persisted.mathematicalV1.operatorResolutionReceipts[0].phase,
+      "authority_committed",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    assert.deepEqual(
+      fs.readFileSync(manifestPath),
+      manifestAfterShutdown,
+      "no mathematical finalizer may write after shutdown returns",
+    );
+    assert.deepEqual(
+      fs.readFileSync(queuePath),
+      queueAfterShutdown,
+      "no queue mutation may write after shutdown returns",
+    );
+  } finally {
+    if (service && !service.closing) {
+      await service.shutdown("operator shutdown-resume test cleanup");
+    }
+    fs.rmSync(outputDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 });
 

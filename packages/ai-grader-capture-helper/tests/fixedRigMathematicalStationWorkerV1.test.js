@@ -165,22 +165,125 @@ test("the worker boundary rejects cross-card results without applying them and e
   );
 });
 
-test("worker-pool shutdown cancels active CPU work and releases its exact slot", async () => {
+test("inner Mathematical result identities and output paths cannot escape the admitted snapshot", async () => {
+  const parentAppliedResults = [];
+  const contained = await
+    buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
+      fixtureInput("worker-report-inner-output-valid"),
+      { workerPath, timeoutMs: 2_000 },
+    );
+  assert.equal(contained.status, "completed");
+  assert.equal(
+    contained.reportPackage.outputDir,
+    fixtureInput("worker-report-inner-output-valid").outputDir,
+  );
+  for (const corruption of [
+    "inner-identity-queue",
+    "inner-identity-session",
+    "inner-identity-report",
+    "inner-output-station-session",
+  ]) {
+    await assert.rejects(
+      buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
+        fixtureInput(`worker-report-${corruption}`),
+        { workerPath, timeoutMs: 2_000 },
+      ).then((result) => {
+        parentAppliedResults.push(result);
+      }),
+      (error) =>
+        error instanceof FixedRigMathematicalStationWorkerErrorV1 &&
+        error.code === "identity_mismatch",
+    );
+  }
+  for (const corruption of [
+    "inner-output-bundle-path",
+    "inner-output-station-path",
+    "inner-output-relative-path",
+  ]) {
+    await assert.rejects(
+      buildFixedRigMathematicalCalibrationStationPackageInWorkerV1(
+        fixtureInput(`worker-report-${corruption}`),
+        { workerPath, timeoutMs: 2_000 },
+      ).then((result) => {
+        parentAppliedResults.push(result);
+      }),
+      (error) =>
+        error instanceof FixedRigMathematicalStationWorkerErrorV1 &&
+        error.code === "malformed_response",
+    );
+  }
+  assert.deepEqual(parentAppliedResults, []);
+});
+
+test("worker-pool shutdown drains active workers, rejects pending work, and leaves no orphan slot", async () => {
+  let liveWorkers = 0;
+  let maximumLiveWorkers = 0;
   const pool = new FixedRigMathematicalStationWorkerPoolV1({
     workerPath,
     timeoutMs: 5_000,
-    maxConcurrency: 1,
-    maxAdmitted: 2,
+    maxConcurrency: 2,
+    maxAdmitted: 4,
+    onWorkerLifecycle: (state) => {
+      liveWorkers += state === "started" ? 1 : -1;
+      maximumLiveWorkers = Math.max(maximumLiveWorkers, liveWorkers);
+    },
   });
-  const running = pool.run(fixtureInput("worker-report-hold-long", 1));
-  assert.equal(pool.status().active, 1);
-  pool.shutdown();
-  await assert.rejects(
-    running,
-    (error) =>
-      error instanceof FixedRigMathematicalStationWorkerErrorV1 &&
-      error.code === "shutdown",
-  );
+  const jobs = [
+    pool.run(fixtureInput("worker-report-hold-long-a", 1)),
+    pool.run(fixtureInput("worker-report-hold-long-b", 2)),
+    pool.run(fixtureInput("worker-report-pending-a", 3)),
+    pool.run(fixtureInput("worker-report-pending-b", 4)),
+  ];
+  assert.equal(pool.status().active, 2);
+  assert.equal(pool.status().queued, 2);
+  const allSettled = Promise.allSettled(jobs);
+  await pool.shutdown();
+  const settled = await allSettled;
+  assert.equal(settled.every((entry) =>
+    entry.status === "rejected" &&
+    entry.reason instanceof FixedRigMathematicalStationWorkerErrorV1 &&
+    entry.reason.code === "shutdown"), true);
+  assert.equal(pool.status().active, 0);
+  assert.equal(pool.status().queued, 0);
+  assert.equal(pool.status().admitted, 0);
+  assert.equal(maximumLiveWorkers, 2);
+  assert.equal(liveWorkers, 0);
+  await pool.shutdown();
+});
+
+test("timed-out workers fully exit before replacement and the live bound never exceeds two", async () => {
+  let liveWorkers = 0;
+  let maximumLiveWorkers = 0;
+  const pool = new FixedRigMathematicalStationWorkerPoolV1({
+    workerPath,
+    timeoutMs: 100,
+    maxConcurrency: 2,
+    maxAdmitted: 4,
+    onWorkerLifecycle: (state) => {
+      liveWorkers += state === "started" ? 1 : -1;
+      maximumLiveWorkers = Math.max(maximumLiveWorkers, liveWorkers);
+    },
+  });
+  let observedMaximum = 0;
+  const sampler = setInterval(() => {
+    observedMaximum = Math.max(observedMaximum, pool.status().active);
+  }, 2);
+  const jobs = [
+    pool.run(fixtureInput("worker-report-hold-long-timeout-a", 1)),
+    pool.run(fixtureInput("worker-report-hold-long-timeout-b", 2)),
+    pool.run(fixtureInput("worker-report-next-a", 3)),
+    pool.run(fixtureInput("worker-report-next-b", 4)),
+  ];
+  const settled = await Promise.allSettled(jobs);
+  clearInterval(sampler);
+  assert.equal(observedMaximum <= 2, true);
+  assert.equal(maximumLiveWorkers <= 2, true);
+  assert.equal(liveWorkers, 0);
+  assert.equal(settled.filter((entry) =>
+    entry.status === "rejected" &&
+    entry.reason instanceof FixedRigMathematicalStationWorkerErrorV1 &&
+    entry.reason.code === "timeout").length, 2);
+  assert.equal(settled.filter((entry) => entry.status === "fulfilled").length, 2);
   assert.equal(pool.status().active, 0);
   assert.equal(pool.status().admitted, 0);
 });
