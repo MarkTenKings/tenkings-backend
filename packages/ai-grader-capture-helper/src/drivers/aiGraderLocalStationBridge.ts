@@ -199,6 +199,9 @@ import {
   type BuildFixedRigMathematicalCalibrationStationPackageV1Result,
   type FixedRigMathematicalStationGradingAuthorityV1,
 } from "./fixedRigMathematicalStationAdapterV1";
+import {
+  FixedRigMathematicalStationWorkerPoolV1,
+} from "./fixedRigMathematicalStationWorkerV1";
 import type {
   FixedRigMathematicalFindingReviewAssetMetadataV1,
   FixedRigMathematicalFindingReviewAssetV1,
@@ -1664,6 +1667,7 @@ export interface AiGraderLocalStationBridgeDependencies {
   probeFastCalibrationRigMaterializationContextV1_2?: () => Promise<BaslerMathematicalCalibrationLiveContextV1_2>;
   loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
   buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
+  mathematicalStationWorkerPool?: FixedRigMathematicalStationWorkerPoolV1;
   captureMathematicalCalibrationFrame?: (
     input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
@@ -5571,6 +5575,7 @@ export class AiGraderLocalStationBridgeService {
   };
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private readonly mathematicalStationWorkerPool: FixedRigMathematicalStationWorkerPoolV1;
   private mathematicalCalibrationV1SessionId?: string;
   private mathematicalCalibrationV1_1SessionId?: string;
   private mathematicalCalibrationV1_2MutationPending = false;
@@ -5597,6 +5602,9 @@ export class AiGraderLocalStationBridgeService {
     this.warmRunner = warmRunner;
     this.calibrationActivationState = dependencies.calibrationActivationRegistry ? "IDLE" : "UNAVAILABLE";
     this.dependencies = dependencies;
+    this.mathematicalStationWorkerPool =
+      dependencies.mathematicalStationWorkerPool ??
+      new FixedRigMathematicalStationWorkerPoolV1();
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.rapidQueue = readRapidCaptureQueueSync(config);
     assertNoUnqueuedRapidSessionManifest(config, this.rapidQueue);
@@ -8813,7 +8821,7 @@ export class AiGraderLocalStationBridgeService {
         this.exactWarmManifestBinding(manifest, "back"),
       ]);
       const builder = this.dependencies.buildMathematicalStationPackage ??
-        buildFixedRigMathematicalCalibrationStationPackageV1;
+        ((input) => this.mathematicalStationWorkerPool.run(input));
       result = await builder({
         authority: this.hydratedMathematicalGradingAuthority(manifest),
         queueItemId: queueItem.queueItemId,
@@ -13299,6 +13307,7 @@ export class AiGraderLocalStationBridgeService {
 
   async shutdown(reason = "local bridge server closing"): Promise<void> {
     this.closing = true;
+    this.mathematicalStationWorkerPool.shutdown();
     const workerShutdown = this.beginProcessingWorkerShutdown(reason).then(
       () => undefined,
       (error) => new Error(boundedProcessingWorkerError(error)),

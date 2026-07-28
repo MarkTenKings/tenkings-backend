@@ -12,6 +12,9 @@ const {
   createAiGraderLocalStationBridgeHttpServer,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const {
+  FixedRigMathematicalStationWorkerPoolV1,
+} = require("../dist/drivers/fixedRigMathematicalStationWorkerV1");
+const {
   assertFixedRigMathematicalWarmSideCaptureProfileV1,
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
 } = require("../dist/drivers/fixedRigMathematicalStationAdapterV1");
@@ -233,7 +236,12 @@ function calibrationLoader() {
   };
 }
 
-function createService(outputDir, builder, configOverrides = {}) {
+function createService(
+  outputDir,
+  builder,
+  configOverrides = {},
+  dependencyOverrides = {},
+) {
   const config = buildAiGraderLocalStationBridgeConfig({
     enabled: true,
     mode: "mock",
@@ -256,6 +264,10 @@ function createService(outputDir, builder, configOverrides = {}) {
   return new AiGraderLocalStationBridgeService(config, undefined, undefined, {
     loadMathematicalCalibrationBundle: calibrationLoader,
     buildMathematicalStationPackage: builder,
+    // Mathematical fixtures share the Dell host with Production and must not
+    // scan for or terminate its live Basler preview process.
+    stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+    ...dependencyOverrides,
   });
 }
 
@@ -1330,6 +1342,37 @@ function postWithoutToken(server, body) {
   });
 }
 
+function postStationAction(server, action, body) {
+  const address = server.address();
+  const bytes = Buffer.from(JSON.stringify(body), "utf8");
+  return new Promise((resolve, reject) => {
+    const request = http.request({
+      host: "127.0.0.1",
+      port: address.port,
+      path: `/actions/${encodeURIComponent(action)}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": String(bytes.byteLength),
+        "X-AI-Grader-Station-Token":
+          "StationTokenStationTokenStationToken1234",
+      },
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => {
+        const text = Buffer.concat(chunks).toString("utf8");
+        resolve({
+          statusCode: response.statusCode,
+          body: JSON.parse(text),
+        });
+      });
+    });
+    request.on("error", reject);
+    request.end(bytes);
+  });
+}
+
 test("local station accepts only the exact hosted-signed Pokemon profile authority", async (t) => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "ten-kings-pokemon-authority-"));
   const services = [];
@@ -1410,7 +1453,12 @@ test("Production Start New Card accepts only an explicit ready Mathematical V1 c
     outputDir: path.join(outputDir, "unavailable"),
     captureProfile: "production_fast",
   });
-  const unavailable = new AiGraderLocalStationBridgeService(unavailableConfig);
+  const unavailable = new AiGraderLocalStationBridgeService(
+    unavailableConfig,
+    undefined,
+    undefined,
+    { stopOrphanedPreviewStreamsUntilReleased: async () => 0 },
+  );
   t.after(() => unavailable.shutdown("mathematical unavailable start test complete"));
   await assert.rejects(
     () => unavailable.action("start-session", {
@@ -1440,6 +1488,7 @@ test("Production Start New Card accepts only an explicit ready Mathematical V1 c
     mathematicalCalibrationRuntimeContext: runtimeContext,
   });
   const mismatch = new AiGraderLocalStationBridgeService(mismatchConfig, undefined, undefined, {
+    stopOrphanedPreviewStreamsUntilReleased: async () => 0,
     loadMathematicalCalibrationBundle(input) {
       assert.deepEqual(input.expectedRuntimeContext, runtimeContext);
       throw new Error("Live camera, rig, controller, wiring, settings, target, component, algorithm, location, or lighting context differs from the active calibration.");
@@ -1764,6 +1813,178 @@ test("independent OCR-first review binds release immediately and overlap determi
       await service.rapidMutationChain.catch(() => {});
       await new Promise((resolve) => setImmediate(resolve));
     }
+    fs.rmSync(outputDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
+});
+
+test("real helper HTTP remains responsive for independent review and Start New Card while deterministic workers run", async () => {
+  const outputDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-math-worker-http-responsive-"),
+  );
+  let pendingOperatorRequest;
+  let server;
+  try {
+    const fixtureService = createService(
+      outputDir,
+      async (input) => {
+        if (input.reportId === "http-responsive-card-c") {
+          pendingOperatorRequest ??= operatorResolutionRequestFixture(input);
+          return operatorResolutionRequiredResult(
+            input,
+            pendingOperatorRequest,
+          );
+        }
+        return insufficientResult();
+      },
+      {},
+      {
+        stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+        writeLightingFrames: async (frames) =>
+          frames.map(() => ({ responseKind: "mock", ok: true })),
+      },
+    );
+    installSimulatedMathematicalCapture(fixtureService, true);
+    const cardA = await captureMathematicalCard(
+      fixtureService,
+      printedAuthority(),
+      "http-responsive-card-a",
+      "http-responsive-a",
+    );
+    const cardB = await captureMathematicalCard(
+      fixtureService,
+      printedAuthority(),
+      "http-responsive-card-b",
+      "http-responsive-b",
+    );
+    const cardC = await captureMathematicalCard(
+      fixtureService,
+      printedAuthority(),
+      "http-responsive-card-c",
+      "http-responsive-c",
+    );
+    assert.equal(cardB.item.state, "insufficient_evidence");
+    assert.equal(cardC.item.state, "operator_resolution_required");
+
+    const workerPool = new FixedRigMathematicalStationWorkerPoolV1({
+      workerPath: path.resolve(
+        __dirname,
+        "fixtures/fixedRigMathematicalStationWorkerFixture.js",
+      ),
+      timeoutMs: 5_000,
+      maxConcurrency: 2,
+      maxAdmitted: 25,
+    });
+    const workerInput = (card) => ({
+      authority: {},
+      gradingSessionId: card.identity.gradingSessionId,
+      generatedAt: "2026-07-28T00:00:00.000Z",
+      reportId: card.identity.reportId,
+      outputDir: path.join(
+        outputDir,
+        "held-worker-output",
+        card.identity.reportId,
+      ),
+      captureProfileVersion: "ten-kings-fixed-rig-production-fast-v1",
+      calibration: {},
+      warmSides: {},
+      queueItemId: card.identity.queueItemId,
+      fixtureHoldMs: 2_000,
+    });
+    const runningA = workerPool.run(workerInput(cardA));
+    const runningB = workerPool.run(workerInput(cardB));
+    assert.deepEqual(workerPool.status(), {
+      limit: 2,
+      active: 2,
+      queued: 0,
+      admitted: 2,
+      admittedLimit: 25,
+    });
+
+    let hardwareBoundaries = 0;
+    server = createAiGraderLocalStationBridgeHttpServer({
+      enabled: true,
+      mode: "mock",
+      host: "127.0.0.1",
+      port: 47652,
+      stationToken: "StationTokenStationTokenStationToken1234",
+      outputDir,
+      captureProfile: "production_fast",
+      publicBasePath: "https://collect.tenkings.co/ai-grader/reports",
+      mathematicalCalibrationRigId: "fixture-rig",
+      mathematicalCalibrationBundlePath: path.join(
+        outputDir,
+        "fixed-rig-mathematical-calibration-bundle-v1.json",
+      ),
+      mathematicalCalibrationBundleSha256: BUNDLE_SHA256,
+    }, process.env, undefined, undefined, {
+      loadMathematicalCalibrationBundle: calibrationLoader,
+      mathematicalStationWorkerPool: workerPool,
+      onRealHardwareBoundary: () => {
+        hardwareBoundaries += 1;
+      },
+      stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+      writeLightingFrames: async (frames) =>
+        frames.map(() => ({ responseKind: "mock", ok: true })),
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+
+    const requestWhileWorkersHeld = async (action, body) => {
+      const startedAt = Date.now();
+      const response = await postStationAction(server, action, body);
+      assert.equal(response.statusCode, 200, JSON.stringify(response.body));
+      assert.equal(
+        Date.now() - startedAt < 750,
+        true,
+        `${action} must return before either two-second worker fixture can finish.`,
+      );
+      assert.equal(workerPool.status().active, 2);
+      return response.body.result;
+    };
+
+    const openedB = await requestWhileWorkersHeld(
+      "activate-queue-item",
+      cardB.identity,
+    );
+    assert.equal(
+      openedB.rapidCaptureQueue.activeReview.queueItemId,
+      cardB.identity.queueItemId,
+    );
+
+    const openedC = await requestWhileWorkersHeld(
+      "activate-queue-item",
+      cardC.identity,
+    );
+    assert.equal(
+      openedC.rapidCaptureQueue.activeReview.queueItemId,
+      cardC.identity.queueItemId,
+    );
+    assert.equal(
+      openedC.rapidCaptureQueue.items.find(
+        (item) => item.queueItemId === cardC.identity.queueItemId,
+      ).state,
+      "operator_resolution_required",
+    );
+
+    const started = await requestWhileWorkersHeld("start-session", {
+      reportId: "http-responsive-new-card",
+      captureProfile: "production_fast",
+      gradingContract: "mathematical_calibration_v1",
+      mathematicalGradingAuthority: printedAuthority(),
+    });
+    assert.equal(started.currentStep, "capture_front");
+    assert.equal(hardwareBoundaries, 0);
+
+    await Promise.all([runningA, runningB]);
+  } finally {
+    if (server?.listening) await closeServer(server);
     fs.rmSync(outputDir, {
       recursive: true,
       force: true,
@@ -3227,6 +3448,8 @@ test("Mathematical binary staging HTTP endpoint rejects unauthenticated bodies b
     port: 47652,
     stationToken: "StationTokenStationTokenStationToken1234",
     outputDir,
+  }, process.env, undefined, undefined, {
+    stopOrphanedPreviewStreamsUntilReleased: async () => 0,
   });
   try {
     await new Promise((resolve, reject) => {
@@ -3250,8 +3473,17 @@ test("Mathematical binary staging HTTP endpoint rejects unauthenticated bodies b
     }
   } finally {
     if (server.listening) await closeServer(server);
+    // Constructor recovery persists the empty authoritative queue
+    // asynchronously; let that final atomic rename leave the Windows handle
+    // before removing this HTTP fixture's root.
+    await new Promise((resolve) => setTimeout(resolve, 250));
     if (fs.existsSync(outputDir)) {
-      fs.rmSync(outputDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      fs.rmSync(outputDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 100,
+      });
     }
   }
 });
