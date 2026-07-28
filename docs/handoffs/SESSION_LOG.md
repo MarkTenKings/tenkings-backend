@@ -28886,6 +28886,18 @@ By enabling Rip It Live, I confirm:
 - Allow the normal GitHub/Vercel Production deployment with migrations disabled and verify the deployed station asset.
 - Do not mutate or reuse the owner's active queue/session/report. Because the header correction changes the local helper, defer helper advancement/restart until the owner clears the current card and a fresh read-only idle gate passes.
 
+### Observed Production result
+
+- PR `#198` merged through protected `main` as exact functional merge commit `42430c3465db76ba7f4e2dbcbcb04b5ae6671cde`.
+- All 12 required protected checks passed: Install & Build, Vercel Preview, disposable PostgreSQL migration-chain verification, and all eight repository-owned Docker image builds.
+- GitHub/Vercel Production deployment `5633589611` succeeded for the exact functional merge at `2026-07-28T03:27:10Z`.
+- Public and exact-deployment station assets are byte-identical: bundle `station-10b6ab2c4a48224c.js`, `320,425` bytes, SHA-256 `c35d6a8441a24898b84933effc67d68e45d37312e2a973b22c122f2411d47fd2`; direct bundle inspection confirms the calculated centering preview is present.
+- After the owner discarded the prior review card, a fresh authenticated Dell idle gate passed: `start_new_card`, session lifecycle idle, preview `not_started`, camera idle, no active transition or capture lock, warm runner idle, capture/processing/report queues empty, and recognized Rapid v2 queue containing zero items.
+- The clean dedicated Dell runtime advanced from `e4f7037c6a2092cb3df13432c0828753608aac5c` to the exact functional merge; shared and capture-helper builds passed. The protected launcher changed only its expected runtime pin and now has SHA-256 `b2232e9b66bb9a1a57d54bb8ff3fbdd500b9d66c0e8b6915f1762b1411c41b89` with its existing restricted ACL.
+- Only the Dell capture helper was stopped and restarted through the protected launcher. Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-required, calibration activation configured, sessionless `start_new_card`, preview `not_started`, camera idle, no active transition/capture lock, warm runner idle, and all queues empty.
+- The live helper now exposes both exact EYES candidate binding headers to the browser: `x-ai-grader-candidate-id` and `x-ai-grader-deterministic-input-sha256`.
+- No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication, calibration change, queue/report/database/storage mutation, NFC, inventory, or unrelated service action occurred.
+
 ## 2026-07-28 - OCR preservation, terminal finalization, and capture-throughput correction candidate
 
 - Owner acceptance of the centering-review correction exposed three bounded lifecycle defects. First, successful OCR text was erased whenever catalog resolution was incomplete, so a clearly extracted name, set, or card number could disappear instead of remaining reviewable. Second, an operator-resolution rerun repeated immutable Front/Back ingestion and every deterministic detector, then a terminal insufficient-evidence result lost the consumed request needed by final receipt validation. Third, the station kept the completed card's review context in the capture workspace even after Back was durably queued, preventing immediate capture of the next card.
