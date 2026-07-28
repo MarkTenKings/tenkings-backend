@@ -15,6 +15,7 @@ import type { LookupSetParallelOption, LookupSetResult } from "./setLookup";
 import { lookupSetByCardIdentity } from "./setLookup";
 import {
   AiGraderOcrStructuredExtractionError,
+  effectiveAiGraderOcrModel,
   runAiGraderOcrStructuredExtraction,
   type AiGraderOcrExtractionState,
   type AiGraderOcrStructuredExtraction,
@@ -104,6 +105,7 @@ export type AiGraderOcrProviderDiagnostics = {
   eyesUnavailableReason?: string;
   eyesUpstreamFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
   openAiFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
+  openAiTimedOut?: true;
 };
 
 export type AiGraderOcrPrefillRuntimeResult = AiGraderOcrPrefillResult & {
@@ -457,6 +459,81 @@ function remainingProviderMs(deadline: number, now: () => number) {
   return Math.max(0, Math.round(deadline - now()));
 }
 
+function boundedDeterministicReviewText(value: unknown) {
+  if (typeof value !== "string") return null;
+  const bounded = value.replace(/\s+/g, " ").trim().slice(0, 180);
+  return bounded || null;
+}
+
+function humanReviewStructuredFieldsAfterOpenAiTimeout(
+  ocr: OcrResponse,
+): AiGraderOcrStructuredExtraction["fields"] {
+  const unknown = () => ({
+    state: "unknown" as const,
+    value: null,
+    confidence: 0,
+    evidenceRefs: [] as string[],
+  });
+  const supportedText = (value: unknown, evidenceRef: string) => {
+    const bounded = boundedDeterministicReviewText(value);
+    return bounded
+      ? {
+          state: "supported" as const,
+          value: bounded,
+          confidence: 0.5,
+          evidenceRefs: [evidenceRef],
+        }
+      : unknown();
+  };
+  const supportedTrue = (value: unknown, evidenceRef: string) =>
+    value === true
+      ? {
+          state: "supported" as const,
+          value: true,
+          confidence: 0.5,
+          evidenceRefs: [evidenceRef],
+        }
+      : unknown();
+  const hints = heuristicHints(ocr);
+  return {
+    category: unknown(),
+    playerName: supportedText(
+      hints.playerName,
+      "google_vision.deterministic.player_name",
+    ),
+    cardName: unknown(),
+    year: supportedText(hints.year, "google_vision.deterministic.year"),
+    manufacturer: supportedText(
+      hints.manufacturer,
+      "google_vision.deterministic.manufacturer",
+    ),
+    sport: unknown(),
+    game: unknown(),
+    productSet: supportedText(
+      hints.productSet,
+      "google_vision.deterministic.product_set",
+    ),
+    cardNumber: unknown(),
+    insert: unknown(),
+    parallel: supportedText(
+      hints.variantKeywords,
+      "google_vision.deterministic.variant_keywords",
+    ),
+    numbered: supportedText(
+      hints.numbered,
+      "google_vision.deterministic.numbered",
+    ),
+    autograph: supportedTrue(
+      hints.autograph,
+      "google_vision.deterministic.autograph",
+    ),
+    memorabilia: supportedTrue(
+      hints.memorabilia,
+      "google_vision.deterministic.memorabilia",
+    ),
+  };
+}
+
 export async function runAiGraderOcrPrefillRuntime(
   input: {
     queueItemId: string;
@@ -504,28 +581,35 @@ export async function runAiGraderOcrPrefillRuntime(
   }
   const googleElapsedMs = boundedProviderElapsedMs(now() - googleStartedAt);
   const openAiStartedAt = now();
-  let structured: AiGraderOcrStructuredExtraction & {
-    requestedModel: string;
-    actualModel: string;
-    providerElapsedMs: number;
-    evidence: unknown;
-  };
+  let structured: AiGraderOcrStructuredExtraction;
+  let structuredExtractionModel: string;
+  let actualOpenAiModel: string | undefined;
+  let openAiTimedOut = false;
   try {
     const timeoutMs = Math.min(AI_GRADER_OPENAI_TIME_BUDGET_MS, remainingProviderMs(providerDeadline, now));
     if (timeoutMs < 1) throw new AiGraderOcrStructuredExtractionError("timeout");
     const runStructured = dependencies.runStructuredExtraction ?? runAiGraderOcrStructuredExtraction;
-    structured = await runStructured(
+    const extracted = await runStructured(
       { images, ocr, heuristicHints: heuristicHints(ocr) },
       { timeoutMs }
     );
     if (remainingProviderMs(providerDeadline, now) < 1) {
       throw new AiGraderOcrStructuredExtractionError("timeout");
     }
-    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(structured.actualModel)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(extracted.actualModel)) {
       throw new AiGraderOcrStructuredExtractionError("malformed_response");
     }
+    structured = extracted;
+    structuredExtractionModel = extracted.actualModel;
+    actualOpenAiModel = extracted.actualModel;
   } catch (error) {
-    throw openAiFailure(error);
+    const failure = openAiFailure(error);
+    if (failure.code !== "AI_GRADER_OCR_OPENAI_TIMEOUT") throw failure;
+    openAiTimedOut = true;
+    structuredExtractionModel = effectiveAiGraderOcrModel();
+    structured = {
+      fields: humanReviewStructuredFieldsAfterOpenAiTimeout(ocr),
+    };
   }
   const openAiElapsedMs = boundedProviderElapsedMs(now() - openAiStartedAt);
   let eyesCenteringSelection:
@@ -634,13 +718,25 @@ export async function runAiGraderOcrPrefillRuntime(
       throw new AiGraderOcrFailure("AI_GRADER_OCR_CATALOG_FAILED");
     }
   }
-  const fields = canonicalizeAiGraderOcrCatalog({ fields: baseFields, category, identified, lookup });
+  const fields = openAiTimedOut
+    ? baseFields
+    : canonicalizeAiGraderOcrCatalog({
+        fields: baseFields,
+        category,
+        identified,
+        lookup,
+      });
   const reviewFieldNames = Object.entries(fields)
     .filter(([, field]) => field.reviewRequired)
     .map(([name]) => name);
   const warnings = reviewFieldNames.length
     ? ["Unknown or conflicting OCR fields require operator review."]
     : [];
+  if (openAiTimedOut) {
+    warnings.unshift(
+      "GPT structured extraction timed out; Google-derived suggestions are unconfirmed and every OCR field requires human review.",
+    );
+  }
   if (eyes?.status === "observed" && eyes.reviewElements.length) {
     warnings.push(`EYES requests operator review for: ${eyes.reviewElements.join(", ")}.`);
   }
@@ -659,7 +755,7 @@ export async function runAiGraderOcrPrefillRuntime(
       ocrEngine: "google_vision_document_text_detection_url_only",
       attributeExtractor: "@tenkings/shared/extractCardAttributes",
       structuredExtractor: "openai_responses_strict_json_schema",
-      structuredExtractionModel: structured.actualModel,
+      structuredExtractionModel,
       setLookupUsed: Boolean(lookup),
       setIdentificationUsed: Boolean(identified),
     },
@@ -671,7 +767,8 @@ export async function runAiGraderOcrPrefillRuntime(
       googleElapsedMs,
       openAiElapsedMs,
       totalProviderElapsedMs: boundedProviderElapsedMs(now() - providerStartedAt),
-      actualOpenAiModel: structured.actualModel,
+      ...(actualOpenAiModel ? { actualOpenAiModel } : {}),
+      ...(openAiTimedOut ? { openAiTimedOut: true as const } : {}),
       ...(eyes
         ? {
             eyesElapsedMs,

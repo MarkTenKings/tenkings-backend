@@ -4240,18 +4240,18 @@ export default function AiGraderStationPage() {
   };
 
   const runStationCapture = async (side: AiGraderPreviewGeometrySide) => {
+    const captureTriggerAt = new Date().toISOString();
     if (liveLightingRequestPendingRef.current) {
       throw new Error("Wait for the pending lighting controller request before capture.");
     }
     if (!bridgeConnected || !stationToken.trim()) throw new Error("Connect the real Dell local station bridge before capture.");
-    const captureStatus = await runAction("status");
-    if (side === "front" && !captureStatus.frontCaptureReadiness.ready) {
-      throw new Error(captureStatus.frontCaptureReadiness.message);
+    if (side === "front" && !status.frontCaptureReadiness.ready) {
+      throw new Error(status.frontCaptureReadiness.message);
     }
     const displayed = assertLocalFreshPreviewCaptureEligibility(side);
     const assertion = aiGraderCaptureAssertionFromFrame({
       frame: displayed.frame,
-      reportId: captureStatus.sessionManifest.reportId,
+      reportId: status.sessionManifest.reportId,
       geometryCaptureMode: "detected_geometry",
       captureTriggerMode: "operator",
     });
@@ -4263,6 +4263,7 @@ export default function AiGraderStationPage() {
         stationToken,
         assertion,
         requestId: `capture-${side}-${crypto.randomUUID()}`,
+        captureTriggerAt,
       });
       setStatus(captured);
       reconcileBridgePreviewStatus(captured.previewStatus);

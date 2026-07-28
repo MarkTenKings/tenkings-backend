@@ -945,7 +945,6 @@ test("OCR runtime maps Google and OpenAI failures to stable production categorie
   const openAiCases = [
     { source: "missing_config", code: "AI_GRADER_OCR_OPENAI_CONFIG_MISSING" },
     { source: "invalid_config", code: "AI_GRADER_OCR_OPENAI_CONFIG_MISSING" },
-    { source: "timeout", code: "AI_GRADER_OCR_OPENAI_TIMEOUT" },
     { source: "network", code: "AI_GRADER_OCR_OPENAI_NETWORK" },
     { source: "non_2xx", code: "AI_GRADER_OCR_OPENAI_NON_2XX" },
     { source: "refusal", code: "AI_GRADER_OCR_OPENAI_REFUSAL" },
@@ -987,6 +986,77 @@ test("OCR runtime maps Google and OpenAI failures to stable production categorie
       return true;
     },
   );
+});
+
+test("OCR runtime converts a GPT timeout into a Google-derived human-review result", async () => {
+  const phases: string[] = [];
+  const result = await runAiGraderOcrPrefillRuntime({
+    queueItemId: "timeout-review-queue-item",
+    gradingSessionId: "timeout-review-session",
+    reportId: "timeout-review-report",
+    images: [
+      {
+        side: "front",
+        url: "https://cdn.tenkings.test/front.png",
+        checksumSha256: "a".repeat(64),
+      },
+      {
+        side: "back",
+        url: "https://cdn.tenkings.test/back.png",
+        checksumSha256: "b".repeat(64),
+      },
+    ],
+  }, {
+    now: () => 1_000,
+    async runOcr() {
+      phases.push("google");
+      return {
+        results: [
+          { id: "front", text: "1990 SKYBOX\nMICHAEL JORDAN", confidence: 0.99, tokens: [] },
+          { id: "back", text: "23/100\nAUTOGRAPH PATCH CARD", confidence: 0.99, tokens: [] },
+        ],
+        combined_text: "1990 SKYBOX\nMICHAEL JORDAN\n23/100\nAUTOGRAPH PATCH CARD",
+      };
+    },
+    async runStructuredExtraction() {
+      phases.push("structured");
+      throw new AiGraderOcrStructuredExtractionError("timeout");
+    },
+    async runEyes() {
+      phases.push("eyes");
+      throw new AiGraderEyesError("timeout");
+    },
+  });
+
+  assert.deepEqual(phases, ["google", "structured", "eyes"]);
+  assert.equal(result.status, "prefill_ready");
+  assert.equal(result.humanConfirmationRequired, true);
+  assert.equal(result.inventoryMutationPerformed, false);
+  assert.equal(result.publishMutationPerformed, false);
+  assert.equal(result.reviewFieldNames.length, 14);
+  assert.equal(result.fields.playerName.value, "Skybox Michael");
+  assert.equal(result.fields.year.value, "1990");
+  assert.equal(result.fields.manufacturer.value, "SkyBox");
+  assert.equal(result.fields.numbered.value, "23/100");
+  assert.equal(result.fields.autograph.value, true);
+  assert.equal(result.fields.memorabilia.value, true);
+  assert.equal(
+    Object.values(result.fields).every((field) => field.reviewRequired === true),
+    true,
+  );
+  assert.equal(
+    Object.values(result.fields)
+      .filter((field) => field.state === "supported")
+      .every((field) =>
+        field.confidence === 0.5 &&
+        field.evidenceRefs.some((ref) => ref.startsWith("google_vision.deterministic."))),
+    true,
+  );
+  assert.match(result.warnings[0] ?? "", /timed out.*human review/i);
+  assert.equal(result.provenance.structuredExtractionModel, "gpt-5.6-sol");
+  assert.equal(result.internalProviderDiagnostics.openAiTimedOut, true);
+  assert.equal(result.internalProviderDiagnostics.actualOpenAiModel, undefined);
+  assert.equal(result.eyes?.status, "unavailable");
 });
 
 test("OCR runtime reports catalog infrastructure failure without exposing its cause", async () => {

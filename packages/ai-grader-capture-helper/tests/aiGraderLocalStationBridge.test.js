@@ -356,7 +356,7 @@ function bindReadyPreview(service, side, frameSuffix) {
     expectedFrameId: frameId,
     geometryCaptureMode: "detected_geometry",
     captureTriggerMode: "operator",
-    captureTriggerAt: timestamp,
+    captureTriggerAt: new Date().toISOString(),
   };
 }
 
@@ -1355,6 +1355,62 @@ test("only the exact durable OCR attempt owner can complete or fail its in-fligh
   }
 });
 
+test("GPT timeout review fallback preserves exact OCR identity and image hashes in one terminal transition", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-timeout-review-"));
+  try {
+    const { service, item } = await createEligibleQueuedFixture(outputDir, "timeout-review");
+    const attempt = {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      attemptOwnerId: "ocr-attempt-owner-timeout-review",
+    };
+    const result = safeOcrResult(item);
+    result.provenance.structuredExtractionModel = "gpt-5.6-sol";
+    result.fields.year = {
+      state: "supported",
+      value: "1990",
+      confidence: 0.5,
+      reviewRequired: true,
+      evidenceRefs: ["google_vision.deterministic.year"],
+    };
+    result.warnings = [
+      "GPT structured extraction timed out; Google-derived suggestions are unconfirmed and every OCR field requires human review.",
+    ];
+    const imageHashesBefore = item.ocr.images.map((image) => image.checksumSha256);
+
+    await service.action("begin-queued-ocr", attempt);
+    await service.action("complete-queued-ocr", { ...attempt, result });
+
+    const completedItem = service.status().rapidCaptureQueue.items[0];
+    assert.equal(completedItem.queueItemId, item.queueItemId);
+    assert.equal(completedItem.sessionId, item.sessionId);
+    assert.equal(completedItem.reportId, item.reportId);
+    assert.equal(completedItem.ocr.state, "succeeded");
+    assert.equal(completedItem.ocr.attemptCount, 1);
+    assert.equal(completedItem.ocr.attemptOwnerId, attempt.attemptOwnerId);
+    assert.equal(completedItem.ocr.result.fields.year.value, "1990");
+    assert.equal(completedItem.ocr.result.fields.year.reviewRequired, true);
+    assert.deepEqual(
+      completedItem.ocr.images.map((image) => image.checksumSha256),
+      imageHashesBefore,
+    );
+    const terminalState = structuredClone(completedItem.ocr);
+
+    await assert.rejects(
+      service.action("complete-queued-ocr", { ...attempt, result }),
+      /cannot rerun|exact one in-flight execution/i,
+    );
+    assert.deepEqual(
+      service.status().rapidCaptureQueue.items[0].ocr,
+      terminalState,
+      "a duplicate completion cannot create a second state transition",
+    );
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("helper accepts the shared review-required contract for supported unresolved catalog OCR", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-shared-review-contract-"));
   try {
@@ -1874,6 +1930,102 @@ test("Atomic Back rejects malformed private assertion identities before capture 
     request.idempotencyKey = "../private-assertion";
     await assert.rejects(service.action("capture-back", request), /idempotency|bounded|private/i);
     assert.equal(service.manifest.outputs.backPackageDir, undefined);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("Atomic Back accepts a frame that was green and fresh at the bounded operator click", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-back-click-freshness-"));
+  try {
+    const { service } = configFor(outputDir);
+    service.enqueueRapidFinalization = () => {};
+    installSimulatedPublicCapture(service);
+    await startHistoricalLegacyFixtureSession(service, { reportId: "back-click-freshness-report" });
+    await service.action("capture-front", bindReadyPreview(service, "front", "back-click-freshness"));
+
+    const clickedRequest = bindReadyPreview(service, "back", "clicked-ready-frame");
+    const clickedObservation = service.previewObservation("back", clickedRequest.expectedFrameId);
+    const receivedAtMs = Date.now();
+    const observedAtMs = receivedAtMs - 2_500;
+    const captureTriggerAtMs = receivedAtMs - 1_000;
+    service.manifest.liveLighting.physicalState.verifiedAt = new Date(receivedAtMs - 5_000).toISOString();
+    clickedObservation.capturedAt = new Date(observedAtMs).toISOString();
+    clickedObservation.receivedAt = new Date(observedAtMs + 25).toISOString();
+    clickedObservation.geometry.timestamp = new Date(observedAtMs + 50).toISOString();
+    clickedRequest.captureTriggerAt = new Date(captureTriggerAtMs).toISOString();
+
+    bindReadyPreview(service, "back", "newer-live-frame");
+    assert.throws(
+      () => service.snapshotAtomicBackCapture(
+        service.validateAtomicBackCaptureRequest({
+          ...clickedRequest,
+          captureTriggerAt: new Date().toISOString(),
+        }),
+        new Date().toISOString(),
+      ),
+      /stale or future-dated/i,
+      "a frame already stale at click must remain rejected",
+    );
+
+    const completed = await service.action("capture-back", clickedRequest);
+    assert.equal(completed.currentStep, "start_new_card");
+    assert.equal(completed.rapidCaptureQueue.items.length, 1);
+    assert.equal(completed.rapidCaptureQueue.items[0].reportId, "back-click-freshness-report");
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("Atomic Back rejects stale click, session mismatch, frame/geometry mismatch, and newer moved geometry", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-back-click-mismatch-"));
+  try {
+    const { service } = configFor(outputDir);
+    service.enqueueRapidFinalization = () => {};
+    installSimulatedPublicCapture(service);
+    await startHistoricalLegacyFixtureSession(service, { reportId: "back-click-mismatch-report" });
+    await service.action("capture-front", bindReadyPreview(service, "front", "back-click-mismatch"));
+
+    const request = bindReadyPreview(service, "back", "back-click-mismatch");
+    const validated = service.validateAtomicBackCaptureRequest(request);
+    const observation = service.previewObservation("back", request.expectedFrameId);
+    const staleClickAt = new Date(Date.parse(observation.capturedAt) + 2_001).toISOString();
+    assert.throws(
+      () => service.snapshotAtomicBackCapture(validated, staleClickAt),
+      /stale or future-dated/i,
+    );
+    assert.throws(
+      () => service.snapshotAtomicBackCapture(
+        service.validateAtomicBackCaptureRequest({
+          ...request,
+          expectedSessionId: "different-session",
+        }),
+        request.captureTriggerAt,
+      ),
+      /assertions are stale/i,
+    );
+
+    const exactGeometryFrameId = observation.geometry.sourceFrameId;
+    observation.geometry.sourceFrameId = "moved-or-mismatched-frame";
+    assert.throws(
+      () => service.snapshotAtomicBackCapture(validated, request.captureTriggerAt),
+      /geometry does not match/i,
+    );
+    observation.geometry.sourceFrameId = exactGeometryFrameId;
+
+    bindReadyPreview(service, "back", "moved-newer-frame");
+    service.manifest.previewStatus.cardGeometry.back.placementState = "adjust_card";
+    service.manifest.previewStatus.cardGeometry.back.adjustmentReason = "not_detected";
+    assert.throws(
+      () => service.snapshotAtomicBackCapture(validated, request.captureTriggerAt),
+      /invalidated by a newer moved or non-Ready/i,
+    );
+    service.manifest.previewStatus.cardGeometry.back.placementState = "ready";
+    service.manifest.previewStatus.cardGeometry.back.adjustmentReason = null;
+
+    const completed = await service.action("capture-back", request);
+    assert.equal(completed.currentStep, "start_new_card");
+    assert.equal(completed.rapidCaptureQueue.items.length, 1);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
