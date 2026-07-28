@@ -28953,3 +28953,11 @@ By enabling Rip It Live, I confirm:
 - Commit and push only this shared OCR response contract, background queue-state isolation, exact-session preview activation/reconnect correction, its focused regressions, and this audit entry.
 - Open one focused protected PR and merge only after the repository-required checks pass. Allow and verify the normal GitHub/Vercel Production deployment with migrations disabled.
 - This correction changes only browser/serverless Next.js code and does not alter the Dell capture-helper runtime or protocol. Do not restart or repin the helper, and do not mutate any existing failed card or queue item.
+
+### Observed Production result
+
+- PR `#202` passed all 12 protected checks: Install & Build, Vercel Preview, disposable PostgreSQL migration-chain verification, and all eight repository-owned Docker image builds. It merged through protected `main` as exact functional commit `5394a217692d75a0568cca3cc74676f1db75d93a` at `2026-07-28T05:49:10Z`.
+- GitHub/Vercel Production deployment `5634796600` succeeded for that exact merge at `2026-07-28T05:50:42Z`; no migration was requested or run.
+- Public and exact-deployment Station pages are byte-identical: both returned `97,600` UTF-8 HTML bytes and bundle `station-9c6bf769bf812896.js`, `322,287` bytes, SHA-256 `bcc334834d8be7a33e635357c290d63756b8642fcf3e1f298f40a1fdd4044fef`.
+- Direct inspection of both served bundles confirms the OCR contract-validation detail and automatic preview reconnect implementation are present.
+- This was a browser/serverless-only rollout. The Dell helper was not repinned or restarted. No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication/discard, calibration, queue/report/database/storage mutation, NFC, inventory, or unrelated service action occurred.
