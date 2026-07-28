@@ -199,6 +199,10 @@ import {
   type BuildFixedRigMathematicalCalibrationStationPackageV1Result,
   type FixedRigMathematicalStationGradingAuthorityV1,
 } from "./fixedRigMathematicalStationAdapterV1";
+import {
+  FixedRigMathematicalStationWorkerErrorV1,
+  FixedRigMathematicalStationWorkerPoolV1,
+} from "./fixedRigMathematicalStationWorkerV1";
 import type {
   FixedRigMathematicalFindingReviewAssetMetadataV1,
   FixedRigMathematicalFindingReviewAssetV1,
@@ -1664,6 +1668,7 @@ export interface AiGraderLocalStationBridgeDependencies {
   probeFastCalibrationRigMaterializationContextV1_2?: () => Promise<BaslerMathematicalCalibrationLiveContextV1_2>;
   loadMathematicalCalibrationBundle?: typeof loadFixedRigMathematicalCalibrationBundleV1;
   buildMathematicalStationPackage?: typeof buildFixedRigMathematicalCalibrationStationPackageV1;
+  mathematicalStationWorkerPool?: FixedRigMathematicalStationWorkerPoolV1;
   captureMathematicalCalibrationFrame?: (
     input: FixedRigMathematicalCalibrationCaptureBoundaryRequestV1,
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
@@ -3868,6 +3873,21 @@ function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLo
   return structuredClone(manifest);
 }
 
+class MathematicalStationShutdownInterruptionV1 extends Error {
+  constructor(message = "Mathematical processing was interrupted by intentional helper shutdown.") {
+    super(message);
+    this.name = "MathematicalStationShutdownInterruptionV1";
+  }
+}
+
+function isMathematicalStationShutdown(error: unknown): boolean {
+  return error instanceof MathematicalStationShutdownInterruptionV1 ||
+    (
+      error instanceof FixedRigMathematicalStationWorkerErrorV1 &&
+      error.code === "shutdown"
+    );
+}
+
 const LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
 const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v2" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
@@ -5531,6 +5551,10 @@ export class AiGraderLocalStationBridgeService {
   private rapidFinalizationActive = 0;
   private rapidFinalizationWaiters: Array<() => void> = [];
   private rapidMutationChain: Promise<void> = Promise.resolve();
+  private rapidRecoveryJob: Promise<void>;
+  private mathematicalStationJobs =
+    new Set<Promise<AiGraderLocalStationMathematicalExecutionV1>>();
+  private mathematicalActionJobs = new Set<Promise<void>>();
   private operatorResolutionRerunClaims = new Map<string, string>();
   private operatorResolutionAnalysisCheckpoints =
     new Map<string, FixedRigMathematicalAnalysisCheckpointV1>();
@@ -5571,6 +5595,7 @@ export class AiGraderLocalStationBridgeService {
   };
   private readonly mathematicalCalibrationCaptureProducer?: FixedRigMathematicalCalibrationCaptureProducerV1;
   private readonly mathematicalCalibrationCaptureProducerV1_1?: FixedRigMathematicalCalibrationCaptureProducerV1;
+  private readonly mathematicalStationWorkerPool: FixedRigMathematicalStationWorkerPoolV1;
   private mathematicalCalibrationV1SessionId?: string;
   private mathematicalCalibrationV1_1SessionId?: string;
   private mathematicalCalibrationV1_2MutationPending = false;
@@ -5597,6 +5622,9 @@ export class AiGraderLocalStationBridgeService {
     this.warmRunner = warmRunner;
     this.calibrationActivationState = dependencies.calibrationActivationRegistry ? "IDLE" : "UNAVAILABLE";
     this.dependencies = dependencies;
+    this.mathematicalStationWorkerPool =
+      dependencies.mathematicalStationWorkerPool ??
+      new FixedRigMathematicalStationWorkerPoolV1();
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
     this.rapidQueue = readRapidCaptureQueueSync(config);
     assertNoUnqueuedRapidSessionManifest(config, this.rapidQueue);
@@ -5658,7 +5686,8 @@ export class AiGraderLocalStationBridgeService {
           })
         : undefined
     );
-    void this.recoverPersistedRapidFinalization().catch(() => {});
+    this.rapidRecoveryJob =
+      this.recoverPersistedRapidFinalization().catch(() => {});
   }
 
   private currentFrontCaptureBinding(): AiGraderFrontCaptureBinding | undefined {
@@ -8735,7 +8764,47 @@ export class AiGraderLocalStationBridgeService {
     return Object.fromEntries(registry);
   }
 
-  private async runMathematicalStationPackage(
+  private runMathematicalStationPackage(
+    manifest: AiGraderLocalStationBridgeManifest,
+    findingReviews?: FixedRigMathematicalFindingReviewV1[],
+    eventTimeFloor?: string,
+    forcedOperatorReviewElements?: Array<(typeof AI_GRADER_EYES_ELEMENTS)[number]>,
+    eyesCenteringSelections?: Partial<
+      Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
+    >,
+  ): Promise<AiGraderLocalStationMathematicalExecutionV1> {
+    const job = this.runMathematicalStationPackageInternal(
+      manifest,
+      findingReviews,
+      eventTimeFloor,
+      forcedOperatorReviewElements,
+      eyesCenteringSelections,
+    );
+    this.mathematicalStationJobs.add(job);
+    void job.then(
+      () => this.mathematicalStationJobs.delete(job),
+      () => this.mathematicalStationJobs.delete(job),
+    );
+    return job;
+  }
+
+  private restoreMathematicalRunSnapshot(
+    manifest: AiGraderLocalStationBridgeManifest,
+    snapshot: AiGraderLocalStationBridgeManifest,
+  ): void {
+    for (
+      const key of Object.keys(manifest) as Array<
+        keyof AiGraderLocalStationBridgeManifest
+      >
+    ) {
+      delete manifest[key];
+    }
+    Object.assign(manifest, cloneManifest(snapshot));
+    const queueItemId = snapshot.rapidCapture.queueItemId;
+    if (queueItemId) this.queuedManifests.set(queueItemId, manifest);
+  }
+
+  private async runMathematicalStationPackageInternal(
     manifest: AiGraderLocalStationBridgeManifest,
     findingReviews?: FixedRigMathematicalFindingReviewV1[],
     eventTimeFloor?: string,
@@ -8772,6 +8841,10 @@ export class AiGraderLocalStationBridgeService {
     if (!queueItem) {
       throw new Error("Mathematical V1 processing requires the exact durable queue item identity.");
     }
+    if (this.closing) {
+      throw new MathematicalStationShutdownInterruptionV1();
+    }
+    const preRunManifest = cloneManifest(manifest);
     const persistedOperatorResolutionRequest =
       manifest.mathematicalV1.operatorResolutionReceipts?.length
         ? this.persistedOperatorResolutionRequest(manifest)
@@ -8813,7 +8886,7 @@ export class AiGraderLocalStationBridgeService {
         this.exactWarmManifestBinding(manifest, "back"),
       ]);
       const builder = this.dependencies.buildMathematicalStationPackage ??
-        buildFixedRigMathematicalCalibrationStationPackageV1;
+        ((input) => this.mathematicalStationWorkerPool.run(input));
       result = await builder({
         authority: this.hydratedMathematicalGradingAuthority(manifest),
         queueItemId: queueItem.queueItemId,
@@ -8868,6 +8941,20 @@ export class AiGraderLocalStationBridgeService {
         throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
       }
     } catch (error) {
+      if (isMathematicalStationShutdown(error) || this.closing) {
+        this.restoreMathematicalRunSnapshot(manifest, preRunManifest);
+        try {
+          await writeSessionManifest(manifest);
+        } catch (restoreError) {
+          throw new MathematicalStationShutdownInterruptionV1(
+            "Mathematical helper shutdown could not durably restore the exact pre-run manifest: " +
+            (restoreError instanceof Error
+              ? restoreError.message
+              : "unknown manifest restore error"),
+          );
+        }
+        throw new MathematicalStationShutdownInterruptionV1();
+      }
       result = {
         version: "fixed_rig_mathematical_calibration_orchestrator_v1",
         status: "insufficient_evidence",
@@ -8977,6 +9064,20 @@ export class AiGraderLocalStationBridgeService {
           stationInput: null,
         };
       }
+    }
+    if (this.closing) {
+      this.restoreMathematicalRunSnapshot(manifest, preRunManifest);
+      try {
+        await writeSessionManifest(manifest);
+      } catch (restoreError) {
+        throw new MathematicalStationShutdownInterruptionV1(
+          "Mathematical helper shutdown could not durably restore the exact pre-run manifest: " +
+          (restoreError instanceof Error
+            ? restoreError.message
+            : "unknown manifest restore error"),
+        );
+      }
+      throw new MathematicalStationShutdownInterruptionV1();
     }
     if (
       result.status === "operator_resolution_required" &&
@@ -10489,6 +10590,7 @@ export class AiGraderLocalStationBridgeService {
             return { value: undefined, manifests: [manifest] };
           });
         } catch (error) {
+          if (isMathematicalStationShutdown(error)) return;
           const message = error instanceof Error ? error.message : "Rapid background finalization failed.";
           await this.runRapidQueueMutation(async ({ trackManifest }) => {
             const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
@@ -13299,6 +13401,8 @@ export class AiGraderLocalStationBridgeService {
 
   async shutdown(reason = "local bridge server closing"): Promise<void> {
     this.closing = true;
+    const mathematicalWorkerShutdown =
+      this.mathematicalStationWorkerPool.shutdown();
     const workerShutdown = this.beginProcessingWorkerShutdown(reason).then(
       () => undefined,
       (error) => new Error(boundedProcessingWorkerError(error)),
@@ -13307,6 +13411,15 @@ export class AiGraderLocalStationBridgeService {
     if (frontCapture) await frontCapture.catch(() => undefined);
     const atomic = this.currentAtomicBackCapturePromise();
     if (atomic) await atomic.catch(() => undefined);
+    await mathematicalWorkerShutdown;
+    await this.rapidRecoveryJob;
+    await Promise.allSettled([
+      ...this.rapidFinalizationJobs.values(),
+      ...this.mathematicalStationJobs.values(),
+      ...this.mathematicalActionJobs.values(),
+    ]);
+    await this.rapidMutationChain.catch(() => undefined);
+    await this.reportWorker.catch(() => undefined);
     let terminalError: Error | undefined;
     try {
       await this.serializeTerminalLifecycle(async () => {
@@ -16106,6 +16219,9 @@ export class AiGraderLocalStationBridgeService {
     if (action === "status" || action === "latest-report" || action === "session-manifest") {
       return this.status();
     }
+    if (this.closing) {
+      throw new Error("Station mutation is unavailable while the local bridge is closing.");
+    }
     if (action === "ingest-finalized-calibration-bundle") {
       assertExactActionRequestKeys(request, action, ["bundleManifestSha256"]);
       if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
@@ -16200,7 +16316,13 @@ export class AiGraderLocalStationBridgeService {
     }
     if (action === "complete-queued-ocr") {
       assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId", "attemptOwnerId", "result"]);
-      await this.completeQueuedOcr(request);
+      const ocrCompletionJob = this.completeQueuedOcr(request);
+      this.mathematicalActionJobs.add(ocrCompletionJob);
+      try {
+        await ocrCompletionJob;
+      } finally {
+        this.mathematicalActionJobs.delete(ocrCompletionJob);
+      }
       return this.status();
     }
     if (action === "fail-queued-ocr") {
@@ -16215,7 +16337,13 @@ export class AiGraderLocalStationBridgeService {
         ["queueItemId", "gradingSessionId", "reportId", "mathematicalReviewRequestSha256", "mathematicalFindingReviews"],
         ["operatorId", "warningsAccepted", "overrideReason"],
       );
-      await this.submitMathematicalFindingReviews(request);
+      const reviewJob = this.submitMathematicalFindingReviews(request);
+      this.mathematicalActionJobs.add(reviewJob);
+      try {
+        await reviewJob;
+      } finally {
+        this.mathematicalActionJobs.delete(reviewJob);
+      }
       return this.status();
     }
     if (action === "submit-operator-resolutions") {
@@ -16231,7 +16359,13 @@ export class AiGraderLocalStationBridgeService {
           "operatorAuthentication",
         ],
       );
-      await this.submitOperatorResolutions(request);
+      const reviewJob = this.submitOperatorResolutions(request);
+      this.mathematicalActionJobs.add(reviewJob);
+      try {
+        await reviewJob;
+      } finally {
+        this.mathematicalActionJobs.delete(reviewJob);
+      }
       return this.status();
     }
     if (action === "publish-report") {

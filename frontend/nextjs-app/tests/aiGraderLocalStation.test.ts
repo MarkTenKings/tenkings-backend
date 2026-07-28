@@ -9,6 +9,8 @@ import {
   aiGraderApproveAndPublishEligible,
   aiGraderAuthoritativeLiveLightingDraft,
   aiGraderMergeBackgroundQueueStatus,
+  aiGraderRapidQueueIdentityKey,
+  aiGraderRapidQueueIdentityOperationActive,
   aiGraderRapidQueueIdentityMatches,
   aiGraderRapidItemPublishable,
   aiGraderReviewActivationAvailable,
@@ -1230,6 +1232,61 @@ test("out-of-order concurrent OCR responses cannot regress a sibling card's dura
   );
 });
 
+test("background queue merge cannot collide colon-bearing exact card identities", () => {
+  const queueItem = (
+    queueItemId: string,
+    sessionId: string,
+    reportId: string,
+    updatedAt: string,
+  ) => ({
+    queueItemId,
+    sessionId,
+    reportId,
+    state: "finalizing" as const,
+    queuedAt: "2026-07-18T12:00:00.000Z",
+    updatedAt,
+    history: [],
+    humanConfirmationRequired: true as const,
+    autoConfirmed: false as const,
+    autoPublished: false as const,
+    ocr: {
+      state: "eligible" as const,
+      updatedAt,
+      attemptCount: 0,
+    },
+  });
+  const current = buildAiGraderLocalStationStatus();
+  current.rapidCaptureQueue.items = [
+    queueItem("a:b", "c", "d", "2026-07-18T12:00:03.000Z"),
+  ];
+  const background = buildAiGraderLocalStationStatus();
+  background.rapidCaptureQueue.items = [
+    queueItem("a", "b:c", "d", "2026-07-18T12:00:01.000Z"),
+  ];
+
+  const merged = aiGraderMergeBackgroundQueueStatus(current, background);
+  assert.deepEqual(
+    new Set(merged.rapidCaptureQueue.items.map((item) =>
+      aiGraderRapidQueueIdentityKey({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+      }))),
+    new Set([
+      aiGraderRapidQueueIdentityKey({
+        queueItemId: "a:b",
+        gradingSessionId: "c",
+        reportId: "d",
+      }),
+      aiGraderRapidQueueIdentityKey({
+        queueItemId: "a",
+        gradingSessionId: "b:c",
+        reportId: "d",
+      }),
+    ]),
+  );
+});
+
 test("a stale background poll cannot switch or resurrect the active review identity", () => {
   const review = (suffix: string) => ({
     queueItemId: `queue-${suffix}`,
@@ -1430,6 +1487,114 @@ test("one synchronous publication claim freezes review selection but never owns 
     currentStep: "start_new_card",
     startSessionLifecycleState: "idle",
   }), true, "a hosted publication claim is not part of camera ownership");
+});
+
+test("long review reruns are keyed by the exact queue, session, and report", () => {
+  const cardA = {
+    queueItemId: "queue-a",
+    gradingSessionId: "session-a",
+    reportId: "report-a",
+  };
+  const cardB = {
+    queueItemId: "queue-b",
+    gradingSessionId: "session-b",
+    reportId: "report-b",
+  };
+  const operations = {
+    [aiGraderRapidQueueIdentityKey(cardA)]: "operator-resolution",
+  };
+  assert.equal(
+    operations[aiGraderRapidQueueIdentityKey({ ...cardA })],
+    "operator-resolution",
+  );
+  assert.equal(operations[aiGraderRapidQueueIdentityKey(cardB)], undefined);
+  assert.equal(
+    aiGraderRapidQueueIdentityOperationActive(operations, cardA),
+    true,
+    "the same card's editing and duplicate submit controls remain disabled",
+  );
+  assert.equal(
+    aiGraderRapidQueueIdentityOperationActive(operations, cardB),
+    false,
+    "another active card's identity, finding, measurement, and submit controls remain enabled",
+  );
+  assert.notEqual(
+    aiGraderRapidQueueIdentityKey({
+      queueItemId: "a:b",
+      gradingSessionId: "c",
+      reportId: "d",
+    }),
+    aiGraderRapidQueueIdentityKey({
+      queueItemId: "a",
+      gradingSessionId: "b:c",
+      reportId: "d",
+    }),
+    "structured exact keys cannot collide when safe IDs contain colons",
+  );
+});
+
+test("finding and element reruns preserve another active card and never take page-global busy", () => {
+  const findingStart = stationPageSource.indexOf(
+    "const submitMathematicalFindingReviews = async",
+  );
+  const operatorStart = stationPageSource.indexOf(
+    "const submitOperatorResolutions = async",
+    findingStart,
+  );
+  const productionStart = stationPageSource.indexOf(
+    "const productionReleaseBody",
+    operatorStart,
+  );
+  const findingBlock = stationPageSource.slice(findingStart, operatorStart);
+  const operatorBlock = stationPageSource.slice(operatorStart, productionStart);
+  const operatorUiStart = stationPageSource.indexOf(
+    'aria-label="Exact element resolution"',
+  );
+  const findingUiStart = stationPageSource.indexOf(
+    'aria-label="Exact Mathematical V1 finding review"',
+  );
+  const operatorUiBlock = stationPageSource.slice(
+    operatorUiStart,
+    findingUiStart,
+  );
+  const findingUiBlock = stationPageSource.slice(
+    findingUiStart,
+    stationPageSource.indexOf("{localReport.open", findingUiStart),
+  );
+
+  for (const block of [findingBlock, operatorBlock]) {
+    assert.match(block, /const submissionIdentity = \{ \.\.\.activeReviewQueueIdentity \}/);
+    assert.match(block, /aiGraderRapidQueueIdentityKey\(submissionIdentity\)/);
+    assert.match(
+      block,
+      /reviewRerunOperationClaimsRef\.current\.has\(submissionIdentityKey\)/,
+    );
+    assert.match(
+      block,
+      /reviewRerunOperationClaimsRef\.current\.add\(submissionIdentityKey\)/,
+    );
+    assert.match(
+      block,
+      /reviewRerunOperationClaimsRef\.current\.delete\(submissionIdentityKey\)/,
+    );
+    assert.match(block, /preserveActiveReview: true/);
+    assert.doesNotMatch(block, /setBusy\(/);
+  }
+  assert.match(
+    operatorBlock,
+    /operatorResolutionIdempotencyRef\.current\.get\(idempotencyIdentityKey\)/,
+  );
+  assert.match(operatorUiBlock, /disabled=\{activeReviewInteractionBusy\}/);
+  assert.match(
+    operatorUiBlock,
+    /disabled=\{activeReviewInteractionBusy \|\| !operatorResolutionDraftState\.confirmed\}/,
+  );
+  assert.doesNotMatch(operatorUiBlock, /disabled=\{busy !== null/);
+  assert.match(
+    findingUiBlock,
+    /activeReviewInteractionBusy \|\| mathematicalReviewAssets\.status !== "ready"/,
+  );
+  assert.doesNotMatch(findingUiBlock, /busy === "mathematical-review"/);
 });
 
 test("cross-page Start reconciliation cannot adopt pending card A into card B draft", () => {

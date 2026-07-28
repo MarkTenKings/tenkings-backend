@@ -47,7 +47,20 @@ function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {
     captureProfile: "production_fast",
     ...overrides,
   });
-  return { config, service: new AiGraderLocalStationBridgeService(config, undefined, warmRunner, dependencies) };
+  return {
+    config,
+    service: new AiGraderLocalStationBridgeService(
+      config,
+      undefined,
+      warmRunner,
+      {
+        // Unit fixtures must never scan for or terminate an unrelated live
+        // Production Basler preview process on the shared Dell workstation.
+        stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+        ...dependencies,
+      },
+    ),
+  };
 }
 
 // These low-level fixtures preserve coverage for already-written Legacy V0 station
