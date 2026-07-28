@@ -11,6 +11,7 @@ import {
   type AiGraderOcrFailureCategory,
   type AiGraderOcrFailureCode,
 } from "./aiGraderOcrFailure";
+import { aiGraderOcrFieldRequiresReview } from "./aiGraderOcrReviewContract";
 
 export type AiGraderOcrPrefillStage =
   | "descriptor_fetch"
@@ -557,10 +558,6 @@ function safeOcrResultField(
       !Array.isArray(field.evidenceRefs) || field.evidenceRefs.length > 24) {
     throw new Error(`Invalid OCR confidence or review contract for ${fieldName}.`);
   }
-  const expectedReviewRequired = field.state !== "supported" || field.confidence < 0.8;
-  if (field.reviewRequired !== expectedReviewRequired) {
-    throw new Error(`OCR review requirement does not match ${fieldName} state and confidence.`);
-  }
   const evidenceRefs = field.evidenceRefs.map((entry) => {
     const evidenceRef = safeBoundedOcrText(entry, 192);
     if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,191}$/.test(evidenceRef)) {
@@ -571,6 +568,14 @@ function safeOcrResultField(
   if (new Set(evidenceRefs).size !== evidenceRefs.length ||
       (field.state === "supported" && evidenceRefs.length < 1)) {
     throw new Error(`Invalid OCR evidence reference set for ${fieldName}.`);
+  }
+  const expectedReviewRequired = aiGraderOcrFieldRequiresReview({
+    state: field.state,
+    confidence: field.confidence,
+    evidenceRefs,
+  });
+  if (field.reviewRequired !== expectedReviewRequired) {
+    throw new Error(`OCR review requirement does not match ${fieldName} state, confidence, and evidence.`);
   }
   return {
     state: field.state,
@@ -787,8 +792,14 @@ function safeOcrResult(value: unknown, identity: AiGraderOcrExactIdentity) {
   }
   try {
     return safeAiGraderOcrPrefillResult(result);
-  } catch {
-    throw new AiGraderOcrPrefillStageError("ocr_response");
+  } catch (error) {
+    const detail = error instanceof Error
+      ? error.message
+      : "Unknown OCR response contract violation.";
+    throw new AiGraderOcrPrefillStageError(
+      "ocr_response",
+      `OCR Prefill response contract validation failed: ${detail}`.slice(0, 500),
+    );
   }
 }
 
