@@ -1355,6 +1355,35 @@ test("only the exact durable OCR attempt owner can complete or fail its in-fligh
   }
 });
 
+test("helper accepts the shared review-required contract for supported unresolved catalog OCR", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-shared-review-contract-"));
+  try {
+    const { service, item } = await createEligibleQueuedFixture(outputDir, "shared-review-contract");
+    const attempt = {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      attemptOwnerId: "ocr-attempt-owner-shared-review-contract",
+    };
+    const exactResult = safeOcrResult(item);
+    exactResult.fields.cardName = {
+      state: "supported",
+      value: "Pikachu",
+      confidence: 0.97,
+      reviewRequired: true,
+      evidenceRefs: ["provider.front.card_name", "catalog.identity.unresolved"],
+    };
+    await service.action("begin-queued-ocr", attempt);
+    await service.action("complete-queued-ocr", { ...attempt, result: exactResult });
+    const completed = service.status().rapidCaptureQueue.items[0].ocr;
+    assert.equal(completed.state, "succeeded");
+    assert.equal(completed.result.fields.cardName.value, "Pikachu");
+    assert.equal(completed.result.fields.cardName.reviewRequired, true);
+  } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test("normalized evidence changed after begin becomes one terminal item failure", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-ocr-reverify-"));
   try {

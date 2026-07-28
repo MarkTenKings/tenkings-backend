@@ -35,6 +35,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+$WarmIncompleteGrabMaxAttempts = 3
+$WarmIncompleteGrabRetryDelayMs = 80
 
 function Write-BridgeJson {
   param([object]$Payload)
@@ -1178,11 +1180,28 @@ function Capture-WarmStill {
   }
   try {
     $phase = [System.Diagnostics.Stopwatch]::StartNew()
-    [void]$Camera.StreamGrabber.Start(1)
-    $streamStarted = $true
-    $grabResult = $Camera.StreamGrabber.RetrieveResult(10000, [Basler.Pylon.TimeoutHandling]::ThrowException)
-    if (-not $grabResult.GrabSucceeded) {
-      throw "Basler warm grab failed: $($grabResult.ErrorCode) $($grabResult.ErrorDescription)"
+    for ($grabAttempt = 1; $grabAttempt -le $WarmIncompleteGrabMaxAttempts; $grabAttempt += 1) {
+      [void]$Camera.StreamGrabber.Start(1)
+      $streamStarted = $true
+      $grabResult = $Camera.StreamGrabber.RetrieveResult(10000, [Basler.Pylon.TimeoutHandling]::ThrowException)
+      if ($grabResult.GrabSucceeded) {
+        break
+      }
+      $grabErrorCode = [int]$grabResult.ErrorCode
+      $grabErrorDescription = [string]$grabResult.ErrorDescription
+      $incompleteGrab = $grabErrorCode -eq -520093676 -or
+        $grabErrorDescription -match "buffer was incompletely grabbed"
+      if (-not $incompleteGrab -or $grabAttempt -ge $WarmIncompleteGrabMaxAttempts) {
+        throw "Basler warm grab failed after $grabAttempt attempt(s): $grabErrorCode $grabErrorDescription"
+      }
+      try { $grabResult.Dispose() } catch {}
+      $grabResult = $null
+      try { [void]$Camera.StreamGrabber.Stop() } catch {}
+      $streamStarted = $false
+      Start-Sleep -Milliseconds $WarmIncompleteGrabRetryDelayMs
+    }
+    if ($null -eq $grabResult -or -not $grabResult.GrabSucceeded) {
+      throw "Basler warm grab did not return one complete frame."
     }
     $sourcePixelFormat = "$($grabResult.PixelTypeValue)"
     if (-not $sourcePixelFormat -or $sourcePixelFormat.Length -eq 0) {

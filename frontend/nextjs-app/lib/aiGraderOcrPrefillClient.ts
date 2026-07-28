@@ -11,7 +11,7 @@ import {
   type AiGraderOcrFailureCategory,
   type AiGraderOcrFailureCode,
 } from "./aiGraderOcrFailure";
-import { aiGraderOcrFieldRequiresReview } from "./aiGraderOcrReviewContract";
+import { aiGraderOcrFieldRequiresReview } from "@tenkings/shared";
 
 export type AiGraderOcrPrefillStage =
   | "descriptor_fetch"

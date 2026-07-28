@@ -3218,13 +3218,13 @@ export default function AiGraderStationPage() {
         if (!ownsLiveAttempt()) return;
         const typedFailure = requestError instanceof AiGraderOcrPrefillStageError ? requestError : null;
         const message = (requestError instanceof Error ? requestError.message : "Queued OCR failed.").slice(0, 500);
-        if (!claimed) {
+        const refreshExactPersistedItem = async () => {
           const refreshed = await callAiGraderStationBridge({
             baseUrl: bridgeUrl,
             stationToken,
             action: "status",
           }).catch(() => null);
-          if (!ownsLiveAttempt()) return;
+          if (!ownsLiveAttempt()) return null;
           const persisted = refreshed?.rapidCaptureQueue.items.find((item) =>
             item.queueItemId === identity.queueItemId &&
             item.sessionId === identity.gradingSessionId &&
@@ -3233,13 +3233,36 @@ export default function AiGraderStationPage() {
             setStatus((current) =>
               aiGraderMergeBackgroundQueueStatus(current, refreshed));
           }
+          return persisted ?? null;
+        };
+        const persistedAfterRequestError = await refreshExactPersistedItem();
+        if (!ownsLiveAttempt()) return;
+        if (persistedAfterRequestError?.ocr.state === "failed") {
+          setError(
+            (persistedAfterRequestError.error ??
+              persistedAfterRequestError.ocr.failure?.message ??
+              message).slice(0, 750),
+          );
+          return;
+        }
+        if (persistedAfterRequestError?.ocr.state === "succeeded") return;
+        if (!claimed) {
           // An observed in-flight attempt can belong to another live tab. Only the
           // exact tab that received and validated the durable claim may fail it.
-          if (!persisted || persisted.ocr.state === "eligible") {
+          if (!persistedAfterRequestError ||
+              persistedAfterRequestError.ocr.state === "eligible") {
             setError(
               `Queued OCR was not claimed for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}; its exact lifecycle was left unchanged: ${message}`.slice(0, 750)
             );
           }
+          return;
+        }
+        if (!persistedAfterRequestError ||
+            persistedAfterRequestError.ocr.state !== "in_flight" ||
+            persistedAfterRequestError.ocr.attemptOwnerId !== attemptOwnerId) {
+          setError(
+            `Queued OCR no longer has this tab's exact in-flight execution for queue ${identity.queueItemId}, session ${identity.gradingSessionId}, report ${identity.reportId}; no second terminal mutation was attempted.`.slice(0, 750),
+          );
           return;
         }
         try {
@@ -3262,6 +3285,17 @@ export default function AiGraderStationPage() {
             aiGraderMergeBackgroundQueueStatus(current, failed));
         } catch (persistenceError) {
           if (!ownsLiveAttempt()) return;
+          const persistedAfterPersistenceError = await refreshExactPersistedItem();
+          if (!ownsLiveAttempt()) return;
+          if (persistedAfterPersistenceError?.ocr.state === "failed") {
+            setError(
+              (persistedAfterPersistenceError.error ??
+                persistedAfterPersistenceError.ocr.failure?.message ??
+                message).slice(0, 750),
+            );
+            return;
+          }
+          if (persistedAfterPersistenceError?.ocr.state === "succeeded") return;
           wakeInterruptedRecovery = true;
           const persistenceMessage = persistenceError instanceof Error
             ? persistenceError.message

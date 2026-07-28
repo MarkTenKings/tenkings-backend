@@ -28961,3 +28961,28 @@ By enabling Rip It Live, I confirm:
 - Public and exact-deployment Station pages are byte-identical: both returned `97,600` UTF-8 HTML bytes and bundle `station-9c6bf769bf812896.js`, `322,287` bytes, SHA-256 `bcc334834d8be7a33e635357c290d63756b8642fcf3e1f298f40a1fdd4044fef`.
 - Direct inspection of both served bundles confirms the OCR contract-validation detail and automatic preview reconnect implementation are present.
 - This was a browser/serverless-only rollout. The Dell helper was not repinned or restarted. No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication/discard, calibration, queue/report/database/storage mutation, NFC, inventory, or unrelated service action occurred.
+
+## 2026-07-28 - Shared OCR terminal contract and incomplete Basler frame correction candidate
+
+- The owner's next fresh Production card preserved exact helper failure `AI_GRADER_OCR_IDENTITY_MISMATCH`: server and browser used the unresolved-catalog-aware OCR review rule from PR `#202`, but the Dell helper retained a third independent legacy validator that rejected a supported, high-confidence `cardName` carrying `reviewRequired=true` and `catalog.identity.unresolved`. The helper durably terminalized the item before returning the error. The browser then attempted `fail-queued-ocr` a second time and replaced the primary failure with `Queued OCR failure requires the exact one in-flight execution and cannot retry`.
+- The OCR review decision is now exported once from `@tenkings/shared` and consumed by server, browser, and helper. Supported unresolved catalog evidence remains review-required; unknown, disagreement, low-confidence, and normally supported resolved values retain the existing behavior.
+- After any queued OCR request error, the browser now reads the exact queue/session/report state before attempting a terminal mutation. If the helper already persisted `failed` or `succeeded`, the browser adopts that terminal state and preserves the primary failure. It invokes `fail-queued-ocr` only while the same tab still owns the exact durable in-flight attempt, and performs the same reconciliation if that persistence response is lost.
+- The same acceptance run also exposed one Basler SDK `-520093676` incomplete warm buffer. Read-only NIC counters and Windows events showed no adapter errors, discards, resets, or link loss. Warm still capture now disposes and re-grabs only that exact incomplete-buffer condition, at most three total attempts with an 80 ms interval. Any other camera error remains immediately terminal, the third incomplete result remains terminal, and no incomplete image bytes can enter processing.
+- Focused validation passed:
+  - shared OCR contract TypeScript build and exact contract regression;
+  - capture-helper and simulator TypeScript builds;
+  - current helper OCR contract regression;
+  - current Basler incomplete-buffer regression;
+  - station/OCR lifecycle and provider suites `68/68`;
+  - server catalog/OCR finalize suites `25/25`;
+  - full Next.js optimized Production build;
+  - `git diff --check` with Windows line-ending notices only.
+- The broader shared test command still contains one unrelated pre-existing mathematical calibration manifest hash expectation mismatch; the shared package compiles and the new OCR contract regression passes.
+- Existing failed queue/session/report artifacts were inspected read-only and not retried, discarded, rewritten, or otherwise mutated. No camera/lighting operation, capture/cancel, card creation, identity/owner resolution, publication/discard, calibration, queue/report/database/storage mutation, helper restart, Production deployment, or unrelated product action occurred.
+
+### Planned authorized Production action
+
+- Commit and push only the shared OCR validator, exact terminal-state reconciliation, bounded Basler incomplete-buffer re-grab, focused regressions, and this audit entry.
+- Open one focused protected PR and merge only after every required check passes. Allow and verify the normal GitHub/Vercel Production deployment with migrations disabled.
+- Before Dell activation, perform a fresh authenticated read-only idle gate. Preserve every existing failed item. Do not cancel, discard, resolve, publish, or otherwise mutate an owner card to manufacture the gate.
+- Only after the helper is sessionless with preview/camera released, no active transition or capture lock, warm runner idle, and capture/processing/report queues empty, advance the dedicated Dell runtime to the exact functional merge, build shared/helper, update only the protected launcher commit pin, restart only the helper through the protected launcher, and verify exact commit parity plus healthy token-gated local-only `production_fast` status.

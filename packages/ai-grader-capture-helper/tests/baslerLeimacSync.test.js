@@ -2473,6 +2473,21 @@ test("Basler operator preview bridge requires pylon live stream and async coales
   assert.doesNotMatch(script, /UserSetSave|SYSTEM RESET|FACTORY DEFAULT/i);
 });
 
+test("warm forensic capture re-grabs only incomplete Basler buffers and never accepts them", () => {
+  const script = fs.readFileSync(path.join(__dirname, "..", "scripts", "basler-pylon-bridge.ps1"), "utf8");
+  const start = script.indexOf("function Capture-WarmStill");
+  const end = script.indexOf("function Capture-FixedRigSideBatch", start);
+  const captureWarmStill = script.slice(start, end);
+  assert.match(script, /\$WarmIncompleteGrabMaxAttempts = 3/);
+  assert.match(captureWarmStill, /for \(\$grabAttempt = 1;/);
+  assert.match(captureWarmStill, /\$grabErrorCode -eq -520093676/);
+  assert.match(captureWarmStill, /buffer was incompletely grabbed/);
+  assert.match(captureWarmStill, /\$grabResult\.Dispose\(\)/);
+  assert.match(captureWarmStill, /StreamGrabber\.Stop\(\)/);
+  assert.match(captureWarmStill, /Basler warm grab failed after \$grabAttempt attempt\(s\)/);
+  assert.match(captureWarmStill, /-not \$grabResult\.GrabSucceeded/);
+});
+
 test("fixed-rig docs record unresolved ring reflection mitigations without solved or certified claims", () => {
   const docs = fs.readFileSync(path.join(__dirname, "..", "..", "..", "docs", "ai-grader-capture-helper.md"), "utf8");
   assert.match(docs, /Ring Reflection \/ Glare Limitation/);
