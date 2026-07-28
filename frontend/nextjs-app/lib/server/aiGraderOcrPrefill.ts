@@ -267,6 +267,27 @@ function unsupportedCatalogField(
   });
 }
 
+function reviewableUnresolvedCatalogField(
+  field: AiGraderOcrPrefillField<string | null>,
+  state: "unknown" | "disagreement",
+  evidenceRef: string
+) {
+  if (
+    field.state === "supported" &&
+    typeof field.value === "string" &&
+    field.value.trim()
+  ) {
+    return {
+      ...field,
+      state: "supported" as const,
+      value: field.value.trim(),
+      reviewRequired: true,
+      evidenceRefs: Array.from(new Set([...field.evidenceRefs, evidenceRef])),
+    };
+  }
+  return unsupportedCatalogField(field, state, evidenceRef);
+}
+
 function validateNumberedField(
   field: AiGraderOcrPrefillField<string | null>,
   parallel: LookupSetParallelOption | null
@@ -301,11 +322,11 @@ export function canonicalizeAiGraderOcrCatalog(input: {
 
   if (!input.identified || input.identified.confidence === "none") {
     const state = (input.identified?.candidateCount ?? 0) > 1 ? "disagreement" : "unknown";
-    fields[identityKey] = unsupportedCatalogField(fields[identityKey], state, "catalog.identity.unresolved");
-    fields.productSet = unsupportedCatalogField(fields.productSet, state, "catalog.set.unresolved");
-    fields.cardNumber = unsupportedCatalogField(fields.cardNumber, state, "catalog.card_number.unresolved");
-    fields.insert = unsupportedCatalogField(fields.insert, state, "catalog.insert.unresolved");
-    fields.parallel = unsupportedCatalogField(fields.parallel, state, "catalog.parallel.unresolved");
+    fields[identityKey] = reviewableUnresolvedCatalogField(fields[identityKey], state, "catalog.identity.unresolved");
+    fields.productSet = reviewableUnresolvedCatalogField(fields.productSet, state, "catalog.set.unresolved");
+    fields.cardNumber = reviewableUnresolvedCatalogField(fields.cardNumber, state, "catalog.card_number.unresolved");
+    fields.insert = reviewableUnresolvedCatalogField(fields.insert, state, "catalog.insert.unresolved");
+    fields.parallel = reviewableUnresolvedCatalogField(fields.parallel, state, "catalog.parallel.unresolved");
     fields.numbered = validateNumberedField(fields.numbered, null);
     return fields;
   }

@@ -647,7 +647,7 @@ test("removed browser safety, Single finalization, and separate queue mutation a
     "configure-rapid-capture", "queue-current-card", "run-diagnostics", "export-report-bundle",
     "calculate-final-grade", "finalize-report", "generate-label-data",
   ]) assert.equal(parseAiGraderStationAction(action), null);
-  for (const action of ["activate-queue-item", "discard-queue-item", "begin-queued-ocr", "complete-queued-ocr", "fail-queued-ocr"]) {
+  for (const action of ["activate-queue-item", "release-queue-item", "discard-queue-item", "begin-queued-ocr", "complete-queued-ocr", "fail-queued-ocr"]) {
     assert.equal(parseAiGraderStationAction(action), action);
   }
   const status = buildAiGraderLocalStationStatus();
@@ -1645,7 +1645,9 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
     source.indexOf('</div>', source.indexOf('<div className="finish-top-actions">')),
   );
   assert.doesNotMatch(startBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
-  assert.doesNotMatch(backBlock, /resetReviewUiState|setIdentityDraft|setSelectedCard/);
+  assert.match(backBlock, /aiGraderAtomicBackQueueReleaseMatches[\s\S]+resetReviewUiState\(\)/);
+  assert.match(backBlock, /setMathematicalAuthorityDraft\(defaultMathematicalAuthorityDraft\)/);
+  assert.match(backBlock, /durably queued for background processing[\s\S]+Start New Card is ready/);
   assert.doesNotMatch(startBlock, /publicationReviewClaim/);
   assert.match(startBlock, /const startController = new AbortController\(\)/);
   assert.match(startBlock, /window\.setTimeout\(\(\) => startController\.abort\(\), 30_000\)/);

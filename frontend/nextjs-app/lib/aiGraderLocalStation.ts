@@ -45,6 +45,7 @@ export type AiGraderStationAction =
   | "latest-report"
   | "session-manifest"
   | "activate-queue-item"
+  | "release-queue-item"
   | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
@@ -3163,6 +3164,7 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "latest-report": "view_unified_report",
   "session-manifest": "view_unified_report",
   "activate-queue-item": "view_unified_report",
+  "release-queue-item": "start_new_card",
   "discard-queue-item": "start_new_card",
   "bind-mathematical-grading-authority": "capture_front",
   "submit-mathematical-finding-reviews": "view_unified_report",
@@ -3214,6 +3216,7 @@ function bridgeEndpoints() {
     { method: "POST", action: "publish-report", description: "Prepare local publication manifest and public URL data." },
     { method: "POST", action: "cancel-session", description: "Cancel a local station session with safe-off cleanup." },
     { method: "POST", action: "activate-queue-item", description: "Select one exact completed queued report for review without taking capture ownership." },
+    { method: "POST", action: "release-queue-item", description: "Close the exact active review without changing its persisted queue/report state." },
     { method: "POST", action: "bind-mathematical-grading-authority", description: "Bind exact Mathematical V1 card and centering authority before capture." },
     { method: "POST", action: "submit-mathematical-finding-reviews", description: "Submit one exact SHA-bound disposition for every measured finding." },
     { method: "POST", action: "submit-operator-resolutions", description: "Submit an authenticated exact element-resolution authority." },
@@ -3622,6 +3625,7 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "latest-report",
     "session-manifest",
     "activate-queue-item",
+    "release-queue-item",
     "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",

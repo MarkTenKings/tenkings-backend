@@ -366,6 +366,19 @@ export interface FixedRigMathematicalFindingReviewRequestV1 {
   artifactSha256: string;
 }
 
+export interface FixedRigMathematicalAnalysisCheckpointV1 {
+  version: typeof FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  calibrationArtifactSha256: string;
+  requestSha256: string;
+  sides: {
+    front: IngestedSideV1;
+    back: IngestedSideV1;
+  };
+}
+
 export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   /** Explicit opt-in. Ordinary sessions remain legacy_v0 and never call this seam. */
   gradingContract: "mathematical_calibration_v1";
@@ -399,6 +412,11 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
   physicalDefectDeduplication?: FixedRigPhysicalDefectDeduplicationV1[];
   findingReviews?: FixedRigMathematicalFindingReviewV1[];
   operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
+  /**
+   * Bridge-private in-memory resume state. It is emitted only after exact
+   * first-pass analysis and is never serialized into a report or queue file.
+   */
+  analysisCheckpoint?: FixedRigMathematicalAnalysisCheckpointV1;
   /**
    * Non-metric semantic EYES challenges that must return to the human review
    * workspace even when prior mathematical resolutions produced a completed
@@ -532,6 +550,8 @@ export type BuildFixedRigMathematicalCalibrationOrchestratorV1Result = (
    */
   eyesCenteringCandidateLedger?: FixedRigEyesCenteringCandidateLedgerV1;
   eyesCenteringCandidateAssets?: FixedRigEyesCenteringCandidateAssetV1[];
+  /** Private in-memory state used to avoid re-ingesting immutable captures after owner resolution. */
+  analysisCheckpoint?: FixedRigMathematicalAnalysisCheckpointV1;
 };
 
 class OrchestrationFailureV1 extends Error {
@@ -873,7 +893,7 @@ function assertMeasurementCalibrationV1(
   }
 }
 
-interface IngestedSideBaseV1 {
+export interface IngestedSideBaseV1 {
   side: Side;
   input: FixedRigMathematicalCalibrationSideInputV1;
   normalizedBytes: Buffer;
@@ -886,7 +906,7 @@ interface IngestedSideBaseV1 {
   eyesCenteringCandidateAssets: FixedRigEyesCenteringCandidateAssetV1[];
 }
 
-interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
+export interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
   automaticMeasurementUnavailable?: undefined;
   condition: ComputedConditionSegmentationV1;
   outerCutGeometryEvidence: FixedRigOuterCutGeometryEvidenceV1;
@@ -901,7 +921,7 @@ interface IngestedSideComputedV1 extends IngestedSideBaseV1 {
   };
 }
 
-interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
+export interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
   automaticMeasurementUnavailable: {
     detector: "photometric_evidence";
     reasons: string[];
@@ -913,7 +933,7 @@ interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
   visualizationAssetIds: null;
 }
 
-type IngestedSideV1 = IngestedSideComputedV1 | IngestedSideAutomaticUnavailableV1;
+export type IngestedSideV1 = IngestedSideComputedV1 | IngestedSideAutomaticUnavailableV1;
 
 function sideAutomaticallyUnavailableV1(
   side: IngestedSideV1,
@@ -4038,64 +4058,88 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       });
     }
     assertCalibrationBundleAuthorityV1(input.calibration);
-    const physicalBytes = await readExactFileV1(
-      input.calibration.physicalArtifact,
-      "physical calibration artifact",
-      "calibration_ingestion",
-    );
-    let physicalArtifact: FixedRigPhysicalCalibrationArtifactV1;
-    try {
-      physicalArtifact = JSON.parse(physicalBytes.toString("utf8")) as FixedRigPhysicalCalibrationArtifactV1;
-    } catch {
-      return fail("calibration_ingestion", "Physical calibration artifact is not valid exact JSON evidence.", {
-        requiresCalibration: true,
-      });
-    }
-    const flatFieldBytes: Buffer[] = [];
-    for (let index = 0; index < input.calibration.flatFieldArtifacts.length; index += 1) {
-      flatFieldBytes.push(await readExactFileV1(
-        input.calibration.flatFieldArtifacts[index]!,
-        `flat-field calibration artifact ${index + 1}`,
+    let front: IngestedSideV1;
+    let back: IngestedSideV1;
+    if (input.analysisCheckpoint) {
+      if (
+        input.analysisCheckpoint.version !==
+          FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION ||
+        input.analysisCheckpoint.queueItemId !== input.queueItemId ||
+        input.analysisCheckpoint.gradingSessionId !== input.gradingSessionId ||
+        input.analysisCheckpoint.reportId !== input.reportId ||
+        input.analysisCheckpoint.calibrationArtifactSha256 !==
+          input.calibration.finalizedProfile.artifactSha256
+      ) {
+        return fail(
+          "input_contract",
+          "The private analysis checkpoint does not match this exact queue/session/report/calibration identity.",
+          { requiresImplementationCorrection: true },
+        );
+      }
+      front = input.analysisCheckpoint.sides.front;
+      back = input.analysisCheckpoint.sides.back;
+    } else {
+      const physicalBytes = await readExactFileV1(
+        input.calibration.physicalArtifact,
+        "physical calibration artifact",
         "calibration_ingestion",
-      ));
+      );
+      let physicalArtifact: FixedRigPhysicalCalibrationArtifactV1;
+      try {
+        physicalArtifact = JSON.parse(physicalBytes.toString("utf8")) as FixedRigPhysicalCalibrationArtifactV1;
+      } catch {
+        return fail("calibration_ingestion", "Physical calibration artifact is not valid exact JSON evidence.", {
+          requiresCalibration: true,
+        });
+      }
+      const flatFieldBytes: Buffer[] = [];
+      for (let index = 0; index < input.calibration.flatFieldArtifacts.length; index += 1) {
+        flatFieldBytes.push(await readExactFileV1(
+          input.calibration.flatFieldArtifacts[index]!,
+          `flat-field calibration artifact ${index + 1}`,
+          "calibration_ingestion",
+        ));
+      }
+      const patternBytes = await readExactFileV1(
+        input.calibration.illuminationPatternArtifact,
+        "illumination-pattern calibration artifact",
+        "calibration_ingestion",
+      );
+      let photometricCalibration: FixedRigPhotometricCalibrationProfileV1;
+      try {
+        photometricCalibration = buildFixedRigPhotometricCalibrationProfileV1({
+          calibrationProfile: input.calibration.finalizedProfile,
+          physicalArtifact,
+          sensorMaximumValue: input.calibration.sensorMaximumValue,
+          flatFieldArtifacts: flatFieldBytes.map((fileBytes) => ({ fileBytes })),
+          illuminationPatternArtifact: { fileBytes: patternBytes },
+        });
+      } catch (error) {
+        return fail("photometric_calibration", `Finalized calibration evidence was rejected: ${safeMessage(error)}.`, {
+          requiresCalibration: true,
+        });
+      }
+      [front, back] = await Promise.all([
+        ingestSideV1({
+          side: "front",
+          sideInput: input.sides.front,
+          cardIdentity: input.cardIdentity,
+          profile: input.calibration.finalizedProfile,
+          photometricCalibration,
+          sensorMaximumValue: input.calibration.sensorMaximumValue,
+          selectedCenteringCandidate: input.eyesCenteringSelections?.front,
+        }),
+        ingestSideV1({
+          side: "back",
+          sideInput: input.sides.back,
+          cardIdentity: input.cardIdentity,
+          profile: input.calibration.finalizedProfile,
+          photometricCalibration,
+          sensorMaximumValue: input.calibration.sensorMaximumValue,
+          selectedCenteringCandidate: input.eyesCenteringSelections?.back,
+        }),
+      ]);
     }
-    const patternBytes = await readExactFileV1(
-      input.calibration.illuminationPatternArtifact,
-      "illumination-pattern calibration artifact",
-      "calibration_ingestion",
-    );
-    let photometricCalibration: FixedRigPhotometricCalibrationProfileV1;
-    try {
-      photometricCalibration = buildFixedRigPhotometricCalibrationProfileV1({
-        calibrationProfile: input.calibration.finalizedProfile,
-        physicalArtifact,
-        sensorMaximumValue: input.calibration.sensorMaximumValue,
-        flatFieldArtifacts: flatFieldBytes.map((fileBytes) => ({ fileBytes })),
-        illuminationPatternArtifact: { fileBytes: patternBytes },
-      });
-    } catch (error) {
-      return fail("photometric_calibration", `Finalized calibration evidence was rejected: ${safeMessage(error)}.`, {
-        requiresCalibration: true,
-      });
-    }
-    const front = await ingestSideV1({
-      side: "front",
-      sideInput: input.sides.front,
-      cardIdentity: input.cardIdentity,
-      profile: input.calibration.finalizedProfile,
-      photometricCalibration,
-      sensorMaximumValue: input.calibration.sensorMaximumValue,
-      selectedCenteringCandidate: input.eyesCenteringSelections?.front,
-    });
-    const back = await ingestSideV1({
-      side: "back",
-      sideInput: input.sides.back,
-      cardIdentity: input.cardIdentity,
-      profile: input.calibration.finalizedProfile,
-      photometricCalibration,
-      sensorMaximumValue: input.calibration.sensorMaximumValue,
-      selectedCenteringCandidate: input.eyesCenteringSelections?.back,
-    });
     const eyesCenteringCandidateAssets = [
       ...front.eyesCenteringCandidateAssets,
       ...back.eyesCenteringCandidateAssets,
@@ -4132,6 +4176,27 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       edges,
       surfaces: { front: front.surface, back: back.surface },
     });
+    if (
+      input.analysisCheckpoint &&
+      input.analysisCheckpoint.requestSha256 !==
+        operatorResolutionRequest.requestSha256
+    ) {
+      return fail(
+        "input_contract",
+        "The private analysis checkpoint is stale for the exact pending element-resolution request.",
+        { requiresImplementationCorrection: true },
+      );
+    }
+    const analysisCheckpoint: FixedRigMathematicalAnalysisCheckpointV1 = {
+      version: FIXED_RIG_MATHEMATICAL_CALIBRATION_ORCHESTRATOR_V1_VERSION,
+      queueItemId: input.queueItemId,
+      gradingSessionId: input.gradingSessionId,
+      reportId: input.reportId,
+      calibrationArtifactSha256:
+        input.calibration.finalizedProfile.artifactSha256,
+      requestSha256: operatorResolutionRequest.requestSha256,
+      sides: { front, back },
+    };
     const authorities = validatedOperatorResolutionAuthoritiesV1({
       request: operatorResolutionRequest,
       authorities: input.operatorResolutionAuthorities ?? [],
@@ -4238,6 +4303,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         unresolvedElements,
         reportPackage: null,
         stationInput: null,
+        analysisCheckpoint,
         ...(eyesCenteringCandidateLedger
           ? {
               eyesCenteringCandidateLedger,

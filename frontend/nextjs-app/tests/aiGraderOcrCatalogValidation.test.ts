@@ -141,15 +141,20 @@ test("catalog conflicts and unsupported values become disagreement rather than a
   }
 });
 
-test("multiple and missing catalog matches preserve disagreement and unknown states", () => {
+test("unresolved catalog matching preserves extracted OCR values for explicit operator review", () => {
   const multiple = canonicalizeAiGraderOcrCatalog({
     fields: fields(),
     category: "sport",
     identified: identified({ confidence: "none", candidateCount: 2 }),
     lookup: lookup({ match: "multiple" }),
   });
-  assert.equal(multiple.playerName.state, "disagreement");
-  assert.equal(multiple.productSet.state, "disagreement");
+  assert.equal(multiple.playerName.state, "supported");
+  assert.equal(multiple.playerName.value, "Michael Jordan");
+  assert.equal(multiple.playerName.reviewRequired, true);
+  assert.ok(multiple.playerName.evidenceRefs.includes("catalog.identity.unresolved"));
+  assert.equal(multiple.productSet.state, "supported");
+  assert.equal(multiple.productSet.value, "1990 SkyBox Basketball");
+  assert.equal(multiple.productSet.reviewRequired, true);
 
   const none = canonicalizeAiGraderOcrCatalog({
     fields: fields(),
@@ -164,9 +169,40 @@ test("multiple and missing catalog matches preserve disagreement and unknown sta
     }),
     lookup: lookup({ match: "none", setId: null, insertLabel: null, scopedParallels: [] }),
   });
-  assert.equal(none.playerName.state, "unknown");
-  assert.equal(none.productSet.state, "unknown");
-  assert.equal(none.cardNumber.state, "unknown");
+  assert.equal(none.playerName.state, "supported");
+  assert.equal(none.playerName.value, "Michael Jordan");
+  assert.equal(none.productSet.state, "supported");
+  assert.equal(none.productSet.value, "1990 SkyBox Basketball");
+  assert.equal(none.cardNumber.state, "supported");
+  assert.equal(none.cardNumber.value, "41");
+  assert.equal(none.cardNumber.reviewRequired, true);
+});
+
+test("unresolved catalog matching keeps absent OCR fields blank", () => {
+  const result = canonicalizeAiGraderOcrCatalog({
+    fields: fields({
+      playerName: unknown(),
+      productSet: unknown(),
+      cardNumber: unknown(),
+      insert: unknown(),
+      parallel: unknown(),
+    }),
+    category: "sport",
+    identified: identified({
+      setId: null,
+      setName: null,
+      playerName: null,
+      cardNumber: null,
+      confidence: "none",
+      candidateCount: 0,
+    }),
+    lookup: lookup({ match: "none", setId: null, insertLabel: null, scopedParallels: [] }),
+  });
+  for (const key of ["playerName", "productSet", "cardNumber", "insert", "parallel"] as const) {
+    assert.equal(result[key].state, "unknown");
+    assert.equal(result[key].value, null);
+    assert.equal(result[key].reviewRequired, true);
+  }
 });
 
 test("numbered validation rejects impossible and wrong-denominator serial evidence", () => {

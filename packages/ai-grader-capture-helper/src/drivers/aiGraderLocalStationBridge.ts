@@ -207,6 +207,7 @@ import type {
   FixedRigEyesCenteringCandidateAssetMetadataV1,
   FixedRigEyesCenteringCandidateAssetV1,
   FixedRigEyesCenteringCandidateLedgerV1,
+  FixedRigMathematicalAnalysisCheckpointV1,
 } from "./fixedRigMathematicalCalibrationOrchestratorV1";
 import type { FixedRigPrintedBorderCandidateSelectionV1 } from "./fixedRigPrintedBorderDetectorV1";
 import {
@@ -414,6 +415,7 @@ export type AiGraderLocalStationMathematicalExecutionV1 =
       requiresApprovedDesignReference: boolean;
       requiresCalibration: boolean;
       requiresImplementationCorrection: boolean;
+      operatorResolutionRequest?: FixedRigOperatorResolutionRequestV1;
     };
 
 export interface AiGraderLocalStationMathematicalV1State {
@@ -473,6 +475,7 @@ export type AiGraderLocalStationBridgeAction =
   | "latest-report"
   | "session-manifest"
   | "activate-queue-item"
+  | "release-queue-item"
   | "discard-queue-item"
   | "bind-mathematical-grading-authority"
   | "submit-mathematical-finding-reviews"
@@ -5467,6 +5470,8 @@ export class AiGraderLocalStationBridgeService {
   private reportWorker: Promise<void> = Promise.resolve();
   private rapidMutationChain: Promise<void> = Promise.resolve();
   private operatorResolutionRerunClaims = new Map<string, string>();
+  private operatorResolutionAnalysisCheckpoints =
+    new Map<string, FixedRigMathematicalAnalysisCheckpointV1>();
   private activeQueueItemId?: string;
   private previewGeometryPending?: AiGraderPreviewFrameCandidate;
   private previewGeometryAnalysisInFlight = false;
@@ -8740,6 +8745,15 @@ export class AiGraderLocalStationBridgeService {
         ...(operatorResolutionAuthorities.length ? {
           operatorResolutionAuthorities,
         } : {}),
+        ...(persistedOperatorResolutionRequest &&
+          this.operatorResolutionAnalysisCheckpoints.has(queueItem.queueItemId)
+          ? {
+              analysisCheckpoint:
+                this.operatorResolutionAnalysisCheckpoints.get(
+                  queueItem.queueItemId,
+                )!,
+            }
+          : {}),
         ...(forcedOperatorReviewElements?.length ? {
           forcedOperatorReviewElements: [...forcedOperatorReviewElements],
         } : {}),
@@ -8866,6 +8880,15 @@ export class AiGraderLocalStationBridgeService {
         };
       }
     }
+    if (
+      result.status === "operator_resolution_required" &&
+      result.analysisCheckpoint
+    ) {
+      this.operatorResolutionAnalysisCheckpoints.set(
+        queueItem.queueItemId,
+        result.analysisCheckpoint,
+      );
+    }
     const completedAt =
       operatorResolutionLogicalEventTimeV1(startedAt);
     if (
@@ -8878,6 +8901,7 @@ export class AiGraderLocalStationBridgeService {
         eyesCenteringCandidateAssets;
     }
     if (result.status === "completed") {
+      this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
       delete manifest.mathematicalV1.reviewAssets;
       delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
       this.applyMathematicalReportPackage(manifest, result.reportPackage);
@@ -8932,6 +8956,7 @@ export class AiGraderLocalStationBridgeService {
         result.request.requestSha256 + ".",
       );
     } else {
+      this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
       delete manifest.mathematicalV1.reviewAssets;
       delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
       manifest.mathematicalV1.execution = {
@@ -8945,6 +8970,12 @@ export class AiGraderLocalStationBridgeService {
         requiresApprovedDesignReference: result.requiresApprovedDesignReference,
         requiresCalibration: result.requiresCalibration,
         requiresImplementationCorrection: result.requiresImplementationCorrection,
+        ...(persistedOperatorResolutionRequest
+          ? {
+              operatorResolutionRequest:
+                structuredClone(persistedOperatorResolutionRequest),
+            }
+          : {}),
       };
       const warning = "Mathematical V1 insufficient evidence: " + result.reasons.join("; ");
       if (!manifest.warnings.includes(warning)) manifest.warnings.push(warning);
@@ -10511,6 +10542,16 @@ export class AiGraderLocalStationBridgeService {
     await writeSessionManifest(manifest);
   }
 
+  private releaseRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest) {
+    const item = this.exactQueuedItem(request);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error(
+        "Rapid Capture review release requires the exact active queue/session/report triple.",
+      );
+    }
+    this.activeQueueItemId = undefined;
+  }
+
   private discardArtifactDirectories(item: PersistedAiGraderRapidCaptureQueueItem): string[] {
     const outputRoot = path.resolve(this.config.outputDir);
     const sessionDir = path.resolve(path.dirname(item.manifestPath));
@@ -10657,6 +10698,21 @@ export class AiGraderLocalStationBridgeService {
         execution.operatorResolutionRequest) {
       if (!verifyFixedRigOperatorResolutionRequestV1(execution.operatorResolutionRequest)) {
         throw new Error("Persisted operator resolution request is invalid or noncanonical.");
+      }
+      return execution.operatorResolutionRequest;
+    }
+    if (
+      execution?.status === "insufficient_evidence" &&
+      execution.operatorResolutionRequest
+    ) {
+      if (
+        !verifyFixedRigOperatorResolutionRequestV1(
+          execution.operatorResolutionRequest,
+        )
+      ) {
+        throw new Error(
+          "Persisted operator resolution request is invalid or noncanonical.",
+        );
       }
       return execution.operatorResolutionRequest;
     }
@@ -15990,6 +16046,11 @@ export class AiGraderLocalStationBridgeService {
       await this.activateRapidQueueItem(request);
       return this.status();
     }
+    if (action === "release-queue-item") {
+      assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
+      this.releaseRapidQueueItem(request);
+      return this.status();
+    }
     if (action === "discard-queue-item") {
       assertExactActionRequestKeys(request, action, ["queueItemId", "gradingSessionId", "reportId"]);
       await this.discardRapidQueueItem(request);
@@ -16284,6 +16345,7 @@ function isAllowedAction(value: string): value is AiGraderLocalStationBridgeActi
     "latest-report",
     "session-manifest",
     "activate-queue-item",
+    "release-queue-item",
     "discard-queue-item",
     "bind-mathematical-grading-authority",
     "submit-mathematical-finding-reviews",

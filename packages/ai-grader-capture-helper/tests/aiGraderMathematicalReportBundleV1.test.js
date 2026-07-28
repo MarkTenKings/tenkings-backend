@@ -1439,6 +1439,31 @@ test("immutable evidence tampering and incomplete-grade fallback attempts are re
   );
 });
 
+test("nonfatal surface evidence limitations do not masquerade as recapture requirements", async () => {
+  const nonfatal = reportInput();
+  nonfatal.surface.front.evidenceQualityLimitations.push({
+    code: "design_dependent_condition_evidence_unavailable",
+    affectedPixelFraction: 1,
+    requiresRecapture: false,
+    message: "Design-relative color evidence is unavailable without an approved reference.",
+  });
+  await assert.doesNotReject(
+    () => buildAiGraderMathematicalReportBundleV1(nonfatal),
+  );
+
+  const recapture = reportInput();
+  recapture.surface.front.evidenceQualityLimitations.push({
+    code: "invalid_condition_evidence_excluded",
+    affectedPixelFraction: 1,
+    requiresRecapture: true,
+    message: "The exact surface evidence requires recapture.",
+  });
+  await assert.rejects(
+    () => buildAiGraderMathematicalReportBundleV1(recapture),
+    /surface evidence still requires recapture/i,
+  );
+});
+
 test("historical V0 reports remain readable after adding the helper V0.3 adapter", () => {
   const legacy = {
     schemaVersion: AI_GRADER_REPORT_BUNDLE_V01_VERSION,

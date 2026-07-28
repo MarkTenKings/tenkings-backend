@@ -1152,9 +1152,13 @@ function assertFinalSourceContract(
   ) {
     throw new Error("Calibrated V1 report rejected: composed element scores do not match their exact measured source results.");
   }
-  if (!input.grade.elements.surface.resolved &&
-      (input.surface.front.evidenceQualityLimitations.length ||
-       input.surface.back.evidenceQualityLimitations.length)) {
+  if (
+    !input.grade.elements.surface.resolved &&
+    [
+      ...input.surface.front.evidenceQualityLimitations,
+      ...input.surface.back.evidenceQualityLimitations,
+    ].some((limitation) => limitation.requiresRecapture)
+  ) {
     throw new Error("Calibrated V1 report rejected: surface evidence still requires recapture and cannot receive a final grade.");
   }
 }
