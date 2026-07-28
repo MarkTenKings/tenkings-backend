@@ -106,6 +106,7 @@ export type AiGraderOcrProviderDiagnostics = {
   eyesUpstreamFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
   openAiFailure?: import("../aiGraderOcrFailure").AiGraderOcrUpstreamFailureDiagnostic;
   openAiTimedOut?: true;
+  openAiSchemaFailed?: true;
 };
 
 export type AiGraderOcrPrefillRuntimeResult = AiGraderOcrPrefillResult & {
@@ -465,7 +466,7 @@ function boundedDeterministicReviewText(value: unknown) {
   return bounded || null;
 }
 
-function humanReviewStructuredFieldsAfterOpenAiTimeout(
+function humanReviewStructuredFieldsAfterOpenAiFailure(
   ocr: OcrResponse,
 ): AiGraderOcrStructuredExtraction["fields"] {
   const unknown = () => ({
@@ -585,6 +586,7 @@ export async function runAiGraderOcrPrefillRuntime(
   let structuredExtractionModel: string;
   let actualOpenAiModel: string | undefined;
   let openAiTimedOut = false;
+  let openAiSchemaFailed = false;
   try {
     const timeoutMs = Math.min(AI_GRADER_OPENAI_TIME_BUDGET_MS, remainingProviderMs(providerDeadline, now));
     if (timeoutMs < 1) throw new AiGraderOcrStructuredExtractionError("timeout");
@@ -604,11 +606,19 @@ export async function runAiGraderOcrPrefillRuntime(
     actualOpenAiModel = extracted.actualModel;
   } catch (error) {
     const failure = openAiFailure(error);
-    if (failure.code !== "AI_GRADER_OCR_OPENAI_TIMEOUT") throw failure;
-    openAiTimedOut = true;
+    if (
+      failure.code !== "AI_GRADER_OCR_OPENAI_TIMEOUT" &&
+      failure.code !== "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED"
+    ) {
+      throw failure;
+    }
+    openAiTimedOut =
+      failure.code === "AI_GRADER_OCR_OPENAI_TIMEOUT";
+    openAiSchemaFailed =
+      failure.code === "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED";
     structuredExtractionModel = effectiveAiGraderOcrModel();
     structured = {
-      fields: humanReviewStructuredFieldsAfterOpenAiTimeout(ocr),
+      fields: humanReviewStructuredFieldsAfterOpenAiFailure(ocr),
     };
   }
   const openAiElapsedMs = boundedProviderElapsedMs(now() - openAiStartedAt);
@@ -718,7 +728,7 @@ export async function runAiGraderOcrPrefillRuntime(
       throw new AiGraderOcrFailure("AI_GRADER_OCR_CATALOG_FAILED");
     }
   }
-  const fields = openAiTimedOut
+  const fields = openAiTimedOut || openAiSchemaFailed
     ? baseFields
     : canonicalizeAiGraderOcrCatalog({
         fields: baseFields,
@@ -735,6 +745,10 @@ export async function runAiGraderOcrPrefillRuntime(
   if (openAiTimedOut) {
     warnings.unshift(
       "GPT structured extraction timed out; Google-derived suggestions are unconfirmed and every OCR field requires human review.",
+    );
+  } else if (openAiSchemaFailed) {
+    warnings.unshift(
+      "GPT structured extraction returned an invalid strict-schema result; Google-derived suggestions are unconfirmed and every OCR field requires human review.",
     );
   }
   if (eyes?.status === "observed" && eyes.reviewElements.length) {
@@ -769,6 +783,7 @@ export async function runAiGraderOcrPrefillRuntime(
       totalProviderElapsedMs: boundedProviderElapsedMs(now() - providerStartedAt),
       ...(actualOpenAiModel ? { actualOpenAiModel } : {}),
       ...(openAiTimedOut ? { openAiTimedOut: true as const } : {}),
+      ...(openAiSchemaFailed ? { openAiSchemaFailed: true as const } : {}),
       ...(eyes
         ? {
             eyesElapsedMs,

@@ -157,7 +157,7 @@ function pokemonAuthority() {
     tenantId: "tenant-fixture",
     setId: "pokemon-set-fixture",
     programId: "pokemon",
-    cardNumber: "25/102",
+    cardNumber: "25-102",
     variantId: null,
     parallelId: null,
   };
@@ -628,7 +628,7 @@ function bindReadyPreview(service, side, suffix) {
     expectedFrameId: frameId,
     geometryCaptureMode: "detected_geometry",
     captureTriggerMode: "operator",
-    captureTriggerAt: timestamp,
+    captureTriggerAt: new Date().toISOString(),
   };
 }
 
@@ -1458,6 +1458,22 @@ test("Production Start New Card accepts only an explicit ready Mathematical V1 c
   assert.equal(mismatch.manifest.sessionId, undefined);
 });
 
+test("Mathematical identity rejects unsafe public identifiers before capture or report adaptation", async (t) => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-safe-identity-"));
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const service = createService(outputDir, completedResult);
+  t.after(() => service.shutdown("safe mathematical identity test complete"));
+  const unsafe = printedAuthority();
+  unsafe.cardIdentity.setId = "2023 Panini Prizm";
+  unsafe.cardIdentity.programId = "Base Set";
+  unsafe.cardIdentity.parallelId = "Silver Prizm";
+  await assert.rejects(
+    () => startMathematicalSession(service, unsafe, "unsafe-public-identity"),
+    /setId must be a safe public identifier/i,
+  );
+  assert.equal(service.status().currentStep, "start_new_card");
+});
+
 test("ordinary Mathematical V1 no-finding completion uses station-derived publication and no V0 fallback", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-station-complete-"));
   const calls = [];
@@ -1587,10 +1603,26 @@ test("OCR-first printed-border capture blocks grading until exact identity confi
     assert.equal(identityItem.state, "identity_resolution_required");
     assert.equal(calls.length, 0);
 
-    await service.action("bind-mathematical-grading-authority", {
+    await service.action("activate-queue-item", identity);
+    assert.equal(
+      service.status().rapidCaptureQueue.activeQueueItemId,
+      mutableItem.queueItemId,
+    );
+    const bindingStatus = await service.action("bind-mathematical-grading-authority", {
       ...identity,
       mathematicalGradingAuthority: printedAuthority(),
     });
+    assert.equal(
+      bindingStatus.rapidCaptureQueue.activeQueueItemId,
+      undefined,
+      "a persisted exact bind releases the review selector before grading finishes",
+    );
+    assert.equal(
+      bindingStatus.rapidCaptureQueue.items.find(
+        (candidate) => candidate.queueItemId === mutableItem.queueItemId,
+      ).state,
+      "finalizing",
+    );
     await service.reportWorker;
     await service.rapidMutationChain;
 
@@ -1608,6 +1640,136 @@ test("OCR-first printed-border capture blocks grading until exact identity confi
     );
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("independent OCR-first review binds release immediately and overlap deterministic finalization", async () => {
+  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-parallel-review-"));
+  const calls = [];
+  const releases = [];
+  let service;
+  try {
+    service = createService(outputDir, (input) =>
+      new Promise((resolve) => {
+        calls.push(input);
+        releases.push(() => resolve(completedResult(input)));
+      }));
+    installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service);
+
+    const captureOcrFirst = async (reportId, suffix) => {
+      await service.action("start-session", {
+        reportId,
+        captureProfile: "production_fast",
+        gradingContract: "mathematical_calibration_v1",
+        ocrFirstIdentityBinding: "printed_border_v1",
+        calibrationActivationAuthority: {
+          bundleManifestSha256: BUNDLE_SHA256,
+        },
+      });
+      await service.action(
+        "capture-front",
+        bindReadyPreview(service, "front", suffix),
+      );
+      await service.action(
+        "capture-back",
+        bindReadyPreview(service, "back", suffix),
+      );
+      await service.reportWorker;
+      await service.rapidMutationChain;
+      const item = service.rapidQueue.items.find(
+        (candidate) => candidate.reportId === reportId,
+      );
+      assert.ok(item);
+      const identity = {
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+      };
+      const attempt = {
+        ...identity,
+        attemptOwnerId: `parallel-review-owner-${suffix}`,
+      };
+      await service.action("begin-queued-ocr", attempt);
+      await service.action("complete-queued-ocr", {
+        ...attempt,
+        result: safeOcrResult(item),
+      });
+      return identity;
+    };
+
+    const first = await captureOcrFirst(
+      "parallel-review-report-1",
+      "parallel-1",
+    );
+    const second = await captureOcrFirst(
+      "parallel-review-report-2",
+      "parallel-2",
+    );
+
+    await service.action("activate-queue-item", first);
+    await service.action("bind-mathematical-grading-authority", {
+      ...first,
+      mathematicalGradingAuthority: printedAuthority(),
+    });
+    assert.equal(service.status().rapidCaptureQueue.activeQueueItemId, undefined);
+
+    await service.action("activate-queue-item", second);
+    await service.action("bind-mathematical-grading-authority", {
+      ...second,
+      mathematicalGradingAuthority: printedAuthority(),
+    });
+    assert.equal(service.status().rapidCaptureQueue.activeQueueItemId, undefined);
+
+    for (let attempt = 0; attempt < 500 && calls.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(
+      calls.length,
+      2,
+      "Card 2 deterministic grading must start while Card 1 remains held",
+    );
+    const inFlight = service.status().rapidCaptureQueue;
+    assert.equal(inFlight.reportWorkerSerialized, false);
+    assert.deepEqual(inFlight.backgroundConcurrency, {
+      limit: 25,
+      active: 2,
+      queued: 0,
+    });
+
+    releases.forEach((release) => release());
+    let workerTimeout;
+    await Promise.race([
+      service.reportWorker,
+      new Promise((_, reject) => {
+        workerTimeout = setTimeout(() => reject(new Error(
+          `Parallel finalization did not settle: calls=${calls.length}, releases=${releases.length}, jobs=${service.rapidFinalizationJobs.size}, active=${service.rapidFinalizationActive}, states=${service.status().rapidCaptureQueue.items.map((item) => `${item.reportId}:${item.state}`).join(",")}`,
+        )), 5_000);
+      }),
+    ]).finally(() => clearTimeout(workerTimeout));
+    await service.rapidMutationChain;
+    const states = service.status().rapidCaptureQueue.items
+      .filter((item) =>
+        item.reportId === first.reportId ||
+        item.reportId === second.reportId)
+      .map((item) => item.state);
+    assert.deepEqual(states, [
+      "report_ready_needs_confirm",
+      "report_ready_needs_confirm",
+    ]);
+  } finally {
+    releases.forEach((release) => release());
+    if (service) {
+      await service.reportWorker.catch(() => {});
+      await service.rapidMutationChain.catch(() => {});
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    fs.rmSync(outputDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 });
 

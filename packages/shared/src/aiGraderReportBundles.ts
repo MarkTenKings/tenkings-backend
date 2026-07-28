@@ -5,6 +5,7 @@ import {
   isSafeAiGraderPublicAssetId,
 } from "./aiGraderDefectFindings";
 import type { AiGraderReportBundleV03 } from "./aiGraderReportBundlesV03";
+import { AI_GRADER_SAFE_PUBLIC_IDENTIFIER_PATTERN } from "./aiGraderPublicIdentifier";
 
 export const AI_GRADER_REPORT_BUNDLE_V01_VERSION = "ai-grader-report-bundle-v0.1" as const;
 export const AI_GRADER_REPORT_BUNDLE_V02_VERSION = "ai-grader-report-bundle-v0.2" as const;
@@ -14,7 +15,7 @@ const identifierSchema = z
   .trim()
   .min(1)
   .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, "must be a safe public identifier");
+  .regex(AI_GRADER_SAFE_PUBLIC_IDENTIFIER_PATTERN, "must be a safe public identifier");
 
 const reportIdSchema = z
   .string()

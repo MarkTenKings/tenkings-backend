@@ -948,7 +948,6 @@ test("OCR runtime maps Google and OpenAI failures to stable production categorie
     { source: "network", code: "AI_GRADER_OCR_OPENAI_NETWORK" },
     { source: "non_2xx", code: "AI_GRADER_OCR_OPENAI_NON_2XX" },
     { source: "refusal", code: "AI_GRADER_OCR_OPENAI_REFUSAL" },
-    { source: "malformed_response", code: "AI_GRADER_OCR_OPENAI_SCHEMA_FAILED" },
   ] as const;
   for (const entry of openAiCases) {
     await assert.rejects(
@@ -1057,6 +1056,56 @@ test("OCR runtime converts a GPT timeout into a Google-derived human-review resu
   assert.equal(result.internalProviderDiagnostics.openAiTimedOut, true);
   assert.equal(result.internalProviderDiagnostics.actualOpenAiModel, undefined);
   assert.equal(result.eyes?.status, "unavailable");
+});
+
+test("OCR runtime converts an invalid GPT strict-schema result into the same conservative human-review boundary", async () => {
+  const result = await runAiGraderOcrPrefillRuntime({
+    queueItemId: "schema-review-queue-item",
+    gradingSessionId: "schema-review-session",
+    reportId: "schema-review-report",
+    images: [
+      {
+        side: "front",
+        url: "https://cdn.tenkings.test/front.png",
+        checksumSha256: "a".repeat(64),
+      },
+      {
+        side: "back",
+        url: "https://cdn.tenkings.test/back.png",
+        checksumSha256: "b".repeat(64),
+      },
+    ],
+  }, {
+    now: () => 1_000,
+    async runOcr() {
+      return {
+        results: [
+          { id: "front", text: "1990 SKYBOX\nMICHAEL JORDAN", confidence: 0.99, tokens: [] },
+          { id: "back", text: "23/100\nAUTOGRAPH PATCH CARD", confidence: 0.99, tokens: [] },
+        ],
+        combined_text: "1990 SKYBOX\nMICHAEL JORDAN\n23/100\nAUTOGRAPH PATCH CARD",
+      };
+    },
+    async runStructuredExtraction() {
+      throw new AiGraderOcrStructuredExtractionError("malformed_response");
+    },
+    async runEyes() {
+      throw new AiGraderEyesError("timeout");
+    },
+  });
+
+  assert.equal(result.status, "prefill_ready");
+  assert.equal(result.reviewFieldNames.length, 14);
+  assert.equal(
+    Object.values(result.fields).every((field) => field.reviewRequired === true),
+    true,
+  );
+  assert.equal(result.fields.playerName.value, "Skybox Michael");
+  assert.equal(result.fields.numbered.value, "23/100");
+  assert.match(result.warnings[0] ?? "", /invalid strict-schema.*human review/i);
+  assert.equal(result.internalProviderDiagnostics.openAiSchemaFailed, true);
+  assert.equal(result.internalProviderDiagnostics.openAiTimedOut, undefined);
+  assert.equal(result.internalProviderDiagnostics.actualOpenAiModel, undefined);
 });
 
 test("OCR runtime reports catalog infrastructure failure without exposing its cause", async () => {

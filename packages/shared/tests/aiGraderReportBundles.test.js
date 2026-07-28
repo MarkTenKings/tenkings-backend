@@ -8,8 +8,28 @@ const {
   aiGraderPublishedAssetSchema,
   aiGraderReportBundleSchema,
   aiGraderReportBundleV02Schema,
+  canonicalizeAiGraderPublicIdentifier,
+  isSafeAiGraderPublicIdentifier,
   isAiGraderHumanConfirmedReviewStatus,
 } = require("../dist");
+
+test("display-like card identity text canonicalizes to the shared public identifier contract", () => {
+  assert.equal(
+    canonicalizeAiGraderPublicIdentifier(" 2023 Pokémon / Scarlet & Violet "),
+    "2023-Pokemon-Scarlet-Violet",
+  );
+  assert.equal(
+    canonicalizeAiGraderPublicIdentifier("Silver Prizm"),
+    "Silver-Prizm",
+  );
+  assert.equal(
+    canonicalizeAiGraderPublicIdentifier("25/102"),
+    "25-102",
+  );
+  assert.equal(canonicalizeAiGraderPublicIdentifier("***"), null);
+  assert.equal(isSafeAiGraderPublicIdentifier("Silver-Prizm"), true);
+  assert.equal(isSafeAiGraderPublicIdentifier("Silver Prizm"), false);
+});
 
 function publishedFinding(overrides = {}) {
   return {

@@ -46,6 +46,38 @@ const identity = {
   parallelId: null,
 } as const;
 
+test("Mathematical authority canonicalizes display text before binding public identity fields", () => {
+  const authority = buildAiGraderMathematicalGradingAuthorityV1({
+    identity: {
+      title: "2023 Pokémon Scarlet & Violet Pikachu",
+      tenantId: "ten-kings",
+      setId: "2023 Pokémon / Scarlet & Violet",
+      programId: "Special Illustration Rare",
+      cardNumber: "25/102",
+      variantId: null,
+      parallelId: "Silver Prizm",
+    },
+    profiles: {
+      front: "printed_border_v1",
+      back: "printed_border_v1",
+    },
+  });
+  assert.equal(
+    authority.cardIdentity.title,
+    "2023 Pokémon Scarlet & Violet Pikachu",
+  );
+  assert.deepEqual(authority.cardIdentity, {
+    title: "2023 Pokémon Scarlet & Violet Pikachu",
+    sideCount: 2,
+    tenantId: "ten-kings",
+    setId: "2023-Pokemon-Scarlet-Violet",
+    programId: "Special-Illustration-Rare",
+    cardNumber: "25-102",
+    variantId: null,
+    parallelId: "Silver-Prizm",
+  });
+});
+
 function sha256(bytes: Uint8Array) {
   return createHash("sha256").update(bytes).digest("hex");
 }

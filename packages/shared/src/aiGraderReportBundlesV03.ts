@@ -50,6 +50,7 @@ import {
   aiGraderPublishedAssetSchema,
   aiGraderSafePublishedUrlSchema,
 } from "./aiGraderReportBundles";
+import { AI_GRADER_SAFE_PUBLIC_IDENTIFIER_PATTERN } from "./aiGraderPublicIdentifier";
 
 export const AI_GRADER_REPORT_BUNDLE_V03_VERSION = "ai-grader-report-bundle-v0.3" as const;
 export const AI_GRADER_CALIBRATED_V1_GRADE_STATUS = "final_mathematical_grade_v1" as const;
@@ -59,7 +60,7 @@ const identifierSchema = z
   .trim()
   .min(1)
   .max(128)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/, "must be a safe public identifier");
+  .regex(AI_GRADER_SAFE_PUBLIC_IDENTIFIER_PATTERN, "must be a safe public identifier");
 const reportIdSchema = z
   .string()
   .trim()

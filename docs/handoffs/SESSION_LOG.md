@@ -29034,3 +29034,47 @@ By enabling Rip It Live, I confirm:
 - Only the Dell capture helper was stopped. Loopback port `47652` reached zero listeners before restart, and restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
 - Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, token-required, `production_fast`, `start_new_card`, preview `not_started`, camera ownership idle, no active transition or capture lock, warm runner idle, and capture/processing/report queues empty. Runtime HEAD and launcher pin are the exact functional merge. The same four queue items and exact queue-file SHA-256 remain preserved; restart released only the in-memory active-review selection.
 - No camera/lighting operation, capture/cancel, card creation, OCR retry, identity/owner resolution, publication/discard, queue/report/database/storage mutation, calibration change, NFC, inventory, or unrelated service action was performed by Codex during activation.
+
+## 2026-07-28 - Independent review and bounded 25-card background throughput correction candidate
+
+- Production operator testing proved that capture can queue multiple cards, but direct review switching and post-bind work still behave as a single-card lane. After Card 1 was bound, Card 2 could not establish an independent review workspace until Card 1 completed deterministic processing. Card 2 also displayed Card 1 identity/authority values.
+- Read-only source and live-state inspection identified three independent serialization defects:
+  - the helper chains every post-bind finalization behind one global `reportWorker` promise;
+  - the browser intentionally selects only one queued OCR item and blocks all other eligible OCR while any item is in flight;
+  - review switching does not reset the Mathematical V1 authority draft, while a stale background status response can replace a newer active-review selection.
+- The planned correction keeps Basler/Leimac capture ownership and the resource-bounded captured-evidence worker serialized, but gives every durably queued card its own exact queue/session/report-bound review and finalization lifecycle. Up to the existing 25-card queue limit may be concurrently in flight through network/advisory OCR and independent post-bind orchestration. Queue/manifest persistence remains atomically serialized.
+- A successful OCR-first authority bind will atomically release only that exact active review selection after persisting the bound authority and `finalizing` transition. The operator can immediately open the next ready card while prior cards continue in the background.
+- Review hydration will reset both identity and Mathematical V1 authority drafts at every exact identity switch. Background queue polling may update item progress and the active manifest only when the active queue/session/report identity still matches; it cannot switch the operator back to an older card.
+- Future OpenAI strict-schema failures will use the same conservative Google-derived human-review result as an OpenAI timeout: all 14 fields require confirmation, supported deterministic suggestions remain low-confidence and explicitly evidenced, and no catalog, inventory, publication, or retry authority is added. The existing failed card remains terminal and unchanged.
+- Completing the first card's exact element resolution exposed a fourth contract defect after the authenticated human decision: the strict V0.3 report adapter rejected `cardIdentity.setId`, `programId`, and `parallelId` because display-like OCR/operator text with spaces or other punctuation had been accepted into fields reserved for safe public identifiers. The correction will canonicalize only identifier fields before authority binding, preserve the human-readable title and OCR values, and enforce the same public-identifier contract at the browser and helper trust boundaries so this class of failure cannot survive until report adaptation. The existing fail-closed card remains unchanged.
+- No camera/lighting operation, capture/cancel, card creation, OCR retry, identity/owner resolution, publication/discard, queue/report/database/storage mutation, calibration change, helper restart, Production deployment, NFC, inventory, or unrelated product action occurred during diagnosis.
+
+### Planned authorized Production action
+
+- Implement and regression-test only the independent review release/hydration, stale-poll protection, bounded 25-card OCR/finalization scheduling, strict-schema human-review fallback, and this audit entry.
+- Open one focused protected PR and merge only after required checks pass. Allow and verify the normal Vercel Production deployment with migrations disabled.
+- Because the scheduling and review-release correction changes the Dell helper, perform a fresh authenticated read-only idle gate before activation. Preserve every current card and exact review state; do not start, capture, cancel, discard, resolve, publish, retry, or otherwise mutate a card to manufacture the gate.
+- Only if capture/preview/lighting ownership is safely released and no helper transition or mutation is active, advance the dedicated clean runtime to the exact functional merge, build the affected packages, update only the protected launcher commit pin, restart only the helper through the protected launcher, and verify exact runtime parity plus healthy token-gated loopback-only `production_fast` status.
+
+### Implementation completed in the isolated candidate worktree
+
+- The browser now admits the oldest eligible exact OCR identities into a bounded 25-card pool. Every request/result remains bound to its own queue item, grading session, report, normalized-image hashes, and durable single-attempt owner. Out-of-order background responses cannot regress a sibling lifecycle, temporarily remove a newly queued card, switch the active review, or resurrect a released review.
+- The helper replaced the global post-bind promise chain with per-card finalization jobs under a 25-slot bound. A successful OCR-first authority bind durably persists `finalizing`, releases only that exact active review, and starts its independent background job, so the next ready card can be opened and bound while earlier cards continue.
+- Exact review identity changes now reset both the card-information workspace and Mathematical V1 authority draft before OCR hydration. Values from Card 1 cannot remain actionable when Card 2 opens.
+- OpenAI timeout and invalid strict-schema results now converge on the same conservative Google-derived fallback: supported suggestions may be displayed, all 14 fields require human review, catalog canonicalization is skipped, and the exact OCR attempt completes once without automatic retry.
+- A shared safe-public-identifier contract now governs V0.2, strict V0.3, browser authority construction, and helper validation. Display-like `setId`, `programId`, `cardNumber`, `variantId`, and `parallelId` values are deterministically canonicalized at authority construction while the human-readable title and persisted OCR evidence remain unchanged. Unsafe identifiers are rejected before deterministic grading, not deferred to Report Adaptation.
+- Capture/lighting ownership, native TIFF evidence capture, resource-bounded TIFF normalization, queue/manifest persistence, human confirmation, publication, and fail-closed evidence policy remain unchanged.
+
+### Local validation completed
+
+- Production-equivalent dependency, Prisma, database, shared, browser-client, helper, and Next.js builds completed successfully with migrations disabled. The packaged Windows Sharp `0.34.5` runtime, calibration trace externalization, and calibration bundle import all passed.
+- Focused regression suites passed:
+  - browser queue/status/orchestration: `51/51`;
+  - browser Mathematical V1 authority: `22/22`;
+  - server OCR prefill: `20/20`;
+  - OCR client: `14/14`;
+  - helper Mathematical V1 workflow and independent finalization: `23/23`;
+  - complete helper station bridge: `49/49`;
+  - shared report bundles: `11/11`;
+  - strict V0.3 report adapter: `9/9`.
+- `git diff --check` passed before the final audit. No physical camera/lighting action, capture/cancel, card creation, OCR retry, identity/owner resolution, publication/discard, live queue/report/database/storage mutation, calibration change, helper restart, Production deployment, NFC, inventory, or unrelated product action occurred during implementation or local validation.
