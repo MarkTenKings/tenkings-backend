@@ -1,5 +1,6 @@
 import {
   extractCardAttributes,
+  aiGraderOcrFieldRequiresReview,
   normalizeCardIdentityPlayerNameBase,
   normalizeCardNumber,
 } from "@tenkings/shared";
@@ -33,8 +34,6 @@ import {
   type AiGraderEyesCenteringCandidateOverlay,
   type AiGraderEyesCenteringCandidateSelectionReceipt,
 } from "./aiGraderEyesCenteringCandidateSelection";
-import { aiGraderOcrFieldRequiresReview } from "../aiGraderOcrReviewContract";
-
 export type AiGraderOcrPrefillSide = "front" | "back";
 
 export type AiGraderOcrPrefillSourceImage = {

@@ -207,9 +207,13 @@ type BehavioralQueuedOcrItem = {
   sessionId: string;
   reportId: string;
   queuedAt: string;
+  error?: string;
   ocr: {
     state: BehavioralQueuedOcrState;
     attemptOwnerId?: string;
+    failure?: {
+      message: string;
+    };
   };
 };
 type BehavioralStationStatus = {
@@ -475,8 +479,8 @@ test("rejected terminal OCR persistence reconciles the exact in-flight owner and
   );
   assert.equal(
     bridgeActions.filter((action) => action === "status").length,
-    1,
-    "the live exact owner must reconcile durable state before interrupted-owner terminalization",
+    3,
+    "the live exact owner must reconcile after both rejected terminal calls and before interrupted-owner terminalization",
   );
 
   const next = selectNextSerializedAiGraderOcrItem(
@@ -560,6 +564,52 @@ test("lost terminal OCR response already advances through persisted exact status
   assert.equal(providerCalls.get(first.reportId), 1);
   assert.equal(providerCalls.get(second.reportId), 1);
   assert.equal(failCalls, 1);
+});
+
+test("helper-persisted OCR contract failure is reconciled without a second terminal mutation", async () => {
+  const item = behavioralOcrItem("1");
+  let serverStatus = behavioralStatus([item]);
+  let failCalls = 0;
+  const snapshot = () => behavioralStatus(serverStatus.rapidCaptureQueue.items);
+  const harness = createEligibleOcrBehaviorHarness({
+    item,
+    callBridge: async (request) => {
+      const exact = serverStatus.rapidCaptureQueue.items[0];
+      if (request.action === "status") return snapshot();
+      if (request.action === "begin-queued-ocr") {
+        exact.ocr = { state: "in_flight", attemptOwnerId: OCR_ATTEMPT_OWNER_ID };
+        return snapshot();
+      }
+      if (request.action === "complete-queued-ocr") {
+        exact.error = "Queued OCR field cardName review flag does not match the shared contract.";
+        exact.ocr = {
+          state: "failed",
+          attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+          failure: { message: exact.error },
+        };
+        throw new Error(exact.error);
+      }
+      if (request.action === "fail-queued-ocr") {
+        failCalls += 1;
+        throw new Error("A second terminal mutation must not occur.");
+      }
+      throw new Error(`Unexpected bridge action ${request.action}.`);
+    },
+  });
+
+  harness.invoke();
+  await waitForQueuedOcrBehavior(
+    () => harness.running.size === 0 &&
+      serverStatus.rapidCaptureQueue.items[0]?.ocr.state === "failed",
+    "the already-persisted helper OCR failure reconciliation",
+  );
+
+  assert.equal(harness.actions.filter((action) => action === "complete-queued-ocr").length, 1);
+  assert.equal(harness.actions.filter((action) => action === "status").length, 1);
+  assert.equal(failCalls, 0);
+  assert.deepEqual(harness.errors, [
+    "Queued OCR field cardName review flag does not match the shared contract.",
+  ]);
 });
 
 test("successful same-token Refresh Sign-In wakes one fresh authorization and queued OCR claim", async () => {

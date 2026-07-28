@@ -93,8 +93,10 @@ import {
 } from "./aiGraderMathematicalReportBundleV1";
 import {
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  aiGraderOcrFieldRequiresReview,
   aiGraderOperatorResolutionAuthenticationV1Schema,
   canonicalJsonV1,
+  type AiGraderOcrReviewState,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationObservationAuthorityV1,
@@ -5184,6 +5186,7 @@ function safeQueuedOcrResult(
     if (!["supported", "unknown", "disagreement"].includes(String(field.state))) {
       throw new Error(`Queued OCR field ${fieldName} state is invalid.`);
     }
+    const safeState = field.state as AiGraderOcrReviewState;
     const allowsBoolean = fieldName === "autograph" || fieldName === "memorabilia";
     const fieldValue = field.value;
     let safeFieldValue: string | boolean | null = null;
@@ -5203,10 +5206,6 @@ function safeQueuedOcrResult(
     if (typeof field.confidence !== "number" || !Number.isFinite(field.confidence) || field.confidence < 0 || field.confidence > 1 || typeof field.reviewRequired !== "boolean") {
       throw new Error(`Queued OCR field ${fieldName} confidence or review flag is invalid.`);
     }
-    const expectedReviewRequired = field.state !== "supported" || field.confidence < 0.8;
-    if (field.reviewRequired !== expectedReviewRequired) {
-      throw new Error(`Queued OCR field ${fieldName} review flag does not match state/confidence requirements.`);
-    }
     if (!Array.isArray(field.evidenceRefs) || field.evidenceRefs.length > 24) {
       throw new Error(`Queued OCR field ${fieldName} evidence references are invalid.`);
     }
@@ -5220,8 +5219,16 @@ function safeQueuedOcrResult(
     if (new Set(evidenceRefs).size !== evidenceRefs.length || (field.state === "supported" && evidenceRefs.length < 1)) {
       throw new Error(`Queued OCR field ${fieldName} evidence reference set is invalid.`);
     }
+    const expectedReviewRequired = aiGraderOcrFieldRequiresReview({
+      state: safeState,
+      confidence: field.confidence,
+      evidenceRefs,
+    });
+    if (field.reviewRequired !== expectedReviewRequired) {
+      throw new Error(`Queued OCR field ${fieldName} review flag does not match state/confidence/evidence requirements.`);
+    }
     return [fieldName, {
-      state: field.state,
+      state: safeState,
       value: safeFieldValue,
       confidence: field.confidence,
       reviewRequired: field.reviewRequired,

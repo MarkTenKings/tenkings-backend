@@ -214,6 +214,7 @@ export * from "./aiGraderProductOwnerOperationalAcceptanceV1";
 export * from "./aiGraderPokemonStandardCornerProfileV1";
 export * from "./aiGraderCalibrationActivationV1";
 export * from "./aiGraderOperatorResolutionAuthenticationV1";
+export * from "./aiGraderOcrReviewContract";
 export {
   COLOR_CHECKER_MAX_MEAN_DELTA_E,
   DEFAULT_REQUIRED_CALIBRATION_TYPES,
