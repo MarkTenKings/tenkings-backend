@@ -28855,3 +28855,13 @@ By enabling Rip It Live, I confirm:
 - Run the focused Mathematical station regression, the optimized frontend Production build, and `git diff --check`.
 - Commit and push only the station ruler presentation/sequence correction, focused regression, and this audit record; open one protected PR and merge after required checks.
 - Verify the resulting Production deployment, public/exact station bundle, and live computed ruler styles. This is browser-only; do not restart the Dell helper or mutate the preserved card, its draft resolution, any queue/report/database/storage state, calibration, capture, publication, or hardware.
+
+### Observed Production result
+
+- PR `#196` merged through protected `main` as exact functional merge commit `01705c865123b60cd7e76821d7306227ecba28fe`.
+- The focused Mathematical station suite passed `21/21`; the optimized Next.js Production build passed; the compiled station bundle contained the intended unscoped ruler image/SVG, line, marker, label, pointer, and zoom selectors; and `git diff --check` passed with Windows line-ending notices only.
+- All required protected checks passed, including Install & Build, Vercel Preview, disposable PostgreSQL migration-chain verification, and all eight repository-owned Docker image builds.
+- GitHub/Vercel Production deployment `5631821788` succeeded for the exact functional merge at `2026-07-27T23:59:49Z`.
+- The public and exact-deployment station assets are byte-identical: bundle `station-27ecb755749eccc0.js`, `315,062` bytes, SHA-256 `70c8090a88cd5c937d638c8e5f57a6a0fe08d27f77ecf51126d6cae8386ddd7b`.
+- Direct Production bundle inspection confirms the shared ruler image/SVG selector and visible cyan line selector are present without a styled-jsx scope suffix, the prior scoped ruler-selector leak is absent, and the next-unfinished-margin copy/behavior is present.
+- This was browser-only. The Dell helper was not updated or restarted. The preserved card, its unsaved draft, queue/report/database/storage state, calibration, capture, camera/lighting hardware, publication, and unrelated runtime were not mutated.
