@@ -28987,6 +28987,18 @@ By enabling Rip It Live, I confirm:
 - Before Dell activation, perform a fresh authenticated read-only idle gate. Preserve every existing failed item. Do not cancel, discard, resolve, publish, or otherwise mutate an owner card to manufacture the gate.
 - Only after the helper is sessionless with preview/camera released, no active transition or capture lock, warm runner idle, and capture/processing/report queues empty, advance the dedicated Dell runtime to the exact functional merge, build shared/helper, update only the protected launcher commit pin, restart only the helper through the protected launcher, and verify exact commit parity plus healthy token-gated local-only `production_fast` status.
 
+### Observed Production result
+
+- PR `#204` passed all 12 protected checks: Install & Build, Vercel Preview, disposable PostgreSQL migration-chain verification, and all eight repository-owned Docker image builds. It merged through protected `main` as exact functional commit `cc2c1454b99de6fc70a6b793677db360e107891a`.
+- GitHub/Vercel Production deployment `5635325078` succeeded for that exact merge at `2026-07-28T06:45:10Z`; no migration was requested or run.
+- Public and exact functional-deployment Station pages are byte-identical: both returned `97,600` UTF-8 HTML bytes and bundle `station-54a1de6ec51f36fb.js`, `322,938` bytes, SHA-256 `9143e1389196356c619ba01eced82900cee7be42cd2f81e2c1e1bc67f083dafe`.
+- The owner explicitly cleared the failed active capture. A fresh authenticated Dell idle gate then proved sessionless `start_new_card`, preview stopped, camera released, no intentional transition, capture lock clear, warm runner idle, capture/processing/report queues empty, and Rapid queue empty.
+- The dedicated clean Dell runtime advanced from `b14f4c83ea8ed4a975878aee724ee8a85dcc668a` to exact functional merge `cc2c1454b99de6fc70a6b793677db360e107891a`; shared and capture-helper builds passed and the runtime remained clean.
+- The protected launcher changed only its expected runtime commit pin. Its resulting SHA-256 is `210d9ccce388e5722e622adec74114f3e3a65cc50b8c22ec127f9390b886b971`; its explicit ACL remains limited to the current user, Administrators, and SYSTEM.
+- Only the Dell capture helper was stopped. Loopback port `47652` reached zero listeners before restart, and restart used only `C:\ProgramData\TenKings\tools\ai-grader\start-production-station-v1.ps1`.
+- Final authenticated status is healthy `ai-grader-local-station-bridge-v0.10`, real, loopback/local-only, token-required, `production_fast`, calibration activation configured for `fixed-rig-dell-v1`, sessionless `start_new_card`, preview `not_started`, camera idle, no active transition or capture lock, warm runner idle, and capture/processing/report/Rapid queues empty. Runtime HEAD and launcher pin are the exact functional merge.
+- No camera/lighting operation, capture action, card creation, calibration change, identity/owner resolution, publication/discard, queue/report/database/storage mutation, NFC, inventory, or unrelated service action was performed by Codex during activation.
+
 ## 2026-07-28 - Back capture click-freshness and GPT timeout human-review correction candidate
 
 - Read-only inspection started from the exact clean Production functional commit `cc2c1454b99de6fc70a6b793677db360e107891a`, which is also the protected Dell launcher pin. Protected `main` had since advanced only through documentation PR `#205` to `297a73ab98ae260f2ab73350f031628b36621d76`; its Vercel Production deployment and the earlier exact functional deployment were both successful. The real helper remained healthy on loopback port `47652`, with camera/preview ownership released and the serialized worker/capture lock idle.
