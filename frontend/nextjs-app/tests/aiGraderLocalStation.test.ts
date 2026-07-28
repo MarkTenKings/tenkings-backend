@@ -1712,6 +1712,9 @@ test("capture busy state leaves the live preview connected until the helper owns
   assert.match(previewEligibilityBlock, /status\.warmRunnerStatus\.status !== "capturing"/);
   assert.match(captureBlock, /setCaptureBusy\(side\)/);
   assert.match(captureBlock, /runAiGraderCapture\(/);
+  assert.match(captureBlock, /const captureTriggerAt = new Date\(\)\.toISOString\(\)/);
+  assert.match(captureBlock, /captureTriggerAt,/);
+  assert.doesNotMatch(captureBlock, /runAction\("status"\)/);
 });
 
 test("background queue orchestration is capture-state isolated and preview activation is exact-session bound", () => {

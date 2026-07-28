@@ -247,7 +247,6 @@ const BACK_POSITIONING_ERROR_MAX_LENGTH = 240;
 const ATOMIC_CAPTURE_AUTHORIZATION_MS = 10000;
 const OPERATOR_RESOLUTION_AUTHENTICATION_MAX_LIFETIME_MS = 60_000;
 const OPERATOR_RESOLUTION_AUTHENTICATION_CLOCK_SKEW_MS = 5_000;
-const PREVIEW_OBSERVATION_LIMIT = 8;
 const MATHEMATICAL_CALIBRATION_CAPTURE_AUTHORIZATION_MS = 10000;
 const MATHEMATICAL_CALIBRATION_RETAINED_FRAME_LIMIT = 16;
 const ATOMIC_CAPTURE_IDEMPOTENCY_LIMIT = 64;
@@ -260,6 +259,9 @@ const ATOMIC_CAPTURE_PRIVATE_ASSERTION_RE = /(?:token|secret|bearer|authorizatio
 const PREVIEW_GEOMETRY_THROTTLE_MS = 125;
 const PREVIEW_GEOMETRY_MAX_AGE_MS = 2000;
 const CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS = 10_000;
+const PREVIEW_OBSERVATION_RETENTION_MS =
+  PREVIEW_GEOMETRY_MAX_AGE_MS + CAPTURE_TRIGGER_MAX_ACTION_DELAY_MS;
+const PREVIEW_OBSERVATION_LIMIT = 128;
 const PREVIEW_JPEG_BUFFER_LIMIT_BYTES = 12 * 1024 * 1024;
 const PREVIEW_MJPEG_HEADER_BUFFER_LIMIT_BYTES = 8 * 1024;
 const MATHEMATICAL_DESIGN_REFERENCE_MAX_BYTES = 64 * 1024 * 1024;
@@ -6631,7 +6633,7 @@ export class AiGraderLocalStationBridgeService {
         const capturedAtMs = Date.parse(observation.capturedAt);
         return Number.isFinite(capturedAtMs)
           && capturedAtMs <= nowMs
-          && nowMs - capturedAtMs <= PREVIEW_GEOMETRY_MAX_AGE_MS;
+          && nowMs - capturedAtMs <= PREVIEW_OBSERVATION_RETENTION_MS;
       })
       .slice(-PREVIEW_OBSERVATION_LIMIT);
   }
@@ -7206,7 +7208,8 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private snapshotAtomicBackCapture(
-    request: ReturnType<AiGraderLocalStationBridgeService["validateAtomicBackCaptureRequest"]>
+    request: ReturnType<AiGraderLocalStationBridgeService["validateAtomicBackCaptureRequest"]>,
+    captureTriggerAt: string,
   ): AiGraderBackCaptureSnapshot {
     if (this.manifest.captureFailure) {
       throw new Error("Atomic Back Capture is blocked after a capture or processing failure.");
@@ -7239,26 +7242,49 @@ export class AiGraderLocalStationBridgeService {
     ) {
       throw new Error("Atomic Back Capture geometry does not match the asserted session/side/epoch/frame.");
     }
-    const nowMs = Date.now();
+    const captureTriggerAtMs = Date.parse(captureTriggerAt);
     const capturedAtMs = Date.parse(observation.capturedAt);
     const receivedAtMs = Date.parse(observation.receivedAt);
     const geometryAtMs = Date.parse(geometry.timestamp);
+    const latestGeometry = this.manifest.previewStatus.cardGeometry.back;
+    const latestGeometryAtMs = Date.parse(latestGeometry?.timestamp ?? "");
     const positioningVerifiedAtMs = Date.parse(this.manifest.liveLighting.physicalState.verifiedAt ?? "");
     if (
-      !Number.isFinite(capturedAtMs)
-      || capturedAtMs > nowMs
-      || nowMs - capturedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+      !Number.isFinite(captureTriggerAtMs)
+      || !Number.isFinite(capturedAtMs)
+      || capturedAtMs > captureTriggerAtMs
+      || captureTriggerAtMs - capturedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
       || !Number.isFinite(receivedAtMs)
-      || receivedAtMs > nowMs
-      || nowMs - receivedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+      || receivedAtMs > captureTriggerAtMs
+      || captureTriggerAtMs - receivedAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
       || !Number.isFinite(geometryAtMs)
-      || geometryAtMs > nowMs
-      || nowMs - geometryAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
+      || geometryAtMs > captureTriggerAtMs
+      || captureTriggerAtMs - geometryAtMs > PREVIEW_GEOMETRY_MAX_AGE_MS
       || !Number.isFinite(positioningVerifiedAtMs)
       || capturedAtMs < positioningVerifiedAtMs
       || receivedAtMs < positioningVerifiedAtMs
     ) {
       throw new Error("Atomic Back Capture retained frame/geometry observation is stale or future-dated.");
+    }
+    if (
+      latestGeometry
+      && latestGeometry.sourceFrameId !== request.expectedFrameId
+      && Number.isFinite(latestGeometryAtMs)
+      && latestGeometryAtMs >= geometryAtMs
+      && (
+        latestGeometry.sessionId !== request.expectedSessionId
+        || latestGeometry.side !== "back"
+        || latestGeometry.sideEpoch !== request.expectedSideEpoch
+        || latestGeometry.placementState !== "ready"
+        || latestGeometry.geometrySource !== "detected"
+        || latestGeometry.detectionUsed !== true
+        || latestGeometry.manualOverrideUsed === true
+        || !geometryHasCaptureAuthoritativeDenseContour(latestGeometry)
+      )
+    ) {
+      throw new Error(
+        "Atomic Back Capture clicked geometry was invalidated by a newer moved or non-Ready back preview observation.",
+      );
     }
     if (request.geometryCaptureMode === "detected_geometry") {
       if (
@@ -7320,8 +7346,12 @@ export class AiGraderLocalStationBridgeService {
     let queuedForBackground: string | undefined;
     let outcomeError: unknown;
     try {
-      snapshot = this.snapshotAtomicBackCapture(request);
-      const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, new Date().toISOString());
+      const actionReceivedAt = new Date().toISOString();
+      const captureTriggerAt = validatedCaptureTriggerAt(request.captureTriggerAt, actionReceivedAt);
+      if (captureTriggerAt !== request.captureTriggerAt) {
+        throw new Error("Atomic Back Capture captureTriggerAt is stale or future-dated for this request.");
+      }
+      snapshot = this.snapshotAtomicBackCapture(request, captureTriggerAt);
       transitionStarted = true;
       this.atomicBackCaptureContext = { owner, snapshot };
       this.recordAtomicBackCaptureDecision(snapshot, captureTriggerAt);
