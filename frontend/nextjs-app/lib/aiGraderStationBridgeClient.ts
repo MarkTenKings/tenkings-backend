@@ -14,6 +14,7 @@ import type {
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
 import {
+  canonicalizeAiGraderPublicIdentifier,
   canonicalJsonV1,
   type AiGraderCalibrationActivationAuthorityV1,
 } from "@tenkings/shared";
@@ -453,10 +454,9 @@ export type AiGraderPreparedRegisteredDesignReferenceV1 = {
   artifact: AiGraderExactDesignReferenceArtifact;
 };
 
-function exactMathematicalIdentityField(value: string, label: string, maxLength = 191): string {
-  const normalized = value.trim();
-  if (!normalized || normalized.length > maxLength ||
-      !/^[A-Za-z0-9][A-Za-z0-9._:/ -]*$/.test(normalized)) {
+function exactMathematicalIdentityField(value: string, label: string, maxLength = 128): string {
+  const normalized = canonicalizeAiGraderPublicIdentifier(value);
+  if (!normalized || normalized.length > maxLength) {
     throw new Error("Mathematical V1 " + label + " is invalid.");
   }
   return normalized;

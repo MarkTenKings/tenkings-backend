@@ -96,6 +96,7 @@ import {
   aiGraderOcrFieldRequiresReview,
   aiGraderOperatorResolutionAuthenticationV1Schema,
   canonicalJsonV1,
+  isSafeAiGraderPublicIdentifier,
   type AiGraderOcrReviewState,
   type AiGraderReportBundleV03,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -1101,7 +1102,12 @@ export interface AiGraderLocalStationBridgeStatus extends AiGraderLocalStationBr
     enabled: boolean;
     activeQueueItemId?: string;
     persisted: true;
-    reportWorkerSerialized: true;
+    reportWorkerSerialized: false;
+    backgroundConcurrency: {
+      limit: 25;
+      active: number;
+      queued: number;
+    };
     items: AiGraderRapidCaptureQueueItem[];
     activeReview?: {
       queueItemId: string;
@@ -1988,11 +1994,54 @@ function validateLocalMathematicalGradingAuthorityV1(
     throw new Error("Mathematical V1 grading authority schemaVersion is not supported.");
   }
   const cardIdentity = stationContractObject(authority.cardIdentity, "Mathematical V1 card identity");
+  assertStationContractKeys(
+    cardIdentity,
+    [
+      "title",
+      "sideCount",
+      "tenantId",
+      "setId",
+      "programId",
+      "cardNumber",
+      "variantId",
+      "parallelId",
+    ],
+    "Mathematical V1 card identity",
+  );
+  const title = exactStationString(
+    cardIdentity.title,
+    "Mathematical V1 card identity title",
+  );
+  if (title.length > 300 || cardIdentity.sideCount !== 2) {
+    throw new Error(
+      "Mathematical V1 card identity title or sideCount is invalid.",
+    );
+  }
   for (const field of ["tenantId", "setId", "programId", "cardNumber"] as const) {
-    exactStationString(cardIdentity[field], "Mathematical V1 card identity " + field);
+    const identifier = exactStationString(
+      cardIdentity[field],
+      "Mathematical V1 card identity " + field,
+    );
+    if (!isSafeAiGraderPublicIdentifier(identifier)) {
+      throw new Error(
+        "Mathematical V1 card identity " + field +
+          " must be a safe public identifier.",
+      );
+    }
   }
   if (!("variantId" in cardIdentity) || !("parallelId" in cardIdentity)) {
     throw new Error("Mathematical V1 card identity requires explicit nullable variantId and parallelId.");
+  }
+  for (const field of ["variantId", "parallelId"] as const) {
+    if (
+      cardIdentity[field] !== null &&
+      !isSafeAiGraderPublicIdentifier(cardIdentity[field])
+    ) {
+      throw new Error(
+        "Mathematical V1 card identity " + field +
+          " must be null or a safe public identifier.",
+      );
+    }
   }
   const sides = stationContractObject(authority.sides, "Mathematical V1 side authority");
   assertStationContractKeys(sides, ["front", "back"], "Mathematical V1 side authority");
@@ -3822,6 +3871,7 @@ function cloneManifest(manifest: AiGraderLocalStationBridgeManifest): AiGraderLo
 const LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
 const RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v2" as const;
 const RAPID_CAPTURE_QUEUE_LIMIT = 25;
+const RAPID_BACKGROUND_CONCURRENCY_LIMIT = RAPID_CAPTURE_QUEUE_LIMIT;
 
 class LegacyRapidCaptureQueueCompatibilityError extends Error {
   constructor(itemCount: number) {
@@ -5477,6 +5527,9 @@ export class AiGraderLocalStationBridgeService {
   private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
   private reportWorker: Promise<void> = Promise.resolve();
+  private rapidFinalizationJobs = new Map<string, Promise<void>>();
+  private rapidFinalizationActive = 0;
+  private rapidFinalizationWaiters: Array<() => void> = [];
   private rapidMutationChain: Promise<void> = Promise.resolve();
   private operatorResolutionRerunClaims = new Map<string, string>();
   private operatorResolutionAnalysisCheckpoints =
@@ -5831,7 +5884,15 @@ export class AiGraderLocalStationBridgeService {
         ...(this.activeQueueItemId ? { activeQueueItemId: this.activeQueueItemId } : {}),
         ...(activeReview ? { activeReview } : {}),
         persisted: true,
-        reportWorkerSerialized: true,
+        reportWorkerSerialized: false,
+        backgroundConcurrency: {
+          limit: RAPID_BACKGROUND_CONCURRENCY_LIMIT,
+          active: this.rapidFinalizationActive,
+          queued: Math.max(
+            0,
+            this.rapidFinalizationJobs.size - this.rapidFinalizationActive,
+          ),
+        },
         items: this.committedRapidQueue.items.map(publicRapidCaptureQueueItem),
       },
       ...this.manifest,
@@ -10238,10 +10299,35 @@ export class AiGraderLocalStationBridgeService {
     this.enqueueRapidFinalization(queueItemId);
   }
 
+  private acquireRapidFinalizationSlot(): Promise<void> {
+    if (
+      this.rapidFinalizationActive <
+      RAPID_BACKGROUND_CONCURRENCY_LIMIT
+    ) {
+      this.rapidFinalizationActive += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      this.rapidFinalizationWaiters.push(() => {
+        this.rapidFinalizationActive += 1;
+        resolve();
+      });
+    });
+  }
+
+  private releaseRapidFinalizationSlot(): void {
+    this.rapidFinalizationActive = Math.max(
+      0,
+      this.rapidFinalizationActive - 1,
+    );
+    this.rapidFinalizationWaiters.shift()?.();
+  }
+
   private enqueueRapidFinalization(queueItemId: string) {
-    this.reportWorker = this.reportWorker
-      .catch(() => {})
-      .then(async () => {
+    if (this.rapidFinalizationJobs.has(queueItemId)) return;
+    const finalization = Promise.resolve().then(async () => {
+      await this.acquireRapidFinalizationSlot();
+      try {
         const manifest = this.queuedManifests.get(queueItemId);
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
@@ -10422,8 +10508,22 @@ export class AiGraderLocalStationBridgeService {
           }
           this.rapidOcrEligibilityObservers.delete(queueItemId);
         }
-      });
-    void this.reportWorker.catch(() => {});
+      } finally {
+        this.releaseRapidFinalizationSlot();
+      }
+    });
+    this.rapidFinalizationJobs.set(queueItemId, finalization);
+    this.reportWorker = Promise.all(
+      [...this.rapidFinalizationJobs.values()].map((job) =>
+        job.catch(() => undefined)),
+    ).then(() => undefined);
+    void finalization
+      .finally(() => {
+        if (this.rapidFinalizationJobs.get(queueItemId) === finalization) {
+          this.rapidFinalizationJobs.delete(queueItemId);
+        }
+      })
+      .catch(() => {});
   }
 
   private async recoverPersistedRapidFinalization() {
@@ -10613,8 +10713,8 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Published cards are not part of the unpublished working queue and cannot be locally discarded.");
     }
 
-    // The serialized worker must release all file handles before the exact card is deleted.
-    await this.reportWorker.catch(() => {});
+    // Only this exact card's independent finalization may own its files.
+    await this.rapidFinalizationJobs.get(item.queueItemId)?.catch(() => {});
     item = this.exactQueuedItem(request);
     if (item.state === "published") {
       throw new Error("This card became published before discard and cannot be locally deleted.");
@@ -16283,6 +16383,9 @@ export class AiGraderLocalStationBridgeService {
         "Operator-confirmed OCR identity is bound. Deterministic grading and the bounded EYES candidate-selection pass may now run.",
       );
       await this.syncQueuedManifest(queuedManifest);
+      if (this.activeQueueItemId === item.queueItemId) {
+        this.activeQueueItemId = undefined;
+      }
       this.startRapidBackgroundForReleasedCard(item.queueItemId);
       return this.status();
     }

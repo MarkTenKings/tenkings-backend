@@ -667,7 +667,12 @@ export type AiGraderRapidCaptureQueueStatus = {
   activeQueueItemId?: string;
   activeReview?: AiGraderRapidCaptureActiveReview;
   persisted: true;
-  reportWorkerSerialized: true;
+  reportWorkerSerialized: false;
+  backgroundConcurrency: {
+    limit: 25;
+    active: number;
+    queued: number;
+  };
   items: AiGraderRapidCaptureQueueItem[];
 };
 
@@ -2114,6 +2119,13 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
 
 export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapidCaptureQueueStatus {
   const record = stationRecord(value) ? value : {};
+  const rawBackgroundConcurrency = stationRecord(record.backgroundConcurrency)
+    ? record.backgroundConcurrency
+    : {};
+  const boundedBackgroundCount = (candidate: unknown) =>
+    Number.isInteger(candidate) && Number(candidate) >= 0 && Number(candidate) <= 25
+      ? Number(candidate)
+      : 0;
   const activeQueueItemId = safeStationId(record.activeQueueItemId);
   const activeReview = sanitizeAiGraderRapidCaptureActiveReview(record.activeReview);
   const items = Array.isArray(record.items)
@@ -2149,7 +2161,12 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
     ...(activeQueueItemId && exactActiveReview?.queueItemId === activeQueueItemId ? { activeQueueItemId } : {}),
     ...(exactActiveReview && exactActiveReview.queueItemId === activeQueueItemId ? { activeReview: exactActiveReview } : {}),
     persisted: true,
-    reportWorkerSerialized: true,
+    reportWorkerSerialized: false,
+    backgroundConcurrency: {
+      limit: 25,
+      active: boundedBackgroundCount(rawBackgroundConcurrency.active),
+      queued: boundedBackgroundCount(rawBackgroundConcurrency.queued),
+    },
     items,
   };
 }
@@ -3085,19 +3102,107 @@ export function aiGraderMergeBackgroundQueueStatus(
   current: AiGraderLocalStationStatus,
   background: AiGraderLocalStationStatus,
 ): AiGraderLocalStationStatus {
+  const currentItems = new Map(
+    current.rapidCaptureQueue.items.map((item) => [
+      [item.queueItemId, item.sessionId, item.reportId].join(":"),
+      item,
+    ]),
+  );
+  const ocrProgress = {
+    waiting_for_normalized: 0,
+    eligible: 1,
+    in_flight: 2,
+    succeeded: 3,
+    failed: 3,
+  } as const;
+  const backgroundItemIdentities = new Set<string>();
+  const mergedItems = background.rapidCaptureQueue.items.map((backgroundItem) => {
+    const identityKey = [
+      backgroundItem.queueItemId,
+      backgroundItem.sessionId,
+      backgroundItem.reportId,
+    ].join(":");
+    backgroundItemIdentities.add(identityKey);
+    const currentItem = currentItems.get(
+      identityKey,
+    );
+    if (!currentItem) return backgroundItem;
+    const currentUpdatedAt = Date.parse(currentItem.updatedAt);
+    const backgroundUpdatedAt = Date.parse(backgroundItem.updatedAt);
+    if (
+      (Number.isFinite(currentUpdatedAt) &&
+        Number.isFinite(backgroundUpdatedAt) &&
+        currentUpdatedAt > backgroundUpdatedAt) ||
+      ocrProgress[currentItem.ocr.state] > ocrProgress[backgroundItem.ocr.state]
+    ) {
+      return currentItem;
+    }
+    return backgroundItem;
+  });
+  for (const currentItem of current.rapidCaptureQueue.items) {
+    const identityKey = [
+      currentItem.queueItemId,
+      currentItem.sessionId,
+      currentItem.reportId,
+    ].join(":");
+    if (!backgroundItemIdentities.has(identityKey)) {
+      mergedItems.push(currentItem);
+    }
+  }
+  const currentReview = current.rapidCaptureQueue.activeReview;
+  const backgroundReview = background.rapidCaptureQueue.activeReview;
+  const sameReview = aiGraderRapidQueueIdentityMatches(
+    currentReview,
+    backgroundReview,
+  );
+  const rapidCaptureQueue = {
+    ...background.rapidCaptureQueue,
+    items: mergedItems,
+    ...(!sameReview && currentReview
+      ? {
+          activeQueueItemId: currentReview.queueItemId,
+          activeReview: currentReview,
+        }
+      : {}),
+  };
+  if (!sameReview && !currentReview) {
+    delete rapidCaptureQueue.activeQueueItemId;
+    delete rapidCaptureQueue.activeReview;
+  }
   return {
     ...current,
-    rapidCaptureQueue: background.rapidCaptureQueue,
+    rapidCaptureQueue,
   };
 }
 
-export function selectNextSerializedAiGraderOcrItem(items: AiGraderRapidCaptureQueueItem[]) {
-  if (items.some((item) => item.ocr.state === "in_flight")) return undefined;
+export const AI_GRADER_RAPID_BACKGROUND_CONCURRENCY_LIMIT = 25;
+
+export function selectAvailableAiGraderOcrItems(
+  items: AiGraderRapidCaptureQueueItem[],
+  limit = AI_GRADER_RAPID_BACKGROUND_CONCURRENCY_LIMIT,
+) {
+  const finiteLimit = Number.isFinite(limit)
+    ? Math.floor(limit)
+    : AI_GRADER_RAPID_BACKGROUND_CONCURRENCY_LIMIT;
+  const boundedLimit = Math.max(
+    1,
+    Math.min(AI_GRADER_RAPID_BACKGROUND_CONCURRENCY_LIMIT, finiteLimit),
+  );
+  const availableSlots = Math.max(
+    0,
+    boundedLimit -
+      items.filter((item) => item.ocr.state === "in_flight").length,
+  );
   return items
     .filter((item) => item.ocr.state === "eligible")
     .sort((left, right) =>
       Date.parse(left.queuedAt) - Date.parse(right.queuedAt) || left.queueItemId.localeCompare(right.queueItemId)
-    )[0];
+    )
+    .slice(0, availableSlots);
+}
+
+export function selectNextSerializedAiGraderOcrItem(items: AiGraderRapidCaptureQueueItem[]) {
+  return selectAvailableAiGraderOcrItems(items, 1)[0];
 }
 
 export function aiGraderAtomicBackQueueReleaseMatches(input: {
@@ -3558,7 +3663,12 @@ export function buildAiGraderLocalStationStatus(input: {
     rapidCaptureQueue: {
       enabled: true,
       persisted: true,
-      reportWorkerSerialized: true,
+      reportWorkerSerialized: false,
+      backgroundConcurrency: {
+        limit: 25,
+        active: 0,
+        queued: 0,
+      },
       items: [],
     },
     reportBundle,

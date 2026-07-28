@@ -34,7 +34,7 @@ import {
   completeAiGraderExactPublicationHandoff,
   embedAiGraderAuthoritativeProductionRelease,
   sanitizeAiGraderPreviewCardGeometryBySide,
-  selectNextSerializedAiGraderOcrItem,
+  selectAvailableAiGraderOcrItems,
   summarizeAiGraderOperatorFailureReasons,
   type AiGraderLocalStationStatus,
   type AiGraderLiveLightingStatus,
@@ -3122,16 +3122,19 @@ export default function AiGraderStationPage() {
     return buildAdminHeaders(activeSession.token, extra);
   };
 
-  const nextEligibleOcrItem = selectNextSerializedAiGraderOcrItem(status.rapidCaptureQueue.items);
-  const nextEligibleOcrQueueItemId = nextEligibleOcrItem?.queueItemId;
-  const nextEligibleOcrSessionId = nextEligibleOcrItem?.sessionId;
-  const nextEligibleOcrReportId = nextEligibleOcrItem?.reportId;
+  const availableOcrItems = useMemo(
+    () => selectAvailableAiGraderOcrItems(
+      status.rapidCaptureQueue.items,
+    ),
+    [status.rapidCaptureQueue.items],
+  );
+  const availableOcrIdentityKey = availableOcrItems
+    .map((item) => [item.queueItemId, item.sessionId, item.reportId].join(":"))
+    .join("|");
 
   useEffect(() => {
     if (
-      !nextEligibleOcrQueueItemId ||
-      !nextEligibleOcrSessionId ||
-      !nextEligibleOcrReportId ||
+      !availableOcrItems.length ||
       !bridgeConnected ||
       !stationToken.trim() ||
       sessionLoading ||
@@ -3149,15 +3152,16 @@ export default function AiGraderStationPage() {
     if (!liveOwnerClaim || liveOwnerClaim.attemptOwnerId !== attemptOwnerId) return;
     const ownsLiveAttempt = () => queuedOcrAttemptOwnerClaimRef.current === liveOwnerClaim;
     const authorizedToken = session.token;
-    const identity = {
-      queueItemId: nextEligibleOcrQueueItemId,
-      gradingSessionId: nextEligibleOcrSessionId,
-      reportId: nextEligibleOcrReportId,
-    };
-    const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
-    if (queuedOcrRunningRef.current.has(identityKey)) return;
-    queuedOcrRunningRef.current.add(identityKey);
-    void (async () => {
+    for (const availableItem of availableOcrItems) {
+      const identity = {
+        queueItemId: availableItem.queueItemId,
+        gradingSessionId: availableItem.sessionId,
+        reportId: availableItem.reportId,
+      };
+      const identityKey = [identity.queueItemId, identity.gradingSessionId, identity.reportId].join(":");
+      if (queuedOcrRunningRef.current.has(identityKey)) continue;
+      queuedOcrRunningRef.current.add(identityKey);
+      void (async () => {
       let claimed = false;
       let wakeInterruptedRecovery = false;
       try {
@@ -3310,14 +3314,14 @@ export default function AiGraderStationPage() {
           setQueuedOcrSchedulerRevision((current) => current + 1);
         }
       }
-    })();
+      })();
+    }
   }, [
+    availableOcrItems,
+    availableOcrIdentityKey,
     bridgeConnected,
     bridgeUrl,
     logout,
-    nextEligibleOcrQueueItemId,
-    nextEligibleOcrSessionId,
-    nextEligibleOcrReportId,
     queuedOcrAttemptOwner.status,
     queuedOcrAttemptOwner.attemptOwnerId,
     queuedOcrAttemptOwner.error,
@@ -3528,6 +3532,12 @@ export default function AiGraderStationPage() {
       identityEditedFieldsRef.current = new Set(initialDraft?.editedFields ?? []);
       setSelectedCard(initialDraft?.selectedCard ?? null);
       setIdentityDraft(initialDraft?.identityDraft ?? defaultIdentityDraft);
+      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setMathematicalAuthorityStatus({
+        status: "idle",
+        message:
+          "Review and confirm this exact card's OCR-assisted Mathematical V1 authority.",
+      });
       setIdentityStatus({ status: "idle", message: "Card information has not yet been linked to a Ten Kings CardAsset/Item." });
       setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
     }
@@ -4036,6 +4046,10 @@ export default function AiGraderStationPage() {
           stagedStatus.frontCaptureReadiness.code === "design_reference_staging_required") {
         throw new Error(stagedStatus.frontCaptureReadiness.message);
       }
+      if (ocrFirstReview) {
+        resetReviewUiState();
+        setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      }
       setMathematicalAuthorityStatus({
         status: "completed",
         message: ocrFirstReview
@@ -4415,7 +4429,6 @@ export default function AiGraderStationPage() {
           next.rapidCaptureQueue.activeReview.reportId !== item.reportId) {
         throw new Error("Rapid Capture review activation returned a different queue/session/report identity.");
       }
-      resetReviewUiState(preCaptureDraftBySessionRef.current.get(item.sessionId));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Rapid Capture report could not be opened.");
     } finally {

@@ -21,6 +21,7 @@ import {
   sanitizeAiGraderLocalStationStatusForDisplay,
   sanitizeAiGraderRapidCaptureQueue,
   sanitizeAiGraderPreviewCardGeometry,
+  selectAvailableAiGraderOcrItems,
   selectNextSerializedAiGraderOcrItem,
 } from "../lib/aiGraderLocalStation";
 import {
@@ -265,9 +266,12 @@ function createEligibleOcrBehaviorHarness(input: {
   ]);
   let currentStatus = behavioralStatus([item]);
   const scope: Record<string, unknown> = {
-    nextEligibleOcrQueueItemId: item.queueItemId,
-    nextEligibleOcrSessionId: item.sessionId,
-    nextEligibleOcrReportId: item.reportId,
+    availableOcrItems: [item],
+    availableOcrIdentityKey: [
+      item.queueItemId,
+      item.sessionId,
+      item.reportId,
+    ].join(":"),
     bridgeConnected: true,
     bridgeUrl: "http://127.0.0.1:47652",
     stationToken: "station-token",
@@ -723,7 +727,12 @@ test("removed browser safety, Single finalization, and separate queue mutation a
   assert.equal(serialized.includes("productionFastOptIn"), false);
   assert.equal(status.rapidCapture.enabled, true);
   assert.equal(status.rapidCaptureQueue.enabled, true);
-  assert.equal(status.rapidCaptureQueue.reportWorkerSerialized, true);
+  assert.equal(status.rapidCaptureQueue.reportWorkerSerialized, false);
+  assert.deepEqual(status.rapidCaptureQueue.backgroundConcurrency, {
+    limit: 25,
+    active: 0,
+    queued: 0,
+  });
   assert.equal(status.liveLighting.safety.maxDutyPercent, 99.9);
   assert.equal(status.liveLighting.safety.watchdogOwnedByBridge, true);
 });
@@ -731,6 +740,11 @@ test("removed browser safety, Single finalization, and separate queue mutation a
 test("Rapid Capture queue sanitization preserves bounded report state and strips local paths", () => {
   const queue = sanitizeAiGraderRapidCaptureQueue({
     enabled: true,
+    backgroundConcurrency: {
+      limit: 25,
+      active: 7,
+      queued: 18,
+    },
     activeQueueItemId: "session-1-rapid-card",
     activeReview: {
       queueItemId: "session-1-rapid-card",
@@ -788,7 +802,12 @@ test("Rapid Capture queue sanitization preserves bounded report state and strips
     }],
   });
   assert.equal(queue.enabled, true);
-  assert.equal(queue.reportWorkerSerialized, true);
+  assert.equal(queue.reportWorkerSerialized, false);
+  assert.deepEqual(queue.backgroundConcurrency, {
+    limit: 25,
+    active: 7,
+    queued: 18,
+  });
   assert.equal(queue.items.length, 1);
   assert.equal(queue.items[0].reportId, "report-1");
   assert.equal("manifestPath" in queue.items[0], false);
@@ -1150,11 +1169,102 @@ test("background queue refresh cannot overwrite an active capture session or pre
   assert.equal(merged.previewStatus.status, "live");
   assert.equal(merged.previewStatus.sessionId, "active-capture-session");
   assert.equal(merged.previewStatus.sideEpoch, "front-active-epoch");
-  assert.equal(merged.rapidCaptureQueue, backgroundQueue);
+  assert.deepEqual(merged.rapidCaptureQueue.items, backgroundQueue.items);
   assert.notEqual(merged.rapidCaptureQueue, current.rapidCaptureQueue);
 });
 
-test("queued OCR selects one eligible item only when no exact item is already in flight", () => {
+test("out-of-order concurrent OCR responses cannot regress a sibling card's durable lifecycle", () => {
+  const current = buildAiGraderLocalStationStatus();
+  const currentItem = {
+    queueItemId: "queue-terminal",
+    sessionId: "session-terminal",
+    reportId: "report-terminal",
+    state: "identity_resolution_required" as const,
+    queuedAt: "2026-07-18T12:00:00.000Z",
+    updatedAt: "2026-07-18T12:00:03.000Z",
+    history: [],
+    humanConfirmationRequired: true as const,
+    autoConfirmed: false as const,
+    autoPublished: false as const,
+    ocr: {
+      state: "succeeded" as const,
+      updatedAt: "2026-07-18T12:00:03.000Z",
+      attemptCount: 1 as const,
+      attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+      startedAt: "2026-07-18T12:00:01.000Z",
+      completedAt: "2026-07-18T12:00:03.000Z",
+      result: {},
+    },
+  };
+  current.rapidCaptureQueue.items = [currentItem];
+
+  const stale = buildAiGraderLocalStationStatus();
+  stale.rapidCaptureQueue.items = [{
+    ...currentItem,
+    state: "finalizing",
+    updatedAt: "2026-07-18T12:00:01.000Z",
+    ocr: {
+      state: "eligible",
+      updatedAt: "2026-07-18T12:00:01.000Z",
+      attemptCount: 0,
+    },
+  }];
+
+  const merged = aiGraderMergeBackgroundQueueStatus(current, stale);
+  assert.equal(merged.rapidCaptureQueue.items[0], currentItem);
+  assert.equal(merged.rapidCaptureQueue.items[0].ocr.state, "succeeded");
+  assert.equal(
+    merged.rapidCaptureQueue.items[0].state,
+    "identity_resolution_required",
+  );
+
+  const olderBeforeCardWasQueued = buildAiGraderLocalStationStatus();
+  const preservedCurrentOnly = aiGraderMergeBackgroundQueueStatus(
+    current,
+    olderBeforeCardWasQueued,
+  );
+  assert.equal(
+    preservedCurrentOnly.rapidCaptureQueue.items[0],
+    currentItem,
+    "an older response cannot temporarily remove a newly queued sibling card",
+  );
+});
+
+test("a stale background poll cannot switch or resurrect the active review identity", () => {
+  const review = (suffix: string) => ({
+    queueItemId: `queue-${suffix}`,
+    gradingSessionId: `session-${suffix}`,
+    reportId: `report-${suffix}`,
+    manifest: {
+      latestReport: {
+        reportId: `report-${suffix}`,
+        localViewerPath: "/ai-grader/station",
+        publicViewerRoute: `/ai-grader/reports/report-${suffix}`,
+        exists: true,
+      },
+    },
+  });
+  const current = buildAiGraderLocalStationStatus();
+  current.rapidCaptureQueue.activeQueueItemId = "queue-new";
+  current.rapidCaptureQueue.activeReview = review("new");
+  const stale = buildAiGraderLocalStationStatus();
+  stale.rapidCaptureQueue.activeQueueItemId = "queue-old";
+  stale.rapidCaptureQueue.activeReview = review("old");
+
+  const preserved = aiGraderMergeBackgroundQueueStatus(current, stale);
+  assert.equal(
+    preserved.rapidCaptureQueue.activeReview?.queueItemId,
+    "queue-new",
+  );
+
+  delete current.rapidCaptureQueue.activeQueueItemId;
+  delete current.rapidCaptureQueue.activeReview;
+  const released = aiGraderMergeBackgroundQueueStatus(current, stale);
+  assert.equal(released.rapidCaptureQueue.activeQueueItemId, undefined);
+  assert.equal(released.rapidCaptureQueue.activeReview, undefined);
+});
+
+test("queued OCR admits the oldest eligible cards into the bounded 25-card background pool", () => {
   const eligible = {
     queueItemId: "queue-eligible",
     sessionId: "session-eligible",
@@ -1184,6 +1294,13 @@ test("queued OCR selects one eligible item only when no exact item is already in
       attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
     },
   };
+  assert.deepEqual(
+    selectAvailableAiGraderOcrItems([eligible, inFlight]).map(
+      (item) => item.queueItemId,
+    ),
+    [eligible.queueItemId],
+    "one in-flight OCR leaves 24 independent admission slots",
+  );
   assert.equal(selectNextSerializedAiGraderOcrItem([eligible])?.queueItemId, eligible.queueItemId);
   assert.equal(selectNextSerializedAiGraderOcrItem([eligible, inFlight]), undefined);
   const oldest = {
@@ -1215,6 +1332,14 @@ test("queued OCR selects one eligible item only when no exact item is already in
     tiedFirst.queueItemId,
     "equal queued timestamps use the queue identity as a deterministic tie-breaker",
   );
+  const twentyFive = Array.from({ length: 25 }, (_, index) => ({
+    ...eligible,
+    queueItemId: `queue-${String(index).padStart(2, "0")}`,
+    sessionId: `session-${String(index).padStart(2, "0")}`,
+    reportId: `report-${String(index).padStart(2, "0")}`,
+    queuedAt: new Date(Date.parse(eligible.queuedAt) + index).toISOString(),
+  }));
+  assert.equal(selectAvailableAiGraderOcrItems(twentyFive).length, 25);
 });
 
 test("Back cannot report clean capture release until the exact queue identity exists", () => {
@@ -1719,7 +1844,7 @@ test("capture busy state leaves the live preview connected until the helper owns
 
 test("background queue orchestration is capture-state isolated and preview activation is exact-session bound", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
-  const queueStart = source.indexOf("const nextEligibleOcrItem");
+  const queueStart = source.indexOf("const availableOcrItems");
   const queueEnd = source.indexOf("if (!activeReview || !activeReviewItem)", queueStart);
   const queueBlock = source.slice(queueStart, queueEnd);
   const previewStart = source.indexOf("const positioningStepActive");
@@ -1829,7 +1954,7 @@ test("station source has no Single route, separate queue mutation, OCR retry, du
 
 test("queued OCR auto-verifies a restored Production session before the exact attempt claim and cannot adopt another tab's attempt", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
-  const ocrStart = source.indexOf("const nextEligibleOcrItem");
+  const ocrStart = source.indexOf("const availableOcrItems");
   const ocrEnd = source.indexOf("if (!activeReview || !activeReviewItem)", ocrStart);
   const ocrBlock = source.slice(ocrStart, ocrEnd);
   const authorizationIndex = ocrBlock.indexOf("await verifyProductionSession(authorizedToken)");
@@ -1900,7 +2025,7 @@ test("queued OCR attempt ownership initializes only after browser mount and wait
   const ownerMountStart = source.lastIndexOf("useEffect(() => {", ownerMountMarker);
   const ownerMountEnd = source.indexOf("  useEffect(() => {", ownerMountMarker);
   const ownerMountBlock = source.slice(ownerMountStart, ownerMountEnd);
-  const ocrStart = source.indexOf("const nextEligibleOcrItem");
+  const ocrStart = source.indexOf("const availableOcrItems");
   const ocrEnd = source.indexOf("const interruptedOcrItem", ocrStart);
   const ocrBlock = source.slice(ocrStart, ocrEnd);
   const hydrationWaitIndex = ocrBlock.indexOf('queuedOcrAttemptOwner.status === "uninitialized"');
