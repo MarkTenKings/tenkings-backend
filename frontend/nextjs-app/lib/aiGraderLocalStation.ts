@@ -1800,32 +1800,58 @@ export function sanitizeAiGraderMathematicalV1StateForDisplay(
 const AI_GRADER_BROWSER_UNSAFE_KEY = /(?:path|dir|folder)$|^local|token|authorization|presign|credential|secret|cookie|bodyBase64|bodyEncoding/i;
 const AI_GRADER_BROWSER_UNSAFE_STRING = /(?:^|[\s"'(])(?:[a-z]:[\\/]|\\\\)|^file:|(?:station|bridge|service)[_-]?token|authorization|bearer\s|x-amz-|presigned|https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i;
 const AI_GRADER_BROWSER_PROTOTYPE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+const AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_PATH =
+  "calibrationProfile.operationalAuthorization";
+const AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_SCHEMA_PATH =
+  `${AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_PATH}.schemaVersion`;
+const AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_SCHEMA =
+  "ai-grader-calibration-operational-authorization-public-v1";
 
-function browserSafeStationRecord(value: unknown): Record<string, unknown> | undefined {
+function browserSafeStationRecord(
+  value: unknown,
+  options: { allowStrictPublicOperationalAuthorization?: boolean } = {},
+): Record<string, unknown> | undefined {
   let visited = 0;
-  const clone = (input: unknown, depth: number): unknown => {
+  const clone = (input: unknown, depth: number, path: readonly string[]): unknown => {
     visited += 1;
     if (visited > 100_000 || depth > 40) throw new Error("Station review payload is too deeply nested.");
     if (input === null || typeof input === "boolean") return input;
     if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
     if (typeof input === "string") {
-      if (input.length > 250_000 || AI_GRADER_BROWSER_UNSAFE_STRING.test(input) || /^data:/i.test(input.trim())) return undefined;
+      const allowedOperationalAuthorizationSchema =
+        options.allowStrictPublicOperationalAuthorization === true &&
+        path.join(".") === AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_SCHEMA_PATH &&
+        input === AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_SCHEMA;
+      if (
+        input.length > 250_000 ||
+        (!allowedOperationalAuthorizationSchema && AI_GRADER_BROWSER_UNSAFE_STRING.test(input)) ||
+        /^data:/i.test(input.trim())
+      ) return undefined;
       return input;
     }
     if (Array.isArray(input)) {
-      return input.map((entry) => clone(entry, depth + 1)).filter((entry) => entry !== undefined);
+      return input
+        .map((entry, index) => clone(entry, depth + 1, [...path, String(index)]))
+        .filter((entry) => entry !== undefined);
     }
     if (!stationRecord(input)) return undefined;
     const output: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(input)) {
-      if (AI_GRADER_BROWSER_PROTOTYPE_KEYS.has(key) || AI_GRADER_BROWSER_UNSAFE_KEY.test(key)) continue;
-      const safeChild = clone(child, depth + 1);
+      const childPath = [...path, key];
+      const allowedOperationalAuthorization =
+        options.allowStrictPublicOperationalAuthorization === true &&
+        childPath.join(".") === AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_PATH;
+      if (
+        AI_GRADER_BROWSER_PROTOTYPE_KEYS.has(key) ||
+        (!allowedOperationalAuthorization && AI_GRADER_BROWSER_UNSAFE_KEY.test(key))
+      ) continue;
+      const safeChild = clone(child, depth + 1, childPath);
       if (safeChild !== undefined) output[key] = safeChild;
     }
     return output;
   };
   try {
-    const cloned = clone(value, 0);
+    const cloned = clone(value, 0, []);
     if (!stationRecord(cloned) || JSON.stringify(cloned).length > 2_000_000) return undefined;
     return cloned;
   } catch {
@@ -2097,7 +2123,23 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
         mathematicalExecution.reviewRequest.reportId !== reportId)) {
     return undefined;
   }
-  const safeReportBundle = browserSafeStationRecord(manifest.reportBundle);
+  const sourceStrictBundle = parseAiGraderMathematicalReportV1(
+    manifest.reportBundle,
+  );
+  const sourceStrictReleaseValid = Boolean(
+    sourceStrictBundle &&
+    !aiGraderMathematicalReleaseEnvelopeIssue(
+      sourceStrictBundle,
+      manifest.productionRelease,
+    ),
+  );
+  const safeReportBundle = browserSafeStationRecord(
+    manifest.reportBundle,
+    {
+      allowStrictPublicOperationalAuthorization:
+        sourceStrictBundle !== null,
+    },
+  );
   const candidateReportBundle = safeReportBundle as unknown as AiGraderStationReportBundle | undefined;
   const reportBundle = safeReportBundle &&
       safeStationId(safeReportBundle.reportId) === reportId &&
@@ -2106,7 +2148,13 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
         safeStationId(safeReportBundle.gradingSessionId) === gradingSessionId)
     ? candidateReportBundle
     : undefined;
-  const safeProductionRelease = browserSafeStationRecord(manifest.productionRelease);
+  const safeProductionRelease = browserSafeStationRecord(
+    manifest.productionRelease,
+    {
+      allowStrictPublicOperationalAuthorization:
+        sourceStrictReleaseValid,
+    },
+  );
   const candidateProductionRelease = safeProductionRelease &&
       safeStationId(safeProductionRelease.reportId) === reportId &&
       safeStationId(safeProductionRelease.gradingSessionId) === gradingSessionId

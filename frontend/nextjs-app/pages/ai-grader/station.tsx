@@ -9,10 +9,8 @@ import {
 } from "react";
 import {
   AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
-  calculateCenteringAxisV1,
+  calculateVerifiedHumanCenteringV1,
   canonicalJsonV1,
-  fuseCenteringFrontBackV1,
-  fuseCenteringSideAxesV1,
   type AiGraderCalibrationActivationAuthorityV1,
 } from "@tenkings/shared";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
@@ -859,21 +857,27 @@ function buildCenteringMeasurementPreview(
     }
     return parsed as [number, number, number, number];
   };
-  const sideScore = (
-    measurements: [number, number, number, number],
-  ) => fuseCenteringSideAxesV1(
-    calculateCenteringAxisV1(measurements[0], measurements[1], 0).score,
-    calculateCenteringAxisV1(measurements[2], measurements[3], 0).score,
-  );
   const front = parseSide("front");
   const back = parseSide("back");
   if (!front || !back) return null;
-  const frontScore = sideScore(front);
-  const backScore = sideScore(back);
+  const calculation = calculateVerifiedHumanCenteringV1({
+    front: {
+      left: front[0],
+      right: front[1],
+      top: front[2],
+      bottom: front[3],
+    },
+    back: {
+      left: back[0],
+      right: back[1],
+      top: back[2],
+      bottom: back[3],
+    },
+  });
   return {
-    frontScore,
-    backScore,
-    score: fuseCenteringFrontBackV1(frontScore, backScore),
+    frontScore: calculation.front.score,
+    backScore: calculation.back.score,
+    score: calculation.score,
   };
 }
 

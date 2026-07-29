@@ -1229,6 +1229,49 @@ export function fuseCenteringFrontBackV1(frontScore: number, backScore: number):
   );
 }
 
+export type VerifiedHumanCenteringMarginsV1 = Readonly<{
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}>;
+
+export type VerifiedHumanCenteringSideCalculationV1 = Readonly<{
+  horizontal: CenteringAxisCalculationV1;
+  vertical: CenteringAxisCalculationV1;
+  score: number;
+}>;
+
+/**
+ * Authenticated human margin measurements are the measurement authority.
+ * Their exact entered millimeters therefore use no machine-calibration U95
+ * buffer, while retaining the shared centering curve and explicit tolerance.
+ */
+export function calculateVerifiedHumanCenteringSideV1(
+  margins: VerifiedHumanCenteringMarginsV1,
+): VerifiedHumanCenteringSideCalculationV1 {
+  const horizontal = calculateCenteringAxisV1(margins.left, margins.right, 0);
+  const vertical = calculateCenteringAxisV1(margins.top, margins.bottom, 0);
+  return {
+    horizontal,
+    vertical,
+    score: fuseCenteringSideAxesV1(horizontal.score, vertical.score),
+  };
+}
+
+export function calculateVerifiedHumanCenteringV1(input: {
+  front: VerifiedHumanCenteringMarginsV1;
+  back: VerifiedHumanCenteringMarginsV1;
+}) {
+  const front = calculateVerifiedHumanCenteringSideV1(input.front);
+  const back = calculateVerifiedHumanCenteringSideV1(input.back);
+  return {
+    front,
+    back,
+    score: fuseCenteringFrontBackV1(front.score, back.score),
+  };
+}
+
 export type PenaltyAggregationV1 = Readonly<{
   score: number;
   aggregatePenalty: number;

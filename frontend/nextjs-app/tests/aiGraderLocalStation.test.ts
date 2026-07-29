@@ -762,12 +762,96 @@ function reportBundleVisitedValueCount(value: unknown): number {
   return visited;
 }
 
+function ownerAuthorizedStrictReportBundle(): AiGraderReportBundleV03 {
+  const bundle = structuredClone(
+    buildStrictAiGraderReportBundleV03Fixture(),
+  ) as any;
+  const authorityFileSha256 = "4".repeat(64);
+  const bundleManifestSha256 = "c".repeat(64);
+  const memberLedgerSha256 = "d".repeat(64);
+  bundle.calibrationProfile = {
+    ...bundle.calibrationProfile,
+    rigId: "fixed-rig-dell-v1",
+    isCalibrated: false,
+    status: "rejected",
+    operationalAuthorization: {
+      schemaVersion:
+        "ai-grader-calibration-operational-authorization-public-v1",
+      status: "authorized",
+      authorityId:
+        "ten-kings-owner-operational-acceptance-math-cal-v1-test",
+      authoritySha256: "a".repeat(64),
+      authorityFileSha256,
+      authorizedAt: "2026-07-22T14:00:00.000Z",
+      subject: {
+        sessionId: "calibration-session-distinct-from-grading-session",
+        sessionStateSha256: "1".repeat(64),
+        sourceCaptureManifestSha256: "2".repeat(64),
+        sourceCapturePackageSha256: "3".repeat(64),
+        analysisSha256: "4".repeat(64),
+        analysisFileSha256: "5".repeat(64),
+        thresholdSetHash: bundle.calibrationProfile.thresholdSetHash,
+        physicalArtifactSha256: bundle.calibrationProfile.artifactSha256,
+        mathematicalAcceptanceFileSha256: "6".repeat(64),
+        mathematicalAcceptanceStatus: "rejected",
+        mathematicalIsCalibrated: false,
+        rigId: "fixed-rig-dell-v1",
+        profileId: bundle.calibrationProfile.profileId,
+        calibrationVersion: bundle.calibrationProfile.calibrationVersion,
+        finalizedAt: bundle.calibrationProfile.finalizedAt,
+        artifactId: bundle.calibrationProfile.artifactId,
+      },
+      issueCount: 36,
+      issueLedgerSha256: "b".repeat(64),
+    },
+  };
+  bundle.calibrationBundleAuthority = {
+    ...bundle.calibrationBundleAuthority,
+    bundleManifestSha256,
+    memberLedgerSha256,
+    members: [
+      ...bundle.calibrationBundleAuthority.members.slice(0, 3),
+      {
+        role: "product_owner_operational_acceptance",
+        fileName: "product-owner-operational-acceptance-v1.json",
+        sha256: authorityFileSha256,
+      },
+      ...bundle.calibrationBundleAuthority.members.slice(3),
+    ],
+  };
+  bundle.calibrationActivationAuthority = {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "owner-accepted-activation-v1",
+    activationHash: "7".repeat(64),
+    activationRevision: "8".repeat(64),
+    snapshotId: "owner-accepted-snapshot-v1",
+    rigId: "fixed-rig-dell-v1",
+    bundleManifestSha256,
+    memberLedgerSha256,
+    runtimeContextHash: "e".repeat(64),
+    rigCharacterizationSha256: bundle.calibrationProfile.artifactSha256,
+    operatingContextHash: "f".repeat(64),
+    observationId: "owner-accepted-observation-v1",
+    workstationObservationSha256: "0".repeat(64),
+    workstationReceiptSha256: "1".repeat(64),
+    activatedAt: "2026-07-22T14:00:00.000Z",
+    hostedAuthorityKeyId: "9".repeat(64),
+    hostedAuthoritySignatureAlgorithm:
+      "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T14:05:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T14:05:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+  return aiGraderReportBundleV03Schema.parse(bundle);
+}
+
 function strictReportBundleAtVisitedValueCount(
   targetVisitedValues: number,
-): AiGraderReportBundleV03 {
-  const bundle = aiGraderReportBundleV03Schema.parse(
+  seed: AiGraderReportBundleV03 =
     buildStrictAiGraderReportBundleV03Fixture(),
-  );
+): AiGraderReportBundleV03 {
+  const bundle = aiGraderReportBundleV03Schema.parse(seed);
   let remaining = targetVisitedValues - reportBundleVisitedValueCount(bundle);
   assert.ok(remaining >= 0);
 
@@ -889,7 +973,10 @@ test("browser-safe station cloning skips parsed enumerable prototype keys", () =
 });
 
 test("schema-valid Production-sized V0.3 report remains hydrated for exact Approve & Publish identity", () => {
-  const reportBundle = strictReportBundleAtVisitedValueCount(84_523);
+  const reportBundle = strictReportBundleAtVisitedValueCount(
+    84_523,
+    ownerAuthorizedStrictReportBundle(),
+  );
   const schemaResult = aiGraderReportBundleV03Schema.safeParse(reportBundle);
   assert.equal(schemaResult.success, true);
   assert.equal(reportBundleVisitedValueCount(reportBundle), 84_523);
@@ -909,6 +996,17 @@ test("schema-valid Production-sized V0.3 report remains hydrated for exact Appro
   );
   assert.equal(hydratedBundle?.reportId, "math-v1-release-test");
   assert.equal(reportBundleVisitedValueCount(hydratedBundle), 84_523);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(hydratedBundle).success, true);
+  assert.equal(
+    (hydratedBundle?.calibrationProfile as any)?.operationalAuthorization
+      ?.schemaVersion,
+    "ai-grader-calibration-operational-authorization-public-v1",
+  );
+  assert.equal(
+    (hydratedBundle?.calibrationProfile as any)?.operationalAuthorization
+      ?.subject.sessionId,
+    "calibration-session-distinct-from-grading-session",
+  );
   assert.equal(
     queue.activeReview?.manifest.productionRelease?.gradingSessionId,
     "session-hydration",
@@ -916,6 +1014,11 @@ test("schema-valid Production-sized V0.3 report remains hydrated for exact Appro
   assert.equal(
     queue.activeReview?.manifest.productionRelease?.reportId,
     "math-v1-release-test",
+  );
+  assert.equal(
+    (queue.activeReview?.manifest.productionRelease?.calibrationProfile as any)
+      ?.operationalAuthorization?.authorityId,
+    "ten-kings-owner-operational-acceptance-math-cal-v1-test",
   );
   const readiness = buildAiGraderPublishReadiness({
     bundle: hydratedBundle,

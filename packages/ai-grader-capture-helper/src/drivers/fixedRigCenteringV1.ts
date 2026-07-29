@@ -4,6 +4,7 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   calculateCenteringAxisV1,
   calculateRegisteredDesignTemplateAxisV1,
+  calculateVerifiedHumanCenteringSideV1,
   fuseCenteringFrontBackV1,
   fuseCenteringSideAxesV1,
   mathematicalCenteringRegistrationV1Schema,
@@ -898,8 +899,8 @@ export function buildFixedRigCenteringSideV1(
 /**
  * Computes the ordinary printed-border centering result from authenticated
  * physical border-width measurements. This seam accepts no score, uncertainty,
- * confidence, fit, transform, or grade input; those values remain derived by
- * the existing calibration and centering math.
+ * confidence, fit, transform, or grade input. The verified millimeters are the
+ * measurement authority, so no machine-calibration uncertainty is applied.
  */
 export function buildFixedRigPhysicalMarginCenteringSideV1(
   input: FixedRigPhysicalMarginCenteringSideInputV1,
@@ -974,29 +975,22 @@ export function buildFixedRigPhysicalMarginCenteringSideV1(
     { x: round(printed.right), y: round(printed.bottom) },
     { x: round(printed.left), y: round(printed.bottom) },
   ];
-  const horizontalUncertainty = deriveFixedRigMeasurementUncertaintyV1({
-    calibration: input.calibration,
-    kind: "margin_difference_mm",
-    measuredMeasurement: Math.abs(observedMargins.left.mm - observedMargins.right.mm),
-    axis: "x",
+  const verifiedCalculation = calculateVerifiedHumanCenteringSideV1({
+    left: observedMargins.left.mm,
+    right: observedMargins.right.mm,
+    top: observedMargins.top.mm,
+    bottom: observedMargins.bottom.mm,
   });
-  const verticalUncertainty = deriveFixedRigMeasurementUncertaintyV1({
-    calibration: input.calibration,
-    kind: "margin_difference_mm",
-    measuredMeasurement: Math.abs(observedMargins.top.mm - observedMargins.bottom.mm),
-    axis: "y",
-  });
-  const horizontal = calculateCenteringAxisV1(
-    observedMargins.left.mm,
-    observedMargins.right.mm,
-    horizontalUncertainty.u95,
-  );
-  const vertical = calculateCenteringAxisV1(
-    observedMargins.top.mm,
-    observedMargins.bottom.mm,
-    verticalUncertainty.u95,
-  );
-  const score = Math.min(horizontal.score, vertical.score);
+  const { horizontal, vertical, score } = verifiedCalculation;
+  const zeroUncertaintyComponents: MathematicalMeasurementUncertaintyComponentsV1 = {
+    pixelMmScale: 0,
+    lensDistortion: 0,
+    normalizationRegistration: 0,
+    repeatedPlacement: 0,
+    segmentationBoundary: 0,
+    measurementRepeatability: 0,
+    lightingChannelConfidence: 0,
+  };
   const registration = mathematicalCenteringRegistrationV1Schema.parse({
     profile: "printed_border_v1",
     transformType: "physical_margin_measurement",
@@ -1022,17 +1016,17 @@ export function buildFixedRigPhysicalMarginCenteringSideV1(
     horizontal,
     vertical,
     u95Mm: {
-      horizontal: horizontalUncertainty.u95,
-      vertical: verticalUncertainty.u95,
+      horizontal: 0,
+      vertical: 0,
     },
     u95ComponentsMm: {
       calibratedMarginDifference: {
-        horizontal: horizontalUncertainty.u95,
-        vertical: verticalUncertainty.u95,
+        horizontal: 0,
+        vertical: 0,
       },
       calibratedMarginDifferenceComponents: {
-        horizontal: { ...horizontalUncertainty.componentsU95 },
-        vertical: { ...verticalUncertainty.componentsU95 },
+        horizontal: { ...zeroUncertaintyComponents },
+        vertical: { ...zeroUncertaintyComponents },
       },
     },
     grade10ToleranceMm:
