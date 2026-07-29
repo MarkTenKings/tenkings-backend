@@ -5473,7 +5473,14 @@ function pngDimensions(bytes: Buffer): { width: number; height: number } | undef
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
-function browserSafeReviewRecord(value: unknown, outputDir: string): Record<string, unknown> | undefined {
+const AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_PATH =
+  "calibrationProfile.operationalAuthorization";
+
+function browserSafeReviewRecord(
+  value: unknown,
+  outputDir: string,
+  options: { allowStrictPublicOperationalAuthorization?: boolean } = {},
+): Record<string, unknown> | undefined {
   const explicitlySafeRouteOrUrlKey = new Set([
     "localViewerPath",
     "publicViewerRoute",
@@ -5499,14 +5506,26 @@ function browserSafeReviewRecord(value: unknown, outputDir: string): Record<stri
       && (/^local/i.test(key) || /(?:path|dir|folder)$/i.test(key))
     )
   );
-  const project = (input: unknown): unknown => {
+  const project = (input: unknown, currentPath: readonly string[] = []): unknown => {
     if (typeof input === "string" && isUnsafeFilesystemString(input)) return undefined;
-    if (Array.isArray(input)) return input.map(project).filter((item) => item !== undefined);
+    if (Array.isArray(input)) {
+      return input
+        .map((item, index) => project(item, [...currentPath, String(index)]))
+        .filter((item) => item !== undefined);
+    }
     if (!input || typeof input !== "object") return input;
     const projected: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(input as Record<string, unknown>)) {
-      if (forbiddenKey(key) || key === "bodyBase64" || key === "bodyEncoding") continue;
-      const safeChild = project(child);
+      const childPath = [...currentPath, key];
+      const allowedOperationalAuthorization =
+        options.allowStrictPublicOperationalAuthorization === true &&
+        childPath.join(".") === AI_GRADER_PUBLIC_OPERATIONAL_AUTHORIZATION_PATH;
+      if (
+        (!allowedOperationalAuthorization && forbiddenKey(key)) ||
+        key === "bodyBase64" ||
+        key === "bodyEncoding"
+      ) continue;
+      const safeChild = project(child, childPath);
       if (safeChild !== undefined) projected[key] = safeChild;
     }
     return projected;
@@ -5889,6 +5908,25 @@ export class AiGraderLocalStationBridgeService {
     const activeReviewItem = this.activeQueueItemId
       ? this.committedRapidQueue.items.find((item) => item.queueItemId === this.activeQueueItemId)
       : undefined;
+    const parsedActiveReviewStrictBundle =
+      activeReviewManifest?.reportBundle
+        ? aiGraderReportBundleV03Schema.safeParse(activeReviewManifest.reportBundle)
+        : undefined;
+    const activeReviewStrictBundle =
+      parsedActiveReviewStrictBundle?.success &&
+      parsedActiveReviewStrictBundle.data.reportId === activeReviewItem?.reportId
+        ? parsedActiveReviewStrictBundle.data
+        : undefined;
+    const activeReviewStrictRelease =
+      activeReviewStrictBundle &&
+      isMathematicalProductionRelease(activeReviewManifest?.productionRelease) &&
+      activeReviewManifest.productionRelease.reportId === activeReviewItem?.reportId &&
+      activeReviewManifest.productionRelease.gradingSessionId === activeReviewItem?.sessionId &&
+      activeReviewManifest.productionRelease.generatedAt === activeReviewStrictBundle.generatedAt &&
+      canonicalJsonV1(activeReviewManifest.productionRelease.calibrationProfile) ===
+        canonicalJsonV1(activeReviewStrictBundle.calibrationProfile)
+        ? activeReviewManifest.productionRelease
+        : undefined;
     const activeReview = activeReviewManifest && activeReviewItem
       ? {
           queueItemId: activeReviewItem.queueItemId,
@@ -5914,10 +5952,21 @@ export class AiGraderLocalStationBridgeService {
                         : activeReviewManifest.productionRelease,
                     ),
                 this.config.outputDir,
+                {
+                  allowStrictPublicOperationalAuthorization:
+                    activeReviewStrictBundle !== undefined,
+                },
               ),
             } : {}),
             ...(activeReviewManifest.productionRelease ? {
-              productionRelease: browserSafeReviewRecord(activeReviewManifest.productionRelease, this.config.outputDir),
+              productionRelease: browserSafeReviewRecord(
+                activeReviewManifest.productionRelease,
+                this.config.outputDir,
+                {
+                  allowStrictPublicOperationalAuthorization:
+                    activeReviewStrictRelease !== undefined,
+                },
+              ),
             } : {}),
             ...(activeReviewItem.ocr.result ? {
               ocr: structuredClone(activeReviewItem.ocr.result),

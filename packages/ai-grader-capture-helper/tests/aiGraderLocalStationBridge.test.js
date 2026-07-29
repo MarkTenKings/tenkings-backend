@@ -15,9 +15,11 @@ const {
 } = require("../../../frontend/nextjs-app/tests/fixtures/strictAiGraderReportBundleV03.ts");
 const {
   curatedAiGraderMathematicalAssetMetadata,
+  loadAiGraderLocalMathematicalAssets,
 } = require("../../../frontend/nextjs-app/lib/aiGraderLocalMathematicalReport.ts");
 const {
   aiGraderMathematicalReleaseEnvelopeIssue,
+  parseAiGraderMathematicalReportV1,
 } = require("../../../frontend/nextjs-app/lib/aiGraderMathematicalReportV1.ts");
 const {
   aiGraderReportBundleV03Schema,
@@ -1152,11 +1154,110 @@ async function createCompletedMathematicalReviewFixture(outputDir, seed) {
     }
     return value === "c".repeat(64) ? assetSha256 : value;
   };
-  const bundle = aiGraderReportBundleV03Schema.parse(
+  const bundleCandidate =
     replaceFixtureHash(
       replaceReportIdentity(buildStrictAiGraderReportBundleV03Fixture()),
-    ),
+    );
+  const authorityFileSha256 = "4".repeat(64);
+  const bundleManifestSha256 = "c".repeat(64);
+  const memberLedgerSha256 = "d".repeat(64);
+  bundleCandidate.calibrationProfile = {
+    ...bundleCandidate.calibrationProfile,
+    rigId: "fixed-rig-dell-v1",
+    isCalibrated: false,
+    status: "rejected",
+    operationalAuthorization: {
+      schemaVersion:
+        "ai-grader-calibration-operational-authorization-public-v1",
+      status: "authorized",
+      authorityId: "owner-operational-acceptance-status-projection-test",
+      authoritySha256: "a".repeat(64),
+      authorityFileSha256,
+      authorizedAt: "2026-07-22T14:00:00.000Z",
+      subject: {
+        sessionId: "calibration-session-distinct-from-grading-session",
+        sessionStateSha256: "1".repeat(64),
+        sourceCaptureManifestSha256: "2".repeat(64),
+        sourceCapturePackageSha256: "3".repeat(64),
+        analysisSha256: "4".repeat(64),
+        analysisFileSha256: "5".repeat(64),
+        thresholdSetHash: bundleCandidate.calibrationProfile.thresholdSetHash,
+        physicalArtifactSha256:
+          bundleCandidate.calibrationProfile.artifactSha256,
+        mathematicalAcceptanceFileSha256: "6".repeat(64),
+        mathematicalAcceptanceStatus: "rejected",
+        mathematicalIsCalibrated: false,
+        rigId: "fixed-rig-dell-v1",
+        profileId: bundleCandidate.calibrationProfile.profileId,
+        calibrationVersion:
+          bundleCandidate.calibrationProfile.calibrationVersion,
+        finalizedAt: bundleCandidate.calibrationProfile.finalizedAt,
+        artifactId: bundleCandidate.calibrationProfile.artifactId,
+      },
+      issueCount: 36,
+      issueLedgerSha256: "b".repeat(64),
+    },
+  };
+  bundleCandidate.calibrationBundleAuthority = {
+    ...bundleCandidate.calibrationBundleAuthority,
+    bundleManifestSha256,
+    memberLedgerSha256,
+    members: [
+      ...bundleCandidate.calibrationBundleAuthority.members.slice(0, 3),
+      {
+        role: "product_owner_operational_acceptance",
+        fileName: "product-owner-operational-acceptance-v1.json",
+        sha256: authorityFileSha256,
+      },
+      ...bundleCandidate.calibrationBundleAuthority.members.slice(3),
+    ],
+  };
+  bundleCandidate.calibrationActivationAuthority = {
+    schemaVersion: "ten-kings-ai-grader-calibration-activation-authority-v1",
+    authorityPhase: "ACTIVE",
+    activationId: "owner-accepted-activation-v1",
+    activationHash: "7".repeat(64),
+    activationRevision: "8".repeat(64),
+    snapshotId: "owner-accepted-snapshot-v1",
+    rigId: "fixed-rig-dell-v1",
+    bundleManifestSha256,
+    memberLedgerSha256,
+    runtimeContextHash: "e".repeat(64),
+    rigCharacterizationSha256:
+      bundleCandidate.calibrationProfile.artifactSha256,
+    operatingContextHash: "f".repeat(64),
+    observationId: "owner-accepted-observation-v1",
+    workstationObservationSha256: "0".repeat(64),
+    workstationReceiptSha256: "1".repeat(64),
+    activatedAt: "2026-07-22T14:00:00.000Z",
+    hostedAuthorityKeyId: "9".repeat(64),
+    hostedAuthoritySignatureAlgorithm: "ecdsa-p256-sha256-ieee-p1363",
+    hostedAuthorityIssuedAt: "2026-07-22T14:05:00.000Z",
+    hostedAuthorityExpiresAt: "2026-07-23T14:05:00.000Z",
+    hostedAuthoritySignature: "A".repeat(86),
+  };
+  const surfaceAssets = ["front", "back"].flatMap((side) =>
+    ["surface_vision", "surface_heatmap"].map((evidenceRole) => {
+      const id = `${side}/${evidenceRole.replace("_", "-")}.png`;
+      return {
+        id,
+        kind: "report-image",
+        fileName: path.basename(id),
+        contentType: "image/png",
+        publicUrl:
+          `/ai-grader/reports/${item.reportId}/assets/${side}-${evidenceRole}.png`,
+        sha256: assetSha256,
+        byteSize: assetBytes.byteLength,
+        side,
+        evidenceRole,
+      };
+    }),
   );
+  bundleCandidate.publicAssets = [
+    ...bundleCandidate.publicAssets,
+    ...surfaceAssets,
+  ];
+  const bundle = aiGraderReportBundleV03Schema.parse(bundleCandidate);
   bundle.publicAssets = bundle.publicAssets.map((asset) => ({
     ...asset,
     sha256: assetSha256,
@@ -1272,7 +1373,7 @@ async function createCompletedMathematicalReviewFixture(outputDir, seed) {
   };
 }
 
-test("compatible v2 startup preserves exact review bytes and reattaches the verified Mathematical V1 report in memory", async (t) => {
+test("helper status preserves strict public authority so browser parsing starts exactly 64 verified renderable assets", async (t) => {
   const outputDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "tenkings-compatible-v2-review-reload-"),
   );
@@ -1334,15 +1435,33 @@ test("compatible v2 startup preserves exact review bytes and reattaches the veri
     status.rapidCaptureQueue.activeReview?.reportId,
     item.reportId,
   );
+  const statusBundle =
+    status.rapidCaptureQueue.activeReview.manifest.reportBundle;
+  const statusRelease =
+    status.rapidCaptureQueue.activeReview.manifest.productionRelease;
+  assert.equal(
+    statusBundle.calibrationProfile.operationalAuthorization.schemaVersion,
+    "ai-grader-calibration-operational-authorization-public-v1",
+  );
+  assert.equal(
+    statusRelease.calibrationProfile.operationalAuthorization.authorityId,
+    "owner-operational-acceptance-status-projection-test",
+  );
+  const browserParsedBundle =
+    parseAiGraderMathematicalReportV1(statusBundle);
+  assert.ok(browserParsedBundle);
   assert.equal(
     aiGraderMathematicalReleaseEnvelopeIssue(
-      status.rapidCaptureQueue.activeReview.manifest.reportBundle,
-      status.rapidCaptureQueue.activeReview.manifest.productionRelease,
+      browserParsedBundle,
+      statusRelease,
     ),
     undefined,
   );
   const exactAssetIds =
-    aiGraderMathematicalAdvancedPresentationAssetIdsV1(bundle);
+    aiGraderMathematicalAdvancedPresentationAssetIdsV1(
+      browserParsedBundle,
+    );
+  assert.equal(exactAssetIds.length, 64);
   const hydrated = await reloaded.mathematicalReportHydration(
     identity,
     exactAssetIds,
@@ -1358,6 +1477,43 @@ test("compatible v2 startup preserves exact review bytes and reattaches the veri
         .digest("hex") === asset.checksumSha256),
     true,
   );
+  const hydratedById = new Map(
+    hydrated.assets.map((asset) => [asset.assetId, asset]),
+  );
+  let objectUrlSequence = 0;
+  const browserAssets = await loadAiGraderLocalMathematicalAssets({
+    bundle: browserParsedBundle,
+    reportId: item.reportId,
+    fetchAsset: async ({ reportId, assetId }) => {
+      const asset = hydratedById.get(assetId);
+      assert.ok(asset);
+      const bytes = Buffer.from(asset.bodyBase64, "base64");
+      return {
+        reportId,
+        assetId,
+        bytes: bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength,
+        ),
+        contentType: asset.contentType,
+        byteSize: asset.byteSize,
+        checksumSha256: asset.checksumSha256,
+      };
+    },
+    dependencies: {
+      createObjectUrl: () => `blob:strict-report-${++objectUrlSequence}`,
+      revokeObjectUrl: () => {},
+      sha256Hex: async (bytes) =>
+        crypto
+          .createHash("sha256")
+          .update(Buffer.from(bytes))
+          .digest("hex"),
+      assertRaster: async () => ({ widthPx: 8, heightPx: 8 }),
+    },
+  });
+  assert.equal(browserAssets.assetIds.length, 64);
+  assert.equal(Object.keys(browserAssets.urlsByAssetId).length, 64);
+  assert.equal(browserAssets.objectUrls.length, 64);
   for (const filePath of preservedPaths) {
     const preserved = before.get(filePath);
     const bytes = fs.readFileSync(filePath);
