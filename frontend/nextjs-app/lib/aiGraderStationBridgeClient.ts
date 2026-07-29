@@ -1880,6 +1880,22 @@ export async function fetchAiGraderStationMathematicalReportHydration(input: {
   const requestedSet = new Set(requestedIds);
   const seen = new Set<string>();
   let totalBytes = 0;
+  const declaredTotalBytes = result.assets.reduce((sum, raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    const byteSize = Number((raw as Record<string, unknown>).byteSize);
+    if (!Number.isSafeInteger(byteSize) || byteSize < 1) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    return sum + byteSize;
+  }, 0);
+  if (
+    !Number.isSafeInteger(declaredTotalBytes) ||
+    declaredTotalBytes > 20 * 1024 * 1024
+  ) {
+    throw new Error("Mathematical V1 report hydration exceeded selected evidence.");
+  }
   const assets = result.assets.map((raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new Error("Mathematical V1 report hydration asset contract is invalid.");
@@ -1933,7 +1949,7 @@ export async function fetchAiGraderStationMathematicalReportHydration(input: {
     seen.size !== requestedSet.size ||
     requestedIds.some((assetId) => !seen.has(assetId)) ||
     !Number.isSafeInteger(totalBytes) ||
-    totalBytes > 256 * 1024 * 1024
+    totalBytes > 20 * 1024 * 1024
   ) {
     throw new Error("Mathematical V1 report hydration omitted or exceeded selected evidence.");
   }

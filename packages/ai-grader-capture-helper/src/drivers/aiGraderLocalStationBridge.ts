@@ -76,6 +76,7 @@ import {
   AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
   AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_DIR,
   AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_V1_VERSION,
+  aiGraderMathematicalAdvancedPresentationAssetIdsV1,
   buildAiGraderMathematicalReportEnvelopeV1,
   decodeAiGraderMathematicalAssetPayloadsV1,
   readAiGraderMathematicalReportAssetsFromVerifiedPackageV1,
@@ -93,6 +94,7 @@ import {
 } from "./aiGraderMathematicalReportBundleV1";
 import {
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  aiGraderReportBundleV03Schema,
   aiGraderOcrFieldRequiresReview,
   aiGraderOperatorResolutionAuthenticationV1Schema,
   canonicalJsonV1,
@@ -242,6 +244,10 @@ export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-b
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 export const MATHEMATICAL_CALIBRATION_PREVIEW_PORT = 47653;
+export const AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES =
+  20 * 1024 * 1024;
+export const AI_GRADER_MATHEMATICAL_HYDRATION_MAX_ENCODED_RESPONSE_BYTES =
+  28 * 1024 * 1024;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 3500;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
@@ -1676,6 +1682,8 @@ export interface AiGraderLocalStationBridgeDependencies {
   writeRapidQueueAtomic?: (filePath: string, value: unknown) => Promise<void>;
   /** Test-only immutable-package verification boundary. */
   readMathematicalReportPackage?: typeof readAiGraderMathematicalReportPackageV1;
+  /** Test-only selected immutable-asset read boundary. */
+  readMathematicalAssetFile?: (filePath: string) => Promise<Buffer>;
   /** Hardware-free test seam; Production uses the concrete opened Basler/Leimac adapter. */
   observeCalibrationActivationRuntime?: (
     expected: AiGraderOperatingContextV1,
@@ -3692,6 +3700,74 @@ function isMathematicalProductionRelease(
   release: AiGraderStationProductionRelease | undefined,
 ): release is AiGraderMathematicalProductionReleaseV1 {
   return release?.schemaVersion === "ai-grader-mathematical-production-release-v1";
+}
+
+function assertMathematicalHydrationBudget(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  bundle: AiGraderReportBundleV03;
+  assetIds: readonly string[];
+}): void {
+  const assetsById = new Map(
+    input.bundle.publicAssets.map((asset) => [asset.id, asset]),
+  );
+  const responseAssets = input.assetIds.map((assetId) => {
+    const asset = assetsById.get(assetId);
+    const byteSize = asset?.byteSize;
+    if (
+      !asset ||
+      typeof byteSize !== "number" ||
+      !Number.isSafeInteger(byteSize) ||
+      byteSize < 1
+    ) {
+      throw new Error(
+        "Mathematical V1 advanced presentation graph has invalid declared evidence.",
+      );
+    }
+    return {
+      reportId: input.reportId,
+      assetId: asset.id,
+      contentType: asset.contentType ?? "application/octet-stream",
+      byteSize,
+      checksumSha256: asset.sha256 ?? asset.checksumSha256 ?? "",
+      bodyBase64: "",
+    };
+  });
+  const rawBytes = responseAssets.reduce(
+    (sum, asset) => sum + asset.byteSize,
+    0,
+  );
+  const base64Bytes = responseAssets.reduce(
+    (sum, asset) => sum + 4 * Math.ceil(asset.byteSize / 3),
+    0,
+  );
+  const fixedJsonBytes = Buffer.byteLength(
+    JSON.stringify({
+      ok: true,
+      operation: "mathematical-report-hydration",
+      result: {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+        bundle: input.bundle,
+        assets: responseAssets,
+      },
+    }),
+    "utf8",
+  ) + 1;
+  const projectedEncodedResponseBytes = fixedJsonBytes + base64Bytes;
+  if (
+    !Number.isSafeInteger(rawBytes) ||
+    !Number.isSafeInteger(projectedEncodedResponseBytes) ||
+    rawBytes > AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES ||
+    projectedEncodedResponseBytes >
+      AI_GRADER_MATHEMATICAL_HYDRATION_MAX_ENCODED_RESPONSE_BYTES
+  ) {
+    throw new Error(
+      "Mathematical V1 advanced presentation evidence exceeds the bounded response.",
+    );
+  }
 }
 
 function gradingContractFor(manifest: Pick<AiGraderLocalStationBridgeManifest, "gradingContract" | "reportBundle">): AiGraderGradingContract {
@@ -14808,6 +14884,9 @@ export class AiGraderLocalStationBridgeService {
           await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
             reportPackage,
             [assetId],
+            {
+              readAssetFile: this.dependencies.readMathematicalAssetFile,
+            },
           )
         )[0];
         return {
@@ -14881,19 +14960,74 @@ export class AiGraderLocalStationBridgeService {
     if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
       throw new Error("Mathematical V1 report hydration requires a strict report.");
     }
+    const parsedManifestBundle = aiGraderReportBundleV03Schema.safeParse(
+      manifest.reportBundle,
+    );
+    if (
+      !parsedManifestBundle.success ||
+      parsedManifestBundle.data.reportId !== item.reportId
+    ) {
+      throw new Error(
+        "Mathematical V1 report hydration requires the exact durable strict report.",
+      );
+    }
+    const manifestBundle = parsedManifestBundle.data;
+    const exactAssetIds =
+      aiGraderMathematicalAdvancedPresentationAssetIdsV1(manifestBundle);
+    const requestedIds = new Set(assetIds);
+    if (
+      assetIds.length !== exactAssetIds.length ||
+      exactAssetIds.some((assetId) => !requestedIds.has(assetId))
+    ) {
+      throw new Error(
+        "Mathematical V1 report hydration requires the exact advanced presentation evidence graph.",
+      );
+    }
+    assertMathematicalHydrationBudget({
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      bundle: manifestBundle,
+      assetIds: exactAssetIds,
+    });
     try {
       const reportPackage = await this.resolveMathematicalReportPackage(manifest, {});
+      if (
+        canonicalJsonV1(reportPackage.envelope.reportBundle) !==
+        canonicalJsonV1(manifestBundle)
+      ) {
+        throw new Error(
+          "Mathematical V1 immutable package changed from the exact active report.",
+        );
+      }
+      const verifiedAssetIds =
+        aiGraderMathematicalAdvancedPresentationAssetIdsV1(
+          reportPackage.envelope.reportBundle,
+        );
+      if (
+        verifiedAssetIds.length !== exactAssetIds.length ||
+        verifiedAssetIds.some(
+          (assetId, index) => assetId !== exactAssetIds[index],
+        )
+      ) {
+        throw new Error(
+          "Mathematical V1 immutable presentation graph changed.",
+        );
+      }
+      assertMathematicalHydrationBudget({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+        bundle: reportPackage.envelope.reportBundle,
+        assetIds: verifiedAssetIds,
+      });
       const selected = await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
         reportPackage,
-        assetIds,
+        verifiedAssetIds,
+        {
+          readAssetFile: this.dependencies.readMathematicalAssetFile,
+        },
       );
-      const totalBytes = selected.reduce((sum, entry) => sum + entry.bytes.byteLength, 0);
-      if (
-        !Number.isSafeInteger(totalBytes) ||
-        totalBytes > 256 * 1024 * 1024
-      ) {
-        throw new Error("Selected Mathematical V1 evidence exceeds the bounded response.");
-      }
       return {
         queueItemId: item.queueItemId,
         gradingSessionId: item.sessionId,

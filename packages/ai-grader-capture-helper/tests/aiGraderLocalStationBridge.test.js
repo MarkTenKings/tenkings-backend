@@ -13,13 +13,19 @@ const {
   buildStrictAiGraderReportBundleV03Fixture,
 } = require("../../../frontend/nextjs-app/tests/fixtures/strictAiGraderReportBundleV03.ts");
 const {
+  curatedAiGraderMathematicalAssetMetadata,
+} = require("../../../frontend/nextjs-app/lib/aiGraderLocalMathematicalReport.ts");
+const {
   AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
 } = require("../dist/drivers/aiGraderMathematicalReportBundleV1");
 const {
+  AI_GRADER_MATHEMATICAL_SELECTED_ASSET_READ_CONCURRENCY,
+  aiGraderMathematicalAdvancedPresentationAssetIdsV1,
   readAiGraderMathematicalReportPackageV1,
   writeAiGraderMathematicalReportPackageV1,
 } = require("../dist/drivers/aiGraderMathematicalReportPackageV1");
 const {
+  AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES,
   AiGraderPreviewJpegFrameAssembler,
   AiGraderLocalStationBridgeService,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -60,7 +66,7 @@ test("local report assets expose exact report, asset, and hash response identiti
   );
 });
 
-test("real Mathematical hydration route verifies one immutable package, returns only selected bytes, and writes nothing", async (t) => {
+test("real Mathematical hydration route enforces the exact server graph, bounded allocation and four selected reads without writes", async (t) => {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-report-hydration-route-"));
   t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
   const outputDir = path.join(fixtureRoot, "station");
@@ -110,8 +116,6 @@ test("real Mathematical hydration route verifies one immutable package, returns 
     item.reportId,
     "mathematical-v1",
   );
-  const selectedBytes = Buffer.alloc(1000, 17);
-  const selectedSha = crypto.createHash("sha256").update(selectedBytes).digest("hex");
   const replaceFixtureIdentity = (value) => {
     if (Array.isArray(value)) return value.map(replaceFixtureIdentity);
     if (value && typeof value === "object") {
@@ -123,25 +127,57 @@ test("real Mathematical hydration route verifies one immutable package, returns 
       );
     }
     if (typeof value !== "string") return value;
-    if (value === "c".repeat(64)) return selectedSha;
     return value.replaceAll("math-v1-release-test", item.reportId);
   };
   const strictBundle = replaceFixtureIdentity(
     buildStrictAiGraderReportBundleV03Fixture(),
   );
-  strictBundle.publicAssets = strictBundle.publicAssets.map((asset) => ({
-    ...asset,
-    sha256: selectedSha,
-    ...(asset.checksumSha256 ? { checksumSha256: selectedSha } : {}),
-    byteSize: selectedBytes.byteLength,
-  }));
+  const presentationAssetIds =
+    aiGraderMathematicalAdvancedPresentationAssetIdsV1(strictBundle);
+  assert.equal(presentationAssetIds.length, 60);
+  assert.deepEqual(
+    presentationAssetIds,
+    curatedAiGraderMathematicalAssetMetadata(strictBundle).map(
+      (asset) => asset.id,
+    ),
+  );
+  const productionShapedGraphRawBytes = Math.floor(15.869 * 1024 * 1024);
+  const selectedBytes = Buffer.alloc(
+    Math.floor(productionShapedGraphRawBytes / presentationAssetIds.length),
+    17,
+  );
+  const selectedSha = crypto.createHash("sha256").update(selectedBytes).digest("hex");
+  assert.ok(
+    selectedBytes.byteLength * presentationAssetIds.length >
+      15.8 * 1024 * 1024,
+  );
+  const replaceFixtureHash = (value) => {
+    if (Array.isArray(value)) return value.map(replaceFixtureHash);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          replaceFixtureHash(entry),
+        ]),
+      );
+    }
+    return value === "c".repeat(64) ? selectedSha : value;
+  };
+  const strictBundleWithExactHashes = replaceFixtureHash(strictBundle);
+  strictBundleWithExactHashes.publicAssets =
+    strictBundleWithExactHashes.publicAssets.map((asset) => ({
+      ...asset,
+      sha256: selectedSha,
+      ...(asset.checksumSha256 ? { checksumSha256: selectedSha } : {}),
+      byteSize: selectedBytes.byteLength,
+    }));
   const reportPackage = await writeAiGraderMathematicalReportPackageV1({
     gradingSessionId: item.sessionId,
     outputDir: packageDir,
     artifact: {
       adapterVersion: AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
-      bundle: strictBundle,
-      assetPayloads: strictBundle.publicAssets.map((asset) => ({
+      bundle: strictBundleWithExactHashes,
+      assetPayloads: strictBundleWithExactHashes.publicAssets.map((asset) => ({
         id: asset.id,
         contentType: asset.contentType,
         sha256: selectedSha,
@@ -150,7 +186,7 @@ test("real Mathematical hydration route verifies one immutable package, returns 
       })),
     },
   });
-  queuedManifest.reportBundle = strictBundle;
+  queuedManifest.reportBundle = strictBundleWithExactHashes;
   queuedManifest.outputs.reportBundlePath = reportPackage.bundlePath;
   queuedManifest.outputs.mathematicalReportBundlePath =
     reportPackage.bundlePath;
@@ -165,8 +201,100 @@ test("real Mathematical hydration route verifies one immutable package, returns 
   );
   await service.persistRapidQueue();
 
+  const exactQueuedBundle = queuedManifest.reportBundle;
+  const oversizedBundle = structuredClone(exactQueuedBundle);
+  const oversizedAsset = oversizedBundle.publicAssets.find(
+    (asset) => asset.id === presentationAssetIds[0],
+  );
+  assert.ok(oversizedAsset);
+  oversizedAsset.byteSize =
+    AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES;
+  queuedManifest.reportBundle = oversizedBundle;
+  fs.writeFileSync(
+    queuedManifest.outputs.manifestPath,
+    JSON.stringify(queuedManifest, null, 2),
+  );
+  let oversizedPackageVerificationCount = 0;
+  let oversizedSelectedReadCount = 0;
+  const oversizedServer = createAiGraderLocalStationBridgeHttpServer(
+    config,
+    {},
+    undefined,
+    undefined,
+    {
+      stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+      readMathematicalReportPackage: async (packagePath) => {
+        oversizedPackageVerificationCount += 1;
+        return readAiGraderMathematicalReportPackageV1(packagePath);
+      },
+      readMathematicalAssetFile: async (filePath) => {
+        oversizedSelectedReadCount += 1;
+        return fs.promises.readFile(filePath);
+      },
+    },
+  );
+  await new Promise((resolve, reject) => {
+    oversizedServer.once("error", reject);
+    oversizedServer.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() =>
+    oversizedServer.listening
+      ? new Promise((resolve) => oversizedServer.close(resolve))
+      : undefined);
+  const oversizedAddress = oversizedServer.address();
+  assert.ok(oversizedAddress && typeof oversizedAddress === "object");
+  const oversizedBaseUrl =
+    `http://127.0.0.1:${oversizedAddress.port}`;
+  const oversizedHeaders = {
+    "content-type": "application/json",
+    "x-ai-grader-station-token": config.stationToken,
+  };
+  const oversizedActivated = await fetch(
+    `${oversizedBaseUrl}/actions/activate-queue-item`,
+    {
+      method: "POST",
+      headers: oversizedHeaders,
+      body: JSON.stringify(identity),
+    },
+  );
+  assert.equal(
+    oversizedActivated.status,
+    200,
+    await oversizedActivated.text(),
+  );
+  oversizedPackageVerificationCount = 0;
+  oversizedSelectedReadCount = 0;
+  const oversizedResponse = await fetch(
+    `${oversizedBaseUrl}/reports/${item.reportId}/mathematical-hydration`,
+    {
+      method: "POST",
+      headers: oversizedHeaders,
+      body: JSON.stringify({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        assetIds: presentationAssetIds,
+      }),
+    },
+  );
+  assert.equal(oversizedResponse.status, 400);
+  const oversizedPayload = await oversizedResponse.text();
+  assert.match(oversizedPayload, /exceeds the bounded response/);
+  assert.equal(oversizedPayload.includes(fixtureRoot), false);
+  assert.equal(oversizedPayload.includes(config.stationToken), false);
+  assert.equal(oversizedPackageVerificationCount, 0);
+  assert.equal(oversizedSelectedReadCount, 0);
+  await new Promise((resolve) => oversizedServer.close(resolve));
+  queuedManifest.reportBundle = exactQueuedBundle;
+  fs.writeFileSync(
+    queuedManifest.outputs.manifestPath,
+    JSON.stringify(queuedManifest, null, 2),
+  );
+
   let packageVerificationCount = 0;
   let queueWriteCount = 0;
+  let selectedReadCount = 0;
+  let activeSelectedReads = 0;
+  let maxActiveSelectedReads = 0;
   const server = createAiGraderLocalStationBridgeHttpServer(
     config,
     {},
@@ -177,6 +305,20 @@ test("real Mathematical hydration route verifies one immutable package, returns 
       readMathematicalReportPackage: async (packagePath) => {
         packageVerificationCount += 1;
         return readAiGraderMathematicalReportPackageV1(packagePath);
+      },
+      readMathematicalAssetFile: async (filePath) => {
+        selectedReadCount += 1;
+        activeSelectedReads += 1;
+        maxActiveSelectedReads = Math.max(
+          maxActiveSelectedReads,
+          activeSelectedReads,
+        );
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          return await fs.promises.readFile(filePath);
+        } finally {
+          activeSelectedReads -= 1;
+        }
       },
       writeRapidQueueAtomic: async (filePath, value) => {
         queueWriteCount += 1;
@@ -234,6 +376,8 @@ test("real Mathematical hydration route verifies one immutable package, returns 
   assert.deepEqual(Buffer.from(await assetGet.arrayBuffer()), selectedBytes);
   assert.equal(packageVerificationCount, 1);
   packageVerificationCount = 0;
+  selectedReadCount = 0;
+  maxActiveSelectedReads = 0;
   assert.deepEqual(
     fs.readFileSync(queuedManifest.outputs.manifestPath),
     manifestBytesBefore,
@@ -243,29 +387,75 @@ test("real Mathematical hydration route verifies one immutable package, returns 
     queueBytesBefore,
   );
 
-  const hydratedResponse = await fetch(
-    `${baseUrl}/reports/${item.reportId}/mathematical-hydration`,
-    {
+  const hydrate = (assetIds) =>
+    fetch(`${baseUrl}/reports/${item.reportId}/mathematical-hydration`, {
       method: "POST",
       headers,
       body: JSON.stringify({
         queueItemId: item.queueItemId,
         gradingSessionId: item.sessionId,
-        assetIds: ["front/center.png", "back/center.png"],
+        assetIds,
       }),
-    },
+    });
+  const presentationAssetIdSet = new Set(presentationAssetIds);
+  const disallowedDetectorAsset = strictBundleWithExactHashes.publicAssets.find(
+    (asset) =>
+      asset.evidenceRole === "confidence_mask" &&
+      !presentationAssetIdSet.has(asset.id),
   );
+  assert.ok(disallowedDetectorAsset);
+
+  const omittedResponse = await hydrate(presentationAssetIds.slice(1));
+  assert.equal(omittedResponse.status, 400);
+  assert.match(
+    await omittedResponse.text(),
+    /exact advanced presentation evidence graph/,
+  );
+  assert.equal(packageVerificationCount, 0);
+  assert.equal(selectedReadCount, 0);
+
+  const disallowedResponse = await hydrate([
+    ...presentationAssetIds,
+    disallowedDetectorAsset.id,
+  ]);
+  assert.equal(disallowedResponse.status, 400);
+  const disallowedPayload = await disallowedResponse.text();
+  assert.match(
+    disallowedPayload,
+    /exact advanced presentation evidence graph/,
+  );
+  assert.equal(disallowedPayload.includes(fixtureRoot), false);
+  assert.equal(disallowedPayload.includes(config.stationToken), false);
+  assert.equal(packageVerificationCount, 0);
+  assert.equal(selectedReadCount, 0);
+
+  const hydratedResponse = await hydrate([...presentationAssetIds].reverse());
   assert.equal(hydratedResponse.status, 200);
-  const hydrated = await hydratedResponse.json();
+  const hydratedResponseBytes = Buffer.from(
+    await hydratedResponse.arrayBuffer(),
+  );
+  assert.ok(
+    hydratedResponseBytes.byteLength < 28 * 1024 * 1024,
+  );
+  const hydrated = JSON.parse(hydratedResponseBytes.toString("utf8"));
   assert.equal(packageVerificationCount, 1);
+  assert.equal(selectedReadCount, presentationAssetIds.length);
+  assert.equal(
+    maxActiveSelectedReads,
+    AI_GRADER_MATHEMATICAL_SELECTED_ASSET_READ_CONCURRENCY,
+  );
   assert.equal(queueWriteCount, 0);
   assert.deepEqual(
     hydrated.result.assets.map((asset) => asset.assetId),
-    ["front/center.png", "back/center.png"],
+    presentationAssetIds,
   );
-  assert.deepEqual(
-    Buffer.from(hydrated.result.assets[0].bodyBase64, "base64"),
-    selectedBytes,
+  assert.equal(
+    hydrated.result.assets.reduce(
+      (sum, asset) =>
+        sum + Buffer.from(asset.bodyBase64, "base64").byteLength,
+      0,
+    ),
+    selectedBytes.byteLength * presentationAssetIds.length,
   );
   assert.equal(
     JSON.stringify(hydrated).includes("front/corners/top_left/confidence.png"),
@@ -278,6 +468,10 @@ test("real Mathematical hydration route verifies one immutable package, returns 
     false,
   );
   assert.deepEqual(
+    Buffer.from(hydrated.result.assets[0].bodyBase64, "base64"),
+    selectedBytes,
+  );
+  assert.deepEqual(
     fs.readFileSync(queuedManifest.outputs.manifestPath),
     manifestBytesBefore,
   );
@@ -286,6 +480,9 @@ test("real Mathematical hydration route verifies one immutable package, returns 
     queueBytesBefore,
   );
 
+  packageVerificationCount = 0;
+  selectedReadCount = 0;
+  maxActiveSelectedReads = 0;
   const selectedPackaged = reportPackage.assetManifest.assets.find(
     (asset) => asset.id === "front/center.png",
   );
@@ -293,18 +490,7 @@ test("real Mathematical hydration route verifies one immutable package, returns 
   fs.rmSync(
     path.join(packageDir, ...selectedPackaged.relativePath.split("/")),
   );
-  const missingResponse = await fetch(
-    `${baseUrl}/reports/${item.reportId}/mathematical-hydration`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        queueItemId: item.queueItemId,
-        gradingSessionId: item.sessionId,
-        assetIds: ["front/center.png"],
-      }),
-    },
-  );
+  const missingResponse = await hydrate(presentationAssetIds);
   assert.equal(missingResponse.status, 400);
   const missingPayload = await missingResponse.text();
   assert.match(
@@ -314,6 +500,8 @@ test("real Mathematical hydration route verifies one immutable package, returns 
   assert.equal(missingPayload.includes(fixtureRoot), false);
   assert.equal(missingPayload.includes(selectedPackaged.relativePath), false);
   assert.equal(missingPayload.includes(config.stationToken), false);
+  assert.equal(packageVerificationCount, 1);
+  assert.equal(selectedReadCount, 0);
 });
 
 function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {

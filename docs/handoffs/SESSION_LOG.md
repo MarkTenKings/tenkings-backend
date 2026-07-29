@@ -29173,3 +29173,19 @@ By enabling Rip It Live, I confirm:
   - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
   - `git diff --check`, with Windows line-ending notices only.
 - No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Server-authoritative exact presentation graph correction
+
+- This bounded correction starts from exact rejected candidate `4d26a0fa88352dd6a1ef1c7ce24bc79821ec350c`; its accepted viewer, release-envelope, linkage, browser lifecycle, immutable package, and publication behavior remain unchanged.
+- The helper now derives the advanced presentation evidence graph from the exact durable strict V0.3 active bundle. A hydration request must contain every and only those graph IDs; an omitted required ID or any extra detector, confidence-mask, duplicate replay, or unused directional asset is rejected before package verification or selected-file access. The verified package body must then remain canonically identical to the durable active bundle.
+- Before package verification or response allocation, the helper pre-sums the graph's declared raw bytes and exact projected base64/JSON body size. Explicit ceilings are `20 MiB` raw and `28 MiB` encoded, which contain the measured `15.869 MiB` preserved Production graph without retaining the prior hundreds-of-MiB allowance. The browser raw-byte guard now matches the `20 MiB` server boundary.
+- Selected immutable files are read by a drained worker group capped at four concurrent operations. Each file retains exact package-root confinement plus manifest byte-size and SHA-256 verification, and stable route failures still expose no local path, filename, or token.
+- The real HTTP route regression uses the canonical schema-valid strict fixture with a 60-asset browser/server-identical presentation graph totaling more than `15.8 MiB`, without owner data. It proves exact graph success, disallowed and omitted rejection before reads, declared oversize rejection before package verification/reads/encoding, one successful package verification, maximum four selected reads, exact response IDs/bytes, zero manifest/queue writes, and path/token-free failures.
+- Focused validation passed unchanged:
+  - strict report presentation, lifecycle, transport, release, station, and linkage suites `118/118`;
+  - publication, raster, and legacy compatibility suites `15/15`;
+  - complete helper station bridge suite `51/51`;
+  - Mathematical package/station cases `14/14` (`20` assertions);
+  - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
