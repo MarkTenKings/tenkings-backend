@@ -712,6 +712,23 @@ export type MathematicalGradingV1ThresholdManifest =
   typeof MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST;
 
 /**
+ * Active overall-grade policy. The calibration threshold manifest remains
+ * immutable because historical measurements and signed calibration authority
+ * bind its exact id/hash; its former cap metadata is historical-only and is
+ * not an alternate grading path.
+ */
+export const MATHEMATICAL_OVERALL_GRADE_V1_POLICY = deepFreeze({
+  weights: {
+    centering: 0.3,
+    corners: 0.25,
+    edges: 0.25,
+    surface: 0.2,
+  },
+  formula:
+    "0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface",
+});
+
+/**
  * Mathematical Calibration V1.1 is an acquisition/validation contract.  The
  * V1.0.1 grading authority above remains immutable and continues to serve all
  * production grading consumers.  V1.1 deliberately reuses every acceptance
@@ -1348,53 +1365,27 @@ export type MathematicalElementScoresV1 = Readonly<Record<MathematicalGradingEle
 export type MathematicalOverallGradeV1 = Readonly<{
   overall: number;
   weightedGrade: number;
-  weakestElement: MathematicalGradingElementV1;
-  weakestScore: number;
-  weakestElementCap: number;
-  applicableSevereDefectCap?: number;
   labelGrade: number;
-  weights: typeof MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights;
+  weights: typeof MATHEMATICAL_OVERALL_GRADE_V1_POLICY.weights;
   formula: string;
 }>;
 
 export function calculateOverallGradeV1(
   elements: MathematicalElementScoresV1,
-  applicableSevereDefectCaps: readonly number[] = [],
 ): MathematicalOverallGradeV1 {
   for (const element of MATHEMATICAL_GRADING_ELEMENTS_V1) mathematicalScoreV1Schema.parse(elements[element]);
-  applicableSevereDefectCaps.forEach((cap) => mathematicalScoreV1Schema.parse(cap));
-  const weights = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights;
+  const weights = MATHEMATICAL_OVERALL_GRADE_V1_POLICY.weights;
   const weightedGradeRaw = MATHEMATICAL_GRADING_ELEMENTS_V1.reduce(
     (sum, element) => sum + elements[element] * weights[element],
     0,
   );
-  const weakestElement = MATHEMATICAL_GRADING_ELEMENTS_V1.reduce((weakest, element) =>
-    elements[element] < elements[weakest] ? element : weakest,
-  );
-  const weakestScore = elements[weakestElement];
-  const weakestElementCap = Math.min(
-    MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.maximum,
-    weakestScore + MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weakestElementAllowance,
-  );
-  const applicableSevereDefectCap = applicableSevereDefectCaps.length
-    ? Math.min(...applicableSevereDefectCaps)
-    : undefined;
-  const overallRaw = Math.min(
-    weightedGradeRaw,
-    weakestElementCap,
-    applicableSevereDefectCap ?? MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.maximum,
-  );
-  const overall = roundMathematicalScoreV1(overallRaw);
+  const overall = roundMathematicalScoreV1(weightedGradeRaw);
   return {
     overall,
-    weightedGrade: roundMathematicalScoreV1(weightedGradeRaw),
-    weakestElement,
-    weakestScore,
-    weakestElementCap: roundMathematicalScoreV1(weakestElementCap),
-    ...(applicableSevereDefectCap === undefined ? {} : { applicableSevereDefectCap }),
+    weightedGrade: overall,
     labelGrade: roundMathematicalLabelGradeV1(overall),
     weights,
-    formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula,
+    formula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
   };
 }
 
@@ -1913,8 +1904,11 @@ export const mathematicalFindingV1Schema = z
     const applicableSevereCap = finding.evidenceQuality === "insufficient"
       ? undefined
       : calculateApplicableSevereDefectCapV1(finding.category, finding.measurements);
-    if (finding.severeDefectCap !== applicableSevereCap) {
-      context.addIssue({ code: "custom", path: ["severeDefectCap"], message: "must equal the applicable manifest severe-defect cap" });
+    if (
+      finding.severeDefectCap !== undefined &&
+      finding.severeDefectCap !== applicableSevereCap
+    ) {
+      context.addIssue({ code: "custom", path: ["severeDefectCap"], message: "legacy cap metadata must equal the historical manifest value" });
     }
     if (finding.evidenceQuality === "insufficient" && finding.deduction !== 0) {
       context.addIssue({ code: "custom", path: ["deduction"], message: "insufficient evidence must not deduct as physical damage" });

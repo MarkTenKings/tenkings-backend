@@ -502,7 +502,7 @@ test("clean calibrated front/back evidence produces four exact 10.00 elements an
   assert.match(result.whyNot10Summary, /No card-condition defect produced a positive deduction/);
 });
 
-test("overall uses exact weights, weakest plus 0.50, and the lowest severe-defect cap", () => {
+test("overall uses only the exact four-element weights", () => {
   const calibration = buildCalibration();
   const crease = surfaceFinding({
     side: "front",
@@ -518,19 +518,18 @@ test("overall uses exact weights, weakest plus 0.50, and the lowest severe-defec
   assert.equal(result.status, "final_mathematical_grade_v1");
   assert.equal(result.elements.surface.score, 4.86);
   assert.equal(result.weightedGrade, 8.97);
-  assert.equal(result.weakestElement, "surface");
-  assert.equal(result.weakestElementCap, 5.36);
-  assert.equal(result.applicableSevereDefectCap, 5);
-  assert.equal(result.overall, 5);
-  assert.equal(result.overallText, "5.00");
-  assert.equal(result.labelGradeText, "5.0");
+  assert.equal(result.overall, 8.97);
+  assert.equal(result.overallText, "8.97");
+  assert.equal(result.labelGradeText, "9.0");
+  assert.equal(Object.hasOwn(result, "weakestElementCap"), false);
+  assert.equal(Object.hasOwn(result, "applicableSevereDefectCap"), false);
   assert.equal(
     result.weightedFormula,
     "0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface",
   );
   assert.equal(
     result.formula,
-    "min(weightedGrade, weakestElement + 0.50, applicableSevereDefectCaps)",
+    "0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface",
   );
   assert.equal(result.deductionLedger.entries[0].deduction, 5.14);
   assert.equal(result.whyNot10[0].findingIds[0], crease.findingId);
@@ -684,7 +683,7 @@ for (const [name, mutate] of [
   });
 }
 
-test("centering deduction remains physical-design evidence and activates weakest-element cap", () => {
+test("centering deduction remains physical-design evidence and feeds the weighted overall", () => {
   const result = buildFixedRigMathematicalGradeV1(composedInput({
     frontCentering: { left: 100, right: 800, top: 100, bottom: 1300 },
   }));
@@ -692,9 +691,9 @@ test("centering deduction remains physical-design evidence and activates weakest
   assert.equal(result.elements.centering.frontScore, 3.86);
   assert.equal(result.elements.centering.backScore, 10);
   assert.equal(result.elements.centering.score, 4.78);
-  assert.equal(result.weakestElement, "centering");
-  assert.equal(result.weakestElementCap, 5.28);
-  assert.equal(result.overall, 5.28);
+  assert.equal(result.weightedGrade, 8.43);
+  assert.equal(result.overall, 8.43);
+  assert.equal(result.labelGrade, 8.4);
   assert.equal(result.deductionLedger.entries.length, 0);
   assert.equal(result.whyNot10[0].element, "centering");
   assert.match(result.whyNot10[0].explanation, /balance 50\.08%.*Grade-10 tolerance 0\.05 mm/);
@@ -744,7 +743,7 @@ function resolvedElement(element, score, publicExplanation) {
   };
 }
 
-test("resolved element scores use unchanged overall composer and preserve owner explanations", () => {
+test("resolved element scores use weighted-only overall composer and preserve owner explanations", () => {
   const input = composedInput();
   input.operatorResolutions = {
     centering: resolvedElement(
@@ -778,8 +777,7 @@ test("resolved element scores use unchanged overall composer and preserve owner 
     { centering: 10, corners: 9.4, edges: 9.15, surface: 8.75 },
   );
   assert.equal(result.weightedGrade, 9.39);
-  assert.equal(result.weakestElementCap, 9.25);
-  assert.equal(result.overall, 9.25);
+  assert.equal(result.overall, 9.39);
   assert.equal(
     result.elements.edges.explanation,
     "Edges show light wear along the lower border.",
@@ -791,7 +789,7 @@ test("resolved element scores use unchanged overall composer and preserve owner 
   assert.doesNotMatch(JSON.stringify(result), /Private workflow rationale/);
 });
 
-test("resolution never removes immutable severe caps or original physical findings", () => {
+test("resolution retains original physical findings without an overall severe-defect cap", () => {
   const calibration = buildCalibration();
   const crease = surfaceFinding({
     side: "front",
@@ -814,12 +812,13 @@ test("resolution never removes immutable severe caps or original physical findin
   const result = buildFixedRigMathematicalGradeV1(input);
   assert.equal(result.status, "final_mathematical_grade_v1");
   assert.equal(result.elements.surface.score, 10);
-  assert.equal(result.applicableSevereDefectCap, 5);
-  assert.equal(result.overall, 5);
+  assert.equal(Object.hasOwn(result, "applicableSevereDefectCap"), false);
+  assert.equal(result.overall, 10);
   assert.equal(result.findings.length, 1);
   assert.equal(result.findings[0].findingId, crease.findingId);
   assert.equal(
-    result.whyNot10.find((entry) => entry.element === "surface").explanation,
+    result.elements.surface.explanation,
     "Surface presentation is strong, with the measured crease retained in the record.",
   );
+  assert.equal(result.whyNot10.length, 0);
 });

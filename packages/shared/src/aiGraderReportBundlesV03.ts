@@ -11,6 +11,7 @@ import {
 import {
   MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
   MATHEMATICAL_GRADING_ELEMENTS_V1,
+  MATHEMATICAL_OVERALL_GRADE_V1_POLICY,
   MATHEMATICAL_GRADING_V1_MAXIMUM_SCORE_DEDUCTION,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
@@ -29,6 +30,7 @@ import {
   mathematicalLabelGradeV1Schema,
   mathematicalMeasurementUncertaintyComponentsV1Schema,
   mathematicalScoreV1Schema,
+  roundMathematicalLabelGradeV1,
   roundMathematicalScoreV1,
   scoreCenteringRatioV1,
 } from "./aiGraderMathematicalCalibrationV1";
@@ -188,9 +190,11 @@ const finalGradeSchema = z.strictObject({
   overall: mathematicalScoreV1Schema,
   labelGrade: mathematicalLabelGradeV1Schema,
   weightedGrade: mathematicalScoreV1Schema,
-  weakestElement: z.enum(MATHEMATICAL_GRADING_ELEMENTS_V1),
-  weakestScore: mathematicalScoreV1Schema,
-  weakestElementCap: mathematicalScoreV1Schema,
+  // Historical immutable V0.3 reports may retain these fields. New reports
+  // omit them and use the weighted-only policy.
+  weakestElement: z.enum(MATHEMATICAL_GRADING_ELEMENTS_V1).optional(),
+  weakestScore: mathematicalScoreV1Schema.optional(),
+  weakestElementCap: mathematicalScoreV1Schema.optional(),
   applicableSevereDefectCap: mathematicalScoreV1Schema.optional(),
   elements: z.strictObject({
     centering: elementScoreSchema,
@@ -1359,9 +1363,8 @@ export const aiGraderReportBundleV03Schema = z
     }
     if (
       JSON.stringify(finalGrade.weights) !==
-        JSON.stringify(MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights) ||
-      finalGrade.weightedFormula !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula ||
-      finalGrade.formula !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula ||
+        JSON.stringify(MATHEMATICAL_OVERALL_GRADE_V1_POLICY.weights) ||
+      finalGrade.weightedFormula !== MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula ||
       bundle.centeringEvidence.formula !== MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.frontBackFusion.formula ||
       JSON.stringify(bundle.centeringEvidence.balanceCurve) !==
         JSON.stringify(MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.balanceCurve)
@@ -1390,18 +1393,96 @@ export const aiGraderReportBundleV03Schema = z
     const severeCaps = bundle.defectFindings
       .map((finding) => finding.severeDefectCap)
       .filter((cap): cap is number => cap !== undefined);
-    const overall = calculateOverallGradeV1(elementScores, severeCaps);
-    for (const key of ["overall", "weightedGrade", "weakestElement", "weakestScore", "weakestElementCap"] as const) {
-      if (finalGrade[key] !== overall[key]) {
-        context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", key], message: "must match the exact calibrated V1 formula" });
+    const hasHistoricalCapPolicy = [
+      finalGrade.weakestElement,
+      finalGrade.weakestScore,
+      finalGrade.weakestElementCap,
+      finalGrade.applicableSevereDefectCap,
+    ].some((value) => value !== undefined);
+    let expectedOverall: number;
+    let expectedLabelGrade: number;
+    if (hasHistoricalCapPolicy) {
+      // Reader compatibility only: validates immutable reports emitted before
+      // the weighted-only policy. This branch is never called by a grade
+      // composer and cannot control a new or recomputed result.
+      const weakestElement = finalGrade.weakestElement;
+      const weakestScore = finalGrade.weakestScore;
+      const weakestElementCap = finalGrade.weakestElementCap;
+      const expectedWeakestElement = MATHEMATICAL_GRADING_ELEMENTS_V1.reduce(
+        (weakest, element) =>
+          elementScores[element] < elementScores[weakest] ? element : weakest,
+      );
+      const expectedWeakestScore = elementScores[expectedWeakestElement];
+      const expectedWeakestElementCap = roundMathematicalScoreV1(Math.min(
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.maximum,
+        expectedWeakestScore +
+          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weakestElementAllowance,
+      ));
+      const expectedSevereCap = severeCaps.length
+        ? Math.min(...severeCaps)
+        : undefined;
+      if (
+        weakestElement === undefined ||
+        weakestScore === undefined ||
+        weakestElementCap === undefined ||
+        weakestElement !== expectedWeakestElement ||
+        weakestScore !== expectedWeakestScore ||
+        weakestElementCap !== expectedWeakestElementCap ||
+        finalGrade.applicableSevereDefectCap !== expectedSevereCap ||
+        finalGrade.formula !==
+          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["productionRelease", "finalGrade"],
+          message: "historical cap metadata must remain internally exact",
+        });
+      }
+      const weighted = roundMathematicalScoreV1(
+        MATHEMATICAL_GRADING_ELEMENTS_V1.reduce(
+          (sum, element) =>
+            sum +
+            elementScores[element] *
+              MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights[element],
+          0,
+        ),
+      );
+      expectedOverall = roundMathematicalScoreV1(Math.min(
+        weighted,
+        expectedWeakestElementCap,
+        expectedSevereCap ??
+          MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.scoreContract.maximum,
+      ));
+      expectedLabelGrade = roundMathematicalLabelGradeV1(expectedOverall);
+      if (finalGrade.weightedGrade !== weighted) {
+        context.addIssue({
+          code: "custom",
+          path: ["productionRelease", "finalGrade", "weightedGrade"],
+          message: "historical weighted grade must remain exact",
+        });
+      }
+    } else {
+      const overall = calculateOverallGradeV1(elementScores);
+      expectedOverall = overall.overall;
+      expectedLabelGrade = overall.labelGrade;
+      if (
+        finalGrade.formula !== MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula ||
+        finalGrade.overall !== overall.overall ||
+        finalGrade.weightedGrade !== overall.weightedGrade
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["productionRelease", "finalGrade"],
+          message: "must match the exact weighted-only overall formula",
+        });
       }
     }
-    if (finalGrade.labelGrade !== overall.labelGrade ||
-        bundle.productionRelease.label.labelGradeText !== overall.labelGrade.toFixed(1)) {
+    if (
+      finalGrade.overall !== expectedOverall ||
+      finalGrade.labelGrade !== expectedLabelGrade ||
+      bundle.productionRelease.label.labelGradeText !== expectedLabelGrade.toFixed(1)
+    ) {
       context.addIssue({ code: "custom", path: ["productionRelease", "label", "labelGradeText"], message: "must match the one-decimal V1 label grade" });
-    }
-    if (finalGrade.applicableSevereDefectCap !== overall.applicableSevereDefectCap) {
-      context.addIssue({ code: "custom", path: ["productionRelease", "finalGrade", "applicableSevereDefectCap"], message: "must match the lowest applicable severe-defect cap" });
     }
 
     const cornerLocations = finalGrade.elements.corners.locationScores;

@@ -49,7 +49,6 @@ function exactState(overrides: Partial<AiGraderReportEditorState> = {}): AiGrade
     sourceBundleSha256: "b".repeat(64),
     baseScores: { centering: 10 },
     baseContent: { reportSummary: "Machine evidence was incomplete." },
-    severeDefectCapProvenance: "none_source_report_has_no_v1_cap",
     machineFailure: { failed: true, codes: ["MACHINE_SUBGRADES_INCOMPLETE"] },
     editorialRevision: null,
     ...overrides,

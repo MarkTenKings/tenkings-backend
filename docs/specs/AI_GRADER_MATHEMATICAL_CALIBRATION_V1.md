@@ -119,7 +119,7 @@ Supported surface classes are scratch, scuff, dent, crease, stain, print defect,
 surfaceScore = clamp(10 - sum(unique physical-finding deductions), 1, 10)
 ```
 
-Severe crease, dent, alteration, and material-loss caps are explicit members of the threshold manifest.
+Physical defects affect only their scoped corner, edge, or surface subgrade through the unchanged measurement-derived deductions. Historical threshold artifacts may retain former cap metadata for immutable-report validation, but it is not an active overall-grade rule.
 
 ## Overall V1
 
@@ -129,14 +129,10 @@ weightedGrade = 0.30 * Centering
               + 0.25 * Edges
               + 0.20 * Surface
 
-overallGrade = clamp(
-  min(weightedGrade, weakestElement + 0.50, applicableSevereDefectCaps),
-  1.00,
-  10.00
-)
+overallGrade = weightedGrade
 ```
 
-Internal and report scores round to two decimals with the manifest rounding policy. Label V1 renders the overall grade to one decimal. A finding is deducted once and only once.
+Internal and report scores round to two decimals with the existing rounding policy. Label V1 renders the overall grade to one decimal. A finding is deducted once and only once through its scoped subgrade; no weakest-element or severe-defect cap overrides the weighted overall result.
 
 ## Immutable calibration authority
 

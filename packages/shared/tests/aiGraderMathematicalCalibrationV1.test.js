@@ -391,17 +391,27 @@ test("corner and edge scores use the exact required worst-plus-average formulas"
   assert.throws(() => aggregateEdgeScoreV1([0, 0, 0, 0, 0, 0, 0, -1]), /nonnegative/);
 });
 
-test("overall V1 uses exact weights, weakest-plus-0.50, and explicit severe caps", () => {
+test("overall V1 uses only the exact weighted calculation", () => {
   const result = calculateOverallGradeV1({ centering: 10, corners: 9, edges: 8, surface: 9 });
   assert.equal(result.weightedGrade, 9.05);
-  assert.equal(result.weakestElement, "edges");
-  assert.equal(result.weakestElementCap, 8.5);
-  assert.equal(result.overall, 8.5);
-  assert.equal(result.labelGrade, 8.5);
+  assert.equal(result.overall, 9.05);
+  assert.equal(result.labelGrade, 9.1);
+  assert.equal(
+    result.formula,
+    "0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface",
+  );
+  assert.equal(Object.hasOwn(result, "weakestElementCap"), false);
+  assert.equal(Object.hasOwn(result, "applicableSevereDefectCap"), false);
 
-  const severe = calculateOverallGradeV1({ centering: 10, corners: 9, edges: 8, surface: 9 }, [7, 6]);
-  assert.equal(severe.applicableSevereDefectCap, 6);
-  assert.equal(severe.overall, 6);
+  const exactExample = calculateOverallGradeV1({
+    centering: 4.12,
+    corners: 10,
+    edges: 10,
+    surface: 10,
+  });
+  assert.equal(exactExample.weightedGrade, 8.24);
+  assert.equal(exactExample.overall, 8.24);
+  assert.equal(exactExample.labelGrade, 8.2);
   assert.throws(
     () => calculateOverallGradeV1({ centering: 10, corners: 9, edges: 0, surface: 9 }),
     /greater than or equal to 1|Too small/,
