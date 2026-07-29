@@ -739,6 +739,111 @@ test("removed browser safety, Single finalization, and separate queue mutation a
   assert.equal(status.liveLighting.safety.watchdogOwnedByBridge, true);
 });
 
+function completedReportHydrationQueue(denseMeasurementCount: number) {
+  const queueItemId = "session-hydration-rapid-card";
+  const gradingSessionId = "session-hydration";
+  const reportId = "report-hydration";
+  return {
+    activeQueueItemId: queueItemId,
+    activeReview: {
+      queueItemId,
+      gradingSessionId,
+      reportId,
+      manifest: {
+        latestReport: { reportId, exists: true },
+        reportBundle: {
+          schemaVersion: AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+          reportId,
+          denseMeasurements: Array.from(
+            { length: denseMeasurementCount },
+            (_, index) => index,
+          ),
+        },
+        productionRelease: {
+          reportId,
+          gradingSessionId,
+          finalGradeComputed: true,
+          label: { status: "label_data_ready" },
+        },
+      },
+    },
+    items: [{
+      queueItemId,
+      sessionId: gradingSessionId,
+      reportId,
+      state: "report_ready_needs_confirm",
+      queuedAt: "2026-07-28T12:00:00.000Z",
+      updatedAt: "2026-07-28T12:00:02.000Z",
+      history: [],
+      mathematicalV1: { status: "completed" },
+      ocr: {
+        state: "succeeded",
+        updatedAt: "2026-07-28T12:00:02.000Z",
+        attemptCount: 1,
+        attemptOwnerId: OCR_ATTEMPT_OWNER_ID,
+        eligibleAt: "2026-07-28T12:00:00.000Z",
+        startedAt: "2026-07-28T12:00:01.000Z",
+        completedAt: "2026-07-28T12:00:02.000Z",
+        images: ["front", "back"].map((side) => ({
+          side,
+          artifactRole: "normalized_card",
+          fileName: `${side}-normalized-card.png`,
+          mimeType: "image/png",
+          checksumSha256: side === "front" ? "a".repeat(64) : "b".repeat(64),
+          byteSize: 1024,
+          widthPx: 1200,
+          heightPx: 1680,
+        })),
+        result: {
+          queueItemId,
+          gradingSessionId,
+          reportId,
+          status: "prefill_ready",
+        },
+      },
+    }],
+  };
+}
+
+test("Production-sized completed V0.3 report bundle remains hydrated for exact Approve & Publish identity", () => {
+  const queue = sanitizeAiGraderRapidCaptureQueue(
+    completedReportHydrationQueue(84_500),
+  );
+  const hydratedBundle = queue.activeReview?.manifest.reportBundle as
+    | (Record<string, unknown> & { denseMeasurements?: number[] })
+    | undefined;
+
+  assert.equal(queue.activeQueueItemId, "session-hydration-rapid-card");
+  assert.equal(queue.activeReview?.queueItemId, "session-hydration-rapid-card");
+  assert.equal(queue.activeReview?.gradingSessionId, "session-hydration");
+  assert.equal(queue.activeReview?.reportId, "report-hydration");
+  assert.equal(
+    hydratedBundle?.schemaVersion,
+    AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+  );
+  assert.equal(hydratedBundle?.reportId, "report-hydration");
+  assert.equal(hydratedBundle?.denseMeasurements?.length, 84_500);
+  assert.equal(
+    queue.activeReview?.manifest.productionRelease?.gradingSessionId,
+    "session-hydration",
+  );
+});
+
+test("completed report bundle above the bounded browser node limit is rejected", () => {
+  const queue = sanitizeAiGraderRapidCaptureQueue(
+    completedReportHydrationQueue(100_000),
+  );
+
+  assert.equal(queue.activeReview?.queueItemId, "session-hydration-rapid-card");
+  assert.equal(queue.activeReview?.gradingSessionId, "session-hydration");
+  assert.equal(queue.activeReview?.reportId, "report-hydration");
+  assert.equal(queue.activeReview?.manifest.reportBundle, undefined);
+  assert.equal(
+    queue.activeReview?.manifest.productionRelease?.reportId,
+    "report-hydration",
+  );
+});
+
 test("Rapid Capture queue sanitization preserves bounded report state and strips local paths", () => {
   const queue = sanitizeAiGraderRapidCaptureQueue({
     enabled: true,

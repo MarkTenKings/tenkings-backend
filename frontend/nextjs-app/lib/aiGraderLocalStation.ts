@@ -1800,7 +1800,7 @@ function browserSafeStationRecord(value: unknown): Record<string, unknown> | und
   let visited = 0;
   const clone = (input: unknown, depth: number): unknown => {
     visited += 1;
-    if (visited > 20_000 || depth > 40) throw new Error("Station review payload is too deeply nested.");
+    if (visited > 100_000 || depth > 40) throw new Error("Station review payload is too deeply nested.");
     if (input === null || typeof input === "boolean") return input;
     if (typeof input === "number") return Number.isFinite(input) ? input : undefined;
     if (typeof input === "string") {
