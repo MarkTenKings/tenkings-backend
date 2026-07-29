@@ -5,7 +5,6 @@ import {
   aiGraderReportBaseScoresFromBundle,
   aiGraderReportEditorialGradeStory,
   aiGraderReportEditorialRevisionFromGradeStory,
-  aiGraderReportSevereDefectCapFromBundle,
   buildAiGraderReportEditorialRevisionV1,
   type AiGraderReportEditorialContent,
   type AiGraderReportEditorialRevisionV1,
@@ -62,10 +61,6 @@ export type AiGraderReportEditorState = {
   sourceBundleSha256: string;
   baseScores: ReturnType<typeof aiGraderReportBaseScoresFromBundle>;
   baseContent: AiGraderReportEditorialContent;
-  applicableSevereDefectCap?: number;
-  severeDefectCapProvenance:
-    | "immutable_mathematical_v1_finding_ledger"
-    | "none_source_report_has_no_v1_cap";
   machineFailure: {
     failed: boolean;
     codes: string[];
@@ -827,9 +822,6 @@ function projectedState(
 ): AiGraderReportEditorState {
   const baseScores = aiGraderReportBaseScoresFromBundle(source.rawBundle);
   const machineFailure = machineFailureFromBundle(source.rawBundle, baseScores);
-  const applicableSevereDefectCap = aiGraderReportSevereDefectCapFromBundle(
-    source.rawBundle,
-  );
   return {
     reportId: row.reportId,
     visibilityStatus: exactVisibility(row.visibilityStatus),
@@ -843,12 +835,6 @@ function projectedState(
     sourceBundleSha256: source.sourceBundleSha256,
     baseScores,
     baseContent: baseContentFromBundle(source.rawBundle),
-    ...(applicableSevereDefectCap === undefined
-      ? {}
-      : { applicableSevereDefectCap }),
-    severeDefectCapProvenance: applicableSevereDefectCap === undefined
-      ? "none_source_report_has_no_v1_cap"
-      : "immutable_mathematical_v1_finding_ledger",
     machineFailure,
     editorialRevision: revision,
   };
@@ -1048,7 +1034,6 @@ export function createAiGraderReportEditorService(input: {
             editedAt: new Date().toISOString(),
             scores: saveInput.scores,
             content: saveInput.content,
-            applicableSevereDefectCap: aiGraderReportSevereDefectCapFromBundle(source.rawBundle),
             adjudicatedMachineFailures: machineFailureFromBundle(
               source.rawBundle,
               aiGraderReportBaseScoresFromBundle(source.rawBundle),

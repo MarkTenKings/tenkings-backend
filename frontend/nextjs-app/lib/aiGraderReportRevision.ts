@@ -1,5 +1,6 @@
 import {
   MATHEMATICAL_GRADING_ELEMENTS_V1,
+  MATHEMATICAL_OVERALL_GRADE_V1_POLICY,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   calculateOverallGradeV1,
   mathematicalScoreV1Schema,
@@ -48,13 +49,6 @@ export type AiGraderReportEditorialRevisionV1 = {
     overall: number;
     labelGrade: number;
     weightedGrade: number;
-    weakestElement: AiGraderReportEditableElement;
-    weakestScore: number;
-    weakestElementCap: number;
-    applicableSevereDefectCap?: number;
-    severeDefectCapProvenance:
-      | "immutable_mathematical_v1_finding_ledger"
-      | "none_source_report_has_no_v1_cap";
     weights: Record<AiGraderReportEditableElement, number>;
     weightedFormula: string;
     finalFormula: string;
@@ -146,7 +140,6 @@ export function buildAiGraderReportEditorialRevisionV1(input: {
   editedAt: string;
   scores: unknown;
   content?: unknown;
-  applicableSevereDefectCap?: number;
   adjudicatedMachineFailures?: unknown;
 }): AiGraderReportEditorialRevisionV1 {
   if (!safeId(input.reportId)) throw new Error("reportId is invalid.");
@@ -163,10 +156,7 @@ export function buildAiGraderReportEditorialRevisionV1(input: {
     throw new Error("editedAt must be an ISO timestamp.");
   }
   const scores = normalizeAiGraderReportEditorialScores(input.scores);
-  const severeCaps = input.applicableSevereDefectCap === undefined
-    ? []
-    : [mathematicalScoreV1Schema.parse(input.applicableSevereDefectCap)];
-  const calculation = calculateOverallGradeV1(scores, severeCaps);
+  const calculation = calculateOverallGradeV1(scores);
   const adjudicatedMachineFailures = input.adjudicatedMachineFailures === undefined
     ? []
     : Array.isArray(input.adjudicatedMachineFailures) &&
@@ -192,19 +182,8 @@ export function buildAiGraderReportEditorialRevisionV1(input: {
       overall: calculation.overall,
       labelGrade: calculation.labelGrade,
       weightedGrade: calculation.weightedGrade,
-      weakestElement: calculation.weakestElement,
-      weakestScore: calculation.weakestScore,
-      weakestElementCap: calculation.weakestElementCap,
-      ...(calculation.applicableSevereDefectCap === undefined
-        ? {}
-        : { applicableSevereDefectCap: calculation.applicableSevereDefectCap }),
-      severeDefectCapProvenance:
-        calculation.applicableSevereDefectCap === undefined
-          ? "none_source_report_has_no_v1_cap"
-          : "immutable_mathematical_v1_finding_ledger",
       weights: { ...calculation.weights },
-      weightedFormula:
-        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula,
+      weightedFormula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
       finalFormula: calculation.formula,
     },
     content: normalizeAiGraderReportEditorialContent(input.content),
@@ -242,12 +221,31 @@ export function parseAiGraderReportEditorialRevisionV1(
       scores: value.scores,
       content: value.content,
       adjudicatedMachineFailures: value.adjudicatedMachineFailures,
-      applicableSevereDefectCap: isRecord(value.calculation) &&
-        typeof value.calculation.applicableSevereDefectCap === "number"
-        ? value.calculation.applicableSevereDefectCap
-        : undefined,
     });
-    return JSON.stringify(parsed.calculation) === JSON.stringify(value.calculation)
+    if (JSON.stringify(parsed.calculation) === JSON.stringify(value.calculation)) {
+      return parsed;
+    }
+    const legacyCalculation = isRecord(value.calculation)
+      ? value.calculation
+      : undefined;
+    if (
+      !legacyCalculation ||
+      legacyCalculation.weightedGrade !== parsed.calculation.weightedGrade ||
+      JSON.stringify(legacyCalculation.weights) !==
+        JSON.stringify(parsed.calculation.weights) ||
+      legacyCalculation.weightedFormula !==
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula ||
+      legacyCalculation.finalFormula !==
+        MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula ||
+      typeof legacyCalculation.weakestElementCap !== "number"
+    ) {
+      return null;
+    }
+    const normalizedLegacy = {
+      ...value,
+      calculation: parsed.calculation,
+    };
+    return JSON.stringify(parsed) === JSON.stringify(normalizedLegacy)
       ? parsed
       : null;
   } catch {
@@ -307,15 +305,4 @@ export function aiGraderReportBaseScoresFromBundle(
       return parsed.success ? [[element, parsed.data] as const] : [];
     }),
   );
-}
-
-export function aiGraderReportSevereDefectCapFromBundle(bundle: unknown) {
-  if (!isRecord(bundle) || !isRecord(bundle.productionRelease)) return undefined;
-  const finalGrade = isRecord(bundle.productionRelease.finalGrade)
-    ? bundle.productionRelease.finalGrade
-    : {};
-  const parsed = mathematicalScoreV1Schema.safeParse(
-    finalGrade.applicableSevereDefectCap,
-  );
-  return parsed.success ? parsed.data : undefined;
 }

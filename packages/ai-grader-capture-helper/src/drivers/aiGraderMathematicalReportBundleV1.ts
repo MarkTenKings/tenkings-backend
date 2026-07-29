@@ -5,6 +5,7 @@ import {
   AI_GRADER_REPORT_BUNDLE_V03_VERSION,
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
   MATHEMATICAL_DESIGN_REFERENCE_V1_SCHEMA_VERSION,
+  MATHEMATICAL_OVERALL_GRADE_V1_POLICY,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
@@ -1071,9 +1072,6 @@ async function buildPublishedFindings(
       measurements: finding.measurements,
       deductionBasisMeasurementId: finding.deductionBasisMeasurementId,
       deduction: finding.deduction,
-      ...(finding.severeDefectCap === undefined
-        ? {}
-        : { severeDefectCap: finding.severeDefectCap }),
       secondaryEvidenceCategories: uniqueCaseInsensitive(presentation.secondaryEvidenceCategories),
       explanation: finding.explanation,
       review: presentation.review,
@@ -1606,12 +1604,6 @@ export async function buildAiGraderMathematicalReportBundleV1(
         overall: input.grade.overall,
         labelGrade: input.grade.labelGrade,
         weightedGrade: input.grade.weightedGrade,
-        weakestElement: input.grade.weakestElement,
-        weakestScore: input.grade.weakestScore,
-        weakestElementCap: input.grade.weakestElementCap,
-        ...(input.grade.applicableSevereDefectCap === undefined
-          ? {}
-          : { applicableSevereDefectCap: input.grade.applicableSevereDefectCap }),
         elements: {
           centering: reportElement(
             "centering",
@@ -1639,8 +1631,8 @@ export async function buildAiGraderMathematicalReportBundleV1(
           ),
         },
         confidence: overallConfidence,
-        weights: { ...MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weights },
-        weightedFormula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula,
+        weights: { ...MATHEMATICAL_OVERALL_GRADE_V1_POLICY.weights },
+        weightedFormula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
         formula: input.grade.formula,
         whyNot10,
       },

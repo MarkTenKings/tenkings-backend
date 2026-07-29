@@ -21,14 +21,11 @@ test("operator review requires all four sub-grades and calculates the overall se
   });
 
   assert.equal(revision.calculation.weightedGrade, 9.63);
-  assert.equal(revision.calculation.weakestElementCap, 9);
-  assert.equal(revision.calculation.overall, 9);
-  assert.equal(revision.calculation.labelGrade, 9);
+  assert.equal(revision.calculation.overall, 9.63);
+  assert.equal(revision.calculation.labelGrade, 9.6);
   assert.equal(revision.machineGradePreserved, true);
-  assert.equal(
-    revision.calculation.severeDefectCapProvenance,
-    "none_source_report_has_no_v1_cap",
-  );
+  assert.equal(Object.hasOwn(revision.calculation, "weakestElementCap"), false);
+  assert.equal(Object.hasOwn(revision.calculation, "applicableSevereDefectCap"), false);
 
   assert.throws(
     () => buildAiGraderReportEditorialRevisionV1({
@@ -39,19 +36,14 @@ test("operator review requires all four sub-grades and calculates the overall se
   );
 });
 
-test("operator review preserves an immutable Mathematical V1 severe-defect cap", () => {
+test("operator review has no alternate overall cap input", () => {
   const revision = buildAiGraderReportEditorialRevisionV1({
     ...baseInput,
     scores: { centering: 10, corners: 10, edges: 10, surface: 10 },
-    applicableSevereDefectCap: 6,
   });
 
-  assert.equal(revision.calculation.overall, 6);
-  assert.equal(revision.calculation.applicableSevereDefectCap, 6);
-  assert.equal(
-    revision.calculation.severeDefectCapProvenance,
-    "immutable_mathematical_v1_finding_ledger",
-  );
+  assert.equal(revision.calculation.overall, 10);
+  assert.equal(Object.hasOwn(revision.calculation, "applicableSevereDefectCap"), false);
 });
 
 test("operator review parsing rejects calculation tampering and source-hash substitution", () => {

@@ -309,11 +309,8 @@ export default function AiGraderMathematicalReportV1({
           Weights: centering {(reviewedRevision?.calculation.weights.centering ?? finalGrade.weights.centering).toFixed(2)}; corners {(reviewedRevision?.calculation.weights.corners ?? finalGrade.weights.corners).toFixed(2)}; edges {(reviewedRevision?.calculation.weights.edges ?? finalGrade.weights.edges).toFixed(2)}; surface {(reviewedRevision?.calculation.weights.surface ?? finalGrade.weights.surface).toFixed(2)}.
         </p>
         <p className="mt-2 font-mono text-sm">{reviewedRevision?.calculation.finalFormula ?? finalGrade.formula}</p>
-        <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm sm:grid-cols-4">
+        <dl className="mt-4 grid gap-x-8 gap-y-2 text-sm">
           <div><dt>Weighted grade</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weightedGrade ?? finalGrade.weightedGrade)}</dd></div>
-          <div><dt>Weakest element</dt><dd className="font-bold">{reviewedRevision?.calculation.weakestElement ?? finalGrade.weakestElement} {score(reviewedRevision?.calculation.weakestScore ?? finalGrade.weakestScore)}</dd></div>
-          <div><dt>Weakest cap</dt><dd className="font-bold">{score(reviewedRevision?.calculation.weakestElementCap ?? finalGrade.weakestElementCap)}</dd></div>
-          <div><dt>Severe-defect cap</dt><dd className="font-bold">{(reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) === undefined ? "none" : score((reviewedRevision?.calculation.applicableSevereDefectCap ?? finalGrade.applicableSevereDefectCap) as number)}</dd></div>
         </dl>
       </section>
 

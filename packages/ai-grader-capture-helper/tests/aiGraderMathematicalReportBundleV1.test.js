@@ -4,12 +4,16 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
+require(require.resolve("tsx/cjs", {
+  paths: [path.resolve(__dirname, "../../../frontend/nextjs-app")],
+}));
 
 const {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
   MATHEMATICAL_CALIBRATION_PROFILE_V1_SCHEMA_VERSION,
   MATHEMATICAL_DEDUCTION_LEDGER_V1_SCHEMA_VERSION,
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
+  MATHEMATICAL_OVERALL_GRADE_V1_POLICY,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
@@ -39,6 +43,7 @@ const {
 const {
   AI_GRADER_MATHEMATICAL_REPORT_BUNDLE_FILE,
   AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
+  buildAiGraderMathematicalProductionReleaseV1,
   buildAiGraderMathematicalReportEnvelopeV1,
   readAiGraderMathematicalReportAssetsFromVerifiedPackageV1,
   readAiGraderMathematicalReportPackageV1,
@@ -51,11 +56,22 @@ const {
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 const {
   buildFixedRigCenteringSideV1,
+  buildFixedRigPhysicalMarginCenteringSideV1,
   fuseFixedRigCenteringFrontBackV1,
 } = require("../dist/drivers/fixedRigCenteringV1");
 const {
   projectApprovedFixedRigDesignReferenceV1,
 } = require("../dist/drivers/fixedRigDesignReferenceV1");
+const {
+  aiGraderMathematicalReleaseEnvelopeIssue,
+  parseAiGraderMathematicalReportV1,
+} = require("../../../frontend/nextjs-app/lib/aiGraderMathematicalReportV1.ts");
+const {
+  buildAiGraderPublishReadiness,
+} = require("../../../frontend/nextjs-app/lib/aiGraderOperatorWorkflow.ts");
+const {
+  buildAiGraderReportEditorialRevisionV1,
+} = require("../../../frontend/nextjs-app/lib/aiGraderReportRevision.ts");
 
 const TEST_PIXEL = Buffer.from([1]);
 const SHA = crypto.createHash("sha256").update(TEST_PIXEL).digest("hex");
@@ -264,6 +280,31 @@ function centering(calibration) {
     thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
     formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.centering.frontBackFusion.formula,
   };
+}
+
+function verifiedPhysicalMarginCentering(calibration) {
+  const sideResult = (side) => buildFixedRigPhysicalMarginCenteringSideV1({
+    side,
+    calibration,
+    outerCutContour: [
+      { x: 0, y: 0 }, { x: 1200, y: 0 },
+      { x: 1200, y: 1680 }, { x: 0, y: 1680 },
+    ],
+    measurementsMm: {
+      left: 5.45125,
+      right: 10,
+      top: 5.45125,
+      bottom: 10,
+    },
+    evidence: [{
+      assetId: `${side}/normalized-card.png`,
+      sha256: SHA,
+      side,
+      role: "normalized_card",
+      regionId: `${side}-centering`,
+    }],
+  });
+  return fuseFixedRigCenteringFrontBackV1(sideResult("front"), sideResult("back"));
 }
 
 function registeredProjection(side) {
@@ -578,7 +619,7 @@ function gradeElement(element, score, options = {}) {
   };
 }
 
-function gradeResult(calibration, sourceFinding) {
+function gradeResult(calibration, sourceFinding, centeringResult = centering(calibration)) {
   const findings = sourceFinding ? [{
     source: "surface",
     findingId: sourceFinding.findingId,
@@ -604,7 +645,7 @@ function gradeResult(calibration, sourceFinding) {
   const surfaceDeduction = sourceFinding?.deduction ?? 0;
   const surfaceScore = roundMathematicalScoreV1(10 - surfaceDeduction);
   const overall = calculateOverallGradeV1({
-    centering: 10,
+    centering: centeringResult.score,
     corners: 10,
     edges: 10,
     surface: surfaceScore,
@@ -666,6 +707,48 @@ function gradeResult(calibration, sourceFinding) {
       };
     }),
   };
+  const resolvedCentering =
+    centeringResult.front.registration.transformType === "physical_margin_measurement" &&
+    centeringResult.back.registration.transformType === "physical_margin_measurement";
+  const centeringExplanation =
+    "Verified human printed-border measurements in millimeters produce the exact centering subgrade.";
+  const centeringGradeElement = gradeElement("centering", centeringResult.score, {
+    frontScore: centeringResult.frontScore,
+    backScore: centeringResult.backScore,
+    aggregatePenalty: centeringResult.centeringDeduction,
+    locationScores: [
+      ["front", centeringResult.frontScore],
+      ["back", centeringResult.backScore],
+    ].map(([side, score]) => ({
+      side,
+      location: "printed_design",
+      score,
+      scoreText: score.toFixed(2),
+      penalty: Number((10 - score).toFixed(2)),
+      findingIds: [],
+    })),
+    ...(resolvedCentering ? { explanation: centeringExplanation } : {}),
+  });
+  if (resolvedCentering) {
+    centeringGradeElement.resolved = true;
+    centeringGradeElement.resolutionAuthoritySha256 = "c".repeat(64);
+  }
+  const centeringWhyNot10 = centeringResult.score < 10 ? [{
+    id: "why-not-10-resolved-centering",
+    element: "centering",
+    findingIds: [],
+    evidenceAssetIds: ["front/normalized-card.png", "back/normalized-card.png"],
+    deduction: centeringResult.centeringDeduction,
+    explanation: centeringExplanation,
+  }] : [];
+  const surfaceWhyNot10 = sourceFinding ? [{
+    id: `why-not-10-${sourceFinding.findingId}`,
+    element: "surface",
+    findingIds: [sourceFinding.findingId],
+    evidenceAssetIds: ["front/segmentation-mask.png"],
+    deduction: sourceFinding.deduction,
+    explanation: "Front scratch measured 2 mm; U95 0, Grade-10 tolerance 0.1, effective measurement 2, exact deduction 0.40.",
+  }] : [];
   return {
     version: "fixed_rig_mathematical_grade_composer_v1",
     status: "final_mathematical_grade_v1",
@@ -686,20 +769,8 @@ function gradeResult(calibration, sourceFinding) {
     labelGradeText: overall.labelGrade.toFixed(1),
     weightedGrade: overall.weightedGrade,
     weightedGradeText: overall.weightedGrade.toFixed(2),
-    weakestElement: overall.weakestElement,
-    weakestScore: overall.weakestScore,
-    weakestElementCap: overall.weakestElementCap,
     elements: {
-      centering: gradeElement("centering", 10, {
-        locationScores: ["front", "back"].map((side) => ({
-          side,
-          location: "printed_design",
-          score: 10,
-          scoreText: "10.00",
-          penalty: 0,
-          findingIds: [],
-        })),
-      }),
+      centering: centeringGradeElement,
       corners: gradeElement("corners", 10, { locationScores: locationScores("corners") }),
       edges: gradeElement("edges", 10, { locationScores: locationScores("edges") }),
       surface: gradeElement("surface", surfaceScore, {
@@ -713,8 +784,8 @@ function gradeResult(calibration, sourceFinding) {
           : undefined,
       }),
     },
-    weightedFormula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula,
-    formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula,
+    weightedFormula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
+    formula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
     deductionLedger,
     findings,
     deduplication: [],
@@ -729,16 +800,9 @@ function gradeResult(calibration, sourceFinding) {
         channelIndex: index + 1,
       })),
     ])),
-    whyNot10: sourceFinding ? [{
-      id: `why-not-10-${sourceFinding.findingId}`,
-      element: "surface",
-      findingIds: [sourceFinding.findingId],
-      evidenceAssetIds: ["front/segmentation-mask.png"],
-      deduction: sourceFinding.deduction,
-      explanation: "Front scratch measured 2 mm; U95 0, Grade-10 tolerance 0.1, effective measurement 2, exact deduction 0.40.",
-    }] : [],
-    whyNot10Summary: sourceFinding
-      ? "One exact physical deduction prevents a 10.00."
+    whyNot10: [...centeringWhyNot10, ...surfaceWhyNot10],
+    whyNot10Summary: centeringWhyNot10.length || surfaceWhyNot10.length
+      ? "Exact weighted subgrades explain why the final result is below 10.00."
       : "No card-condition defect was measured beyond certified resolution and tolerance.",
     noDoubleDeduction: true,
   };
@@ -873,10 +937,18 @@ function reportInput({
   calibration: suppliedCalibration,
   calibrationAuthority,
   activationAuthority,
+  resolvedCenteringScore,
 } = {}) {
   const calibration = suppliedCalibration ?? calibrationProfile();
   const sourceFinding = scratch ? surfaceFinding(calibration) : undefined;
-  const grade = gradeResult(calibration, sourceFinding);
+  const sourceCentering = resolvedCenteringScore === undefined
+    ? centering(calibration)
+    : verifiedPhysicalMarginCentering(calibration);
+  if (resolvedCenteringScore !== undefined) {
+    assert.equal(sourceCentering.status, "computed");
+    assert.equal(sourceCentering.score, resolvedCenteringScore);
+  }
+  const grade = gradeResult(calibration, sourceFinding, sourceCentering);
   if (resolvedEdge) {
     const publicExplanation = "Edges show light wear along the lower border.";
     grade.elements.edges = {
@@ -904,9 +976,6 @@ function reportInput({
     grade.labelGradeText = composed.labelGrade.toFixed(1);
     grade.weightedGrade = composed.weightedGrade;
     grade.weightedGradeText = composed.weightedGrade.toFixed(2);
-    grade.weakestElement = composed.weakestElement;
-    grade.weakestScore = composed.weakestScore;
-    grade.weakestElementCap = composed.weakestElementCap;
     grade.whyNot10 = [{
       id: "why-not-10-resolved-edges",
       element: "edges",
@@ -969,7 +1038,7 @@ function reportInput({
     calibrationBundleAuthority: calibrationAuthority ?? calibrationBundleAuthority(),
     ...(activationAuthority ? { calibrationActivationAuthority: activationAuthority } : {}),
     designReferences: [],
-    centering: centering(calibration),
+    centering: sourceCentering,
     corners,
     edges,
     surface: {
@@ -1208,6 +1277,98 @@ test("strict V0.3 adapter generates deterministic centering evidence without a V
     artifact.assetPayloads.map(({ id, sha256 }) => ({ id, sha256 })),
     "measurement overlay hashes are deterministic",
   );
+});
+
+test("weighted-only overall policy agrees across strict report, release, and UI", async () => {
+  const scores = {
+    centering: 4.12,
+    corners: 10,
+    edges: 10,
+    surface: 10,
+  };
+  const calculation = calculateOverallGradeV1(scores);
+  assert.deepEqual(calculation, {
+    overall: 8.24,
+    weightedGrade: 8.24,
+    labelGrade: 8.2,
+    weights: {
+      centering: 0.3,
+      corners: 0.25,
+      edges: 0.25,
+      surface: 0.2,
+    },
+    formula:
+      "0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface",
+  });
+
+  const artifact = await buildAiGraderMathematicalReportBundleV1(
+    reportInput({ resolvedCenteringScore: 4.12 }),
+  );
+  const parsedBundle = parseAiGraderMathematicalReportV1(artifact.bundle);
+  assert.ok(parsedBundle);
+  assert.equal(parsedBundle.productionRelease.finalGrade.overall, 8.24);
+  assert.equal(parsedBundle.productionRelease.finalGrade.weightedGrade, 8.24);
+  assert.equal(parsedBundle.productionRelease.finalGrade.labelGrade, 8.2);
+  assert.equal(parsedBundle.productionRelease.label.labelGradeText, "8.2");
+  assert.equal(
+    parsedBundle.productionRelease.finalGrade.formula,
+    MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(parsedBundle.productionRelease.finalGrade),
+    /weakestElement|weakestElementCap|applicableSevereDefectCap|min\(weightedGrade/i,
+  );
+
+  const release = buildAiGraderMathematicalProductionReleaseV1({
+    envelope: buildAiGraderMathematicalReportEnvelopeV1({
+      gradingSessionId: "weighted-only-proof-session",
+      reportBundle: parsedBundle,
+    }),
+    finalizedAt: GENERATED_AT,
+    reportBundlePath: "report-bundle-v0.3.json",
+  });
+  assert.equal(release.finalGrade.overall, 8.24);
+  assert.equal(release.finalGrade.weightedGrade, 8.24);
+  assert.equal(release.label.labelGradeText, "8.2");
+  assert.equal(
+    aiGraderMathematicalReleaseEnvelopeIssue(parsedBundle, release),
+    undefined,
+  );
+  const readiness = buildAiGraderPublishReadiness({
+    bundle: parsedBundle,
+    productionRelease: release,
+  });
+  assert.equal(readiness.status, "ready");
+  assert.equal(readiness.ready, true);
+
+  const uiRevision = buildAiGraderReportEditorialRevisionV1({
+    reportId: parsedBundle.reportId,
+    sourceReportSchemaVersion: parsedBundle.schemaVersion,
+    sourceBundleSha256: "d".repeat(64),
+    revision: 1,
+    editedAt: GENERATED_AT,
+    scores,
+  });
+  assert.equal(uiRevision.calculation.overall, 8.24);
+  assert.equal(uiRevision.calculation.labelGrade, 8.2);
+  assert.equal(
+    uiRevision.calculation.finalFormula,
+    MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(uiRevision.calculation),
+    /weakestElement|weakestElementCap|applicableSevereDefectCap|min\(weightedGrade/i,
+  );
+  for (const uiPath of [
+    path.resolve(__dirname, "../../../frontend/nextjs-app/components/ai-grader/AiGraderMathematicalReportV1.tsx"),
+    path.resolve(__dirname, "../../../frontend/nextjs-app/components/ai-grader/AiGraderReportAdminEditor.tsx"),
+    path.resolve(__dirname, "../../../frontend/nextjs-app/pages/ai-grader/reports/[reportId].tsx"),
+  ]) {
+    assert.doesNotMatch(
+      fs.readFileSync(uiPath, "utf8"),
+      /Weakest cap|Weakest-element cap|Severe-defect cap|limited by weakest element/i,
+    );
+  }
 });
 
 test("owner public explanation renders verbatim while private authority metadata never projects", async () => {

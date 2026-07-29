@@ -282,8 +282,11 @@ function validateFindingV2(finding: FindingShape, context: z.RefinementCtx) {
   const applicableSevereCap = finding.evidenceQuality === "insufficient"
     ? undefined
     : calculateApplicableSevereDefectCapV1(finding.category, finding.measurements);
-  if (finding.severeDefectCap !== applicableSevereCap) {
-    context.addIssue({ code: "custom", path: ["severeDefectCap"], message: "must equal the applicable manifest severe-defect cap" });
+  if (
+    finding.severeDefectCap !== undefined &&
+    finding.severeDefectCap !== applicableSevereCap
+  ) {
+    context.addIssue({ code: "custom", path: ["severeDefectCap"], message: "legacy cap metadata must equal the historical manifest value" });
   }
   const evidenceAssetIds = new Set([
     finding.evidence.trueViewAssetId,

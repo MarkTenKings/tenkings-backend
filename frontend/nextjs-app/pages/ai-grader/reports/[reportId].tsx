@@ -236,11 +236,8 @@ function HumanAdjudicatedMachineFailureReport({
               <h2 className="text-2xl font-bold">Effective overall formula</h2>
               <p className="mt-3 font-mono text-sm">{revision.calculation.weightedFormula}</p>
               <p className="mt-2 font-mono text-sm">{revision.calculation.finalFormula}</p>
-              <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-4">
+              <dl className="mt-4 grid gap-4 text-sm">
                 <div><dt>Weighted</dt><dd className="font-bold">{revision.calculation.weightedGrade.toFixed(2)}</dd></div>
-                <div><dt>Weakest element</dt><dd className="font-bold">{revision.calculation.weakestElement} {revision.calculation.weakestScore.toFixed(2)}</dd></div>
-                <div><dt>Weakest cap</dt><dd className="font-bold">{revision.calculation.weakestElementCap.toFixed(2)}</dd></div>
-                <div><dt>Severe-defect cap</dt><dd className="font-bold">{revision.calculation.applicableSevereDefectCap?.toFixed(2) ?? "none in source"}</dd></div>
               </dl>
             </section>
 
@@ -989,8 +986,6 @@ export default function AiGraderReportViewerPage() {
             <div className="production-grid">
               <article><span>Effective overall</span><strong>{scoreText(reviewedRevision.calculation.overall)}</strong></article>
               <article><span>Weighted grade</span><strong>{scoreText(reviewedRevision.calculation.weightedGrade)}</strong></article>
-              <article><span>Weakest element</span><strong>{reviewedRevision.calculation.weakestElement} {scoreText(reviewedRevision.calculation.weakestScore)}</strong></article>
-              <article><span>Weakest-element cap</span><strong>{scoreText(reviewedRevision.calculation.weakestElementCap)}</strong></article>
             </div>
             <p className="formula">{reviewedRevision.calculation.finalFormula}</p>
             <details className="machine-provenance">

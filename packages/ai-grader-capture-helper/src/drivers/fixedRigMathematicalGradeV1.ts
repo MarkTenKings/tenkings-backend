@@ -1,5 +1,6 @@
 import {
   MATHEMATICAL_DEDUCTION_LEDGER_V1_SCHEMA_VERSION,
+  MATHEMATICAL_OVERALL_GRADE_V1_POLICY,
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
@@ -165,13 +166,6 @@ export type FixedRigMathematicalGradeV1Result =
       labelGradeText: string;
       weightedGrade: number;
       weightedGradeText: string;
-      weakestElement: MathematicalGradingElementV1;
-      weakestScore: number;
-      weakestScoreText: string;
-      weakestElementCap: number;
-      weakestElementCapText: string;
-      applicableSevereDefectCap?: number;
-      applicableSevereDefectCapText?: string;
       elements: Record<MathematicalGradingElementV1, FixedRigGradeElementScoreV1>;
       weightedFormula: string;
       formula: string;
@@ -1470,15 +1464,12 @@ export function buildFixedRigMathematicalGradeV1(
       message: `The retained finding ledger failed its exact no-double-deduction contract: ${error instanceof Error ? error.message : String(error)}`,
     }]);
   }
-  const severeCaps = findings.flatMap((finding) =>
-    finding.severeDefectCap === undefined ? [] : [finding.severeDefectCap],
-  );
   const overall = calculateOverallGradeV1({
     centering: elements.centering.score,
     corners: elements.corners.score,
     edges: elements.edges.score,
     surface: elements.surface.score,
-  }, severeCaps);
+  });
   const resolvedElements = new Set(
     Object.entries(input.operatorResolutions ?? {})
       .filter(([, resolution]) => Boolean(resolution))
@@ -1491,9 +1482,7 @@ export function buildFixedRigMathematicalGradeV1(
     entry !== undefined && !resolvedElements.has(entry.element));
   const resolvedWhyNot10 = [...resolvedElements].flatMap((element): FixedRigWhyNot10V1[] => {
     const resolution = input.operatorResolutions?.[element];
-    const resolvedSevereCap = findings.some((finding) =>
-      finding.element === element && finding.severeDefectCap !== undefined);
-    if (!resolution || (elements[element].score >= 10 && !resolvedSevereCap)) return [];
+    if (!resolution || elements[element].score >= 10) return [];
     return [{
       id: `why-not-10-resolved-${element}`,
       element,
@@ -1505,9 +1494,7 @@ export function buildFixedRigMathematicalGradeV1(
   });
   const whyNot10 = [...automaticWhyNot10, ...resolvedWhyNot10];
   const whyNot10Summary = whyNot10.length
-    ? `The grade is below 10.00 because ${whyNot10.length} exact measured deduction explanation(s) are listed; the overall is the minimum of weighted grade ${scoreText(overall.weightedGrade)}, weakest-element cap ${scoreText(overall.weakestElementCap)}${overall.applicableSevereDefectCap === undefined
-        ? ""
-        : `, and severe-defect cap ${scoreText(overall.applicableSevereDefectCap)}`}.`
+    ? `The grade is below 10.00 because ${whyNot10.length} exact measured deduction explanation(s) are listed; the overall weighted grade is ${scoreText(overall.weightedGrade)}.`
     : "No card-condition defect produced a positive deduction; all observable measurements were evaluated by the Grade-10 formula.";
 
   return {
@@ -1530,20 +1517,9 @@ export function buildFixedRigMathematicalGradeV1(
     labelGradeText: overall.labelGrade.toFixed(1),
     weightedGrade: overall.weightedGrade,
     weightedGradeText: scoreText(overall.weightedGrade),
-    weakestElement: overall.weakestElement,
-    weakestScore: overall.weakestScore,
-    weakestScoreText: scoreText(overall.weakestScore),
-    weakestElementCap: overall.weakestElementCap,
-    weakestElementCapText: scoreText(overall.weakestElementCap),
-    ...(overall.applicableSevereDefectCap === undefined
-      ? {}
-      : {
-          applicableSevereDefectCap: overall.applicableSevereDefectCap,
-          applicableSevereDefectCapText: scoreText(overall.applicableSevereDefectCap),
-        }),
     elements,
-    weightedFormula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.weightedFormula,
-    formula: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.overall.finalFormula,
+    weightedFormula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
+    formula: MATHEMATICAL_OVERALL_GRADE_V1_POLICY.formula,
     deductionLedger,
     findings,
     surfaceSourceEvidence: {

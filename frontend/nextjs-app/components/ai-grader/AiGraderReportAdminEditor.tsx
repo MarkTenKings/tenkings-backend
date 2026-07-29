@@ -43,10 +43,6 @@ export type AiGraderReportAdminEditorState = {
   sourceBundleSha256: string;
   baseScores: Partial<Record<AiGraderReportEditableElement, number>>;
   baseContent: AiGraderReportEditorialContent;
-  applicableSevereDefectCap?: number;
-  severeDefectCapProvenance:
-    | "immutable_mathematical_v1_finding_ledger"
-    | "none_source_report_has_no_v1_cap";
   machineFailure: { failed: boolean; codes: string[] };
   editorialRevision: AiGraderReportEditorialRevisionV1 | null;
 };
@@ -108,16 +104,7 @@ function parseEditorState(value: unknown, expectedReportId: string): AiGraderRep
   if (value.editorialRevision !== null && !editorialRevision) {
     throw new Error("The saved human revision failed validation.");
   }
-  const cap = value.applicableSevereDefectCap === undefined
-    ? undefined
-    : mathematicalScoreV1Schema.safeParse(value.applicableSevereDefectCap);
-  if (cap !== undefined && !cap.success) {
-    throw new Error("The report editor returned an invalid severe-defect cap.");
-  }
-  const severeDefectCapProvenance = value.severeDefectCapProvenance;
   if (
-    (cap?.success && severeDefectCapProvenance !== "immutable_mathematical_v1_finding_ledger") ||
-    (!cap?.success && severeDefectCapProvenance !== "none_source_report_has_no_v1_cap") ||
     (editorialRevision === null && value.completionStatus === "human_reviewed_complete") ||
     (editorialRevision !== null && value.completionStatus !== "human_reviewed_complete") ||
     (value.completionStatus === "machine_failed" && value.machineFailure.failed !== true) ||
@@ -125,16 +112,12 @@ function parseEditorState(value: unknown, expectedReportId: string): AiGraderRep
     (editorialRevision !== null && (
       editorialRevision.sourceReportSchemaVersion !== value.sourceReportSchemaVersion ||
       editorialRevision.sourceBundleSha256 !== value.sourceBundleSha256 ||
-      editorialRevision.calculation.severeDefectCapProvenance !== severeDefectCapProvenance ||
-      editorialRevision.calculation.applicableSevereDefectCap !== (cap?.success ? cap.data : undefined) ||
       JSON.stringify([...editorialRevision.adjudicatedMachineFailures].sort()) !==
         JSON.stringify([...(value.machineFailure.codes as string[])].sort())
     ))
   ) {
     throw new Error("The report editor returned contradictory revision authority.");
   }
-  const normalizedSevereDefectCapProvenance = severeDefectCapProvenance as
-    AiGraderReportAdminEditorState["severeDefectCapProvenance"];
   return {
     reportId: value.reportId,
     visibilityStatus: value.visibilityStatus,
@@ -144,8 +127,6 @@ function parseEditorState(value: unknown, expectedReportId: string): AiGraderRep
     sourceBundleSha256: value.sourceBundleSha256,
     baseScores: parsePartialScores(value.baseScores),
     baseContent: normalizeAiGraderReportEditorialContent(value.baseContent),
-    ...(cap?.success ? { applicableSevereDefectCap: cap.data } : {}),
-    severeDefectCapProvenance: normalizedSevereDefectCapProvenance,
     machineFailure: {
       failed: value.machineFailure.failed,
       codes: [...value.machineFailure.codes] as string[],
@@ -260,17 +241,12 @@ export default function AiGraderReportAdminEditor({
           return [element, mathematicalScoreV1Schema.parse(Number(scoreDraft[element]))];
         }),
       ) as Record<AiGraderReportEditableElement, number>;
-      const calculation = calculateOverallGradeV1(
-        scores,
-        editorState?.applicableSevereDefectCap === undefined
-          ? []
-          : [editorState.applicableSevereDefectCap],
-      );
+      const calculation = calculateOverallGradeV1(scores);
       return { scores, calculation };
     } catch {
       return null;
     }
-  }, [editorState?.applicableSevereDefectCap, scoreDraft]);
+  }, [scoreDraft]);
 
   if (hidden || loading) return null;
   if (!editorState) {
@@ -421,10 +397,7 @@ export default function AiGraderReportAdminEditor({
               <span>Dynamic overall</span>
               <strong>{scorePreview ? scorePreview.calculation.overall.toFixed(2) : "—"}</strong>
               <small>
-                30% centering + 25% corners + 25% edges + 20% surface, limited by weakest element + 0.50
-                {editorState.applicableSevereDefectCap === undefined
-                  ? "."
-                  : ` and immutable severe-defect cap ${editorState.applicableSevereDefectCap.toFixed(2)}.`}
+                30% centering + 25% corners + 25% edges + 20% surface.
               </small>
             </div>
           </section>
