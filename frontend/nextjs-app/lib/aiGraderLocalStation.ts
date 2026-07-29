@@ -1795,6 +1795,7 @@ export function sanitizeAiGraderMathematicalV1StateForDisplay(
 
 const AI_GRADER_BROWSER_UNSAFE_KEY = /(?:path|dir|folder)$|^local|token|authorization|presign|credential|secret|cookie|bodyBase64|bodyEncoding/i;
 const AI_GRADER_BROWSER_UNSAFE_STRING = /(?:^|[\s"'(])(?:[a-z]:[\\/]|\\\\)|^file:|(?:station|bridge|service)[_-]?token|authorization|bearer\s|x-amz-|presigned|https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i;
+const AI_GRADER_BROWSER_PROTOTYPE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 function browserSafeStationRecord(value: unknown): Record<string, unknown> | undefined {
   let visited = 0;
@@ -1813,7 +1814,7 @@ function browserSafeStationRecord(value: unknown): Record<string, unknown> | und
     if (!stationRecord(input)) return undefined;
     const output: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(input)) {
-      if (AI_GRADER_BROWSER_UNSAFE_KEY.test(key)) continue;
+      if (AI_GRADER_BROWSER_PROTOTYPE_KEYS.has(key) || AI_GRADER_BROWSER_UNSAFE_KEY.test(key)) continue;
       const safeChild = clone(child, depth + 1);
       if (safeChild !== undefined) output[key] = safeChild;
     }

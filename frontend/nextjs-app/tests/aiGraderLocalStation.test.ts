@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import ts from "typescript";
-import { AI_GRADER_REPORT_BUNDLE_V03_VERSION } from "@tenkings/shared";
+import {
+  AI_GRADER_REPORT_BUNDLE_V03_VERSION,
+  aiGraderReportBundleV03Schema,
+  type AiGraderReportBundleV03,
+} from "@tenkings/shared";
 import {
   AI_GRADER_STATION_STEPS,
   aiGraderAtomicBackQueueReleaseMatches,
@@ -44,6 +48,7 @@ import {
   aiGraderCaptureAssertionFromFrame,
   runAiGraderCapture,
 } from "../lib/aiGraderStationOperations";
+import { buildStrictAiGraderReportBundleV03Fixture } from "./fixtures/strictAiGraderReportBundleV03";
 
 const OCR_ATTEMPT_OWNER_ID = "ocr-attempt-11111111-1111-4111-8111-111111111111";
 
@@ -739,10 +744,71 @@ test("removed browser safety, Single finalization, and separate queue mutation a
   assert.equal(status.liveLighting.safety.watchdogOwnedByBridge, true);
 });
 
-function completedReportHydrationQueue(denseMeasurementCount: number) {
+function reportBundleVisitedValueCount(value: unknown): number {
+  let visited = 0;
+  const visit = (entry: unknown) => {
+    visited += 1;
+    if (Array.isArray(entry)) {
+      entry.forEach(visit);
+    } else if (entry && typeof entry === "object") {
+      Object.values(entry).forEach(visit);
+    }
+  };
+  visit(value);
+  return visited;
+}
+
+function strictReportBundleAtVisitedValueCount(
+  targetVisitedValues: number,
+): AiGraderReportBundleV03 {
+  const bundle = aiGraderReportBundleV03Schema.parse(
+    buildStrictAiGraderReportBundleV03Fixture(),
+  );
+  let remaining = targetVisitedValues - reportBundleVisitedValueCount(bundle);
+  assert.ok(remaining >= 0);
+
+  // Each dense contour point contributes exactly three traversed values:
+  // the point object plus its x and y numbers. An optional warnings array
+  // supplies the deterministic zero-, one-, or two-value remainder.
+  const warningContribution = remaining % 3;
+  if (warningContribution > 0) {
+    bundle.warnings = Array.from(
+      { length: warningContribution - 1 },
+      (_, index) => `bounded traversal remainder ${index + 1}`,
+    );
+    remaining -= warningContribution;
+  }
+  let pointsToAdd = remaining / 3;
+  assert.equal(Number.isInteger(pointsToAdd), true);
+
+  for (const side of ["front", "back"] as const) {
+    const geometry =
+      bundle.centeringEvidence[side].outerCutGeometryEvidence;
+    assert.ok(geometry);
+    for (const contourName of ["rawContour", "normalizedContour"] as const) {
+      const contour = geometry.observedArtifact[contourName];
+      const additionCount = Math.min(pointsToAdd, 10_000 - contour.length);
+      contour.push(
+        ...Array.from({ length: additionCount }, () => ({ x: 0, y: 0 })),
+      );
+      pointsToAdd -= additionCount;
+      if (contourName === "normalizedContour") {
+        geometry.observedContourPointCount = contour.length;
+      }
+    }
+  }
+
+  assert.equal(pointsToAdd, 0);
+  assert.equal(reportBundleVisitedValueCount(bundle), targetVisitedValues);
+  assert.ok(JSON.stringify(bundle).length < 2_000_000);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(bundle).success, true);
+  return bundle;
+}
+
+function completedReportHydrationQueue(reportBundle: AiGraderReportBundleV03) {
   const queueItemId = "session-hydration-rapid-card";
   const gradingSessionId = "session-hydration";
-  const reportId = "report-hydration";
+  const reportId = reportBundle.reportId;
   return {
     activeQueueItemId: queueItemId,
     activeReview: {
@@ -751,14 +817,7 @@ function completedReportHydrationQueue(denseMeasurementCount: number) {
       reportId,
       manifest: {
         latestReport: { reportId, exists: true },
-        reportBundle: {
-          schemaVersion: AI_GRADER_REPORT_BUNDLE_V03_VERSION,
-          reportId,
-          denseMeasurements: Array.from(
-            { length: denseMeasurementCount },
-            (_, index) => index,
-          ),
-        },
+        reportBundle,
         productionRelease: {
           reportId,
           gradingSessionId,
@@ -805,42 +864,98 @@ function completedReportHydrationQueue(denseMeasurementCount: number) {
   };
 }
 
-test("Production-sized completed V0.3 report bundle remains hydrated for exact Approve & Publish identity", () => {
-  const queue = sanitizeAiGraderRapidCaptureQueue(
-    completedReportHydrationQueue(84_500),
+test("browser-safe station cloning skips parsed enumerable prototype keys", () => {
+  const source = completedReportHydrationQueue(
+    aiGraderReportBundleV03Schema.parse(
+      buildStrictAiGraderReportBundleV03Fixture(),
+    ),
   );
-  const hydratedBundle = queue.activeReview?.manifest.reportBundle as
-    | (Record<string, unknown> & { denseMeasurements?: number[] })
-    | undefined;
+  const maliciousResult = JSON.parse(
+    `{"queueItemId":"session-hydration-rapid-card","gradingSessionId":"session-hydration","reportId":"math-v1-release-test","status":"prefill_ready","__proto__":{"inheritedAttackerValue":"exposed"},"prototype":{"ignored":true},"constructor":{"ignored":true}}`,
+  );
+  assert.equal(Object.hasOwn(maliciousResult, "__proto__"), true);
+  source.items[0].ocr.result = maliciousResult;
+
+  const queue = sanitizeAiGraderRapidCaptureQueue(source);
+  const safeResult = queue.items[0].ocr.result as Record<string, unknown>;
+
+  assert.equal(Object.getPrototypeOf(safeResult), Object.prototype);
+  assert.equal(Object.hasOwn(safeResult, "__proto__"), false);
+  assert.equal(Object.hasOwn(safeResult, "prototype"), false);
+  assert.equal(Object.hasOwn(safeResult, "constructor"), false);
+  assert.equal(safeResult.inheritedAttackerValue, undefined);
+});
+
+test("schema-valid Production-sized V0.3 report remains hydrated for exact Approve & Publish identity", () => {
+  const reportBundle = strictReportBundleAtVisitedValueCount(84_523);
+  const schemaResult = aiGraderReportBundleV03Schema.safeParse(reportBundle);
+  assert.equal(schemaResult.success, true);
+  assert.equal(reportBundleVisitedValueCount(reportBundle), 84_523);
+
+  const queue = sanitizeAiGraderRapidCaptureQueue(
+    completedReportHydrationQueue(reportBundle),
+  );
+  const hydratedBundle = queue.activeReview?.manifest.reportBundle;
 
   assert.equal(queue.activeQueueItemId, "session-hydration-rapid-card");
   assert.equal(queue.activeReview?.queueItemId, "session-hydration-rapid-card");
   assert.equal(queue.activeReview?.gradingSessionId, "session-hydration");
-  assert.equal(queue.activeReview?.reportId, "report-hydration");
+  assert.equal(queue.activeReview?.reportId, "math-v1-release-test");
   assert.equal(
     hydratedBundle?.schemaVersion,
     AI_GRADER_REPORT_BUNDLE_V03_VERSION,
   );
-  assert.equal(hydratedBundle?.reportId, "report-hydration");
-  assert.equal(hydratedBundle?.denseMeasurements?.length, 84_500);
+  assert.equal(hydratedBundle?.reportId, "math-v1-release-test");
+  assert.equal(reportBundleVisitedValueCount(hydratedBundle), 84_523);
   assert.equal(
     queue.activeReview?.manifest.productionRelease?.gradingSessionId,
     "session-hydration",
   );
+  assert.equal(
+    queue.activeReview?.manifest.productionRelease?.reportId,
+    "math-v1-release-test",
+  );
 });
 
-test("completed report bundle above the bounded browser node limit is rejected", () => {
+test("exactly 100,000 visited report values pass the browser hydration bound", () => {
+  const reportBundle = strictReportBundleAtVisitedValueCount(100_000);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(reportBundle).success, true);
+  assert.equal(reportBundleVisitedValueCount(reportBundle), 100_000);
+
   const queue = sanitizeAiGraderRapidCaptureQueue(
-    completedReportHydrationQueue(100_000),
+    completedReportHydrationQueue(reportBundle),
+  );
+
+  assert.equal(
+    reportBundleVisitedValueCount(queue.activeReview?.manifest.reportBundle),
+    100_000,
+  );
+  assert.equal(
+    queue.activeReview?.manifest.productionRelease?.gradingSessionId,
+    "session-hydration",
+  );
+  assert.equal(
+    queue.activeReview?.manifest.productionRelease?.reportId,
+    "math-v1-release-test",
+  );
+});
+
+test("100,001 visited report values reject at the exact browser hydration bound", () => {
+  const reportBundle = strictReportBundleAtVisitedValueCount(100_001);
+  assert.equal(aiGraderReportBundleV03Schema.safeParse(reportBundle).success, true);
+  assert.equal(reportBundleVisitedValueCount(reportBundle), 100_001);
+
+  const queue = sanitizeAiGraderRapidCaptureQueue(
+    completedReportHydrationQueue(reportBundle),
   );
 
   assert.equal(queue.activeReview?.queueItemId, "session-hydration-rapid-card");
   assert.equal(queue.activeReview?.gradingSessionId, "session-hydration");
-  assert.equal(queue.activeReview?.reportId, "report-hydration");
+  assert.equal(queue.activeReview?.reportId, "math-v1-release-test");
   assert.equal(queue.activeReview?.manifest.reportBundle, undefined);
   assert.equal(
     queue.activeReview?.manifest.productionRelease?.reportId,
-    "report-hydration",
+    "math-v1-release-test",
   );
 });
 
