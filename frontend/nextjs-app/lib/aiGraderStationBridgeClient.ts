@@ -17,6 +17,7 @@ import {
   canonicalizeAiGraderPublicIdentifier,
   canonicalJsonV1,
   type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderReportBundleV03,
 } from "@tenkings/shared";
 import {
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
@@ -1467,6 +1468,7 @@ async function bridgePostJson<T>(
     body?: Record<string, unknown>;
     keepalive?: boolean;
     assertionHeaders?: Record<string, string>;
+    signal?: AbortSignal;
   },
   fetchImpl: typeof fetch = fetch
 ): Promise<T> {
@@ -1483,6 +1485,7 @@ async function bridgePostJson<T>(
     },
     body: JSON.stringify(input.body ?? {}),
     keepalive: input.keepalive,
+    signal: input.signal,
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok || payload.ok !== true) {
@@ -1743,7 +1746,14 @@ export async function fetchAiGraderStationReportBundle(input: {
     stationToken: input.stationToken,
     path: `/reports/${encodeURIComponent(input.reportId)}/bundle${query}`,
   }, fetchImpl);
-  return strictStationReportBundle(result.bundle);
+  if (result.reportId !== input.reportId) {
+    throw new Error("AI Grader local station report response identity mismatch.");
+  }
+  const bundle = strictStationReportBundle(result.bundle);
+  if (bundle.reportId !== input.reportId) {
+    throw new Error("AI Grader local station report bundle identity mismatch.");
+  }
+  return bundle;
 }
 
 export async function fetchAiGraderStationReportAsset(input: {
@@ -1751,7 +1761,15 @@ export async function fetchAiGraderStationReportAsset(input: {
   stationToken: string;
   reportId: string;
   assetId: string;
-}, fetchImpl: typeof fetch = fetch): Promise<{ bytes: ArrayBuffer; contentType: string; byteSize: number; checksumSha256?: string }> {
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<{
+  reportId: string;
+  assetId: string;
+  bytes: ArrayBuffer;
+  contentType: string;
+  byteSize: number;
+  checksumSha256?: string;
+}> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
@@ -1763,6 +1781,7 @@ export async function fetchAiGraderStationReportAsset(input: {
       headers: {
         "x-ai-grader-station-token": input.stationToken,
       },
+      signal: input.signal,
     }
   );
   if (!response.ok) {
@@ -1777,11 +1796,169 @@ export async function fetchAiGraderStationReportAsset(input: {
     throw new Error(message);
   }
   const bytes = await response.arrayBuffer();
+  const reportId = response.headers.get("x-ai-grader-report-id") ?? "";
+  const assetId = response.headers.get("x-ai-grader-asset-id") ?? "";
+  if (reportId !== input.reportId || assetId !== input.assetId) {
+    throw new Error("AI Grader local station asset response identity mismatch.");
+  }
   return {
+    reportId,
+    assetId,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/octet-stream",
     byteSize: bytes.byteLength,
     checksumSha256: response.headers.get("x-ai-grader-sha256") ?? undefined,
+  };
+}
+
+export async function fetchAiGraderStationMathematicalReportHydration(input: {
+  baseUrl: string;
+  stationToken: string;
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  assetIds: readonly string[];
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<{
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  bundle: AiGraderReportBundleV03;
+  assets: Array<{
+    reportId: string;
+    assetId: string;
+    bytes: ArrayBuffer;
+    contentType: string;
+    byteSize: number;
+    checksumSha256: string;
+  }>;
+}> {
+  const identity = exactRapidQueueIdentity(input);
+  const requestedIds = [...input.assetIds];
+  if (
+    requestedIds.length < 1 ||
+    requestedIds.length > 96 ||
+    new Set(requestedIds).size !== requestedIds.length ||
+    requestedIds.some((assetId) =>
+      typeof assetId !== "string" ||
+      assetId.length < 1 ||
+      assetId.length > 512 ||
+      assetId.includes("\0"))
+  ) {
+    throw new Error("Mathematical V1 report hydration selected asset IDs are invalid.");
+  }
+  const result = await bridgePostJson<{
+    queueItemId?: unknown;
+    gradingSessionId?: unknown;
+    reportId?: unknown;
+    bundle?: unknown;
+    assets?: unknown;
+  }>({
+    baseUrl: input.baseUrl,
+    stationToken: input.stationToken,
+    path: `/reports/${encodeURIComponent(identity.reportId)}/mathematical-hydration`,
+    body: {
+      queueItemId: identity.queueItemId,
+      gradingSessionId: identity.gradingSessionId,
+      assetIds: requestedIds,
+    },
+    signal: input.signal,
+  }, fetchImpl);
+  if (
+    result.queueItemId !== identity.queueItemId ||
+    result.gradingSessionId !== identity.gradingSessionId ||
+    result.reportId !== identity.reportId
+  ) {
+    throw new Error("Mathematical V1 report hydration response identity mismatch.");
+  }
+  const bundle = parseAiGraderMathematicalReportV1(
+    strictStationReportBundle(result.bundle),
+  );
+  if (!bundle || bundle.reportId !== identity.reportId || !Array.isArray(result.assets)) {
+    throw new Error("Mathematical V1 report hydration response contract is invalid.");
+  }
+  const requestedSet = new Set(requestedIds);
+  const seen = new Set<string>();
+  let totalBytes = 0;
+  const declaredTotalBytes = result.assets.reduce((sum, raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    const byteSize = Number((raw as Record<string, unknown>).byteSize);
+    if (!Number.isSafeInteger(byteSize) || byteSize < 1) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    return sum + byteSize;
+  }, 0);
+  if (
+    !Number.isSafeInteger(declaredTotalBytes) ||
+    declaredTotalBytes > 20 * 1024 * 1024
+  ) {
+    throw new Error("Mathematical V1 report hydration exceeded selected evidence.");
+  }
+  const assets = result.assets.map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    const asset = raw as Record<string, unknown>;
+    const reportId = typeof asset.reportId === "string" ? asset.reportId : "";
+    const assetId = typeof asset.assetId === "string" ? asset.assetId : "";
+    const contentType = typeof asset.contentType === "string" ? asset.contentType : "";
+    const byteSize = Number(asset.byteSize);
+    const checksumSha256 = typeof asset.checksumSha256 === "string"
+      ? asset.checksumSha256.toLowerCase()
+      : "";
+    const bodyBase64 = typeof asset.bodyBase64 === "string" ? asset.bodyBase64 : "";
+    if (
+      reportId !== identity.reportId ||
+      !requestedSet.has(assetId) ||
+      seen.has(assetId) ||
+      !Number.isSafeInteger(byteSize) ||
+      byteSize < 1 ||
+      !/^[a-f0-9]{64}$/.test(checksumSha256) ||
+      !bodyBase64 ||
+      bodyBase64.length > Math.ceil(byteSize / 3) * 4 + 4
+    ) {
+      throw new Error("Mathematical V1 report hydration asset contract is invalid.");
+    }
+    let binary: string;
+    try {
+      binary = globalThis.atob(bodyBase64);
+    } catch {
+      throw new Error("Mathematical V1 report hydration asset body is invalid.");
+    }
+    if (binary.length !== byteSize) {
+      throw new Error("Mathematical V1 report hydration asset byte size mismatch.");
+    }
+    const bytes = new Uint8Array(byteSize);
+    for (let index = 0; index < byteSize; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    seen.add(assetId);
+    totalBytes += byteSize;
+    return {
+      reportId,
+      assetId,
+      bytes: bytes.buffer,
+      contentType,
+      byteSize,
+      checksumSha256,
+    };
+  });
+  if (
+    seen.size !== requestedSet.size ||
+    requestedIds.some((assetId) => !seen.has(assetId)) ||
+    !Number.isSafeInteger(totalBytes) ||
+    totalBytes > 20 * 1024 * 1024
+  ) {
+    throw new Error("Mathematical V1 report hydration omitted or exceeded selected evidence.");
+  }
+  return {
+    queueItemId: identity.queueItemId,
+    gradingSessionId: identity.gradingSessionId,
+    reportId: identity.reportId,
+    bundle,
+    assets,
   };
 }
 

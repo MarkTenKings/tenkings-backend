@@ -29141,3 +29141,59 @@ By enabling Rip It Live, I confirm:
 - Hydration tests now use a strict public Production V0.3 fixture independently accepted by `aiGraderReportBundleV03Schema`. Only the schema's bounded raw and normalized dense-contour arrays are scaled; each added point contributes the explicit object-plus-`x`-plus-`y` traversal count, and an optional bounded warnings array supplies the deterministic remainder.
 - Focused coverage proves a schema-valid `84,523`-value bundle hydrates with exact queue/session/report/Production-release binding, exactly `100,000` values hydrate, and `100,001` values reject while remaining below the unchanged `2,000,000`-character cap. The parsed enumerable prototype-key probe, complete station transport suite, strict V0.3 release-boundary suite, and Production Next.js build pass.
 - This remains an isolated review candidate. No PR, merge, deployment, helper restart, hardware action, publication, rerun, or owner card/review/report/queue mutation was performed.
+
+## 2026-07-28 - Exact Mathematical report presentation and publication-envelope hydration candidate
+
+- This isolated candidate starts from exact protected-main base `bcc4282c879f682736b5a27724e267608e606dd2`, which contains the approved bounded completed-report hydration release from PR `#212`.
+- A hydrated strict `ai-grader-report-bundle-v0.3` no longer falls through the generic Local Operator Report or enumerates all 152 report assets. The station reuses the existing advanced Mathematical V1 presentation for the final grade, four measured elements and formulas, front/back centering overlays, exact corner/edge observations, surface replay, limitations, and publication gates. Actual legacy bundles retain the existing generic viewer.
+- Unpublished strict assets are loaded only from the token-gated loopback Dell report-asset endpoint. The browser selects a bounded curated set, requires exact report and asset response identities, declared SHA-256, byte size, safe image MIME, and decoded raster dimensions before creating object URLs, and revokes every URL on close, identity change, abort, or failure. The helper now echoes the exact report identity in that endpoint's exposed headers. Unpublished hosted `/api/.../assets/...` URLs are never used.
+- Active-review sanitization retains the external Mathematical V1 production-release envelope only when its queue/session/report context and complete strict release, final grade, Label V1, calibration, and publication identities match. Review readiness and Approve & Publish consume that same active-review envelope, never the session-level release.
+- A hard refresh reconstructs immutable bound card fields from the exact durable Mathematical grading authority. Only required owner linkage fields absent from that immutable body (`year`, `manufacturer`, and sports `sport`) use a bounded 25-record browser draft keyed by the exact queue/session/report triple; product set and all other bound identity fields remain derived from durable authority and immutable.
+- Focused validation passed:
+  - shared, database, browser-client, simulator, and capture-helper TypeScript builds;
+  - strict report presentation, asset transport/security, exact release hydration, refresh isolation, station, and release-boundary suites `113/113`;
+  - publication/raster/legacy compatibility suites `14/14`;
+  - complete helper station bridge suite `50/50`;
+  - optimized Production Next.js build, with only existing non-blocking repository warnings;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Drained exact-report presentation hydration correction candidate
+
+- This isolated correction starts from exact rejected presentation candidate `c0f43adfa7e367725852cefda291b312db33dc5e` and preserves its strict Mathematical V1 viewer, active external release-envelope gating, and exact-card linkage behavior.
+- Curated report evidence loading now owns an internal abort boundary, stops scheduling on the first failure, drains all four bounded browser workers with `Promise.allSettled`, and revokes every created object URL before rejecting. An exact queue/session/report change or modal close aborts the matching load, advances its epoch, revokes ready assets, resets the modal, and releases only that load's owned `open-report` busy claim.
+- The strict viewer selects only its rendered evidence graph: both sides' measurement, outer-cut, printed-design, all-on, and correspondence references; exact corner/edge observations; finding and ledger evidence; why-not-10 overlays; and one deterministic replay asset for each rendered side/role/channel. Unused directional channels, duplicate replay assets, detector planes, and the legacy 152-image dump are not requested.
+- Strict package and asset reads are immutable. The token-gated exact-card hydration route validates the active queue/session/report triple, verifies the finalized Mathematical package once, reads and rechecks only the selected asset IDs, and returns their exact metadata and bytes without applying the package or rewriting station/queue state. Stable failures omit local paths, filenames, and tokens.
+- Browser verification retains exact identity, SHA-256, byte-size, MIME, declared-dimension, and decoded-dimension checks. Encoded dimensions and a conservative `24,000,000`-pixel product limit are enforced before `createImageBitmap`; current `1200x1680` evidence remains within the bound.
+- Focused validation passed:
+  - strict report presentation, lifecycle, transport, release, station, and linkage suites `118/118`;
+  - publication, raster, and legacy compatibility suites `15/15`;
+  - complete helper station bridge suite `51/51`;
+  - Mathematical package/station cases `14/14` (`20` assertions);
+  - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Server-authoritative exact presentation graph correction
+
+- This bounded correction starts from exact rejected candidate `4d26a0fa88352dd6a1ef1c7ce24bc79821ec350c`; its accepted viewer, release-envelope, linkage, browser lifecycle, immutable package, and publication behavior remain unchanged.
+- The helper now derives the advanced presentation evidence graph from the exact durable strict V0.3 active bundle. A hydration request must contain every and only those graph IDs; an omitted required ID or any extra detector, confidence-mask, duplicate replay, or unused directional asset is rejected before package verification or selected-file access. The verified package body must then remain canonically identical to the durable active bundle.
+- Before package verification or response allocation, the helper pre-sums the graph's declared raw bytes and exact projected base64/JSON body size. Explicit ceilings are `20 MiB` raw and `28 MiB` encoded, which contain the measured `15.869 MiB` preserved Production graph without retaining the prior hundreds-of-MiB allowance. The browser raw-byte guard now matches the `20 MiB` server boundary.
+- Selected immutable files are read by a drained worker group capped at four concurrent operations. Each file retains exact package-root confinement plus manifest byte-size and SHA-256 verification, and stable route failures still expose no local path, filename, or token.
+- The real HTTP route regression uses the canonical schema-valid strict fixture with a 60-asset browser/server-identical presentation graph totaling more than `15.8 MiB`, without owner data. It proves exact graph success, disallowed and omitted rejection before reads, declared oversize rejection before package verification/reads/encoding, one successful package verification, maximum four selected reads, exact response IDs/bytes, zero manifest/queue writes, and path/token-free failures.
+- Focused validation passed unchanged:
+  - strict report presentation, lifecycle, transport, release, station, and linkage suites `118/118`;
+  - publication, raster, and legacy compatibility suites `15/15`;
+  - complete helper station bridge suite `51/51`;
+  - Mathematical package/station cases `14/14` (`20` assertions);
+  - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Case-insensitive presentation reference compatibility correction
+
+- This isolated compatibility correction starts from exact rejected head `8cc0e43ff86f29dcb7e5136a661ab054f911ba68`. Server graph references now use lowercase lookup keys, matching the strict V0.3 schema and browser curator, while canonical `publicAssets[].id` casing and public-assets order remain the response authority.
+- A schema-valid mixed-case centering reference now passes both the browser selector and real token-gated hydration route. The regressions prove browser/server graph parity, canonical returned IDs, bounded hydration success, and the existing extra/omitted pre-read rejection.
+- Focused validation passed: browser report suites `119/119` and `15/15`; complete helper bridge `51/51`; Mathematical package/station `14/14` (`20` assertions); capture-helper and Production Next.js builds; and `git diff --check` with Windows line-ending notices only.
+- Request equality, `20 MiB` raw and `28 MiB` encoded budgets, four-read limit, hash/size/path checks, stable errors, release/linkage/lifecycle behavior, and all grading/publication contracts remain unchanged.
+- No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.

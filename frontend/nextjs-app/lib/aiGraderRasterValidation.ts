@@ -3,6 +3,7 @@ const PRIVATE_PNG_CHUNKS = new Set(["tEXt", "zTXt", "iTXt", "eXIf", "iCCP"]);
 const PRIVATE_WEBP_CHUNKS = new Set(["EXIF", "XMP ", "ICCP"]);
 const SAFE_PNG_ANCILLARY_CHUNKS = new Set(["tRNS", "gAMA", "cHRM", "sRGB", "pHYs", "bKGD", "sBIT"]);
 const SAFE_WEBP_CHUNKS = new Set(["VP8 ", "VP8L", "VP8X", "ALPH", "ANIM", "ANMF"]);
+export const AI_GRADER_BROWSER_RASTER_MAX_PIXELS = 24_000_000;
 
 export type AiGraderRasterDimensions = {
   widthPx: number;
@@ -225,7 +226,8 @@ function assertSafePlannedDimensions(dimensions: AiGraderRasterDimensions) {
     dimensions.widthPx > 100_000 ||
     !Number.isSafeInteger(dimensions.heightPx) ||
     dimensions.heightPx < 1 ||
-    dimensions.heightPx > 100_000
+    dimensions.heightPx > 100_000 ||
+    dimensions.widthPx * dimensions.heightPx > AI_GRADER_BROWSER_RASTER_MAX_PIXELS
   ) {
     throw new Error("AI Grader report image plan is missing valid pixel dimensions.");
   }
@@ -240,6 +242,23 @@ export async function assertAiGraderBrowserRaster(
   const normalized = normalizedContentType(contentType);
   if (!isAiGraderRasterBytes(bytes, normalized)) {
     throw new Error("AI Grader report image bytes do not match the approved raster content type.");
+  }
+  const encodedDimensions = readAiGraderRasterDimensions(bytes, normalized);
+  if (
+    !encodedDimensions ||
+    encodedDimensions.widthPx * encodedDimensions.heightPx >
+      AI_GRADER_BROWSER_RASTER_MAX_PIXELS
+  ) {
+    throw new Error("AI Grader report image exceeds the safe decoded pixel bound.");
+  }
+  if (
+    plannedDimensions &&
+    (encodedDimensions.widthPx !== plannedDimensions.widthPx ||
+      encodedDimensions.heightPx !== plannedDimensions.heightPx)
+  ) {
+    throw new Error(
+      `AI Grader report image dimensions do not match the upload plan (${encodedDimensions.widthPx}x${encodedDimensions.heightPx} encoded; ${plannedDimensions.widthPx}x${plannedDimensions.heightPx} planned).`,
+    );
   }
   if (typeof createImageBitmap !== "function") {
     throw new Error("This browser cannot verify AI Grader report image decoding.");

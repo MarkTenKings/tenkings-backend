@@ -76,9 +76,10 @@ import {
   AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
   AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_DIR,
   AI_GRADER_MATHEMATICAL_REPORT_PACKAGE_V1_VERSION,
+  aiGraderMathematicalAdvancedPresentationAssetIdsV1,
   buildAiGraderMathematicalReportEnvelopeV1,
   decodeAiGraderMathematicalAssetPayloadsV1,
-  readAiGraderMathematicalReportAssetV1,
+  readAiGraderMathematicalReportAssetsFromVerifiedPackageV1,
   readAiGraderMathematicalReportPackageV1,
   writeAiGraderMathematicalProductionReleaseV1,
   writeAiGraderMathematicalReportPackageV1,
@@ -93,6 +94,7 @@ import {
 } from "./aiGraderMathematicalReportBundleV1";
 import {
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  aiGraderReportBundleV03Schema,
   aiGraderOcrFieldRequiresReview,
   aiGraderOperatorResolutionAuthenticationV1Schema,
   canonicalJsonV1,
@@ -242,6 +244,10 @@ export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-b
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_HOST = "127.0.0.1";
 export const DEFAULT_AI_GRADER_LOCAL_STATION_BRIDGE_PORT = 47652;
 export const MATHEMATICAL_CALIBRATION_PREVIEW_PORT = 47653;
+export const AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES =
+  20 * 1024 * 1024;
+export const AI_GRADER_MATHEMATICAL_HYDRATION_MAX_ENCODED_RESPONSE_BYTES =
+  28 * 1024 * 1024;
 const PREVIEW_RELEASE_TIMEOUT_MS = 5000;
 const PREVIEW_CAMERA_SETTLE_MS = 3500;
 const LIVE_LIGHTING_WATCHDOG_MS = 15000;
@@ -1674,6 +1680,10 @@ export interface AiGraderLocalStationBridgeDependencies {
   ) => Promise<FixedRigMathematicalCalibrationCaptureBoundaryResultV1>;
   /** Test-only queue persistence boundary; production uses the same atomic JSON writer as manifests. */
   writeRapidQueueAtomic?: (filePath: string, value: unknown) => Promise<void>;
+  /** Test-only immutable-package verification boundary. */
+  readMathematicalReportPackage?: typeof readAiGraderMathematicalReportPackageV1;
+  /** Test-only selected immutable-asset read boundary. */
+  readMathematicalAssetFile?: (filePath: string) => Promise<Buffer>;
   /** Hardware-free test seam; Production uses the concrete opened Basler/Leimac adapter. */
   observeCalibrationActivationRuntime?: (
     expected: AiGraderOperatingContextV1,
@@ -3690,6 +3700,74 @@ function isMathematicalProductionRelease(
   release: AiGraderStationProductionRelease | undefined,
 ): release is AiGraderMathematicalProductionReleaseV1 {
   return release?.schemaVersion === "ai-grader-mathematical-production-release-v1";
+}
+
+function assertMathematicalHydrationBudget(input: {
+  queueItemId: string;
+  gradingSessionId: string;
+  reportId: string;
+  bundle: AiGraderReportBundleV03;
+  assetIds: readonly string[];
+}): void {
+  const assetsById = new Map(
+    input.bundle.publicAssets.map((asset) => [asset.id, asset]),
+  );
+  const responseAssets = input.assetIds.map((assetId) => {
+    const asset = assetsById.get(assetId);
+    const byteSize = asset?.byteSize;
+    if (
+      !asset ||
+      typeof byteSize !== "number" ||
+      !Number.isSafeInteger(byteSize) ||
+      byteSize < 1
+    ) {
+      throw new Error(
+        "Mathematical V1 advanced presentation graph has invalid declared evidence.",
+      );
+    }
+    return {
+      reportId: input.reportId,
+      assetId: asset.id,
+      contentType: asset.contentType ?? "application/octet-stream",
+      byteSize,
+      checksumSha256: asset.sha256 ?? asset.checksumSha256 ?? "",
+      bodyBase64: "",
+    };
+  });
+  const rawBytes = responseAssets.reduce(
+    (sum, asset) => sum + asset.byteSize,
+    0,
+  );
+  const base64Bytes = responseAssets.reduce(
+    (sum, asset) => sum + 4 * Math.ceil(asset.byteSize / 3),
+    0,
+  );
+  const fixedJsonBytes = Buffer.byteLength(
+    JSON.stringify({
+      ok: true,
+      operation: "mathematical-report-hydration",
+      result: {
+        queueItemId: input.queueItemId,
+        gradingSessionId: input.gradingSessionId,
+        reportId: input.reportId,
+        bundle: input.bundle,
+        assets: responseAssets,
+      },
+    }),
+    "utf8",
+  ) + 1;
+  const projectedEncodedResponseBytes = fixedJsonBytes + base64Bytes;
+  if (
+    !Number.isSafeInteger(rawBytes) ||
+    !Number.isSafeInteger(projectedEncodedResponseBytes) ||
+    rawBytes > AI_GRADER_MATHEMATICAL_HYDRATION_MAX_RAW_BYTES ||
+    projectedEncodedResponseBytes >
+      AI_GRADER_MATHEMATICAL_HYDRATION_MAX_ENCODED_RESPONSE_BYTES
+  ) {
+    throw new Error(
+      "Mathematical V1 advanced presentation evidence exceeds the bounded response.",
+    );
+  }
 }
 
 function gradingContractFor(manifest: Pick<AiGraderLocalStationBridgeManifest, "gradingContract" | "reportBundle">): AiGraderGradingContract {
@@ -6397,7 +6475,10 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Provide either a Mathematical V1 package path or a V0.3 body envelope, not both.");
     }
     if (request.mathematicalReportPackagePath) {
-      const reportPackage = await readAiGraderMathematicalReportPackageV1(
+      const reportPackage = await (
+        this.dependencies.readMathematicalReportPackage ??
+        readAiGraderMathematicalReportPackageV1
+      )(
         this.assertMathematicalPackagePathAllowed(request.mathematicalReportPackagePath),
       );
       this.assertMathematicalPackageIdentity(reportPackage, manifest);
@@ -6428,7 +6509,10 @@ export class AiGraderLocalStationBridgeService {
         ? manifest.outputs.reportBundlePath
         : undefined);
     if (existingPath) {
-      const reportPackage = await readAiGraderMathematicalReportPackageV1(
+      const reportPackage = await (
+        this.dependencies.readMathematicalReportPackage ??
+        readAiGraderMathematicalReportPackageV1
+      )(
         this.assertMathematicalPackagePathAllowed(existingPath),
       );
       this.assertMathematicalPackageIdentity(reportPackage, manifest);
@@ -6436,7 +6520,10 @@ export class AiGraderLocalStationBridgeService {
     }
     const canonicalDir = mathematicalPublishPackageDir(this.config, manifest.reportId);
     if (await exists(canonicalDir)) {
-      const reportPackage = await readAiGraderMathematicalReportPackageV1(canonicalDir);
+      const reportPackage = await (
+        this.dependencies.readMathematicalReportPackage ??
+        readAiGraderMathematicalReportPackageV1
+      )(canonicalDir);
       this.assertMathematicalPackageIdentity(reportPackage, manifest);
       return reportPackage;
     }
@@ -6459,8 +6546,6 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical Grading V1 report " + expectedReportId + " is not available.");
     }
     const reportPackage = await this.resolveMathematicalReportPackage(source.manifest, {});
-    this.applyMathematicalReportPackage(source.manifest, reportPackage);
-    if (source.manifestPath) await writeJsonAtomic(source.manifestPath, source.manifest);
     return {
       reportId: expectedReportId,
       gradingSessionId: reportPackage.envelope.gradingSessionId,
@@ -14788,21 +14873,40 @@ export class AiGraderLocalStationBridgeService {
     contentType: string;
     sha256: string;
   }> {
+    const stationSource = await this.findStationManifestForReport(reportId);
+    if (stationSource && gradingContractFor(stationSource.manifest) === "mathematical_calibration_v1") {
+      try {
+        const reportPackage = await this.resolveMathematicalReportPackage(
+          stationSource.manifest,
+          {},
+        );
+        const asset = (
+          await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+            reportPackage,
+            [assetId],
+            {
+              readAssetFile: this.dependencies.readMathematicalAssetFile,
+            },
+          )
+        )[0];
+        return {
+          id: asset.asset.id,
+          bytes: asset.bytes,
+          contentType: asset.asset.contentType ?? "application/octet-stream",
+          sha256: asset.asset.sha256 ?? asset.asset.checksumSha256 ??
+            crypto.createHash("sha256").update(asset.bytes).digest("hex"),
+        };
+      } catch {
+        throw new Error(
+          "Mathematical Grading V1 report evidence is unavailable or failed integrity verification.",
+        );
+      }
+    }
     const resolved = await this.reportBundle(reportId);
-    if (resolved.gradingContract === "mathematical_calibration_v1") {
-      const source = await this.findStationManifestForReport(reportId);
-      if (!source) throw new Error("Mathematical Grading V1 station manifest is unavailable.");
-      const reportPackage = await this.resolveMathematicalReportPackage(source.manifest, {});
-      const asset = await readAiGraderMathematicalReportAssetV1({
-        packagePath: reportPackage.outputDir,
-        assetId,
-      });
-      return {
-        id: asset.asset.id,
-        bytes: asset.bytes,
-        contentType: asset.asset.contentType ?? "application/octet-stream",
-        sha256: asset.asset.sha256 ?? asset.asset.checksumSha256 ?? crypto.createHash("sha256").update(asset.bytes).digest("hex"),
-      };
+    if (resolved.gradingContract !== "legacy_v0") {
+      throw new Error(
+        "Mathematical Grading V1 report evidence is unavailable or failed integrity verification.",
+      );
     }
     const asset = resolved.bundle.assets.find((candidate) => candidate.id === assetId);
     if (!asset?.localPath || asset.kind !== "image") {
@@ -14815,6 +14919,135 @@ export class AiGraderLocalStationBridgeService {
       contentType: asset.contentType ?? "application/octet-stream",
       sha256: crypto.createHash("sha256").update(bytes).digest("hex"),
     };
+  }
+
+  async mathematicalReportHydration(
+    identity: { queueItemId?: string; gradingSessionId?: string; reportId?: string },
+    assetIds: readonly string[],
+  ): Promise<{
+    queueItemId: string;
+    gradingSessionId: string;
+    reportId: string;
+    bundle: AiGraderReportBundleV03;
+    assets: Array<{
+      reportId: string;
+      assetId: string;
+      contentType: string;
+      byteSize: number;
+      checksumSha256: string;
+      bodyBase64: string;
+    }>;
+  }> {
+    const item = this.exactQueuedItem(identity);
+    if (this.activeQueueItemId !== item.queueItemId) {
+      throw new Error(
+        "Mathematical V1 report hydration requires the exact activated queue/session/report triple.",
+      );
+    }
+    if (
+      assetIds.length < 1 ||
+      assetIds.length > 96 ||
+      new Set(assetIds).size !== assetIds.length ||
+      assetIds.some((assetId) =>
+        typeof assetId !== "string" ||
+        assetId.length < 1 ||
+        assetId.length > 512 ||
+        assetId.includes("\0"))
+    ) {
+      throw new Error("Mathematical V1 report hydration selected asset IDs are invalid.");
+    }
+    const manifest = await this.exactQueuedManifest(item);
+    if (gradingContractFor(manifest) !== "mathematical_calibration_v1") {
+      throw new Error("Mathematical V1 report hydration requires a strict report.");
+    }
+    const parsedManifestBundle = aiGraderReportBundleV03Schema.safeParse(
+      manifest.reportBundle,
+    );
+    if (
+      !parsedManifestBundle.success ||
+      parsedManifestBundle.data.reportId !== item.reportId
+    ) {
+      throw new Error(
+        "Mathematical V1 report hydration requires the exact durable strict report.",
+      );
+    }
+    const manifestBundle = parsedManifestBundle.data;
+    const exactAssetIds =
+      aiGraderMathematicalAdvancedPresentationAssetIdsV1(manifestBundle);
+    const requestedIds = new Set(assetIds);
+    if (
+      assetIds.length !== exactAssetIds.length ||
+      exactAssetIds.some((assetId) => !requestedIds.has(assetId))
+    ) {
+      throw new Error(
+        "Mathematical V1 report hydration requires the exact advanced presentation evidence graph.",
+      );
+    }
+    assertMathematicalHydrationBudget({
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      bundle: manifestBundle,
+      assetIds: exactAssetIds,
+    });
+    try {
+      const reportPackage = await this.resolveMathematicalReportPackage(manifest, {});
+      if (
+        canonicalJsonV1(reportPackage.envelope.reportBundle) !==
+        canonicalJsonV1(manifestBundle)
+      ) {
+        throw new Error(
+          "Mathematical V1 immutable package changed from the exact active report.",
+        );
+      }
+      const verifiedAssetIds =
+        aiGraderMathematicalAdvancedPresentationAssetIdsV1(
+          reportPackage.envelope.reportBundle,
+        );
+      if (
+        verifiedAssetIds.length !== exactAssetIds.length ||
+        verifiedAssetIds.some(
+          (assetId, index) => assetId !== exactAssetIds[index],
+        )
+      ) {
+        throw new Error(
+          "Mathematical V1 immutable presentation graph changed.",
+        );
+      }
+      assertMathematicalHydrationBudget({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+        bundle: reportPackage.envelope.reportBundle,
+        assetIds: verifiedAssetIds,
+      });
+      const selected = await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+        reportPackage,
+        verifiedAssetIds,
+        {
+          readAssetFile: this.dependencies.readMathematicalAssetFile,
+        },
+      );
+      return {
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+        bundle: reportPackage.envelope.reportBundle,
+        assets: selected.map(({ asset, bytes }) => ({
+          reportId: item.reportId,
+          assetId: asset.id,
+          contentType: asset.contentType ?? "application/octet-stream",
+          byteSize: bytes.byteLength,
+          checksumSha256: asset.sha256 ?? asset.checksumSha256 ??
+            crypto.createHash("sha256").update(bytes).digest("hex"),
+          bodyBase64: bytes.toString("base64"),
+        })),
+      };
+    } catch {
+      throw new Error(
+        "Mathematical Grading V1 report evidence is unavailable or failed integrity verification.",
+      );
+    }
   }
 
   async mathematicalReviewAsset(
@@ -17481,9 +17714,67 @@ export function createAiGraderLocalStationBridgeHttpServer(
           config,
           asset.contentType,
           {
+            "X-AI-Grader-Report-Id": reportId,
             "X-AI-Grader-Asset-Id": asset.id,
             "X-AI-Grader-SHA256": asset.sha256,
           }
+        );
+      }
+
+      const reportHydrationMatch = url.pathname.match(
+        /^\/reports\/([^/]+)\/mathematical-hydration$/,
+      );
+      if (reportHydrationMatch) {
+        if (req.method !== "POST") {
+          return sendJson(
+            res,
+            405,
+            {
+              ok: false,
+              code: "METHOD_NOT_ALLOWED",
+              message: "POST is required for Mathematical V1 report hydration.",
+            },
+            origin,
+            config,
+          );
+        }
+        if (!tokenMatches(req, config)) {
+          return sendJson(
+            res,
+            401,
+            {
+              ok: false,
+              code: "AI_GRADER_STATION_BRIDGE_UNAUTHORIZED",
+              message: "Station token is required.",
+            },
+            origin,
+            config,
+          );
+        }
+        const reportId = decodeURIComponent(reportHydrationMatch[1]);
+        const body = await readJsonBody(req);
+        const assetIds = Array.isArray(body.assetIds)
+          ? body.assetIds.filter((assetId): assetId is string => typeof assetId === "string")
+          : [];
+        if (assetIds.length !== (Array.isArray(body.assetIds) ? body.assetIds.length : -1)) {
+          throw new Error("Mathematical V1 report hydration assetIds are invalid.");
+        }
+        const result = await service.mathematicalReportHydration(
+          {
+            queueItemId: typeof body.queueItemId === "string" ? body.queueItemId : undefined,
+            gradingSessionId: typeof body.gradingSessionId === "string"
+              ? body.gradingSessionId
+              : undefined,
+            reportId,
+          },
+          assetIds,
+        );
+        return sendJson(
+          res,
+          200,
+          { ok: true, operation: "mathematical-report-hydration", result },
+          origin,
+          config,
         );
       }
 

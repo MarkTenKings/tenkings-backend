@@ -48,7 +48,11 @@ import {
   aiGraderCaptureAssertionFromFrame,
   runAiGraderCapture,
 } from "../lib/aiGraderStationOperations";
-import { buildStrictAiGraderReportBundleV03Fixture } from "./fixtures/strictAiGraderReportBundleV03";
+import { buildAiGraderPublishReadiness } from "../lib/aiGraderOperatorWorkflow";
+import {
+  buildStrictAiGraderMathematicalReleaseV1Fixture,
+  buildStrictAiGraderReportBundleV03Fixture,
+} from "./fixtures/strictAiGraderReportBundleV03";
 
 const OCR_ATTEMPT_OWNER_ID = "ocr-attempt-11111111-1111-4111-8111-111111111111";
 
@@ -818,12 +822,10 @@ function completedReportHydrationQueue(reportBundle: AiGraderReportBundleV03) {
       manifest: {
         latestReport: { reportId, exists: true },
         reportBundle,
-        productionRelease: {
-          reportId,
+        productionRelease: buildStrictAiGraderMathematicalReleaseV1Fixture(
+          reportBundle,
           gradingSessionId,
-          finalGradeComputed: true,
-          label: { status: "label_data_ready" },
-        },
+        ),
       },
     },
     items: [{
@@ -915,7 +917,60 @@ test("schema-valid Production-sized V0.3 report remains hydrated for exact Appro
     queue.activeReview?.manifest.productionRelease?.reportId,
     "math-v1-release-test",
   );
+  const readiness = buildAiGraderPublishReadiness({
+    bundle: hydratedBundle,
+    productionRelease: queue.activeReview?.manifest.productionRelease,
+    published: false,
+  });
+  assert.equal(readiness.status, "ready");
+  assert.equal(readiness.ready, true);
+  assert.equal(aiGraderApproveAndPublishEligible({
+    itemState: queue.items[0].state,
+    reportReady: true,
+    finalReady: true,
+    productionSignedIn: true,
+    identityReady: true,
+    publishStatus: "idle",
+  }), true);
 });
+
+for (const mismatch of ["queue", "session", "report", "release-grade", "release-label"] as const) {
+  test(`strict V1 active review rejects ${mismatch} identity/release mismatch`, () => {
+    const reportBundle = buildStrictAiGraderReportBundleV03Fixture();
+    const source = completedReportHydrationQueue(reportBundle);
+    if (mismatch === "queue") {
+      source.activeReview.queueItemId = "queue-other";
+    } else if (mismatch === "session") {
+      source.activeReview.manifest.productionRelease.gradingSessionId = "session-other";
+    } else if (mismatch === "report") {
+      source.activeReview.manifest.productionRelease.reportId = "report-other";
+    } else if (mismatch === "release-grade") {
+      source.activeReview.manifest.productionRelease.finalGrade = {
+        ...source.activeReview.manifest.productionRelease.finalGrade,
+        overall: 9,
+      };
+    } else {
+      source.activeReview.manifest.productionRelease.label = {
+        ...source.activeReview.manifest.productionRelease.label,
+        reportId: "report-other",
+      };
+    }
+
+    const queue = sanitizeAiGraderRapidCaptureQueue(source);
+    if (mismatch === "queue") {
+      assert.equal(queue.activeReview, undefined);
+      return;
+    }
+    assert.equal(queue.activeReview?.manifest.productionRelease, undefined);
+    const readiness = buildAiGraderPublishReadiness({
+      bundle: queue.activeReview?.manifest.reportBundle,
+      productionRelease: queue.activeReview?.manifest.productionRelease,
+      published: false,
+    });
+    assert.equal(readiness.ready, false);
+    assert.equal(readiness.status, "not_ready_missing_final_grade");
+  });
+}
 
 test("exactly 100,000 visited report values pass the browser hydration bound", () => {
   const reportBundle = strictReportBundleAtVisitedValueCount(100_000);

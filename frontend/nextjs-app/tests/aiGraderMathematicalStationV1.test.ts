@@ -227,6 +227,44 @@ test("Production station exposes Mathematical V1 as a fixed contract with no Leg
   assert.doesNotMatch(source, /setSelectedGradingContract/);
 });
 
+test("Production station routes strict V1 through the advanced local viewer and preserves the legacy viewer", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /const localMathematicalBundle = parseAiGraderMathematicalReportV1\(localReport\.bundle\)/,
+  );
+  assert.match(
+    source,
+    /localMathematicalBundle && localReport\.productionRelease \? \([\s\S]*?<AiGraderMathematicalReportV1/,
+  );
+  assert.match(source, /localUnpublished/);
+  assert.match(source, /showAllEvidenceAssets=\{false\}/);
+  assert.match(source, /assetUrlsById=\{localReport\.assetUrlsById\}/);
+  assert.match(source, /workflowRelease=\{localReport\.productionRelease\}/);
+  assert.match(source, /fetchAiGraderStationMathematicalReportHydration\(\{/);
+  assert.match(source, /curatedAiGraderMathematicalAssetMetadata\(\s*strictBundle/);
+  assert.match(
+    source,
+    /canonicalJsonV1\(hydration\.bundle\) !== canonicalJsonV1\(strictBundle\)/,
+  );
+  assert.match(
+    source,
+    /localReportLifecycleRef\.current!\.switchIdentity\(\s*activeReviewQueueIdentityKey/,
+  );
+  assert.match(source, /releaseLocalReportBusyClaim\(transition\.retiredClaim\)/);
+  assert.match(source, /localReportLifecycleRef\.current!\.adoptAssets\(load, assets\)/);
+  assert.match(
+    source,
+    /const localReportRelease = localMathematicalBundle[\s\S]*?\? localReport\.productionRelease[\s\S]*?: \(localReport\.bundle\?\.productionRelease/,
+  );
+  assert.doesNotMatch(
+    source,
+    /const localReportRelease = localMathematicalBundle[\s\S]{0,120}\? status\.productionRelease/,
+  );
+  assert.match(source, /\? "Mathematical V1 Report Review"\s*: "Local Operator Report"/);
+  assert.match(source, /localReportGallery\.map\(\(asset\) =>/);
+});
+
 test("Production station uses plain-language card and border labels", () => {
   const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
   assert.match(source, /<option value="generic_standard">Sports<\/option>/);
@@ -272,6 +310,43 @@ test("Production station uses one contextual card-information form for grading a
   assert.match(
     source,
     /const mathematicalAuthorityDraftComplete = \[\s*mathematicalAuthorityDraft\.title,\s*mathematicalAuthorityDraft\.setId,\s*mathematicalAuthorityDraft\.cardNumber,\s*\]/,
+  );
+});
+
+test("bound Mathematical identity and exact-card owner linkage fields survive refresh without broadening edits", () => {
+  const source = readFileSync(new URL("../pages/ai-grader/station.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /readAiGraderReviewLinkageDraft\(\s*exactIdentity,\s*window\.localStorage,\s*\)/,
+  );
+  assert.match(
+    source,
+    /boundAiGraderReviewDraftPatch\(boundAuthority\)/,
+  );
+  assert.match(
+    source,
+    /boundAiGraderMathematicalAuthorityDraft\(boundAuthority\)/,
+  );
+  assert.match(
+    source,
+    /persistAiGraderReviewLinkageField\([\s\S]*?queueItemId: activeReview\.queueItemId,[\s\S]*?gradingSessionId: activeReview\.gradingSessionId,[\s\S]*?reportId: activeReview\.reportId,[\s\S]*?key,[\s\S]*?value,[\s\S]*?window\.localStorage/,
+  );
+  assert.match(source, /disabled=\{mathematicalAuthorityBound \|\| busy !== null\}/);
+  assert.match(
+    source,
+    /value=\{identityDraft\.year\}[\s\S]*?disabled=\{busy !== null\}/,
+  );
+  assert.match(
+    source,
+    /value=\{identityDraft\.manufacturer\}[\s\S]*?disabled=\{busy !== null\}/,
+  );
+  assert.match(
+    source,
+    /value=\{identityDraft\.sport\}[\s\S]*?disabled=\{busy !== null\}/,
+  );
+  assert.doesNotMatch(
+    source,
+    /persistAiGraderReviewLinkageField\([\s\S]{0,300}"cardName"/,
   );
 });
 

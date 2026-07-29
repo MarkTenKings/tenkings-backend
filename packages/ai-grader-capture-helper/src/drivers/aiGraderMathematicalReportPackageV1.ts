@@ -28,6 +28,7 @@ export const AI_GRADER_MATHEMATICAL_REPORT_CHECKSUMS_FILE = "checksums-v0.3.json
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const SHA256 = /^[a-f0-9]{64}$/;
+export const AI_GRADER_MATHEMATICAL_SELECTED_ASSET_READ_CONCURRENCY = 4;
 
 export interface AiGraderMathematicalReportEnvelopeV1 {
   schemaVersion: typeof AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION;
@@ -77,6 +78,72 @@ export interface AiGraderMathematicalReportPackageV1 {
   envelope: AiGraderMathematicalReportEnvelopeV1;
   assetManifest: AiGraderMathematicalReportPackageManifestV1;
   checksums: AiGraderMathematicalReportChecksumsV1;
+}
+
+export function aiGraderMathematicalAdvancedPresentationAssetIdsV1(
+  bundle: AiGraderReportBundleV03,
+): string[] {
+  const selectedIds = new Set<string>();
+  const addAssetId = (assetId: string | undefined) => {
+    if (assetId) selectedIds.add(assetId.toLowerCase());
+  };
+  for (const side of [bundle.centeringEvidence.front, bundle.centeringEvidence.back]) {
+    addAssetId(side.measurementOverlayAssetId);
+    addAssetId(side.outerCutContourAssetId);
+    addAssetId(side.printedDesignContourAssetId);
+    addAssetId(side.outerCutGeometryEvidence?.normalizedAllOnAssetId);
+    addAssetId(side.registrationEvidence?.correspondenceLedgerAssetId);
+  }
+  for (const observation of [
+    ...bundle.conditionObservationEvidence.corners,
+    ...bundle.conditionObservationEvidence.edges,
+  ]) {
+    addAssetId(observation.roiAssetId);
+    addAssetId(observation.segmentationMaskAssetId);
+    addAssetId(observation.illuminationMaskAssetId);
+  }
+  for (const finding of bundle.defectFindings) {
+    addAssetId(finding.evidence.trueViewAssetId);
+    addAssetId(finding.evidence.overlayAssetId);
+    addAssetId(finding.evidence.segmentationMaskAssetId);
+  }
+  for (const entry of bundle.deductionLedger.entries) {
+    for (const assetId of entry.evidenceAssetIds) addAssetId(assetId);
+  }
+  for (const reason of bundle.productionRelease.finalGrade.whyNot10) {
+    for (const assetId of reason.overlayAssetIds) addAssetId(assetId);
+  }
+  for (const side of ["front", "back"] as const) {
+    for (const evidenceRole of [
+      "normalized_card",
+      "surface_vision",
+      "surface_heatmap",
+      "illumination_mask",
+    ] as const) {
+      addAssetId(
+        bundle.publicAssets.find(
+          (asset) => asset.side === side && asset.evidenceRole === evidenceRole,
+        )?.id,
+      );
+    }
+    addAssetId(
+      bundle.publicAssets
+        .filter(
+          (asset) =>
+            asset.side === side && asset.evidenceRole === "directional_channel",
+        )
+        .sort((left, right) => left.id.localeCompare(right.id))[0]?.id,
+    );
+  }
+  const exactIds = bundle.publicAssets
+    .filter((asset) => selectedIds.has(asset.id.toLowerCase()))
+    .map((asset) => asset.id);
+  if (exactIds.length !== selectedIds.size || exactIds.length < 1) {
+    throw new Error(
+      "Mathematical Grading V1 advanced presentation graph is incomplete.",
+    );
+  }
+  return exactIds;
 }
 
 export interface AiGraderMathematicalProductionReleaseV1 {
@@ -498,13 +565,87 @@ export async function readAiGraderMathematicalReportAssetV1(input: {
   assetId: string;
 }): Promise<{ asset: AiGraderReportBundleV03["publicAssets"][number]; bytes: Buffer }> {
   const reportPackage = await readAiGraderMathematicalReportPackageV1(input.packagePath);
-  const packaged = reportPackage.assetManifest.assets.find((asset) => asset.id === input.assetId);
-  const asset = reportPackage.envelope.reportBundle.publicAssets.find((candidate) => candidate.id === input.assetId);
-  if (!packaged || !asset) throw new Error(`Mathematical Grading V1 asset ${input.assetId} is not in the immutable package.`);
-  return {
-    asset,
-    bytes: await readFile(path.join(reportPackage.outputDir, ...packaged.relativePath.split("/"))),
+  return (await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+    reportPackage,
+    [input.assetId],
+  ))[0];
+}
+
+/**
+ * Reads a bounded selected set from an already checksum-verified package.
+ * The package-wide verification remains a single operation; selected bytes
+ * are rechecked against their immutable manifest entry immediately before use.
+ */
+export async function readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+  reportPackage: AiGraderMathematicalReportPackageV1,
+  assetIds: readonly string[],
+  dependencies: {
+    readAssetFile?: (filePath: string) => Promise<Buffer>;
+  } = {},
+): Promise<Array<{
+  asset: AiGraderReportBundleV03["publicAssets"][number];
+  bytes: Buffer;
+}>> {
+  const seen = new Set<string>();
+  const requested = assetIds.map((assetId) => {
+    if (seen.has(assetId)) {
+      throw new Error("Mathematical Grading V1 selected asset IDs must be unique.");
+    }
+    seen.add(assetId);
+    const packaged = reportPackage.assetManifest.assets.find((asset) => asset.id === assetId);
+    const asset = reportPackage.envelope.reportBundle.publicAssets.find((candidate) => candidate.id === assetId);
+    if (!packaged || !asset) {
+      throw new Error("Mathematical Grading V1 selected asset is not in the immutable package.");
+    }
+    return { packaged, asset };
+  });
+  const results = new Array<{
+    asset: AiGraderReportBundleV03["publicAssets"][number];
+    bytes: Buffer;
+  }>(requested.length);
+  const readAssetFile = dependencies.readAssetFile ?? readFile;
+  let nextIndex = 0;
+  let firstError: unknown;
+  const worker = async () => {
+    while (firstError === undefined) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= requested.length) return;
+      const { packaged, asset } = requested[index];
+      try {
+        const assetPath = path.resolve(
+          reportPackage.outputDir,
+          ...packaged.relativePath.split("/"),
+        );
+        if (!isSubpath(assetPath, reportPackage.outputDir)) {
+          throw new Error("Mathematical Grading V1 selected asset escaped the package root.");
+        }
+        const bytes = await readAssetFile(assetPath);
+        if (
+          bytes.byteLength !== packaged.byteSize ||
+          sha256(bytes) !== packaged.sha256
+        ) {
+          throw new Error("Mathematical Grading V1 selected asset failed integrity verification.");
+        }
+        results[index] = { asset, bytes };
+      } catch (error) {
+        if (firstError === undefined) firstError = error;
+      }
+    }
   };
+  await Promise.allSettled(
+    Array.from(
+      {
+        length: Math.min(
+          AI_GRADER_MATHEMATICAL_SELECTED_ASSET_READ_CONCURRENCY,
+          requested.length,
+        ),
+      },
+      () => worker(),
+    ),
+  );
+  if (firstError !== undefined) throw firstError;
+  return results;
 }
 
 export function buildAiGraderMathematicalProductionReleaseV1(input: {

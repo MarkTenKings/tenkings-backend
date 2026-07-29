@@ -10,6 +10,7 @@ import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   type AiGraderReportBundleV03,
 } from "@tenkings/shared";
+import type { AiGraderMathematicalProductionReleaseEnvelope } from "../../lib/aiGraderMathematicalReportV1";
 
 const SHA = "c".repeat(64);
 const confidence = {
@@ -514,4 +515,67 @@ export function buildStrictAiGraderReportBundleV03Fixture(): AiGraderReportBundl
     evidenceQualityLimitations: [],
     publicAssets,
   } as unknown as AiGraderReportBundleV03;
+}
+
+export function buildStrictAiGraderMathematicalReleaseV1Fixture(
+  bundle: AiGraderReportBundleV03,
+  gradingSessionId = "session-hydration",
+): AiGraderMathematicalProductionReleaseEnvelope {
+  const publicReportUrl = bundle.productionRelease.label.publicReportUrl;
+  const qrPayloadUrl = bundle.productionRelease.label.qrPayloadUrl;
+  return {
+    schemaVersion: "ai-grader-mathematical-production-release-v1",
+    reportId: bundle.reportId,
+    gradingSessionId,
+    generatedAt: bundle.generatedAt,
+    reportStatus: "final_ai_grader_report_v1",
+    finalStatus: "final_grade_computed",
+    finalGradeComputed: true,
+    certifiedClaim: false,
+    certificateGenerated: false,
+    finalGrade: structuredClone(bundle.productionRelease.finalGrade),
+    gates: [{
+      id: "mathematical-v1",
+      status: "pass",
+      reason: "Strict V1 validation passed.",
+      evidenceRefs: ["calibration-artifact-v1"],
+    }],
+    operatorFinalization: {
+      operatorId: "operator-1",
+      finalizedAt: "2026-07-18T19:10:00.000Z",
+      warningsAccepted: false,
+      acceptedWarningGateIds: [],
+    },
+    label: {
+      ...structuredClone(bundle.productionRelease.label),
+      labelVersion: "ten-kings-ai-grader-label-v1",
+      reportId: bundle.reportId,
+      status: "label_data_ready",
+      certificateStatus: "report_id_issued_not_certified",
+      elementScores: {
+        centering: bundle.productionRelease.finalGrade.elements.centering.score,
+        corners: bundle.productionRelease.finalGrade.elements.corners.score,
+        edges: bundle.productionRelease.finalGrade.elements.edges.score,
+        surface: bundle.productionRelease.finalGrade.elements.surface.score,
+      },
+      cardIdentity: structuredClone(bundle.cardIdentity),
+      certifiedClaim: false,
+      publicReportUrl,
+      qrPayloadUrl,
+    },
+    publication: {
+      status: "local_bundle_ready",
+      reportId: bundle.reportId,
+      publicReportUrl,
+      qrPayloadUrl,
+      storageMode: "local_artifact_only",
+      dbWritesPerformed: false,
+      migrationsRun: false,
+      uploadPerformed: false,
+    },
+    cardIdentity: structuredClone(bundle.cardIdentity),
+    calibrationProfile: structuredClone(bundle.calibrationProfile),
+    labelDataGenerated: true,
+    qrPayloadGenerated: true,
+  };
 }
