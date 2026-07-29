@@ -29270,3 +29270,10 @@ By enabling Rip It Live, I confirm:
   - `git diff --check`.
 - The complete build passed with existing repository warnings for unrelated image tags/hooks, stale Browserslist/Tailwind metadata, and optional Sharp development modules. Local Node `25.6.1` also reported the repository's expected Node `20.x` engine warning.
 - No database migration was applied, no database was read or written, no deploy/restart was run, no hardware/helper/station action was performed, and no AI Grader data or behavior was changed.
+
+## 2026-07-29 - Standalone Human Grade production rollout authorized
+
+- Mark explicitly authorized merging the completed standalone Human Grade workflow to Production for live testing.
+- Planned rollout is limited to: fetch and verify current protected-main parity; push `codex/human-grade`; open the focused PR; wait for required GitHub/Vercel checks; merge through the protected path; apply additive migration `20260729190000_human_grade_labels`; verify the serving Production commit; and smoke-test `/admin/human-grade` plus its authenticated API boundary.
+- The migration creates only the standalone `HumanGradeCardType` and `HumanGradeLabelSheetStatus` enums, `HumanGradeLabelSheet` and `HumanGradeLabel` tables, indexes, sequences, and their sheet relation. It contains no delete, truncate, update, backfill, or reference to an AI Grader table.
+- No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action is authorized or planned.
