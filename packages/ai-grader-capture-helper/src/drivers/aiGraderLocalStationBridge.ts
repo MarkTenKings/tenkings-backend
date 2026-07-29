@@ -8384,7 +8384,8 @@ export class AiGraderLocalStationBridgeService {
     };
     const expected = new Map<string, ExpectedAsset>();
     const allowedContentTypes = new Set(["image/png", "image/jpeg", "image/tiff"]);
-    const assetIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+    const assetIdPattern =
+      /^(?=.{1,256}$)[A-Za-z0-9][A-Za-z0-9._:-]*(?:\/[A-Za-z0-9][A-Za-z0-9._:-]*)*$/;
     const metadataMatches = (
       left: FixedRigMathematicalFindingReviewAssetMetadataV1,
       right: FixedRigMathematicalFindingReviewAssetMetadataV1,

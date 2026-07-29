@@ -1215,7 +1215,10 @@ function findingReviewFixture(input, warmSources) {
   const reviewAssets = [];
   for (const [name, source] of Object.entries(generated)) {
     const metadata = assetMetadata(
-      "surface-fixture-" + source.role,
+      "front/mathematical-v1/findings/surface-fixture-finding/" +
+        (source.role === "roi_crop"
+          ? "roi.png"
+          : source.role.replaceAll("_", "-") + ".png"),
       source.role,
       source.bytes,
       source.fileName,
@@ -3361,7 +3364,7 @@ test("a crash immediately after release write resumes from one deterministic byt
   }
 });
 
-test("finding review persists and serves exact True View, directional, ROI, segmentation, confidence, and illumination evidence before deterministic rerun", async () => {
+test("Production-shaped hierarchical finding review persists and serves exact hash-bound ROI and mask evidence", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-station-review-"));
   const calls = [];
   let reviewFixture;
@@ -3406,6 +3409,15 @@ test("finding review persists and serves exact True View, directional, ROI, segm
     assert.equal(JSON.stringify(active.manifest.mathematicalV1).includes("filePath"), false);
 
     const requestFinding = pending.mathematicalV1.execution.reviewRequest.findings[0];
+    assert.deepEqual(
+      Object.values(requestFinding.reviewEvidence).map((asset) => asset.assetId),
+      [
+        "front/mathematical-v1/findings/surface-fixture-finding/roi.png",
+        "front/mathematical-v1/findings/surface-fixture-finding/segmentation-mask.png",
+        "front/mathematical-v1/findings/surface-fixture-finding/confidence-mask.png",
+        "front/mathematical-v1/findings/surface-fixture-finding/illumination-mask.png",
+      ],
+    );
     const expectedRoles = new Set([
       "normalized_card",
       "directional_channel",
