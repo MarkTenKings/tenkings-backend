@@ -71,6 +71,7 @@ test("strict Mathematical V1 selects advanced curated evidence instead of the 15
   const selectedIds = new Set(selected.map((asset) => asset.id));
 
   assert.equal(bundle.publicAssets.length, 152);
+  assert.equal(selected.length, 64);
   assert.ok(selected.length < bundle.publicAssets.length);
   for (const side of ["front", "back"] as const) {
     assert.equal(selectedIds.has(`${side}/normalized.png`), true);
@@ -286,6 +287,7 @@ test("local Mathematical V1 assets are identity/hash/size/MIME verified before o
     },
   });
 
+  assert.equal(assets.assetIds.length, 64);
   assert.equal(fetched.length, assets.assetIds.length);
   assert.deepEqual(
     fetched.map((entry) => entry.slice(entry.indexOf(":") + 1)),

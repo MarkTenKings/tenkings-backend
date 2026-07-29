@@ -421,7 +421,8 @@ test("centering ruler stacks exact sides, zooms from fit width, and persists vis
   assert.match(source, /heightPx: 1680 as const/);
   assert.match(source, /function CenteringResolutionPreview\(/);
   assert.match(source, /Calculated centering preview/);
-  assert.match(source, /fuseCenteringFrontBackV1\(frontScore, backScore\)/);
+  assert.match(source, /calculateVerifiedHumanCenteringV1\(/);
+  assert.match(source, /score: calculation\.score/);
   assert.match(source, /DEFAULT_CENTERING_PUBLIC_EXPLANATION/);
   assert.match(source, /DEFAULT_CENTERING_INTERNAL_REASON/);
 });

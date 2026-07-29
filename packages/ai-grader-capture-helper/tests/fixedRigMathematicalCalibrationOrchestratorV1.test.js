@@ -938,11 +938,11 @@ test("a localized low-contrast outer-cut area preserves computed elements and th
       measurements: {
         unit: "mm",
         order: ["left", "right", "top", "bottom"],
-        front: [2.1, 2.2, 2.4, 2.3],
-        back: [2.3, 2.2, 2.1, 2.4],
+        front: [2.39, 2.12, 2.35, 2.12],
+        back: [2.7, 3.05, 3.45, 2.8],
         segments: operatorCenteringSegments(
-          [2.1, 2.2, 2.4, 2.3],
-          [2.3, 2.2, 2.1, 2.4],
+          [2.39, 2.12, 2.35, 2.12],
+          [2.7, 3.05, 3.45, 2.8],
         ),
       },
     },
@@ -995,6 +995,31 @@ test("a localized low-contrast outer-cut area preserves computed elements and th
     result.reasons?.join("; ") ?? JSON.stringify(result),
   );
   assert.equal(result.grade.elements.centering.resolved, true);
+  assert.equal(result.grade.elements.centering.score, 7.46);
+  assert.equal(result.summary.scores.centering, 7.46);
+  assert.equal(result.reportArtifact.bundle.centeringEvidence.front.score, 8.74);
+  assert.equal(result.reportArtifact.bundle.centeringEvidence.back.score, 7.23);
+  assert.equal(result.reportArtifact.bundle.centeringEvidence.fusedScore, 7.46);
+  assert.equal(
+    result.reportArtifact.bundle.productionRelease.finalGrade.elements.centering.score,
+    7.46,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.front.horizontal.u95Mm,
+    0,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.front.vertical.u95Mm,
+    0,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.horizontal.u95Mm,
+    0,
+  );
+  assert.equal(
+    result.reportArtifact.bundle.centeringEvidence.back.vertical.u95Mm,
+    0,
+  );
   assert.equal(result.grade.elements.corners.score, 9.4);
   assert.equal(result.grade.elements.edges.score, 9.15);
   assert.equal(result.grade.elements.surface.score, 8.75);

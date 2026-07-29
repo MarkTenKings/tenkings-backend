@@ -23,6 +23,7 @@ const {
   calculateFindingDeductionV1,
   calculateOverallGradeV1,
   calculateRegisteredDesignTemplateAxisV1,
+  calculateVerifiedHumanCenteringV1,
   canonicalizeMathematicalGradingManifestV1,
   clampMathematicalGradeV1,
   combineMeasurementUncertaintyU95,
@@ -330,6 +331,21 @@ test("centering uses the continuous published curve and U95 margin deadband", ()
   assert.equal(insideExplicitTolerance.effectiveDifference, 0);
   assert.equal(fuseCenteringSideAxesV1(9.5, 8.5), 8.5);
   assert.equal(fuseCenteringFrontBackV1(10, 8), 8.3);
+});
+
+test("verified human centering uses exact measured margins with no calibration uncertainty buffer", () => {
+  const calculation = calculateVerifiedHumanCenteringV1({
+    front: { left: 2.39, right: 2.12, top: 2.35, bottom: 2.12 },
+    back: { left: 2.7, right: 3.05, top: 3.45, bottom: 2.8 },
+  });
+
+  assert.equal(calculation.front.horizontal.differenceU95, 0);
+  assert.equal(calculation.front.vertical.differenceU95, 0);
+  assert.equal(calculation.back.horizontal.differenceU95, 0);
+  assert.equal(calculation.back.vertical.differenceU95, 0);
+  assert.equal(calculation.front.score, 8.74);
+  assert.equal(calculation.back.score, 7.23);
+  assert.equal(calculation.score, 7.46);
 });
 
 test("registered design templates score error from approved expected margins, not intentional asymmetry", () => {
