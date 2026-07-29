@@ -498,13 +498,54 @@ export async function readAiGraderMathematicalReportAssetV1(input: {
   assetId: string;
 }): Promise<{ asset: AiGraderReportBundleV03["publicAssets"][number]; bytes: Buffer }> {
   const reportPackage = await readAiGraderMathematicalReportPackageV1(input.packagePath);
-  const packaged = reportPackage.assetManifest.assets.find((asset) => asset.id === input.assetId);
-  const asset = reportPackage.envelope.reportBundle.publicAssets.find((candidate) => candidate.id === input.assetId);
-  if (!packaged || !asset) throw new Error(`Mathematical Grading V1 asset ${input.assetId} is not in the immutable package.`);
-  return {
-    asset,
-    bytes: await readFile(path.join(reportPackage.outputDir, ...packaged.relativePath.split("/"))),
-  };
+  return (await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+    reportPackage,
+    [input.assetId],
+  ))[0];
+}
+
+/**
+ * Reads a bounded selected set from an already checksum-verified package.
+ * The package-wide verification remains a single operation; selected bytes
+ * are rechecked against their immutable manifest entry immediately before use.
+ */
+export async function readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+  reportPackage: AiGraderMathematicalReportPackageV1,
+  assetIds: readonly string[],
+): Promise<Array<{
+  asset: AiGraderReportBundleV03["publicAssets"][number];
+  bytes: Buffer;
+}>> {
+  const seen = new Set<string>();
+  const requested = assetIds.map((assetId) => {
+    if (seen.has(assetId)) {
+      throw new Error("Mathematical Grading V1 selected asset IDs must be unique.");
+    }
+    seen.add(assetId);
+    const packaged = reportPackage.assetManifest.assets.find((asset) => asset.id === assetId);
+    const asset = reportPackage.envelope.reportBundle.publicAssets.find((candidate) => candidate.id === assetId);
+    if (!packaged || !asset) {
+      throw new Error("Mathematical Grading V1 selected asset is not in the immutable package.");
+    }
+    return { packaged, asset };
+  });
+  return Promise.all(requested.map(async ({ packaged, asset }) => {
+    const assetPath = path.resolve(
+      reportPackage.outputDir,
+      ...packaged.relativePath.split("/"),
+    );
+    if (!isSubpath(assetPath, reportPackage.outputDir)) {
+      throw new Error("Mathematical Grading V1 selected asset escaped the package root.");
+    }
+    const bytes = await readFile(assetPath);
+    if (
+      bytes.byteLength !== packaged.byteSize ||
+      sha256(bytes) !== packaged.sha256
+    ) {
+      throw new Error("Mathematical Grading V1 selected asset failed integrity verification.");
+    }
+    return { asset, bytes };
+  }));
 }
 
 export function buildAiGraderMathematicalProductionReleaseV1(input: {

@@ -6,11 +6,25 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const sharp = require("sharp");
+require(require.resolve("tsx/cjs", {
+  paths: [path.resolve(__dirname, "../../../frontend/nextjs-app")],
+}));
+const {
+  buildStrictAiGraderReportBundleV03Fixture,
+} = require("../../../frontend/nextjs-app/tests/fixtures/strictAiGraderReportBundleV03.ts");
+const {
+  AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+} = require("../dist/drivers/aiGraderMathematicalReportBundleV1");
+const {
+  readAiGraderMathematicalReportPackageV1,
+  writeAiGraderMathematicalReportPackageV1,
+} = require("../dist/drivers/aiGraderMathematicalReportPackageV1");
 const {
   AiGraderPreviewJpegFrameAssembler,
   AiGraderLocalStationBridgeService,
   AI_GRADER_LOCAL_STATION_BRIDGE_VERSION,
   buildAiGraderLocalStationBridgeConfig,
+  createAiGraderLocalStationBridgeHttpServer,
   retainAiGraderRapidCaptureQueueItems,
 } = require("../dist/drivers/aiGraderLocalStationBridge");
 
@@ -44,6 +58,262 @@ test("local report assets expose exact report, asset, and hash response identiti
     bridgeSource,
     /const reportAssetMatch[\s\S]*?service\.reportAsset\(reportId, assetId\)[\s\S]*?"X-AI-Grader-Report-Id": reportId,[\s\S]*?"X-AI-Grader-Asset-Id": asset\.id,[\s\S]*?"X-AI-Grader-SHA256": asset\.sha256/,
   );
+});
+
+test("real Mathematical hydration route verifies one immutable package, returns only selected bytes, and writes nothing", async (t) => {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-report-hydration-route-"));
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
+  const outputDir = path.join(fixtureRoot, "station");
+  const reportBundleOutputDir = path.join(fixtureRoot, "reports");
+  fs.mkdirSync(outputDir, { recursive: true });
+  const { config, service, item, queuedManifest } =
+    await createEligibleQueuedFixture(
+      outputDir,
+      "report-hydration",
+      { reportBundleOutputDir },
+    );
+  await service.rapidRecoveryJob;
+  const identity = {
+    queueItemId: item.queueItemId,
+    gradingSessionId: item.sessionId,
+    reportId: item.reportId,
+  };
+  const now = new Date().toISOString();
+  item.state = "report_ready_needs_confirm";
+  item.updatedAt = now;
+  item.ocr = {
+    state: "succeeded",
+    updatedAt: now,
+    attemptCount: 1,
+    attemptOwnerId: "ocr-attempt-owner-report-hydration",
+    eligibleAt: now,
+    startedAt: now,
+    completedAt: now,
+    images: item.ocr.images,
+    result: safeOcrResult(item),
+  };
+  item.history.push({
+    state: item.state,
+    at: now,
+    detail: "Production-shaped strict report hydration fixture.",
+  });
+  queuedManifest.gradingContract = "mathematical_calibration_v1";
+  queuedManifest.rapidCapture.workflowState = item.state;
+  queuedManifest.rapidCapture.workflowHistory = [...item.history];
+  queuedManifest.rapidCapture.ocr = {
+    ...item.ocr,
+    images: item.ocr.images.map(({ localPath, ...image }) => image),
+  };
+  queuedManifest.currentStep = "label_data_ready";
+  const packageDir = path.join(
+    reportBundleOutputDir,
+    item.reportId,
+    "mathematical-v1",
+  );
+  const selectedBytes = Buffer.alloc(1000, 17);
+  const selectedSha = crypto.createHash("sha256").update(selectedBytes).digest("hex");
+  const replaceFixtureIdentity = (value) => {
+    if (Array.isArray(value)) return value.map(replaceFixtureIdentity);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          replaceFixtureIdentity(entry),
+        ]),
+      );
+    }
+    if (typeof value !== "string") return value;
+    if (value === "c".repeat(64)) return selectedSha;
+    return value.replaceAll("math-v1-release-test", item.reportId);
+  };
+  const strictBundle = replaceFixtureIdentity(
+    buildStrictAiGraderReportBundleV03Fixture(),
+  );
+  strictBundle.publicAssets = strictBundle.publicAssets.map((asset) => ({
+    ...asset,
+    sha256: selectedSha,
+    ...(asset.checksumSha256 ? { checksumSha256: selectedSha } : {}),
+    byteSize: selectedBytes.byteLength,
+  }));
+  const reportPackage = await writeAiGraderMathematicalReportPackageV1({
+    gradingSessionId: item.sessionId,
+    outputDir: packageDir,
+    artifact: {
+      adapterVersion: AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+      bundle: strictBundle,
+      assetPayloads: strictBundle.publicAssets.map((asset) => ({
+        id: asset.id,
+        contentType: asset.contentType,
+        sha256: selectedSha,
+        byteSize: selectedBytes.byteLength,
+        bytes: selectedBytes,
+      })),
+    },
+  });
+  queuedManifest.reportBundle = strictBundle;
+  queuedManifest.outputs.reportBundlePath = reportPackage.bundlePath;
+  queuedManifest.outputs.mathematicalReportBundlePath =
+    reportPackage.bundlePath;
+  queuedManifest.outputs.mathematicalReportEnvelopePath =
+    reportPackage.envelopePath;
+  service.rapidQueue.items = [item];
+  service.committedRapidQueue = structuredClone(service.rapidQueue);
+  service.queuedManifests.set(item.queueItemId, queuedManifest);
+  fs.writeFileSync(
+    queuedManifest.outputs.manifestPath,
+    JSON.stringify(queuedManifest, null, 2),
+  );
+  await service.persistRapidQueue();
+
+  let packageVerificationCount = 0;
+  let queueWriteCount = 0;
+  const server = createAiGraderLocalStationBridgeHttpServer(
+    config,
+    {},
+    undefined,
+    undefined,
+    {
+      stopOrphanedPreviewStreamsUntilReleased: async () => 0,
+      readMathematicalReportPackage: async (packagePath) => {
+        packageVerificationCount += 1;
+        return readAiGraderMathematicalReportPackageV1(packagePath);
+      },
+      writeRapidQueueAtomic: async (filePath, value) => {
+        queueWriteCount += 1;
+        fs.writeFileSync(
+          filePath,
+          JSON.stringify(value, null, 2),
+        );
+      },
+    },
+  );
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const headers = {
+    "content-type": "application/json",
+    "x-ai-grader-station-token": config.stationToken,
+  };
+  const statusResponse = await fetch(`${baseUrl}/status`, {
+    headers: { "x-ai-grader-station-token": config.stationToken },
+  });
+  const statusPayload = await statusResponse.json();
+  assert.equal(
+    statusPayload.result.rapidCaptureQueue.items[0].state,
+    "report_ready_needs_confirm",
+    JSON.stringify(statusPayload.result.rapidCaptureQueue.items[0]),
+  );
+  const activated = await fetch(`${baseUrl}/actions/activate-queue-item`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(identity),
+  });
+  const activatedPayload = await activated.text();
+  assert.equal(activated.status, 200, activatedPayload);
+  queueWriteCount = 0;
+  const manifestBytesBefore = fs.readFileSync(queuedManifest.outputs.manifestPath);
+  const queueBytesBefore = fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json"));
+
+  const bundleGet = await fetch(
+    `${baseUrl}/reports/${item.reportId}/bundle`,
+    { headers: { "x-ai-grader-station-token": config.stationToken } },
+  );
+  assert.equal(bundleGet.status, 200);
+  assert.equal(packageVerificationCount, 1);
+  packageVerificationCount = 0;
+  const assetGet = await fetch(
+    `${baseUrl}/reports/${item.reportId}/asset?assetId=${encodeURIComponent("front/center.png")}`,
+    { headers: { "x-ai-grader-station-token": config.stationToken } },
+  );
+  assert.equal(assetGet.status, 200);
+  assert.deepEqual(Buffer.from(await assetGet.arrayBuffer()), selectedBytes);
+  assert.equal(packageVerificationCount, 1);
+  packageVerificationCount = 0;
+  assert.deepEqual(
+    fs.readFileSync(queuedManifest.outputs.manifestPath),
+    manifestBytesBefore,
+  );
+  assert.deepEqual(
+    fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json")),
+    queueBytesBefore,
+  );
+
+  const hydratedResponse = await fetch(
+    `${baseUrl}/reports/${item.reportId}/mathematical-hydration`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        assetIds: ["front/center.png", "back/center.png"],
+      }),
+    },
+  );
+  assert.equal(hydratedResponse.status, 200);
+  const hydrated = await hydratedResponse.json();
+  assert.equal(packageVerificationCount, 1);
+  assert.equal(queueWriteCount, 0);
+  assert.deepEqual(
+    hydrated.result.assets.map((asset) => asset.assetId),
+    ["front/center.png", "back/center.png"],
+  );
+  assert.deepEqual(
+    Buffer.from(hydrated.result.assets[0].bodyBase64, "base64"),
+    selectedBytes,
+  );
+  assert.equal(
+    JSON.stringify(hydrated).includes("front/corners/top_left/confidence.png"),
+    true,
+    "the immutable bundle may name detector evidence while response bytes remain selected-only",
+  );
+  assert.equal(
+    hydrated.result.assets.some((asset) =>
+      asset.assetId.includes("/confidence.png")),
+    false,
+  );
+  assert.deepEqual(
+    fs.readFileSync(queuedManifest.outputs.manifestPath),
+    manifestBytesBefore,
+  );
+  assert.deepEqual(
+    fs.readFileSync(path.join(outputDir, "rapid-capture-queue.json")),
+    queueBytesBefore,
+  );
+
+  const selectedPackaged = reportPackage.assetManifest.assets.find(
+    (asset) => asset.id === "front/center.png",
+  );
+  assert.ok(selectedPackaged);
+  fs.rmSync(
+    path.join(packageDir, ...selectedPackaged.relativePath.split("/")),
+  );
+  const missingResponse = await fetch(
+    `${baseUrl}/reports/${item.reportId}/mathematical-hydration`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        assetIds: ["front/center.png"],
+      }),
+    },
+  );
+  assert.equal(missingResponse.status, 400);
+  const missingPayload = await missingResponse.text();
+  assert.match(
+    missingPayload,
+    /Mathematical Grading V1 report evidence is unavailable or failed integrity verification/,
+  );
+  assert.equal(missingPayload.includes(fixtureRoot), false);
+  assert.equal(missingPayload.includes(selectedPackaged.relativePath), false);
+  assert.equal(missingPayload.includes(config.stationToken), false);
 });
 
 function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {

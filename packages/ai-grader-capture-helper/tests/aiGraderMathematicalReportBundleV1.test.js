@@ -40,6 +40,7 @@ const {
   AI_GRADER_MATHEMATICAL_REPORT_BUNDLE_FILE,
   AI_GRADER_MATHEMATICAL_REPORT_ENVELOPE_V1_VERSION,
   buildAiGraderMathematicalReportEnvelopeV1,
+  readAiGraderMathematicalReportAssetsFromVerifiedPackageV1,
   readAiGraderMathematicalReportPackageV1,
   writeAiGraderMathematicalProductionReleaseV1,
   writeAiGraderMathematicalReportPackageV1,
@@ -1520,6 +1521,39 @@ test("Mathematical V1 package writes body, external session envelope, assets, an
   );
 });
 
+test("verified Mathematical package reads only the exact selected asset set and rechecks selected bytes", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-selected-assets-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const artifact = await buildAiGraderMathematicalReportBundleV1(reportInput());
+  const reportPackage = await writeAiGraderMathematicalReportPackageV1({
+    gradingSessionId: "grading-session-selected-assets",
+    artifact,
+    outputDir: path.join(tempDir, "mathematical-v1"),
+  });
+  const selectedIds = reportPackage.assetManifest.assets
+    .slice(0, 2)
+    .map((asset) => asset.id);
+  const selected = await readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+    reportPackage,
+    selectedIds,
+  );
+  assert.deepEqual(selected.map((entry) => entry.asset.id), selectedIds);
+  assert.deepEqual(selected.map((entry) => entry.bytes), [TEST_PIXEL, TEST_PIXEL]);
+
+  const firstPackaged = reportPackage.assetManifest.assets[0];
+  fs.writeFileSync(
+    path.join(reportPackage.outputDir, ...firstPackaged.relativePath.split("/")),
+    Buffer.from([2]),
+  );
+  await assert.rejects(
+    readAiGraderMathematicalReportAssetsFromVerifiedPackageV1(
+      reportPackage,
+      [firstPackaged.id],
+    ),
+    /failed integrity verification/,
+  );
+});
+
 test("Mathematical V1 release preserves the exact strict grade and one-decimal label without V0 policy", async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-release-"));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
@@ -1603,7 +1637,16 @@ test("station Mathematical V1 path returns strict body with external session ide
     gradingContract: "mathematical_calibration_v1",
     mathematicalGradingAuthority: {
       schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
-      cardIdentity: artifact.bundle.cardIdentity,
+      cardIdentity: {
+        title: artifact.bundle.cardIdentity.title,
+        sideCount: artifact.bundle.cardIdentity.sideCount,
+        tenantId: artifact.bundle.cardIdentity.tenantId,
+        setId: artifact.bundle.cardIdentity.setId,
+        programId: artifact.bundle.cardIdentity.programId,
+        cardNumber: artifact.bundle.cardIdentity.cardNumber,
+        variantId: artifact.bundle.cardIdentity.variantId,
+        parallelId: artifact.bundle.cardIdentity.parallelId,
+      },
       cardFormatId: MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.cardFormats.standardTradingCard.profileId,
       sides: {
         front: { centering: { profile: "printed_border_v1" } },

@@ -29157,3 +29157,19 @@ By enabling Rip It Live, I confirm:
   - optimized Production Next.js build, with only existing non-blocking repository warnings;
   - `git diff --check`, with Windows line-ending notices only.
 - No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Drained exact-report presentation hydration correction candidate
+
+- This isolated correction starts from exact rejected presentation candidate `c0f43adfa7e367725852cefda291b312db33dc5e` and preserves its strict Mathematical V1 viewer, active external release-envelope gating, and exact-card linkage behavior.
+- Curated report evidence loading now owns an internal abort boundary, stops scheduling on the first failure, drains all four bounded browser workers with `Promise.allSettled`, and revokes every created object URL before rejecting. An exact queue/session/report change or modal close aborts the matching load, advances its epoch, revokes ready assets, resets the modal, and releases only that load's owned `open-report` busy claim.
+- The strict viewer selects only its rendered evidence graph: both sides' measurement, outer-cut, printed-design, all-on, and correspondence references; exact corner/edge observations; finding and ledger evidence; why-not-10 overlays; and one deterministic replay asset for each rendered side/role/channel. Unused directional channels, duplicate replay assets, detector planes, and the legacy 152-image dump are not requested.
+- Strict package and asset reads are immutable. The token-gated exact-card hydration route validates the active queue/session/report triple, verifies the finalized Mathematical package once, reads and rechecks only the selected asset IDs, and returns their exact metadata and bytes without applying the package or rewriting station/queue state. Stable failures omit local paths, filenames, and tokens.
+- Browser verification retains exact identity, SHA-256, byte-size, MIME, declared-dimension, and decoded-dimension checks. Encoded dimensions and a conservative `24,000,000`-pixel product limit are enforced before `createImageBitmap`; current `1200x1680` evidence remains within the bound.
+- Focused validation passed:
+  - strict report presentation, lifecycle, transport, release, station, and linkage suites `118/118`;
+  - publication, raster, and legacy compatibility suites `15/15`;
+  - complete helper station bridge suite `51/51`;
+  - Mathematical package/station cases `14/14` (`20` assertions);
+  - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.

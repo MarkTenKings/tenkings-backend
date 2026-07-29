@@ -115,13 +115,47 @@ test("browser raster preflight returns decoded dimensions and rejects a planned-
     );
     await assert.rejects(
       assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png", { widthPx: 2, heightPx: 1 }),
-      /dimensions do not match the upload plan \(1x1 decoded; 2x1 planned\)/,
+      /dimensions do not match the upload plan \(1x1 encoded; 2x1 planned\)/,
     );
     await assert.rejects(
       assertAiGraderBrowserRaster(arrayBuffer(PNG), "image/png", { widthPx: 0, heightPx: 1 }),
       /plan is missing valid pixel dimensions/,
     );
-    assert.equal(closeCount, 3);
+    assert.equal(closeCount, 2);
+  } finally {
+    if (originalCreateImageBitmap) {
+      Object.defineProperty(globalThis, "createImageBitmap", {
+        configurable: true,
+        writable: true,
+        value: originalCreateImageBitmap,
+      });
+    } else {
+      delete (globalThis as { createImageBitmap?: typeof createImageBitmap }).createImageBitmap;
+    }
+  }
+});
+
+test("browser raster preflight rejects compressed oversized dimensions before decoding", async () => {
+  const oversized = Buffer.from(PNG);
+  oversized.writeUInt32BE(6_000, 16);
+  oversized.writeUInt32BE(5_000, 20);
+  let decodeCount = 0;
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+  Object.defineProperty(globalThis, "createImageBitmap", {
+    configurable: true,
+    writable: true,
+    value: async () => {
+      decodeCount += 1;
+      return { width: 6_000, height: 5_000, close() {} };
+    },
+  });
+  try {
+    assert.equal(isAiGraderRasterBytes(arrayBuffer(oversized), "image/png"), true);
+    await assert.rejects(
+      assertAiGraderBrowserRaster(arrayBuffer(oversized), "image/png"),
+      /safe decoded pixel bound/,
+    );
+    assert.equal(decodeCount, 0);
   } finally {
     if (originalCreateImageBitmap) {
       Object.defineProperty(globalThis, "createImageBitmap", {

@@ -164,7 +164,10 @@ export default function AiGraderMathematicalReportV1({
   ) ?? observations[0];
   const sideAssets = publicDisplayAssets.filter((asset) => asset.side === selectedSide);
   const directionalAssets = sideAssets
-    .filter((asset) => asset.evidenceRole === "directional_channel")
+    .filter((asset) =>
+      asset.evidenceRole === "directional_channel" &&
+      (!localUnpublished || Boolean(asset.publicUrl))
+    )
     .sort((left, right) => left.id.localeCompare(right.id));
   const replayAsset = replayMode === "light_sweep"
     ? directionalAssets[replayChannelIndex % Math.max(1, directionalAssets.length)]

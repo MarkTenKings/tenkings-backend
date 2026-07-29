@@ -77,7 +77,13 @@ export function curatedAiGraderMathematicalAssetMetadata(
   const selectedIds = new Set<string>();
   for (const side of [bundle.centeringEvidence.front, bundle.centeringEvidence.back]) {
     addAssetId(selectedIds, side.measurementOverlayAssetId);
+    addAssetId(selectedIds, side.outerCutContourAssetId);
+    addAssetId(selectedIds, side.printedDesignContourAssetId);
     addAssetId(selectedIds, side.outerCutGeometryEvidence?.normalizedAllOnAssetId);
+    addAssetId(
+      selectedIds,
+      side.registrationEvidence?.correspondenceLedgerAssetId,
+    );
   }
   for (const observation of [
     ...bundle.conditionObservationEvidence.corners,
@@ -91,20 +97,36 @@ export function curatedAiGraderMathematicalAssetMetadata(
     addAssetId(selectedIds, finding.evidence.trueViewAssetId);
     addAssetId(selectedIds, finding.evidence.overlayAssetId);
     addAssetId(selectedIds, finding.evidence.segmentationMaskAssetId);
-    addAssetId(selectedIds, finding.evidence.heatmapAssetId);
-    addAssetId(selectedIds, finding.evidence.surfaceVisionAssetId);
   }
-  for (const limitation of bundle.evidenceQualityLimitations) {
-    for (const assetId of limitation.evidenceAssetIds) addAssetId(selectedIds, assetId);
+  for (const entry of bundle.deductionLedger.entries) {
+    for (const assetId of entry.evidenceAssetIds) addAssetId(selectedIds, assetId);
   }
-  for (const asset of bundle.publicAssets) {
-    if (
-      asset.evidenceRole === "normalized_card" ||
-      asset.evidenceRole === "surface_vision" ||
-      asset.evidenceRole === "surface_heatmap"
-    ) {
-      addAssetId(selectedIds, asset.id);
+  for (const reason of bundle.productionRelease.finalGrade.whyNot10) {
+    for (const assetId of reason.overlayAssetIds) addAssetId(selectedIds, assetId);
+  }
+  for (const side of ["front", "back"] as const) {
+    for (const evidenceRole of [
+      "normalized_card",
+      "surface_vision",
+      "surface_heatmap",
+      "illumination_mask",
+    ] as const) {
+      addAssetId(
+        selectedIds,
+        bundle.publicAssets.find(
+          (asset) => asset.side === side && asset.evidenceRole === evidenceRole,
+        )?.id,
+      );
     }
+    addAssetId(
+      selectedIds,
+      bundle.publicAssets
+        .filter(
+          (asset) =>
+            asset.side === side && asset.evidenceRole === "directional_channel",
+        )
+        .sort((left, right) => left.id.localeCompare(right.id))[0]?.id,
+    );
   }
 
   const assetsById = new Map(
@@ -182,14 +204,20 @@ export async function loadAiGraderLocalMathematicalAssets(input: {
   const urlsByAssetId: Record<string, string> = {};
   const objectUrls: string[] = [];
   let nextIndex = 0;
+  const internalAbort = new AbortController();
+  const abortFromCaller = () => internalAbort.abort(input.signal?.reason);
+  if (input.signal?.aborted) abortFromCaller();
+  else input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  let firstError: unknown;
 
   const loadOne = async (asset: PublicAsset) => {
-    if (input.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (internalAbort.signal.aborted) throw new DOMException("Aborted", "AbortError");
     const response = await dependencies.fetchAsset({
       reportId: input.reportId,
       assetId: asset.id,
-      signal: input.signal,
+      signal: internalAbort.signal,
     });
+    if (internalAbort.signal.aborted) throw new DOMException("Aborted", "AbortError");
     if (
       response.reportId !== input.reportId ||
       response.assetId !== asset.id
@@ -223,7 +251,7 @@ export async function loadAiGraderLocalMathematicalAssets(input: {
         ? { widthPx: asset.widthPx, heightPx: asset.heightPx }
         : undefined,
     );
-    if (input.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    if (internalAbort.signal.aborted) throw new DOMException("Aborted", "AbortError");
     const objectUrl = dependencies.createObjectUrl(
       new Blob([response.bytes], { type: expectedType }),
     );
@@ -232,21 +260,30 @@ export async function loadAiGraderLocalMathematicalAssets(input: {
   };
 
   const worker = async () => {
-    while (true) {
+    while (!internalAbort.signal.aborted) {
       const index = nextIndex;
       nextIndex += 1;
       if (index >= assets.length) return;
-      await loadOne(assets[index]);
+      try {
+        await loadOne(assets[index]);
+      } catch (error) {
+        if (firstError === undefined) firstError = error;
+        internalAbort.abort(error);
+        return;
+      }
     }
   };
 
   try {
-    await Promise.all(
+    await Promise.allSettled(
       Array.from(
         { length: Math.min(MAX_CURATED_ASSET_CONCURRENCY, assets.length) },
         () => worker(),
       ),
     );
+    if (firstError !== undefined || internalAbort.signal.aborted) {
+      throw firstError ?? new DOMException("Aborted", "AbortError");
+    }
     return {
       reportId: input.reportId,
       assetIds: assets.map((asset) => asset.id),
@@ -256,6 +293,8 @@ export async function loadAiGraderLocalMathematicalAssets(input: {
   } catch (error) {
     for (const objectUrl of objectUrls) dependencies.revokeObjectUrl(objectUrl);
     throw error;
+  } finally {
+    input.signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 

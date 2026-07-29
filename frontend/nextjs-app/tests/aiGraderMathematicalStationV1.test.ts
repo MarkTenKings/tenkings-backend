@@ -241,6 +241,18 @@ test("Production station routes strict V1 through the advanced local viewer and 
   assert.match(source, /showAllEvidenceAssets=\{false\}/);
   assert.match(source, /assetUrlsById=\{localReport\.assetUrlsById\}/);
   assert.match(source, /workflowRelease=\{localReport\.productionRelease\}/);
+  assert.match(source, /fetchAiGraderStationMathematicalReportHydration\(\{/);
+  assert.match(source, /curatedAiGraderMathematicalAssetMetadata\(\s*strictBundle/);
+  assert.match(
+    source,
+    /canonicalJsonV1\(hydration\.bundle\) !== canonicalJsonV1\(strictBundle\)/,
+  );
+  assert.match(
+    source,
+    /localReportLifecycleRef\.current!\.switchIdentity\(\s*activeReviewQueueIdentityKey/,
+  );
+  assert.match(source, /releaseLocalReportBusyClaim\(transition\.retiredClaim\)/);
+  assert.match(source, /localReportLifecycleRef\.current!\.adoptAssets\(load, assets\)/);
   assert.match(
     source,
     /const localReportRelease = localMathematicalBundle[\s\S]*?\? localReport\.productionRelease[\s\S]*?: \(localReport\.bundle\?\.productionRelease/,

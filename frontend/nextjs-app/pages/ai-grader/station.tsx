@@ -10,6 +10,7 @@ import {
 import {
   AI_GRADER_CALIBRATION_START_AUTHORITY_API_V1,
   calculateCenteringAxisV1,
+  canonicalJsonV1,
   fuseCenteringFrontBackV1,
   fuseCenteringSideAxesV1,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -84,6 +85,7 @@ import {
   fetchAiGraderLiveLightingStatus,
   fetchAiGraderStationBridgeHealth,
   fetchAiGraderStationPreviewStatus,
+  fetchAiGraderStationMathematicalReportHydration,
   fetchAiGraderStationReportAsset,
   fetchAiGraderStationReportBundle,
   heartbeatAiGraderLiveLighting,
@@ -158,10 +160,15 @@ import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation"
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
 import AiGraderMathematicalReportV1 from "../../components/ai-grader/AiGraderMathematicalReportV1";
 import {
+  curatedAiGraderMathematicalAssetMetadata,
   loadAiGraderLocalMathematicalAssets,
   revokeAiGraderLocalMathematicalAssets,
-  type AiGraderLocalMathematicalAssetSet,
 } from "../../lib/aiGraderLocalMathematicalReport";
+import {
+  AiGraderLocalReportBusyOwner,
+  AiGraderLocalReportLifecycle,
+  type AiGraderLocalReportBusyClaim,
+} from "../../lib/aiGraderLocalReportLifecycle";
 import {
   boundAiGraderMathematicalAuthorityDraft,
   boundAiGraderReviewDraftPatch,
@@ -1613,9 +1620,16 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "No local report is open.",
   });
-  const localReportAssetSetRef = useRef<AiGraderLocalMathematicalAssetSet | undefined>(undefined);
-  const localReportAbortRef = useRef<AbortController | undefined>(undefined);
-  const localReportLoadEpochRef = useRef(0);
+  const localReportLifecycleRef = useRef<AiGraderLocalReportLifecycle | undefined>(undefined);
+  const localReportBusyOwnerRef = useRef<AiGraderLocalReportBusyOwner | undefined>(undefined);
+  if (!localReportLifecycleRef.current) {
+    localReportLifecycleRef.current = new AiGraderLocalReportLifecycle(
+      revokeAiGraderLocalMathematicalAssets,
+    );
+  }
+  if (!localReportBusyOwnerRef.current) {
+    localReportBusyOwnerRef.current = new AiGraderLocalReportBusyOwner();
+  }
   const [finishQueue, setFinishQueue] = useState<FinishQueueResult>(emptyFinishQueue);
   const [finishQueueState, setFinishQueueState] = useState<StepState>({
     status: "idle",
@@ -1733,22 +1747,36 @@ export default function AiGraderStationPage() {
     operatorResolutionEvidenceObjectUrlsRef.current = [];
   };
 
-  const revokeLocalReportObjectUrls = () => {
-    revokeAiGraderLocalMathematicalAssets(localReportAssetSetRef.current);
-    localReportAssetSetRef.current = undefined;
+  const releaseLocalReportBusyClaim = (
+    claim: AiGraderLocalReportBusyClaim | undefined,
+  ) => {
+    setBusy((current) =>
+      localReportBusyOwnerRef.current!.release(claim, current),
+    );
   };
 
   const closeLocalReport = () => {
-    localReportLoadEpochRef.current += 1;
-    localReportAbortRef.current?.abort();
-    localReportAbortRef.current = undefined;
-    revokeLocalReportObjectUrls();
+    const transition = localReportLifecycleRef.current!.close();
+    releaseLocalReportBusyClaim(transition.retiredClaim);
     setLocalReport({
       open: false,
       status: "idle",
       message: "No local report is open.",
     });
   };
+
+  useEffect(() => {
+    const transition = localReportLifecycleRef.current!.switchIdentity(
+      activeReviewQueueIdentityKey,
+    );
+    if (!transition.changed) return;
+    releaseLocalReportBusyClaim(transition.retiredClaim);
+    setLocalReport({
+      open: false,
+      status: "idle",
+      message: "No local report is open.",
+    });
+  }, [activeReviewQueueIdentityKey]);
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
     const transition = transitionAiGraderPreviewEpoch(previewEpochStateRef.current, event);
@@ -1919,8 +1947,7 @@ export default function AiGraderStationPage() {
 
   useEffect(() => () => revokeMathematicalReviewObjectUrls(), []);
   useEffect(() => () => {
-    localReportAbortRef.current?.abort();
-    revokeLocalReportObjectUrls();
+    localReportLifecycleRef.current?.close();
   }, []);
 
   useEffect(() => {
@@ -5945,12 +5972,14 @@ export default function AiGraderStationPage() {
       setError("Connect the Dell local station bridge before opening the local report.");
       return;
     }
-    localReportLoadEpochRef.current += 1;
-    const loadEpoch = localReportLoadEpochRef.current;
-    localReportAbortRef.current?.abort();
-    revokeLocalReportObjectUrls();
-    const abortController = new AbortController();
-    localReportAbortRef.current = abortController;
+    const reviewIdentityKey = aiGraderRapidQueueIdentityKey(reviewIdentity);
+    const busyClaim = localReportBusyOwnerRef.current!.claim();
+    const lifecycle = localReportLifecycleRef.current!.begin(
+      reviewIdentityKey,
+      busyClaim,
+    );
+    releaseLocalReportBusyClaim(lifecycle.retiredClaim);
+    const load = lifecycle.load;
     setBusy("open-report");
     setError(null);
     setLocalReport({
@@ -5962,12 +5991,7 @@ export default function AiGraderStationPage() {
     window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, bridgeUrl);
     window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, stationToken);
     try {
-      let bundle = await fetchAiGraderStationReportBundle({
-        baseUrl: bridgeUrl,
-        stationToken,
-        reportId: reviewIdentity.reportId,
-      });
-      const strictBundle = parseAiGraderMathematicalReportV1(bundle);
+      const strictBundle = parseAiGraderMathematicalReportV1(activeReviewBundle);
       if (strictBundle) {
         if (
           strictBundle.reportId !== reviewIdentity.reportId ||
@@ -5982,46 +6006,79 @@ export default function AiGraderStationPage() {
           strictBundle,
           releaseCandidate,
         );
+        const selectedAssetIds = curatedAiGraderMathematicalAssetMetadata(
+          strictBundle,
+        ).map((asset) => asset.id);
+        const hydration =
+          await fetchAiGraderStationMathematicalReportHydration({
+            baseUrl: bridgeUrl,
+            stationToken,
+            ...reviewIdentity,
+            assetIds: selectedAssetIds,
+            signal: load.abortController.signal,
+          });
+        if (
+          canonicalJsonV1(hydration.bundle) !== canonicalJsonV1(strictBundle)
+        ) {
+          throw new Error(
+            "Mathematical V1 hydrated bundle changed from the exact active review.",
+          );
+        }
+        assertAiGraderMathematicalReleaseEnvelope(
+          hydration.bundle,
+          releaseCandidate,
+        );
+        const hydratedAssets = new Map(
+          hydration.assets.map((asset) => [asset.assetId, asset]),
+        );
         const assets = await loadAiGraderLocalMathematicalAssets({
-          bundle: strictBundle,
+          bundle: hydration.bundle,
           reportId: reviewIdentity.reportId,
-          signal: abortController.signal,
-          fetchAsset: ({ reportId, assetId, signal }) =>
-            fetchAiGraderStationReportAsset({
-              baseUrl: bridgeUrl,
-              stationToken,
-              reportId,
-              assetId,
-              signal,
-            }),
+          signal: load.abortController.signal,
+          fetchAsset: async ({ reportId, assetId }) => {
+            const asset = hydratedAssets.get(assetId);
+            if (!asset || asset.reportId !== reportId) {
+              throw new Error(
+                "Mathematical V1 hydration omitted exact selected evidence.",
+              );
+            }
+            return asset;
+          },
         });
         if (
-          loadEpoch !== localReportLoadEpochRef.current ||
-          currentActiveReviewIdentityKeyRef.current !==
-            aiGraderRapidQueueIdentityKey(reviewIdentity)
+          !localReportLifecycleRef.current!.isCurrent(
+            load,
+            currentActiveReviewIdentityKeyRef.current,
+          )
         ) {
           revokeAiGraderLocalMathematicalAssets(assets);
           return;
         }
-        localReportAssetSetRef.current = assets;
+        if (!localReportLifecycleRef.current!.adoptAssets(load, assets)) return;
         setLocalReport({
           open: true,
           status: "ready",
           message:
             `${assets.assetIds.length} curated, hash-verified Mathematical V1 evidence image(s) loaded from the exact Dell report package.`,
           ...reviewIdentity,
-          bundle: strictBundle,
+          bundle: hydration.bundle,
           productionRelease: releaseCandidate,
           assetUrlsById: assets.urlsByAssetId,
         });
         return;
       }
-      bundle = await fetchAiGraderStationReportBundle({
+      const bundle = await fetchAiGraderStationReportBundle({
         baseUrl: bridgeUrl,
         stationToken,
         reportId: reviewIdentity.reportId,
         includeAssetBodies: true,
       });
+      if (
+        !localReportLifecycleRef.current!.isCurrent(
+          load,
+          currentActiveReviewIdentityKeyRef.current,
+        )
+      ) return;
       const imageCount = reportImageAssets(bundle, { allowEmbeddedBodies: true }).length;
       setLocalReport({
         open: true,
@@ -6032,8 +6089,11 @@ export default function AiGraderStationPage() {
       });
     } catch (requestError) {
       if (
-        abortController.signal.aborted ||
-        loadEpoch !== localReportLoadEpochRef.current
+        load.abortController.signal.aborted ||
+        !localReportLifecycleRef.current!.isCurrent(
+          load,
+          currentActiveReviewIdentityKeyRef.current,
+        )
       ) {
         return;
       }
@@ -6046,10 +6106,9 @@ export default function AiGraderStationPage() {
       });
       setError(message);
     } finally {
-      if (loadEpoch === localReportLoadEpochRef.current) {
-        localReportAbortRef.current = undefined;
-        setBusy(null);
-      }
+      releaseLocalReportBusyClaim(
+        localReportLifecycleRef.current!.finish(load),
+      );
     }
   };
 
