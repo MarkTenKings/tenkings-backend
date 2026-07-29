@@ -26,6 +26,13 @@ const ADMIN_SECTIONS: AdminSection[] = [
     desktopColumns: 4,
     routes: [
       {
+        label: "Human Grade",
+        href: "/admin/human-grade",
+        posterSrc: "/admin/launch/inventory-ready-poster.jpg",
+        videoSrc: "/admin/launch/add-cards.mp4",
+        priority: true,
+      },
+      {
         label: "Add Cards",
         href: "/admin/uploads",
         posterSrc: "/admin/launch/add-cards-poster.jpg",
