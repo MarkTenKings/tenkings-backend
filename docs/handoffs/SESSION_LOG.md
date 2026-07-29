@@ -29277,3 +29277,16 @@ By enabling Rip It Live, I confirm:
 - Planned rollout is limited to: fetch and verify current protected-main parity; push `codex/human-grade`; open the focused PR; wait for required GitHub/Vercel checks; merge through the protected path; apply additive migration `20260729190000_human_grade_labels`; verify the serving Production commit; and smoke-test `/admin/human-grade` plus its authenticated API boundary.
 - The migration creates only the standalone `HumanGradeCardType` and `HumanGradeLabelSheetStatus` enums, `HumanGradeLabelSheet` and `HumanGradeLabel` tables, indexes, sequences, and their sheet relation. It contains no delete, truncate, update, backfill, or reference to an AI Grader table.
 - No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action is authorized or planned.
+
+## 2026-07-29 - Standalone Human Grade production rollout result
+
+- Focused PR `#220` passed all `12/12` required GitHub, disposable PostgreSQL, Docker-image, and Vercel checks and merged through the protected path at `ba53584a6fcc416a195d35f43553544b4882ccca`.
+- The normal Vercel Production deployment for that exact merge completed successfully at `2026-07-29T22:10:33Z`; deployment evidence is `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/7VpPBiNErrkmVi6KMFXYAK5dS9Mu`.
+- Direct droplet SSH from this Mac was unavailable because its public key was not accepted. No SSH access control was bypassed. The authenticated Ten Kings Vercel project environment was instead supplied in memory with `vercel env run`; no Production secret value was printed or persisted to a project file.
+- Applied only additive migration `20260729190000_human_grade_labels` with `prisma migrate deploy`. Prisma reported all `76` migrations successfully applied and a follow-up `prisma migrate status` reported `Database schema is up to date!`.
+- Read-only Production schema verification returned exactly the new `HumanGradeLabel` and `HumanGradeLabelSheet` tables.
+- Production smoke evidence:
+  - `https://collect.tenkings.co/admin/human-grade` returned HTTP `200`;
+  - the rendered browser title was `Human Grade | Ten Kings` and the existing admin sign-in boundary displayed normally;
+  - unauthenticated `GET /api/admin/human-grade` returned HTTP `401` with JSON content.
+- No fake label/card row was created during smoke testing. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
