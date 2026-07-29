@@ -29250,3 +29250,23 @@ By enabling Rip It Live, I confirm:
 - The bridge asset-ID validator now admits bounded nonempty slash-delimited identifier segments. Existing exact metadata matching, filename basename checks, output/session path containment, byte-size, dimensions, MIME, and SHA-256 verification remain unchanged.
 - The one focused bridge regression uses the exact four Production-shaped hierarchical IDs, proves the queue and durable manifest remain `finding_review_required`, and serves the exact hash-bound ROI and mask bytes. The affected helper build and focused regression pass; no broad suite was run.
 - Planned release is limited to the exact protected PR/required-CI/merge path, normal Production web deployment, and controlled helper update/restart after the completed Optimize activation, preserving current queue/report/card data. No grading, Optimize, capture, OCR/EYES, publication, recapture, rerun, or unrelated change is included.
+
+## 2026-07-29 - Standalone Human Grade label workflow
+
+- Created clean Mac worktree `/Users/markthomas/tenkings/tenkings-human-grade` on branch `codex/human-grade` from `origin/main` at `7b78b24d`.
+- Added a standalone admin route at `/admin/human-grade` with one green `Add New Graded Card` action, Sports/Pokemon printed-field entry, a human grade input, automatic short `TKH-######` certificate assignment, current-page progress, a label-page list, authenticated PDF preview, printing, and download.
+- Added standalone `HumanGradeLabelSheet` and `HumanGradeLabel` Prisma models plus additive migration `20260729190000_human_grade_labels`. Pages fill slots 1 through 16 in row-major order; the sixteenth saved label marks the page `READY`, and the next saved label starts a new page.
+- Added a standalone server PDF renderer that copies the approved 8.5x11-inch, 2-column by 8-row Label V1 geometry and exact embedded crown/Bebas Neue/Barlow assets without importing AI Grader runtime code. Human-only artwork omits the NFC circle/symbol, QR, and `GRADING`; the grade uses the full right third at a larger size and the `TKH-######` certificate is centered beneath it on exactly one line. Label artwork has no background fill.
+- Existing AI Grader station, Finish, reports, publication, Label V1 runtime, NFC, capture helper, grading math, and production API files were not modified. The only existing UI file changed is the general admin landing page, which now links to Human Grade.
+- Validation passed:
+  - Prisma schema validation;
+  - database TypeScript build;
+  - focused Human Grade typecheck;
+  - focused ESLint with zero warnings/errors;
+  - Human Grade tests `5/5`;
+  - exact one-page Letter PDF metadata check and 300-DPI Poppler render inspection of all 16 slots;
+  - optimized Vercel-equivalent build with `RUN_DB_MIGRATIONS=false`, including `/admin/human-grade`, `/api/admin/human-grade`, and `/api/admin/human-grade/sheets/[sheetId]`;
+  - local browser compile/load of `/admin/human-grade` with the existing admin sign-in gate;
+  - `git diff --check`.
+- The complete build passed with existing repository warnings for unrelated image tags/hooks, stale Browserslist/Tailwind metadata, and optional Sharp development modules. Local Node `25.6.1` also reported the repository's expected Node `20.x` engine warning.
+- No database migration was applied, no database was read or written, no deploy/restart was run, no hardware/helper/station action was performed, and no AI Grader data or behavior was changed.

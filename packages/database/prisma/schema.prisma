@@ -3460,3 +3460,51 @@ model AuditEvent {
   @@index([tenantId, entityType, entityId])
   @@index([actorOperatorId, createdAt])
 }
+
+enum HumanGradeCardType {
+  SPORTS
+  POKEMON
+}
+
+enum HumanGradeLabelSheetStatus {
+  OPEN
+  READY
+}
+
+model HumanGradeLabelSheet {
+  id          String                     @id @default(cuid())
+  sheetNumber Int                        @unique @default(autoincrement())
+  status      HumanGradeLabelSheetStatus @default(OPEN)
+  readyAt     DateTime?
+  createdAt   DateTime                   @default(now())
+  updatedAt   DateTime                   @updatedAt
+  labels      HumanGradeLabel[]
+
+  @@index([status, sheetNumber])
+}
+
+model HumanGradeLabel {
+  id                  String               @id @default(cuid())
+  certificateSequence Int                  @unique @default(autoincrement())
+  certificateNumber   String?              @unique
+  sheetId             String
+  sheet               HumanGradeLabelSheet @relation(fields: [sheetId], references: [id], onDelete: Restrict)
+  slot                Int
+  cardType            HumanGradeCardType
+  playerName          String?
+  cardName            String?
+  year                String
+  manufacturer        String?
+  productSet          String
+  parallel            String?
+  insert              String?
+  cardNumber          String?
+  grade               Decimal              @db.Decimal(3, 1)
+  createdByUserId     String
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@unique([sheetId, slot])
+  @@index([sheetId, slot])
+  @@index([createdAt])
+}
