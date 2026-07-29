@@ -106,6 +106,26 @@ test("strict Mathematical V1 selects advanced curated evidence instead of the 15
   );
 });
 
+test("strict Mathematical V1 resolves mixed-case references to canonical public asset casing and order", () => {
+  const baseline = productionSizedStrictBundle();
+  const expectedIds = curatedAiGraderMathematicalAssetMetadata(baseline).map(
+    (asset) => asset.id,
+  );
+  const mixedCase = structuredClone(baseline);
+  const canonicalId =
+    mixedCase.centeringEvidence.front.measurementOverlayAssetId;
+  mixedCase.centeringEvidence.front.measurementOverlayAssetId =
+    canonicalId.toUpperCase();
+  const parsed = aiGraderReportBundleV03Schema.parse(mixedCase);
+  const actualIds = curatedAiGraderMathematicalAssetMetadata(parsed).map(
+    (asset) => asset.id,
+  );
+
+  assert.deepEqual(actualIds, expectedIds);
+  assert.equal(actualIds.includes(canonicalId), true);
+  assert.equal(actualIds.includes(canonicalId.toUpperCase()), false);
+});
+
 test("asset loader aborts sibling work, drains every worker, and leaks no URL after first failure", async () => {
   const bundle = productionSizedStrictBundle();
   const selected = curatedAiGraderMathematicalAssetMetadata(bundle);

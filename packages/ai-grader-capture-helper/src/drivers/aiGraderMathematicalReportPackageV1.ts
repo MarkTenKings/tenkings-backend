@@ -85,7 +85,7 @@ export function aiGraderMathematicalAdvancedPresentationAssetIdsV1(
 ): string[] {
   const selectedIds = new Set<string>();
   const addAssetId = (assetId: string | undefined) => {
-    if (assetId) selectedIds.add(assetId);
+    if (assetId) selectedIds.add(assetId.toLowerCase());
   };
   for (const side of [bundle.centeringEvidence.front, bundle.centeringEvidence.back]) {
     addAssetId(side.measurementOverlayAssetId);
@@ -136,7 +136,7 @@ export function aiGraderMathematicalAdvancedPresentationAssetIdsV1(
     );
   }
   const exactIds = bundle.publicAssets
-    .filter((asset) => selectedIds.has(asset.id))
+    .filter((asset) => selectedIds.has(asset.id.toLowerCase()))
     .map((asset) => asset.id);
   if (exactIds.length !== selectedIds.size || exactIds.length < 1) {
     throw new Error(

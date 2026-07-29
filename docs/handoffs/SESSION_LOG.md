@@ -29189,3 +29189,11 @@ By enabling Rip It Live, I confirm:
   - shared, database, browser-client, simulator, capture-helper, and optimized Production Next.js builds;
   - `git diff --check`, with Windows line-ending notices only.
 - No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
+
+## 2026-07-28 - Case-insensitive presentation reference compatibility correction
+
+- This isolated compatibility correction starts from exact rejected head `8cc0e43ff86f29dcb7e5136a661ab054f911ba68`. Server graph references now use lowercase lookup keys, matching the strict V0.3 schema and browser curator, while canonical `publicAssets[].id` casing and public-assets order remain the response authority.
+- A schema-valid mixed-case centering reference now passes both the browser selector and real token-gated hydration route. The regressions prove browser/server graph parity, canonical returned IDs, bounded hydration success, and the existing extra/omitted pre-read rejection.
+- Focused validation passed: browser report suites `119/119` and `15/15`; complete helper bridge `51/51`; Mathematical package/station `14/14` (`20` assertions); capture-helper and Production Next.js builds; and `git diff --check` with Windows line-ending notices only.
+- Request equality, `20 MiB` raw and `28 MiB` encoded budgets, four-read limit, hash/size/path checks, stable errors, release/linkage/lifecycle behavior, and all grading/publication contracts remain unchanged.
+- No PR, push, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.

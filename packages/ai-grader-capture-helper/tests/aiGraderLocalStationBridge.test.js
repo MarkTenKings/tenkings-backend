@@ -16,6 +16,9 @@ const {
   curatedAiGraderMathematicalAssetMetadata,
 } = require("../../../frontend/nextjs-app/lib/aiGraderLocalMathematicalReport.ts");
 const {
+  aiGraderReportBundleV03Schema,
+} = require("@tenkings/shared");
+const {
   AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
 } = require("../dist/drivers/aiGraderMathematicalReportBundleV1");
 const {
@@ -132,14 +135,24 @@ test("real Mathematical hydration route enforces the exact server graph, bounded
   const strictBundle = replaceFixtureIdentity(
     buildStrictAiGraderReportBundleV03Fixture(),
   );
+  const canonicalMixedCaseAssetId =
+    strictBundle.centeringEvidence.front.measurementOverlayAssetId;
+  strictBundle.centeringEvidence.front.measurementOverlayAssetId =
+    canonicalMixedCaseAssetId.toUpperCase();
+  const parsedStrictBundle = aiGraderReportBundleV03Schema.parse(strictBundle);
   const presentationAssetIds =
-    aiGraderMathematicalAdvancedPresentationAssetIdsV1(strictBundle);
+    aiGraderMathematicalAdvancedPresentationAssetIdsV1(parsedStrictBundle);
   assert.equal(presentationAssetIds.length, 60);
   assert.deepEqual(
     presentationAssetIds,
-    curatedAiGraderMathematicalAssetMetadata(strictBundle).map(
+    curatedAiGraderMathematicalAssetMetadata(parsedStrictBundle).map(
       (asset) => asset.id,
     ),
+  );
+  assert.equal(presentationAssetIds.includes(canonicalMixedCaseAssetId), true);
+  assert.equal(
+    presentationAssetIds.includes(canonicalMixedCaseAssetId.toUpperCase()),
+    false,
   );
   const productionShapedGraphRawBytes = Math.floor(15.869 * 1024 * 1024);
   const selectedBytes = Buffer.alloc(
@@ -163,7 +176,7 @@ test("real Mathematical hydration route enforces the exact server graph, bounded
     }
     return value === "c".repeat(64) ? selectedSha : value;
   };
-  const strictBundleWithExactHashes = replaceFixtureHash(strictBundle);
+  const strictBundleWithExactHashes = replaceFixtureHash(parsedStrictBundle);
   strictBundleWithExactHashes.publicAssets =
     strictBundleWithExactHashes.publicAssets.map((asset) => ({
       ...asset,
