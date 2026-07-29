@@ -632,6 +632,11 @@ interface PersistedAiGraderRapidCaptureQueue {
   items: PersistedAiGraderRapidCaptureQueueItem[];
 }
 
+interface LoadedAiGraderRapidCaptureQueue {
+  queue: PersistedAiGraderRapidCaptureQueue;
+  requiresInitialPersistence: boolean;
+}
+
 export type AiGraderLocalStationStepId =
   | "start_new_card"
   | "live_preview_focus_framing"
@@ -4641,7 +4646,7 @@ function persistedRapidItem(
   }
 }
 
-function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): PersistedAiGraderRapidCaptureQueue {
+function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): LoadedAiGraderRapidCaptureQueue {
   const empty = (): PersistedAiGraderRapidCaptureQueue => ({
     schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
     updatedAt: new Date().toISOString(),
@@ -4658,7 +4663,7 @@ function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): Pe
     const persistedQueueUpdatedAt = persistedTimestamp(parsed.updatedAt, "queue update timestamp");
     if (parsed.schemaVersion === LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
       if (parsed.items.length > 0) throw new LegacyRapidCaptureQueueCompatibilityError(parsed.items.length);
-      return empty();
+      return { queue: empty(), requiresInitialPersistence: true };
     }
     if (parsed.schemaVersion !== RAPID_CAPTURE_QUEUE_SCHEMA_VERSION) {
       throw new Error("Authoritative Rapid queue top-level shape or schema is invalid.");
@@ -4686,14 +4691,21 @@ function readRapidCaptureQueueSync(config: AiGraderLocalStationBridgeConfig): Pe
       if (!invalid) throw new Error("Duplicate persisted Rapid identity cannot be retained safely.");
       return invalid;
     });
-    return {
+    const queue: PersistedAiGraderRapidCaptureQueue = {
       schemaVersion: RAPID_CAPTURE_QUEUE_SCHEMA_VERSION,
       updatedAt: persistedQueueUpdatedAt,
       rapidCaptureEnabled: true,
       items: retainAiGraderRapidCaptureQueueItems(uniqueItems),
     };
+    return {
+      queue,
+      requiresInitialPersistence:
+        canonicalJsonV1(queue) !== canonicalJsonV1(parsed),
+    };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return empty();
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      return { queue: empty(), requiresInitialPersistence: true };
+    }
     if (error instanceof LegacyRapidCaptureQueueCompatibilityError) throw error;
     throw new Error(`Authoritative Rapid queue is corrupt and the bridge refuses to hide its items: ${error instanceof Error ? error.message : "unreadable queue"}`);
   }
@@ -5623,6 +5635,7 @@ export class AiGraderLocalStationBridgeService {
   private processingWorkerShutdown?: Promise<void>;
   private rapidQueue: PersistedAiGraderRapidCaptureQueue;
   private committedRapidQueue: PersistedAiGraderRapidCaptureQueue;
+  private rapidQueueRequiresInitialPersistence: boolean;
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
   private reportWorker: Promise<void> = Promise.resolve();
   private rapidFinalizationJobs = new Map<string, Promise<void>>();
@@ -5704,7 +5717,10 @@ export class AiGraderLocalStationBridgeService {
       dependencies.mathematicalStationWorkerPool ??
       new FixedRigMathematicalStationWorkerPoolV1();
     this.stationUrl = `http://${hostForUrl(config.host)}:${config.port}`;
-    this.rapidQueue = readRapidCaptureQueueSync(config);
+    const loadedRapidQueue = readRapidCaptureQueueSync(config);
+    this.rapidQueue = loadedRapidQueue.queue;
+    this.rapidQueueRequiresInitialPersistence =
+      loadedRapidQueue.requiresInitialPersistence;
     assertNoUnqueuedRapidSessionManifest(config, this.rapidQueue);
     this.committedRapidQueue = structuredClone(this.rapidQueue);
     this.manifest = newManifest(config);
@@ -10713,8 +10729,64 @@ export class AiGraderLocalStationBridgeService {
       .catch(() => {});
   }
 
+  private async reattachExactPersistedReportReadyReview(): Promise<void> {
+    const candidates = this.committedRapidQueue.items.filter(
+      (item) => item.state === "report_ready_needs_confirm",
+    );
+    if (candidates.length === 0) return;
+    if (candidates.length !== 1) {
+      throw new Error(
+        "Persisted Rapid review reattachment is ambiguous; exactly one report_ready_needs_confirm queue/session/report triple is required.",
+      );
+    }
+    const item = candidates[0];
+    const manifest = await this.exactQueuedManifest(item);
+    if (
+      manifest.rapidCapture.workflowState !== item.state ||
+      manifest.rapidCapture.workflowHistory.at(-1)?.state !== item.state ||
+      gradingContractFor(manifest) !== "mathematical_calibration_v1" ||
+      item.mathematicalV1?.status !== "completed" ||
+      manifest.mathematicalV1?.execution?.status !== "completed"
+    ) {
+      throw new Error(
+        "Persisted Rapid review cannot reattach because its exact completed Mathematical V1 state does not match the durable queue and manifest.",
+      );
+    }
+    const parsedBundle = aiGraderReportBundleV03Schema.safeParse(
+      manifest.reportBundle,
+    );
+    const release = manifest.productionRelease;
+    if (
+      !parsedBundle.success ||
+      parsedBundle.data.reportId !== item.reportId ||
+      !isMathematicalProductionRelease(release) ||
+      release.reportId !== item.reportId ||
+      release.gradingSessionId !== item.sessionId
+    ) {
+      throw new Error(
+        "Persisted Rapid review cannot reattach because its strict report or external publication envelope does not match the exact queue/session/report identity.",
+      );
+    }
+    const reportPackage = await this.resolveMathematicalReportPackage(
+      manifest,
+      {},
+    );
+    if (
+      canonicalJsonV1(reportPackage.envelope.reportBundle) !==
+      canonicalJsonV1(parsedBundle.data)
+    ) {
+      throw new Error(
+        "Persisted Rapid review cannot reattach because its verified Mathematical V1 package does not match the exact durable strict report.",
+      );
+    }
+    this.activeQueueItemId = item.queueItemId;
+  }
+
   private async recoverPersistedRapidFinalization() {
-    await this.persistRapidQueue();
+    if (this.rapidQueueRequiresInitialPersistence) {
+      await this.persistRapidQueue();
+      this.rapidQueueRequiresInitialPersistence = false;
+    }
     const recovering = this.committedRapidQueue.items
       .filter((candidate) => candidate.state === "finalizing")
       .map((item) => ({ queueItemId: item.queueItemId, gradingSessionId: item.sessionId, reportId: item.reportId }));
@@ -10846,6 +10918,7 @@ export class AiGraderLocalStationBridgeService {
         );
       }
     }
+    await this.reattachExactPersistedReportReadyReview();
   }
 
   private async activateRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest) {

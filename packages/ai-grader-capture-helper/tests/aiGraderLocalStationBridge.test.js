@@ -11,10 +11,14 @@ require(require.resolve("tsx/cjs", {
 }));
 const {
   buildStrictAiGraderReportBundleV03Fixture,
+  buildStrictAiGraderMathematicalReleaseV1Fixture,
 } = require("../../../frontend/nextjs-app/tests/fixtures/strictAiGraderReportBundleV03.ts");
 const {
   curatedAiGraderMathematicalAssetMetadata,
 } = require("../../../frontend/nextjs-app/lib/aiGraderLocalMathematicalReport.ts");
+const {
+  aiGraderMathematicalReleaseEnvelopeIssue,
+} = require("../../../frontend/nextjs-app/lib/aiGraderMathematicalReportV1.ts");
 const {
   aiGraderReportBundleV03Schema,
 } = require("@tenkings/shared");
@@ -1100,6 +1104,380 @@ async function createEligibleQueuedFixture(outputDir, seed = "ocr", configOverri
   return { config, service, item, queuedManifest, images };
 }
 
+async function createCompletedMathematicalReviewFixture(outputDir, seed) {
+  const reportBundleOutputDir = path.join(outputDir, "strict-reports");
+  const fixture = await createEligibleQueuedFixture(
+    outputDir,
+    seed,
+    { reportBundleOutputDir },
+  );
+  await fixture.service.rapidRecoveryJob;
+  const { config, service, item, queuedManifest } = fixture;
+  const now = "2026-07-29T15:00:00.000Z";
+  const replaceReportIdentity = (value) => {
+    if (Array.isArray(value)) return value.map(replaceReportIdentity);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          replaceReportIdentity(entry),
+        ]),
+      );
+    }
+    return typeof value === "string"
+      ? value.replaceAll("math-v1-release-test", item.reportId)
+      : value;
+  };
+  const assetBytes = await sharp({
+    create: {
+      width: 8,
+      height: 8,
+      channels: 3,
+      background: "#203040",
+    },
+  }).png().toBuffer();
+  const assetSha256 = crypto
+    .createHash("sha256")
+    .update(assetBytes)
+    .digest("hex");
+  const replaceFixtureHash = (value) => {
+    if (Array.isArray(value)) return value.map(replaceFixtureHash);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          replaceFixtureHash(entry),
+        ]),
+      );
+    }
+    return value === "c".repeat(64) ? assetSha256 : value;
+  };
+  const bundle = aiGraderReportBundleV03Schema.parse(
+    replaceFixtureHash(
+      replaceReportIdentity(buildStrictAiGraderReportBundleV03Fixture()),
+    ),
+  );
+  bundle.publicAssets = bundle.publicAssets.map((asset) => ({
+    ...asset,
+    sha256: assetSha256,
+    ...(asset.checksumSha256 ? { checksumSha256: assetSha256 } : {}),
+    byteSize: assetBytes.byteLength,
+  }));
+  const packageDir = path.join(
+    reportBundleOutputDir,
+    item.reportId,
+    "mathematical-v1",
+  );
+  const reportPackage = await writeAiGraderMathematicalReportPackageV1({
+    gradingSessionId: item.sessionId,
+    outputDir: packageDir,
+    artifact: {
+      adapterVersion: AI_GRADER_MATHEMATICAL_REPORT_ADAPTER_V1_VERSION,
+      bundle,
+      assetPayloads: bundle.publicAssets.map((asset) => ({
+        id: asset.id,
+        contentType: asset.contentType,
+        sha256: assetSha256,
+        byteSize: assetBytes.byteLength,
+        bytes: assetBytes,
+      })),
+    },
+  });
+  const release = buildStrictAiGraderMathematicalReleaseV1Fixture(
+    bundle,
+    item.sessionId,
+  );
+  const productionReleasePath = path.join(
+    packageDir,
+    "production-release.json",
+  );
+  const labelDataPath = path.join(packageDir, "label-data.json");
+  fs.writeFileSync(
+    productionReleasePath,
+    `${JSON.stringify(release, null, 2)}\n`,
+  );
+  fs.writeFileSync(
+    labelDataPath,
+    `${JSON.stringify(release.label, null, 2)}\n`,
+  );
+
+  item.state = "report_ready_needs_confirm";
+  item.updatedAt = now;
+  item.history = [{
+    state: item.state,
+    at: now,
+    detail: "Exact completed Mathematical V1 review fixture.",
+  }];
+  item.ocr = {
+    state: "succeeded",
+    updatedAt: now,
+    attemptCount: 1,
+    attemptOwnerId: `ocr-attempt-owner-${seed}`,
+    eligibleAt: now,
+    startedAt: now,
+    completedAt: now,
+    images: item.ocr.images,
+    result: safeOcrResult(item),
+  };
+  item.mathematicalV1 = { status: "completed" };
+  queuedManifest.gradingContract = "mathematical_calibration_v1";
+  queuedManifest.currentStep = "label_data_ready";
+  queuedManifest.updatedAt = now;
+  queuedManifest.rapidCapture.workflowState = item.state;
+  queuedManifest.rapidCapture.workflowHistory = [...item.history];
+  queuedManifest.rapidCapture.ocr = {
+    ...item.ocr,
+    images: item.ocr.images.map(({ localPath, ...image }) => image),
+  };
+  queuedManifest.mathematicalV1 = {
+    execution: { status: "completed" },
+  };
+  queuedManifest.reportBundle = bundle;
+  queuedManifest.productionRelease = release;
+  queuedManifest.outputs.reportBundlePath = reportPackage.bundlePath;
+  queuedManifest.outputs.mathematicalReportBundlePath =
+    reportPackage.bundlePath;
+  queuedManifest.outputs.mathematicalReportEnvelopePath =
+    reportPackage.envelopePath;
+  queuedManifest.outputs.publishPackageDir = reportPackage.outputDir;
+  queuedManifest.outputs.assetManifestPath =
+    reportPackage.assetManifestPath;
+  queuedManifest.outputs.checksumsPath = reportPackage.checksumsPath;
+  queuedManifest.outputs.productionReleasePath = productionReleasePath;
+  queuedManifest.outputs.labelDataPath = labelDataPath;
+  queuedManifest.outputs.unifiedReportPath = reportPackage.bundlePath;
+  queuedManifest.safety.finalGradeComputed = true;
+  queuedManifest.safety.labelGenerated = true;
+  queuedManifest.safety.qrGenerated = true;
+  fs.writeFileSync(
+    queuedManifest.outputs.manifestPath,
+    `${JSON.stringify(queuedManifest, null, 2)}\n`,
+  );
+  service.rapidQueue = {
+    schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
+    updatedAt: now,
+    rapidCaptureEnabled: true,
+    items: [item],
+  };
+  service.committedRapidQueue = structuredClone(service.rapidQueue);
+  service.queuedManifests.set(item.queueItemId, queuedManifest);
+  await service.persistRapidQueue();
+  return {
+    ...fixture,
+    bundle,
+    release,
+    reportPackage,
+    productionReleasePath,
+    labelDataPath,
+  };
+}
+
+test("compatible v2 startup preserves exact review bytes and reattaches the verified Mathematical V1 report in memory", async (t) => {
+  const outputDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-compatible-v2-review-reload-"),
+  );
+  t.after(() => fs.rmSync(outputDir, { recursive: true, force: true }));
+  const fixture = await createCompletedMathematicalReviewFixture(
+    outputDir,
+    "compatible-v2-review",
+  );
+  const {
+    config,
+    item,
+    queuedManifest,
+    bundle,
+    reportPackage,
+    productionReleasePath,
+    labelDataPath,
+  } = fixture;
+  const queuePath = path.join(outputDir, "rapid-capture-queue.json");
+  const preservedPaths = [
+    queuePath,
+    queuedManifest.outputs.manifestPath,
+    reportPackage.bundlePath,
+    reportPackage.envelopePath,
+    reportPackage.assetManifestPath,
+    reportPackage.checksumsPath,
+    productionReleasePath,
+    labelDataPath,
+  ];
+  const before = new Map(preservedPaths.map((filePath) => [
+    filePath,
+    {
+      bytes: fs.readFileSync(filePath),
+      sha256: crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(filePath))
+        .digest("hex"),
+      mtimeMs: fs.statSync(filePath).mtimeMs,
+    },
+  ]));
+  const identity = {
+    queueItemId: item.queueItemId,
+    gradingSessionId: item.sessionId,
+    reportId: item.reportId,
+  };
+
+  const reloaded = new AiGraderLocalStationBridgeService(config);
+  await reloaded.rapidRecoveryJob;
+  const status = reloaded.status();
+  assert.equal(status.rapidCaptureQueue.activeQueueItemId, item.queueItemId);
+  assert.equal(
+    status.rapidCaptureQueue.activeReview?.queueItemId,
+    item.queueItemId,
+  );
+  assert.equal(
+    status.rapidCaptureQueue.activeReview?.gradingSessionId,
+    item.sessionId,
+  );
+  assert.equal(
+    status.rapidCaptureQueue.activeReview?.reportId,
+    item.reportId,
+  );
+  assert.equal(
+    aiGraderMathematicalReleaseEnvelopeIssue(
+      status.rapidCaptureQueue.activeReview.manifest.reportBundle,
+      status.rapidCaptureQueue.activeReview.manifest.productionRelease,
+    ),
+    undefined,
+  );
+  const exactAssetIds =
+    aiGraderMathematicalAdvancedPresentationAssetIdsV1(bundle);
+  const hydrated = await reloaded.mathematicalReportHydration(
+    identity,
+    exactAssetIds,
+  );
+  assert.deepEqual(
+    hydrated.assets.map((asset) => asset.assetId),
+    exactAssetIds,
+  );
+  assert.equal(
+    hydrated.assets.every((asset) =>
+      crypto.createHash("sha256")
+        .update(Buffer.from(asset.bodyBase64, "base64"))
+        .digest("hex") === asset.checksumSha256),
+    true,
+  );
+  for (const filePath of preservedPaths) {
+    const preserved = before.get(filePath);
+    const bytes = fs.readFileSync(filePath);
+    assert.deepEqual(bytes, preserved.bytes, filePath);
+    assert.equal(
+      crypto.createHash("sha256").update(bytes).digest("hex"),
+      preserved.sha256,
+      filePath,
+    );
+    assert.equal(fs.statSync(filePath).mtimeMs, preserved.mtimeMs, filePath);
+  }
+
+  await reloaded.action("release-queue-item", identity);
+  const manifestBeforeExplicitActivation = fs.readFileSync(
+    queuedManifest.outputs.manifestPath,
+  );
+  const queueBeforeExplicitActivation = fs.readFileSync(queuePath);
+  await reloaded.action("activate-queue-item", identity);
+  assert.notDeepEqual(
+    fs.readFileSync(queuedManifest.outputs.manifestPath),
+    manifestBeforeExplicitActivation,
+  );
+  assert.deepEqual(fs.readFileSync(queuePath), queueBeforeExplicitActivation);
+});
+
+test("compatible v2 review reattachment rejects mismatched and ambiguous exact identities without writes", async (t) => {
+  const mismatchDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-compatible-v2-review-mismatch-"),
+  );
+  const ambiguousDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-compatible-v2-review-ambiguous-"),
+  );
+  t.after(() => {
+    fs.rmSync(mismatchDir, { recursive: true, force: true });
+    fs.rmSync(ambiguousDir, { recursive: true, force: true });
+  });
+
+  const mismatch = await createCompletedMathematicalReviewFixture(
+    mismatchDir,
+    "compatible-v2-mismatch",
+  );
+  mismatch.queuedManifest.productionRelease = {
+    ...mismatch.queuedManifest.productionRelease,
+    gradingSessionId: "different-grading-session",
+  };
+  fs.writeFileSync(
+    mismatch.queuedManifest.outputs.manifestPath,
+    `${JSON.stringify(mismatch.queuedManifest, null, 2)}\n`,
+  );
+  const mismatchQueuePath = path.join(
+    mismatchDir,
+    "rapid-capture-queue.json",
+  );
+  const mismatchQueueBefore = fs.readFileSync(mismatchQueuePath);
+  const mismatchManifestBefore = fs.readFileSync(
+    mismatch.queuedManifest.outputs.manifestPath,
+  );
+  const mismatchedReload = new AiGraderLocalStationBridgeService(
+    mismatch.config,
+  );
+  await mismatchedReload.rapidRecoveryJob;
+  assert.equal(
+    mismatchedReload.status().rapidCaptureQueue.activeReview,
+    undefined,
+  );
+  await assert.rejects(
+    mismatchedReload.reattachExactPersistedReportReadyReview(),
+    /publication envelope does not match the exact queue\/session\/report identity/i,
+  );
+  assert.deepEqual(fs.readFileSync(mismatchQueuePath), mismatchQueueBefore);
+  assert.deepEqual(
+    fs.readFileSync(mismatch.queuedManifest.outputs.manifestPath),
+    mismatchManifestBefore,
+  );
+
+  const ambiguous = await createCompletedMathematicalReviewFixture(
+    ambiguousDir,
+    "compatible-v2-ambiguous",
+  );
+  const secondItem = structuredClone(ambiguous.item);
+  secondItem.queueItemId = `${secondItem.queueItemId}-other`;
+  secondItem.sessionId = `${secondItem.sessionId}-other`;
+  secondItem.reportId = `${secondItem.reportId}-other`;
+  secondItem.manifestPath = path.join(
+    ambiguousDir,
+    "missing-other-session",
+    "station-session.json",
+  );
+  secondItem.sideProcessingJobs.front.sessionId = secondItem.sessionId;
+  secondItem.sideProcessingJobs.back.sessionId = secondItem.sessionId;
+  secondItem.ocr.result = safeOcrResult(secondItem);
+  const ambiguousQueuePath = path.join(
+    ambiguousDir,
+    "rapid-capture-queue.json",
+  );
+  fs.writeFileSync(
+    ambiguousQueuePath,
+    `${JSON.stringify({
+      schemaVersion: "ten-kings-ai-grader-rapid-capture-queue-v2",
+      updatedAt: ambiguous.item.updatedAt,
+      rapidCaptureEnabled: true,
+      items: [ambiguous.item, secondItem],
+    }, null, 2)}\n`,
+  );
+  const ambiguousQueueBefore = fs.readFileSync(ambiguousQueuePath);
+  const ambiguousReload = new AiGraderLocalStationBridgeService(
+    ambiguous.config,
+  );
+  await ambiguousReload.rapidRecoveryJob;
+  assert.equal(
+    ambiguousReload.status().rapidCaptureQueue.activeReview,
+    undefined,
+  );
+  await assert.rejects(
+    ambiguousReload.reattachExactPersistedReportReadyReview(),
+    /reattachment is ambiguous/i,
+  );
+  assert.deepEqual(fs.readFileSync(ambiguousQueuePath), ambiguousQueueBefore);
+});
+
 test("station bridge is one loopback production_fast road and exposes no removed selector/actions", () => {
   const outputDir = path.join(os.tmpdir(), "tenkings-station-contract");
   const { config } = configFor(outputDir);
@@ -1403,6 +1781,8 @@ test("real-shape bracket Front -> Back transaction durably commits all 33 native
       [35, 35],
       "the native bracket contract remains valid after durable queue reload",
     );
+    await reloaded.rapidRecoveryJob;
+    await reloaded.reportWorker;
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
