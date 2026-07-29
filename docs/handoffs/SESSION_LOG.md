@@ -29290,3 +29290,10 @@ By enabling Rip It Live, I confirm:
   - the rendered browser title was `Human Grade | Ten Kings` and the existing admin sign-in boundary displayed normally;
   - unauthenticated `GET /api/admin/human-grade` returned HTTP `401` with JSON content.
 - No fake label/card row was created during smoke testing. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
+
+## 2026-07-29 - Bounded AI Grader publish payload correction
+
+- This web-only correction starts from protected main `95030fc11691c9479f9629703d894825fb831798`, containing Optimize and PR `#219`. The AI Grader Production API route now uses an explicit `4mb` Next.js body-parser limit instead of `1mb`, containing the observed approximately `2.71 MiB` advanced create-card-from-report request while remaining below Vercel's `4.5 MB` function limit.
+- One focused regression builds a schema-valid strict V0.3 Production-shaped create-card-from-report envelope at exactly `2.71 MiB`, reads the exact route configuration, and proves Next's configured parser accepts and preserves the request. The test also asserts the request exceeds `1 MiB` and remains below the explicit `4 MiB` route bound.
+- Planned release is limited to this exact commit through the protected PR/required-CI/merge path and the normal Vercel Production web deployment. No helper update/restart, Optimize change, grading change, reference redesign, queue/report/card mutation, publication attempt, camera action, or lighting action is included.
+- Focused validation passed: the exact `2.71 MiB` parser regression passed `1/1`; the optimized Production Next.js build passed after only the standard generated-client and workspace-package build prerequisites; and `git diff --check` passed with the existing Windows line-ending notice only.
