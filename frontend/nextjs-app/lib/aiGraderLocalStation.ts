@@ -6,6 +6,10 @@ import {
 } from "./aiGraderReportBundle";
 import type { AiGraderStationProductionRelease } from "./aiGraderProductionRelease";
 import {
+  aiGraderMathematicalReleaseEnvelopeIssue,
+  parseAiGraderMathematicalReportV1,
+} from "./aiGraderMathematicalReportV1";
+import {
   trustedPokemonCardFormatAuthorityV1Schema,
   type TrustedPokemonCardFormatAuthorityV1,
   type AiGraderCalibrationActivationAuthorityV1,
@@ -2103,10 +2107,21 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
     ? candidateReportBundle
     : undefined;
   const safeProductionRelease = browserSafeStationRecord(manifest.productionRelease);
-  const productionRelease = safeProductionRelease &&
+  const candidateProductionRelease = safeProductionRelease &&
       safeStationId(safeProductionRelease.reportId) === reportId &&
       safeStationId(safeProductionRelease.gradingSessionId) === gradingSessionId
     ? safeProductionRelease as unknown as AiGraderStationProductionRelease
+    : undefined;
+  const strictBundle = reportBundle
+    ? parseAiGraderMathematicalReportV1(reportBundle)
+    : null;
+  const productionRelease = candidateProductionRelease &&
+      (!strictBundle ||
+        !aiGraderMathematicalReleaseEnvelopeIssue(
+          strictBundle,
+          candidateProductionRelease,
+        ))
+    ? candidateProductionRelease
     : undefined;
   const currentStep = typeof manifest.currentStep === "string"
     ? AI_GRADER_STATION_STEPS.find((step) => step.id === manifest.currentStep)?.id

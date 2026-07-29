@@ -1743,7 +1743,14 @@ export async function fetchAiGraderStationReportBundle(input: {
     stationToken: input.stationToken,
     path: `/reports/${encodeURIComponent(input.reportId)}/bundle${query}`,
   }, fetchImpl);
-  return strictStationReportBundle(result.bundle);
+  if (result.reportId !== input.reportId) {
+    throw new Error("AI Grader local station report response identity mismatch.");
+  }
+  const bundle = strictStationReportBundle(result.bundle);
+  if (bundle.reportId !== input.reportId) {
+    throw new Error("AI Grader local station report bundle identity mismatch.");
+  }
+  return bundle;
 }
 
 export async function fetchAiGraderStationReportAsset(input: {
@@ -1751,7 +1758,15 @@ export async function fetchAiGraderStationReportAsset(input: {
   stationToken: string;
   reportId: string;
   assetId: string;
-}, fetchImpl: typeof fetch = fetch): Promise<{ bytes: ArrayBuffer; contentType: string; byteSize: number; checksumSha256?: string }> {
+  signal?: AbortSignal;
+}, fetchImpl: typeof fetch = fetch): Promise<{
+  reportId: string;
+  assetId: string;
+  bytes: ArrayBuffer;
+  contentType: string;
+  byteSize: number;
+  checksumSha256?: string;
+}> {
   const baseUrl = normalizeAiGraderStationBridgeUrl(input.baseUrl);
   if (!input.stationToken.trim()) {
     throw new Error("AI Grader station bridge token is required.");
@@ -1763,6 +1778,7 @@ export async function fetchAiGraderStationReportAsset(input: {
       headers: {
         "x-ai-grader-station-token": input.stationToken,
       },
+      signal: input.signal,
     }
   );
   if (!response.ok) {
@@ -1777,7 +1793,14 @@ export async function fetchAiGraderStationReportAsset(input: {
     throw new Error(message);
   }
   const bytes = await response.arrayBuffer();
+  const reportId = response.headers.get("x-ai-grader-report-id") ?? "";
+  const assetId = response.headers.get("x-ai-grader-asset-id") ?? "";
+  if (reportId !== input.reportId || assetId !== input.assetId) {
+    throw new Error("AI Grader local station asset response identity mismatch.");
+  }
   return {
+    reportId,
+    assetId,
     bytes,
     contentType: response.headers.get("content-type") ?? "application/octet-stream",
     byteSize: bytes.byteLength,

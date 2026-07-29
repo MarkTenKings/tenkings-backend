@@ -132,8 +132,10 @@ import {
 } from "../../lib/aiGraderReportBundle";
 import type { AiGraderProductionRelease, AiGraderStationProductionRelease } from "../../lib/aiGraderProductionRelease";
 import {
+  assertAiGraderMathematicalReleaseEnvelope,
   aiGraderMathematicalReleaseEnvelopeIssue,
   parseAiGraderMathematicalReportV1,
+  type AiGraderMathematicalProductionReleaseEnvelope,
 } from "../../lib/aiGraderMathematicalReportV1";
 import {
   AiGraderOcrPrefillStageError,
@@ -154,6 +156,18 @@ import { formatAiGraderPublishStageError } from "../../lib/aiGraderPublishErrors
 import { productionAssetManifest } from "../../lib/aiGraderProductionAssetManifest";
 import { assertAiGraderBrowserRaster } from "../../lib/aiGraderRasterValidation";
 import { uploadAiGraderArtifactDirectly } from "../../lib/aiGraderDirectUpload";
+import AiGraderMathematicalReportV1 from "../../components/ai-grader/AiGraderMathematicalReportV1";
+import {
+  loadAiGraderLocalMathematicalAssets,
+  revokeAiGraderLocalMathematicalAssets,
+  type AiGraderLocalMathematicalAssetSet,
+} from "../../lib/aiGraderLocalMathematicalReport";
+import {
+  boundAiGraderMathematicalAuthorityDraft,
+  boundAiGraderReviewDraftPatch,
+  persistAiGraderReviewLinkageField,
+  readAiGraderReviewLinkageDraft,
+} from "../../lib/aiGraderReviewLinkageDraft";
 
 type HistorySort = "most_recent" | "oldest" | "grade" | "category";
 type HistoryView = "list" | "tiles";
@@ -268,7 +282,11 @@ type LocalReportState = {
   status: "idle" | "loading" | "ready" | "error";
   message: string;
   reportId?: string;
+  queueItemId?: string;
+  gradingSessionId?: string;
   bundle?: AiGraderStationReportBundle;
+  productionRelease?: AiGraderMathematicalProductionReleaseEnvelope;
+  assetUrlsById?: Record<string, string>;
 };
 
 type MathematicalAuthorityDraftState = {
@@ -1595,6 +1613,9 @@ export default function AiGraderStationPage() {
     status: "idle",
     message: "No local report is open.",
   });
+  const localReportAssetSetRef = useRef<AiGraderLocalMathematicalAssetSet | undefined>(undefined);
+  const localReportAbortRef = useRef<AbortController | undefined>(undefined);
+  const localReportLoadEpochRef = useRef(0);
   const [finishQueue, setFinishQueue] = useState<FinishQueueResult>(emptyFinishQueue);
   const [finishQueueState, setFinishQueueState] = useState<StepState>({
     status: "idle",
@@ -1710,6 +1731,23 @@ export default function AiGraderStationPage() {
       window.URL.revokeObjectURL(objectUrl);
     }
     operatorResolutionEvidenceObjectUrlsRef.current = [];
+  };
+
+  const revokeLocalReportObjectUrls = () => {
+    revokeAiGraderLocalMathematicalAssets(localReportAssetSetRef.current);
+    localReportAssetSetRef.current = undefined;
+  };
+
+  const closeLocalReport = () => {
+    localReportLoadEpochRef.current += 1;
+    localReportAbortRef.current?.abort();
+    localReportAbortRef.current = undefined;
+    revokeLocalReportObjectUrls();
+    setLocalReport({
+      open: false,
+      status: "idle",
+      message: "No local report is open.",
+    });
   };
 
   const applyPreviewEpochEvent = (event: AiGraderPreviewEpochEvent) => {
@@ -1880,6 +1918,10 @@ export default function AiGraderStationPage() {
   ]);
 
   useEffect(() => () => revokeMathematicalReviewObjectUrls(), []);
+  useEffect(() => () => {
+    localReportAbortRef.current?.abort();
+    revokeLocalReportObjectUrls();
+  }, []);
 
   useEffect(() => {
     const request = operatorResolutionRequestRef.current;
@@ -2666,8 +2708,11 @@ export default function AiGraderStationPage() {
     });
   }, [selectedFinishItem, workArea]);
 
+  const localMathematicalBundle = parseAiGraderMathematicalReportV1(localReport.bundle);
   const localReportImages = useMemo(
-    () => (localReport.bundle ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true }) : []),
+    () => (localReport.bundle && !parseAiGraderMathematicalReportV1(localReport.bundle)
+      ? reportImageAssets(localReport.bundle, { allowEmbeddedBodies: true })
+      : []),
     [localReport.bundle]
   );
   const localFrontTrueView =
@@ -2693,12 +2738,8 @@ export default function AiGraderStationPage() {
       return haystack.includes("surface") || haystack.includes("heatmap") || haystack.includes("confidence") || haystack.includes("normal");
     }).length,
   };
-  const localMathematicalBundle = parseAiGraderMathematicalReportV1(localReport.bundle);
-  const localExternalRelease = status.productionRelease?.reportId === localReport.bundle?.reportId
-    ? status.productionRelease
-    : undefined;
   const localReportRelease = localMathematicalBundle
-    ? localExternalRelease
+    ? localReport.productionRelease
     : (localReport.bundle?.productionRelease as AiGraderStationProductionRelease | undefined);
   const localReportReadiness = buildAiGraderPublishReadiness({
     bundle: localReport.bundle,
@@ -3553,14 +3594,46 @@ export default function AiGraderStationPage() {
       const cached = reviewDraftCacheRef.current.get(identityKey);
       const preCapture = preCaptureDraftBySessionRef.current.get(activeReview.gradingSessionId);
       const initialDraft = cached ?? preCapture;
-      identityEditedFieldsRef.current = new Set(initialDraft?.editedFields ?? []);
+      const boundAuthority =
+        activeReviewManifest?.mathematicalV1?.gradingAuthority;
+      const persistedLinkage = (() => {
+        try {
+          return readAiGraderReviewLinkageDraft(
+            exactIdentity,
+            window.localStorage,
+          );
+        } catch {
+          return undefined;
+        }
+      })();
+      const boundPatch = boundAuthority
+        ? boundAiGraderReviewDraftPatch(boundAuthority)
+        : undefined;
+      identityEditedFieldsRef.current = new Set([
+        ...(initialDraft?.editedFields ?? []),
+        ...(boundPatch
+          ? Object.keys(boundPatch) as Array<keyof IdentityDraftState>
+          : []),
+        ...(persistedLinkage
+          ? Object.keys(persistedLinkage) as Array<keyof IdentityDraftState>
+          : []),
+      ]);
       setSelectedCard(initialDraft?.selectedCard ?? null);
-      setIdentityDraft(initialDraft?.identityDraft ?? defaultIdentityDraft);
-      setMathematicalAuthorityDraft(defaultMathematicalAuthorityDraft);
+      setIdentityDraft({
+        ...(initialDraft?.identityDraft ?? defaultIdentityDraft),
+        ...(boundPatch ?? {}),
+        ...(persistedLinkage ?? {}),
+      });
+      setMathematicalAuthorityDraft(
+        boundAuthority
+          ? boundAiGraderMathematicalAuthorityDraft(boundAuthority)
+          : defaultMathematicalAuthorityDraft,
+      );
       setMathematicalAuthorityStatus({
-        status: "idle",
-        message:
-          "Review and confirm this exact card's OCR-assisted Mathematical V1 authority.",
+        status: boundAuthority ? "completed" : "idle",
+        message: boundAuthority
+          ? "Exact durable Mathematical V1 card identity is restored for this review."
+          : "Review and confirm this exact card's OCR-assisted Mathematical V1 authority.",
       });
       setIdentityStatus({ status: "idle", message: "Card information has not yet been linked to a Ten Kings CardAsset/Item." });
       setProductionPublish({ status: "idle", message: "Ten Kings DB/storage publish has not been run." });
@@ -4881,6 +4954,30 @@ export default function AiGraderStationPage() {
   const updateIdentityDraft = <K extends keyof IdentityDraftState>(key: K, value: IdentityDraftState[K]) => {
     identityEditedFieldsRef.current.add(key);
     setIdentityDraft((current) => ({ ...current, [key]: value }));
+    if (
+      activeReview &&
+      typeof value === "string" &&
+      (key === "year" || key === "manufacturer" || key === "sport")
+    ) {
+      try {
+        persistAiGraderReviewLinkageField(
+          {
+            queueItemId: activeReview.queueItemId,
+            gradingSessionId: activeReview.gradingSessionId,
+            reportId: activeReview.reportId,
+          },
+          key,
+          value,
+          window.localStorage,
+        );
+      } catch (storageError) {
+        setError(
+          storageError instanceof Error
+            ? storageError.message
+            : "Exact review linkage fields could not be persisted.",
+        );
+      }
+    }
   };
 
   const updateCardType = (cardFormatProfile: MathematicalAuthorityDraftState["cardFormatProfile"]) => {
@@ -5832,8 +5929,15 @@ export default function AiGraderStationPage() {
   };
 
   const openReport = async () => {
-    const reportId = activeReviewIdentityReady ? activeReview?.reportId : undefined;
-    if (!reportReady || !reportId) {
+    const reviewIdentity = activeReviewIdentityReady && activeReview
+      ? {
+          queueItemId: activeReview.queueItemId,
+          gradingSessionId: activeReview.gradingSessionId,
+          reportId: activeReview.reportId,
+        }
+      : undefined;
+    const releaseCandidate = activeReviewManifest?.productionRelease;
+    if (!reportReady || !reviewIdentity) {
       setError("No generated report is ready yet.");
       return;
     }
@@ -5841,21 +5945,81 @@ export default function AiGraderStationPage() {
       setError("Connect the Dell local station bridge before opening the local report.");
       return;
     }
+    localReportLoadEpochRef.current += 1;
+    const loadEpoch = localReportLoadEpochRef.current;
+    localReportAbortRef.current?.abort();
+    revokeLocalReportObjectUrls();
+    const abortController = new AbortController();
+    localReportAbortRef.current = abortController;
     setBusy("open-report");
     setError(null);
     setLocalReport({
       open: true,
       status: "loading",
-      message: "Loading local report images from the paired Dell bridge.",
-      reportId,
+      message: "Loading exact Mathematical V1 report evidence from the paired Dell bridge.",
+      ...reviewIdentity,
     });
     window.localStorage.setItem(AI_GRADER_STATION_BRIDGE_URL_STORAGE_KEY, bridgeUrl);
     window.localStorage.setItem(AI_GRADER_STATION_TOKEN_STORAGE_KEY, stationToken);
     try {
-      const bundle = await fetchAiGraderStationReportBundle({
+      let bundle = await fetchAiGraderStationReportBundle({
         baseUrl: bridgeUrl,
         stationToken,
-        reportId,
+        reportId: reviewIdentity.reportId,
+      });
+      const strictBundle = parseAiGraderMathematicalReportV1(bundle);
+      if (strictBundle) {
+        if (
+          strictBundle.reportId !== reviewIdentity.reportId ||
+          releaseCandidate?.reportId !== reviewIdentity.reportId ||
+          releaseCandidate?.gradingSessionId !== reviewIdentity.gradingSessionId
+        ) {
+          throw new Error(
+            "Mathematical V1 review bundle and release do not match the active queue/session/report identity.",
+          );
+        }
+        assertAiGraderMathematicalReleaseEnvelope(
+          strictBundle,
+          releaseCandidate,
+        );
+        const assets = await loadAiGraderLocalMathematicalAssets({
+          bundle: strictBundle,
+          reportId: reviewIdentity.reportId,
+          signal: abortController.signal,
+          fetchAsset: ({ reportId, assetId, signal }) =>
+            fetchAiGraderStationReportAsset({
+              baseUrl: bridgeUrl,
+              stationToken,
+              reportId,
+              assetId,
+              signal,
+            }),
+        });
+        if (
+          loadEpoch !== localReportLoadEpochRef.current ||
+          currentActiveReviewIdentityKeyRef.current !==
+            aiGraderRapidQueueIdentityKey(reviewIdentity)
+        ) {
+          revokeAiGraderLocalMathematicalAssets(assets);
+          return;
+        }
+        localReportAssetSetRef.current = assets;
+        setLocalReport({
+          open: true,
+          status: "ready",
+          message:
+            `${assets.assetIds.length} curated, hash-verified Mathematical V1 evidence image(s) loaded from the exact Dell report package.`,
+          ...reviewIdentity,
+          bundle: strictBundle,
+          productionRelease: releaseCandidate,
+          assetUrlsById: assets.urlsByAssetId,
+        });
+        return;
+      }
+      bundle = await fetchAiGraderStationReportBundle({
+        baseUrl: bridgeUrl,
+        stationToken,
+        reportId: reviewIdentity.reportId,
         includeAssetBodies: true,
       });
       const imageCount = reportImageAssets(bundle, { allowEmbeddedBodies: true }).length;
@@ -5863,20 +6027,29 @@ export default function AiGraderStationPage() {
         open: true,
         status: "ready",
         message: imageCount ? `${imageCount} local report image(s) loaded through the paired bridge.` : "Local report loaded, but no renderable image assets were returned.",
-        reportId,
+        ...reviewIdentity,
         bundle,
       });
     } catch (requestError) {
+      if (
+        abortController.signal.aborted ||
+        loadEpoch !== localReportLoadEpochRef.current
+      ) {
+        return;
+      }
       const message = requestError instanceof Error ? requestError.message : "Could not open the local AI Grader report.";
       setLocalReport({
         open: true,
         status: "error",
         message,
-        reportId,
+        ...reviewIdentity,
       });
       setError(message);
     } finally {
-      setBusy(null);
+      if (loadEpoch === localReportLoadEpochRef.current) {
+        localReportAbortRef.current = undefined;
+        setBusy(null);
+      }
     }
   };
 
@@ -7172,14 +7345,18 @@ export default function AiGraderStationPage() {
             <section className="local-report" aria-label="Local AI Grader report viewer">
               <div className="local-report-head">
                 <div>
-                  <p className="eyebrow">Local Operator Report</p>
+                  <p className="eyebrow">
+                    {localMathematicalBundle
+                      ? "Mathematical V1 Report Review"
+                      : "Local Operator Report"}
+                  </p>
                   <h2>{localReport.bundle?.cardIdentity.title ?? localReport.reportId ?? "AI Grader report"}</h2>
                   <p>{localReport.message}</p>
                 </div>
                 <button
                   type="button"
                   className="close-report"
-                  onClick={() => setLocalReport({ open: false, status: "idle", message: "No local report is open." })}
+                  onClick={closeLocalReport}
                   aria-label="Close local report viewer"
                 >
                   X
@@ -7190,6 +7367,15 @@ export default function AiGraderStationPage() {
               ) : localReport.status === "error" ? (
                 <div className="report-error">{localReport.message}</div>
               ) : localReport.bundle ? (
+                localMathematicalBundle && localReport.productionRelease ? (
+                  <AiGraderMathematicalReportV1
+                    bundle={localMathematicalBundle}
+                    assetUrlsById={localReport.assetUrlsById}
+                    localUnpublished
+                    showAllEvidenceAssets={false}
+                    workflowRelease={localReport.productionRelease}
+                  />
+                ) : (
                 <>
                   <div className="report-hero">
                     {localFrontTrueView ? (
@@ -7343,6 +7529,7 @@ export default function AiGraderStationPage() {
                     </section>
                   ) : null}
                 </>
+                )
               ) : null}
             </section>
           ) : null}
@@ -7494,7 +7681,7 @@ export default function AiGraderStationPage() {
                       value={identityDraft.year}
                       onChange={(event) => updateIdentityDraft("year", event.target.value)}
                       placeholder="2020"
-                      disabled={mathematicalAuthorityBound || busy !== null}
+                      disabled={busy !== null}
                       required
                     />
                   </label>
@@ -7504,7 +7691,7 @@ export default function AiGraderStationPage() {
                       value={identityDraft.manufacturer}
                       onChange={(event) => updateIdentityDraft("manufacturer", event.target.value)}
                       placeholder={pokemonAuthoritySelected ? "Pokémon, Wizards of the Coast" : "Panini, Topps"}
-                      disabled={mathematicalAuthorityBound || busy !== null}
+                      disabled={busy !== null}
                       required
                     />
                   </label>
@@ -7515,7 +7702,7 @@ export default function AiGraderStationPage() {
                         value={identityDraft.sport}
                         onChange={(event) => updateIdentityDraft("sport", event.target.value)}
                         placeholder="Basketball"
-                        disabled={mathematicalAuthorityBound || busy !== null}
+                        disabled={busy !== null}
                         required
                       />
                     </label>

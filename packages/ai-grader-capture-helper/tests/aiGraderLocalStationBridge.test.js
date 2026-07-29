@@ -35,6 +35,17 @@ const OCR_FIELDS = [
   "productSet", "cardNumber", "parallel", "insert", "numbered", "autograph", "memorabilia",
 ];
 
+test("local report assets expose exact report, asset, and hash response identities", () => {
+  assert.match(
+    bridgeSource,
+    /"Access-Control-Expose-Headers"[\s\S]*?x-ai-grader-report-id[\s\S]*?x-ai-grader-sha256[\s\S]*?x-ai-grader-asset-id/,
+  );
+  assert.match(
+    bridgeSource,
+    /const reportAssetMatch[\s\S]*?service\.reportAsset\(reportId, assetId\)[\s\S]*?"X-AI-Grader-Report-Id": reportId,[\s\S]*?"X-AI-Grader-Asset-Id": asset\.id,[\s\S]*?"X-AI-Grader-SHA256": asset\.sha256/,
+  );
+});
+
 function configFor(outputDir, dependencies = {}, overrides = {}, warmRunner) {
   const config = buildAiGraderLocalStationBridgeConfig({
     enabled: true,

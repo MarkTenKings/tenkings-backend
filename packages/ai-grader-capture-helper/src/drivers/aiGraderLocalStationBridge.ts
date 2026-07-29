@@ -17481,6 +17481,7 @@ export function createAiGraderLocalStationBridgeHttpServer(
           config,
           asset.contentType,
           {
+            "X-AI-Grader-Report-Id": reportId,
             "X-AI-Grader-Asset-Id": asset.id,
             "X-AI-Grader-SHA256": asset.sha256,
           }

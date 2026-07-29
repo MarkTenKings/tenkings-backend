@@ -7,6 +7,7 @@ import type {
   AiGraderReportEditorialContent,
   AiGraderReportEditorialRevisionV1,
 } from "../../lib/aiGraderReportRevision";
+import type { AiGraderMathematicalProductionReleaseEnvelope } from "../../lib/aiGraderMathematicalReportV1";
 
 const ELEMENTS = ["centering", "corners", "edges", "surface"] as const;
 
@@ -88,12 +89,20 @@ export default function AiGraderMathematicalReportV1({
   enrichment,
   editorialRevision,
   onAdminEditorStateChange,
+  assetUrlsById,
+  localUnpublished = false,
+  showAllEvidenceAssets = true,
+  workflowRelease,
 }: {
   bundle: AiGraderReportBundleV03;
   nfc?: AiGraderMathematicalPublicNfc | null;
   enrichment?: AiGraderMathematicalPublicEnrichment | null;
   editorialRevision?: AiGraderReportEditorialRevisionV1 | null;
   onAdminEditorStateChange?: (state: AiGraderReportAdminEditorState) => void;
+  assetUrlsById?: Readonly<Record<string, string>>;
+  localUnpublished?: boolean;
+  showAllEvidenceAssets?: boolean;
+  workflowRelease?: AiGraderMathematicalProductionReleaseEnvelope;
 }) {
   const [selectedSide, setSelectedSide] = useState<"front" | "back">("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string>();
@@ -123,8 +132,15 @@ export default function AiGraderMathematicalReportV1({
     surface: "surfaceExplanation",
   };
   const publicDisplayAssets = useMemo(
-    () => bundle.publicAssets.filter((asset) => asset.evidenceRole !== "confidence_mask"),
-    [bundle.publicAssets],
+    () => bundle.publicAssets
+      .filter((asset) => asset.evidenceRole !== "confidence_mask")
+      .map((asset) => {
+        const verifiedLocalUrl = assetUrlsById?.[asset.id];
+        if (verifiedLocalUrl) return { ...asset, publicUrl: verifiedLocalUrl };
+        if (!localUnpublished) return asset;
+        return { ...asset, publicUrl: undefined };
+      }),
+    [assetUrlsById, bundle.publicAssets, localUnpublished],
   );
   const assets = useMemo(
     () => new Map(publicDisplayAssets.map((asset) => [asset.id.toLowerCase(), asset])),
@@ -171,10 +187,12 @@ export default function AiGraderMathematicalReportV1({
 
   return (
     <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">
-      <AiGraderReportAdminEditor
-        reportId={bundle.reportId}
-        onStateChange={onAdminEditorStateChange}
-      />
+      {!localUnpublished ? (
+        <AiGraderReportAdminEditor
+          reportId={bundle.reportId}
+          onStateChange={onAdminEditorStateChange}
+        />
+      ) : null}
       <header className="mx-auto flex max-w-7xl flex-wrap items-start justify-between gap-5 border-b border-black/15 pb-6">
         <div>
           <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-800">Ten Kings Mathematical Grading V1</p>
@@ -202,8 +220,12 @@ export default function AiGraderMathematicalReportV1({
         <div>
           <strong className="block">Certificate</strong>
           <span>{bundle.productionRelease.label.certId}</span>
-          <a className="mt-1 block underline" href={bundle.productionRelease.publication.publicReportUrl}>Open public report</a>
-          <a className="mt-1 block underline" href={bundle.productionRelease.label.qrPayloadUrl}>Open QR destination</a>
+          {!localUnpublished ? (
+            <>
+              <a className="mt-1 block underline" href={bundle.productionRelease.publication.publicReportUrl}>Open public report</a>
+              <a className="mt-1 block underline" href={bundle.productionRelease.label.qrPayloadUrl}>Open QR destination</a>
+            </>
+          ) : <span className="mt-1 block">Publication remains operator-gated.</span>}
         </div>
         <div>
           <strong className="block">Inventory linkage</strong>
@@ -686,33 +708,58 @@ export default function AiGraderMathematicalReportV1({
         </div>
       </section>
 
-      <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
-        <h2 className="text-2xl font-bold">Published evidence replay</h2>
-        <p className="mt-2 text-sm text-zinc-700">True View, Surface Vision, heatmaps, directional channels, masks, overlays, and ROI crops remain linked to their immutable source records.</p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {publicDisplayAssets.map((asset) => {
-            const hash = asset.sha256 ?? asset.checksumSha256;
-            const isImage = Boolean(asset.publicUrl && (!asset.contentType || asset.contentType.startsWith("image/")));
-            return (
-              <article className="overflow-hidden rounded border border-black/15 bg-white" id={`asset-${asset.id}`} key={asset.id}>
-                {isImage ? (
-                  <a href={asset.publicUrl}>
-                    <img className="aspect-[5/4] w-full bg-black object-contain" src={asset.publicUrl} alt={`${asset.side ?? "unscoped"} ${label(asset.evidenceRole ?? "evidence")} ${asset.id}`} />
-                  </a>
-                ) : (
-                  <div className="grid aspect-[5/4] place-items-center bg-zinc-100 p-4 text-center text-sm text-zinc-600">Published binary evidence</div>
-                )}
-                <div className="p-3 text-xs">
-                  <strong className="block text-sm">{label(asset.evidenceRole ?? asset.kind ?? "other evidence")}</strong>
-                  <span>{asset.side ?? "both / calibration"} / {asset.id}</span>
-                  <span className="mt-1 block break-all font-mono">{hash ? fullHash(hash) : "hash unavailable"}</span>
-                  {asset.publicUrl ? <a className="mt-2 inline-block underline" href={asset.publicUrl}>Open exact evidence</a> : null}
-                </div>
+      {showAllEvidenceAssets ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
+          <h2 className="text-2xl font-bold">Published evidence replay</h2>
+          <p className="mt-2 text-sm text-zinc-700">True View, Surface Vision, heatmaps, directional channels, masks, overlays, and ROI crops remain linked to their immutable source records.</p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {publicDisplayAssets.map((asset) => {
+              const hash = asset.sha256 ?? asset.checksumSha256;
+              const isImage = Boolean(asset.publicUrl && (!asset.contentType || asset.contentType.startsWith("image/")));
+              return (
+                <article className="overflow-hidden rounded border border-black/15 bg-white" id={`asset-${asset.id}`} key={asset.id}>
+                  {isImage ? (
+                    <a href={asset.publicUrl}>
+                      <img className="aspect-[5/4] w-full bg-black object-contain" src={asset.publicUrl} alt={`${asset.side ?? "unscoped"} ${label(asset.evidenceRole ?? "evidence")} ${asset.id}`} />
+                    </a>
+                  ) : (
+                    <div className="grid aspect-[5/4] place-items-center bg-zinc-100 p-4 text-center text-sm text-zinc-600">Published binary evidence</div>
+                  )}
+                  <div className="p-3 text-xs">
+                    <strong className="block text-sm">{label(asset.evidenceRole ?? asset.kind ?? "other evidence")}</strong>
+                    <span>{asset.side ?? "both / calibration"} / {asset.id}</span>
+                    <span className="mt-1 block break-all font-mono">{hash ? fullHash(hash) : "hash unavailable"}</span>
+                    {asset.publicUrl ? <a className="mt-2 inline-block underline" href={asset.publicUrl}>Open exact evidence</a> : null}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+
+      {workflowRelease ? (
+        <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
+          <h2 className="text-2xl font-bold">Publication warnings and gates</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {workflowRelease.gates.map((gate) => (
+              <article className="rounded border border-black/10 p-4" key={gate.id}>
+                <span className="text-xs font-bold uppercase tracking-widest">{label(gate.status)}</span>
+                <strong className="mt-1 block">{gate.label ?? gate.id}</strong>
+                <p className="mt-2 text-sm">{gate.reason}</p>
+                <small className="mt-2 block break-all font-mono">{gate.evidenceRefs.join(", ")}</small>
               </article>
-            );
-          })}
-        </div>
-      </section>
+            ))}
+          </div>
+          {[...(workflowRelease.warnings ?? []), ...(workflowRelease.limitations ?? []), ...(bundle.warnings ?? []), ...(bundle.limitations ?? [])].length ? (
+            <ul className="mt-4 grid gap-2 text-sm">
+              {[...(workflowRelease.warnings ?? []), ...(workflowRelease.limitations ?? []), ...(bundle.warnings ?? []), ...(bundle.limitations ?? [])]
+                .filter((entry, index, values) => values.indexOf(entry) === index)
+                .map((entry) => <li className="rounded bg-amber-50 p-3" key={entry}>{entry}</li>)}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="mx-auto mt-6 max-w-7xl rounded border border-black/15 bg-white/80 p-6">
         <h2 className="text-2xl font-bold">Immutable grading provenance</h2>

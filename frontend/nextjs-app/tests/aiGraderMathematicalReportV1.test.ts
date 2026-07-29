@@ -9,6 +9,10 @@ import {
 import AiGraderMathematicalReportV1 from "../components/ai-grader/AiGraderMathematicalReportV1";
 import { parseAiGraderMathematicalReportV1 } from "../lib/aiGraderMathematicalReportV1";
 import { buildAiGraderReportEditorialRevisionV1 } from "../lib/aiGraderReportRevision";
+import {
+  buildStrictAiGraderMathematicalReleaseV1Fixture,
+  buildStrictAiGraderReportBundleV03Fixture,
+} from "./fixtures/strictAiGraderReportBundleV03";
 
 const confidence = { score: 0.98, band: "high", validEvidenceCoverage: 0.99, warnings: [] };
 const location = { side: "front", location: "top_left", score: 9.75, penalty: 0.25, findingIds: [], confidence };
@@ -387,6 +391,38 @@ test("V1 public report renders measured scores, subscores, formulas, and exact e
   assert.match(html, /href="\/api\/evidence\/segmentation-mask"/);
   assert.match(html, /Calibration bundle manifest/);
   assert.match(html, /Exact calibration bundle members/);
+});
+
+test("local unpublished strict V1 renders the advanced report with verified object URLs and no bulk gallery", () => {
+  const bundle = buildStrictAiGraderReportBundleV03Fixture();
+  const assetUrlsById = Object.fromEntries(
+    bundle.publicAssets.map((asset, index) => [
+      asset.id,
+      `blob:verified-mathematical-${index}`,
+    ]),
+  );
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle,
+    assetUrlsById,
+    localUnpublished: true,
+    showAllEvidenceAssets: false,
+    workflowRelease: buildStrictAiGraderMathematicalReleaseV1Fixture(bundle),
+  }));
+
+  assert.match(html, /Ten Kings Mathematical Grading V1/);
+  assert.match(html, /Overall calculation/);
+  assert.match(html, /Front, back, and location subscores/);
+  assert.match(html, /Independent corner and edge observations/);
+  assert.match(html, /Centering measurements/);
+  assert.match(html, /front centering registration QA overlay/);
+  assert.match(html, /back centering registration QA overlay/);
+  assert.match(html, /Vision evidence replay/);
+  assert.match(html, /Publication warnings and gates/);
+  assert.match(html, /Strict V1 validation passed/);
+  assert.match(html, /blob:verified-mathematical-/);
+  assert.doesNotMatch(html, /Published evidence replay/);
+  assert.doesNotMatch(html, /\/api\/evidence\//);
+  assert.doesNotMatch(html, /LOCAL OPERATOR REPORT/i);
 });
 
 test("owner-accepted calibration metadata remains internal and is not rendered on the public report", () => {

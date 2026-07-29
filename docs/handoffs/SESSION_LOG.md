@@ -29141,3 +29141,19 @@ By enabling Rip It Live, I confirm:
 - Hydration tests now use a strict public Production V0.3 fixture independently accepted by `aiGraderReportBundleV03Schema`. Only the schema's bounded raw and normalized dense-contour arrays are scaled; each added point contributes the explicit object-plus-`x`-plus-`y` traversal count, and an optional bounded warnings array supplies the deterministic remainder.
 - Focused coverage proves a schema-valid `84,523`-value bundle hydrates with exact queue/session/report/Production-release binding, exactly `100,000` values hydrate, and `100,001` values reject while remaining below the unchanged `2,000,000`-character cap. The parsed enumerable prototype-key probe, complete station transport suite, strict V0.3 release-boundary suite, and Production Next.js build pass.
 - This remains an isolated review candidate. No PR, merge, deployment, helper restart, hardware action, publication, rerun, or owner card/review/report/queue mutation was performed.
+
+## 2026-07-28 - Exact Mathematical report presentation and publication-envelope hydration candidate
+
+- This isolated candidate starts from exact protected-main base `bcc4282c879f682736b5a27724e267608e606dd2`, which contains the approved bounded completed-report hydration release from PR `#212`.
+- A hydrated strict `ai-grader-report-bundle-v0.3` no longer falls through the generic Local Operator Report or enumerates all 152 report assets. The station reuses the existing advanced Mathematical V1 presentation for the final grade, four measured elements and formulas, front/back centering overlays, exact corner/edge observations, surface replay, limitations, and publication gates. Actual legacy bundles retain the existing generic viewer.
+- Unpublished strict assets are loaded only from the token-gated loopback Dell report-asset endpoint. The browser selects a bounded curated set, requires exact report and asset response identities, declared SHA-256, byte size, safe image MIME, and decoded raster dimensions before creating object URLs, and revokes every URL on close, identity change, abort, or failure. The helper now echoes the exact report identity in that endpoint's exposed headers. Unpublished hosted `/api/.../assets/...` URLs are never used.
+- Active-review sanitization retains the external Mathematical V1 production-release envelope only when its queue/session/report context and complete strict release, final grade, Label V1, calibration, and publication identities match. Review readiness and Approve & Publish consume that same active-review envelope, never the session-level release.
+- A hard refresh reconstructs immutable bound card fields from the exact durable Mathematical grading authority. Only required owner linkage fields absent from that immutable body (`year`, `manufacturer`, and sports `sport`) use a bounded 25-record browser draft keyed by the exact queue/session/report triple; product set and all other bound identity fields remain derived from durable authority and immutable.
+- Focused validation passed:
+  - shared, database, browser-client, simulator, and capture-helper TypeScript builds;
+  - strict report presentation, asset transport/security, exact release hydration, refresh isolation, station, and release-boundary suites `113/113`;
+  - publication/raster/legacy compatibility suites `14/14`;
+  - complete helper station bridge suite `50/50`;
+  - optimized Production Next.js build, with only existing non-blocking repository warnings;
+  - `git diff --check`, with Windows line-ending notices only.
+- No grading formula, score, threshold, calibration, capture, OCR/EYES, queue concurrency, database, publication workflow, or Finish Cards behavior was changed. No PR, merge, deployment, helper restart, hardware operation, Production read/write, rerun, retry, discard, resolution, publication, or owner card/report/queue mutation was performed.
