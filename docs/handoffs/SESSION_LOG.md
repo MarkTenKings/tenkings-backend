@@ -29229,3 +29229,17 @@ By enabling Rip It Live, I confirm:
 - The focused Production-shaped proof derives a valid human-measurement centering score of `4.12`; with corners, edges, and surface each `10.00`, the shared composer, strict report, exact release envelope, publication readiness, and browser/editor calculation all agree on overall `8.24` and label `8.2`, with no active cap field or formula.
 - Focused validation passed: helper grade/report suites `35/35`; browser report, release-boundary, editor API, and revision suites `25/25`; shared weighted/report-schema checks `3/3`; shared, helper, browser-client, and optimized Production Next.js builds; and `git diff --check`.
 - Planned release is limited to the exact protected PR/required-CI/merge path, Production web deployment, and controlled helper update/restart with current queue/report/card bytes preserved. No Optimize, capture, OCR/EYES, calibration, database, publication, recapture, rerun, or owner data mutation is included.
+
+## 2026-07-29 - Bounded Mathematical Optimize integration and release
+
+- Integration starts from exact protected-main and live Production/helper merge `eaf533cc83a23daba6e7c40bcc2017610e695c0b`. The authorized frozen Optimize source is `e5ebad54c26382a5d7113c4eaf7eddeb66f8b7c0`, whose net base is `b557124367ee5249f798ba023d9e25f909a65359`.
+- Only the four Optimize code/test files are transplanted. The condition segmentation source, Mathematical orchestrator source, and segmentation regression were byte-identical to the frozen source's old base on current main and now exactly match the frozen Optimize blobs. The one later-modified orchestrator regression merged cleanly; its residual patch-id exactly matches the Lane A test delta.
+- The bounded delta retains job-local exact-path/SHA byte reuse, decode-once presentation reuse without decoded checkpoint state, cyan-contour presentation removal, orange/centering/defect overlays, and exact straight-side scoring/report ROIs. New disk checkpoint persistence remains absent.
+- Current strict report/image hydration and publishing, verified-human centering, weighted-only overall grading, helper status behavior, queue/report handling, thresholds, calibration, formulas, and publication authority remain unchanged.
+- Focused validation passed: shared/simulator/capture-helper TypeScript build and the six relevant Optimize suites `99/99`. The integrated weighted-only grade cases passed, the worker proof retained `25` admitted cards and at most `2` active workers, and independent replay produced identical grade, summary, orchestration-trace SHA-256, report bundle, and all `197` payload IDs, hashes, and bytes. `git diff --check` passed.
+
+### Planned authorized Production action
+
+- Freeze one clean integration commit, push one focused branch, open one protected PR, and merge only after all required checks pass. Allow and verify the normal Vercel Production deployment with migrations disabled.
+- Because the Optimize delta changes the capture-helper runtime, perform a fresh authenticated read-only idle gate, preserve every current queue/report/card artifact exactly, advance the dedicated clean Dell runtime only to the exact functional merge, build the affected packages, update only the protected launcher pin, and restart only the helper through the normal protected procedure.
+- Do not exercise camera or lighting, create/capture/cancel/retry/resolve/discard/publish a card, mutate queue/report/database/storage/calibration, or perform unrelated Production work.

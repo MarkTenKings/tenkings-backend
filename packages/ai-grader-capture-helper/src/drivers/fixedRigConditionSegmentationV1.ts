@@ -120,6 +120,21 @@ export type FixedRigConditionSegmentationV1Result =
       designReferenceSha256?: string;
       conditionValidEvidenceMask: FixedRigScalarPlaneV1;
       boundaryValidEvidenceMask: FixedRigScalarPlaneV1;
+      /**
+       * Exact normalized-frame ROIs used to construct the scoring observations.
+       * Report evidence must reuse these boxes instead of independently
+       * reconstructing region geometry from the frame origin.
+       */
+      observationRois: {
+        corners: Record<
+          FixedRigCornerObservationInputV1["location"],
+          { x: number; y: number; width: number; height: number }
+        >;
+        edges: Record<
+          FixedRigEdgeObservationInputV1["location"],
+          { x: number; y: number; width: number; height: number }
+        >;
+      };
       cornerObservations: FixedRigCornerObservationInputV1[];
       edgeObservations: FixedRigEdgeObservationInputV1[];
       surfaceCandidateSeeds: FixedRigSurfaceCandidateSeedV1[];
@@ -1151,6 +1166,20 @@ export function buildFixedRigConditionSegmentationV1(
     } : {}),
     conditionValidEvidenceMask: features.conditionValid,
     boundaryValidEvidenceMask: features.boundaryValid,
+    observationRois: {
+      corners: Object.fromEntries(
+        cornerBoxes.map(({ location, box }) => [location, { ...box }]),
+      ) as Record<
+        FixedRigCornerObservationInputV1["location"],
+        { x: number; y: number; width: number; height: number }
+      >,
+      edges: Object.fromEntries(
+        edgeBoxes.map(({ location, box }) => [location, { ...box }]),
+      ) as Record<
+        FixedRigEdgeObservationInputV1["location"],
+        { x: number; y: number; width: number; height: number }
+      >,
+    },
     cornerObservations,
     edgeObservations,
     surfaceCandidateSeeds,

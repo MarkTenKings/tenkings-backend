@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { resolve as resolvePath } from "node:path";
 import sharp from "sharp";
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
@@ -604,7 +605,7 @@ function svgPolyline(points: readonly FixedRigPointV1[]): string {
 
 async function buildEyesCenteringCandidateAssetsV1(input: {
   side: Side;
-  normalizedBytes: Buffer;
+  normalizedRgbImage: FixedRigDecodedRgbImageV1;
   widthPx: number;
   heightPx: number;
   detector: FixedRigPrintedBorderDetectorResultV1;
@@ -639,7 +640,7 @@ async function buildEyesCenteringCandidateAssetsV1(input: {
       `</svg>`,
       "utf8",
     );
-    const bytes = await sharp(input.normalizedBytes, { failOn: "error" })
+    const bytes = await sharpFromDecodedRgbImageV1(input.normalizedRgbImage)
       .composite([{ input: svg, blend: "over" }])
       .png()
       .toBuffer();
@@ -749,30 +750,79 @@ function safeMessage(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 600) : "unknown V1 contract error";
 }
 
+interface FixedRigDecodedRgbImageV1 {
+  width: number;
+  height: number;
+  encodedBytes: Buffer;
+  rawBytes?: Buffer;
+  plane: FixedRigRgbPlaneV1;
+}
+
+interface FixedRigMathematicalJobContextV1 {
+  exactFileBytes: Map<string, Buffer>;
+  expectedHashByResolvedPath: Map<string, string>;
+  decodedRgbImages: Map<string, FixedRigDecodedRgbImageV1>;
+}
+
+function buildJobContextV1(): FixedRigMathematicalJobContextV1 {
+  return {
+    exactFileBytes: new Map(),
+    expectedHashByResolvedPath: new Map(),
+    decodedRgbImages: new Map(),
+  };
+}
+
+function exactFileIdentityV1(input: FixedRigExactInputFileV1): {
+  resolvedPath: string;
+  expectedSha256: string;
+  cacheKey: string;
+} {
+  const expectedSha256 = (input.sha256 ?? "").toLowerCase();
+  const resolvedPath = input.filePath ? resolvePath(input.filePath) : "";
+  return {
+    resolvedPath,
+    expectedSha256,
+    cacheKey: `${resolvedPath}\u0000${expectedSha256}`,
+  };
+}
+
 async function readExactFileV1(
   input: FixedRigExactInputFileV1,
   label: string,
   stage: FixedRigMathematicalOrchestrationStageV1,
+  job: FixedRigMathematicalJobContextV1,
 ): Promise<Buffer> {
-  const expected = input.sha256?.toLowerCase();
-  if (!input.filePath || !SHA256.test(expected)) {
+  const identity = exactFileIdentityV1(input);
+  if (!input.filePath || !SHA256.test(identity.expectedSha256)) {
     return fail(stage, `${label} requires an exact local path and SHA-256.`, {
       requiresImplementationCorrection: true,
     });
   }
+  const priorExpected = job.expectedHashByResolvedPath.get(identity.resolvedPath);
+  if (priorExpected && priorExpected !== identity.expectedSha256) {
+    return fail(stage, `${label} reuses one exact path with a conflicting SHA-256.`, {
+      requiresImplementationCorrection: true,
+    });
+  }
+  job.expectedHashByResolvedPath.set(identity.resolvedPath, identity.expectedSha256);
+  const cached = job.exactFileBytes.get(identity.cacheKey);
+  if (cached) {
+    return cached;
+  }
   let bytes: Buffer;
   try {
-    bytes = await readFile(input.filePath);
+    bytes = await readFile(identity.resolvedPath);
   } catch {
     return fail(stage, `${label} exact evidence file is unavailable.`, {
       requiresImplementationCorrection: true,
     });
   }
-  if (sha256(bytes) !== expected) {
+  if (sha256(bytes) !== identity.expectedSha256) {
     return fail(stage, `${label} exact file SHA-256 mismatch.`, {
       requiresImplementationCorrection: true,
     });
   }
+  job.exactFileBytes.set(identity.cacheKey, bytes);
   return bytes;
 }
 
@@ -814,13 +864,26 @@ async function decodeGrayPlaneV1(input: {
   return { width: input.width, height: input.height, data };
 }
 
-async function decodeRgbPlaneV1(input: {
+async function decodeRgbImageV1(input: {
   bytes: Uint8Array;
   width: number;
   height: number;
   sensorMaximumValue: number;
   label: string;
-}): Promise<FixedRigRgbPlaneV1> {
+  exactFile: FixedRigExactInputFileV1;
+  job: FixedRigMathematicalJobContextV1;
+}): Promise<FixedRigDecodedRgbImageV1> {
+  const fileIdentity = exactFileIdentityV1(input.exactFile);
+  const cacheKey = [
+    fileIdentity.cacheKey,
+    input.width,
+    input.height,
+    input.sensorMaximumValue,
+  ].join("\u0000");
+  const cached = input.job.decodedRgbImages.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
   let result: { data: Buffer; info: { width: number; height: number; channels: number } };
   try {
     result = await sharp(input.bytes, { failOn: "error" })
@@ -845,6 +908,9 @@ async function decodeRgbPlaneV1(input: {
     });
   }
   const data = new Float32Array(input.width * input.height * 3);
+  let rawBytes = input.sensorMaximumValue === 255
+    ? Buffer.alloc(input.width * input.height * 3)
+    : undefined;
   for (let index = 0; index < data.length; index += 1) {
     const value = result.data.readFloatLE(index * 4);
     if (!Number.isFinite(value) || value < 0 || value > input.sensorMaximumValue + 1e-6) {
@@ -853,8 +919,43 @@ async function decodeRgbPlaneV1(input: {
       });
     }
     data[index] = value / input.sensorMaximumValue;
+    if (rawBytes) {
+      if (!Number.isInteger(value)) {
+        rawBytes = undefined;
+      } else {
+        rawBytes[index] = value;
+      }
+    }
   }
-  return { width: input.width, height: input.height, data };
+  const decoded = {
+    width: input.width,
+    height: input.height,
+    encodedBytes: Buffer.isBuffer(input.bytes)
+      ? input.bytes
+      : Buffer.from(
+          input.bytes.buffer,
+          input.bytes.byteOffset,
+          input.bytes.byteLength,
+        ),
+    ...(rawBytes ? { rawBytes } : {}),
+    plane: { width: input.width, height: input.height, data },
+  };
+  input.job.decodedRgbImages.set(cacheKey, decoded);
+  return decoded;
+}
+
+function sharpFromDecodedRgbImageV1(image: FixedRigDecodedRgbImageV1): sharp.Sharp {
+  if (!image.rawBytes) {
+    return sharp(image.encodedBytes, { failOn: "error" });
+  }
+  return sharp(image.rawBytes, {
+    raw: {
+      width: image.width,
+      height: image.height,
+      channels: 3,
+    },
+    failOn: "error",
+  });
 }
 
 function evidenceKey(reference: Pick<EvidenceReferenceV1, "assetId">): string {
@@ -935,6 +1036,14 @@ export interface IngestedSideAutomaticUnavailableV1 extends IngestedSideBaseV1 {
 
 export type IngestedSideV1 = IngestedSideComputedV1 | IngestedSideAutomaticUnavailableV1;
 
+type IngestedSideWithDecodedRgbV1 = IngestedSideV1 & {
+  normalizedRgbImage: FixedRigDecodedRgbImageV1;
+};
+
+type IngestedSideComputedWithDecodedRgbV1 = IngestedSideComputedV1 & {
+  normalizedRgbImage: FixedRigDecodedRgbImageV1;
+};
+
 function sideAutomaticallyUnavailableV1(
   side: IngestedSideV1,
 ): side is IngestedSideAutomaticUnavailableV1 {
@@ -955,6 +1064,42 @@ function computedSideV1(
   return side;
 }
 
+function computedSideWithDecodedRgbV1(
+  side: IngestedSideWithDecodedRgbV1,
+  context: string,
+): IngestedSideComputedWithDecodedRgbV1 {
+  if (sideAutomaticallyUnavailableV1(side)) {
+    return fail(
+      "report_adaptation",
+      `${context} cannot reference a side whose automatic detector output is unavailable.`,
+      { requiresImplementationCorrection: true },
+    );
+  }
+  return side;
+}
+
+async function hydrateDecodedRgbImageV1(
+  side: IngestedSideV1,
+  sensorMaximumValue: number,
+  job: FixedRigMathematicalJobContextV1,
+): Promise<IngestedSideWithDecodedRgbV1> {
+  const normalizedRgbImage = await decodeRgbImageV1({
+    bytes: side.normalizedBytes,
+    width: side.input.rawToNormalizedTransform.outputWidthPx,
+    height: side.input.rawToNormalizedTransform.outputHeightPx,
+    sensorMaximumValue,
+    label: `${side.side} normalized card`,
+    exactFile: side.input.normalizedCard,
+    job,
+  });
+  return { ...side, normalizedRgbImage };
+}
+
+function checkpointSideV1(side: IngestedSideWithDecodedRgbV1): IngestedSideV1 {
+  const { normalizedRgbImage: _jobLocalDecodedImage, ...checkpointSide } = side;
+  return checkpointSide;
+}
+
 async function ingestSideV1(input: {
   side: Side;
   sideInput: FixedRigMathematicalCalibrationSideInputV1;
@@ -963,7 +1108,8 @@ async function ingestSideV1(input: {
   photometricCalibration: FixedRigPhotometricCalibrationProfileV1;
   sensorMaximumValue: number;
   selectedCenteringCandidate?: FixedRigPrintedBorderCandidateSelectionV1;
-}): Promise<IngestedSideV1> {
+  job: FixedRigMathematicalJobContextV1;
+}): Promise<IngestedSideWithDecodedRgbV1> {
   const { side, sideInput, profile } = input;
   const rawSideInput = sideInput as unknown as Record<string, unknown>;
   if (
@@ -1035,6 +1181,7 @@ async function ingestSideV1(input: {
     sideInput.rawAllOn,
     `${side} raw sensor all-on capture`,
     'capture_evidence_ingestion',
+    input.job,
   );
   const rawGeometryAuthority =
     sideInput.rawGeometryAuthority ?? sideInput.rawAllOn;
@@ -1048,6 +1195,7 @@ async function ingestSideV1(input: {
           rawGeometryAuthority,
           `${side} raw sensor ${geometryAuthorityRole} geometry authority`,
           "capture_evidence_ingestion",
+          input.job,
         );
   const rawToNormalizedTransform = sideInput.rawToNormalizedTransform;
   if (!verifyCardGeometryRawToNormalizedTransformV1(rawToNormalizedTransform) ||
@@ -1063,20 +1211,27 @@ async function ingestSideV1(input: {
     sideInput.normalizedCard,
     `${side} normalized card`,
     "capture_evidence_ingestion",
+    input.job,
   );
   const allOnBytes = await readExactFileV1(
     sideInput.normalizedAllOn,
     `${side} normalized all-on capture`,
     "capture_evidence_ingestion",
+    input.job,
   );
   const designBytes = hasCompleteDesignEvidence
     ? await readExactFileV1(
         sideInput.designReferenceArtifact!,
         `${side} approved design artifact`,
         "capture_evidence_ingestion",
+        input.job,
       )
     : undefined;
-  if (designBytes && sha256(designBytes) !== sideInput.designReference!.artifactSha256.toLowerCase()) {
+  if (
+    designBytes &&
+    sideInput.designReferenceArtifact!.sha256.toLowerCase() !==
+      sideInput.designReference!.artifactSha256.toLowerCase()
+  ) {
     return fail("capture_evidence_ingestion", `${side} approved design artifact hash does not match its approved reference.`, {
       requiresApprovedDesignReference: true,
       requiresImplementationCorrection: true,
@@ -1097,36 +1252,48 @@ async function ingestSideV1(input: {
       });
     }
   }
-  const rawGeometryAuthorityRgb = await decodeRgbPlaneV1({
+  const rawGeometryAuthorityRgbImage = await decodeRgbImageV1({
     bytes: rawGeometryAuthorityBytes,
     width: rawToNormalizedTransform.sourceWidthPx,
     height: rawToNormalizedTransform.sourceHeightPx,
     sensorMaximumValue: input.sensorMaximumValue,
     label: `${side} raw sensor ${geometryAuthorityRole} geometry authority`,
+    exactFile: rawGeometryAuthority,
+    job: input.job,
   });
-  const normalizedRgb = await decodeRgbPlaneV1({
+  const normalizedRgbImage = await decodeRgbImageV1({
     bytes: normalizedBytes,
     width: profile.normalizedWidthPx,
     height: profile.normalizedHeightPx,
     sensorMaximumValue: input.sensorMaximumValue,
     label: `${side} normalized card`,
+    exactFile: sideInput.normalizedCard,
+    job: input.job,
   });
-  const allOnRgb = await decodeRgbPlaneV1({
+  const allOnRgbImage = await decodeRgbImageV1({
     bytes: allOnBytes,
     width: profile.normalizedWidthPx,
     height: profile.normalizedHeightPx,
     sensorMaximumValue: input.sensorMaximumValue,
     label: `${side} normalized all-on capture`,
+    exactFile: sideInput.normalizedAllOn,
+    job: input.job,
   });
-  const designRgb = designBytes
-    ? await decodeRgbPlaneV1({
+  const designRgbImage = designBytes
+    ? await decodeRgbImageV1({
         bytes: designBytes,
         width: profile.normalizedWidthPx,
         height: profile.normalizedHeightPx,
         sensorMaximumValue: input.sensorMaximumValue,
         label: `${side} approved design artifact`,
+        exactFile: sideInput.designReferenceArtifact!,
+        job: input.job,
       })
     : undefined;
+  const rawGeometryAuthorityRgb = rawGeometryAuthorityRgbImage.plane;
+  const normalizedRgb = normalizedRgbImage.plane;
+  const allOnRgb = allOnRgbImage.plane;
+  const designRgb = designRgbImage?.plane;
   const bracketProvided = Boolean(sideInput.photometricExposureBracket);
   if (bracketProvided && (sideInput.directionalChannels || sideInput.darkControl)) {
     return fail("input_contract", `${side} exposure-bracket evidence cannot carry legacy directional/dark aliases.`, {
@@ -1227,6 +1394,7 @@ async function ingestSideV1(input: {
       channel,
       `${side} directional channel ${channel.channel}`,
       "capture_evidence_ingestion",
+      input.job,
     );
     const image = await decodeGrayPlaneV1({
       bytes,
@@ -1292,6 +1460,7 @@ async function ingestSideV1(input: {
         frame,
         label,
         "capture_evidence_ingestion",
+        input.job,
       );
       const plane = await decodeGrayPlaneV1({
         bytes,
@@ -1376,6 +1545,7 @@ async function ingestSideV1(input: {
       directDarkControl,
       `${side} registered dark control`,
       "capture_evidence_ingestion",
+      input.job,
     );
     darkControl = await decodeGrayPlaneV1({
       bytes: darkBytes,
@@ -1703,6 +1873,7 @@ async function ingestSideV1(input: {
       side,
       input: sideInput,
       normalizedBytes,
+      normalizedRgbImage,
       normalizedReference,
       channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
       detectorPlaneSha256s: {
@@ -1912,7 +2083,7 @@ async function ingestSideV1(input: {
   const eyesCenteringCandidateAssets = printedBorder
     ? await buildEyesCenteringCandidateAssetsV1({
         side,
-        normalizedBytes,
+        normalizedRgbImage,
         widthPx: profile.normalizedWidthPx,
         heightPx: profile.normalizedHeightPx,
         detector: printedBorder.detector,
@@ -2019,6 +2190,7 @@ async function ingestSideV1(input: {
     side,
     input: sideInput,
     normalizedBytes,
+    normalizedRgbImage,
     normalizedReference,
     channelAssetIds: photometric.channels.map((channel) => channel.sourceEvidenceId),
     detectorPlaneSha256s,
@@ -2112,6 +2284,27 @@ function roiOrigin(input: {
   return { x: 0, y: edgeEndY, width: edgeDepthX, height: input.height - 2 * edgeEndY };
 }
 
+function exactObservationRoiV1(input: {
+  side: IngestedSideComputedV1;
+  element: "corners" | "edges";
+  location: string;
+}): { x: number; y: number; width: number; height: number } {
+  const roi = (
+    input.side.condition.observationRois[input.element] as Record<
+      string,
+      { x: number; y: number; width: number; height: number }
+    >
+  )[input.location];
+  if (!roi) {
+    return fail(
+      "report_adaptation",
+      `${input.side.side} ${input.element} ${input.location} has no exact scoring ROI.`,
+      { requiresImplementationCorrection: true },
+    );
+  }
+  return { ...roi };
+}
+
 function reportGeometryForFinding(input: {
   finding: FinalGradeV1["findings"][number];
   side: IngestedSideComputedV1;
@@ -2125,7 +2318,6 @@ function reportGeometryForFinding(input: {
   secondaryEvidenceCategories: string[];
 } {
   const width = input.side.condition.width;
-  const height = input.side.condition.height;
   if (input.finding.source === "surface") {
     const source = input.side.surface.findings.find((entry) => entry.findingId === input.finding.findingId);
     if (!source || !source.detectorIds[0] || !source.detectorVersions[0]) {
@@ -2149,12 +2341,10 @@ function reportGeometryForFinding(input: {
       requiresImplementationCorrection: true,
     });
   }
-  const origin = roiOrigin({
+  const origin = exactObservationRoiV1({
+    side: input.side,
     element,
     location: source.location,
-    width,
-    height,
-    calibration: input.side.input.measurementCalibration,
   });
   const box = {
     x: origin.x + source.finding.boundingBoxPx.x,
@@ -2519,8 +2709,23 @@ function workspaceAssetMetadataV1(
   return metadata;
 }
 
+export function buildFixedRigCornerMeasurementOverlaySvgV1(input: {
+  center: FixedRigPointV1;
+  point: FixedRigPointV1;
+  radiusX: number;
+  radiusY: number;
+  radiusMm: number;
+}): string {
+  return [
+    `<ellipse cx="${input.center.x}" cy="${input.center.y}" rx="${input.radiusX}" ry="${input.radiusY}" fill="none" stroke="#ff9f43" stroke-width="4" stroke-dasharray="10 7"/>`,
+    `<line x1="${input.center.x}" y1="${input.center.y}" x2="${input.point.x}" y2="${input.point.y}" stroke="#ff9f43" stroke-width="4"/>`,
+    `<circle cx="${input.center.x}" cy="${input.center.y}" r="7" fill="#ff9f43"/>`,
+    `<text x="${input.point.x + 10}" y="${input.point.y - 10}" class="measure">R ${input.radiusMm.toFixed(3)} mm</text>`,
+  ].join("");
+}
+
 async function operatorWorkspaceOverlayAssetV1(input: {
-  side: IngestedSideComputedV1;
+  side: IngestedSideComputedWithDecodedRgbV1;
   element: MathematicalGradingElementV1;
   location: string;
   evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
@@ -2554,12 +2759,6 @@ async function operatorWorkspaceOverlayAssetV1(input: {
     x: (point.x - crop.x) * sx,
     y: (point.y - crop.y) * sy,
   });
-  const contourPath = overlayPointPathV1({
-    points: input.contour ?? input.side.outerCutGeometryEvidence.observedArtifact.normalizedContour,
-    crop,
-    outputWidth,
-    outputHeight,
-  });
   const secondaryPath = input.secondaryContour?.length
     ? overlayPointPathV1({
         points: input.secondaryContour,
@@ -2589,12 +2788,13 @@ async function operatorWorkspaceOverlayAssetV1(input: {
         const ry =
           input.measurementArc!.radiusMm *
           input.side.input.measurementCalibration.pixelsPerMmY * sy;
-        return [
-          `<ellipse cx="${center.x}" cy="${center.y}" rx="${rx}" ry="${ry}" fill="none" stroke="#ff9f43" stroke-width="4" stroke-dasharray="10 7"/>`,
-          `<line x1="${center.x}" y1="${center.y}" x2="${point.x}" y2="${point.y}" stroke="#ff9f43" stroke-width="4"/>`,
-          `<circle cx="${center.x}" cy="${center.y}" r="7" fill="#ff9f43"/>`,
-          `<text x="${point.x + 10}" y="${point.y - 10}" class="measure">R ${input.measurementArc!.radiusMm.toFixed(3)} mm</text>`,
-        ].join("");
+        return buildFixedRigCornerMeasurementOverlaySvgV1({
+          center,
+          point,
+          radiusX: rx,
+          radiusY: ry,
+          radiusMm: input.measurementArc!.radiusMm,
+        });
       })()
     : "";
   const boxesMarkup = (input.findingBoxes ?? []).map((box) => {
@@ -2610,7 +2810,6 @@ async function operatorWorkspaceOverlayAssetV1(input: {
         .title{font:bold ${textSize}px Arial,sans-serif;fill:#fff}
         .measure{font:bold ${Math.max(16, textSize - 4)}px Arial,sans-serif;fill:#fff;paint-order:stroke;stroke:#000;stroke-width:4px;stroke-linejoin:round}
       </style>
-      <path d="${contourPath}" fill="none" stroke="#20e8ff" stroke-width="4"/>
       ${secondaryPath ? `<path d="${secondaryPath}" fill="none" stroke="#ffd84d" stroke-width="4"/>` : ""}
       ${lineMarkup}${arcMarkup}${boxesMarkup}
       <rect x="0" y="${outputHeight - headerHeight}" width="${outputWidth}" height="${headerHeight}" fill="#050707" fill-opacity="0.84"/>
@@ -2620,7 +2819,7 @@ async function operatorWorkspaceOverlayAssetV1(input: {
     </svg>`,
     "utf8",
   );
-  let base = sharp(input.side.normalizedBytes, { failOn: "error" }).extract({
+  let base = sharpFromDecodedRgbImageV1(input.side.normalizedRgbImage).extract({
     left: crop.x,
     top: crop.y,
     width: crop.width,
@@ -2680,7 +2879,7 @@ async function operatorWorkspaceOverlayAssetV1(input: {
 }
 
 async function operatorWorkspacePlaceholderAssetV1(input: {
-  side: IngestedSideV1;
+  side: IngestedSideWithDecodedRgbV1;
   element: MathematicalGradingElementV1;
   location: string;
   evidenceRole: FixedRigOperatorResolutionWorkspaceAssetMetadataV1["evidenceRole"];
@@ -2719,7 +2918,7 @@ async function operatorWorkspacePlaceholderAssetV1(input: {
     </svg>`,
     "utf8",
   );
-  const bytes = await sharp(input.side.normalizedBytes, { failOn: "error" })
+  const bytes = await sharpFromDecodedRgbImageV1(input.side.normalizedRgbImage)
     .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
     .resize(outputWidth, outputHeight, {
       fit: "fill",
@@ -2751,7 +2950,7 @@ async function operatorWorkspacePlaceholderAssetV1(input: {
 
 async function buildOperatorResolutionWorkspaceV1(input: {
   request: FixedRigOperatorResolutionRequestV1;
-  sides: Record<Side, IngestedSideV1>;
+  sides: Record<Side, IngestedSideWithDecodedRgbV1>;
   cornerObservations: FixedRigConditionObservationResultV1[];
   edgeObservations: FixedRigConditionObservationResultV1[];
 }): Promise<{
@@ -2791,12 +2990,10 @@ async function buildOperatorResolutionWorkspaceV1(input: {
         location,
       });
       if (!observation) continue;
-      const crop = roiOrigin({
+      const crop = exactObservationRoiV1({
+        side,
         element: "corners",
         location,
-        width: side.condition.width,
-        height: side.condition.height,
-        calibration: side.input.measurementCalibration,
       });
       const arc = cornerArcForLocationV1({
         contour,
@@ -2847,12 +3044,10 @@ async function buildOperatorResolutionWorkspaceV1(input: {
         location,
       });
       if (!observation) continue;
-      const crop = roiOrigin({
+      const crop = exactObservationRoiV1({
+        side,
         element: "edges",
         location,
-        width: side.condition.width,
-        height: side.condition.height,
-        calibration: side.input.measurementCalibration,
       });
       const horizontal = location === "top" || location === "bottom";
       const measurements = observation.findings.flatMap((finding) => finding.measurements)
@@ -3023,14 +3218,14 @@ type PreparedFindingPresentationV1 = Omit<AiGraderMathematicalFindingPresentatio
 async function buildPreparedFindingPresentationsV1(input: {
   captureProfileVersion: string;
   grade: FinalGradeV1;
-  sides: Record<Side, IngestedSideV1>;
+  sides: Record<Side, IngestedSideWithDecodedRgbV1>;
   cornerObservations: FixedRigConditionObservationResultV1[];
   edgeObservations: FixedRigConditionObservationResultV1[];
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
 }): Promise<PreparedFindingPresentationV1[]> {
   const presentations: PreparedFindingPresentationV1[] = [];
   for (const finding of input.grade.findings) {
-    const side = computedSideV1(
+    const side = computedSideWithDecodedRgbV1(
       input.sides[finding.side],
       `Finding ${finding.findingId}`,
     );
@@ -3064,7 +3259,7 @@ async function buildPreparedFindingPresentationsV1(input: {
     const roiAssetId = `${baseId}/roi.png`;
     let roiBytes: Buffer;
     try {
-      roiBytes = await sharp(side.normalizedBytes, { failOn: "error" })
+      roiBytes = await sharpFromDecodedRgbImageV1(side.normalizedRgbImage)
         .extract({
           left: source.box.x,
           top: source.box.y,
@@ -3246,7 +3441,7 @@ function finalizeFindingPresentationsV1(input: {
 
 async function buildConditionObservationPresentationsV1(input: {
   grade: FinalGradeV1;
-  sides: Record<Side, IngestedSideV1>;
+  sides: Record<Side, IngestedSideWithDecodedRgbV1>;
   cornerObservations: FixedRigConditionObservationResultV1[];
   edgeObservations: FixedRigConditionObservationResultV1[];
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
@@ -3272,16 +3467,14 @@ async function buildConditionObservationPresentationsV1(input: {
           { requiresRecapture: true },
         );
       }
-      const side = computedSideV1(
+      const side = computedSideWithDecodedRgbV1(
         input.sides[observation.side],
         `${observation.side} ${element} ${observation.location}`,
       );
-      const origin = roiOrigin({
+      const origin = exactObservationRoiV1({
+        side,
         element,
         location: observation.location,
-        width: side.condition.width,
-        height: side.condition.height,
-        calibration: side.input.measurementCalibration,
       });
       if (
         origin.x < 0 ||
@@ -3323,7 +3516,7 @@ async function buildConditionObservationPresentationsV1(input: {
       const illuminationMaskAssetId = `${baseId}/illumination-mask.png`;
       let roiBytes: Buffer;
       try {
-        roiBytes = await sharp(side.normalizedBytes, { failOn: "error" })
+        roiBytes = await sharpFromDecodedRgbImageV1(side.normalizedRgbImage)
           .extract({
             left: origin.x,
             top: origin.y,
@@ -4058,8 +4251,9 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       });
     }
     assertCalibrationBundleAuthorityV1(input.calibration);
-    let front: IngestedSideV1;
-    let back: IngestedSideV1;
+    const job = buildJobContextV1();
+    let front: IngestedSideWithDecodedRgbV1;
+    let back: IngestedSideWithDecodedRgbV1;
     if (input.analysisCheckpoint) {
       if (
         input.analysisCheckpoint.version !==
@@ -4076,13 +4270,24 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           { requiresImplementationCorrection: true },
         );
       }
-      front = input.analysisCheckpoint.sides.front;
-      back = input.analysisCheckpoint.sides.back;
+      [front, back] = await Promise.all([
+        hydrateDecodedRgbImageV1(
+          input.analysisCheckpoint.sides.front,
+          input.calibration.sensorMaximumValue,
+          job,
+        ),
+        hydrateDecodedRgbImageV1(
+          input.analysisCheckpoint.sides.back,
+          input.calibration.sensorMaximumValue,
+          job,
+        ),
+      ]);
     } else {
       const physicalBytes = await readExactFileV1(
         input.calibration.physicalArtifact,
         "physical calibration artifact",
         "calibration_ingestion",
+        job,
       );
       let physicalArtifact: FixedRigPhysicalCalibrationArtifactV1;
       try {
@@ -4098,12 +4303,14 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           input.calibration.flatFieldArtifacts[index]!,
           `flat-field calibration artifact ${index + 1}`,
           "calibration_ingestion",
+          job,
         ));
       }
       const patternBytes = await readExactFileV1(
         input.calibration.illuminationPatternArtifact,
         "illumination-pattern calibration artifact",
         "calibration_ingestion",
+        job,
       );
       let photometricCalibration: FixedRigPhotometricCalibrationProfileV1;
       try {
@@ -4128,6 +4335,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           photometricCalibration,
           sensorMaximumValue: input.calibration.sensorMaximumValue,
           selectedCenteringCandidate: input.eyesCenteringSelections?.front,
+          job,
         }),
         ingestSideV1({
           side: "back",
@@ -4137,6 +4345,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           photometricCalibration,
           sensorMaximumValue: input.calibration.sensorMaximumValue,
           selectedCenteringCandidate: input.eyesCenteringSelections?.back,
+          job,
         }),
       ]);
     }
@@ -4149,7 +4358,8 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
     const originalSides = { front, back };
     const originalCentering = fuseFixedRigCenteringFrontBackV1(front.centering, back.centering);
     const computedSides = [front, back].filter(
-      (side): side is IngestedSideComputedV1 => !sideAutomaticallyUnavailableV1(side),
+      (side): side is IngestedSideComputedWithDecodedRgbV1 =>
+        !sideAutomaticallyUnavailableV1(side),
     );
     const cornerObservations = computedSides.flatMap((side) =>
       side.condition.cornerObservations.map((observation) =>
@@ -4195,7 +4405,10 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
       calibrationArtifactSha256:
         input.calibration.finalizedProfile.artifactSha256,
       requestSha256: operatorResolutionRequest.requestSha256,
-      sides: { front, back },
+      sides: {
+        front: checkpointSideV1(front),
+        back: checkpointSideV1(back),
+      },
     };
     const authorities = validatedOperatorResolutionAuthoritiesV1({
       request: operatorResolutionRequest,
