@@ -40,6 +40,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           parallel: label.parallel,
           insert: label.insert,
           cardNumber: label.cardNumber,
+          centeringGrade: label.centeringGrade.toString(),
+          cornersGrade: label.cornersGrade.toString(),
+          edgesGrade: label.edgesGrade.toString(),
+          surfaceGrade: label.surfaceGrade.toString(),
           grade: label.grade.toString(),
         },
       }))

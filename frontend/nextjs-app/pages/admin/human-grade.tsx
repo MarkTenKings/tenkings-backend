@@ -9,6 +9,7 @@ import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
+  calculateHumanGrade,
   type HumanGradeCardType,
   type HumanGradeLabelSheetDto,
   type HumanGradeQueueDto,
@@ -24,7 +25,10 @@ type HumanGradeForm = {
   parallel: string;
   insert: string;
   cardNumber: string;
-  grade: string;
+  centeringGrade: string;
+  cornersGrade: string;
+  edgesGrade: string;
+  surfaceGrade: string;
 };
 
 const EMPTY_QUEUE: HumanGradeQueueDto = {
@@ -42,7 +46,10 @@ const EMPTY_FORM: HumanGradeForm = {
   parallel: "",
   insert: "",
   cardNumber: "",
-  grade: "",
+  centeringGrade: "",
+  cornersGrade: "",
+  edgesGrade: "",
+  surfaceGrade: "",
 };
 
 function pageTitle(sheet: HumanGradeLabelSheetDto) {
@@ -78,6 +85,15 @@ export default function HumanGradePage() {
     () => queue.sheets.find((sheet) => sheet.id === selectedSheetId) ?? queue.sheets[0] ?? null,
     [queue.sheets, selectedSheetId]
   );
+  const calculatedGrade = useMemo(() => {
+    const values = [form.centeringGrade, form.cornersGrade, form.edgesGrade, form.surfaceGrade];
+    if (values.some((value) => !value.trim())) return null;
+    try {
+      return calculateHumanGrade(form).labelGrade;
+    } catch {
+      return null;
+    }
+  }, [form]);
 
   const loadQueue = useCallback(async () => {
     if (!session?.token || !isAdmin) return;
@@ -307,6 +323,7 @@ export default function HumanGradePage() {
                 <div className="brand-third">
                   <Image src={crownAsset} alt="" priority />
                   <strong>TEN KINGS</strong>
+                  <span className="certificate-preview">TKH-AUTO</span>
                 </div>
                 <div className="identity-third">
                   <label className="primary-field">
@@ -363,19 +380,32 @@ export default function HumanGradePage() {
                     <input value={form.cardNumber} onChange={(event) => updateForm("cardNumber", event.target.value)} placeholder="#CARD" />
                   </label>
                   <label className="grade-field">
-                    <span>Human Grade</span>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      step="0.1"
-                      inputMode="decimal"
-                      value={form.grade}
-                      onChange={(event) => updateForm("grade", event.target.value)}
-                      placeholder="9.5"
-                    />
+                    <span>Calculated Final Grade</span>
+                    <output aria-live="polite">{calculatedGrade ?? "—"}</output>
                   </label>
-                  <span className="certificate-preview">TKH-AUTO</span>
+                  <div className="subgrade-fields" aria-label="Human subgrades">
+                    {([
+                      ["centeringGrade", "Centering"],
+                      ["cornersGrade", "Corners"],
+                      ["edgesGrade", "Edges"],
+                      ["surfaceGrade", "Surface"],
+                    ] as const).map(([field, label]) => (
+                      <label className="subgrade-field" key={field}>
+                        <span>{label}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          step="0.1"
+                          inputMode="decimal"
+                          required
+                          value={form[field]}
+                          onChange={(event) => updateForm(field, event.target.value)}
+                          placeholder="—"
+                        />
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -559,6 +589,7 @@ export default function HumanGradePage() {
         }
         .brand-third img { width: 60%; max-height: 50%; object-fit: contain; filter: brightness(0); }
         .brand-third strong { margin-top: 3px; font-family: Arial, sans-serif; font-size: clamp(12px, 2vw, 32px); letter-spacing: 0.02em; white-space: nowrap; }
+        .brand-third .certificate-preview { margin-top: 8px; }
         .identity-third {
           display: grid;
           grid-template-rows: 1.2fr 1fr 0.85fr;
@@ -580,7 +611,7 @@ export default function HumanGradePage() {
           text-transform: uppercase;
         }
         .label-composer input:focus { border-color: #168a45; box-shadow: 0 2px 0 #168a45; }
-        .primary-field input, .grade-field input {
+        .primary-field input, .grade-field output {
           font-family: Impact, "Arial Narrow", sans-serif;
           font-size: clamp(20px, 3.2vw, 46px);
           line-height: 1;
@@ -593,10 +624,46 @@ export default function HumanGradePage() {
         }
         .grade-third {
           display: grid;
-          grid-template-rows: 0.65fr 2fr 0.65fr;
+          grid-template-rows: 0.45fr 1.25fr 1.3fr;
           align-items: center;
         }
-        .grade-field input { font-size: clamp(34px, 6vw, 82px); }
+        .grade-field output {
+          display: block;
+          color: #0f0f0f;
+          text-align: center;
+          font-size: clamp(34px, 5vw, 72px);
+        }
+        .subgrade-fields {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px 7px;
+        }
+        .label-composer .subgrade-field {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 34%;
+          align-items: center;
+          gap: 3px;
+        }
+        .label-composer .subgrade-field > span {
+          position: static;
+          width: auto;
+          height: auto;
+          overflow: visible;
+          clip: auto;
+          color: #0f0f0f;
+          font-family: Arial, sans-serif;
+          font-size: clamp(5px, 0.65vw, 10px);
+          font-weight: 700;
+          text-transform: uppercase;
+          white-space: nowrap;
+        }
+        .subgrade-field input {
+          font-family: Arial, sans-serif;
+          font-size: clamp(7px, 0.95vw, 14px);
+          font-weight: 700;
+        }
         .certificate-preview { text-align: center; font-family: Arial, sans-serif; font-size: clamp(9px, 1.4vw, 19px); letter-spacing: 0.04em; white-space: nowrap; }
         .field-errors { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #ff9f9f; font-size: 12px; }
         .field-errors span { padding: 6px 9px; border-radius: 6px; background: #321515; }
@@ -654,9 +721,11 @@ export default function HumanGradePage() {
           .brand-third img { width: 110px; }
           .identity-third { min-height: 250px; border-right: 0; border-bottom: 2px solid #0f0f0f; }
           .grade-third { min-height: 230px; }
-          .primary-field input, .grade-field input { font-size: 44px; }
+          .primary-field input, .grade-field output { font-size: 44px; }
           .metadata-fields input, .descriptor-fields input, .card-number-field input { font-size: 14px; }
           .certificate-preview { font-size: 15px; }
+          .label-composer .subgrade-field > span { font-size: 10px; }
+          .subgrade-field input { font-size: 14px; }
           .page-buttons, .slot-grid { grid-template-columns: 1fr; }
         }
       `}</style>

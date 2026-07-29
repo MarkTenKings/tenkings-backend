@@ -6,7 +6,9 @@ import {
   HUMAN_GRADE_LABEL_GEOMETRY,
   HUMAN_GRADE_SHEET_CAPACITY,
   HUMAN_GRADE_SHEET_SLOTS,
+  HUMAN_GRADE_WEIGHTS,
   buildHumanGradeLabelContent,
+  calculateHumanGrade,
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
   type HumanGradeLabelSnapshot,
@@ -23,7 +25,11 @@ const sports: HumanGradeLabelSnapshot = {
   parallel: "Refractor",
   insert: "Rookie",
   cardNumber: "111",
-  grade: 9.5,
+  centeringGrade: 10,
+  cornersGrade: 9,
+  edgesGrade: 8,
+  surfaceGrade: 7,
+  grade: 8.7,
 };
 
 const pokemon: HumanGradeLabelSnapshot = {
@@ -34,6 +40,10 @@ const pokemon: HumanGradeLabelSnapshot = {
   productSet: "Base Set",
   parallel: "Holo",
   cardNumber: "4",
+  centeringGrade: 10,
+  cornersGrade: 10,
+  edgesGrade: 10,
+  surfaceGrade: 10,
   grade: 10,
 };
 
@@ -46,6 +56,28 @@ test("human-grade certificate numbers are short, deterministic, and one-line saf
   assert.throws(() => formatHumanGrade(10.1), /1 through 10/);
 });
 
+test("human-grade final grades use the active Ten Kings weighted-only formula", () => {
+  assert.deepEqual(HUMAN_GRADE_WEIGHTS, {
+    centering: 0.3,
+    corners: 0.25,
+    edges: 0.25,
+    surface: 0.2,
+  });
+  assert.deepEqual(calculateHumanGrade(sports), {
+    weightedGrade: 8.65,
+    labelGrade: "8.7",
+  });
+  assert.deepEqual(
+    calculateHumanGrade({
+      centeringGrade: 9.5,
+      cornersGrade: 9.5,
+      edgesGrade: 9.5,
+      surfaceGrade: 9.5,
+    }),
+    { weightedGrade: 9.5, labelGrade: "9.5" }
+  );
+});
+
 test("human-grade Sports and Pokemon labels use only printed label fields", () => {
   assert.deepEqual(buildHumanGradeLabelContent(sports), {
     primary: "LEBRON JAMES",
@@ -53,15 +85,31 @@ test("human-grade Sports and Pokemon labels use only printed label fields", () =
     descriptor: "REFRACTOR / ROOKIE",
     cardNumberAboveGrade: "#111",
     certificateNumber: "TKH-000001",
-    grade: "9.5",
+    subgrades: [
+      { label: "CENTERING", grade: "10" },
+      { label: "CORNERS", grade: "9" },
+      { label: "EDGES", grade: "8" },
+      { label: "SURFACE", grade: "7" },
+    ],
+    grade: "8.7",
   });
   assert.deepEqual(buildHumanGradeLabelContent(pokemon), {
     primary: "CHARIZARD",
     metadata: "1999 BASE SET #4",
     descriptor: "HOLO",
     certificateNumber: "TKH-000002",
+    subgrades: [
+      { label: "CENTERING", grade: "10" },
+      { label: "CORNERS", grade: "10" },
+      { label: "EDGES", grade: "10" },
+      { label: "SURFACE", grade: "10" },
+    ],
     grade: "10",
   });
+  assert.throws(
+    () => buildHumanGradeLabelContent({ ...sports, grade: 8.6 }),
+    /does not match its weighted subgrades/
+  );
 });
 
 test("human-grade pages copy the approved 2 by 8 physical sheet geometry", () => {
@@ -123,6 +171,8 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(api, /requireAdminSession/);
   assert.match(page, /Add New Graded Card/);
   assert.match(page, /TKH-AUTO/);
+  assert.match(page, /calculateHumanGrade/);
+  assert.match(api, /calculateHumanGrade/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);
   assert.doesNotMatch(renderer, /drawNfc|drawQr|GRADING/);

@@ -1,7 +1,20 @@
 export const HUMAN_GRADE_SHEET_CAPACITY = 16 as const;
 export const HUMAN_GRADE_CERTIFICATE_PREFIX = "TKH" as const;
+export const HUMAN_GRADE_WEIGHTS = {
+  centering: 0.3,
+  corners: 0.25,
+  edges: 0.25,
+  surface: 0.2,
+} as const;
 
 export type HumanGradeCardType = "SPORTS" | "POKEMON";
+
+export type HumanGradeSubgrades = {
+  centeringGrade: string | number;
+  cornersGrade: string | number;
+  edgesGrade: string | number;
+  surfaceGrade: string | number;
+};
 
 export type HumanGradeLabelSnapshot = {
   id?: string;
@@ -15,6 +28,10 @@ export type HumanGradeLabelSnapshot = {
   parallel?: string | null;
   insert?: string | null;
   cardNumber?: string | null;
+  centeringGrade: string | number;
+  cornersGrade: string | number;
+  edgesGrade: string | number;
+  surfaceGrade: string | number;
   grade: string | number;
 };
 
@@ -24,6 +41,12 @@ export type HumanGradeLabelContent = {
   descriptor?: string;
   cardNumberAboveGrade?: string;
   certificateNumber: string;
+  subgrades: readonly [
+    { label: "CENTERING"; grade: string },
+    { label: "CORNERS"; grade: string },
+    { label: "EDGES"; grade: string },
+    { label: "SURFACE"; grade: string },
+  ];
   grade: string;
 };
 
@@ -85,13 +108,38 @@ function upper(value: string | null | undefined) {
   return normalized(value).toUpperCase();
 }
 
+function roundHalfAwayFromZero(value: number, decimals: number) {
+  const factor = 10 ** decimals;
+  const absolute = Math.abs(value) * factor;
+  const rounded = Math.floor(absolute + 0.5 + Number.EPSILON);
+  return (Math.sign(value) * rounded) / factor;
+}
+
 export function formatHumanGrade(value: string | number) {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(parsed) || parsed < 1 || parsed > 10) {
     throw new Error("Human grade must be a number from 1 through 10.");
   }
-  const rounded = Math.round(parsed * 10) / 10;
+  const rounded = roundHalfAwayFromZero(parsed, 1);
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+export function calculateHumanGrade(subgrades: HumanGradeSubgrades) {
+  const centering = Number(formatHumanGrade(subgrades.centeringGrade));
+  const corners = Number(formatHumanGrade(subgrades.cornersGrade));
+  const edges = Number(formatHumanGrade(subgrades.edgesGrade));
+  const surface = Number(formatHumanGrade(subgrades.surfaceGrade));
+  const weightedGrade = roundHalfAwayFromZero(
+    centering * HUMAN_GRADE_WEIGHTS.centering +
+      corners * HUMAN_GRADE_WEIGHTS.corners +
+      edges * HUMAN_GRADE_WEIGHTS.edges +
+      surface * HUMAN_GRADE_WEIGHTS.surface,
+    2
+  );
+  return {
+    weightedGrade,
+    labelGrade: formatHumanGrade(weightedGrade),
+  };
 }
 
 export function formatHumanGradeCertificateNumber(sequence: number) {
@@ -106,6 +154,16 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
   if (!/^TKH-\d{6,}$/.test(certificateNumber)) {
     throw new Error("Human grade certificate number is invalid.");
   }
+  const calculated = calculateHumanGrade(snapshot);
+  if (formatHumanGrade(snapshot.grade) !== calculated.labelGrade) {
+    throw new Error("Human grade does not match its weighted subgrades.");
+  }
+  const subgrades = [
+    { label: "CENTERING", grade: formatHumanGrade(snapshot.centeringGrade) },
+    { label: "CORNERS", grade: formatHumanGrade(snapshot.cornersGrade) },
+    { label: "EDGES", grade: formatHumanGrade(snapshot.edgesGrade) },
+    { label: "SURFACE", grade: formatHumanGrade(snapshot.surfaceGrade) },
+  ] as const;
 
   if (snapshot.cardType === "SPORTS") {
     const primary = upper(snapshot.playerName);
@@ -120,7 +178,8 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
       ...(descriptor ? { descriptor } : {}),
       ...(upper(snapshot.cardNumber) ? { cardNumberAboveGrade: `#${upper(snapshot.cardNumber).replace(/^#/, "")}` } : {}),
       certificateNumber,
-      grade: formatHumanGrade(snapshot.grade),
+      subgrades,
+      grade: calculated.labelGrade,
     };
   }
 
@@ -136,6 +195,7 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
     metadata,
     ...(descriptor ? { descriptor } : {}),
     certificateNumber,
-    grade: formatHumanGrade(snapshot.grade),
+    subgrades,
+    grade: calculated.labelGrade,
   };
 }

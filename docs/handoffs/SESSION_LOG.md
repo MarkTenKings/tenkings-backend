@@ -29291,6 +29291,14 @@ By enabling Rip It Live, I confirm:
   - unauthenticated `GET /api/admin/human-grade` returned HTTP `401` with JSON content.
 - No fake label/card row was created during smoke testing. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
 
+## 2026-07-29 - Human Grade subgrades authorized implementation and rollout
+
+- Mark authorized a focused Human Grade-only follow-up that adds required Centering, Corners, Edges, and Surface subgrades; calculates the final label grade as `0.30 * centering + 0.25 * corners + 0.25 * edges + 0.20 * surface`; moves the TK certificate beneath the Ten Kings logo; and prints the four subgrades beneath the final grade.
+- The active Human Grade Production data contains three labels on one open sheet. The additive migration will preserve those three labels by initializing each new subgrade to its existing final grade, which leaves each existing calculated result unchanged. Every new label will require all four independently entered subgrades.
+- Planned rollout is limited to the clean Mac worktree, focused tests/build and 300-DPI label-sheet proof, protected PR/required checks/merge, additive Human Grade migration, normal Vercel Production deployment, and live Human Grade smoke testing.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+- Local validation passed: Prisma schema validation and client generation; database build; focused lint with zero findings; Human Grade tests `6/6`; complete Production-equivalent Next.js build; exact one-page Letter/16-slot PDF metadata; and 300-DPI full-sheet plus single-label visual inspection. The proof case `Centering 10 / Corners 9 / Edges 8 / Surface 7` produced internal weighted grade `8.65` and printed label grade `8.7`.
+
 ## 2026-07-29 - Bounded AI Grader publish payload correction
 
 - This web-only correction starts from protected main `95030fc11691c9479f9629703d894825fb831798`, containing Optimize and PR `#219`. The AI Grader Production API route now uses an explicit `4mb` Next.js body-parser limit instead of `1mb`, containing the observed approximately `2.71 MiB` advanced create-card-from-report request while remaining below Vercel's `4.5 MB` function limit.
