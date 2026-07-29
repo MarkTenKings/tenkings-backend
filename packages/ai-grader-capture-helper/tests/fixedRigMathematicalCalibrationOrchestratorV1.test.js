@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const fsPromises = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
@@ -13,6 +14,7 @@ const {
   decodeFixedRigCalibratedDetectorPlaneV1,
 } = require("../dist/drivers/fixedRigCalibratedDetectorPlaneV1");
 const {
+  buildFixedRigCornerMeasurementOverlaySvgV1,
   buildFixedRigMathematicalCalibrationReportPackageV1,
 } = require("../dist/drivers/fixedRigMathematicalCalibrationOrchestratorV1");
 const {
@@ -43,6 +45,19 @@ const GENERATED_AT = "2026-07-18T20:00:00.000Z";
 
 function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+async function countExactRgb(bytes, [red, green, blue]) {
+  const decoded = await sharp(bytes).removeAlpha().raw().toBuffer();
+  let count = 0;
+  for (let index = 0; index < decoded.length; index += 3) {
+    if (
+      decoded[index] === red &&
+      decoded[index + 1] === green &&
+      decoded[index + 2] === blue
+    ) count += 1;
+  }
+  return count;
 }
 
 function canonical(value) {
@@ -506,7 +521,9 @@ async function buildSide(root, side, profile, options = {}) {
     `${side}-normalized.png`,
   );
   const allOn = reportEvidence(
-    writeExact(root, `${side}-all-on.png`, allOnBytes),
+    options.aliasNormalizedInputs
+      ? { filePath: normalized.filePath, sha256: normalized.sha256 }
+      : writeExact(root, `${side}-all-on.png`, allOnBytes),
     `${side}-all-on`,
     `${side}-all-on.png`,
   );
@@ -731,7 +748,7 @@ async function resolveOperatorCheckpoint(input, resolutions = [], inspectPending
   } else {
     assert.equal(pending.request.originalElements.surface.score, null);
   }
-  inspectPending?.(pending);
+  await inspectPending?.(pending);
   const deterministicReplay =
     await buildFixedRigMathematicalCalibrationReportPackageV1(input);
   assert.equal(deterministicReplay.status, "operator_resolution_required");
@@ -811,10 +828,12 @@ async function buildFixture(options = {}) {
       scratch: Boolean(options.scratchFront),
       partialClipping: Boolean(options.partialClippingFront),
       fullyObscured: Boolean(options.fullyObscuredFront),
+      aliasNormalizedInputs: Boolean(options.aliasNormalizedInputs),
     }),
     back: await buildSide(root, "back", calibration.profile, {
       partialOuterCut: Boolean(options.partialOuterCutBack),
       zeroOuterCut: Boolean(options.zeroOuterCutBack),
+      aliasNormalizedInputs: Boolean(options.aliasNormalizedInputs),
     }),
   };
   const sides = {
@@ -880,7 +899,46 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   const fixture = await buildFixture();
   t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
   assert.equal("calibratedDetectorPlanes" in fixture.input.sides.front, false);
-  const result = await resolveOperatorCheckpoint(fixture.input);
+  const result = await resolveOperatorCheckpoint(
+    fixture.input,
+    [],
+    async (pending) => {
+      assert.equal(pending.workspaceAssets.length, 20);
+      for (const asset of pending.workspaceAssets) {
+        assert.equal(
+          await countExactRgb(asset.bytes, [0x20, 0xe8, 0xff]),
+          0,
+          `${asset.assetId} must not render the detected cyan contour`,
+        );
+      }
+      const cornerAssets = pending.workspaceAssets.filter(
+        (asset) => asset.element === "corners",
+      );
+      assert.equal(cornerAssets.length, 8);
+      const fittedMarkup = buildFixedRigCornerMeasurementOverlaySvgV1({
+        center: { x: 90, y: 90 },
+        point: { x: 140, y: 90 },
+        radiusX: 50,
+        radiusY: 50,
+        radiusMm: 3.18,
+      });
+      const fittedOverlay = await sharp(Buffer.from(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">${fittedMarkup}</svg>`,
+      )).png().toBuffer();
+      assert.ok(
+        await countExactRgb(fittedOverlay, [0xff, 0x9f, 0x43]) > 0,
+        "the fitted-radius renderer retains its orange arc, radius line, and center",
+      );
+      for (const side of ["front", "back"]) {
+        assert.deepEqual(
+          pending.workspace.galleries.edges
+            .filter((asset) => asset.side === side)
+            .map((asset) => asset.location),
+          ["top", "right", "bottom", "left"],
+        );
+      }
+    },
+  );
   assert.equal(
     result.status,
     "completed",
@@ -921,6 +979,192 @@ test("full orchestrator emits a clean checksum-bound V0.3 package from captured 
   assert.equal(scratchPlane.header.derivation, "fused_calibrated_detector");
   assert.ok(scratchPlane.header.sourceEvidence.some((entry) => entry.role === "all_on"));
   assert.equal(scratchPlane.header.heatmapUsedAsInput, false);
+});
+
+test("job-local exact reads and decoded RGB rendering preserve exact outputs", async (t) => {
+  const ordinary = await buildFixture({
+    reportId: "mathematical-orchestrator-ordinary-reads",
+    outputName: "ordinary-reads-report-package",
+  });
+  const aliased = await buildFixture({
+    aliasNormalizedInputs: true,
+    reportId: "mathematical-orchestrator-job-cache",
+    outputName: "job-cache-report-package",
+  });
+  t.after(() => {
+    fs.rmSync(ordinary.root, { recursive: true, force: true });
+    fs.rmSync(aliased.root, { recursive: true, force: true });
+  });
+
+  const runWithExactReadCount = async (input) => {
+    const originalReadFile = fsPromises.readFile;
+    let exactReadCount = 0;
+    fsPromises.readFile = async (...args) => {
+      exactReadCount += 1;
+      return originalReadFile(...args);
+    };
+    try {
+      return {
+        result:
+          await buildFixedRigMathematicalCalibrationReportPackageV1(input),
+        exactReadCount,
+      };
+    } finally {
+      fsPromises.readFile = originalReadFile;
+    }
+  };
+
+  const ordinaryRun = await runWithExactReadCount(ordinary.input);
+  const first = await runWithExactReadCount(aliased.input);
+  const second = await runWithExactReadCount({
+    ...aliased.input,
+    outputDir: path.join(aliased.root, "second-job-cache-report-package"),
+  });
+  assert.equal(ordinaryRun.result.status, "operator_resolution_required");
+  assert.equal(first.result.status, "operator_resolution_required");
+  assert.equal(second.result.status, "operator_resolution_required");
+  assert.equal(
+    first.exactReadCount,
+    ordinaryRun.exactReadCount - 2,
+    "the two normalized-card/all-on aliases must each reuse one verified job-local read",
+  );
+  assert.equal(
+    second.exactReadCount,
+    first.exactReadCount,
+    "a later job must perform its own exact reads before local reuse",
+  );
+  assert.deepEqual(second.result.request, first.result.request);
+  assert.doesNotMatch(
+    JSON.stringify(first.result.analysisCheckpoint),
+    /normalizedRgbImage|rawBytes|encodedBytes/,
+    "the job-local decoded representation must not enter checkpoint state",
+  );
+  assert.deepEqual(
+    second.result.workspaceAssets.map((asset) => ({
+      assetId: asset.assetId,
+      sha256: asset.sha256,
+      bytes: asset.bytes,
+    })),
+    first.result.workspaceAssets.map((asset) => ({
+      assetId: asset.assetId,
+      sha256: asset.sha256,
+      bytes: asset.bytes,
+    })),
+    "a fresh job must produce byte-identical presentation assets",
+  );
+
+  const side = first.result.analysisCheckpoint.sides.front;
+  const observationRoi = side.condition.observationRois.edges.top;
+  const crop = {
+    left: observationRoi.x,
+    top: observationRoi.y,
+    width: observationRoi.width,
+    height: observationRoi.height,
+  };
+  const decoded = await sharp(side.normalizedBytes)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const renderOverlay = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420">' +
+      '<line x1="40" y1="210" x2="960" y2="210" stroke="#ff9f43" stroke-width="4"/>' +
+      "</svg>",
+  );
+  const encodedRender = () => sharp(side.normalizedBytes, { failOn: "error" })
+    .extract(crop)
+    .resize(1000, 420, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .composite([{ input: renderOverlay, blend: "over" }])
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  const decodedRender = () => sharp(decoded.data, {
+    raw: {
+      width: decoded.info.width,
+      height: decoded.info.height,
+      channels: decoded.info.channels,
+    },
+    failOn: "error",
+  })
+    .extract(crop)
+    .resize(1000, 420, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .composite([{ input: renderOverlay, blend: "over" }])
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  assert.equal((await decodedRender()).equals(await encodedRender()), true);
+
+  const timingWidth = 1200;
+  const timingHeight = 1680;
+  const timingRaw = Buffer.alloc(timingWidth * timingHeight * 3);
+  let timingSeed = 0x1badf00d;
+  for (let index = 0; index < timingRaw.length; index += 1) {
+    timingSeed = (Math.imul(timingSeed, 1664525) + 1013904223) >>> 0;
+    timingRaw[index] = timingSeed >>> 24;
+  }
+  const timingEncoded = await sharp(timingRaw, {
+    raw: { width: timingWidth, height: timingHeight, channels: 3 },
+  }).png({ compressionLevel: 6, adaptiveFiltering: false }).toBuffer();
+  const timingCrop = { left: 180, top: 240, width: 840, height: 1080 };
+  const encodedTimingRender = () => sharp(timingEncoded, { failOn: "error" })
+    .extract(timingCrop)
+    .resize(1000, 420, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  const decodedTimingRender = () => sharp(timingRaw, {
+    raw: { width: timingWidth, height: timingHeight, channels: 3 },
+    failOn: "error",
+  })
+    .extract(timingCrop)
+    .resize(1000, 420, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+  assert.equal(
+    (await decodedTimingRender()).equals(await encodedTimingRender()),
+    true,
+    "the Production-shaped decoded representation preserves output bytes",
+  );
+  const iterations = 4;
+  const encodedStart = process.hrtime.bigint();
+  for (let index = 0; index < iterations; index += 1) {
+    await encodedTimingRender();
+  }
+  const encodedMs = Number(process.hrtime.bigint() - encodedStart) / 1e6;
+  const decodedStart = process.hrtime.bigint();
+  for (let index = 0; index < iterations; index += 1) {
+    await decodedTimingRender();
+  }
+  const decodedMs = Number(process.hrtime.bigint() - decodedStart) / 1e6;
+
+  const exactPath = aliased.input.sides.front.normalizedCard.filePath;
+  const expectedSha256 = aliased.input.sides.front.normalizedCard.sha256;
+  const readIterations = 40;
+  const repeatedReadStart = process.hrtime.bigint();
+  for (let index = 0; index < readIterations; index += 1) {
+    assert.equal(sha256(await fsPromises.readFile(exactPath)), expectedSha256);
+  }
+  const repeatedReadMs =
+    Number(process.hrtime.bigint() - repeatedReadStart) / 1e6;
+  const cachedReadStart = process.hrtime.bigint();
+  const verifiedBytes = await fsPromises.readFile(exactPath);
+  assert.equal(sha256(verifiedBytes), expectedSha256);
+  const cacheKey = `${path.resolve(exactPath)}\0${expectedSha256}`;
+  const exactCache = new Map([[cacheKey, verifiedBytes]]);
+  for (let index = 1; index < readIterations; index += 1) {
+    assert.equal(exactCache.get(cacheKey), verifiedBytes);
+  }
+  const cachedReadMs = Number(process.hrtime.bigint() - cachedReadStart) / 1e6;
+  t.diagnostic(JSON.stringify({
+    scope: "focused_fixture_only_not_production",
+    timingFixture: `${timingWidth}x${timingHeight}-deterministic-noisy-rgb`,
+    repeatedEncodedDecodeAndRenderMs: Number(encodedMs.toFixed(3)),
+    decodedRepresentationRenderMs: Number(decodedMs.toFixed(3)),
+    renderIterations: iterations,
+    renderSavedMs: Number((encodedMs - decodedMs).toFixed(3)),
+    repeatedExactReadAndHashMs: Number(repeatedReadMs.toFixed(3)),
+    cachedExactReadAndHashMs: Number(cachedReadMs.toFixed(3)),
+    exactReadIterations: readIterations,
+    avoidedReadsAndHashes: readIterations - 1,
+    ordinaryJobExactReads: ordinaryRun.exactReadCount,
+    aliasedJobExactReads: first.exactReadCount,
+  }));
 });
 
 test("a localized low-contrast outer-cut area preserves computed elements and the canonical image workspace", async (t) => {
@@ -983,8 +1227,9 @@ test("a localized low-contrast outer-cut area preserves computed elements and th
         pending.workspaceAssets.length,
         Object.values(pending.workspace.galleries).flat().length,
       );
+      const { analysisCheckpoint: _checkpoint, ...publicPending } = pending;
       assert.doesNotMatch(
-        JSON.stringify(pending),
+        JSON.stringify(publicPending),
         /requiresRecapture\"\s*:\s*true/,
       );
     },
@@ -1130,6 +1375,28 @@ test("sealed 33-source bracket completes strict report/package asset registratio
   );
   assert.equal(result.v0FallbackUsed, false);
   assert.equal(fs.existsSync(result.reportPackage.envelopePath), true);
+  assert.equal(result.reportArtifact.assetPayloads.length, 197);
+  const replay =
+    await buildFixedRigMathematicalCalibrationReportPackageV1({
+      ...fixture.input,
+      outputDir: path.join(fixture.root, "sealed-exposure-bracket-replay"),
+    });
+  assert.equal(replay.status, "completed");
+  assert.deepEqual(replay.grade, result.grade);
+  assert.deepEqual(replay.summary, result.summary);
+  assert.equal(
+    replay.orchestrationTraceSha256,
+    result.orchestrationTraceSha256,
+  );
+  assert.deepEqual(replay.reportArtifact.bundle, result.reportArtifact.bundle);
+  const exactPayloads = (value) => value.reportArtifact.assetPayloads
+    .map((asset) => ({
+      id: asset.id,
+      sha256: asset.sha256,
+      bytes: asset.bytes,
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  assert.deepEqual(exactPayloads(replay), exactPayloads(result));
   const serialized = JSON.stringify(result.reportArtifact.bundle);
   assert.doesNotMatch(serialized, /exposure-bracket-v1-channel-/);
   for (const sideName of ["front", "back"]) {
@@ -1258,8 +1525,9 @@ test("localized directional obscuration still yields measured subgrades with pri
         true,
       );
       assert.ok(pending.workspace.galleries.surface.length >= 2);
+      const { analysisCheckpoint: _checkpoint, ...publicPending } = pending;
       assert.doesNotMatch(
-        JSON.stringify(pending),
+        JSON.stringify(publicPending),
         /requiresRecapture\"\s*:\s*true/,
       );
     },
@@ -1395,7 +1663,12 @@ test("orchestrator preserves a controlled scratch as an exact measurement-derive
 
 test("missing and hash-tampered immutable captures fail closed with no package or station input", async (t) => {
   const fixture = await buildFixture({ reportId: "mathematical-orchestrator-fail-closed" });
-  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  t.after(() => fs.promises.rm(fixture.root, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  }));
 
   const tampered = structuredClone(fixture.input);
   tampered.sides.front.normalizedCard.sha256 = "b".repeat(64);

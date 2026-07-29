@@ -427,6 +427,48 @@ test("known-size top-edge damage measures exact length/depth without corner over
   );
 });
 
+test("exact scoring ROIs follow inset material bounds and map every straight side independently", () => {
+  const input = buildInput();
+  input.planes.observedCardMaterialMask = plane(
+    WIDTH,
+    HEIGHT,
+    (x, y) => x >= 3 && x <= 76 && y >= 5 && y <= 114 ? 1 : 0,
+  );
+  const segmented = buildFixedRigConditionSegmentationV1(input);
+  assert.equal(segmented.status, "computed");
+  assert.deepEqual(segmented.observationRois.edges, {
+    top: { x: 27, y: 0, width: 26, height: 13 },
+    right: { x: 68, y: 29, width: 12, height: 62 },
+    bottom: { x: 27, y: 106, width: 26, height: 14 },
+    left: { x: 0, y: 29, width: 11, height: 62 },
+  });
+  assert.deepEqual(
+    segmented.edgeObservations.map((observation) => ({
+      location: observation.location,
+      width: observation.damageMask.width,
+      height: observation.damageMask.height,
+    })),
+    [
+      { location: "top", width: 26, height: 13 },
+      { location: "right", width: 12, height: 62 },
+      { location: "bottom", width: 26, height: 14 },
+      { location: "left", width: 11, height: 62 },
+    ],
+    "each gallery location is backed by the same side-specific ROI used for scoring",
+  );
+  assert.ok(
+    segmented.observationRois.edges.top.x >
+      segmented.observationRois.corners.top_left.x +
+        segmented.observationRois.corners.top_left.width / 2,
+  );
+  assert.ok(
+    segmented.observationRois.edges.top.x +
+      segmented.observationRois.edges.top.width <
+      segmented.observationRois.corners.top_right.x +
+        segmented.observationRois.corners.top_right.width / 2,
+  );
+});
+
 test("private contour U95 removes only unsupported defect claims and never vetoes the grade", () => {
   const lowU95 = buildInput();
   setRect(lowU95.planes.edgeRoughnessIndex, 30, 0, 20, 2, 1);
