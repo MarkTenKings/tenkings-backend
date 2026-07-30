@@ -4,6 +4,7 @@ import {
   buildMuxStaticRenditionUrl,
   ensureMuxHighestStaticRendition,
 } from "../../../../../lib/server/mux";
+import { resolveLiveRipCustomer } from "../../../../../lib/server/liveRipCustomer";
 import { requireUserSession, toUserErrorResponse } from "../../../../../lib/server/session";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 
@@ -24,10 +25,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const session = await requireUserSession(req);
+    const customer = await resolveLiveRipCustomer(session.user);
     const liveRip = await prisma.liveRip.findFirst({
       where: {
         id: liveRipId,
-        userId: session.user.id,
+        userId: customer.id,
         isGoldenTicket: false,
       },
       select: {

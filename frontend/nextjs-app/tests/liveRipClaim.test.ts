@@ -11,6 +11,48 @@ import {
   QR_CLAIM_TTL_MS,
   toLiveRipClaimError,
 } from "../lib/server/liveRipClaim";
+import { resolveLiveRipCustomerWithClient } from "../lib/server/liveRipCustomer";
+
+type FakeCustomer = {
+  id: string;
+  phone: string | null;
+  displayName: string | null;
+  avatarUrl: string | null;
+  phoneVerifiedAt: Date | null;
+};
+
+function createCustomerClient(initialCustomers: FakeCustomer[] = []) {
+  const customers = [...initialCustomers];
+  const client = {
+    user: {
+      findUnique: async ({ where }: { where: { id?: string; phone?: string } }) =>
+        customers.find(
+          (customer) =>
+            (where.id !== undefined && customer.id === where.id) ||
+            (where.phone !== undefined && customer.phone === where.phone)
+        ) ?? null,
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id: string };
+        data: Partial<FakeCustomer>;
+      }) => {
+        const customer = customers.find((entry) => entry.id === where.id);
+        assert.ok(customer);
+        Object.assign(customer, data);
+        return customer;
+      },
+      create: async ({ data }: { data: FakeCustomer }) => {
+        const customer = { ...data };
+        customers.push(customer);
+        return customer;
+      },
+    },
+  } as unknown as Parameters<typeof resolveLiveRipCustomerWithClient>[0];
+
+  return { client, customers };
+}
 
 test("Live Rip claim tokens are validated and hashed without retaining the raw value", () => {
   const rawToken = "Z".repeat(43);
@@ -41,6 +83,41 @@ test("Live Rip assignment SMS uses the required claim copy without a hosting URL
     buildLiveRipClaimSms(claimUrl),
     `Your Ten Kings Live Rip is ready! Sign in or create your account to watch and download your video:\n\n${claimUrl}`
   );
+});
+
+test("Live Rip claims create the local customer required by the ownership foreign key", async () => {
+  const { client, customers } = createCustomerClient();
+  const customer = await resolveLiveRipCustomerWithClient(client, {
+    id: "auth-user-1",
+    phone: "(916) 555-1212",
+    displayName: "Jordan Collector",
+    avatarUrl: null,
+  });
+
+  assert.equal(customer.id, "auth-user-1");
+  assert.equal(customer.phone, "+19165551212");
+  assert.equal(customers.length, 1);
+  assert.ok(customers[0]?.phoneVerifiedAt instanceof Date);
+});
+
+test("Live Rip claims reuse the legacy local customer with the same verified phone", async () => {
+  const existing: FakeCustomer = {
+    id: "legacy-local-user",
+    phone: "+19165551212",
+    displayName: "Existing Collector",
+    avatarUrl: null,
+    phoneVerifiedAt: new Date("2026-01-01T00:00:00.000Z"),
+  };
+  const { client, customers } = createCustomerClient([existing]);
+  const customer = await resolveLiveRipCustomerWithClient(client, {
+    id: "auth-service-user",
+    phone: "916-555-1212",
+    displayName: null,
+    avatarUrl: null,
+  });
+
+  assert.equal(customer.id, "legacy-local-user");
+  assert.equal(customers.length, 1);
 });
 
 test("Live Rip claim errors preserve their intended HTTP status", () => {

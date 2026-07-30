@@ -24,6 +24,12 @@ interface LiveRipRecord {
   location: LocationRecord | null;
   createdAt: string;
   viewCount: number | null;
+  claimedAt?: string | null;
+  claimant?: {
+    id: string;
+    displayName: string | null;
+    phone: string | null;
+  } | null;
 }
 
 interface LiveRipFormState {
@@ -100,7 +106,9 @@ export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps
     }
 
     const loadLiveRips = async () => {
-      const res = await fetch("/api/live-rips");
+      const res = await fetch(isManagementMode && session?.token ? ADMIN_API_BASE : "/api/live-rips", {
+        headers,
+      });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
         const message = typeof payload?.message === "string" ? payload.message : "Failed to load live rips";
@@ -173,7 +181,7 @@ export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps
     return () => {
       mounted = false;
     };
-  }, [session?.token]);
+  }, [isManagementMode, session?.token]);
 
   const filteredLiveRips = useMemo(() => {
     if (!filterLocation) {
@@ -181,6 +189,39 @@ export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps
     }
     return liveRips.filter((liveRip) => liveRip.location?.id === filterLocation);
   }, [liveRips, filterLocation]);
+
+  const claimedCustomers = useMemo(() => {
+    if (!isManagementMode) {
+      return [];
+    }
+
+    const customers = new Map<
+      string,
+      {
+        id: string;
+        displayName: string | null;
+        phone: string | null;
+        location: LocationRecord | null;
+        claimedAt: string | null;
+      }
+    >();
+
+    for (const liveRip of filteredLiveRips) {
+      if (!liveRip.claimant) {
+        continue;
+      }
+      const key = `${liveRip.location?.id ?? "unassigned"}:${liveRip.claimant.id}`;
+      if (!customers.has(key)) {
+        customers.set(key, {
+          ...liveRip.claimant,
+          location: liveRip.location,
+          claimedAt: liveRip.claimedAt ?? null,
+        });
+      }
+    }
+
+    return [...customers.values()];
+  }, [filteredLiveRips, isManagementMode]);
 
   useEffect(() => {
     if (activePreviewId && !filteredLiveRips.some((rip) => rip.id === activePreviewId)) {
@@ -523,6 +564,48 @@ export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps
             </button>
           ) : null}
         </div>
+
+        {isManagementMode && isAdmin ? (
+          <section className="rounded-3xl border border-white/10 bg-night-900/60 p-6">
+            <p className="text-xs uppercase tracking-[0.3em] text-gold-300">Customer follow-up</p>
+            <h2 className="mt-2 font-heading text-2xl uppercase tracking-[0.18em] text-white">
+              Claimed customers by store
+            </h2>
+
+            {claimedCustomers.length === 0 ? (
+              <p className="mt-5 text-sm text-slate-400">
+                No customers have claimed a Live Rip for this location yet.
+              </p>
+            ) : (
+              <div className="mt-5 overflow-x-auto">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead className="text-[10px] uppercase tracking-[0.26em] text-slate-500">
+                    <tr>
+                      <th className="pb-3 pr-4 font-medium">Customer</th>
+                      <th className="pb-3 pr-4 font-medium">Mobile</th>
+                      <th className="pb-3 pr-4 font-medium">Store</th>
+                      <th className="pb-3 font-medium">Claimed</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10 text-slate-200">
+                    {claimedCustomers.map((customer) => (
+                      <tr key={`${customer.location?.id ?? "unassigned"}:${customer.id}`}>
+                        <td className="py-3 pr-4">{customer.displayName || "Ten Kings customer"}</td>
+                        <td className="py-3 pr-4">{customer.phone ?? "Not available"}</td>
+                        <td className="py-3 pr-4">{customer.location?.name ?? "Unassigned"}</td>
+                        <td className="py-3">
+                          {customer.claimedAt
+                            ? new Date(customer.claimedAt).toLocaleString()
+                            : "Claimed"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        ) : null}
 
         {loading ? (
           <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-12 text-center text-sm text-slate-400">

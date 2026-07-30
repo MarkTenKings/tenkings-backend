@@ -4,6 +4,10 @@ import { z } from "zod";
 import { normalizePhoneInput } from "./stocker";
 import { sendSms } from "./sms";
 import { buildSiteUrl } from "./urls";
+import {
+  resolveLiveRipCustomerWithClient,
+  type AuthenticatedLiveRipCustomer,
+} from "./liveRipCustomer";
 
 const SMS_CLAIM_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const QR_CLAIM_TTL_MS = 15 * 60 * 1000;
@@ -304,8 +308,7 @@ export async function inspectLiveRipClaimToken(tokenInput: string) {
 
 export async function claimLiveRipForUser(params: {
   token: string;
-  userId: string;
-  userPhone: string | null;
+  user: AuthenticatedLiveRipCustomer;
 }) {
   const token = liveRipClaimTokenSchema.parse(params.token);
   const claimTokenHash = hashLiveRipClaimToken(token);
@@ -331,11 +334,12 @@ export async function claimLiveRipForUser(params: {
     if (!liveRip.claimExpiresAt || liveRip.claimExpiresAt.getTime() <= now.getTime()) {
       throw new LiveRipClaimError(410, "This Live Rip claim link has expired");
     }
+    const customer = await resolveLiveRipCustomerWithClient(tx, params.user);
     assertLiveRipClaimAccess({
       claimPhone: liveRip.claimPhone,
       existingOwnerId: liveRip.userId,
-      claimantUserId: params.userId,
-      claimantPhone: params.userPhone,
+      claimantUserId: customer.id,
+      claimantPhone: customer.phone ?? params.user.phone,
     });
 
     const claimed = await tx.liveRip.updateMany({
@@ -346,14 +350,14 @@ export async function claimLiveRipForUser(params: {
         claimExpiresAt: { gt: now },
         ...(liveRip.claimPhone
           ? {
-              OR: [{ userId: null }, { userId: params.userId }],
+              OR: [{ userId: null }, { userId: customer.id }],
             }
           : {
               userId: null,
             }),
       },
       data: {
-        userId: params.userId,
+        userId: customer.id,
         claimTokenHash: null,
         claimExpiresAt: null,
         claimedAt: now,
@@ -367,7 +371,7 @@ export async function claimLiveRipForUser(params: {
     if (liveRip.claimName) {
       await tx.user.updateMany({
         where: {
-          id: params.userId,
+          id: customer.id,
           OR: [{ displayName: null }, { displayName: "" }],
         },
         data: {
