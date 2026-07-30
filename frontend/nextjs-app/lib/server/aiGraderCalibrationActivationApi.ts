@@ -30,7 +30,7 @@ export type AiGraderCalibrationActivationApiDependencies = {
   service: ActivationService;
 };
 
-const WRITE_ACTIONS = new Set(["observe", "activate", "reactivate", "complete", "fail"]);
+const FRESH_ACTIONS = new Set(["authorize", "observe", "activate", "reactivate", "complete", "fail"]);
 
 function actionFrom(req: NextApiRequest) {
   const parts = Array.isArray(req.query.action) ? req.query.action : [req.query.action];
@@ -75,10 +75,14 @@ export function createAiGraderCalibrationActivationApiHandler(
         return res.status(405).json({ ok: false, code: "METHOD_NOT_ALLOWED", message: "Method not allowed." });
       }
       const action = actionFrom(req);
-      const admin = WRITE_ACTIONS.has(action)
+      const admin = FRESH_ACTIONS.has(action)
         ? await deps.requireFreshAdminSession(req)
         : await deps.requireAdminSession(req);
 
+      if (action === "authorize") {
+        exactBody(req.body, []);
+        return res.status(200).json({ ok: true, fresh: true });
+      }
       if (action === "resolve-trusted") {
         exactBody(req.body, []);
         const resolved = await deps.service.resolveTrustedRegistry();
