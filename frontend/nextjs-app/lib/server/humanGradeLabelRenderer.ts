@@ -60,16 +60,27 @@ const COLORS = {
   ink: "#0f0f0f",
 } as const;
 
+const LABEL_SECTION_BOUNDARIES = {
+  brandEndPt: 44,
+  identityEndPt: 132.5,
+  labelEndPt: HUMAN_GRADE_LABEL_GEOMETRY.label.widthPt,
+} as const;
+
+const RIGHT_THIRD_CONTENT_INSET_PT = 0.75;
+
 const LABEL_ZONES = {
   brandCrown: { xPt: 9.496192, yPt: 12.6, widthPt: 25.007616, heightPt: 16.258954 },
   brandWordmark: { xPt: 2.52, yPt: 27.4, widthPt: 38.96 },
   brandCertificate: { xPt: 2.52, yPt: 39, widthPt: 38.96 },
-  leftSeparator: { xPt: 44, yPt: 8, heightPt: 43.76 },
+  leftSeparator: { xPt: LABEL_SECTION_BOUNDARIES.brandEndPt, yPt: 8, heightPt: 43.76 },
   identity: { xPt: 48, widthPt: 81.5 },
-  rightSeparator: { xPt: 132.5, yPt: 8, heightPt: 43.76 },
+  rightSeparator: { xPt: LABEL_SECTION_BOUNDARIES.identityEndPt, yPt: 8, heightPt: 43.76 },
   rightThird: {
-    xPt: 136,
-    widthPt: 57.8,
+    xPt: LABEL_SECTION_BOUNDARIES.identityEndPt + RIGHT_THIRD_CONTENT_INSET_PT,
+    widthPt:
+      LABEL_SECTION_BOUNDARIES.labelEndPt -
+      LABEL_SECTION_BOUNDARIES.identityEndPt -
+      RIGHT_THIRD_CONTENT_INSET_PT * 2,
     gradeCenterYPt: 21.5,
     gradeCenterFromTextTopEm: 0.55,
   },
@@ -77,14 +88,20 @@ const LABEL_ZONES = {
 } as const;
 
 export const HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY = {
-  gridTopPt: 39.2,
-  rowHeightPt: 9.5,
-  paddingXPt: 1.2,
-  columnGapPt: 1.4,
-  pairGapPt: 0.65,
+  gridTopPt: 33.7,
+  rowHeightPt: 8.2,
+  paddingXPt: 0,
+  columnGapPt: 0.8,
   codeFontSizePt: 8,
+  equalsFontSizePt: 8,
   scoreFontSizePt: 9.6,
+  codeToEqualsGapPt: 1,
+  equalsToScoreGapPt: 1,
   scoreTopOffsetPt: -0.8,
+  rightThirdCenterXPt:
+    (LABEL_SECTION_BOUNDARIES.identityEndPt + LABEL_SECTION_BOUNDARIES.labelEndPt) / 2,
+  dividerTopPt: 8,
+  dividerBottomPt: 51.76,
 } as const;
 
 const TEXT_TIERS = {
@@ -306,28 +323,44 @@ function drawSubgradePair(
   cellWidth: number
 ) {
   const geometry = HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY;
-  const codeWidth = doc.font("TKHumanWordmark").fontSize(geometry.codeFontSizePt).widthOfString(code);
+  const codeWidth = doc.font("TKHumanSmall").fontSize(geometry.codeFontSizePt).widthOfString(code);
+  const equalsWidth = doc.font("TKHumanSmall").fontSize(geometry.equalsFontSizePt).widthOfString("=");
   const scoreWidth = doc.font("TKHumanDisplay").fontSize(geometry.scoreFontSizePt).widthOfString(score);
-  const pairWidth = codeWidth + geometry.pairGapPt + scoreWidth;
-  if (pairWidth > cellWidth) throw new Error(`Human-grade subgrade pair does not fit its cell: ${code} ${score}`);
+  const pairWidth =
+    codeWidth +
+    geometry.codeToEqualsGapPt +
+    equalsWidth +
+    geometry.equalsToScoreGapPt +
+    scoreWidth;
+  if (pairWidth > cellWidth) throw new Error(`Human-grade subgrade pair does not fit its cell: ${code} = ${score}`);
   const startX = cellX + (cellWidth - pairWidth) / 2;
 
   doc
-    .font("TKHumanWordmark")
+    .font("TKHumanSmall")
     .fontSize(geometry.codeFontSizePt)
     .fillColor(COLORS.ink)
     .text(code, startX, cellY, { lineBreak: false });
+  const equalsX = startX + codeWidth + geometry.codeToEqualsGapPt;
+  doc
+    .font("TKHumanSmall")
+    .fontSize(geometry.equalsFontSizePt)
+    .fillColor(COLORS.ink)
+    .text("=", equalsX, cellY, { lineBreak: false });
   doc
     .font("TKHumanDisplay")
     .fontSize(geometry.scoreFontSizePt)
     .fillColor(COLORS.ink)
-    .text(score, startX + codeWidth + geometry.pairGapPt, cellY + geometry.scoreTopOffsetPt, {
+    .text(score, equalsX + equalsWidth + geometry.equalsToScoreGapPt, cellY + geometry.scoreTopOffsetPt, {
       lineBreak: false,
     });
 }
 
 function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLabelContent>) {
   const zone = LABEL_ZONES.rightThird;
+  const zoneCenterX = zone.xPt + zone.widthPt / 2;
+  if (Math.abs(zoneCenterX - HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rightThirdCenterXPt) > 0.001) {
+    throw new Error("Human-grade right-third content is not centered within its physical section.");
+  }
   const grade = fitBlock(doc, content.grade, zone.widthPt, TEXT_TIERS.grade, {
     maxLines: 1,
     fontName: "TKHumanDisplay",

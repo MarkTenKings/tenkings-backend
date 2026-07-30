@@ -1,5 +1,16 @@
 # Session Log (Append Only)
 
+## 2026-07-30 - Human Grade right-third optical balance refinement
+
+- Mark authorized a narrowly scoped Human Grade label adjustment for the fastest protected Production path: keep every existing label field, value, weighted grade, certificate, page, PDF workflow, and all non-Human-Grade systems unchanged.
+- The printable right-third content is now centered on the exact physical section midpoint between the existing right separator and label edge, with symmetric content insets.
+- The compact 2x2 subgrades retain `CTR`, `CRN`, `EDG`, and `SUR`, switch their abbreviations back to the cleaner regular small-label font at an enlarged `8 pt`, and render each expression as `CODE = SCORE` with explicit `1 pt` spacing on both sides of the equals sign. The bold score remains `9.6 pt`.
+- The top and bottom endpoints of the existing vertical dividers now define the shared vertical safe area. Both subgrade rows move upward and are geometrically constrained so their text remains within those divider endpoints.
+- The Human Grade admin preview mirrors the regular-weight abbreviation, equals sign, tight score spacing, and unit-centered layout.
+- Focused Human Grade ESLint passed with zero findings, Human Grade tests passed `7/7`, and `git diff --check` passed. A complete 16-label Letter proof containing integer and decimal values was rendered at 300 DPI and visually inspected; the right section is centered and no text clips, overlaps, or crosses a separator.
+- Planned Production action is limited to focused Human Grade lint/tests, a current 300 DPI printable proof, one protected PR, merge after required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+
 ## 2026-07-30 - Human Grade compact 2x2 subgrades restored
 
 - Mark changed direction and authorized restoring the original compact 2x2 subgrade layout beneath the large Human Grade final score.
