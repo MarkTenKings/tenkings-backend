@@ -63,6 +63,7 @@ const COLORS = {
 const LABEL_ZONES = {
   brandCrown: { xPt: 9.496192, yPt: 4.5, widthPt: 25.007616, heightPt: 16.258954 },
   brandWordmark: { xPt: 2.52, yPt: 19.3, widthPt: 38.96 },
+  brandCertificate: { xPt: 2.52, yPt: 37.5, widthPt: 38.96 },
   leftSeparator: { xPt: 44, yPt: 8, heightPt: 43.76 },
   identity: { xPt: 48, widthPt: 81.5 },
   rightSeparator: { xPt: 132.5, yPt: 8, heightPt: 43.76 },
@@ -70,9 +71,10 @@ const LABEL_ZONES = {
     xPt: 136,
     widthPt: 57.8,
     cardNumberTopPt: 3.7,
-    gradeCenterYPt: 28.8,
+    gradeCenterYPt: 23.5,
     gradeCenterFromTextTopEm: 0.55,
-    certificateTopPt: 47.1,
+    subgradesTopPt: 35.4,
+    subgradeRowHeightPt: 5.15,
   },
   separatorCrowns: { centerYPt: 29.88, widthPt: 3.4, heightPt: 2.2, lineGapPt: 0.7 },
 } as const;
@@ -81,9 +83,9 @@ const TEXT_TIERS = {
   metadata: [9, 8, 7, 6, 5],
   primary: [19, 17, 15, 13, 11],
   descriptor: [10, 9, 8, 7, 6, 5],
-  certificate: [7.2, 6.8, 6.2, 5.6],
+  certificate: [6.2, 5.8, 5.4, 5],
   cardNumber: [7, 6.2, 5.5],
-  grade: [40, 37, 34, 31, 28, 25],
+  grade: [31, 29, 27, 25, 23],
 } as const;
 
 function assetDirectory() {
@@ -215,7 +217,7 @@ function drawVerticalSeparator(doc: PdfDoc, crown: PdfImage, x: number, y: numbe
   });
 }
 
-function drawBrand(doc: PdfDoc, crown: PdfImage) {
+function drawBrand(doc: PdfDoc, crown: PdfImage, content: ReturnType<typeof buildHumanGradeLabelContent>) {
   const brandCrown = LABEL_ZONES.brandCrown;
   doc.image(crown as unknown as Parameters<PdfDoc["image"]>[0], brandCrown.xPt, brandCrown.yPt, {
     fit: [brandCrown.widthPt, brandCrown.heightPt],
@@ -236,6 +238,15 @@ function drawBrand(doc: PdfDoc, crown: PdfImage) {
     lineBreak: false,
   });
   doc.restore();
+
+  const certificateZone = LABEL_ZONES.brandCertificate;
+  const certificate = fitBlock(doc, content.certificateNumber, certificateZone.widthPt, TEXT_TIERS.certificate, {
+    maxLines: 1,
+    fontName: "TKHumanSmall",
+    lineHeightEm: 1,
+    characterSpacingPt: 0.08,
+  });
+  drawCenteredBlock(doc, certificate, certificateZone.xPt, certificateZone.yPt, certificateZone.widthPt);
 }
 
 function drawIdentity(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLabelContent>) {
@@ -293,20 +304,28 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
   const gradeTop = zone.gradeCenterYPt - grade.fontSize * zone.gradeCenterFromTextTopEm;
   drawCenteredBlock(doc, grade, zone.xPt, gradeTop, zone.widthPt);
 
-  const certificate = fitBlock(doc, content.certificateNumber, zone.widthPt, TEXT_TIERS.certificate, {
-    maxLines: 1,
-    fontName: "TKHumanSmall",
-    lineHeightEm: 1,
-    characterSpacingPt: 0.12,
+  content.subgrades.forEach((subgrade, index) => {
+    const y = zone.subgradesTopPt + index * zone.subgradeRowHeightPt;
+    doc.font("TKHumanSmall").fontSize(4.7).fillColor(COLORS.ink).text(subgrade.label, zone.xPt + 3, y, {
+      width: 38,
+      align: "left",
+      characterSpacing: 0.04,
+      lineBreak: false,
+    });
+    doc.font("TKHumanWordmark").fontSize(4.9).fillColor(COLORS.ink).text(subgrade.grade, zone.xPt + 42, y - 0.1, {
+      width: 12.8,
+      align: "right",
+      characterSpacing: 0,
+      lineBreak: false,
+    });
   });
-  drawCenteredBlock(doc, certificate, zone.xPt, zone.certificateTopPt, zone.widthPt);
 }
 
 function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapshot, x: number, y: number) {
   const content = buildHumanGradeLabelContent(snapshot);
   doc.save().translate(x, y);
   // Deliberately no background fill: human-grade labels retain transparent artwork.
-  drawBrand(doc, crown);
+  drawBrand(doc, crown, content);
   drawVerticalSeparator(doc, crown, LABEL_ZONES.leftSeparator.xPt, LABEL_ZONES.leftSeparator.yPt, LABEL_ZONES.leftSeparator.heightPt);
   drawVerticalSeparator(doc, crown, LABEL_ZONES.rightSeparator.xPt, LABEL_ZONES.rightSeparator.yPt, LABEL_ZONES.rightSeparator.heightPt);
   drawIdentity(doc, content);

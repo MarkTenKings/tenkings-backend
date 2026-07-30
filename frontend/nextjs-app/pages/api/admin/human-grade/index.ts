@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
+  calculateHumanGrade,
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
   type HumanGradeLabelSheetDto,
@@ -11,6 +12,13 @@ import {
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 const optionalLabelText = z.string().trim().max(120).optional().nullable();
+const subgrade = z.coerce
+  .number()
+  .min(1)
+  .max(10)
+  .refine((value) => Math.abs(value * 10 - Math.round(value * 10)) < 1e-8, {
+    message: "Subgrades must use increments of 0.1.",
+  });
 const createSchema = z
   .object({
     cardType: z.enum(["SPORTS", "POKEMON"]),
@@ -22,7 +30,10 @@ const createSchema = z
     parallel: optionalLabelText,
     insert: optionalLabelText,
     cardNumber: optionalLabelText,
-    grade: z.coerce.number().min(1).max(10),
+    centeringGrade: subgrade,
+    cornersGrade: subgrade,
+    edgesGrade: subgrade,
+    surfaceGrade: subgrade,
   })
   .superRefine((value, context) => {
     if (value.cardType === "SPORTS" && !value.playerName?.trim()) {
@@ -56,6 +67,10 @@ type SheetRecord = {
     parallel: string | null;
     insert: string | null;
     cardNumber: string | null;
+    centeringGrade: { toString(): string };
+    cornersGrade: { toString(): string };
+    edgesGrade: { toString(): string };
+    surfaceGrade: { toString(): string };
     grade: { toString(): string };
     createdAt: Date;
   }>;
@@ -87,6 +102,10 @@ function serializeSheet(sheet: SheetRecord): HumanGradeLabelSheetDto {
       parallel: label.parallel,
       insert: label.insert,
       cardNumber: label.cardNumber,
+      centeringGrade: formatHumanGrade(label.centeringGrade.toString()),
+      cornersGrade: formatHumanGrade(label.cornersGrade.toString()),
+      edgesGrade: formatHumanGrade(label.edgesGrade.toString()),
+      surfaceGrade: formatHumanGrade(label.surfaceGrade.toString()),
       grade: formatHumanGrade(label.grade.toString()),
       createdAt: label.createdAt.toISOString(),
     })),
@@ -151,6 +170,7 @@ export default async function handler(
 
       const slot = sheet.labels.length + 1;
       const input = parsed.data;
+      const calculated = calculateHumanGrade(input);
       const created = await tx.humanGradeLabel.create({
         data: {
           sheetId: sheet.id,
@@ -164,7 +184,11 @@ export default async function handler(
           parallel: optionalText(input.parallel),
           insert: input.cardType === "SPORTS" ? optionalText(input.insert) : null,
           cardNumber: optionalText(input.cardNumber),
-          grade: formatHumanGrade(input.grade),
+          centeringGrade: formatHumanGrade(input.centeringGrade),
+          cornersGrade: formatHumanGrade(input.cornersGrade),
+          edgesGrade: formatHumanGrade(input.edgesGrade),
+          surfaceGrade: formatHumanGrade(input.surfaceGrade),
+          grade: calculated.labelGrade,
           createdByUserId: admin.user.id,
         },
       });

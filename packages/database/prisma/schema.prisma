@@ -3499,6 +3499,10 @@ model HumanGradeLabel {
   parallel            String?
   insert              String?
   cardNumber          String?
+  centeringGrade      Decimal              @db.Decimal(3, 1)
+  cornersGrade        Decimal              @db.Decimal(3, 1)
+  edgesGrade          Decimal              @db.Decimal(3, 1)
+  surfaceGrade        Decimal              @db.Decimal(3, 1)
   grade               Decimal              @db.Decimal(3, 1)
   createdByUserId     String
   createdAt           DateTime              @default(now())
