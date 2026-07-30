@@ -98,7 +98,9 @@ export function createAiGraderCalibrationActivationApiHandler(
         return res.status(200).json({ ok: true, ...status });
       }
       if (action === "observe") {
-        const input = exactBody(req.body, ["rigId", "snapshotId", "expectedRegistryRevision"]);
+        const input = exactBody(req.body, [
+          "rigId", "snapshotId", "expectedRegistryRevision", "priorActivationId", "targetHelperVersion",
+        ]);
         const observation = await deps.service.requestObservationAuthority(
           input as AiGraderCalibrationObservationRequestV1,
         );

@@ -337,6 +337,8 @@ const observationRequestSchema = z.object({
   rigId: canonicalText,
   snapshotId: canonicalText,
   expectedRegistryRevision: sha256,
+  priorActivationId: canonicalText.optional(),
+  targetHelperVersion: canonicalText.optional(),
 }).strict();
 const activateRequestSchema = z.object({
   rigId: canonicalText,
@@ -523,6 +525,8 @@ export function requestAiGraderCalibrationObservationAuthorityV1(
     rigId: string;
     snapshotId: string;
     expectedRegistryRevision: string;
+    priorActivationId?: string;
+    targetHelperVersion?: string;
   },
   fetchImpl: typeof fetch = fetch,
 ) {
@@ -530,6 +534,8 @@ export function requestAiGraderCalibrationObservationAuthorityV1(
     rigId: input.rigId,
     snapshotId: input.snapshotId,
     expectedRegistryRevision: input.expectedRegistryRevision,
+    ...(input.priorActivationId ? { priorActivationId: input.priorActivationId } : {}),
+    ...(input.targetHelperVersion ? { targetHelperVersion: input.targetHelperVersion } : {}),
   });
   return hostedPost(
     AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.observe,
@@ -659,14 +665,25 @@ async function localActivationAction(
 }
 
 export function prepareLocalAiGraderCalibrationActivationV1(
-  input: { baseUrl: string; stationToken: string; pendingAuthority: AiGraderCalibrationPendingAuthorityV1 },
+  input: {
+    baseUrl: string;
+    stationToken: string;
+    pendingAuthority: AiGraderCalibrationPendingAuthorityV1;
+    priorActiveAuthority?: AiGraderCalibrationActivationAuthorityV1;
+  },
   fetchImpl: typeof fetch = fetch,
 ) {
   return localActivationAction({
     baseUrl: input.baseUrl,
     stationToken: input.stationToken,
     action: "prepare-calibration-activation",
-    body: { calibrationPendingAuthority: aiGraderCalibrationPendingAuthorityV1Schema.parse(input.pendingAuthority) },
+    body: {
+      calibrationPendingAuthority: aiGraderCalibrationPendingAuthorityV1Schema.parse(input.pendingAuthority),
+      ...(input.priorActiveAuthority ? {
+        priorHostedCalibrationActivationAuthority:
+          aiGraderCalibrationActivationAuthorityV1Schema.parse(input.priorActiveAuthority),
+      } : {}),
+    },
   }, fetchImpl);
 }
 
@@ -675,6 +692,7 @@ export function observeLocalAiGraderCalibrationActivationV1(
     baseUrl: string;
     stationToken: string;
     observationAuthority: AiGraderCalibrationObservationAuthorityV1;
+    priorActiveAuthority?: AiGraderCalibrationActivationAuthorityV1;
   },
   fetchImpl: typeof fetch = fetch,
 ) {
@@ -685,6 +703,10 @@ export function observeLocalAiGraderCalibrationActivationV1(
     body: {
       calibrationObservationAuthority:
         aiGraderCalibrationObservationAuthorityV1Schema.parse(input.observationAuthority),
+      ...(input.priorActiveAuthority ? {
+        priorHostedCalibrationActivationAuthority:
+          aiGraderCalibrationActivationAuthorityV1Schema.parse(input.priorActiveAuthority),
+      } : {}),
     },
   }, fetchImpl);
 }
@@ -743,6 +765,8 @@ export type AiGraderCalibrationActivationWorkflowSelectionV1 = {
   priorActivationId?: string;
   expectedRegistryRevision: string;
   reason: string;
+  priorActiveAuthority?: AiGraderCalibrationActivationAuthorityV1;
+  targetHelperVersion?: string;
 };
 
 export type AiGraderCalibrationActivationWorkflowResultV1 = {
@@ -803,6 +827,33 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
       "AI_GRADER_CALIBRATION_EXPLICIT_REACTIVATION_REQUIRED",
     );
   }
+  const priorActiveAuthority = input.selection.priorActiveAuthority
+    ? aiGraderCalibrationActivationAuthorityV1Schema.parse(input.selection.priorActiveAuthority)
+    : undefined;
+  if (priorActiveAuthority) {
+    if (
+      input.selection.action !== "reactivate" ||
+      priorActiveAuthority.activationId !== input.selection.priorActivationId ||
+      priorActiveAuthority.snapshotId !== snapshot.snapshotId ||
+      priorActiveAuthority.rigId !== snapshot.rigId
+    ) {
+      throw new AiGraderCalibrationActivationTransportError(
+        "The signed prior ACTIVE authority does not match the exact reactivation selection.",
+        409,
+        "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_MISMATCH",
+      );
+    }
+  }
+  const targetHelperVersion = input.selection.targetHelperVersion
+    ? canonicalText.parse(input.selection.targetHelperVersion)
+    : undefined;
+  if (targetHelperVersion && !priorActiveAuthority) {
+    throw new AiGraderCalibrationActivationTransportError(
+      "Helper-identity successor requires the exact signed prior ACTIVE authority.",
+      409,
+      "AI_GRADER_CALIBRATION_ACTIVATION_BINDING_MISMATCH",
+    );
+  }
   const idempotency = input.idempotencyKeyFactory ?? newIdempotencyKey;
   let pending: AiGraderCalibrationActivationPendingResponseV1 | undefined;
   let completed: AiGraderCalibrationCompleteActivationResponseV1 | undefined;
@@ -816,6 +867,10 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
       rigId: snapshot.rigId,
       snapshotId: snapshot.snapshotId,
       expectedRegistryRevision,
+      ...(targetHelperVersion ? {
+        priorActivationId: input.selection.priorActivationId,
+        targetHelperVersion,
+      } : {}),
     }, fetchImpl);
     observationAuthority = observationResponse.observationAuthority;
     exactMatch(observationAuthority.rigId, snapshot.rigId, "observation rig");
@@ -825,6 +880,7 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
       baseUrl: input.baseUrl,
       stationToken: input.stationToken,
       observationAuthority,
+      priorActiveAuthority,
     }, fetchImpl);
     if (!localObservation.observation || localObservation.state !== "IDLE") {
       throw new AiGraderCalibrationActivationTransportError(
@@ -868,6 +924,7 @@ export async function runAiGraderCalibrationActivationWorkflowV1(
       baseUrl: input.baseUrl,
       stationToken: input.stationToken,
       pendingAuthority: pending.pendingAuthority,
+      priorActiveAuthority,
     }, fetchImpl);
     if (localPending.state !== "PENDING" || !localPending.receipt) {
       throw new AiGraderCalibrationActivationTransportError(

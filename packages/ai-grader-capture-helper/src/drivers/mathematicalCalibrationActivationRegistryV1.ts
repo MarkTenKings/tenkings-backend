@@ -240,6 +240,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
   const evidenceRoot = path.join(rootDir, "activation-evidence");
   const successfulEvidenceRoot = path.join(evidenceRoot, "successful");
   const failedEvidenceRoot = path.join(evidenceRoot, "failed");
+  const supersededPointersRoot = path.join(rootDir, "superseded-pointers");
   const pointerPath = path.join(rootDir, "active-pointer-v1.json");
   const now = options.now ?? (() => new Date());
   if (!path.isAbsolute(options.rootDir) || !path.isAbsolute(options.finalizedBundleStagingRoot) ||
@@ -389,6 +390,13 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return path.join(contextsRoot, `${activationId}.json`);
   }
 
+  function supersededPointerPath(activationId: string) {
+    if (!activationId.trim() || path.basename(activationId) !== activationId) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_PATH_REJECTED", "Activation ID is unsafe for immutable pointer history.");
+    }
+    return path.join(supersededPointersRoot, `${activationId}.json`);
+  }
+
   async function readExpectedOperatingContext(
     activationId: string,
     expectedHash: string,
@@ -498,13 +506,120 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return observation;
   }
 
-  async function observeActivation(value: unknown): Promise<AiGraderCalibrationWorkstationObservationV1> {
+  const exactActivePointerFields: (keyof AiGraderCalibrationActivationAuthorityV1)[] = [
+    "activationId", "activationHash", "activationRevision", "snapshotId", "rigId",
+    "bundleManifestSha256", "memberLedgerSha256", "runtimeContextHash",
+    "rigCharacterizationSha256", "operatingContextHash", "observationId",
+    "workstationObservationSha256", "workstationReceiptSha256", "activatedAt",
+  ];
+
+  async function verifyPriorActiveSuccessor(
+    priorValue: unknown,
+    next: {
+      snapshotId: string;
+      rigId: string;
+      bundleManifestSha256: string;
+      memberLedgerSha256: string;
+      runtimeContextHash: string;
+      rigCharacterizationSha256: string;
+      operatingContextHash: string;
+      operatingContextV1: AiGraderOperatingContextV1;
+    },
+    pointerOverride?: AiGraderCalibrationLocalPointerV1,
+  ) {
+    const prior = verifyHostedAuthority(priorValue, "ACTIVE");
+    const pointer = pointerOverride ?? await readPointer();
+    if (
+      pointer.state !== "ACTIVE" ||
+      exactActivePointerFields.some(
+        (field) => pointer[field as keyof typeof pointer] !== prior[field],
+      )
+    ) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_AUTHORITY_MISMATCH",
+        "Helper-identity successor requires exact local/hosted agreement on the prior ACTIVE authority.",
+      );
+    }
+    const receiptBytes = await readFile(path.join(receiptsRoot, `${prior.activationId}.json`));
+    if (sha256(receiptBytes) !== prior.workstationReceiptSha256) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_RECEIPT_MISMATCH",
+        "Prior ACTIVE workstation receipt is missing, corrupt, or mismatched.",
+      );
+    }
+    aiGraderCalibrationWorkstationReceiptV1Schema.parse(JSON.parse(receiptBytes.toString("utf8")));
+    verifyBundle(prior);
+    const priorContext = await readExpectedOperatingContext(
+      prior.activationId,
+      prior.operatingContextHash,
+    );
+    if (sha256(canonicalAiGraderRuntimeContextV1(priorContext)) !== prior.runtimeContextHash) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH",
+        "Prior ACTIVE operating context does not reproduce its exact runtime hash.",
+      );
+    }
+    const priorObservation = await readWorkstationObservation(
+      prior.observationId,
+      prior.workstationObservationSha256,
+    );
+    if (
+      priorObservation.snapshotId !== prior.snapshotId ||
+      priorObservation.rigId !== prior.rigId ||
+      priorObservation.bundleManifestSha256 !== prior.bundleManifestSha256 ||
+      priorObservation.memberLedgerSha256 !== prior.memberLedgerSha256 ||
+      priorObservation.runtimeContextHash !== prior.runtimeContextHash ||
+      priorObservation.rigCharacterizationSha256 !== prior.rigCharacterizationSha256 ||
+      priorObservation.expectedOperatingContextHash !== prior.operatingContextHash ||
+      priorObservation.observedOperatingContextHash !== prior.operatingContextHash
+    ) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_OBSERVATION_REJECTED",
+        "Prior ACTIVE observation does not match its exact signed authority.",
+      );
+    }
+    const nextContext = aiGraderOperatingContextV1Schema.parse(next.operatingContextV1);
+    const sameContext =
+      canonicalAiGraderCalibrationJsonV1(nextContext) ===
+      canonicalAiGraderCalibrationJsonV1(priorContext);
+    const helperSuccessorContext = aiGraderOperatingContextV1Schema.parse({
+      ...priorContext,
+      software: {
+        ...priorContext.software,
+        helperVersion: nextContext.software.helperVersion,
+      },
+    });
+    const helperVersionOnlyChange =
+      nextContext.software.helperVersion !== priorContext.software.helperVersion &&
+      canonicalAiGraderCalibrationJsonV1(nextContext) ===
+        canonicalAiGraderCalibrationJsonV1(helperSuccessorContext);
+    if (
+      (!sameContext && !helperVersionOnlyChange) ||
+      next.snapshotId !== prior.snapshotId ||
+      next.rigId !== prior.rigId ||
+      next.bundleManifestSha256 !== prior.bundleManifestSha256 ||
+      next.memberLedgerSha256 !== prior.memberLedgerSha256 ||
+      next.rigCharacterizationSha256 !== prior.rigCharacterizationSha256 ||
+      next.operatingContextHash !== sha256(canonicalAiGraderOperatingContextV1(nextContext)) ||
+      next.runtimeContextHash !== sha256(canonicalAiGraderRuntimeContextV1(nextContext)) ||
+      nextContext.software.helperInstanceId !== options.helperInstanceId ||
+      nextContext.software.helperVersion !== options.helperVersion
+    ) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH",
+        "Successor must preserve the exact calibration/runtime authority and may change only to this helper version.",
+      );
+    }
+    return { prior, pointer };
+  }
+
+  async function observeActivation(
+    value: unknown,
+    priorActiveValue?: unknown,
+  ): Promise<AiGraderCalibrationWorkstationObservationV1> {
     const authority = verifyHostedAuthority(value, "OBSERVATION");
     if (!await options.isIdle()) {
       fail("AI_GRADER_LOCAL_CALIBRATION_NOT_IDLE", "Local helper must be idle before the one activation runtime observation.");
-    }
-    if (await exists(pointerPath)) {
-      fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "Runtime observation requires no local activation pointer.");
     }
     const expectedContext = aiGraderOperatingContextV1Schema.parse(authority.operatingContextV1);
     if (
@@ -512,6 +627,23 @@ export function createMathematicalCalibrationActivationRegistryV1(
       sha256(canonicalAiGraderRuntimeContextV1(expectedContext)) !== authority.runtimeContextHash
     ) {
       fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted observation context does not reproduce its exact hashes.");
+    }
+    if (await exists(pointerPath)) {
+      if (priorActiveValue === undefined) {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT",
+          "Runtime observation found an existing local pointer without an exact signed prior ACTIVE successor authority.",
+        );
+      }
+      await verifyPriorActiveSuccessor(priorActiveValue, {
+        ...authority,
+        operatingContextV1: expectedContext,
+      });
+    } else if (priorActiveValue !== undefined) {
+      fail(
+        "AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT",
+        "Signed prior ACTIVE successor authority was supplied without its exact local pointer.",
+      );
     }
     verifyBundle(authority);
     await mkdir(evidenceRoot, { recursive: true, mode: 0o700 });
@@ -806,13 +938,23 @@ export function createMathematicalCalibrationActivationRegistryV1(
     return { bundlePath: stored.bundlePath, authority: stored.authority };
   }
 
-  async function prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1> {
+  async function prepareActivation(
+    value: unknown,
+    priorActiveValue?: unknown,
+  ): Promise<AiGraderCalibrationWorkstationReceiptV1> {
     const pending = verifyHostedAuthority(value, "PENDING");
     const exactNow = now();
     if (!Number.isFinite(exactNow.getTime()) || exactNow.getTime() >= new Date(pending.pendingExpiresAt).getTime()) {
       fail("AI_GRADER_LOCAL_CALIBRATION_PENDING_EXPIRED", "Pending activation is expired.");
     }
     if (!await options.isIdle()) fail("AI_GRADER_LOCAL_CALIBRATION_NOT_IDLE", "Local helper must be idle before activation verification.");
+    const expectedContext = aiGraderOperatingContextV1Schema.parse(pending.operatingContextV1);
+    const expectedContextHash = sha256(canonicalAiGraderOperatingContextV1(expectedContext));
+    if (expectedContextHash !== pending.operatingContextHash) {
+      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted pending operating context does not reproduce its exact hash.");
+    }
+    let priorForArchive: AiGraderCalibrationActivationAuthorityV1 | undefined;
+    let priorPointerForArchive: AiGraderCalibrationLocalPointerV1 | undefined;
     if (await exists(pointerPath)) {
       const current = await readPointer();
       if (
@@ -829,12 +971,35 @@ export function createMathematicalCalibrationActivationRegistryV1(
         }
         return aiGraderCalibrationWorkstationReceiptV1Schema.parse(JSON.parse(receiptBytes.toString("utf8")));
       }
-      fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "A different local activation pointer already exists.");
-    }
-    const expectedContext = aiGraderOperatingContextV1Schema.parse(pending.operatingContextV1);
-    const expectedContextHash = sha256(canonicalAiGraderOperatingContextV1(expectedContext));
-    if (expectedContextHash !== pending.operatingContextHash) {
-      fail("AI_GRADER_LOCAL_CALIBRATION_CONTEXT_MISMATCH", "Hosted pending operating context does not reproduce its exact hash.");
+      if (priorActiveValue === undefined) {
+        fail("AI_GRADER_LOCAL_CALIBRATION_POINTER_CONFLICT", "A different local activation pointer already exists.");
+      }
+      const verified = await verifyPriorActiveSuccessor(priorActiveValue, {
+        ...pending,
+        operatingContextV1: expectedContext,
+      }, current);
+      priorForArchive = verified.prior;
+      priorPointerForArchive = verified.pointer;
+    } else if (priorActiveValue !== undefined) {
+      const prior = verifyHostedAuthority(priorActiveValue, "ACTIVE");
+      const archivedPointerPath = supersededPointerPath(prior.activationId);
+      let archived: AiGraderCalibrationLocalPointerV1;
+      try {
+        archived = aiGraderCalibrationLocalPointerV1Schema.parse(
+          JSON.parse(await readFile(archivedPointerPath, "utf8")),
+        );
+      } catch {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_POINTER_MISSING",
+          "The prior ACTIVE pointer is neither current nor present in the immutable successor archive.",
+        );
+      }
+      const verified = await verifyPriorActiveSuccessor(prior, {
+        ...pending,
+        operatingContextV1: expectedContext,
+      }, archived);
+      priorForArchive = verified.prior;
+      priorPointerForArchive = verified.pointer;
     }
     verifyBundle(pending);
     const observation = await readWorkstationObservation(
@@ -955,6 +1120,18 @@ export function createMathematicalCalibrationActivationRegistryV1(
       pendingExpiresAt: pending.pendingExpiresAt,
       writtenAt: exactNow.toISOString(),
     };
+    if (priorForArchive && priorPointerForArchive && await exists(pointerPath)) {
+      await mkdir(supersededPointersRoot, { recursive: true, mode: 0o700 });
+      const archivedPointerPath = supersededPointerPath(priorForArchive.activationId);
+      if (await exists(archivedPointerPath)) {
+        fail(
+          "AI_GRADER_LOCAL_CALIBRATION_IMMUTABLE_CONFLICT",
+          "Prior ACTIVE pointer already has a successor archive while it is still current.",
+        );
+      }
+      await rename(pointerPath, archivedPointerPath);
+      await chmod(archivedPointerPath, 0o600);
+    }
     await writeAtomic(pointerPath, aiGraderCalibrationLocalPointerV1Schema.parse(pendingPointer));
     return receipt;
   }
@@ -1116,6 +1293,7 @@ export function createMathematicalCalibrationActivationRegistryV1(
       evidenceRoot,
       successfulEvidenceRoot,
       failedEvidenceRoot,
+      supersededPointersRoot,
       pointerPath,
     },
   };

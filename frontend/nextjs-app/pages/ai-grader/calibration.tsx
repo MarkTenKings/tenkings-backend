@@ -448,10 +448,34 @@ export default function AiGraderCalibrationPage() {
         throw new Error("Fresh authentication did not produce a human-admin session.");
       }
       const credentials = pairedStationCredentials();
+      const stationStatus = await callAiGraderStationBridge({ ...credentials, action: "status" });
+      const priorActiveAuthority = input.action === "reactivate"
+        ? registryState.status?.authority ?? undefined
+        : undefined;
+      const activeActivation = input.action === "reactivate"
+        ? registryState.status?.active ?? undefined
+        : undefined;
+      if (
+        input.action === "reactivate" &&
+        (
+          !priorActiveAuthority ||
+          !activeActivation ||
+          priorActiveAuthority.activationId !== input.priorActivationId ||
+          activeActivation.activationId !== input.priorActivationId
+        )
+      ) {
+        throw new Error("Refresh the exact signed current ACTIVE authority before reactivation.");
+      }
       const result = await runAiGraderCalibrationActivationWorkflowV1({
         freshAdminToken: freshSession.token,
         ...credentials,
-        selection: input,
+        selection: {
+          ...input,
+          ...(priorActiveAuthority ? { priorActiveAuthority } : {}),
+          ...(activeActivation
+            ? { targetHelperVersion: stationStatus.bridgeVersion }
+            : {}),
+        },
       });
       setMessage(`Exact activation ${result.completed.activation.activationId} is hosted and locally ACTIVE.`);
       await refreshRegistry(freshSession.token);
@@ -460,7 +484,7 @@ export default function AiGraderCalibrationPage() {
     } finally {
       setRegistryBusy(false);
     }
-  }, [ensureSession, refreshRegistry]);
+  }, [ensureSession, refreshRegistry, registryState.status]);
 
   if (!router.isReady || (!localMock && sessionLoading)) {
     return <main className="gate"><p>Checking admin access…</p><style jsx>{`.gate{min-height:100vh;display:grid;place-items:center;background:#0b0d0c;color:#f5f1e7;font-family:system-ui}`}</style></main>;

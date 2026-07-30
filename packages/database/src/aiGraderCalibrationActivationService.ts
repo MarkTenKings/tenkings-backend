@@ -641,6 +641,7 @@ function pendingAuthorityFrom(
 
 function observationAuthorityFrom(
   snapshotValue: unknown,
+  contextValue: unknown,
   registryRevision: string,
   observationId: string,
   issuedAt: Date,
@@ -648,7 +649,21 @@ function observationAuthorityFrom(
   signingKey: AiGraderCalibrationHostedAuthoritySigningKeyV1,
 ): AiGraderCalibrationObservationAuthorityV1 {
   const snapshot = record(snapshotValue, "observation snapshot");
-  const context = parseContext(snapshot);
+  const context = aiGraderOperatingContextV1Schema.parse(contextValue);
+  const operatingContextHash = hash(canonicalAiGraderOperatingContextV1(context));
+  const runtimeContextHash = hash(canonicalAiGraderRuntimeContextV1(context));
+  if (
+    context.rig.rigId !== snapshot.rigId ||
+    context.calibration.bundleManifestSha256 !== snapshot.mathematicalBundleManifestSha256 ||
+    context.calibration.memberLedgerSha256 !== snapshot.mathematicalMemberLedgerSha256 ||
+    context.calibration.rigCharacterizationSha256 !== snapshot.mathematicalRigCharacterizationSha256
+  ) {
+    return failure(
+      "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+      "Observation operating context does not match the immutable calibration snapshot evidence.",
+      503,
+    );
+  }
   const unsigned = {
     schemaVersion: AI_GRADER_CALIBRATION_OBSERVATION_AUTHORITY_V1_SCHEMA_VERSION,
     authorityPhase: "OBSERVATION" as const,
@@ -658,12 +673,12 @@ function observationAuthorityFrom(
     rigId: text(snapshot.rigId, "snapshot.rigId"),
     bundleManifestSha256: exactSha(snapshot.mathematicalBundleManifestSha256, "snapshot.bundleManifestSha256"),
     memberLedgerSha256: exactSha(snapshot.mathematicalMemberLedgerSha256, "snapshot.memberLedgerSha256"),
-    runtimeContextHash: exactSha(snapshot.mathematicalRuntimeContextHash, "snapshot.runtimeContextHash"),
+    runtimeContextHash,
     rigCharacterizationSha256: exactSha(
       snapshot.mathematicalRigCharacterizationSha256,
       "snapshot.rigCharacterizationSha256",
     ),
-    operatingContextHash: exactSha(snapshot.mathematicalOperatingContextHash, "snapshot.operatingContextHash"),
+    operatingContextHash,
     operatingContextV1: context,
     hostedAuthorityKeyId: signingKey.keyId,
     hostedAuthoritySignatureAlgorithm: AI_GRADER_CALIBRATION_HOSTED_AUTHORITY_SIGNATURE_ALGORITHM_V1,
@@ -889,11 +904,24 @@ export function createAiGraderCalibrationActivationService(
     rigId: string;
     snapshotId: string;
     expectedRegistryRevision: string;
+    priorActivationId?: string;
+    targetHelperVersion?: string;
   }) {
     const signingKey = requireHostedAuthoritySigningKey();
     const rigId = text(input.rigId, "rigId");
     const snapshotId = text(input.snapshotId, "snapshotId");
     const expectedRegistryRevision = exactSha(input.expectedRegistryRevision, "expectedRegistryRevision");
+    const priorActivationId = input.priorActivationId === undefined
+      ? undefined : text(input.priorActivationId, "priorActivationId");
+    const targetHelperVersion = input.targetHelperVersion === undefined
+      ? undefined : text(input.targetHelperVersion, "targetHelperVersion");
+    if ((priorActivationId === undefined) !== (targetHelperVersion === undefined)) {
+      failure(
+        "AI_GRADER_CALIBRATION_ACTIVATION_INVALID_INPUT",
+        "Helper-identity successor observation requires both priorActivationId and targetHelperVersion.",
+        400,
+      );
+    }
     const at = date(now(), "now");
     const registry = await loadRegistry(db, rigId, at, true);
     if (registry.registryRevision !== expectedRegistryRevision) {
@@ -913,9 +941,60 @@ export function createAiGraderCalibrationActivationService(
     }
     const snapshot = exactSnapshotForActivation(snapshotRow, rigId);
     await verifySnapshotStorage(snapshot);
+    let context = parseContext(snapshot);
+    if (priorActivationId && targetHelperVersion) {
+      if (registry.activeActivationId !== priorActivationId) {
+        failure(
+          "AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED",
+          "Helper-identity successor observation requires the exact current active activation.",
+          409,
+        );
+      }
+      const priorRow = await db.mathematicalCalibrationActivation.findFirst({
+        where: { id: priorActivationId, rigId, calibrationSnapshotId: snapshotId },
+        include: { events: { orderBy: { sequence: "asc" } } },
+      });
+      if (!priorRow) {
+        failure(
+          "AI_GRADER_CALIBRATION_ACTIVATION_NOT_FOUND",
+          "The exact prior active calibration authority was not found.",
+          404,
+        );
+      }
+      const prior = record(priorRow, "prior activation");
+      const priorEvents = sortedEvents(prior);
+      if (!priorEvents.some((entry) => entry.eventType === "ACTIVATED") ||
+          eventState(priorEvents.at(-1)!.eventType) !== "ACTIVE") {
+        failure(
+          "AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED",
+          "Helper-identity successor observation requires an exact ACTIVE prior authority.",
+          409,
+        );
+      }
+      const priorContext = aiGraderOperatingContextV1Schema.safeParse(prior.operatingContextV1);
+      if (
+        !priorContext.success ||
+        hash(canonicalAiGraderOperatingContextV1(priorContext.data)) !== prior.operatingContextHash ||
+        hash(canonicalAiGraderRuntimeContextV1(priorContext.data)) !== prior.runtimeContextHash
+      ) {
+        failure(
+          "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+          "Helper-identity successor requires an intact exact prior context.",
+          409,
+        );
+      }
+      context = aiGraderOperatingContextV1Schema.parse({
+        ...priorContext.data,
+        software: {
+          ...priorContext.data.software,
+          helperVersion: targetHelperVersion,
+        },
+      });
+    }
     return {
       observationAuthority: observationAuthorityFrom(
         snapshot,
+        context,
         registry.registryRevision,
         `calibration-observation-${randomId()}`,
         at,
@@ -929,6 +1008,7 @@ export function createAiGraderCalibrationActivationService(
     authorityValue: unknown,
     observationValue: unknown,
     snapshot: JsonRecord,
+    expectedContext: AiGraderOperatingContextV1,
     expectedRegistryRevision: string,
     at: Date,
   ) {
@@ -961,9 +1041,11 @@ export function createAiGraderCalibrationActivationService(
       authority.rigId !== snapshot.rigId ||
       authority.bundleManifestSha256 !== snapshot.mathematicalBundleManifestSha256 ||
       authority.memberLedgerSha256 !== snapshot.mathematicalMemberLedgerSha256 ||
-      authority.runtimeContextHash !== snapshot.mathematicalRuntimeContextHash ||
+      authority.runtimeContextHash !== hash(canonicalAiGraderRuntimeContextV1(expectedContext)) ||
       authority.rigCharacterizationSha256 !== snapshot.mathematicalRigCharacterizationSha256 ||
-      authority.operatingContextHash !== snapshot.mathematicalOperatingContextHash ||
+      authority.operatingContextHash !== hash(canonicalAiGraderOperatingContextV1(expectedContext)) ||
+      canonicalAiGraderCalibrationJsonV1(authority.operatingContextV1) !==
+        canonicalAiGraderCalibrationJsonV1(expectedContext) ||
       hash(canonicalAiGraderOperatingContextV1(authority.operatingContextV1)) !== authority.operatingContextHash ||
       observation.observationId !== authority.observationId ||
       observation.hostedObservationAuthoritySha256 !== authoritySha256 ||
@@ -1072,17 +1154,6 @@ export function createAiGraderCalibrationActivationService(
       if (!snapshotRow) failure("AI_GRADER_CALIBRATION_ACTIVATION_SNAPSHOT_NOT_ELIGIBLE", "The exact selected snapshot was not found for this rig.", 404);
       const snapshot = exactSnapshotForActivation(snapshotRow, rigId);
       await verifySnapshotStorage(snapshot);
-      const context = parseContext(snapshot);
-      const observation = verifyObservationForActivation(
-        input.observationAuthority,
-        input.workstationObservation,
-        snapshot,
-        expectedRegistryRevision,
-        at,
-      );
-      if (observation.workstationObservationSha256 !== workstationObservationSha256) {
-        failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation evidence hash changed during verification.", 409);
-      }
       const prior = priorActivationId
         ? await tx.mathematicalCalibrationActivation.findFirst({
             where: { id: priorActivationId, rigId, calibrationSnapshotId: snapshotId },
@@ -1091,6 +1162,56 @@ export function createAiGraderCalibrationActivationService(
       const priorWasActive = prior
         ? sortedEvents(record(prior, "prior activation")).some((entry) => entry.eventType === "ACTIVATED")
         : false;
+      let context = parseContext(snapshot);
+      let helperIdentitySuccessor = false;
+      if (kind === "reactivate" && prior) {
+        const priorRecord = record(prior, "prior activation");
+        const priorContext = aiGraderOperatingContextV1Schema.safeParse(priorRecord.operatingContextV1);
+        const requestedContext = aiGraderCalibrationObservationAuthorityV1Schema
+          .parse(input.observationAuthority).operatingContextV1;
+        if (!priorContext.success ||
+            hash(canonicalAiGraderOperatingContextV1(priorContext.data)) !== priorRecord.operatingContextHash ||
+            hash(canonicalAiGraderRuntimeContextV1(priorContext.data)) !== priorRecord.runtimeContextHash) {
+          failure(
+            "AI_GRADER_CALIBRATION_ACTIVATION_STATE_CONTRADICTORY",
+            "Prior activation operating context is invalid.",
+            503,
+          );
+        }
+        const sameContext = canonicalAiGraderCalibrationJsonV1(requestedContext) ===
+          canonicalAiGraderCalibrationJsonV1(priorContext.data);
+        const helperSuccessorContext = aiGraderOperatingContextV1Schema.parse({
+          ...priorContext.data,
+          software: {
+            ...priorContext.data.software,
+            helperVersion: requestedContext.software.helperVersion,
+          },
+        });
+        const helperVersionOnlyChange =
+          requestedContext.software.helperVersion !== priorContext.data.software.helperVersion &&
+          canonicalAiGraderCalibrationJsonV1(requestedContext) ===
+            canonicalAiGraderCalibrationJsonV1(helperSuccessorContext);
+        if (!sameContext && !helperVersionOnlyChange) {
+          failure(
+            "AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED",
+            "Reactivate may preserve the exact context or change only the helper version.",
+            409,
+          );
+        }
+        helperIdentitySuccessor = helperVersionOnlyChange;
+        context = requestedContext;
+      }
+      const observation = verifyObservationForActivation(
+        input.observationAuthority,
+        input.workstationObservation,
+        snapshot,
+        context,
+        expectedRegistryRevision,
+        at,
+      );
+      if (observation.workstationObservationSha256 !== workstationObservationSha256) {
+        failure("AI_GRADER_CALIBRATION_ACTIVATION_RECEIPT_REJECTED", "Runtime observation evidence hash changed during verification.", 409);
+      }
       const historical = await tx.mathematicalCalibrationActivation.findMany({
         where: { rigId, calibrationSnapshotId: snapshotId },
         include: { events: { orderBy: { sequence: "asc" } } },
@@ -1103,6 +1224,13 @@ export function createAiGraderCalibrationActivationService(
       if (kind === "reactivate" && !priorWasActive) {
         failure("AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED", "Reactivate requires the exact prior active activation for this preserved snapshot.", 409);
       }
+      if (helperIdentitySuccessor && before.activeActivationId !== priorActivationId) {
+        failure(
+          "AI_GRADER_CALIBRATION_ACTIVATION_EXPLICIT_REACTIVATION_REQUIRED",
+          "Reactivate requires the exact current active activation; historical fallback is prohibited.",
+          409,
+        );
+      }
       const activationId = text(randomId(), "activationId");
       const expiresAt = new Date(at.getTime() + ttlMs);
       const activationIdentity = {
@@ -1110,8 +1238,8 @@ export function createAiGraderCalibrationActivationService(
         activationId,
         rigId,
         snapshotId,
-        operatingContextHash: snapshot.mathematicalOperatingContextHash,
-        runtimeContextHash: snapshot.mathematicalRuntimeContextHash,
+        operatingContextHash: hash(canonicalAiGraderOperatingContextV1(context)),
+        runtimeContextHash: hash(canonicalAiGraderRuntimeContextV1(context)),
         rigCharacterizationSha256: snapshot.mathematicalRigCharacterizationSha256,
         bundleManifestSha256: snapshot.mathematicalBundleManifestSha256,
         memberLedgerSha256: snapshot.mathematicalMemberLedgerSha256,
@@ -1157,8 +1285,8 @@ export function createAiGraderCalibrationActivationService(
         calibrationSnapshotId: snapshotId,
         activationHash,
         operatingContextV1: context,
-        operatingContextHash: snapshot.mathematicalOperatingContextHash,
-        runtimeContextHash: snapshot.mathematicalRuntimeContextHash,
+        operatingContextHash: hash(canonicalAiGraderOperatingContextV1(context)),
+        runtimeContextHash: hash(canonicalAiGraderRuntimeContextV1(context)),
         rigCharacterizationSha256: snapshot.mathematicalRigCharacterizationSha256,
         bundleManifestSha256: snapshot.mathematicalBundleManifestSha256,
         memberLedgerSha256: snapshot.mathematicalMemberLedgerSha256,
