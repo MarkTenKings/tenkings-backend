@@ -1,5 +1,18 @@
 # Session Log (Append Only)
 
+## 2026-07-30 - Human Grade number-only score nodes authorized
+
+- Mark authorized the focused Option 2 refinement of the standalone Human Grade label HUD and requested the fastest protected path to Production.
+- The printable right third removes the visible `CTR`, `CRN`, `EDG`, and `SUR` abbreviations. The fixed score mapping remains top Centering, left Corners, right Edges, and bottom Surface, with each numeric score centered inside its own circular outline node.
+- The portrait frame widens from `33 pt` to `38 pt`, remains vertically oriented at `38 x 46.2 pt`, uses smaller precision reticles, and explicitly interrupts every frame and axis segment before a score node or the calculated center grade. The central final-grade size and weighted grading formula remain unchanged.
+- The Human Grade admin preview mirrors the number-only circular score-node design while retaining full accessible field names for Centering, Corners, Edges, and Surface.
+- A complete 16-label Letter proof was rendered at 300 DPI and visually inspected. The reported `9.6` final grade with `10`, `10`, `10`, and `8` subgrades, plus decimal node values `8.5`, `9.2`, and `7.5`, render without abbreviation collisions, crossed text, clipping, or unreadable spacing.
+- Focused Human Grade ESLint passed with zero findings, Human Grade tests passed `7/7`, and `git diff --check` passed.
+- The complete Production-equivalent Next.js build passed with `RUN_DB_MIGRATIONS=false`. It emitted only the repository's existing unrelated image, hook-dependency, stale browser metadata, Tailwind glob, and optional Sharp development-module warnings.
+- Existing completed Human Grade pages remain render-on-request with `private, no-store`; after Production deployment, hard refresh or a new download will apply this refinement to every existing READY page. Previously downloaded local PDF files remain unchanged.
+- Planned Production action is limited to one complete Production-equivalent build, one protected PR, merge after all required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live Human Grade label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+
 ## 2026-07-30 - Human Grade portrait grading HUD authorized
 
 - Mark authorized replacing the standalone Human Grade label's right-third 2x2 subgrade grid with a portrait card-proportion precision-grading HUD and merging the focused design to Production.

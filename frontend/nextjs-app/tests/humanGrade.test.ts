@@ -147,11 +147,9 @@ test("human-grade pages copy the approved 2 by 8 physical sheet geometry", () =>
 
 test("human-grade grade HUD uses a portrait card frame", () => {
   assert.ok(HUMAN_GRADE_HUD_GEOMETRY.frameHeightPt > HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt);
-  assert.equal(
-    Number((HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt / HUMAN_GRADE_HUD_GEOMETRY.frameHeightPt).toFixed(3)),
-    Number((2.5 / 3.5).toFixed(3))
-  );
-  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeScoreFontSizePt >= 8);
+  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt >= 38);
+  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeScoreFontSizePt >= 9);
+  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeRadiusPt >= 5);
 });
 
 test("human-grade renderer creates one exact letter page with embedded approved fonts", async () => {
@@ -204,8 +202,11 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(pdfApi, /"Cache-Control", "private, no-store"/);
   assert.match(renderer, /HUMAN_GRADE_HUD_GEOMETRY/);
   assert.match(renderer, /drawHudReticle/);
+  assert.match(renderer, /drawHudNode/);
+  assert.match(renderer, /nodeRadiusPt/);
   assert.match(renderer, /gradeVisualTop/);
   assert.match(renderer, /gradeVisualBottom/);
+  assert.doesNotMatch(renderer, /code: "CTR"|code: "CRN"|code: "EDG"|code: "SUR"|nodeCodeFontSizePt/);
   assert.doesNotMatch(renderer, /subgradeGridTopPt|subgradesTopPt/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);
