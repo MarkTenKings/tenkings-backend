@@ -1786,7 +1786,7 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
   }
 });
 
-test("Human Geometry V2 rejects stale V1 work and degenerate coordinates, then hydrates one exact strict V2 receipt", async () => {
+test("Human Geometry V2 finalization follows one held stale V1 slot without stranding or duplication", async () => {
   const outputDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "tenkings-human-geometry-v2-race-"),
   );
@@ -1882,89 +1882,87 @@ test("Human Geometry V2 rejects stale V1 work and degenerate coordinates, then h
       );
     }
 
+    const v2Sides = confirmedFixtureGeometrySides(manifest);
+    await service.action("lock-human-geometry", {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      operatorId: "geometry-race-operator",
+      idempotencyKey: "geometry-race-v2-lock",
+      expectedReceiptVersion: 2,
+      humanGeometrySides: v2Sides,
+    });
+    const v2Receipt = manifest.humanGeometryAssist.lockedReceipt;
+    assert.equal(item.state, "finalizing");
+    assert.equal(v2Receipt.receiptVersion, 2);
+    assert.equal(
+      calls.length,
+      1,
+      "V2 remains queued behind the exact held V1 item slot",
+    );
+    assert.deepEqual(
+      service.pendingRapidFinalizationClaims.get(item.queueItemId),
+      {
+        queueItemId: item.queueItemId,
+        receiptVersion: 2,
+        receiptSha256: v2Receipt.receiptSha256,
+      },
+    );
+
     releaseV1();
+    for (
+      let attempt = 0;
+      attempt < 500 &&
+      (
+        calls.length !== 2 ||
+        release.callCount !== 1 ||
+        service.rapidFinalizationJobs.size !== 0
+      );
+      attempt += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     await service.reportWorker;
     await service.rapidMutationChain;
     assert.equal(
-      item.state,
-      "geometry_review_required",
-      "released V1 work cannot overwrite the V2 review gate",
-    );
-    assert.equal(manifest.humanGeometryAssist.receiptVersion, 2);
-    assert.equal(manifest.mathematicalV1.execution, undefined);
-    assert.equal(manifest.reportBundle, undefined);
-    assert.equal(manifest.productionRelease, undefined);
-    assert.equal(release.callCount, 0);
-
-    const degenerateV2 = confirmedFixtureGeometrySides(manifest);
-    degenerateV2.front.printedBorders.top.finalLine.end =
-      structuredClone(
-        degenerateV2.front.printedBorders.top.finalLine.start,
-      );
-    await assert.rejects(
-      service.action("lock-human-geometry", {
-        queueItemId: item.queueItemId,
-        gradingSessionId: item.sessionId,
-        reportId: item.reportId,
-        operatorId: "geometry-race-operator",
-        idempotencyKey: "geometry-race-v2-degenerate",
-        expectedReceiptVersion: 2,
-        humanGeometrySides: degenerateV2,
-      }),
-      /top printed border must have nonzero length/i,
-    );
-    assert.equal(item.state, "geometry_review_required");
-    assert.equal(manifest.humanGeometryAssist.state, "geometry_review_required");
-    assert.equal(calls.length, 1);
-
-    await lockFixtureGeometry(service, item, "human-geometry-race-v2");
-    assert.equal(calls.length, 2, "exactly one V2 worker result is permitted");
-    assert.equal(
-      calls[1].humanGeometryReceipt.receiptVersion,
+      calls.length,
       2,
+      "the held V1 and exactly one current V2 worker are the only executions",
     );
-    assert.equal(release.callCount, 1);
+    assert.deepEqual(
+      calls.map((call) => call.humanGeometryReceipt.receiptVersion),
+      [1, 2],
+    );
+    assert.equal(
+      calls[1].humanGeometryReceipt.receiptSha256,
+      v2Receipt.receiptSha256,
+    );
+    assert.match(calls[1].outputDir, /geometry-v2$/);
+    assert.equal(release.callCount, 1, "stale V1 cannot create a release");
+    assert.equal(manifest.humanGeometryAssist.receiptVersion, 2);
+    assert.equal(
+      manifest.humanGeometryAssist.lockedReceipt.receiptSha256,
+      v2Receipt.receiptSha256,
+    );
+    assert.equal(
+      manifest.humanGeometryAssist.gradingClaimReceiptSha256,
+      v2Receipt.receiptSha256,
+    );
     assert.equal(manifest.mathematicalV1.execution.status, "completed");
-    const v2Receipt = manifest.humanGeometryAssist.lockedReceipt;
     const strictProjection =
       aiGraderHumanGeometryReportProjectionV1Schema.parse(
         manifest.reportBundle.geometry,
       );
-    const hydratedProjection =
-      service.assertLockedHumanGeometryReportProjection(
-        manifest,
-        manifest.reportBundle,
-      );
     assert.equal(strictProjection.receiptVersion, 2);
     assert.equal(strictProjection.receiptSha256, v2Receipt.receiptSha256);
     assert.equal(
-      hydratedProjection.receiptSha256,
-      v2Receipt.receiptSha256,
+      strictProjection.measurementUncertaintyAuthority.policyHashSha256,
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1
+        .policyHashSha256,
     );
-    assert.deepEqual(
-      hydratedProjection.measurementUncertaintyAuthority,
-      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
-    );
-    assert.throws(
-      () => service.assertLockedHumanGeometryReportProjection(
-        manifest,
-        { ...manifest.reportBundle, geometry: undefined },
-      ),
-      /required|invalid|expected/i,
-    );
-    assert.throws(
-      () => service.assertLockedHumanGeometryReportProjection(
-        manifest,
-        {
-          ...manifest.reportBundle,
-          geometry: {
-            ...manifest.reportBundle.geometry,
-            receiptSha256: "0".repeat(64),
-          },
-        },
-      ),
-      /does not match the exact locked receipt/i,
-    );
+    assert.equal(service.rapidFinalizationJobs.size, 0);
+    assert.equal(service.rapidFinalizationJobClaims.size, 0);
+    assert.equal(service.pendingRapidFinalizationClaims.size, 0);
   } finally {
     if (releaseV1) releaseV1();
     fs.rmSync(outputDir, { recursive: true, force: true });

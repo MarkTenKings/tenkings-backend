@@ -5767,6 +5767,10 @@ export class AiGraderLocalStationBridgeService {
   private queuedManifests = new Map<string, AiGraderLocalStationBridgeManifest>();
   private reportWorker: Promise<void> = Promise.resolve();
   private rapidFinalizationJobs = new Map<string, Promise<void>>();
+  private rapidFinalizationJobClaims =
+    new Map<string, HumanGeometryReceiptAuthorityV1>();
+  private pendingRapidFinalizationClaims =
+    new Map<string, HumanGeometryReceiptAuthorityV1>();
   private rapidFinalizationActive = 0;
   private rapidFinalizationWaiters: Array<() => void> = [];
   private rapidMutationChain: Promise<void> = Promise.resolve();
@@ -10804,7 +10808,68 @@ export class AiGraderLocalStationBridgeService {
   }
 
   private startRapidBackgroundForReleasedCard(queueItemId: string): void {
-    this.enqueueRapidFinalization(queueItemId);
+    this.enqueueRapidFinalization(
+      queueItemId,
+      this.currentLockedHumanGeometryFinalizationClaim(queueItemId),
+    );
+  }
+
+  private currentLockedHumanGeometryFinalizationClaim(
+    queueItemId: string,
+  ): HumanGeometryReceiptAuthorityV1 | undefined {
+    const manifest = this.queuedManifests.get(queueItemId);
+    const item = this.rapidQueue.items.find(
+      (candidate) => candidate.queueItemId === queueItemId,
+    );
+    const geometry = manifest?.humanGeometryAssist;
+    if (
+      !manifest ||
+      !item ||
+      manifest.rapidCapture.queueItemId !== queueItemId ||
+      manifest.sessionId !== item.sessionId ||
+      manifest.reportId !== item.reportId ||
+      manifest.rapidCapture.workflowState !== "finalizing" ||
+      item.state !== "finalizing" ||
+      geometry?.state !== "locked" ||
+      !geometry.lockedReceipt ||
+      geometry.receiptVersion !== geometry.lockedReceipt.receiptVersion
+    ) {
+      return undefined;
+    }
+    return {
+      queueItemId,
+      receiptVersion: geometry.lockedReceipt.receiptVersion,
+      receiptSha256: geometry.lockedReceipt.receiptSha256,
+    };
+  }
+
+  private humanGeometryFinalizationClaimIsCurrent(
+    claim: HumanGeometryReceiptAuthorityV1,
+  ): boolean {
+    const current =
+      this.currentLockedHumanGeometryFinalizationClaim(claim.queueItemId);
+    return (
+      current?.receiptVersion === claim.receiptVersion &&
+      current.receiptSha256 === claim.receiptSha256
+    );
+  }
+
+  private rememberPendingRapidFinalizationClaim(
+    claim: HumanGeometryReceiptAuthorityV1,
+  ): void {
+    const active = this.rapidFinalizationJobClaims.get(claim.queueItemId);
+    if (
+      active?.receiptVersion === claim.receiptVersion &&
+      active.receiptSha256 === claim.receiptSha256
+    ) {
+      return;
+    }
+    const pending = this.pendingRapidFinalizationClaims.get(
+      claim.queueItemId,
+    );
+    if (!pending || claim.receiptVersion >= pending.receiptVersion) {
+      this.pendingRapidFinalizationClaims.set(claim.queueItemId, claim);
+    }
   }
 
   private acquireRapidFinalizationSlot(): Promise<void> {
@@ -10831,11 +10896,31 @@ export class AiGraderLocalStationBridgeService {
     this.rapidFinalizationWaiters.shift()?.();
   }
 
-  private enqueueRapidFinalization(queueItemId: string) {
-    if (this.rapidFinalizationJobs.has(queueItemId)) return;
+  private enqueueRapidFinalization(
+    queueItemId: string,
+    requestedClaim?: HumanGeometryReceiptAuthorityV1,
+  ) {
+    if (
+      requestedClaim &&
+      !this.humanGeometryFinalizationClaimIsCurrent(requestedClaim)
+    ) {
+      return;
+    }
+    if (this.rapidFinalizationJobs.has(queueItemId)) {
+      if (requestedClaim) {
+        this.rememberPendingRapidFinalizationClaim(requestedClaim);
+      }
+      return;
+    }
     const finalization = Promise.resolve().then(async () => {
       await this.acquireRapidFinalizationSlot();
       try {
+        if (
+          requestedClaim &&
+          !this.humanGeometryFinalizationClaimIsCurrent(requestedClaim)
+        ) {
+          return;
+        }
         const manifest = this.queuedManifests.get(queueItemId);
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
@@ -11110,6 +11195,11 @@ export class AiGraderLocalStationBridgeService {
       }
     });
     this.rapidFinalizationJobs.set(queueItemId, finalization);
+    if (requestedClaim) {
+      this.rapidFinalizationJobClaims.set(queueItemId, requestedClaim);
+    } else {
+      this.rapidFinalizationJobClaims.delete(queueItemId);
+    }
     this.reportWorker = Promise.all(
       [...this.rapidFinalizationJobs.values()].map((job) =>
         job.catch(() => undefined)),
@@ -11118,6 +11208,17 @@ export class AiGraderLocalStationBridgeService {
       .finally(() => {
         if (this.rapidFinalizationJobs.get(queueItemId) === finalization) {
           this.rapidFinalizationJobs.delete(queueItemId);
+          this.rapidFinalizationJobClaims.delete(queueItemId);
+          const pending =
+            this.pendingRapidFinalizationClaims.get(queueItemId);
+          this.pendingRapidFinalizationClaims.delete(queueItemId);
+          if (
+            pending &&
+            !this.closing &&
+            this.humanGeometryFinalizationClaimIsCurrent(pending)
+          ) {
+            this.enqueueRapidFinalization(queueItemId, pending);
+          }
         }
       })
       .catch(() => {});
