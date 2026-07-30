@@ -11,6 +11,14 @@
 - Planned Production action is limited to focused Human Grade lint/tests, a current 300 DPI printable proof, one protected PR, merge after required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live label mutation is required.
 - No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
 
+### Production result
+
+- Focused PR `#246` passed all `12/12` required GitHub, disposable PostgreSQL migration-chain, Docker-image, and Vercel checks and merged through the protected path at `abd44a0b94f21b476e16e326dfd4cf1e4a28a0f3`.
+- The exact merge's normal Vercel Production deployment completed successfully at `2026-07-30T10:50:38Z`; deployment evidence is `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/G4opspEudMh231xa3MYcQ6TA3Tvo`.
+- No database migration was required or applied.
+- Read-only Production smoke verification returned HTTP `200` for `/admin/human-grade`, retained JSON HTTP `401` responses for unauthenticated queue and printable-sheet requests, and found `Calculated grade and human subgrades`, `compact-subgrade-code`, and `compact-subgrade-equals` in the deployed Human Grade page bundle.
+- No live Human Grade label was created, edited, deleted, regraded, or reassigned. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
+
 ## 2026-07-30 - Human Grade compact 2x2 subgrades restored
 
 - Mark changed direction and authorized restoring the original compact 2x2 subgrade layout beneath the large Human Grade final score.
