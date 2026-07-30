@@ -212,6 +212,7 @@ export * from "./aiGraderReportBundlesV03";
 export * from "./aiGraderMathematicalCalibrationV1";
 export * from "./aiGraderProductOwnerOperationalAcceptanceV1";
 export * from "./aiGraderPokemonStandardCornerProfileV1";
+export * from "./aiGraderHumanGeometryAssistV1";
 export * from "./aiGraderCalibrationActivationV1";
 export * from "./aiGraderOperatorResolutionAuthenticationV1";
 export * from "./aiGraderOcrReviewContract";

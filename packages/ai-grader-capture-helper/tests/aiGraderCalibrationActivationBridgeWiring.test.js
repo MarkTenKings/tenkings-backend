@@ -96,7 +96,7 @@ test("activation evidence collision fails before any real hardware boundary", as
     service.observeMathematicalCalibrationActivationRuntime(
       {},
       "local-dell-ai-grader-station",
-      "ai-grader-local-station-bridge-v0.10",
+      "ai-grader-local-station-bridge-v0.11",
       evidenceDirectory,
     ),
     /create-new target already exists/,

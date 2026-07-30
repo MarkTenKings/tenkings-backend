@@ -14,6 +14,7 @@ import {
   type AiGraderCalibrationActivationAuthorityV1,
 } from "@tenkings/shared";
 import { useSession, type SessionPayload } from "../../hooks/useSession";
+import HumanGeometryAssistPanel from "../../components/ai-grader/HumanGeometryAssistPanel";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
@@ -793,6 +794,7 @@ const OCR_PREFILL_FIELD_LABELS = {
 } as const;
 
 const RAPID_REVIEWABLE_STATES = new Set<string>([
+  "geometry_review_required",
   "identity_resolution_required",
   "operator_resolution_required",
   "finding_review_required",
@@ -1543,7 +1545,6 @@ export default function AiGraderStationPage() {
   const revealedIdentityReviewRef = useRef<string | null>(null);
   const hydratedOcrIdentityRef = useRef<string | null>(null);
   const queuedOcrRunningRef = useRef<Set<string>>(new Set());
-  const eyesCenteringRunningRef = useRef<Set<string>>(new Set());
   const queuedOcrInterruptedHandledRef = useRef<Set<string>>(new Set());
   const queuedOcrAttemptOwnerClaimRef = useRef<AiGraderQueuedOcrAttemptOwnerClaim | null>(null);
   const [queuedOcrAttemptOwner, setQueuedOcrAttemptOwner] = useState<QueuedOcrAttemptOwnerState>({
@@ -3527,86 +3528,6 @@ export default function AiGraderStationPage() {
     queuedOcrAttemptOwner.status,
     queuedOcrAttemptOwner.attemptOwnerId,
     queuedOcrSchedulerRevision,
-    stationToken,
-  ]);
-
-  useEffect(() => {
-    const eyesItem = rapidQueueItems.find((item) =>
-      item.ocr.state === "succeeded" &&
-      item.mathematicalV1?.eyesCenteringSelectionState ===
-        "eligible");
-    if (
-      !eyesItem ||
-      !bridgeConnected ||
-      !stationToken.trim() ||
-      sessionLoading ||
-      !session?.token
-    ) return;
-    const identity = {
-      queueItemId: eyesItem.queueItemId,
-      gradingSessionId: eyesItem.sessionId,
-      reportId: eyesItem.reportId,
-    };
-    const identityKey = [
-      identity.queueItemId,
-      identity.gradingSessionId,
-      identity.reportId,
-      "eyes-centering",
-    ].join(":");
-    if (eyesCenteringRunningRef.current.has(identityKey)) return;
-    eyesCenteringRunningRef.current.add(identityKey);
-    let active = true;
-    void (async () => {
-      try {
-        const actor = await verifyProductionSession(session.token);
-        if (!active) return;
-        setProductionAuthActor(actor);
-        const result =
-          await runAiGraderOcrPrefillFromLocalReport({
-            baseUrl: bridgeUrl,
-            stationToken,
-            ...identity,
-            authHeaders: buildAdminHeaders(session.token),
-            mode: "eyes_selection",
-          });
-        if (!active) return;
-        const completed = await callAiGraderStationBridge({
-          baseUrl: bridgeUrl,
-          stationToken,
-          action: "complete-eyes-centering-selection",
-          body: { ...identity, result },
-        });
-        if (!active) return;
-        setStatus((current) =>
-          aiGraderMergeBackgroundQueueStatus(current, completed));
-      } catch (selectionError) {
-        if (!active) return;
-        setError(
-          (
-            "EYES could not complete its exact border-candidate review; deterministic measurements remain unchanged and no candidate was accepted: " +
-            (selectionError instanceof Error
-              ? selectionError.message
-              : "unknown EYES failure")
-          ).slice(0, 750),
-        );
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [
-    rapidQueueItems
-      .map((item) =>
-        [
-          item.queueItemId,
-          item.ocr.state,
-          item.mathematicalV1?.eyesCenteringSelectionState ?? "",
-        ].join(":"))
-      .join("|"),
-    bridgeConnected,
-    bridgeUrl,
-    session?.token,
-    sessionLoading,
     stationToken,
   ]);
 
@@ -7843,6 +7764,17 @@ export default function AiGraderStationPage() {
             ) : null}
           </section>
 
+          {activeReview &&
+          activeReviewManifest?.humanGeometryAssist?.state === "geometry_review_required" ? (
+            <HumanGeometryAssistPanel
+              baseUrl={bridgeUrl}
+              stationToken={stationToken}
+              review={activeReview}
+              operatorId={session?.user.id ?? ""}
+              onStatus={setStatus}
+            />
+          ) : null}
+
           <section className="rapid-queue">
               <div className="rapid-queue-head">
                 <div>
@@ -7863,6 +7795,8 @@ export default function AiGraderStationPage() {
                     ? "Failed"
                     : published
                       ? "Published"
+                    : item.state === "geometry_review_required"
+                      ? "Geometry review required"
                     : reviewable
                       ? "Ready for review"
                       : "Processing";
@@ -7898,8 +7832,10 @@ export default function AiGraderStationPage() {
                                   ? "Open Exact Element Resolution"
                                 : item.state === "finding_review_required"
                                   ? "Open Exact Finding Review"
-                                  : item.state === "insufficient_evidence"
+                                : item.state === "insufficient_evidence"
                                     ? "Open Insufficient Evidence"
+                                  : item.state === "geometry_review_required"
+                                    ? "Review Geometry"
                                     : reviewable
                                       ? "Open for Review"
                                       : statusText}

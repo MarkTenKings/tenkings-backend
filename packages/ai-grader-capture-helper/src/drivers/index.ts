@@ -199,6 +199,8 @@ export * from "./fixedRigFastMathematicalCalibrationV1_2";
 export * from "./fixedRigMathematicalCalibrationCaptureV1";
 export * from "./fixedRigMathematicalCalibrationBundleV1";
 export * from "./productOwnerOperationalAcceptanceV1";
+export * from "./fixedRigAcceptedCalibrationAuthorityV1";
+export * from "./fixedRigHumanGeometryAssistV1";
 export * from "./mathematicalCalibrationActivationRegistryV1";
 export * from "./mathematicalCalibrationOperatingContextRuntimeV1";
 export * from './fixedRigMathematicalStationAdapterV1';

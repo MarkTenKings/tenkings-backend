@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  buildAiGraderHumanGeometryAssistSideV1,
   calculateOverallGradeV1,
   type AiGraderReportBundleV03,
 } from "@tenkings/shared";
@@ -144,6 +145,21 @@ const observation = (elementName: "corners" | "edges", locationName: string) => 
   illuminationMaskAssetId: `front/${elementName}-${locationName}-illumination.png`,
   channelAssetIds: ["front/channel-1.png"],
 });
+
+function confirmedGeometry(sideName: "front" | "back") {
+  const geometry = buildAiGraderHumanGeometryAssistSideV1(sideName, [
+    { x: 20, y: 20 },
+    { x: 1180, y: 20 },
+    { x: 1180, y: 1660 },
+    { x: 20, y: 1660 },
+  ]);
+  for (const border of Object.values(geometry.printedBorders)) border.reviewed = true;
+  for (const corner of Object.values(geometry.physicalCorners)) corner.reviewed = true;
+  geometry.edgeRegionsReviewed = true;
+  geometry.surfaceRegionReviewed = true;
+  geometry.confirmed = true;
+  return geometry;
+}
 
 function displayBundle() {
   const findingId = "surface-scratch-front-1";
@@ -293,6 +309,11 @@ function displayBundle() {
       }],
     },
     evidenceQualityLimitations: [{ limitationId: "glare-1", side: "front", regionId: "region-1", classification: "common_mode_specular_glare", validEvidenceCoverage: 0.85, excludedPixelFraction: 0.15, recoveredFromAlternateChannels: true, recaptureRequired: false, deduction: 0, evidenceAssetIds: ["front/glare.png"], explanation: "Specular pixels were excluded and alternate channels retained valid evidence." }],
+    geometry: {
+      schemaVersion: "ai-grader-human-geometry-receipt-v1",
+      front: confirmedGeometry("front"),
+      back: confirmedGeometry("back"),
+    },
     publicAssets: [
       { id: trueViewAssetId, kind: "report-image", fileName: "true-view.png", publicUrl: "/api/evidence/true-view", sha256: sha("1"), side: "front", evidenceRole: "normalized_card", contentType: "image/png" },
       { id: overlayAssetId, kind: "report-image", fileName: "deduction-overlay.png", publicUrl: "/api/evidence/deduction-overlay", sha256: sha("2"), side: "front", evidenceRole: "deduction_overlay", contentType: "image/png" },
@@ -373,24 +394,22 @@ function ownerAcceptedDisplayBundle() {
   return bundle as AiGraderReportBundleV03;
 }
 
-test("V1 public report renders measured scores, subscores, formulas, and exact evidence without private quality terms", () => {
+test("normal report is concise, uses confirmed overlays, and hides technical audit fields", () => {
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle: displayBundle() }));
   assert.match(html, /9\.58/);
   assert.match(html, /Label 9\.6/);
-  assert.match(html, /Starting score|Start/);
-  assert.match(html, /Front, back, and location subscores/);
-  assert.match(html, /top left/);
-  assert.doesNotMatch(html, /Evidence-quality limitations|common mode specular glare/);
-  assert.match(html, /Vision evidence replay/);
-  assert.match(html, /Immutable grading provenance/);
-  assert.doesNotMatch(html, /confidence|uncertainty|U95|provisional/i);
-  assert.doesNotMatch(html, /Finding review|Human finding review/);
-  assert.match(html, /Exact immutable deduction overlay for finding surface-scratch-front-1/);
-  assert.match(html, /href="\/api\/evidence\/deduction-overlay"/);
-  assert.match(html, /Exact immutable segmentation mask for finding surface-scratch-front-1/);
-  assert.match(html, /href="\/api\/evidence\/segmentation-mask"/);
-  assert.match(html, /Calibration bundle manifest/);
-  assert.match(html, /Exact calibration bundle members/);
+  assert.match(html, /Confirmed Front and Back geometry|Confirmed borders/);
+  assert.match(html, /Measurement \/ finding/);
+  assert.match(html, /Deduction/);
+  assert.match(html, /Subgrade/);
+  assert.match(html, /Confirmed card geometry overlay/);
+  assert.doesNotMatch(html, /Immutable grading provenance|Calibration bundle|Overall calculation/);
+  assert.doesNotMatch(html, /confidence|uncertainty|U95|provisional|formula/i);
+  const visibleText = html.replace(/<[^>]+>/g, " ");
+  assert.doesNotMatch(
+    visibleText,
+    /surface-scratch-front-1|\/api\/evidence\/|[a-f0-9]{64}/i,
+  );
 });
 
 test("local unpublished strict V1 renders the advanced report with verified object URLs and no bulk gallery", () => {
@@ -407,6 +426,7 @@ test("local unpublished strict V1 renders the advanced report with verified obje
     localUnpublished: true,
     showAllEvidenceAssets: false,
     workflowRelease: buildStrictAiGraderMathematicalReleaseV1Fixture(bundle),
+    technicalInspection: true,
   }));
 
   assert.match(html, /Ten Kings Mathematical Grading V1/);
@@ -428,6 +448,7 @@ test("local unpublished strict V1 renders the advanced report with verified obje
 test("owner-accepted calibration metadata remains internal and is not rendered on the public report", () => {
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
     bundle: ownerAcceptedDisplayBundle(),
+    technicalInspection: true,
   }));
   assert.doesNotMatch(html, /Owner accepted with recorded exceptions/);
   assert.doesNotMatch(html, /Mathematical status REJECTED/);
@@ -468,7 +489,10 @@ test("resolved owner explanation appears verbatim in standard HTML with no priva
   });
   Object.assign(bundle.productionRelease.finalGrade, recomposed);
   bundle.productionRelease.label.labelGradeText = recomposed.labelGrade.toFixed(1);
-  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle }));
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle,
+    technicalInspection: true,
+  }));
   assert.match(html, /Edges show light wear along the lower border\./);
   assert.match(html, new RegExp(recomposed.overall.toFixed(2)));
   assert.match(html, new RegExp(`Label ${recomposed.labelGrade.toFixed(1)}`));
@@ -496,7 +520,10 @@ test("resolved physical measurements render the standard report without fabricat
     bundle.productionRelease.finalGrade.elements[element].resolved = true;
   }
   const html = renderToStaticMarkup(
-    createElement(AiGraderMathematicalReportV1, { bundle }),
+    createElement(AiGraderMathematicalReportV1, {
+      bundle,
+      technicalInspection: true,
+    }),
   );
   assert.match(html, /Centering measurements/);
   assert.match(html, /Measurement unit/);
@@ -545,6 +572,7 @@ test("V1 public report renders approved replacement values without human or mach
   const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
     bundle,
     editorialRevision,
+    technicalInspection: true,
   }));
   assert.match(html, /Approved Display Card/);
   assert.match(html, new RegExp(editorialRevision.calculation.overall.toFixed(2)));
@@ -618,7 +646,10 @@ test("registered-template centering renders exact approved reference and corresp
     { id: "front/registered/design-reference.png", kind: "report-image", fileName: "design-reference.png", publicUrl: "/api/evidence/design-reference", sha256: referenceSha256, side: "front", evidenceRole: "design_reference", contentType: "image/png" },
   );
 
-  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, { bundle }));
+  const html = renderToStaticMarkup(createElement(AiGraderMathematicalReportV1, {
+    bundle,
+    technicalInspection: true,
+  }));
   assert.match(html, /Approved design reference/);
   assert.match(html, /approved-front-reference-v3/);
   assert.match(html, /Reference identity/);

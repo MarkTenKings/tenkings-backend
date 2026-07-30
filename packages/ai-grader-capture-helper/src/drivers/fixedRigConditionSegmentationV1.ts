@@ -7,6 +7,7 @@ import {
   mathematicalEvidenceReferenceV1Schema,
   type MathematicalDesignReferenceV1,
   type MathematicalMeasurementV1,
+  type AiGraderHumanGeometrySideV1,
 } from "@tenkings/shared";
 import type {
   FixedRigConditionMeasurementCalibrationV1,
@@ -101,6 +102,7 @@ export interface BuildFixedRigConditionSegmentationV1Input {
   unavailableModalities?: Array<
     "metric_depth" | "polarized_residue" | "design_relative_color"
   >;
+  humanGeometry?: AiGraderHumanGeometrySideV1;
 }
 
 export type FixedRigConditionSegmentationV1Result =
@@ -1012,7 +1014,7 @@ export function buildFixedRigConditionSegmentationV1(
       height: Math.max(1, boundedBottom - y),
     };
   };
-  const cornerBoxes: Array<{
+  let cornerBoxes: Array<{
     location: FixedRigCornerObservationInputV1["location"];
     box: { x: number; y: number; width: number; height: number };
   }> = [
@@ -1053,7 +1055,7 @@ export function buildFixedRigConditionSegmentationV1(
       ),
     },
   ];
-  const edgeBoxes: Array<{
+  let edgeBoxes: Array<{
     location: FixedRigEdgeObservationInputV1["location"];
     box: { x: number; y: number; width: number; height: number };
   }> = [
@@ -1094,6 +1096,31 @@ export function buildFixedRigConditionSegmentationV1(
       ),
     },
   ];
+  const polygonBox = (polygon: Array<{ x: number; y: number }>) => boundedBox(
+    Math.min(...polygon.map((point) => point.x)),
+    Math.min(...polygon.map((point) => point.y)),
+    Math.max(...polygon.map((point) => point.x)) + 1,
+    Math.max(...polygon.map((point) => point.y)) + 1,
+  );
+  if (input.humanGeometry) {
+    cornerBoxes = ([
+      "top_left", "top_right", "bottom_right", "bottom_left",
+    ] as const).map((location) => {
+      const corner = input.humanGeometry!.physicalCorners[location];
+      return {
+        location,
+        box: polygonBox([
+          corner.vertex,
+          corner.horizontalTangent,
+          corner.verticalTangent,
+        ]),
+      };
+    });
+    edgeBoxes = (["top", "right", "bottom", "left"] as const).map((location) => ({
+      location,
+      box: polygonBox(input.humanGeometry!.derivedRegions.edgeBands[location]),
+    }));
+  }
   const cornerObservations = cornerBoxes.map(({ location, box }) =>
     cornerObservation({ buildInput: input, features, location, box }),
   );
@@ -1113,11 +1140,34 @@ export function buildFixedRigConditionSegmentationV1(
     { category: "print_defect", evidenceKind: "registered_print_reference", requireResidual: false },
     { category: "foreign_material", evidenceKind: "polarized_residue", requireResidual: false },
   ];
+  const surfacePolygon = input.humanGeometry?.derivedRegions.surfaceRegion ?? [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ];
+  const pointInsideSurface = (x: number, y: number) => {
+    let inside = false;
+    for (let index = 0, prior = surfacePolygon.length - 1; index < surfacePolygon.length; prior = index++) {
+      const currentPoint = surfacePolygon[index]!;
+      const priorPoint = surfacePolygon[prior]!;
+      if (
+        (currentPoint.y > y) !== (priorPoint.y > y) &&
+        x < (priorPoint.x - currentPoint.x) * (y - currentPoint.y) /
+          (priorPoint.y - currentPoint.y || Number.EPSILON) + currentPoint.x
+      ) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
   const surfaceCandidateSeeds = surfaceSeedPolicy.map((policy) => buildSurfaceSeed({
     side: input.side,
     category: policy.category,
     evidenceKind: policy.evidenceKind,
-    candidateMask: features.surfaceMasks[policy.category],
+    candidateMask: maskFrom(width, height, (index) =>
+      Number(features.surfaceMasks[policy.category].data[index]) > 0 &&
+      pointInsideSurface(index % width, Math.floor(index / width))),
     sourceEvidence: input.sourceEvidence,
     photometric: input.photometricEvidence,
     requireResidual: policy.requireResidual,

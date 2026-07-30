@@ -34,6 +34,9 @@ const {
   FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
 } = require("../dist/drivers/fixedRigMathematicalStationAdapterV1");
 const {
+  deriveAiGraderHumanGeometryRegionsV1,
+} = require("@tenkings/shared");
+const {
   FIXED_RIG_STANDARD_TRADING_CARD_FORMAT_V1_ID,
 } = require("../dist/drivers/fixedRigStandardCardFormatV1");
 
@@ -403,6 +406,81 @@ function orchestratorIntendedOuterBoundary() {
   };
 }
 
+function confirmedHumanGeometry(side) {
+  const radiusX = WIDTH * 3.18 / 63.5;
+  const radiusY = HEIGHT * 3.18 / 88.9;
+  const corner = (vertex, horizontalTangent, verticalTangent) => ({
+    vertex,
+    horizontalTangent,
+    verticalTangent,
+    toolType: "rounded_3_18_mm",
+    adjustment: {
+      source: "candidate",
+      snapApplied: true,
+      snapDistancePx: 0,
+      gradientStrength: 1,
+    },
+    reviewed: true,
+  });
+  const physicalCorners = {
+    top_left: corner(
+      { x: 0, y: 0 },
+      { x: radiusX, y: 0 },
+      { x: 0, y: radiusY },
+    ),
+    top_right: corner(
+      { x: WIDTH, y: 0 },
+      { x: WIDTH - radiusX, y: 0 },
+      { x: WIDTH, y: radiusY },
+    ),
+    bottom_right: corner(
+      { x: WIDTH, y: HEIGHT },
+      { x: WIDTH - radiusX, y: HEIGHT },
+      { x: WIDTH, y: HEIGHT - radiusY },
+    ),
+    bottom_left: corner(
+      { x: 0, y: HEIGHT },
+      { x: radiusX, y: HEIGHT },
+      { x: 0, y: HEIGHT - radiusY },
+    ),
+  };
+  const line = (edge, inset) => {
+    if (edge === "top") return { start: { x: 0, y: inset }, end: { x: WIDTH, y: inset } };
+    if (edge === "right") return { start: { x: WIDTH - inset, y: 0 }, end: { x: WIDTH - inset, y: HEIGHT } };
+    if (edge === "bottom") return { start: { x: 0, y: HEIGHT - inset }, end: { x: WIDTH, y: HEIGHT - inset } };
+    return { start: { x: inset, y: 0 }, end: { x: inset, y: HEIGHT } };
+  };
+  const printedBorders = Object.fromEntries(
+    ["top", "right", "bottom", "left"].map((edge) => {
+      const candidates = [3, 4, 5].map((inset, index) => ({
+        id: `${side}-${edge}-fixture-${index + 1}`,
+        line: line(edge, inset),
+        rank: index + 1,
+      }));
+      return [edge, {
+        candidates,
+        selectedCandidateId: candidates[1].id,
+        finalLine: candidates[1].line,
+        adjustment: {
+          source: "candidate",
+          snapApplied: false,
+          snapDistancePx: 0,
+          gradientStrength: 0,
+        },
+        reviewed: true,
+      }];
+    }),
+  );
+  return {
+    printedBorders,
+    physicalCorners,
+    derivedRegions: deriveAiGraderHumanGeometryRegionsV1(physicalCorners),
+    edgeRegionsReviewed: true,
+    surfaceRegionReviewed: true,
+    confirmed: true,
+  };
+}
+
 async function rawAllOnPng(intendedContour, marker, options = {}) {
   const rawWidth = WIDTH + 16;
   const rawHeight = HEIGHT + 16;
@@ -619,6 +697,7 @@ async function buildSide(root, side, profile, options = {}) {
     },
     measurementCalibration: measurementCalibration(profile),
     algorithmVersion: "mathematical-condition-v1.0.0",
+    humanGeometry: confirmedHumanGeometry(side),
   };
 }
 

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import type { AiGraderCalibrationActivationAuthorityV1 } from "@tenkings/shared";
+import {
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+  type AiGraderCalibrationActivationAuthorityV1,
+} from "@tenkings/shared";
 import {
   buildAiGraderCaptureProfileRequest,
   buildAiGraderMathematicalAuthorityBindingRequest,
@@ -76,6 +79,10 @@ test("Mathematical authority canonicalizes display text before binding public id
     variantId: null,
     parallelId: "Silver-Prizm",
   });
+  assert.deepEqual(
+    authority.measurementUncertaintyAuthority,
+    AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+  );
 });
 
 function sha256(bytes: Uint8Array) {

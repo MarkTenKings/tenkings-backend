@@ -10,6 +10,7 @@ require(require.resolve("tsx/cjs", {
 
 const {
   AI_GRADER_REPORT_BUNDLE_V01_VERSION,
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
   MATHEMATICAL_CALIBRATION_PROFILE_V1_SCHEMA_VERSION,
   MATHEMATICAL_DEDUCTION_LEDGER_V1_SCHEMA_VERSION,
   MATHEMATICAL_FINDING_V1_SCHEMA_VERSION,
@@ -1798,6 +1799,9 @@ test("station Mathematical V1 path returns strict body with external session ide
     gradingContract: "mathematical_calibration_v1",
     mathematicalGradingAuthority: {
       schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+      measurementUncertaintyAuthority: structuredClone(
+        AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+      ),
       cardIdentity: {
         title: artifact.bundle.cardIdentity.title,
         sideCount: artifact.bundle.cardIdentity.sideCount,

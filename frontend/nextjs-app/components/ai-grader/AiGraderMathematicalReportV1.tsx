@@ -1,5 +1,10 @@
 import React, { useMemo, useState } from "react";
-import type { AiGraderPublishedDefectFindingV2, AiGraderReportBundleV03 } from "@tenkings/shared";
+import {
+  aiGraderHumanGeometryAssistSideV1Schema,
+  type AiGraderHumanGeometrySideV1,
+  type AiGraderPublishedDefectFindingV2,
+  type AiGraderReportBundleV03,
+} from "@tenkings/shared";
 import AiGraderReportAdminEditor, {
   type AiGraderReportAdminEditorState,
 } from "./AiGraderReportAdminEditor";
@@ -8,6 +13,7 @@ import type {
   AiGraderReportEditorialRevisionV1,
 } from "../../lib/aiGraderReportRevision";
 import type { AiGraderMathematicalProductionReleaseEnvelope } from "../../lib/aiGraderMathematicalReportV1";
+import HumanGeometryOverlay from "./HumanGeometryOverlay";
 
 const ELEMENTS = ["centering", "corners", "edges", "surface"] as const;
 
@@ -93,6 +99,7 @@ export default function AiGraderMathematicalReportV1({
   localUnpublished = false,
   showAllEvidenceAssets = true,
   workflowRelease,
+  technicalInspection = false,
 }: {
   bundle: AiGraderReportBundleV03;
   nfc?: AiGraderMathematicalPublicNfc | null;
@@ -103,6 +110,8 @@ export default function AiGraderMathematicalReportV1({
   localUnpublished?: boolean;
   showAllEvidenceAssets?: boolean;
   workflowRelease?: AiGraderMathematicalProductionReleaseEnvelope;
+  /** Restricted support-only view. Normal internal and public reports stay concise. */
+  technicalInspection?: boolean;
 }) {
   const [selectedSide, setSelectedSide] = useState<"front" | "back">("front");
   const [selectedFindingId, setSelectedFindingId] = useState<string>();
@@ -182,11 +191,143 @@ export default function AiGraderMathematicalReportV1({
                 : "illumination_mask"
         )
       );
+  const humanGeometryRecord = bundle.geometry &&
+    typeof bundle.geometry === "object" &&
+    !Array.isArray(bundle.geometry)
+      ? bundle.geometry as Record<string, unknown>
+      : undefined;
+  const parsedGeometry = {
+    front: aiGraderHumanGeometryAssistSideV1Schema.safeParse(humanGeometryRecord?.front),
+    back: aiGraderHumanGeometryAssistSideV1Schema.safeParse(humanGeometryRecord?.back),
+  };
+  const confirmedGeometry: Partial<Record<"front" | "back", AiGraderHumanGeometrySideV1>> = {
+    ...(parsedGeometry.front.success ? { front: parsedGeometry.front.data } : {}),
+    ...(parsedGeometry.back.success ? { back: parsedGeometry.back.data } : {}),
+  };
   const selectFinding = (findingId: string, side?: "front" | "back") => {
     if (side) setSelectedSide(side);
     setSelectedFindingId(findingId);
     if (typeof document !== "undefined") document.getElementById("v1-finding-inspector")?.scrollIntoView({ behavior: "smooth" });
   };
+
+  if (!technicalInspection) {
+    return (
+      <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">
+        <header className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-5 border-b border-black/15 pb-6">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[.2em] text-amber-800">Ten Kings Grading Report</p>
+            <h1 className="mt-2 text-4xl font-bold">{reviewedContent.cardTitle ?? bundle.cardIdentity.title}</h1>
+          </div>
+          <div className="text-right">
+            <strong className="block text-6xl tabular-nums">{score(effectiveOverall)}</strong>
+            <span className="text-sm font-bold uppercase tracking-widest">Label {effectiveLabelGrade}</span>
+          </div>
+        </header>
+
+        <section className="mx-auto mt-6 grid max-w-6xl gap-5 md:grid-cols-2" aria-label="Confirmed Front and Back geometry">
+          {(["front", "back"] as const).map((side) => {
+            const geometry = confirmedGeometry[side];
+            const normalized = publicDisplayAssets.find(
+              (asset) => asset.side === side && asset.evidenceRole === "normalized_card",
+            );
+            return (
+              <article className="rounded-xl border border-black/15 bg-white p-4" key={side}>
+                <h2 className="mb-3 text-xl font-bold capitalize">{side}</h2>
+                <div className="relative aspect-[5/7] overflow-hidden rounded-lg bg-black">
+                  {normalized?.publicUrl ? (
+                    <img className="absolute inset-0 h-full w-full object-contain" src={normalized.publicUrl} alt={`${side} confirmed card evidence`} />
+                  ) : (
+                    <div className="grid h-full place-items-center text-sm text-zinc-300">Confirmed image unavailable</div>
+                  )}
+                  {geometry ? (
+                    <div className="pointer-events-none absolute inset-0">
+                      <HumanGeometryOverlay geometry={geometry} showRegions />
+                    </div>
+                  ) : null}
+                </div>
+                <p className="mt-3 text-sm text-zinc-700">
+                  {geometry ? "Confirmed borders, corners, edges, and surface." : "Confirmed geometry is unavailable."}
+                </p>
+              </article>
+            );
+          })}
+        </section>
+
+        <section className="mx-auto mt-6 max-w-6xl rounded-xl border border-black/15 bg-white p-5">
+          <h2 className="text-2xl font-bold">Results</h2>
+          <div className="mt-4 grid gap-3">
+            {ELEMENTS.flatMap((element) =>
+              finalGrade.elements[element].locationScores.map((location) => {
+                const findings = location.findingIds
+                  .map((findingId) => bundle.defectFindings.find((finding) => finding.findingId === findingId))
+                  .filter((finding): finding is AiGraderPublishedDefectFindingV2 => Boolean(finding));
+                const ledger = location.findingIds
+                  .map((findingId) => bundle.deductionLedger.entries.find((entry) => entry.findingId === findingId))
+                  .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+                const geometry = confirmedGeometry[location.side];
+                const normalized = publicDisplayAssets.find(
+                  (asset) =>
+                    asset.side === location.side &&
+                    asset.evidenceRole === "normalized_card",
+                );
+                const cornerTool = element === "corners" && geometry &&
+                  location.location in geometry.physicalCorners
+                    ? geometry.physicalCorners[
+                        location.location as keyof typeof geometry.physicalCorners
+                      ].toolType
+                    : undefined;
+                const measurement = ledger.length
+                  ? ledger.map((entry) => `${entry.measuredMeasurement} ${entry.unit}`).join(", ")
+                  : "No measured defect";
+                const findingText = findings.length
+                  ? findings.map((finding) => label(finding.category)).join(", ")
+                  : "No finding";
+                return (
+                  <article className="grid gap-3 rounded-lg border border-black/10 p-4 sm:grid-cols-[1.1fr_140px_1.5fr_.8fr_.8fr]" key={`${element}:${location.side}:${location.location}`}>
+                    <div>
+                      <strong className="capitalize">{location.side} {label(location.location)}</strong>
+                      <span className="block text-xs uppercase tracking-wide text-zinc-500">{element}</span>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-zinc-500">Confirmed overlay</span>
+                      <div className="relative mt-1 aspect-[5/7] overflow-hidden rounded bg-black">
+                        {normalized?.publicUrl ? (
+                          <img
+                            className="absolute inset-0 h-full w-full object-contain"
+                            src={normalized.publicUrl}
+                            alt={`${location.side} ${label(location.location)} confirmed overlay`}
+                          />
+                        ) : null}
+                        {geometry ? (
+                          <div className="pointer-events-none absolute inset-0">
+                            <HumanGeometryOverlay geometry={geometry} showRegions />
+                          </div>
+                        ) : null}
+                      </div>
+                      <strong>{cornerTool === "rounded_3_18_mm" ? "Rounded 3.18 mm" : cornerTool === "square_90_degree" ? "Square 90°" : "Confirmed overlay"}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-zinc-500">Measurement / finding</span>
+                      <strong>{measurement}</strong>
+                      <span className="block text-sm">{findingText}</span>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-zinc-500">Deduction</span>
+                      <strong>{location.penalty > 0 ? `-${score(location.penalty)}` : "0.00"}</strong>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-zinc-500">Subgrade</span>
+                      <strong>{score(location.score)}</strong>
+                    </div>
+                  </article>
+                );
+              }),
+            )}
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-[#f3f0e9] px-5 py-8 text-[#171512]">

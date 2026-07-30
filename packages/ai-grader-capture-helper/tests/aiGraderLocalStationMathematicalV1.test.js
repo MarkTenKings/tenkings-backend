@@ -33,6 +33,7 @@ const {
 const {
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_V1,
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
@@ -93,6 +94,9 @@ function sha256(bytes) {
 function printedAuthority() {
   return {
     schemaVersion: FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
+    measurementUncertaintyAuthority: structuredClone(
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    ),
     cardIdentity: {
       title: "Mathematical station fixture",
       sideCount: 2,
@@ -197,6 +201,9 @@ function pokemonAuthority() {
   const bytes = canonicalJsonV1(artifact);
   return {
     schemaVersion: FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION,
+    measurementUncertaintyAuthority: structuredClone(
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    ),
     cardIdentity,
     cardFormatId: "pokemon_tcg_standard",
     trustedCardFormatAuthority: {
@@ -224,10 +231,60 @@ function calibrationLoader() {
     bundleSha256: BUNDLE_SHA256,
     bundle: {},
     profile: {
+      schemaVersion: "ai-grader-mathematical-calibration-profile-v1",
       profileId: "fixture-calibration-profile",
       calibrationVersion: "fixture-calibration-v1",
       rigId: "fixture-rig",
+      isCalibrated: true,
+      status: "finalized",
+      coordinateFrame: "normalized_card_portrait_pixels",
+      thresholdSetId: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+      thresholdSetHash: MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
+      artifactId: "fixture-calibration-artifact",
       artifactSha256: CALIBRATION_ARTIFACT_SHA256,
+      finalizedAt: "2026-07-29T12:00:00.000Z",
+      normalizedWidthPx: 1200,
+      normalizedHeightPx: 1680,
+      mmPerPixelX: 63.5 / 1200,
+      mmPerPixelY: 88.9 / 1680,
+      scaleRelativeU95: 0.001,
+      scaleSampleCount: 10,
+      lensCalibrationViewCount: 10,
+      lensResidualPx: 0.1,
+      normalizationRegistrationResidualPx: 0.2,
+      normalizationRegistrationSampleCount: 10,
+      repeatedPlacementCount: 10,
+      repeatedPlacementU95Mm: 0.02,
+      segmentationBoundaryU95Px: 0.2,
+      segmentationBoundarySampleCount: 10,
+      measurementRepeatability: {
+        linearMm: { sampleCount: 10, u95: 0.03 },
+        areaMm2: { sampleCount: 10, u95: 0.04 },
+        reliefIndex: { sampleCount: 10, u95: 0.02 },
+        roughnessIndex: { sampleCount: 10, u95: 0.03 },
+        colorDeltaE: { sampleCount: 10, u95: 0.2 },
+      },
+      channels: Array.from({ length: 8 }, (_, index) => ({
+        channelIndex: index + 1,
+        direction: {
+          x: Math.cos(index * Math.PI / 4),
+          y: Math.sin(index * Math.PI / 4),
+        },
+        directionConfidence: 1,
+        directionMeasurementSampleCount: 3,
+        directionAngularU95Degrees: 0,
+        directionSourceRadiusMm: 100,
+        directionPointU95Mm: 0.1,
+        flatFieldArtifactId: `flat-${index + 1}`,
+        flatFieldArtifactSha256: "7".repeat(64),
+        flatFieldFrameCount: 3,
+        darkControlFrameCount: 3,
+        maxFlatFieldDeviationFraction: 0.02,
+        illuminationPatternArtifactId: "illumination",
+        illuminationPatternArtifactSha256: "8".repeat(64),
+        illuminationPatternFrameCount: 3,
+        responseScale: 1,
+      })),
     },
     physicalArtifact: {},
     acceptance: {},
@@ -644,7 +701,12 @@ function bindReadyPreview(service, side, suffix) {
   };
 }
 
-async function processedMathematicalSide(side, packageDir, includeReviewSources) {
+async function processedMathematicalSide(
+  side,
+  packageDir,
+  includeReviewSources,
+  acceptedCaptureSha256,
+) {
   fs.mkdirSync(packageDir, { recursive: true });
   const reviewSource = {};
   let diskManifest = {};
@@ -701,12 +763,27 @@ async function processedMathematicalSide(side, packageDir, includeReviewSources)
     },
   }).png().toFile(normalizedPath);
   const normalizedBytes = fs.readFileSync(normalizedPath);
+  const contour = Array.from({ length: 32 }, (_, index) => {
+    const phase = index / 32;
+    if (phase < 0.25) return { x: 20 + phase * 4 * 1160, y: 20 };
+    if (phase < 0.5) return { x: 1180, y: 20 + (phase - 0.25) * 4 * 1640 };
+    if (phase < 0.75) return { x: 1180 - (phase - 0.5) * 4 * 1160, y: 1660 };
+    return { x: 20, y: 1660 - (phase - 0.75) * 4 * 1640 };
+  });
   return {
     reviewSource,
     processed: {
       manifest: {
         evidenceSide: side,
+        status: "completed",
         [side]: {
+          fullResolutionGeometryAuthority: {
+            source: { sourceSha256: acceptedCaptureSha256 },
+          },
+          acceptedProfile: {
+            capture: { sha256: acceptedCaptureSha256 },
+            analysisArtifact: { sha256: sha256(normalizedBytes) },
+          },
           normalizedCard: {
             normalizedArtifact: {
               mimeType: "image/png",
@@ -715,6 +792,7 @@ async function processedMathematicalSide(side, packageDir, includeReviewSources)
               sha256: sha256(normalizedBytes),
               byteSize: normalizedBytes.byteLength,
               localOutputPath: normalizedPath,
+              normalizedDenseContour: { points: contour },
             },
           },
         },
@@ -742,7 +820,12 @@ function installSimulatedMathematicalCapture(service, includeReviewSources = fal
       payload,
     };
     manifest.commandResults.push(result);
-    const processing = processedMathematicalSide(side, packageDir, includeReviewSources)
+    const processing = processedMathematicalSide(
+      side,
+      packageDir,
+      includeReviewSources,
+      payload.warmBatch.captures.acceptedProfile.capture.sha256,
+    )
       .then((fixture) => {
         if (includeReviewSources) warmSources[side] = fixture.reviewSource;
         service.recordProcessedNormalizedOcrImage(manifest, side, fixture.processed);
@@ -911,6 +994,7 @@ async function captureMathematicalCard(service, authority, reportId, suffix) {
   assert.equal(mutableItem.sessionId, gradingSessionId);
   assert.deepEqual(mutableItem.ocr.images?.map((image) => image.side), ["front", "back"]);
   const manifest = service.queuedManifests.get(mutableItem.queueItemId);
+  await lockFixtureGeometry(service, mutableItem, suffix);
   const item = service.status().rapidCaptureQueue.items.find((candidate) => candidate.reportId === reportId);
   return {
     item,
@@ -921,6 +1005,53 @@ async function captureMathematicalCard(service, authority, reportId, suffix) {
     },
     manifest,
   };
+}
+
+async function lockFixtureGeometry(service, mutableItem, suffix) {
+  const manifest = service.queuedManifests.get(mutableItem.queueItemId);
+  assert.equal(
+    mutableItem.state,
+    "geometry_review_required",
+    `durable capture must stop at the mandatory geometry gate: ${JSON.stringify({
+      error: mutableItem.error,
+      warnings: manifest.warnings,
+      history: mutableItem.history,
+    })}`,
+  );
+  assert.equal(
+    manifest.mathematicalV1?.execution,
+    undefined,
+    "measurement, grading, and report adaptation must not run before geometry lock",
+  );
+  assert.equal(manifest.reportBundle, undefined);
+  const confirmedSides = structuredClone(manifest.humanGeometryAssist.draft.sides);
+  for (const side of ["front", "back"]) {
+    for (const edge of ["top", "right", "bottom", "left"]) {
+      confirmedSides[side].printedBorders[edge].reviewed = true;
+    }
+    for (const corner of ["top_left", "top_right", "bottom_right", "bottom_left"]) {
+      confirmedSides[side].physicalCorners[corner].reviewed = true;
+    }
+    confirmedSides[side].edgeRegionsReviewed = true;
+    confirmedSides[side].surfaceRegionReviewed = true;
+    confirmedSides[side].confirmed = true;
+  }
+  const lockRequest = {
+    queueItemId: mutableItem.queueItemId,
+    gradingSessionId: mutableItem.sessionId,
+    reportId: mutableItem.reportId,
+    operatorId: "geometry-fixture-operator",
+    idempotencyKey: `geometry-lock-${suffix}`,
+    expectedReceiptVersion: manifest.humanGeometryAssist.receiptVersion,
+    humanGeometrySides: confirmedSides,
+  };
+  await service.action("lock-human-geometry", lockRequest);
+  await service.action(
+    "lock-human-geometry",
+    lockRequest,
+  );
+  await service.reportWorker;
+  await service.rapidMutationChain;
 }
 
 async function completeFixtureOcr(service, queued, suffix, reviewElements) {
@@ -1551,6 +1682,31 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
     assert.equal(queued.item.rawEvidence.sides.length, 2);
     assert.deepEqual(Object.keys(queued.item.sideProcessingJobs).sort(), ["back", "front"]);
     assert.equal(calls.length, 1);
+    assert.equal(
+      "eyesCenteringSelections" in calls[0],
+      false,
+      "Human Geometry grading never receives an Eyes geometry selection",
+    );
+    assert.equal(
+      queued.manifest.mathematicalV1.eyesCenteringCandidateLedger,
+      undefined,
+      "Human Geometry grading creates no Eyes geometry receipt or gate",
+    );
+    assert.deepEqual(
+      calls[0].authority.measurementUncertaintyAuthority,
+      queued.manifest.humanGeometryAssist.lockedReceipt
+        .measurementUncertaintyAuthority,
+      "grading authority and locked receipt bind the same owner policy",
+    );
+    assert.equal(
+      calls[0].humanGeometryReceipt.receiptSha256,
+      queued.manifest.humanGeometryAssist.lockedReceipt.receiptSha256,
+    );
+    assert.deepEqual(
+      calls[0].humanGeometryReceipt.sides,
+      queued.manifest.humanGeometryAssist.lockedReceipt.sides,
+      "centering, corner, edge, surface, and report adaptation receive one exact locked coordinate source",
+    );
     assert.equal("publication" in browserAuthority, false);
     const expectedUrl = "https://collect.tenkings.co/ai-grader/reports/ordinary-math-report";
     const expectedCert = "TK-AIG-" + crypto.createHash("sha1")
@@ -1583,6 +1739,37 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
       mathematicalReleaseBranch.includes("AI_GRADER_MATHEMATICAL_PRODUCTION_RELEASE_V1_VERSION"),
       true,
     );
+
+    const firstReceiptPath = queued.manifest.humanGeometryAssist.receiptPath;
+    const firstOutputDir = calls[0].outputDir;
+    const reopenedStatus = await service.action("reopen-human-geometry", {
+      ...queued.identity,
+      operatorId: "geometry-fixture-operator",
+      expectedReceiptVersion: 1,
+      reopenReason: "Focused regression: correct the confirmed master boundary.",
+    });
+    const reopenedItem = service.rapidQueue.items.find(
+      (candidate) => candidate.queueItemId === queued.item.queueItemId,
+    );
+    assert.equal(reopenedItem.state, "geometry_review_required");
+    assert.equal(queued.manifest.mathematicalV1.execution, undefined);
+    assert.equal(queued.manifest.reportBundle, undefined);
+    assert.equal(queued.manifest.humanGeometryAssist.receiptVersion, 2);
+    assert.equal(
+      queued.manifest.humanGeometryAssist.supersedesReceiptSha256,
+      calls[0].humanGeometryReceipt.receiptSha256,
+    );
+    assert.equal(fs.existsSync(firstReceiptPath), true, "the superseded receipt remains immutable audit evidence");
+    assert.equal(
+      reopenedStatus.rapidCaptureQueue.items.find(
+        (candidate) => candidate.queueItemId === queued.item.queueItemId,
+      ).state,
+      "geometry_review_required",
+    );
+    await lockFixtureGeometry(service, reopenedItem, "ordinary-v2");
+    assert.equal(calls.length, 2, "each locked receipt triggers deterministic grading exactly once");
+    assert.notEqual(calls[1].outputDir, firstOutputDir);
+    assert.match(calls[1].outputDir, /geometry-v2$/);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
@@ -1634,6 +1821,8 @@ test("OCR-first printed-border capture blocks grading until exact identity confi
     assert.equal(mutableItem.sessionId, gradingSessionId);
     assert.equal(mutableItem.ocr.state, "eligible");
     assert.equal(calls.length, 0, "no grading runs before OCR identity confirmation");
+    await lockFixtureGeometry(service, mutableItem, "ocr-first");
+    assert.equal(calls.length, 0, "geometry lock cannot bypass OCR identity confirmation");
 
     const identity = {
       queueItemId: mutableItem.queueItemId,
@@ -1738,6 +1927,7 @@ test("independent OCR-first review binds release immediately and overlap determi
         gradingSessionId: item.sessionId,
         reportId: item.reportId,
       };
+      await lockFixtureGeometry(service, item, suffix);
       const attempt = {
         ...identity,
         attemptOwnerId: `parallel-review-owner-${suffix}`,
@@ -1884,6 +2074,7 @@ test("real bind-route worker jobs leave HTTP review and Start New Card responsiv
           reportId: item.reportId,
         },
       };
+      await lockFixtureGeometry(fixtureService, item, suffix);
       const completed = await completeFixtureOcr(
         fixtureService,
         queued,
@@ -2071,7 +2262,7 @@ test("real bind-route worker jobs leave HTTP review and Start New Card responsiv
   }
 });
 
-test("EYES reject-all cannot silently keep centering; it forces one deterministic centering review pass and refreshes release state", async () => {
+test("Human Geometry shelves a stale EYES reject-all receipt without a call, wait, gate, or remeasurement", async () => {
   const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "tenkings-math-eyes-reject-"));
   const calls = [];
   try {
@@ -2164,14 +2355,13 @@ test("EYES reject-all cannot silently keep centering; it forces one deterministi
 
     await service.applyQueuedEyesCenteringSelection(item, manifest, receipt);
 
-    assert.equal(calls.length, 2);
-    assert.deepEqual(calls[1].forcedOperatorReviewElements, ["centering"]);
+    assert.equal(calls.length, 1);
     assert.equal(
       manifest.mathematicalV1.eyesCenteringRemeasurementPassCount,
-      2,
+      undefined,
     );
     assert.equal(item.state, "report_ready_needs_confirm");
-    assert.equal(release.callCount, 2);
+    assert.equal(release.callCount, 1);
   } finally {
     fs.rmSync(outputDir, { recursive: true, force: true });
   }

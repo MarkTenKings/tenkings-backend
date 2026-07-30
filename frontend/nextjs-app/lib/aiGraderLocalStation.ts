@@ -10,14 +10,19 @@ import {
   parseAiGraderMathematicalReportV1,
 } from "./aiGraderMathematicalReportV1";
 import {
+  aiGraderHumanGeometryAssistDraftV1Schema,
+  aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
   trustedPokemonCardFormatAuthorityV1Schema,
+  type AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1,
+  type AiGraderHumanGeometryAssistDraftV1,
+  type AiGraderHumanGeometrySideV1,
   type TrustedPokemonCardFormatAuthorityV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderCalibrationWorkstationObservationV1,
   type AiGraderCalibrationWorkstationReceiptV1,
 } from "@tenkings/shared";
 
-export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.10";
+export const AI_GRADER_LOCAL_STATION_BRIDGE_VERSION = "ai-grader-local-station-bridge-v0.11";
 export const AI_GRADER_REPORT_PRODUCER_CONTRACT_VERSION = "ai-grader-report-producer-v0.2";
 
 export type AiGraderStationStepId =
@@ -57,6 +62,8 @@ export type AiGraderStationAction =
   | "begin-queued-ocr"
   | "complete-queued-ocr"
   | "complete-eyes-centering-selection"
+  | "lock-human-geometry"
+  | "reopen-human-geometry"
   | "fail-queued-ocr";
 
 export type AiGraderCaptureProfile = "production_fast";
@@ -112,6 +119,8 @@ export type AiGraderMathematicalCenteringAuthorityV1 =
 
 type AiGraderMathematicalGradingAuthorityBaseV1 = {
   schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1";
+  measurementUncertaintyAuthority:
+    AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1;
   cardIdentity: AiGraderMathematicalCardIdentityV1;
   sides: {
     front: { centering: AiGraderMathematicalCenteringAuthorityV1 };
@@ -513,6 +522,7 @@ export type AiGraderRapidCaptureWorkflowState =
   | "back_positioning"
   | "back_captured"
   | "finalizing"
+  | "geometry_review_required"
   | "identity_resolution_required"
   | "operator_resolution_required"
   | "finding_review_required"
@@ -675,6 +685,11 @@ export type AiGraderRapidCaptureActiveReview = {
       exists: boolean;
     };
     mathematicalV1?: AiGraderMathematicalV1State;
+    humanGeometryAssist?: {
+      state: "geometry_review_required" | "locked";
+      receiptVersion: number;
+      draft: AiGraderHumanGeometryAssistDraftV1;
+    };
     reportBundle?: AiGraderStationReportBundle;
     productionRelease?: AiGraderStationProductionRelease;
     safety?: {
@@ -1334,7 +1349,11 @@ export function sanitizeAiGraderMathematicalGradingAuthorityV1(
         value.cardFormatId !== "pokemon_tcg_standard") ||
       !stationRecord(value.sides)) return undefined;
   const cardIdentity = sanitizeMathematicalCardIdentity(value.cardIdentity);
-  if (!cardIdentity) return undefined;
+  const measurementUncertaintyAuthority =
+    aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema.safeParse(
+      value.measurementUncertaintyAuthority,
+    );
+  if (!cardIdentity || !measurementUncertaintyAuthority.success) return undefined;
   const frontValue = stationRecord(value.sides.front) ? value.sides.front.centering : undefined;
   const backValue = stationRecord(value.sides.back) ? value.sides.back.centering : undefined;
   const front = sanitizeMathematicalCenteringAuthority(frontValue, "front", cardIdentity);
@@ -1342,6 +1361,7 @@ export function sanitizeAiGraderMathematicalGradingAuthorityV1(
   if (!front || !back) return undefined;
   const base = {
     schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1" as const,
+    measurementUncertaintyAuthority: measurementUncertaintyAuthority.data,
     cardIdentity,
     sides: { front: { centering: front }, back: { centering: back } },
   };
@@ -1865,6 +1885,7 @@ const AI_GRADER_RAPID_CAPTURE_WORKFLOW_STATES: AiGraderRapidCaptureWorkflowState
   "back_positioning",
   "back_captured",
   "finalizing",
+  "geometry_review_required",
   "identity_resolution_required",
   "operator_resolution_required",
   "finding_review_required",
@@ -2117,6 +2138,24 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
   if (safeStationId(latest.reportId) !== reportId ||
       (latest.exists !== true && latest.exists !== false)) return undefined;
   const mathematicalV1 = sanitizeAiGraderMathematicalV1StateForDisplay(manifest.mathematicalV1);
+  const rawHumanGeometry = stationRecord(manifest.humanGeometryAssist)
+    ? manifest.humanGeometryAssist
+    : undefined;
+  const parsedHumanGeometryDraft = rawHumanGeometry
+    ? aiGraderHumanGeometryAssistDraftV1Schema.safeParse(rawHumanGeometry.draft)
+    : undefined;
+  const humanGeometryAssist =
+    parsedHumanGeometryDraft?.success &&
+    (rawHumanGeometry?.state === "geometry_review_required" ||
+      rawHumanGeometry?.state === "locked") &&
+    Number.isInteger(rawHumanGeometry.receiptVersion) &&
+    Number(rawHumanGeometry.receiptVersion) > 0
+      ? {
+          state: rawHumanGeometry.state as "geometry_review_required" | "locked",
+          receiptVersion: Number(rawHumanGeometry.receiptVersion),
+          draft: parsedHumanGeometryDraft.data,
+        }
+      : undefined;
   const mathematicalExecution = mathematicalV1?.execution;
   if (mathematicalExecution?.status === "finding_review_required" &&
       (mathematicalExecution.reviewRequest.gradingSessionId !== gradingSessionId ||
@@ -2187,6 +2226,7 @@ function sanitizeAiGraderRapidCaptureActiveReview(value: unknown): AiGraderRapid
         exists: latest.exists === true,
       },
       ...(mathematicalV1 ? { mathematicalV1 } : {}),
+      ...(humanGeometryAssist ? { humanGeometryAssist } : {}),
       ...(reportBundle ? { reportBundle } : {}),
       ...(productionRelease ? { productionRelease } : {}),
       ...(stationRecord(manifest.safety) ? {
@@ -2223,6 +2263,8 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
       item.state === "insufficient_evidence";
     const pendingIdentityState =
       item.state === "identity_resolution_required";
+    const pendingGeometryState =
+      item.state === "geometry_review_required";
     const activeMathematicalStatus = activeReview.manifest.mathematicalV1?.execution?.status;
     return item.queueItemId === activeReview.queueItemId &&
       item.sessionId === activeReview.gradingSessionId &&
@@ -2230,10 +2272,14 @@ export function sanitizeAiGraderRapidCaptureQueue(value: unknown): AiGraderRapid
       item.state !== "failed" &&
       (activeReview.manifest.latestReport.exists ||
         pendingMathematicalState ||
-        pendingIdentityState) &&
+        pendingIdentityState ||
+        pendingGeometryState) &&
       (item.ocr.state === "succeeded" ||
         pendingMathematicalState ||
-        pendingIdentityState) &&
+        pendingIdentityState ||
+        pendingGeometryState) &&
+      (!pendingGeometryState ||
+        activeReview.manifest.humanGeometryAssist?.state === "geometry_review_required") &&
       (!pendingMathematicalState ||
         (item.mathematicalV1?.status === item.state && activeMathematicalStatus === item.state));
   })
@@ -3374,6 +3420,8 @@ const ACTION_TO_STEP: Record<AiGraderStationAction, AiGraderStationStepId> = {
   "begin-queued-ocr": "start_new_card",
   "complete-queued-ocr": "start_new_card",
   "complete-eyes-centering-selection": "start_new_card",
+  "lock-human-geometry": "run_provisional_diagnostics",
+  "reopen-human-geometry": "run_provisional_diagnostics",
   "fail-queued-ocr": "start_new_card",
 };
 
@@ -3840,6 +3888,8 @@ export function parseAiGraderStationAction(value: string | string[] | undefined)
     "begin-queued-ocr",
     "complete-queued-ocr",
     "complete-eyes-centering-selection",
+    "lock-human-geometry",
+    "reopen-human-geometry",
     "fail-queued-ocr",
   ];
   return allowed.includes(raw as AiGraderStationAction) ? (raw as AiGraderStationAction) : null;
