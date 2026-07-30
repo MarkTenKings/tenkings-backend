@@ -60,28 +60,49 @@ const COLORS = {
   ink: "#0f0f0f",
 } as const;
 
+export const HUMAN_GRADE_LABEL_FINISH_GEOMETRY = {
+  safeInsetIn: 0.08,
+  safeInsetPt: 5.76,
+  cutGuideStrokePt: 0.75,
+  cutGuidePathOffsetPt: -0.375,
+} as const;
+
 const LABEL_SECTION_BOUNDARIES = {
   brandEndPt: 44,
   identityEndPt: 132.5,
   labelEndPt: HUMAN_GRADE_LABEL_GEOMETRY.label.widthPt,
 } as const;
 
-const RIGHT_THIRD_CONTENT_INSET_PT = 0.75;
+const BRAND_SECTION_CENTER_PT = LABEL_SECTION_BOUNDARIES.brandEndPt / 2;
+const RIGHT_THIRD_CENTER_PT =
+  (LABEL_SECTION_BOUNDARIES.identityEndPt + LABEL_SECTION_BOUNDARIES.labelEndPt) / 2;
+const BRAND_SAFE_WIDTH_PT =
+  (BRAND_SECTION_CENTER_PT - HUMAN_GRADE_LABEL_FINISH_GEOMETRY.safeInsetPt) * 2;
+const RIGHT_THIRD_SAFE_WIDTH_PT =
+  (LABEL_SECTION_BOUNDARIES.labelEndPt -
+    HUMAN_GRADE_LABEL_FINISH_GEOMETRY.safeInsetPt -
+    RIGHT_THIRD_CENTER_PT) *
+  2;
 
 const LABEL_ZONES = {
   brandCrown: { xPt: 9.496192, yPt: 12.6, widthPt: 25.007616, heightPt: 16.258954 },
-  brandWordmark: { xPt: 2.52, yPt: 27.4, widthPt: 38.96 },
-  brandCertificate: { xPt: 2.52, yPt: 39, widthPt: 38.96 },
+  brandWordmark: {
+    xPt: HUMAN_GRADE_LABEL_FINISH_GEOMETRY.safeInsetPt,
+    yPt: 27.4,
+    widthPt: BRAND_SAFE_WIDTH_PT,
+  },
+  brandCertificate: {
+    xPt: HUMAN_GRADE_LABEL_FINISH_GEOMETRY.safeInsetPt,
+    yPt: 39,
+    widthPt: BRAND_SAFE_WIDTH_PT,
+  },
   leftSeparator: { xPt: LABEL_SECTION_BOUNDARIES.brandEndPt, yPt: 8, heightPt: 43.76 },
   identity: { xPt: 48, widthPt: 81.5 },
   rightSeparator: { xPt: LABEL_SECTION_BOUNDARIES.identityEndPt, yPt: 8, heightPt: 43.76 },
   rightThird: {
-    xPt: LABEL_SECTION_BOUNDARIES.identityEndPt + RIGHT_THIRD_CONTENT_INSET_PT,
-    widthPt:
-      LABEL_SECTION_BOUNDARIES.labelEndPt -
-      LABEL_SECTION_BOUNDARIES.identityEndPt -
-      RIGHT_THIRD_CONTENT_INSET_PT * 2,
-    gradeCenterYPt: 21.5,
+    xPt: RIGHT_THIRD_CENTER_PT - RIGHT_THIRD_SAFE_WIDTH_PT / 2,
+    widthPt: RIGHT_THIRD_SAFE_WIDTH_PT,
+    gradeCenterYPt: 23,
     gradeCenterFromTextTopEm: 0.55,
   },
   separatorCrowns: { centerYPt: 29.88, widthPt: 3.4, heightPt: 2.2, lineGapPt: 0.7 },
@@ -98,8 +119,8 @@ export const HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY = {
   codeToEqualsGapPt: 1,
   equalsToScoreGapPt: 1,
   scoreTopOffsetPt: -0.8,
-  rightThirdCenterXPt:
-    (LABEL_SECTION_BOUNDARIES.identityEndPt + LABEL_SECTION_BOUNDARIES.labelEndPt) / 2,
+  horizontalScale: 0.84,
+  rightThirdCenterXPt: RIGHT_THIRD_CENTER_PT,
   dividerTopPt: 8,
   dividerBottomPt: 51.76,
 } as const;
@@ -251,11 +272,12 @@ function drawBrand(doc: PdfDoc, crown: PdfImage, content: ReturnType<typeof buil
 
   const zone = LABEL_ZONES.brandWordmark;
   const centerX = zone.xPt + zone.widthPt / 2;
-  const horizontalScale = 0.88;
+  const horizontalScale = 0.84;
+  const fontSize = 7.8;
   const unscaledWidth = zone.widthPt / horizontalScale;
   const unscaledX = centerX - unscaledWidth / 2;
   doc.save().translate(centerX, 0).scale(horizontalScale, 1).translate(-centerX, 0);
-  doc.font("TKHumanWordmark").fontSize(9.005493).fillColor(COLORS.ink).text("TEN KINGS", unscaledX, zone.yPt, {
+  doc.font("TKHumanWordmark").fontSize(fontSize).fillColor(COLORS.ink).text("TEN KINGS", unscaledX, zone.yPt, {
     width: unscaledWidth,
     align: "center",
     characterSpacing: 0.12,
@@ -332,9 +354,14 @@ function drawSubgradePair(
     equalsWidth +
     geometry.equalsToScoreGapPt +
     scoreWidth;
-  if (pairWidth > cellWidth) throw new Error(`Human-grade subgrade pair does not fit its cell: ${code} = ${score}`);
-  const startX = cellX + (cellWidth - pairWidth) / 2;
+  const scaledPairWidth = pairWidth * geometry.horizontalScale;
+  if (scaledPairWidth > cellWidth) {
+    throw new Error(`Human-grade subgrade pair does not fit its safe cell: ${code} = ${score}`);
+  }
+  const centerX = cellX + cellWidth / 2;
+  const startX = centerX - pairWidth / 2;
 
+  doc.save().translate(centerX, 0).scale(geometry.horizontalScale, 1).translate(-centerX, 0);
   doc
     .font("TKHumanSmall")
     .fontSize(geometry.codeFontSizePt)
@@ -353,6 +380,7 @@ function drawSubgradePair(
     .text(score, equalsX + equalsWidth + geometry.equalsToScoreGapPt, cellY + geometry.scoreTopOffsetPt, {
       lineBreak: false,
     });
+  doc.restore();
 }
 
 function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLabelContent>) {
@@ -384,6 +412,23 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
   });
 }
 
+function drawHandCutGuide(doc: PdfDoc) {
+  const strokeWidth = HUMAN_GRADE_LABEL_FINISH_GEOMETRY.cutGuideStrokePt;
+  const pathOffset = HUMAN_GRADE_LABEL_FINISH_GEOMETRY.cutGuidePathOffsetPt;
+  doc
+    .save()
+    .lineWidth(strokeWidth)
+    .strokeColor(COLORS.ink)
+    .rect(
+      pathOffset,
+      pathOffset,
+      HUMAN_GRADE_LABEL_GEOMETRY.label.widthPt + strokeWidth,
+      HUMAN_GRADE_LABEL_GEOMETRY.label.heightPt + strokeWidth
+    )
+    .stroke()
+    .restore();
+}
+
 function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapshot, x: number, y: number) {
   const content = buildHumanGradeLabelContent(snapshot);
   doc.save().translate(x, y);
@@ -393,6 +438,7 @@ function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapsh
   drawVerticalSeparator(doc, crown, LABEL_ZONES.rightSeparator.xPt, LABEL_ZONES.rightSeparator.yPt, LABEL_ZONES.rightSeparator.heightPt);
   drawIdentity(doc, content);
   drawRightThird(doc, content);
+  drawHandCutGuide(doc);
   doc.restore();
 }
 

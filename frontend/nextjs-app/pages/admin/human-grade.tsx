@@ -687,7 +687,7 @@ export default function HumanGradePage() {
           border-radius: 9px;
           background: rgba(255,255,255,0.98);
           color: #0f0f0f;
-          box-shadow: 0 12px 36px rgba(0,0,0,0.35);
+          box-shadow: inset 0 0 0 2px #b38a20, 0 12px 36px rgba(0,0,0,0.35);
         }
         .brand-third, .identity-third, .grade-third { min-width: 0; padding: 12px; }
         .brand-third {
