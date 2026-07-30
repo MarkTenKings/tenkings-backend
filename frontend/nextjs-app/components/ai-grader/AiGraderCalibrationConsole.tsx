@@ -135,7 +135,6 @@ export default function AiGraderCalibrationConsole({
       .sort((left, right) => Date.parse(right.activatedAt ?? "") - Date.parse(left.activatedAt ?? ""))[0];
   }, [registry, selectedRegistrySnapshot]);
   const selectedRegistryAction = priorActivationForSelected ? "reactivate" : "activate";
-  const activeRegistryActivation = registry?.activations.find((activation) => activation.activationId === registry.activeActivationId);
 
   const button = (action: AiGraderCalibrationConsoleAction, className = "") => {
     const enabled = actionEnabled(action) && (action !== "activate" || activationLabelsComplete);
@@ -396,7 +395,6 @@ export default function AiGraderCalibrationConsole({
                       Boolean(registryStatus?.pending) ||
                       !selectedRegistrySnapshot.activationEligible ||
                       selectedRegistrySnapshot.trustStatus !== "TRUSTED" ||
-                      activeRegistryActivation?.snapshotId === selectedRegistrySnapshot.snapshotId ||
                       activationReason.trim().length === 0 ||
                       !onRegistryActivation
                     }
@@ -419,11 +417,10 @@ export default function AiGraderCalibrationConsole({
             <div className="calibration-history">
               <h3>Saved calibrations</h3>
               {registry?.snapshots.length ? registry.snapshots.map((snapshot) => {
-                const exactActive = activeRegistryActivation?.snapshotId === snapshot.snapshotId;
                 const historical = registry.activations
                   .filter((activation) => activation.snapshotId === snapshot.snapshotId && activation.activatedAt)
                   .sort((left, right) => Date.parse(right.activatedAt ?? "") - Date.parse(left.activatedAt ?? ""))[0];
-                const label = exactActive ? "Currently Active" : historical ? "Select to Reactivate" : "Select to Activate";
+                const label = historical ? "Select to Reactivate" : "Select to Activate";
                 return (
                   <article key={snapshot.snapshotId}>
                     <div>
@@ -436,7 +433,7 @@ export default function AiGraderCalibrationConsole({
                     <button
                       type="button"
                       className="calibration-action"
-                      disabled={registryBusy || Boolean(registryStatus?.pending) || exactActive || !snapshot.activationEligible}
+                      disabled={registryBusy || Boolean(registryStatus?.pending) || !snapshot.activationEligible}
                       onClick={() => {
                         setSelectedRegistrySnapshotId(snapshot.snapshotId);
                         setActivationReason("");

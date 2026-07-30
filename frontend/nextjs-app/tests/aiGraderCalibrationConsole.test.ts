@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -123,6 +124,94 @@ test("contract loss is a clear fail-closed state with only safe exit available",
   }));
   assert.match(html, /Calibration hard failure/);
   assert.match(html, /No older calibration was selected automatically/);
+});
+
+test("the exact active snapshot remains selectable for an explicit versioned reactivation", () => {
+  const sha = "a".repeat(64);
+  const snapshot = {
+    snapshotId: "snapshot-active",
+    rigId: "fixed-rig-dell-v1",
+    trustStatus: "TRUSTED",
+    activationEligible: true,
+    activationIneligibilityCode: null,
+    profileId: "fixed-rig-dell-v1-evidence-calibration-20260722",
+    calibrationVersion: "v1.2-20260722-d87aacd6",
+    artifactSha256: sha,
+    bundleManifestSha256: sha,
+    memberLedgerSha256: sha,
+    runtimeContextHash: sha,
+    rigCharacterizationSha256: sha,
+    operatingContextHash: sha,
+    importedAt: "2026-07-23T00:00:00.000Z",
+    trustedAt: "2026-07-23T00:01:00.000Z",
+    revokedAt: null,
+  } as const;
+  const activation = {
+    activationId: "activation-v010",
+    activationHash: sha,
+    activationRevision: sha,
+    state: "ACTIVE",
+    snapshotId: snapshot.snapshotId,
+    rigId: snapshot.rigId,
+    bundleManifestSha256: sha,
+    memberLedgerSha256: sha,
+    runtimeContextHash: sha,
+    rigCharacterizationSha256: sha,
+    operatingContextHash: sha,
+    observationId: "observation-v010",
+    workstationObservationSha256: sha,
+    workstationReceiptSha256: sha,
+    requestedAt: "2026-07-23T00:02:00.000Z",
+    pendingExpiresAt: "2026-07-23T00:10:00.000Z",
+    locallyVerifiedAt: "2026-07-23T00:03:00.000Z",
+    activatedAt: "2026-07-23T00:04:00.000Z",
+    terminatedAt: null,
+    priorActivationId: null,
+    supersededByActivationId: null,
+  } as const;
+  const html = renderToStaticMarkup(createElement(AiGraderCalibrationConsole, {
+    model: unavailableAiGraderCalibrationConsole("No local calibration session is required for activation."),
+    previewUrl: null,
+    previewFresh: false,
+    previewStatusLabel: "Basler preview unavailable",
+    previewDetail: "No exact epoch",
+    onAction() {},
+    registryState: {
+      loading: false,
+      registry: {
+        schemaVersion: "ten-kings-ai-grader-calibration-activation-registry-projection-v1",
+        rigId: snapshot.rigId,
+        registryRevision: sha,
+        activeActivationId: activation.activationId,
+        pendingActivationId: null,
+        snapshots: [snapshot],
+        activations: [activation],
+        observedAt: "2026-07-30T00:00:00.000Z",
+      },
+      status: {
+        ok: true,
+        registryRevision: sha,
+        active: activation,
+        pending: null,
+        authority: null,
+        observedAt: "2026-07-30T00:00:00.000Z",
+      },
+    },
+    onRegistryActivation() {},
+  }));
+  assert.match(
+    html,
+    /<button type="button" class="calibration-action">Select to Reactivate<\/button>/,
+  );
+  assert.doesNotMatch(html, /Currently Active/);
+
+  const source = readFileSync(
+    new URL("../components/ai-grader/AiGraderCalibrationConsole.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /activeRegistryActivation/);
+  assert.match(source, /const selectedRegistryAction = priorActivationForSelected \? "reactivate" : "activate"/);
+  assert.match(source, /priorActivationId: priorActivationForSelected\.activationId/);
 });
 
 test("proven multipart reader parses split live frames and keeps session identity out of the URL", async () => {
