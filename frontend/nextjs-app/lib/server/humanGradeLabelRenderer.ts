@@ -70,17 +70,27 @@ const LABEL_ZONES = {
   rightThird: {
     xPt: 136,
     widthPt: 57.8,
-    cardNumberTopPt: 3.7,
-    gradeCenterYPt: 23.5,
+    gradeCenterYPt: 29.88,
     gradeCenterFromTextTopEm: 0.55,
-    subgradeGridTopPt: 40.3,
-    subgradeRowHeightPt: 6.8,
-    subgradePaddingXPt: 1.5,
-    subgradeColumnGapPt: 1.4,
-    subgradeLeftColumnWidthPt: 28.4,
-    subgradeScoreWidthPt: 6.5,
   },
   separatorCrowns: { centerYPt: 29.88, widthPt: 3.4, heightPt: 2.2, lineGapPt: 0.7 },
+} as const;
+
+export const HUMAN_GRADE_HUD_GEOMETRY = {
+  frameWidthPt: 33,
+  frameHeightPt: 46.2,
+  frameCenterYPt: 29.88,
+  frameStrokePt: 0.42,
+  axisStrokePt: 0.32,
+  cornerReticleRadiusPt: 2.2,
+  cornerReticleArmPt: 3.25,
+  cornerLineClearancePt: 3.15,
+  gradeClearanceXPt: 1.6,
+  gradeClearanceYPt: 1.2,
+  nodeLineClearancePt: 0.8,
+  nodeCodeFontSizePt: 2.45,
+  nodeScoreFontSizePt: 8.6,
+  nodeCharacterGapPt: 0.6,
 } as const;
 
 const TEXT_TIERS = {
@@ -88,8 +98,7 @@ const TEXT_TIERS = {
   primary: [19, 17, 15, 13, 11],
   descriptor: [10, 9, 8, 7, 6, 5],
   certificate: [6.2, 5.8, 5.4, 5],
-  cardNumber: [7, 6.2, 5.5],
-  grade: [31, 29, 27, 25, 23],
+  grade: [25, 24, 23, 22, 21],
 } as const;
 
 function assetDirectory() {
@@ -287,55 +296,222 @@ function drawIdentity(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLab
   }
 }
 
+type HudNode = {
+  code: "CTR" | "CRN" | "EDG" | "SUR";
+  grade: string;
+  side: "top" | "left" | "right" | "bottom";
+};
+
+function hudNodeWidth(doc: PdfDoc, node: HudNode) {
+  const geometry = HUMAN_GRADE_HUD_GEOMETRY;
+  const codeWidth = doc
+    .font("TKHumanWordmark")
+    .fontSize(geometry.nodeCodeFontSizePt)
+    .widthOfString(node.code, { characterSpacing: 0.02 });
+  const scoreWidth = doc
+    .font("TKHumanDisplay")
+    .fontSize(geometry.nodeScoreFontSizePt)
+    .widthOfString(node.grade);
+  return codeWidth + geometry.nodeCharacterGapPt + scoreWidth;
+}
+
+function drawHudNode(doc: PdfDoc, node: HudNode, centerX: number, centerY: number) {
+  const geometry = HUMAN_GRADE_HUD_GEOMETRY;
+  const codeWidth = doc
+    .font("TKHumanWordmark")
+    .fontSize(geometry.nodeCodeFontSizePt)
+    .widthOfString(node.code, { characterSpacing: 0.02 });
+  const scoreWidth = doc
+    .font("TKHumanDisplay")
+    .fontSize(geometry.nodeScoreFontSizePt)
+    .widthOfString(node.grade);
+  const totalWidth = codeWidth + geometry.nodeCharacterGapPt + scoreWidth;
+  const startX = centerX - totalWidth / 2;
+  const scoreTop = centerY - geometry.nodeScoreFontSizePt * 0.54;
+  const codeTop = centerY - geometry.nodeCodeFontSizePt * 0.42;
+
+  doc
+    .font("TKHumanWordmark")
+    .fontSize(geometry.nodeCodeFontSizePt)
+    .fillColor(COLORS.ink)
+    .text(node.code, startX, codeTop, {
+      characterSpacing: 0.02,
+      lineBreak: false,
+    });
+  doc
+    .font("TKHumanDisplay")
+    .fontSize(geometry.nodeScoreFontSizePt)
+    .fillColor(COLORS.ink)
+    .text(node.grade, startX + codeWidth + geometry.nodeCharacterGapPt, scoreTop, {
+      lineBreak: false,
+    });
+}
+
+function drawHudReticle(doc: PdfDoc, x: number, y: number) {
+  const geometry = HUMAN_GRADE_HUD_GEOMETRY;
+  doc.lineWidth(geometry.axisStrokePt).strokeColor(COLORS.ink);
+  doc.circle(x, y, geometry.cornerReticleRadiusPt).stroke();
+  doc
+    .moveTo(x - geometry.cornerReticleArmPt, y)
+    .lineTo(x + geometry.cornerReticleArmPt, y)
+    .stroke();
+  doc
+    .moveTo(x, y - geometry.cornerReticleArmPt)
+    .lineTo(x, y + geometry.cornerReticleArmPt)
+    .stroke();
+  doc.circle(x, y, 0.55).stroke();
+}
+
+function drawHudSegment(doc: PdfDoc, x1: number, y1: number, x2: number, y2: number, width: number) {
+  if (x2 < x1 || y2 < y1) return;
+  doc.lineWidth(width).strokeColor(COLORS.ink).moveTo(x1, y1).lineTo(x2, y2).stroke();
+}
+
 function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLabelContent>) {
   const zone = LABEL_ZONES.rightThird;
-  if (content.cardNumberAboveGrade) {
-    const cardNumber = fitBlock(doc, content.cardNumberAboveGrade, zone.widthPt, TEXT_TIERS.cardNumber, {
-      maxLines: 1,
-      fontName: "TKHumanSmall",
-      lineHeightEm: 1,
-      characterSpacingPt: 0.12,
-    });
-    drawCenteredBlock(doc, cardNumber, zone.xPt, zone.cardNumberTopPt, zone.widthPt);
-  }
-
-  const grade = fitBlock(doc, content.grade, zone.widthPt, TEXT_TIERS.grade, {
+  const geometry = HUMAN_GRADE_HUD_GEOMETRY;
+  const centerX = zone.xPt + zone.widthPt / 2;
+  const centerY = geometry.frameCenterYPt;
+  const frameLeft = centerX - geometry.frameWidthPt / 2;
+  const frameRight = centerX + geometry.frameWidthPt / 2;
+  const frameTop = centerY - geometry.frameHeightPt / 2;
+  const frameBottom = centerY + geometry.frameHeightPt / 2;
+  const grade = fitBlock(doc, content.grade, geometry.frameWidthPt - 8, TEXT_TIERS.grade, {
     maxLines: 1,
     fontName: "TKHumanDisplay",
     lineHeightEm: 0.88,
     characterSpacingPt: 0,
   });
-  const gradeTop = zone.gradeCenterYPt - grade.fontSize * zone.gradeCenterFromTextTopEm;
-  drawCenteredBlock(doc, grade, zone.xPt, gradeTop, zone.widthPt);
+  const gradeTop = centerY - grade.fontSize * zone.gradeCenterFromTextTopEm;
+  const gradeTextWidth = measure(doc, content.grade, grade.fontSize, grade.fontName, grade.characterSpacingPt);
+  const gradeLeft = centerX - gradeTextWidth / 2 - geometry.gradeClearanceXPt;
+  const gradeRight = centerX + gradeTextWidth / 2 + geometry.gradeClearanceXPt;
+  const gradeVisualTop = centerY - grade.fontSize * 0.4 - geometry.gradeClearanceYPt;
+  const gradeVisualBottom = centerY + grade.fontSize * 0.4 + geometry.gradeClearanceYPt;
+  const subgradeByLabel = new Map(content.subgrades.map((subgrade) => [subgrade.label, subgrade.grade]));
+  const nodes: HudNode[] = [
+    { code: "CTR", grade: subgradeByLabel.get("CENTERING") ?? "", side: "top" },
+    { code: "CRN", grade: subgradeByLabel.get("CORNERS") ?? "", side: "left" },
+    { code: "EDG", grade: subgradeByLabel.get("EDGES") ?? "", side: "right" },
+    { code: "SUR", grade: subgradeByLabel.get("SURFACE") ?? "", side: "bottom" },
+  ];
+  const topNode = nodes[0];
+  const leftNode = nodes[1];
+  const rightNode = nodes[2];
+  const bottomNode = nodes[3];
+  const topGap = hudNodeWidth(doc, topNode) / 2 + geometry.nodeLineClearancePt;
+  const bottomGap = hudNodeWidth(doc, bottomNode) / 2 + geometry.nodeLineClearancePt;
+  const sideGap = geometry.nodeScoreFontSizePt * 0.43 + geometry.nodeLineClearancePt;
+  const cornerClearance = geometry.cornerLineClearancePt;
 
-  const gridInnerWidth = zone.widthPt - zone.subgradePaddingXPt * 2;
-  const rightColumnWidth = gridInnerWidth - zone.subgradeLeftColumnWidthPt - zone.subgradeColumnGapPt;
-  content.subgrades.forEach((subgrade, index) => {
-    const row = Math.floor(index / 2);
-    const column = index % 2;
-    const cellWidth = column === 0 ? zone.subgradeLeftColumnWidthPt : rightColumnWidth;
-    const cellX =
-      zone.xPt +
-      zone.subgradePaddingXPt +
-      (column === 0 ? 0 : zone.subgradeLeftColumnWidthPt + zone.subgradeColumnGapPt);
-    const y = zone.subgradeGridTopPt + row * zone.subgradeRowHeightPt;
-    doc.font("TKHumanSmall").fontSize(4).fillColor(COLORS.ink).text(subgrade.label, cellX, y, {
-      width: cellWidth - zone.subgradeScoreWidthPt - 0.5,
-      align: "left",
-      characterSpacing: 0.02,
-      lineBreak: false,
-    });
-    doc
-      .font("TKHumanWordmark")
-      .fontSize(4.8)
-      .fillColor(COLORS.ink)
-      .text(subgrade.grade, cellX + cellWidth - zone.subgradeScoreWidthPt, y - 0.15, {
-        width: zone.subgradeScoreWidthPt,
-        align: "right",
-        characterSpacing: 0,
-        lineBreak: false,
-      });
-  });
+  drawHudSegment(
+    doc,
+    frameLeft + cornerClearance,
+    frameTop,
+    centerX - topGap,
+    frameTop,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    centerX + topGap,
+    frameTop,
+    frameRight - cornerClearance,
+    frameTop,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameLeft + cornerClearance,
+    frameBottom,
+    centerX - bottomGap,
+    frameBottom,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    centerX + bottomGap,
+    frameBottom,
+    frameRight - cornerClearance,
+    frameBottom,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameLeft,
+    frameTop + cornerClearance,
+    frameLeft,
+    centerY - sideGap,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameLeft,
+    centerY + sideGap,
+    frameLeft,
+    frameBottom - cornerClearance,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameRight,
+    frameTop + cornerClearance,
+    frameRight,
+    centerY - sideGap,
+    geometry.frameStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameRight,
+    centerY + sideGap,
+    frameRight,
+    frameBottom - cornerClearance,
+    geometry.frameStrokePt
+  );
+
+  drawHudSegment(
+    doc,
+    centerX,
+    frameTop + geometry.nodeScoreFontSizePt * 0.5,
+    centerX,
+    gradeVisualTop,
+    geometry.axisStrokePt
+  );
+  drawHudSegment(
+    doc,
+    centerX,
+    gradeVisualBottom,
+    centerX,
+    frameBottom - geometry.nodeScoreFontSizePt * 0.5,
+    geometry.axisStrokePt
+  );
+  drawHudSegment(
+    doc,
+    frameLeft + geometry.nodeScoreFontSizePt * 0.5,
+    centerY,
+    gradeLeft,
+    centerY,
+    geometry.axisStrokePt
+  );
+  drawHudSegment(
+    doc,
+    gradeRight,
+    centerY,
+    frameRight - geometry.nodeScoreFontSizePt * 0.5,
+    centerY,
+    geometry.axisStrokePt
+  );
+
+  drawHudReticle(doc, frameLeft, frameTop);
+  drawHudReticle(doc, frameRight, frameTop);
+  drawHudReticle(doc, frameLeft, frameBottom);
+  drawHudReticle(doc, frameRight, frameBottom);
+
+  drawHudNode(doc, topNode, centerX, frameTop);
+  drawHudNode(doc, leftNode, frameLeft, centerY);
+  drawHudNode(doc, rightNode, frameRight, centerY);
+  drawHudNode(doc, bottomNode, centerX, frameBottom);
+  drawCenteredBlock(doc, grade, centerX - geometry.frameWidthPt / 2, gradeTop, geometry.frameWidthPt);
 }
 
 function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapshot, x: number, y: number) {

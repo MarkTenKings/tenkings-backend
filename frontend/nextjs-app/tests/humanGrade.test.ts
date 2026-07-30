@@ -13,7 +13,10 @@ import {
   formatHumanGradeCertificateNumber,
   type HumanGradeLabelSnapshot,
 } from "../lib/humanGrade";
-import { renderHumanGradeLabelSheetPdf } from "../lib/server/humanGradeLabelRenderer";
+import {
+  HUMAN_GRADE_HUD_GEOMETRY,
+  renderHumanGradeLabelSheetPdf,
+} from "../lib/server/humanGradeLabelRenderer";
 
 const sports: HumanGradeLabelSnapshot = {
   certificateNumber: "TKH-000001",
@@ -81,9 +84,8 @@ test("human-grade final grades use the active Ten Kings weighted-only formula", 
 test("human-grade Sports and Pokemon labels use only printed label fields", () => {
   assert.deepEqual(buildHumanGradeLabelContent(sports), {
     primary: "LEBRON JAMES",
-    metadata: "2003 TOPPS CHROME",
+    metadata: "2003 TOPPS CHROME #111",
     descriptor: "REFRACTOR / ROOKIE",
-    cardNumberAboveGrade: "#111",
     certificateNumber: "TKH-000001",
     subgrades: [
       { label: "CENTERING", grade: "10" },
@@ -143,6 +145,15 @@ test("human-grade pages copy the approved 2 by 8 physical sheet geometry", () =>
   });
 });
 
+test("human-grade grade HUD uses a portrait card frame", () => {
+  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.frameHeightPt > HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt);
+  assert.equal(
+    Number((HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt / HUMAN_GRADE_HUD_GEOMETRY.frameHeightPt).toFixed(3)),
+    Number((2.5 / 3.5).toFixed(3))
+  );
+  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeScoreFontSizePt >= 8);
+});
+
 test("human-grade renderer creates one exact letter page with embedded approved fonts", async () => {
   const entries = Array.from({ length: 16 }, (_, index) => ({
     slot: index + 1,
@@ -186,12 +197,16 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /Saving an edit regenerates this page’s PDF with the updated label/);
   assert.match(page, /PDF rendered from its current saved labels/);
   assert.match(page, /cache: "no-store"/);
+  assert.match(page, /Portrait card grading HUD/);
+  assert.match(page, /hud-final-grade/);
+  assert.doesNotMatch(page, /className="subgrade-fields"/);
   assert.match(pdfApi, /renderHumanGradeLabelSheetPdf/);
   assert.match(pdfApi, /"Cache-Control", "private, no-store"/);
-  assert.match(renderer, /Math\.floor\(index \/ 2\)/);
-  assert.match(renderer, /index % 2/);
-  assert.match(renderer, /subgradeGridTopPt/);
-  assert.doesNotMatch(renderer, /subgradesTopPt/);
+  assert.match(renderer, /HUMAN_GRADE_HUD_GEOMETRY/);
+  assert.match(renderer, /drawHudReticle/);
+  assert.match(renderer, /gradeVisualTop/);
+  assert.match(renderer, /gradeVisualBottom/);
+  assert.doesNotMatch(renderer, /subgradeGridTopPt|subgradesTopPt/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);
   assert.doesNotMatch(renderer, /drawNfc|drawQr|GRADING/);
