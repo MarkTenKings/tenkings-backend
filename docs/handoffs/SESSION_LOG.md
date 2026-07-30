@@ -29326,6 +29326,15 @@ By enabling Rip It Live, I confirm:
 - Read-only Production smoke verification returned HTTP `200` for `/admin/human-grade`, rendered the browser title `Human Grade | Ten Kings` with the existing sign-in boundary, found `Save Changes`, `Deleting…`, and the delete-compaction confirmation in the deployed Human Grade page bundle, and confirmed the API advertises `GET, POST, PATCH, DELETE`. Unauthenticated API access continued to return JSON HTTP `401`.
 - No live Human Grade label was edited or deleted. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
 
+## 2026-07-29 - Human Grade balanced label composition authorized
+
+- Mark approved a renderer-only refinement shared by Sports and Pokémon Human Grade labels: replace the four-row subgrade column with a compact two-row by two-column matrix, keep all four subgrade names fully spelled out, and preserve the large final grade.
+- The crown, TEN KINGS wordmark, and TK certificate remain exactly centered left-to-right and are repositioned as one compact vertically centered stack, with the certificate immediately beneath the wordmark. The distinct Sports and Pokémon middle-third field composition remains unchanged.
+- Existing Human Grade card data, grades, subgrades, certificates, page assignments, READY status, and PDFs remain unchanged at rest. Since printable PDFs are rendered from stored label data on request, existing READY pages will use the balanced composition the next time they are previewed or downloaded after deployment.
+- Planned Production action is limited to 300-DPI Sports/Pokémon PDF proof, focused tests and a Production-equivalent build, one protected PR with all required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+- Local validation passed: focused renderer/test ESLint with zero findings, Human Grade tests `6/6`, `git diff --check`, and the complete Vercel-equivalent Production build with `RUN_DB_MIGRATIONS=false`. A one-page Letter proof containing all 16 physical slots was rendered at 300 DPI; the full sheet and isolated Sports and Pokémon labels were visually inspected with no clipping, overlap, unreadable glyphs, or geometry change.
+
 ## 2026-07-29 - Bounded AI Grader publish payload correction
 
 - This web-only correction starts from protected main `95030fc11691c9479f9629703d894825fb831798`, containing Optimize and PR `#219`. The AI Grader Production API route now uses an explicit `4mb` Next.js body-parser limit instead of `1mb`, containing the observed approximately `2.71 MiB` advanced create-card-from-report request while remaining below Vercel's `4.5 MB` function limit.
