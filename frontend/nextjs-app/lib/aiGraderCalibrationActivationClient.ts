@@ -8,6 +8,7 @@ import { normalizeAiGraderStationBridgeUrl } from "./aiGraderStationBridgeClient
  * manufactures, or interprets activation authority.
  */
 export const AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1 = {
+  authorize: "/api/admin/ai-grader/calibration-activations/authorize",
   resolveTrusted: "/api/admin/ai-grader/calibration-activations/resolve-trusted",
   list: "/api/admin/ai-grader/calibration-activations/list",
   status: "/api/admin/ai-grader/calibration-activations/status",
@@ -17,6 +18,11 @@ export const AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1 = {
   complete: "/api/admin/ai-grader/calibration-activations/complete",
   fail: "/api/admin/ai-grader/calibration-activations/fail",
 } as const;
+
+const freshAuthorizationResponseSchema = z.object({
+  ok: z.literal(true),
+  fresh: z.literal(true),
+}).strict();
 
 const canonicalText = z.string().trim().min(1).max(256);
 const longCanonicalText = z.string().trim().min(1).max(1024);
@@ -491,6 +497,19 @@ export function listAiGraderCalibrationActivationsV1(
     ...(input.includeIncomplete === undefined ? {} : { includeIncomplete: input.includeIncomplete }),
   });
   return hostedPost(AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.list, body, input.token, listResponseSchema, fetchImpl);
+}
+
+export function authorizeFreshAiGraderCalibrationActivationV1(
+  input: { token: string },
+  fetchImpl: typeof fetch = fetch,
+) {
+  return hostedPost(
+    AI_GRADER_CALIBRATION_ACTIVATION_ROUTE_MAP_V1.authorize,
+    {},
+    input.token,
+    freshAuthorizationResponseSchema,
+    fetchImpl,
+  );
 }
 
 export function resolveTrustedAiGraderCalibrationRegistryV1(

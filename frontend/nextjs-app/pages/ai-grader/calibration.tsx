@@ -25,6 +25,9 @@ import {
   resolveAiGraderCalibrationRegistryForConsoleV1,
 } from "../../lib/aiGraderCalibrationRegistryResolver";
 import {
+  ensureFreshAiGraderCalibrationActivationSession,
+} from "../../lib/aiGraderCalibrationFreshSession";
+import {
   listMathematicalCalibrationV1_2Sessions,
   mutateMathematicalCalibrationV1_2Session,
   readMathematicalCalibrationV1_2Status,
@@ -440,10 +443,7 @@ export default function AiGraderCalibrationPage() {
     setRegistryBusy(true);
     setMessage("");
     try {
-      const freshSession = await ensureSession({
-        force: true,
-        message: "Enter a fresh human-admin SMS code to activate this exact calibration.",
-      });
+      const freshSession = await ensureFreshAiGraderCalibrationActivationSession(ensureSession);
       if (!hasAdminAccess(freshSession.user.id) && !hasAdminPhoneAccess(freshSession.user.phone)) {
         throw new Error("Fresh authentication did not produce a human-admin session.");
       }

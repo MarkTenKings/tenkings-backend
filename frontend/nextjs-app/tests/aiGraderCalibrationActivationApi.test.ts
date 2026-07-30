@@ -40,6 +40,44 @@ function service(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
+test("fresh activation authorization verifies step-up without touching activation state", async () => {
+  let ordinaryAuth = 0;
+  let freshAuth = 0;
+  let serviceCalls = 0;
+  const runtime = createAiGraderCalibrationActivationApiHandler({
+    async requireAdminSession() {
+      ordinaryAuth += 1;
+      return { user: { id: "admin-exact" } };
+    },
+    async requireFreshAdminSession() {
+      freshAuth += 1;
+      return { user: { id: "admin-exact" } };
+    },
+    service: service({
+      async status() {
+        serviceCalls += 1;
+        return {};
+      },
+      async requestObservationAuthority() {
+        serviceCalls += 1;
+        return {};
+      },
+      async requestActivation() {
+        serviceCalls += 1;
+        return {};
+      },
+    }),
+  });
+
+  const result = response();
+  await runtime(request("authorize", {}), result.res);
+  assert.equal(result.state.status, 200);
+  assert.deepEqual(result.state.body, { ok: true, fresh: true });
+  assert.equal(freshAuth, 1);
+  assert.equal(ordinaryAuth, 0);
+  assert.equal(serviceCalls, 0);
+});
+
 test("hosted trusted resolver accepts no browser rig choice and performs no write", async () => {
   let ordinaryAuth = 0;
   let freshAuth = 0;
