@@ -13,6 +13,14 @@
 - Planned Production action is limited to one complete Production-equivalent build, one protected PR, merge after all required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live Human Grade label mutation is required.
 - No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
 
+### Production result
+
+- Focused PR `#242` passed all `12/12` required GitHub, disposable PostgreSQL migration-chain, Docker-image, and Vercel checks and merged through the protected path at `8ff5ddf835fe79e5fc97f71f7b220b6a838505c2`.
+- The exact merge's normal Vercel Production deployment completed successfully at `2026-07-30T09:55:51Z`; deployment evidence is `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/CG9Pb5yTmqRJBR7BngyW7WWtkXuN`.
+- No database migration was required or applied.
+- Read-only Production smoke verification returned HTTP `200` for `/admin/human-grade`, retained JSON HTTP `401` responses for unauthenticated queue and printable-sheet requests, and found the widened `38 / 46.2` portrait HUD, `hud-final-grade`, `hud-subgrade`, and completed-page controls in the deployed Human Grade page bundle.
+- No live Human Grade label was created, edited, deleted, regraded, or reassigned. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
+
 ## 2026-07-30 - Human Grade portrait grading HUD authorized
 
 - Mark authorized replacing the standalone Human Grade label's right-third 2x2 subgrade grid with a portrait card-proportion precision-grading HUD and merging the focused design to Production.
