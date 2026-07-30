@@ -1,5 +1,19 @@
 # Session Log (Append Only)
 
+## 2026-07-30 - Human Grade compact 2x2 subgrades restored
+
+- Mark changed direction and authorized restoring the original compact 2x2 subgrade layout beneath the large Human Grade final score.
+- The printable right third removes the portrait HUD, measurement axes, reticles, and circular nodes. It uses `CTR`, `CRN`, `EDG`, and `SUR` in the fixed order Centering, Corners, Edges, and Surface.
+- The abbreviation font is exactly doubled from the original `4 pt` to `8 pt`, and the score font is exactly doubled from `4.8 pt` to `9.6 pt`. Each abbreviation and score is measured and centered as one pair with a `0.65 pt` gap so the number stays visually attached to its abbreviation.
+- The large calculated grade returns to the original `31 pt` maximum tier above the two subgrade rows. The weighted grading formula and all stored grades remain unchanged.
+- The Human Grade admin preview mirrors the restored 2x2 layout and retains the full accessible field names for Centering, Corners, Edges, and Surface.
+- A complete 16-label Letter proof was rendered at 300 DPI and visually inspected using the reference `9.5` and `9` labels plus decimal subgrades `9.2`, `8.5`, `9.5`, and `7.5`. All abbreviation/score pairs are legible, close together, aligned, and free of clipping or overlap.
+- Focused Human Grade ESLint passed with zero findings, Human Grade tests passed `7/7`, and `git diff --check` passed.
+- The complete Production-equivalent Next.js build passed with `RUN_DB_MIGRATIONS=false`. It emitted only the repository's existing unrelated image, hook-dependency, stale browser metadata, Tailwind glob, and optional Sharp development-module warnings.
+- Existing completed Human Grade pages remain render-on-request with `private, no-store`; after Production deployment, hard refresh or a new download will apply the restored layout to every existing READY page. Previously downloaded local PDF files remain unchanged.
+- Planned Production action is limited to one complete Production-equivalent build, one protected PR, merge after all required checks, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live Human Grade label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+
 ## 2026-07-30 - Human Grade number-only score nodes authorized
 
 - Mark authorized the focused Option 2 refinement of the standalone Human Grade label HUD and requested the fastest protected path to Production.
