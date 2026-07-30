@@ -22,6 +22,7 @@ import {
   type AiGraderPublishedDefectFindingV2,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderReportBundleV03,
+  type AiGraderHumanGeometryReportProjectionV1,
   type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
   type MathematicalGradingElementV1,
@@ -187,7 +188,7 @@ export interface BuildAiGraderMathematicalReportBundleV1Input {
   conditionObservationPresentations: AiGraderMathematicalConditionObservationPresentationV1[];
   assetBindings: AiGraderMathematicalReportAssetBindingV1[];
   evidenceQualityLimitations?: AiGraderMathematicalEvidenceQualityLimitationV1[];
-  geometry?: Record<string, unknown>;
+  geometry?: AiGraderHumanGeometryReportProjectionV1;
   geometryCaptureDecisions?: Record<string, unknown>;
   captureTiming?: Record<string, unknown>;
   ocrPrefill?: Record<string, unknown>;

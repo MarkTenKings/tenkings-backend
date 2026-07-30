@@ -95,6 +95,7 @@ import {
 import {
   AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
   AI_GRADER_OPERATOR_RESOLUTION_AUTHENTICATION_DOMAIN_V1,
+  assertAiGraderHumanGeometryReportProjectionMatchesReceiptV1,
   aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
   aiGraderReportBundleV03Schema,
   aiGraderOcrFieldRequiresReview,
@@ -4034,12 +4035,37 @@ class MathematicalStationShutdownInterruptionV1 extends Error {
   }
 }
 
+class StaleHumanGeometryWorkerResultV1 extends Error {
+  constructor() {
+    super(
+      "A superseded Human Geometry worker result was discarded without changing the active receipt.",
+    );
+    this.name = "StaleHumanGeometryWorkerResultV1";
+  }
+}
+
+interface HumanGeometryReceiptAuthorityV1 {
+  queueItemId: string;
+  receiptVersion: number;
+  receiptSha256: string;
+}
+
+interface HumanGeometryWorkerClaimV1
+  extends HumanGeometryReceiptAuthorityV1 {
+  attempt: number;
+  startedAt: string;
+}
+
 function isMathematicalStationShutdown(error: unknown): boolean {
   return error instanceof MathematicalStationShutdownInterruptionV1 ||
     (
       error instanceof FixedRigMathematicalStationWorkerErrorV1 &&
       error.code === "shutdown"
     );
+}
+
+function isStaleHumanGeometryWorkerResult(error: unknown): boolean {
+  return error instanceof StaleHumanGeometryWorkerResultV1;
 }
 
 const LEGACY_RAPID_CAPTURE_QUEUE_SCHEMA_VERSION = "ten-kings-ai-grader-rapid-capture-queue-v1" as const;
@@ -6709,6 +6735,10 @@ export class AiGraderLocalStationBridgeService {
       throw new Error("Mathematical Grading V1 report " + expectedReportId + " is not available.");
     }
     const reportPackage = await this.resolveMathematicalReportPackage(source.manifest, {});
+    this.assertLockedHumanGeometryReportProjection(
+      source.manifest,
+      reportPackage.envelope.reportBundle,
+    );
     return {
       reportId: expectedReportId,
       gradingSessionId: reportPackage.envelope.gradingSessionId,
@@ -9053,6 +9083,71 @@ export class AiGraderLocalStationBridgeService {
     if (queueItemId) this.queuedManifests.set(queueItemId, manifest);
   }
 
+  private humanGeometryReceiptAuthorityIsCurrent(
+    manifest: AiGraderLocalStationBridgeManifest,
+    authority: HumanGeometryReceiptAuthorityV1,
+  ): boolean {
+    const current = this.queuedManifests.get(authority.queueItemId);
+    const geometry = current?.humanGeometryAssist;
+    return (
+      current === manifest &&
+      geometry?.state === "locked" &&
+      geometry.receiptVersion === authority.receiptVersion &&
+      geometry.lockedReceipt?.receiptVersion === authority.receiptVersion &&
+      geometry.lockedReceipt.receiptSha256 === authority.receiptSha256 &&
+      geometry.gradingClaimReceiptSha256 === authority.receiptSha256
+    );
+  }
+
+  private assertHumanGeometryReceiptAuthorityCurrent(
+    manifest: AiGraderLocalStationBridgeManifest,
+    authority: HumanGeometryReceiptAuthorityV1,
+  ): void {
+    if (!this.humanGeometryReceiptAuthorityIsCurrent(manifest, authority)) {
+      throw new StaleHumanGeometryWorkerResultV1();
+    }
+  }
+
+  private humanGeometryWorkerClaimIsCurrent(
+    manifest: AiGraderLocalStationBridgeManifest,
+    claim: HumanGeometryWorkerClaimV1,
+  ): boolean {
+    const current = this.queuedManifests.get(claim.queueItemId);
+    const execution = current?.mathematicalV1?.execution;
+    return (
+      this.humanGeometryReceiptAuthorityIsCurrent(manifest, claim) &&
+      execution?.status === "processing" &&
+      execution.attempt === claim.attempt &&
+      execution.startedAt === claim.startedAt
+    );
+  }
+
+  private assertHumanGeometryWorkerClaimCurrent(
+    manifest: AiGraderLocalStationBridgeManifest,
+    claim: HumanGeometryWorkerClaimV1,
+  ): void {
+    if (!this.humanGeometryWorkerClaimIsCurrent(manifest, claim)) {
+      throw new StaleHumanGeometryWorkerResultV1();
+    }
+  }
+
+  private assertLockedHumanGeometryReportProjection(
+    manifest: AiGraderLocalStationBridgeManifest,
+    bundle: AiGraderReportBundleV03,
+  ) {
+    const geometry = manifest.humanGeometryAssist;
+    if (!geometry) return;
+    if (geometry.state !== "locked" || !geometry.lockedReceipt) {
+      throw new Error(
+        "A new Human Geometry report requires the exact currently locked receipt.",
+      );
+    }
+    return assertAiGraderHumanGeometryReportProjectionMatchesReceiptV1(
+      bundle.geometry,
+      geometry.lockedReceipt,
+    );
+  }
+
   private async runMathematicalStationPackageInternal(
     manifest: AiGraderLocalStationBridgeManifest,
     findingReviews?: FixedRigMathematicalFindingReviewV1[],
@@ -9157,6 +9252,13 @@ export class AiGraderLocalStationBridgeService {
         ? { operatorResolutionRequest: persistedOperatorResolutionRequest }
         : {}),
     };
+    const workerClaim: HumanGeometryWorkerClaimV1 = {
+      queueItemId: queueItem.queueItemId,
+      receiptVersion: humanGeometryReceipt.receiptVersion,
+      receiptSha256: humanGeometryReceipt.receiptSha256,
+      attempt,
+      startedAt,
+    };
     manifest.mathematicalV1.submittedFindingReviews = findingReviews
       ? structuredClone(findingReviews)
       : undefined;
@@ -9221,10 +9323,17 @@ export class AiGraderLocalStationBridgeService {
           forcedOperatorReviewElements: [...forcedOperatorReviewElements],
         } : {}),
       });
+      this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       if (result.gradingContract !== "mathematical_calibration_v1" || result.v0FallbackUsed !== false) {
         throw new Error("Mathematical station adapter returned cross-contract or fallback output.");
       }
     } catch (error) {
+      if (
+        isStaleHumanGeometryWorkerResult(error) ||
+        !this.humanGeometryWorkerClaimIsCurrent(manifest, workerClaim)
+      ) {
+        throw new StaleHumanGeometryWorkerResultV1();
+      }
       if (isMathematicalStationShutdown(error) || this.closing) {
         this.restoreMathematicalRunSnapshot(manifest, preRunManifest);
         try {
@@ -9262,13 +9371,21 @@ export class AiGraderLocalStationBridgeService {
     let operatorWorkspaceAssets:
       Record<string, AiGraderLocalStationOperatorResolutionWorkspaceAssetV1> | undefined;
     if (result.status === "finding_review_required") {
+      this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       try {
         reviewAssets = await this.buildMathematicalReviewAssetRegistry(
           manifest,
           result.reviewRequest,
           result.reviewAssets,
         );
+        this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       } catch (error) {
+        if (
+          isStaleHumanGeometryWorkerResult(error) ||
+          !this.humanGeometryWorkerClaimIsCurrent(manifest, workerClaim)
+        ) {
+          throw new StaleHumanGeometryWorkerResultV1();
+        }
         result = {
           version: "fixed_rig_mathematical_calibration_orchestrator_v1",
           status: "insufficient_evidence",
@@ -9288,6 +9405,7 @@ export class AiGraderLocalStationBridgeService {
         };
       }
     } else if (result.status === "operator_resolution_required") {
+      this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       try {
         operatorWorkspaceAssets =
           await this.buildOperatorResolutionWorkspaceAssetRegistry(
@@ -9296,7 +9414,14 @@ export class AiGraderLocalStationBridgeService {
             result.workspace,
             result.workspaceAssets,
           );
+        this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       } catch (error) {
+        if (
+          isStaleHumanGeometryWorkerResult(error) ||
+          !this.humanGeometryWorkerClaimIsCurrent(manifest, workerClaim)
+        ) {
+          throw new StaleHumanGeometryWorkerResultV1();
+        }
         result = {
           version: "fixed_rig_mathematical_calibration_orchestrator_v1",
           status: "insufficient_evidence",
@@ -9317,6 +9442,7 @@ export class AiGraderLocalStationBridgeService {
       }
     }
     if (this.closing) {
+      this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
       this.restoreMathematicalRunSnapshot(manifest, preRunManifest);
       try {
         await writeSessionManifest(manifest);
@@ -9330,109 +9456,128 @@ export class AiGraderLocalStationBridgeService {
       }
       throw new MathematicalStationShutdownInterruptionV1();
     }
-    if (
-      result.status === "operator_resolution_required" &&
-      result.analysisCheckpoint
-    ) {
-      this.operatorResolutionAnalysisCheckpoints.set(
-        queueItem.queueItemId,
-        result.analysisCheckpoint,
-      );
-    }
-    const completedAt =
-      operatorResolutionLogicalEventTimeV1(startedAt);
-    delete manifest.mathematicalV1.eyesCenteringCandidateLedger;
-    delete manifest.mathematicalV1.eyesCenteringCandidateAssets;
-    delete manifest.mathematicalV1.eyesCenteringSelections;
-    delete manifest.mathematicalV1.eyesCenteringSelectionReceipt;
-    if (result.status === "completed") {
-      this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
-      delete manifest.mathematicalV1.reviewAssets;
-      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
-      this.applyMathematicalReportPackage(manifest, result.reportPackage);
-      manifest.outputs.unifiedReportDir = result.reportPackage.outputDir;
-      manifest.outputs.unifiedReportPath = result.reportPackage.bundlePath;
-      manifest.mathematicalV1.execution = {
-        status: "completed",
-        completedAt,
-        attempt,
-        v0FallbackUsed: false,
-        reportPackagePath: result.reportPackage.outputDir,
-        reportBundlePath: result.reportPackage.bundlePath,
-        orchestrationTraceSha256: result.orchestrationTraceSha256,
-        grade: result.grade,
-        summary: result.summary,
-        operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
+    return this.runRapidQueueMutation(async ({ trackManifest }) => {
+      this.assertHumanGeometryWorkerClaimCurrent(manifest, workerClaim);
+      this.exactMutableQueuedItem({
+        queueItemId: queueItem.queueItemId,
+        gradingSessionId: manifest.sessionId,
+        reportId: manifest.reportId,
+      });
+      const mathematicalV1 = manifest.mathematicalV1;
+      if (!mathematicalV1) {
+        throw new StaleHumanGeometryWorkerResultV1();
+      }
+      trackManifest(manifest);
+      if (
+        result.status === "operator_resolution_required" &&
+        result.analysisCheckpoint
+      ) {
+        this.operatorResolutionAnalysisCheckpoints.set(
+          queueItem.queueItemId,
+          result.analysisCheckpoint,
+        );
+      }
+      const completedAt =
+        operatorResolutionLogicalEventTimeV1(startedAt);
+      delete mathematicalV1.eyesCenteringCandidateLedger;
+      delete mathematicalV1.eyesCenteringCandidateAssets;
+      delete mathematicalV1.eyesCenteringSelections;
+      delete mathematicalV1.eyesCenteringSelectionReceipt;
+      if (result.status === "completed") {
+        this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
+        delete mathematicalV1.reviewAssets;
+        delete mathematicalV1.operatorResolutionWorkspaceAssets;
+        this.assertLockedHumanGeometryReportProjection(
+          manifest,
+          result.reportPackage.envelope.reportBundle,
+        );
+        this.applyMathematicalReportPackage(manifest, result.reportPackage);
+        manifest.outputs.unifiedReportDir = result.reportPackage.outputDir;
+        manifest.outputs.unifiedReportPath = result.reportPackage.bundlePath;
+        mathematicalV1.execution = {
+          status: "completed",
+          completedAt,
+          attempt,
+          v0FallbackUsed: false,
+          reportPackagePath: result.reportPackage.outputDir,
+          reportBundlePath: result.reportPackage.bundlePath,
+          orchestrationTraceSha256: result.orchestrationTraceSha256,
+          grade: result.grade,
+          summary: result.summary,
+          operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
+        };
+        manifest.progressLog.push(
+          completedAt + " Mathematical V1 strict V0.3 package completed with all four elements and no V0/manual fallback.",
+        );
+      } else if (result.status === "finding_review_required") {
+        mathematicalV1.reviewAssets = reviewAssets;
+        delete mathematicalV1.operatorResolutionWorkspaceAssets;
+        mathematicalV1.execution = {
+          status: "finding_review_required",
+          completedAt,
+          attempt,
+          v0FallbackUsed: false,
+          reviewRequest: structuredClone(result.reviewRequest),
+          reviewIssues: [...result.reviewIssues],
+          operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
+        };
+        manifest.progressLog.push(
+          completedAt + " Mathematical V1 requires explicit operator review bound to request " +
+          result.reviewRequest.artifactSha256 + "; no finding was auto-confirmed.",
+        );
+      } else if (result.status === "operator_resolution_required") {
+        delete mathematicalV1.reviewAssets;
+        mathematicalV1.operatorResolutionWorkspaceAssets =
+          operatorWorkspaceAssets;
+        mathematicalV1.execution = {
+          status: "operator_resolution_required",
+          completedAt,
+          attempt,
+          v0FallbackUsed: false,
+          request: structuredClone(result.request),
+          workspace: structuredClone(result.workspace),
+          unresolvedElements: [...result.unresolvedElements],
+        };
+        manifest.progressLog.push(
+          completedAt + " Mathematical V1 reached the authenticated element-resolution boundary for request " +
+          result.request.requestSha256 + ".",
+        );
+      } else {
+        this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
+        delete mathematicalV1.reviewAssets;
+        delete mathematicalV1.operatorResolutionWorkspaceAssets;
+        mathematicalV1.execution = {
+          status: "insufficient_evidence",
+          completedAt,
+          attempt,
+          v0FallbackUsed: false,
+          failedStage: result.failedStage,
+          reasons: [...result.reasons],
+          requiresRecapture: result.requiresRecapture,
+          requiresApprovedDesignReference: result.requiresApprovedDesignReference,
+          requiresCalibration: result.requiresCalibration,
+          requiresImplementationCorrection: result.requiresImplementationCorrection,
+          ...(persistedOperatorResolutionRequest
+            ? {
+                operatorResolutionRequest:
+                  structuredClone(persistedOperatorResolutionRequest),
+              }
+            : {}),
+        };
+        const warning = "Mathematical V1 insufficient evidence: " + result.reasons.join("; ");
+        if (!manifest.warnings.includes(warning)) manifest.warnings.push(warning);
+        manifest.progressLog.push(
+          completedAt + " Mathematical V1 stopped at " + result.failedStage +
+          " with explicit insufficient evidence; no V0/manual fallback ran.",
+        );
+      }
+      manifest.currentStep = "view_unified_report";
+      manifest.updatedAt = completedAt;
+      return {
+        value: mathematicalV1.execution,
+        manifests: [manifest],
       };
-      manifest.progressLog.push(
-        completedAt + " Mathematical V1 strict V0.3 package completed with all four elements and no V0/manual fallback.",
-      );
-    } else if (result.status === "finding_review_required") {
-      manifest.mathematicalV1.reviewAssets = reviewAssets;
-      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
-      manifest.mathematicalV1.execution = {
-        status: "finding_review_required",
-        completedAt,
-        attempt,
-        v0FallbackUsed: false,
-        reviewRequest: structuredClone(result.reviewRequest),
-        reviewIssues: [...result.reviewIssues],
-        operatorResolutionRequest: structuredClone(result.operatorResolutionRequest),
-      };
-      manifest.progressLog.push(
-        completedAt + " Mathematical V1 requires explicit operator review bound to request " +
-        result.reviewRequest.artifactSha256 + "; no finding was auto-confirmed.",
-      );
-    } else if (result.status === "operator_resolution_required") {
-      delete manifest.mathematicalV1.reviewAssets;
-      manifest.mathematicalV1.operatorResolutionWorkspaceAssets =
-        operatorWorkspaceAssets;
-      manifest.mathematicalV1.execution = {
-        status: "operator_resolution_required",
-        completedAt,
-        attempt,
-        v0FallbackUsed: false,
-        request: structuredClone(result.request),
-        workspace: structuredClone(result.workspace),
-        unresolvedElements: [...result.unresolvedElements],
-      };
-      manifest.progressLog.push(
-        completedAt + " Mathematical V1 reached the authenticated element-resolution boundary for request " +
-        result.request.requestSha256 + ".",
-      );
-    } else {
-      this.operatorResolutionAnalysisCheckpoints.delete(queueItem.queueItemId);
-      delete manifest.mathematicalV1.reviewAssets;
-      delete manifest.mathematicalV1.operatorResolutionWorkspaceAssets;
-      manifest.mathematicalV1.execution = {
-        status: "insufficient_evidence",
-        completedAt,
-        attempt,
-        v0FallbackUsed: false,
-        failedStage: result.failedStage,
-        reasons: [...result.reasons],
-        requiresRecapture: result.requiresRecapture,
-        requiresApprovedDesignReference: result.requiresApprovedDesignReference,
-        requiresCalibration: result.requiresCalibration,
-        requiresImplementationCorrection: result.requiresImplementationCorrection,
-        ...(persistedOperatorResolutionRequest
-          ? {
-              operatorResolutionRequest:
-                structuredClone(persistedOperatorResolutionRequest),
-            }
-          : {}),
-      };
-      const warning = "Mathematical V1 insufficient evidence: " + result.reasons.join("; ");
-      if (!manifest.warnings.includes(warning)) manifest.warnings.push(warning);
-      manifest.progressLog.push(
-        completedAt + " Mathematical V1 stopped at " + result.failedStage +
-        " with explicit insufficient evidence; no V0/manual fallback ran.",
-      );
-    }
-    manifest.currentStep = "view_unified_report";
-    manifest.updatedAt = completedAt;
-    await writeSessionManifest(manifest);
-    return manifest.mathematicalV1.execution;
+    });
   }
 
   private validatedMathematicalFindingReviews(
@@ -10694,6 +10839,8 @@ export class AiGraderLocalStationBridgeService {
         const manifest = this.queuedManifests.get(queueItemId);
         const item = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
         if (!manifest || !item) throw new Error(`Rapid capture queue item ${queueItemId} is no longer available.`);
+        let backgroundGeometryAuthority:
+          HumanGeometryReceiptAuthorityV1 | undefined;
         try {
           if (!manifest.humanGeometryAssist) {
             const [frontProcessed, backProcessed] = await Promise.all([
@@ -10724,6 +10871,13 @@ export class AiGraderLocalStationBridgeService {
           if (!manifest.humanGeometryAssist.lockedReceipt) {
             throw new Error("Mathematical processing requires one immutable human geometry receipt.");
           }
+          backgroundGeometryAuthority = {
+            queueItemId,
+            receiptVersion:
+              manifest.humanGeometryAssist.lockedReceipt.receiptVersion,
+            receiptSha256:
+              manifest.humanGeometryAssist.lockedReceipt.receiptSha256,
+          };
           if (
             manifest.pendingOcrIdentityV1?.schemaVersion ===
             AI_GRADER_OCR_FIRST_PRINTED_BORDER_V1
@@ -10742,7 +10896,15 @@ export class AiGraderLocalStationBridgeService {
           const reportId = manifest.reportId ?? "local-report";
           if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
             let execution = await this.runMathematicalStationPackage(manifest);
+            this.assertHumanGeometryReceiptAuthorityCurrent(
+              manifest,
+              backgroundGeometryAuthority,
+            );
             await this.observeRapidOcrEligibility(queueItemId);
+            this.assertHumanGeometryReceiptAuthorityCurrent(
+              manifest,
+              backgroundGeometryAuthority,
+            );
             if (
               execution.status === "completed" &&
               item.ocr.state === "succeeded"
@@ -10766,9 +10928,17 @@ export class AiGraderLocalStationBridgeService {
                   undefined,
                   forcedOperatorReviewElements,
                 );
+                this.assertHumanGeometryReceiptAuthorityCurrent(
+                  manifest,
+                  backgroundGeometryAuthority,
+                );
               }
             }
             if (execution.status === "operator_resolution_required") {
+              this.assertHumanGeometryReceiptAuthorityCurrent(
+                manifest,
+                backgroundGeometryAuthority,
+              );
               this.transitionRapidWorkflow(
                 manifest,
                 "operator_resolution_required",
@@ -10779,6 +10949,10 @@ export class AiGraderLocalStationBridgeService {
               return;
             }
             if (execution.status === "finding_review_required") {
+              this.assertHumanGeometryReceiptAuthorityCurrent(
+                manifest,
+                backgroundGeometryAuthority,
+              );
               this.transitionRapidWorkflow(
                 manifest,
                 "finding_review_required",
@@ -10789,6 +10963,10 @@ export class AiGraderLocalStationBridgeService {
               return;
             }
             if (execution.status === "insufficient_evidence") {
+              this.assertHumanGeometryReceiptAuthorityCurrent(
+                manifest,
+                backgroundGeometryAuthority,
+              );
               this.transitionRapidWorkflow(
                 manifest,
                 "insufficient_evidence",
@@ -10832,11 +11010,19 @@ export class AiGraderLocalStationBridgeService {
             manifest.outputs.checksumsPath = bundle.checksumsPath;
             manifest.reportBundle = bundle.bundle;
           }
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            backgroundGeometryAuthority,
+          );
           const release = await this.writeProductionReleaseForManifest(manifest, {
             operatorId: "rapid-background-preparation",
             warningsAccepted: true,
             overrideReason: "Canonical Rapid background preparation before the separate authenticated Approve & Publish authority.",
           });
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            backgroundGeometryAuthority,
+          );
           if (
             release.reportId !== reportId
             || release.gradingSessionId !== manifest.sessionId
@@ -10849,7 +11035,15 @@ export class AiGraderLocalStationBridgeService {
           ) {
             throw new Error("Rapid background preparation did not produce the exact final grade and label-ready release for this queued report.");
           }
+          const finalGeometryAuthority = backgroundGeometryAuthority;
+          if (!finalGeometryAuthority) {
+            throw new StaleHumanGeometryWorkerResultV1();
+          }
           await this.runRapidQueueMutation(async ({ trackManifest }) => {
+            this.assertHumanGeometryReceiptAuthorityCurrent(
+              manifest,
+              finalGeometryAuthority,
+            );
             const mutableItem = this.exactMutableQueuedItem({
               queueItemId,
               gradingSessionId: manifest.sessionId,
@@ -10881,7 +11075,17 @@ export class AiGraderLocalStationBridgeService {
             return { value: undefined, manifests: [manifest] };
           });
         } catch (error) {
-          if (isMathematicalStationShutdown(error)) return;
+          if (
+            isMathematicalStationShutdown(error) ||
+            isStaleHumanGeometryWorkerResult(error) ||
+            (
+              backgroundGeometryAuthority &&
+              !this.humanGeometryReceiptAuthorityIsCurrent(
+                manifest,
+                backgroundGeometryAuthority,
+              )
+            )
+          ) return;
           const message = error instanceof Error ? error.message : "Rapid background finalization failed.";
           await this.runRapidQueueMutation(async ({ trackManifest }) => {
             const failedItem = this.rapidQueue.items.find((candidate) => candidate.queueItemId === queueItemId);
@@ -10946,6 +11150,12 @@ export class AiGraderLocalStationBridgeService {
       manifest.reportBundle,
     );
     const release = manifest.productionRelease;
+    if (isMathematicalReportBundle(manifest.reportBundle)) {
+      this.assertLockedHumanGeometryReportProjection(
+        manifest,
+        manifest.reportBundle,
+      );
+    }
     if (
       !parsedBundle.success ||
       parsedBundle.data.reportId !== item.reportId ||
@@ -10957,6 +11167,10 @@ export class AiGraderLocalStationBridgeService {
         "Persisted Rapid review cannot reattach because its strict report or external publication envelope does not match the exact queue/session/report identity.",
       );
     }
+    this.assertLockedHumanGeometryReportProjection(
+      manifest,
+      parsedBundle.data,
+    );
     const reportPackage = await this.resolveMathematicalReportPackage(
       manifest,
       {},
@@ -11201,66 +11415,69 @@ export class AiGraderLocalStationBridgeService {
   private async reopenHumanGeometry(
     request: AiGraderLocalStationBridgeActionRequest,
   ): Promise<void> {
-    const item = this.exactQueuedItem(request);
-    const manifest = await this.exactQueuedManifest(item);
-    const review = manifest.humanGeometryAssist;
-    const reason = request.reopenReason?.trim();
-    const operatorId = request.operatorId?.trim();
-    if (
-      !review ||
-      review.state !== "locked" ||
-      !review.lockedReceipt ||
-      request.expectedReceiptVersion !== review.receiptVersion ||
-      !reason ||
-      reason.length > 500 ||
-      !operatorId
-    ) {
-      throw new Error(
-        "Reopening geometry requires the exact locked receipt version, authenticated operator, and bounded reason.",
+    await this.runRapidQueueMutation(async ({ trackManifest }) => {
+      const item = this.exactMutableQueuedItem(request);
+      const manifest = await this.exactQueuedManifest(item);
+      const review = manifest.humanGeometryAssist;
+      const reason = request.reopenReason?.trim();
+      const operatorId = request.operatorId?.trim();
+      if (
+        !review ||
+        review.state !== "locked" ||
+        !review.lockedReceipt ||
+        request.expectedReceiptVersion !== review.receiptVersion ||
+        !reason ||
+        reason.length > 500 ||
+        !operatorId
+      ) {
+        throw new Error(
+          "Reopening geometry requires the exact locked receipt version, authenticated operator, and bounded reason.",
+        );
+      }
+      trackManifest(manifest);
+      const invalidatedAt = new Date().toISOString();
+      const invalidatedResults = [
+        ...(review.invalidatedResults ?? []),
+        {
+          receiptSha256: review.lockedReceipt.receiptSha256,
+          invalidatedAt,
+          reason,
+        },
+      ];
+      manifest.humanGeometryAssist = {
+        ...reopenFixedRigHumanGeometryReviewV1(review),
+        invalidatedResults,
+      };
+      if (manifest.mathematicalV1) {
+        delete manifest.mathematicalV1.execution;
+        delete manifest.mathematicalV1.submittedFindingReviews;
+        delete manifest.mathematicalV1.eyesCenteringCandidateLedger;
+        delete manifest.mathematicalV1.eyesCenteringCandidateAssets;
+        delete manifest.mathematicalV1.eyesCenteringSelections;
+        delete manifest.mathematicalV1.eyesCenteringSelectionReceipt;
+      }
+      delete manifest.reportBundle;
+      delete manifest.productionRelease;
+      for (const key of [
+        "unifiedReportDir", "unifiedReportPath", "reportBundlePath",
+        "publishPackageDir", "assetManifestPath", "checksumsPath",
+        "productionReleasePath", "labelDataPath", "publicationManifestPath",
+        "integrationContractPath", "mathematicalReportBundlePath",
+        "mathematicalReportEnvelopePath", "mathematicalReleaseChecksumsPath",
+      ] as const) {
+        delete manifest.outputs[key];
+      }
+      manifest.safety.finalGradeComputed = false;
+      manifest.safety.labelGenerated = false;
+      manifest.safety.qrGenerated = false;
+      manifest.currentStep = "run_provisional_diagnostics";
+      this.transitionRapidWorkflow(
+        manifest,
+        "geometry_review_required",
+        `Geometry was reopened by ${operatorId}; every dependent result is invalid until a new immutable receipt locks.`,
       );
-    }
-    const invalidatedAt = new Date().toISOString();
-    const invalidatedResults = [
-      ...(review.invalidatedResults ?? []),
-      {
-        receiptSha256: review.lockedReceipt.receiptSha256,
-        invalidatedAt,
-        reason,
-      },
-    ];
-    manifest.humanGeometryAssist = {
-      ...reopenFixedRigHumanGeometryReviewV1(review),
-      invalidatedResults,
-    };
-    if (manifest.mathematicalV1) {
-      delete manifest.mathematicalV1.execution;
-      delete manifest.mathematicalV1.submittedFindingReviews;
-      delete manifest.mathematicalV1.eyesCenteringCandidateLedger;
-      delete manifest.mathematicalV1.eyesCenteringCandidateAssets;
-      delete manifest.mathematicalV1.eyesCenteringSelections;
-      delete manifest.mathematicalV1.eyesCenteringSelectionReceipt;
-    }
-    delete manifest.reportBundle;
-    delete manifest.productionRelease;
-    for (const key of [
-      "unifiedReportDir", "unifiedReportPath", "reportBundlePath",
-      "publishPackageDir", "assetManifestPath", "checksumsPath",
-      "productionReleasePath", "labelDataPath", "publicationManifestPath",
-      "integrationContractPath", "mathematicalReportBundlePath",
-      "mathematicalReportEnvelopePath", "mathematicalReleaseChecksumsPath",
-    ] as const) {
-      delete manifest.outputs[key];
-    }
-    manifest.safety.finalGradeComputed = false;
-    manifest.safety.labelGenerated = false;
-    manifest.safety.qrGenerated = false;
-    manifest.currentStep = "run_provisional_diagnostics";
-    this.transitionRapidWorkflow(
-      manifest,
-      "geometry_review_required",
-      `Geometry was reopened by ${operatorId}; every dependent result is invalid until a new immutable receipt locks.`,
-    );
-    await this.syncQueuedManifest(manifest);
+      return { value: undefined, manifests: [manifest] };
+    });
   }
 
   private releaseRapidQueueItem(request: AiGraderLocalStationBridgeActionRequest) {
@@ -12087,6 +12304,12 @@ export class AiGraderLocalStationBridgeService {
         || JSON.stringify(mutableManifest.productionRelease) !== JSON.stringify(persistedRelease)
       ) {
         throw new Error("Approve & Publish authority changed before the exact local publication transition.");
+      }
+      if (isMathematicalReportBundle(mutableManifest.reportBundle)) {
+        this.assertLockedHumanGeometryReportProjection(
+          mutableManifest,
+          mutableManifest.reportBundle,
+        );
       }
       trackManifest(mutableManifest);
       mutableManifest.currentStep = "session_complete";
@@ -15369,6 +15592,10 @@ export class AiGraderLocalStationBridgeService {
       );
     }
     const manifestBundle = parsedManifestBundle.data;
+    this.assertLockedHumanGeometryReportProjection(
+      manifest,
+      manifestBundle,
+    );
     const exactAssetIds =
       aiGraderMathematicalAdvancedPresentationAssetIdsV1(manifestBundle);
     const requestedIds = new Set(assetIds);
@@ -15397,6 +15624,10 @@ export class AiGraderLocalStationBridgeService {
           "Mathematical V1 immutable package changed from the exact active report.",
         );
       }
+      this.assertLockedHumanGeometryReportProjection(
+        manifest,
+        reportPackage.envelope.reportBundle,
+      );
       const verifiedAssetIds =
         aiGraderMathematicalAdvancedPresentationAssetIdsV1(
           reportPackage.envelope.reportBundle,
@@ -15763,7 +15994,40 @@ export class AiGraderLocalStationBridgeService {
     }
     if (gradingContractFor(manifest) === "mathematical_calibration_v1") {
       return withAiGraderReportPackageOperation(reportId, async () => {
+        const lockedGeometryReceipt =
+          manifest.humanGeometryAssist?.state === "locked"
+            ? manifest.humanGeometryAssist.lockedReceipt
+            : undefined;
+        const geometryAuthority = lockedGeometryReceipt &&
+          manifest.rapidCapture.queueItemId
+          ? {
+              queueItemId: manifest.rapidCapture.queueItemId,
+              receiptVersion: lockedGeometryReceipt.receiptVersion,
+              receiptSha256: lockedGeometryReceipt.receiptSha256,
+            }
+          : undefined;
+        if (manifest.humanGeometryAssist && !geometryAuthority) {
+          throw new Error(
+            "A new Human Geometry release requires the exact currently locked receipt.",
+          );
+        }
+        if (geometryAuthority) {
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            geometryAuthority,
+          );
+        }
         const reportPackage = await this.resolveMathematicalReportPackage(manifest, request);
+        if (geometryAuthority) {
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            geometryAuthority,
+          );
+        }
+        this.assertLockedHumanGeometryReportProjection(
+          manifest,
+          reportPackage.envelope.reportBundle,
+        );
         this.applyMathematicalReportPackage(manifest, reportPackage);
         const result = await writeAiGraderMathematicalProductionReleaseV1({
           packagePath: reportPackage.outputDir,
@@ -15774,6 +16038,12 @@ export class AiGraderLocalStationBridgeService {
           warningsAccepted: request.warningsAccepted,
           overrideReason: request.overrideReason,
         });
+        if (geometryAuthority) {
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            geometryAuthority,
+          );
+        }
         const release = result.productionRelease;
         const expectedPublication =
           this.hydratedMathematicalGradingAuthority(manifest).publication;
@@ -15818,6 +16088,12 @@ export class AiGraderLocalStationBridgeService {
           throw new Error(
             "Mathematical Grading V1 production release did not preserve its exact V1 schema, " +
             "final flags, card identity, four element scores, Label V1 data, and report/QR authority.",
+          );
+        }
+        if (geometryAuthority) {
+          this.assertHumanGeometryReceiptAuthorityCurrent(
+            manifest,
+            geometryAuthority,
           );
         }
         manifest.outputs.productionReleasePath = result.productionReleasePath;

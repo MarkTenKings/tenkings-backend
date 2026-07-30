@@ -37,7 +37,9 @@ const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
   POKEMON_TCG_STANDARD_CORNER_PROFILE_SHA256,
+  aiGraderHumanGeometryReportProjectionV1Schema,
   canonicalJsonV1,
+  projectAiGraderHumanGeometryReceiptForReportV1,
 } = require("@tenkings/shared");
 
 const BUNDLE_SHA256 = "a".repeat(64);
@@ -1024,18 +1026,7 @@ async function lockFixtureGeometry(service, mutableItem, suffix) {
     "measurement, grading, and report adaptation must not run before geometry lock",
   );
   assert.equal(manifest.reportBundle, undefined);
-  const confirmedSides = structuredClone(manifest.humanGeometryAssist.draft.sides);
-  for (const side of ["front", "back"]) {
-    for (const edge of ["top", "right", "bottom", "left"]) {
-      confirmedSides[side].printedBorders[edge].reviewed = true;
-    }
-    for (const corner of ["top_left", "top_right", "bottom_right", "bottom_left"]) {
-      confirmedSides[side].physicalCorners[corner].reviewed = true;
-    }
-    confirmedSides[side].edgeRegionsReviewed = true;
-    confirmedSides[side].surfaceRegionReviewed = true;
-    confirmedSides[side].confirmed = true;
-  }
+  const confirmedSides = confirmedFixtureGeometrySides(manifest);
   const lockRequest = {
     queueItemId: mutableItem.queueItemId,
     gradingSessionId: mutableItem.sessionId,
@@ -1052,6 +1043,22 @@ async function lockFixtureGeometry(service, mutableItem, suffix) {
   );
   await service.reportWorker;
   await service.rapidMutationChain;
+}
+
+function confirmedFixtureGeometrySides(manifest) {
+  const confirmedSides = structuredClone(manifest.humanGeometryAssist.draft.sides);
+  for (const side of ["front", "back"]) {
+    for (const edge of ["top", "right", "bottom", "left"]) {
+      confirmedSides[side].printedBorders[edge].reviewed = true;
+    }
+    for (const corner of ["top_left", "top_right", "bottom_right", "bottom_left"]) {
+      confirmedSides[side].physicalCorners[corner].reviewed = true;
+    }
+    confirmedSides[side].edgeRegionsReviewed = true;
+    confirmedSides[side].surfaceRegionReviewed = true;
+    confirmedSides[side].confirmed = true;
+  }
+  return confirmedSides;
 }
 
 async function completeFixtureOcr(service, queued, suffix, reviewElements) {
@@ -1132,6 +1139,10 @@ function completedResult(input, operatorResolutionRequest) {
         reportBundle: {
           schemaVersion: "ai-grader-report-bundle-v0.3",
           reportId: input.reportId,
+          geometry:
+            projectAiGraderHumanGeometryReceiptForReportV1(
+              input.humanGeometryReceipt,
+            ),
         },
       },
       assetManifest: {},
@@ -1771,6 +1782,191 @@ test("ordinary Mathematical V1 no-finding completion uses station-derived public
     assert.notEqual(calls[1].outputDir, firstOutputDir);
     assert.match(calls[1].outputDir, /geometry-v2$/);
   } finally {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
+test("Human Geometry V2 rejects stale V1 work and degenerate coordinates, then hydrates one exact strict V2 receipt", async () => {
+  const outputDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tenkings-human-geometry-v2-race-"),
+  );
+  const calls = [];
+  let releaseV1;
+  let markV1Entered;
+  const v1Release = new Promise((resolve) => {
+    releaseV1 = resolve;
+  });
+  const v1Entered = new Promise((resolve) => {
+    markV1Entered = resolve;
+  });
+  try {
+    const service = createService(outputDir, async (input) => {
+      calls.push(input);
+      if (input.humanGeometryReceipt.receiptVersion === 1) {
+        markV1Entered();
+        await v1Release;
+      }
+      return completedResult(input);
+    });
+    const release = installMathematicalReleaseStub(service);
+    installSimulatedMathematicalCapture(service);
+    await startMathematicalSession(
+      service,
+      printedAuthority(),
+      "human-geometry-v2-race-report",
+    );
+    const gradingSessionId = service.status().sessionId;
+    await service.action(
+      "capture-front",
+      bindReadyPreview(service, "front", "human-geometry-v2-race"),
+    );
+    await service.action(
+      "capture-back",
+      bindReadyPreview(service, "back", "human-geometry-v2-race"),
+    );
+    await service.reportWorker;
+    await service.rapidMutationChain;
+
+    const item = service.rapidQueue.items.find(
+      (candidate) =>
+        candidate.reportId === "human-geometry-v2-race-report",
+    );
+    assert.ok(item);
+    assert.equal(item.sessionId, gradingSessionId);
+    const manifest = service.queuedManifests.get(item.queueItemId);
+    assert.equal(item.state, "geometry_review_required");
+    const v1Sides = confirmedFixtureGeometrySides(manifest);
+    await service.action("lock-human-geometry", {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      operatorId: "geometry-race-operator",
+      idempotencyKey: "geometry-race-v1-lock",
+      expectedReceiptVersion: 1,
+      humanGeometrySides: v1Sides,
+    });
+    await v1Entered;
+    assert.equal(calls.length, 1);
+    const v1ReceiptSha256 =
+      calls[0].humanGeometryReceipt.receiptSha256;
+
+    await service.action("reopen-human-geometry", {
+      queueItemId: item.queueItemId,
+      gradingSessionId: item.sessionId,
+      reportId: item.reportId,
+      operatorId: "geometry-race-operator",
+      expectedReceiptVersion: 1,
+      reopenReason:
+        "Focused stale-worker regression reopens V1 while its builder is pending.",
+    });
+    assert.equal(item.state, "geometry_review_required");
+    assert.equal(manifest.humanGeometryAssist.receiptVersion, 2);
+    assert.equal(
+      manifest.humanGeometryAssist.supersedesReceiptSha256,
+      v1ReceiptSha256,
+    );
+    assert.equal(manifest.mathematicalV1.execution, undefined);
+    assert.equal(manifest.reportBundle, undefined);
+    assert.equal(manifest.productionRelease, undefined);
+    for (const key of [
+      "unifiedReportDir", "unifiedReportPath", "reportBundlePath",
+      "publishPackageDir", "assetManifestPath", "checksumsPath",
+      "productionReleasePath", "labelDataPath", "publicationManifestPath",
+      "integrationContractPath", "mathematicalReportBundlePath",
+      "mathematicalReportEnvelopePath", "mathematicalReleaseChecksumsPath",
+    ]) {
+      assert.equal(
+        manifest.outputs[key],
+        undefined,
+        `reopen must clear stale ${key}`,
+      );
+    }
+
+    releaseV1();
+    await service.reportWorker;
+    await service.rapidMutationChain;
+    assert.equal(
+      item.state,
+      "geometry_review_required",
+      "released V1 work cannot overwrite the V2 review gate",
+    );
+    assert.equal(manifest.humanGeometryAssist.receiptVersion, 2);
+    assert.equal(manifest.mathematicalV1.execution, undefined);
+    assert.equal(manifest.reportBundle, undefined);
+    assert.equal(manifest.productionRelease, undefined);
+    assert.equal(release.callCount, 0);
+
+    const degenerateV2 = confirmedFixtureGeometrySides(manifest);
+    degenerateV2.front.printedBorders.top.finalLine.end =
+      structuredClone(
+        degenerateV2.front.printedBorders.top.finalLine.start,
+      );
+    await assert.rejects(
+      service.action("lock-human-geometry", {
+        queueItemId: item.queueItemId,
+        gradingSessionId: item.sessionId,
+        reportId: item.reportId,
+        operatorId: "geometry-race-operator",
+        idempotencyKey: "geometry-race-v2-degenerate",
+        expectedReceiptVersion: 2,
+        humanGeometrySides: degenerateV2,
+      }),
+      /top printed border must have nonzero length/i,
+    );
+    assert.equal(item.state, "geometry_review_required");
+    assert.equal(manifest.humanGeometryAssist.state, "geometry_review_required");
+    assert.equal(calls.length, 1);
+
+    await lockFixtureGeometry(service, item, "human-geometry-race-v2");
+    assert.equal(calls.length, 2, "exactly one V2 worker result is permitted");
+    assert.equal(
+      calls[1].humanGeometryReceipt.receiptVersion,
+      2,
+    );
+    assert.equal(release.callCount, 1);
+    assert.equal(manifest.mathematicalV1.execution.status, "completed");
+    const v2Receipt = manifest.humanGeometryAssist.lockedReceipt;
+    const strictProjection =
+      aiGraderHumanGeometryReportProjectionV1Schema.parse(
+        manifest.reportBundle.geometry,
+      );
+    const hydratedProjection =
+      service.assertLockedHumanGeometryReportProjection(
+        manifest,
+        manifest.reportBundle,
+      );
+    assert.equal(strictProjection.receiptVersion, 2);
+    assert.equal(strictProjection.receiptSha256, v2Receipt.receiptSha256);
+    assert.equal(
+      hydratedProjection.receiptSha256,
+      v2Receipt.receiptSha256,
+    );
+    assert.deepEqual(
+      hydratedProjection.measurementUncertaintyAuthority,
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    );
+    assert.throws(
+      () => service.assertLockedHumanGeometryReportProjection(
+        manifest,
+        { ...manifest.reportBundle, geometry: undefined },
+      ),
+      /required|invalid|expected/i,
+    );
+    assert.throws(
+      () => service.assertLockedHumanGeometryReportProjection(
+        manifest,
+        {
+          ...manifest.reportBundle,
+          geometry: {
+            ...manifest.reportBundle.geometry,
+            receiptSha256: "0".repeat(64),
+          },
+        },
+      ),
+      /does not match the exact locked receipt/i,
+    );
+  } finally {
+    if (releaseV1) releaseV1();
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
 });

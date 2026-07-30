@@ -9,6 +9,7 @@ import {
   mathematicalDesignReferenceV1Schema,
   roundMathematicalScoreV1,
   type AiGraderReportBundleV03,
+  type AiGraderHumanGeometryReportProjectionV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
@@ -440,7 +441,7 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
       qrPayloadUrl: string;
     };
     evidenceQualityLimitations?: AiGraderMathematicalEvidenceQualityLimitationV1[];
-    geometry?: Record<string, unknown>;
+    geometry?: AiGraderHumanGeometryReportProjectionV1;
     geometryCaptureDecisions?: Record<string, unknown>;
     captureTiming?: Record<string, unknown>;
     ocrPrefill?: Record<string, unknown>;

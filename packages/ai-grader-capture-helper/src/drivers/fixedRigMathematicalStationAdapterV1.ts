@@ -5,6 +5,7 @@ import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignRe
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
   aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
+  projectAiGraderHumanGeometryReceiptForReportV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type AiGraderHumanGeometryReceiptV1,
   type AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1,
@@ -1262,19 +1263,10 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     forcedOperatorReviewElements: input.forcedOperatorReviewElements,
     report: {
       publication: input.authority.publication,
-      geometry: {
-        schemaVersion: humanGeometryReceipt.schemaVersion,
-        receiptVersion: humanGeometryReceipt.receiptVersion,
-        receiptSha256: humanGeometryReceipt.receiptSha256,
-        measurementUncertaintyAuthority: structuredClone(
-          humanGeometryReceipt.measurementUncertaintyAuthority,
+      geometry:
+        projectAiGraderHumanGeometryReceiptForReportV1(
+          humanGeometryReceipt,
         ),
-        geometryToolVersion: humanGeometryReceipt.geometryToolVersion,
-        softwareVersion: humanGeometryReceipt.softwareVersion,
-        coordinateFrame: humanGeometryReceipt.coordinateFrame,
-        front: structuredClone(humanGeometryReceipt.sides.front),
-        back: structuredClone(humanGeometryReceipt.sides.back),
-      },
       geometryCaptureDecisions: {
         front: warm.front.geometryCaptureDecisions,
         back: warm.back.geometryCaptureDecisions,

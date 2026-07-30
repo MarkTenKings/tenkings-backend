@@ -10,6 +10,8 @@ export const AI_GRADER_HUMAN_GEOMETRY_ASSIST_SCHEMA_VERSION =
   "ai-grader-human-geometry-assist-v1" as const;
 export const AI_GRADER_HUMAN_GEOMETRY_RECEIPT_SCHEMA_VERSION =
   "ai-grader-human-geometry-receipt-v1" as const;
+export const AI_GRADER_HUMAN_GEOMETRY_REPORT_PROJECTION_SCHEMA_VERSION =
+  "ai-grader-human-geometry-report-projection-v1" as const;
 export const AI_GRADER_HUMAN_GEOMETRY_TOOL_VERSION =
   "ten-kings-human-geometry-tools-v1.0.0" as const;
 export const AI_GRADER_HUMAN_GEOMETRY_SOFTWARE_VERSION =
@@ -147,6 +149,36 @@ export const aiGraderHumanGeometryAssistDraftV1Schema = z.strictObject({
   }),
 });
 
+export const aiGraderHumanGeometryReportProjectionV1Schema = z
+  .strictObject({
+    schemaVersion: z.literal(
+      AI_GRADER_HUMAN_GEOMETRY_REPORT_PROJECTION_SCHEMA_VERSION,
+    ),
+    receiptVersion: z.number().int().positive(),
+    receiptSha256: sha256Schema,
+    measurementUncertaintyAuthority:
+      aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
+    coordinateFrame: z.literal(AI_GRADER_HUMAN_GEOMETRY_COORDINATE_FRAME),
+    front: sideSchema,
+    back: sideSchema,
+  })
+  .superRefine((projection, context) => {
+    for (const side of AI_GRADER_GEOMETRY_SIDES) {
+      try {
+        assertAiGraderHumanGeometrySideConfirmedV1(projection[side]);
+      } catch (error) {
+        context.addIssue({
+          code: "custom",
+          path: [side],
+          message:
+            error instanceof Error
+              ? error.message
+              : "Human Geometry report projection is invalid.",
+        });
+      }
+    }
+  });
+
 export const aiGraderHumanGeometryReceiptV1Schema = z.strictObject({
   schemaVersion: z.literal(AI_GRADER_HUMAN_GEOMETRY_RECEIPT_SCHEMA_VERSION),
   receiptVersion: z.number().int().positive(),
@@ -199,6 +231,8 @@ export type AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1 =
   >;
 export type AiGraderHumanGeometryAssistDraftV1 =
   z.infer<typeof aiGraderHumanGeometryAssistDraftV1Schema>;
+export type AiGraderHumanGeometryReportProjectionV1 =
+  z.infer<typeof aiGraderHumanGeometryReportProjectionV1Schema>;
 export type AiGraderHumanGeometryReceiptV1 =
   z.infer<typeof aiGraderHumanGeometryReceiptV1Schema>;
 
@@ -403,15 +437,169 @@ export function assertAiGraderHumanGeometrySideConfirmedV1(
   value: unknown,
 ): AiGraderHumanGeometrySideV1 {
   const side = aiGraderHumanGeometryAssistSideV1Schema.parse(value);
+  const epsilon = 0.000_001;
+  const distance = (
+    left: AiGraderHumanGeometryPointV1,
+    right: AiGraderHumanGeometryPointV1,
+  ) => Math.hypot(right.x - left.x, right.y - left.y);
+  const signedArea = (polygon: readonly AiGraderHumanGeometryPointV1[]) =>
+    polygon.reduce((sum, current, index) => {
+      const next = polygon[(index + 1) % polygon.length];
+      return sum + current.x * next.y - next.x * current.y;
+    }, 0) / 2;
+  const cross = (
+    first: AiGraderHumanGeometryPointV1,
+    second: AiGraderHumanGeometryPointV1,
+    third: AiGraderHumanGeometryPointV1,
+  ) =>
+    (second.x - first.x) * (third.y - first.y) -
+    (second.y - first.y) * (third.x - first.x);
+  const onSegment = (
+    start: AiGraderHumanGeometryPointV1,
+    end: AiGraderHumanGeometryPointV1,
+    candidate: AiGraderHumanGeometryPointV1,
+  ) =>
+    Math.abs(cross(start, end, candidate)) <= epsilon &&
+    candidate.x >= Math.min(start.x, end.x) - epsilon &&
+    candidate.x <= Math.max(start.x, end.x) + epsilon &&
+    candidate.y >= Math.min(start.y, end.y) - epsilon &&
+    candidate.y <= Math.max(start.y, end.y) + epsilon;
+  const segmentsIntersect = (
+    firstStart: AiGraderHumanGeometryPointV1,
+    firstEnd: AiGraderHumanGeometryPointV1,
+    secondStart: AiGraderHumanGeometryPointV1,
+    secondEnd: AiGraderHumanGeometryPointV1,
+  ) => {
+    const firstSideStart = cross(firstStart, firstEnd, secondStart);
+    const firstSideEnd = cross(firstStart, firstEnd, secondEnd);
+    const secondSideStart = cross(secondStart, secondEnd, firstStart);
+    const secondSideEnd = cross(secondStart, secondEnd, firstEnd);
+    if (
+      ((firstSideStart > epsilon && firstSideEnd < -epsilon) ||
+        (firstSideStart < -epsilon && firstSideEnd > epsilon)) &&
+      ((secondSideStart > epsilon && secondSideEnd < -epsilon) ||
+        (secondSideStart < -epsilon && secondSideEnd > epsilon))
+    ) {
+      return true;
+    }
+    return (
+      (Math.abs(firstSideStart) <= epsilon &&
+        onSegment(firstStart, firstEnd, secondStart)) ||
+      (Math.abs(firstSideEnd) <= epsilon &&
+        onSegment(firstStart, firstEnd, secondEnd)) ||
+      (Math.abs(secondSideStart) <= epsilon &&
+        onSegment(secondStart, secondEnd, firstStart)) ||
+      (Math.abs(secondSideEnd) <= epsilon &&
+        onSegment(secondStart, secondEnd, firstEnd))
+    );
+  };
+  const assertSimplePositivePolygon = (
+    polygon: readonly AiGraderHumanGeometryPointV1[],
+    label: string,
+  ) => {
+    for (let index = 0; index < polygon.length; index += 1) {
+      if (distance(polygon[index], polygon[(index + 1) % polygon.length]) <= epsilon) {
+        throw new Error(`${label} contains a coincident or zero-length edge.`);
+      }
+    }
+    if (signedArea(polygon) <= epsilon) {
+      throw new Error(`${label} must be correctly oriented with positive area.`);
+    }
+    for (let first = 0; first < polygon.length; first += 1) {
+      const firstNext = (first + 1) % polygon.length;
+      for (let second = first + 1; second < polygon.length; second += 1) {
+        const secondNext = (second + 1) % polygon.length;
+        if (
+          first === second ||
+          firstNext === second ||
+          secondNext === first
+        ) {
+          continue;
+        }
+        if (
+          segmentsIntersect(
+            polygon[first],
+            polygon[firstNext],
+            polygon[second],
+            polygon[secondNext],
+          )
+        ) {
+          throw new Error(`${label} must be a simple non-self-crossing polygon.`);
+        }
+      }
+    }
+  };
   for (const edge of AI_GRADER_GEOMETRY_EDGES) {
-    if (!side.printedBorders[edge].reviewed) {
+    const border = side.printedBorders[edge];
+    if (!border.reviewed) {
       throw new Error(`The ${edge} printed border requires human review.`);
+    }
+    const deltaX = border.finalLine.end.x - border.finalLine.start.x;
+    const deltaY = border.finalLine.end.y - border.finalLine.start.y;
+    if (Math.hypot(deltaX, deltaY) <= epsilon) {
+      throw new Error(`The ${edge} printed border must have nonzero length.`);
+    }
+    const correctlyOriented =
+      edge === "top" || edge === "bottom"
+        ? deltaX > epsilon && Math.abs(deltaY) <= epsilon
+        : deltaY > epsilon && Math.abs(deltaX) <= epsilon;
+    if (!correctlyOriented) {
+      throw new Error(`The ${edge} printed border has an invalid orientation.`);
     }
   }
   for (const corner of AI_GRADER_GEOMETRY_CORNERS) {
-    if (!side.physicalCorners[corner].reviewed) {
+    const geometry = side.physicalCorners[corner];
+    if (!geometry.reviewed) {
       throw new Error(`The ${corner.replace(/_/g, " ")} physical corner requires human review.`);
     }
+    const right = corner === "top_right" || corner === "bottom_right";
+    const bottom = corner === "bottom_left" || corner === "bottom_right";
+    const horizontalDelta =
+      geometry.horizontalTangent.x - geometry.vertex.x;
+    const verticalDelta = geometry.verticalTangent.y - geometry.vertex.y;
+    if (
+      distance(geometry.vertex, geometry.horizontalTangent) <= epsilon ||
+      distance(geometry.vertex, geometry.verticalTangent) <= epsilon ||
+      distance(geometry.horizontalTangent, geometry.verticalTangent) <= epsilon ||
+      Math.abs(geometry.horizontalTangent.y - geometry.vertex.y) > epsilon ||
+      Math.abs(geometry.verticalTangent.x - geometry.vertex.x) > epsilon ||
+      (right ? horizontalDelta >= -epsilon : horizontalDelta <= epsilon) ||
+      (bottom ? verticalDelta >= -epsilon : verticalDelta <= epsilon)
+    ) {
+      throw new Error(
+        `The ${corner.replace(/_/g, " ")} corner and tangent points must be distinct and correctly ordered.`,
+      );
+    }
+    if (
+      geometry.toolType === "rounded_3_18_mm" &&
+      (
+        Math.abs(horizontalDelta) <= epsilon ||
+        Math.abs(verticalDelta) <= epsilon
+      )
+    ) {
+      throw new Error(
+        `The ${corner.replace(/_/g, " ")} rounded corner requires nonzero radii.`,
+      );
+    }
+  }
+  const corners = side.physicalCorners;
+  if (
+    corners.top_left.vertex.x >= corners.top_right.vertex.x - epsilon ||
+    corners.bottom_left.vertex.x >= corners.bottom_right.vertex.x - epsilon ||
+    corners.top_left.vertex.y >= corners.bottom_left.vertex.y - epsilon ||
+    corners.top_right.vertex.y >= corners.bottom_right.vertex.y - epsilon ||
+    corners.top_left.horizontalTangent.x >=
+      corners.top_right.horizontalTangent.x - epsilon ||
+    corners.bottom_left.horizontalTangent.x >=
+      corners.bottom_right.horizontalTangent.x - epsilon ||
+    corners.top_left.verticalTangent.y >=
+      corners.bottom_left.verticalTangent.y - epsilon ||
+    corners.top_right.verticalTangent.y >=
+      corners.bottom_right.verticalTangent.y - epsilon
+  ) {
+    throw new Error(
+      "Physical corner vertices and tangent points must preserve the ordered card boundary.",
+    );
   }
   if (!side.edgeRegionsReviewed || !side.surfaceRegionReviewed || !side.confirmed) {
     throw new Error("Edge regions, surface region, and the side require explicit human confirmation.");
@@ -420,5 +608,51 @@ export function assertAiGraderHumanGeometrySideConfirmedV1(
   if (JSON.stringify(expected) !== JSON.stringify(side.derivedRegions)) {
     throw new Error("Derived edge and surface regions must match the confirmed master corner geometry.");
   }
+  assertSimplePositivePolygon(
+    side.derivedRegions.physicalOuterContour,
+    "The physical outer contour",
+  );
+  for (const edge of AI_GRADER_GEOMETRY_EDGES) {
+    assertSimplePositivePolygon(
+      side.derivedRegions.edgeBands[edge],
+      `The ${edge} straight-edge region`,
+    );
+  }
+  assertSimplePositivePolygon(
+    side.derivedRegions.surfaceRegion,
+    "The surface region",
+  );
   return side;
+}
+
+export function projectAiGraderHumanGeometryReceiptForReportV1(
+  receiptValue: unknown,
+): AiGraderHumanGeometryReportProjectionV1 {
+  const receipt = aiGraderHumanGeometryReceiptV1Schema.parse(receiptValue);
+  return aiGraderHumanGeometryReportProjectionV1Schema.parse({
+    schemaVersion:
+      AI_GRADER_HUMAN_GEOMETRY_REPORT_PROJECTION_SCHEMA_VERSION,
+    receiptVersion: receipt.receiptVersion,
+    receiptSha256: receipt.receiptSha256,
+    measurementUncertaintyAuthority:
+      structuredClone(receipt.measurementUncertaintyAuthority),
+    coordinateFrame: receipt.coordinateFrame,
+    front: structuredClone(receipt.sides.front),
+    back: structuredClone(receipt.sides.back),
+  });
+}
+
+export function assertAiGraderHumanGeometryReportProjectionMatchesReceiptV1(
+  projectionValue: unknown,
+  receiptValue: unknown,
+): AiGraderHumanGeometryReportProjectionV1 {
+  const projection =
+    aiGraderHumanGeometryReportProjectionV1Schema.parse(projectionValue);
+  const expected = projectAiGraderHumanGeometryReceiptForReportV1(receiptValue);
+  if (JSON.stringify(projection) !== JSON.stringify(expected)) {
+    throw new Error(
+      "Human Geometry report projection does not match the exact locked receipt.",
+    );
+  }
+  return projection;
 }
