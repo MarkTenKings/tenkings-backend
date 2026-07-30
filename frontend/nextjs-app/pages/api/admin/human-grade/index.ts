@@ -46,6 +46,10 @@ const createSchema = z
       context.addIssue({ code: "custom", path: ["cardName"], message: "Card name is required." });
     }
   });
+const updateSchema = createSchema.and(z.object({ id: z.string().min(1).max(128) }));
+const deleteSchema = z.object({ id: z.string().min(1).max(128) });
+
+type HumanGradeInput = z.infer<typeof createSchema>;
 
 type SheetRecord = {
   id: string;
@@ -79,6 +83,26 @@ type SheetRecord = {
 function optionalText(value: string | null | undefined) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function labelData(input: HumanGradeInput) {
+  const calculated = calculateHumanGrade(input);
+  return {
+    cardType: input.cardType,
+    playerName: input.cardType === "SPORTS" ? optionalText(input.playerName) : null,
+    cardName: input.cardType === "POKEMON" ? optionalText(input.cardName) : null,
+    year: input.year.trim(),
+    manufacturer: input.cardType === "SPORTS" ? optionalText(input.manufacturer) : null,
+    productSet: input.productSet.trim(),
+    parallel: optionalText(input.parallel),
+    insert: input.cardType === "SPORTS" ? optionalText(input.insert) : null,
+    cardNumber: optionalText(input.cardNumber),
+    centeringGrade: formatHumanGrade(input.centeringGrade),
+    cornersGrade: formatHumanGrade(input.cornersGrade),
+    edgesGrade: formatHumanGrade(input.edgesGrade),
+    surfaceGrade: formatHumanGrade(input.surfaceGrade),
+    grade: calculated.labelGrade,
+  };
 }
 
 function serializeSheet(sheet: SheetRecord): HumanGradeLabelSheetDto {
@@ -130,14 +154,79 @@ export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<HumanGradeQueueDto | { message: string; fields?: Record<string, string> }>
 ) {
-  if (req.method !== "GET" && req.method !== "POST") {
-    res.setHeader("Allow", "GET, POST");
+  if (!["GET", "POST", "PATCH", "DELETE"].includes(req.method ?? "")) {
+    res.setHeader("Allow", "GET, POST, PATCH, DELETE");
     return res.status(405).json({ message: "Method not allowed" });
   }
 
   try {
     const admin = await requireAdminSession(req);
     if (req.method === "GET") return res.status(200).json(await loadQueue());
+
+    if (req.method === "PATCH") {
+      const parsed = updateSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        const fields = Object.fromEntries(
+          parsed.error.issues.map((issue) => [issue.path.join(".") || "form", issue.message])
+        );
+        return res.status(400).json({ message: "Complete the required label fields.", fields });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const existing = await tx.humanGradeLabel.findUnique({
+          where: { id: parsed.data.id },
+          include: { sheet: { select: { status: true } } },
+        });
+        if (!existing) return "NOT_FOUND" as const;
+        if (existing.sheet.status !== "OPEN") return "LOCKED" as const;
+
+        await tx.humanGradeLabel.update({
+          where: { id: existing.id },
+          data: labelData(parsed.data),
+        });
+        return "UPDATED" as const;
+      });
+
+      if (result === "NOT_FOUND") return res.status(404).json({ message: "Human-grade label not found." });
+      if (result === "LOCKED") {
+        return res.status(409).json({ message: "Ready-to-print label pages cannot be edited." });
+      }
+      return res.status(200).json(await loadQueue());
+    }
+
+    if (req.method === "DELETE") {
+      const parsed = deleteSchema.safeParse(req.body ?? {});
+      if (!parsed.success) return res.status(400).json({ message: "Choose a valid human-grade label." });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const existing = await tx.humanGradeLabel.findUnique({
+          where: { id: parsed.data.id },
+          include: { sheet: { select: { status: true } } },
+        });
+        if (!existing) return "NOT_FOUND" as const;
+        if (existing.sheet.status !== "OPEN") return "LOCKED" as const;
+
+        await tx.humanGradeLabel.delete({ where: { id: existing.id } });
+        const laterLabels = await tx.humanGradeLabel.findMany({
+          where: { sheetId: existing.sheetId, slot: { gt: existing.slot } },
+          select: { id: true, slot: true },
+          orderBy: { slot: "asc" },
+        });
+        for (const label of laterLabels) {
+          await tx.humanGradeLabel.update({
+            where: { id: label.id },
+            data: { slot: label.slot - 1 },
+          });
+        }
+        return "DELETED" as const;
+      });
+
+      if (result === "NOT_FOUND") return res.status(404).json({ message: "Human-grade label not found." });
+      if (result === "LOCKED") {
+        return res.status(409).json({ message: "Ready-to-print label pages cannot be changed." });
+      }
+      return res.status(200).json(await loadQueue());
+    }
 
     const parsed = createSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -170,25 +259,11 @@ export default async function handler(
 
       const slot = sheet.labels.length + 1;
       const input = parsed.data;
-      const calculated = calculateHumanGrade(input);
       const created = await tx.humanGradeLabel.create({
         data: {
           sheetId: sheet.id,
           slot,
-          cardType: input.cardType,
-          playerName: input.cardType === "SPORTS" ? optionalText(input.playerName) : null,
-          cardName: input.cardType === "POKEMON" ? optionalText(input.cardName) : null,
-          year: input.year.trim(),
-          manufacturer: input.cardType === "SPORTS" ? optionalText(input.manufacturer) : null,
-          productSet: input.productSet.trim(),
-          parallel: optionalText(input.parallel),
-          insert: input.cardType === "SPORTS" ? optionalText(input.insert) : null,
-          cardNumber: optionalText(input.cardNumber),
-          centeringGrade: formatHumanGrade(input.centeringGrade),
-          cornersGrade: formatHumanGrade(input.cornersGrade),
-          edgesGrade: formatHumanGrade(input.edgesGrade),
-          surfaceGrade: formatHumanGrade(input.surfaceGrade),
-          grade: calculated.labelGrade,
+          ...labelData(input),
           createdByUserId: admin.user.id,
         },
       });
