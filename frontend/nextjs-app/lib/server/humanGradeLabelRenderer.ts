@@ -77,20 +77,20 @@ const LABEL_ZONES = {
 } as const;
 
 export const HUMAN_GRADE_HUD_GEOMETRY = {
-  frameWidthPt: 33,
+  frameWidthPt: 38,
   frameHeightPt: 46.2,
   frameCenterYPt: 29.88,
   frameStrokePt: 0.42,
   axisStrokePt: 0.32,
-  cornerReticleRadiusPt: 2.2,
-  cornerReticleArmPt: 3.25,
-  cornerLineClearancePt: 3.15,
-  gradeClearanceXPt: 1.6,
+  cornerReticleRadiusPt: 1.7,
+  cornerReticleArmPt: 2.6,
+  cornerLineClearancePt: 2.65,
+  gradeClearanceXPt: 2.2,
   gradeClearanceYPt: 1.2,
-  nodeLineClearancePt: 0.8,
-  nodeCodeFontSizePt: 2.45,
-  nodeScoreFontSizePt: 8.6,
-  nodeCharacterGapPt: 0.6,
+  nodeRadiusPt: 5.15,
+  nodeStrokePt: 0.42,
+  nodeLineClearancePt: 0.7,
+  nodeScoreFontSizePt: 9.6,
 } as const;
 
 const TEXT_TIERS = {
@@ -297,54 +297,28 @@ function drawIdentity(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeLab
 }
 
 type HudNode = {
-  code: "CTR" | "CRN" | "EDG" | "SUR";
   grade: string;
-  side: "top" | "left" | "right" | "bottom";
 };
-
-function hudNodeWidth(doc: PdfDoc, node: HudNode) {
-  const geometry = HUMAN_GRADE_HUD_GEOMETRY;
-  const codeWidth = doc
-    .font("TKHumanWordmark")
-    .fontSize(geometry.nodeCodeFontSizePt)
-    .widthOfString(node.code, { characterSpacing: 0.02 });
-  const scoreWidth = doc
-    .font("TKHumanDisplay")
-    .fontSize(geometry.nodeScoreFontSizePt)
-    .widthOfString(node.grade);
-  return codeWidth + geometry.nodeCharacterGapPt + scoreWidth;
-}
 
 function drawHudNode(doc: PdfDoc, node: HudNode, centerX: number, centerY: number) {
   const geometry = HUMAN_GRADE_HUD_GEOMETRY;
-  const codeWidth = doc
-    .font("TKHumanWordmark")
-    .fontSize(geometry.nodeCodeFontSizePt)
-    .widthOfString(node.code, { characterSpacing: 0.02 });
-  const scoreWidth = doc
-    .font("TKHumanDisplay")
-    .fontSize(geometry.nodeScoreFontSizePt)
-    .widthOfString(node.grade);
-  const totalWidth = codeWidth + geometry.nodeCharacterGapPt + scoreWidth;
-  const startX = centerX - totalWidth / 2;
-  const scoreTop = centerY - geometry.nodeScoreFontSizePt * 0.54;
-  const codeTop = centerY - geometry.nodeCodeFontSizePt * 0.42;
+  const nodeDiameter = geometry.nodeRadiusPt * 2;
+  const score = fitBlock(
+    doc,
+    node.grade,
+    nodeDiameter - 1.3,
+    [geometry.nodeScoreFontSizePt, 9.1, 8.6],
+    {
+      maxLines: 1,
+      fontName: "TKHumanDisplay",
+      lineHeightEm: 0.88,
+      characterSpacingPt: 0,
+    }
+  );
+  const scoreTop = centerY - score.fontSize * 0.55;
 
-  doc
-    .font("TKHumanWordmark")
-    .fontSize(geometry.nodeCodeFontSizePt)
-    .fillColor(COLORS.ink)
-    .text(node.code, startX, codeTop, {
-      characterSpacing: 0.02,
-      lineBreak: false,
-    });
-  doc
-    .font("TKHumanDisplay")
-    .fontSize(geometry.nodeScoreFontSizePt)
-    .fillColor(COLORS.ink)
-    .text(node.grade, startX + codeWidth + geometry.nodeCharacterGapPt, scoreTop, {
-      lineBreak: false,
-    });
+  doc.lineWidth(geometry.nodeStrokePt).strokeColor(COLORS.ink).circle(centerX, centerY, geometry.nodeRadiusPt).stroke();
+  drawCenteredBlock(doc, score, centerX - geometry.nodeRadiusPt, scoreTop, nodeDiameter);
 }
 
 function drawHudReticle(doc: PdfDoc, x: number, y: number) {
@@ -390,31 +364,29 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
   const gradeVisualBottom = centerY + grade.fontSize * 0.4 + geometry.gradeClearanceYPt;
   const subgradeByLabel = new Map(content.subgrades.map((subgrade) => [subgrade.label, subgrade.grade]));
   const nodes: HudNode[] = [
-    { code: "CTR", grade: subgradeByLabel.get("CENTERING") ?? "", side: "top" },
-    { code: "CRN", grade: subgradeByLabel.get("CORNERS") ?? "", side: "left" },
-    { code: "EDG", grade: subgradeByLabel.get("EDGES") ?? "", side: "right" },
-    { code: "SUR", grade: subgradeByLabel.get("SURFACE") ?? "", side: "bottom" },
+    { grade: subgradeByLabel.get("CENTERING") ?? "" },
+    { grade: subgradeByLabel.get("CORNERS") ?? "" },
+    { grade: subgradeByLabel.get("EDGES") ?? "" },
+    { grade: subgradeByLabel.get("SURFACE") ?? "" },
   ];
   const topNode = nodes[0];
   const leftNode = nodes[1];
   const rightNode = nodes[2];
   const bottomNode = nodes[3];
-  const topGap = hudNodeWidth(doc, topNode) / 2 + geometry.nodeLineClearancePt;
-  const bottomGap = hudNodeWidth(doc, bottomNode) / 2 + geometry.nodeLineClearancePt;
-  const sideGap = geometry.nodeScoreFontSizePt * 0.43 + geometry.nodeLineClearancePt;
+  const nodeGap = geometry.nodeRadiusPt + geometry.nodeLineClearancePt;
   const cornerClearance = geometry.cornerLineClearancePt;
 
   drawHudSegment(
     doc,
     frameLeft + cornerClearance,
     frameTop,
-    centerX - topGap,
+    centerX - nodeGap,
     frameTop,
     geometry.frameStrokePt
   );
   drawHudSegment(
     doc,
-    centerX + topGap,
+    centerX + nodeGap,
     frameTop,
     frameRight - cornerClearance,
     frameTop,
@@ -424,13 +396,13 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
     doc,
     frameLeft + cornerClearance,
     frameBottom,
-    centerX - bottomGap,
+    centerX - nodeGap,
     frameBottom,
     geometry.frameStrokePt
   );
   drawHudSegment(
     doc,
-    centerX + bottomGap,
+    centerX + nodeGap,
     frameBottom,
     frameRight - cornerClearance,
     frameBottom,
@@ -441,13 +413,13 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
     frameLeft,
     frameTop + cornerClearance,
     frameLeft,
-    centerY - sideGap,
+    centerY - nodeGap,
     geometry.frameStrokePt
   );
   drawHudSegment(
     doc,
     frameLeft,
-    centerY + sideGap,
+    centerY + nodeGap,
     frameLeft,
     frameBottom - cornerClearance,
     geometry.frameStrokePt
@@ -457,13 +429,13 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
     frameRight,
     frameTop + cornerClearance,
     frameRight,
-    centerY - sideGap,
+    centerY - nodeGap,
     geometry.frameStrokePt
   );
   drawHudSegment(
     doc,
     frameRight,
-    centerY + sideGap,
+    centerY + nodeGap,
     frameRight,
     frameBottom - cornerClearance,
     geometry.frameStrokePt
@@ -472,7 +444,7 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
   drawHudSegment(
     doc,
     centerX,
-    frameTop + geometry.nodeScoreFontSizePt * 0.5,
+    frameTop + nodeGap,
     centerX,
     gradeVisualTop,
     geometry.axisStrokePt
@@ -482,12 +454,12 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
     centerX,
     gradeVisualBottom,
     centerX,
-    frameBottom - geometry.nodeScoreFontSizePt * 0.5,
+    frameBottom - nodeGap,
     geometry.axisStrokePt
   );
   drawHudSegment(
     doc,
-    frameLeft + geometry.nodeScoreFontSizePt * 0.5,
+    frameLeft + nodeGap,
     centerY,
     gradeLeft,
     centerY,
@@ -497,7 +469,7 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
     doc,
     gradeRight,
     centerY,
-    frameRight - geometry.nodeScoreFontSizePt * 0.5,
+    frameRight - nodeGap,
     centerY,
     geometry.axisStrokePt
   );
