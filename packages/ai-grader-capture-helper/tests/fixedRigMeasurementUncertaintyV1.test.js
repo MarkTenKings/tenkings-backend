@@ -4,7 +4,9 @@ const test = require("node:test");
 const {
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_HASH,
   MATHEMATICAL_GRADING_V1_THRESHOLD_SET_ID,
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
   combineMeasurementUncertaintyU95,
+  effectiveMeasurementV1,
 } = require("../../shared/dist");
 const {
   deriveFixedRigMeasurementUncertaintyV1,
@@ -89,13 +91,17 @@ test("linear U95 is derived from every certified profile source and has no calle
     pixelMmScale: 0.002,
     lensDistortion: 0.01,
     normalizationRegistration: 0.02,
-    repeatedPlacement: 0.01,
+    repeatedPlacement: 0.05,
     segmentationBoundary: 0.02,
     measurementRepeatability: 0.03,
     lightingChannelConfidence: 0.002,
   });
-  assert.equal(derived.u95, 0.043681);
-  assert.equal(derived.source, "finalized_calibration_profile");
+  assert.equal(derived.u95, 0.065635);
+  assert.equal(derived.source, "owner_approved_human_geometry_policy");
+  assert.deepEqual(
+    derived.measurementUncertaintyAuthority,
+    AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+  );
 });
 
 test("area and dimensionless U95 use their class repeatability and manifest propagation", () => {
@@ -106,7 +112,7 @@ test("area and dimensionless U95 use their class repeatability and manifest prop
     pixelMmScale: 0.008,
     lensDistortion: 0.04,
     normalizationRegistration: 0.08,
-    repeatedPlacement: 0.04,
+    repeatedPlacement: 0.2,
     segmentationBoundary: 0.08,
     measurementRepeatability: 0.04,
     lightingChannelConfidence: 0.008,
@@ -134,6 +140,42 @@ test("unfinalized or incomplete profiles fail closed", () => {
     () => deriveFixedRigMeasurementUncertaintyV1({
       calibration: invalid, kind: "length_mm", measuredMeasurement: 1,
     }),
-    /finalized calibration profile/,
+    /Calibration required/,
   );
+});
+
+test("rejected 4.306362 mm emergency calibration cannot erase sub-4.3 mm defects", () => {
+  const rejected = profile();
+  rejected.isCalibrated = false;
+  rejected.status = "rejected";
+  rejected.repeatedPlacementU95Mm = 4.306362;
+  assert.throws(
+    () => deriveFixedRigMeasurementUncertaintyV1({
+      calibration: rejected,
+      kind: "shape_deviation_mm",
+      measuredMeasurement: 0.4,
+    }),
+    /supporting mathematical calibration profile is not operationally usable/,
+  );
+});
+
+test("accepted normal calibration preserves uncertainty without erasing a legitimate defect", () => {
+  const accepted = profile();
+  accepted.repeatedPlacementU95Mm = 0.02;
+  const result = deriveFixedRigMeasurementUncertaintyV1({
+    calibration: accepted,
+    kind: "shape_deviation_mm",
+    measuredMeasurement: 0.4,
+  });
+  assert.ok(result.u95 > 0, "accepted calibration must preserve U95 protection");
+  assert.ok(
+    effectiveMeasurementV1(0.4, result.u95) > 0.3,
+    "the owner-policy U95 must preserve the real 0.4 mm deviation",
+  );
+  assert.equal(result.componentsU95.repeatedPlacement, 0.05);
+  assert.equal(
+    result.measurementUncertaintyAuthority.policyId,
+    "owner_human_geometry_measurement_uncertainty_v1",
+  );
+  assert.equal(accepted.repeatedPlacementU95Mm, 0.02);
 });

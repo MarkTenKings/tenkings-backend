@@ -265,7 +265,7 @@ function makeTarget(root, timestamp, overrides = {}) {
   writeJson(reportBundlePath, bundle);
   writeJson(productionReleasePath, release);
   const manifest = {
-    schemaVersion: "ai-grader-local-station-bridge-v0.10",
+    schemaVersion: "ai-grader-local-station-bridge-v0.11",
     sessionId,
     reportId,
     currentStep: "label_data_ready",

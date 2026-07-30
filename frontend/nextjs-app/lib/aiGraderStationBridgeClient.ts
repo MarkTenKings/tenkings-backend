@@ -14,9 +14,11 @@ import type {
   AiGraderStationAction,
 } from "./aiGraderLocalStation";
 import {
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
   canonicalizeAiGraderPublicIdentifier,
   canonicalJsonV1,
   type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderHumanGeometrySideV1,
   type AiGraderReportBundleV03,
 } from "@tenkings/shared";
 import {
@@ -383,6 +385,12 @@ export type AiGraderStationBridgeActionRequestBody = {
     code: string;
     message: string;
   };
+  humanGeometrySides?: {
+    front: AiGraderHumanGeometrySideV1;
+    back: AiGraderHumanGeometrySideV1;
+  };
+  expectedReceiptVersion?: number;
+  reopenReason?: string;
   publication?: {
     queueItemId: string;
     gradingSessionId: string;
@@ -571,6 +579,9 @@ export function buildAiGraderMathematicalGradingAuthorityV1(input: {
         });
   return {
     schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+    measurementUncertaintyAuthority: structuredClone(
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    ),
     cardIdentity,
     cardFormatId: "standard_trading_card_63_50x88_90_r3_18_v1",
     sides: {
@@ -703,6 +714,9 @@ export function buildAiGraderTrustedPokemonMathematicalGradingAuthorityV1(input:
         });
   return {
     schemaVersion: "fixed_rig_mathematical_station_grading_authority_v1",
+    measurementUncertaintyAuthority: structuredClone(
+      AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    ),
     cardIdentity,
     cardFormatId: "pokemon_tcg_standard",
     trustedCardFormatAuthority: trusted,
@@ -1966,7 +1980,7 @@ export type AiGraderQueuedOcrDescriptor = {
   queueItemId: string;
   gradingSessionId: string;
   reportId: string;
-  status: "eligible" | "in_flight" | "eyes_selection_eligible";
+  status: "eligible" | "in_flight" | "eyes_selection_eligible" | "geometry_review_eligible";
   images: Array<{
     side: "front" | "back";
     artifactRole: "normalized_card";

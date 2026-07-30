@@ -4,7 +4,11 @@ import path from 'node:path';
 import type { FixedRigApprovedDesignReferencePixelsV1 } from './fixedRigDesignReferenceV1';
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
+  projectAiGraderHumanGeometryReceiptForReportV1,
   type AiGraderCalibrationActivationAuthorityV1,
+  type AiGraderHumanGeometryReceiptV1,
+  type AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1,
   type MathematicalGradingElementV1,
   type TrustedPokemonCardFormatAuthorityV1,
 } from '@tenkings/shared';
@@ -19,7 +23,6 @@ import {
   type FixedRigMathematicalAnalysisCheckpointV1,
   type FixedRigMathematicalOrchestrationStageV1,
 } from './fixedRigMathematicalCalibrationOrchestratorV1';
-import type { FixedRigPrintedBorderCandidateSelectionV1 } from './fixedRigPrintedBorderDetectorV1';
 import type {
   FixedRigOperatorResolutionAuthorityV1,
   FixedRigOperatorResolutionNativeRoleV1,
@@ -31,6 +34,7 @@ import {
 import { loadFixedRigMathematicalCalibrationBundleV1 } from './fixedRigMathematicalCalibrationBundleV1';
 import type { FastCalibrationRuntimeContextV1_2 } from './fixedRigFastMathematicalCalibrationV1_2';
 import { buildFixedRigAutomaticDesignRegistrationV1 } from './fixedRigAutomaticDesignRegistrationV1';
+import { assertFixedRigHumanGeometryReceiptIdentityV1 } from './fixedRigHumanGeometryAssistV1';
 import {
   verifyCardGeometryNormalizedDenseContourV1,
   verifyCardGeometryObservedDenseContourV1,
@@ -63,6 +67,8 @@ export type FixedRigMathematicalStationCenteringAuthorityV1 =
 
 type FixedRigMathematicalStationGradingAuthorityBaseV1 = {
   schemaVersion: typeof FIXED_RIG_MATHEMATICAL_STATION_GRADING_AUTHORITY_V1_VERSION;
+  measurementUncertaintyAuthority:
+    AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1;
   cardIdentity: FixedRigMathematicalCardIdentityV1;
   sides: {
     front: { centering: FixedRigMathematicalStationCenteringAuthorityV1 };
@@ -89,6 +95,7 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
   gradingSessionId: string;
   generatedAt: string;
   reportId: string;
+  humanGeometryReceipt: import("@tenkings/shared").AiGraderHumanGeometryReceiptV1;
   outputDir: string;
   captureProfileVersion: string;
   calibration: {
@@ -107,9 +114,6 @@ export interface BuildFixedRigMathematicalCalibrationStationPackageV1Input {
   operatorResolutionAuthorities?: FixedRigOperatorResolutionAuthorityV1[];
   analysisCheckpoint?: FixedRigMathematicalAnalysisCheckpointV1;
   forcedOperatorReviewElements?: MathematicalGradingElementV1[];
-  eyesCenteringSelections?: Partial<
-    Record<"front" | "back", FixedRigPrintedBorderCandidateSelectionV1>
-  >;
   cardFormatAuthorityVerification?: {
     hmacKey: string;
     keyId: string;
@@ -1120,6 +1124,41 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
       error instanceof Error ? error.message : 'Warm front/back evidence could not be verified.',
     ], { requiresRecapture: true });
   }
+  try {
+    aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema.parse(
+      input.authority.measurementUncertaintyAuthority,
+    );
+  } catch {
+    return adapterInsufficient('input_contract', [
+      'Station authority must carry the exact owner-approved Human Geometry measurement-uncertainty policy.',
+    ], { requiresImplementationCorrection: true });
+  }
+  let humanGeometryReceipt: AiGraderHumanGeometryReceiptV1;
+  try {
+    humanGeometryReceipt = assertFixedRigHumanGeometryReceiptIdentityV1({
+      receipt: input.humanGeometryReceipt,
+      queueItemId: input.queueItemId,
+      stationSessionId: input.gradingSessionId,
+      gradingSessionId: input.gradingSessionId,
+      reportId: input.reportId,
+      captureAuthority: {
+        front: {
+          exactCaptureSha256: warm.front.rawGeometryAuthority.sha256,
+          normalizedImageSha256: warm.front.normalizedAllOn.sha256,
+        },
+        back: {
+          exactCaptureSha256: warm.back.rawGeometryAuthority.sha256,
+          normalizedImageSha256: warm.back.normalizedAllOn.sha256,
+        },
+      },
+      measurementUncertaintyAuthority:
+        input.authority.measurementUncertaintyAuthority,
+    });
+  } catch (error) {
+    return adapterInsufficient('input_contract', [
+      error instanceof Error ? error.message : 'Human geometry receipt could not be verified.',
+    ], { requiresImplementationCorrection: true });
+  }
   const intendedOuterBoundary = input.authority.cardFormatId ===
       FIXED_RIG_POKEMON_TCG_STANDARD_FORMAT_V1_ID
     ? buildFixedRigPokemonTcgStandardBoundaryV1({
@@ -1179,6 +1218,7 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     algorithmVersion: FIXED_RIG_MATHEMATICAL_STATION_ADAPTER_V1_VERSION,
     warmManifestSha256: warm[side].warmManifestSha256,
     nativeCaptureRoles: warm[side].nativeCaptureRoles,
+    humanGeometry: structuredClone(humanGeometryReceipt.sides[side]),
   });
   return buildFixedRigMathematicalCalibrationReportPackageV1({
     gradingContract: 'mathematical_calibration_v1',
@@ -1221,13 +1261,12 @@ export async function buildFixedRigMathematicalCalibrationStationPackageV1(
     operatorResolutionAuthorities: input.operatorResolutionAuthorities,
     analysisCheckpoint: input.analysisCheckpoint,
     forcedOperatorReviewElements: input.forcedOperatorReviewElements,
-    eyesCenteringSelections: input.eyesCenteringSelections,
     report: {
       publication: input.authority.publication,
-      geometry: {
-        front: warm.front.geometry,
-        back: warm.back.geometry,
-      },
+      geometry:
+        projectAiGraderHumanGeometryReceiptForReportV1(
+          humanGeometryReceipt,
+        ),
       geometryCaptureDecisions: {
         front: warm.front.geometryCaptureDecisions,
         back: warm.back.geometryCaptureDecisions,

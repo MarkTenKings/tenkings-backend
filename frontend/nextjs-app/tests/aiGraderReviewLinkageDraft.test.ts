@@ -57,7 +57,7 @@ function boundAuthority(): AiGraderMathematicalGradingAuthorityV1 {
         centering: { profile: "pokemon_standard_back_v1" },
       },
     },
-  } as AiGraderMathematicalGradingAuthorityV1;
+  } as unknown as AiGraderMathematicalGradingAuthorityV1;
 }
 
 test("refresh-safe linkage fields persist only under one exact queue/session/report identity", () => {

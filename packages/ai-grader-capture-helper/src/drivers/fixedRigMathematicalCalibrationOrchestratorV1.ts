@@ -9,6 +9,7 @@ import {
   mathematicalDesignReferenceV1Schema,
   roundMathematicalScoreV1,
   type AiGraderReportBundleV03,
+  type AiGraderHumanGeometryReportProjectionV1,
   type AiGraderCalibrationActivationAuthorityV1,
   type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
   type MathematicalDesignReferenceV1,
@@ -258,6 +259,8 @@ export interface FixedRigMathematicalCalibrationSideInputV1 {
   algorithmVersion: string;
   warmManifestSha256: string;
   nativeCaptureRoles: FixedRigOperatorResolutionNativeRoleV1[];
+  /** The immutable human-confirmed master geometry for every downstream engine. */
+  humanGeometry: import("@tenkings/shared").AiGraderHumanGeometrySideV1;
 }
 
 export interface FixedRigMathematicalFindingReviewV1 {
@@ -438,7 +441,7 @@ export interface BuildFixedRigMathematicalCalibrationOrchestratorV1Input {
       qrPayloadUrl: string;
     };
     evidenceQualityLimitations?: AiGraderMathematicalEvidenceQualityLimitationV1[];
-    geometry?: Record<string, unknown>;
+    geometry?: AiGraderHumanGeometryReportProjectionV1;
     geometryCaptureDecisions?: Record<string, unknown>;
     captureTiming?: Record<string, unknown>;
     ocrPrefill?: Record<string, unknown>;
@@ -1683,7 +1686,7 @@ async function ingestSideV1(input: {
     observedCardMaterialMask = buildFixedRigExpectedOuterCardMaskV1({
       width: profile.normalizedWidthPx,
       height: profile.normalizedHeightPx,
-      outerCutContour: observedCut.artifact.normalizedContour,
+      outerCutContour: sideInput.humanGeometry.derivedRegions.physicalOuterContour,
     });
     if (!Array.from(observedCardMaterialMask.data).some((value) => Number(value) === 1)) {
       return fail("detector_plane_ingestion", `${side} observed dense contour contains no card-material pixels.`, {
@@ -2024,6 +2027,7 @@ async function ingestSideV1(input: {
     sourceEvidence,
     planes,
     unavailableModalities: produced.unavailableModalities,
+    humanGeometry: sideInput.humanGeometry,
   });
   if (condition.status !== "computed") {
     return fail("condition_segmentation", `${side} condition evidence is insufficient: ${condition.reasons.join("; ")}`, {
@@ -2058,37 +2062,31 @@ async function ingestSideV1(input: {
     ...(designReference ? [designReference] : []),
     planeReferenceByName.get("expectedOuterCardMask")!,
   ];
-  const printedBorder = sideInput.centering.profileInput.profile === "printed_border_v1"
-    ? buildFixedRigPrintedBorderCenteringSideV1({
-        side,
-        calibration: profile,
-        outerCutContour: produced.outerCutGeometryEvidence.observedArtifact.normalizedContour,
-        flatFieldNormalizedAllOnLuminance: rgbLuminancePlaneV1(allOnRgb),
-        evidence: centeringEvidence,
-        ...(input.selectedCenteringCandidate
-          ? { selectedCandidate: input.selectedCenteringCandidate }
-          : {}),
-      })
-    : undefined;
-  const centering = printedBorder?.centering ?? buildFixedRigCenteringSideV1({
-        side,
-        calibration: profile,
-        outerCutContour: produced.outerCutGeometryEvidence.observedArtifact.normalizedContour,
-        profileInput: sideInput.centering.profileInput as Extract<
-          FixedRigCenteringProfileInputV1,
-          { profile: "registered_design_template_v1" }
-        >,
-        evidence: centeringEvidence,
-      });
-  const eyesCenteringCandidateAssets = printedBorder
-    ? await buildEyesCenteringCandidateAssetsV1({
-        side,
-        normalizedRgbImage,
-        widthPx: profile.normalizedWidthPx,
-        heightPx: profile.normalizedHeightPx,
-        detector: printedBorder.detector,
-      })
-    : [];
+  const confirmedOuter = sideInput.humanGeometry.derivedRegions.physicalOuterContour;
+  const outerLeft = Math.min(...confirmedOuter.map((point) => point.x));
+  const outerRight = Math.max(...confirmedOuter.map((point) => point.x));
+  const outerTop = Math.min(...confirmedOuter.map((point) => point.y));
+  const outerBottom = Math.max(...confirmedOuter.map((point) => point.y));
+  const lineCoordinate = (
+    edge: "top" | "right" | "bottom" | "left",
+    axis: "x" | "y",
+  ) => {
+    const line = sideInput.humanGeometry.printedBorders[edge].finalLine;
+    return (line.start[axis] + line.end[axis]) / 2;
+  };
+  const centering = buildFixedRigPhysicalMarginCenteringSideV1({
+    side,
+    calibration: profile,
+    outerCutContour: confirmedOuter,
+    measurementsMm: {
+      left: Math.max(0, lineCoordinate("left", "x") - outerLeft) * profile.mmPerPixelX,
+      right: Math.max(0, outerRight - lineCoordinate("right", "x")) * profile.mmPerPixelX,
+      top: Math.max(0, lineCoordinate("top", "y") - outerTop) * profile.mmPerPixelY,
+      bottom: Math.max(0, outerBottom - lineCoordinate("bottom", "y")) * profile.mmPerPixelY,
+    },
+    evidence: centeringEvidence,
+  });
+  const eyesCenteringCandidateAssets: FixedRigEyesCenteringCandidateAssetV1[] = [];
   const surface = buildFixedRigSurfaceV1({
     side,
     photometricEvidence: photometric,
@@ -2196,7 +2194,6 @@ async function ingestSideV1(input: {
     detectorPlaneSha256s,
     assetBindings,
     photometric,
-    ...(printedBorder ? { printedBorderDetector: printedBorder.detector } : {}),
     eyesCenteringCandidateAssets,
     condition,
     outerCutGeometryEvidence: produced.outerCutGeometryEvidence,
@@ -4544,7 +4541,7 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
         ],
       };
     };
-    const grade = buildFixedRigMathematicalGradeV1({
+    const composedGrade = buildFixedRigMathematicalGradeV1({
       calibration: input.calibration.finalizedProfile,
       centering,
       corners,
@@ -4566,14 +4563,26 @@ export async function buildFixedRigMathematicalCalibrationReportPackageV1(
           : {}),
       },
     });
-    if (grade.status !== "final_mathematical_grade_v1") {
-      return fail("grade_composition", grade.issues.map((issue) => issue.message).join("; "), {
-        requiresRecapture: grade.requiresRecapture,
-        requiresApprovedDesignReference: grade.requiresApprovedDesignReference,
-        requiresCalibration: grade.requiresCalibration,
-        requiresImplementationCorrection: grade.requiresImplementationCorrection,
+    if (composedGrade.status !== "final_mathematical_grade_v1") {
+      return fail("grade_composition", composedGrade.issues.map((issue) => issue.message).join("; "), {
+        requiresRecapture: composedGrade.requiresRecapture,
+        requiresApprovedDesignReference: composedGrade.requiresApprovedDesignReference,
+        requiresCalibration: composedGrade.requiresCalibration,
+        requiresImplementationCorrection: composedGrade.requiresImplementationCorrection,
       });
     }
+    const grade = {
+      ...composedGrade,
+      elements: {
+        ...composedGrade.elements,
+        centering: {
+          ...composedGrade.elements.centering,
+          // This denotes resolved input geometry, not a human-entered score.
+          // The score and deduction above remain deterministic engine outputs.
+          resolved: true as const,
+        },
+      },
+    };
     const summary = orchestrationSummaryV1({
       profile: input.calibration.finalizedProfile,
       sides,

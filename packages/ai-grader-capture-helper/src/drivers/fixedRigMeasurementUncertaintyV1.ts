@@ -1,24 +1,29 @@
 import {
   MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST,
+  AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+  aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema,
   combineMeasurementUncertaintyU95,
-  type OperationallyUsableMathematicalCalibrationProfileV1 as MathematicalCalibrationProfileV1,
+  type AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1,
+  type OperationallyUsableMathematicalCalibrationProfileV1 as OperationalCalibrationProfileV1,
   type MathematicalMeasurementKindV1,
   type MathematicalMeasurementUncertaintyComponentsV1,
 } from "@tenkings/shared";
 import { validateMathematicalCalibrationForOperationalUseV1 } from "./productOwnerOperationalAcceptanceV1";
 
 export const FIXED_RIG_MEASUREMENT_UNCERTAINTY_V1_VERSION =
-  "fixed_rig_profile_derived_measurement_uncertainty_v1" as const;
+  "fixed_rig_owner_human_geometry_measurement_uncertainty_v1" as const;
 
 export type FixedRigMeasurementAxisV1 = "x" | "y" | "isotropic";
 
 export interface DeriveFixedRigMeasurementUncertaintyV1Input {
-  calibration: MathematicalCalibrationProfileV1;
+  calibration: OperationalCalibrationProfileV1;
   kind: MathematicalMeasurementKindV1;
   measuredMeasurement: number;
   axis?: FixedRigMeasurementAxisV1;
   /** Observable fraction of the exact ROI. Omit only for non-image measurements. */
   validEvidenceCoverage?: number;
+  measurementUncertaintyAuthority?:
+    AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1;
 }
 
 export interface DerivedFixedRigMeasurementUncertaintyV1 {
@@ -30,7 +35,9 @@ export interface DerivedFixedRigMeasurementUncertaintyV1 {
   axis: FixedRigMeasurementAxisV1;
   componentsU95: MathematicalMeasurementUncertaintyComponentsV1;
   u95: number;
-  source: "finalized_calibration_profile";
+  measurementUncertaintyAuthority:
+    AiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1;
+  source: "owner_approved_human_geometry_policy";
   formula: string;
   validEvidenceCoverage?: number;
 }
@@ -53,18 +60,22 @@ function round(value: number): number {
   return Math.sign(value) * Math.floor(Math.abs(value) * factor + 0.5 + Number.EPSILON) / factor;
 }
 
-function validatedProfile(value: MathematicalCalibrationProfileV1): MathematicalCalibrationProfileV1 {
-  const validation = validateMathematicalCalibrationForOperationalUseV1(value);
-  if (!validation.valid || (!validation.isCalibrated && !validation.isOperationallyAccepted) || !validation.profile) {
+function validatedProfile(value: OperationalCalibrationProfileV1): OperationalCalibrationProfileV1 {
+  const result = validateMathematicalCalibrationForOperationalUseV1(value);
+  if (
+    !result.valid ||
+    !result.profile ||
+    (!result.isCalibrated && !result.isOperationallyAccepted)
+  ) {
     throw new Error(
-      "Measurement uncertainty requires one finalized calibration profile satisfying every V1 acceptance gate.",
+      "Calibration required: the supporting mathematical calibration profile is not operationally usable.",
     );
   }
-  return validation.profile;
+  return result.profile;
 }
 
 function axisMmPerPixel(
-  profile: MathematicalCalibrationProfileV1,
+  profile: OperationalCalibrationProfileV1,
   axis: FixedRigMeasurementAxisV1,
 ): number {
   if (axis === "x") return profile.mmPerPixelX;
@@ -72,7 +83,7 @@ function axisMmPerPixel(
   return Math.max(profile.mmPerPixelX, profile.mmPerPixelY);
 }
 
-function calibratedLightingFraction(profile: MathematicalCalibrationProfileV1): number {
+function calibratedLightingFraction(profile: OperationalCalibrationProfileV1): number {
   const maximumFlatFieldDeviation = Math.max(
     ...profile.channels.map((channel) => channel.maxFlatFieldDeviationFraction),
   );
@@ -83,9 +94,10 @@ function calibratedLightingFraction(profile: MathematicalCalibrationProfileV1): 
 }
 
 function linearComponents(
-  profile: MathematicalCalibrationProfileV1,
+  profile: OperationalCalibrationProfileV1,
   measuredMeasurement: number,
   axis: FixedRigMeasurementAxisV1,
+  repeatedPlacementU95Mm: number,
 ): MathematicalMeasurementUncertaintyComponentsV1 {
   const mmPerPixel = axisMmPerPixel(profile, axis);
   const lightingFraction = calibratedLightingFraction(profile);
@@ -93,7 +105,7 @@ function linearComponents(
     pixelMmScale: round(measuredMeasurement * profile.scaleRelativeU95),
     lensDistortion: round(profile.lensResidualPx * mmPerPixel),
     normalizationRegistration: round(profile.normalizationRegistrationResidualPx * mmPerPixel),
-    repeatedPlacement: round(profile.repeatedPlacementU95Mm),
+    repeatedPlacement: round(repeatedPlacementU95Mm),
     segmentationBoundary: round(profile.segmentationBoundaryU95Px * mmPerPixel),
     measurementRepeatability: round(profile.measurementRepeatability.linearMm.u95),
     lightingChannelConfidence: round(mmPerPixel * lightingFraction),
@@ -101,11 +113,12 @@ function linearComponents(
 }
 
 function areaComponents(
-  profile: MathematicalCalibrationProfileV1,
+  profile: OperationalCalibrationProfileV1,
   measuredAreaMm2: number,
   axis: FixedRigMeasurementAxisV1,
+  repeatedPlacementU95Mm: number,
 ): MathematicalMeasurementUncertaintyComponentsV1 {
-  const linear = linearComponents(profile, 0, axis);
+  const linear = linearComponents(profile, 0, axis, repeatedPlacementU95Mm);
   const propagate = (linearPositionU95Mm: number) =>
     round(2 * Math.sqrt(measuredAreaMm2) * linearPositionU95Mm);
   return {
@@ -120,7 +133,7 @@ function areaComponents(
 }
 
 function dimensionlessComponents(
-  profile: MathematicalCalibrationProfileV1,
+  profile: OperationalCalibrationProfileV1,
   kind: "relief_index" | "roughness_index" | "delta_e",
 ): MathematicalMeasurementUncertaintyComponentsV1 {
   const repeatability = kind === "relief_index"
@@ -144,10 +157,9 @@ function dimensionlessComponents(
 }
 
 /**
- * Derive every U95 component from one accepted physical profile. Callers may
- * provide a measured value and an axis, but cannot supply or override an
- * uncertainty component. Evidence-quality limitations are handled before
- * scoring and therefore cannot be converted into a condition deduction here.
+ * Derive U95 from one operationally usable supporting profile while binding
+ * repeated placement to the exact owner-approved Human Geometry policy.
+ * Callers cannot supply or override any uncertainty component.
  */
 export function deriveFixedRigMeasurementUncertaintyV1(
   input: DeriveFixedRigMeasurementUncertaintyV1Input,
@@ -156,14 +168,29 @@ export function deriveFixedRigMeasurementUncertaintyV1(
     throw new RangeError("Measured measurement must be finite and nonnegative.");
   }
   const profile = validatedProfile(input.calibration);
+  const measurementUncertaintyAuthority =
+    aiGraderOwnerHumanGeometryMeasurementUncertaintyAuthorityV1Schema.parse(
+      input.measurementUncertaintyAuthority ??
+        AI_GRADER_OWNER_HUMAN_GEOMETRY_MEASUREMENT_UNCERTAINTY_AUTHORITY_V1,
+    );
   const axis = input.axis ?? "isotropic";
   let componentsU95: MathematicalMeasurementUncertaintyComponentsV1;
   let formula: string;
   if (LINEAR_KINDS.has(input.kind)) {
-    componentsU95 = linearComponents(profile, input.measuredMeasurement, axis);
+    componentsU95 = linearComponents(
+      profile,
+      input.measuredMeasurement,
+      axis,
+      measurementUncertaintyAuthority.repeatedPlacementU95Mm,
+    );
     formula = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.linearMeasurementU95Formula;
   } else if (AREA_KINDS.has(input.kind)) {
-    componentsU95 = areaComponents(profile, input.measuredMeasurement, axis);
+    componentsU95 = areaComponents(
+      profile,
+      input.measuredMeasurement,
+      axis,
+      measurementUncertaintyAuthority.repeatedPlacementU95Mm,
+    );
     formula = MATHEMATICAL_GRADING_V1_THRESHOLD_MANIFEST.uncertainty.areaMeasurementU95Formula;
   } else if (
     input.kind === "relief_index" ||
@@ -214,8 +241,12 @@ export function deriveFixedRigMeasurementUncertaintyV1(
     axis,
     componentsU95,
     u95: combineMeasurementUncertaintyU95(componentsU95),
-    source: "finalized_calibration_profile",
-    formula,
+    measurementUncertaintyAuthority:
+      structuredClone(measurementUncertaintyAuthority),
+    source: "owner_approved_human_geometry_policy",
+    formula:
+      formula +
+      "; repeated-placement U95 is the owner-approved 0.05 mm grading policy, not a claim of new empirical calibration",
     ...(input.validEvidenceCoverage !== undefined
       ? { validEvidenceCoverage: round(input.validEvidenceCoverage) }
       : {}),

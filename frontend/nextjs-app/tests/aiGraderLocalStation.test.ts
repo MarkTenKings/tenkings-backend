@@ -2333,7 +2333,7 @@ test("production station rejects a version-compatible mock or contract bridge", 
       { baseUrl: "http://127.0.0.1:47652" },
       (async () => new Response(JSON.stringify({
         ok: true,
-        bridgeVersion: "ai-grader-local-station-bridge-v0.10",
+        bridgeVersion: "ai-grader-local-station-bridge-v0.11",
         reportProducerContractVersion: "ai-grader-report-producer-v0.2",
         mode: "mock",
         hardwareActionsEnabled: false,

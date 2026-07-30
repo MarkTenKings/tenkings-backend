@@ -1,0 +1,500 @@
+.workspace {
+  --black: #000;
+  --ink: #070706;
+  --cream: #f8f3e7;
+  --cream-muted: #cfc5b1;
+  --gold: #e1bd68;
+  --gold-bright: #f4d88e;
+  --gold-soft: rgba(225, 189, 104, 0.14);
+  --gold-line: rgba(225, 189, 104, 0.32);
+  --green: #5bff9d;
+  box-sizing: border-box;
+  width: 100%;
+  color: var(--cream);
+  border: 1px solid var(--gold-line);
+  border-radius: 22px;
+  padding: 22px;
+  background: var(--black);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.72);
+}
+
+.head,
+.tabs,
+.toolbar,
+.footer,
+.candidateRow,
+.cornerTools,
+.finalStep,
+.stepHeading {
+  display: flex;
+  align-items: center;
+}
+
+.head {
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.eyebrow {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+}
+
+.head h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(23px, 2.1vw, 32px);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+}
+
+.head p {
+  margin: 5px 0 0;
+  color: var(--cream-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.status {
+  flex: 0 0 auto;
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  padding: 8px 13px;
+  color: var(--gold-bright);
+  background: var(--gold-soft);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.045em;
+}
+
+.confirmed {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(91, 255, 157, 0.1);
+}
+
+.tabs {
+  gap: 8px;
+  padding: 5px;
+  border: 1px solid rgba(225, 189, 104, 0.22);
+  border-radius: 14px;
+  background: #050504;
+  width: fit-content;
+}
+
+.tabs button,
+.toolbar button,
+.candidateRow button,
+.cornerTools button,
+.cornerList button,
+.reviewButton,
+.footer button {
+  border: 1px solid rgba(225, 189, 104, 0.26);
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--black);
+  color: var(--cream);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+}
+
+.tabs button:hover,
+.toolbar button:hover,
+.candidateRow button:hover,
+.cornerTools button:hover,
+.cornerList button:hover,
+.reviewButton:hover,
+.footer button:hover {
+  border-color: var(--gold);
+  color: #fff;
+}
+
+.tabs button[aria-selected="true"] {
+  border-color: var(--gold);
+  color: var(--black);
+  background: var(--gold);
+  font-weight: 900;
+}
+
+.tabs button.sideComplete:not([aria-selected="true"]) {
+  border-color: rgba(91, 255, 157, 0.7);
+  color: var(--green);
+}
+
+.toolbar {
+  justify-content: space-between;
+  gap: 16px;
+  margin: 14px 0;
+}
+
+.toolbar > div {
+  display: flex;
+  gap: 8px;
+}
+
+.toolbar button {
+  padding: 8px 11px;
+  color: var(--cream-muted);
+  font-size: 12px;
+}
+
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--cream-muted);
+  font-size: 12px;
+}
+
+.toolbar input {
+  width: 126px;
+  accent-color: var(--gold);
+}
+
+.toolbar .selected,
+.candidateRow .selected,
+.cornerTools .selected,
+.activeCorner {
+  border-color: var(--gold);
+  color: var(--gold-bright);
+  background: var(--gold-soft);
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(292px, 360px);
+  gap: 18px;
+}
+
+.viewport {
+  position: relative;
+  height: min(73vh, 790px);
+  min-height: 560px;
+  overflow: hidden;
+  border: 1px solid rgba(225, 189, 104, 0.24);
+  border-radius: 18px;
+  background: #000;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  touch-action: none;
+}
+
+.canvas {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(60vh, 500px);
+  aspect-ratio: 5 / 7;
+  transform-origin: center;
+  user-select: none;
+}
+
+.canvas img,
+.canvas > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.canvas img {
+  object-fit: fill;
+  pointer-events: none;
+}
+
+.canvas > svg {
+  overflow: visible;
+}
+
+.magnifier {
+  position: absolute;
+  z-index: 6;
+  width: 148px;
+  height: 148px;
+  border: 3px solid var(--gold);
+  border-radius: 50%;
+  background-repeat: no-repeat;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.86);
+  pointer-events: none;
+}
+
+.snap {
+  position: absolute;
+  z-index: 7;
+  left: 15px;
+  bottom: 15px;
+  padding: 7px 11px;
+  border: 1px solid rgba(91, 255, 157, 0.68);
+  border-radius: 999px;
+  color: var(--green);
+  background: rgba(0, 0, 0, 0.9);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.step {
+  border: 1px solid rgba(225, 189, 104, 0.18);
+  border-radius: 15px;
+  padding: 13px;
+  background: #050504;
+  transition: border-color 160ms ease, opacity 160ms ease;
+}
+
+.stepActive {
+  border-color: var(--gold);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+.stepComplete {
+  border-color: rgba(91, 255, 157, 0.42);
+}
+
+.stepLocked {
+  opacity: 0.5;
+}
+
+.stepHeading {
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.stepHeading > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.stepNumber {
+  display: inline-grid;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 1px solid var(--gold);
+  border-radius: 50%;
+  color: var(--gold-bright);
+  background: #000;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.stepComplete .stepNumber,
+.finalStep + .done {
+  border-color: var(--green);
+  color: var(--black);
+  background: var(--green);
+}
+
+.stepState {
+  flex: 0 0 auto;
+  color: var(--gold);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.stepComplete .stepState,
+.check {
+  color: var(--green);
+}
+
+.step h3,
+.step p {
+  margin: 0;
+}
+
+.step h3 {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.step p {
+  margin-top: 2px;
+  color: var(--cream-muted);
+  font-size: 11px;
+  line-height: 1.38;
+}
+
+.borderChoice {
+  display: grid;
+  grid-template-columns: 62px 1fr;
+  align-items: center;
+  gap: 8px;
+  min-height: 37px;
+  border-top: 1px solid rgba(225, 189, 104, 0.11);
+}
+
+.borderChoice strong {
+  color: var(--cream);
+  font-size: 12px;
+}
+
+.candidateRow {
+  gap: 6px;
+}
+
+.candidateRow button {
+  width: 31px;
+  height: 29px;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.candidateRow .done,
+.cornerList .done,
+.reviewButton.done,
+.footer .done {
+  border-color: var(--green);
+  color: var(--green);
+  background: rgba(91, 255, 157, 0.09);
+}
+
+.check,
+.pending {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.pending {
+  color: var(--gold);
+}
+
+.cornerList {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.cornerList > button {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 9px;
+  font-size: 11px;
+}
+
+.cornerTools {
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.cornerTools button {
+  flex: 1 1 0;
+  padding: 8px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.reviewButton {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.footer {
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(225, 189, 104, 0.2);
+}
+
+.finalStep {
+  gap: 9px;
+  margin-right: auto;
+  color: var(--cream);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.footer button {
+  min-height: 42px;
+  padding: 10px 15px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.lock {
+  min-width: 230px;
+  border-color: var(--green) !important;
+  color: #000 !important;
+  background: var(--green) !important;
+  font-weight: 950 !important;
+}
+
+.lock:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.lock:disabled,
+.workspace button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+@media (max-width: 1040px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .viewport {
+    min-height: 520px;
+  }
+}
+
+@media (max-width: 700px) {
+  .workspace {
+    padding: 14px;
+    border-radius: 16px;
+  }
+
+  .head,
+  .toolbar,
+  .footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .status {
+    width: fit-content;
+  }
+
+  .toolbar > div {
+    flex-wrap: wrap;
+  }
+
+  .panel {
+    grid-template-columns: 1fr;
+  }
+
+  .viewport {
+    min-height: 460px;
+  }
+
+  .lock {
+    width: 100%;
+  }
+}

@@ -52,6 +52,10 @@ import {
   aiGraderPublishedAssetSchema,
   aiGraderSafePublishedUrlSchema,
 } from "./aiGraderReportBundles";
+import {
+  AI_GRADER_HUMAN_GEOMETRY_REPORT_PROJECTION_SCHEMA_VERSION,
+  aiGraderHumanGeometryReportProjectionV1Schema,
+} from "./aiGraderHumanGeometryAssistV1";
 import { AI_GRADER_SAFE_PUBLIC_IDENTIFIER_PATTERN } from "./aiGraderPublicIdentifier";
 
 export const AI_GRADER_REPORT_BUNDLE_V03_VERSION = "ai-grader-report-bundle-v0.3" as const;
@@ -619,6 +623,15 @@ const publicOperationallyAuthorizedCalibrationProfileSchema =
     operationalAuthorization: publicOperationalCalibrationAuthorizationSchema,
   });
 
+const legacyReportGeometrySchema = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (value) =>
+      value.schemaVersion !==
+      AI_GRADER_HUMAN_GEOMETRY_REPORT_PROJECTION_SCHEMA_VERSION,
+    "Human Geometry reports must use the strict receipt projection",
+  );
+
 export const aiGraderReportBundleV03Schema = z
   .strictObject({
     schemaVersion: z.literal(AI_GRADER_REPORT_BUNDLE_V03_VERSION),
@@ -655,7 +668,12 @@ export const aiGraderReportBundleV03Schema = z
     deductionLedger: mathematicalDeductionLedgerV1Schema,
     evidenceQualityLimitations: z.array(evidenceQualityLimitationSchema).max(200),
     publicAssets: z.array(aiGraderPublishedAssetV03Schema).max(1000),
-    geometry: z.record(z.string(), z.unknown()).optional(),
+    geometry: z
+      .union([
+        aiGraderHumanGeometryReportProjectionV1Schema,
+        legacyReportGeometrySchema,
+      ])
+      .optional(),
     geometryCaptureDecisions: z.record(z.string(), z.unknown()).optional(),
     captureTiming: z.record(z.string(), z.unknown()).optional(),
     ocrPrefill: z.record(z.string(), z.unknown()).optional(),

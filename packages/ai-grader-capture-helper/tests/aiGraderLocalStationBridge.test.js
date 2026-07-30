@@ -1641,7 +1641,7 @@ test("station bridge is one loopback production_fast road and exposes no removed
   assert.deepEqual(config.allowedOrigins, ["https://collect.tenkings.co"]);
   assert.equal(config.stationToken, "StationTokenStationTokenStationToken1234");
   assert.equal(config.captureProfile, "production_fast");
-  assert.equal(AI_GRADER_LOCAL_STATION_BRIDGE_VERSION, "ai-grader-local-station-bridge-v0.10");
+  assert.equal(AI_GRADER_LOCAL_STATION_BRIDGE_VERSION, "ai-grader-local-station-bridge-v0.11");
   assert.throws(() => buildAiGraderLocalStationBridgeConfig({ ...config, host: "0.0.0.0" }), /loopback/i);
   assert.throws(() => buildAiGraderLocalStationBridgeConfig({ ...config, captureProfile: "full_forensic" }), /one required capture profile/i);
   for (const removed of ["configure-rapid-capture", "queue-current-card", 'captureProfile ?? "full_forensic"']) {

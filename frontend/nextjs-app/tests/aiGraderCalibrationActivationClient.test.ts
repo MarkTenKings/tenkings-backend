@@ -101,7 +101,7 @@ const operatingContext = {
     thresholdSetId: "ten-kings-mathematical-grading-v1.0.1",
     thresholdSetHash: hash("8"),
     helperInstanceId: "local-dell-ai-grader-station",
-    helperVersion: "ai-grader-local-station-bridge-v0.10",
+    helperVersion: "ai-grader-local-station-bridge-v0.11",
   },
 };
 
