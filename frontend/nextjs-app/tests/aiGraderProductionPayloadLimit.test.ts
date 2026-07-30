@@ -42,10 +42,27 @@ function response() {
   return { state, res };
 }
 
-test("Production handler admits the current 2.71 MiB create-card-from-report envelope through the 4 MiB guard", async () => {
+test("Production handler projects private capture timing before scanning the current 2.71 MiB create-card-from-report envelope", async () => {
   assert.equal(AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, 4 * MEBIBYTE);
 
   const reportBundle = buildStrictAiGraderReportBundleV03Fixture();
+  const leimacHost = "169.254.191.156";
+  reportBundle.captureTiming = {
+    schemaVersion: "ten-kings-ai-grader-capture-timing-v1",
+    captureProfile: "production_fast",
+    front: {
+      lightingProfileChanges: {
+        writes: [{ host: leimacHost, port: 1000, frame: "W1100" }],
+      },
+    },
+    events: [],
+    phases: [],
+    summary: {
+      frontProcessingOverlappedFlip: true,
+      totalFrontMs: 4200,
+      totalBackMs: 4300,
+    },
+  };
   reportBundle.geometry = {
     ...(reportBundle.geometry ?? {}),
     productionTransportPadding: "",
@@ -78,7 +95,8 @@ test("Production handler admits the current 2.71 MiB create-card-from-report env
   assert.ok(bodyBytes > MEBIBYTE);
   assert.ok(bodyBytes < AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES);
 
-  let createCardActionReached = false;
+  let createCardActionCalls = 0;
+  let projectedReportBundle: any;
   const handler = createAiGraderProductionApiHandler({
     env: { [AI_GRADER_PRODUCTION_PUBLISH_ENABLED_ENV]: "true" },
     async requireAdminSession() {
@@ -88,7 +106,8 @@ test("Production handler admits the current 2.71 MiB create-card-from-report env
     },
     publicUrlFor: (storageKey) => `https://cdn.tenkings.test/${storageKey}`,
     async createCardFromReport(input) {
-      createCardActionReached = true;
+      createCardActionCalls += 1;
+      projectedReportBundle = input.reportBundle;
       return {
         queueItemId: input.queueItemId,
         gradingSessionId: input.reportBundle.gradingSessionId,
@@ -111,9 +130,27 @@ test("Production handler admits the current 2.71 MiB create-card-from-report env
   const { state, res } = response();
   await handler(request(body), res);
 
-  assert.equal(createCardActionReached, true);
+  assert.equal(createCardActionCalls, 1);
   assert.equal(state.statusCode, 200, JSON.stringify(state.body));
   assert.equal(state.body.result.queueItemId, body.queueItemId);
   assert.equal(state.body.result.reportId, productionRelease.reportId);
   assert.doesNotMatch(String(state.body.message), /must be 1 MB or smaller/i);
+  assert.equal(projectedReportBundle.captureTiming.schemaVersion, "ten-kings-ai-grader-capture-timing-v1");
+  assert.equal(projectedReportBundle.captureTiming.captureProfile, "production_fast");
+  assert.deepEqual(projectedReportBundle.captureTiming.summary, reportBundle.captureTiming.summary);
+  assert.equal("front" in projectedReportBundle.captureTiming, false);
+  assert.doesNotMatch(JSON.stringify(projectedReportBundle), new RegExp(leimacHost.replaceAll(".", "\\.")));
+  assert.equal((reportBundle.captureTiming as any).front.lightingProfileChanges.writes[0].host, leimacHost);
+
+  const unsafeBody = structuredClone(body);
+  (unsafeBody.reportBundle.geometry as any).stationToken = "must-still-be-rejected";
+  const unsafeResponse = response();
+  await handler(request(unsafeBody), unsafeResponse.res);
+
+  assert.equal(unsafeResponse.state.statusCode, 400);
+  assert.match(
+    String(unsafeResponse.state.body?.message),
+    /body\.reportBundle\.geometry\.stationToken/,
+  );
+  assert.equal(createCardActionCalls, 1);
 });
