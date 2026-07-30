@@ -29591,3 +29591,10 @@ By enabling Rip It Live, I confirm:
 
 - Mark intends to print the updated Human Grade labels through the FoilXpress AP, so the contained release is one protected PR, required checks, merge to `main`, and the normal Vercel Production deployment. After deployment, verify the exact serving build, authenticated route boundary, and deployed Human Grade bundle/renderer evidence before Mark downloads a fresh no-store PDF.
 - No database schema/data change, migration, backfill, destructive operation, AI Grader change, helper/hardware action, FoilXpress/Cricut command, or stored label/page mutation is included. Existing READY pages will adopt the renderer-only artwork update only when requested again.
+
+### Production result
+
+- Protected PR `#248` passed Install & Build, every Docker image, the disposable PostgreSQL migration chain, and the Vercel preview, then merged to `main` as `8dfa8c11254f9d9929a75cc850ef2ff3b0555971`.
+- The Vercel Production deployment for that exact merge completed successfully at `2026-07-30T23:10:52Z`. A read-only smoke check returned HTTP `200` for `https://collect.tenkings.co/admin/human-grade`; the deployed page bundle contains the new `#b38a20` inset cut-guide preview. Unauthenticated `GET /api/admin/human-grade` returned HTTP `401` with the expected missing/invalid authorization response.
+- No database schema/data change, migration, backfill, destructive operation, stored label/page mutation, AI Grader change, helper/hardware action, or FoilXpress/Cricut command occurred. Existing READY Human Grade pages now render the updated artwork and guides when their no-store PDF endpoint is requested.
+- Added a documentation-only Cricut Basic Cut template for the exact 8.5 x 11 in physical sheet and the existing 16-slot geometry, plus a FoilXpress AP/Cricut Explore 5 calibration runbook. The template uses one compound path with harmless 0.01 in page-corner ticks so Design Space retains the complete physical-sheet bounding box. It does not alter application runtime, stored data, or either grader.

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="8.5in"
+     height="11in"
+     viewBox="0 0 8500 11000"
+     aria-label="Ten Kings Human Grade 16-label Cricut cut template">
+  <!--
+    Physical stock: 8.5 x 11 in, portrait.
+    Finished label: 2.73 x 0.83 in.
+    Columns: x = 1.00 and 4.77 in.
+    Rows: y = 1.00, 2.08, 3.16, 4.24, 5.32, 6.40, 7.48, 8.56 in.
+    The four 0.01 in corner ticks preserve the full physical-sheet bounding box
+    when Cricut Design Space imports and attaches this single compound path.
+  -->
+  <path fill="none"
+        stroke="#000000"
+        stroke-width="1"
+        d="
+          M 0 0 H 10 M 0 0 V 10
+          M 8490 11000 H 8500 M 8500 10990 V 11000
+
+          M 1000 1000 H 3730 V 1830 H 1000 Z
+          M 4770 1000 H 7500 V 1830 H 4770 Z
+
+          M 1000 2080 H 3730 V 2910 H 1000 Z
+          M 4770 2080 H 7500 V 2910 H 4770 Z
+
+          M 1000 3160 H 3730 V 3990 H 1000 Z
+          M 4770 3160 H 7500 V 3990 H 4770 Z
+
+          M 1000 4240 H 3730 V 5070 H 1000 Z
+          M 4770 4240 H 7500 V 5070 H 4770 Z
+
+          M 1000 5320 H 3730 V 6150 H 1000 Z
+          M 4770 5320 H 7500 V 6150 H 4770 Z
+
+          M 1000 6400 H 3730 V 7230 H 1000 Z
+          M 4770 6400 H 7500 V 7230 H 4770 Z
+
+          M 1000 7480 H 3730 V 8310 H 1000 Z
+          M 4770 7480 H 7500 V 8310 H 4770 Z
+
+          M 1000 8560 H 3730 V 9390 H 1000 Z
+          M 4770 8560 H 7500 V 9390 H 4770 Z
+        "/>
+</svg>
