@@ -488,39 +488,34 @@ export default function HumanGradePage() {
                   </div>
                 </div>
                 <div className="grade-third">
-                  <div className="grade-hud" aria-label="Portrait card grading HUD">
-                    <div className="grade-hud-frame" aria-hidden="true">
-                      <i className="hud-reticle top-left" />
-                      <i className="hud-reticle top-right" />
-                      <i className="hud-reticle bottom-left" />
-                      <i className="hud-reticle bottom-right" />
-                    </div>
-                    <i className="hud-axis vertical" aria-hidden="true" />
-                    <i className="hud-axis horizontal" aria-hidden="true" />
-                    <output className="hud-final-grade" aria-label="Calculated Final Grade" aria-live="polite">
+                  <div className="compact-grade-summary" aria-label="Calculated grade and human subgrades">
+                    <output className="compact-final-grade" aria-label="Calculated Final Grade" aria-live="polite">
                       {calculatedGrade ?? "—"}
                     </output>
-                    {([
-                      ["centeringGrade", "top", "Centering"],
-                      ["cornersGrade", "left", "Corners"],
-                      ["edgesGrade", "right", "Edges"],
-                      ["surfaceGrade", "bottom", "Surface"],
-                    ] as const).map(([field, position, label]) => (
-                      <label className={`hud-subgrade ${position}`} key={field}>
-                        <input
-                          type="number"
-                          min="1"
-                          max="10"
-                          step="0.1"
-                          inputMode="decimal"
-                          required
-                          value={form[field]}
-                          onChange={(event) => updateForm(field, event.target.value)}
-                          placeholder="—"
-                          aria-label={label}
-                        />
-                      </label>
-                    ))}
+                    <div className="compact-subgrade-grid">
+                      {([
+                        ["centeringGrade", "CTR", "Centering"],
+                        ["cornersGrade", "CRN", "Corners"],
+                        ["edgesGrade", "EDG", "Edges"],
+                        ["surfaceGrade", "SUR", "Surface"],
+                      ] as const).map(([field, code, label]) => (
+                        <label className="compact-subgrade-field" key={field}>
+                          <span aria-hidden="true">{code}</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="10"
+                            step="0.1"
+                            inputMode="decimal"
+                            required
+                            value={form[field]}
+                            onChange={(event) => updateForm(field, event.target.value)}
+                            placeholder="—"
+                            aria-label={label}
+                          />
+                        </label>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -736,91 +731,58 @@ export default function HumanGradePage() {
           font-size: clamp(8px, 1.2vw, 17px);
         }
         .grade-third { display: grid; place-items: center; }
-        .grade-hud {
-          position: relative;
-          width: min(82%, 196px);
-          aspect-ratio: 38 / 46.2;
+        .compact-grade-summary {
+          width: 94%;
+          display: grid;
+          justify-items: center;
           color: #0f0f0f;
-          isolation: isolate;
         }
-        .grade-hud-frame {
-          position: absolute;
-          inset: 5%;
-          border: 1.3px solid #0f0f0f;
-        }
-        .hud-axis {
-          position: absolute;
-          z-index: 1;
+        .compact-final-grade {
           display: block;
-          background: #0f0f0f;
-        }
-        .hud-axis.vertical { top: 10%; bottom: 10%; left: 50%; width: 1px; transform: translateX(-50%); }
-        .hud-axis.horizontal { top: 50%; right: 10%; left: 10%; height: 1px; transform: translateY(-50%); }
-        .hud-reticle {
-          position: absolute;
-          width: 13px;
-          height: 13px;
-          border: 1px solid #0f0f0f;
-          border-radius: 50%;
-          background: white;
-          transform: translate(-50%, -50%);
-        }
-        .hud-reticle::before, .hud-reticle::after {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          content: "";
-          background: #0f0f0f;
-          transform: translate(-50%, -50%);
-        }
-        .hud-reticle::before { width: 19px; height: 1px; }
-        .hud-reticle::after { width: 1px; height: 19px; }
-        .hud-reticle.top-left { top: 0; left: 0; }
-        .hud-reticle.top-right { top: 0; left: 100%; }
-        .hud-reticle.bottom-left { top: 100%; left: 0; }
-        .hud-reticle.bottom-right { top: 100%; left: 100%; }
-        .hud-final-grade {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          z-index: 3;
-          padding: 0 7px;
-          background: white;
-          color: #0f0f0f;
           font-family: Impact, "Arial Narrow", sans-serif;
-          font-size: clamp(38px, 5vw, 72px);
+          font-size: clamp(44px, 5.4vw, 78px);
           line-height: 0.9;
-          transform: translate(-50%, -50%);
+          text-align: center;
         }
-        .hud-subgrade {
-          position: absolute;
-          z-index: 4;
-          display: grid !important;
-          width: clamp(32px, 3.8vw, 46px) !important;
-          aspect-ratio: 1;
-          place-items: center;
-          border: 1.3px solid #0f0f0f;
-          border-radius: 50%;
-          background: white;
-          transform: translate(-50%, -50%);
-        }
-        .label-composer .hud-subgrade input {
+        .compact-subgrade-grid {
           width: 100%;
-          height: 100%;
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 4px 8px;
+          margin-top: 8px;
+        }
+        .label-composer .compact-subgrade-field {
+          display: grid !important;
+          grid-template-columns: auto auto;
+          align-items: baseline;
+          justify-content: center;
+          gap: 3px;
+        }
+        .label-composer .compact-subgrade-field > span {
+          position: static;
+          width: auto;
+          height: auto;
+          overflow: visible;
+          clip: auto;
+          color: #0f0f0f;
+          font-family: Arial, sans-serif;
+          font-size: clamp(12px, 1.15vw, 18px);
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .label-composer .compact-subgrade-field input {
+          width: clamp(30px, 3vw, 45px);
           padding: 0;
           border: 0;
           font-family: Impact, "Arial Narrow", sans-serif;
-          font-size: clamp(18px, 1.9vw, 27px);
+          font-size: clamp(18px, 1.65vw, 25px);
           line-height: 1;
           font-weight: 400;
+          text-align: left;
         }
-        .label-composer .hud-subgrade input::-webkit-inner-spin-button,
-        .label-composer .hud-subgrade input::-webkit-outer-spin-button { margin: 0; appearance: none; }
-        .label-composer .hud-subgrade input { appearance: textfield; }
-        .hud-subgrade.top { top: 5%; left: 50%; }
-        .hud-subgrade.left { top: 50%; left: 5%; }
-        .hud-subgrade.right { top: 50%; left: 95%; }
-        .hud-subgrade.bottom { top: 95%; left: 50%; }
+        .label-composer .compact-subgrade-field input::-webkit-inner-spin-button,
+        .label-composer .compact-subgrade-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+        .label-composer .compact-subgrade-field input { appearance: textfield; }
         .certificate-preview { text-align: center; font-family: Arial, sans-serif; font-size: clamp(9px, 1.4vw, 19px); letter-spacing: 0.04em; white-space: nowrap; }
         .field-errors { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #ff9f9f; font-size: 12px; }
         .field-errors span { padding: 6px 9px; border-radius: 6px; background: #321515; }
@@ -902,8 +864,9 @@ export default function HumanGradePage() {
           .primary-field input, .grade-field output { font-size: 44px; }
           .metadata-fields input, .descriptor-fields input, .card-number-field input { font-size: 14px; }
           .certificate-preview { font-size: 15px; }
-          .grade-hud { width: 170px; }
-          .label-composer .hud-subgrade input { font-size: 23px; }
+          .compact-grade-summary { width: min(100%, 330px); }
+          .label-composer .compact-subgrade-field > span { font-size: 16px; }
+          .label-composer .compact-subgrade-field input { font-size: 23px; }
           .page-buttons, .slot-grid { grid-template-columns: 1fr; }
         }
       `}</style>

@@ -14,7 +14,7 @@ import {
   type HumanGradeLabelSnapshot,
 } from "../lib/humanGrade";
 import {
-  HUMAN_GRADE_HUD_GEOMETRY,
+  HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY,
   renderHumanGradeLabelSheetPdf,
 } from "../lib/server/humanGradeLabelRenderer";
 
@@ -145,11 +145,11 @@ test("human-grade pages copy the approved 2 by 8 physical sheet geometry", () =>
   });
 });
 
-test("human-grade grade HUD uses a portrait card frame", () => {
-  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.frameHeightPt > HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt);
-  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.frameWidthPt >= 38);
-  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeScoreFontSizePt >= 9);
-  assert.ok(HUMAN_GRADE_HUD_GEOMETRY.nodeRadiusPt >= 5);
+test("human-grade compact subgrade grid doubles the original print sizing", () => {
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.codeFontSizePt, 8);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreFontSizePt, 9.6);
+  assert.ok(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.pairGapPt <= 0.75);
+  assert.ok(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rowHeightPt >= 9);
 });
 
 test("human-grade renderer creates one exact letter page with embedded approved fonts", async () => {
@@ -195,19 +195,21 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /Saving an edit regenerates this page’s PDF with the updated label/);
   assert.match(page, /PDF rendered from its current saved labels/);
   assert.match(page, /cache: "no-store"/);
-  assert.match(page, /Portrait card grading HUD/);
-  assert.match(page, /hud-final-grade/);
+  assert.match(page, /Calculated grade and human subgrades/);
+  assert.match(page, /compact-final-grade/);
+  assert.match(page, /compact-subgrade-grid/);
+  assert.match(page, /\["centeringGrade", "CTR", "Centering"\]/);
   assert.doesNotMatch(page, /className="subgrade-fields"/);
+  assert.doesNotMatch(page, /grade-hud|hud-final-grade|hud-subgrade/);
   assert.match(pdfApi, /renderHumanGradeLabelSheetPdf/);
   assert.match(pdfApi, /"Cache-Control", "private, no-store"/);
-  assert.match(renderer, /HUMAN_GRADE_HUD_GEOMETRY/);
-  assert.match(renderer, /drawHudReticle/);
-  assert.match(renderer, /drawHudNode/);
-  assert.match(renderer, /nodeRadiusPt/);
-  assert.match(renderer, /gradeVisualTop/);
-  assert.match(renderer, /gradeVisualBottom/);
-  assert.doesNotMatch(renderer, /code: "CTR"|code: "CRN"|code: "EDG"|code: "SUR"|nodeCodeFontSizePt/);
-  assert.doesNotMatch(renderer, /subgradeGridTopPt|subgradesTopPt/);
+  assert.match(renderer, /HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY/);
+  assert.match(renderer, /drawSubgradePair/);
+  assert.match(renderer, /CENTERING: "CTR"/);
+  assert.match(renderer, /CORNERS: "CRN"/);
+  assert.match(renderer, /EDGES: "EDG"/);
+  assert.match(renderer, /SURFACE: "SUR"/);
+  assert.doesNotMatch(renderer, /drawHud|nodeRadiusPt|frameWidthPt/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);
   assert.doesNotMatch(renderer, /drawNfc|drawQr|GRADING/);
