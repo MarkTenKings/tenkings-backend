@@ -32,8 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const session = await requireUserSession(req);
     const claim = await claimLiveRipForUser({
       token,
-      userId: session.user.id,
-      userPhone: session.user.phone,
+      user: session.user,
     });
 
     return res.status(200).json({

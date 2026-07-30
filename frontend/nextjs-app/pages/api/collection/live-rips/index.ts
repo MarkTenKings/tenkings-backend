@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { buildMuxThumbnailUrl } from "../../../../lib/server/liveRip";
+import { resolveLiveRipCustomer } from "../../../../lib/server/liveRipCustomer";
 import { requireUserSession, toUserErrorResponse } from "../../../../lib/server/session";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -11,9 +12,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const session = await requireUserSession(req);
+    const customer = await resolveLiveRipCustomer(session.user);
     const liveRips = await prisma.liveRip.findMany({
       where: {
-        userId: session.user.id,
+        userId: customer.id,
         isGoldenTicket: false,
       },
       select: {

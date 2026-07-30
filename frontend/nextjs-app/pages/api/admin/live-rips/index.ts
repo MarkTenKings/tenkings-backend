@@ -29,8 +29,8 @@ const withLocation = (liveRip: any) => ({
 });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== "POST") {
-    res.setHeader("Allow", "POST");
+  if (req.method !== "GET" && req.method !== "POST") {
+    res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ message: "Method not allowed" });
   }
 
@@ -39,6 +39,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const isAdmin = hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone);
     if (!isAdmin) {
       return res.status(403).json({ message: "Admin access required" });
+    }
+
+    if (req.method === "GET") {
+      const liveRips = await prisma.liveRip.findMany({
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          description: true,
+          videoUrl: true,
+          muxPlaybackId: true,
+          thumbnailUrl: true,
+          featured: true,
+          createdAt: true,
+          viewCount: true,
+          claimedAt: true,
+          location: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+          user: {
+            select: {
+              id: true,
+              displayName: true,
+              phone: true,
+            },
+          },
+        },
+        orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
+      });
+
+      return res.status(200).json({
+        liveRips: liveRips.map(({ user, ...liveRip }) => ({
+          ...liveRip,
+          claimant: user,
+        })),
+      });
     }
 
     const payload = liveRipSchema.parse(req.body ?? {});
