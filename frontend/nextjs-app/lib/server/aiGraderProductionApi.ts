@@ -992,6 +992,18 @@ export function assertAiGraderPublishBundleBoundary(
   }
 }
 
+function projectAiGraderPublicPublishBody(body: unknown) {
+  if (!isRecord(body) || !isRecord(body.reportBundle)) return body;
+  return {
+    ...body,
+    reportBundle: {
+      ...body.reportBundle,
+      captureTiming: normalizeAiGraderPublicCaptureTiming(body.reportBundle.captureTiming),
+      ocrPrefill: normalizeAiGraderPublicOcrPrefill(body.reportBundle.ocrPrefill),
+    },
+  };
+}
+
 function parseProductionPublishSmallBody(body: unknown) {
   assertSmallJsonPayload(body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader publish request");
   assertNoUnsafePublishPayload(body);
@@ -2881,9 +2893,15 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
     }
 
     try {
+      const requestBody =
+        key === "create-card-from-report" ||
+        key === "publish-init" ||
+        key === "publish-finalize"
+          ? projectAiGraderPublicPublishBody(req.body)
+          : req.body;
       if (allow === "POST") {
         assertSmallJsonPayload(req.body, AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES, "AI Grader production request");
-        assertNoUnsafePublishPayload(req.body);
+        assertNoUnsafePublishPayload(requestBody);
       }
       const authAction: AiGraderProductionAction =
         key === "auth-check" ||
@@ -3636,7 +3654,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       }
       if (key === "create-card-from-report") {
         if (!deps.createCardFromReport) throw new Error("AI Grader create-card-from-report is not configured.");
-        const input = parseCreateCardFromReportBody(req.body);
+        const input = parseCreateCardFromReportBody(requestBody);
         assertAiGraderConfirmCardReady(input);
         assertAiGraderPublishBundleBoundary(input.reportBundle, input.productionRelease);
         const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
@@ -3672,7 +3690,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
           result,
         });
       }
-      const requestedInput = parseConfirmedPublishSmallBody(req.body);
+      const requestedInput = parseConfirmedPublishSmallBody(requestBody);
       assertPublishedReleaseReady(requestedInput);
       const tenantId = env[AI_GRADER_PRODUCTION_TENANT_ID_ENV] ?? "ten-kings";
       if (!deps.resolvePublishAuthority) {
@@ -3787,7 +3805,7 @@ export function createAiGraderProductionApiHandler(deps: AiGraderProductionApiDe
       if (key !== "publish-finalize") {
         return res.status(404).json({ ok: false, message: "AI Grader production API route not found" });
       }
-      const body = req.body as JsonRecord;
+      const body = requestBody as JsonRecord;
       const suppliedPublishSessionId = stringValue(body.publishSessionId, "");
       if (!suppliedPublishSessionId || suppliedPublishSessionId !== publishSessionId) {
         return res.status(409).json({
