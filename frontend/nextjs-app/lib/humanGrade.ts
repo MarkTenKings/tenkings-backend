@@ -167,7 +167,13 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
 
   if (snapshot.cardType === "SPORTS") {
     const primary = upper(snapshot.playerName);
-    const metadata = [upper(snapshot.year), upper(snapshot.manufacturer), upper(snapshot.productSet)]
+    const cardNumber = upper(snapshot.cardNumber).replace(/^#/, "");
+    const metadata = [
+      upper(snapshot.year),
+      upper(snapshot.manufacturer),
+      upper(snapshot.productSet),
+      cardNumber ? `#${cardNumber}` : "",
+    ]
       .filter(Boolean)
       .join(" ");
     const descriptor = [upper(snapshot.parallel), upper(snapshot.insert)].filter(Boolean).join(" / ");
@@ -176,7 +182,6 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
       primary,
       metadata,
       ...(descriptor ? { descriptor } : {}),
-      ...(upper(snapshot.cardNumber) ? { cardNumberAboveGrade: `#${upper(snapshot.cardNumber).replace(/^#/, "")}` } : {}),
       certificateNumber,
       subgrades,
       grade: calculated.labelGrade,

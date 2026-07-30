@@ -481,26 +481,33 @@ export default function HumanGradePage() {
                         <input value={form.insert} onChange={(event) => updateForm("insert", event.target.value)} placeholder="INSERT" />
                       </label>
                     ) : null}
+                    <label className="card-number-field">
+                      <span>Card Number</span>
+                      <input value={form.cardNumber} onChange={(event) => updateForm("cardNumber", event.target.value)} placeholder="#CARD" />
+                    </label>
                   </div>
                 </div>
                 <div className="grade-third">
-                  <label className="card-number-field">
-                    <span>Card Number</span>
-                    <input value={form.cardNumber} onChange={(event) => updateForm("cardNumber", event.target.value)} placeholder="#CARD" />
-                  </label>
-                  <label className="grade-field">
-                    <span>Calculated Final Grade</span>
-                    <output aria-live="polite">{calculatedGrade ?? "—"}</output>
-                  </label>
-                  <div className="subgrade-fields" aria-label="Human subgrades">
+                  <div className="grade-hud" aria-label="Portrait card grading HUD">
+                    <div className="grade-hud-frame" aria-hidden="true">
+                      <i className="hud-reticle top-left" />
+                      <i className="hud-reticle top-right" />
+                      <i className="hud-reticle bottom-left" />
+                      <i className="hud-reticle bottom-right" />
+                    </div>
+                    <i className="hud-axis vertical" aria-hidden="true" />
+                    <i className="hud-axis horizontal" aria-hidden="true" />
+                    <output className="hud-final-grade" aria-label="Calculated Final Grade" aria-live="polite">
+                      {calculatedGrade ?? "—"}
+                    </output>
                     {([
-                      ["centeringGrade", "Centering"],
-                      ["cornersGrade", "Corners"],
-                      ["edgesGrade", "Edges"],
-                      ["surfaceGrade", "Surface"],
-                    ] as const).map(([field, label]) => (
-                      <label className="subgrade-field" key={field}>
-                        <span>{label}</span>
+                      ["centeringGrade", "CTR", "top", "Centering"],
+                      ["cornersGrade", "CRN", "left", "Corners"],
+                      ["edgesGrade", "EDG", "right", "Edges"],
+                      ["surfaceGrade", "SUR", "bottom", "Surface"],
+                    ] as const).map(([field, code, position, label]) => (
+                      <label className={`hud-subgrade ${position}`} key={field}>
+                        <span>{code}</span>
                         <input
                           type="number"
                           min="1"
@@ -511,6 +518,7 @@ export default function HumanGradePage() {
                           value={form[field]}
                           onChange={(event) => updateForm(field, event.target.value)}
                           placeholder="—"
+                          aria-label={label}
                         />
                       </label>
                     ))}
@@ -728,31 +736,77 @@ export default function HumanGradePage() {
           font-family: Arial, sans-serif;
           font-size: clamp(8px, 1.2vw, 17px);
         }
-        .grade-third {
-          display: grid;
-          grid-template-rows: 0.45fr 1.25fr 1.3fr;
-          align-items: center;
-        }
-        .grade-field output {
-          display: block;
+        .grade-third { display: grid; place-items: center; }
+        .grade-hud {
+          position: relative;
+          width: min(74%, 178px);
+          aspect-ratio: 2.5 / 3.5;
           color: #0f0f0f;
-          text-align: center;
-          font-size: clamp(34px, 5vw, 72px);
+          isolation: isolate;
         }
-        .subgrade-fields {
-          min-width: 0;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 4px 7px;
+        .grade-hud-frame {
+          position: absolute;
+          inset: 5%;
+          border: 1.3px solid #0f0f0f;
         }
-        .label-composer .subgrade-field {
-          min-width: 0;
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 34%;
-          align-items: center;
+        .hud-axis {
+          position: absolute;
+          z-index: 1;
+          display: block;
+          background: #0f0f0f;
+        }
+        .hud-axis.vertical { top: 10%; bottom: 10%; left: 50%; width: 1px; transform: translateX(-50%); }
+        .hud-axis.horizontal { top: 50%; right: 10%; left: 10%; height: 1px; transform: translateY(-50%); }
+        .hud-reticle {
+          position: absolute;
+          width: 13px;
+          height: 13px;
+          border: 1px solid #0f0f0f;
+          border-radius: 50%;
+          background: white;
+          transform: translate(-50%, -50%);
+        }
+        .hud-reticle::before, .hud-reticle::after {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          content: "";
+          background: #0f0f0f;
+          transform: translate(-50%, -50%);
+        }
+        .hud-reticle::before { width: 19px; height: 1px; }
+        .hud-reticle::after { width: 1px; height: 19px; }
+        .hud-reticle.top-left { top: 0; left: 0; }
+        .hud-reticle.top-right { top: 0; left: 100%; }
+        .hud-reticle.bottom-left { top: 100%; left: 0; }
+        .hud-reticle.bottom-right { top: 100%; left: 100%; }
+        .hud-final-grade {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          z-index: 3;
+          padding: 0 7px;
+          background: white;
+          color: #0f0f0f;
+          font-family: Impact, "Arial Narrow", sans-serif;
+          font-size: clamp(38px, 5vw, 72px);
+          line-height: 0.9;
+          transform: translate(-50%, -50%);
+        }
+        .hud-subgrade {
+          position: absolute;
+          z-index: 4;
+          display: flex !important;
+          width: auto !important;
+          grid-auto-flow: column;
+          align-items: baseline !important;
           gap: 3px;
+          padding: 0 4px;
+          background: white;
+          white-space: nowrap;
+          transform: translate(-50%, -50%);
         }
-        .label-composer .subgrade-field > span {
+        .label-composer .hud-subgrade > span {
           position: static;
           width: auto;
           height: auto;
@@ -760,16 +814,23 @@ export default function HumanGradePage() {
           clip: auto;
           color: #0f0f0f;
           font-family: Arial, sans-serif;
-          font-size: clamp(5px, 0.65vw, 10px);
+          font-size: clamp(5px, 0.55vw, 9px);
           font-weight: 700;
           text-transform: uppercase;
           white-space: nowrap;
         }
-        .subgrade-field input {
-          font-family: Arial, sans-serif;
-          font-size: clamp(7px, 0.95vw, 14px);
-          font-weight: 700;
+        .label-composer .hud-subgrade input {
+          width: clamp(24px, 3vw, 44px);
+          border: 0;
+          font-family: Impact, "Arial Narrow", sans-serif;
+          font-size: clamp(14px, 1.5vw, 23px);
+          line-height: 1;
+          font-weight: 400;
         }
+        .hud-subgrade.top { top: 5%; left: 50%; }
+        .hud-subgrade.left { top: 50%; left: 5%; }
+        .hud-subgrade.right { top: 50%; left: 95%; }
+        .hud-subgrade.bottom { top: 95%; left: 50%; }
         .certificate-preview { text-align: center; font-family: Arial, sans-serif; font-size: clamp(9px, 1.4vw, 19px); letter-spacing: 0.04em; white-space: nowrap; }
         .field-errors { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #ff9f9f; font-size: 12px; }
         .field-errors span { padding: 6px 9px; border-radius: 6px; background: #321515; }
@@ -851,8 +912,9 @@ export default function HumanGradePage() {
           .primary-field input, .grade-field output { font-size: 44px; }
           .metadata-fields input, .descriptor-fields input, .card-number-field input { font-size: 14px; }
           .certificate-preview { font-size: 15px; }
-          .label-composer .subgrade-field > span { font-size: 10px; }
-          .subgrade-field input { font-size: 14px; }
+          .grade-hud { width: 145px; }
+          .label-composer .hud-subgrade > span { font-size: 7px; }
+          .label-composer .hud-subgrade input { width: 34px; font-size: 19px; }
           .page-buttons, .slot-grid { grid-template-columns: 1fr; }
         }
       `}</style>

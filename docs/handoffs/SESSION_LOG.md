@@ -1,5 +1,18 @@
 # Session Log (Append Only)
 
+## 2026-07-30 - Human Grade portrait grading HUD authorized
+
+- Mark authorized replacing the standalone Human Grade label's right-third 2x2 subgrade grid with a portrait card-proportion precision-grading HUD and merging the focused design to Production.
+- The new right third uses an exact `2.5 / 3.5` vertical card frame, four corner reticles, interrupted vertical and horizontal measurement axes, the calculated final grade at the optical center, and enlarged subgrade numerals at fixed cardinal positions: `CTR` top, `CRN` left, `EDG` right, and `SUR` bottom.
+- Sports card numbers move from the grade third into the existing middle-third metadata so the portrait HUD is identical for Sports and Pokemon labels. Stored card data, subgrades, weighted final grades, certificates, page assignments, slots, and page statuses remain unchanged.
+- The admin entry preview mirrors the portrait HUD and retains all four required editable subgrade inputs. The printable renderer remains Human Grade-only, black, transparent, and separate from every AI Grader label/station/runtime path.
+- Existing completed Human Grade pages are not persisted as PDF files. Their authenticated endpoint rereads the current 16 database labels and renders on request with `Cache-Control: private, no-store`; after Production deployment, every existing READY page will use the portrait HUD on hard refresh or a new download. Previously downloaded local PDF files remain unchanged.
+- A one-page Letter proof containing all 16 physical slots was rendered at 300 DPI. The full sheet and isolated Pokemon and Sports labels were visually inspected with a true portrait frame, sharp reticles, readable integer and decimal subgrades including `9.2`, and no clipping, overlap, unreadable glyphs, or sheet-geometry change.
+- Focused Human Grade ESLint passed with zero findings, Human Grade tests passed `7/7`, and `git diff --check` passed.
+- The complete Production-equivalent Next.js build passed with `RUN_DB_MIGRATIONS=false`. It emitted only the repository's existing unrelated stale browser metadata, Tailwind glob, and optional Sharp development-module warnings.
+- Planned Production action is limited to a complete Production-equivalent build, one protected PR with all required checks, merge through the protected path, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live Human Grade label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+
 ## 2026-07-29 - Human Grade completed-page editing authorized
 
 - Mark authorized editing labels after their 16-label Human Grade page reaches `READY`, while keeping the existing completed-page print/download workflow.
