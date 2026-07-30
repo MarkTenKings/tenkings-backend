@@ -143,6 +143,7 @@ export default function HumanGradePage() {
     setPreviewUrl(null);
     void fetch(`/api/admin/human-grade/sheets/${encodeURIComponent(selectedSheet.id)}`, {
       headers: buildAdminHeaders(session.token),
+      cache: "no-store",
     })
       .then(async (response) => {
         if (!response.ok) {
@@ -155,6 +156,7 @@ export default function HumanGradePage() {
         if (!active) return;
         nextUrl = URL.createObjectURL(blob);
         setPreviewUrl(nextUrl);
+        setMessage(`${pageTitle(selectedSheet)} PDF rendered from its current saved labels.`);
       })
       .catch((error) => {
         if (active) setMessage(error instanceof Error ? error.message : "The printable label page could not be rendered.");
@@ -299,6 +301,40 @@ export default function HumanGradePage() {
     }
     window.open(previewUrl, "_blank", "noopener,noreferrer");
   };
+
+  const renderLabelSlots = (sheet: HumanGradeLabelSheetDto, allowDelete: boolean) => (
+    <div className="slot-grid">
+      {Array.from({ length: HUMAN_GRADE_SHEET_CAPACITY }, (_, index) => {
+        const label = sheet.labels.find((candidate) => candidate.slot === index + 1);
+        return (
+          <div key={index} className={label ? "slot filled" : "slot"}>
+            <span>Slot {index + 1}</span>
+            {label ? (
+              <>
+                <strong>{label.playerName ?? label.cardName}</strong>
+                <small>{label.certificateNumber} · Grade {label.grade}</small>
+                <div className="slot-actions">
+                  <button type="button" className="edit-label" onClick={() => openEditLabel(label, sheet.id)}>
+                    Edit
+                  </button>
+                  {allowDelete ? (
+                    <button
+                      type="button"
+                      className="delete-label"
+                      onClick={() => void deleteLabel(label)}
+                      disabled={deletingLabelId === label.id}
+                    >
+                      {deletingLabelId === label.id ? "Deleting…" : "Delete"}
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            ) : <small>Waiting</small>}
+          </div>
+        );
+      })}
+    </div>
+  );
 
   const renderGate = () => {
     if (sessionLoading) {
@@ -543,45 +579,27 @@ export default function HumanGradePage() {
                 </div>
 
                 {selectedSheet.status === "READY" ? (
-                  previewUrl ? (
-                    <iframe
-                      ref={previewFrameRef}
-                      src={`${previewUrl}#toolbar=1&navpanes=0&view=FitH`}
-                      title={`Printable ${pageTitle(selectedSheet)}`}
-                    />
-                  ) : (
-                    <div className="preview-placeholder">{previewLoading ? "Rendering the exact 16-label PDF…" : "Preview unavailable."}</div>
-                  )
-                ) : (
-                  <div className="slot-grid">
-                    {Array.from({ length: HUMAN_GRADE_SHEET_CAPACITY }, (_, index) => {
-                      const label = selectedSheet.labels.find((candidate) => candidate.slot === index + 1);
-                      return (
-                        <div key={index} className={label ? "slot filled" : "slot"}>
-                          <span>Slot {index + 1}</span>
-                          {label ? (
-                            <>
-                              <strong>{label.playerName ?? label.cardName}</strong>
-                              <small>{label.certificateNumber} · Grade {label.grade}</small>
-                              <div className="slot-actions">
-                                <button type="button" className="edit-label" onClick={() => openEditLabel(label, selectedSheet.id)}>
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="delete-label"
-                                  onClick={() => void deleteLabel(label)}
-                                  disabled={deletingLabelId === label.id}
-                                >
-                                  {deletingLabelId === label.id ? "Deleting…" : "Delete"}
-                                </button>
-                              </div>
-                            </>
-                          ) : <small>Waiting</small>}
-                        </div>
-                      );
-                    })}
+                  <div className="ready-page-content">
+                    {previewUrl ? (
+                      <iframe
+                        ref={previewFrameRef}
+                        src={`${previewUrl}#toolbar=1&navpanes=0&view=FitH`}
+                        title={`Printable ${pageTitle(selectedSheet)}`}
+                      />
+                    ) : (
+                      <div className="preview-placeholder">{previewLoading ? "Rendering the exact 16-label PDF…" : "Preview unavailable."}</div>
+                    )}
+                    <section className="completed-label-editor" aria-label="Edit completed page labels">
+                      <div>
+                        <p className="eyebrow">Completed Page Labels</p>
+                        <h3>Edit any saved label</h3>
+                        <p>Saving an edit regenerates this page’s PDF with the updated label.</p>
+                      </div>
+                      {renderLabelSlots(selectedSheet, false)}
+                    </section>
                   </div>
+                ) : (
+                  renderLabelSlots(selectedSheet, true)
                 )}
               </>
             ) : (
@@ -785,6 +803,15 @@ export default function HumanGradePage() {
         .print-actions a { display: inline-flex; align-items: center; }
         .page-preview iframe { width: 100%; height: 820px; border: 0; border-radius: 8px; background: white; }
         .preview-placeholder { min-height: 530px; display: grid; place-items: center; border: 1px dashed #2e3931; border-radius: 12px; color: #7f8981; }
+        .ready-page-content { display: grid; gap: 20px; }
+        .completed-label-editor {
+          display: grid;
+          gap: 14px;
+          padding-top: 18px;
+          border-top: 1px solid #29322c;
+        }
+        .completed-label-editor h3 { margin: 3px 0 4px; font-size: 18px; }
+        .completed-label-editor p:last-child { margin: 0; color: #8d9890; font-size: 12px; }
         .slot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
         .slot { min-height: 92px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-content: center; padding: 10px 12px; border: 1px dashed #303a33; border-radius: 8px; color: #5f6861; }
         .slot.filled { border-style: solid; border-color: #385642; background: #111a14; color: #eff4f0; }

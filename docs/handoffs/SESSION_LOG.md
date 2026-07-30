@@ -1,5 +1,15 @@
 # Session Log (Append Only)
 
+## 2026-07-29 - Human Grade completed-page editing authorized
+
+- Mark authorized editing labels after their 16-label Human Grade page reaches `READY`, while keeping the existing completed-page print/download workflow.
+- The focused change permits `PATCH` updates for existing Human Grade labels on both `OPEN` and `READY` pages. Server-side weighted grade calculation remains authoritative, and the existing certificate number, certificate sequence, page, slot, page status, and ready timestamp remain unchanged.
+- A selected `READY` page now shows an Edit control for each of its 16 labels beneath the PDF preview. Delete remains unavailable and server-blocked for `READY` pages so every completed page retains exactly 16 printable slots.
+- After a completed label is saved, the client reloads the returned queue and explicitly fetches the authenticated printable endpoint with `cache: "no-store"`. That endpoint rereads all 16 current database rows, renders a new PDF, and already returns `Cache-Control: private, no-store`; previously downloaded PDF files remain unchanged.
+- Planned Production action is limited to focused Human Grade validation, a Production-equivalent build, one protected PR with all required checks, merge through the protected path, the normal Vercel Production deployment, and read-only live smoke verification. No database migration or live label mutation is required.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+- Local validation passed: focused Human Grade ESLint with zero findings, Human Grade tests `6/6`, `git diff --check`, and the complete Production-equivalent Next.js build with `RUN_DB_MIGRATIONS=false`. The build emitted only the repository's existing unrelated image/hook, stale browser metadata, Tailwind glob, optional Sharp development-module, and local Node engine warnings.
+
 ## 2026-07-08 - AI Grader live preview guide 0.97 sizing pass
 
 ### Branch And HEAD

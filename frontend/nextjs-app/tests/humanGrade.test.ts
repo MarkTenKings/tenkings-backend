@@ -168,6 +168,8 @@ test("human-grade code stays outside AI Grader station and production routes", (
   const pdfApi = readFileSync(`${root}/pages/api/admin/human-grade/sheets/[sheetId].ts`, "utf8");
   const page = readFileSync(`${root}/pages/admin/human-grade.tsx`, "utf8");
   const renderer = readFileSync(`${root}/lib/server/humanGradeLabelRenderer.ts`, "utf8");
+  const patchBlock = api.slice(api.indexOf('req.method === "PATCH"'), api.indexOf('req.method === "DELETE"'));
+  const deleteBlock = api.slice(api.indexOf('req.method === "DELETE"'));
   assert.match(api, /requireAdminSession/);
   assert.match(page, /Add New Graded Card/);
   assert.match(page, /TKH-AUTO/);
@@ -175,10 +177,17 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(api, /calculateHumanGrade/);
   assert.match(api, /req\.method === "PATCH"/);
   assert.match(api, /req\.method === "DELETE"/);
-  assert.match(api, /existing\.sheet\.status !== "OPEN"/);
+  assert.doesNotMatch(patchBlock, /existing\.sheet\.status !== "OPEN"|Ready-to-print label pages cannot be edited/);
+  assert.match(deleteBlock, /existing\.sheet\.status !== "OPEN"/);
   assert.match(page, /Save Changes/);
   assert.match(page, /Delete/);
   assert.match(page, /editingLabelId/);
+  assert.match(page, /Completed Page Labels/);
+  assert.match(page, /Saving an edit regenerates this page’s PDF with the updated label/);
+  assert.match(page, /PDF rendered from its current saved labels/);
+  assert.match(page, /cache: "no-store"/);
+  assert.match(pdfApi, /renderHumanGradeLabelSheetPdf/);
+  assert.match(pdfApi, /"Cache-Control", "private, no-store"/);
   assert.match(renderer, /Math\.floor\(index \/ 2\)/);
   assert.match(renderer, /index % 2/);
   assert.match(renderer, /subgradeGridTopPt/);

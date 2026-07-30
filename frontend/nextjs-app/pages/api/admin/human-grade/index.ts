@@ -175,10 +175,9 @@ export default async function handler(
       const result = await prisma.$transaction(async (tx) => {
         const existing = await tx.humanGradeLabel.findUnique({
           where: { id: parsed.data.id },
-          include: { sheet: { select: { status: true } } },
+          select: { id: true },
         });
         if (!existing) return "NOT_FOUND" as const;
-        if (existing.sheet.status !== "OPEN") return "LOCKED" as const;
 
         await tx.humanGradeLabel.update({
           where: { id: existing.id },
@@ -188,9 +187,6 @@ export default async function handler(
       });
 
       if (result === "NOT_FOUND") return res.status(404).json({ message: "Human-grade label not found." });
-      if (result === "LOCKED") {
-        return res.status(409).json({ message: "Ready-to-print label pages cannot be edited." });
-      }
       return res.status(200).json(await loadQueue());
     }
 
