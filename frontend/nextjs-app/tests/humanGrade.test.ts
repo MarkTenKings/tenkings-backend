@@ -14,6 +14,7 @@ import {
   type HumanGradeLabelSnapshot,
 } from "../lib/humanGrade";
 import {
+  HUMAN_GRADE_LABEL_FINISH_GEOMETRY,
   HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY,
   renderHumanGradeLabelSheetPdf,
 } from "../lib/server/humanGradeLabelRenderer";
@@ -149,6 +150,7 @@ test("human-grade compact subgrade grid is centered with legible equals-separate
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.codeFontSizePt, 8);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.equalsFontSizePt, 8);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreFontSizePt, 9.6);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.horizontalScale, 0.84);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rightThirdCenterXPt, (132.5 + 196.56) / 2);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.codeToEqualsGapPt, 1);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.equalsToScoreGapPt, 1);
@@ -160,6 +162,20 @@ test("human-grade compact subgrade grid is centered with legible equals-separate
   assert.ok(
     secondScoreTop + HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreFontSizePt <=
       HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.dividerBottomPt
+  );
+});
+
+test("human-grade artwork uses a uniform safe frame and an outside hand-cut guide", () => {
+  assert.deepEqual(HUMAN_GRADE_LABEL_FINISH_GEOMETRY, {
+    safeInsetIn: 0.08,
+    safeInsetPt: 5.76,
+    cutGuideStrokePt: 0.75,
+    cutGuidePathOffsetPt: -0.375,
+  });
+  assert.equal(
+    HUMAN_GRADE_LABEL_FINISH_GEOMETRY.cutGuidePathOffsetPt +
+      HUMAN_GRADE_LABEL_FINISH_GEOMETRY.cutGuideStrokePt / 2,
+    0
   );
 });
 
@@ -179,7 +195,11 @@ test("human-grade renderer creates one exact letter page with embedded approved 
   assert.equal((source.match(/\/Type \/Page\b/g) ?? []).length, 1);
   assert.match(source, /BebasNeue-Regular/);
   assert.match(source, /Barlow-Regular/);
+  assert.equal((source.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 16);
   assert.doesNotMatch(source, /GRADING|QR CODE|NFC/);
+
+  const partialSource = (await renderHumanGradeLabelSheetPdf(entries.slice(0, 1))).toString("latin1");
+  assert.equal((partialSource.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 1);
 });
 
 test("human-grade code stays outside AI Grader station and production routes", () => {
