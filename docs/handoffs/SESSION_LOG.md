@@ -29308,6 +29308,16 @@ By enabling Rip It Live, I confirm:
 - Production smoke verification returned HTTP `200` for `/admin/human-grade`, HTTP `401` JSON for the unauthenticated admin API, browser title `Human Grade | Ten Kings`, and the deployed page bundle contains `Centering`, `Corners`, `Edges`, `Surface`, `Calculated Final Grade`, and `TKH-AUTO`.
 - No new test label/card row was created. No AI Grader helper/station restart, hardware action, capture, grading, NFC, report, publication, queue/card mutation, or unrelated Production action was performed.
 
+## 2026-07-29 - Human Grade open-page edit and delete authorized
+
+- Mark explicitly authorized adding Edit and Delete controls to the standalone Human Grade workflow and merging the focused change to Production.
+- Edit is limited to labels on an `OPEN` page. It loads the existing printed fields and subgrades into the same form, recalculates the weighted final grade on the server, and preserves the existing TK certificate number, certificate sequence, page, and slot.
+- Delete is limited to labels on an `OPEN` page and requires an explicit browser confirmation. It removes only the selected Human Grade label and moves later labels on that same open page forward one slot so the page has no gaps. Deleted TK certificate numbers are never reused.
+- `READY` 16-label pages remain immutable and retain their existing PDF preview, download, and print behavior. No database migration is required.
+- Planned Production action is limited to focused validation and a Production-equivalent build, one protected PR with all required checks, merge through the protected path, the normal Vercel Production deployment, and read-only live smoke verification. No live Human Grade label will be edited or deleted during smoke testing.
+- No AI Grader station, helper, label renderer, grading formula, calibration, runtime, hardware, queue, card/report, NFC, capture, publication, or unrelated Production system will be modified or restarted.
+- Local validation passed: focused Human Grade ESLint with zero findings, Human Grade tests `6/6`, `git diff --check`, and the complete Vercel-equivalent Production build with `RUN_DB_MIGRATIONS=false`. The build emitted only the repository's existing unrelated image/hook, stale browser metadata, Tailwind glob, optional Sharp development-module, and local Node engine warnings.
+
 ## 2026-07-29 - Bounded AI Grader publish payload correction
 
 - This web-only correction starts from protected main `95030fc11691c9479f9629703d894825fb831798`, containing Optimize and PR `#219`. The AI Grader Production API route now uses an explicit `4mb` Next.js body-parser limit instead of `1mb`, containing the observed approximately `2.71 MiB` advanced create-card-from-report request while remaining below Vercel's `4.5 MB` function limit.

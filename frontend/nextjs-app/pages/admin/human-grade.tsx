@@ -11,6 +11,7 @@ import {
   HUMAN_GRADE_SHEET_CAPACITY,
   calculateHumanGrade,
   type HumanGradeCardType,
+  type HumanGradeLabelDto,
   type HumanGradeLabelSheetDto,
   type HumanGradeQueueDto,
 } from "../../lib/humanGrade";
@@ -67,6 +68,8 @@ export default function HumanGradePage() {
   const [queue, setQueue] = useState<HumanGradeQueueDto>(EMPTY_QUEUE);
   const [selectedSheetId, setSelectedSheetId] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
+  const [deletingLabelId, setDeletingLabelId] = useState<string | null>(null);
   const [form, setForm] = useState<HumanGradeForm>(EMPTY_FORM);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("Loading human-grade label pages.");
@@ -84,6 +87,10 @@ export default function HumanGradePage() {
   const selectedSheet = useMemo(
     () => queue.sheets.find((sheet) => sheet.id === selectedSheetId) ?? queue.sheets[0] ?? null,
     [queue.sheets, selectedSheetId]
+  );
+  const editingLabel = useMemo(
+    () => queue.sheets.flatMap((sheet) => sheet.labels).find((label) => label.id === editingLabelId) ?? null,
+    [editingLabelId, queue.sheets]
   );
   const calculatedGrade = useMemo(() => {
     const values = [form.centeringGrade, form.cornersGrade, form.edgesGrade, form.surfaceGrade];
@@ -172,23 +179,55 @@ export default function HumanGradePage() {
   };
 
   const openNewCard = () => {
+    setEditingLabelId(null);
     setForm(EMPTY_FORM);
     setFieldErrors({});
     setFormOpen(true);
     setMessage("Enter only the information that should print on the label.");
   };
 
+  const closeForm = () => {
+    setFormOpen(false);
+    setEditingLabelId(null);
+    setForm(EMPTY_FORM);
+    setFieldErrors({});
+  };
+
+  const openEditLabel = (label: HumanGradeLabelDto, sheetId: string) => {
+    setEditingLabelId(label.id);
+    setSelectedSheetId(sheetId);
+    setForm({
+      cardType: label.cardType,
+      playerName: label.playerName ?? "",
+      cardName: label.cardName ?? "",
+      year: label.year,
+      manufacturer: label.manufacturer ?? "",
+      productSet: label.productSet,
+      parallel: label.parallel ?? "",
+      insert: label.insert ?? "",
+      cardNumber: label.cardNumber ?? "",
+      centeringGrade: String(label.centeringGrade),
+      cornersGrade: String(label.cornersGrade),
+      edgesGrade: String(label.edgesGrade),
+      surfaceGrade: String(label.surfaceGrade),
+    });
+    setFieldErrors({});
+    setFormOpen(true);
+    setMessage(`Editing ${label.certificateNumber}. Its certificate and slot will stay unchanged.`);
+  };
+
   const saveCard = async (event: FormEvent) => {
     event.preventDefault();
     if (!session?.token || saving) return;
+    const editedId = editingLabelId;
     setSaving(true);
     setFieldErrors({});
-    setMessage("Saving human grade and assigning the next label slot.");
+    setMessage(editedId ? "Saving label changes." : "Saving human grade and assigning the next label slot.");
     try {
       const response = await fetch("/api/admin/human-grade", {
-        method: "POST",
+        method: editedId ? "PATCH" : "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify(form),
+        body: JSON.stringify(editedId ? { ...form, id: editedId } : form),
       });
       const payload = (await response.json().catch(() => ({}))) as HumanGradeQueueDto & {
         message?: string;
@@ -200,19 +239,53 @@ export default function HumanGradePage() {
       }
       const newestSheet = payload.sheets[0] ?? null;
       const newestLabel = newestSheet?.labels[newestSheet.labels.length - 1];
+      const savedSheet = editedId
+        ? payload.sheets.find((sheet) => sheet.labels.some((label) => label.id === editedId)) ?? null
+        : newestSheet;
+      const savedLabel = editedId
+        ? savedSheet?.labels.find((label) => label.id === editedId)
+        : newestLabel;
       setQueue(payload);
-      setSelectedSheetId(newestSheet?.id ?? null);
-      setFormOpen(false);
-      setForm(EMPTY_FORM);
+      setSelectedSheetId(savedSheet?.id ?? null);
+      closeForm();
       setMessage(
-        newestLabel
-          ? `${newestLabel.certificateNumber} saved in ${pageTitle(newestSheet)}, slot ${newestLabel.slot}.`
+        savedLabel && savedSheet
+          ? `${savedLabel.certificateNumber} ${editedId ? "updated" : "saved"} in ${pageTitle(savedSheet)}, slot ${savedLabel.slot}.`
           : "Human-grade label saved."
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "The human-grade label could not be saved.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const deleteLabel = async (label: HumanGradeLabelDto) => {
+    if (!session?.token || deletingLabelId) return;
+    if (!window.confirm(`Delete ${label.certificateNumber}? Later labels will move forward one slot.`)) return;
+
+    setDeletingLabelId(label.id);
+    setMessage(`Deleting ${label.certificateNumber}.`);
+    try {
+      const response = await fetch("/api/admin/human-grade", {
+        method: "DELETE",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ id: label.id }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as HumanGradeQueueDto & { message?: string };
+      if (!response.ok) throw new Error(payload.message ?? "The human-grade label could not be deleted.");
+
+      setQueue(payload);
+      setSelectedSheetId((current) => {
+        if (current && payload.sheets.some((sheet) => sheet.id === current)) return current;
+        return payload.sheets[0]?.id ?? null;
+      });
+      if (editingLabelId === label.id) closeForm();
+      setMessage(`${label.certificateNumber} deleted. Remaining labels shifted forward.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The human-grade label could not be deleted.");
+    } finally {
+      setDeletingLabelId(null);
     }
   };
 
@@ -301,7 +374,7 @@ export default function HumanGradePage() {
           <section className="composer-card">
             <div className="composer-heading">
               <div>
-                <p className="eyebrow">New Label</p>
+                <p className="eyebrow">{editingLabelId ? "Edit Label" : "New Label"}</p>
                 <h2>Enter printed card information</h2>
               </div>
               <div className="type-switch" aria-label="Card type">
@@ -323,7 +396,7 @@ export default function HumanGradePage() {
                 <div className="brand-third">
                   <Image src={crownAsset} alt="" priority />
                   <strong>TEN KINGS</strong>
-                  <span className="certificate-preview">TKH-AUTO</span>
+                  <span className="certificate-preview">{editingLabel?.certificateNumber ?? "TKH-AUTO"}</span>
                 </div>
                 <div className="identity-third">
                   <label className="primary-field">
@@ -416,8 +489,10 @@ export default function HumanGradePage() {
               ) : null}
 
               <div className="form-actions">
-                <button type="button" className="cancel-button" onClick={() => setFormOpen(false)} disabled={saving}>Cancel</button>
-                <button type="submit" className="save-button" disabled={saving}>{saving ? "Saving…" : "Save Graded Card"}</button>
+                <button type="button" className="cancel-button" onClick={closeForm} disabled={saving}>Cancel</button>
+                <button type="submit" className="save-button" disabled={saving}>
+                  {saving ? "Saving…" : editingLabelId ? "Save Changes" : "Save Graded Card"}
+                </button>
               </div>
             </form>
           </section>
@@ -488,6 +563,19 @@ export default function HumanGradePage() {
                             <>
                               <strong>{label.playerName ?? label.cardName}</strong>
                               <small>{label.certificateNumber} · Grade {label.grade}</small>
+                              <div className="slot-actions">
+                                <button type="button" className="edit-label" onClick={() => openEditLabel(label, selectedSheet.id)}>
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="delete-label"
+                                  onClick={() => void deleteLabel(label)}
+                                  disabled={deletingLabelId === label.id}
+                                >
+                                  {deletingLabelId === label.id ? "Deleting…" : "Delete"}
+                                </button>
+                              </div>
                             </>
                           ) : <small>Waiting</small>}
                         </div>
@@ -698,11 +786,23 @@ export default function HumanGradePage() {
         .page-preview iframe { width: 100%; height: 820px; border: 0; border-radius: 8px; background: white; }
         .preview-placeholder { min-height: 530px; display: grid; place-items: center; border: 1px dashed #2e3931; border-radius: 12px; color: #7f8981; }
         .slot-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-        .slot { min-height: 70px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-content: center; padding: 10px 12px; border: 1px dashed #303a33; border-radius: 8px; color: #5f6861; }
+        .slot { min-height: 92px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-content: center; padding: 10px 12px; border: 1px dashed #303a33; border-radius: 8px; color: #5f6861; }
         .slot.filled { border-style: solid; border-color: #385642; background: #111a14; color: #eff4f0; }
         .slot > span { color: #65cb89; font-size: 10px; font-weight: 900; text-transform: uppercase; }
         .slot > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .slot > small { grid-column: 2; color: #7f8981; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .slot-actions { grid-column: 2; display: flex; gap: 7px; }
+        .slot-actions button {
+          border: 1px solid #34443a;
+          border-radius: 6px;
+          padding: 5px 9px;
+          background: #172019;
+          color: #dce4de;
+          font-size: 11px;
+          font-weight: 800;
+        }
+        .slot-actions .edit-label { border-color: #397d50; color: #83e7a7; }
+        .slot-actions .delete-label { border-color: #713838; color: #ffaaaa; }
         @media (max-width: 980px) {
           .queue-layout { grid-template-columns: 1fr; }
           .page-list, .page-preview { min-height: auto; }
