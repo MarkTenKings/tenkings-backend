@@ -567,6 +567,8 @@ export type AiGraderCalibrationObservationRequestV1 = {
   rigId: string;
   snapshotId: string;
   expectedRegistryRevision: string;
+  priorActivationId?: string;
+  targetHelperVersion?: string;
 };
 export type AiGraderCalibrationObservationResponseV1 = {
   ok: true;

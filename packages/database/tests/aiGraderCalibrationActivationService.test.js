@@ -687,11 +687,24 @@ test("two-phase activation is exact, fail-closed, explicitly reactivatable, and 
   assert.equal(state.activations[0].calibrationSnapshotId, first.id, "historical activation remains bound to its immutable snapshot");
 });
 
-test("trusted finalizer handoff flows through local prepare, hosted complete, local confirm, and Start without restart", async (t) => {
+test("signed helper-identity successor preserves calibration evidence and performs exactly one v0.11 observation", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "ten-kings-calibration-end-to-end-"));
   t.after(async () => fs.rm(root, { recursive: true, force: true }));
 
   const selected = snapshot("snapshot-end-to-end", "end-to-end");
+  selected.mathematicalOperatingContextV1 = {
+    ...selected.mathematicalOperatingContextV1,
+    software: {
+      ...selected.mathematicalOperatingContextV1.software,
+      helperVersion: "ai-grader-local-station-bridge-v0.10",
+    },
+  };
+  selected.mathematicalOperatingContextHash = sha(
+    canonicalAiGraderOperatingContextV1(selected.mathematicalOperatingContextV1),
+  );
+  selected.mathematicalRuntimeContextHash = sha(
+    canonicalAiGraderRuntimeContextV1(selected.mathematicalOperatingContextV1),
+  );
   const contextValue = selected.mathematicalOperatingContextV1;
   const bundleAuthority = {
     schemaVersion: contextValue.calibration.bundleSchemaVersion,
@@ -757,17 +770,18 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
   );
 
   const { publicKey, privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
-  const registry = createMathematicalCalibrationActivationRegistryV1({
+  let hardwareObservationCount = 0;
+  const registryOptions = {
     rootDir: path.join(root, "registry"),
     finalizedBundleStagingRoot: stagingRoot,
     expectedRigId: RIG_ID,
     helperInstanceId: "helper-1",
-    helperVersion: "helper-v1",
     workstationKeyId: KEY_ID,
     workstationPrivateKey: privateKey,
     hostedAuthorityPublicKeys: HOSTED_AUTHORITY_PUBLIC_KEYS,
     liveOperatingContext: async (expected) => expected,
     observeActivationRuntime: async (expected, evidenceDirectory) => {
+      hardwareObservationCount += 1;
       const imageBytes = Buffer.from("activation evidence");
       await fs.writeFile(path.join(evidenceDirectory, "activation-runtime-evidence.png"), imageBytes, { flag: "wx" });
       return {
@@ -783,15 +797,27 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
     },
     isIdle: async () => true,
     now: () => new Date(NOW),
+  };
+  const registryV010 = createMathematicalCalibrationActivationRegistryV1({
+    ...registryOptions,
+    helperVersion: "ai-grader-local-station-bridge-v0.10",
   });
-  await registry.ingestFinalizedBundle({
+  await registryV010.ingestFinalizedBundle({
     bundleManifestSha256: bundleAuthority.bundleManifestSha256,
   });
 
-  const { db } = createMemoryDb([selected]);
+  const { db, state } = createMemoryDb([selected]);
   const hosted = createAiGraderCalibrationActivationService(db, {
     now: () => new Date(NOW),
-    randomId: () => "activation-end-to-end",
+    randomId: (() => {
+      const identities = [
+        "observation-v010",
+        "activation-v010",
+        "observation-v011",
+        "activation-v011",
+      ];
+      return () => identities.shift();
+    })(),
     acquireRigLock: async () => undefined,
     verifySnapshotStorage: async () => undefined,
     workstationPublicKeys: new Map([[KEY_ID, {
@@ -801,37 +827,153 @@ test("trusted finalizer handoff flows through local prepare, hosted complete, lo
     }]]),
     hostedAuthoritySigningKey: HOSTED_AUTHORITY_SIGNING_KEY,
   });
-  const listed = await hosted.list(RIG_ID, true);
-  const { observationAuthority } = await hosted.requestObservationAuthority({
+  let listed = await hosted.list(RIG_ID, true);
+  const { observationAuthority: observationAuthorityV010 } = await hosted.requestObservationAuthority({
     rigId: RIG_ID,
     snapshotId: selected.id,
     expectedRegistryRevision: listed.registryRevision,
   });
-  const workstationObservation = await registry.observeActivation(observationAuthority);
-  const pending = await hosted.requestActivation(
+  const workstationObservationV010 = await registryV010.observeActivation(observationAuthorityV010);
+  const pendingV010 = await hosted.requestActivation(
     {
       action: "activate",
       rigId: RIG_ID,
       snapshotId: selected.id,
       expectedRegistryRevision: listed.registryRevision,
-      idempotencyKey: "activate-end-to-end",
+      idempotencyKey: "activate-v010",
       reason: "explicit calibrated profile selection",
-      observationAuthority,
-      workstationObservation,
+      observationAuthority: observationAuthorityV010,
+      workstationObservation: workstationObservationV010,
     },
     "admin-1",
   );
-  const receipt = await registry.prepareActivation(pending.pendingAuthority);
-  const completed = await hosted.completeActivation({
-    activationId: pending.activation.activationId,
-    expectedActivationRevision: pending.activation.activationRevision,
-    idempotencyKey: "complete-end-to-end",
-    workstationReceipt: receipt,
+  const receiptV010 = await registryV010.prepareActivation(pendingV010.pendingAuthority);
+  const completedV010 = await hosted.completeActivation({
+    activationId: pendingV010.activation.activationId,
+    expectedActivationRevision: pendingV010.activation.activationRevision,
+    idempotencyKey: "complete-v010",
+    workstationReceipt: receiptV010,
   }, "admin-1");
-  await registry.confirmHostedActivation(completed.authority);
-  const start = await registry.assertStartAuthority(completed.authority);
-  assert.equal(start.authority.activationId, completed.activation.activationId);
-  assert.equal((await registry.readPointer()).state, "ACTIVE");
+  await registryV010.confirmHostedActivation(completedV010.authority);
+  assert.equal((await registryV010.readPointer()).state, "ACTIVE");
+
+  const registryV011 = createMathematicalCalibrationActivationRegistryV1({
+    ...registryOptions,
+    helperVersion: "ai-grader-local-station-bridge-v0.11",
+  });
+  const statusV010 = await hosted.status(RIG_ID);
+  listed = await hosted.list(RIG_ID, true);
+  assert.equal(
+    state.activations.find((entry) => entry.id === completedV010.activation.activationId)
+      .operatingContextV1.software.helperVersion,
+    "ai-grader-local-station-bridge-v0.10",
+  );
+  const { observationAuthority: observationAuthorityV011 } =
+    await hosted.requestObservationAuthority({
+      rigId: RIG_ID,
+      snapshotId: selected.id,
+      expectedRegistryRevision: listed.registryRevision,
+      priorActivationId: completedV010.activation.activationId,
+      targetHelperVersion: "ai-grader-local-station-bridge-v0.11",
+    });
+  assert.equal(
+    observationAuthorityV011.operatingContextV1.software.helperVersion,
+    "ai-grader-local-station-bridge-v0.11",
+  );
+  assert.deepEqual(
+    {
+      ...observationAuthorityV011.operatingContextV1,
+      software: {
+        ...observationAuthorityV011.operatingContextV1.software,
+        helperVersion: "ai-grader-local-station-bridge-v0.10",
+      },
+    },
+    selected.mathematicalOperatingContextV1,
+    "the signed successor changes only helperVersion",
+  );
+
+  await assert.rejects(
+    registryV011.observeActivation(
+      observationAuthorityV011,
+      { ...statusV010.authority, activationId: "mismatched-prior" },
+    ),
+    /signature|authority|rejected/i,
+  );
+  assert.equal(hardwareObservationCount, 1, "mismatch is rejected before any v0.11 hardware observation");
+
+  const workstationObservationV011 = await registryV011.observeActivation(
+    observationAuthorityV011,
+    statusV010.authority,
+  );
+  assert.equal(hardwareObservationCount, 2, "the successor performs exactly one new observation");
+  const replayedObservationV011 = await registryV011.observeActivation(
+    observationAuthorityV011,
+    statusV010.authority,
+  );
+  assert.deepEqual(replayedObservationV011, workstationObservationV011);
+  assert.equal(hardwareObservationCount, 2, "immutable observation replay performs no second hardware action");
+
+  const pendingV011 = await hosted.requestActivation({
+    action: "reactivate",
+    rigId: RIG_ID,
+    snapshotId: selected.id,
+    priorActivationId: completedV010.activation.activationId,
+    expectedRegistryRevision: listed.registryRevision,
+    idempotencyKey: "activate-v011-successor",
+    reason: "versioned helper identity successor using unchanged calibration evidence",
+    observationAuthority: observationAuthorityV011,
+    workstationObservation: workstationObservationV011,
+  }, "admin-1");
+  assert.equal(
+    state.activations.find((entry) => entry.id === pendingV011.activation.activationId)
+      .operatingContextV1.software.helperVersion,
+    "ai-grader-local-station-bridge-v0.11",
+  );
+  assert.equal((await hosted.status(RIG_ID)).active, null);
+  const receiptV011 = await registryV011.prepareActivation(
+    pendingV011.pendingAuthority,
+    statusV010.authority,
+  );
+  assert.equal((await registryV011.readPointer()).state, "PENDING");
+  assert.equal(
+    (await registryV011.readPointer()).activationId,
+    pendingV011.activation.activationId,
+  );
+  const archivedV010 = JSON.parse(await fs.readFile(
+    path.join(
+      registryV011.paths.supersededPointersRoot,
+      `${completedV010.activation.activationId}.json`,
+    ),
+    "utf8",
+  ));
+  assert.equal(archivedV010.activationId, completedV010.activation.activationId);
+  assert.equal(archivedV010.state, "ACTIVE");
+
+  const completedV011 = await hosted.completeActivation({
+    activationId: pendingV011.activation.activationId,
+    expectedActivationRevision: pendingV011.activation.activationRevision,
+    idempotencyKey: "complete-v011-successor",
+    workstationReceipt: receiptV011,
+  }, "admin-1");
+  await registryV011.confirmHostedActivation(completedV011.authority);
+  const start = await registryV011.assertStartAuthority(completedV011.authority);
+  assert.equal(start.authority.activationId, completedV011.activation.activationId);
+  assert.equal(start.authority.snapshotId, completedV010.authority.snapshotId);
+  assert.equal(start.authority.bundleManifestSha256, completedV010.authority.bundleManifestSha256);
+  assert.notEqual(start.authority.runtimeContextHash, completedV010.authority.runtimeContextHash);
+  assert.equal((await registryV011.readPointer()).state, "ACTIVE");
+  const finalStatus = await hosted.status(RIG_ID);
+  assert.equal(finalStatus.active.activationId, completedV011.activation.activationId);
+  assert.equal(
+    state.activations.find((entry) => entry.id === finalStatus.active.activationId)
+      .operatingContextV1.software.helperVersion,
+    "ai-grader-local-station-bridge-v0.11",
+  );
+  assert.equal(
+    (await hosted.list(RIG_ID, true)).activations.filter((entry) => entry.state === "ACTIVE").length,
+    1,
+    "there is no hosted fallback to the superseded v0.10 activation",
+  );
 });
 test("operating-context mismatch and stale optimistic revision cannot create activation authority", async () => {
   const selected = snapshot("snapshot-1", "v1");

@@ -1635,6 +1635,7 @@ export interface AiGraderLocalStationBridgeActionRequest {
   calibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   calibrationObservationAuthority?: AiGraderCalibrationObservationAuthorityV1;
   calibrationPendingAuthority?: AiGraderCalibrationPendingAuthorityV1;
+  priorHostedCalibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   bundleManifestSha256?: string;
   hostedCalibrationActivationAuthority?: AiGraderCalibrationActivationAuthorityV1;
   mathematicalFindingReviews?: FixedRigMathematicalFindingReviewV1[];
@@ -1748,8 +1749,14 @@ export interface AiGraderLocalStationBridgeDependencies {
   }>;
   calibrationActivationRegistry?: {
     ingestFinalizedBundle(value: unknown): Promise<{ bundlePath: string }>;
-    observeActivation(value: unknown): Promise<AiGraderCalibrationWorkstationObservationV1>;
-    prepareActivation(value: unknown): Promise<AiGraderCalibrationWorkstationReceiptV1>;
+    observeActivation(
+      value: unknown,
+      priorActiveValue?: unknown,
+    ): Promise<AiGraderCalibrationWorkstationObservationV1>;
+    prepareActivation(
+      value: unknown,
+      priorActiveValue?: unknown,
+    ): Promise<AiGraderCalibrationWorkstationReceiptV1>;
     confirmHostedActivation(value: unknown): Promise<unknown>;
     abortPendingActivation(value: unknown): Promise<unknown>;
     assertStartAuthority(value: unknown): Promise<{ bundlePath: string }>;
@@ -17246,7 +17253,12 @@ export class AiGraderLocalStationBridgeService {
       return this.status();
     }
     if (action === "observe-calibration-activation") {
-      assertExactActionRequestKeys(request, action, ["calibrationObservationAuthority"]);
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["calibrationObservationAuthority"],
+        ["priorHostedCalibrationActivationAuthority"],
+      );
       if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
       if (!this.dependencies.calibrationActivationRegistry) {
         throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
@@ -17258,11 +17270,17 @@ export class AiGraderLocalStationBridgeService {
       }
       this.calibrationActivationObservation = await this.dependencies.calibrationActivationRegistry.observeActivation(
         request.calibrationObservationAuthority,
+        request.priorHostedCalibrationActivationAuthority,
       );
       return this.status();
     }
     if (action === "prepare-calibration-activation") {
-      assertExactActionRequestKeys(request, action, ["calibrationPendingAuthority"]);
+      assertExactActionRequestKeys(
+        request,
+        action,
+        ["calibrationPendingAuthority"],
+        ["priorHostedCalibrationActivationAuthority"],
+      );
       if (this.closing) throw new Error("Station mutation is unavailable while the local bridge is closing.");
       if (!this.dependencies.calibrationActivationRegistry) {
         throw new Error("Local calibration activation registry is unavailable; no fallback is permitted.");
@@ -17272,6 +17290,7 @@ export class AiGraderLocalStationBridgeService {
       }
       const receipt = await this.dependencies.calibrationActivationRegistry.prepareActivation(
         request.calibrationPendingAuthority,
+        request.priorHostedCalibrationActivationAuthority,
       );
       this.calibrationActivationState = "PENDING";
       this.calibrationActivationAuthority = undefined;
