@@ -145,11 +145,22 @@ test("human-grade pages copy the approved 2 by 8 physical sheet geometry", () =>
   });
 });
 
-test("human-grade compact subgrade grid doubles the original print sizing", () => {
+test("human-grade compact subgrade grid is centered with legible equals-separated scores", () => {
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.codeFontSizePt, 8);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.equalsFontSizePt, 8);
   assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreFontSizePt, 9.6);
-  assert.ok(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.pairGapPt <= 0.75);
-  assert.ok(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rowHeightPt >= 9);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rightThirdCenterXPt, (132.5 + 196.56) / 2);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.codeToEqualsGapPt, 1);
+  assert.equal(HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.equalsToScoreGapPt, 1);
+  const secondScoreTop =
+    HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.gridTopPt +
+    HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.rowHeightPt +
+    HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreTopOffsetPt;
+  assert.ok(secondScoreTop >= HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.dividerTopPt);
+  assert.ok(
+    secondScoreTop + HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.scoreFontSizePt <=
+      HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY.dividerBottomPt
+  );
 });
 
 test("human-grade renderer creates one exact letter page with embedded approved fonts", async () => {
@@ -198,6 +209,7 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /Calculated grade and human subgrades/);
   assert.match(page, /compact-final-grade/);
   assert.match(page, /compact-subgrade-grid/);
+  assert.match(page, /compact-subgrade-equals/);
   assert.match(page, /\["centeringGrade", "CTR", "Centering"\]/);
   assert.doesNotMatch(page, /className="subgrade-fields"/);
   assert.doesNotMatch(page, /grade-hud|hud-final-grade|hud-subgrade/);
@@ -209,6 +221,8 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(renderer, /CORNERS: "CRN"/);
   assert.match(renderer, /EDGES: "EDG"/);
   assert.match(renderer, /SURFACE: "SUR"/);
+  assert.match(renderer, /\.text\("=", equalsX/);
+  assert.match(renderer, /right-third content is not centered/);
   assert.doesNotMatch(renderer, /drawHud|nodeRadiusPt|frameWidthPt/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);

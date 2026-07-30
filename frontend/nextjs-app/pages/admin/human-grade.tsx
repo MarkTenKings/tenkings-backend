@@ -500,7 +500,8 @@ export default function HumanGradePage() {
                         ["surfaceGrade", "SUR", "Surface"],
                       ] as const).map(([field, code, label]) => (
                         <label className="compact-subgrade-field" key={field}>
-                          <span aria-hidden="true">{code}</span>
+                          <span className="compact-subgrade-code" aria-hidden="true">{code}</span>
+                          <span className="compact-subgrade-equals" aria-hidden="true">=</span>
                           <input
                             type="number"
                             min="1"
@@ -512,6 +513,7 @@ export default function HumanGradePage() {
                             onChange={(event) => updateForm(field, event.target.value)}
                             placeholder="—"
                             aria-label={label}
+                            style={{ width: `${Math.max(1.2, form[field].length * 0.62)}em` }}
                           />
                         </label>
                       ))}
@@ -748,17 +750,18 @@ export default function HumanGradePage() {
           width: 100%;
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 4px 8px;
-          margin-top: 8px;
+          gap: 2px 8px;
+          margin-top: 5px;
         }
         .label-composer .compact-subgrade-field {
           display: grid !important;
-          grid-template-columns: auto auto;
+          grid-template-columns: auto auto auto;
           align-items: baseline;
           justify-content: center;
-          gap: 3px;
+          column-gap: 5px;
         }
-        .label-composer .compact-subgrade-field > span {
+        .label-composer .compact-subgrade-field > .compact-subgrade-code,
+        .label-composer .compact-subgrade-field > .compact-subgrade-equals {
           position: static;
           width: auto;
           height: auto;
@@ -766,19 +769,20 @@ export default function HumanGradePage() {
           clip: auto;
           color: #0f0f0f;
           font-family: Arial, sans-serif;
-          font-size: clamp(12px, 1.15vw, 18px);
-          font-weight: 700;
+          font-size: clamp(13px, 1.3vw, 20px);
+          font-weight: 400;
           white-space: nowrap;
         }
         .label-composer .compact-subgrade-field input {
-          width: clamp(30px, 3vw, 45px);
+          min-width: 1.2em;
+          max-width: 1.9em;
           padding: 0;
           border: 0;
           font-family: Impact, "Arial Narrow", sans-serif;
           font-size: clamp(18px, 1.65vw, 25px);
           line-height: 1;
           font-weight: 400;
-          text-align: left;
+          text-align: center;
         }
         .label-composer .compact-subgrade-field input::-webkit-inner-spin-button,
         .label-composer .compact-subgrade-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
@@ -865,7 +869,8 @@ export default function HumanGradePage() {
           .metadata-fields input, .descriptor-fields input, .card-number-field input { font-size: 14px; }
           .certificate-preview { font-size: 15px; }
           .compact-grade-summary { width: min(100%, 330px); }
-          .label-composer .compact-subgrade-field > span { font-size: 16px; }
+          .label-composer .compact-subgrade-field > .compact-subgrade-code,
+          .label-composer .compact-subgrade-field > .compact-subgrade-equals { font-size: 17px; }
           .label-composer .compact-subgrade-field input { font-size: 23px; }
           .page-buttons, .slot-grid { grid-template-columns: 1fr; }
         }
