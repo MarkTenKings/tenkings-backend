@@ -29324,3 +29324,10 @@ By enabling Rip It Live, I confirm:
 - One focused regression builds a schema-valid strict V0.3 Production-shaped create-card-from-report envelope at exactly `2.71 MiB`, reads the exact route configuration, and proves Next's configured parser accepts and preserves the request. The test also asserts the request exceeds `1 MiB` and remains below the explicit `4 MiB` route bound.
 - Planned release is limited to this exact commit through the protected PR/required-CI/merge path and the normal Vercel Production web deployment. No helper update/restart, Optimize change, grading change, reference redesign, queue/report/card mutation, publication attempt, camera action, or lighting action is included.
 - Focused validation passed: the exact `2.71 MiB` parser regression passed `1/1`; the optimized Production Next.js build passed after only the standard generated-client and workspace-package build prerequisites; and `git diff --check` passed with the existing Windows line-ending notice only.
+
+## 2026-07-29 - AI Grader Production internal publish-body guard correction
+
+- The PR `#222` route parser accepts up to `4mb`, but the Production handler retained its separate `1 MiB` safe-body constant and continued rejecting the approximately `2.71 MiB` advanced create-card-from-report request before action dispatch.
+- This correction changes only `AI_GRADER_PRODUCTION_SAFE_BODY_LIMIT_BYTES` from `1 MiB` to explicit `4 MiB`, remaining below Vercel's `4.5 MB` hard function limit. Existing unsafe-payload checks and every action-specific parser remain unchanged.
+- The single focused regression now calls the actual Production handler with a schema-valid strict V0.3 create-card-from-report body at exactly `2.71 MiB` and proves it passes all repeated internal size guards and reaches the configured action handler.
+- Focused validation passed: the exact Production handler regression passed `1/1`, the optimized Production Next.js build completed with existing warnings only, and `git diff --check` passed with only the existing Windows line-ending notice.
