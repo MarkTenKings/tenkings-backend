@@ -61,9 +61,9 @@ const COLORS = {
 } as const;
 
 const LABEL_ZONES = {
-  brandCrown: { xPt: 9.496192, yPt: 4.5, widthPt: 25.007616, heightPt: 16.258954 },
-  brandWordmark: { xPt: 2.52, yPt: 19.3, widthPt: 38.96 },
-  brandCertificate: { xPt: 2.52, yPt: 37.5, widthPt: 38.96 },
+  brandCrown: { xPt: 9.496192, yPt: 12.6, widthPt: 25.007616, heightPt: 16.258954 },
+  brandWordmark: { xPt: 2.52, yPt: 27.4, widthPt: 38.96 },
+  brandCertificate: { xPt: 2.52, yPt: 39, widthPt: 38.96 },
   leftSeparator: { xPt: 44, yPt: 8, heightPt: 43.76 },
   identity: { xPt: 48, widthPt: 81.5 },
   rightSeparator: { xPt: 132.5, yPt: 8, heightPt: 43.76 },
@@ -73,8 +73,12 @@ const LABEL_ZONES = {
     cardNumberTopPt: 3.7,
     gradeCenterYPt: 23.5,
     gradeCenterFromTextTopEm: 0.55,
-    subgradesTopPt: 35.4,
-    subgradeRowHeightPt: 5.15,
+    subgradeGridTopPt: 40.3,
+    subgradeRowHeightPt: 6.8,
+    subgradePaddingXPt: 1.5,
+    subgradeColumnGapPt: 1.4,
+    subgradeLeftColumnWidthPt: 28.4,
+    subgradeScoreWidthPt: 6.5,
   },
   separatorCrowns: { centerYPt: 29.88, widthPt: 3.4, heightPt: 2.2, lineGapPt: 0.7 },
 } as const;
@@ -304,20 +308,33 @@ function drawRightThird(doc: PdfDoc, content: ReturnType<typeof buildHumanGradeL
   const gradeTop = zone.gradeCenterYPt - grade.fontSize * zone.gradeCenterFromTextTopEm;
   drawCenteredBlock(doc, grade, zone.xPt, gradeTop, zone.widthPt);
 
+  const gridInnerWidth = zone.widthPt - zone.subgradePaddingXPt * 2;
+  const rightColumnWidth = gridInnerWidth - zone.subgradeLeftColumnWidthPt - zone.subgradeColumnGapPt;
   content.subgrades.forEach((subgrade, index) => {
-    const y = zone.subgradesTopPt + index * zone.subgradeRowHeightPt;
-    doc.font("TKHumanSmall").fontSize(4.7).fillColor(COLORS.ink).text(subgrade.label, zone.xPt + 3, y, {
-      width: 38,
+    const row = Math.floor(index / 2);
+    const column = index % 2;
+    const cellWidth = column === 0 ? zone.subgradeLeftColumnWidthPt : rightColumnWidth;
+    const cellX =
+      zone.xPt +
+      zone.subgradePaddingXPt +
+      (column === 0 ? 0 : zone.subgradeLeftColumnWidthPt + zone.subgradeColumnGapPt);
+    const y = zone.subgradeGridTopPt + row * zone.subgradeRowHeightPt;
+    doc.font("TKHumanSmall").fontSize(4).fillColor(COLORS.ink).text(subgrade.label, cellX, y, {
+      width: cellWidth - zone.subgradeScoreWidthPt - 0.5,
       align: "left",
-      characterSpacing: 0.04,
+      characterSpacing: 0.02,
       lineBreak: false,
     });
-    doc.font("TKHumanWordmark").fontSize(4.9).fillColor(COLORS.ink).text(subgrade.grade, zone.xPt + 42, y - 0.1, {
-      width: 12.8,
-      align: "right",
-      characterSpacing: 0,
-      lineBreak: false,
-    });
+    doc
+      .font("TKHumanWordmark")
+      .fontSize(4.8)
+      .fillColor(COLORS.ink)
+      .text(subgrade.grade, cellX + cellWidth - zone.subgradeScoreWidthPt, y - 0.15, {
+        width: zone.subgradeScoreWidthPt,
+        align: "right",
+        characterSpacing: 0,
+        lineBreak: false,
+      });
   });
 }
 

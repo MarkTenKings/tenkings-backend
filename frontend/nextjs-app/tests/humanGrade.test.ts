@@ -179,6 +179,10 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /Save Changes/);
   assert.match(page, /Delete/);
   assert.match(page, /editingLabelId/);
+  assert.match(renderer, /Math\.floor\(index \/ 2\)/);
+  assert.match(renderer, /index % 2/);
+  assert.match(renderer, /subgradeGridTopPt/);
+  assert.doesNotMatch(renderer, /subgradesTopPt/);
   assert.doesNotMatch(`${api}\n${pdfApi}\n${page}`, /\/api\/admin\/ai-grader|\/ai-grader\/station/);
   assert.doesNotMatch(renderer, /from ["'][^"']*aiGrader/);
   assert.doesNotMatch(renderer, /drawNfc|drawQr|GRADING/);
