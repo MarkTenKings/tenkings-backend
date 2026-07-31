@@ -195,11 +195,17 @@ test("human-grade renderer creates one exact letter page with embedded approved 
   assert.equal((source.match(/\/Type \/Page\b/g) ?? []).length, 1);
   assert.match(source, /BebasNeue-Regular/);
   assert.match(source, /Barlow-Regular/);
-  assert.equal((source.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 16);
+  assert.equal((source.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 1);
   assert.doesNotMatch(source, /GRADING|QR CODE|NFC/);
 
   const partialSource = (await renderHumanGradeLabelSheetPdf(entries.slice(0, 1))).toString("latin1");
-  assert.equal((partialSource.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 1);
+  assert.equal((partialSource.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 0);
+
+  const slotFifteenSource = (await renderHumanGradeLabelSheetPdf(entries.slice(14, 15))).toString("latin1");
+  assert.equal((slotFifteenSource.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 1);
+
+  const slotSixteenSource = (await renderHumanGradeLabelSheetPdf(entries.slice(15, 16))).toString("latin1");
+  assert.equal((slotSixteenSource.match(/-0\.375 -0\.375 197\.31 60\.51 re/g) ?? []).length, 0);
 });
 
 test("human-grade code stays outside AI Grader station and production routes", () => {
