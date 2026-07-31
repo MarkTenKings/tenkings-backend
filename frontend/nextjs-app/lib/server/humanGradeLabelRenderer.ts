@@ -429,7 +429,14 @@ function drawHandCutGuide(doc: PdfDoc) {
     .restore();
 }
 
-function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapshot, x: number, y: number) {
+function drawLabel(
+  doc: PdfDoc,
+  crown: PdfImage,
+  snapshot: HumanGradeLabelSnapshot,
+  x: number,
+  y: number,
+  drawCutGuide: boolean
+) {
   const content = buildHumanGradeLabelContent(snapshot);
   doc.save().translate(x, y);
   // Deliberately no background fill: human-grade labels retain transparent artwork.
@@ -438,7 +445,7 @@ function drawLabel(doc: PdfDoc, crown: PdfImage, snapshot: HumanGradeLabelSnapsh
   drawVerticalSeparator(doc, crown, LABEL_ZONES.rightSeparator.xPt, LABEL_ZONES.rightSeparator.yPt, LABEL_ZONES.rightSeparator.heightPt);
   drawIdentity(doc, content);
   drawRightThird(doc, content);
-  drawHandCutGuide(doc);
+  if (drawCutGuide) drawHandCutGuide(doc);
   doc.restore();
 }
 
@@ -478,7 +485,7 @@ export async function renderHumanGradeLabelSheetPdf(entries: readonly HumanGrade
   const bySlot = new Map(entries.map((entry) => [entry.slot, entry.snapshot]));
   for (const slot of HUMAN_GRADE_SHEET_SLOTS) {
     const snapshot = bySlot.get(slot.slot);
-    if (snapshot) drawLabel(doc, crown, snapshot, slot.xPt, slot.yFromTopPt);
+    if (snapshot) drawLabel(doc, crown, snapshot, slot.xPt, slot.yFromTopPt, slot.slot === 15);
   }
   return pdfBuffer(doc);
 }
