@@ -29611,3 +29611,178 @@ By enabling Rip It Live, I confirm:
 - Protected PR `#250` passed Install & Build, every Docker image, the disposable PostgreSQL migration chain, and Vercel preview, then merged to `main` as `33160bf4edb459c75981859a214359cd71797c59`.
 - The Vercel Production deployment for that exact merge completed successfully at `2026-07-31T18:18:55Z`. Read-only smoke checks returned HTTP `200` for `https://collect.tenkings.co/admin/human-grade` and the expected HTTP `401` for unauthenticated `GET /api/admin/human-grade`; current `main` contains the exact `slot.slot === 15` renderer condition.
 - No migration, database/data mutation, destructive operation, stored page/label mutation, AI Grader change, hardware/helper command, restart, or FoilXpress/Cricut command occurred. Existing READY pages will render the slot-15-only guide on their next private no-store PDF request.
+
+## 2026-07-31 - AI Grader V2 Speedster isolated implementation start
+
+- Created the separate `/Users/markthomas/tenkings/ten-kings-speedster-v2` worktree on branch `codex/ai-grader-v2-speedster-20260731` from `origin/main` at `977fc816` so active V1, Live Rip, and Human Grade work remains untouched.
+- Added the first isolated V2 contract file at `frontend/nextjs-app/lib/ai-grader-v2/contracts.ts`, including the one-detector result, reviewed-defect, and measured-evidence contracts; no existing application, Human Grade, V1, schema, API, or production file was changed.
+- Added the isolated V2 photo-pair component for one original front and one original back image; it uses browser-native file selection and previews with no helper, hardware, OCR, or new dependency.
+- Added and reviewed the pure V2 canonical geometry module: both approved profiles use 63.5 x 88.9 mm, corners are fixed 5 x 5 mm, edges are the outer 2 mm excluding corners, and the remainder is Surface. Focused geometry tests passed 6/6 in the supporting lane.
+- Added and reviewed the pure V2 Blueprint scoring module: centering ratios and interpolation, 70/30 front/back weighting, published defect multipliers and condition thresholds, and equal-25% overall raw/display grades. Combined focused geometry/scoring tests passed 12/12; focused ESLint passed with no errors or warnings.
+- Added the isolated OpenCV/FastAPI Speedster image service with one direct corner-proposal path, one exact perspective-rectification path, and the three approved low-cost reveal views: normalized color/contrast, bright/dark micro-defect response, and directional high-frequency response. It has no alternate corner algorithm or detector. A synthetic four-corner card was proposed exactly, rectified to 1270 x 1778, and processed into all three reveal views successfully.
+- Added the reusable Geometry Assist UI with the supplied automatic proposal, four draggable crosshair handles, Rounded 3.18mm/Square pills, and one Continue action. It contains no condition grading or detector logic and passed focused lint/type checking in its supporting lane.
+- Added the shared Defect Evidence Viewer for editable admin review and identical read-only public evidence. It uses the original card as the master map, source-view close-ups, exact measurement math, zone-specific type pills, and Remove; focused lint passed with no warnings.
+- Added exact per-defect report attribution as the condition score without that defect minus the score with all defects, weighted 70% for Front or 30% for Back. Added the premium Grade Summary UI showing all four equal-25% subgrades and every 70/30 equation.
+- Added the premium Centering Assist UI with automatic border geometry, four draggable gold crosshairs, live millimeter measurements, live centering ratios, and one Continue action.
+- Reduced image preparation to two direct service actions: `geometry`, then one combined `prepare` action that decodes and rectifies the image once before producing the centering proposal and all three reveal views. Added a direct-to-object-storage original upload plan so full camera files do not pass through the Next.js/Vercel request body.
+- Added the Capture Workspace covering original Front/Back upload, automatic card geometry, human corner/profile confirmation, single-pass image preparation, automatic printed-border geometry, and human centering confirmation. The completed bundle is ready for the one active detector without containing detector or grading logic.
+- Fresh combined V2 TypeScript tests passed 14/14, Python geometry/image-preparation tests passed 2/2, focused ESLint passed, and `git diff --check` passed. Repository-wide TypeScript remains blocked by pre-existing generated-Prisma and unrelated V1/package diagnostics; filtering that output showed no V2 diagnostics.
+- Speedster implementation follows one direct path with minimal code and processing, no detector fallbacks or ensembles, no unapproved workflow gates, and no scope beyond the approved Master Plan.
+- The active Human Grade equal-weighting branch remains untouched. Shared label-editor extraction is deferred until that agent's finished result is inspected.
+- No deploy, migration, database/data mutation, destructive operation, production access, model execution, helper/hardware action, commit, push, merge, or restart occurred.
+
+## 2026-07-31 - Planned Human Grade formula integration into Speedster worktree
+
+- Mark confirmed the dedicated Human Grade agent completed the equal-25% subgrade task.
+- Reviewed PR `#252` at `bcabb6da764551f310d1159dbf3ef910987d5253`: it is mergeable, all GitHub/Vercel checks pass, new labels explicitly use `EQUAL_25`, existing labels remain versioned under `LEGACY_30_25_25_20`, and the migration contains no row-level data rewrite.
+- Plan: merge the finished Human Grade branch into the isolated Speedster branch, preserve both session logs, regenerate the local Prisma client only for verification, run the focused Human Grade and Speedster tests, and then extract the shared identity/label composer.
+- No production deploy, production migration, data mutation, V1 edit, helper/hardware action, or destructive operation is planned in this integration step.
+
+## 2026-07-31 - Human Grade formula-version implementation (not deployed)
+
+- Implemented the requested Human Grade-only formula split in isolated worktree `/Users/markthomas/tenkings/tenkings-human-grade-formula-version` on branch `codex/human-grade-formula-version`; no AI Grader station, label, grading, capture, NFC, report, helper, hardware, or runtime path was changed.
+- Added immutable saved formula versions `LEGACY_30_25_25_20` and `EQUAL_25`. New Human Grade records explicitly save `EQUAL_25` and calculate Centering, Corners, Edges, and Surface at `25%` each. Editing an existing label retains and recalculates with that label's saved formula version.
+- Added additive migration `20260731183000_human_grade_formula_version`. Its column-add default assigns `LEGACY_30_25_25_20` to existing rows, then its catalog default changes to `EQUAL_25` for future rows. The migration contains no row-level `UPDATE`, `DELETE`, `TRUNCATE`, grade recalculation, certificate change, page reassignment, or stored printable-page mutation.
+- The queue API now returns each label's saved formula version, and the printable PDF route passes that exact version to the renderer. The renderer independently validates every label's saved final grade against its own saved formula before drawing it, so legacy and equal-weight labels can coexist on one page without changing label artwork or geometry.
+- Focused Human Grade tests passed `9/9`, including legacy `10/9/8/7 -> 8.7`, equal `10/9/8/7 -> 8.5`, mixed-version PDF rendering, deliberate wrong-version rejection, future-default checks, and proof that the migration has no data-rewrite statement. Focused ESLint, Prisma schema validation/client generation, database build, and `git diff --check` passed.
+- The complete Production-equivalent build passed with `RUN_DB_MIGRATIONS=false`; it emitted only the repository's existing image/hook, browser-data, Tailwind-glob, optional Sharp development-module, and local Node-version warnings. A fresh mixed legacy/equal Letter PDF was rendered at 300 DPI and visually inspected; label geometry/artwork and the existing slot-15-only Cricut guide remained unchanged.
+- No Production migration, deployment, database access, saved-label mutation, regrading, backfill, or data rewrite was performed. Production rollout remains pending explicit authorization and must apply the additive schema migration before serving the version-aware application code.
+
+## 2026-07-31 - Human Grade rollout compatibility default correction
+
+- Before merge or Production rollout, Mark requested the simplest lowest-effort correction that maximizes preservation of all existing Human Grade labels and pages.
+- The additive formula-version column now keeps its database and Prisma compatibility default at `LEGACY_30_25_25_20`; the migration no longer flips the database default to `EQUAL_25`. This ensures the currently deployed legacy calculator and any rollback cannot save a legacy-calculated grade with an equal-formula version during the migration/deployment window.
+- The version-aware Human Grade create API remains unchanged and explicitly writes `EQUAL_25` for every label created after the new application is serving. Existing rows, deployment-window rows created by the old application, and rollback-created rows remain correctly identified as legacy. No new endpoint, gate, backfill, rewrite, or coordination system was added.
+- Production remains untouched: PR `#252` is unmerged, and no Production migration, deployment, database access, saved-label mutation, regrading, or page change occurred.
+## 2026-07-31 - Shared Human Grade and Speedster label editor extracted
+
+- Extracted the proven Human Grade label composer into `components/human-grade/SharedLabelEditor.tsx` with one shared Sports/Pokemon identity form and live label artwork.
+- `HUMAN` mode preserves the existing editable equal/legacy subgrade preview and save/edit callbacks. `SPEEDSTER` mode keeps the same identity editor, hides subgrades, and uses `Continue to Photos` without adding persistence or another route.
+- Refactored `/admin/human-grade` to consume that one component while preserving its existing API save/edit/delete behavior, queue, 16-label pages, formula-version calculation, certificate preview, and visible copy.
+- Focused Human Grade tests passed `9/9`; focused ESLint passed; targeted TypeScript diagnostics reported no errors in the shared editor, Human Grade page, or `lib/humanGrade.ts`. Repository-wide TypeScript still reports pre-existing unrelated workspace/test errors.
+- No deployment, migration, production mutation, V1/Dell workflow change, helper/hardware action, or Human Grade data operation was performed.
+
+## 2026-07-31 - Speedster workflow integration after Human Grade completion
+
+- Merged the completed Human Grade formula branch into the isolated Speedster branch and preserved both histories. Local Prisma client generation completed; no database migration or database connection was performed.
+- Added one compact additive `AiGraderV2Session` model and direct admin create/read/update APIs. Identity, capture, reviewed defects, and grade/report data remain four compact JSON documents in one V2 row; V1 and Human Grade records are not reused or changed.
+- Added exact detector-independent OpenCV mask fusion and measurement. Cross-view evidence is unioned once, rounded/square card material is respected, masks are split across mutually exclusive 5mm Corner / outer-2mm Edge / Surface zones, and overlapping classifications use the highest published multiplier.
+- Added the actual `/admin/ai-grader-v2` route using the one shared label editor, the direct object-storage upload path, and the complete Front/Back capture, geometry, rectification, reveal-view, and centering workspace. Capture metadata is stored without placing original camera files or generated images inside Vercel JSON bodies or the database.
+- Added human-review Magnify and Smart-Mark modes, plus the review workspace that reuses the same evidence viewer and deterministic grade summary intended for the public read-only report.
+- Combined focused TypeScript tests passed `30/30`; combined Python tests passed `8/8`; focused ESLint, filtered V2/shared-editor TypeScript diagnostics, Prisma validation with a non-connecting placeholder URL, and `git diff --check` passed.
+- The one active detector remains the only unresolved implementation choice. No detector model, fallback detector, ensemble, production migration, deploy, database/data mutation, V1 edit, helper/hardware action, or destructive operation occurred.
+- Refined generated-image handling so the Python image service uploads rectified and reveal-view WebPs in parallel directly to four presigned object-storage targets; no generated image body returns through Next.js/Vercel JSON. The browser uses short-lived read URLs while the saved V2 session keeps only stable object keys.
+- The optimized Next.js build completed lint and V2/shared-editor type checking, then stopped on the pre-existing locally unlinked `@tenkings/ai-grader-capture-helper/calibration-bundle` workspace module. Focused V2/shared-editor diagnostics remain clean. The service Dockerfile is present, but local container build could not start because Docker Desktop's daemon is not running.
+
+## 2026-07-31 - Speedster public report and production-build integration
+
+- Added one public, read-only `/ai-grader-v2/reports/[slug]` route. It selects only completed V2 sessions by their stable public slug, maps only public card identity, reviewed measured defects, grade math, and evidence keys, then supplies short-lived read URLs for the Front/Back master and three reveal views.
+- The report reuses the exact `DefectEvidenceViewer` and `GradeSummary` components from admin review. Removed and unreviewed detector findings are not exposed; public viewers can inspect the same markers, close-ups, measurements, percentages, multipliers, score effects, side math, and equal-25% overall grade without edit controls.
+- The first integrated build exposed a server/client boundary error because the server-only storage module was referenced from page module scope. Moved the database and storage imports inside `getServerSideProps`, keeping those modules out of the browser bundle; no alternate path or new dependency was added.
+- Built the two existing locally referenced workspace packages required by the repository build, then completed the optimized Production Next.js build successfully. It emitted only existing repository warnings. Focused Speedster/Human Grade tests passed `34/34`, Python image/defect tests passed `8/8` in a temporary requirements-only environment, focused ESLint passed with zero errors/warnings, and `git diff --check` passed.
+- No Production deploy, database migration, database/data mutation, label-slot creation, V1 edit, Human Grade behavior change, detector selection/execution, helper/hardware action, or destructive operation occurred.
+
+## 2026-07-31 - Speedster atomic label finalization seam
+
+- Added the smallest additive Human Grade label-source seam: existing and future ordinary labels default to `HUMAN`, while a Speedster label records `SPEEDSTER` plus one optional unique V2 session link. The migration contains no row-level rewrite and was not run.
+- Preserved all Human Grade calculation and validation behavior. Only `SPEEDSTER` snapshots trust the stored authoritative V2 overall grade calculated from full-precision subgrades; the shared label renderer still displays each subgrade to one decimal.
+- Added one isolated authenticated V2 completion endpoint. Its single database transaction stores reviewed defects, the full grade report, stable report slug, and `COMPLETED` workflow state while creating exactly one label in the existing 16-slot queue. A retry returns the uniquely linked label without consuming another slot; drafts consume none.
+- Full focused Speedster/Human Grade/public-report/session/label tests passed `38/38`. Focused ESLint, Prisma validation/client generation, `git diff --check`, and filtered TypeScript diagnostics for every changed file passed. The optimized Production Next.js build also passed with existing repository warnings only. Repository-wide TypeScript continues to report only pre-existing unrelated V1/test diagnostics.
+- No Production migration, deployment, database/data mutation, label creation, V1/Dell edit, helper/hardware action, or destructive operation occurred.
+
+## 2026-07-31 - SAM 3.1 confirmed as the sole Speedster detector
+
+- Mark made the final detector decision: SAM 3.1 is the one active Speedster detector. YOLO is shelved completely and removed from the current Master Plan, build order, learning plan, and technology stack. No YOLO code or dependency existed, so no runtime removal was required.
+- The official Meta implementation currently requires Python 3.12+, PyTorch 2.7+, and a CUDA 12.6+ GPU. The SAM 3.1 checkpoint is the gated `facebook/sam3.1` `sam3.1_multiplex.pt` artifact; production execution will require accepted model access and a Hugging Face token on the GPU service.
+- Planned implementation is one direct SAM 3.1 path inside the existing Speedster image service: scan each canonical evidence view independently, return masks and scores, fuse and measure them once on the physical card grid, then send one canonical defect map to human review. There will be no secondary detector, detector fallback, ensemble, or voting path.
+- No deployment, model/checkpoint download, production credential change, migration, database/data mutation, V1/Dell edit, Human Grade change, or helper/hardware action occurred.
+
+## 2026-07-31 - SAM 3.1 Speedster integration implemented locally
+
+- Implemented one direct SAM 3.1 detector path in the isolated Speedster service. It pins Meta's official repository commit `96914d2425f90a64f45ca977c2b5165418099543`, lazily loads the gated `sam3.1_multiplex.pt` checkpoint once, releases the unused tracking model, and reuses one image embedding per canonical view across the nine published Ten Kings defect prompts.
+- Added `/detect` for independent canonical-view scans and `/measure` for human Smart-Marks. Both return the existing measured-defect contract and reuse the same physical-grid fusion, mutually exclusive 5 mm Corner / outer-2 mm Edge / Surface masks, overlap removal, dimensions, area, percentage, multiplier, and score-effect math.
+- Connected the admin workflow end to end: save locked Front/Back geometry, scan Front then Back, place every finding on the existing evidence map, Remove or type-correct a finding, Smart-Mark a missed defect, recalculate grades immediately, and complete the existing atomic label/public-report transaction. A failed scan leaves capture available for a direct manual resubmission instead of trapping the session.
+- Focused frontend tests passed `41/41`; focused backend tests passed `14/14`; focused ESLint and `git diff --check` passed. The optimized Production Next.js build passed with only existing repository warnings.
+- The live SAM 3.1 model was not executed and the gated checkpoint was not downloaded. Live verification still requires accepted `facebook/sam3.1` model access, a Hugging Face token, and a CUDA GPU host. No deployment, migration, database/data mutation, label creation, V1/Dell edit, Human Grade behavior change, helper/hardware action, or destructive operation occurred.
+
+## 2026-07-31 - Speedster Production launch audit (read-only)
+
+- Audited the isolated Speedster branch against the mandatory deploy runbook without accessing Production databases, changing Production configuration, or deploying anything.
+- Mark replaced the inaccessible SAM 3.1 choice with the available SAM 3 model during this audit. The current launch plan has one SAM 3 detector and no SAM 3.1, YOLO, secondary detector, fallback, ensemble, voting, or retry path. Earlier SAM 3.1 entries above remain historical records of work that was never deployed or executed.
+- Confirmed the exact additive migration order: Human Grade formula version, V2 session table, then Human/Speedster label source and unique V2 session link. Human Grade PR `#252` remains open and undeployed; the single Speedster release can carry that work and all three migrations together. Existing rows retain legacy/Human defaults with no row-level rewrite.
+- Confirmed the only new Vercel runtime variable is `AI_GRADER_SPEEDSTER_SERVICE_URL`; Speedster reuses the existing database, admin authentication, and S3-compatible storage variables. The selected GPU path uses `HF_TOKEN` for authenticated download of the available `facebook/sam3` `sam3.pt` checkpoint and the container port only.
+- Identified the one unresolved infrastructure dependency: `backend/ai-grader-speedster-service/Dockerfile` is not present in the existing droplet compose stack and requires one CUDA GPU host plus an HTTPS URL. SAM 3 now loads during service startup, but live checkpoint execution and request latency remain unverified, and the Vercel image proxy has no explicit function-duration setting.
+- Added the exact one-path service, environment, migration, deployment, and smoke-test order to the Speedster Master Plan. Current Human Grade queue occupancy is not a launch dependency; only completion of a real test card consumes one next label slot.
+- No deploy, migration, database/data/label mutation, Production environment change, model/checkpoint execution, V1/Dell edit, Human Grade behavior change, helper/hardware action, push, merge, restart, or destructive operation occurred.
+
+## 2026-07-31 - SAM 3 sole-detector replacement and RunPod readiness
+
+- Replaced the undeployed SAM 3.1 implementation completely with one official SAM 3 still-image path using pinned Meta source commit `96914d2425f90a64f45ca977c2b5165418099543`, `facebook/sam3/sam3.pt`, `build_sam3_image_model`, and `Sam3Processor`. The active backend contains no SAM 3.1 multiplex runtime, alternate checkpoint, second detector, fallback, ensemble, or voting path.
+- The GPU service loads one SAM 3 model during FastAPI startup, keeps one worker/model instance, creates one image embedding per canonical evidence view, and reuses it across the nine fixed Ten Kings defect prompts. Existing OpenCV fusion, physical measurement, human review, deterministic scoring, label completion, and public-report code remain the downstream authority.
+- Extracted and tested the actual Front-then-Back orchestration used by the admin page. A defect-free side still reaches review, canonical evidence IDs remain stable, completion accepts untouched findings, and detector version plus public evidence are preserved through the equal-25% label/report transaction. A scan error returns the operator to the capture workspace for direct resubmission instead of leaving a dead-end scanning screen.
+- Mark obtained gated `facebook/sam3` access and created the private Hugging Face Read token. Read-only RunPod inspection confirmed the private `huggingface_token` secret exists and funded GPU credit is available; the token value was never read, printed, copied, or stored in the repository.
+- Focused frontend tests passed `42/42`; focused backend tests passed `15/15`; focused ESLint, Python compilation, and `git diff --check` passed. The optimized Production Next.js build passed with only existing repository warnings.
+- No GPU Pod/template was created or started, no paid GPU usage was authorized or incurred by Codex, and the SAM checkpoint/model was not downloaded or executed. No Production deploy, migration, database/data/label mutation, Production environment change, V1/Dell edit, Human Grade behavior change, helper/hardware action, push, merge, or destructive operation occurred.
+
+## 2026-07-31 - Speedster private GPU image and RunPod template prepared
+
+- Built and pushed the pinned Linux/amd64 Speedster SAM 3 service image to the private GitHub Container Registry package `ghcr.io/marktenkings/tenkings-backend/ai-grader-speedster-service:43312301`. Registry inspection verified OCI digest `sha256:529ab2f7e2d6cb5db3dfb351411a0567d1f8a93d1f265fece3aed5f6621f3946` and the expected amd64 image manifest.
+- During the first private-registry credential attempt, a GitHub CLI credential was exposed in browser diagnostic output before any RunPod credential was saved. The RunPod dialog was canceled, local and virtual clipboards were cleared, the upload was canceled, and the local registry session was logged out. Mark then explicitly authorized revocation of all GitHub CLI tokens; GitHub confirmed the OAuth app revocation. The Mac was reauthenticated with the required `write:packages` scope, while Dell GitHub CLI will require reauthentication before its next GitHub CLI operation.
+- Created the private RunPod registry credential `Ten Kings GHCR` using the newly issued Mac credential without exposing it in output. Created private Pod template `ten-kings-speedster-sam3` (`779b2q8wng`) with the verified image, one NVIDIA GPU path, 20 GB container disk, 20 GB Pod volume mounted at `/models`, HTTP port `8080`, `HF_TOKEN` bound to the existing private `huggingface_token` secret, and `HF_HOME=/models/huggingface`.
+- No GPU Pod was created or started, no paid GPU usage was incurred, and the SAM checkpoint/model was not downloaded or executed. Starting the currently selected RTX 4090 Secure Cloud GPU at `$0.69/hour` remains pending Mark's explicit action-time approval.
+- No Production deploy, migration, database/data/label mutation, Production environment change, V1/Dell edit, Human Grade behavior change, helper/hardware action, merge, restart, or destructive operation occurred.
+
+## 2026-07-31 - Planned paid SAM 3 GPU launch
+
+- Mark explicitly authorized the action-time paid launch with: `Start the RTX 4090 at $0.69/hour.`
+- Plan: create and start exactly one RunPod Secure Cloud RTX 4090 Pod from private template `ten-kings-speedster-sam3` (`779b2q8wng`) at the confirmed rate of `$0.69/hour`, then observe image pull, gated SAM 3 checkpoint download, one-model startup, and the port-8080 health endpoint.
+- The launch will not deploy the web application, run Production migrations, change Production environment variables, mutate database/data/labels, touch V1/Dell or Human Grade workflows, add another detector, or perform a destructive operation.
+
+### First live-start observation and planned correction
+
+- RunPod created Pod `worldwide_green_hare` (`c0e0xbl709jhxa`) on exactly one RTX 4090 at the authorized `$0.69/hour`. The private container pulled successfully and port `8080` was exposed.
+- Container evidence showed SAM 3 startup stopped immediately with `ModuleNotFoundError: No module named 'einops'`; the health endpoint therefore remained unavailable. No detector request, checkpoint execution, database action, or application deployment occurred.
+- Plan: stop the idle billed Pod, add only the required official SAM 3 runtime dependency `einops`, rerun focused backend verification, rebuild/push the same private image tag from cache, then restart the same one-detector Pod path and recheck startup logs plus `/health`.
+
+### First correction result before rebuild
+
+- The failed-start Pod was stopped before rebuilding so idle GPU billing would not continue. Added only `einops==0.8.2`, the currently published runtime package required by SAM 3's unconditional rotary-position import.
+- Focused Speedster backend tests passed `15/15`. No detector logic, prompt, API, measurement, scoring, frontend, database, migration, or Production behavior changed.
+
+### Second live-start observation and planned import audit
+
+- Pushed and verified corrected private image `98a30765` at OCI digest `sha256:1ee129ea0a16120848cad62bfb08f4140136ff13ee4c1833770947fe3afa0d77`, updated template `779b2q8wng`, and created replacement RTX 4090 Pod `subsequent_blue_albatross` (`6s43s9nx2iuvov`) at the same authorized `$0.69/hour`.
+- The corrected image passed the prior `einops` import, then official SAM 3's tracker import chain stopped on another package omitted from its base dependency list: `ModuleNotFoundError: No module named 'pycocotools'`. No checkpoint inference, detector request, application deployment, database action, or Production change occurred.
+- Plan: stop the replacement Pod immediately, add the exact missing package, and execute the official SAM 3 builder/processor import inside the exact Linux image locally before another paid restart. Any further mandatory import revealed by that direct audit will be added only if the sole SAM 3 runtime requires it.
+
+### Complete local SAM 3 import-audit result
+
+- The replacement Pod was stopped before the audit; both failed Pods now show `$0.00/hour`. Ran the exact Linux/amd64 container locally and reproduced `pycocotools` without GPU billing.
+- Installing `pycocotools==2.0.11` exposed one final unconditional official import, `psutil`; installing `psutil==7.2.2` then completed direct imports of both `build_sam3_image_model` and `Sam3Processor` successfully (`SAM3_IMPORT_OK`).
+- Added those two exact packages as one small post-requirements Docker layer so the proven 3 GB PyTorch/CUDA layer remains cached and does not need to be rebuilt or re-uploaded again. No optional SAM 3 training/notebook package, alternate detector, or fallback was added.
+
+### Corrected-image live start and narrow diagnostic redeploy plan
+
+- Built and pushed corrected image `0a4e703c` at OCI digest `sha256:895a106df2ad95773c4bb29342a4eb7dcf26028829c835b41c1e2c06c37f29ca`, updated template `779b2q8wng`, and created RTX 4090 Pod `tame_amethyst_quail` (`a227c1360hr8d4`) at the authorized `$0.69/hour` rate.
+- The private image pulled, the gated `facebook/sam3/sam3.pt` checkpoint loaded, and the public health endpoint returned HTTP 200 with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`. The first live `/detect` smoke request reached the service but returned HTTP 500 after model startup.
+- Added one direct detector-error response so the next smoke request returns the sole SAM 3 runtime mismatch instead of an opaque body; focused backend tests pass `16/16`. This adds no alternate detector, retry, fallback, ensemble, gate, or Production behavior.
+- Plan: rebuild and push the tiny application layer, stop the currently healthy-but-inference-failing Pod before restarting so duplicate GPU billing cannot occur, update the same private template, create exactly one replacement RTX 4090 Pod on the previously authorized path, read the returned error, then correct only the proven SAM 3 integration mismatch and rerun `/health` plus `/detect`.
+
+### Live inference root cause and one-line SAM 3 correction
+
+- Container evidence identified the sole real SAM 3 failure at `sam3_detector.py` score serialization: official inference returned BF16 scores, and NumPy rejected direct BF16 conversion with `TypeError: Got unsupported ScalarType BFloat16`.
+- Added the one required conversion to standard float before moving scores to CPU/NumPy. The focused backend suite passes `16/16`, including an assertion that every official-prompt score crosses this conversion.
+- The separate OpenCV empty-buffer traceback came from the first smoke command referencing a temporary image path that no longer existed; it was diagnostic-input error, not a detector/runtime defect, so no fallback or extra image-validation path was added.
+- The existing Pod still returned HTTP 200 health while the code fix was prepared. Mark was asked to stop it before the corrected restart so idle GPU billing does not continue; the next planned paid action remains one replacement RTX 4090 Pod on the already authorized `$0.69/hour` path after the corrected image and template are ready.
+
+### Corrected SAM 3 production-GPU verification result
+
+- Pushed corrected private image `40bb1fe4` at OCI manifest-list digest `sha256:539d8332f7ee1003f25da3ec546c0c9233c5c414509e2fed8abe257c3dc04651`, updated private template `ten-kings-speedster-sam3` (`779b2q8wng`), and stopped the prior inference-failing Pod so it remained at `$0.00/hour` before replacement.
+- Created exactly one replacement Pod, `disturbed_teal_cicada` (`ms3c0gbpervnf2`), on one RTX 4090 at Mark's authorized `$0.69/hour` rate. The corrected container pulled all 9 layers, loaded the gated pinned SAM 3 model, and returned HTTP 200 from `/health` with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`.
+- The live `/detect` smoke test completed successfully on the RTX 4090 in `3.96` seconds and returned one measured `CHIPPING_EXPOSED_STOCK` finding in the `SURFACE` zone. This verifies the BF16 correction through the real model-inference path; no alternate detector, retry, fallback, ensemble, gate, database action, migration, or web application deployment occurred.
+
+### Planned Speedster Production web rollout
+
+- Pull request `#253` contains the isolated Speedster release and is mergeable; its Vercel Preview passed while the repository CI build remained in progress at plan time.
+- Plan: add Production `AI_GRADER_SPEEDSTER_SERVICE_URL=https://ms3c0gbpervnf2-8080.proxy.runpod.net` and temporarily set Production `RUN_DB_MIGRATIONS=true`, merge only after required checks pass, let the documented Vercel build apply the three additive migrations in repository order, verify the serving commit and Speedster routes, then reset `RUN_DB_MIGRATIONS` so later deployments return to migration-skipping behavior.
+- This rollout does not change or stop the V1/Dell system, alter existing Human Grade records or label-page layout, add a second detector or fallback path, or perform a destructive database operation.

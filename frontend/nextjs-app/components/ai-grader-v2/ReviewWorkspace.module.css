@@ -1,0 +1,65 @@
+.workspace {
+  display: grid;
+  gap: 22px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.header span {
+  color: #d8aa4f;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .24em;
+}
+
+.header h1 {
+  margin: 8px 0 0;
+  color: #f7f5ef;
+  font-size: clamp(30px, 4vw, 54px);
+  font-weight: 400;
+  letter-spacing: -.045em;
+}
+
+.sides {
+  display: flex;
+  gap: 8px;
+}
+
+.sides button,
+.complete {
+  min-height: 42px;
+  padding: 0 17px;
+  color: #aaa99f;
+  background: #10120f;
+  border: 1px solid #d8aa4f42;
+  border-radius: 999px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sides .active,
+.complete {
+  color: #090a08;
+  font-weight: 800;
+  background: #e3bc68;
+  border-color: #e3bc68;
+}
+
+.complete {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  justify-self: end;
+  min-width: 230px;
+  min-height: 58px;
+}
+
+@media (max-width: 720px) {
+  .header { align-items: flex-start; flex-direction: column; }
+  .complete { justify-self: stretch; }
+}

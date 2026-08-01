@@ -31,6 +31,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           id: label.id,
           certificateNumber:
             label.certificateNumber ?? formatHumanGradeCertificateNumber(label.certificateSequence),
+          source: label.source,
+          gradingFormulaVersion: label.gradingFormulaVersion,
           cardType: label.cardType,
           playerName: label.playerName,
           cardName: label.cardName,
