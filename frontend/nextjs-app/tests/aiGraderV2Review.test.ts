@@ -68,6 +68,15 @@ test("completion accepts untouched findings and keeps canonical report view IDs"
   assert.deepEqual(persisted[0].supportingViewIds, ["MICRO_DEFECT"]);
 });
 
+test("completion preserves removed decisions without accepting them", () => {
+  const removed = removeSpeedsterDefect([defect], defect.id);
+  const review = calculateSpeedsterReview(capture, removed);
+  const prepared = prepareSpeedsterCompletion(removed, review.grade, "sam3-test");
+  assert.equal(prepared.completedDefects[0].reviewResult, "REMOVED");
+  assert.equal(prepared.body.reviewedDefects[0].reviewResult, "REMOVED");
+  assert.equal(prepared.body.gradeReport.overall.displayGrade, 10);
+});
+
 test("the production orchestration scans Front then Back and produces a completable report payload", async () => {
   const scanOrder: string[] = [];
   const scanned = await scanSpeedsterCapture({

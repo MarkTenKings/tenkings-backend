@@ -29839,3 +29839,19 @@ By enabling Rip It Live, I confirm:
 - Updated only the Production `AI_GRADER_SPEEDSTER_SERVICE_URL` value to the verified replacement endpoint. Vercel Production deployment `4c15FViz2ANeRw9QGCSzyMJHUPXW` completed successfully for the merge commit; Production `RUN_DB_MIGRATIONS=false` remained in place, so no migration or database/data/label mutation ran for this correction.
 - Authenticated Production verification loaded `https://collect.tenkings.co/admin/ai-grader-v2` with the shared Human Grade label editor and `Continue to Photos` ready. The replacement SAM 3 service remained healthy after deployment and returned HTTP 200 with `sam3-local-box@96914d2425f90a64f45ca977c2b5165418099543`.
 - No V1/Dell or Human Grade code/data changed, no alternate detector or fallback path was added, and no destructive operation occurred. The Production Speedster page is ready for Mark's real-card geometry, snapping, printed-border, and localized-defect review test.
+
+## 2026-08-01 - Speedster review interaction and exact-report correction built locally
+
+- Mark's first review test confirmed SAM 3 localization and real-time grade recalculation, then exposed unstable pin interaction and a mismatch between intended removals and the final public evidence set.
+- Root cause: the review card updated React state on every ordinary pointer movement, entire overlapping defect contours acted as hover targets, and the flexible card stage could resize with the changing evidence detail. The active defect could therefore switch while the reviewer moved from a pin to its controls.
+- Corrected the single viewer so ordinary inspection performs no pointer-motion updates, only fixed pin-sized targets can hover/select a finding, removed selections advance to a remaining finding, and the card stage remains dimensionally stable. No second review component or interaction path was added.
+- Public report mapping now uses an explicit allowlist of `ACCEPTED`, `SMART_MARKED`, and `TYPE_CORRECTED` evidence. Removed, unreviewed, unknown, or malformed findings cannot be published. Removed decisions remain stored in the completed session as reviewer feedback and remain excluded from grade math.
+- Reviewer results are currently persisted for future detector improvement, but no active training or retrieval loop consumes them and SAM 3 does not automatically learn between cards yet.
+- Focused Speedster session/review/report/label tests passed `20/20`; focused ESLint, the optimized Production Next.js build, and `git diff --check` passed. The build emitted only existing repository warnings.
+- No deployment, migration, database/data/label mutation, GPU/Pod restart, detector change, V1/Dell change, Human Grade change, #4 post-grading workspace work, #5 capture work, or destructive action occurred in this local correction.
+
+### Planned review/report correction Production rollout
+
+- Plan: print branch/HEAD and confirm `origin/main` ancestry, commit and push only this narrow frontend/test/documentation correction, and use the normal green-check pull-request path.
+- Plan: keep Production `RUN_DB_MIGRATIONS=false`, merge only after the optimized build, disposable migration chain, Vercel Preview, and service/frontend image checks pass, then verify the serving Production commit and public/admin Speedster routes.
+- No SAM 3 image, RunPod template, GPU Pod, environment variable, database schema/data, label, V1/Dell, Human Grade, #4 post-grading, #5 capture, fallback, or destructive change is planned.

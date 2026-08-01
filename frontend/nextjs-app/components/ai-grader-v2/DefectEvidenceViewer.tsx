@@ -108,9 +108,12 @@ export function DefectEvidenceViewer({
   const [markStart, setMarkStart] = useState<SpeedsterPoint | null>(null);
   const [markEnd, setMarkEnd] = useState<SpeedsterPoint | null>(null);
   const visibleDefects = defects.filter((defect) => defect.side === side);
+  const visibleIds = new Set(visibleDefects.map(({ id }) => id));
   const selectedId =
-    selectedDefectId === undefined ? localId ?? visibleDefects[0]?.id : selectedDefectId;
-  const activeId = hoveredId ?? selectedId;
+    selectedDefectId === undefined
+      ? localId && visibleIds.has(localId) ? localId : visibleDefects[0]?.id
+      : selectedDefectId;
+  const activeId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : selectedId;
   const active = visibleDefects.find(({ id }) => id === activeId);
   const activeCrop = active ? crop(active.canonicalContour) : null;
   const activeTypes = active?.zone === "SURFACE" ? SURFACE_TYPES : EDGE_CORNER_TYPES;
@@ -175,7 +178,10 @@ export function DefectEvidenceViewer({
             <button
               type="button"
               className={mode === "MAGNIFY" ? styles.toolActive : undefined}
-              onClick={() => setMode(mode === "MAGNIFY" ? "INSPECT" : "MAGNIFY")}
+              onClick={() => {
+                setPointer(null);
+                setMode(mode === "MAGNIFY" ? "INSPECT" : "MAGNIFY");
+              }}
             >Magnify</button>
             {!readOnly ? (
               <button
@@ -190,9 +196,8 @@ export function DefectEvidenceViewer({
         <div
           className={`${styles.cardStage} ${mode === "SMART_MARK" ? styles.marking : ""}`}
           onPointerMove={(event) => {
-            const next = pointFromEvent(event);
-            setPointer(next);
-            if (mode === "SMART_MARK" && markStart) setMarkEnd(next);
+            if (mode === "MAGNIFY") setPointer(pointFromEvent(event));
+            if (mode === "SMART_MARK" && markStart) setMarkEnd(pointFromEvent(event));
           }}
           onPointerLeave={() => setPointer(null)}
           onPointerDown={(event) => {
@@ -237,6 +242,7 @@ export function DefectEvidenceViewer({
                   onBlur={() => setHoveredId(null)}
                 >
                   <polygon className={styles.contour} points={points(defect.canonicalContour, 1000)} />
+                  <circle className={styles.hitTarget} cx={marker.x * 1000} cy={marker.y * 1000} r="34" />
                   <circle className={styles.halo} cx={marker.x * 1000} cy={marker.y * 1000} r="25" />
                   <circle className={styles.marker} cx={marker.x * 1000} cy={marker.y * 1000} r="11" />
                 </g>
