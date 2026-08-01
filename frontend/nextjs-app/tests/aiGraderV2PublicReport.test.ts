@@ -64,7 +64,12 @@ function persisted(workflowState = "COMPLETED") {
     cardProfile: "POKEMON",
     identity: { cardName: "Charizard", year: "2025", productSet: "Journey Together", internalNote: "private" },
     capture: { front: side("front"), back: side("back"), helperToken: "private" },
-    reviewedDefects: [defect, { ...defect, id: "removed", reviewResult: "REMOVED" }],
+    reviewedDefects: [
+      defect,
+      { ...defect, id: "removed", reviewResult: "REMOVED" },
+      { ...defect, id: "unreviewed", reviewResult: "UNREVIEWED" },
+      { ...defect, id: "unknown", reviewResult: "UNKNOWN" },
+    ],
     gradeReport: grade,
   };
 }

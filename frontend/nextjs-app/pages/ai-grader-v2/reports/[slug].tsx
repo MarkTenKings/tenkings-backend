@@ -196,7 +196,11 @@ export function mapCompletedSpeedsterSession(value: unknown): PublicReportSource
   const keys = sourceKeys(value.capture);
   if (!cardProfile || !grade || !keys || !Array.isArray(value.reviewedDefects)) return null;
   const defects = value.reviewedDefects
-    .filter((entry) => !isRecord(entry) || (entry.reviewResult !== "REMOVED" && entry.reviewResult !== "UNREVIEWED"))
+    .filter((entry): entry is Record<string, unknown> => (
+      isRecord(entry) &&
+      typeof entry.reviewResult === "string" &&
+      PUBLIC_REVIEW_RESULTS.has(entry.reviewResult)
+    ))
     .map(measuredDefect);
   if (defects.some((entry) => !entry)) return null;
   const identity: PublicIdentity = { cardProfile };

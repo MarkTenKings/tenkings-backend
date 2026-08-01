@@ -248,7 +248,7 @@ export default function AiGraderV2AdminPage() {
             grade={review.grade}
             onRemoveDefect={(defectId) => {
               setDefects((current) => current ? removeSpeedsterDefect(current, defectId) : current);
-              setMessage("Finding removed from grading and retained for learning.");
+              setMessage("Finding removed from grading and saved as reviewer feedback.");
             }}
             onDefectTypeChange={(defectId: string, defectType: SpeedsterDefectType) => {
               setDefects((current) => current

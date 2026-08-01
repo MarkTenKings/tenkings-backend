@@ -80,7 +80,7 @@
 
 .cardStage {
   position: relative;
-  flex: 1;
+  flex: none;
   width: min(100%, 520px);
   aspect-ratio: 63.5 / 88.9;
   align-self: center;
@@ -134,18 +134,25 @@
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.hitTarget {
+  fill: transparent;
+  pointer-events: all;
 }
 .halo {
   fill: #070807b3;
   stroke: #f3d58bd9;
   stroke-width: 1.5;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .marker {
   fill: var(--bright);
   stroke: #070807;
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
+  pointer-events: none;
 }
 .active .contour,
 .defect:focus .contour { fill: #f3d58b47; stroke-width: 2.5; }
