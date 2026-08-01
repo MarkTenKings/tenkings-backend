@@ -199,7 +199,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
             onChange={(side, file) => side === "FRONT" ? setFrontFile(file) : setBackFile(file)}
           />
           <button type="button" onClick={() => void beginGeometry()} disabled={!frontFile || !backFile || working}>
-            {working ? "Preparing…" : "Set geometry →"}
+            {working ? "Preparing…" : frontFile && backFile ? "Set geometry →" : "Add both photos to continue"}
           </button>
         </div>
       ) : null}
