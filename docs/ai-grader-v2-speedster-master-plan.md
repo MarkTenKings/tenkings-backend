@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
-Date: 2026-07-31  
-Status: Approved and actively being implemented; one-detector provider selection pending  
+Date: 2026-07-31
+Status: Approved and actively being implemented; one-detector provider selection pending
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
