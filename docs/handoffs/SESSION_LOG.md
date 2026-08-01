@@ -29774,3 +29774,9 @@ By enabling Rip It Live, I confirm:
 - Added the one required conversion to standard float before moving scores to CPU/NumPy. The focused backend suite passes `16/16`, including an assertion that every official-prompt score crosses this conversion.
 - The separate OpenCV empty-buffer traceback came from the first smoke command referencing a temporary image path that no longer existed; it was diagnostic-input error, not a detector/runtime defect, so no fallback or extra image-validation path was added.
 - The existing Pod still returned HTTP 200 health while the code fix was prepared. Mark was asked to stop it before the corrected restart so idle GPU billing does not continue; the next planned paid action remains one replacement RTX 4090 Pod on the already authorized `$0.69/hour` path after the corrected image and template are ready.
+
+### Corrected SAM 3 production-GPU verification result
+
+- Pushed corrected private image `40bb1fe4` at OCI manifest-list digest `sha256:539d8332f7ee1003f25da3ec546c0c9233c5c414509e2fed8abe257c3dc04651`, updated private template `ten-kings-speedster-sam3` (`779b2q8wng`), and stopped the prior inference-failing Pod so it remained at `$0.00/hour` before replacement.
+- Created exactly one replacement Pod, `disturbed_teal_cicada` (`ms3c0gbpervnf2`), on one RTX 4090 at Mark's authorized `$0.69/hour` rate. The corrected container pulled all 9 layers, loaded the gated pinned SAM 3 model, and returned HTTP 200 from `/health` with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`.
+- The live `/detect` smoke test completed successfully on the RTX 4090 in `3.96` seconds and returned one measured `CHIPPING_EXPOSED_STOCK` finding in the `SURFACE` zone. This verifies the BF16 correction through the real model-inference path; no alternate detector, retry, fallback, ensemble, gate, database action, migration, or web application deployment occurred.
