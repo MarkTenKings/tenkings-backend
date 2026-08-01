@@ -3518,3 +3518,18 @@ model HumanGradeLabel {
   @@index([sheetId, slot])
   @@index([createdAt])
 }
+
+model AiGraderV2Session {
+  id               String   @id @default(cuid())
+  createdByUserId  String
+  cardProfile      String
+  workflowState    String   @default("DRAFT")
+  ruleVersion      String
+  publicReportSlug String?  @unique
+  identity         Json     @db.JsonB
+  capture          Json     @db.JsonB
+  reviewedDefects  Json     @db.JsonB
+  gradeReport      Json     @db.JsonB
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}

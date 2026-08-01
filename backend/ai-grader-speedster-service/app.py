@@ -1,4 +1,5 @@
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 import cv2
@@ -33,19 +34,22 @@ class RectifyRequest(ImageInput):
     corners: List[Point]
 
 
-class RevealViewsResponse(BaseModel):
+class PreparedUploads(BaseModel):
+    rectified: str
     normalized: str
     microDefect: str
     directional: str
 
 
+class PrepareRequest(RectifyRequest):
+    outputUploads: PreparedUploads
+
+
 class PrepareResponse(BaseModel):
-    rectified: str
     width: int
     height: int
     transform: List[float]
     borders: List[Point]
-    views: RevealViewsResponse
 
 
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
@@ -143,11 +147,21 @@ def find_design_borders(image: np.ndarray) -> np.ndarray:
     return np.array([[left, top], [right, top], [right, bottom], [left, bottom]], dtype=np.float32)
 
 
-def encode_webp(image: np.ndarray) -> str:
+def encode_webp(image: np.ndarray) -> bytes:
     success, encoded = cv2.imencode(".webp", image, [cv2.IMWRITE_WEBP_QUALITY, 92])
     if not success:
         raise ValueError("Image could not be encoded")
-    return base64.b64encode(encoded).decode("ascii")
+    return encoded.tobytes()
+
+
+def upload_webp(upload_url: str, image: np.ndarray):
+    response = requests.put(
+        upload_url,
+        data=encode_webp(image),
+        headers={"Content-Type": "image/webp"},
+        timeout=30,
+    )
+    response.raise_for_status()
 
 
 @app.get("/health")
@@ -172,7 +186,7 @@ def geometry(request: ImageInput):
 
 
 @app.post("/prepare", response_model=PrepareResponse)
-def prepare_image(request: RectifyRequest):
+def prepare_image(request: PrepareRequest):
     if len(request.corners) != 4:
         raise HTTPException(status_code=400, detail="Exactly four corners are required")
     try:
@@ -180,18 +194,20 @@ def prepare_image(request: RectifyRequest):
         rectified, transform = rectify(image, request.corners)
         normalized, micro, directional = reveal_views(rectified)
         borders = find_design_borders(rectified)
+        uploads = (
+            (request.outputUploads.rectified, rectified),
+            (request.outputUploads.normalized, normalized),
+            (request.outputUploads.microDefect, micro),
+            (request.outputUploads.directional, directional),
+        )
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            list(executor.map(lambda item: upload_webp(*item), uploads))
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     return {
-        "rectified": encode_webp(rectified),
         "width": TARGET_WIDTH,
         "height": TARGET_HEIGHT,
         "transform": transform.reshape(-1).tolist(),
         "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
-        "views": {
-            "normalized": encode_webp(normalized),
-            "microDefect": encode_webp(micro),
-            "directional": encode_webp(directional),
-        },
     }

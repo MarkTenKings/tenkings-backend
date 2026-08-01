@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import {
   speedsterImageService,
+  planSpeedsterPreparedOutputs,
   uploadSpeedsterOriginal,
-  webpDataUrl,
 } from "../../lib/ai-grader-v2/image-service";
 import { CenteringAssist, type CenteringAssistResult } from "./CenteringAssist";
 import { GeometryAssist, type SpeedsterCornerShape } from "./GeometryAssist";
@@ -21,8 +21,10 @@ export type SpeedsterPreparedSide = {
   sourceUrl: string;
   sourceCorners: SpeedsterQuad;
   rectifiedUrl: string;
+  rectifiedStorageKey: string;
   transform: readonly number[];
   views: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
+  viewStorageKeys: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
   centeringQuad: SpeedsterQuad;
   centeringBorders: SpeedsterCenteringBorders;
 };
@@ -37,6 +39,7 @@ export type SpeedsterCaptureBundle = {
 
 type CaptureWorkspaceProps = {
   token: string;
+  sessionId: string;
   cardProfile: SpeedsterCardProfile;
   onReady: (bundle: SpeedsterCaptureBundle) => void;
 };
@@ -46,8 +49,10 @@ type SideState = {
   sourceUrl: string;
   corners: SpeedsterQuad;
   rectifiedUrl?: string;
+  rectifiedStorageKey?: string;
   transform?: readonly number[];
   views?: SpeedsterPreparedSide["views"];
+  viewStorageKeys?: SpeedsterPreparedSide["viewStorageKeys"];
   proposedCentering?: SpeedsterQuad;
   centering?: CenteringAssistResult;
 };
@@ -59,8 +64,7 @@ const FULL_IMAGE_QUAD: SpeedsterQuad = [
   { x: 0, y: 1 },
 ];
 
-export function CaptureWorkspace({ token, cardProfile, onReady }: CaptureWorkspaceProps) {
-  const sessionId = useRef(crypto.randomUUID());
+export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
   const [frontFile, setFrontFile] = useState<File | null>(null);
   const [backFile, setBackFile] = useState<File | null>(null);
   const [front, setFront] = useState<SideState | null>(null);
@@ -76,11 +80,11 @@ export function CaptureWorkspace({ token, cardProfile, onReady }: CaptureWorkspa
     setMessage("Uploading originals and locking onto the card geometry.");
     try {
       const uploadedFront = await uploadSpeedsterOriginal({
-        token, sessionId: sessionId.current, side: "FRONT", file: frontFile,
+        token, sessionId, side: "FRONT", file: frontFile,
       });
       const frontGeometry = await speedsterImageService.proposeGeometry(token, uploadedFront.readUrl);
       const uploadedBack = await uploadSpeedsterOriginal({
-        token, sessionId: sessionId.current, side: "BACK", file: backFile,
+        token, sessionId, side: "BACK", file: backFile,
       });
       const backGeometry = await speedsterImageService.proposeGeometry(token, uploadedBack.readUrl);
       setFront({
@@ -108,16 +112,23 @@ export function CaptureWorkspace({ token, cardProfile, onReady }: CaptureWorkspa
     setWorking(true);
     setMessage(`Preparing the ${side.toLowerCase()} card map.`);
     try {
-      const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners);
+      const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
+      const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners, outputPlan);
       const next: SideState = {
         ...current,
-        rectifiedUrl: webpDataUrl(prepared.rectified),
+        rectifiedUrl: outputPlan.RECTIFIED.readUrl,
+        rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
         transform: prepared.transform,
         proposedCentering: prepared.borders,
         views: {
-          NORMALIZED: webpDataUrl(prepared.views.normalized),
-          MICRO_DEFECT: webpDataUrl(prepared.views.microDefect),
-          DIRECTIONAL: webpDataUrl(prepared.views.directional),
+          NORMALIZED: outputPlan.NORMALIZED.readUrl,
+          MICRO_DEFECT: outputPlan.MICRO_DEFECT.readUrl,
+          DIRECTIONAL: outputPlan.DIRECTIONAL.readUrl,
+        },
+        viewStorageKeys: {
+          NORMALIZED: outputPlan.NORMALIZED.storageKey,
+          MICRO_DEFECT: outputPlan.MICRO_DEFECT.storageKey,
+          DIRECTIONAL: outputPlan.DIRECTIONAL.storageKey,
         },
       };
       if (side === "FRONT") {
@@ -150,13 +161,15 @@ export function CaptureWorkspace({ token, cardProfile, onReady }: CaptureWorkspa
       sourceUrl: value.sourceUrl,
       sourceCorners: value.corners,
       rectifiedUrl: value.rectifiedUrl!,
+      rectifiedStorageKey: value.rectifiedStorageKey!,
       transform: value.transform!,
       views: value.views!,
+      viewStorageKeys: value.viewStorageKeys!,
       centeringQuad: value.centering!.innerQuad,
       centeringBorders: value.centering!.borders,
     });
     const bundle = {
-      sessionId: sessionId.current,
+      sessionId,
       cardProfile,
       cornerShape,
       front: toPreparedSide("FRONT", front),

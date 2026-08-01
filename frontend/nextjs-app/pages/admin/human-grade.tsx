@@ -1,57 +1,25 @@
 import Head from "next/head";
-import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import crownAsset from "../../assets/ai-grader-label-v1/ten-kings-crown-2026-monochrome-v1.png";
 import AppShell from "../../components/AppShell";
+import SharedLabelEditor from "../../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
+  EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
   NEW_HUMAN_GRADE_FORMULA_VERSION,
   calculateHumanGrade,
-  type HumanGradeCardType,
+  type HumanGradeLabelEditorValue,
   type HumanGradeLabelDto,
   type HumanGradeLabelSheetDto,
   type HumanGradeQueueDto,
 } from "../../lib/humanGrade";
 
-type HumanGradeForm = {
-  cardType: HumanGradeCardType;
-  playerName: string;
-  cardName: string;
-  year: string;
-  manufacturer: string;
-  productSet: string;
-  parallel: string;
-  insert: string;
-  cardNumber: string;
-  centeringGrade: string;
-  cornersGrade: string;
-  edgesGrade: string;
-  surfaceGrade: string;
-};
-
 const EMPTY_QUEUE: HumanGradeQueueDto = {
   sheets: [],
   totals: { cards: 0, readySheets: 0 },
-};
-
-const EMPTY_FORM: HumanGradeForm = {
-  cardType: "SPORTS",
-  playerName: "",
-  cardName: "",
-  year: "",
-  manufacturer: "",
-  productSet: "",
-  parallel: "",
-  insert: "",
-  cardNumber: "",
-  centeringGrade: "",
-  cornersGrade: "",
-  edgesGrade: "",
-  surfaceGrade: "",
 };
 
 function pageTitle(sheet: HumanGradeLabelSheetDto) {
@@ -71,7 +39,7 @@ export default function HumanGradePage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
   const [deletingLabelId, setDeletingLabelId] = useState<string | null>(null);
-  const [form, setForm] = useState<HumanGradeForm>(EMPTY_FORM);
+  const [form, setForm] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [message, setMessage] = useState("Loading human-grade label pages.");
   const [loadingQueue, setLoadingQueue] = useState(false);
@@ -174,7 +142,7 @@ export default function HumanGradePage() {
     };
   }, [selectedSheet, session?.token]);
 
-  const updateForm = (field: keyof HumanGradeForm, value: string) => {
+  const updateForm = (field: keyof HumanGradeLabelEditorValue, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
     setFieldErrors((current) => {
       if (!current[field]) return current;
@@ -186,7 +154,7 @@ export default function HumanGradePage() {
 
   const openNewCard = () => {
     setEditingLabelId(null);
-    setForm(EMPTY_FORM);
+    setForm(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
     setFieldErrors({});
     setFormOpen(true);
     setMessage("Enter only the information that should print on the label.");
@@ -195,7 +163,7 @@ export default function HumanGradePage() {
   const closeForm = () => {
     setFormOpen(false);
     setEditingLabelId(null);
-    setForm(EMPTY_FORM);
+    setForm(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
     setFieldErrors({});
   };
 
@@ -411,135 +379,20 @@ export default function HumanGradePage() {
         <p className="status-message" role="status">{message}</p>
 
         {formOpen ? (
-          <section className="composer-card">
-            <div className="composer-heading">
-              <div>
-                <p className="eyebrow">{editingLabelId ? "Edit Label" : "New Label"}</p>
-                <h2>Enter printed card information</h2>
-              </div>
-              <div className="type-switch" aria-label="Card type">
-                {(["SPORTS", "POKEMON"] as const).map((cardType) => (
-                  <button
-                    key={cardType}
-                    type="button"
-                    className={form.cardType === cardType ? "selected" : ""}
-                    onClick={() => updateForm("cardType", cardType)}
-                  >
-                    {cardType === "SPORTS" ? "Sports" : "Pokémon"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <form onSubmit={saveCard}>
-              <div className="label-composer" aria-label="Ten Kings human-grade label editor">
-                <div className="brand-third">
-                  <Image src={crownAsset} alt="" priority />
-                  <strong>TEN KINGS</strong>
-                  <span className="certificate-preview">{editingLabel?.certificateNumber ?? "TKH-AUTO"}</span>
-                </div>
-                <div className="identity-third">
-                  <label className="primary-field">
-                    <span>{form.cardType === "SPORTS" ? "Player Name" : "Card Name"}</span>
-                    <input
-                      value={form.cardType === "SPORTS" ? form.playerName : form.cardName}
-                      onChange={(event) =>
-                        updateForm(form.cardType === "SPORTS" ? "playerName" : "cardName", event.target.value)
-                      }
-                      placeholder={form.cardType === "SPORTS" ? "PLAYER NAME" : "CARD NAME"}
-                      autoFocus
-                    />
-                  </label>
-                  <div className="metadata-fields">
-                    <label>
-                      <span>Year</span>
-                      <input value={form.year} onChange={(event) => updateForm("year", event.target.value)} placeholder="YEAR" />
-                    </label>
-                    {form.cardType === "SPORTS" ? (
-                      <label>
-                        <span>Manufacturer</span>
-                        <input
-                          value={form.manufacturer}
-                          onChange={(event) => updateForm("manufacturer", event.target.value)}
-                          placeholder="MANUFACTURER"
-                        />
-                      </label>
-                    ) : null}
-                    <label>
-                      <span>{form.cardType === "SPORTS" ? "Product / Set" : "Set"}</span>
-                      <input
-                        value={form.productSet}
-                        onChange={(event) => updateForm("productSet", event.target.value)}
-                        placeholder={form.cardType === "SPORTS" ? "PRODUCT / SET" : "SET"}
-                      />
-                    </label>
-                  </div>
-                  <div className="descriptor-fields">
-                    <label>
-                      <span>Parallel</span>
-                      <input value={form.parallel} onChange={(event) => updateForm("parallel", event.target.value)} placeholder="PARALLEL" />
-                    </label>
-                    {form.cardType === "SPORTS" ? (
-                      <label>
-                        <span>Insert</span>
-                        <input value={form.insert} onChange={(event) => updateForm("insert", event.target.value)} placeholder="INSERT" />
-                      </label>
-                    ) : null}
-                    <label className="card-number-field">
-                      <span>Card Number</span>
-                      <input value={form.cardNumber} onChange={(event) => updateForm("cardNumber", event.target.value)} placeholder="#CARD" />
-                    </label>
-                  </div>
-                </div>
-                <div className="grade-third">
-                  <div className="compact-grade-summary" aria-label="Calculated grade and human subgrades">
-                    <output className="compact-final-grade" aria-label="Calculated Final Grade" aria-live="polite">
-                      {calculatedGrade ?? "—"}
-                    </output>
-                    <div className="compact-subgrade-grid">
-                      {([
-                        ["centeringGrade", "CTR", "Centering"],
-                        ["cornersGrade", "CRN", "Corners"],
-                        ["edgesGrade", "EDG", "Edges"],
-                        ["surfaceGrade", "SUR", "Surface"],
-                      ] as const).map(([field, code, label]) => (
-                        <label className="compact-subgrade-field" key={field}>
-                          <span className="compact-subgrade-code" aria-hidden="true">{code}</span>
-                          <span className="compact-subgrade-equals" aria-hidden="true">=</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="10"
-                            step="0.1"
-                            inputMode="decimal"
-                            required
-                            value={form[field]}
-                            onChange={(event) => updateForm(field, event.target.value)}
-                            placeholder="—"
-                            aria-label={label}
-                            style={{ width: `${Math.max(1.2, form[field].length * 0.62)}em` }}
-                          />
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {Object.keys(fieldErrors).length ? (
-                <div className="field-errors" role="alert">
-                  {Object.entries(fieldErrors).map(([field, error]) => <span key={field}>{error}</span>)}
-                </div>
-              ) : null}
-
-              <div className="form-actions">
-                <button type="button" className="cancel-button" onClick={closeForm} disabled={saving}>Cancel</button>
-                <button type="submit" className="save-button" disabled={saving}>
-                  {saving ? "Saving…" : editingLabelId ? "Save Changes" : "Save Graded Card"}
-                </button>
-              </div>
-            </form>
-          </section>
+          <SharedLabelEditor
+            mode="HUMAN"
+            value={form}
+            onChange={updateForm}
+            onSubmit={saveCard}
+            onCancel={closeForm}
+            certificateNumber={editingLabel?.certificateNumber ?? "TKH-AUTO"}
+            calculatedGrade={calculatedGrade}
+            fieldErrors={fieldErrors}
+            saving={saving}
+            editing={Boolean(editingLabelId)}
+            primaryActionLabel={editingLabelId ? "Save Changes" : "Save Graded Card"}
+            subgradeAriaLabel="Calculated grade and human subgrades"
+          />
         ) : null}
 
         <div className="queue-layout">
@@ -626,7 +479,7 @@ export default function HumanGradePage() {
           padding: 42px 28px 80px;
           color: #f4f6f4;
         }
-        .page-header, .composer-heading, .preview-heading, .list-heading {
+        .page-header, .preview-heading, .list-heading {
           display: flex;
           align-items: center;
           justify-content: space-between;
@@ -635,8 +488,8 @@ export default function HumanGradePage() {
         .page-header h1 { margin: 2px 0 8px; font-size: clamp(36px, 5vw, 64px); line-height: 1; letter-spacing: -0.03em; }
         .eyebrow { margin: 0; color: #73d998; font-size: 11px; font-weight: 800; letter-spacing: 0.22em; text-transform: uppercase; }
         .subtitle { margin: 0; color: #aab3ac; }
-        .header-actions, .form-actions, .print-actions, .type-switch { display: flex; align-items: center; gap: 10px; }
-        .header-actions a, .header-actions button, .form-actions button, .print-actions button, .print-actions a, .type-switch button, .summary-row button {
+        .header-actions, .print-actions { display: flex; align-items: center; gap: 10px; }
+        .header-actions a, .header-actions button, .print-actions button, .print-actions a, .summary-row button {
           border: 1px solid #38423b;
           border-radius: 10px;
           padding: 11px 15px;
@@ -645,7 +498,7 @@ export default function HumanGradePage() {
           font-weight: 800;
           text-decoration: none;
         }
-        .header-actions .add-card-button, .save-button, .print-actions button {
+        .header-actions .add-card-button, .print-actions button {
           border-color: #2c9e58;
           background: #32b764;
           color: #06130a;
@@ -670,131 +523,13 @@ export default function HumanGradePage() {
         .summary-row span { color: #879189; font-size: 11px; font-weight: 700; text-transform: uppercase; }
         .summary-row button { justify-self: end; align-self: center; min-height: auto; }
         .status-message { min-height: 24px; margin: 0 0 16px; color: #aeb6b0; font-size: 13px; }
-        .composer-card, .page-list, .page-preview {
+        .page-list, .page-preview {
           border: 1px solid #29322c;
           border-radius: 18px;
           background: #0c100d;
           box-shadow: 0 20px 60px rgba(0,0,0,0.22);
         }
-        .composer-card { margin-bottom: 24px; padding: 22px; }
-        .composer-heading { margin-bottom: 18px; }
-        .composer-heading h2, .list-heading h2, .preview-heading h2 { margin: 3px 0 0; font-size: 20px; }
-        .type-switch button { padding: 8px 12px; }
-        .type-switch button.selected { border-color: #67ce8d; background: #183c26; color: #8feaaf; }
-        .label-composer {
-          width: min(100%, 1092px);
-          aspect-ratio: 2.73 / 0.83;
-          display: grid;
-          grid-template-columns: 22.6% 45.1% 32.3%;
-          margin: 0 auto;
-          overflow: hidden;
-          border-radius: 9px;
-          background: rgba(255,255,255,0.98);
-          color: #0f0f0f;
-          box-shadow: inset 0 0 0 2px #b38a20, 0 12px 36px rgba(0,0,0,0.35);
-        }
-        .brand-third, .identity-third, .grade-third { min-width: 0; padding: 12px; }
-        .brand-third {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          border-right: 2px solid #0f0f0f;
-        }
-        .brand-third img { width: 60%; max-height: 50%; object-fit: contain; filter: brightness(0); }
-        .brand-third strong { margin-top: 3px; font-family: Arial, sans-serif; font-size: clamp(12px, 2vw, 32px); letter-spacing: 0.02em; white-space: nowrap; }
-        .brand-third .certificate-preview { margin-top: 8px; }
-        .identity-third {
-          display: grid;
-          grid-template-rows: 1.2fr 1fr 0.85fr;
-          gap: 7px;
-          border-right: 2px solid #0f0f0f;
-        }
-        .label-composer label { min-width: 0; display: grid; align-content: center; }
-        .label-composer label > span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-        .label-composer input {
-          width: 100%;
-          min-width: 0;
-          border: 0;
-          border-bottom: 1px solid #b9b9b9;
-          border-radius: 0;
-          outline: none;
-          background: transparent;
-          color: #0f0f0f;
-          text-align: center;
-          text-transform: uppercase;
-        }
-        .label-composer input:focus { border-color: #168a45; box-shadow: 0 2px 0 #168a45; }
-        .primary-field input, .grade-field output {
-          font-family: Impact, "Arial Narrow", sans-serif;
-          font-size: clamp(20px, 3.2vw, 46px);
-          line-height: 1;
-        }
-        .metadata-fields, .descriptor-fields { min-width: 0; display: flex; align-items: center; gap: 5px; }
-        .metadata-fields label, .descriptor-fields label { flex: 1 1 0; }
-        .metadata-fields input, .descriptor-fields input, .card-number-field input {
-          font-family: Arial, sans-serif;
-          font-size: clamp(8px, 1.2vw, 17px);
-        }
-        .grade-third { display: grid; place-items: center; }
-        .compact-grade-summary {
-          width: 94%;
-          display: grid;
-          justify-items: center;
-          color: #0f0f0f;
-        }
-        .compact-final-grade {
-          display: block;
-          font-family: Impact, "Arial Narrow", sans-serif;
-          font-size: clamp(44px, 5.4vw, 78px);
-          line-height: 0.9;
-          text-align: center;
-        }
-        .compact-subgrade-grid {
-          width: 100%;
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 2px 8px;
-          margin-top: 5px;
-        }
-        .label-composer .compact-subgrade-field {
-          display: grid !important;
-          grid-template-columns: auto auto auto;
-          align-items: baseline;
-          justify-content: center;
-          column-gap: 5px;
-        }
-        .label-composer .compact-subgrade-field > .compact-subgrade-code,
-        .label-composer .compact-subgrade-field > .compact-subgrade-equals {
-          position: static;
-          width: auto;
-          height: auto;
-          overflow: visible;
-          clip: auto;
-          color: #0f0f0f;
-          font-family: Arial, sans-serif;
-          font-size: clamp(13px, 1.3vw, 20px);
-          font-weight: 400;
-          white-space: nowrap;
-        }
-        .label-composer .compact-subgrade-field input {
-          min-width: 1.2em;
-          max-width: 1.9em;
-          padding: 0;
-          border: 0;
-          font-family: Impact, "Arial Narrow", sans-serif;
-          font-size: clamp(18px, 1.65vw, 25px);
-          line-height: 1;
-          font-weight: 400;
-          text-align: center;
-        }
-        .label-composer .compact-subgrade-field input::-webkit-inner-spin-button,
-        .label-composer .compact-subgrade-field input::-webkit-outer-spin-button { margin: 0; appearance: none; }
-        .label-composer .compact-subgrade-field input { appearance: textfield; }
-        .certificate-preview { text-align: center; font-family: Arial, sans-serif; font-size: clamp(9px, 1.4vw, 19px); letter-spacing: 0.04em; white-space: nowrap; }
-        .field-errors { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; color: #ff9f9f; font-size: 12px; }
-        .field-errors span { padding: 6px 9px; border-radius: 6px; background: #321515; }
-        .form-actions { justify-content: flex-end; margin-top: 18px; }
+        .list-heading h2, .preview-heading h2 { margin: 3px 0 0; font-size: 20px; }
         .queue-layout { display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 18px; }
         .page-list, .page-preview { min-height: 650px; padding: 18px; }
         .list-heading { padding: 0 4px 14px; border-bottom: 1px solid #252c27; }
@@ -855,27 +590,14 @@ export default function HumanGradePage() {
           .queue-layout { grid-template-columns: 1fr; }
           .page-list, .page-preview { min-height: auto; }
           .page-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-          .label-composer { min-height: 280px; }
         }
         @media (max-width: 680px) {
           .human-grade-page { padding: 28px 14px 60px; }
-          .page-header, .composer-heading, .preview-heading { align-items: flex-start; flex-direction: column; }
+          .page-header, .preview-heading { align-items: flex-start; flex-direction: column; }
           .header-actions, .print-actions { width: 100%; }
           .header-actions > *, .print-actions > * { flex: 1; text-align: center; }
           .summary-row { grid-template-columns: repeat(3, 1fr); }
           .summary-row > button { grid-column: 1 / -1; justify-self: stretch; }
-          .label-composer { aspect-ratio: auto; grid-template-columns: 1fr; min-height: 0; }
-          .brand-third { min-height: 130px; border-right: 0; border-bottom: 2px solid #0f0f0f; }
-          .brand-third img { width: 110px; }
-          .identity-third { min-height: 250px; border-right: 0; border-bottom: 2px solid #0f0f0f; }
-          .grade-third { min-height: 230px; }
-          .primary-field input, .grade-field output { font-size: 44px; }
-          .metadata-fields input, .descriptor-fields input, .card-number-field input { font-size: 14px; }
-          .certificate-preview { font-size: 15px; }
-          .compact-grade-summary { width: min(100%, 330px); }
-          .label-composer .compact-subgrade-field > .compact-subgrade-code,
-          .label-composer .compact-subgrade-field > .compact-subgrade-equals { font-size: 17px; }
-          .label-composer .compact-subgrade-field input { font-size: 23px; }
           .page-buttons, .slot-grid { grid-template-columns: 1fr; }
         }
       `}</style>

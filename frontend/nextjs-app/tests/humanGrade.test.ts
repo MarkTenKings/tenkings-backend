@@ -276,6 +276,7 @@ test("human-grade code stays outside AI Grader station and production routes", (
   const api = readFileSync(`${root}/pages/api/admin/human-grade/index.ts`, "utf8");
   const pdfApi = readFileSync(`${root}/pages/api/admin/human-grade/sheets/[sheetId].ts`, "utf8");
   const page = readFileSync(`${root}/pages/admin/human-grade.tsx`, "utf8");
+  const sharedEditor = readFileSync(`${root}/components/human-grade/SharedLabelEditor.tsx`, "utf8");
   const renderer = readFileSync(`${root}/lib/server/humanGradeLabelRenderer.ts`, "utf8");
   const patchBlock = api.slice(api.indexOf('req.method === "PATCH"'), api.indexOf('req.method === "DELETE"'));
   const deleteBlock = api.slice(api.indexOf('req.method === "DELETE"'));
@@ -299,11 +300,12 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /Saving an edit regenerates this page’s PDF with the updated label/);
   assert.match(page, /PDF rendered from its current saved labels/);
   assert.match(page, /cache: "no-store"/);
-  assert.match(page, /Calculated grade and human subgrades/);
-  assert.match(page, /compact-final-grade/);
-  assert.match(page, /compact-subgrade-grid/);
-  assert.match(page, /compact-subgrade-equals/);
-  assert.match(page, /\["centeringGrade", "CTR", "Centering"\]/);
+  assert.match(page, /SharedLabelEditor/);
+  assert.match(sharedEditor, /Calculated grade and human subgrades/);
+  assert.match(sharedEditor, /compact-final-grade/);
+  assert.match(sharedEditor, /compact-subgrade-grid/);
+  assert.match(sharedEditor, /compact-subgrade-equals/);
+  assert.match(sharedEditor, /\["centeringGrade", "CTR", "Centering"\]/);
   assert.doesNotMatch(page, /className="subgrade-fields"/);
   assert.doesNotMatch(page, /grade-hud|hud-final-grade|hud-subgrade/);
   assert.match(pdfApi, /renderHumanGradeLabelSheetPdf/);

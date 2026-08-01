@@ -19,6 +19,38 @@ export const NEW_HUMAN_GRADE_FORMULA_VERSION: HumanGradeFormulaVersion = "EQUAL_
 
 export type HumanGradeCardType = "SPORTS" | "POKEMON";
 
+export type HumanGradeLabelEditorValue = {
+  cardType: HumanGradeCardType;
+  playerName: string;
+  cardName: string;
+  year: string;
+  manufacturer: string;
+  productSet: string;
+  parallel: string;
+  insert: string;
+  cardNumber: string;
+  centeringGrade: string;
+  cornersGrade: string;
+  edgesGrade: string;
+  surfaceGrade: string;
+};
+
+export const EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE: HumanGradeLabelEditorValue = {
+  cardType: "SPORTS",
+  playerName: "",
+  cardName: "",
+  year: "",
+  manufacturer: "",
+  productSet: "",
+  parallel: "",
+  insert: "",
+  cardNumber: "",
+  centeringGrade: "",
+  cornersGrade: "",
+  edgesGrade: "",
+  surfaceGrade: "",
+};
+
 export type HumanGradeSubgrades = {
   centeringGrade: string | number;
   cornersGrade: string | number;

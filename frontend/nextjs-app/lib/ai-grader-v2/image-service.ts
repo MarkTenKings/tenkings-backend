@@ -10,22 +10,24 @@ export type SpeedsterGeometryResponse = {
 };
 
 export type SpeedsterPrepareResponse = {
-  rectified: string;
   width: number;
   height: number;
   transform: readonly number[];
   borders: SpeedsterQuad;
-  views: {
-    normalized: string;
-    microDefect: string;
-    directional: string;
-  };
 };
+
+type PreparedArtifact = "RECTIFIED" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
+type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
+export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
 
 async function postImageAction<T>(
   token: string,
   action: ImageAction,
-  body: { imageUrl: string; corners?: readonly SpeedsterPoint[] },
+  body: {
+    imageUrl: string;
+    corners?: readonly SpeedsterPoint[];
+    outputUploads?: Record<string, string>;
+  },
 ): Promise<T> {
   const response = await fetch(`/api/admin/ai-grader-v2/image/${action}`, {
     method: "POST",
@@ -43,8 +45,22 @@ export const speedsterImageService = {
   proposeGeometry(token: string, imageUrl: string) {
     return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { imageUrl });
   },
-  prepare(token: string, imageUrl: string, corners: SpeedsterQuad) {
-    return postImageAction<SpeedsterPrepareResponse>(token, "prepare", { imageUrl, corners });
+  prepare(
+    token: string,
+    imageUrl: string,
+    corners: SpeedsterQuad,
+    outputPlan: SpeedsterPreparedOutputPlan,
+  ) {
+    return postImageAction<SpeedsterPrepareResponse>(token, "prepare", {
+      imageUrl,
+      corners,
+      outputUploads: {
+        rectified: outputPlan.RECTIFIED.uploadUrl,
+        normalized: outputPlan.NORMALIZED.uploadUrl,
+        microDefect: outputPlan.MICRO_DEFECT.uploadUrl,
+        directional: outputPlan.DIRECTIONAL.uploadUrl,
+      },
+    });
   },
 };
 
@@ -60,6 +76,7 @@ export async function uploadSpeedsterOriginal(input: {
     body: JSON.stringify({
       sessionId: input.sessionId,
       side: input.side,
+      kind: "ORIGINAL",
       contentType: input.file.type,
     }),
   });
@@ -84,6 +101,22 @@ export async function uploadSpeedsterOriginal(input: {
   return { storageKey: plan.storageKey, readUrl: plan.readUrl };
 }
 
-export function webpDataUrl(imageBase64: string): string {
-  return `data:image/webp;base64,${imageBase64}`;
+export async function planSpeedsterPreparedOutputs(input: {
+  token: string;
+  sessionId: string;
+  side: SpeedsterCardSide;
+}): Promise<SpeedsterPreparedOutputPlan> {
+  const response = await fetch("/api/admin/ai-grader-v2/upload-plan", {
+    method: "POST",
+    headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ sessionId: input.sessionId, side: input.side, kind: "PREPARED" }),
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    outputs?: SpeedsterPreparedOutputPlan;
+    message?: string;
+  };
+  if (!response.ok || !payload.outputs) {
+    throw new Error(payload.message ?? "Speedster output storage could not be prepared.");
+  }
+  return payload.outputs;
 }

@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 
 import type {
   SpeedsterCardSide,
@@ -49,7 +50,10 @@ type DefectEvidenceViewerProps = {
   onSelectedDefectChange?: (defectId: string) => void;
   onRemoveDefect?: (defectId: string) => void;
   onDefectTypeChange?: (defectId: string, defectType: SpeedsterDefectType) => void;
+  onSmartMark?: (box: { x: number; y: number; width: number; height: number }) => void;
 };
+
+type ReviewMode = "INSPECT" | "MAGNIFY" | "SMART_MARK";
 
 function points(contour: readonly SpeedsterPoint[], scale = 1): string {
   return contour.map(({ x, y }) => `${x * scale},${y * scale}`).join(" ");
@@ -95,9 +99,14 @@ export function DefectEvidenceViewer({
   onSelectedDefectChange,
   onRemoveDefect,
   onDefectTypeChange,
+  onSmartMark,
 }: DefectEvidenceViewerProps) {
   const [localId, setLocalId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [mode, setMode] = useState<ReviewMode>("INSPECT");
+  const [pointer, setPointer] = useState<SpeedsterPoint | null>(null);
+  const [markStart, setMarkStart] = useState<SpeedsterPoint | null>(null);
+  const [markEnd, setMarkEnd] = useState<SpeedsterPoint | null>(null);
   const visibleDefects = defects.filter((defect) => defect.side === side);
   const selectedId =
     selectedDefectId === undefined ? localId ?? visibleDefects[0]?.id : selectedDefectId;
@@ -121,14 +130,81 @@ export function DefectEvidenceViewer({
     onSelectedDefectChange?.(id);
   };
 
+  const pointFromEvent = (event: ReactPointerEvent<HTMLDivElement>): SpeedsterPoint => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)),
+    };
+  };
+
+  const finishMark = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (mode !== "SMART_MARK" || !markStart) return;
+    const end = pointFromEvent(event);
+    const box = {
+      x: Math.min(markStart.x, end.x),
+      y: Math.min(markStart.y, end.y),
+      width: Math.abs(end.x - markStart.x),
+      height: Math.abs(end.y - markStart.y),
+    };
+    setMarkStart(null);
+    setMarkEnd(null);
+    if (box.width > 0.005 && box.height > 0.005) onSmartMark?.(box);
+    setMode("INSPECT");
+  };
+
+  const markBox = markStart && markEnd ? {
+    x: Math.min(markStart.x, markEnd.x),
+    y: Math.min(markStart.y, markEnd.y),
+    width: Math.abs(markEnd.x - markStart.x),
+    height: Math.abs(markEnd.y - markStart.y),
+  } : null;
+
+  const lensStyle = pointer ? {
+    "--lens-x": `${pointer.x * 100}%`,
+    "--lens-y": `${pointer.y * 100}%`,
+    backgroundImage: `url(${masterImageUrl})`,
+  } as CSSProperties : undefined;
+
   return (
     <section className={styles.viewer} aria-label={`${side.toLowerCase()} defect evidence`}>
       <div className={styles.masterPanel}>
         <header className={styles.header}>
           <div><span>MASTER CARD MAP</span><h2>{side === "FRONT" ? "Front" : "Back"} evidence</h2></div>
-          <b>{visibleDefects.length.toString().padStart(2, "0")}</b>
+          <div className={styles.headerTools}>
+            <button
+              type="button"
+              className={mode === "MAGNIFY" ? styles.toolActive : undefined}
+              onClick={() => setMode(mode === "MAGNIFY" ? "INSPECT" : "MAGNIFY")}
+            >Magnify</button>
+            {!readOnly ? (
+              <button
+                type="button"
+                className={mode === "SMART_MARK" ? styles.toolActive : undefined}
+                onClick={() => setMode(mode === "SMART_MARK" ? "INSPECT" : "SMART_MARK")}
+              >Smart-Mark</button>
+            ) : null}
+            <b>{visibleDefects.length.toString().padStart(2, "0")}</b>
+          </div>
         </header>
-        <div className={styles.cardStage}>
+        <div
+          className={`${styles.cardStage} ${mode === "SMART_MARK" ? styles.marking : ""}`}
+          onPointerMove={(event) => {
+            const next = pointFromEvent(event);
+            setPointer(next);
+            if (mode === "SMART_MARK" && markStart) setMarkEnd(next);
+          }}
+          onPointerLeave={() => setPointer(null)}
+          onPointerDown={(event) => {
+            if (mode !== "SMART_MARK") return;
+            const next = pointFromEvent(event);
+            setMarkStart(next);
+            setMarkEnd(next);
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerUp={finishMark}
+          onPointerCancel={() => { setMarkStart(null); setMarkEnd(null); }}
+        >
           <Image
             className={styles.masterImage}
             src={masterImageUrl}
@@ -166,7 +242,17 @@ export function DefectEvidenceViewer({
                 </g>
               );
             })}
+            {markBox ? (
+              <rect
+                className={styles.smartMarkBox}
+                x={markBox.x * 1000}
+                y={markBox.y * 1000}
+                width={markBox.width * 1000}
+                height={markBox.height * 1000}
+              />
+            ) : null}
           </svg>
+          {mode === "MAGNIFY" && pointer ? <div className={styles.lens} style={lensStyle} /> : null}
         </div>
       </div>
 
@@ -202,7 +288,10 @@ export function DefectEvidenceViewer({
             ) : null}
           </>
         ) : (
-          <div className={styles.empty}><span>DEFECT EVIDENCE</span><p>Select a marker to inspect its measurements.</p></div>
+          <div className={styles.empty}>
+            <span>{mode === "SMART_MARK" ? "SMART-MARK" : "DEFECT EVIDENCE"}</span>
+            <p>{mode === "SMART_MARK" ? "Drag a box around the missed defect." : "Select a marker to inspect its measurements."}</p>
+          </div>
         )}
       </aside>
     </section>
