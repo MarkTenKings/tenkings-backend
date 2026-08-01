@@ -29748,3 +29748,15 @@ By enabling Rip It Live, I confirm:
 
 - The failed-start Pod was stopped before rebuilding so idle GPU billing would not continue. Added only `einops==0.8.2`, the currently published runtime package required by SAM 3's unconditional rotary-position import.
 - Focused Speedster backend tests passed `15/15`. No detector logic, prompt, API, measurement, scoring, frontend, database, migration, or Production behavior changed.
+
+### Second live-start observation and planned import audit
+
+- Pushed and verified corrected private image `98a30765` at OCI digest `sha256:1ee129ea0a16120848cad62bfb08f4140136ff13ee4c1833770947fe3afa0d77`, updated template `779b2q8wng`, and created replacement RTX 4090 Pod `subsequent_blue_albatross` (`6s43s9nx2iuvov`) at the same authorized `$0.69/hour`.
+- The corrected image passed the prior `einops` import, then official SAM 3's tracker import chain stopped on another package omitted from its base dependency list: `ModuleNotFoundError: No module named 'pycocotools'`. No checkpoint inference, detector request, application deployment, database action, or Production change occurred.
+- Plan: stop the replacement Pod immediately, add the exact missing package, and execute the official SAM 3 builder/processor import inside the exact Linux image locally before another paid restart. Any further mandatory import revealed by that direct audit will be added only if the sole SAM 3 runtime requires it.
+
+### Complete local SAM 3 import-audit result
+
+- The replacement Pod was stopped before the audit; both failed Pods now show `$0.00/hour`. Ran the exact Linux/amd64 container locally and reproduced `pycocotools` without GPU billing.
+- Installing `pycocotools==2.0.11` exposed one final unconditional official import, `psutil`; installing `psutil==7.2.2` then completed direct imports of both `build_sam3_image_model` and `Sam3Processor` successfully (`SAM3_IMPORT_OK`).
+- Added those two exact packages as one small post-requirements Docker layer so the proven 3 GB PyTorch/CUDA layer remains cached and does not need to be rebuilt or re-uploaded again. No optional SAM 3 training/notebook package, alternate detector, or fallback was added.
