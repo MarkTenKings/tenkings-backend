@@ -1,0 +1,237 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { prisma, type Prisma } from "@tenkings/database";
+import { z } from "zod";
+import {
+  HUMAN_GRADE_SHEET_CAPACITY,
+  formatHumanGrade,
+  formatHumanGradeCertificateNumber,
+} from "../../../../../../lib/humanGrade";
+import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
+import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
+
+const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
+const score = z.number().finite().min(1).max(10);
+const balance = z.tuple([z.number().finite(), z.number().finite()]);
+const condition = z.object({ weightedDamagePercent: z.number().finite().min(0), score }).passthrough();
+const sideGrade = z
+  .object({
+    centering: z.object({ leftRightBalance: balance, topBottomBalance: balance, score }).passthrough(),
+    corners: condition,
+    edges: condition,
+    surface: condition,
+  })
+  .passthrough();
+const gradeReportSchema = z
+  .object({
+    front: sideGrade,
+    back: sideGrade,
+    subgrades: z.object({ centering: score, corners: score, edges: score, surface: score }).passthrough(),
+    overall: z.object({ rawGrade: score, displayGrade: score }).passthrough(),
+  })
+  .passthrough();
+const completeSchema = z
+  .object({
+    reviewedDefects: z.array(z.unknown()),
+    gradeReport: gradeReportSchema,
+  })
+  .strict();
+const optionalText = z.string().trim().max(120).optional().nullable();
+const identitySchema = z
+  .object({
+    playerName: optionalText,
+    cardName: optionalText,
+    year: z.string().trim().min(1).max(24),
+    manufacturer: optionalText,
+    productSet: z.string().trim().min(1).max(120),
+    parallel: optionalText,
+    insert: optionalText,
+    cardNumber: optionalText,
+  })
+  .passthrough();
+
+type CompletionSession = {
+  id: string;
+  cardProfile: string;
+  workflowState: string;
+  publicReportSlug: string | null;
+  identity: Prisma.JsonValue;
+};
+type CompletionInput = z.infer<typeof completeSchema> & {
+  sessionId: string;
+  createdByUserId: string;
+};
+type CompletionResult = {
+  outcome: "CREATED" | "EXISTING";
+  label: {
+    id: string;
+    sheetId: string;
+    slot: number;
+    certificateNumber: string;
+  };
+  publicReportSlug: string;
+};
+type Dependencies = {
+  requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
+  completeSession: (input: CompletionInput) => Promise<CompletionResult>;
+};
+
+const optional = (value: string | null | undefined) => value?.trim() || null;
+
+export function buildSpeedsterLabelData(session: CompletionSession, report: z.infer<typeof gradeReportSchema>) {
+  const parsedIdentity = identitySchema.safeParse(session.identity);
+  if (!parsedIdentity.success || (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON")) {
+    throw new HttpError(409, "Speedster label identity is incomplete");
+  }
+  const identity = parsedIdentity.data;
+  if (session.cardProfile === "SPORTS" && (!optional(identity.playerName) || !optional(identity.manufacturer))) {
+    throw new HttpError(409, "Speedster Sports label identity is incomplete");
+  }
+  if (session.cardProfile === "POKEMON" && !optional(identity.cardName)) {
+    throw new HttpError(409, "Speedster Pokemon label identity is incomplete");
+  }
+
+  return {
+    source: "SPEEDSTER" as const,
+    sourceSessionId: session.id,
+    gradingFormulaVersion: "EQUAL_25" as const,
+    cardType: session.cardProfile as "SPORTS" | "POKEMON",
+    playerName: session.cardProfile === "SPORTS" ? optional(identity.playerName) : null,
+    cardName: session.cardProfile === "POKEMON" ? optional(identity.cardName) : null,
+    year: identity.year.trim(),
+    manufacturer: session.cardProfile === "SPORTS" ? optional(identity.manufacturer) : null,
+    productSet: identity.productSet.trim(),
+    parallel: optional(identity.parallel),
+    insert: session.cardProfile === "SPORTS" ? optional(identity.insert) : null,
+    cardNumber: optional(identity.cardNumber),
+    centeringGrade: formatHumanGrade(report.subgrades.centering),
+    cornersGrade: formatHumanGrade(report.subgrades.corners),
+    edgesGrade: formatHumanGrade(report.subgrades.edges),
+    surfaceGrade: formatHumanGrade(report.subgrades.surface),
+    grade: formatHumanGrade(report.overall.displayGrade),
+  };
+}
+
+export const speedsterReportSlug = (sessionId: string) => `speedster-${sessionId.toLowerCase()}`;
+
+const labelResult = (label: {
+  id: string;
+  sheetId: string;
+  slot: number;
+  certificateSequence: number;
+  certificateNumber: string | null;
+}) => ({
+  id: label.id,
+  sheetId: label.sheetId,
+  slot: label.slot,
+  certificateNumber: label.certificateNumber ?? formatHumanGradeCertificateNumber(label.certificateSequence),
+});
+
+async function completeSession(input: CompletionInput): Promise<CompletionResult> {
+  return prisma.$transaction(async (tx) => {
+    const session = await tx.aiGraderV2Session.findUnique({
+      where: { id: input.sessionId },
+      select: { id: true, cardProfile: true, workflowState: true, publicReportSlug: true, identity: true },
+    });
+    if (!session) throw new HttpError(404, "Speedster session not found");
+
+    if (session.workflowState === "COMPLETED") {
+      const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
+      if (!existing || !session.publicReportSlug) {
+        throw new HttpError(409, "Completed Speedster session is missing its label identity");
+      }
+      return {
+        outcome: "EXISTING",
+        label: labelResult(existing),
+        publicReportSlug: session.publicReportSlug,
+      };
+    }
+
+    const labelData = buildSpeedsterLabelData(session, input.gradeReport);
+    const publicReportSlug = session.publicReportSlug ?? speedsterReportSlug(session.id);
+    const claimed = await tx.aiGraderV2Session.updateMany({
+      where: { id: session.id, workflowState: { not: "COMPLETED" } },
+      data: {
+        workflowState: "COMPLETED",
+        publicReportSlug,
+        reviewedDefects: input.reviewedDefects as Prisma.InputJsonValue,
+        gradeReport: input.gradeReport as Prisma.InputJsonValue,
+      },
+    });
+    if (claimed.count === 0) {
+      const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
+      if (!existing) throw new HttpError(409, "Speedster completion is already in progress");
+      return { outcome: "EXISTING", label: labelResult(existing), publicReportSlug };
+    }
+
+    let sheet = await tx.humanGradeLabelSheet.findFirst({
+      where: { status: "OPEN" },
+      orderBy: { sheetNumber: "asc" },
+      include: { labels: { select: { slot: true }, orderBy: { slot: "asc" } } },
+    });
+    if (sheet && sheet.labels.length >= HUMAN_GRADE_SHEET_CAPACITY) {
+      await tx.humanGradeLabelSheet.update({
+        where: { id: sheet.id },
+        data: { status: "READY", readyAt: sheet.readyAt ?? new Date() },
+      });
+      sheet = null;
+    }
+    if (!sheet) {
+      sheet = await tx.humanGradeLabelSheet.create({
+        data: {},
+        include: { labels: { select: { slot: true }, orderBy: { slot: "asc" } } },
+      });
+    }
+
+    const slot = sheet.labels.length + 1;
+    const created = await tx.humanGradeLabel.create({
+      data: { sheetId: sheet.id, slot, createdByUserId: input.createdByUserId, ...labelData },
+    });
+    const certificateNumber = formatHumanGradeCertificateNumber(created.certificateSequence);
+    const label = await tx.humanGradeLabel.update({
+      where: { id: created.id },
+      data: { certificateNumber },
+    });
+    if (slot === HUMAN_GRADE_SHEET_CAPACITY) {
+      await tx.humanGradeLabelSheet.update({
+        where: { id: sheet.id },
+        data: { status: "READY", readyAt: new Date() },
+      });
+    }
+    return { outcome: "CREATED", label: labelResult(label), publicReportSlug };
+  });
+}
+
+const dependencies: Dependencies = { requireAdminSession, completeSession };
+
+const sessionIdFrom = (req: NextApiRequest) => {
+  const value = Array.isArray(req.query.sessionId) ? req.query.sessionId[0] : req.query.sessionId;
+  return typeof value === "string" && SESSION_ID.test(value) ? value : null;
+};
+
+export function createAiGraderV2CompleteLabelHandler(deps: Dependencies = dependencies) {
+  return async function handler(req: NextApiRequest, res: NextApiResponse) {
+    if (req.method !== "POST") {
+      res.setHeader("Allow", "POST");
+      return res.status(405).json({ message: "Method not allowed" });
+    }
+    try {
+      const admin = await deps.requireAdminSession(req);
+      const sessionId = sessionIdFrom(req);
+      if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
+      const parsed = completeSchema.safeParse(req.body ?? {});
+      if (!parsed.success) return res.status(400).json({ message: "Invalid completed Speedster grade" });
+      const result = await deps.completeSession({
+        sessionId,
+        createdByUserId: admin.user.id,
+        reviewedDefects: parsed.data.reviewedDefects,
+        gradeReport: parsed.data.gradeReport,
+      });
+      return res.status(result.outcome === "CREATED" ? 201 : 200).json(result);
+    } catch (error) {
+      const response = toErrorResponse(error);
+      return res.status(response.status).json({ message: response.message });
+    }
+  };
+}
+
+export default createAiGraderV2CompleteLabelHandler();

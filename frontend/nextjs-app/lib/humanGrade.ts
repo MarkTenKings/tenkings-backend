@@ -61,6 +61,7 @@ export type HumanGradeSubgrades = {
 export type HumanGradeLabelSnapshot = {
   id?: string;
   certificateNumber: string;
+  source?: "HUMAN" | "SPEEDSTER";
   gradingFormulaVersion: HumanGradeFormulaVersion;
   cardType: HumanGradeCardType;
   playerName?: string | null;
@@ -202,9 +203,12 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
   if (!/^TKH-\d{6,}$/.test(certificateNumber)) {
     throw new Error("Human grade certificate number is invalid.");
   }
-  const calculated = calculateHumanGrade(snapshot, snapshot.gradingFormulaVersion);
-  if (formatHumanGrade(snapshot.grade) !== calculated.labelGrade) {
-    throw new Error(`Human grade does not match its ${snapshot.gradingFormulaVersion} weighted subgrades.`);
+  const grade = formatHumanGrade(snapshot.grade);
+  if ((snapshot.source ?? "HUMAN") === "HUMAN") {
+    const calculated = calculateHumanGrade(snapshot, snapshot.gradingFormulaVersion);
+    if (grade !== calculated.labelGrade) {
+      throw new Error(`Human grade does not match its ${snapshot.gradingFormulaVersion} weighted subgrades.`);
+    }
   }
   const subgrades = [
     { label: "CENTERING", grade: formatHumanGrade(snapshot.centeringGrade) },
@@ -232,7 +236,7 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
       ...(descriptor ? { descriptor } : {}),
       certificateNumber,
       subgrades,
-      grade: calculated.labelGrade,
+      grade,
     };
   }
 
@@ -249,6 +253,6 @@ export function buildHumanGradeLabelContent(snapshot: HumanGradeLabelSnapshot): 
     ...(descriptor ? { descriptor } : {}),
     certificateNumber,
     subgrades,
-    grade: calculated.labelGrade,
+    grade,
   };
 }
