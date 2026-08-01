@@ -3471,6 +3471,11 @@ enum HumanGradeLabelSheetStatus {
   READY
 }
 
+enum HumanGradeFormulaVersion {
+  LEGACY_30_25_25_20
+  EQUAL_25
+}
+
 model HumanGradeLabelSheet {
   id          String                     @id @default(cuid())
   sheetNumber Int                        @unique @default(autoincrement())
@@ -3499,6 +3504,7 @@ model HumanGradeLabel {
   parallel            String?
   insert              String?
   cardNumber          String?
+  gradingFormulaVersion HumanGradeFormulaVersion @default(EQUAL_25)
   centeringGrade      Decimal              @db.Decimal(3, 1)
   cornersGrade        Decimal              @db.Decimal(3, 1)
   edgesGrade          Decimal              @db.Decimal(3, 1)
