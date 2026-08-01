@@ -29630,3 +29630,10 @@ By enabling Rip It Live, I confirm:
 - Speedster implementation follows one direct path with minimal code and processing, no detector fallbacks or ensembles, no unapproved workflow gates, and no scope beyond the approved Master Plan.
 - The active Human Grade equal-weighting branch remains untouched. Shared label-editor extraction is deferred until that agent's finished result is inspected.
 - No deploy, migration, database/data mutation, destructive operation, production access, model execution, helper/hardware action, commit, push, merge, or restart occurred.
+
+## 2026-07-31 - Planned Human Grade formula integration into Speedster worktree
+
+- Mark confirmed the dedicated Human Grade agent completed the equal-25% subgrade task.
+- Reviewed PR `#252` at `bcabb6da764551f310d1159dbf3ef910987d5253`: it is mergeable, all GitHub/Vercel checks pass, new labels explicitly use `EQUAL_25`, existing labels remain versioned under `LEGACY_30_25_25_20`, and the migration contains no row-level data rewrite.
+- Plan: merge the finished Human Grade branch into the isolated Speedster branch, preserve both session logs, regenerate the local Prisma client only for verification, run the focused Human Grade and Speedster tests, and then extract the shared identity/label composer.
+- No production deploy, production migration, data mutation, V1 edit, helper/hardware action, or destructive operation is planned in this integration step.
