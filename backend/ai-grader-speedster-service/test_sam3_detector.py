@@ -38,11 +38,16 @@ class FakeMaskProcessor:
 class FakeTensor:
     def __init__(self, value):
         self.value = value
+        self.float_calls = 0
 
     def detach(self):
         return self
 
     def cpu(self):
+        return self
+
+    def float(self):
+        self.float_calls += 1
         return self
 
     def numpy(self):
@@ -53,6 +58,7 @@ class FakeOfficialImageProcessor:
     def __init__(self):
         self.images = []
         self.prompts = []
+        self.scores = FakeTensor(np.array([0.84], dtype=np.float16))
 
     def set_image(self, image):
         self.images.append(image)
@@ -65,7 +71,7 @@ class FakeOfficialImageProcessor:
         return {
             **state,
             "masks": FakeTensor(mask),
-            "scores": FakeTensor(np.array([0.84], dtype=np.float32)),
+            "scores": self.scores,
         }
 
 
@@ -237,6 +243,7 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertTrue(
             all(candidate["mask"].shape == (12, 8) for candidate in candidates)
         )
+        self.assertEqual(fake.scores.float_calls, len(DEFECT_PROMPTS))
 
 
 if __name__ == "__main__":

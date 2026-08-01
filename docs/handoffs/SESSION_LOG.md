@@ -29767,3 +29767,10 @@ By enabling Rip It Live, I confirm:
 - The private image pulled, the gated `facebook/sam3/sam3.pt` checkpoint loaded, and the public health endpoint returned HTTP 200 with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`. The first live `/detect` smoke request reached the service but returned HTTP 500 after model startup.
 - Added one direct detector-error response so the next smoke request returns the sole SAM 3 runtime mismatch instead of an opaque body; focused backend tests pass `16/16`. This adds no alternate detector, retry, fallback, ensemble, gate, or Production behavior.
 - Plan: rebuild and push the tiny application layer, stop the currently healthy-but-inference-failing Pod before restarting so duplicate GPU billing cannot occur, update the same private template, create exactly one replacement RTX 4090 Pod on the previously authorized path, read the returned error, then correct only the proven SAM 3 integration mismatch and rerun `/health` plus `/detect`.
+
+### Live inference root cause and one-line SAM 3 correction
+
+- Container evidence identified the sole real SAM 3 failure at `sam3_detector.py` score serialization: official inference returned BF16 scores, and NumPy rejected direct BF16 conversion with `TypeError: Got unsupported ScalarType BFloat16`.
+- Added the one required conversion to standard float before moving scores to CPU/NumPy. The focused backend suite passes `16/16`, including an assertion that every official-prompt score crosses this conversion.
+- The separate OpenCV empty-buffer traceback came from the first smoke command referencing a temporary image path that no longer existed; it was diagnostic-input error, not a detector/runtime defect, so no fallback or extra image-validation path was added.
+- The existing Pod still returned HTTP 200 health while the code fix was prepared. Mark was asked to stop it before the corrected restart so idle GPU billing does not continue; the next planned paid action remains one replacement RTX 4090 Pod on the already authorized `$0.69/hour` path after the corrected image and template are ready.

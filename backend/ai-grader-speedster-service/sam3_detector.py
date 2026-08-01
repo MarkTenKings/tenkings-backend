@@ -82,7 +82,9 @@ class Sam3ImageProcessor:
                 for defect_type, text_prompt in prompts:
                     output = processor.set_text_prompt(prompt=text_prompt, state=state)
                     masks = output["masks"].detach().cpu().numpy()
-                    scores = output["scores"].detach().cpu().numpy().reshape(-1)
+                    scores = (
+                        output["scores"].detach().float().cpu().numpy().reshape(-1)
+                    )
                     if (
                         masks.ndim != 4
                         or masks.shape[1] != 1
