@@ -17,6 +17,7 @@ test("centering converts opposite border measurements into exact percentages", (
   const [left, right] = calculateCenteringBalance(2.4, 2);
   assert.ok(Math.abs(left - 54.54545454545454) < 1e-12);
   assert.ok(Math.abs(right - 45.45454545454545) < 1e-12);
+  assert.deepEqual(calculateCenteringBalance(0, 0), [50, 50]);
 });
 
 test("centering uses the worse axis and linearly interpolates published boundaries", () => {

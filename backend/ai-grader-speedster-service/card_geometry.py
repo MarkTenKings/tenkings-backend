@@ -1,0 +1,353 @@
+"""Lean deterministic geometry and localized defect proposals for Speedster."""
+
+from typing import Optional
+
+import cv2
+import numpy as np
+
+from defect_math import (
+    CARD_HEIGHT_MM,
+    CARD_WIDTH_MM,
+    GRID_HEIGHT,
+    GRID_WIDTH,
+    material_mask,
+)
+
+
+EXPECTED_ASPECT = CARD_WIDTH_MM / CARD_HEIGHT_MM
+WORKING_LONG_SIDE_PX = 1000
+PX_PER_MM = GRID_WIDTH / CARD_WIDTH_MM
+DEFAULT_BORDER_MM = 5.0
+MAX_BORDER_SEARCH_MM = 12.0
+MIN_COMPONENT_AREA_FRACTION = 0.30
+MAX_COMPONENT_AREA_FRACTION = 0.97
+MIN_RECTANGULAR_FILL = 0.72
+MAX_ASPECT_ERROR = 0.06
+MIN_DEFECT_AREA_MM2 = 0.02
+MAX_CANDIDATE_AREA_MM2 = 8.0
+MAX_CANDIDATE_BOX_AREA_MM2 = 20.0
+MAX_CANDIDATE_DIMENSION_MM = 10.0
+
+
+def order_corners(points: np.ndarray) -> np.ndarray:
+    """Order four visual points TL, TR, BR, BL."""
+    points = np.asarray(points, dtype=np.float32)
+    coordinate_sum = points.sum(axis=1)
+    coordinate_difference = np.diff(points, axis=1).reshape(-1)
+    return np.array(
+        [
+            points[np.argmin(coordinate_sum)],
+            points[np.argmin(coordinate_difference)],
+            points[np.argmax(coordinate_sum)],
+            points[np.argmax(coordinate_difference)],
+        ],
+        dtype=np.float32,
+    )
+
+
+def _working_image(image: np.ndarray) -> tuple[np.ndarray, float]:
+    scale = min(1.0, WORKING_LONG_SIDE_PX / max(image.shape[:2]))
+    if scale == 1.0:
+        return image, scale
+    return cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA), scale
+
+
+def _material_boundary(image: np.ndarray) -> np.ndarray:
+    """Return the card/background ownership boundary from frame-border color."""
+    height, width = image.shape[:2]
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB).astype(np.float32)
+    band = max(3, round(min(height, width) * 0.025))
+    samples = np.concatenate(
+        (
+            lab[:band].reshape(-1, 3),
+            lab[-band:].reshape(-1, 3),
+            lab[:, :band].reshape(-1, 3),
+            lab[:, -band:].reshape(-1, 3),
+        )
+    )
+    background = np.median(samples, axis=0)
+    difference = np.linalg.norm(lab - background, axis=2)
+    difference_u8 = np.uint8(np.clip(difference, 0, 255))
+    otsu, _ = cv2.threshold(
+        difference_u8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    material = np.uint8(difference > max(12.0, float(otsu))) * 255
+    kernel_size = max(5, round(min(height, width) * 0.012))
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
+    )
+    material = cv2.morphologyEx(material, cv2.MORPH_CLOSE, kernel, iterations=2)
+    material = cv2.morphologyEx(
+        material,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)),
+    )
+    return cv2.morphologyEx(
+        material, cv2.MORPH_GRADIENT, np.ones((3, 3), dtype=np.uint8)
+    )
+
+
+def _candidate_contours(image: np.ndarray) -> list[np.ndarray]:
+    gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    median = float(np.median(gray))
+    low = max(12, int(0.66 * median))
+    high = max(low + 20, min(255, int(1.33 * median)))
+    visual_edges = cv2.Canny(gray, low, high)
+    combined = cv2.bitwise_or(visual_edges, _material_boundary(image))
+    combined = cv2.dilate(combined, np.ones((3, 3), dtype=np.uint8))
+    contours, _ = cv2.findContours(
+        combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
+    )
+    return contours
+
+
+def _side_line_corners(contour: np.ndarray, rectangle) -> np.ndarray:
+    """Fit the straight middle of every side, then intersect virtual corners."""
+    box = order_corners(cv2.boxPoints(rectangle))
+    points = contour.reshape(-1, 2).astype(np.float32)
+    lines = []
+    for index in range(4):
+        first, second = box[index], box[(index + 1) % 4]
+        side = second - first
+        length = float(np.linalg.norm(side))
+        if length <= 0:
+            return box
+        unit = side / length
+        normal = np.array([-unit[1], unit[0]], dtype=np.float32)
+        relative = points - first
+        along = relative @ unit
+        distance = np.abs(relative @ normal)
+        selected = points[
+            (along > 0.15 * length)
+            & (along < 0.85 * length)
+            & (distance < 0.03 * length + 5.0)
+        ]
+        if len(selected) < 10:
+            selected = points[
+                (along > 0) & (along < length) & (distance < 0.05 * length + 8.0)
+            ]
+        if len(selected) < 2:
+            return box
+        vx, vy, x0, y0 = cv2.fitLine(
+            selected, cv2.DIST_HUBER, 0, 0.01, 0.01
+        ).flatten()
+        lines.append((float(x0), float(y0), float(vx), float(vy)))
+
+    corners = []
+    for index in range(4):
+        x1, y1, vx1, vy1 = lines[(index - 1) % 4]
+        x2, y2, vx2, vy2 = lines[index]
+        matrix = np.array([[vx1, -vx2], [vy1, -vy2]], dtype=np.float32)
+        if abs(float(np.linalg.det(matrix))) < 1e-5:
+            return box
+        offset = np.array([x2 - x1, y2 - y1], dtype=np.float32)
+        distance = np.linalg.solve(matrix, offset)[0]
+        corners.append((x1 + distance * vx1, y1 + distance * vy1))
+    return order_corners(np.array(corners, dtype=np.float32))
+
+
+def _portraitize(corners: np.ndarray) -> np.ndarray:
+    if np.linalg.norm(corners[1] - corners[0]) > np.linalg.norm(
+        corners[3] - corners[0]
+    ):
+        return np.roll(corners, -1, axis=0)
+    return corners
+
+
+def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
+    """Return the physical card quad or None; never substitute the photo frame."""
+    working, scale = _working_image(image)
+    frame_area = working.shape[0] * working.shape[1]
+    best = None
+    for contour in _candidate_contours(working):
+        area = float(cv2.contourArea(contour))
+        if not (
+            MIN_COMPONENT_AREA_FRACTION * frame_area
+            < area
+            < MAX_COMPONENT_AREA_FRACTION * frame_area
+        ):
+            continue
+        rectangle = cv2.minAreaRect(contour)
+        width, height = rectangle[1]
+        if min(width, height) <= 0:
+            continue
+        aspect = min(width, height) / max(width, height)
+        aspect_error = abs(aspect - EXPECTED_ASPECT)
+        fill = area / (width * height)
+        if aspect_error > MAX_ASPECT_ERROR or fill < MIN_RECTANGULAR_FILL:
+            continue
+        score = (
+            area
+            * (1.0 - aspect_error / MAX_ASPECT_ERROR)
+            * min(1.0, fill / 0.93)
+        )
+        if best is None or score > best[0]:
+            best = (score, contour, rectangle)
+    if best is None:
+        return None
+    corners = _portraitize(_side_line_corners(best[1], best[2]))
+    return corners / scale if scale < 1.0 else corners
+
+
+def warp_to_card_map(
+    image: np.ndarray, corners: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    destination = np.array(
+        [
+            [0, 0],
+            [GRID_WIDTH - 1, 0],
+            [GRID_WIDTH - 1, GRID_HEIGHT - 1],
+            [0, GRID_HEIGHT - 1],
+        ],
+        dtype=np.float32,
+    )
+    transform = cv2.getPerspectiveTransform(
+        np.asarray(corners, dtype=np.float32), destination
+    )
+    rectified = cv2.warpPerspective(image, transform, (GRID_WIDTH, GRID_HEIGHT))
+    return rectified, transform
+
+
+def _top_border_offset(
+    gray: np.ndarray,
+    search_mm: float = MAX_BORDER_SEARCH_MM,
+    minimum_coverage: float = 0.50,
+) -> Optional[float]:
+    search_pixels = min(gray.shape[0], round(search_mm * PX_PER_MM))
+    side_margin = max(1, round(gray.shape[1] * 0.04))
+    band = gray[:search_pixels, side_margin:-side_margin].astype(np.float32)
+    gradient = np.abs(cv2.Sobel(band, cv2.CV_32F, 0, 1, ksize=3))
+    threshold = max(20.0, 0.5 * float(np.percentile(gradient, 90)))
+    coverage = (gradient > threshold).mean(axis=1)
+    score = gradient.mean(axis=1) * coverage
+    score[coverage < minimum_coverage] = 0.0
+    score[: max(1, round(1.0 * PX_PER_MM))] = 0.0
+    index = int(np.argmax(score))
+    return float(index / PX_PER_MM) if score[index] > 0 else None
+
+
+def find_printed_border_offsets(image: np.ndarray) -> dict[str, Optional[float]]:
+    """Use one continuous-line projection, rotated once for every side."""
+    gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0)
+    offsets = {}
+    for side in ("top", "right", "bottom", "left"):
+        offsets[side] = _top_border_offset(gray)
+        gray = np.ascontiguousarray(np.rot90(gray))
+    return offsets
+
+
+def printed_border_quad(
+    image: np.ndarray,
+) -> tuple[np.ndarray, list[str], dict[str, Optional[float]]]:
+    offsets = find_printed_border_offsets(image)
+    resolved = {
+        side: value if value is not None else DEFAULT_BORDER_MM
+        for side, value in offsets.items()
+    }
+    left = resolved["left"] * PX_PER_MM
+    right = GRID_WIDTH - 1 - resolved["right"] * PX_PER_MM
+    top = resolved["top"] * PX_PER_MM
+    bottom = GRID_HEIGHT - 1 - resolved["bottom"] * PX_PER_MM
+    quad = np.array(
+        [[left, top], [right, top], [right, bottom], [left, bottom]],
+        dtype=np.float32,
+    )
+    detected = [side for side, value in offsets.items() if value is not None]
+    return quad, detected, offsets
+
+
+def _candidate_type(
+    view_id: str,
+    box: tuple[int, int, int, int],
+    bright_strength: float,
+    dark_strength: float,
+) -> str:
+    x, y, width, height = box
+    center_x_mm = (x + width / 2) / PX_PER_MM
+    center_y_mm = (y + height / 2) / PX_PER_MM
+    outer_x = min(center_x_mm, CARD_WIDTH_MM - center_x_mm)
+    outer_y = min(center_y_mm, CARD_HEIGHT_MM - center_y_mm)
+    edge_or_corner = (outer_x < 5 and outer_y < 5) or min(outer_x, outer_y) < 2
+    if edge_or_corner:
+        return "VISIBLE_WHITENING" if bright_strength >= dark_strength else "FRAYING"
+    if view_id.endswith("DIRECTIONAL") or max(width / height, height / width) >= 2.5:
+        return "LIGHT_SCRATCH_SCUFF"
+    return "FAINT_COLOR_VARIATION"
+
+
+def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = first
+    bx, by, bw, bh = second
+    left, top = max(ax, bx), max(ay, by)
+    right, bottom = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    overlap = max(0, right - left) * max(0, bottom - top)
+    if overlap == 0:
+        return 0.0
+    return overlap / float(aw * ah + bw * bh - overlap)
+
+
+def defect_candidates(
+    image: np.ndarray,
+    corner_shape: str,
+    view_id: str,
+    maximum: int = 8,
+) -> list[dict]:
+    """Return only small, localized anomaly boxes for geometric SAM prompts."""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
+    bright = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
+    dark = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+    heat = cv2.max(bright, dark)
+    otsu, _ = cv2.threshold(heat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    percentile = float(np.percentile(heat, 97.0))
+    threshold = max(12.0, float(otsu), percentile)
+    binary = np.uint8(heat >= threshold)
+    binary &= material_mask(corner_shape)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
+    proposals = []
+    padding = max(2, round(0.4 * PX_PER_MM))
+    for label in range(1, count):
+        x, y, width, height, area = (int(value) for value in stats[label])
+        area_mm2 = area / (PX_PER_MM**2)
+        width_mm, height_mm = width / PX_PER_MM, height / PX_PER_MM
+        box_area_mm2 = width_mm * height_mm
+        if not (MIN_DEFECT_AREA_MM2 <= area_mm2 <= MAX_CANDIDATE_AREA_MM2):
+            continue
+        if (
+            max(width_mm, height_mm) > MAX_CANDIDATE_DIMENSION_MM
+            or box_area_mm2 > MAX_CANDIDATE_BOX_AREA_MM2
+        ):
+            continue
+        left, top = max(0, x - padding), max(0, y - padding)
+        right = min(GRID_WIDTH, x + width + padding)
+        bottom = min(GRID_HEIGHT, y + height + padding)
+        box = (left, top, right - left, bottom - top)
+        component = labels[y : y + height, x : x + width] == label
+        bright_strength = float(bright[y : y + height, x : x + width][component].mean())
+        dark_strength = float(dark[y : y + height, x : x + width][component].mean())
+        proposals.append(
+            {
+                "box": box,
+                "coreBox": (x, y, width, height),
+                "coreMask": component,
+                "defectType": _candidate_type(
+                    view_id, box, bright_strength, dark_strength
+                ),
+                "score": float(
+                    heat[y : y + height, x : x + width][component].mean()
+                    * np.sqrt(area)
+                ),
+            }
+        )
+
+    proposals.sort(key=lambda candidate: candidate["score"], reverse=True)
+    selected = []
+    for proposal in proposals:
+        if any(_box_iou(proposal["box"], item["box"]) >= 0.20 for item in selected):
+            continue
+        selected.append(proposal)
+        if len(selected) == maximum:
+            break
+    return selected

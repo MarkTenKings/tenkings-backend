@@ -9,6 +9,12 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from card_geometry import (
+    detect_card_quad,
+    printed_border_quad,
+    warp_to_card_map,
+)
+from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
 
 
@@ -20,8 +26,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-TARGET_WIDTH = 1270
-TARGET_HEIGHT = 1778
+TARGET_WIDTH = GRID_WIDTH
+TARGET_HEIGHT = GRID_HEIGHT
 
 
 class ImageInput(BaseModel):
@@ -60,6 +66,7 @@ class PrepareResponse(BaseModel):
     height: int
     transform: List[float]
     borders: List[Point]
+    detectedBorders: List[str]
 
 
 class CanonicalView(ImageInput):
@@ -102,46 +109,17 @@ def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndar
     return image
 
 
-def order_corners(points: np.ndarray) -> np.ndarray:
-    ordered = np.zeros((4, 2), dtype=np.float32)
-    coordinate_sum = points.sum(axis=1)
-    coordinate_difference = np.diff(points, axis=1).reshape(-1)
-    ordered[0] = points[np.argmin(coordinate_sum)]
-    ordered[1] = points[np.argmin(coordinate_difference)]
-    ordered[2] = points[np.argmax(coordinate_sum)]
-    ordered[3] = points[np.argmax(coordinate_difference)]
-    return ordered
-
-
-def find_card_corners(image: np.ndarray) -> Optional[np.ndarray]:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blurred, 40, 130)
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:12]:
-        perimeter = cv2.arcLength(contour, True)
-        polygon = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-        if len(polygon) == 4:
-            return order_corners(polygon.reshape(4, 2).astype(np.float32))
-    return None
-
-
 def normalized_points(points: np.ndarray, width: int, height: int) -> List[Point]:
     return [Point(x=float(x / width), y=float(y / height)) for x, y in points]
 
 
 def rectify(image: np.ndarray, corners: List[Point]):
     height, width = image.shape[:2]
-    source = order_corners(
-        np.array([[point.x * width, point.y * height] for point in corners], dtype=np.float32)
-    )
-    destination = np.array(
-        [[0, 0], [TARGET_WIDTH - 1, 0], [TARGET_WIDTH - 1, TARGET_HEIGHT - 1], [0, TARGET_HEIGHT - 1]],
+    source = np.array(
+        [[point.x * width, point.y * height] for point in corners],
         dtype=np.float32,
     )
-    transform = cv2.getPerspectiveTransform(source, destination)
-    return cv2.warpPerspective(image, transform, (TARGET_WIDTH, TARGET_HEIGHT)), transform
+    return warp_to_card_map(image, source)
 
 
 def reveal_views(image: np.ndarray):
@@ -160,24 +138,6 @@ def reveal_views(image: np.ndarray):
     y_response = cv2.convertScaleAbs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))
     directional = cv2.max(x_response, y_response)
     return normalized, micro, directional
-
-
-def find_design_borders(image: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    height, width = gray.shape
-    x_profile = np.abs(cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3))[height // 20 : -height // 20].mean(axis=0)
-    y_profile = np.abs(cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3))[:, width // 20 : -width // 20].mean(axis=1)
-
-    left_range = slice(max(1, width // 100), width * 35 // 100)
-    right_range = slice(width * 65 // 100, width - max(1, width // 100))
-    top_range = slice(max(1, height // 100), height * 35 // 100)
-    bottom_range = slice(height * 65 // 100, height - max(1, height // 100))
-    left = left_range.start + int(np.argmax(x_profile[left_range]))
-    right = right_range.start + int(np.argmax(x_profile[right_range]))
-    top = top_range.start + int(np.argmax(y_profile[top_range]))
-    bottom = bottom_range.start + int(np.argmax(y_profile[bottom_range]))
-    return np.array([[left, top], [right, top], [right, bottom], [left, bottom]], dtype=np.float32)
 
 
 def encode_webp(image: np.ndarray) -> bytes:
@@ -210,7 +170,7 @@ def geometry(request: ImageInput):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     height, width = image.shape[:2]
-    corners = find_card_corners(image)
+    corners = detect_card_quad(image)
     return {
         "width": width,
         "height": height,
@@ -226,7 +186,7 @@ def prepare_image(request: PrepareRequest):
         image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
         normalized, micro, directional = reveal_views(rectified)
-        borders = find_design_borders(rectified)
+        borders, detected_borders, _ = printed_border_quad(rectified)
         uploads = (
             (request.outputUploads.rectified, rectified),
             (request.outputUploads.normalized, normalized),
@@ -243,6 +203,7 @@ def prepare_image(request: PrepareRequest):
         "height": TARGET_HEIGHT,
         "transform": transform.reshape(-1).tolist(),
         "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
+        "detectedBorders": detected_borders,
     }
 
 

@@ -8,6 +8,11 @@ import type {
   SpeedsterPoint,
   SpeedsterQuad,
 } from "../../lib/ai-grader-v2/contracts";
+import {
+  gradientMapFromImage,
+  snapSpeedsterPoint,
+  type SpeedsterGradientMap,
+} from "../../lib/ai-grader-v2/gradient-snap";
 
 import styles from "./GeometryAssist.module.css";
 
@@ -17,6 +22,7 @@ type GeometryAssistProps = {
   imageUrl: string;
   side: SpeedsterCardSide;
   proposedQuad: SpeedsterQuad;
+  automaticPlacement: boolean;
   cornerShape: SpeedsterCornerShape;
   onQuadChange: (quad: SpeedsterQuad) => void;
   onCornerShapeChange: (shape: SpeedsterCornerShape) => void;
@@ -24,6 +30,12 @@ type GeometryAssistProps = {
 };
 
 const CORNER_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
+const CORNER_DIRECTIONS = [
+  { inwardX: 1, inwardY: 1 },
+  { inwardX: -1, inwardY: 1 },
+  { inwardX: -1, inwardY: -1 },
+  { inwardX: 1, inwardY: -1 },
+] as const;
 
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -33,26 +45,65 @@ function overlayPoint(point: SpeedsterPoint): string {
   return `${point.x * 1000},${point.y * 1000}`;
 }
 
+function between(first: SpeedsterPoint, second: SpeedsterPoint, fraction: number): SpeedsterPoint {
+  return {
+    x: first.x + (second.x - first.x) * fraction,
+    y: first.y + (second.y - first.y) * fraction,
+  };
+}
+
+function svgPoint(point: SpeedsterPoint): string {
+  return `${point.x * 1000} ${point.y * 1000}`;
+}
+
+function roundedQuadPath(quad: SpeedsterQuad): string {
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  const horizontalRadius = 3.18 / 63.5;
+  const verticalRadius = 3.18 / 88.9;
+  const topLeftTop = between(topLeft, topRight, horizontalRadius);
+  const topRightTop = between(topRight, topLeft, horizontalRadius);
+  const topRightRight = between(topRight, bottomRight, verticalRadius);
+  const bottomRightRight = between(bottomRight, topRight, verticalRadius);
+  const bottomRightBottom = between(bottomRight, bottomLeft, horizontalRadius);
+  const bottomLeftBottom = between(bottomLeft, bottomRight, horizontalRadius);
+  const bottomLeftLeft = between(bottomLeft, topLeft, verticalRadius);
+  const topLeftLeft = between(topLeft, bottomLeft, verticalRadius);
+  return [
+    `M ${svgPoint(topLeftTop)}`,
+    `L ${svgPoint(topRightTop)} Q ${svgPoint(topRight)} ${svgPoint(topRightRight)}`,
+    `L ${svgPoint(bottomRightRight)} Q ${svgPoint(bottomRight)} ${svgPoint(bottomRightBottom)}`,
+    `L ${svgPoint(bottomLeftBottom)} Q ${svgPoint(bottomLeft)} ${svgPoint(bottomLeftLeft)}`,
+    `L ${svgPoint(topLeftLeft)} Q ${svgPoint(topLeft)} ${svgPoint(topLeftTop)} Z`,
+  ].join(" ");
+}
+
 export function GeometryAssist({
   imageUrl,
   side,
   proposedQuad,
+  automaticPlacement,
   cornerShape,
   onQuadChange,
   onCornerShapeChange,
   onContinue,
 }: GeometryAssistProps) {
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
+  const gradientMap = useRef<SpeedsterGradientMap | null>(null);
 
   const moveHandle = (event: ReactPointerEvent<SVGSVGElement>) => {
     const active = activeHandle.current;
     if (!active || active.pointerId !== event.pointerId) return;
 
     const bounds = event.currentTarget.getBoundingClientRect();
-    const point = {
+    const draggedPoint = {
       x: clampUnit((event.clientX - bounds.left) / bounds.width),
       y: clampUnit((event.clientY - bounds.top) / bounds.height),
     };
+    const point = snapSpeedsterPoint(gradientMap.current, draggedPoint, {
+      ...CORNER_DIRECTIONS[active.index],
+      sampleStart: cornerShape === "ROUNDED_3_18_MM" ? 30 : 8,
+      sampleLength: 125,
+    });
     const next = [...proposedQuad] as [
       SpeedsterPoint,
       SpeedsterPoint,
@@ -78,13 +129,24 @@ export function GeometryAssist({
           <span className={styles.eyebrow}>{side} · GEOMETRY</span>
           <h2>Set the four corners.</h2>
         </div>
-        <p>Drag only if the gold markers need adjustment.</p>
+        <p>{automaticPlacement
+          ? "Physical card found. Drag only if a gold marker needs adjustment."
+          : "Set the four physical corners. Each drag snaps to the nearby card edge."}</p>
       </header>
 
       <div className={styles.workspace}>
         <div className={styles.imageFrame}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img className={styles.image} src={imageUrl} alt={`${side.toLowerCase()} trading card`} draggable={false} />
+          <img
+            className={styles.image}
+            src={imageUrl}
+            crossOrigin="anonymous"
+            alt={`${side.toLowerCase()} trading card`}
+            draggable={false}
+            onLoad={(event) => {
+              gradientMap.current = gradientMapFromImage(event.currentTarget);
+            }}
+          />
           <svg
             className={styles.overlay}
             viewBox="0 0 1000 1000"
@@ -94,11 +156,15 @@ export function GeometryAssist({
             onPointerUp={endDrag}
             onPointerCancel={endDrag}
           >
-            <polygon
-              className={styles.quad}
-              points={proposedQuad.map(overlayPoint).join(" ")}
-              vectorEffect="non-scaling-stroke"
-            />
+            {cornerShape === "ROUNDED_3_18_MM" ? (
+              <path className={styles.quad} d={roundedQuadPath(proposedQuad)} vectorEffect="non-scaling-stroke" />
+            ) : (
+              <polygon
+                className={styles.quad}
+                points={proposedQuad.map(overlayPoint).join(" ")}
+                vectorEffect="non-scaling-stroke"
+              />
+            )}
             {proposedQuad.map((point, index) => {
               const x = point.x * 1000;
               const y = point.y * 1000;

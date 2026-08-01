@@ -62,6 +62,7 @@ export function calculateCenteringBalance(
   secondBorderMm: number,
 ): readonly [number, number] {
   const totalMm = firstBorderMm + secondBorderMm;
+  if (totalMm <= Number.EPSILON) return [50, 50];
   return [
     normalizeMeasurement((firstBorderMm / totalMm) * 100),
     normalizeMeasurement((secondBorderMm / totalMm) * 100),

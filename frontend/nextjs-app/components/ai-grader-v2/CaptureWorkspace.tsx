@@ -48,21 +48,34 @@ type SideState = {
   originalStorageKey: string;
   sourceUrl: string;
   corners: SpeedsterQuad;
+  automaticGeometry: boolean;
   rectifiedUrl?: string;
   rectifiedStorageKey?: string;
   transform?: readonly number[];
   views?: SpeedsterPreparedSide["views"];
   viewStorageKeys?: SpeedsterPreparedSide["viewStorageKeys"];
   proposedCentering?: SpeedsterQuad;
+  detectedBorders?: readonly ("top" | "right" | "bottom" | "left")[];
   centering?: CenteringAssistResult;
 };
 
-const FULL_IMAGE_QUAD: SpeedsterQuad = [
-  { x: 0, y: 0 },
-  { x: 1, y: 0 },
-  { x: 1, y: 1 },
-  { x: 0, y: 1 },
-];
+const CARD_ASPECT = 63.5 / 88.9;
+
+function manualStartQuad(width: number, height: number): SpeedsterQuad {
+  const frameAspect = width / height;
+  const widthFraction = frameAspect > CARD_ASPECT ? 0.9 * CARD_ASPECT / frameAspect : 0.9;
+  const heightFraction = frameAspect > CARD_ASPECT ? 0.9 : 0.9 * frameAspect / CARD_ASPECT;
+  const left = (1 - widthFraction) / 2;
+  const top = (1 - heightFraction) / 2;
+  const right = 1 - left;
+  const bottom = 1 - top;
+  return [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+}
 
 export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
   const [frontFile, setFrontFile] = useState<File | null>(null);
@@ -90,15 +103,20 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
       setFront({
         originalStorageKey: uploadedFront.storageKey,
         sourceUrl: uploadedFront.readUrl,
-        corners: frontGeometry.corners ?? FULL_IMAGE_QUAD,
+        corners: frontGeometry.corners ?? manualStartQuad(frontGeometry.width, frontGeometry.height),
+        automaticGeometry: frontGeometry.corners !== null,
       });
       setBack({
         originalStorageKey: uploadedBack.storageKey,
         sourceUrl: uploadedBack.readUrl,
-        corners: backGeometry.corners ?? FULL_IMAGE_QUAD,
+        corners: backGeometry.corners ?? manualStartQuad(backGeometry.width, backGeometry.height),
+        automaticGeometry: backGeometry.corners !== null,
       });
       setStage("FRONT_GEOMETRY");
-      setMessage("Move only the geometry points that need correction.");
+      const automaticCount = Number(frontGeometry.corners !== null) + Number(backGeometry.corners !== null);
+      setMessage(automaticCount === 2
+        ? "Both physical cards found. Move only points that need correction."
+        : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
     } finally {
@@ -120,6 +138,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
         transform: prepared.transform,
         proposedCentering: prepared.borders,
+        detectedBorders: prepared.detectedBorders,
         views: {
           NORMALIZED: outputPlan.NORMALIZED.readUrl,
           MICRO_DEFECT: outputPlan.MICRO_DEFECT.readUrl,
@@ -209,6 +228,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
           imageUrl={activeGeometry.sourceUrl}
           side={activeSide}
           proposedQuad={activeGeometry.corners}
+          automaticPlacement={activeGeometry.automaticGeometry}
           cornerShape={cornerShape}
           onQuadChange={(corners) => activeSide === "FRONT"
             ? setFront((current) => current ? { ...current, corners } : current)
@@ -224,6 +244,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
           imageUrl={activeCentering.rectifiedUrl}
           side={activeSide}
           initialInnerQuad={activeCentering.proposedCentering}
+          detectedBorders={activeCentering.detectedBorders ?? []}
           onContinue={confirmCentering}
         />
       ) : null}

@@ -14,6 +14,10 @@ import {
   isCanonicalPoint,
   unitPointToCanonicalPoint,
 } from "../lib/ai-grader-v2/geometry";
+import {
+  buildSpeedsterGradientMap,
+  snapSpeedsterPoint,
+} from "../lib/ai-grader-v2/gradient-snap";
 
 test("Pokemon and standard Sports profiles share the approved physical grid", () => {
   const expected = { widthMm: 63.5, heightMm: 88.9 };
@@ -88,4 +92,36 @@ test("canonical, unit, and display coordinates round-trip for the UI", () => {
     () => canonicalPointToDisplayPoint(canonical, "POKEMON", 0, 889),
     /positive finite numbers/,
   );
+});
+
+test("human geometry drag snaps each axis to the nearby physical card edge", () => {
+  const width = 80;
+  const height = 80;
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const value = x >= 20 && x <= 60 && y >= 10 && y <= 70 ? 255 : 0;
+      const index = (y * width + x) * 4;
+      rgba[index] = value;
+      rgba[index + 1] = value;
+      rgba[index + 2] = value;
+      rgba[index + 3] = 255;
+    }
+  }
+  const map = buildSpeedsterGradientMap({ width, height, data: rgba } as ImageData);
+  const snapped = snapSpeedsterPoint(
+    map,
+    { x: 18 / 79, y: 12 / 79 },
+    {
+      inwardX: 1,
+      inwardY: 1,
+      radius: 5,
+      sampleStart: 2,
+      sampleLength: 30,
+      minimumStrength: 0.05,
+    },
+  );
+
+  assert.ok(Math.abs(snapped.x * 79 - 20) <= 1);
+  assert.ok(Math.abs(snapped.y * 79 - 10) <= 1);
 });

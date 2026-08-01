@@ -21,6 +21,7 @@ export type SpeedsterPrepareResponse = {
   height: number;
   transform: readonly number[];
   borders: SpeedsterQuad;
+  detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
 };
 
 type PreparedArtifact = "RECTIFIED" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";

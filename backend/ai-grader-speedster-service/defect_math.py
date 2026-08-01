@@ -45,7 +45,7 @@ def _rasterize(contour: List[Dict[str, float]]) -> np.ndarray:
     return mask
 
 
-def _material_mask(corner_shape: str) -> np.ndarray:
+def material_mask(corner_shape: str) -> np.ndarray:
     if corner_shape == "SQUARE":
         return np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
     if corner_shape != "ROUNDED_3_18_MM":
@@ -146,7 +146,7 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
             raise ValueError(f"Unknown defect type: {defect_type}")
         prepared.append({**proposal, "mask": _rasterize(proposal["canonicalContour"])})
 
-    material = _material_mask(corner_shape)
+    material = material_mask(corner_shape)
     zones = _zone_masks(material)
     pixel_area_mm2 = CARD_WIDTH_MM * CARD_HEIGHT_MM / (GRID_WIDTH * GRID_HEIGHT)
     results = []
