@@ -29689,3 +29689,10 @@ By enabling Rip It Live, I confirm:
 - Added one isolated authenticated V2 completion endpoint. Its single database transaction stores reviewed defects, the full grade report, stable report slug, and `COMPLETED` workflow state while creating exactly one label in the existing 16-slot queue. A retry returns the uniquely linked label without consuming another slot; drafts consume none.
 - Full focused Speedster/Human Grade/public-report/session/label tests passed `38/38`. Focused ESLint, Prisma validation/client generation, `git diff --check`, and filtered TypeScript diagnostics for every changed file passed. The optimized Production Next.js build also passed with existing repository warnings only. Repository-wide TypeScript continues to report only pre-existing unrelated V1/test diagnostics.
 - No Production migration, deployment, database/data mutation, label creation, V1/Dell edit, helper/hardware action, or destructive operation occurred.
+
+## 2026-07-31 - SAM 3.1 confirmed as the sole Speedster detector
+
+- Mark made the final detector decision: SAM 3.1 is the one active Speedster detector. YOLO is shelved completely and removed from the current Master Plan, build order, learning plan, and technology stack. No YOLO code or dependency existed, so no runtime removal was required.
+- The official Meta implementation currently requires Python 3.12+, PyTorch 2.7+, and a CUDA 12.6+ GPU. The SAM 3.1 checkpoint is the gated `facebook/sam3.1` `sam3.1_multiplex.pt` artifact; production execution will require accepted model access and a Hugging Face token on the GPU service.
+- Planned implementation is one direct SAM 3.1 path inside the existing Speedster image service: scan each canonical evidence view independently, return masks and scores, fuse and measure them once on the physical card grid, then send one canonical defect map to human review. There will be no secondary detector, detector fallback, ensemble, or voting path.
+- No deployment, model/checkpoint download, production credential change, migration, database/data mutation, V1/Dell edit, Human Grade change, or helper/hardware action occurred.

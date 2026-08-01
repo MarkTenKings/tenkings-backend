@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
 Date: 2026-07-31
-Status: Core capture, geometry, scoring, persistence, review UI, public report, and atomic 16-label finalization implemented locally; one-detector provider selection and production rollout pending
+Status: Core workflow implemented locally; SAM 3.1 is the confirmed sole detector and its integration is active; production rollout pending
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -143,9 +143,8 @@ They are generated and labeled automatically. Keep only views that measurably im
 | Private object storage | Original evidence, generated views, masks, and report assets | Required |
 | OpenCV | Corner proposal, rectification, canonical grid, zones, filters, measurements | Required |
 | Python and PyTorch detector service | Replaceable execution boundary for vision models | Required capability |
-| SAM 3.1 | Bootstrap primary mask generator while reviewed Ten Kings masks are accumulated | Initial active detector |
+| SAM 3.1 | Sole production detector and precise mask generator across every canonical evidence view | Required and active |
 | DINOv3 embeddings | Similar-example retrieval across the single learning bank | Required for the moat; backbone replaceable |
-| YOLO26 segmentation | Trainable specialist that detects, classifies, and precisely masks Ten Kings defects at high speed | Integrate the adapter and training-ready data path from the beginning; activate only after trained, then replace SAM rather than run beside it |
 
 Vision LLMs, PatchCore, detector ensembles, and automated fallback detectors are not part of the Speedster architecture.
 
@@ -174,15 +173,13 @@ After review completion:
 
 This is database/index learning, not unsafe per-card neural-weight updates.
 
-### Controlled model learning
+### Controlled detector learning
 
-- Save reviewed masks in a YOLO26-ready segmentation format from the first completed card.
-- Train or retrain YOLO26 periodically, not after every card.
-- Test every candidate against an immutable golden set.
-- Evaluate candidates offline, outside the Speedster grading workflow.
-- Activate YOLO26 only when recall, false positives, mask accuracy, measurement error, review time, and latency beat the active SAM-based detector.
-- When promoted, YOLO26 replaces SAM as the one active detector; there is no runtime fallback between them.
-- Version prior models, thresholds, memory-bank snapshots, and grading rules for historical reproducibility. Changing the active detector is always one explicit offline-approved replacement, never an automatic fallback.
+- Save every reviewed mask and patch from the first completed card.
+- Keep SAM 3.1 as the one detector; improve the prompts and retrieved Ten Kings examples from reviewed evidence.
+- Measure recall, false positives, mask accuracy, measurement error, review time, and latency on the Ten Kings golden set.
+- Version the SAM checkpoint, prompts, thresholds, memory-bank snapshots, and grading rules for historical reproducibility.
+- Do not update neural weights after each card. Immediate improvement comes from the reviewed retrieval bank.
 
 ## 10. Ten Kings Scoring Blueprint
 
@@ -291,7 +288,7 @@ Existing admin authentication/access control, non-destructive handling of produc
 ### Parallel lanes
 
 1. **Scoring lane** — Implement the deterministic Blueprint engine and exhaustive known-answer tests in isolated V2 library/test files.
-2. **Vision lane** — Implement canonical-grid geometry, the one-detector contract, SAM bootstrap service, reviewed-mask export, DINO retrieval, and inactive YOLO training/evaluation tooling in the isolated V2 vision service.
+2. **Vision lane** — Implement canonical-grid geometry, the one-detector contract, SAM 3.1 service, reviewed-mask persistence, and DINO retrieval in the isolated V2 vision service.
 3. **Experience lane** — Implement the defect review/evidence component and its read-only public-report mode against fixed contracts in isolated V2 UI files.
 4. **Primary integration lane** — Extract the shared label editor, build the Speedster shell/upload/data flow, connect all lanes, perform end-to-end verification, and deploy.
 
@@ -309,15 +306,14 @@ This strategy uses parallel agents for speed without creating competing architec
 6. Complete automatic corner proposal, human geometry assist, rectification, and canonical zones.
 7. Complete centering geometry and deterministic centering scoring.
 8. Implement the one-active-detector contract using test masks first.
-9. Integrate SAM 3.1 as the bootstrap active detector and DINOv3 retrieval.
-10. Add the YOLO26 adapter, reviewed-mask export, offline training command, evaluation command, and versioned model package from the beginning; do not add it to the live path until trained.
-11. Implement independent per-view scanning and canonical mask fusion/deduplication.
-12. Complete the master-map review UI, magnifier, evidence close-up, type pills, Remove, and Smart-Mark.
-13. Complete measurements, shared weighted-area engine, sub-grades, and overall grade.
-14. Build the interactive report from the same read-only evidence component.
-15. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades.
-16. Persist the structured learning bank, version snapshots, golden-set metrics, and offline model-promotion controls.
-17. Deploy the completed V2 admin-only route, run end-to-end cards, then give Mark the production test URL.
+9. Integrate SAM 3.1 as the sole active detector and DINOv3 retrieval.
+10. Implement independent per-view scanning and canonical mask fusion/deduplication.
+11. Complete the master-map review UI, magnifier, evidence close-up, type pills, Remove, and Smart-Mark.
+12. Complete measurements, shared weighted-area engine, sub-grades, and overall grade.
+13. Build the interactive report from the same read-only evidence component.
+14. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades.
+15. Persist the structured learning bank, version snapshots, and golden-set metrics.
+16. Deploy the completed V2 admin-only route, run end-to-end cards, then give Mark the production test URL.
 
 ## 15. Production Definition of Done
 
