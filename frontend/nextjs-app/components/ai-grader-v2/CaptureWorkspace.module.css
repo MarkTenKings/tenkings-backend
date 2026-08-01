@@ -1,0 +1,61 @@
+.workspace {
+  display: grid;
+  gap: 18px;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  color: #d8af55;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .22em;
+}
+
+.progress p {
+  margin: 0;
+  color: #8f938d;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.photos {
+  display: grid;
+  gap: 18px;
+}
+
+.photos > button,
+.ready {
+  min-height: 58px;
+  padding: 0 24px;
+  border: 1px solid #d8af55;
+  border-radius: 999px;
+  background: #d8af55;
+  color: #080806;
+  font: inherit;
+  font-weight: 850;
+}
+
+.photos > button {
+  justify-self: end;
+  min-width: 220px;
+  cursor: pointer;
+}
+
+.photos > button:disabled {
+  cursor: default;
+  opacity: .35;
+}
+
+.ready {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 720px) {
+  .progress { align-items: flex-start; flex-direction: column; }
+  .photos > button { justify-self: stretch; }
+}
