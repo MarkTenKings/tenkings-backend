@@ -29780,3 +29780,9 @@ By enabling Rip It Live, I confirm:
 - Pushed corrected private image `40bb1fe4` at OCI manifest-list digest `sha256:539d8332f7ee1003f25da3ec546c0c9233c5c414509e2fed8abe257c3dc04651`, updated private template `ten-kings-speedster-sam3` (`779b2q8wng`), and stopped the prior inference-failing Pod so it remained at `$0.00/hour` before replacement.
 - Created exactly one replacement Pod, `disturbed_teal_cicada` (`ms3c0gbpervnf2`), on one RTX 4090 at Mark's authorized `$0.69/hour` rate. The corrected container pulled all 9 layers, loaded the gated pinned SAM 3 model, and returned HTTP 200 from `/health` with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`.
 - The live `/detect` smoke test completed successfully on the RTX 4090 in `3.96` seconds and returned one measured `CHIPPING_EXPOSED_STOCK` finding in the `SURFACE` zone. This verifies the BF16 correction through the real model-inference path; no alternate detector, retry, fallback, ensemble, gate, database action, migration, or web application deployment occurred.
+
+### Planned Speedster Production web rollout
+
+- Pull request `#253` contains the isolated Speedster release and is mergeable; its Vercel Preview passed while the repository CI build remained in progress at plan time.
+- Plan: add Production `AI_GRADER_SPEEDSTER_SERVICE_URL=https://ms3c0gbpervnf2-8080.proxy.runpod.net` and temporarily set Production `RUN_DB_MIGRATIONS=true`, merge only after required checks pass, let the documented Vercel build apply the three additive migrations in repository order, verify the serving commit and Speedster routes, then reset `RUN_DB_MIGRATIONS` so later deployments return to migration-skipping behavior.
+- This rollout does not change or stop the V1/Dell system, alter existing Human Grade records or label-page layout, add a second detector or fallback path, or perform a destructive database operation.
