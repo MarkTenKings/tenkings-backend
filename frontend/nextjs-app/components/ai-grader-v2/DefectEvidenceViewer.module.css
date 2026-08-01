@@ -87,7 +87,7 @@
   overflow: hidden;
   background: #030403;
   border: 1px solid #f3d58b88;
-  border-radius: 16px;
+  border-radius: 0;
   box-shadow: 0 28px 64px #0008;
 }
 

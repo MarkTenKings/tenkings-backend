@@ -9,32 +9,20 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from card_geometry import defect_candidates
 from defect_math import GRID_HEIGHT, GRID_WIDTH, measure_defects
 
 
 SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
 SAM3_CHECKPOINT = "sam3.pt"
-DETECTOR_VERSION = f"sam3-image@{SAM3_REPOSITORY_COMMIT}"
-
-# One fixed prompt maps directly to each published Ten Kings defect type.
-DEFECT_PROMPTS = (
-    ("FAINT_COLOR_VARIATION", "faint color variation on a trading card"),
-    ("VISIBLE_WHITENING", "white spot or whitening on a trading card"),
-    ("FRAYING", "frayed paper edge on a trading card"),
-    ("CHIPPING_EXPOSED_STOCK", "chip exposing paper stock on a trading card"),
-    ("LIFTING_DEFORMATION", "lifted or bent material on a trading card"),
-    ("LIGHT_SCRATCH_SCUFF", "light scratch or scuff on a trading card"),
-    (
-        "VISIBLE_SCRATCH_PRINT_COATING_LOSS",
-        "scratch with missing print coating on a trading card",
-    ),
-    ("DENT_MATERIAL_DAMAGE", "dent in a trading card"),
-    ("PEELING_HEAVY_DAMAGE", "peeling surface on a trading card"),
-)
+DETECTOR_VERSION = f"sam3-local-box@{SAM3_REPOSITORY_COMMIT}"
+MIN_SAM_AREA_MM2 = 0.02
+MAX_SAM_AREA_MM2 = 120.0
+PX_PER_MM = GRID_WIDTH / 63.5
 
 
 class MaskProcessor(Protocol):
-    def scan(self, image: np.ndarray, prompts=DEFECT_PROMPTS) -> list[dict]: ...
+    def scan(self, image: np.ndarray, candidates: list[dict]) -> list[dict]: ...
 
 
 class Sam3ImageProcessor:
@@ -72,34 +60,71 @@ class Sam3ImageProcessor:
             )
         return self._processor
 
-    def scan(self, image: np.ndarray, prompts=DEFECT_PROMPTS) -> list[dict]:
+    def scan(self, image: np.ndarray, candidates: list[dict]) -> list[dict]:
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
             processor = self.load()
             with self._autocast():
                 state = processor.set_image(rgb_image)
-                candidates = []
-                for defect_type, text_prompt in prompts:
-                    output = processor.set_text_prompt(prompt=text_prompt, state=state)
-                    masks = output["masks"].detach().cpu().numpy()
+                results = []
+                for candidate in candidates:
+                    x, y, width, height = candidate["box"]
+                    processor.reset_all_prompts(state)
+                    output = processor.add_geometric_prompt(
+                        box=[
+                            (x + width / 2) / GRID_WIDTH,
+                            (y + height / 2) / GRID_HEIGHT,
+                            width / GRID_WIDTH,
+                            height / GRID_HEIGHT,
+                        ],
+                        label=True,
+                        state=state,
+                    )
+                    masks = output["masks"].detach().float().cpu().numpy()
                     scores = (
                         output["scores"].detach().float().cpu().numpy().reshape(-1)
                     )
-                    if (
-                        masks.ndim != 4
-                        or masks.shape[1] != 1
-                        or len(masks) != len(scores)
-                    ):
+                    if masks.ndim < 3:
                         raise RuntimeError("SAM 3 returned an invalid mask result")
-                    candidates.extend(
-                        {
-                            "defectType": defect_type,
-                            "confidence": float(score),
-                            "mask": mask[0],
-                        }
-                        for mask, score in zip(masks, scores)
-                    )
-        return candidates
+                    masks = masks.reshape((-1, masks.shape[-2], masks.shape[-1]))
+                    if len(masks) != len(scores):
+                        raise RuntimeError("SAM 3 returned mismatched masks and scores")
+
+                    best = None
+                    for mask, score in zip(masks, scores):
+                        binary = np.asarray(mask) > 0
+                        if binary.shape != (GRID_HEIGHT, GRID_WIDTH):
+                            binary = cv2.resize(
+                                binary.astype(np.uint8),
+                                (GRID_WIDTH, GRID_HEIGHT),
+                                interpolation=cv2.INTER_NEAREST,
+                            ).astype(bool)
+                        clipped = np.zeros_like(binary)
+                        clipped[y : y + height, x : x + width] = binary[
+                            y : y + height, x : x + width
+                        ]
+                        core_x, core_y, core_width, core_height = candidate["coreBox"]
+                        core = candidate["coreMask"]
+                        if not np.any(
+                            clipped[
+                                core_y : core_y + core_height,
+                                core_x : core_x + core_width,
+                            ]
+                            & core
+                        ):
+                            continue
+                        area_mm2 = float(clipped.sum() / (PX_PER_MM**2))
+                        if not (MIN_SAM_AREA_MM2 <= area_mm2 <= MAX_SAM_AREA_MM2):
+                            continue
+                        if best is None or score > best["confidence"]:
+                            best = {
+                                "defectType": candidate["defectType"],
+                                "confidence": float(score),
+                                "mask": clipped,
+                            }
+                    if best is not None:
+                        results.append(best)
+        return results
 
 
 _processor = Sam3ImageProcessor()
@@ -228,7 +253,10 @@ def detect_views(
     proposals = []
     for view_id, image in views:
         canonical_image = cv2.resize(image, (GRID_WIDTH, GRID_HEIGHT))
-        for candidate in active_processor.scan(canonical_image, DEFECT_PROMPTS):
+        localized_candidates = defect_candidates(
+            canonical_image, corner_shape, view_id
+        )
+        for candidate in active_processor.scan(canonical_image, localized_candidates):
             for contour in _mask_contours(candidate["mask"]):
                 proposals.append(
                     {

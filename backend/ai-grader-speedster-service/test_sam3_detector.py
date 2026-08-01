@@ -8,9 +8,8 @@ import numpy as np
 from fastapi import HTTPException
 
 from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure
-from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH
+from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import (
-    DEFECT_PROMPTS,
     DETECTOR_VERSION,
     Sam3ImageProcessor,
     detect_views,
@@ -22,8 +21,8 @@ class FakeMaskProcessor:
     def __init__(self):
         self.calls = []
 
-    def scan(self, image, prompts):
-        self.calls.append((image.shape, prompts))
+    def scan(self, image, candidates):
+        self.calls.append((image.shape, candidates))
         mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         mask[500:650, 450:600] = 1
         return [
@@ -64,10 +63,12 @@ class FakeOfficialImageProcessor:
         self.images.append(image)
         return {"image_embedding": "shared"}
 
-    def set_text_prompt(self, prompt, state):
-        self.prompts.append((prompt, state))
-        mask = np.zeros((1, 1, 12, 8), dtype=bool)
-        mask[:, :, 3:6, 2:5] = True
+    def reset_all_prompts(self, state):
+        state.pop("masks", None)
+
+    def add_geometric_prompt(self, box, label, state):
+        self.prompts.append((box, label, state))
+        mask = np.ones((1, 1, 12, 8), dtype=bool)
         return {
             **state,
             "masks": FakeTensor(mask),
@@ -171,19 +172,27 @@ class Sam3DetectorTests(unittest.TestCase):
     def test_scans_each_view_and_returns_measured_speedster_defect(self):
         processor = FakeMaskProcessor()
         image = np.zeros((200, 100, 3), dtype=np.uint8)
-        result = detect_views(
-            [("ORIGINAL", image), ("NORMALIZED", image)],
-            "FRONT",
-            "SQUARE",
-            processor,
-        )
+        localized = [{
+            "box": (430, 480, 190, 190),
+            "coreBox": (450, 500, 150, 150),
+            "coreMask": np.ones((150, 150), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+            "score": 1.0,
+        }]
+        with patch("sam3_detector.defect_candidates", return_value=localized):
+            result = detect_views(
+                [("ORIGINAL", image), ("NORMALIZED", image)],
+                "FRONT",
+                "SQUARE",
+                processor,
+            )
 
         self.assertEqual(result["detectorVersion"], DETECTOR_VERSION)
         self.assertEqual(len(processor.calls), 2)
         self.assertTrue(
             all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _ in processor.calls)
         )
-        self.assertTrue(all(prompts is DEFECT_PROMPTS for _, prompts in processor.calls))
+        self.assertTrue(all(candidates is localized for _, candidates in processor.calls))
         self.assertEqual(len(result["defects"]), 1)
         defect = result["defects"][0]
         self.assertTrue(defect["id"].startswith("sam3-front-"))
@@ -221,29 +230,40 @@ class Sam3DetectorTests(unittest.TestCase):
             all(defect["reviewResult"] == "SMART_MARKED" for defect in defects)
         )
 
-    def test_prompts_cover_every_published_defect_type_once(self):
-        prompt_types = [defect_type for defect_type, _ in DEFECT_PROMPTS]
-        self.assertEqual(len(prompt_types), len(set(prompt_types)))
-        self.assertEqual(set(prompt_types), set(DEFECT_MULTIPLIERS))
-
-    def test_official_processor_reuses_one_image_embedding_for_all_prompts(self):
+    def test_official_processor_reuses_one_image_embedding_for_local_boxes(self):
         fake = FakeOfficialImageProcessor()
         processor = Sam3ImageProcessor()
         processor._processor = fake
+        localized = [
+            {
+                "box": (450, 500, 100, 100),
+                "coreBox": (470, 520, 60, 60),
+                "coreMask": np.ones((60, 60), dtype=bool),
+                "defectType": "VISIBLE_WHITENING",
+            },
+            {
+                "box": (700, 900, 80, 80),
+                "coreBox": (710, 910, 60, 60),
+                "coreMask": np.ones((60, 60), dtype=bool),
+                "defectType": "LIGHT_SCRATCH_SCUFF",
+            },
+        ]
 
-        candidates = processor.scan(np.zeros((12, 8, 3), dtype=np.uint8))
+        candidates = processor.scan(
+            np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8), localized
+        )
 
-        self.assertEqual(len(candidates), len(DEFECT_PROMPTS))
+        self.assertEqual(len(candidates), 2)
         self.assertIs(processor._processor, fake)
         self.assertEqual(len(fake.images), 1)
-        self.assertEqual(len(fake.prompts), len(DEFECT_PROMPTS))
+        self.assertEqual(len(fake.prompts), 2)
         self.assertTrue(
-            all(state is fake.prompts[0][1] for _, state in fake.prompts)
+            all(state is fake.prompts[0][2] for _, _, state in fake.prompts)
         )
         self.assertTrue(
-            all(candidate["mask"].shape == (12, 8) for candidate in candidates)
+            all(candidate["mask"].shape == (GRID_HEIGHT, GRID_WIDTH) for candidate in candidates)
         )
-        self.assertEqual(fake.scores.float_calls, len(DEFECT_PROMPTS))
+        self.assertEqual(fake.scores.float_calls, 2)
 
 
 if __name__ == "__main__":

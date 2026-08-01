@@ -16,6 +16,11 @@ import {
   calculateCenteringBalance,
   type SpeedsterCenteringBorders,
 } from "../../lib/ai-grader-v2/scoring";
+import {
+  gradientMapFromImage,
+  snapSpeedsterPoint,
+  type SpeedsterGradientMap,
+} from "../../lib/ai-grader-v2/gradient-snap";
 
 import styles from "./CenteringAssist.module.css";
 
@@ -29,12 +34,19 @@ type CenteringAssistProps = {
   imageUrl: string;
   side: SpeedsterCardSide;
   initialInnerQuad: SpeedsterQuad;
+  detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   onContinue: (result: CenteringAssistResult) => void;
 };
 
 const HANDLE_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
 const OVERLAY_WIDTH = 635;
 const OVERLAY_HEIGHT = 889;
+const HANDLE_DIRECTIONS = [
+  { inwardX: 1, inwardY: 1 },
+  { inwardX: -1, inwardY: 1 },
+  { inwardX: -1, inwardY: -1 },
+  { inwardX: 1, inwardY: -1 },
+] as const;
 
 function clampUnit(value: number): number {
   return Math.min(1, Math.max(0, value));
@@ -66,10 +78,12 @@ export function CenteringAssist({
   imageUrl,
   side,
   initialInnerQuad,
+  detectedBorders,
   onContinue,
 }: CenteringAssistProps) {
   const [innerQuad, setInnerQuad] = useState<SpeedsterQuad>(initialInnerQuad);
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
+  const gradientMap = useRef<SpeedsterGradientMap | null>(null);
   const measurements = useMemo(() => {
     const borders = measureBorders(innerQuad);
     return {
@@ -90,10 +104,15 @@ export function CenteringAssist({
       SpeedsterPoint,
       SpeedsterPoint,
     ];
-    next[active.index] = {
+    const draggedPoint = {
       x: clampUnit((event.clientX - bounds.left) / bounds.width),
       y: clampUnit((event.clientY - bounds.top) / bounds.height),
     };
+    next[active.index] = snapSpeedsterPoint(gradientMap.current, draggedPoint, {
+      ...HANDLE_DIRECTIONS[active.index],
+      sampleStart: 4,
+      sampleLength: 90,
+    });
     setInnerQuad(next);
   };
 
@@ -112,7 +131,9 @@ export function CenteringAssist({
           <span className={styles.eyebrow}>{side} · CENTERING</span>
           <h2>Set the printed borders.</h2>
         </div>
-        <p>Drag only if the gold markers need adjustment.</p>
+        <p>{detectedBorders.length === 4
+          ? "All four printed borders found. Drag only if a marker needs adjustment."
+          : `${detectedBorders.length}/4 printed borders found. Set missing sides; each drag snaps locally.`}</p>
       </header>
 
       <div className={styles.workspace}>
@@ -122,8 +143,12 @@ export function CenteringAssist({
             <img
               className={styles.image}
               src={imageUrl}
+              crossOrigin="anonymous"
               alt={`${side.toLowerCase()} rectified trading card`}
               draggable={false}
+              onLoad={(event) => {
+                gradientMap.current = gradientMapFromImage(event.currentTarget);
+              }}
             />
             <svg
               className={styles.overlay}
