@@ -1,0 +1,121 @@
+.page {
+  min-height: 100vh;
+  padding: 32px clamp(18px, 4vw, 72px) 56px;
+  color: #f8f5ed;
+  background:
+    radial-gradient(circle at 82% 8%, rgba(199, 155, 57, 0.12), transparent 28rem),
+    #050606;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.6fr) minmax(280px, 2fr) auto;
+  gap: clamp(28px, 5vw, 88px);
+  align-items: end;
+  min-height: 320px;
+  padding: 28px 0 44px;
+  border-top: 1px solid #30291d;
+  border-bottom: 1px solid #30291d;
+}
+
+.brand,
+.identity > span,
+.grade small,
+.evidenceHeader span,
+.footer span {
+  color: #d4ad55;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-decoration: none;
+}
+
+.identity h1 {
+  max-width: 850px;
+  margin: 16px 0 10px;
+  font-size: clamp(42px, 6vw, 92px);
+  font-weight: 400;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.identity p,
+.footer p {
+  margin: 0;
+  color: #8e8b83;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+.grade {
+  min-width: 150px;
+  text-align: right;
+}
+
+.grade small { display: block; }
+.grade strong {
+  display: block;
+  margin-top: 8px;
+  color: #e5c579;
+  font-size: clamp(74px, 10vw, 138px);
+  font-weight: 300;
+  letter-spacing: -0.08em;
+  line-height: 0.85;
+}
+
+.evidence { padding: 80px 0 56px; }
+.evidenceHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  align-items: end;
+  margin-bottom: 28px;
+}
+
+.evidenceHeader h2 {
+  max-width: 740px;
+  margin: 10px 0 0;
+  font-size: clamp(28px, 4vw, 54px);
+  font-weight: 400;
+  letter-spacing: -0.04em;
+}
+
+.sides {
+  display: flex;
+  padding: 4px;
+  border: 1px solid #30291d;
+  border-radius: 999px;
+}
+
+.sides button {
+  min-width: 92px;
+  padding: 11px 18px;
+  color: #77736b;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sides .active { color: #090909; background: #d4ad55; }
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: 72px;
+  padding-top: 28px;
+  border-top: 1px solid #30291d;
+}
+
+@media (max-width: 760px) {
+  .page { padding-inline: 14px; }
+  .hero { grid-template-columns: 1fr auto; min-height: 250px; }
+  .brand { grid-column: 1 / -1; }
+  .identity h1 { font-size: 44px; }
+  .grade strong { font-size: 68px; }
+  .evidence { padding-top: 54px; }
+  .evidenceHeader { align-items: stretch; flex-direction: column; }
+  .sides button { flex: 1; }
+  .footer { flex-direction: column; }
+}

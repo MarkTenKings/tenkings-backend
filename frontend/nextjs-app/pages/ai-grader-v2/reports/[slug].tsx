@@ -1,0 +1,299 @@
+import Head from "next/head";
+import Link from "next/link";
+import { useState } from "react";
+import type { GetServerSideProps, GetServerSidePropsContext } from "next";
+
+import { DefectEvidenceViewer } from "../../../components/ai-grader-v2/DefectEvidenceViewer";
+import { GradeSummary } from "../../../components/ai-grader-v2/GradeSummary";
+import type {
+  SpeedsterCardSide,
+  SpeedsterDefectType,
+  SpeedsterMeasuredDefect,
+  SpeedsterPoint,
+} from "../../../lib/ai-grader-v2/contracts";
+import type { calculateSpeedsterGrade } from "../../../lib/ai-grader-v2/scoring";
+import styles from "../../../styles/AiGraderV2Report.module.css";
+
+type Grade = ReturnType<typeof calculateSpeedsterGrade>;
+type PublicIdentity = {
+  cardProfile: "POKEMON" | "SPORTS";
+  playerName?: string;
+  cardName?: string;
+  year?: string;
+  manufacturer?: string;
+  productSet?: string;
+  parallel?: string;
+  insert?: string;
+  cardNumber?: string;
+};
+type SourceKeys = Readonly<Record<SpeedsterCardSide, {
+  master: string;
+  views: Readonly<Record<"ORIGINAL" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
+}>>;
+type PublicReportSource = {
+  identity: PublicIdentity;
+  defects: SpeedsterMeasuredDefect[];
+  grade: Grade;
+  sourceKeys: SourceKeys;
+};
+type PublicReportProps = Omit<PublicReportSource, "sourceKeys"> & {
+  imageUrls: Readonly<Record<SpeedsterCardSide, {
+    master: string;
+    views: Readonly<Record<string, string>>;
+  }>>;
+};
+type ReportDependencies = {
+  findCompletedSession: (slug: string) => Promise<unknown | null>;
+  presign: (storageKey: string) => Promise<string>;
+};
+
+const DEFECT_TYPES = new Set<SpeedsterDefectType>([
+  "FAINT_COLOR_VARIATION",
+  "VISIBLE_WHITENING",
+  "FRAYING",
+  "CHIPPING_EXPOSED_STOCK",
+  "LIFTING_DEFORMATION",
+  "LIGHT_SCRATCH_SCUFF",
+  "VISIBLE_SCRATCH_PRINT_COATING_LOSS",
+  "DENT_MATERIAL_DAMAGE",
+  "PEELING_HEAVY_DAMAGE",
+]);
+const PUBLIC_REVIEW_RESULTS = new Set(["ACCEPTED", "SMART_MARKED", "TYPE_CORRECTED"]);
+const VIEW_TYPES = ["ORIGINAL", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"] as const;
+const IDENTITY_FIELDS = [
+  "playerName", "cardName", "year", "manufacturer", "productSet", "parallel", "insert", "cardNumber",
+] as const;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
+const number = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
+
+function point(value: unknown): SpeedsterPoint | null {
+  if (!isRecord(value)) return null;
+  const x = number(value.x);
+  const y = number(value.y);
+  return x !== null && y !== null && x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+}
+
+function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
+  if (!isRecord(value)) return null;
+  const side = value.side === "FRONT" || value.side === "BACK" ? value.side : null;
+  const zone = value.zone === "CORNERS" || value.zone === "EDGES" || value.zone === "SURFACE" ? value.zone : null;
+  const defectType = typeof value.defectType === "string" && DEFECT_TYPES.has(value.defectType as SpeedsterDefectType)
+    ? value.defectType as SpeedsterDefectType
+    : null;
+  const reviewResult = typeof value.reviewResult === "string" && PUBLIC_REVIEW_RESULTS.has(value.reviewResult)
+    ? value.reviewResult as SpeedsterMeasuredDefect["reviewResult"]
+    : null;
+  const contour = Array.isArray(value.canonicalContour) ? value.canonicalContour.map(point) : [];
+  const measurement = isRecord(value.measurement) ? value.measurement : null;
+  const metrics = measurement ? {
+    widthMm: number(measurement.widthMm),
+    heightMm: number(measurement.heightMm),
+    areaMm2: number(measurement.areaMm2),
+    zonePercent: number(measurement.zonePercent),
+    multiplier: number(measurement.multiplier),
+    weightedAreaMm2: number(measurement.weightedAreaMm2),
+    subgradeEffect: number(measurement.subgradeEffect),
+  } : null;
+  if (
+    !text(value.id) || !side || !zone || !defectType || !reviewResult ||
+    !text(value.sourceViewId) || contour.length < 3 || contour.some((entry) => !entry) ||
+    !metrics || Object.values(metrics).some((entry) => entry === null || entry < 0)
+  ) return null;
+  const confidence = number(value.confidence);
+  if (confidence === null) return null;
+  const supportingViewIds = Array.isArray(value.supportingViewIds)
+    ? value.supportingViewIds.map(text).filter((entry): entry is string => Boolean(entry))
+    : [];
+  return {
+    id: text(value.id)!,
+    side,
+    zone,
+    defectType,
+    confidence,
+    canonicalContour: contour as SpeedsterPoint[],
+    sourceViewId: text(value.sourceViewId)!,
+    supportingViewIds,
+    reviewResult,
+    measurement: metrics as SpeedsterMeasuredDefect["measurement"],
+  };
+}
+
+function pair(value: unknown): readonly [number, number] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null;
+  const first = number(value[0]);
+  const second = number(value[1]);
+  return first === null || second === null ? null : [first, second];
+}
+
+function gradeReport(value: unknown): Grade | null {
+  if (!isRecord(value) || !isRecord(value.front) || !isRecord(value.back) || !isRecord(value.subgrades) || !isRecord(value.overall)) {
+    return null;
+  }
+  const condition = (side: Record<string, unknown>, key: "corners" | "edges" | "surface") => {
+    const row = isRecord(side[key]) ? side[key] : null;
+    const score = row ? number(row.score) : null;
+    const weightedDamagePercent = row ? number(row.weightedDamagePercent) : null;
+    return score === null || weightedDamagePercent === null ? null : { score, weightedDamagePercent };
+  };
+  const side = (source: Record<string, unknown>) => {
+    const centering = isRecord(source.centering) ? source.centering : null;
+    const centeringScore = centering ? number(centering.score) : null;
+    const leftRightBalance = centering ? pair(centering.leftRightBalance) : null;
+    const topBottomBalance = centering ? pair(centering.topBottomBalance) : null;
+    const corners = condition(source, "corners");
+    const edges = condition(source, "edges");
+    const surface = condition(source, "surface");
+    return centeringScore === null || !leftRightBalance || !topBottomBalance || !corners || !edges || !surface
+      ? null
+      : { centering: { score: centeringScore, leftRightBalance, topBottomBalance }, corners, edges, surface };
+  };
+  const front = side(value.front);
+  const back = side(value.back);
+  const subgrades = {
+    centering: number(value.subgrades.centering),
+    corners: number(value.subgrades.corners),
+    edges: number(value.subgrades.edges),
+    surface: number(value.subgrades.surface),
+  };
+  const rawGrade = number(value.overall.rawGrade);
+  const displayGrade = number(value.overall.displayGrade);
+  if (!front || !back || Object.values(subgrades).some((entry) => entry === null) || rawGrade === null || displayGrade === null) return null;
+  return {
+    front,
+    back,
+    subgrades: subgrades as Grade["subgrades"],
+    overall: { rawGrade, displayGrade },
+  };
+}
+
+function sourceKeys(value: unknown): SourceKeys | null {
+  if (!isRecord(value)) return null;
+  const side = (name: SpeedsterCardSide) => {
+    const candidate = value[name.toLowerCase()];
+    const row: Record<string, unknown> | null = isRecord(candidate) ? candidate : null;
+    const master = row ? text(row.rectifiedStorageKey) : null;
+    const generated = row && isRecord(row.viewStorageKeys) ? row.viewStorageKeys : null;
+    const normalized = generated ? text(generated.NORMALIZED) : null;
+    const micro = generated ? text(generated.MICRO_DEFECT) : null;
+    const directional = generated ? text(generated.DIRECTIONAL) : null;
+    return master && normalized && micro && directional ? {
+      master,
+      views: { ORIGINAL: master, NORMALIZED: normalized, MICRO_DEFECT: micro, DIRECTIONAL: directional },
+    } : null;
+  };
+  const front = side("FRONT");
+  const back = side("BACK");
+  return front && back ? { FRONT: front, BACK: back } : null;
+}
+
+export function mapCompletedSpeedsterSession(value: unknown): PublicReportSource | null {
+  if (!isRecord(value) || value.workflowState !== "COMPLETED" || !isRecord(value.identity)) return null;
+  const cardProfile = value.cardProfile === "POKEMON" || value.cardProfile === "SPORTS" ? value.cardProfile : null;
+  const grade = gradeReport(value.gradeReport);
+  const keys = sourceKeys(value.capture);
+  if (!cardProfile || !grade || !keys || !Array.isArray(value.reviewedDefects)) return null;
+  const defects = value.reviewedDefects
+    .filter((entry) => !isRecord(entry) || (entry.reviewResult !== "REMOVED" && entry.reviewResult !== "UNREVIEWED"))
+    .map(measuredDefect);
+  if (defects.some((entry) => !entry)) return null;
+  const identity: PublicIdentity = { cardProfile };
+  for (const field of IDENTITY_FIELDS) {
+    const fieldValue = text(value.identity[field]);
+    if (fieldValue) identity[field] = fieldValue;
+  }
+  return { identity, defects: defects as SpeedsterMeasuredDefect[], grade, sourceKeys: keys };
+}
+
+export async function materializeSpeedsterReport(
+  source: PublicReportSource,
+  presign: ReportDependencies["presign"],
+): Promise<PublicReportProps> {
+  const imageUrls = {} as Record<SpeedsterCardSide, { master: string; views: Record<string, string> }>;
+  await Promise.all((["FRONT", "BACK"] as const).map(async (side) => {
+    const values = await Promise.all(VIEW_TYPES.map((view) => presign(source.sourceKeys[side].views[view])));
+    imageUrls[side] = {
+      master: values[0],
+      views: Object.fromEntries(VIEW_TYPES.map((view, index) => [view, values[index]])),
+    };
+  }));
+  return { identity: source.identity, defects: source.defects, grade: source.grade, imageUrls };
+}
+
+export function createSpeedsterReportGetServerSideProps(deps: ReportDependencies): GetServerSideProps<PublicReportProps> {
+  return async function getServerSideProps(context: GetServerSidePropsContext) {
+    context.res.setHeader("Cache-Control", "private, no-store");
+    const slug = typeof context.params?.slug === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(context.params.slug)
+      ? context.params.slug
+      : null;
+    if (!slug) return { notFound: true };
+    const source = mapCompletedSpeedsterSession(await deps.findCompletedSession(slug));
+    return source ? { props: await materializeSpeedsterReport(source, deps.presign) } : { notFound: true };
+  };
+}
+
+export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (context) => {
+  const [{ prisma }, { presignReadUrl }] = await Promise.all([
+    import("@tenkings/database"),
+    import("../../../lib/server/storage"),
+  ]);
+  return createSpeedsterReportGetServerSideProps({
+    findCompletedSession: (slug) => prisma.aiGraderV2Session.findFirst({
+      where: { publicReportSlug: slug, workflowState: "COMPLETED" },
+      select: { cardProfile: true, workflowState: true, identity: true, capture: true, reviewedDefects: true, gradeReport: true },
+    }),
+    presign: (storageKey) => presignReadUrl(storageKey, 60 * 5),
+  })(context);
+};
+
+export default function SpeedsterPublicReport({ identity, defects, grade, imageUrls }: PublicReportProps) {
+  const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
+  const title = (identity.cardProfile === "POKEMON" ? identity.cardName : identity.playerName) || "Ten Kings card";
+  const details = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <main className={styles.page}>
+      <Head>
+        <title>{title} · Grade {grade.overall.displayGrade.toFixed(1)} | Ten Kings</title>
+      </Head>
+      <header className={styles.hero}>
+        <Link className={styles.brand} href="/">TEN KINGS</Link>
+        <div className={styles.identity}>
+          <span>AI GRADED · MEASURED EVIDENCE</span>
+          <h1>{title}</h1>
+          {details ? <p>{details}</p> : null}
+        </div>
+        <div className={styles.grade}><small>FINAL GRADE</small><strong>{grade.overall.displayGrade.toFixed(1)}</strong></div>
+      </header>
+
+      <section className={styles.evidence}>
+        <header className={styles.evidenceHeader}>
+          <div><span>INTERACTIVE REPORT</span><h2>Every measurement. Right where it happened.</h2></div>
+          <div className={styles.sides} aria-label="Card side">
+            {(["FRONT", "BACK"] as const).map((value) => (
+              <button key={value} type="button" className={side === value ? styles.active : undefined} onClick={() => setSide(value)}>
+                {value === "FRONT" ? "Front" : "Back"}
+              </button>
+            ))}
+          </div>
+        </header>
+        <DefectEvidenceViewer
+          masterImageUrl={imageUrls[side].master}
+          sourceImageUrls={imageUrls[side].views}
+          side={side}
+          defects={defects}
+          readOnly
+        />
+      </section>
+
+      <GradeSummary grade={grade} />
+      <footer className={styles.footer}><span>TEN KINGS</span><p>Measured. Transparent. Built to be inspected.</p></footer>
+    </main>
+  );
+}
+
+export type { PublicReportProps, PublicReportSource };
