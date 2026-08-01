@@ -9,6 +9,7 @@ import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
+  NEW_HUMAN_GRADE_FORMULA_VERSION,
   calculateHumanGrade,
   type HumanGradeCardType,
   type HumanGradeLabelDto,
@@ -96,11 +97,14 @@ export default function HumanGradePage() {
     const values = [form.centeringGrade, form.cornersGrade, form.edgesGrade, form.surfaceGrade];
     if (values.some((value) => !value.trim())) return null;
     try {
-      return calculateHumanGrade(form).labelGrade;
+      return calculateHumanGrade(
+        form,
+        editingLabel?.gradingFormulaVersion ?? NEW_HUMAN_GRADE_FORMULA_VERSION
+      ).labelGrade;
     } catch {
       return null;
     }
-  }, [form]);
+  }, [editingLabel?.gradingFormulaVersion, form]);
 
   const loadQueue = useCallback(async () => {
     if (!session?.token || !isAdmin) return;

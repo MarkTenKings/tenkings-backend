@@ -3,9 +3,11 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
+  NEW_HUMAN_GRADE_FORMULA_VERSION,
   calculateHumanGrade,
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
+  type HumanGradeFormulaVersion,
   type HumanGradeLabelSheetDto,
   type HumanGradeQueueDto,
 } from "../../../../lib/humanGrade";
@@ -62,6 +64,7 @@ type SheetRecord = {
     certificateNumber: string | null;
     certificateSequence: number;
     slot: number;
+    gradingFormulaVersion: HumanGradeFormulaVersion;
     cardType: "SPORTS" | "POKEMON";
     playerName: string | null;
     cardName: string | null;
@@ -85,8 +88,8 @@ function optionalText(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-function labelData(input: HumanGradeInput) {
-  const calculated = calculateHumanGrade(input);
+function labelData(input: HumanGradeInput, gradingFormulaVersion: HumanGradeFormulaVersion) {
+  const calculated = calculateHumanGrade(input, gradingFormulaVersion);
   return {
     cardType: input.cardType,
     playerName: input.cardType === "SPORTS" ? optionalText(input.playerName) : null,
@@ -117,6 +120,7 @@ function serializeSheet(sheet: SheetRecord): HumanGradeLabelSheetDto {
       id: label.id,
       slot: label.slot,
       certificateNumber: label.certificateNumber ?? formatHumanGradeCertificateNumber(label.certificateSequence),
+      gradingFormulaVersion: label.gradingFormulaVersion,
       cardType: label.cardType,
       playerName: label.playerName,
       cardName: label.cardName,
@@ -175,13 +179,13 @@ export default async function handler(
       const result = await prisma.$transaction(async (tx) => {
         const existing = await tx.humanGradeLabel.findUnique({
           where: { id: parsed.data.id },
-          select: { id: true },
+          select: { id: true, gradingFormulaVersion: true },
         });
         if (!existing) return "NOT_FOUND" as const;
 
         await tx.humanGradeLabel.update({
           where: { id: existing.id },
-          data: labelData(parsed.data),
+          data: labelData(parsed.data, existing.gradingFormulaVersion),
         });
         return "UPDATED" as const;
       });
@@ -259,7 +263,8 @@ export default async function handler(
         data: {
           sheetId: sheet.id,
           slot,
-          ...labelData(input),
+          gradingFormulaVersion: NEW_HUMAN_GRADE_FORMULA_VERSION,
+          ...labelData(input, NEW_HUMAN_GRADE_FORMULA_VERSION),
           createdByUserId: admin.user.id,
         },
       });
