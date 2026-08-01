@@ -252,17 +252,22 @@ test("human-grade renderer validates and renders mixed legacy and equal-formula 
   );
 });
 
-test("human-grade formula migration preserves old rows without a production data rewrite", () => {
+test("human-grade formula migration keeps a legacy-safe rollout default without a data rewrite", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const schema = readFileSync(`${root}/../../packages/database/prisma/schema.prisma`, "utf8");
+  const api = readFileSync(`${root}/pages/api/admin/human-grade/index.ts`, "utf8");
   const migration = readFileSync(
     `${root}/../../packages/database/prisma/migrations/20260731183000_human_grade_formula_version/migration.sql`,
     "utf8"
   );
   assert.match(schema, /enum HumanGradeFormulaVersion[\s\S]*LEGACY_30_25_25_20[\s\S]*EQUAL_25/);
-  assert.match(schema, /gradingFormulaVersion\s+HumanGradeFormulaVersion\s+@default\(EQUAL_25\)/);
+  assert.match(
+    schema,
+    /gradingFormulaVersion\s+HumanGradeFormulaVersion\s+@default\(LEGACY_30_25_25_20\)/
+  );
   assert.match(migration, /ADD COLUMN "gradingFormulaVersion"[\s\S]*DEFAULT 'LEGACY_30_25_25_20'/);
-  assert.match(migration, /ALTER COLUMN "gradingFormulaVersion" SET DEFAULT 'EQUAL_25'/);
+  assert.doesNotMatch(migration, /ALTER COLUMN "gradingFormulaVersion" SET DEFAULT 'EQUAL_25'/);
+  assert.match(api, /gradingFormulaVersion: NEW_HUMAN_GRADE_FORMULA_VERSION/);
   assert.doesNotMatch(migration, /\b(?:UPDATE|DELETE FROM|TRUNCATE)\b/i);
 });
 
