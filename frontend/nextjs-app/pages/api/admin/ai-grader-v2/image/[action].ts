@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
-const ACTIONS = new Set(["geometry", "prepare"]);
+const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {

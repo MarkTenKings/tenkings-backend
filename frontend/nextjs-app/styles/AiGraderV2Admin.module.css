@@ -14,7 +14,8 @@
 }
 
 .hero span,
-.detectorReady span {
+.statusPanel span,
+.completePanel span {
   color: #d8aa4f;
   font-size: 10px;
   font-weight: 800;
@@ -30,7 +31,8 @@
 }
 
 .hero p,
-.detectorReady p { margin: 0; color: #92958f; }
+.statusPanel p,
+.completePanel p { margin: 0; color: #92958f; }
 .hero a,
 .center button {
   padding: 11px 16px;
@@ -49,7 +51,8 @@
   color: #d8aa4f;
 }
 
-.detectorReady {
+.statusPanel,
+.completePanel {
   min-height: 460px;
   display: grid;
   place-content: center;
@@ -59,11 +62,23 @@
   background: radial-gradient(circle at 50% 0, #2c2412 0, #090a08 52%);
 }
 
-.detectorReady h2 {
+.statusPanel h2,
+.completePanel h2 {
   margin: 8px 0;
   font-size: clamp(42px, 6vw, 76px);
   font-weight: 350;
   letter-spacing: -.05em;
+}
+
+.completePanel a {
+  width: fit-content;
+  margin: 24px auto 0;
+  padding: 12px 18px;
+  color: #090a08;
+  background: #d8aa4f;
+  border-radius: 999px;
+  font-weight: 900;
+  text-decoration: none;
 }
 
 @media (max-width: 700px) {

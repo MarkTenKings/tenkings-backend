@@ -1,7 +1,14 @@
 import { buildAdminHeaders } from "../adminHeaders";
-import type { SpeedsterCardSide, SpeedsterPoint, SpeedsterQuad } from "./contracts";
+import type {
+  SpeedsterCardSide,
+  SpeedsterDefectType,
+  SpeedsterMeasuredDefect,
+  SpeedsterPoint,
+  SpeedsterQuad,
+} from "./contracts";
 
-type ImageAction = "geometry" | "prepare";
+type ImageAction = "geometry" | "prepare" | "detect" | "measure";
+type SpeedsterCornerShape = "ROUNDED_3_18_MM" | "SQUARE";
 
 export type SpeedsterGeometryResponse = {
   width: number;
@@ -23,11 +30,7 @@ export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, Arti
 async function postImageAction<T>(
   token: string,
   action: ImageAction,
-  body: {
-    imageUrl: string;
-    corners?: readonly SpeedsterPoint[];
-    outputUploads?: Record<string, string>;
-  },
+  body: Record<string, unknown>,
 ): Promise<T> {
   const response = await fetch(`/api/admin/ai-grader-v2/image/${action}`, {
     method: "POST",
@@ -61,6 +64,34 @@ export const speedsterImageService = {
         directional: outputPlan.DIRECTIONAL.uploadUrl,
       },
     });
+  },
+  detect(
+    token: string,
+    input: {
+      side: SpeedsterCardSide;
+      cornerShape: SpeedsterCornerShape;
+      views: readonly { id: string; imageUrl: string }[];
+    },
+  ) {
+    return postImageAction<{
+      detectorVersion: string;
+      defects: SpeedsterMeasuredDefect[];
+    }>(token, "detect", input);
+  },
+  measure(
+    token: string,
+    input: {
+      side: SpeedsterCardSide;
+      cornerShape: SpeedsterCornerShape;
+      marks: readonly {
+        id: string;
+        defectType: SpeedsterDefectType;
+        canonicalContour: readonly SpeedsterPoint[];
+        sourceViewId: string;
+      }[];
+    },
+  ) {
+    return postImageAction<{ defects: SpeedsterMeasuredDefect[] }>(token, "measure", input);
   },
 };
 

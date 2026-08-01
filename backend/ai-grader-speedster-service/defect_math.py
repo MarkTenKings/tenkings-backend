@@ -179,6 +179,7 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
             eligible_area_mm2 = np.count_nonzero(zone_mask) * pixel_area_mm2
             results.append(
                 {
+                    "proposalId": primary.get("id"),
                     "zone": zone_name,
                     "canonicalContours": _normalized_contours(measured),
                     "sourceViewId": primary["sourceViewId"],

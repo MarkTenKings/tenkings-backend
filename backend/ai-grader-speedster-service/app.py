@@ -8,6 +8,8 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from sam31_detector import detect_views, measure_marks
+
 app = FastAPI()
 
 TARGET_WIDTH = 1270
@@ -50,6 +52,29 @@ class PrepareResponse(BaseModel):
     height: int
     transform: List[float]
     borders: List[Point]
+
+
+class CanonicalView(ImageInput):
+    id: str
+
+
+class DetectRequest(BaseModel):
+    side: str
+    cornerShape: str
+    views: List[CanonicalView]
+
+
+class SmartMark(BaseModel):
+    id: str
+    defectType: str
+    canonicalContour: List[Point]
+    sourceViewId: str
+
+
+class MeasureRequest(BaseModel):
+    side: str
+    cornerShape: str
+    marks: List[SmartMark]
 
 
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
@@ -211,3 +236,35 @@ def prepare_image(request: PrepareRequest):
         "transform": transform.reshape(-1).tolist(),
         "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
     }
+
+
+@app.post("/detect")
+def detect(request: DetectRequest):
+    try:
+        views = [
+            (view.id, load_image(view.imageUrl, view.imageBase64))
+            for view in request.views
+        ]
+        return detect_views(views, request.side, request.cornerShape)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/measure")
+def measure(request: MeasureRequest):
+    try:
+        return measure_marks(
+            [
+                {
+                    "id": mark.id,
+                    "defectType": mark.defectType,
+                    "canonicalContour": [point.model_dump() for point in mark.canonicalContour],
+                    "sourceViewId": mark.sourceViewId,
+                }
+                for mark in request.marks
+            ],
+            request.side,
+            request.cornerShape,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error

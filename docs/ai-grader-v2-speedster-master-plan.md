@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
 Date: 2026-07-31
-Status: Core workflow implemented locally; SAM 3.1 is the confirmed sole detector and its integration is active; production rollout pending
+Status: Core workflow and SAM 3.1 integration implemented locally; live GPU/checkpoint verification, learning bank, and production rollout pending
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -306,12 +306,12 @@ This strategy uses parallel agents for speed without creating competing architec
 6. Complete automatic corner proposal, human geometry assist, rectification, and canonical zones.
 7. Complete centering geometry and deterministic centering scoring.
 8. Implement the one-active-detector contract using test masks first.
-9. Integrate SAM 3.1 as the sole active detector and DINOv3 retrieval.
-10. Implement independent per-view scanning and canonical mask fusion/deduplication.
-11. Complete the master-map review UI, magnifier, evidence close-up, type pills, Remove, and Smart-Mark.
-12. Complete measurements, shared weighted-area engine, sub-grades, and overall grade.
-13. Build the interactive report from the same read-only evidence component.
-14. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades.
+9. Integrate SAM 3.1 as the sole active detector. **Implemented locally; live gated-checkpoint GPU verification pending.** Add DINOv3 retrieval after the detector path is proven.
+10. Implement independent per-view scanning and canonical mask fusion/deduplication. **Completed locally.**
+11. Complete the master-map review UI, magnifier, evidence close-up, type pills, Remove, and Smart-Mark. **Completed locally.**
+12. Complete measurements, shared weighted-area engine, sub-grades, and overall grade. **Completed locally.**
+13. Build the interactive report from the same read-only evidence component. **Completed locally.**
+14. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades. **Completed locally.**
 15. Persist the structured learning bank, version snapshots, and golden-set metrics.
 16. Deploy the completed V2 admin-only route, run end-to-end cards, then give Mark the production test URL.
 
