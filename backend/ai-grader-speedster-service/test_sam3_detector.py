@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+from fastapi import HTTPException
 
 from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure
 from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH
@@ -119,6 +120,27 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(corner_shape, "SQUARE")
         self.assertEqual(views[0][0], "ORIGINAL")
         self.assertEqual(views[0][1].shape, (12, 8, 3))
+
+    def test_detect_endpoint_returns_the_single_detector_error(self):
+        success, encoded = cv2.imencode(".png", np.zeros((12, 8, 3), dtype=np.uint8))
+        self.assertTrue(success)
+        request = DetectRequest(
+            side="FRONT",
+            cornerShape="SQUARE",
+            views=[
+                {
+                    "id": "ORIGINAL",
+                    "imageBase64": base64.b64encode(encoded).decode(),
+                }
+            ],
+        )
+
+        with patch("app.detect_views", side_effect=RuntimeError("live mismatch")):
+            with self.assertRaises(HTTPException) as raised:
+                detect(request)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        self.assertEqual(raised.exception.detail, "RuntimeError: live mismatch")
 
     def test_measure_endpoint_uses_the_same_zone_measurement_engine(self):
         result = measure(

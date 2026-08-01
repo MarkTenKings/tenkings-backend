@@ -256,6 +256,11 @@ def detect(request: DetectRequest):
         return detect_views(views, request.side, request.cornerShape)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(error).__name__}: {error}",
+        ) from error
 
 
 @app.post("/measure")

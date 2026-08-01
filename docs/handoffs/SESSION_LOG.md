@@ -29760,3 +29760,10 @@ By enabling Rip It Live, I confirm:
 - The replacement Pod was stopped before the audit; both failed Pods now show `$0.00/hour`. Ran the exact Linux/amd64 container locally and reproduced `pycocotools` without GPU billing.
 - Installing `pycocotools==2.0.11` exposed one final unconditional official import, `psutil`; installing `psutil==7.2.2` then completed direct imports of both `build_sam3_image_model` and `Sam3Processor` successfully (`SAM3_IMPORT_OK`).
 - Added those two exact packages as one small post-requirements Docker layer so the proven 3 GB PyTorch/CUDA layer remains cached and does not need to be rebuilt or re-uploaded again. No optional SAM 3 training/notebook package, alternate detector, or fallback was added.
+
+### Corrected-image live start and narrow diagnostic redeploy plan
+
+- Built and pushed corrected image `0a4e703c` at OCI digest `sha256:895a106df2ad95773c4bb29342a4eb7dcf26028829c835b41c1e2c06c37f29ca`, updated template `779b2q8wng`, and created RTX 4090 Pod `tame_amethyst_quail` (`a227c1360hr8d4`) at the authorized `$0.69/hour` rate.
+- The private image pulled, the gated `facebook/sam3/sam3.pt` checkpoint loaded, and the public health endpoint returned HTTP 200 with detector `sam3-image@96914d2425f90a64f45ca977c2b5165418099543`. The first live `/detect` smoke request reached the service but returned HTTP 500 after model startup.
+- Added one direct detector-error response so the next smoke request returns the sole SAM 3 runtime mismatch instead of an opaque body; focused backend tests pass `16/16`. This adds no alternate detector, retry, fallback, ensemble, gate, or Production behavior.
+- Plan: rebuild and push the tiny application layer, stop the currently healthy-but-inference-failing Pod before restarting so duplicate GPU billing cannot occur, update the same private template, create exactly one replacement RTX 4090 Pod on the previously authorized path, read the returned error, then correct only the proven SAM 3 integration mismatch and rerun `/health` plus `/detect`.
