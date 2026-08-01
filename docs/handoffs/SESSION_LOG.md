@@ -29723,3 +29723,28 @@ By enabling Rip It Live, I confirm:
 - Mark obtained gated `facebook/sam3` access and created the private Hugging Face Read token. Read-only RunPod inspection confirmed the private `huggingface_token` secret exists and funded GPU credit is available; the token value was never read, printed, copied, or stored in the repository.
 - Focused frontend tests passed `42/42`; focused backend tests passed `15/15`; focused ESLint, Python compilation, and `git diff --check` passed. The optimized Production Next.js build passed with only existing repository warnings.
 - No GPU Pod/template was created or started, no paid GPU usage was authorized or incurred by Codex, and the SAM checkpoint/model was not downloaded or executed. No Production deploy, migration, database/data/label mutation, Production environment change, V1/Dell edit, Human Grade behavior change, helper/hardware action, push, merge, or destructive operation occurred.
+
+## 2026-07-31 - Speedster private GPU image and RunPod template prepared
+
+- Built and pushed the pinned Linux/amd64 Speedster SAM 3 service image to the private GitHub Container Registry package `ghcr.io/marktenkings/tenkings-backend/ai-grader-speedster-service:43312301`. Registry inspection verified OCI digest `sha256:529ab2f7e2d6cb5db3dfb351411a0567d1f8a93d1f265fece3aed5f6621f3946` and the expected amd64 image manifest.
+- During the first private-registry credential attempt, a GitHub CLI credential was exposed in browser diagnostic output before any RunPod credential was saved. The RunPod dialog was canceled, local and virtual clipboards were cleared, the upload was canceled, and the local registry session was logged out. Mark then explicitly authorized revocation of all GitHub CLI tokens; GitHub confirmed the OAuth app revocation. The Mac was reauthenticated with the required `write:packages` scope, while Dell GitHub CLI will require reauthentication before its next GitHub CLI operation.
+- Created the private RunPod registry credential `Ten Kings GHCR` using the newly issued Mac credential without exposing it in output. Created private Pod template `ten-kings-speedster-sam3` (`779b2q8wng`) with the verified image, one NVIDIA GPU path, 20 GB container disk, 20 GB Pod volume mounted at `/models`, HTTP port `8080`, `HF_TOKEN` bound to the existing private `huggingface_token` secret, and `HF_HOME=/models/huggingface`.
+- No GPU Pod was created or started, no paid GPU usage was incurred, and the SAM checkpoint/model was not downloaded or executed. Starting the currently selected RTX 4090 Secure Cloud GPU at `$0.69/hour` remains pending Mark's explicit action-time approval.
+- No Production deploy, migration, database/data/label mutation, Production environment change, V1/Dell edit, Human Grade behavior change, helper/hardware action, merge, restart, or destructive operation occurred.
+
+## 2026-07-31 - Planned paid SAM 3 GPU launch
+
+- Mark explicitly authorized the action-time paid launch with: `Start the RTX 4090 at $0.69/hour.`
+- Plan: create and start exactly one RunPod Secure Cloud RTX 4090 Pod from private template `ten-kings-speedster-sam3` (`779b2q8wng`) at the confirmed rate of `$0.69/hour`, then observe image pull, gated SAM 3 checkpoint download, one-model startup, and the port-8080 health endpoint.
+- The launch will not deploy the web application, run Production migrations, change Production environment variables, mutate database/data/labels, touch V1/Dell or Human Grade workflows, add another detector, or perform a destructive operation.
+
+### First live-start observation and planned correction
+
+- RunPod created Pod `worldwide_green_hare` (`c0e0xbl709jhxa`) on exactly one RTX 4090 at the authorized `$0.69/hour`. The private container pulled successfully and port `8080` was exposed.
+- Container evidence showed SAM 3 startup stopped immediately with `ModuleNotFoundError: No module named 'einops'`; the health endpoint therefore remained unavailable. No detector request, checkpoint execution, database action, or application deployment occurred.
+- Plan: stop the idle billed Pod, add only the required official SAM 3 runtime dependency `einops`, rerun focused backend verification, rebuild/push the same private image tag from cache, then restart the same one-detector Pod path and recheck startup logs plus `/health`.
+
+### First correction result before rebuild
+
+- The failed-start Pod was stopped before rebuilding so idle GPU billing would not continue. Added only `einops==0.8.2`, the currently published runtime package required by SAM 3's unconditional rotary-position import.
+- Focused Speedster backend tests passed `15/15`. No detector logic, prompt, API, measurement, scoring, frontend, database, migration, or Production behavior changed.
