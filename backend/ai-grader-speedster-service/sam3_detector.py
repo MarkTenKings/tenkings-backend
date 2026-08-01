@@ -1,7 +1,6 @@
-"""Single-model SAM 3.1 defect detection on the Speedster canonical grid."""
+"""Single-model SAM 3 defect detection on the Speedster canonical grid."""
 
 import hashlib
-import os
 from contextlib import nullcontext
 from threading import Lock
 from typing import Optional, Protocol
@@ -13,9 +12,9 @@ from PIL import Image
 from defect_math import GRID_HEIGHT, GRID_WIDTH, measure_defects
 
 
-SAM31_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
-SAM31_CHECKPOINT = "sam3.1_multiplex.pt"
-DETECTOR_VERSION = f"sam3.1-multiplex@{SAM31_REPOSITORY_COMMIT}"
+SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
+SAM3_CHECKPOINT = "sam3.pt"
+DETECTOR_VERSION = f"sam3-image@{SAM3_REPOSITORY_COMMIT}"
 
 # One fixed prompt maps directly to each published Ten Kings defect type.
 DEFECT_PROMPTS = (
@@ -38,41 +37,36 @@ class MaskProcessor(Protocol):
     def scan(self, image: np.ndarray, prompts=DEFECT_PROMPTS) -> list[dict]: ...
 
 
-class Sam31Processor:
-    """Lazily loads one official SAM 3.1 detector and reuses its image embedding."""
+class Sam3ImageProcessor:
+    """Lazily loads one official SAM 3 model and reuses its image embedding."""
 
     def __init__(self):
         self._processor = None
         self._autocast = nullcontext
         self._lock = Lock()
 
-    def _load(self):
+    def load(self):
         if self._processor is None:
             import torch
             from huggingface_hub import hf_hub_download
-            from sam3.model_builder import build_sam3_multiplex_video_predictor
+            from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
 
-            checkpoint_path = os.getenv("SAM31_CHECKPOINT_PATH") or hf_hub_download(
-                repo_id="facebook/sam3.1",
-                filename=SAM31_CHECKPOINT,
-                token=os.getenv("HF_TOKEN"),
+            checkpoint_path = hf_hub_download(
+                repo_id="facebook/sam3",
+                filename=SAM3_CHECKPOINT,
+                token=True,
             )
-            predictor = build_sam3_multiplex_video_predictor(
+            model = build_sam3_image_model(
                 checkpoint_path=checkpoint_path,
-                max_num_objects=16,
-                multiplex_count=16,
-                use_fa3=False,
-                use_rope_real=False,
+                load_from_HF=False,
+                device="cuda",
+                eval_mode=True,
+                enable_segmentation=True,
+                enable_inst_interactivity=False,
                 compile=False,
-                warm_up=False,
-                async_loading_frames=False,
             )
-            detector = predictor.model.detector
-            predictor.model.tracker = None
-            predictor.model.detector = None
-            predictor.bf16_context.__exit__(None, None, None)
-            self._processor = Sam3Processor(detector, confidence_threshold=0.5)
+            self._processor = Sam3Processor(model, confidence_threshold=0.5)
             self._autocast = lambda: torch.autocast(
                 device_type="cuda", dtype=torch.bfloat16
             )
@@ -81,7 +75,7 @@ class Sam31Processor:
     def scan(self, image: np.ndarray, prompts=DEFECT_PROMPTS) -> list[dict]:
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
-            processor = self._load()
+            processor = self.load()
             with self._autocast():
                 state = processor.set_image(rgb_image)
                 candidates = []
@@ -94,7 +88,7 @@ class Sam31Processor:
                         or masks.shape[1] != 1
                         or len(masks) != len(scores)
                     ):
-                        raise RuntimeError("SAM 3.1 returned an invalid mask result")
+                        raise RuntimeError("SAM 3 returned an invalid mask result")
                     candidates.extend(
                         {
                             "defectType": defect_type,
@@ -106,7 +100,7 @@ class Sam31Processor:
         return candidates
 
 
-_processor = Sam31Processor()
+_processor = Sam3ImageProcessor()
 
 
 def get_processor() -> MaskProcessor:
@@ -171,7 +165,7 @@ def _defect_id(side: str, result: dict, index: int) -> str:
             index,
         )
     ).encode()
-    return f"sam31-{side.lower()}-{hashlib.sha256(identity).hexdigest()[:16]}"
+    return f"sam3-{side.lower()}-{hashlib.sha256(identity).hexdigest()[:16]}"
 
 
 def _to_speedster_defects(

@@ -6,8 +6,10 @@ import {
   calculateSpeedsterReview,
   completeSpeedsterReview,
   correctSpeedsterDefectType,
+  prepareSpeedsterCompletion,
   publicSpeedsterDefects,
   removeSpeedsterDefect,
+  scanSpeedsterCapture,
 } from "../lib/ai-grader-v2/review";
 
 const capture = {
@@ -64,4 +66,76 @@ test("completion accepts untouched findings and keeps canonical report view IDs"
   const persisted = publicSpeedsterDefects(completed);
   assert.equal(persisted[0].sourceViewId, "DIRECTIONAL");
   assert.deepEqual(persisted[0].supportingViewIds, ["MICRO_DEFECT"]);
+});
+
+test("the production orchestration scans Front then Back and produces a completable report payload", async () => {
+  const scanOrder: string[] = [];
+  const scanned = await scanSpeedsterCapture({
+    capture: {
+      cornerShape: "ROUNDED_3_18_MM",
+      front: {
+        side: "FRONT",
+        rectifiedUrl: "https://images.test/front-original",
+        views: {
+          NORMALIZED: "https://images.test/front-normalized",
+          MICRO_DEFECT: "https://images.test/front-micro",
+          DIRECTIONAL: "https://images.test/front-directional",
+        },
+      },
+      back: {
+        side: "BACK",
+        rectifiedUrl: "https://images.test/back-original",
+        views: {
+          NORMALIZED: "https://images.test/back-normalized",
+          MICRO_DEFECT: "https://images.test/back-micro",
+          DIRECTIONAL: "https://images.test/back-directional",
+        },
+      },
+    },
+    async detect(request) {
+      scanOrder.push(request.side);
+      assert.deepEqual(request.views.map(({ id }) => id), [
+        `${request.side}:ORIGINAL`,
+        `${request.side}:NORMALIZED`,
+        `${request.side}:MICRO_DEFECT`,
+        `${request.side}:DIRECTIONAL`,
+      ]);
+      return {
+        detectorVersion: "sam3-test",
+        defects: request.side === "FRONT" ? [] : [{
+          ...defect,
+          id: "sam-result-1",
+          side: "BACK",
+          sourceViewId: "BACK:DIRECTIONAL",
+          supportingViewIds: ["BACK:MICRO_DEFECT"],
+        }],
+      };
+    },
+  });
+
+  assert.deepEqual(scanOrder, ["FRONT", "BACK"]);
+  assert.equal(scanned.detectorVersion, "sam3-test");
+  assert.equal(scanned.defects.length, 1);
+  assert.equal(scanned.defects[0].id, "BACK:sam-result-1:SURFACE");
+  assert.equal(scanned.defects[0].reviewResult, "UNREVIEWED");
+
+  const review = calculateSpeedsterReview(capture, scanned.defects);
+  const prepared = prepareSpeedsterCompletion(scanned.defects, review.grade, scanned.detectorVersion);
+  assert.equal(prepared.completedDefects[0].reviewResult, "ACCEPTED");
+  assert.equal(prepared.body.reviewedDefects[0].sourceViewId, "DIRECTIONAL");
+  assert.equal(prepared.body.gradeReport.detectorVersion, "sam3-test");
+
+  const { buildSpeedsterLabelData, speedsterReportSlug } = await import(
+    "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label"
+  );
+  const label = buildSpeedsterLabelData({
+    id: "speedster-session-123456789",
+    cardProfile: "POKEMON",
+    workflowState: "CAPTURED",
+    publicReportSlug: null,
+    identity: { cardName: "Charizard", year: "2026", productSet: "Speedster" },
+  }, prepared.body.gradeReport as unknown as Parameters<typeof buildSpeedsterLabelData>[1]);
+  assert.equal(label.source, "SPEEDSTER");
+  assert.equal(label.gradingFormulaVersion, "EQUAL_25");
+  assert.equal(speedsterReportSlug("speedster-session-123456789"), "speedster-speedster-session-123456789");
 });

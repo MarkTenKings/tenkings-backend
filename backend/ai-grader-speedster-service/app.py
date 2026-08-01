@@ -1,4 +1,5 @@
 import base64
+from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
@@ -8,9 +9,16 @@ import requests
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from sam31_detector import detect_views, measure_marks
+from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
 
-app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    get_processor().load()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 TARGET_WIDTH = 1270
 TARGET_HEIGHT = 1778
@@ -191,7 +199,7 @@ def upload_webp(upload_url: str, image: np.ndarray):
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    return {"ok": True, "detectorVersion": DETECTOR_VERSION}
 
 
 @app.post("/geometry", response_model=GeometryResponse)

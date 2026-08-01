@@ -1,16 +1,17 @@
 import base64
+import asyncio
 import unittest
 from unittest.mock import patch
 
 import cv2
 import numpy as np
 
-from app import DetectRequest, MeasureRequest, detect, measure
+from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure
 from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH
-from sam31_detector import (
+from sam3_detector import (
     DEFECT_PROMPTS,
     DETECTOR_VERSION,
-    Sam31Processor,
+    Sam3ImageProcessor,
     detect_views,
     measure_marks,
 )
@@ -76,7 +77,25 @@ def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
     ]
 
 
-class Sam31DetectorTests(unittest.TestCase):
+class Sam3DetectorTests(unittest.TestCase):
+    def test_service_startup_loads_the_one_detector_before_health(self):
+        class FakeLoader:
+            def __init__(self):
+                self.calls = 0
+
+            def load(self):
+                self.calls += 1
+
+        loader = FakeLoader()
+
+        async def start_and_stop():
+            with patch("app.get_processor", return_value=loader):
+                async with lifespan(None):
+                    self.assertEqual(health()["detectorVersion"], DETECTOR_VERSION)
+
+        asyncio.run(start_and_stop())
+        self.assertEqual(loader.calls, 1)
+
     def test_detect_endpoint_loads_supplied_canonical_views(self):
         success, encoded = cv2.imencode(".png", np.zeros((12, 8, 3), dtype=np.uint8))
         self.assertTrue(success)
@@ -139,6 +158,7 @@ class Sam31DetectorTests(unittest.TestCase):
         self.assertTrue(all(prompts is DEFECT_PROMPTS for _, prompts in processor.calls))
         self.assertEqual(len(result["defects"]), 1)
         defect = result["defects"][0]
+        self.assertTrue(defect["id"].startswith("sam3-front-"))
         self.assertEqual(defect["sourceViewId"], "NORMALIZED")
         self.assertEqual(defect["supportingViewIds"], ["ORIGINAL"])
         self.assertEqual(defect["reviewResult"], "UNREVIEWED")
@@ -180,7 +200,7 @@ class Sam31DetectorTests(unittest.TestCase):
 
     def test_official_processor_reuses_one_image_embedding_for_all_prompts(self):
         fake = FakeOfficialImageProcessor()
-        processor = Sam31Processor()
+        processor = Sam3ImageProcessor()
         processor._processor = fake
 
         candidates = processor.scan(np.zeros((12, 8, 3), dtype=np.uint8))

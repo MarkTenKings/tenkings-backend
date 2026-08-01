@@ -21,10 +21,11 @@ import type {
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   calculateSpeedsterReview,
-  completeSpeedsterReview,
   correctSpeedsterDefectType,
-  publicSpeedsterDefects,
+  prepareSpeedsterCompletion,
   removeSpeedsterDefect,
+  scanSpeedsterCapture,
+  speedsterDetectorViews,
 } from "../../lib/ai-grader-v2/review";
 import styles from "../../styles/AiGraderV2Admin.module.css";
 
@@ -33,40 +34,6 @@ type SpeedsterCompletion = {
   label: { certificateNumber: string; slot: number };
   publicReportSlug: string;
 };
-
-const canonicalViewId = (side: SpeedsterCardSide, viewId: string) =>
-  viewId.startsWith(`${side}:`) ? viewId : `${side}:${viewId}`;
-const canonicalDefectId = (
-  side: SpeedsterCardSide,
-  defect: Pick<SpeedsterMeasuredDefect, "id" | "zone">,
-) => {
-  const id = canonicalViewId(side, defect.id);
-  return id.endsWith(`:${defect.zone}`) ? id : `${id}:${defect.zone}`;
-};
-
-function detectorViews(side: SpeedsterCaptureBundle["front"]) {
-  return [
-    { id: `${side.side}:ORIGINAL`, imageUrl: side.rectifiedUrl },
-    { id: `${side.side}:NORMALIZED`, imageUrl: side.views.NORMALIZED },
-    { id: `${side.side}:MICRO_DEFECT`, imageUrl: side.views.MICRO_DEFECT },
-    { id: `${side.side}:DIRECTIONAL`, imageUrl: side.views.DIRECTIONAL },
-  ];
-}
-
-function canonicalDefects(
-  side: SpeedsterCardSide,
-  defects: readonly SpeedsterMeasuredDefect[],
-  reviewResult: SpeedsterMeasuredDefect["reviewResult"],
-) {
-  return defects.map((defect) => ({
-    ...defect,
-    id: canonicalDefectId(side, defect),
-    side,
-    sourceViewId: canonicalViewId(side, defect.sourceViewId),
-    supportingViewIds: defect.supportingViewIds.map((id) => canonicalViewId(side, id)),
-    reviewResult,
-  }));
-}
 
 export default function AiGraderV2AdminPage() {
   const { session, loading, ensureSession } = useSession();
@@ -87,8 +54,8 @@ export default function AiGraderV2AdminPage() {
     [capture, defects],
   );
   const sourceImageUrls = useMemo(() => capture ? Object.fromEntries([
-    ...detectorViews(capture.front),
-    ...detectorViews(capture.back),
+    ...speedsterDetectorViews(capture.front),
+    ...speedsterDetectorViews(capture.back),
   ].map(({ id, imageUrl }) => [id, imageUrl])) : {}, [capture]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
@@ -150,26 +117,17 @@ export default function AiGraderV2AdminPage() {
       });
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "Card geometry could not be saved.");
-      setMessage("SAM 3.1 is scanning the Front card views.");
-      const front = await speedsterImageService.detect(session.token, {
-        side: "FRONT",
-        cornerShape: bundle.cornerShape,
-        views: detectorViews(bundle.front),
-      });
-      setMessage("SAM 3.1 is scanning the Back card views.");
-      const back = await speedsterImageService.detect(session.token, {
-        side: "BACK",
-        cornerShape: bundle.cornerShape,
-        views: detectorViews(bundle.back),
-      });
       setCapture(bundle);
-      setDetectorVersion(front.detectorVersion);
-      setDefects([
-        ...canonicalDefects("FRONT", front.defects, "UNREVIEWED"),
-        ...canonicalDefects("BACK", back.defects, "UNREVIEWED"),
-      ]);
-      setMessage("SAM 3.1 scan complete. Review the measured card map.");
+      const scanned = await scanSpeedsterCapture({
+        capture: bundle,
+        detect: (request) => speedsterImageService.detect(session.token, request),
+        onSide: (side) => setMessage(`SAM 3 is scanning the ${side === "FRONT" ? "Front" : "Back"} card views.`),
+      });
+      setDetectorVersion(scanned.detectorVersion);
+      setDefects(scanned.defects);
+      setMessage("SAM 3 scan complete. Review the measured card map.");
     } catch (error) {
+      setCapture(null);
       setMessage(error instanceof Error ? error.message : "Card geometry could not be saved.");
     } finally {
       setWorking(false);
@@ -200,7 +158,7 @@ export default function AiGraderV2AdminPage() {
           ],
         }],
       });
-      const added = canonicalDefects(side, measured.defects, "SMART_MARKED");
+      const added = measured.defects.map((defect) => ({ ...defect, reviewResult: "SMART_MARKED" as const }));
       if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
       setDefects((current) => [...(current ?? []), ...added]);
       setMessage("Smart-Mark measured. Select its defect type if needed.");
@@ -215,24 +173,21 @@ export default function AiGraderV2AdminPage() {
     if (!session?.token || !draft || !review || working) return;
     setWorking(true);
     setMessage("Completing the grade and adding its label to the print queue.");
-    const completedDefects = completeSpeedsterReview(review.defects);
+    const prepared = prepareSpeedsterCompletion(review.defects, review.grade, detectorVersion!);
     try {
       const response = await fetch(
         `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/complete-label`,
         {
           method: "POST",
           headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            reviewedDefects: publicSpeedsterDefects(completedDefects),
-            gradeReport: { ...review.grade, detectorVersion },
-          }),
+          body: JSON.stringify(prepared.body),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as SpeedsterCompletion & { message?: string };
       if (!response.ok || !payload.label || !payload.publicReportSlug) {
         throw new Error(payload.message ?? "Speedster grade could not be completed.");
       }
-      setDefects(completedDefects);
+      setDefects(prepared.completedDefects);
       setCompletion(payload);
       setMessage("Grade complete. The public evidence report and label are ready.");
     } catch (error) {
@@ -279,7 +234,7 @@ export default function AiGraderV2AdminPage() {
 
         {capture && defects === null ? (
           <section className={styles.statusPanel}>
-            <span>03 · SAM 3.1</span>
+            <span>03 · SAM 3</span>
             <h2>Scanning card views.</h2>
             <p>Every finding lands on one measured card map.</p>
           </section>

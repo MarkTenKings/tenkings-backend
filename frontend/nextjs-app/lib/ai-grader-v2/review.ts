@@ -15,11 +15,86 @@ import {
 const SIDES = ["FRONT", "BACK"] as const;
 const ZONES = ["CORNERS", "EDGES", "SURFACE"] as const;
 
+type DetectorSide = {
+  side: SpeedsterCardSide;
+  rectifiedUrl: string;
+  views: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
+};
+type DetectorCapture = {
+  cornerShape: "ROUNDED_3_18_MM" | "SQUARE";
+  front: DetectorSide;
+  back: DetectorSide;
+};
+type DetectRequest = {
+  side: SpeedsterCardSide;
+  cornerShape: DetectorCapture["cornerShape"];
+  views: readonly { id: string; imageUrl: string }[];
+};
+type DetectResponse = {
+  detectorVersion: string;
+  defects: SpeedsterMeasuredDefect[];
+};
+
 type ReviewCapture = Readonly<Record<Lowercase<SpeedsterCardSide>, {
   centeringBorders: SpeedsterCenteringBorders;
 }>>;
 
 const isIncluded = (defect: SpeedsterMeasuredDefect) => defect.reviewResult !== "REMOVED";
+const canonicalViewId = (side: SpeedsterCardSide, viewId: string) =>
+  viewId.startsWith(`${side}:`) ? viewId : `${side}:${viewId}`;
+
+export function speedsterDetectorViews(side: DetectorSide) {
+  return [
+    { id: `${side.side}:ORIGINAL`, imageUrl: side.rectifiedUrl },
+    { id: `${side.side}:NORMALIZED`, imageUrl: side.views.NORMALIZED },
+    { id: `${side.side}:MICRO_DEFECT`, imageUrl: side.views.MICRO_DEFECT },
+    { id: `${side.side}:DIRECTIONAL`, imageUrl: side.views.DIRECTIONAL },
+  ];
+}
+
+function canonicalDefects(
+  side: SpeedsterCardSide,
+  defects: readonly SpeedsterMeasuredDefect[],
+  reviewResult: SpeedsterMeasuredDefect["reviewResult"],
+) {
+  return defects.map((defect) => {
+    const rawId = canonicalViewId(side, defect.id);
+    return {
+      ...defect,
+      id: rawId.endsWith(`:${defect.zone}`) ? rawId : `${rawId}:${defect.zone}`,
+      side,
+      sourceViewId: canonicalViewId(side, defect.sourceViewId),
+      supportingViewIds: defect.supportingViewIds.map((id) => canonicalViewId(side, id)),
+      reviewResult,
+    };
+  });
+}
+
+export async function scanSpeedsterCapture(input: {
+  capture: DetectorCapture;
+  detect: (request: DetectRequest) => Promise<DetectResponse>;
+  onSide?: (side: SpeedsterCardSide) => void;
+}) {
+  input.onSide?.("FRONT");
+  const front = await input.detect({
+    side: "FRONT",
+    cornerShape: input.capture.cornerShape,
+    views: speedsterDetectorViews(input.capture.front),
+  });
+  input.onSide?.("BACK");
+  const back = await input.detect({
+    side: "BACK",
+    cornerShape: input.capture.cornerShape,
+    views: speedsterDetectorViews(input.capture.back),
+  });
+  return {
+    detectorVersion: front.detectorVersion,
+    defects: [
+      ...canonicalDefects("FRONT", front.defects, "UNREVIEWED"),
+      ...canonicalDefects("BACK", back.defects, "UNREVIEWED"),
+    ],
+  };
+}
 
 function conditionInput(
   defects: readonly SpeedsterMeasuredDefect[],
@@ -130,4 +205,19 @@ export function publicSpeedsterDefects(
     sourceViewId: defect.sourceViewId.replace(`${defect.side}:`, ""),
     supportingViewIds: defect.supportingViewIds.map((id) => id.replace(`${defect.side}:`, "")),
   }));
+}
+
+export function prepareSpeedsterCompletion(
+  defects: readonly SpeedsterMeasuredDefect[],
+  grade: ReturnType<typeof calculateSpeedsterGrade>,
+  detectorVersion: string,
+) {
+  const completedDefects = completeSpeedsterReview(defects);
+  return {
+    completedDefects,
+    body: {
+      reviewedDefects: publicSpeedsterDefects(completedDefects),
+      gradeReport: { ...grade, detectorVersion },
+    },
+  };
 }
