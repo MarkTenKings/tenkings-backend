@@ -288,6 +288,10 @@ export default function AiGraderV2AdminPage() {
               Open public evidence report →
             </Link>
             <Link href="/admin/ai-grader-v2/completed">Open completed cards →</Link>
+            <Link href="/admin/ai-grader-v2" onClick={(event) => {
+              event.preventDefault();
+              window.location.assign("/admin/ai-grader-v2");
+            }}>Next card →</Link>
           </section>
         ) : null}
       </main>

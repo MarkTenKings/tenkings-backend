@@ -287,6 +287,11 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
             onChange={(side, file) => side === "FRONT"
               ? setFrontPhoto({ kind: "LOCAL", file })
               : setBackPhoto({ kind: "LOCAL", file })}
+            onRetake={() => {
+              setFrontPhoto(null);
+              setBackPhoto(null);
+              setMessage("Retake front + back, then run the Speedster Shortcut again.");
+            }}
             onSwap={() => {
               setFrontPhoto(backPhoto);
               setBackPhoto(frontPhoto);

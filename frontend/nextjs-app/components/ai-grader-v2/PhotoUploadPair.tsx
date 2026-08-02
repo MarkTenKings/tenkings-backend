@@ -17,6 +17,7 @@ type PhotoUploadPairProps = {
   back: SpeedsterOriginalPhoto | null;
   pairingUrl?: string;
   onChange: (side: SpeedsterCardSide, file: File) => void;
+  onRetake: () => void;
   onSwap: () => void;
 };
 
@@ -102,9 +103,11 @@ export default function PhotoUploadPair({
   back,
   pairingUrl,
   onChange,
+  onRetake,
   onSwap,
 }: PhotoUploadPairProps) {
   const readyCount = Number(Boolean(front)) + Number(Boolean(back));
+  const iphonePairReady = front?.kind === "IPHONE" && back?.kind === "IPHONE";
 
   return (
     <section className={styles.uploader} aria-label="Front and back card photos">
@@ -115,6 +118,7 @@ export default function PhotoUploadPair({
         </div>
         <div className={styles.headingActions}>
           <p aria-live="polite"><strong>{readyCount}/2</strong> photos ready</p>
+          {iphonePairReady ? <button type="button" onClick={onRetake}>Retake</button> : null}
           {readyCount === 2 ? <button type="button" onClick={onSwap}>Swap front / back</button> : null}
         </div>
       </div>
