@@ -16,7 +16,9 @@ type ReviewWorkspaceProps = {
   sourceImageUrls: Readonly<Record<string, string>>;
   defects: readonly SpeedsterMeasuredDefect[];
   grade: ReturnType<typeof calculateSpeedsterGrade>;
+  canUndo: boolean;
   onRemoveDefect: (defectId: string) => void;
+  onUndo: () => void;
   onDefectTypeChange: (defectId: string, defectType: SpeedsterDefectType) => void;
   onSmartMark: (side: SpeedsterCardSide, box: { x: number; y: number; width: number; height: number }) => void;
   onComplete: () => void;
@@ -27,7 +29,9 @@ export function ReviewWorkspace({
   sourceImageUrls,
   defects,
   grade,
+  canUndo,
   onRemoveDefect,
+  onUndo,
   onDefectTypeChange,
   onSmartMark,
   onComplete,
@@ -39,6 +43,7 @@ export function ReviewWorkspace({
       <header className={styles.header}>
         <div><span>03 · HUMAN REVIEW</span><h1>Review only what needs attention.</h1></div>
         <div className={styles.sides}>
+          {canUndo ? <button type="button" onClick={onUndo}>Undo remove</button> : null}
           {(["FRONT", "BACK"] as const).map((value) => (
             <button
               type="button"

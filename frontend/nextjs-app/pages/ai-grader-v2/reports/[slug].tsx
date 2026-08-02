@@ -248,7 +248,7 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
       where: { publicReportSlug: slug, workflowState: "COMPLETED" },
       select: { cardProfile: true, workflowState: true, identity: true, capture: true, reviewedDefects: true, gradeReport: true },
     }),
-    presign: (storageKey) => presignReadUrl(storageKey, 60 * 5),
+    presign: (storageKey) => presignReadUrl(storageKey, 60 * 60 * 24 * 7),
   })(context);
 };
 

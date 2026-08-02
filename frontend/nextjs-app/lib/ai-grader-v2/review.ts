@@ -179,6 +179,13 @@ export function removeSpeedsterDefect(
     : defect);
 }
 
+export function restoreSpeedsterDefect(
+  defects: readonly SpeedsterMeasuredDefect[],
+  restored: SpeedsterMeasuredDefect,
+): SpeedsterMeasuredDefect[] {
+  return defects.map((defect) => defect.id === restored.id ? restored : defect);
+}
+
 export function correctSpeedsterDefectType(
   defects: readonly SpeedsterMeasuredDefect[],
   defectId: string,

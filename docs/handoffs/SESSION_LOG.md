@@ -29862,3 +29862,14 @@ By enabling Rip It Live, I confirm:
 - Vercel Production deployment `CepUEFpfTR8vBuVoudPypAqAxHLv` completed successfully for the merge commit with Production `RUN_DB_MIGRATIONS=false`; no migration, database/data/label mutation, environment-variable change, or detector deployment occurred.
 - Authenticated Production verification loaded `/admin/ai-grader-v2`, and the existing public Nick Bosa report loaded at its saved report URL. The serving review/report bundle exposes the new fixed pin hit targets with `pointer-events: all` and a dimensionally stable card stage with `flex: 0 0 auto`.
 - The existing SAM 3 service remained healthy after deployment: `/health` returned HTTP 200 with `sam3-local-box@96914d2425f90a64f45ca977c2b5165418099543`. No GPU Pod restart, V1/Dell change, Human Grade change, #4 post-grading work, #5 capture work, fallback, or destructive operation occurred.
+
+## 2026-08-01 - Speedster long-lived evidence images and one-level Undo built locally
+
+- Production inspection confirmed the close-up mask-with-black-background defect was caused by report evidence URLs expiring after five minutes while the already-loaded master image remained visible. Extended only the public report read-URL lifetime to seven days; every SSR report reload still produces fresh URLs, and no render pipeline, copied evidence asset, fallback image path, database change, or report redesign was added.
+- Added exactly one-level reviewer Undo. The browser remembers only the last removed defect, restores that defect by ID without replacing later edits to other findings, immediately reuses the existing live grade recalculation, and then clears the Undo. No redo, history stack, persistence table, API, or alternate review path was added.
+- Focused Speedster review/report tests pass `10/10`, focused ESLint passes, the optimized Production Next.js build completes with existing repository warnings only, and `git diff --check` passes. Repository-wide standalone TypeScript still reports only existing unrelated V1/test diagnostics; none reference the changed Speedster files. No deployment, migration, database/data/label mutation, GPU/Pod restart, detector change, V1/Dell change, Human Grade change, fallback, or destructive action has occurred.
+
+### Planned evidence/Undo Production rollout
+
+- Plan: push the isolated reviewed commit through the normal green-check pull-request path with Production `RUN_DB_MIGRATIONS=false`, merge only after required checks and Vercel Preview pass, then verify the serving Production commit, the public report route, and the authenticated Speedster review bundle.
+- This frontend/report-only rollout will not run a migration, mutate database/data/labels, change an environment variable, rebuild or restart SAM 3, touch V1/Dell or Human Grade, add a fallback, or perform a destructive action.

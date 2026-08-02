@@ -9,6 +9,7 @@ import {
   prepareSpeedsterCompletion,
   publicSpeedsterDefects,
   removeSpeedsterDefect,
+  restoreSpeedsterDefect,
   scanSpeedsterCapture,
 } from "../lib/ai-grader-v2/review";
 
@@ -49,6 +50,16 @@ test("derives the exact eligible zone area from the measured defect and excludes
   assert.equal(removed.grade.front.surface.weightedDamagePercent, 0);
   assert.equal(removed.grade.front.surface.score, 10);
   assert.equal(removed.defects[0].reviewResult, "REMOVED");
+});
+
+test("restores only the last removed finding without replacing later defect edits", () => {
+  const other = { ...defect, id: "front-2", defectType: "VISIBLE_WHITENING" as const };
+  const removed = removeSpeedsterDefect([defect, other], defect.id);
+  const corrected = correctSpeedsterDefectType(removed, other.id, "FRAYING");
+  const restored = restoreSpeedsterDefect(corrected, defect);
+  assert.equal(restored[0].reviewResult, "UNREVIEWED");
+  assert.equal(restored[1].defectType, "FRAYING");
+  assert.equal(restored[1].reviewResult, "TYPE_CORRECTED");
 });
 
 test("type corrections change published multiplier math immediately", () => {
