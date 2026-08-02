@@ -30016,3 +30016,7 @@ By enabling Rip It Live, I confirm:
 ### Worker source release result
 
 - Pull request `#267` passed the complete repository build, disposable PostgreSQL migration chain, all Docker-image builds, Vercel preview, and the focused `4/4` Worker tests, then merged as `82f807a423e9f4998fdabf6bcf58083e923be5eb`. Its automatic Production Vercel deployment `5712240125` completed successfully. This release established only the tested standalone Worker source and runbook; Cloudflare was not deployed or activated, and the live iPhone API, grader behavior, database/data/labels, storage objects, GPU/RunPod, V1/Dell, and Human Grade remained unchanged.
+
+### Planned minimal iPhone capture Worker deployment
+
+- Plan: deploy the reviewed `ten-kings-speedster-capture` Worker source to its default `workers.dev` URL in the newly authorized Ten Kings Cloudflare account, then verify only its read-only method and incomplete-form responses before a user-driven real Front/Back capture test. The deployment has no secrets, bindings, queues, retries, custom domain, storage, migration, database/data/label mutation, GPU/RunPod action, V1/Dell change, Human Grade change, fallback, gate, or destructive operation.
