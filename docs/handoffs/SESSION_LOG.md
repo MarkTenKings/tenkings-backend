@@ -29977,3 +29977,20 @@ By enabling Rip It Live, I confirm:
 - Plan: verify the new endpoint's `/ping`, `/health`, geometry, and real detector response before changing web traffic. Keep the current single RTX 4090 Pod live until the new endpoint and migration-bearing web release pass acceptance; then stop that old Pod to end duplicate billing.
 - Plan: push this reviewed branch through the normal protected pull-request checks. Enable `RUN_DB_MIGRATIONS=true` only for the approved Production deployment that applies the three additive migrations, point only `AI_GRADER_SPEEDSTER_SERVICE_URL` and its server-only provider key at the verified new endpoint, then restore `RUN_DB_MIGRATIONS=false` after success.
 - No V1/Dell component, existing Human Grade record/page, existing label, NFC hardware, comps/inventory record, detector fallback, application queue, alternate GPU type, or destructive database operation is included.
+
+### Speedster capacity and Production rollout evidence
+
+- Built and pushed private Linux/amd64 service image `ghcr.io/marktenkings/tenkings-backend/ai-grader-speedster-service:d2bc4b5b` with digest `sha256:4cc66fa8d176721963ea649c6cda5c5b4fa0c6f18f259bfa0d30943118bc27e9`.
+- Created RunPod load-balanced endpoint `ten-kings-speedster-sam3-lb-d2bc4b5b` (`we730z8vl8o3tm`) using only RTX 4090 / 24 GB workers, two active workers and four maximum workers. Both active workers reached `running`.
+- Direct endpoint acceptance passed `/ping`, `/health`, `/geometry`, and `/detect` against the real Nick Bosa Front image. Geometry returned the source `1512 x 2016` dimensions and four corners; detection returned seven measured findings with the pinned `sam3-local-box@96914d2425f90a64f45ca977c2b5165418099543` version and learning fingerprints.
+- Pull request `#262` passed the complete build, Docker-image, disposable PostgreSQL migration-chain, and Vercel preview checks, then merged as `2ea811298fe0f536695b859b520d7ad843886926`.
+- Production Vercel deployment `C2esjoyc1V1FNhSSXCV6CYVPUirk` completed Ready with `RUN_DB_MIGRATIONS=true`; the live completed-card list then queried three existing completed sessions and a completed workspace loaded, confirming the additive schema is available. Production `RUN_DB_MIGRATIONS` was immediately restored to `false` after acceptance.
+- Live acceptance passed at `/admin/ai-grader-v2`, `/admin/ai-grader-v2/completed`, an existing completed-card workspace, and its public report. The workspace exposed direct slab-photo controls and the live public-report link; the report rendered the existing card, overall grade, all four subgrades, and measured evidence.
+
+### Planned superseded-Pod stop
+
+- Plan: stop, but do not terminate, superseded normal Pod `0uxb1mii5nne0d` only after the accepted load-balanced endpoint and Production web release above. This ends duplicate GPU billing while keeping the operation recoverable; no database, label, image, V1/Dell, Human Grade, or other persistent data is changed.
+
+### Superseded-Pod stop result
+
+- Stopped superseded normal Pod `electronic_peach_chickadee` (`0uxb1mii5nne0d`) after Production acceptance. RunPod now shows that Pod at `$0.00/hr`; it was not terminated and remains recoverable. The new load-balanced endpoint remains the only Production SAM 3 target.
