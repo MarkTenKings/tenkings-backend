@@ -30020,3 +30020,7 @@ By enabling Rip It Live, I confirm:
 ### Planned minimal iPhone capture Worker deployment
 
 - Plan: deploy the reviewed `ten-kings-speedster-capture` Worker source to its default `workers.dev` URL in the newly authorized Ten Kings Cloudflare account, then verify only its read-only method and incomplete-form responses before a user-driven real Front/Back capture test. The deployment has no secrets, bindings, queues, retries, custom domain, storage, migration, database/data/label mutation, GPU/RunPod action, V1/Dell change, Human Grade change, fallback, gate, or destructive operation.
+
+### Minimal iPhone capture Worker deployment result
+
+- Deployed Worker version `334b62bd-742c-40ed-a8f5-6f082c03c516` at `https://ten-kings-speedster-capture.tenkings-monorepo.workers.dev` with the reviewed `2.02 KiB` / `0.81 KiB` gzip script and no bindings. Live HTTPS acceptance returned the intended `405 POST only` for GET and `400 Expected deviceId, front, and back` for an incomplete multipart POST. No real card image, PLAN/COMPLETE call, storage object, database/data/label, migration, GPU/RunPod, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation was involved; a real Front/Back pair remains the next user-driven acceptance step.
