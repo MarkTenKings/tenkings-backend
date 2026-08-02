@@ -30002,3 +30002,13 @@ By enabling Rip It Live, I confirm:
 ### Flat iPhone PLAN response release result
 
 - Pull request `#265` passed the focused `6/6` iPhone-capture contract tests, focused ESLint, complete repository build, disposable PostgreSQL migration chain, all Docker-image builds, and Vercel preview, then merged as `c74bd2b0e3f088f351ba00a2171e6f0867643a9c`. Its Production Vercel deployment completed successfully. The live PLAN contract now exposes `frontUploadUrl` and `backUploadUrl` directly while preserving all existing fields and behavior; no migration, data/label mutation, GPU/provider action, V1/Dell change, Human Grade change, fallback, queue, gate, or destructive operation occurred.
+
+## 2026-08-02 - Minimal Speedster iPhone Worker relay built locally
+
+- Added one zero-secret, stateless Cloudflare Worker that accepts exactly one multipart `deviceId`/Front/Back pair, calls the existing Production PLAN endpoint, sends both JPEGs directly to the returned DigitalOcean Spaces URLs in parallel, and returns the existing COMPLETE response unchanged. It adds no image processing, storage binding, queue, retry system, streaming parser, custom domain, auth layer, or fallback path.
+- Replaced the old Shortcut runbook choreography with the exact ten-action Worker flow and recorded the post-acceptance cleanup boundary. The existing PLAN/COMPLETE endpoint, capture-device row, stable image keys, browser polling, and shared geometry/grading path remain unchanged.
+- Focused Worker tests pass `4/4`, `git diff --check` passes, and Wrangler `4.118.0` dry-run succeeds at `2.02 KiB` uncompressed / `0.81 KiB` gzip with no bindings. No deployment, Cloudflare account or billing change, migration, database/data/label mutation, storage upload, Production request, GPU/RunPod action, V1/Dell change, Human Grade change, fallback, queue, gate, or destructive operation occurred.
+
+### Planned Worker source release
+
+- Plan: merge the fully green Worker-source pull request into the repository source of truth. The automatic Vercel deployment contains only the new standalone Worker files and documentation; it does not deploy or activate Cloudflare, change the existing iPhone API, run a migration, or alter Production grader behavior. Cloudflare deployment remains a separate recorded action after account login.
