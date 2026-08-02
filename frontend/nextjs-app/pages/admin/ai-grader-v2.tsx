@@ -24,6 +24,7 @@ import {
   correctSpeedsterDefectType,
   prepareSpeedsterCompletion,
   removeSpeedsterDefect,
+  restoreSpeedsterDefect,
   scanSpeedsterCapture,
   speedsterDetectorViews,
 } from "../../lib/ai-grader-v2/review";
@@ -41,6 +42,7 @@ export default function AiGraderV2AdminPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterMeasuredDefect[] | null>(null);
+  const [lastRemovedDefect, setLastRemovedDefect] = useState<SpeedsterMeasuredDefect | null>(null);
   const [detectorVersion, setDetectorVersion] = useState<string | null>(null);
   const [completion, setCompletion] = useState<SpeedsterCompletion | null>(null);
   const [working, setWorking] = useState(false);
@@ -246,9 +248,21 @@ export default function AiGraderV2AdminPage() {
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
             grade={review.grade}
+            canUndo={lastRemovedDefect !== null}
             onRemoveDefect={(defectId) => {
-              setDefects((current) => current ? removeSpeedsterDefect(current, defectId) : current);
+              const removed = defects.find((defect) => defect.id === defectId);
+              if (!removed) return;
+              setLastRemovedDefect(removed);
+              setDefects(removeSpeedsterDefect(defects, defectId));
               setMessage("Finding removed from grading and saved as reviewer feedback.");
+            }}
+            onUndo={() => {
+              if (!lastRemovedDefect) return;
+              setDefects((current) => current
+                ? restoreSpeedsterDefect(current, lastRemovedDefect)
+                : current);
+              setLastRemovedDefect(null);
+              setMessage("Last removed finding restored.");
             }}
             onDefectTypeChange={(defectId: string, defectType: SpeedsterDefectType) => {
               setDefects((current) => current
