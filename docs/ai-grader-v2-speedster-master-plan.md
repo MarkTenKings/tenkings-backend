@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
-Date: 2026-07-31
-Status: Core workflow and SAM 3 integration implemented locally; live GPU/checkpoint verification, learning bank, and production rollout pending
+Date: 2026-08-01
+Status: Core workflow and SAM 3 are live; completed-card workspace, native-iPhone capture, multi-admin isolation, and immediate reviewed-defect learning are in the approved release branch pending migration/deployment
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -17,7 +17,7 @@ Every image is straightened onto the same physical card grid, scanned independen
 ## 3. Speedster Workflow
 
 1. **Create card** — Human clicks **New Speedster Card** inside `/admin/ai-grader-v2`. The first Speedster step displays the same proven Sports/Pokemon identity editor and live label preview as Human Grade, without navigating to another page.
-2. **Upload** — One original front image and one original back image are required. Extra evidence views are optional.
+2. **Capture** — The mounted iPhone native Camera sends the newest Front/Back pair through one permanently paired Shortcut. The page shows both thumbnails with Retake and Swap before geometry. Manual upload remains only as the initial test path.
 3. **Set geometry** — OpenCV proposes the four physical card corners. Human moves only incorrect points and confirms the card shape/radius.
 4. **Rectify** — Every image is mapped onto the same known-dimension card grid and receives a saved raw-to-grid transform.
 5. **Measure centering** — Human confirms the design-border geometry; deterministic code calculates front and back centering.
@@ -144,7 +144,7 @@ They are generated and labeled automatically. Keep only views that measurably im
 | OpenCV | Corner proposal, rectification, canonical grid, zones, filters, measurements | Required |
 | Python and PyTorch detector service | Replaceable execution boundary for vision models | Required capability |
 | SAM 3 | Sole production detector and precise mask generator across every canonical evidence view | Required and active |
-| DINOv3 embeddings | Similar-example retrieval across the single learning bank | Required for the moat; backbone replaceable |
+| Existing SAM 3 encoder features | Zero-extra-inference fingerprint for immediate reviewed-example similarity | Required and active in the learning loop |
 
 Vision LLMs, PatchCore, detector ensembles, and automated fallback detectors are not part of the Speedster architecture.
 
@@ -166,12 +166,14 @@ Each example stores automatically available context:
 
 After review completion:
 
-- accepted and Smart-Marked patches become positive retrieval examples
+- accepted detector masks become positive similarity examples
 - removed detections become hard-negative examples
 - corrected types become better labeled examples
-- DINOv3 retrieval uses the most relevant examples on the very next card
+- the already-computed SAM 3 feature pyramid is pooled under each detector mask into one compact normalized fingerprint
+- the next card re-ranks proposals with nearest accepted/removed cosine similarity
+- Smart-Marks remain saved human-missed-defect lessons without a fabricated SAM fingerprint or a second SAM pass
 
-This is database/index learning, not unsafe per-card neural-weight updates.
+This is a small reviewed-example matrix and deterministic cosine math, not a new embedding model, vector database, inference pass, worker-local cache, or per-card neural-weight update.
 
 ### Controlled detector learning
 
@@ -256,15 +258,17 @@ The public report reuses the review visualization in read-only mode:
 
 Public viewers can explore evidence but cannot edit it.
 
-## 12. NFC-Ready Report Identity
+## 12. Post-Grading Tool Boundary
 
-NFC is explicitly planned but is not part of the initial Speedster build.
+NFC, comps, and inventory are finishing tools and never run inside the grading path.
 
 - Every completed Speedster card receives one stable certificate identity and one permanent Ten Kings public report URL.
 - The future NFC chip sealed into the slab label will open that exact report URL.
 - The future NFC label layout will use the same physical label dimensions and 16-up sheet geometry.
-- Before NFC implementation, audit the existing V1 hosted registration, report-link, NFC helper, reader, write, verification, and chip-profile code.
-- Reuse only clean, compatible contracts and components; do not copy V1 grading/capture baggage into Speedster.
+- The existing V1/Dell NFC path was audited. It requires V1 `AiGraderReport`, `CardAsset`, `Item`, `AiGraderLabel`, `AiGraderNfcTag`, reservation, attestation, and the exact `/nfc/<publicTagId>` URL; a Speedster session/report URL cannot truthfully call it yet.
+- Existing KingsReview and Inventory were audited. Both are `CardAsset`-backed; KingsReview also requires a TILT image while Speedster intentionally captures only Front and Back.
+- Do not add dead generic links, title searches, copied/fake TILT images, manual Done buttons, duplicate records, or false status writes.
+- A later bridge must first define one exact Speedster-to-`CardAsset`/`Item` ownership/linkage contract and the no-TILT comps input. That bridge is a separately approved data/workflow change.
 - NFC programming remains a finishing action after the report is complete and published.
 
 ## 13. Codex Build Strategy
@@ -285,16 +289,14 @@ The primary agent must include and repeat this charter in every assignment, foll
 
 Existing admin authentication/access control, non-destructive handling of production data, V1 isolation, deterministic tests, and pre-deployment verification remain mandatory platform responsibilities. They must be implemented with the smallest existing mechanisms and must not create new operator steps, alternate grading paths, or product complexity.
 
-### Parallel lanes
+### Build lanes
 
-1. **Scoring lane** — Implement the deterministic Blueprint engine and exhaustive known-answer tests in isolated V2 library/test files.
-2. **Vision lane** — Implement canonical-grid geometry, the one-detector contract, SAM 3 service, reviewed-mask persistence, and DINO retrieval in the isolated V2 vision service.
-3. **Experience lane** — Implement the defect review/evidence component and its read-only public-report mode against fixed contracts in isolated V2 UI files.
-4. **Primary integration lane** — Extract the shared label editor, build the Speedster shell/upload/data flow, connect all lanes, perform end-to-end verification, and deploy.
+1. **Capture and grading flow** — Shared label editor, native-iPhone pair, geometry, SAM review, deterministic grading, report, and one-level Undo.
+2. **Capacity and storage** — Admin-owned active drafts, one direct load-balanced SAM endpoint with identical workers, stable evidence keys, and the shared label-slot transaction lock.
+3. **Learning** — One reviewed-example table, fingerprints pooled from the existing SAM encoder pass, and small cosine re-ranking on the next card.
+4. **Post grading** — Shared completed-card list, exact public report, sealed-slab photos, and independently scoped NFC/comps/inventory bridges only when their exact record contracts exist.
 
-The primary agent reviews and integrates every lane. Agents do not edit the same files concurrently. Schema migrations, the shared Human Grade refactor, model promotion, and production deployment remain single-owner operations. No Speedster agent touches Human Grade files until the current Human Grade agent has completed and its result has been inspected.
-
-This strategy uses parallel agents for speed without creating competing architectures or merge baggage. Most product workflow work stays lightweight through reuse and shared contracts; production-quality geometry, defect detection, and golden-set evaluation remain the substantive technical work.
+The primary agent reviews and integrates each bounded lane and owns schema order, production rollout, and compatibility decisions. Agents do not create alternate architectures or edit the same files concurrently.
 
 ## 14. Build Order
 
@@ -306,14 +308,15 @@ This strategy uses parallel agents for speed without creating competing architec
 6. Complete automatic corner proposal, human geometry assist, rectification, and canonical zones.
 7. Complete centering geometry and deterministic centering scoring.
 8. Implement the one-active-detector contract using test masks first.
-9. Integrate SAM 3 as the sole active detector. **Implemented locally; live checkpoint GPU verification pending.** Add DINOv3 retrieval after the detector path is proven.
+9. Integrate SAM 3 as the sole active detector. **Completed and live.** Reuse its already-computed encoder features for immediate learning; do not add DINO or another model.
 10. Implement independent per-view scanning and canonical mask fusion/deduplication. **Completed locally.**
 11. Complete the master-map review UI, magnifier, evidence close-up, type pills, Remove, and Smart-Mark. **Completed locally.**
 12. Complete measurements, shared weighted-area engine, sub-grades, and overall grade. **Completed locally.**
 13. Build the interactive report from the same read-only evidence component. **Completed locally.**
 14. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades. **Completed locally.**
-15. Persist the structured learning bank, version snapshots, and golden-set metrics.
-16. Deploy the completed V2 admin-only route, run end-to-end cards, then give Mark the production test URL.
+15. Persist the compact reviewed-example bank and apply deterministic cosine re-ranking on the next card. **In the approved release branch.**
+16. Add the shared completed-card workspace, sealed-slab photos, native-iPhone capture, Next Card rhythm, and multi-admin isolation. **Completed locally.**
+17. Deploy the migration-bearing release, move SAM traffic to one 2-warm-plus-flex load-balanced endpoint, and run Production acceptance.
 
 ## 15. Production Definition of Done
 
@@ -340,17 +343,20 @@ This section records the read-only launch audit performed on branch `codex/ai-gr
 1. The existing Vercel Next.js application for the admin UI, authenticated APIs, completion transaction, and public report.
 2. The existing Production PostgreSQL database.
 3. The existing S3-compatible card object storage and its Production-origin direct-PUT CORS rule.
-4. One CUDA SAM 3 endpoint running identical copies of `backend/ai-grader-speedster-service/Dockerfile`. Each GPU worker loads exactly one model and handles one detector request at a time; there is no alternate detector or fallback.
+4. One RunPod load-balanced CUDA endpoint running identical copies of `backend/ai-grader-speedster-service/Dockerfile`. Each worker loads exactly one SAM 3 model and handles one detector request at a time. Start with two active RTX 4090 PRO workers and allow flex overflow up to four total workers. There is no application queue, named-worker selection, alternate detector, or fallback.
 
-The current repository does not add the Speedster container to `infra/docker-compose.yml`, and the existing droplet deployment is not a CUDA GPU deployment. A GPU host and HTTPS service URL therefore remain the one unresolved infrastructure dependency. The Vercel image proxy also has no explicit function-duration setting, while live SAM latency has not yet been measured; its supported request duration must cover one Front or Back detector call.
+The current single normal Pod remains the live detector until the migration-bearing web release and new load-balanced endpoint pass acceptance. Cut over the one server URL, then stop the old Pod so duplicate GPU billing does not continue.
 
 ### Exact additive migration order
 
 1. `20260731183000_human_grade_formula_version`
 2. `20260731210000_ai_grader_v2_speedster_sessions`
 3. `20260731223000_ai_grader_v2_label_source`
+4. `20260801173000_ai_grader_v2_post_grade`
+5. `20260801180000_ai_grader_v2_iphone_capture`
+6. the reviewed-example learning-bank migration from this release
 
-All three are additive. Existing Human Grade rows receive `LEGACY_30_25_25_20` and `HUMAN` through column defaults, with no row-level backfill or grade/page rewrite. Speedster completion requires all three because it writes an `AiGraderV2Session`, `EQUAL_25`, `SPEEDSTER`, and the unique source-session label link.
+All migrations are additive. Existing Human Grade rows receive `LEGACY_30_25_25_20` and `HUMAN` through column defaults, with no row-level grade/page rewrite. The new Speedster migrations add only V2 post-grade/capture/learning state.
 
 Human Grade PR `#252` remains open and is not deployed as of this audit. A separate Human Grade deployment is not technically required before Speedster: the one protected Speedster release can carry the Human Grade formula change and all three migrations together. The application must not serve the Speedster schema before the migrations are applied.
 
@@ -381,7 +387,7 @@ GPU service variables for the selected direct checkpoint-download path:
 
 The pinned service downloads that one official SAM 3 checkpoint at startup through `HF_TOKEN` and reuses the loaded model in memory. There is no alternate checkpoint path or second detector in the current plan.
 
-The service exposes `/ping` for direct worker readiness. Multiple admins remain isolated by the existing admin identity on each active Speedster session. Shared 16-label sheet create/delete/slot assignment uses one short PostgreSQL transaction advisory lock; there is no application work queue or manual worker selection.
+The service exposes `/ping` for direct worker readiness on `PORT_HEALTH`. RunPod receives one GPU type only, two active workers, four maximum workers, and request-count scaling for flex overflow. Multiple admins remain isolated by the existing admin identity on each active Speedster session. Shared 16-label sheet create/delete/slot assignment uses one short PostgreSQL transaction advisory lock; there is no application work queue or manual worker selection.
 
 Temporary deployment variable from the existing deploy runbook:
 
@@ -389,14 +395,14 @@ Temporary deployment variable from the existing deploy runbook:
 
 ### One direct launch order
 
-1. Build and start the pinned Speedster Docker image on one CUDA host with `HF_TOKEN`; startup downloads and loads SAM 3 before the service accepts requests. Expose its HTTPS base URL.
-2. Confirm `/health` returns the pinned SAM 3 detector version, then invoke one real `/detect` request on non-Production sample images to measure the Front/Back request time.
+1. Build and push the pinned Speedster Docker image. Create one private RunPod load-balanced template with `HF_TOKEN`, `HF_HOME`, `PORT=8080`, `PORT_HEALTH=8080`, and HTTP port `8080`.
+2. Create one RTX 4090 PRO endpoint with two active workers, four maximum workers, and no secondary GPU type. Confirm `/ping` and `/health`, then invoke one real `/detect` request on non-Production sample images.
 3. Verify the existing object-storage settings and Production-origin direct PUT/read behavior without rotating credentials or changing V1 storage behavior.
 4. Set `AI_GRADER_SPEEDSTER_SERVICE_URL` in Vercel and set `RUN_DB_MIGRATIONS=true` for the one approved release.
-5. Merge the protected Speedster PR after required checks; let the Production build apply the three additive migrations in order and deploy the Next.js application.
+5. Merge the protected Speedster PR after required checks; let the Production build apply the additive migrations in order and deploy the Next.js application.
 6. Remove/reset `RUN_DB_MIGRATIONS` after the migration-bearing deploy.
 7. Read-only verify the serving commit, `/admin/ai-grader-v2` authentication boundary, GPU `/health`, and one authenticated image action.
-8. Mark performs the first Production card. Creating the draft and uploading images persist only V2 session/evidence data; completing the card creates its permanent report and consumes exactly one next slot in the existing 16-label queue.
+8. Mark performs the first Production iPhone-capture card and a simultaneous-admin acceptance run. After acceptance, stop the old normal GPU Pod and retain only the load-balanced endpoint.
 
 The current contents or occupancy of the Human Grade queue are not a launch dependency. If an OPEN page exists, the completed Speedster label takes its next slot; otherwise the existing queue creates a page. A draft never consumes a slot. V1/Dell, local helpers, camera hardware, and NFC are not involved.
 
@@ -412,7 +418,7 @@ The current contents or occupancy of the Human Grade queue are not a launch depe
 - Vision LLMs, PatchCore, backup detectors, fallback detectors, and detector ensembles
 - multiple learning databases or separate models per lighting/view type
 - public report editing
-- NFC programming and the NFC-specific inner label layout until the core Speedster workflow is proven
+- NFC/comps/inventory launch bridges until the exact shared `CardAsset`/`Item` identity and no-TILT comps contract are approved
 
 ## 18. Moat Path After Speedster Proof
 

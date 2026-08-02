@@ -29939,3 +29939,9 @@ By enabling Rip It Live, I confirm:
 - Added one Retake action only when a complete iPhone pair is visible. It clears the two browser thumbnails, leaves the paired Shortcut/device and stable object keys unchanged, and accepts the next Shortcut send as the replacement pair. No retake history, extra endpoint, capture mode, or storage object was added.
 - Added one Next card link after completion. It reloads the existing Speedster entry route so all per-card browser state is discarded and the unchanged shared label editor starts cleanly; it does not create a draft or consume a label slot until the normal existing action does so.
 - Focused ESLint and `git diff --check` pass. No deployment, migration, database/data/label mutation, iPhone/Shortcut action, GPU/RunPod change, V1/Dell change, Human Grade behavior change, fallback, queue, gate, or destructive operation occurred.
+
+## 2026-08-01 - Speedster master plan reconciled with implementation evidence
+
+- Updated the source-of-truth plan from the old DINO/one-GPU/pending-SAM assumptions to the implemented native-iPhone, multi-admin, post-grade, and existing-SAM-feature learning architecture.
+- Recorded the one approved capacity shape: one direct RunPod load-balanced endpoint, RTX 4090 PRO only, two active workers and flex overflow up to four total. The old normal Pod stays live only through acceptance and is then stopped to avoid duplicate billing.
+- Recorded the audited NFC/comps/inventory contract gap explicitly so no dead link, fake TILT, duplicate record, or false completion status can enter the release. No runtime code, provider resource, environment variable, deployment, migration, database/data/label, GPU, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation changed in this documentation update.
