@@ -13,6 +13,8 @@ from sam3_detector import (
     DETECTOR_VERSION,
     Sam3ImageProcessor,
     detect_views,
+    feature_fingerprint,
+    learning_adjustment,
     measure_marks,
 )
 
@@ -21,8 +23,8 @@ class FakeMaskProcessor:
     def __init__(self):
         self.calls = []
 
-    def scan(self, image, candidates):
-        self.calls.append((image.shape, candidates))
+    def scan(self, image, candidates, learning_bank=None):
+        self.calls.append((image.shape, candidates, learning_bank))
         mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         mask[500:650, 450:600] = 1
         return [
@@ -52,6 +54,9 @@ class FakeTensor:
     def numpy(self):
         return self.value
 
+    def __getitem__(self, index):
+        return FakeTensor(self.value[index])
+
 
 class FakeOfficialImageProcessor:
     def __init__(self):
@@ -61,7 +66,13 @@ class FakeOfficialImageProcessor:
 
     def set_image(self, image):
         self.images.append(image)
-        return {"image_embedding": "shared"}
+        return {
+            "backbone_out": {
+                "backbone_fpn": [
+                    FakeTensor(np.ones((1, 256, 6, 4), dtype=np.float32))
+                ]
+            }
+        }
 
     def reset_all_prompts(self, state):
         state.pop("masks", None)
@@ -111,6 +122,7 @@ class Sam3DetectorTests(unittest.TestCase):
         request = DetectRequest(
             side="FRONT",
             cornerShape="SQUARE",
+            learningBank={"version": 1, "types": {}},
             views=[
                 {
                     "id": "ORIGINAL",
@@ -128,6 +140,10 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(corner_shape, "SQUARE")
         self.assertEqual(views[0][0], "ORIGINAL")
         self.assertEqual(views[0][1].shape, (12, 8, 3))
+        self.assertEqual(
+            scan.call_args.kwargs["learning_bank"],
+            {"version": 1, "types": {}},
+        )
 
     def test_detect_endpoint_returns_the_single_detector_error(self):
         success, encoded = cv2.imencode(".png", np.zeros((12, 8, 3), dtype=np.uint8))
@@ -191,9 +207,9 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(result["detectorVersion"], DETECTOR_VERSION)
         self.assertEqual(len(processor.calls), 2)
         self.assertTrue(
-            all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _ in processor.calls)
+            all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _, _ in processor.calls)
         )
-        self.assertTrue(all(candidates is localized for _, candidates in processor.calls))
+        self.assertTrue(all(candidates is localized for _, candidates, _ in processor.calls))
         self.assertEqual(len(result["defects"]), 1)
         defect = result["defects"][0]
         self.assertTrue(defect["id"].startswith("sam3-front-"))
@@ -251,7 +267,19 @@ class Sam3DetectorTests(unittest.TestCase):
         ]
 
         candidates = processor.scan(
-            np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8), localized
+            np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+            localized,
+            {
+                "version": 1,
+                "types": {
+                    "VISIBLE_WHITENING": {
+                        "positive": {
+                            "count": 1,
+                            "sum": [1 / np.sqrt(32)] * 32,
+                        },
+                    },
+                },
+            },
         )
 
         self.assertEqual(len(candidates), 2)
@@ -264,7 +292,52 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertTrue(
             all(candidate["mask"].shape == (GRID_HEIGHT, GRID_WIDTH) for candidate in candidates)
         )
+        self.assertTrue(all(len(candidate["featureFingerprint"]) == 32 for candidate in candidates))
+        self.assertAlmostEqual(candidates[0]["confidence"], 0.84, places=3)
+        self.assertEqual(candidates[0]["learningAdjustment"], 0.06)
+        self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.9, places=3)
+        self.assertEqual(candidates[1]["learningAdjustment"], 0.0)
         self.assertEqual(fake.scores.float_calls, 2)
+
+    def test_existing_backbone_features_make_one_compact_normalized_fingerprint(self):
+        features = np.arange(256 * 4 * 3, dtype=np.float32).reshape(256, 4, 3)
+        mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        mask[200:700, 300:900] = 1
+
+        fingerprint = feature_fingerprint(features, mask)
+
+        self.assertIsNotNone(fingerprint)
+        self.assertEqual(len(fingerprint), 32)
+        self.assertAlmostEqual(float(np.linalg.norm(fingerprint)), 1.0, places=5)
+
+    def test_cosine_learning_adds_only_the_tiny_matching_type_adjustment(self):
+        fingerprint = [1.0] + [0.0] * 31
+        positive = {
+            "version": 1,
+            "types": {
+                "VISIBLE_WHITENING": {
+                    "positive": {"count": 1, "sum": fingerprint},
+                }
+            },
+        }
+        negative = {
+            "version": 1,
+            "types": {
+                "VISIBLE_WHITENING": {
+                    "negative": {"count": 1, "sum": fingerprint},
+                }
+            },
+        }
+
+        self.assertEqual(
+            learning_adjustment(fingerprint, "VISIBLE_WHITENING", positive), 0.06
+        )
+        self.assertEqual(
+            learning_adjustment(fingerprint, "VISIBLE_WHITENING", negative), -0.06
+        )
+        self.assertEqual(
+            learning_adjustment(fingerprint, "LIGHT_SCRATCH_SCUFF", positive), 0.0
+        )
 
 
 if __name__ == "__main__":

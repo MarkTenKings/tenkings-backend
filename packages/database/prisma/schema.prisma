@@ -3555,3 +3555,9 @@ model AiGraderV2CaptureDevice {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+model AiGraderV2LearningBank {
+  id        String   @id
+  state     Json     @db.JsonB
+  updatedAt DateTime @updatedAt
+}

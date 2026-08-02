@@ -6,6 +6,10 @@ import {
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
 } from "../../../../../../lib/humanGrade";
+import {
+  cleanSpeedsterLearningBank,
+  updateSpeedsterLearningBank,
+} from "../../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
 
@@ -171,6 +175,16 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       SELECT 1 AS "lockAcquired"
       FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
     `;
+    const storedLearningBank = await tx.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
+    const currentLearningBank = cleanSpeedsterLearningBank(storedLearningBank?.state);
+    const nextLearningBank = updateSpeedsterLearningBank(currentLearningBank, input.reviewedDefects);
+    if (JSON.stringify(nextLearningBank) !== JSON.stringify(currentLearningBank)) {
+      await tx.aiGraderV2LearningBank.upsert({
+        where: { id: "GLOBAL" },
+        create: { id: "GLOBAL", state: nextLearningBank as Prisma.InputJsonValue },
+        update: { state: nextLearningBank as Prisma.InputJsonValue },
+      });
+    }
     let sheet = await tx.humanGradeLabelSheet.findFirst({
       where: { status: "OPEN" },
       orderBy: { sheetNumber: "asc" },

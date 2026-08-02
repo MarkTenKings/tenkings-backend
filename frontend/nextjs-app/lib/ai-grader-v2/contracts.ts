@@ -52,6 +52,8 @@ export type SpeedsterDefect = {
   defectType: SpeedsterDefectType;
   origin?: SpeedsterDefectOrigin;
   detectedDefectType?: SpeedsterDefectType;
+  featureFingerprint?: readonly number[];
+  learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];
   sourceViewId: string;

@@ -77,6 +77,7 @@ class DetectRequest(BaseModel):
     side: str
     cornerShape: str
     views: List[CanonicalView]
+    learningBank: Optional[dict] = None
 
 
 class SmartMark(BaseModel):
@@ -219,7 +220,9 @@ def detect(request: DetectRequest):
             (view.id, load_image(view.imageUrl, view.imageBase64))
             for view in request.views
         ]
-        return detect_views(views, request.side, request.cornerShape)
+        return detect_views(
+            views, request.side, request.cornerShape, learning_bank=request.learningBank
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
