@@ -30012,3 +30012,25 @@ By enabling Rip It Live, I confirm:
 ### Planned Worker source release
 
 - Plan: merge the fully green Worker-source pull request into the repository source of truth. The automatic Vercel deployment contains only the new standalone Worker files and documentation; it does not deploy or activate Cloudflare, change the existing iPhone API, run a migration, or alter Production grader behavior. Cloudflare deployment remains a separate recorded action after account login.
+
+### Worker source release result
+
+- Pull request `#267` passed the complete repository build, disposable PostgreSQL migration chain, all Docker-image builds, Vercel preview, and the focused `4/4` Worker tests, then merged as `82f807a423e9f4998fdabf6bcf58083e923be5eb`. Its automatic Production Vercel deployment `5712240125` completed successfully. This release established only the tested standalone Worker source and runbook; Cloudflare was not deployed or activated, and the live iPhone API, grader behavior, database/data/labels, storage objects, GPU/RunPod, V1/Dell, and Human Grade remained unchanged.
+
+### Planned minimal iPhone capture Worker deployment
+
+- Plan: deploy the reviewed `ten-kings-speedster-capture` Worker source to its default `workers.dev` URL in the newly authorized Ten Kings Cloudflare account, then verify only its read-only method and incomplete-form responses before a user-driven real Front/Back capture test. The deployment has no secrets, bindings, queues, retries, custom domain, storage, migration, database/data/label mutation, GPU/RunPod action, V1/Dell change, Human Grade change, fallback, gate, or destructive operation.
+
+### Minimal iPhone capture Worker deployment result
+
+- Deployed Worker version `334b62bd-742c-40ed-a8f5-6f082c03c516` at `https://ten-kings-speedster-capture.tenkings-monorepo.workers.dev` with the reviewed `2.02 KiB` / `0.81 KiB` gzip script and no bindings. Live HTTPS acceptance returned the intended `405 POST only` for GET and `400 Expected deviceId, front, and back` for an incomplete multipart POST. No real card image, PLAN/COMPLETE call, storage object, database/data/label, migration, GPU/RunPod, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation was involved; a real Front/Back pair remains the next user-driven acceptance step.
+
+### Planned Cloudflare runtime-handler correction
+
+- A real iPhone multipart request reached the deployed Worker but returned Cloudflare error `1101`. Live Worker tail evidence identified `TypeError: fetcher is not a function`: Cloudflare supplied its normal environment object as the second runtime handler argument, while the directly exported dependency-injected test function interpreted that object as its test fetcher.
+- Plan: add only an explicit Cloudflare runtime wrapper that calls the existing tested handler with the global runtime `fetch`, add one regression test that invokes the Worker with Cloudflare's `(request, env, context)` shape, and redeploy the same Worker URL. No Shortcut change, API contract change, image-processing path, new service, binding, secret, queue, retry, fallback, migration, database/data/label change, GPU/RunPod action, V1/Dell change, Human Grade change, or destructive operation is planned.
+
+### Cloudflare runtime-handler correction result
+
+- Added the explicit three-line runtime wrapper and one regression test; focused Worker tests pass `5/5`, `git diff --check` passes, and Wrangler dry-run remains binding-free at `2.06 KiB` / `0.82 KiB` gzip.
+- Deployed corrected Worker version `b99e5f2e-9991-46dc-9f28-9107c7bb8335` to the unchanged `workers.dev` URL. A complete multipart diagnostic with an intentionally invalid device ID now passes Worker parsing and runtime dispatch, reaches the existing API, and returns its expected HTTP `404` pairing response instead of Worker error `1101`. No real card image was uploaded and no Shortcut, API contract, storage object, migration, database/data/label, GPU/RunPod, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation changed.
