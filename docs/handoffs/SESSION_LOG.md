@@ -29970,3 +29970,10 @@ By enabling Rip It Live, I confirm:
 - The validator passed all `83` migrations, the real database lifecycle/advisory-lock suite, and the required second-deploy no-op check.
 - It destroyed the randomly named local PostgreSQL container and tmpfs storage after success. No Production, staging, or persistent Ten Kings database was contacted or changed.
 - Integrated validation also passed: database generation/build, `54/54` focused Speedster frontend tests, focused ESLint, `18/18` dependency-complete Python service tests, Python compilation, optimized Next.js Production build, and `git diff --check`. The Next build emitted only existing repository warnings.
+
+### Planned Speedster capacity and migration-bearing Production rollout
+
+- Plan: build and push one private Linux/amd64 SAM 3 service image from the reviewed `d2bc4b5b` code, then create one private RunPod load-balanced endpoint using only RTX 4090 PRO workers, two active workers, four maximum workers, request-count scaling, and the existing Hugging Face secret/model cache settings.
+- Plan: verify the new endpoint's `/ping`, `/health`, geometry, and real detector response before changing web traffic. Keep the current single RTX 4090 Pod live until the new endpoint and migration-bearing web release pass acceptance; then stop that old Pod to end duplicate billing.
+- Plan: push this reviewed branch through the normal protected pull-request checks. Enable `RUN_DB_MIGRATIONS=true` only for the approved Production deployment that applies the three additive migrations, point only `AI_GRADER_SPEEDSTER_SERVICE_URL` and its server-only provider key at the verified new endpoint, then restore `RUN_DB_MIGRATIONS=false` after success.
+- No V1/Dell component, existing Human Grade record/page, existing label, NFC hardware, comps/inventory record, detector fallback, application queue, alternate GPU type, or destructive database operation is included.
