@@ -117,3 +117,22 @@ test("slab completion rejects a cross-card or cross-side object key", async () =
   assert.equal(state.status, 400);
   assert.equal(updates, 0);
 });
+
+test("completed-card status cannot be marked by a fake comps or inventory action", async () => {
+  let updates = 0;
+  const handler = createCompletedCardHandler({
+    requireAdminSession: admin,
+    async findSession() { return completed; },
+    async findLabel() { return null; },
+    async updateSlabKey() { updates += 1; return completed; },
+    async presignUpload(key) { return `https://upload.example/${key}`; },
+    async presignRead(key) { return `https://read.example/${key}`; },
+    storageReady: () => true,
+  });
+  for (const action of ["COMPS_COMPLETE", "INVENTORY_COMPLETE"]) {
+    const { state, res } = response();
+    await handler(request("POST", { action }), res);
+    assert.equal(state.status, 400);
+  }
+  assert.equal(updates, 0);
+});
