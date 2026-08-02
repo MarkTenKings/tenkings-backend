@@ -170,7 +170,7 @@ After review completion:
 - removed detections become hard-negative examples
 - corrected types become better labeled examples
 - the already-computed SAM 3 feature pyramid is pooled under each detector mask into one compact normalized fingerprint
-- the next card re-ranks proposals with nearest accepted/removed cosine similarity
+- the next card re-ranks proposals against the positive/negative type centroids with cosine similarity
 - Smart-Marks remain saved human-missed-defect lessons without a fabricated SAM fingerprint or a second SAM pass
 
 This is a small reviewed-example matrix and deterministic cosine math, not a new embedding model, vector database, inference pass, worker-local cache, or per-card neural-weight update.
@@ -293,7 +293,7 @@ Existing admin authentication/access control, non-destructive handling of produc
 
 1. **Capture and grading flow** — Shared label editor, native-iPhone pair, geometry, SAM review, deterministic grading, report, and one-level Undo.
 2. **Capacity and storage** — Admin-owned active drafts, one direct load-balanced SAM endpoint with identical workers, stable evidence keys, and the shared label-slot transaction lock.
-3. **Learning** — One reviewed-example table, fingerprints pooled from the existing SAM encoder pass, and small cosine re-ranking on the next card.
+3. **Learning** — Individual fingerprints remain in the reviewed session evidence, one tiny global centroid bank is pooled from them, and the next card receives a small cosine re-ranking adjustment.
 4. **Post grading** — Shared completed-card list, exact public report, sealed-slab photos, and independently scoped NFC/comps/inventory bridges only when their exact record contracts exist.
 
 The primary agent reviews and integrates each bounded lane and owns schema order, production rollout, and compatibility decisions. Agents do not create alternate architectures or edit the same files concurrently.
@@ -354,11 +354,11 @@ The current single normal Pod remains the live detector until the migration-bear
 3. `20260731223000_ai_grader_v2_label_source`
 4. `20260801173000_ai_grader_v2_post_grade`
 5. `20260801180000_ai_grader_v2_iphone_capture`
-6. the reviewed-example learning-bank migration from this release
+6. `20260801190000_ai_grader_v2_learning_bank`
 
 All migrations are additive. Existing Human Grade rows receive `LEGACY_30_25_25_20` and `HUMAN` through column defaults, with no row-level grade/page rewrite. The new Speedster migrations add only V2 post-grade/capture/learning state.
 
-Human Grade PR `#252` remains open and is not deployed as of this audit. A separate Human Grade deployment is not technically required before Speedster: the one protected Speedster release can carry the Human Grade formula change and all three migrations together. The application must not serve the Speedster schema before the migrations are applied.
+The Human Grade formula-version migration is already live from the first Speedster rollout. The application must not serve the three newer post-grade, capture, and learning schemas before their migrations are applied.
 
 ### Runtime environment
 
