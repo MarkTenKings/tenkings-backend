@@ -111,6 +111,10 @@ test("completion retry returns the original label without consuming another slot
       };
       return { outcome: "CREATED" as const, ...saved };
     },
+    async completePresentation(input) {
+      assert.equal(input.sessionId, sessionId);
+      assert.equal(input.createdByUserId, "admin-1");
+    },
   });
   const first = response();
   const retry = response();
@@ -122,6 +126,45 @@ test("completion retry returns the original label without consuming another slot
   assert.equal(retry.state.status, 200);
   assert.equal(creations, 1);
   assert.deepEqual((retry.state.body as { label: unknown }).label, (first.state.body as { label: unknown }).label);
+});
+
+test("PhotoRoom starts only after durable completion and can fail without rolling the grade back", async () => {
+  let completed = false;
+  const events: string[] = [];
+  const originalConsoleError = console.error;
+  console.error = () => undefined;
+  try {
+    const handler = createAiGraderV2CompleteLabelHandler({
+      async requireAdminSession() { return { user: { id: "admin-1" } }; },
+      async completeSession() {
+        events.push("grade-complete");
+        completed = true;
+        return {
+          outcome: "CREATED",
+          label: { id: "label-1", sheetId: "sheet-1", slot: 7, certificateNumber: "TKH-000207" },
+          publicReportSlug: speedsterReportSlug(sessionId),
+        };
+      },
+      async completePresentation() {
+        assert.equal(completed, true);
+        events.push("photoroom");
+        throw new Error("PhotoRoom unavailable");
+      },
+    });
+    const failed = response();
+
+    await handler(request(), failed.res);
+
+    assert.deepEqual(events, ["grade-complete", "photoroom"]);
+    assert.equal(failed.state.status, 502);
+    assert.match(
+      (failed.state.body as { message: string }).message,
+      /grade and label are safely complete/i,
+    );
+    assert.equal(completed, true);
+  } finally {
+    console.error = originalConsoleError;
+  }
 });
 
 test("additive schema seam defaults existing labels to HUMAN and uniquely links one Speedster session", () => {

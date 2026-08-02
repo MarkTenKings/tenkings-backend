@@ -106,8 +106,6 @@ export function createAiGraderV2IphoneCaptureHandler(deps: Dependencies = depend
         contentType: SPEEDSTER_IPHONE_CONTENT_TYPE,
         frontUploadUrl,
         backUploadUrl,
-        front: { storageKey: frontStorageKey, uploadUrl: frontUploadUrl },
-        back: { storageKey: backStorageKey, uploadUrl: backUploadUrl },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "iPhone capture failed";

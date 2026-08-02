@@ -12,6 +12,7 @@ import {
 } from "../../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
+import { completeSpeedsterPresentationImages } from "../../../../../../lib/server/aiGraderV2PresentationWorkflow";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const score = z.number().finite().min(1).max(10);
@@ -77,6 +78,7 @@ type CompletionResult = {
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   completeSession: (input: CompletionInput) => Promise<CompletionResult>;
+  completePresentation: (input: { sessionId: string; createdByUserId: string }) => Promise<unknown>;
 };
 
 const optional = (value: string | null | undefined) => value?.trim() || null;
@@ -223,7 +225,11 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
   });
 }
 
-const dependencies: Dependencies = { requireAdminSession, completeSession };
+const dependencies: Dependencies = {
+  requireAdminSession,
+  completeSession,
+  completePresentation: completeSpeedsterPresentationImages,
+};
 
 const sessionIdFrom = (req: NextApiRequest) => {
   const value = Array.isArray(req.query.sessionId) ? req.query.sessionId[0] : req.query.sessionId;
@@ -248,6 +254,15 @@ export function createAiGraderV2CompleteLabelHandler(deps: Dependencies = depend
         reviewedDefects: parsed.data.reviewedDefects,
         gradeReport: parsed.data.gradeReport,
       });
+      try {
+        await deps.completePresentation({ sessionId, createdByUserId: admin.user.id });
+      } catch (error) {
+        console.error(`[Speedster] Presentation images failed after durable completion for ${sessionId}:`, error);
+        throw new HttpError(
+          502,
+          "The grade and label are safely complete, but the PhotoRoom report images failed. Press Complete Grade again to retry.",
+        );
+      }
       return res.status(result.outcome === "CREATED" ? 201 : 200).json(result);
     } catch (error) {
       const response = toErrorResponse(error);

@@ -30034,3 +30034,27 @@ By enabling Rip It Live, I confirm:
 
 - Added the explicit three-line runtime wrapper and one regression test; focused Worker tests pass `5/5`, `git diff --check` passes, and Wrangler dry-run remains binding-free at `2.06 KiB` / `0.82 KiB` gzip.
 - Deployed corrected Worker version `b99e5f2e-9991-46dc-9f28-9107c7bb8335` to the unchanged `workers.dev` URL. A complete multipart diagnostic with an intentionally invalid device ID now passes Worker parsing and runtime dispatch, reaches the existing API, and returns its expected HTTP `404` pairing response instead of Worker error `1101`. No real card image was uploaded and no Shortcut, API contract, storage object, migration, database/data/label, GPU/RunPod, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation changed.
+
+### Worker source alignment result
+
+- User reported one complete Production Speedster grading test succeeded through capture, review, grading, and completed/report access.
+- Pull request `#268` remained clean and mergeable with the complete build, disposable migration chain, all Docker-image builds, Vercel Preview, and Worker tests green. It merged into `main` as `5d52cce48e673c1a4edaa0bb6b151efaae330759`, so the repository source now contains the runtime wrapper already deployed as Cloudflare Worker version `b99e5f2e-9991-46dc-9f28-9107c7bb8335`.
+- The stale `feature/ai-grader-report-polish` checkout remains intentionally untouched. Active Speedster work moved to `codex/speedster-photoroom-presentation-20260802` based directly on the aligned `origin/main` tree.
+
+## 2026-08-02 - Post-grade PhotoRoom report presentation built locally
+
+- Kept the approved execution order exactly: geometry, SAM 3 detection, physical measurements, human review, deterministic grade, label assignment, report identity, and learning-bank update complete durably before PhotoRoom begins. PhotoRoom output is never passed to geometry, detection, measurement, scoring, or learning.
+- Added one isolated provider adapter with explicit source content/storage keys and explicit destination keys. It has no session, database, grading, label, or workflow-order knowledge, so a future separately approved timing experiment can reuse the adapter without rewriting the grading system.
+- Added one small post-grade workflow wrapper that reads the completed session's rectified Front/Back WebP evidence, writes both transparent PNGs in parallel to stable `report/front-clean.png` and `report/back-clean.png` keys, and then adds only `reportStorageKey` to each side of the existing capture JSON. Existing report keys make retries no-ops.
+- Grade/label completion remains durable if PhotoRoom fails. The same Complete Grade action returns an explicit retry message, and a retry reuses the existing label/session rather than consuming another slot. Stable object keys make a partial provider/storage attempt safely overwriteable.
+- Public reports use the PhotoRoom image as the visual master when present but keep the rectified image as `ORIGINAL` measured evidence. Completed records created before PhotoRoom fall back to their rectified master instead of returning `404`.
+- Removed only the obsolete nested `front` and `back` objects from the public iPhone PLAN response after the real Worker and full grading tests succeeded. The already-live flat `frontUploadUrl` and `backUploadUrl`, stable original keys, PLAN/COMPLETE behavior, and Shortcut contract remain unchanged.
+- Current official PhotoRoom v2 documentation confirms the existing POST `/v2/edit`, `removeBackground=true`, `referenceBox=originalImage`, `outputSize=originalImage`, `scaling=fit`, transparent PNG request used here.
+- Validation passed: `63/63` complete AI-Grader V2 tests, focused ESLint, `git diff --check`, and the optimized Next.js Production build. The build emitted only existing repository warnings. Standalone repository-wide TypeScript still exits on known unrelated V1 test-fixture diagnostics; no diagnostic references a changed Speedster file.
+- No migration, database/data/label mutation, PhotoRoom request or credit use, Production storage write, environment change, deployment, SAM/RunPod action, Cloudflare action, V1/Dell change, Human Grade behavior change, NFC/comps/inventory action, fallback detector, queue, gate, or destructive operation occurred during the local build.
+
+### Planned post-grade PhotoRoom report release
+
+- Plan: push the reviewed branch through the normal protected pull-request checks, merge only after every required check passes, and allow the normal Vercel Production deployment to publish the post-grade PhotoRoom/report and flat iPhone response changes.
+- This release contains no schema migration or database backfill. It reuses the existing Production `PHOTOROOM_API_KEY` already required by current Ten Kings PhotoRoom endpoints and the existing private object-storage configuration.
+- After deployment, verify the Speedster admin and existing completed report routes first. A newly completed card is the required user-driven acceptance for actual PhotoRoom Front/Back generation; if PhotoRoom fails, the completed grade and label remain durable and the same Complete Grade action retries presentation generation.

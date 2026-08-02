@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
-Date: 2026-08-01
-Status: Core workflow and SAM 3 are live; completed-card workspace, native-iPhone capture, multi-admin isolation, and immediate reviewed-defect learning are in the approved release branch pending migration/deployment
+Date: 2026-08-02
+Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, immediate reviewed-defect learning, and two-worker SAM 3 capacity are live. A full user-run Production grading test passed on 2026-08-02. Worker source is aligned with Production; post-grade PhotoRoom report presentation is the active release.
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -24,8 +24,8 @@ Every image is straightened onto the same physical card grid, scanned independen
 6. **Scan views independently** — The detector returns precise defect masks, suggested defect types, confidence, and source-view IDs for each image.
 7. **Fuse onto one card map** — Masks that overlap within geometric tolerance become one canonical defect with multiple supporting views. They are never double-counted.
 8. **Human review** — The original color image is the master review image. Hovering or tapping a marker opens the best evidence close-up and its measurements.
-9. **Grade and report** — Deterministic rules calculate all four sub-grades and generate the premium interactive report.
-10. **Learn** — Reviewed masks and patches enter one structured Ten Kings learning bank and improve retrieval for the next card.
+9. **Grade, label, and learn** — Deterministic rules calculate all four sub-grades, durably complete the report and label, and update the compact reviewed-example learning bank.
+10. **Create report presentation images** — Only after durable grading completion, one isolated PhotoRoom adapter removes the backgrounds from the rectified Front and Back images and stores separate transparent presentation PNGs. Rectified evidence remains unchanged and remains the only image source for detection, measurement, scoring, and learning.
 
 ## 4. Human Grade and Label-System Reuse
 
@@ -248,7 +248,8 @@ Multipliers remain category-specific as defined in the approved grading blueprin
 
 The public report reuses the review visualization in read-only mode:
 
-- original front/back master images
+- PhotoRoom-cleaned Front/Back master presentation images when present
+- original rectified Front/Back images retained as the report's measured evidence and as the compatibility master for reports created before PhotoRoom
 - canonical defect markers and masks
 - tap/hover evidence close-up from the best source view
 - defect type and exact location
@@ -316,7 +317,14 @@ The primary agent reviews and integrates each bounded lane and owns schema order
 14. Finalize the completed Speedster label through the existing 16-up queue using the selected layout and V2 Blueprint grades. **Completed locally.**
 15. Persist the compact reviewed-example bank and apply deterministic cosine re-ranking on the next card. **In the approved release branch.**
 16. Add the shared completed-card workspace, sealed-slab photos, native-iPhone capture, Next Card rhythm, and multi-admin isolation. **Completed locally.**
-17. Deploy the migration-bearing release, move SAM traffic to one 2-warm-plus-flex load-balanced endpoint, and run Production acceptance.
+17. Deploy the migration-bearing release, move SAM traffic to one 2-warm-plus-flex load-balanced endpoint, and run Production acceptance. **Completed and live.**
+18. Merge the deployed Cloudflare Worker runtime correction into `main` so source and Production match. **Completed in PR #268.**
+19. Complete the isolated post-grade PhotoRoom presentation-image release, preserve rectified report compatibility, and remove obsolete nested iPhone PLAN fields. **In progress.**
+20. Define and build one idempotent Speedster-to-`CardAsset` permanent-record bridge.
+21. Connect the permanent Speedster card to the existing `Item` and inventory workflow without duplicate records.
+22. Add physical NFC write/read-back verification against the permanent card/report identity.
+23. Add Speedster eBay comps without a fabricated TILT image or any effect on grading.
+24. Run the simultaneous multi-admin Production acceptance test when a second human operator is available. This is intentionally last in the current order; implemented session isolation and label locking remain unchanged meanwhile.
 
 ## 15. Production Definition of Done
 

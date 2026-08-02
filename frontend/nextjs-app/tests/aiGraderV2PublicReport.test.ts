@@ -48,10 +48,11 @@ const defect = {
   },
 };
 
-function persisted(workflowState = "COMPLETED") {
+function persisted(workflowState = "COMPLETED", includePresentationImages = true) {
   const side = (name: string) => ({
     originalStorageKey: `${name}/raw.webp`,
     rectifiedStorageKey: `${name}/rectified.webp`,
+    ...(includePresentationImages ? { reportStorageKey: `${name}/report.webp` } : {}),
     viewStorageKeys: {
       NORMALIZED: `${name}/normalized.webp`,
       MICRO_DEFECT: `${name}/micro.webp`,
@@ -93,10 +94,23 @@ test("maps only a completed session into public identity, reviewed evidence, gra
   assert.equal(source.defects[0].origin, "DETECTOR");
   assert.equal(source.defects[0].detectedDefectType, "VISIBLE_WHITENING");
   assert.equal(source.grade.overall.displayGrade, 9.8);
-  assert.equal(source.sourceKeys.FRONT.master, "front/rectified.webp");
+  assert.equal(source.sourceKeys.FRONT.master, "front/report.webp");
+  assert.equal(source.sourceKeys.FRONT.views.ORIGINAL, "front/rectified.webp");
   assert.equal(source.slabKeys.front, "slab/front.jpg");
   assert.equal(JSON.stringify(source).includes("private-admin-id"), false);
   assert.equal(JSON.stringify(source).includes("private-upload"), false);
+});
+
+test("completed reports created before PhotoRoom keep their rectified master images", async () => {
+  const reportModule = await reportModulePromise;
+  const legacy = persisted("COMPLETED", false);
+
+  const source = reportModule.mapCompletedSpeedsterSession(legacy);
+
+  assert.ok(source);
+  assert.equal(source.sourceKeys.FRONT.master, "front/rectified.webp");
+  assert.equal(source.sourceKeys.BACK.master, "back/rectified.webp");
+  assert.equal(source.sourceKeys.FRONT.views.ORIGINAL, "front/rectified.webp");
 });
 
 test("returns no public source for an incomplete workflow", async () => {
@@ -109,6 +123,8 @@ test("materializes short-lived image URLs without returning object keys or priva
   const source = reportModule.mapCompletedSpeedsterSession(persisted());
   assert.ok(source);
   const props = await reportModule.materializeSpeedsterReport(source, async (key) => `https://read.example/${encodeURIComponent(key)}`);
+  assert.equal(props.imageUrls.FRONT.master, "https://read.example/front%2Freport.webp");
+  assert.equal(props.imageUrls.FRONT.views.ORIGINAL, "https://read.example/front%2Frectified.webp");
   assert.match(props.imageUrls.FRONT.views.DIRECTIONAL, /^https:\/\/read\.example\//);
   assert.match(props.slabImageUrls.front ?? "", /^https:\/\/read\.example\//);
   assert.equal(props.slabImageUrls.back, null);
