@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { handleCapture } from "../src/index.mjs";
+import worker, { handleCapture } from "../src/index.mjs";
 
 const API = "https://collect.tenkings.co/api/ai-grader-v2/iphone-capture";
 const DEVICE_ID = "device-12345678901234567890";
@@ -57,6 +57,12 @@ test("rejects anything except one complete multipart photo pair", async () => {
 
   assert.equal(method.status, 405);
   assert.equal(incomplete.status, 400);
+});
+
+test("Cloudflare runtime arguments are not mistaken for the fetch function", async () => {
+  const response = await worker.fetch(new Request("https://relay.example"), {}, {});
+
+  assert.equal(response.status, 405);
 });
 
 test("returns PLAN and COMPLETE failures honestly", async () => {

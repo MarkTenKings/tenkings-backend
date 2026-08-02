@@ -48,4 +48,8 @@ export async function handleCapture(request, fetcher = fetch) {
   });
 }
 
-export default { fetch: handleCapture };
+export default {
+  fetch(request) {
+    return handleCapture(request);
+  },
+};
