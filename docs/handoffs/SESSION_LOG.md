@@ -29998,3 +29998,7 @@ By enabling Rip It Live, I confirm:
 ### Planned flat iPhone PLAN response release
 
 - Plan: expose the already-generated Front and Back presigned upload URLs as two top-level PLAN response fields, update the focused contract test and Shortcut runbook, and deploy through the normal pull-request path. This removes nested-dictionary parsing from the iPhone Shortcut without changing storage keys, capture behavior, grading, V1/Dell, Human Grade, RunPod/SAM, database schema/data, or any destructive state.
+
+### Flat iPhone PLAN response release result
+
+- Pull request `#265` passed the focused `6/6` iPhone-capture contract tests, focused ESLint, complete repository build, disposable PostgreSQL migration chain, all Docker-image builds, and Vercel preview, then merged as `c74bd2b0e3f088f351ba00a2171e6f0867643a9c`. Its Production Vercel deployment completed successfully. The live PLAN contract now exposes `frontUploadUrl` and `backUploadUrl` directly while preserving all existing fields and behavior; no migration, data/label mutation, GPU/provider action, V1/Dell change, Human Grade change, fallback, queue, gate, or destructive operation occurred.
