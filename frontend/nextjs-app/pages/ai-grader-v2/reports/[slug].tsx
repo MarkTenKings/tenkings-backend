@@ -86,6 +86,11 @@ function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
   const defectType = typeof value.defectType === "string" && DEFECT_TYPES.has(value.defectType as SpeedsterDefectType)
     ? value.defectType as SpeedsterDefectType
     : null;
+  const origin = value.origin === "DETECTOR" || value.origin === "SMART_MARK" ? value.origin : null;
+  const detectedDefectType = typeof value.detectedDefectType === "string" &&
+    DEFECT_TYPES.has(value.detectedDefectType as SpeedsterDefectType)
+    ? value.detectedDefectType as SpeedsterDefectType
+    : null;
   const reviewResult = typeof value.reviewResult === "string" && PUBLIC_REVIEW_RESULTS.has(value.reviewResult)
     ? value.reviewResult as SpeedsterMeasuredDefect["reviewResult"]
     : null;
@@ -115,6 +120,8 @@ function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
     side,
     zone,
     defectType,
+    ...(origin ? { origin } : {}),
+    ...(detectedDefectType ? { detectedDefectType } : {}),
     confidence,
     canonicalContour: contour as SpeedsterPoint[],
     sourceViewId: text(value.sourceViewId)!,

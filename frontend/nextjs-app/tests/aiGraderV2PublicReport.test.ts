@@ -30,6 +30,8 @@ const defect = {
   side: "FRONT",
   zone: "SURFACE",
   defectType: "LIGHT_SCRATCH_SCUFF",
+  origin: "DETECTOR",
+  detectedDefectType: "VISIBLE_WHITENING",
   confidence: 0.92,
   canonicalContour: [{ x: 0.1, y: 0.2 }, { x: 0.2, y: 0.2 }, { x: 0.2, y: 0.3 }],
   sourceViewId: "DIRECTIONAL",
@@ -88,6 +90,8 @@ test("maps only a completed session into public identity, reviewed evidence, gra
   });
   assert.equal(source.defects.length, 1);
   assert.equal(source.defects[0].id, "front-surface-1");
+  assert.equal(source.defects[0].origin, "DETECTOR");
+  assert.equal(source.defects[0].detectedDefectType, "VISIBLE_WHITENING");
   assert.equal(source.grade.overall.displayGrade, 9.8);
   assert.equal(source.sourceKeys.FRONT.master, "front/rectified.webp");
   assert.equal(source.slabKeys.front, "slab/front.jpg");

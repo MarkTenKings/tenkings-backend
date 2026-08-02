@@ -160,7 +160,11 @@ export default function AiGraderV2AdminPage() {
           ],
         }],
       });
-      const added = measured.defects.map((defect) => ({ ...defect, reviewResult: "SMART_MARKED" as const }));
+      const added = measured.defects.map((defect) => ({
+        ...defect,
+        origin: "SMART_MARK" as const,
+        reviewResult: "SMART_MARKED" as const,
+      }));
       if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
       setDefects((current) => [...(current ?? []), ...added]);
       setMessage("Smart-Mark measured. Select its defect type if needed.");
