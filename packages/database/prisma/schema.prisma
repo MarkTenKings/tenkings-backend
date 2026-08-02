@@ -3545,3 +3545,13 @@ model AiGraderV2Session {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
+
+model AiGraderV2CaptureDevice {
+  id              String   @id @default(cuid())
+  createdByUserId String   @unique
+  activeSessionId String?
+  uploadVersion   Int      @default(0)
+  readyVersion    Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

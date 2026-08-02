@@ -29901,3 +29901,20 @@ By enabling Rip It Live, I confirm:
 - Detector findings now receive immutable detector provenance during the existing scan normalization step. Smart-Marks receive human provenance during their existing measurement step. Existing object spreads preserve both fields through removal, one-level Undo, type correction, completion, database persistence, and public report mapping.
 - Focused review/public-report tests pass `11/11`, focused ESLint passes with only the expected shared-dependency React-detection warning, and `git diff --check` passes. The optional offline fingerprint experiment was intentionally not added because completed sessions do not store SAM feature maps; creating them would require a new model execution, outside the approved zero-new-inference condition.
 - No push, deployment, migration, database/data/label mutation, GPU/Pod action, production ranker, vector database, queue, live synchronization, fallback detector, V1/Dell change, Human Grade change, or destructive operation occurred.
+
+## 2026-08-01 - Speedster native-iPhone capture built locally
+
+- Added one permanent capture-device row per admin grader with only the active Speedster draft and monotonic upload/ready versions. The additive migration creates no relation to V1, Human Grade, labels, detector work, or existing card/report records.
+- Added one direct native-iPhone path: the shared `Ten Kings Speedster Capture` Shortcut receives its grader ID from a one-time QR pairing, reads the two newest native Camera photos, requests two signed object-storage PUT URLs, uploads Front and Back directly to the existing Speedster original-image keys, and publishes one ready version. Image bytes never pass through the Next.js server.
+- The existing capture screen polls every two seconds only while the photo stage is visible, immediately stops when geometry begins, accepts a replacement capture without creating new object keys, and feeds received photos into the existing geometry path without download/re-upload. The existing manual file selection remains available, and both inputs converge before geometry; no second preparation, detector, or grading pipeline was introduced.
+- Added one compact pairing strip, bounded QR, and Front/Back swap action to the existing premium photo-pair component. Added the exact Shortcut construction and operator flow in `docs/runbooks/AI_GRADER_V2_IPHONE_CAPTURE.md`; no custom iPhone app, local helper, browser camera, PhotoRoom call, WebSocket, event bus, queue, SAM selector, or new dependency was added.
+- Prisma generation and database package build passed. Focused iPhone/Speedster tests passed `26/26`, focused ESLint passed, `git diff --check` passed, and the optimized Next.js Production build completed successfully with existing repository warnings only. Repository-wide standalone TypeScript has existing unrelated V1/test diagnostics; none references a changed iPhone-capture file.
+- No migration was applied, no deployment/push/restart occurred, no database/data/label record changed, and no V1/Dell, Human Grade, SAM 3, RunPod, Production environment, fallback, or destructive action occurred.
+
+### Planned disposable iPhone-capture migration validation
+
+- Plan: run the repository's acknowledged disposable, loopback-only PostgreSQL migration validator against the complete migration chain, including `20260801180000_ai_grader_v2_iphone_capture`; record its observed result below. This will create and remove only its temporary local validation container and will not connect to or change Production or any persistent Ten Kings database.
+
+### Disposable iPhone-capture migration validation result
+
+- The acknowledged loopback-only validator passed the complete `81`-migration chain, the real database lifecycle suite, and a second no-op deploy. It then destroyed its temporary PostgreSQL container and tmpfs storage. No persistent or Production database was contacted or changed.

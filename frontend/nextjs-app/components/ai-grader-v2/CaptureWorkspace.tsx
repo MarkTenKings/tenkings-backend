@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import {
@@ -10,7 +11,7 @@ import {
 } from "../../lib/ai-grader-v2/image-service";
 import { CenteringAssist, type CenteringAssistResult } from "./CenteringAssist";
 import { GeometryAssist, type SpeedsterCornerShape } from "./GeometryAssist";
-import PhotoUploadPair from "./PhotoUploadPair";
+import PhotoUploadPair, { type SpeedsterOriginalPhoto } from "./PhotoUploadPair";
 import styles from "./CaptureWorkspace.module.css";
 
 type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
@@ -78,8 +79,10 @@ function manualStartQuad(width: number, height: number): SpeedsterQuad {
 }
 
 export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
-  const [frontFile, setFrontFile] = useState<File | null>(null);
-  const [backFile, setBackFile] = useState<File | null>(null);
+  const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
+  const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
+  const [iphonePairingUrl, setIphonePairingUrl] = useState<string>();
+  const iphoneVersion = useRef(0);
   const [front, setFront] = useState<SideState | null>(null);
   const [back, setBack] = useState<SideState | null>(null);
   const [stage, setStage] = useState<Stage>("PHOTOS");
@@ -87,18 +90,83 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Add one original image of each side.");
 
+  useEffect(() => {
+    if (stage !== "PHOTOS" || working) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    iphoneVersion.current = 0;
+
+    const poll = async () => {
+      try {
+        const response = await fetch(
+          `/api/admin/ai-grader-v2/iphone-capture?sessionId=${encodeURIComponent(sessionId)}`,
+          { headers: buildAdminHeaders(token), cache: "no-store" },
+        );
+        const payload = (await response.json().catch(() => ({}))) as {
+          readyVersion?: number;
+          front?: { storageKey: string; readUrl: string };
+          back?: { storageKey: string; readUrl: string };
+        };
+        if (
+          !stopped
+          && response.ok
+          && payload.readyVersion
+          && payload.readyVersion > iphoneVersion.current
+          && payload.front
+          && payload.back
+        ) {
+          iphoneVersion.current = payload.readyVersion;
+          setFrontPhoto({ kind: "IPHONE", ...payload.front, captureVersion: payload.readyVersion });
+          setBackPhoto({ kind: "IPHONE", ...payload.back, captureVersion: payload.readyVersion });
+          setMessage("iPhone front + back received. Swap them if needed, then set geometry.");
+        }
+      } catch {
+        // The next lightweight poll is enough; no second capture path is needed.
+      } finally {
+        if (!stopped) timer = setTimeout(() => void poll(), 2000);
+      }
+    };
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/admin/ai-grader-v2/iphone-capture", {
+          method: "POST",
+          headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ sessionId }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          pairingUrl?: string;
+          message?: string;
+        };
+        if (!response.ok || !payload.pairingUrl) {
+          throw new Error(payload.message ?? "iPhone pairing could not start.");
+        }
+        if (stopped) return;
+        setIphonePairingUrl(payload.pairingUrl);
+        await poll();
+      } catch (error) {
+        if (!stopped) setMessage(error instanceof Error ? error.message : "iPhone pairing could not start.");
+      }
+    })();
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [sessionId, stage, token, working]);
+
   const beginGeometry = async () => {
-    if (!frontFile || !backFile || working) return;
+    if (!frontPhoto || !backPhoto || working) return;
     setWorking(true);
     setMessage("Uploading originals and locking onto the card geometry.");
     try {
-      const uploadedFront = await uploadSpeedsterOriginal({
-        token, sessionId, side: "FRONT", file: frontFile,
-      });
+      const uploadedFront = frontPhoto.kind === "IPHONE"
+        ? frontPhoto
+        : await uploadSpeedsterOriginal({ token, sessionId, side: "FRONT", file: frontPhoto.file });
       const frontGeometry = await speedsterImageService.proposeGeometry(token, uploadedFront.readUrl);
-      const uploadedBack = await uploadSpeedsterOriginal({
-        token, sessionId, side: "BACK", file: backFile,
-      });
+      const uploadedBack = backPhoto.kind === "IPHONE"
+        ? backPhoto
+        : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file });
       const backGeometry = await speedsterImageService.proposeGeometry(token, uploadedBack.readUrl);
       setFront({
         originalStorageKey: uploadedFront.storageKey,
@@ -213,12 +281,19 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
       {stage === "PHOTOS" ? (
         <div className={styles.photos}>
           <PhotoUploadPair
-            front={frontFile}
-            back={backFile}
-            onChange={(side, file) => side === "FRONT" ? setFrontFile(file) : setBackFile(file)}
+            front={frontPhoto}
+            back={backPhoto}
+            pairingUrl={iphonePairingUrl}
+            onChange={(side, file) => side === "FRONT"
+              ? setFrontPhoto({ kind: "LOCAL", file })
+              : setBackPhoto({ kind: "LOCAL", file })}
+            onSwap={() => {
+              setFrontPhoto(backPhoto);
+              setBackPhoto(frontPhoto);
+            }}
           />
-          <button type="button" onClick={() => void beginGeometry()} disabled={!frontFile || !backFile || working}>
-            {working ? "Preparing…" : frontFile && backFile ? "Set geometry →" : "Add both photos to continue"}
+          <button type="button" onClick={() => void beginGeometry()} disabled={!frontPhoto || !backPhoto || working}>
+            {working ? "Preparing…" : frontPhoto && backPhoto ? "Set geometry →" : "Add both photos to continue"}
           </button>
         </div>
       ) : null}
