@@ -3,6 +3,14 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 
 const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
 
+export function speedsterServiceHeaders() {
+  const apiKey = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
+  return {
+    "Content-Type": "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  };
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -21,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const response = await fetch(`${serviceUrl}/${action}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: speedsterServiceHeaders(),
       body: JSON.stringify(req.body ?? {}),
     });
     const payload = await response.json();

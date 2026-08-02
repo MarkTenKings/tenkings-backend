@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from fastapi import HTTPException
 
-from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure
+from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure, ping
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import (
     DETECTOR_VERSION,
@@ -100,6 +100,7 @@ class Sam3DetectorTests(unittest.TestCase):
             with patch("app.get_processor", return_value=loader):
                 async with lifespan(None):
                     self.assertEqual(health()["detectorVersion"], DETECTOR_VERSION)
+                    self.assertEqual(ping(), health())
 
         asyncio.run(start_and_stop())
         self.assertEqual(loader.calls, 1)

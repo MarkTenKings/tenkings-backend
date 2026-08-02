@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { SPEEDSTER_RULE_VERSION } from "../lib/ai-grader-v2/contracts";
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
 import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
+import { speedsterServiceHeaders } from "../pages/api/admin/ai-grader-v2/image/[action]";
 
 function request(method: string, body?: unknown, sessionId?: string): NextApiRequest {
   return {
@@ -108,9 +111,10 @@ test("GET returns one V2 session after admin authentication", async () => {
       authenticated = true;
       return { user: { id: "admin-1" } };
     },
-    async findSession(id) {
+    async findSession(id, createdByUserId) {
       assert.equal(authenticated, true);
       assert.equal(id, "speedster-1");
+      assert.equal(createdByUserId, "admin-1");
       return existing;
     },
     async updateSession() {
@@ -132,8 +136,9 @@ test("PATCH sends only supplied V2 fields", async () => {
     async findSession() {
       return { id: "speedster-1", publicReportSlug: null };
     },
-    async updateSession(id, data) {
+    async updateSession(id, createdByUserId, data) {
       assert.equal(id, "speedster-1");
+      assert.equal(createdByUserId, "admin-1");
       update = data;
       return { id, ...data };
     },
@@ -149,6 +154,29 @@ test("PATCH sends only supplied V2 fields", async () => {
   assert.deepEqual(update, {
     reviewedDefects: [{ id: "defect-1", reviewResult: "ACCEPTED" }],
   });
+});
+
+test("upload planning binds the requested session to the existing admin identity", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const source = readFileSync(`${root}/pages/api/admin/ai-grader-v2/upload-plan.ts`, "utf8");
+  assert.match(source, /where: \{ id: sessionId, createdByUserId: admin\.user\.id \}/);
+  assert.match(source, /if \(!session\) return res\.status\(404\)/);
+});
+
+test("SAM proxy adds its one optional server-only bearer header", () => {
+  const original = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY;
+  try {
+    delete process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY;
+    assert.deepEqual(speedsterServiceHeaders(), { "Content-Type": "application/json" });
+    process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY = "runpod-key";
+    assert.deepEqual(speedsterServiceHeaders(), {
+      "Content-Type": "application/json",
+      Authorization: "Bearer runpod-key",
+    });
+  } finally {
+    if (original === undefined) delete process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY;
+    else process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY = original;
+  }
 });
 
 test("PATCH keeps an assigned public report slug stable", async () => {

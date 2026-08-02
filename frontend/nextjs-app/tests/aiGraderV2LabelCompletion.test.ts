@@ -101,7 +101,8 @@ test("completion retry returns the original label without consuming another slot
   let creations = 0;
   const handler = createAiGraderV2CompleteLabelHandler({
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
-    async completeSession() {
+    async completeSession(input) {
+      assert.equal(input.createdByUserId, "admin-1");
       if (saved) return { outcome: "EXISTING" as const, ...saved };
       creations += 1;
       saved = {
@@ -134,6 +135,7 @@ test("additive schema seam defaults existing labels to HUMAN and uniquely links 
     `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label.ts`,
     "utf8",
   );
+  const humanGradeEndpoint = readFileSync(`${root}/pages/api/admin/human-grade/index.ts`, "utf8");
 
   assert.match(schema, /source\s+HumanGradeLabelSource\s+@default\(HUMAN\)/);
   assert.match(schema, /sourceSessionId\s+String\?\s+@unique/);
@@ -141,4 +143,9 @@ test("additive schema seam defaults existing labels to HUMAN and uniquely links 
   assert.doesNotMatch(migration, /\bUPDATE\s+"HumanGradeLabel"/i);
   assert.match(endpoint, /workflowState: \{ not: "COMPLETED" \}/);
   assert.match(endpoint, /where: \{ sourceSessionId: session\.id \}/);
+  assert.match(endpoint, /createdByUserId: input\.createdByUserId/);
+  assert.equal((endpoint.match(/pg_advisory_xact_lock/g) ?? []).length, 1);
+  assert.equal((humanGradeEndpoint.match(/pg_advisory_xact_lock/g) ?? []).length, 2);
+  assert.equal((`${endpoint}\n${humanGradeEndpoint}`.match(/SELECT 1 AS "lockAcquired"/g) ?? []).length, 3);
+  assert.doesNotMatch(`${endpoint}\n${humanGradeEndpoint}`, /SELECT\s+pg_advisory_xact_lock/);
 });

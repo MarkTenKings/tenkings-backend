@@ -340,7 +340,7 @@ This section records the read-only launch audit performed on branch `codex/ai-gr
 1. The existing Vercel Next.js application for the admin UI, authenticated APIs, completion transaction, and public report.
 2. The existing Production PostgreSQL database.
 3. The existing S3-compatible card object storage and its Production-origin direct-PUT CORS rule.
-4. One new CUDA GPU service running `backend/ai-grader-speedster-service/Dockerfile`. This is the only SAM 3 execution service; it has no alternate detector or fallback.
+4. One CUDA SAM 3 endpoint running identical copies of `backend/ai-grader-speedster-service/Dockerfile`. Each GPU worker loads exactly one model and handles one detector request at a time; there is no alternate detector or fallback.
 
 The current repository does not add the Speedster container to `infra/docker-compose.yml`, and the existing droplet deployment is not a CUDA GPU deployment. A GPU host and HTTPS service URL therefore remain the one unresolved infrastructure dependency. The Vercel image proxy also has no explicit function-duration setting, while live SAM latency has not yet been measured; its supported request duration must cover one Front or Back detector call.
 
@@ -358,7 +358,8 @@ Human Grade PR `#252` remains open and is not deployed as of this audit. A separ
 
 New Vercel server variable:
 
-- `AI_GRADER_SPEEDSTER_SERVICE_URL` — HTTPS base URL of the one GPU service.
+- `AI_GRADER_SPEEDSTER_SERVICE_URL` — HTTPS base URL of the one SAM 3 endpoint.
+- `AI_GRADER_SPEEDSTER_SERVICE_API_KEY` — optional server-only bearer key when that endpoint requires RunPod authentication.
 
 Existing Vercel variables reused without changing their values or credentials:
 
@@ -379,6 +380,8 @@ GPU service variables for the selected direct checkpoint-download path:
 - `PORT` — the host-assigned HTTP port; the container defaults to `8080`.
 
 The pinned service downloads that one official SAM 3 checkpoint at startup through `HF_TOKEN` and reuses the loaded model in memory. There is no alternate checkpoint path or second detector in the current plan.
+
+The service exposes `/ping` for direct worker readiness. Multiple admins remain isolated by the existing admin identity on each active Speedster session. Shared 16-label sheet create/delete/slot assignment uses one short PostgreSQL transaction advisory lock; there is no application work queue or manual worker selection.
 
 Temporary deployment variable from the existing deploy runbook:
 

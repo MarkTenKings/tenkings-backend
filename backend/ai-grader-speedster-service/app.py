@@ -162,6 +162,11 @@ def health():
     return {"ok": True, "detectorVersion": DETECTOR_VERSION}
 
 
+@app.get("/ping")
+def ping():
+    return health()
+
+
 @app.post("/geometry", response_model=GeometryResponse)
 def geometry(request: ImageInput):
     try:
