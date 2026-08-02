@@ -6,6 +6,10 @@ import {
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
 } from "../../../../../../lib/humanGrade";
+import {
+  cleanSpeedsterLearningBank,
+  updateSpeedsterLearningBank,
+} from "../../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
 
@@ -128,8 +132,8 @@ const labelResult = (label: {
 
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
   return prisma.$transaction(async (tx) => {
-    const session = await tx.aiGraderV2Session.findUnique({
-      where: { id: input.sessionId },
+    const session = await tx.aiGraderV2Session.findFirst({
+      where: { id: input.sessionId, createdByUserId: input.createdByUserId },
       select: { id: true, cardProfile: true, workflowState: true, publicReportSlug: true, identity: true },
     });
     if (!session) throw new HttpError(404, "Speedster session not found");
@@ -149,7 +153,11 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     const labelData = buildSpeedsterLabelData(session, input.gradeReport);
     const publicReportSlug = session.publicReportSlug ?? speedsterReportSlug(session.id);
     const claimed = await tx.aiGraderV2Session.updateMany({
-      where: { id: session.id, workflowState: { not: "COMPLETED" } },
+      where: {
+        id: session.id,
+        createdByUserId: input.createdByUserId,
+        workflowState: { not: "COMPLETED" },
+      },
       data: {
         workflowState: "COMPLETED",
         publicReportSlug,
@@ -163,6 +171,20 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       return { outcome: "EXISTING", label: labelResult(existing), publicReportSlug };
     }
 
+    await tx.$queryRaw`
+      SELECT 1 AS "lockAcquired"
+      FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
+    `;
+    const storedLearningBank = await tx.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
+    const currentLearningBank = cleanSpeedsterLearningBank(storedLearningBank?.state);
+    const nextLearningBank = updateSpeedsterLearningBank(currentLearningBank, input.reviewedDefects);
+    if (JSON.stringify(nextLearningBank) !== JSON.stringify(currentLearningBank)) {
+      await tx.aiGraderV2LearningBank.upsert({
+        where: { id: "GLOBAL" },
+        create: { id: "GLOBAL", state: nextLearningBank as Prisma.InputJsonValue },
+        update: { state: nextLearningBank as Prisma.InputJsonValue },
+      });
+    }
     let sheet = await tx.humanGradeLabelSheet.findFirst({
       where: { status: "OPEN" },
       orderBy: { sheetNumber: "asc" },

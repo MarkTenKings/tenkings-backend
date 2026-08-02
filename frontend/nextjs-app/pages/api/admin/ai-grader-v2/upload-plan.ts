@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { getStorageMode, presignReadUrl, presignUploadUrl } from "../../../../lib/server/storage";
 
@@ -26,6 +27,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!sessionId || !SESSION_ID.test(sessionId)) {
       return res.status(400).json({ message: "Invalid Speedster session ID" });
     }
+    const session = await prisma.aiGraderV2Session.findFirst({
+      where: { id: sessionId, createdByUserId: admin.user.id },
+      select: { id: true },
+    });
+    if (!session) return res.status(404).json({ message: "Speedster session not found" });
     if (side !== "FRONT" && side !== "BACK") {
       return res.status(400).json({ message: "Card side must be FRONT or BACK" });
     }

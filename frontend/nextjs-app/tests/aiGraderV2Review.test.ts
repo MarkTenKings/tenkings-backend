@@ -53,13 +53,39 @@ test("derives the exact eligible zone area from the measured defect and excludes
 });
 
 test("restores only the last removed finding without replacing later defect edits", () => {
-  const other = { ...defect, id: "front-2", defectType: "VISIBLE_WHITENING" as const };
-  const removed = removeSpeedsterDefect([defect, other], defect.id);
+  const detected = {
+    ...defect,
+    origin: "DETECTOR" as const,
+    detectedDefectType: "LIGHT_SCRATCH_SCUFF" as const,
+  };
+  const other = {
+    ...defect,
+    id: "front-2",
+    defectType: "VISIBLE_WHITENING" as const,
+    origin: "DETECTOR" as const,
+    detectedDefectType: "VISIBLE_WHITENING" as const,
+  };
+  const removed = removeSpeedsterDefect([detected, other], detected.id);
+  assert.equal(removed[0].origin, "DETECTOR");
+  assert.equal(removed[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   const corrected = correctSpeedsterDefectType(removed, other.id, "FRAYING");
-  const restored = restoreSpeedsterDefect(corrected, defect);
+  const restored = restoreSpeedsterDefect(corrected, detected);
   assert.equal(restored[0].reviewResult, "UNREVIEWED");
+  assert.equal(restored[0].origin, "DETECTOR");
+  assert.equal(restored[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   assert.equal(restored[1].defectType, "FRAYING");
+  assert.equal(restored[1].origin, "DETECTOR");
+  assert.equal(restored[1].detectedDefectType, "VISIBLE_WHITENING");
   assert.equal(restored[1].reviewResult, "TYPE_CORRECTED");
+});
+
+test("type correction preserves Smart-Mark provenance without inventing a detector label", () => {
+  const smartMark = { ...defect, origin: "SMART_MARK" as const, reviewResult: "SMART_MARKED" as const };
+  const corrected = correctSpeedsterDefectType([smartMark], smartMark.id, "FRAYING");
+  assert.equal(corrected[0].origin, "SMART_MARK");
+  assert.equal(corrected[0].detectedDefectType, undefined);
+  assert.equal(corrected[0].defectType, "FRAYING");
+  assert.equal(corrected[0].reviewResult, "TYPE_CORRECTED");
 });
 
 test("type corrections change published multiplier math immediately", () => {
@@ -137,11 +163,15 @@ test("the production orchestration scans Front then Back and produces a completa
   assert.equal(scanned.detectorVersion, "sam3-test");
   assert.equal(scanned.defects.length, 1);
   assert.equal(scanned.defects[0].id, "BACK:sam-result-1:SURFACE");
+  assert.equal(scanned.defects[0].origin, "DETECTOR");
+  assert.equal(scanned.defects[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   assert.equal(scanned.defects[0].reviewResult, "UNREVIEWED");
 
   const review = calculateSpeedsterReview(capture, scanned.defects);
   const prepared = prepareSpeedsterCompletion(scanned.defects, review.grade, scanned.detectorVersion);
   assert.equal(prepared.completedDefects[0].reviewResult, "ACCEPTED");
+  assert.equal(prepared.body.reviewedDefects[0].origin, "DETECTOR");
+  assert.equal(prepared.body.reviewedDefects[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   assert.equal(prepared.body.reviewedDefects[0].sourceViewId, "DIRECTIONAL");
   assert.equal(prepared.body.gradeReport.detectorVersion, "sam3-test");
 

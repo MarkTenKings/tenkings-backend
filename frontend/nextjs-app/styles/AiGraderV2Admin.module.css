@@ -44,6 +44,8 @@
   text-decoration: none;
 }
 
+.hero nav { display: flex; gap: 10px; }
+
 .center {
   min-height: 70vh;
   display: grid;

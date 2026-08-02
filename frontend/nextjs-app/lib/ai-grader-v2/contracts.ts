@@ -43,11 +43,17 @@ export type SpeedsterReviewResult =
   | "SMART_MARKED"
   | "TYPE_CORRECTED";
 
+export type SpeedsterDefectOrigin = "DETECTOR" | "SMART_MARK";
+
 export type SpeedsterDefect = {
   id: string;
   side: SpeedsterCardSide;
   zone: SpeedsterConditionZone;
   defectType: SpeedsterDefectType;
+  origin?: SpeedsterDefectOrigin;
+  detectedDefectType?: SpeedsterDefectType;
+  featureFingerprint?: readonly number[];
+  learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];
   sourceViewId: string;

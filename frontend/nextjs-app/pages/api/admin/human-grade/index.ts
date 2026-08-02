@@ -199,6 +199,10 @@ export default async function handler(
       if (!parsed.success) return res.status(400).json({ message: "Choose a valid human-grade label." });
 
       const result = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`
+          SELECT 1 AS "lockAcquired"
+          FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
+        `;
         const existing = await tx.humanGradeLabel.findUnique({
           where: { id: parsed.data.id },
           include: { sheet: { select: { status: true } } },
@@ -237,6 +241,10 @@ export default async function handler(
     }
 
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT 1 AS "lockAcquired"
+        FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
+      `;
       let sheet = await tx.humanGradeLabelSheet.findFirst({
         where: { status: "OPEN" },
         orderBy: { sheetNumber: "asc" },

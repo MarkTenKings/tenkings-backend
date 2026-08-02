@@ -29873,3 +29873,107 @@ By enabling Rip It Live, I confirm:
 
 - Plan: push the isolated reviewed commit through the normal green-check pull-request path with Production `RUN_DB_MIGRATIONS=false`, merge only after required checks and Vercel Preview pass, then verify the serving Production commit, the public report route, and the authenticated Speedster review bundle.
 - This frontend/report-only rollout will not run a migration, mutate database/data/labels, change an environment variable, rebuild or restart SAM 3, touch V1/Dell or Human Grade, add a fallback, or perform a destructive action.
+
+### Evidence/Undo Production rollout result
+
+- Pull request `#261` passed the optimized application build, disposable PostgreSQL migration chain, every service/frontend container build, and Vercel Preview before merging as Production commit `8ad9367e861f42c865fa47b99b109661a4bcb4ca`.
+- GitHub recorded Vercel Production deployment `5709491217` as `success` for that exact commit. Production `RUN_DB_MIGRATIONS=false` remained unchanged, so no migration or database/data/label mutation ran for this report/review correction.
+- The release extends only the public evidence read-URL lifetime and adds exactly one browser-held Undo for the most recently removed defect. It does not rebuild or restart SAM 3, change an environment variable, touch V1/Dell or Human Grade, add a fallback, or perform a destructive operation.
+
+## 2026-08-01 - Planned Speedster completed-card workspace build
+
+- Plan: add one additive Speedster post-grading schema seam for Front/Back slab-photo object keys plus NFC, comps, and inventory completion status; no existing row rewrite or grading behavior change.
+- Plan: add one shared completed-card list, one card workspace that opens the existing public report alongside post-grading actions, and direct object-storage Front/Back slab photo upload. The public report will show those slab photos read-only without changing its measured evidence.
+- Label printing remains a link to the existing Human Grade 16-up page. NFC, comps, and inventory remain independent tool launch points and must not add their engines to the grading workflow or report renderer.
+- No Production migration, deploy, database/data/label mutation, NFC operation, comps request, inventory mutation, GPU/Pod action, V1/Dell change, Human Grade behavior change, fallback, queue, or destructive operation is part of this local build step.
+
+## 2026-08-01 - Speedster completed-card workspace built locally
+
+- Added one additive V2 post-grading schema seam: Front/Back slab-photo storage keys and three direct completion booleans for NFC, comps, and inventory. The migration contains only nullable columns and false defaults; it has no row-level rewrite, delete, or grading change.
+- Added one authenticated shared completed-card list for every admin grader, one card workspace with the exact public report embedded as its live preview, direct Front/Back slab-photo upload into the existing object-storage namespace, label-sheet/slot visibility, and a link to the existing 16-up label pages.
+- The public report now adds sealed Front/Back slab photos when present while leaving the original measured evidence, defects, scoring, and report URL unchanged. Admin slab replacement overwrites only that card side's stable slab object key.
+- Focused post-grade/public-report/review tests pass `14/14`; focused ESLint passes; the optimized Production Next.js build passes with existing repository warnings. Filtered standalone TypeScript reports no diagnostics in any changed V2 post-grade/report file; repository-wide standalone TypeScript still exits on known unrelated V1/test diagnostics.
+- No Production migration, deploy, database/data/label mutation, slab upload, NFC operation, comps request, inventory mutation, GPU/Pod action, V1/Dell change, Human Grade behavior change, fallback, queue, or destructive operation occurred.
+
+## 2026-08-01 - Speedster learning provenance foundation built locally
+
+- Added two optional fields to the existing reviewed-defect JSON contract: `origin` records whether a finding came from SAM 3 or Smart-Mark, and `detectedDefectType` preserves SAM 3's original type when the reviewer corrects it. Existing completed records remain compatible; no schema, table, API, storage system, detector, scoring, or review-flow change was added.
+- Detector findings now receive immutable detector provenance during the existing scan normalization step. Smart-Marks receive human provenance during their existing measurement step. Existing object spreads preserve both fields through removal, one-level Undo, type correction, completion, database persistence, and public report mapping.
+- Focused review/public-report tests pass `11/11`, focused ESLint passes with only the expected shared-dependency React-detection warning, and `git diff --check` passes. The optional offline fingerprint experiment was intentionally not added because completed sessions do not store SAM feature maps; creating them would require a new model execution, outside the approved zero-new-inference condition.
+- No push, deployment, migration, database/data/label mutation, GPU/Pod action, production ranker, vector database, queue, live synchronization, fallback detector, V1/Dell change, Human Grade change, or destructive operation occurred.
+
+## 2026-08-01 - Speedster native-iPhone capture built locally
+
+- Added one permanent capture-device row per admin grader with only the active Speedster draft and monotonic upload/ready versions. The additive migration creates no relation to V1, Human Grade, labels, detector work, or existing card/report records.
+- Added one direct native-iPhone path: the shared `Ten Kings Speedster Capture` Shortcut receives its grader ID from a one-time QR pairing, reads the two newest native Camera photos, requests two signed object-storage PUT URLs, uploads Front and Back directly to the existing Speedster original-image keys, and publishes one ready version. Image bytes never pass through the Next.js server.
+- The existing capture screen polls every two seconds only while the photo stage is visible, immediately stops when geometry begins, accepts a replacement capture without creating new object keys, and feeds received photos into the existing geometry path without download/re-upload. The existing manual file selection remains available, and both inputs converge before geometry; no second preparation, detector, or grading pipeline was introduced.
+- Added one compact pairing strip, bounded QR, and Front/Back swap action to the existing premium photo-pair component. Added the exact Shortcut construction and operator flow in `docs/runbooks/AI_GRADER_V2_IPHONE_CAPTURE.md`; no custom iPhone app, local helper, browser camera, PhotoRoom call, WebSocket, event bus, queue, SAM selector, or new dependency was added.
+- Prisma generation and database package build passed. Focused iPhone/Speedster tests passed `26/26`, focused ESLint passed, `git diff --check` passed, and the optimized Next.js Production build completed successfully with existing repository warnings only. Repository-wide standalone TypeScript has existing unrelated V1/test diagnostics; none references a changed iPhone-capture file.
+- No migration was applied, no deployment/push/restart occurred, no database/data/label record changed, and no V1/Dell, Human Grade, SAM 3, RunPod, Production environment, fallback, or destructive action occurred.
+
+### Planned disposable iPhone-capture migration validation
+
+- Plan: run the repository's acknowledged disposable, loopback-only PostgreSQL migration validator against the complete migration chain, including `20260801180000_ai_grader_v2_iphone_capture`; record its observed result below. This will create and remove only its temporary local validation container and will not connect to or change Production or any persistent Ten Kings database.
+
+### Disposable iPhone-capture migration validation result
+
+- The acknowledged loopback-only validator passed the complete `81`-migration chain, the real database lifecycle suite, and a second no-op deploy. It then destroyed its temporary PostgreSQL container and tmpfs storage. No persistent or Production database was contacted or changed.
+
+## 2026-08-01 - Speedster multi-admin ownership and direct SAM worker seam built locally
+
+- Reused the existing authenticated admin identity to bind active Speedster session reads, updates, uploads, and completion to their creator. No new role, auth framework, browser gate, or shared-admin UI was added; completed public reports remain unchanged.
+- Added one short PostgreSQL transaction advisory lock around the shared 16-label sheet/slot mutations in Speedster completion plus Human Grade create/delete. Certificate allocation, completion idempotency, and the existing label layout remain unchanged; there is no application work queue, retry layer, or slot-selection UI.
+- Added the RunPod-compatible `/ping` alias and one optional server-only bearer header for the existing SAM proxy. The current single model, per-GPU detector lock, one Uvicorn worker, endpoint actions, and detector remain unchanged; there is no second detector, fallback, SAM picker, or infrastructure abstraction.
+- Focused Speedster/Human Grade tests pass `22/22`, focused ESLint passes, database generation/build passes, Python syntax compilation passes, and `git diff --check` passes. The full frontend TypeScript check still reports only the existing unrelated V1/browser-rip/test diagnostics and none of the changed files. The backend unit suite could not run locally because the host Python lacks OpenCV; the added `/ping` assertion is ready for the existing dependency-complete CI/container test environment.
+- No migration, deployment, restart, image build/push, RunPod/Vercel/environment change, Production/staging database or storage access, label/data mutation, GPU action, V1/Dell action, Human Grade record change, or destructive operation occurred.
+
+## 2026-08-01 - Speedster post-grading tool-bridge contract audit
+
+- Audited the completed Speedster workspace against the existing KingsReview and Inventory contracts before adding launch buttons or status writes. Speedster completion currently creates one `AiGraderV2Session` and one `HumanGradeLabel`; it creates no `CardAsset`, `CardBatch`, `Item`, or exact linkage to those existing systems.
+- KingsReview's only exact-card launch seam is `cardId`, and its sold-comp jobs/evidence are CardAsset-backed. Its enqueue contract also requires Back and TILT photos, while Speedster intentionally captures only Front and Back. Inventory likewise lists and mutates CardAsset records and has no Speedster-session or certificate-number lookup.
+- Consequently, no truthful exact-card launch or completion callback exists within the current contracts. A generic link, title search, manual Done button, copied/fake TILT image, or boolean update on launch would misidentify the card or falsely claim completion. No runtime bridge was added. Focused coverage now proves the completed-card API rejects fabricated `COMPS_COMPLETE` and `INVENTORY_COMPLETE` actions without any write.
+- Building an actual bridge requires a separately approved exact Speedster-to-CardAsset/Item linkage and a decision about the missing KingsReview TILT requirement; those are broader data/workflow changes, not launch/status wiring. No schema, migration, production mutation, CardAsset/Item creation, comps request, inventory action, fallback, queue, new auth, V1/Dell change, Human Grade change, or destructive operation occurred.
+
+## 2026-08-01 - Speedster capture rhythm tightened locally
+
+- Added one Retake action only when a complete iPhone pair is visible. It clears the two browser thumbnails, leaves the paired Shortcut/device and stable object keys unchanged, and accepts the next Shortcut send as the replacement pair. No retake history, extra endpoint, capture mode, or storage object was added.
+- Added one Next card link after completion. It reloads the existing Speedster entry route so all per-card browser state is discarded and the unchanged shared label editor starts cleanly; it does not create a draft or consume a label slot until the normal existing action does so.
+- Focused ESLint and `git diff --check` pass. No deployment, migration, database/data/label mutation, iPhone/Shortcut action, GPU/RunPod change, V1/Dell change, Human Grade behavior change, fallback, queue, gate, or destructive operation occurred.
+
+## 2026-08-01 - Speedster master plan reconciled with implementation evidence
+
+- Updated the source-of-truth plan from the old DINO/one-GPU/pending-SAM assumptions to the implemented native-iPhone, multi-admin, post-grade, and existing-SAM-feature learning architecture.
+- Recorded the one approved capacity shape: one direct RunPod load-balanced endpoint, RTX 4090 PRO only, two active workers and flex overflow up to four total. The old normal Pod stays live only through acceptance and is then stopped to avoid duplicate billing.
+- Recorded the audited NFC/comps/inventory contract gap explicitly so no dead link, fake TILT, duplicate record, or false completion status can enter the release. No runtime code, provider resource, environment variable, deployment, migration, database/data/label, GPU, V1/Dell, Human Grade, fallback, queue, gate, or destructive operation changed in this documentation update.
+
+## 2026-08-01 - Speedster immediate SAM-review learning loop built locally
+
+- Added one compact 32-value fingerprint per SAM 3 detector finding by pooling the already-computed image FPN features under its measured mask. This performs no second model pass. At pinned official SAM 3 commit `96914d2425f90a64f45ca977c2b5165418099543`, the image model uses a 1008px input, 256-channel neck, `[4, 2, 1, 0.5]` FPN scales, and `scalp=1`; therefore the reused final retained tensor is the raw `B x 256 x 72 x 72` `state["backbone_out"]["backbone_fpn"][-1]` output from the existing `set_image` call.
+- Added one global PostgreSQL learning-bank row containing only positive and negative fingerprint sums/counts by existing defect type. Completion updates it inside the already-existing Human Grade label-slot advisory lock, so simultaneous completions cannot overwrite one another and no new lock, queue, cache, worker affinity, service, vector database, or event system was introduced.
+- Accepted detector findings teach the reviewed type, removed detector findings teach against the detected type, and corrected detector findings teach against the original type and toward the reviewed type. The next detect request reads the one small bank and applies a separate cosine-based adjustment bounded to `+/-0.06`; raw official SAM confidence remains unchanged and separately persisted. Smart-Mark provenance remains stored in the completed session, but no fabricated SAM fingerprint or extra inference is created after the original request state is gone.
+- Backend tests pass `18/18`; focused Speedster frontend tests pass `28/28`; focused ESLint, Prisma schema validation, database TypeScript build, Python compilation, and `git diff --check` pass. The optimized Next.js build advances through changed-file lint/type checking and stops only on existing unrelated missing workspace-package imports (`@tenkings/ai-grader-capture-helper/calibration-bundle` before that dependency is built, then `@tenkings/browser-rip-client`); no diagnostic references a learning-loop file.
+- No migration was applied, no database/data/label row changed, and no push, deployment, restart, image build/push, RunPod/Vercel/environment change, Production/staging storage access, GPU action, V1/Dell action, Human Grade behavior change, fallback, gate, or destructive operation occurred.
+
+## 2026-08-01 - Speedster release plan reconciled to the implemented learning contract
+
+- Replaced the plan's generic reviewed-example-table wording with the implemented evidence contract: individual fingerprints remain in completed-session review JSON, while one global positive/negative centroid bank applies the bounded cosine adjustment to the next card.
+- Named the exact additive migration `20260801190000_ai_grader_v2_learning_bank` and corrected the stale Human Grade rollout note; its formula-version migration is already live from the first Speedster Production rollout.
+- No runtime code, migration application, data/label mutation, deployment, GPU/provider action, V1/Dell change, Human Grade behavior change, fallback, queue, gate, or destructive operation occurred.
+
+### Planned full-chain disposable migration validation
+
+- Plan: run the repository's acknowledged migration validator against all current migrations, including `20260801173000_ai_grader_v2_post_grade`, `20260801180000_ai_grader_v2_iphone_capture`, and `20260801190000_ai_grader_v2_learning_bank`.
+- The validator is limited to a randomly named, loopback-only, tmpfs-backed local PostgreSQL container. Its cleanup removes only that disposable container and storage; it does not connect to or mutate Production, staging, or any persistent Ten Kings database.
+
+### Full-chain disposable migration validation result
+
+- The validator passed all `83` migrations, the real database lifecycle/advisory-lock suite, and the required second-deploy no-op check.
+- It destroyed the randomly named local PostgreSQL container and tmpfs storage after success. No Production, staging, or persistent Ten Kings database was contacted or changed.
+- Integrated validation also passed: database generation/build, `54/54` focused Speedster frontend tests, focused ESLint, `18/18` dependency-complete Python service tests, Python compilation, optimized Next.js Production build, and `git diff --check`. The Next build emitted only existing repository warnings.
+
+### Planned Speedster capacity and migration-bearing Production rollout
+
+- Plan: build and push one private Linux/amd64 SAM 3 service image from the reviewed `d2bc4b5b` code, then create one private RunPod load-balanced endpoint using only RTX 4090 PRO workers, two active workers, four maximum workers, request-count scaling, and the existing Hugging Face secret/model cache settings.
+- Plan: verify the new endpoint's `/ping`, `/health`, geometry, and real detector response before changing web traffic. Keep the current single RTX 4090 Pod live until the new endpoint and migration-bearing web release pass acceptance; then stop that old Pod to end duplicate billing.
+- Plan: push this reviewed branch through the normal protected pull-request checks. Enable `RUN_DB_MIGRATIONS=true` only for the approved Production deployment that applies the three additive migrations, point only `AI_GRADER_SPEEDSTER_SERVICE_URL` and its server-only provider key at the verified new endpoint, then restore `RUN_DB_MIGRATIONS=false` after success.
+- No V1/Dell component, existing Human Grade record/page, existing label, NFC hardware, comps/inventory record, detector fallback, application queue, alternate GPU type, or destructive database operation is included.

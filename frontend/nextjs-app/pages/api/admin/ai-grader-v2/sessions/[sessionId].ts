@@ -40,14 +40,15 @@ type UpdateSessionData = {
 
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
-  findSession: (id: string) => Promise<PersistedSession | null>;
-  updateSession: (id: string, data: UpdateSessionData) => Promise<unknown>;
+  findSession: (id: string, createdByUserId: string) => Promise<PersistedSession | null>;
+  updateSession: (id: string, createdByUserId: string, data: UpdateSessionData) => Promise<unknown>;
 };
 
 const dependencies: Dependencies = {
   requireAdminSession,
-  findSession: (id) => prisma.aiGraderV2Session.findUnique({ where: { id } }),
-  updateSession: (id, data) => prisma.aiGraderV2Session.update({ where: { id }, data }),
+  findSession: (id, createdByUserId) => prisma.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
+  updateSession: (id, createdByUserId, data) =>
+    prisma.aiGraderV2Session.update({ where: { id, createdByUserId }, data }),
 };
 
 const sessionIdFrom = (req: NextApiRequest) => {
@@ -63,11 +64,11 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
     }
 
     try {
-      await deps.requireAdminSession(req);
+      const admin = await deps.requireAdminSession(req);
       const sessionId = sessionIdFrom(req);
       if (!sessionId) return res.status(400).json({ message: "Session ID is required" });
 
-      const existing = await deps.findSession(sessionId);
+      const existing = await deps.findSession(sessionId, admin.user.id);
       if (!existing) return res.status(404).json({ message: "Speedster session not found" });
 
       if (req.method === "GET") return res.status(200).json({ session: existing });
@@ -97,7 +98,7 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         data.gradeReport = parsed.data.gradeReport as Prisma.InputJsonValue;
       }
 
-      const session = await deps.updateSession(sessionId, data);
+      const session = await deps.updateSession(sessionId, admin.user.id, data);
       return res.status(200).json({ session });
     } catch (error) {
       const response = toErrorResponse(error);

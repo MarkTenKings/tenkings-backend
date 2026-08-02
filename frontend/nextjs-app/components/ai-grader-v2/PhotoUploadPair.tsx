@@ -1,33 +1,50 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import type { SpeedsterCardSide } from "../../lib/ai-grader-v2/contracts";
 import styles from "./PhotoUploadPair.module.css";
 
+export type SpeedsterOriginalPhoto =
+  | { kind: "LOCAL"; file: File }
+  | {
+    kind: "IPHONE";
+    storageKey: string;
+    readUrl: string;
+    captureVersion: number;
+  };
+
 type PhotoUploadPairProps = {
-  front: File | null;
-  back: File | null;
+  front: SpeedsterOriginalPhoto | null;
+  back: SpeedsterOriginalPhoto | null;
+  pairingUrl?: string;
   onChange: (side: SpeedsterCardSide, file: File) => void;
+  onRetake: () => void;
+  onSwap: () => void;
 };
 
 function PhotoSlot({
   side,
-  file,
+  photo,
   onChange,
 }: {
   side: SpeedsterCardSide;
-  file: File | null;
+  photo: SpeedsterOriginalPhoto | null;
   onChange: PhotoUploadPairProps["onChange"];
 }) {
   const [preview, setPreview] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!file) {
+    if (!photo) {
       setPreview(null);
       return;
     }
-    const url = URL.createObjectURL(file);
+    if (photo.kind === "IPHONE") {
+      setPreview(photo.readUrl);
+      return;
+    }
+    const url = URL.createObjectURL(photo.file);
     setPreview(url);
     return () => URL.revokeObjectURL(url);
-  }, [file]);
+  }, [photo]);
 
   return (
     <label className={styles.slot}>
@@ -59,15 +76,38 @@ function PhotoSlot({
       ) : (
         <span className={styles.photoAction}>
           <strong>Replace photo</strong>
-          <small>{file?.name}</small>
+          <small>{photo?.kind === "LOCAL" ? photo.file.name : "iPhone capture"}</small>
         </span>
       )}
     </label>
   );
 }
 
-export default function PhotoUploadPair({ front, back, onChange }: PhotoUploadPairProps) {
+function PairingQr({ value }: { value: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    void QRCode.toCanvas(canvasRef.current, value, {
+      width: 92,
+      margin: 1,
+      color: { dark: "#080806", light: "#f3d58a" },
+    });
+  }, [value]);
+
+  return <canvas ref={canvasRef} className={styles.qr} aria-label="Pair iPhone QR code" />;
+}
+
+export default function PhotoUploadPair({
+  front,
+  back,
+  pairingUrl,
+  onChange,
+  onRetake,
+  onSwap,
+}: PhotoUploadPairProps) {
   const readyCount = Number(Boolean(front)) + Number(Boolean(back));
+  const iphonePairReady = front?.kind === "IPHONE" && back?.kind === "IPHONE";
 
   return (
     <section className={styles.uploader} aria-label="Front and back card photos">
@@ -76,11 +116,24 @@ export default function PhotoUploadPair({ front, back, onChange }: PhotoUploadPa
           <span>ORIGINAL CAPTURE</span>
           <h2>Front + back.</h2>
         </div>
-        <p aria-live="polite"><strong>{readyCount}/2</strong> photos ready</p>
+        <div className={styles.headingActions}>
+          <p aria-live="polite"><strong>{readyCount}/2</strong> photos ready</p>
+          {iphonePairReady ? <button type="button" onClick={onRetake}>Retake</button> : null}
+          {readyCount === 2 ? <button type="button" onClick={onSwap}>Swap front / back</button> : null}
+        </div>
       </div>
+      {pairingUrl ? (
+        <div className={styles.iphoneBar}>
+          <PairingQr value={pairingUrl} />
+          <div>
+            <span>PAIR IPHONE ONCE</span>
+            <strong>Scan, then run the Speedster Shortcut after taking front + back.</strong>
+          </div>
+        </div>
+      ) : null}
       <div className={styles.pair}>
-        <PhotoSlot side="FRONT" file={front} onChange={onChange} />
-        <PhotoSlot side="BACK" file={back} onChange={onChange} />
+        <PhotoSlot side="FRONT" photo={front} onChange={onChange} />
+        <PhotoSlot side="BACK" photo={back} onChange={onChange} />
       </div>
     </section>
   );

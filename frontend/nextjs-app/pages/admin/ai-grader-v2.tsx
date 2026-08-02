@@ -160,7 +160,11 @@ export default function AiGraderV2AdminPage() {
           ],
         }],
       });
-      const added = measured.defects.map((defect) => ({ ...defect, reviewResult: "SMART_MARKED" as const }));
+      const added = measured.defects.map((defect) => ({
+        ...defect,
+        origin: "SMART_MARK" as const,
+        reviewResult: "SMART_MARKED" as const,
+      }));
       if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
       setDefects((current) => [...(current ?? []), ...added]);
       setMessage("Smart-Mark measured. Select its defect type if needed.");
@@ -211,7 +215,7 @@ export default function AiGraderV2AdminPage() {
       <main className={styles.page}>
         <header className={styles.hero}>
           <div><span>TEN KINGS · AI GRADER V2</span><h1>Speedster</h1><p>{working ? "Racing · " : ""}{message}</p></div>
-          <Link href="/admin">Admin Home</Link>
+          <nav><Link href="/admin/ai-grader-v2/completed">Completed cards</Link><Link href="/admin">Admin Home</Link></nav>
         </header>
 
         {!draft ? (
@@ -283,6 +287,11 @@ export default function AiGraderV2AdminPage() {
             <Link href={`/ai-grader-v2/reports/${completion.publicReportSlug}`}>
               Open public evidence report →
             </Link>
+            <Link href="/admin/ai-grader-v2/completed">Open completed cards →</Link>
+            <Link href="/admin/ai-grader-v2" onClick={(event) => {
+              event.preventDefault();
+              window.location.assign("/admin/ai-grader-v2");
+            }}>Next card →</Link>
           </section>
         ) : null}
       </main>

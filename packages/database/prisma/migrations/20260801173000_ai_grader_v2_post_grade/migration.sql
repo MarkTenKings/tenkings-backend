@@ -1,0 +1,6 @@
+ALTER TABLE "AiGraderV2Session"
+  ADD COLUMN "slabFrontKey" TEXT,
+  ADD COLUMN "slabBackKey" TEXT,
+  ADD COLUMN "nfcDone" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "compsDone" BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN "inventoryDone" BOOLEAN NOT NULL DEFAULT false;

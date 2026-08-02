@@ -63,6 +63,8 @@ function canonicalDefects(
       ...defect,
       id: rawId.endsWith(`:${defect.zone}`) ? rawId : `${rawId}:${defect.zone}`,
       side,
+      origin: "DETECTOR" as const,
+      detectedDefectType: defect.defectType,
       sourceViewId: canonicalViewId(side, defect.sourceViewId),
       supportingViewIds: defect.supportingViewIds.map((id) => canonicalViewId(side, id)),
       reviewResult,

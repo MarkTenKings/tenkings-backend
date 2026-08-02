@@ -157,7 +157,7 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
             members,
             key=lambda proposal: (
                 DEFECT_MULTIPLIERS[proposal["defectType"]],
-                proposal["confidence"],
+                proposal.get("rankingConfidence", proposal["confidence"]),
             ),
         )
         fused = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
@@ -186,6 +186,8 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                     "supportingViewIds": supporting_views,
                     "defectType": primary["defectType"],
                     "confidence": float(primary["confidence"]),
+                    "featureFingerprint": primary.get("featureFingerprint"),
+                    "learningAdjustment": float(primary.get("learningAdjustment", 0.0)),
                     "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
                     "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
                     "areaMm2": area_mm2,
