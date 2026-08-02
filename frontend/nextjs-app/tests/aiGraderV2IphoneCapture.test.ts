@@ -192,6 +192,8 @@ test("Shortcut PLAN and COMPLETE publish an overwriteable photo pair", async () 
   assert.equal(first.state.status, 200);
   assert.equal(first.state.body.contentType, "image/jpeg");
   assert.equal(first.state.body.uploadVersion, 1);
+  assert.equal(first.state.body.frontUploadUrl, first.state.body.front.uploadUrl);
+  assert.equal(first.state.body.backUploadUrl, first.state.body.back.uploadUrl);
   assert.equal(complete.state.body.readyVersion, 1);
   assert.equal(resend.state.body.uploadVersion, 2);
   assert.equal(resend.state.body.front.storageKey, first.state.body.front.storageKey);

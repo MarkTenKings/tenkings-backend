@@ -29994,3 +29994,7 @@ By enabling Rip It Live, I confirm:
 ### Superseded-Pod stop result
 
 - Stopped superseded normal Pod `electronic_peach_chickadee` (`0uxb1mii5nne0d`) after Production acceptance. RunPod now shows that Pod at `$0.00/hr`; it was not terminated and remains recoverable. The new load-balanced endpoint remains the only Production SAM 3 target.
+
+### Planned flat iPhone PLAN response release
+
+- Plan: expose the already-generated Front and Back presigned upload URLs as two top-level PLAN response fields, update the focused contract test and Shortcut runbook, and deploy through the normal pull-request path. This removes nested-dictionary parsing from the iPhone Shortcut without changing storage keys, capture behavior, grading, V1/Dell, Human Grade, RunPod/SAM, database schema/data, or any destructive state.
