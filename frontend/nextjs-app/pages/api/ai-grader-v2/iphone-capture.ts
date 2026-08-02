@@ -104,6 +104,8 @@ export function createAiGraderV2IphoneCaptureHandler(deps: Dependencies = depend
       return res.status(200).json({
         uploadVersion: pair.uploadVersion,
         contentType: SPEEDSTER_IPHONE_CONTENT_TYPE,
+        frontUploadUrl,
+        backUploadUrl,
         front: { storageKey: frontStorageKey, uploadUrl: frontUploadUrl },
         back: { storageKey: backStorageKey, uploadUrl: backUploadUrl },
       });

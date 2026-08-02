@@ -18,7 +18,7 @@ Create and share one iPhone Shortcut named exactly `Ten Kings Speedster Capture`
    { "action": "PLAN", "deviceId": "<saved deviceId>" }
    ```
 
-6. PUT the Front JPEG to `front.uploadUrl` and the Back JPEG to `back.uploadUrl`. Set `Content-Type: image/jpeg` on both requests.
+6. Read `frontUploadUrl` and `backUploadUrl` directly from that one response dictionary. PUT the Front JPEG to `frontUploadUrl` and the Back JPEG to `backUploadUrl`. Set `Content-Type: image/jpeg` on both requests.
 7. POST JSON to the same endpoint:
 
    ```json
