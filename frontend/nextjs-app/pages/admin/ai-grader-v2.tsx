@@ -211,7 +211,7 @@ export default function AiGraderV2AdminPage() {
       <main className={styles.page}>
         <header className={styles.hero}>
           <div><span>TEN KINGS · AI GRADER V2</span><h1>Speedster</h1><p>{working ? "Racing · " : ""}{message}</p></div>
-          <Link href="/admin">Admin Home</Link>
+          <nav><Link href="/admin/ai-grader-v2/completed">Completed cards</Link><Link href="/admin">Admin Home</Link></nav>
         </header>
 
         {!draft ? (
@@ -283,6 +283,7 @@ export default function AiGraderV2AdminPage() {
             <Link href={`/ai-grader-v2/reports/${completion.publicReportSlug}`}>
               Open public evidence report →
             </Link>
+            <Link href="/admin/ai-grader-v2/completed">Open completed cards →</Link>
           </section>
         ) : null}
       </main>

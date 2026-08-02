@@ -29873,3 +29873,24 @@ By enabling Rip It Live, I confirm:
 
 - Plan: push the isolated reviewed commit through the normal green-check pull-request path with Production `RUN_DB_MIGRATIONS=false`, merge only after required checks and Vercel Preview pass, then verify the serving Production commit, the public report route, and the authenticated Speedster review bundle.
 - This frontend/report-only rollout will not run a migration, mutate database/data/labels, change an environment variable, rebuild or restart SAM 3, touch V1/Dell or Human Grade, add a fallback, or perform a destructive action.
+
+### Evidence/Undo Production rollout result
+
+- Pull request `#261` passed the optimized application build, disposable PostgreSQL migration chain, every service/frontend container build, and Vercel Preview before merging as Production commit `8ad9367e861f42c865fa47b99b109661a4bcb4ca`.
+- GitHub recorded Vercel Production deployment `5709491217` as `success` for that exact commit. Production `RUN_DB_MIGRATIONS=false` remained unchanged, so no migration or database/data/label mutation ran for this report/review correction.
+- The release extends only the public evidence read-URL lifetime and adds exactly one browser-held Undo for the most recently removed defect. It does not rebuild or restart SAM 3, change an environment variable, touch V1/Dell or Human Grade, add a fallback, or perform a destructive operation.
+
+## 2026-08-01 - Planned Speedster completed-card workspace build
+
+- Plan: add one additive Speedster post-grading schema seam for Front/Back slab-photo object keys plus NFC, comps, and inventory completion status; no existing row rewrite or grading behavior change.
+- Plan: add one shared completed-card list, one card workspace that opens the existing public report alongside post-grading actions, and direct object-storage Front/Back slab photo upload. The public report will show those slab photos read-only without changing its measured evidence.
+- Label printing remains a link to the existing Human Grade 16-up page. NFC, comps, and inventory remain independent tool launch points and must not add their engines to the grading workflow or report renderer.
+- No Production migration, deploy, database/data/label mutation, NFC operation, comps request, inventory mutation, GPU/Pod action, V1/Dell change, Human Grade behavior change, fallback, queue, or destructive operation is part of this local build step.
+
+## 2026-08-01 - Speedster completed-card workspace built locally
+
+- Added one additive V2 post-grading schema seam: Front/Back slab-photo storage keys and three direct completion booleans for NFC, comps, and inventory. The migration contains only nullable columns and false defaults; it has no row-level rewrite, delete, or grading change.
+- Added one authenticated shared completed-card list for every admin grader, one card workspace with the exact public report embedded as its live preview, direct Front/Back slab-photo upload into the existing object-storage namespace, label-sheet/slot visibility, and a link to the existing 16-up label pages.
+- The public report now adds sealed Front/Back slab photos when present while leaving the original measured evidence, defects, scoring, and report URL unchanged. Admin slab replacement overwrites only that card side's stable slab object key.
+- Focused post-grade/public-report/review tests pass `14/14`; focused ESLint passes; the optimized Production Next.js build passes with existing repository warnings. Filtered standalone TypeScript reports no diagnostics in any changed V2 post-grade/report file; repository-wide standalone TypeScript still exits on known unrelated V1/test diagnostics.
+- No Production migration, deploy, database/data/label mutation, slab upload, NFC operation, comps request, inventory mutation, GPU/Pod action, V1/Dell change, Human Grade behavior change, fallback, queue, or destructive operation occurred.

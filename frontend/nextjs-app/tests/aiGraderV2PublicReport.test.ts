@@ -71,6 +71,8 @@ function persisted(workflowState = "COMPLETED") {
       { ...defect, id: "unknown", reviewResult: "UNKNOWN" },
     ],
     gradeReport: grade,
+    slabFrontKey: "slab/front.jpg",
+    slabBackKey: null,
   };
 }
 
@@ -88,6 +90,7 @@ test("maps only a completed session into public identity, reviewed evidence, gra
   assert.equal(source.defects[0].id, "front-surface-1");
   assert.equal(source.grade.overall.displayGrade, 9.8);
   assert.equal(source.sourceKeys.FRONT.master, "front/rectified.webp");
+  assert.equal(source.slabKeys.front, "slab/front.jpg");
   assert.equal(JSON.stringify(source).includes("private-admin-id"), false);
   assert.equal(JSON.stringify(source).includes("private-upload"), false);
 });
@@ -103,6 +106,8 @@ test("materializes short-lived image URLs without returning object keys or priva
   assert.ok(source);
   const props = await reportModule.materializeSpeedsterReport(source, async (key) => `https://read.example/${encodeURIComponent(key)}`);
   assert.match(props.imageUrls.FRONT.views.DIRECTIONAL, /^https:\/\/read\.example\//);
+  assert.match(props.slabImageUrls.front ?? "", /^https:\/\/read\.example\//);
+  assert.equal(props.slabImageUrls.back, null);
   const serialized = JSON.stringify(props);
   assert.equal(serialized.includes("StorageKey"), false);
   assert.equal(serialized.includes("private-session-id"), false);

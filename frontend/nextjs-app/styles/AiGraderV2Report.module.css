@@ -99,6 +99,14 @@
 
 .sides .active { color: #090909; background: #d4ad55; }
 
+.slabPhotos { margin-top: 72px; padding-top: 52px; border-top: 1px solid #30291d; }
+.slabPhotos header span { color: #d4ad55; font-size: 11px; font-weight: 700; letter-spacing: .28em; }
+.slabPhotos h2 { margin: 10px 0 28px; font-size: clamp(28px, 4vw, 54px); font-weight: 400; letter-spacing: -.04em; }
+.slabPhotos > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.slabPhotos figure { margin: 0; padding: 18px; border: 1px solid #30291d; border-radius: 20px; background: #090a08; }
+.slabPhotos img { display: block; width: 100%; height: min(70vh, 820px); object-fit: contain; border-radius: 12px; background: #030403; }
+.slabPhotos figcaption { margin-top: 12px; color: #d4ad55; font-size: 11px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+
 .footer {
   display: flex;
   justify-content: space-between;
@@ -117,5 +125,6 @@
   .evidence { padding-top: 54px; }
   .evidenceHeader { align-items: stretch; flex-direction: column; }
   .sides button { flex: 1; }
+  .slabPhotos > div { grid-template-columns: 1fr; }
   .footer { flex-direction: column; }
 }

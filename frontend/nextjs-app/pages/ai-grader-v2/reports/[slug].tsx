@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 import Head from "next/head";
 import Link from "next/link";
 import { useState } from "react";
@@ -35,12 +36,14 @@ type PublicReportSource = {
   defects: SpeedsterMeasuredDefect[];
   grade: Grade;
   sourceKeys: SourceKeys;
+  slabKeys: { front: string | null; back: string | null };
 };
-type PublicReportProps = Omit<PublicReportSource, "sourceKeys"> & {
+type PublicReportProps = Omit<PublicReportSource, "sourceKeys" | "slabKeys"> & {
   imageUrls: Readonly<Record<SpeedsterCardSide, {
     master: string;
     views: Readonly<Record<string, string>>;
   }>>;
+  slabImageUrls: { front: string | null; back: string | null };
 };
 type ReportDependencies = {
   findCompletedSession: (slug: string) => Promise<unknown | null>;
@@ -208,7 +211,13 @@ export function mapCompletedSpeedsterSession(value: unknown): PublicReportSource
     const fieldValue = text(value.identity[field]);
     if (fieldValue) identity[field] = fieldValue;
   }
-  return { identity, defects: defects as SpeedsterMeasuredDefect[], grade, sourceKeys: keys };
+  return {
+    identity,
+    defects: defects as SpeedsterMeasuredDefect[],
+    grade,
+    sourceKeys: keys,
+    slabKeys: { front: text(value.slabFrontKey), back: text(value.slabBackKey) },
+  };
 }
 
 export async function materializeSpeedsterReport(
@@ -223,7 +232,17 @@ export async function materializeSpeedsterReport(
       views: Object.fromEntries(VIEW_TYPES.map((view, index) => [view, values[index]])),
     };
   }));
-  return { identity: source.identity, defects: source.defects, grade: source.grade, imageUrls };
+  const [frontSlab, backSlab] = await Promise.all([
+    source.slabKeys.front ? presign(source.slabKeys.front) : null,
+    source.slabKeys.back ? presign(source.slabKeys.back) : null,
+  ]);
+  return {
+    identity: source.identity,
+    defects: source.defects,
+    grade: source.grade,
+    imageUrls,
+    slabImageUrls: { front: frontSlab, back: backSlab },
+  };
 }
 
 export function createSpeedsterReportGetServerSideProps(deps: ReportDependencies): GetServerSideProps<PublicReportProps> {
@@ -246,13 +265,22 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
   return createSpeedsterReportGetServerSideProps({
     findCompletedSession: (slug) => prisma.aiGraderV2Session.findFirst({
       where: { publicReportSlug: slug, workflowState: "COMPLETED" },
-      select: { cardProfile: true, workflowState: true, identity: true, capture: true, reviewedDefects: true, gradeReport: true },
+      select: {
+        cardProfile: true,
+        workflowState: true,
+        identity: true,
+        capture: true,
+        reviewedDefects: true,
+        gradeReport: true,
+        slabFrontKey: true,
+        slabBackKey: true,
+      },
     }),
     presign: (storageKey) => presignReadUrl(storageKey, 60 * 60 * 24 * 7),
   })(context);
 };
 
-export default function SpeedsterPublicReport({ identity, defects, grade, imageUrls }: PublicReportProps) {
+export default function SpeedsterPublicReport({ identity, defects, grade, imageUrls, slabImageUrls }: PublicReportProps) {
   const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
   const title = (identity.cardProfile === "POKEMON" ? identity.cardName : identity.playerName) || "Ten Kings card";
   const details = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber]
@@ -295,6 +323,15 @@ export default function SpeedsterPublicReport({ identity, defects, grade, imageU
       </section>
 
       <GradeSummary grade={grade} />
+      {slabImageUrls.front || slabImageUrls.back ? (
+        <section className={styles.slabPhotos}>
+          <header><span>SEALED CARD</span><h2>The finished Ten Kings slab.</h2></header>
+          <div>
+            {slabImageUrls.front ? <figure><img src={slabImageUrls.front} alt="Front of sealed Ten Kings slab" /><figcaption>Front</figcaption></figure> : null}
+            {slabImageUrls.back ? <figure><img src={slabImageUrls.back} alt="Back of sealed Ten Kings slab" /><figcaption>Back</figcaption></figure> : null}
+          </div>
+        </section>
+      ) : null}
       <footer className={styles.footer}><span>TEN KINGS</span><p>Measured. Transparent. Built to be inspected.</p></footer>
     </main>
   );

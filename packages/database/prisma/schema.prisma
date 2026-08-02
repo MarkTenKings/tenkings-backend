@@ -3537,6 +3537,11 @@ model AiGraderV2Session {
   capture          Json     @db.JsonB
   reviewedDefects  Json     @db.JsonB
   gradeReport      Json     @db.JsonB
+  slabFrontKey     String?
+  slabBackKey      String?
+  nfcDone          Boolean  @default(false)
+  compsDone        Boolean  @default(false)
+  inventoryDone    Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
