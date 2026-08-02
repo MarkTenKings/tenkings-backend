@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
 Date: 2026-08-02
-Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, immediate reviewed-defect learning, and two-worker SAM 3 capacity are live. A full user-run Production grading test passed on 2026-08-02. Worker source is aligned with Production; post-grade PhotoRoom report presentation is the active release.
+Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, immediate reviewed-defect learning, two-worker SAM 3 capacity, aligned Worker source, and post-grade PhotoRoom report presentation are live. A full user-run Production grading test passed on 2026-08-02; one newly completed card remains the final PhotoRoom-output acceptance.
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -319,7 +319,7 @@ The primary agent reviews and integrates each bounded lane and owns schema order
 16. Add the shared completed-card workspace, sealed-slab photos, native-iPhone capture, Next Card rhythm, and multi-admin isolation. **Completed locally.**
 17. Deploy the migration-bearing release, move SAM traffic to one 2-warm-plus-flex load-balanced endpoint, and run Production acceptance. **Completed and live.**
 18. Merge the deployed Cloudflare Worker runtime correction into `main` so source and Production match. **Completed in PR #268.**
-19. Complete the isolated post-grade PhotoRoom presentation-image release, preserve rectified report compatibility, and remove obsolete nested iPhone PLAN fields. **In progress.**
+19. Complete the isolated post-grade PhotoRoom presentation-image release, preserve rectified report compatibility, and remove obsolete nested iPhone PLAN fields. **Deployed in PR #269; one new-card PhotoRoom-output acceptance remains.**
 20. Define and build one idempotent Speedster-to-`CardAsset` permanent-record bridge.
 21. Connect the permanent Speedster card to the existing `Item` and inventory workflow without duplicate records.
 22. Add physical NFC write/read-back verification against the permanent card/report identity.
