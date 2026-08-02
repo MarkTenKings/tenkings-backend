@@ -184,14 +184,15 @@ function sourceKeys(value: unknown): SourceKeys | null {
   const side = (name: SpeedsterCardSide) => {
     const candidate = value[name.toLowerCase()];
     const row: Record<string, unknown> | null = isRecord(candidate) ? candidate : null;
-    const master = row ? text(row.rectifiedStorageKey) : null;
+    const original = row ? text(row.rectifiedStorageKey) : null;
+    const master = (row ? text(row.reportStorageKey) : null) ?? original;
     const generated = row && isRecord(row.viewStorageKeys) ? row.viewStorageKeys : null;
     const normalized = generated ? text(generated.NORMALIZED) : null;
     const micro = generated ? text(generated.MICRO_DEFECT) : null;
     const directional = generated ? text(generated.DIRECTIONAL) : null;
-    return master && normalized && micro && directional ? {
+    return master && original && normalized && micro && directional ? {
       master,
-      views: { ORIGINAL: master, NORMALIZED: normalized, MICRO_DEFECT: micro, DIRECTIONAL: directional },
+      views: { ORIGINAL: original, NORMALIZED: normalized, MICRO_DEFECT: micro, DIRECTIONAL: directional },
     } : null;
   };
   const front = side("FRONT");
@@ -233,9 +234,12 @@ export async function materializeSpeedsterReport(
 ): Promise<PublicReportProps> {
   const imageUrls = {} as Record<SpeedsterCardSide, { master: string; views: Record<string, string> }>;
   await Promise.all((["FRONT", "BACK"] as const).map(async (side) => {
-    const values = await Promise.all(VIEW_TYPES.map((view) => presign(source.sourceKeys[side].views[view])));
+    const [master, ...values] = await Promise.all([
+      presign(source.sourceKeys[side].master),
+      ...VIEW_TYPES.map((view) => presign(source.sourceKeys[side].views[view])),
+    ]);
     imageUrls[side] = {
-      master: values[0],
+      master,
       views: Object.fromEntries(VIEW_TYPES.map((view, index) => [view, values[index]])),
     };
   }));

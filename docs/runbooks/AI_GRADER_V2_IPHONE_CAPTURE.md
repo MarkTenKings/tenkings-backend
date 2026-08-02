@@ -47,10 +47,11 @@ Running the Shortcut again replaces only that grader's current draft photos. The
 
 ## Acceptance cleanup
 
-Only after one real Front/Back pair arrives successfully through the Worker:
+A real Front/Back pair and one complete Production grading flow passed on 2026-08-02. The flat PLAN contract is now authoritative. The current PhotoRoom report release removes the obsolete nested `front` and `back` PLAN objects while preserving `uploadVersion`, `contentType`, `frontUploadUrl`, and `backUploadUrl`.
+
+The remaining device-local cleanup can happen independently when the operator confirms those setup aids are no longer needed:
 
 1. Delete the old iPhone Shortcut and its saved pairing file.
-2. Remove the nested `front` and `back` compatibility objects from the PLAN response; keep only `uploadVersion`, `contentType`, `frontUploadUrl`, and `backUploadUrl`.
-3. Remove the old QR pairing UI and replace its one-time setup role with the smallest copy-device-ID control needed for additional admin graders.
+2. Remove the old QR pairing UI and replace its one-time setup role with the smallest copy-device-ID control needed for additional admin graders.
 
 Keep the existing PLAN/COMPLETE endpoint, capture-device row, stable Spaces keys, admin polling, and shared geometry/grading path. Those are the working core, not baggage.
