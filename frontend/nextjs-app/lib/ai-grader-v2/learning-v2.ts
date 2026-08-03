@@ -8,6 +8,11 @@ export const SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY = 50;
 export const SPEEDSTER_LEARNING_SERIALIZED_BANK_BUDGET_BYTES = 1_500_000;
 export const SPEEDSTER_LEARNING_FINGERPRINT_VERSION =
   "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543" as const;
+export const SPEEDSTER_LEARNING_POLICY_V2 = { tau: 0.8, margin: 0.1 } as const;
+export const SPEEDSTER_LEARNING_POLICY_BOUNDS_V2 = {
+  tau: { min: 0.7, max: 0.95 },
+  margin: { min: 0.03, max: 0.2 },
+} as const;
 
 export const SPEEDSTER_LEARNING_DEFECT_TYPES = [
   "FAINT_COLOR_VARIATION",
@@ -153,8 +158,12 @@ const validCalibration = (value: unknown): value is SpeedsterLearningCalibration
   if (!isRecord(value)) return false;
   if (value.status === "UNCALIBRATED") return value.tau === null && value.margin === null;
   return value.status === "CALIBRATED"
-    && typeof value.tau === "number" && Number.isFinite(value.tau) && value.tau >= 0 && value.tau <= 1
-    && typeof value.margin === "number" && Number.isFinite(value.margin) && value.margin >= 0 && value.margin <= 1;
+    && typeof value.tau === "number" && Number.isFinite(value.tau)
+    && value.tau >= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.tau.min
+    && value.tau <= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.tau.max
+    && typeof value.margin === "number" && Number.isFinite(value.margin)
+    && value.margin >= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.margin.min
+    && value.margin <= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.margin.max;
 };
 
 const compareExemplars = (left: SpeedsterLearningExemplarV2, right: SpeedsterLearningExemplarV2) =>

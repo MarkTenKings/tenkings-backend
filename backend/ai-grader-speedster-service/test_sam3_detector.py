@@ -2,6 +2,7 @@ import base64
 import asyncio
 import inspect
 import json
+import logging
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from card_geometry import (
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import (
     DETECTOR_VERSION,
+    LOGGER,
     Sam3ImageProcessor,
     _smart_mark_mask,
     detect_views,
@@ -192,6 +194,9 @@ def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
 
 
 class Sam3DetectorTests(unittest.TestCase):
+    def test_sam_memory_decision_logger_emits_info_diagnostics(self):
+        self.assertEqual(LOGGER.level, logging.INFO)
+
     def test_service_startup_loads_the_one_detector_before_health(self):
         class FakeLoader:
             def __init__(self):

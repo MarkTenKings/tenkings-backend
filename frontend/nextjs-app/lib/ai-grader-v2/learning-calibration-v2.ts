@@ -9,6 +9,8 @@ import {
 import {
   SPEEDSTER_LEARNING_FINGERPRINT_SIZE,
   SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+  SPEEDSTER_LEARNING_POLICY_BOUNDS_V2,
+  SPEEDSTER_LEARNING_POLICY_V2,
   normalizeSpeedsterLearningFingerprintV2,
   type SpeedsterLearningBankV2,
   type SpeedsterLearningExemplarV2,
@@ -24,7 +26,7 @@ export const SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT = [
 export const SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION =
   "sam3-local-box-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543" as const;
 export const SPEEDSTER_LEARNING_CALIBRATION_SCHEMA =
-  "ten-kings-speedster-sam-memory-v2-calibration-replay-v2" as const;
+  "ten-kings-speedster-sam-memory-v2-calibration-replay-v3" as const;
 
 const LEARNING_SCALE = 0.06;
 const MAX_DECISION_BOUNDARIES = 64;
@@ -52,6 +54,9 @@ export type SpeedsterLearningCalibrationDecisionV2 = {
   positiveMax: number | null;
   positiveMatchSessionId: string | null;
   positiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
+  gentlePositiveMax: number | null;
+  gentlePositiveMatchSessionId: string | null;
+  gentlePositiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
   negativeMax: number | null;
   negativeMatchSessionId: string | null;
   negativeMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
@@ -73,6 +78,9 @@ type ReplayCase = {
   positiveMax: number | null;
   positiveMatchSessionId: string | null;
   positiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
+  gentlePositiveMax: number | null;
+  gentlePositiveMatchSessionId: string | null;
+  gentlePositiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
   negativeMax: number | null;
   negativeMatchSessionId: string | null;
   negativeMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
@@ -134,6 +142,13 @@ export type SpeedsterLearningCalibrationReplayV2 = {
     };
     explicitPositiveRetention: { status: EvidenceStatus; caseIds: string[] };
     unrelatedControlSuppression: { status: EvidenceStatus; caseIds: string[] };
+    postUpdateBankSelfConflict: {
+      status: EvidenceStatus;
+      negativeCaseIds: string[];
+      positiveCaseIds: string[];
+      failedNegativeCaseIds: string[];
+      failedPositiveCaseIds: string[];
+    };
     damageOnTextPositiveProtection: {
       status: "INSUFFICIENT_EVIDENCE";
       blocksCandidateReadiness: false;
@@ -247,6 +262,9 @@ export function evaluateSpeedsterLearningDecisionV2(input: {
       positiveMax: null,
       positiveMatchSessionId: null,
       positiveMatch: null,
+      gentlePositiveMax: null,
+      gentlePositiveMatchSessionId: null,
+      gentlePositiveMatch: null,
       negativeMax: null,
       negativeMatchSessionId: null,
       negativeMatch: null,
@@ -257,19 +275,25 @@ export function evaluateSpeedsterLearningDecisionV2(input: {
   const matching = input.bank.exemplars.filter((exemplar) =>
     exemplar.defectType === input.lesson.defectType
     && exemplar.sourceViewId === input.lesson.sourceViewId);
-  const positive = maximumSimilarity(
+  const gentlePositive = maximumSimilarity(
     fingerprint,
     matching.filter(({ polarity }) => polarity === "POSITIVE"),
+  );
+  const positive = maximumSimilarity(
+    fingerprint,
+    matching.filter(({ polarity, provenance }) => polarity === "POSITIVE"
+      && provenance !== "UNTOUCHED_ACCEPTED_POSITIVE"),
   );
   const negative = maximumSimilarity(
     fingerprint,
     matching.filter(({ polarity }) => polarity === "NEGATIVE"),
   );
   const positiveValue = positive.similarity ?? 0;
+  const gentlePositiveValue = gentlePositive.similarity ?? 0;
   const negativeValue = negative.similarity ?? 0;
   const gentleAdjustment = rounded(Math.max(
     -LEARNING_SCALE,
-    Math.min(LEARNING_SCALE, LEARNING_SCALE * (positiveValue - negativeValue)),
+    Math.min(LEARNING_SCALE, LEARNING_SCALE * (gentlePositiveValue - negativeValue)),
   ));
   const strongNegative = negative.similarity !== null
     && negative.similarity >= input.thresholds.tau;
@@ -282,6 +306,9 @@ export function evaluateSpeedsterLearningDecisionV2(input: {
     positiveMax: positive.similarity,
     positiveMatchSessionId: positive.match?.sessionId ?? null,
     positiveMatch: positive.match,
+    gentlePositiveMax: gentlePositive.similarity,
+    gentlePositiveMatchSessionId: gentlePositive.match?.sessionId ?? null,
+    gentlePositiveMatch: gentlePositive.match,
     negativeMax: negative.similarity,
     negativeMatchSessionId: negative.match?.sessionId ?? null,
     negativeMatch: negative.match,
@@ -393,6 +420,9 @@ export function replaySpeedsterLearningCalibrationV2(
         positiveMax: decision.positiveMax,
         positiveMatchSessionId: decision.positiveMatchSessionId,
         positiveMatch: decision.positiveMatch,
+        gentlePositiveMax: decision.gentlePositiveMax,
+        gentlePositiveMatchSessionId: decision.gentlePositiveMatchSessionId,
+        gentlePositiveMatch: decision.gentlePositiveMatch,
         negativeMax: decision.negativeMax,
         negativeMatchSessionId: decision.negativeMatchSessionId,
         negativeMatch: decision.negativeMatch,
@@ -404,21 +434,25 @@ export function replaySpeedsterLearningCalibrationV2(
   }
 
   const finalBank = deriveSpeedsterLearningBankFromHistoryV2(eligible).bank;
-  const tauBoundaries = boundaries(cases.flatMap(({ negativeMax }) =>
-    negativeMax === null ? [] : [negativeMax]));
-  const marginBoundaries = boundaries(cases.flatMap(({ negativeMax, positiveMax }) =>
-    negativeMax === null ? [] : [Math.max(0, negativeMax - (positiveMax ?? 0))]));
+  const tauBoundaries = boundaries([
+    SPEEDSTER_LEARNING_POLICY_V2.tau,
+    ...cases.flatMap(({ negativeMax }) => negativeMax === null ? [] : [negativeMax]),
+  ]).filter((value) => value >= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.tau.min
+    && value <= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.tau.max);
+  const marginBoundaries = boundaries([
+    SPEEDSTER_LEARNING_POLICY_V2.margin,
+    ...cases.flatMap(({ negativeMax, positiveMax }) =>
+      negativeMax === null ? [] : [Math.max(0, negativeMax - (positiveMax ?? 0))]),
+  ]).filter((value) => value >= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.margin.min
+    && value <= SPEEDSTER_LEARNING_POLICY_BOUNDS_V2.margin.max);
   const gridTruncated = tauBoundaries.length > MAX_DECISION_BOUNDARIES
     || marginBoundaries.length > MAX_DECISION_BOUNDARIES;
   const tauValues = tauBoundaries.slice(0, MAX_DECISION_BOUNDARIES);
   const marginValues = marginBoundaries.slice(0, MAX_DECISION_BOUNDARIES);
-  const grid = tauValues.flatMap((tau) => marginValues.map((margin) =>
-    sensitivity(cases, { tau, margin })));
-  const evidenceCandidate = grid
-    .filter(({ falseVetoes, trueVetoes }) => falseVetoes === 0 && trueVetoes > 0)
-    .sort((left, right) => right.trueVetoes - left.trueVetoes
-      || right.tau - left.tau
-      || right.margin - left.margin)[0] ?? null;
+  const policySensitivity = sensitivity(cases, SPEEDSTER_LEARNING_POLICY_V2);
+  const evidenceCandidate = policySensitivity.falseVetoes === 0 && policySensitivity.trueVetoes > 0
+    ? policySensitivity
+    : null;
   const falseVetoCases = evidenceCandidate
     ? cases.filter((entry) => entry.expectedAction === "RETAIN"
       && entry.negativeMax !== null
@@ -430,6 +464,22 @@ export function replaySpeedsterLearningCalibrationV2(
       adjacentValues(marginValues, evidenceCandidate.margin).map((margin) =>
         sensitivity(cases, { tau, margin })))
     : [];
+
+  const postUpdateCases = finalBank.exemplars
+    .filter(({ provenance }) => provenance !== "UNTOUCHED_ACCEPTED_POSITIVE")
+    .map((exemplar) => ({
+      caseId: `${exemplar.completionOrder}:${exemplar.sessionId}:${exemplar.proposalOrder}:${exemplar.lessonOrder}:${exemplar.polarity}`,
+      polarity: exemplar.polarity,
+      action: evaluateSpeedsterLearningDecisionV2({
+        bank: finalBank,
+        lesson: exemplar,
+        thresholds: SPEEDSTER_LEARNING_POLICY_V2,
+      }).action,
+    }));
+  const postUpdateNegativeCases = postUpdateCases.filter(({ polarity }) => polarity === "NEGATIVE");
+  const postUpdatePositiveCases = postUpdateCases.filter(({ polarity }) => polarity === "POSITIVE");
+  const failedPostUpdateNegatives = postUpdateNegativeCases.filter(({ action }) => action !== "vetoed");
+  const failedPostUpdatePositives = postUpdatePositiveCases.filter(({ action }) => action === "vetoed");
 
   const matchedSessionCardKeys = new Map(history.map(({ sessionId, cardKey }) => [sessionId, cardKey]));
   const attestedCohort = new Map<string, number>(SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT.map((entry) =>
@@ -519,6 +569,17 @@ export function replaySpeedsterLearningCalibrationV2(
         : unrelatedRetained.length === unrelatedControls.length ? "PASS" as const : "FAIL" as const,
       caseIds: compactIds(unrelatedRetained),
     },
+    postUpdateBankSelfConflict: {
+      status: postUpdateNegativeCases.length === 0 || postUpdatePositiveCases.length === 0
+        ? "INSUFFICIENT_EVIDENCE" as const
+        : failedPostUpdateNegatives.length === 0 && failedPostUpdatePositives.length === 0
+          ? "PASS" as const
+          : "FAIL" as const,
+      negativeCaseIds: postUpdateNegativeCases.slice(0, MAX_REPORTED_CASES).map(({ caseId }) => caseId),
+      positiveCaseIds: postUpdatePositiveCases.slice(0, MAX_REPORTED_CASES).map(({ caseId }) => caseId),
+      failedNegativeCaseIds: failedPostUpdateNegatives.slice(0, MAX_REPORTED_CASES).map(({ caseId }) => caseId),
+      failedPositiveCaseIds: failedPostUpdatePositives.slice(0, MAX_REPORTED_CASES).map(({ caseId }) => caseId),
+    },
     damageOnTextPositiveProtection: {
       status: "INSUFFICIENT_EVIDENCE" as const,
       blocksCandidateReadiness: false as const,
@@ -544,6 +605,8 @@ export function replaySpeedsterLearningCalibrationV2(
       ? "Compatible trusted explicit-positive retention evidence is incomplete or fails." : null,
     evidence.unrelatedControlSuppression.status !== "PASS"
       ? "Compatible unrelated-control suppression evidence is incomplete or fails." : null,
+    evidence.postUpdateBankSelfConflict.status !== "PASS"
+      ? "The completed bank does not veto every admitted explicit negative while retaining every admitted explicit positive." : null,
   ].filter((reason): reason is string => Boolean(reason));
   const status = insufficientReasons.length === 0
     ? "CANDIDATE_READY_FOR_MARK_REVIEW" as const
@@ -577,7 +640,7 @@ export function replaySpeedsterLearningCalibrationV2(
       : null,
     falseVetoRiskCaseIds: compactIds(falseVetoRiskCases),
     recommendation: status === "CANDIDATE_READY_FOR_MARK_REVIEW" && evidenceCandidate
-      ? { tau: evidenceCandidate.tau, margin: evidenceCandidate.margin }
+      ? { ...SPEEDSTER_LEARNING_POLICY_V2 }
       : null,
     adjacentSensitivity: sensitivityRows,
     requiredEvidence: evidence,

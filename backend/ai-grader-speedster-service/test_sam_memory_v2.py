@@ -3,6 +3,8 @@ import unittest
 from sam_memory_v2 import (
     CAPACITY_PER_TYPE_POLARITY,
     FINGERPRINT_VERSION,
+    POLICY_MARGIN,
+    POLICY_TAU,
     decide_candidate_v2,
     normalize_source_view,
     prepare_bank_v2,
@@ -19,6 +21,7 @@ def exemplar(
     defect_type="VISIBLE_WHITENING",
     source_view="ORIGINAL",
     session_id="lesson-session",
+    provenance=None,
 ):
     return {
         "defectType": defect_type,
@@ -29,9 +32,8 @@ def exemplar(
         "proposalOrder": 0,
         "lessonOrder": 0,
         "fingerprint": fingerprint,
-        "provenance": (
-            "DETECTOR_REMOVED" if polarity == "NEGATIVE" else "SMART_MARK_POSITIVE"
-        ),
+        "provenance": provenance
+        or ("DETECTOR_REMOVED" if polarity == "NEGATIVE" else "SMART_MARK_POSITIVE"),
         "sourceViewId": source_view,
     }
 
@@ -85,6 +87,45 @@ class SamMemoryV2Tests(unittest.TestCase):
         self.assertEqual(result["diagnostic"]["positiveMatchSessionId"], "real-damage")
         self.assertEqual(result["diagnostic"]["negativeMatchSessionId"], "removed-text")
 
+    def test_fixed_policy_vetoes_the_observed_cubone_similarity_gap(self):
+        positive = [0.807931, (1 - 0.807931**2) ** 0.5] + [0.0] * 30
+        result = decide(
+            bank(
+                exemplar("NEGATIVE", session_id="removed-cubone-text"),
+                exemplar(
+                    "POSITIVE",
+                    fingerprint=positive,
+                    session_id="cubone-smart-mark",
+                ),
+                tau=POLICY_TAU,
+                margin=POLICY_MARGIN,
+            )
+        )
+
+        self.assertTrue(result["veto"])
+        self.assertEqual(result["diagnostic"]["action"], "vetoed")
+        self.assertAlmostEqual(result["diagnostic"]["negativeMax"], 1.0, places=6)
+        self.assertAlmostEqual(result["diagnostic"]["positiveMax"], 0.807931, places=6)
+
+    def test_untouched_accept_nudges_but_cannot_protect_a_human_removal(self):
+        result = decide(
+            bank(
+                exemplar("NEGATIVE", session_id="human-removal"),
+                exemplar(
+                    "POSITIVE",
+                    session_id="untouched-accept",
+                    provenance="UNTOUCHED_ACCEPTED_POSITIVE",
+                ),
+                tau=POLICY_TAU,
+                margin=POLICY_MARGIN,
+            )
+        )
+
+        self.assertTrue(result["veto"])
+        self.assertIsNone(result["diagnostic"]["positiveMax"])
+        self.assertEqual(result["diagnostic"]["gentlePositiveMax"], 1.0)
+        self.assertEqual(result["adjustment"], 0.0)
+
     def test_weak_evidence_keeps_the_gentle_adjustment_bounded(self):
         half_cosine = [0.5, (0.75) ** 0.5] + [0.0] * 30
         result = decide(
@@ -132,6 +173,19 @@ class SamMemoryV2Tests(unittest.TestCase):
         self.assertFalse(uncalibrated_result["veto"])
         self.assertEqual(malformed_result["adjustment"], 0.0)
         self.assertEqual(uncalibrated_result["adjustment"], 0.0)
+
+    def test_out_of_policy_calibration_is_inert(self):
+        result = decide(
+            bank(
+                exemplar("NEGATIVE"),
+                tau=0.652262,
+                margin=0.652262,
+            )
+        )
+
+        self.assertEqual(result["diagnostic"]["bankStatus"], "malformed")
+        self.assertFalse(result["veto"])
+        self.assertEqual(result["adjustment"], 0.0)
 
     def test_bank_capacity_and_exemplar_shape_are_sanity_checked(self):
         over_capacity = [
