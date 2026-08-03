@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { SpeedsterDefectType, SpeedsterViewType } from "./contracts";
 
 export const SPEEDSTER_LEARNING_BANK_V2_VERSION = 2 as const;
@@ -52,6 +54,7 @@ export type SpeedsterLearningHistoryLessonsV2 = {
   sessionId: string;
   completedAt: string | Date;
   completionOrder: number;
+  fingerprintVersion: string;
   lessons: readonly SpeedsterLearningLessonCandidateV2[];
 };
 
@@ -73,6 +76,11 @@ export type SpeedsterLearningBankV2 = {
   fingerprintVersion: typeof SPEEDSTER_LEARNING_FINGERPRINT_VERSION;
   capacityPerTypePolarity: typeof SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY;
   calibration: SpeedsterLearningCalibrationV2;
+  replayCursor: {
+    completionOrder: number;
+    sessionId: string;
+    sessionDigest: string;
+  } | null;
   exemplars: SpeedsterLearningExemplarV2[];
 };
 
@@ -117,6 +125,28 @@ export function normalizeSpeedsterLearningFingerprintV2(value: unknown): number[
 const normalizedCompletedAt = (value: string | Date): string | null => {
   const date = value instanceof Date ? value : new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+};
+
+const sessionDigest = (session: SpeedsterLearningHistoryLessonsV2, completedAt: string) => {
+  const lessons = session.lessons.map((entry, inputOrder) => ({
+    defectType: entry.defectType,
+    polarity: entry.polarity,
+    fingerprint: normalizeSpeedsterLearningFingerprintV2(entry.fingerprint),
+    provenance: entry.provenance,
+    sourceViewId: entry.sourceViewId,
+    proposalOrder: entry.proposalOrder,
+    lessonOrder: entry.lessonOrder ?? inputOrder,
+  })).sort((left, right) => left.proposalOrder - right.proposalOrder
+    || left.lessonOrder - right.lessonOrder
+    || left.defectType.localeCompare(right.defectType)
+    || left.polarity.localeCompare(right.polarity));
+  return createHash("sha256").update(JSON.stringify({
+    sessionId: session.sessionId.trim(),
+    completedAt,
+    completionOrder: session.completionOrder,
+    fingerprintVersion: session.fingerprintVersion,
+    lessons,
+  })).digest("hex");
 };
 
 const validCalibration = (value: unknown): value is SpeedsterLearningCalibrationV2 => {
@@ -173,6 +203,13 @@ export function parseSpeedsterLearningBankV2(value: unknown): SpeedsterLearningB
     || value.fingerprintVersion !== SPEEDSTER_LEARNING_FINGERPRINT_VERSION
     || value.capacityPerTypePolarity !== SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY
     || !validCalibration(value.calibration)
+    || !(value.replayCursor === null || (isRecord(value.replayCursor)
+      && Number.isInteger(value.replayCursor.completionOrder)
+      && Number(value.replayCursor.completionOrder) >= 1
+      && typeof value.replayCursor.sessionId === "string"
+      && Boolean(value.replayCursor.sessionId.trim())
+      && typeof value.replayCursor.sessionDigest === "string"
+      && /^[a-f0-9]{64}$/.test(value.replayCursor.sessionDigest)))
     || !Array.isArray(value.exemplars)) return null;
   const exemplars = value.exemplars.map(cleanExemplar);
   if (exemplars.some((entry) => !entry)) return null;
@@ -181,8 +218,16 @@ export function parseSpeedsterLearningBankV2(value: unknown): SpeedsterLearningB
     fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
     capacityPerTypePolarity: SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY,
     calibration: value.calibration,
+    replayCursor: value.replayCursor === null ? null : {
+      completionOrder: Number(value.replayCursor.completionOrder),
+      sessionId: String(value.replayCursor.sessionId).trim(),
+      sessionDigest: String(value.replayCursor.sessionDigest),
+    },
     exemplars: (exemplars as SpeedsterLearningExemplarV2[]).sort(compareExemplars),
   } satisfies SpeedsterLearningBankV2;
+  if ((bank.exemplars.length > 0 && !bank.replayCursor)
+    || bank.exemplars.some((entry) =>
+      !bank.replayCursor || entry.completionOrder > bank.replayCursor.completionOrder)) return null;
   const counts = new Map<string, number>();
   for (const exemplar of bank.exemplars) {
     const key = groupKey(exemplar);
@@ -209,6 +254,7 @@ export function deriveSpeedsterLearningBankV2(
     admittedExemplars: 0,
   };
   const admitted: SpeedsterLearningExemplarV2[] = [];
+  let replayCursor: SpeedsterLearningBankV2["replayCursor"] = null;
   const chronological = history.map((session, inputOrder) => ({ session, inputOrder })).sort((left, right) => {
     const leftAt = normalizedCompletedAt(left.session.completedAt) ?? "";
     const rightAt = normalizedCompletedAt(right.session.completedAt) ?? "";
@@ -226,10 +272,16 @@ export function deriveSpeedsterLearningBankV2(
     const completedAt = normalizedCompletedAt(session.completedAt);
     if (!session.sessionId.trim() || !completedAt
       || !Number.isInteger(session.completionOrder) || session.completionOrder < 1
+      || session.fingerprintVersion !== SPEEDSTER_LEARNING_FINGERPRINT_VERSION
       || !Array.isArray(session.lessons)) {
       diagnostics.invalidSessions += 1;
       continue;
     }
+    replayCursor = {
+      completionOrder: session.completionOrder,
+      sessionId: session.sessionId.trim(),
+      sessionDigest: sessionDigest(session, completedAt),
+    };
     const orderedLessons = session.lessons
       .map((lesson, inputOrder) => ({ lesson, inputOrder }))
       .sort((left, right) => left.lesson.proposalOrder - right.lesson.proposalOrder
@@ -284,8 +336,75 @@ export function deriveSpeedsterLearningBankV2(
       fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
       capacityPerTypePolarity: SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY,
       calibration,
+      replayCursor,
       exemplars,
     },
     diagnostics,
   };
+}
+
+export function incrementSpeedsterLearningBankV2(
+  currentBank: SpeedsterLearningBankV2,
+  session: SpeedsterLearningHistoryLessonsV2,
+): SpeedsterLearningDerivationV2 {
+  const cleanBank = parseSpeedsterLearningBankV2(currentBank);
+  if (!cleanBank) throw new Error("Invalid SAM Memory V2 bank");
+  const completedAt = normalizedCompletedAt(session.completedAt);
+  if (!session.sessionId.trim() || !completedAt
+    || !Number.isInteger(session.completionOrder) || session.completionOrder < 1
+    || session.fingerprintVersion !== SPEEDSTER_LEARNING_FINGERPRINT_VERSION
+    || !Array.isArray(session.lessons)) {
+    throw new Error("Invalid SAM Memory V2 incremental session");
+  }
+  const nextDigest = sessionDigest(session, completedAt);
+  if (cleanBank.replayCursor && session.completionOrder <= cleanBank.replayCursor.completionOrder) {
+    if (session.completionOrder === cleanBank.replayCursor.completionOrder
+      && session.sessionId.trim() === cleanBank.replayCursor.sessionId
+      && nextDigest === cleanBank.replayCursor.sessionDigest) {
+      return {
+        bank: cleanBank,
+        diagnostics: {
+          historySessions: 1,
+          excludedSessions: 0,
+          invalidSessions: 0,
+          candidateLessons: session.lessons.length,
+          skippedInvalidLessons: 0,
+          prunedByCapacity: 0,
+          admittedExemplars: cleanBank.exemplars.length,
+        },
+      };
+    }
+    throw new Error("Conflicting duplicate or stale SAM Memory V2 incremental session");
+  }
+  const bySession = new Map<string, Omit<SpeedsterLearningHistoryLessonsV2, "lessons"> & {
+    lessons: SpeedsterLearningLessonCandidateV2[];
+  }>();
+  for (const exemplar of cleanBank.exemplars) {
+    const key = `${exemplar.completionOrder}:${exemplar.sessionId}`;
+    const existing = bySession.get(key);
+    const lesson = {
+      defectType: exemplar.defectType,
+      polarity: exemplar.polarity,
+      fingerprint: exemplar.fingerprint,
+      provenance: exemplar.provenance,
+      sourceViewId: exemplar.sourceViewId,
+      proposalOrder: exemplar.proposalOrder,
+      lessonOrder: exemplar.lessonOrder,
+    } satisfies SpeedsterLearningLessonCandidateV2;
+    if (existing) existing.lessons.push(lesson);
+    else {
+      bySession.set(key, {
+        sessionId: exemplar.sessionId,
+        completedAt: exemplar.completedAt,
+        completionOrder: exemplar.completionOrder,
+        fingerprintVersion: cleanBank.fingerprintVersion,
+        lessons: [lesson],
+      });
+    }
+  }
+  return deriveSpeedsterLearningBankV2(
+    [...bySession.values(), session],
+    new Set(),
+    cleanBank.calibration,
+  );
 }
