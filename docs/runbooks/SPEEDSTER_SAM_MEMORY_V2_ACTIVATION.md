@@ -1,7 +1,11 @@
 # Speedster SAM Memory V2 Activation Runbook
 
-Status: implementation only. Do not activate, roll back, deploy, migrate, or
-mutate Production without Mark's separate explicit approval.
+Status: Production active since 2026-08-03. `GLOBAL` is Bank V2 at durable hash
+`5d8520e8ae7861f3cd0c8fac421e38ad0fc05034f339e5e15aeaad6d12a0204e`;
+the inert backup preserves V1 preimage hash
+`6352e0aec6d54c81dc6d00f13f4987a8137cf2bab7a900c3938c1a2c155bce06`.
+Do not attempt activation again or run rollback without Mark's separate explicit
+approval.
 
 ## One active cache
 
@@ -29,7 +33,7 @@ zero V2 exemplars; that ineligibility is verified explicitly. The dry run return
 the calibration hash, Articuno dry-run hash, derived bank hash, and exact
 activation phrase.
 
-## Activation (do not run without approval)
+## Activation record (completed; do not rerun)
 
 Repeat the identical request with `operation: "ACTIVATE"`, the returned
 `calibrationEvidenceHash`, `dryRunStatus`, and `dryRunEvidenceHash`, and this
