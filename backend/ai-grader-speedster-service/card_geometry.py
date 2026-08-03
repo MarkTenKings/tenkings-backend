@@ -17,6 +17,10 @@ from defect_math import (
 EXPECTED_ASPECT = CARD_WIDTH_MM / CARD_HEIGHT_MM
 WORKING_LONG_SIDE_PX = 1000
 PX_PER_MM = GRID_WIDTH / CARD_WIDTH_MM
+INSPECTION_MARGIN_MM = 2.0
+INSPECTION_MARGIN_PX = round(INSPECTION_MARGIN_MM * PX_PER_MM)
+INSPECTION_WIDTH = GRID_WIDTH + 2 * INSPECTION_MARGIN_PX
+INSPECTION_HEIGHT = GRID_HEIGHT + 2 * INSPECTION_MARGIN_PX
 DEFAULT_BORDER_MM = 5.0
 MAX_BORDER_SEARCH_MM = 12.0
 MIN_COMPONENT_AREA_FRACTION = 0.30
@@ -210,6 +214,59 @@ def warp_to_card_map(
     return rectified, transform
 
 
+def warp_to_inspection_map(
+    image: np.ndarray, corners: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Keep the physical card map exact while retaining 2 mm of photo context."""
+    margin = INSPECTION_MARGIN_PX
+    destination = np.array(
+        [
+            [margin, margin],
+            [margin + GRID_WIDTH - 1, margin],
+            [margin + GRID_WIDTH - 1, margin + GRID_HEIGHT - 1],
+            [margin, margin + GRID_HEIGHT - 1],
+        ],
+        dtype=np.float32,
+    )
+    transform = cv2.getPerspectiveTransform(
+        np.asarray(corners, dtype=np.float32), destination
+    )
+    inspection = cv2.warpPerspective(
+        image, transform, (INSPECTION_WIDTH, INSPECTION_HEIGHT)
+    )
+    return inspection, transform
+
+
+def detector_material_mask(corner_shape: str, width: int, height: int) -> np.ndarray:
+    canonical = material_mask(corner_shape)
+    if (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        return canonical
+    if (width, height) != (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        raise ValueError("Detector view has unsupported dimensions")
+    allowed = np.zeros((height, width), dtype=np.uint8)
+    margin = INSPECTION_MARGIN_PX
+    allowed[margin : margin + GRID_HEIGHT, margin : margin + GRID_WIDTH] = canonical
+    return allowed
+
+
+def detector_card_origin(width: int, height: int) -> tuple[int, int]:
+    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        return INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX
+    if (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        return 0, 0
+    raise ValueError("Detector view has unsupported dimensions")
+
+
+def crop_detector_mask_to_card(mask: np.ndarray) -> np.ndarray:
+    binary = np.asarray(mask)
+    if binary.shape == (GRID_HEIGHT, GRID_WIDTH):
+        return binary
+    if binary.shape != (INSPECTION_HEIGHT, INSPECTION_WIDTH):
+        raise ValueError("Detector mask has unsupported dimensions")
+    margin = INSPECTION_MARGIN_PX
+    return binary[margin : margin + GRID_HEIGHT, margin : margin + GRID_WIDTH]
+
+
 def _top_border_offset(
     gray: np.ndarray,
     search_mm: float = MAX_BORDER_SEARCH_MM,
@@ -263,10 +320,12 @@ def _candidate_type(
     box: tuple[int, int, int, int],
     bright_strength: float,
     dark_strength: float,
+    card_origin: tuple[int, int],
 ) -> str:
     x, y, width, height = box
-    center_x_mm = (x + width / 2) / PX_PER_MM
-    center_y_mm = (y + height / 2) / PX_PER_MM
+    origin_x, origin_y = card_origin
+    center_x_mm = (x + width / 2 - origin_x) / PX_PER_MM
+    center_y_mm = (y + height / 2 - origin_y) / PX_PER_MM
     outer_x = min(center_x_mm, CARD_WIDTH_MM - center_x_mm)
     outer_y = min(center_y_mm, CARD_HEIGHT_MM - center_y_mm)
     edge_or_corner = (outer_x < 5 and outer_y < 5) or min(outer_x, outer_y) < 2
@@ -295,6 +354,8 @@ def defect_candidates(
     maximum: int = 8,
 ) -> list[dict]:
     """Return only small, localized anomaly boxes for geometric SAM prompts."""
+    height_px, width_px = image.shape[:2]
+    card_origin = detector_card_origin(width_px, height_px)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
     bright = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
@@ -304,7 +365,7 @@ def defect_candidates(
     percentile = float(np.percentile(heat, 97.0))
     threshold = max(12.0, float(otsu), percentile)
     binary = np.uint8(heat >= threshold)
-    binary &= material_mask(corner_shape)
+    binary &= detector_material_mask(corner_shape, width_px, height_px)
     count, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
     proposals = []
     padding = max(2, round(0.4 * PX_PER_MM))
@@ -321,8 +382,8 @@ def defect_candidates(
         ):
             continue
         left, top = max(0, x - padding), max(0, y - padding)
-        right = min(GRID_WIDTH, x + width + padding)
-        bottom = min(GRID_HEIGHT, y + height + padding)
+        right = min(width_px, x + width + padding)
+        bottom = min(height_px, y + height + padding)
         box = (left, top, right - left, bottom - top)
         component = labels[y : y + height, x : x + width] == label
         bright_strength = float(bright[y : y + height, x : x + width][component].mean())
@@ -333,7 +394,7 @@ def defect_candidates(
                 "coreBox": (x, y, width, height),
                 "coreMask": component,
                 "defectType": _candidate_type(
-                    view_id, box, bright_strength, dark_strength
+                    view_id, box, bright_strength, dark_strength, card_origin
                 ),
                 "score": float(
                     heat[y : y + height, x : x + width][component].mean()

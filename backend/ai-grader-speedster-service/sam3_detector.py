@@ -9,13 +9,19 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from card_geometry import defect_candidates
+from card_geometry import (
+    INSPECTION_HEIGHT,
+    INSPECTION_WIDTH,
+    crop_detector_mask_to_card,
+    defect_candidates,
+    detector_material_mask,
+)
 from defect_math import GRID_HEIGHT, GRID_WIDTH, measure_defects
 
 
 SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
 SAM3_CHECKPOINT = "sam3.pt"
-DETECTOR_VERSION = f"sam3-local-box@{SAM3_REPOSITORY_COMMIT}"
+DETECTOR_VERSION = f"sam3-local-box-inspection-2mm@{SAM3_REPOSITORY_COMMIT}"
 MIN_SAM_AREA_MM2 = 0.02
 MAX_SAM_AREA_MM2 = 120.0
 PX_PER_MM = GRID_WIDTH / 63.5
@@ -29,6 +35,7 @@ class MaskProcessor(Protocol):
         image: np.ndarray,
         candidates: list[dict],
         learning_bank: Optional[dict] = None,
+        allowed_mask: Optional[np.ndarray] = None,
     ) -> list[dict]: ...
 
 
@@ -143,7 +150,13 @@ class Sam3ImageProcessor:
         image: np.ndarray,
         candidates: list[dict],
         learning_bank: Optional[dict] = None,
+        allowed_mask: Optional[np.ndarray] = None,
     ) -> list[dict]:
+        image_height, image_width = image.shape[:2]
+        if allowed_mask is None:
+            allowed_mask = np.ones((image_height, image_width), dtype=np.uint8)
+        if allowed_mask.shape != (image_height, image_width):
+            raise ValueError("Detector material mask does not match the image")
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
             processor = self.load()
@@ -164,10 +177,10 @@ class Sam3ImageProcessor:
                     processor.reset_all_prompts(state)
                     output = processor.add_geometric_prompt(
                         box=[
-                            (x + width / 2) / GRID_WIDTH,
-                            (y + height / 2) / GRID_HEIGHT,
-                            width / GRID_WIDTH,
-                            height / GRID_HEIGHT,
+                            (x + width / 2) / image_width,
+                            (y + height / 2) / image_height,
+                            width / image_width,
+                            height / image_height,
                         ],
                         label=True,
                         state=state,
@@ -185,16 +198,17 @@ class Sam3ImageProcessor:
                     best = None
                     for mask, score in zip(masks, scores):
                         binary = np.asarray(mask) > 0
-                        if binary.shape != (GRID_HEIGHT, GRID_WIDTH):
+                        if binary.shape != (image_height, image_width):
                             binary = cv2.resize(
                                 binary.astype(np.uint8),
-                                (GRID_WIDTH, GRID_HEIGHT),
+                                (image_width, image_height),
                                 interpolation=cv2.INTER_NEAREST,
                             ).astype(bool)
                         clipped = np.zeros_like(binary)
                         clipped[y : y + height, x : x + width] = binary[
                             y : y + height, x : x + width
                         ]
+                        clipped &= allowed_mask > 0
                         core_x, core_y, core_width, core_height = candidate["coreBox"]
                         core = candidate["coreMask"]
                         if not np.any(
@@ -224,7 +238,7 @@ class Sam3ImageProcessor:
                                 "rankingConfidence": adjusted_confidence,
                                 "learningAdjustment": adjustment,
                                 "featureFingerprint": fingerprint,
-                                "mask": clipped,
+                                "mask": crop_detector_mask_to_card(clipped),
                             }
                     if best is not None:
                         results.append(best)
@@ -367,12 +381,19 @@ def detect_views(
     active_processor = processor or get_processor()
     proposals = []
     for view_id, image in views:
-        canonical_image = cv2.resize(image, (GRID_WIDTH, GRID_HEIGHT))
+        if image.shape[:2] == (INSPECTION_HEIGHT, INSPECTION_WIDTH):
+            detector_image = image
+        else:
+            detector_image = cv2.resize(image, (GRID_WIDTH, GRID_HEIGHT))
+        detector_height, detector_width = detector_image.shape[:2]
+        allowed_mask = detector_material_mask(
+            corner_shape, detector_width, detector_height
+        )
         localized_candidates = defect_candidates(
-            canonical_image, corner_shape, view_id
+            detector_image, corner_shape, view_id
         )
         for candidate in active_processor.scan(
-            canonical_image, localized_candidates, learning_bank
+            detector_image, localized_candidates, learning_bank, allowed_mask
         ):
             for contour in _mask_contours(candidate["mask"]):
                 proposals.append(

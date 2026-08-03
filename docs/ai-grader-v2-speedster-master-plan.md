@@ -1,7 +1,7 @@
 # Ten Kings AI Grader V2 Speedster — Master Plan
 
 Date: 2026-08-02
-Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, immediate reviewed-defect learning, two-worker SAM 3 capacity, aligned Worker source, and post-grade PhotoRoom report presentation are live. A full user-run Production grading test passed on 2026-08-02; one newly completed card remains the final PhotoRoom-output acceptance.
+Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, V1 reviewed-defect memory, two-worker SAM 3 capacity, aligned Worker source, and post-grade PhotoRoom report presentation are live. Multiple complete user-run Production grading tests, including PhotoRoom Front/Back output, passed on 2026-08-02. The 2 mm inspection frame is built and under release validation; the approved SAM Memory V2 follows it.
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
 ## 1. Mission
@@ -12,20 +12,20 @@ V1 remains active and untouched. The existing Human Grade workflow also remains 
 
 ## 2. One-Sentence Architecture
 
-Every image is straightened onto the same physical card grid, scanned independently, and merged into one master defect map; the human only fixes mistakes, deterministic Ten Kings math produces the grade, and the reviewed evidence improves the next card.
+Every image yields one exact physical grading grid plus one aligned inspection frame with 2 mm of original-photo context, inspection views are scanned independently and merged back onto the grading grid, the human fixes mistakes, deterministic Ten Kings math produces the grade, and reviewed evidence improves the next card.
 
 ## 3. Speedster Workflow
 
 1. **Create card** — Human clicks **New Speedster Card** inside `/admin/ai-grader-v2`. The first Speedster step displays the same proven Sports/Pokemon identity editor and live label preview as Human Grade, without navigating to another page.
 2. **Capture** — The mounted iPhone native Camera sends the newest Front/Back pair through one permanently paired Shortcut. The page shows both thumbnails with Retake and Swap before geometry. Manual upload remains only as the initial test path.
 3. **Set geometry** — OpenCV proposes the four physical card corners. Human moves only incorrect points and confirms the card shape/radius.
-4. **Rectify** — Every image is mapped onto the same known-dimension card grid and receives a saved raw-to-grid transform.
+4. **Prepare aligned maps** — Every image produces the unchanged `1270x1778` known-dimension card grid plus a `1350x1858` inspection map with exactly 2 mm of original-photo context on every side. Both come from the same approved four source corners.
 5. **Measure centering** — Human confirms the design-border geometry; deterministic code calculates front and back centering.
-6. **Scan views independently** — The detector returns precise defect masks, suggested defect types, confidence, and source-view IDs for each image.
+6. **Scan inspection views independently** — OpenCV and SAM 3 inspect the expanded original/reveal views. Candidate prompts may see exterior context, but masks are clipped to physical card material and converted back to the canonical grid before measurement.
 7. **Fuse onto one card map** — Masks that overlap within geometric tolerance become one canonical defect with multiple supporting views. They are never double-counted.
-8. **Human review** — The original color image is the master review image. Hovering or tapping a marker opens the best evidence close-up and its measurements.
+8. **Human review** — The expanded original-color inspection image is the master review image. Canonical markers map through one shared frame contract; magnification, Smart-Mark, and evidence close-ups can reach every edge and corner without changing grading coordinates.
 9. **Grade, label, and learn** — Deterministic rules calculate all four sub-grades, durably complete the report and label, and update the compact reviewed-example learning bank.
-10. **Create report presentation images** — Only after durable grading completion, one isolated PhotoRoom adapter removes the backgrounds from the rectified Front and Back images and stores separate transparent presentation PNGs. Rectified evidence remains unchanged and remains the only image source for detection, measurement, scoring, and learning.
+10. **Create report presentation images** — Only after durable grading completion, one isolated PhotoRoom adapter removes the backgrounds from the expanded Front and Back inspection images and stores separate transparent presentation PNGs on the same canvas. Canonical rectified evidence remains immutable grading authority; PhotoRoom output never enters detection, measurement, scoring, or learning.
 
 ## 4. Human Grade and Label-System Reuse
 
@@ -95,6 +95,9 @@ The normal workflow for a correct detection requires zero human actions.
 ## 6. Geometry and Inspection Zones
 
 - Known physical card dimensions convert pixels into millimeters and square millimeters.
+- The canonical grading map remains exactly `1270x1778` at 20 px/mm. It alone owns centering, zones, defect measurement, and grade math.
+- The inspection map is exactly `1350x1858`: the same card map inset by 40 px/2.0 mm on every side. It adds visibility, not grading area.
+- OpenCV candidates are limited to the inset physical-material mask. SAM prompt padding may extend into context, after which the mask is intersected with card material and cropped to canonical coordinates.
 - **Corners:** four fixed 5 mm × 5 mm zones. Only actual card material counts; empty space outside a rounded corner does not.
 - **Edges:** the outer 2 mm of card material, excluding the corner zones.
 - **Surface:** all remaining card area.
@@ -140,7 +143,7 @@ They are generated and labeled automatically. Keep only views that measurably im
 |---|---|---|
 | Next.js, React, TypeScript | Upload, geometry, review, report, APIs, deterministic grading | Required |
 | PostgreSQL and Prisma | Cards, views, transforms, canonical defects, review state, measurements, versions | Required |
-| Private object storage | Original evidence, generated views, masks, and report assets | Required |
+| Private object storage | Original photos, canonical rectified evidence, expanded inspection/reveal views, masks, and report assets | Required |
 | OpenCV | Corner proposal, rectification, canonical grid, zones, filters, measurements | Required |
 | Python and PyTorch detector service | Replaceable execution boundary for vision models | Required capability |
 | SAM 3 | Sole production detector and precise mask generator across every canonical evidence view | Required and active |
@@ -150,38 +153,30 @@ Vision LLMs, PatchCore, detector ensembles, and automated fallback detectors are
 
 ## 9. One Structured Learning Bank
 
-There is one logical Ten Kings learning system, not separate models or databases for each view or lighting setup.
+There is one logical Ten Kings learning system, not separate models or databases
+for each view or lighting setup. The current centroid-based V1 is live but
+Production evidence proves its `+/-0.06` adjustment cannot suppress the observed
+high-confidence text false positives, and Smart-Marks do not yet fingerprint.
 
-Each example stores automatically available context:
+The approved replacement is frozen in
+`docs/ai-grader-v2-sam-memory-v2-frozen-blueprint.md`:
 
-- reviewed patch and canonical mask
-- accepted, removed, Smart-Marked, or type-corrected result
-- defect type
-- source view type
-- card side and zone derived by the system
-- card profile/finish when available
-- capture, transform, detector, filter, and rule versions
+- completed-session history is the mathematical source of truth and the single
+  PostgreSQL JSON row is a derived cache;
+- bounded, session-tagged exemplars replace centroids, with capacity 50 per
+  defect type/polarity;
+- explicit remove, relabel, and Smart-Mark actions teach fully; untouched accepts
+  admit at most three stable-order, deduplicated lessons per type/card;
+- a strong same-type negative exemplar may veto a candidate only when no
+  comparable positive exemplar protects it;
+- V2 is veto-only: no lowered SAM threshold and no positive promotion;
+- ordinary completion applies the same pure harvest/prune functions incrementally
+  and a required equivalence test proves it equals full chronological rebuild;
+- calibration is read-only, and the Articuno session correction requires a
+  reconstruct/verify/exclude dry-run plus Mark's typed approval.
 
-### Immediate learning
-
-After review completion:
-
-- accepted detector masks become positive similarity examples
-- removed detections become hard-negative examples
-- corrected types become better labeled examples
-- the already-computed SAM 3 feature pyramid is pooled under each detector mask into one compact normalized fingerprint
-- the next card re-ranks proposals against the positive/negative type centroids with cosine similarity
-- Smart-Marks remain saved human-missed-defect lessons without a fabricated SAM fingerprint or a second SAM pass
-
-This is a small reviewed-example matrix and deterministic cosine math, not a new embedding model, vector database, inference pass, worker-local cache, or per-card neural-weight update.
-
-### Controlled detector learning
-
-- Save every reviewed mask and patch from the first completed card.
-- Keep SAM 3 as the one detector; improve the prompts and retrieved Ten Kings examples from reviewed evidence.
-- Measure recall, false positives, mask accuracy, measurement error, review time, and latency on the Ten Kings golden set.
-- Version the SAM checkpoint, prompts, thresholds, memory-bank snapshots, and grading rules for historical reproducibility.
-- Do not update neural weights after each card. Immediate improvement comes from the reviewed retrieval bank.
+SAM 3 remains the sole detector. V2 adds no neural-weight update, OCR, vector DB,
+second model, learned proposal path, queue, fallback, or reviewer step.
 
 ## 10. Ten Kings Scoring Blueprint
 
@@ -248,8 +243,9 @@ Multipliers remain category-specific as defined in the approved grading blueprin
 
 The public report reuses the review visualization in read-only mode:
 
-- PhotoRoom-cleaned Front/Back master presentation images when present
-- original rectified Front/Back images retained as the report's measured evidence and as the compatibility master for reports created before PhotoRoom
+- PhotoRoom-cleaned expanded Front/Back master presentation images when present
+- immutable expanded inspection evidence for magnification and source close-ups, with canonical rectified Front/Back retained as grading evidence
+- automatic canonical rectified fallback for reports created before the inspection-frame release
 - canonical defect markers and masks
 - tap/hover evidence close-up from the best source view
 - defect type and exact location
@@ -294,7 +290,7 @@ Existing admin authentication/access control, non-destructive handling of produc
 
 1. **Capture and grading flow** — Shared label editor, native-iPhone pair, geometry, SAM review, deterministic grading, report, and one-level Undo.
 2. **Capacity and storage** — Admin-owned active drafts, one direct load-balanced SAM endpoint with identical workers, stable evidence keys, and the shared label-slot transaction lock.
-3. **Learning** — Individual fingerprints remain in the reviewed session evidence, one tiny global centroid bank is pooled from them, and the next card receives a small cosine re-ranking adjustment.
+3. **Learning** — Replace the insufficient centroid cache with the frozen bounded-exemplar, negative-veto-only SAM Memory V2 after the inspection frame is stable in Production.
 4. **Post grading** — Shared completed-card list, exact public report, sealed-slab photos, and independently scoped NFC/comps/inventory bridges only when their exact record contracts exist.
 
 The primary agent reviews and integrates each bounded lane and owns schema order, production rollout, and compatibility decisions. Agents do not create alternate architectures or edit the same files concurrently.
@@ -319,12 +315,14 @@ The primary agent reviews and integrates each bounded lane and owns schema order
 16. Add the shared completed-card workspace, sealed-slab photos, native-iPhone capture, Next Card rhythm, and multi-admin isolation. **Completed locally.**
 17. Deploy the migration-bearing release, move SAM traffic to one 2-warm-plus-flex load-balanced endpoint, and run Production acceptance. **Completed and live.**
 18. Merge the deployed Cloudflare Worker runtime correction into `main` so source and Production match. **Completed in PR #268.**
-19. Complete the isolated post-grade PhotoRoom presentation-image release, preserve rectified report compatibility, and remove obsolete nested iPhone PLAN fields. **Deployed in PR #269; one new-card PhotoRoom-output acceptance remains.**
-20. Define and build one idempotent Speedster-to-`CardAsset` permanent-record bridge.
-21. Connect the permanent Speedster card to the existing `Item` and inventory workflow without duplicate records.
-22. Add physical NFC write/read-back verification against the permanent card/report identity.
-23. Add Speedster eBay comps without a fabricated TILT image or any effect on grading.
-24. Run the simultaneous multi-admin Production acceptance test when a second human operator is available. This is intentionally last in the current order; implemented session isolation and label locking remain unchanged meanwhile.
+19. Complete the isolated post-grade PhotoRoom presentation-image release, preserve rectified report compatibility, and remove obsolete nested iPhone PLAN fields. **Deployed in PR #269; multiple new-card PhotoRoom tests passed.**
+20. Add and Production-validate the isolated 2 mm inspection frame while preserving the exact canonical grading grid. **Built locally; release validation in progress.**
+21. Implement and calibrate the frozen SAM Memory V2, then dry-run the Articuno exclusion before any approved cache swap.
+22. Define and build one idempotent Speedster-to-`CardAsset` permanent-record bridge.
+23. Connect the permanent Speedster card to the existing `Item` and inventory workflow without duplicate records.
+24. Add physical NFC write/read-back verification against the permanent card/report identity.
+25. Add Speedster eBay comps without a fabricated TILT image or any effect on grading.
+26. Run the simultaneous multi-admin Production acceptance test when a second human operator is available. This is intentionally last in the current order; implemented session isolation and label locking remain unchanged meanwhile.
 
 ## 15. Production Definition of Done
 
@@ -342,9 +340,11 @@ The primary agent reviews and integrates each bounded lane and owns schema order
 - Detector accuracy, false markers per card, mask-area error, review time, latency, and cost are recorded on the Ten Kings golden set.
 - Production access remains admin-only until Mark approves broader exposure.
 
-## 16. Production Launch Requirements
+## 16. Production Runtime
 
-This section records the read-only launch audit performed on branch `codex/ai-grader-v2-speedster-20260731`. No Production action has been executed.
+The original launch described below completed successfully. Production now uses
+the load-balanced SAM endpoint with two warm RTX 4090 workers and flex capacity
+up to four; the superseded normal Pod is stopped.
 
 ### Required services
 
@@ -353,7 +353,7 @@ This section records the read-only launch audit performed on branch `codex/ai-gr
 3. The existing S3-compatible card object storage and its Production-origin direct-PUT CORS rule.
 4. One RunPod load-balanced CUDA endpoint running identical copies of `backend/ai-grader-speedster-service/Dockerfile`. Each worker loads exactly one SAM 3 model and handles one detector request at a time. Start with two active RTX 4090 PRO workers and allow flex overflow up to four total workers. There is no application queue, named-worker selection, alternate detector, or fallback.
 
-The current single normal Pod remains the live detector until the migration-bearing web release and new load-balanced endpoint pass acceptance. Cut over the one server URL, then stop the old Pod so duplicate GPU billing does not continue.
+The load-balanced endpoint is the sole live detector target. There is no normal-Pod fallback or alternate detector.
 
 ### Exact additive migration order
 
@@ -401,7 +401,7 @@ Temporary deployment variable from the existing deploy runbook:
 
 - `RUN_DB_MIGRATIONS=true` only for the explicitly approved migration-bearing Vercel deploy; remove/reset it after that deploy.
 
-### One direct launch order
+### Original direct launch order (completed)
 
 1. Build and push the pinned Speedster Docker image. Create one private RunPod load-balanced template with `HF_TOKEN`, `HF_HOME`, `PORT=8080`, `PORT_HEALTH=8080`, and HTTP port `8080`.
 2. Create one RTX 4090 PRO endpoint with two active workers, four maximum workers, and no secondary GPU type. Confirm `/ping` and `/health`, then invoke one real `/detect` request on non-Production sample images.

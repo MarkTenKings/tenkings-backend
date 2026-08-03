@@ -7,12 +7,14 @@ import type {
   SpeedsterMeasuredDefect,
 } from "../../lib/ai-grader-v2/contracts";
 import type { calculateSpeedsterGrade } from "../../lib/ai-grader-v2/scoring";
+import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
 import { DefectEvidenceViewer } from "./DefectEvidenceViewer";
 import { GradeSummary } from "./GradeSummary";
 import styles from "./ReviewWorkspace.module.css";
 
 type ReviewWorkspaceProps = {
   masterImageUrls: Readonly<Record<SpeedsterCardSide, string>>;
+  inspectionFrames: Readonly<Record<SpeedsterCardSide, SpeedsterInspectionFrame>>;
   sourceImageUrls: Readonly<Record<string, string>>;
   defects: readonly SpeedsterMeasuredDefect[];
   grade: ReturnType<typeof calculateSpeedsterGrade>;
@@ -26,6 +28,7 @@ type ReviewWorkspaceProps = {
 
 export function ReviewWorkspace({
   masterImageUrls,
+  inspectionFrames,
   sourceImageUrls,
   defects,
   grade,
@@ -57,6 +60,8 @@ export function ReviewWorkspace({
 
       <DefectEvidenceViewer
         masterImageUrl={masterImageUrls[side]}
+        magnifyImageUrl={sourceImageUrls[`${side}:ORIGINAL`]}
+        inspectionFrame={inspectionFrames[side]}
         sourceImageUrls={sourceImageUrls}
         side={side}
         defects={defects}

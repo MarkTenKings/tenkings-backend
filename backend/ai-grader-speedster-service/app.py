@@ -10,9 +10,13 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from card_geometry import (
+    INSPECTION_HEIGHT,
+    INSPECTION_MARGIN_PX,
+    INSPECTION_WIDTH,
     detect_card_quad,
     printed_border_quad,
     warp_to_card_map,
+    warp_to_inspection_map,
 )
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
@@ -52,6 +56,7 @@ class RectifyRequest(ImageInput):
 
 class PreparedUploads(BaseModel):
     rectified: str
+    inspection: Optional[str] = None
     normalized: str
     microDefect: str
     directional: str
@@ -67,6 +72,7 @@ class PrepareResponse(BaseModel):
     transform: List[float]
     borders: List[Point]
     detectedBorders: List[str]
+    inspectionFrame: dict
 
 
 class CanonicalView(ImageInput):
@@ -191,15 +197,49 @@ def prepare_image(request: PrepareRequest):
     try:
         image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
-        normalized, micro, directional = reveal_views(rectified)
         borders, detected_borders, _ = printed_border_quad(rectified)
+        if request.outputUploads.inspection:
+            height, width = image.shape[:2]
+            source = np.array(
+                [[point.x * width, point.y * height] for point in request.corners],
+                dtype=np.float32,
+            )
+            detector_image, _ = warp_to_inspection_map(image, source)
+            frame = {
+                "width": INSPECTION_WIDTH,
+                "height": INSPECTION_HEIGHT,
+                "cardBounds": {
+                    "x": INSPECTION_MARGIN_PX,
+                    "y": INSPECTION_MARGIN_PX,
+                    "width": TARGET_WIDTH,
+                    "height": TARGET_HEIGHT,
+                },
+            }
+            inspection_upload = (
+                (request.outputUploads.inspection, detector_image),
+            )
+        else:
+            detector_image = rectified
+            frame = {
+                "width": TARGET_WIDTH,
+                "height": TARGET_HEIGHT,
+                "cardBounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": TARGET_WIDTH,
+                    "height": TARGET_HEIGHT,
+                },
+            }
+            inspection_upload = ()
+        normalized, micro, directional = reveal_views(detector_image)
         uploads = (
             (request.outputUploads.rectified, rectified),
+            *inspection_upload,
             (request.outputUploads.normalized, normalized),
             (request.outputUploads.microDefect, micro),
             (request.outputUploads.directional, directional),
         )
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=len(uploads)) as executor:
             list(executor.map(lambda item: upload_webp(*item), uploads))
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -210,6 +250,7 @@ def prepare_image(request: PrepareRequest):
         "transform": transform.reshape(-1).tolist(),
         "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
         "detectedBorders": detected_borders,
+        "inspectionFrame": frame,
     }
 
 

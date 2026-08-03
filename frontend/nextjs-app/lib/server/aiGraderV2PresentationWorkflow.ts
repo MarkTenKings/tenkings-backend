@@ -64,22 +64,22 @@ export async function completeSpeedsterPresentationImages(input: {
     return { outcome: "EXISTING" as const, frontCleanStorageKey: existingFront, backCleanStorageKey: existingBack };
   }
 
-  const frontRectifiedStorageKey = text(front.rectifiedStorageKey);
-  const backRectifiedStorageKey = text(back.rectifiedStorageKey);
-  if (!frontRectifiedStorageKey || !backRectifiedStorageKey) {
-    throw new Error("Completed Speedster capture is missing rectified Front or Back evidence.");
+  const frontSourceStorageKey = text(front.inspectionStorageKey) ?? text(front.rectifiedStorageKey);
+  const backSourceStorageKey = text(back.inspectionStorageKey) ?? text(back.rectifiedStorageKey);
+  if (!frontSourceStorageKey || !backSourceStorageKey) {
+    throw new Error("Completed Speedster capture is missing Front or Back presentation evidence.");
   }
 
   const frontOutputStorageKey = speedsterPresentationStorageKey({ ...input, side: "FRONT" });
   const backOutputStorageKey = speedsterPresentationStorageKey({ ...input, side: "BACK" });
   const created = await deps.createImages({
     front: {
-      sourceStorageKey: frontRectifiedStorageKey,
+      sourceStorageKey: frontSourceStorageKey,
       sourceContentType: "image/webp",
       outputStorageKey: frontOutputStorageKey,
     },
     back: {
-      sourceStorageKey: backRectifiedStorageKey,
+      sourceStorageKey: backSourceStorageKey,
       sourceContentType: "image/webp",
       outputStorageKey: backOutputStorageKey,
     },

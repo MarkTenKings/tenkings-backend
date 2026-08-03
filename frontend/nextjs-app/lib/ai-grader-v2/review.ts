@@ -18,6 +18,7 @@ const ZONES = ["CORNERS", "EDGES", "SURFACE"] as const;
 type DetectorSide = {
   side: SpeedsterCardSide;
   rectifiedUrl: string;
+  inspectionUrl?: string;
   views: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
 };
 type DetectorCapture = {
@@ -45,7 +46,7 @@ const canonicalViewId = (side: SpeedsterCardSide, viewId: string) =>
 
 export function speedsterDetectorViews(side: DetectorSide) {
   return [
-    { id: `${side.side}:ORIGINAL`, imageUrl: side.rectifiedUrl },
+    { id: `${side.side}:ORIGINAL`, imageUrl: side.inspectionUrl ?? side.rectifiedUrl },
     { id: `${side.side}:NORMALIZED`, imageUrl: side.views.NORMALIZED },
     { id: `${side.side}:MICRO_DEFECT`, imageUrl: side.views.MICRO_DEFECT },
     { id: `${side.side}:DIRECTIONAL`, imageUrl: side.views.DIRECTIONAL },

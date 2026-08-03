@@ -13,6 +13,11 @@ import type {
   SpeedsterPoint,
 } from "../../../lib/ai-grader-v2/contracts";
 import type { calculateSpeedsterGrade } from "../../../lib/ai-grader-v2/scoring";
+import {
+  SPEEDSTER_CANONICAL_FRAME,
+  parseSpeedsterInspectionFrame,
+  type SpeedsterInspectionFrame,
+} from "../../../lib/ai-grader-v2/inspection-frame";
 import styles from "../../../styles/AiGraderV2Report.module.css";
 
 type Grade = ReturnType<typeof calculateSpeedsterGrade>;
@@ -29,6 +34,7 @@ type PublicIdentity = {
 };
 type SourceKeys = Readonly<Record<SpeedsterCardSide, {
   master: string;
+  inspectionFrame: SpeedsterInspectionFrame;
   views: Readonly<Record<"ORIGINAL" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
 }>>;
 type PublicReportSource = {
@@ -43,6 +49,7 @@ type PublicReportProps = Omit<PublicReportSource, "sourceKeys" | "slabKeys"> & {
     master: string;
     views: Readonly<Record<string, string>>;
   }>>;
+  inspectionFrames: Readonly<Record<SpeedsterCardSide, SpeedsterInspectionFrame>>;
   slabImageUrls: { front: string | null; back: string | null };
 };
 type ReportDependencies = {
@@ -184,7 +191,11 @@ function sourceKeys(value: unknown): SourceKeys | null {
   const side = (name: SpeedsterCardSide) => {
     const candidate = value[name.toLowerCase()];
     const row: Record<string, unknown> | null = isRecord(candidate) ? candidate : null;
-    const original = row ? text(row.rectifiedStorageKey) : null;
+    const rectified = row ? text(row.rectifiedStorageKey) : null;
+    const inspection = row ? text(row.inspectionStorageKey) : null;
+    const parsedFrame = row ? parseSpeedsterInspectionFrame(row.inspectionFrame) : null;
+    if (inspection && !parsedFrame) return null;
+    const original = inspection ?? rectified;
     const master = (row ? text(row.reportStorageKey) : null) ?? original;
     const generated = row && isRecord(row.viewStorageKeys) ? row.viewStorageKeys : null;
     const normalized = generated ? text(generated.NORMALIZED) : null;
@@ -192,6 +203,7 @@ function sourceKeys(value: unknown): SourceKeys | null {
     const directional = generated ? text(generated.DIRECTIONAL) : null;
     return master && original && normalized && micro && directional ? {
       master,
+      inspectionFrame: parsedFrame ?? SPEEDSTER_CANONICAL_FRAME,
       views: { ORIGINAL: original, NORMALIZED: normalized, MICRO_DEFECT: micro, DIRECTIONAL: directional },
     } : null;
   };
@@ -253,6 +265,10 @@ export async function materializeSpeedsterReport(
     grade: source.grade,
     imageUrls,
     slabImageUrls: { front: frontSlab, back: backSlab },
+    inspectionFrames: {
+      FRONT: source.sourceKeys.FRONT.inspectionFrame,
+      BACK: source.sourceKeys.BACK.inspectionFrame,
+    },
   };
 }
 
@@ -291,7 +307,14 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
   })(context);
 };
 
-export default function SpeedsterPublicReport({ identity, defects, grade, imageUrls, slabImageUrls }: PublicReportProps) {
+export default function SpeedsterPublicReport({
+  identity,
+  defects,
+  grade,
+  imageUrls,
+  inspectionFrames,
+  slabImageUrls,
+}: PublicReportProps) {
   const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
   const title = (identity.cardProfile === "POKEMON" ? identity.cardName : identity.playerName) || "Ten Kings card";
   const details = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber]
@@ -326,6 +349,8 @@ export default function SpeedsterPublicReport({ identity, defects, grade, imageU
         </header>
         <DefectEvidenceViewer
           masterImageUrl={imageUrls[side].master}
+          magnifyImageUrl={imageUrls[side].views.ORIGINAL}
+          inspectionFrame={inspectionFrames[side]}
           sourceImageUrls={imageUrls[side].views}
           side={side}
           defects={defects}

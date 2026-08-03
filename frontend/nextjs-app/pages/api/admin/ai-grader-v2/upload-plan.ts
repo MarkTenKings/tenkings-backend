@@ -40,7 +40,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (kind === "PREPARED") {
-      const artifacts = ["RECTIFIED", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"] as const;
+      const artifacts = ["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"] as const;
       const entries = await Promise.all(artifacts.map(async (artifact) => {
         const fileName = `${artifact.toLowerCase()}.webp`;
         const storageKey = `ai-grader-v2/${admin.user.id}/${sessionId}/prepared/${side.toLowerCase()}/${fileName}`;

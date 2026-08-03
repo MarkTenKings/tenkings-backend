@@ -98,6 +98,8 @@ export default function AiGraderV2AdminPage() {
     const compactSide = (side: SpeedsterCaptureBundle["front"]) => ({
       originalStorageKey: side.originalStorageKey,
       rectifiedStorageKey: side.rectifiedStorageKey,
+      inspectionStorageKey: side.inspectionStorageKey,
+      inspectionFrame: side.inspectionFrame,
       viewStorageKeys: side.viewStorageKeys,
       sourceCorners: side.sourceCorners,
       transform: side.transform,
@@ -248,7 +250,8 @@ export default function AiGraderV2AdminPage() {
 
         {capture && review && defects !== null && !completion ? (
           <ReviewWorkspace
-            masterImageUrls={{ FRONT: capture.front.rectifiedUrl, BACK: capture.back.rectifiedUrl }}
+            masterImageUrls={{ FRONT: capture.front.inspectionUrl, BACK: capture.back.inspectionUrl }}
+            inspectionFrames={{ FRONT: capture.front.inspectionFrame, BACK: capture.back.inspectionFrame }}
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
             grade={review.grade}
