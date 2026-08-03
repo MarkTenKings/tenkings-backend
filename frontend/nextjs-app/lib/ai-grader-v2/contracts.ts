@@ -45,6 +45,13 @@ export type SpeedsterReviewResult =
 
 export type SpeedsterDefectOrigin = "DETECTOR" | "SMART_MARK";
 
+export type SpeedsterSmartMarkLearning = {
+  fingerprintProvenance: "SAM_TRACE" | "HUMAN_BOX_POOL" | "HARD_FAILURE";
+  traceAttempts: 0 | 1 | 2;
+  proposalOverlapIouGt03: boolean;
+  proposalMaxIou: number;
+};
+
 export type SpeedsterDefect = {
   id: string;
   side: SpeedsterCardSide;
@@ -53,6 +60,7 @@ export type SpeedsterDefect = {
   origin?: SpeedsterDefectOrigin;
   detectedDefectType?: SpeedsterDefectType;
   featureFingerprint?: readonly number[];
+  smartMarkLearning?: SpeedsterSmartMarkLearning;
   learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];

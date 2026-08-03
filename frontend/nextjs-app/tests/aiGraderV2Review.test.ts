@@ -80,12 +80,30 @@ test("restores only the last removed finding without replacing later defect edit
 });
 
 test("type correction preserves Smart-Mark provenance without inventing a detector label", () => {
-  const smartMark = { ...defect, origin: "SMART_MARK" as const, reviewResult: "SMART_MARKED" as const };
+  const smartMark = {
+    ...defect,
+    origin: "SMART_MARK" as const,
+    reviewResult: "SMART_MARKED" as const,
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    smartMarkLearning: {
+      fingerprintProvenance: "HUMAN_BOX_POOL" as const,
+      traceAttempts: 1 as const,
+      proposalOverlapIouGt03: false,
+      proposalMaxIou: 0.12,
+    },
+  };
   const corrected = correctSpeedsterDefectType([smartMark], smartMark.id, "FRAYING");
   assert.equal(corrected[0].origin, "SMART_MARK");
   assert.equal(corrected[0].detectedDefectType, undefined);
   assert.equal(corrected[0].defectType, "FRAYING");
   assert.equal(corrected[0].reviewResult, "TYPE_CORRECTED");
+  assert.deepEqual(corrected[0].featureFingerprint, smartMark.featureFingerprint);
+  assert.deepEqual(corrected[0].smartMarkLearning, smartMark.smartMarkLearning);
+
+  const review = calculateSpeedsterReview(capture, corrected);
+  const prepared = prepareSpeedsterCompletion(corrected, review.grade, "sam3-test");
+  assert.deepEqual(prepared.body.reviewedDefects[0].featureFingerprint, smartMark.featureFingerprint);
+  assert.deepEqual(prepared.body.reviewedDefects[0].smartMarkLearning, smartMark.smartMarkLearning);
 });
 
 test("type corrections change published multiplier math immediately", () => {
@@ -95,6 +113,57 @@ test("type corrections change published multiplier math immediately", () => {
   assert.equal(review.defects[0].measurement.multiplier, 2);
   assert.equal(review.grade.front.surface.weightedDamagePercent, 4);
   assert.equal(review.grade.front.surface.score, 6);
+});
+
+test("Smart-Mark fingerprint branches cannot change geometry, measurement, grade, or completion", () => {
+  const smartMark = {
+    ...defect,
+    origin: "SMART_MARK" as const,
+    reviewResult: "SMART_MARKED" as const,
+  };
+  const branches: SpeedsterMeasuredDefect[] = [
+    {
+      ...smartMark,
+      featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+      smartMarkLearning: {
+        fingerprintProvenance: "SAM_TRACE",
+        traceAttempts: 1,
+        proposalOverlapIouGt03: true,
+        proposalMaxIou: 0.5,
+      },
+    },
+    {
+      ...smartMark,
+      featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+      smartMarkLearning: {
+        fingerprintProvenance: "HUMAN_BOX_POOL",
+        traceAttempts: 1,
+        proposalOverlapIouGt03: false,
+        proposalMaxIou: 0,
+      },
+    },
+    {
+      ...smartMark,
+      smartMarkLearning: {
+        fingerprintProvenance: "HARD_FAILURE",
+        traceAttempts: 0,
+        proposalOverlapIouGt03: false,
+        proposalMaxIou: 0,
+      },
+    },
+  ];
+  const reviews = branches.map((branch) => calculateSpeedsterReview(capture, [branch]));
+  const completions = reviews.map((review, index) =>
+    prepareSpeedsterCompletion([branches[index]], review.grade, "sam3-test"));
+
+  assert.deepEqual(reviews[1].defects[0].canonicalContour, reviews[0].defects[0].canonicalContour);
+  assert.deepEqual(reviews[2].defects[0].canonicalContour, reviews[0].defects[0].canonicalContour);
+  assert.deepEqual(reviews[1].defects[0].measurement, reviews[0].defects[0].measurement);
+  assert.deepEqual(reviews[2].defects[0].measurement, reviews[0].defects[0].measurement);
+  assert.deepEqual(reviews[1].grade, reviews[0].grade);
+  assert.deepEqual(reviews[2].grade, reviews[0].grade);
+  assert.equal(completions.every(({ completedDefects }) => completedDefects[0].reviewResult === "SMART_MARKED"), true);
+  assert.equal(completions[2].body.reviewedDefects[0].featureFingerprint, undefined);
 });
 
 test("completion accepts untouched findings and keeps canonical report view IDs", () => {

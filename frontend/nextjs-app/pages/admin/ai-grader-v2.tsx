@@ -150,6 +150,13 @@ export default function AiGraderV2AdminPage() {
       const measured = await speedsterImageService.measure(session.token, {
         side,
         cornerShape: capture.cornerShape,
+        evidenceView: {
+          id: `${side}:ORIGINAL`,
+          imageUrl: sourceImageUrls[`${side}:ORIGINAL`],
+          inspectionFrame: side === "FRONT"
+            ? capture.front.inspectionFrame
+            : capture.back.inspectionFrame,
+        },
         marks: [{
           id,
           defectType: "FAINT_COLOR_VARIATION",

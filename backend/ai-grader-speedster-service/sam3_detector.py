@@ -13,6 +13,7 @@ from PIL import Image
 
 from card_geometry import (
     INSPECTION_HEIGHT,
+    INSPECTION_MARGIN_PX,
     INSPECTION_WIDTH,
     crop_detector_mask_to_card,
     defect_candidates,
@@ -31,6 +32,10 @@ PX_PER_MM = GRID_WIDTH / 63.5
 FINGERPRINT_SIZE = 32
 LEARNING_SCALE = 0.06
 LOGGER = logging.getLogger(__name__)
+SMART_MARK_TRACE_MIN_INSIDE = 0.80
+SMART_MARK_TRACE_MIN_BOX_AREA = 0.10
+SMART_MARK_TRACE_MAX_BOX_AREA = 1.00
+SMART_MARK_PROPOSAL_IOU_THRESHOLD = 0.30
 
 
 class MaskProcessor(Protocol):
@@ -278,6 +283,116 @@ class Sam3ImageProcessor:
                         results.append(best)
         return results
 
+    def fingerprint_smart_mark(
+        self,
+        image: np.ndarray,
+        human_box_mask: np.ndarray,
+        allowed_mask: np.ndarray,
+    ) -> dict:
+        """Fingerprint one human mark without changing its authoritative geometry."""
+
+        image_height, image_width = image.shape[:2]
+        if human_box_mask.shape != (image_height, image_width):
+            raise ValueError("Smart-Mark box mask does not match the evidence image")
+        if allowed_mask.shape != (image_height, image_width):
+            raise ValueError("Smart-Mark material mask does not match the evidence image")
+        human_box = np.asarray(human_box_mask) > 0
+        on_card_box = human_box & (np.asarray(allowed_mask) > 0)
+        if not np.any(on_card_box):
+            raise ValueError("Smart-Mark does not intersect physical card material")
+        x, y, width, height = cv2.boundingRect(human_box.astype(np.uint8))
+        rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+        with self._lock:
+            processor = self.load()
+            with self._autocast():
+                state = processor.set_image(rgb_image)
+                feature_map = (
+                    state["backbone_out"]["backbone_fpn"][-1][0]
+                    .detach()
+                    .float()
+                    .cpu()
+                    .numpy()
+                )
+                output = None
+                trace_attempts = 0
+                for attempt in range(2):
+                    trace_attempts = attempt + 1
+                    try:
+                        processor.reset_all_prompts(state)
+                        output = processor.add_geometric_prompt(
+                            box=[
+                                (x + width / 2) / image_width,
+                                (y + height / 2) / image_height,
+                                width / image_width,
+                                height / image_height,
+                            ],
+                            label=True,
+                            state=state,
+                        )
+                        break
+                    except Exception:
+                        if attempt == 1:
+                            output = None
+
+                valid_trace = None
+                if output is not None:
+                    try:
+                        masks = output["masks"].detach().float().cpu().numpy()
+                        scores = output["scores"].detach().float().cpu().numpy().reshape(-1)
+                        masks = masks.reshape((-1, masks.shape[-2], masks.shape[-1]))
+                        if len(masks) != len(scores):
+                            raise ValueError("SAM 3 returned mismatched Smart-Mark masks and scores")
+                        candidates = []
+                        on_card_box_area = int(np.count_nonzero(on_card_box))
+                        for mask, score in zip(masks, scores):
+                            binary = np.asarray(mask) > 0
+                            if binary.shape != (image_height, image_width):
+                                binary = cv2.resize(
+                                    binary.astype(np.uint8),
+                                    (image_width, image_height),
+                                    interpolation=cv2.INTER_NEAREST,
+                                ).astype(bool)
+                            on_card_trace = binary & (np.asarray(allowed_mask) > 0)
+                            trace_area = int(np.count_nonzero(on_card_trace))
+                            inside = on_card_trace & human_box
+                            inside_area = int(np.count_nonzero(inside))
+                            inside_fraction = inside_area / trace_area if trace_area else 0.0
+                            area_ratio = trace_area / on_card_box_area
+                            if (
+                                inside_fraction >= SMART_MARK_TRACE_MIN_INSIDE
+                                and SMART_MARK_TRACE_MIN_BOX_AREA
+                                <= area_ratio
+                                <= SMART_MARK_TRACE_MAX_BOX_AREA
+                            ):
+                                candidates.append((float(score), inside))
+                        if candidates:
+                            valid_trace = max(candidates, key=lambda entry: entry[0])[1]
+                    except Exception:
+                        valid_trace = None
+
+                if valid_trace is not None:
+                    fingerprint = feature_fingerprint(feature_map, valid_trace)
+                    if fingerprint is not None:
+                        return {
+                            "featureFingerprint": fingerprint,
+                            "fingerprintProvenance": "SAM_TRACE",
+                            "traceAttempts": trace_attempts,
+                        }
+
+                fingerprint = feature_fingerprint(feature_map, on_card_box)
+                if fingerprint is not None:
+                    return {
+                        "featureFingerprint": fingerprint,
+                        "fingerprintProvenance": "HUMAN_BOX_POOL",
+                        "traceAttempts": trace_attempts,
+                    }
+                return {
+                    "featureFingerprint": None,
+                    "fingerprintProvenance": "HARD_FAILURE",
+                    "traceAttempts": trace_attempts,
+                }
+
 
 _processor = Sam3ImageProcessor()
 
@@ -387,6 +502,11 @@ def _to_speedster_defects(
                     if result.get("learningAdjustment")
                     else {}
                 ),
+                **(
+                    {"smartMarkLearning": result["smartMarkLearning"]}
+                    if result.get("smartMarkLearning") is not None
+                    else {}
+                ),
                 "canonicalContour": contour,
                 "sourceViewId": result["sourceViewId"],
                 "supportingViewIds": result["supportingViewIds"],
@@ -459,7 +579,119 @@ def detect_views(
     }
 
 
-def measure_marks(marks: list[dict], side: str, corner_shape: str) -> dict:
+def _smart_mark_mask(
+    contour: list[dict], image_shape: tuple[int, int], inspection_frame: dict
+) -> np.ndarray:
+    height, width = image_shape
+    bounds = inspection_frame["cardBounds"]
+    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        expected_origin = (INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX)
+    elif (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        expected_origin = (0, 0)
+    else:
+        expected_origin = None
+    if (
+        expected_origin is None
+        or inspection_frame.get("width") != width
+        or inspection_frame.get("height") != height
+        or bounds.get("width") != GRID_WIDTH
+        or bounds.get("height") != GRID_HEIGHT
+        or (bounds.get("x"), bounds.get("y")) != expected_origin
+    ):
+        raise ValueError("Smart-Mark inspection frame does not match the evidence image")
+    points = np.array(
+        [
+            [
+                round(bounds["x"] + float(point["x"]) * (bounds["width"] - 1)),
+                round(bounds["y"] + float(point["y"]) * (bounds["height"] - 1)),
+            ]
+            for point in contour
+        ],
+        dtype=np.int32,
+    )
+    mask = np.zeros((height, width), dtype=np.uint8)
+    if len(points) >= 3:
+        cv2.fillPoly(mask, [points], 1)
+    return mask
+
+
+def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
+    ax, ay, aw, ah = first
+    bx, by, bw, bh = second
+    left, top = max(ax, bx), max(ay, by)
+    right, bottom = min(ax + aw, bx + bw), min(ay + ah, by + bh)
+    intersection = max(0, right - left) * max(0, bottom - top)
+    union = aw * ah + bw * bh - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def measure_marks(
+    marks: list[dict],
+    side: str,
+    corner_shape: str,
+    evidence_image: Optional[np.ndarray] = None,
+    evidence_view_id: Optional[str] = None,
+    inspection_frame: Optional[dict] = None,
+    evidence_failed: bool = False,
+    processor=None,
+) -> dict:
+    evidence_by_id = {}
+    if evidence_image is not None and inspection_frame is not None:
+        try:
+            allowed_mask = detector_material_mask(
+                corner_shape, evidence_image.shape[1], evidence_image.shape[0]
+            )
+        except Exception:
+            allowed_mask = None
+            evidence_failed = True
+        try:
+            candidates = defect_candidates(
+                evidence_image, corner_shape, evidence_view_id or "ORIGINAL"
+            )
+        except Exception:
+            candidates = []
+    else:
+        allowed_mask = None
+        candidates = []
+        evidence_failed = True
+
+    for mark in marks:
+        fingerprint = None
+        provenance = "HARD_FAILURE"
+        attempts = 0
+        max_iou = 0.0
+        try:
+            human_mask = _smart_mark_mask(
+                mark["canonicalContour"], evidence_image.shape[:2], inspection_frame
+            )
+            human_box = cv2.boundingRect(human_mask)
+            max_iou = max(
+                (
+                    _box_iou(human_box, candidate.get("coreBox", candidate["box"]))
+                    for candidate in candidates
+                ),
+                default=0.0,
+            )
+            if not evidence_failed and allowed_mask is not None:
+                result = (processor or get_processor()).fingerprint_smart_mark(
+                    evidence_image, human_mask, allowed_mask
+                )
+                fingerprint = result.get("featureFingerprint")
+                provenance = result.get("fingerprintProvenance", "HARD_FAILURE")
+                attempts = int(result.get("traceAttempts", 0))
+        except Exception:
+            fingerprint = None
+            provenance = "HARD_FAILURE"
+        evidence_by_id[mark["id"]] = {
+            "featureFingerprint": fingerprint,
+            "smartMarkLearning": {
+                "fingerprintProvenance": provenance,
+                "traceAttempts": attempts,
+                "proposalOverlapIouGt03": max_iou > SMART_MARK_PROPOSAL_IOU_THRESHOLD,
+                "proposalMaxIou": round(float(max_iou), 6),
+            },
+        }
+
     proposals = [
         {
             "id": mark["id"],
@@ -471,4 +703,7 @@ def measure_marks(marks: list[dict], side: str, corner_shape: str) -> dict:
         for mark in marks
     ]
     measured = measure_defects(proposals, corner_shape)
+    for result in measured:
+        evidence = evidence_by_id.get(result.get("proposalId"), {})
+        result.update(evidence)
     return {"defects": _to_speedster_defects(measured, side, "SMART_MARKED")}
