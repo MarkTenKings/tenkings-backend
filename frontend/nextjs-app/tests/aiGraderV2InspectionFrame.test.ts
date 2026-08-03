@@ -81,3 +81,14 @@ test("Smart-Mark measure sends the same ORIGINAL inspection evidence in one requ
   assert.match(service, /evidenceView:\s*\{/);
   assert.doesNotMatch(page, /fingerprint.*(?:queue|poll)/i);
 });
+
+test("SAM Memory decisions reuse deterministic session and side diagnostics", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+  const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
+
+  assert.match(page, /sessionId:\s*draft\.id/);
+  assert.match(page, /requestTraceId:\s*`\$\{draft\.id\}:\$\{request\.side\}:detect`/);
+  assert.match(service, /sessionId:\s*string/);
+  assert.match(service, /requestTraceId:\s*string/);
+});

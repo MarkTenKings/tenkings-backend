@@ -124,7 +124,11 @@ export default function AiGraderV2AdminPage() {
       setCapture(bundle);
       const scanned = await scanSpeedsterCapture({
         capture: bundle,
-        detect: (request) => speedsterImageService.detect(session.token, request),
+        detect: (request) => speedsterImageService.detect(session.token, {
+          ...request,
+          sessionId: draft.id,
+          requestTraceId: `${draft.id}:${request.side}:detect`,
+        }),
         onSide: (side) => setMessage(`SAM 3 is scanning the ${side === "FRONT" ? "Front" : "Back"} card views.`),
       });
       setDetectorVersion(scanned.detectorVersion);

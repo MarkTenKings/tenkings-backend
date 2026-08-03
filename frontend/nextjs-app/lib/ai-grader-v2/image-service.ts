@@ -75,6 +75,8 @@ export const speedsterImageService = {
       side: SpeedsterCardSide;
       cornerShape: SpeedsterCornerShape;
       views: readonly { id: string; imageUrl: string }[];
+      sessionId: string;
+      requestTraceId: string;
     },
   ) {
     return postImageAction<{
