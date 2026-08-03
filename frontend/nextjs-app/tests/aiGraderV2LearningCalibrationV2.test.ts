@@ -205,6 +205,18 @@ test("reports compact adjacent sensitivity, bank size, measured latency, and hon
   assert.match(report.insufficientReasons.join(" "), /Damage-on-text/);
 });
 
+test("bounds machine-readable case output without changing full replay counts", () => {
+  const report = replaySpeedsterLearningCalibrationV2([
+    session("many-explicit-actions", 1, Array.from({ length: 201 }, () => finding())),
+  ], { now: () => 0 });
+
+  assert.equal(report.counts.trustedExplicitCases, 201);
+  assert.equal(report.reporting.totalCaseRecords, 201);
+  assert.equal(report.reporting.maxCaseRecords, 200);
+  assert.equal(report.reporting.casesTruncated, true);
+  assert.equal(report.cases.length, 200);
+});
+
 test("maps only the exact inspection detector version and hashes card identity stably", () => {
   assert.equal(
     speedsterLearningFingerprintVersionForDetectorV2(SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION),

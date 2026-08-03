@@ -24,6 +24,7 @@ export const SPEEDSTER_LEARNING_CALIBRATION_SCHEMA =
 
 const LEARNING_SCALE = 0.06;
 const MAX_DECISION_BOUNDARIES = 64;
+const MAX_REPORTED_CASES = 200;
 
 type EvidenceStatus = "PASS" | "FAIL" | "INSUFFICIENT_EVIDENCE";
 type ExpectedAction = "VETO" | "RETAIN";
@@ -88,8 +89,8 @@ export type SpeedsterLearningCalibrationReplayV2 = {
     untouchedLessonsUsedOnlyInEarlierBanks: number;
   };
   distributions: {
-    positiveMax: number[];
-    negativeMax: number[];
+    positiveMax: { values: number[]; total: number; truncated: boolean };
+    negativeMax: { values: number[]; total: number; truncated: boolean };
   };
   evidenceCandidate: (SensitivityRow & {
     falseVetoCaseIds: string[];
@@ -108,6 +109,11 @@ export type SpeedsterLearningCalibrationReplayV2 = {
     };
   };
   cases: ReplayCase[];
+  reporting: {
+    maxCaseRecords: typeof MAX_REPORTED_CASES;
+    totalCaseRecords: number;
+    casesTruncated: boolean;
+  };
   capacity: {
     finalExemplars: number;
     peakEarlierBankExemplars: number;
@@ -290,6 +296,15 @@ const adjacentValues = (values: readonly number[], selected: number) => {
 
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
+const compactValues = (values: readonly number[]) => ({
+  values: values.slice(0, MAX_REPORTED_CASES),
+  total: values.length,
+  truncated: values.length > MAX_REPORTED_CASES,
+});
+
+const compactIds = (entries: readonly ReplayCase[]) =>
+  entries.slice(0, MAX_REPORTED_CASES).map(({ caseId }) => caseId);
+
 export function replaySpeedsterLearningCalibrationV2(
   inputHistory: readonly SpeedsterLearningCalibrationHistoryRowV2[],
   options: { now?: () => number } = {},
@@ -361,12 +376,11 @@ export function replaySpeedsterLearningCalibrationV2(
     .sort((left, right) => right.trueVetoes - left.trueVetoes
       || right.tau - left.tau
       || right.margin - left.margin)[0] ?? null;
-  const falseVetoCaseIds = evidenceCandidate
+  const falseVetoCases = evidenceCandidate
     ? cases.filter((entry) => entry.expectedAction === "RETAIN"
       && entry.negativeMax !== null
       && entry.negativeMax >= evidenceCandidate.tau
       && entry.negativeMax - (entry.positiveMax ?? 0) >= evidenceCandidate.margin)
-      .map(({ caseId }) => caseId)
     : [];
   const sensitivityRows = evidenceCandidate
     ? adjacentValues(tauValues, evidenceCandidate.tau).flatMap((tau) =>
@@ -408,10 +422,9 @@ export function replaySpeedsterLearningCalibrationV2(
       && entry.negativeMax >= evidenceCandidate.tau
       && entry.negativeMax - entry.positiveMax < evidenceCandidate.margin)
     : [];
-  const falseVetoRiskCaseIds = cases.filter((entry) => entry.expectedAction === "RETAIN"
+  const falseVetoRiskCases = cases.filter((entry) => entry.expectedAction === "RETAIN"
     && entry.negativeMax !== null
-    && entry.negativeMax > (entry.positiveMax ?? 0))
-    .map(({ caseId }) => caseId);
+    && entry.negativeMax > (entry.positiveMax ?? 0));
 
   const evidence = {
     articunoClassRemovalAfterEarlierLesson: {
@@ -419,23 +432,23 @@ export function replaySpeedsterLearningCalibrationV2(
         && entry.cardKey === poisonedCardKey && entry.negativeMatchSessionId))
         ? "INSUFFICIENT_EVIDENCE" as const
         : articunoCases.length > 0 ? "PASS" as const : "FAIL" as const,
-      caseIds: articunoCases.map(({ caseId }) => caseId),
+      caseIds: compactIds(articunoCases),
     },
     explicitPositiveRetention: {
       status: evaluatedPositives.length === 0
         ? "INSUFFICIENT_EVIDENCE" as const
         : retainedPositiveCases.length === evaluatedPositives.length ? "PASS" as const : "FAIL" as const,
-      caseIds: retainedPositiveCases.map(({ caseId }) => caseId),
+      caseIds: compactIds(retainedPositiveCases),
     },
     unrelatedControlSuppression: {
       status: unrelatedControls.length === 0
         ? "INSUFFICIENT_EVIDENCE" as const
         : unrelatedRetained.length === unrelatedControls.length ? "PASS" as const : "FAIL" as const,
-      caseIds: unrelatedRetained.map(({ caseId }) => caseId),
+      caseIds: compactIds(unrelatedRetained),
     },
     damageOnTextPositiveProtection: {
       status: "INSUFFICIENT_EVIDENCE" as const,
-      comparableProtectionCaseIds: comparableProtection.map(({ caseId }) => caseId),
+      comparableProtectionCaseIds: compactIds(comparableProtection),
       limitation: "Completed-session history has no authoritative damage-crossing-text label; similarity alone cannot prove that condition.",
     },
   };
@@ -480,17 +493,26 @@ export function replaySpeedsterLearningCalibrationV2(
       untouchedLessonsUsedOnlyInEarlierBanks,
     },
     distributions: {
-      positiveMax: cases.flatMap(({ positiveMax }) => positiveMax === null ? [] : [rounded(positiveMax)]).sort((a, b) => a - b),
-      negativeMax: cases.flatMap(({ negativeMax }) => negativeMax === null ? [] : [rounded(negativeMax)]).sort((a, b) => a - b),
+      positiveMax: compactValues(cases.flatMap(({ positiveMax }) =>
+        positiveMax === null ? [] : [rounded(positiveMax)]).sort((a, b) => a - b)),
+      negativeMax: compactValues(cases.flatMap(({ negativeMax }) =>
+        negativeMax === null ? [] : [rounded(negativeMax)]).sort((a, b) => a - b)),
     },
-    evidenceCandidate: evidenceCandidate ? { ...evidenceCandidate, falseVetoCaseIds } : null,
-    falseVetoRiskCaseIds,
+    evidenceCandidate: evidenceCandidate
+      ? { ...evidenceCandidate, falseVetoCaseIds: compactIds(falseVetoCases) }
+      : null,
+    falseVetoRiskCaseIds: compactIds(falseVetoRiskCases),
     recommendation: status === "CANDIDATE_READY_FOR_MARK_REVIEW" && evidenceCandidate
       ? { tau: evidenceCandidate.tau, margin: evidenceCandidate.margin }
       : null,
     adjacentSensitivity: sensitivityRows,
     requiredEvidence: evidence,
-    cases,
+    cases: cases.slice(0, MAX_REPORTED_CASES),
+    reporting: {
+      maxCaseRecords: MAX_REPORTED_CASES,
+      totalCaseRecords: cases.length,
+      casesTruncated: cases.length > MAX_REPORTED_CASES,
+    },
     capacity: {
       finalExemplars: finalBank.exemplars.length,
       peakEarlierBankExemplars,
