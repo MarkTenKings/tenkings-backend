@@ -30120,3 +30120,9 @@ By enabling Rip It Live, I confirm:
 
 - Plan: send this isolated Step 2 foundation through the normal protected pull-request checks and allow the normal Vercel Production deployment only after they pass. No database migration, backfill, bank conversion, Articuno exclusion, threshold calibration, RunPod image, or learning decision change is included.
 - After deployment, verify the serving commit and existing Speedster admin/completed/report routes. The square magnifier is the only active review behavior change; the new authenticated history route is read-only, and V1 remains the active learning mechanism until the later calibration, dry-run, and Mark approval gates are satisfied.
+
+### SAM Memory V2 Step 2 and square-magnifier release result
+
+- Pull request `#273` passed the exact final-head monorepo build, disposable PostgreSQL migration chain, all service/frontend Docker-image builds, Vercel Preview, the local `78/78` Speedster suite, focused ESLint, and optimized local Production build. It merged into `main` as `3dc76b7d2f1027216af2bf86560e48d4d35e9de1`.
+- Vercel Production deployment `GTunqV7MwicJV2jxy4Pa3oYiogPd` completed successfully for that exact merge commit. Live HTTPS checks returned HTTP `200` for `/admin/human-grade`, `/admin/ai-grader-v2`, `/admin/ai-grader-v2/completed`, and a legacy public Speedster report. The new `/api/admin/ai-grader-v2/learning-history` route returned the expected unauthenticated HTTP `401`, confirming the route is deployed and admin-protected.
+- The square magnifier and read-only history inventory are live. V1 remains the only learning path used by completion and detection; Bank V2 is not activated or written. No migration, database/backfill/data/label/bank mutation, Articuno correction, calibration, threshold change, storage write, PhotoRoom credit, SAM/RunPod action, Cloudflare action, V1/Dell change, Human Grade behavior change, fallback, queue, gate, or destructive operation occurred.
