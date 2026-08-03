@@ -327,8 +327,13 @@ class ActivationStore implements SpeedsterLearningActivationClient {
     cardProfile: entry.cardProfile,
     identity: entry.identity,
   }));
+  persistGlobalState: (value: unknown) => unknown;
+  hidePersistedBackup = false;
+  driftFinalGlobalReadback = false;
+  globalReadbacksAfterWrite = 0;
 
-  constructor(active: unknown) {
+  constructor(active: unknown, persistGlobalState: (value: unknown) => unknown = structuredClone) {
+    this.persistGlobalState = persistGlobalState;
     this.rows.set("GLOBAL", {
       id: "GLOBAL",
       state: structuredClone(active),
@@ -344,7 +349,20 @@ class ActivationStore implements SpeedsterLearningActivationClient {
       aiGraderV2LearningBank: {
         findUnique: async (raw) => {
           const args = raw as { where: { id: string } };
-          return structuredClone(draft.get(args.where.id) ?? null);
+          if (writes > 0 && args.where.id === "GLOBAL") {
+            this.globalReadbacksAfterWrite += 1;
+          }
+          if (writes > 0 && args.where.id === SPEEDSTER_LEARNING_BANK_BACKUP_ID
+            && this.hidePersistedBackup) return null;
+          const row = structuredClone(draft.get(args.where.id) ?? null);
+          if (row && args.where.id === "GLOBAL" && this.driftFinalGlobalReadback
+            && this.globalReadbacksAfterWrite >= 2) {
+            const state = row.state as SpeedsterLearningBankV2;
+            if (state.version === 2 && state.exemplars[0]) {
+              state.exemplars[0].fingerprint[0] += 5e-15;
+            }
+          }
+          return row;
         },
         create: async (raw) => {
           const args = raw as { data: Omit<ActivationRow, "updatedAt"> };
@@ -361,7 +379,9 @@ class ActivationStore implements SpeedsterLearningActivationClient {
           if (!draft.has(args.where.id)) throw new Error("missing row");
           draft.set(args.where.id, {
             id: args.where.id,
-            state: structuredClone(args.data.state),
+            state: args.where.id === "GLOBAL"
+              ? this.persistGlobalState(structuredClone(args.data.state))
+              : structuredClone(args.data.state),
             updatedAt: new Date("2026-08-02T20:00:00.000Z"),
           });
           writes += 1;
@@ -512,23 +532,104 @@ test("activation transaction saves one inert backup, swaps only GLOBAL, verifies
   );
   assert.equal(activated.mode, "ACTIVATE");
   assert.equal(store.writes, 2);
-  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), preflight.calibratedBankHash);
+  assert.equal(activated.calibratedBankHash, preflight.calibratedBankHash);
+  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), activated.activeRowHash);
   assert.equal(dispatchSpeedsterLearningBank(store.rows.get(SPEEDSTER_LEARNING_BANK_BACKUP_ID)?.state).kind, "INVALID");
   assert.deepEqual(store.unrelated, unrelatedBefore);
 
   const rollbackConfirmation = buildSpeedsterLearningRollbackConfirmation({
-    expectedActiveRowHash: preflight.calibratedBankHash,
+    expectedActiveRowHash: activated.activeRowHash,
     savedPreimageHash: input.expectedCurrentRowHash,
   });
   const rolledBack = await runSpeedsterLearningRollback(store, {
     typedConfirmation: rollbackConfirmation,
-    expectedActiveRowHash: preflight.calibratedBankHash,
+    expectedActiveRowHash: activated.activeRowHash,
     actorUserId: "admin-user",
   });
   assert.equal(rolledBack.mode, "ROLLBACK");
   assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), input.expectedCurrentRowHash);
   assert.equal(store.rows.has(SPEEDSTER_LEARNING_BANK_BACKUP_ID), true);
   assert.deepEqual(store.unrelated, unrelatedBefore);
+});
+
+test("activation binds rollback to the exact persisted hash after tolerance-safe JSON numeric drift", async () => {
+  const persistWithTinyNumericDrift = (value: unknown) => {
+    const persisted = structuredClone(value) as SpeedsterLearningBankV2;
+    if (persisted.version === 2 && persisted.exemplars[0]) {
+      persisted.exemplars[0].fingerprint[0] += 5e-15;
+    }
+    return persisted;
+  };
+  const store = new ActivationStore(activationV1Bank, persistWithTinyNumericDrift);
+  const input = activationInput();
+  const preflight = await runSpeedsterLearningActivation(store, input);
+  assert.equal(preflight.mode, "DRY_RUN");
+  if (preflight.mode !== "DRY_RUN") return;
+  const activated = await runSpeedsterLearningActivation(store, {
+    ...input,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+    dryRunStatus: preflight.dryRunStatus,
+    dryRunEvidenceHash: preflight.dryRunEvidenceHash,
+    typedConfirmation: preflight.requiredConfirmation,
+  });
+  assert.equal(activated.mode, "ACTIVATE");
+  assert.notEqual(activated.activeRowHash, activated.calibratedBankHash);
+  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), activated.activeRowHash);
+  assert.equal(
+    (store.rows.get(SPEEDSTER_LEARNING_BANK_BACKUP_ID)?.state as { activationBankHash?: string })
+      .activationBankHash,
+    activated.activeRowHash,
+  );
+  const rolledBack = await runSpeedsterLearningRollback(store, {
+    typedConfirmation: buildSpeedsterLearningRollbackConfirmation({
+      expectedActiveRowHash: activated.activeRowHash,
+      savedPreimageHash: input.expectedCurrentRowHash,
+    }),
+    expectedActiveRowHash: activated.activeRowHash,
+    actorUserId: "admin-user",
+  });
+  assert.equal(rolledBack.restoredRowHash, input.expectedCurrentRowHash);
+});
+
+test("activation rolls back when the persisted backup cannot be verified", async () => {
+  const store = new ActivationStore(activationV1Bank);
+  const input = activationInput();
+  const preflight = await runSpeedsterLearningActivation(store, input);
+  assert.equal(preflight.mode, "DRY_RUN");
+  if (preflight.mode !== "DRY_RUN") return;
+  store.hidePersistedBackup = true;
+  await assert.rejects(runSpeedsterLearningActivation(store, {
+    ...input,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+    dryRunStatus: preflight.dryRunStatus,
+    dryRunEvidenceHash: preflight.dryRunEvidenceHash,
+    typedConfirmation: preflight.requiredConfirmation,
+  }), /backup readback verification failed/);
+  assert.equal(store.writes, 0);
+  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), input.expectedCurrentRowHash);
+  assert.equal(store.rows.has(SPEEDSTER_LEARNING_BANK_BACKUP_ID), false);
+});
+
+test("activation rolls back when the final GLOBAL hash changes after its persisted identity is captured", async () => {
+  const store = new ActivationStore(activationV1Bank);
+  const input = activationInput();
+  const preflight = await runSpeedsterLearningActivation(store, input);
+  assert.equal(preflight.mode, "DRY_RUN");
+  if (preflight.mode !== "DRY_RUN") return;
+  store.driftFinalGlobalReadback = true;
+  await assert.rejects(runSpeedsterLearningActivation(store, {
+    ...input,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+    dryRunStatus: preflight.dryRunStatus,
+    dryRunEvidenceHash: preflight.dryRunEvidenceHash,
+    typedConfirmation: preflight.requiredConfirmation,
+  }), /activation readback verification failed/);
+  assert.equal(store.writes, 0);
+  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), input.expectedCurrentRowHash);
+  assert.equal(store.rows.has(SPEEDSTER_LEARNING_BANK_BACKUP_ID), false);
 });
 
 test("rollback requires exact active hash and typed confirmation", async () => {
@@ -542,10 +643,10 @@ test("rollback requires exact active hash and typed confirmation", async () => {
   input.dryRunStatus = preflight.dryRunStatus;
   input.dryRunEvidenceHash = preflight.dryRunEvidenceHash;
   input.typedConfirmation = preflight.requiredConfirmation;
-  await runSpeedsterLearningActivation(store, input);
+  const activated = await runSpeedsterLearningActivation(store, input);
   await assert.rejects(runSpeedsterLearningRollback(store, {
     typedConfirmation: "wrong",
-    expectedActiveRowHash: preflight.calibratedBankHash,
+    expectedActiveRowHash: activated.activeRowHash,
     actorUserId: "admin-user",
   }), /typed confirmation mismatch/);
   await assert.rejects(runSpeedsterLearningRollback(store, {

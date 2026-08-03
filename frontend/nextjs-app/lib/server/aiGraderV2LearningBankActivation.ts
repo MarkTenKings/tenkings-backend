@@ -254,15 +254,20 @@ async function recomputeActivationEvidence(
   };
 }
 
-const verifiedActivationReadback = (value: unknown, expected: SpeedsterLearningBankV2, expectedHash: string) => {
+const verifiedActivationReadback = (
+  value: unknown,
+  expected: SpeedsterLearningBankV2,
+  expectedPersistedHash?: string,
+) => {
   const parsed = parseSpeedsterLearningBankV2(value);
+  const persistedHash = hashSpeedsterLearningBankState(value);
   if (!parsed || parsed.calibration.status !== "CALIBRATED"
     || parsed.exemplars.length !== expected.exemplars.length
-    || hashSpeedsterLearningBankState(value) !== expectedHash
+    || (expectedPersistedHash !== undefined && persistedHash !== expectedPersistedHash)
     || !speedsterLearningBankTolerantEqual(value, expected)) {
     throw new Error("SAM Memory activation readback verification failed");
   }
-  return parsed;
+  return { parsed, persistedHash };
 };
 
 export async function runSpeedsterLearningActivation(
@@ -320,11 +325,20 @@ export async function runSpeedsterLearningActivation(
       throw new Error("SAM Memory activation typed confirmation mismatch");
     }
 
+    await tx.aiGraderV2LearningBank.update({
+      where: { id: SPEEDSTER_LEARNING_BANK_ID },
+      data: { state: authoritative.bank as unknown as Prisma.InputJsonValue },
+    });
+    const firstReadback = await tx.aiGraderV2LearningBank.findUnique({
+      where: { id: SPEEDSTER_LEARNING_BANK_ID },
+    });
+    if (!firstReadback) throw new Error("SAM Memory activation GLOBAL readback is missing");
+    const firstVerified = verifiedActivationReadback(firstReadback.state, authoritative.bank);
     const backupState = {
       version: SPEEDSTER_LEARNING_BANK_BACKUP_VERSION,
       originalState: current!.state,
       originalStateHash: input.expectedCurrentRowHash,
-      activationBankHash: authoritative.calibratedBankHash,
+      activationBankHash: firstVerified.persistedHash,
       calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
       dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
       createdByUserId: input.actorUserId,
@@ -336,29 +350,33 @@ export async function runSpeedsterLearningActivation(
         state: backupState as unknown as Prisma.InputJsonValue,
       },
     });
-    await tx.aiGraderV2LearningBank.update({
-      where: { id: SPEEDSTER_LEARNING_BANK_ID },
-      data: { state: authoritative.bank as unknown as Prisma.InputJsonValue },
-    });
-    const readback = await tx.aiGraderV2LearningBank.findUnique({
-      where: { id: SPEEDSTER_LEARNING_BANK_ID },
-    });
-    if (!readback) throw new Error("SAM Memory activation GLOBAL readback is missing");
+    const [finalReadback, backupReadback] = await Promise.all([
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_ID } }),
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_BACKUP_ID } }),
+    ]);
+    if (!finalReadback) throw new Error("SAM Memory activation final GLOBAL readback is missing");
+    const verifiedBackup = parseBackup(backupReadback?.state);
+    if (!verifiedBackup
+      || verifiedBackup.originalStateHash !== input.expectedCurrentRowHash
+      || verifiedBackup.activationBankHash !== firstVerified.persistedHash) {
+      throw new Error("SAM Memory activation backup readback verification failed");
+    }
     const verified = verifiedActivationReadback(
-      readback.state,
+      finalReadback.state,
       authoritative.bank,
-      authoritative.calibratedBankHash,
+      firstVerified.persistedHash,
     );
     return {
       mode: "ACTIVATE" as const,
       writes: 2 as const,
       activated: true as const,
-      currentRowHash: authoritative.calibratedBankHash,
+      activeRowHash: verified.persistedHash,
+      calibratedBankHash: authoritative.calibratedBankHash,
       savedPreimageHash: input.expectedCurrentRowHash,
       calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
       dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
-      exemplarCount: verified.exemplars.length,
-      version: verified.version,
+      exemplarCount: verified.parsed.exemplars.length,
+      version: verified.parsed.version,
     };
   });
 }
