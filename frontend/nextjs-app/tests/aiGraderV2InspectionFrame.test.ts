@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
@@ -51,4 +53,18 @@ test("accepts only bounded inspection metadata", () => {
     ...frame,
     cardBounds: { ...frame.cardBounds, x: 1000 },
   }), null);
+});
+
+test("uses a square magnifier while retaining full-stage boundary clamping", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const css = readFileSync(
+    `${root}/components/ai-grader-v2/DefectEvidenceViewer.module.css`,
+    "utf8",
+  );
+  const lens = css.match(/\.lens\s*\{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? "";
+
+  assert.match(lens, /border-radius:\s*0;/);
+  assert.match(lens, /left:\s*clamp\(0px,/);
+  assert.match(lens, /top:\s*clamp\(0px,/);
+  assert.doesNotMatch(lens, /border-radius:\s*50%/);
 });

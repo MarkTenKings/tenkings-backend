@@ -1,7 +1,8 @@
 # Speedster SAM Memory V2 — Frozen Build Blueprint
 
-Status: approved by Mark, Fable 5, and Codex. Design is frozen. Implementation
-starts only after the 2 mm inspection-frame release is Production-validated.
+Status: approved by Mark, Fable 5, and Codex. Design is frozen. Mark
+Production-validated the 2 mm inspection frame on 2026-08-02; implementation is
+now proceeding in the build order below.
 
 This is the final combined specification. It supersedes the original Fable 5
 attachment wherever they differ.
@@ -64,6 +65,12 @@ admission caps, and capacity pruning.
   the full rebuild. The fast path is not a second algorithm.
 - Bank writes use a transaction and PostgreSQL advisory lock so concurrent
   completions cannot lose lessons.
+
+Speedster sessions do not carry a durable completion timestamp. The unique,
+autoincrementing Human Grade label `certificateSequence`, created in the same
+completion transaction, is therefore the authoritative chronological order for
+history replay. Label `createdAt` and session ID are diagnostic/tie-break fields,
+not competing ordering authorities.
 
 ## Bank V2 format
 
@@ -128,6 +135,15 @@ Smart-Marks join the same SAM feature space during the existing save request:
    box. Human geometry stays authoritative.
 6. If SAM/fingerprinting still hard-fails, save the Smart-Mark without a
    fingerprint and continue.
+
+The review overlay shown for a Smart-Mark is the human rectangle clipped and
+rasterized to physical card material for deterministic measurement; it is not a
+SAM trace and is not the shape stored in memory. Edge/corner exemplars store the
+normalized SAM feature fingerprint only. Trace support and box-pooling fallback
+are restricted to on-card material, so exterior inspection-frame pixels cannot
+become defect teaching. Required edge/corner tests must prove valid trace
+handling and invalid-trace fallback to the human-box feature pool without
+changing the human rectangle, measurement, defect type, grade, or completion.
 
 In veto-only V2 a Smart-Mark immediately:
 
@@ -263,8 +279,13 @@ Acceptance:
 
 ## Build order
 
-1. Production-validate the isolated 2 mm inspection frame.
-2. Add read-only history inventory and pure V2 bank types/functions.
+1. Production-validate the isolated 2 mm inspection frame. **Completed
+   2026-08-02.** Mark confirmed four-sided context, aligned overlays, full-edge
+   Smart-Marks, expanded PhotoRoom/report canvas, and normal completion.
+2. Add read-only history inventory and pure V2 bank types/functions. **Built
+   locally; Production release pending.** This release also changes only the
+   review magnifier presentation from a circle to a square; its size, zoom,
+   pointer math, and boundary clamping remain unchanged.
 3. Add provenance harvest plus incremental/rebuild equivalence tests.
 4. Add Smart-Mark fingerprinting and failure tests.
 5. Add Python veto-only decision and diagnostics.
