@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT,
   SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
   SPEEDSTER_LEARNING_POISONED_ARTICUNO_SESSION_ID,
   evaluateSpeedsterLearningDecisionV2,
@@ -202,7 +203,85 @@ test("reports compact adjacent sensitivity, bank size, measured latency, and hon
   assert.equal(report.latency.totalDecisionMs, 0.9);
   assert.equal(report.status, "INSUFFICIENT_EVIDENCE");
   assert.equal(report.recommendation, null);
-  assert.match(report.insufficientReasons.join(" "), /Damage-on-text/);
+  assert.equal(report.requiredEvidence.damageOnTextPositiveProtection.status, "INSUFFICIENT_EVIDENCE");
+  assert.equal(report.requiredEvidence.damageOnTextPositiveProtection.blocksCandidateReadiness, false);
+  assert.equal(report.requiredEvidence.damageOnTextPositiveProtection.reviewAuthority, "MARK_VISUAL_REVIEW");
+  assert.doesNotMatch(report.insufficientReasons.join(" "), /Damage-on-text/);
+});
+
+test("uses the exact attested Articuno repeat cohort despite different identity card keys", () => {
+  const [firstArticuno, repeatArticuno] = SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT;
+  const report = replaySpeedsterLearningCalibrationV2([
+    session(firstArticuno.sessionId, firstArticuno.completionOrder, [finding()], {
+      cardKey: "first-free-form-identity",
+    }),
+    session(repeatArticuno.sessionId, repeatArticuno.completionOrder, [finding()], {
+      cardKey: "different-free-form-identity",
+    }),
+    session("positive-unrelated-control", 228, [finding({
+      origin: "SMART_MARK",
+      reviewResult: "SMART_MARKED",
+      detectedDefectType: undefined,
+      defectType: "VISIBLE_WHITENING",
+      featureFingerprint: axis(1),
+    })], { cardKey: "unrelated-control" }),
+  ], { now: () => 0 });
+
+  const evidence = report.requiredEvidence.articunoClassRemovalAfterEarlierLesson;
+  assert.equal(evidence.status, "PASS");
+  assert.deepEqual(evidence.attestedCohort, SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT);
+  assert.equal(evidence.matches.length, 1);
+  assert.equal(evidence.matches[0].laterLesson.sessionId, repeatArticuno.sessionId);
+  assert.equal(evidence.matches[0].earlierLesson.sessionId, firstArticuno.sessionId);
+  assert.equal(evidence.matches[0].earlierLesson.proposalOrder, 0);
+  assert.equal(evidence.matches[0].earlierLesson.lessonOrder, 0);
+  assert.equal(evidence.matches[0].negativeSimilarity, 1);
+  assert.equal(report.requiredEvidence.explicitPositiveRetention.status, "PASS");
+  assert.equal(report.requiredEvidence.unrelatedControlSuppression.status, "PASS");
+  assert.equal(report.requiredEvidence.damageOnTextPositiveProtection.status, "INSUFFICIENT_EVIDENCE");
+  assert.equal(report.status, "CANDIDATE_READY_FOR_MARK_REVIEW");
+  assert.ok(report.recommendation);
+  assert.deepEqual(report.insufficientReasons, []);
+});
+
+test("does not accept an attested cohort without the exact completion orders and earlier match", () => {
+  const [firstArticuno, repeatArticuno] = SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT;
+  const report = replaySpeedsterLearningCalibrationV2([
+    session(firstArticuno.sessionId, firstArticuno.completionOrder - 1, [finding()]),
+    session(repeatArticuno.sessionId, repeatArticuno.completionOrder, [finding({
+      featureFingerprint: axis(1),
+    })]),
+  ]);
+
+  const evidence = report.requiredEvidence.articunoClassRemovalAfterEarlierLesson;
+  assert.equal(evidence.status, "INSUFFICIENT_EVIDENCE");
+  assert.deepEqual(evidence.caseIds, []);
+  assert.deepEqual(evidence.matches, []);
+});
+
+test("does not misclassify differing identity keys inside the attested cohort as unrelated control evidence", () => {
+  const [firstArticuno, repeatArticuno] = SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT;
+  const report = replaySpeedsterLearningCalibrationV2([
+    session(firstArticuno.sessionId, firstArticuno.completionOrder, [finding()], {
+      cardKey: "first-free-form-identity",
+    }),
+    session(repeatArticuno.sessionId, repeatArticuno.completionOrder, [
+      finding(),
+      finding({
+        origin: "SMART_MARK",
+        reviewResult: "SMART_MARKED",
+        detectedDefectType: undefined,
+        defectType: "VISIBLE_WHITENING",
+        featureFingerprint: axis(1),
+      }),
+    ], { cardKey: "different-free-form-identity" }),
+  ]);
+
+  assert.equal(report.requiredEvidence.articunoClassRemovalAfterEarlierLesson.status, "PASS");
+  assert.equal(report.requiredEvidence.explicitPositiveRetention.status, "PASS");
+  assert.equal(report.requiredEvidence.unrelatedControlSuppression.status, "INSUFFICIENT_EVIDENCE");
+  assert.equal(report.status, "INSUFFICIENT_EVIDENCE");
+  assert.match(report.insufficientReasons.join(" "), /unrelated-control/);
 });
 
 test("bounds machine-readable case output without changing full replay counts", () => {

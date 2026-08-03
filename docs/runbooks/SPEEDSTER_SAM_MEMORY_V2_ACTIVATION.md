@@ -15,23 +15,28 @@ Authenticated admins POST to
 `/api/admin/ai-grader-v2/learning-bank-activation`. Omitting `operation`, or
 setting it to `DRY_RUN`, performs zero writes. Supply:
 
-- the exact current V1 row hash from the locked Articuno audit;
-- the exact canonical calibrated Bank V2 payload and its deterministic hash;
-- target exclusion `cmscem6960006accgpc69tgwp`.
+- the exact current V1 row hash from the locked Articuno audit.
 
 Under the completion advisory lock, the endpoint reruns the authoritative
-Articuno audit from current completed sessions, labels, and `GLOBAL`. It requires
-the current V1 audit to pass, exactly one frozen target exclusion, status
-`SAFE_TO_REQUEST_APPROVAL`, and the excluded rebuild hash to equal the proposed
-Bank V2 hash. It returns the canonical evidence hash and exact activation phrase.
+calibration replay and Articuno audit from current completed sessions, labels,
+and `GLOBAL`. It requires the current V1 audit to pass, an exact data-derived
+calibration recommendation, nonzero positive and negative evidence, a genuinely
+unrelated retained control, and both positive and negative final exemplars. It
+then derives the canonical Bank V2 internally; callers cannot supply thresholds,
+bank bytes, a bank hash, or an exclusion identity. The poisoned Articuno session
+`cmscem6960006accgpc69tgwp` is fingerprint-incompatible and therefore contributes
+zero V2 exemplars; that ineligibility is verified explicitly. The dry run returns
+the calibration hash, Articuno dry-run hash, derived bank hash, and exact
+activation phrase.
 
 ## Activation (do not run without approval)
 
 Repeat the identical request with `operation: "ACTIVATE"`, the returned
-`dryRunStatus` and `dryRunEvidenceHash`, and this exact dynamic phrase:
+`calibrationEvidenceHash`, `dryRunStatus`, and `dryRunEvidenceHash`, and this
+exact dynamic phrase:
 
 ```text
-ACTIVATE SPEEDSTER SAM MEMORY V2 <calibrated-bank-hash> FROM DRY RUN <evidence-hash> EXCLUDING cmscem6960006accgpc69tgwp
+ACTIVATE SPEEDSTER SAM MEMORY V2 <calibrated-bank-hash> FROM CALIBRATION <calibration-hash> AND DRY RUN <dry-run-hash> REPLACING <current-v1-hash>
 ```
 
 The transaction reacquires the same lock, recomputes all evidence, verifies the
@@ -61,3 +66,13 @@ If concurrent completions reorder the second transaction, it catches up the
 whole gap without losing a lesson. A learning failure cannot roll back the
 durable grade; the next completion or explicit reuse of the same catch-up helper
 heals the gap. There is no queue, worker, retry service, or second algorithm.
+
+## Smart-Mark evidence freshness
+
+The browser supplies the current Speedster session ID with each Smart-Mark
+measurement. The authenticated image proxy resolves that admin-owned session's
+exact persisted Front or Back inspection key and signs a fresh ten-minute read
+URL immediately before calling the existing SAM service. Caller-provided storage
+keys are never accepted. If ownership, side, key, lookup, or signing fails, the
+existing nonblocking Smart-Mark measurement remains authoritative and learning
+records the existing hard-failure branch without changing the grade.

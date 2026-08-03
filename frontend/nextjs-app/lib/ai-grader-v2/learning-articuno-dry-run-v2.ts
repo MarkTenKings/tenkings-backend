@@ -108,6 +108,11 @@ export type SpeedsterArticunoDryRunResult = {
     requestedExcludedSessionIds: [typeof SPEEDSTER_ARTICUNO_POISONED_SESSION_ID];
     targetPresent: boolean;
     targetFingerprintCompatible: boolean;
+    exclusionDisposition:
+      | "EXPLICIT_EXEMPLAR_REMOVAL"
+      | "ALREADY_INELIGIBLE_FINGERPRINT"
+      | "NO_EFFECT"
+      | "TARGET_MISSING";
   };
   history: {
     authoritativeOrder: "HumanGradeLabel.certificateSequence";
@@ -472,6 +477,25 @@ export function analyzeSpeedsterArticunoDryRun(input: {
     after: afterSessions.get(sessionId) ?? 0,
     delta: (afterSessions.get(sessionId) ?? 0) - (beforeSessions.get(sessionId) ?? 0),
   })).filter(({ delta }) => delta !== 0);
+  const targetFingerprintCompatible = target
+    ? speedsterHistoryFingerprintVersion(target.capture, target.gradeReport)
+      === SPEEDSTER_LEARNING_FINGERPRINT_VERSION
+    : false;
+  const targetDelta = exemplarSessionDeltas.find(({ sessionId }) =>
+    sessionId === SPEEDSTER_ARTICUNO_POISONED_SESSION_ID);
+  const exclusionDisposition = !target
+    ? "TARGET_MISSING" as const
+    : targetFingerprintCompatible
+      ? targetDelta && targetDelta.delta < 0
+        ? "EXPLICIT_EXEMPLAR_REMOVAL" as const
+        : "NO_EFFECT" as const
+      : sha256(unexcluded) === sha256(excluded)
+        ? "ALREADY_INELIGIBLE_FINGERPRINT" as const
+        : "NO_EFFECT" as const;
+  const exclusionVerified = exclusionDisposition === "EXPLICIT_EXEMPLAR_REMOVAL"
+    || exclusionDisposition === "ALREADY_INELIGIBLE_FINGERPRINT";
+  const positiveExemplars = excluded.exemplars.filter(({ polarity }) => polarity === "POSITIVE").length;
+  const negativeExemplars = excluded.exemplars.filter(({ polarity }) => polarity === "NEGATIVE").length;
 
   const strictLive = strictV1Bank(input.liveBank?.state);
   const v1Audit = strictLive ? auditV1(ordered, strictLive) : { boundaries: [], closest: null };
@@ -482,10 +506,14 @@ export function analyzeSpeedsterArticunoDryRun(input: {
   if (!target) reasons.push(`Target Articuno session ${SPEEDSTER_ARTICUNO_POISONED_SESSION_ID} is absent`);
   if (!input.calibration) reasons.push("Externally calibrated tau and margin were not supplied");
   if (!compatible.length || excluded.exemplars.length === 0) reasons.push("Compatible inspection-2mm history is insufficient");
+  if (positiveExemplars === 0) reasons.push("Bank V2 has no positive exemplars for false-veto protection");
+  if (negativeExemplars === 0) reasons.push("Bank V2 has no negative exemplars for learned vetoes");
+  if (target && !exclusionVerified) reasons.push("Target Articuno exclusion has no verified eligibility effect");
   const aborted = integrityErrors.length > 0 || !strictLive || !v1Audit.boundaries.length || !target || !validCalibration;
   const status: SpeedsterArticunoDryRunStatus = aborted
     ? "ABORTED"
-    : (!input.calibration || !compatible.length || excluded.exemplars.length === 0)
+    : (!input.calibration || !compatible.length || excluded.exemplars.length === 0
+      || positiveExemplars === 0 || negativeExemplars === 0 || !exclusionVerified)
       ? "INSUFFICIENT_EVIDENCE"
       : "SAFE_TO_REQUEST_APPROVAL";
 
@@ -498,9 +526,8 @@ export function analyzeSpeedsterArticunoDryRun(input: {
     target: {
       requestedExcludedSessionIds: [SPEEDSTER_ARTICUNO_POISONED_SESSION_ID],
       targetPresent: Boolean(target),
-      targetFingerprintCompatible: target
-        ? speedsterHistoryFingerprintVersion(target.capture, target.gradeReport) === SPEEDSTER_LEARNING_FINGERPRINT_VERSION
-        : false,
+      targetFingerprintCompatible,
+      exclusionDisposition,
     },
     history: {
       authoritativeOrder: "HumanGradeLabel.certificateSequence",

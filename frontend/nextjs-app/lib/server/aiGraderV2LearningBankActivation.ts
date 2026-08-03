@@ -5,7 +5,16 @@ import {
   SPEEDSTER_V1_AUDIT_ABSOLUTE_TOLERANCE,
   runLockedSpeedsterArticunoDryRun,
   speedsterLearningDeterministicHashV2,
+  speedsterHistoryFingerprintVersion,
 } from "../ai-grader-v2/learning-articuno-dry-run-v2";
+import {
+  replaySpeedsterLearningCalibrationV2,
+  speedsterLearningCardKeyV2,
+} from "../ai-grader-v2/learning-calibration-v2";
+import {
+  deriveSpeedsterLearningBankFromHistoryV2,
+  type SpeedsterLearningReviewHistoryV2,
+} from "../ai-grader-v2/learning-harvest-v2";
 import {
   parseSpeedsterLearningBankV2,
   type SpeedsterLearningBankV2,
@@ -19,7 +28,7 @@ export const SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID = SPEEDSTER_ARTICUNO_POIS
 export const SPEEDSTER_LEARNING_BANK_BACKUP_ID = "GLOBAL_PRE_V2_ACTIVATION_BACKUP";
 export const SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS = "SAFE_TO_REQUEST_APPROVAL" as const;
 export const SPEEDSTER_LEARNING_BANK_BACKUP_VERSION =
-  "SAM_MEMORY_V2_PREACTIVATION_BACKUP_V1" as const;
+  "SAM_MEMORY_V2_PREACTIVATION_BACKUP_V2" as const;
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const FLOAT_TOLERANCE = SPEEDSTER_V1_AUDIT_ABSOLUTE_TOLERANCE;
@@ -51,11 +60,12 @@ export function speedsterLearningBankTolerantEqual(
 }
 
 export function buildSpeedsterLearningActivationConfirmation(input: {
+  expectedCurrentRowHash: string;
   calibratedBankHash: string;
+  calibrationEvidenceHash: string;
   dryRunEvidenceHash: string;
-  targetExcludedSessionId: string;
 }) {
-  return `ACTIVATE SPEEDSTER SAM MEMORY V2 ${input.calibratedBankHash} FROM DRY RUN ${input.dryRunEvidenceHash} EXCLUDING ${input.targetExcludedSessionId}`;
+  return `ACTIVATE SPEEDSTER SAM MEMORY V2 ${input.calibratedBankHash} FROM CALIBRATION ${input.calibrationEvidenceHash} AND DRY RUN ${input.dryRunEvidenceHash} REPLACING ${input.expectedCurrentRowHash}`;
 }
 
 export function buildSpeedsterLearningRollbackConfirmation(input: {
@@ -69,11 +79,9 @@ export type SpeedsterLearningActivationInput = {
   mode?: "DRY_RUN" | "ACTIVATE";
   typedConfirmation?: string;
   expectedCurrentRowHash: string;
-  calibratedBankHash: string;
-  calibratedBank: unknown;
+  calibrationEvidenceHash?: string;
   dryRunStatus?: typeof SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS;
   dryRunEvidenceHash?: string;
-  targetExcludedSessionId: typeof SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID;
   actorUserId: string;
 };
 
@@ -105,6 +113,8 @@ export type SpeedsterLearningActivationTransaction = {
       reviewedDefects: unknown;
       capture: unknown;
       gradeReport: unknown;
+      cardProfile: string;
+      identity: unknown;
     }>>;
   };
 };
@@ -118,8 +128,8 @@ type BackupState = {
   originalState: unknown;
   originalStateHash: string;
   activationBankHash: string;
+  calibrationEvidenceHash: string;
   dryRunEvidenceHash: string;
-  targetExcludedSessionId: typeof SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID;
   createdByUserId: string;
   createdAt: string;
 };
@@ -130,8 +140,8 @@ const parseBackup = (value: unknown): BackupState | null => {
   if (backup.version !== SPEEDSTER_LEARNING_BANK_BACKUP_VERSION
     || !SHA256.test(String(backup.originalStateHash))
     || !SHA256.test(String(backup.activationBankHash))
+    || !SHA256.test(String(backup.calibrationEvidenceHash))
     || !SHA256.test(String(backup.dryRunEvidenceHash))
-    || backup.targetExcludedSessionId !== SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID
     || typeof backup.createdByUserId !== "string" || !backup.createdByUserId
     || typeof backup.createdAt !== "string" || !Number.isFinite(new Date(backup.createdAt).getTime())
     || hashSpeedsterLearningBankState(backup.originalState) !== backup.originalStateHash) return null;
@@ -143,7 +153,7 @@ const acquireLearningLock = (tx: SpeedsterLearningActivationTransaction) => tx.$
   FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
 `;
 
-const validateActivation = (
+const validateActivationPreimage = (
   input: SpeedsterLearningActivationInput,
   current: BankRow | null,
   backup: BankRow | null,
@@ -157,35 +167,12 @@ const validateActivation = (
   if (dispatchSpeedsterLearningBank(current.state).kind !== "V1") {
     throw new Error("SAM Memory activation requires the current GLOBAL row to be valid V1");
   }
-  if (input.targetExcludedSessionId !== SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID) {
-    throw new Error("SAM Memory activation excluded-session identity mismatch");
-  }
-  if (!SHA256.test(input.calibratedBankHash)
-    || hashSpeedsterLearningBankState(input.calibratedBank) !== input.calibratedBankHash) {
-    throw new Error("SAM Memory activation calibrated-bank hash mismatch");
-  }
-  const bank = parseSpeedsterLearningBankV2(input.calibratedBank);
-  if (!bank || bank.calibration.status !== "CALIBRATED") {
-    throw new Error("SAM Memory activation requires one externally calibrated Bank V2 payload");
-  }
-  if (hashSpeedsterLearningBankState(bank) !== input.calibratedBankHash
-    || !speedsterLearningBankTolerantEqual(input.calibratedBank, bank)) {
-    throw new Error("SAM Memory activation requires canonical calibrated Bank V2 bytes");
-  }
-  if (bank.exemplars.some((entry) => entry.sessionId === input.targetExcludedSessionId)) {
-    throw new Error("SAM Memory activation payload still contains the excluded session");
-  }
-  return bank;
 };
 
-async function recomputeActivationDryRun(
+async function recomputeActivationEvidence(
   tx: SpeedsterLearningActivationTransaction,
   current: BankRow,
-  bank: SpeedsterLearningBankV2,
 ) {
-  if (bank.calibration.status !== "CALIBRATED") {
-    throw new Error("SAM Memory activation requires calibrated tau and margin");
-  }
   const labels = await tx.humanGradeLabel.findMany({
     where: { source: "SPEEDSTER" },
     orderBy: { certificateSequence: "asc" },
@@ -193,26 +180,78 @@ async function recomputeActivationDryRun(
   });
   const sessions = await tx.aiGraderV2Session.findMany({
     where: { workflowState: "COMPLETED" },
-    select: { id: true, reviewedDefects: true, capture: true, gradeReport: true },
+    select: {
+      id: true,
+      reviewedDefects: true,
+      capture: true,
+      gradeReport: true,
+      cardProfile: true,
+      identity: true,
+    },
   });
-  const report = await runLockedSpeedsterArticunoDryRun({
+  const completionBySession = new Map(labels.flatMap((label) => label.sourceSessionId
+    ? [[label.sourceSessionId, label] as const]
+    : []));
+  const calibrationHistory = sessions.flatMap((session) => {
+    const completion = completionBySession.get(session.id);
+    return completion ? [{
+      sessionId: session.id,
+      completedAt: completion.createdAt,
+      completionOrder: completion.certificateSequence,
+      fingerprintVersion: speedsterHistoryFingerprintVersion(session.capture, session.gradeReport),
+      reviewedDefects: Array.isArray(session.reviewedDefects) ? session.reviewedDefects : [],
+      cardKey: speedsterLearningCardKeyV2(session.cardProfile, session.identity),
+    }] : [];
+  });
+  const calibration = replaySpeedsterLearningCalibrationV2(calibrationHistory, { now: () => 0 });
+  if (calibration.status !== "CANDIDATE_READY_FOR_MARK_REVIEW"
+    || !calibration.recommendation
+    || calibration.counts.positiveCases === 0
+    || calibration.counts.negativeCases === 0) {
+    throw new Error("SAM Memory activation authoritative calibration recommendation did not pass");
+  }
+  const bank = deriveSpeedsterLearningBankFromHistoryV2(
+    calibrationHistory as readonly SpeedsterLearningReviewHistoryV2[],
+    new Set([SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID]),
+    { status: "CALIBRATED", ...calibration.recommendation },
+  ).bank;
+  const positiveExemplars = bank.exemplars.filter(({ polarity }) => polarity === "POSITIVE").length;
+  const negativeExemplars = bank.exemplars.filter(({ polarity }) => polarity === "NEGATIVE").length;
+  if (positiveExemplars === 0 || negativeExemplars === 0) {
+    throw new Error("SAM Memory activation requires both positive and negative Bank V2 exemplars");
+  }
+  if (bank.exemplars.some((entry) => entry.sessionId === SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID)) {
+    throw new Error("SAM Memory activation canonical bank still contains the excluded session");
+  }
+  const dryRun = await runLockedSpeedsterArticunoDryRun({
     acquireCompletionAdvisoryLock: async () => undefined,
     listCompletionLabels: async () => labels,
     listCompletedSessions: async () => sessions,
     readGlobalLearningBank: async () => ({ state: current.state, updatedAt: current.updatedAt }),
-  }, { tau: bank.calibration.tau, margin: bank.calibration.margin });
-  const evidenceHash = speedsterLearningDeterministicHashV2(report);
+  }, calibration.recommendation);
+  const dryRunEvidenceHash = speedsterLearningDeterministicHashV2(dryRun);
+  const calibrationEvidenceHash = speedsterLearningDeterministicHashV2(calibration);
+  const calibratedBankHash = hashSpeedsterLearningBankState(bank);
   const latestCompletionOrder = labels.at(-1)?.certificateSequence ?? null;
-  if (report.status !== SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS
-    || report.liveV1Audit.status !== "PASS"
-    || report.liveV1Audit.liveExactHash !== hashSpeedsterLearningBankState(current.state)
-    || report.target.requestedExcludedSessionIds.length !== 1
-    || report.target.requestedExcludedSessionIds[0] !== SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID
-    || report.v2.excluded.deterministicHash !== hashSpeedsterLearningBankState(bank)
+  if (dryRun.status !== SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS
+    || dryRun.liveV1Audit.status !== "PASS"
+    || dryRun.liveV1Audit.liveExactHash !== hashSpeedsterLearningBankState(current.state)
+    || dryRun.target.requestedExcludedSessionIds.length !== 1
+    || dryRun.target.requestedExcludedSessionIds[0] !== SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID
+    || (dryRun.target.exclusionDisposition !== "EXPLICIT_EXEMPLAR_REMOVAL"
+      && dryRun.target.exclusionDisposition !== "ALREADY_INELIGIBLE_FINGERPRINT")
+    || dryRun.v2.excluded.deterministicHash !== calibratedBankHash
     || bank.replayCursor?.completionOrder !== latestCompletionOrder) {
     throw new Error("SAM Memory activation authoritative Articuno dry-run did not pass");
   }
-  return { report, evidenceHash };
+  return {
+    dryRun,
+    dryRunEvidenceHash,
+    calibration,
+    calibrationEvidenceHash,
+    bank,
+    calibratedBankHash,
+  };
 }
 
 const verifiedActivationReadback = (value: unknown, expected: SpeedsterLearningBankV2, expectedHash: string) => {
@@ -237,18 +276,23 @@ export async function runSpeedsterLearningActivation(
       tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_ID } }),
       tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_BACKUP_ID } }),
     ]);
-    const bank = validateActivation(input, current, backup);
-    const authoritative = await recomputeActivationDryRun(tx, current!, bank);
-    if (input.dryRunStatus && input.dryRunStatus !== authoritative.report.status) {
+    validateActivationPreimage(input, current, backup);
+    const authoritative = await recomputeActivationEvidence(tx, current!);
+    if (input.dryRunStatus && input.dryRunStatus !== authoritative.dryRun.status) {
       throw new Error("SAM Memory activation dry-run status mismatch");
     }
-    if (input.dryRunEvidenceHash && input.dryRunEvidenceHash !== authoritative.evidenceHash) {
+    if (input.dryRunEvidenceHash && input.dryRunEvidenceHash !== authoritative.dryRunEvidenceHash) {
       throw new Error("SAM Memory activation dry-run evidence hash mismatch");
     }
+    if (input.calibrationEvidenceHash
+      && input.calibrationEvidenceHash !== authoritative.calibrationEvidenceHash) {
+      throw new Error("SAM Memory activation calibration evidence hash mismatch");
+    }
     const confirmationInput = {
-      calibratedBankHash: input.calibratedBankHash,
-      dryRunEvidenceHash: authoritative.evidenceHash,
-      targetExcludedSessionId: input.targetExcludedSessionId,
+      expectedCurrentRowHash: input.expectedCurrentRowHash,
+      calibratedBankHash: authoritative.calibratedBankHash,
+      calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+      dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
     };
     const requiredConfirmation = buildSpeedsterLearningActivationConfirmation(confirmationInput);
     if ((input.mode ?? "DRY_RUN") !== "ACTIVATE") {
@@ -258,15 +302,19 @@ export async function runSpeedsterLearningActivation(
         ready: true as const,
         requiredConfirmation,
         currentRowHash: input.expectedCurrentRowHash,
-        calibratedBankHash: input.calibratedBankHash,
+        calibratedBankHash: authoritative.calibratedBankHash,
+        calibrationStatus: authoritative.calibration.status,
+        calibrationRecommendation: authoritative.calibration.recommendation,
+        calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
         dryRunStatus: SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS,
-        dryRunEvidenceHash: authoritative.evidenceHash,
-        exemplarCount: bank.exemplars.length,
+        dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
+        exemplarCount: authoritative.bank.exemplars.length,
       };
     }
-    if (input.dryRunStatus !== authoritative.report.status
-      || input.dryRunEvidenceHash !== authoritative.evidenceHash) {
-      throw new Error("SAM Memory activation requires the exact authoritative dry-run status and evidence hash");
+    if (input.dryRunStatus !== authoritative.dryRun.status
+      || input.dryRunEvidenceHash !== authoritative.dryRunEvidenceHash
+      || input.calibrationEvidenceHash !== authoritative.calibrationEvidenceHash) {
+      throw new Error("SAM Memory activation requires the exact authoritative calibration and dry-run evidence hashes");
     }
     if (input.typedConfirmation !== requiredConfirmation) {
       throw new Error("SAM Memory activation typed confirmation mismatch");
@@ -276,9 +324,9 @@ export async function runSpeedsterLearningActivation(
       version: SPEEDSTER_LEARNING_BANK_BACKUP_VERSION,
       originalState: current!.state,
       originalStateHash: input.expectedCurrentRowHash,
-      activationBankHash: input.calibratedBankHash,
-      dryRunEvidenceHash: authoritative.evidenceHash,
-      targetExcludedSessionId: input.targetExcludedSessionId,
+      activationBankHash: authoritative.calibratedBankHash,
+      calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+      dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
       createdByUserId: input.actorUserId,
       createdAt: now().toISOString(),
     } satisfies BackupState;
@@ -290,20 +338,25 @@ export async function runSpeedsterLearningActivation(
     });
     await tx.aiGraderV2LearningBank.update({
       where: { id: SPEEDSTER_LEARNING_BANK_ID },
-      data: { state: input.calibratedBank as Prisma.InputJsonValue },
+      data: { state: authoritative.bank as unknown as Prisma.InputJsonValue },
     });
     const readback = await tx.aiGraderV2LearningBank.findUnique({
       where: { id: SPEEDSTER_LEARNING_BANK_ID },
     });
     if (!readback) throw new Error("SAM Memory activation GLOBAL readback is missing");
-    const verified = verifiedActivationReadback(readback.state, bank, input.calibratedBankHash);
+    const verified = verifiedActivationReadback(
+      readback.state,
+      authoritative.bank,
+      authoritative.calibratedBankHash,
+    );
     return {
       mode: "ACTIVATE" as const,
       writes: 2 as const,
       activated: true as const,
-      currentRowHash: input.calibratedBankHash,
+      currentRowHash: authoritative.calibratedBankHash,
       savedPreimageHash: input.expectedCurrentRowHash,
-      dryRunEvidenceHash: authoritative.evidenceHash,
+      calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+      dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
       exemplarCount: verified.exemplars.length,
       version: verified.version,
     };

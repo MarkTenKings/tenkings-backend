@@ -5,7 +5,6 @@ import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import {
   SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS,
-  SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID,
   runSpeedsterLearningActivation,
   runSpeedsterLearningRollback,
   type SpeedsterLearningActivationClient,
@@ -18,11 +17,9 @@ const activationSchema = z.object({
   operation: z.enum(["DRY_RUN", "ACTIVATE"]).default("DRY_RUN"),
   typedConfirmation: z.string().optional(),
   expectedCurrentRowHash: sha256,
-  calibratedBankHash: sha256,
-  calibratedBank: z.unknown(),
+  calibrationEvidenceHash: sha256.optional(),
   dryRunStatus: z.literal(SPEEDSTER_LEARNING_ACTIVATION_DRY_RUN_STATUS).optional(),
   dryRunEvidenceHash: sha256.optional(),
-  targetExcludedSessionId: z.literal(SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID),
 }).strict();
 const rollbackSchema = z.object({
   operation: z.literal("ROLLBACK"),
@@ -70,11 +67,9 @@ export function createSpeedsterLearningBankActivationHandler(deps: Dependencies 
         mode: payload.operation,
         typedConfirmation: payload.typedConfirmation,
         expectedCurrentRowHash: payload.expectedCurrentRowHash,
-        calibratedBankHash: payload.calibratedBankHash,
-        calibratedBank: payload.calibratedBank,
+        calibrationEvidenceHash: payload.calibrationEvidenceHash,
         dryRunStatus: payload.dryRunStatus,
         dryRunEvidenceHash: payload.dryRunEvidenceHash,
-        targetExcludedSessionId: payload.targetExcludedSessionId,
         actorUserId: admin.user.id,
       });
       return res.status(200).json(result);

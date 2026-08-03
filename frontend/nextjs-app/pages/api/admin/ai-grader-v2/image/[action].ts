@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { speedsterLearningBankForDetect } from "../../../../../lib/server/aiGraderV2LearningBank";
+import { presignReadUrl } from "../../../../../lib/server/storage";
 
 const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
 
@@ -13,7 +14,67 @@ export function speedsterServiceHeaders() {
   };
 }
 
-export async function speedsterServiceBody(action: string, body: Record<string, unknown>) {
+type MeasureEvidenceDependencies = {
+  findOwnedCapture: (sessionId: string, createdByUserId: string) => Promise<{ capture: unknown } | null>;
+  presignRead: (storageKey: string, expiresInSeconds: number) => Promise<string>;
+};
+
+const measureEvidenceDependencies: MeasureEvidenceDependencies = {
+  findOwnedCapture: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
+    where: { id: sessionId, createdByUserId },
+    select: { capture: true },
+  }),
+  presignRead: presignReadUrl,
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+export async function freshSpeedsterMeasureEvidence(
+  body: Record<string, unknown>,
+  createdByUserId: string,
+  deps: MeasureEvidenceDependencies = measureEvidenceDependencies,
+) {
+  const { sessionId, ...serviceBody } = body;
+  const evidenceView = isRecord(serviceBody.evidenceView) ? serviceBody.evidenceView : null;
+  const sideMatch = typeof evidenceView?.id === "string"
+    ? /^(FRONT|BACK):ORIGINAL$/.exec(evidenceView.id)
+    : null;
+  const side = sideMatch?.[1];
+  if (typeof sessionId !== "string" || !sessionId.trim() || !side || serviceBody.side !== side) {
+    return serviceBody;
+  }
+
+  try {
+    const ownedSessionId = sessionId.trim();
+    const session = await deps.findOwnedCapture(ownedSessionId, createdByUserId);
+    const capture = isRecord(session?.capture) ? session.capture : null;
+    const persistedSide = capture && isRecord(capture[side.toLowerCase()])
+      ? capture[side.toLowerCase()] as Record<string, unknown>
+      : null;
+    const storageKey = persistedSide?.inspectionStorageKey;
+    const expectedStorageKey = `ai-grader-v2/${createdByUserId}/${ownedSessionId}/prepared/${side.toLowerCase()}/inspection.webp`;
+    if (storageKey !== expectedStorageKey) return serviceBody;
+    const imageUrl = await deps.presignRead(expectedStorageKey, 60 * 10);
+    return {
+      ...serviceBody,
+      evidenceView: { ...evidenceView, imageUrl },
+    };
+  } catch {
+    // Fingerprinting is optional. Preserve the existing nonblocking measure path
+    // if storage lookup or fresh URL signing is temporarily unavailable.
+    return serviceBody;
+  }
+}
+
+export async function speedsterServiceBody(
+  action: string,
+  body: Record<string, unknown>,
+  createdByUserId?: string,
+) {
+  if (action === "measure" && createdByUserId) {
+    return freshSpeedsterMeasureEvidence(body, createdByUserId);
+  }
   if (action !== "detect") return body;
   const bank = await prisma.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
   return { ...body, learningBank: speedsterLearningBankForDetect(bank?.state) };
@@ -26,7 +87,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    await requireAdminSession(req);
+    const admin = await requireAdminSession(req);
     const action = Array.isArray(req.query.action) ? req.query.action[0] : req.query.action;
     if (!action || !ACTIONS.has(action)) {
       return res.status(404).json({ message: "Unknown Speedster image action" });
@@ -38,7 +99,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const response = await fetch(`${serviceUrl}/${action}`, {
       method: "POST",
       headers: speedsterServiceHeaders(),
-      body: JSON.stringify(await speedsterServiceBody(action, req.body ?? {})),
+      body: JSON.stringify(await speedsterServiceBody(action, req.body ?? {}, admin.user.id)),
     });
     const payload = await response.json();
     return res.status(response.status).json(payload);

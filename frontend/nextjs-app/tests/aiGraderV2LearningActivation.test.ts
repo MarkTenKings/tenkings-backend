@@ -25,17 +25,22 @@ import {
 } from "../lib/server/aiGraderV2LearningBankActivation";
 import { deriveSpeedsterLearningBankFromHistoryV2 } from "../lib/ai-grader-v2/learning-harvest-v2";
 import {
+  SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT,
+  replaySpeedsterLearningCalibrationV2,
+  speedsterLearningCardKeyV2,
+} from "../lib/ai-grader-v2/learning-calibration-v2";
+import {
   SPEEDSTER_LEARNING_FINGERPRINT_SIZE,
   SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
   type SpeedsterLearningBankV2,
 } from "../lib/ai-grader-v2/learning-v2";
+import { updateSpeedsterLearningBank, type SpeedsterLearningBank } from "../lib/ai-grader-v2/learning";
 
 const fingerprint = (index: number) => Array.from(
   { length: SPEEDSTER_LEARNING_FINGERPRINT_SIZE },
   (_, part) => part === index % SPEEDSTER_LEARNING_FINGERPRINT_SIZE ? 1 : 0,
 );
 
-const calibrationSessionId = "calibration-session";
 const authoritativeCompletedAt = (sequence: number) => new Date(Date.UTC(2026, 7, 2, 12, sequence));
 const inspectionFrame = {
   width: 1350,
@@ -145,25 +150,78 @@ const removedFinding = (index: number) => ({
   sourceViewId: "ORIGINAL",
 });
 
-const authoritativeHistory = (targetFindings: unknown[] = []) => [{
+const smartMarkFinding = (index: number) => ({
+  origin: "SMART_MARK",
+  reviewResult: "SMART_MARKED",
+  defectType: "VISIBLE_WHITENING",
+  featureFingerprint: fingerprint(index),
+  sourceViewId: "ORIGINAL",
+});
+
+const authoritativeHistory = () => [{
   sessionId: SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID,
-  completedAt: authoritativeCompletedAt(1),
-  completionOrder: 1,
-  fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
-  reviewedDefects: targetFindings,
+  completedAt: authoritativeCompletedAt(225),
+  completionOrder: 225,
+  fingerprintVersion: "INCOMPATIBLE_PRE_INSPECTION_2MM",
+  reviewedDefects: [removedFinding(5)],
+  capture: {},
+  gradeReport: { detectorVersion: "pre-inspection-detector" },
+  cardProfile: "POKEMON",
+  identity: { cardName: "Articuno", testRun: "poison" },
 }, {
-  sessionId: calibrationSessionId,
-  completedAt: authoritativeCompletedAt(2),
-  completionOrder: 2,
+  sessionId: SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[0].sessionId,
+  completedAt: authoritativeCompletedAt(SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[0].completionOrder),
+  completionOrder: SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[0].completionOrder,
   fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
   reviewedDefects: [removedFinding(0)],
+  capture: compatibleCapture,
+  gradeReport: compatibleGradeReport,
+  cardProfile: "POKEMON",
+  identity: { cardName: "Articuno", testRun: "first" },
+}, {
+  sessionId: SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[1].sessionId,
+  completedAt: authoritativeCompletedAt(SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[1].completionOrder),
+  completionOrder: SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT[1].completionOrder,
+  fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+  reviewedDefects: [removedFinding(0)],
+  capture: compatibleCapture,
+  gradeReport: compatibleGradeReport,
+  cardProfile: "POKEMON",
+  identity: { cardName: "Articuno", testRun: "repeat" },
+}, {
+  sessionId: "positive-unrelated-control",
+  completedAt: authoritativeCompletedAt(228),
+  completionOrder: 228,
+  fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+  reviewedDefects: [smartMarkFinding(1)],
+  capture: compatibleCapture,
+  gradeReport: compatibleGradeReport,
+  cardProfile: "POKEMON",
+  identity: { cardName: "Unrelated control" },
 }];
 
-const calibratedBank = (): SpeedsterLearningBankV2 => deriveSpeedsterLearningBankFromHistoryV2(
-  authoritativeHistory(),
-  new Set([SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID]),
-  { status: "CALIBRATED", tau: 0.91, margin: 0.08 },
-).bank;
+const authoritativeCalibration = () => replaySpeedsterLearningCalibrationV2(
+  authoritativeHistory().map((entry) => ({
+    ...entry,
+    cardKey: speedsterLearningCardKeyV2(entry.cardProfile, entry.identity),
+  })),
+  { now: () => 0 },
+);
+
+const calibratedBank = (): SpeedsterLearningBankV2 => {
+  const recommendation = authoritativeCalibration().recommendation;
+  if (!recommendation) throw new Error("Activation test history must have an authoritative recommendation");
+  return deriveSpeedsterLearningBankFromHistoryV2(
+    authoritativeHistory(),
+    new Set([SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID]),
+    { status: "CALIBRATED", ...recommendation },
+  ).bank;
+};
+
+const activationV1Bank = authoritativeHistory().reduce<SpeedsterLearningBank>(
+  (bank, entry) => updateSpeedsterLearningBank(bank, entry.reviewedDefects),
+  { version: 1, types: {} },
+);
 
 const addCompleted = (store: CatchUpStore, sequence: number, findingIndex = sequence) => {
   const sessionId = `completed-session-${sequence.toString().padStart(3, "0")}`;
@@ -254,11 +312,20 @@ class ActivationStore implements SpeedsterLearningActivationClient {
     certificateSequence: entry.completionOrder,
     createdAt: authoritativeCompletedAt(entry.completionOrder),
   }));
-  sessions = authoritativeHistory().map((entry) => ({
+  sessions: Array<{
+    id: string;
+    reviewedDefects: unknown[];
+    capture: unknown;
+    gradeReport: unknown;
+    cardProfile: string;
+    identity: unknown;
+  }> = authoritativeHistory().map((entry) => ({
     id: entry.sessionId,
     reviewedDefects: entry.reviewedDefects,
-    capture: compatibleCapture,
-    gradeReport: compatibleGradeReport,
+    capture: entry.capture,
+    gradeReport: entry.gradeReport,
+    cardProfile: entry.cardProfile,
+    identity: entry.identity,
   }));
 
   constructor(active: unknown) {
@@ -315,21 +382,17 @@ class ActivationStore implements SpeedsterLearningActivationClient {
   }
 }
 
-const activationInput = (bank: unknown = calibratedBank()): SpeedsterLearningActivationInput => {
-  const expectedCurrentRowHash = hashSpeedsterLearningBankState(v1Bank);
-  const calibratedBankHash = hashSpeedsterLearningBankState(bank);
+const activationInput = (): SpeedsterLearningActivationInput => {
+  const expectedCurrentRowHash = hashSpeedsterLearningBankState(activationV1Bank);
   return {
     mode: "DRY_RUN",
     expectedCurrentRowHash,
-    calibratedBankHash,
-    calibratedBank: bank,
-    targetExcludedSessionId: SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID,
     actorUserId: "admin-user",
   };
 };
 
-test("activation dry-run validates exact evidence and performs zero writes", async () => {
-  const store = new ActivationStore(v1Bank);
+test("activation dry-run derives the canonical bank from locked authoritative evidence and performs zero writes", async () => {
+  const store = new ActivationStore(activationV1Bank);
   const input = activationInput();
   const result = await runSpeedsterLearningActivation(store, input);
   assert.equal(result.mode, "DRY_RUN");
@@ -337,48 +400,35 @@ test("activation dry-run validates exact evidence and performs zero writes", asy
   assert.equal(store.writes, 0);
   assert.equal(store.rows.has(SPEEDSTER_LEARNING_BANK_BACKUP_ID), false);
   assert.equal(result.requiredConfirmation, buildSpeedsterLearningActivationConfirmation({
-    calibratedBankHash: input.calibratedBankHash,
+    expectedCurrentRowHash: input.expectedCurrentRowHash,
+    calibratedBankHash: result.calibratedBankHash,
+    calibrationEvidenceHash: result.calibrationEvidenceHash,
     dryRunEvidenceHash: result.dryRunEvidenceHash,
-    targetExcludedSessionId: input.targetExcludedSessionId,
   }));
+  assert.equal(result.calibratedBankHash, hashSpeedsterLearningBankState(calibratedBank()));
+  assert.deepEqual(result.calibrationRecommendation, authoritativeCalibration().recommendation);
 });
 
-test("activation aborts on wrong hash, evidence, calibration, exclusion, or confirmation", async () => {
+test("activation aborts on wrong preimage/evidence or confirmation", async () => {
   await assert.rejects(
-    runSpeedsterLearningActivation(new ActivationStore(v1Bank), {
+    runSpeedsterLearningActivation(new ActivationStore(activationV1Bank), {
       ...activationInput(), expectedCurrentRowHash: "0".repeat(64),
     }),
     /current-row hash mismatch/,
   );
   await assert.rejects(
-    runSpeedsterLearningActivation(new ActivationStore(v1Bank), {
-      ...activationInput(), calibratedBankHash: "0".repeat(64),
-    }),
-    /calibrated-bank hash mismatch/,
-  );
-  await assert.rejects(
-    runSpeedsterLearningActivation(new ActivationStore(v1Bank), {
+    runSpeedsterLearningActivation(new ActivationStore(activationV1Bank), {
       ...activationInput(), dryRunEvidenceHash: "e".repeat(64),
     }),
     /dry-run evidence hash mismatch/,
   );
-  const uncalibrated = deriveSpeedsterLearningBankFromHistoryV2([]).bank;
   await assert.rejects(
-    runSpeedsterLearningActivation(new ActivationStore(v1Bank), activationInput(uncalibrated)),
-    /externally calibrated/,
+    runSpeedsterLearningActivation(new ActivationStore(activationV1Bank), {
+      ...activationInput(), calibrationEvidenceHash: "d".repeat(64),
+    }),
+    /calibration evidence hash mismatch/,
   );
-  await assert.rejects(
-    runSpeedsterLearningActivation(
-      new ActivationStore(v1Bank),
-      activationInput(deriveSpeedsterLearningBankFromHistoryV2(
-        authoritativeHistory([removedFinding(4)]),
-        new Set(),
-        { status: "CALIBRATED", tau: 0.91, margin: 0.08 },
-      ).bank),
-    ),
-    /still contains the excluded session/,
-  );
-  const wrongConfirmationStore = new ActivationStore(v1Bank);
+  const wrongConfirmationStore = new ActivationStore(activationV1Bank);
   const preflight = await runSpeedsterLearningActivation(wrongConfirmationStore, activationInput());
   await assert.rejects(
     runSpeedsterLearningActivation(wrongConfirmationStore, {
@@ -386,18 +436,47 @@ test("activation aborts on wrong hash, evidence, calibration, exclusion, or conf
       mode: "ACTIVATE",
       typedConfirmation: preflight.requiredConfirmation,
     }),
-    /requires the exact authoritative dry-run status and evidence hash/,
+    /requires the exact authoritative calibration and dry-run evidence hashes/,
   );
   await assert.rejects(
     runSpeedsterLearningActivation(wrongConfirmationStore, {
       ...activationInput(),
       mode: "ACTIVATE",
+      calibrationEvidenceHash: preflight.calibrationEvidenceHash,
       dryRunStatus: preflight.dryRunStatus,
       dryRunEvidenceHash: preflight.dryRunEvidenceHash,
       typedConfirmation: "wrong",
     }),
     /typed confirmation mismatch/,
   );
+});
+
+test("activation remains fail-closed when authoritative history lacks either exemplar polarity", async () => {
+  const noPositive = new ActivationStore(activationV1Bank);
+  noPositive.sessions = noPositive.sessions.map((session) => session.id === "positive-unrelated-control"
+    ? { ...session, reviewedDefects: [] }
+    : session);
+  await assert.rejects(
+    runSpeedsterLearningActivation(noPositive, activationInput()),
+    /authoritative calibration recommendation did not pass/,
+  );
+  assert.equal(noPositive.writes, 0);
+
+  const noNegative = new ActivationStore(activationV1Bank);
+  noNegative.sessions = noNegative.sessions.map((session) => ({
+    ...session,
+    reviewedDefects: session.reviewedDefects.map((finding) => ({
+      ...(finding as Record<string, unknown>),
+      origin: "SMART_MARK",
+      reviewResult: "SMART_MARKED",
+      detectedDefectType: undefined,
+    })),
+  }));
+  await assert.rejects(
+    runSpeedsterLearningActivation(noNegative, activationInput()),
+    /authoritative calibration recommendation did not pass/,
+  );
+  assert.equal(noNegative.writes, 0);
 });
 
 test("activation endpoint is admin-authenticated and defaults to zero-write dry-run", () => {
@@ -410,15 +489,19 @@ test("activation endpoint is admin-authenticated and defaults to zero-write dry-
   assert.match(source, /z\.enum\(\["DRY_RUN", "ACTIVATE"\]\)\.default\("DRY_RUN"\)/);
   assert.match(source, /runSpeedsterLearningActivation/);
   assert.match(source, /runSpeedsterLearningRollback/);
+  assert.doesNotMatch(source, /calibratedBank(?:Hash)?/);
   assert.doesNotMatch(source, /delete|deleteMany|updateMany/);
 });
 
 test("activation transaction saves one inert backup, swaps only GLOBAL, verifies, and rolls back", async () => {
-  const store = new ActivationStore(v1Bank);
+  const store = new ActivationStore(activationV1Bank);
   const unrelatedBefore = structuredClone(store.unrelated);
   const input = activationInput();
   const preflight = await runSpeedsterLearningActivation(store, input);
+  assert.equal(preflight.mode, "DRY_RUN");
+  if (preflight.mode !== "DRY_RUN") return;
   input.mode = "ACTIVATE";
+  input.calibrationEvidenceHash = preflight.calibrationEvidenceHash;
   input.dryRunStatus = preflight.dryRunStatus;
   input.dryRunEvidenceHash = preflight.dryRunEvidenceHash;
   input.typedConfirmation = preflight.requiredConfirmation;
@@ -429,17 +512,17 @@ test("activation transaction saves one inert backup, swaps only GLOBAL, verifies
   );
   assert.equal(activated.mode, "ACTIVATE");
   assert.equal(store.writes, 2);
-  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), input.calibratedBankHash);
+  assert.equal(hashSpeedsterLearningBankState(store.rows.get("GLOBAL")?.state), preflight.calibratedBankHash);
   assert.equal(dispatchSpeedsterLearningBank(store.rows.get(SPEEDSTER_LEARNING_BANK_BACKUP_ID)?.state).kind, "INVALID");
   assert.deepEqual(store.unrelated, unrelatedBefore);
 
   const rollbackConfirmation = buildSpeedsterLearningRollbackConfirmation({
-    expectedActiveRowHash: input.calibratedBankHash,
+    expectedActiveRowHash: preflight.calibratedBankHash,
     savedPreimageHash: input.expectedCurrentRowHash,
   });
   const rolledBack = await runSpeedsterLearningRollback(store, {
     typedConfirmation: rollbackConfirmation,
-    expectedActiveRowHash: input.calibratedBankHash,
+    expectedActiveRowHash: preflight.calibratedBankHash,
     actorUserId: "admin-user",
   });
   assert.equal(rolledBack.mode, "ROLLBACK");
@@ -449,17 +532,20 @@ test("activation transaction saves one inert backup, swaps only GLOBAL, verifies
 });
 
 test("rollback requires exact active hash and typed confirmation", async () => {
-  const store = new ActivationStore(v1Bank);
+  const store = new ActivationStore(activationV1Bank);
   const input = activationInput();
   const preflight = await runSpeedsterLearningActivation(store, input);
+  assert.equal(preflight.mode, "DRY_RUN");
+  if (preflight.mode !== "DRY_RUN") return;
   input.mode = "ACTIVATE";
+  input.calibrationEvidenceHash = preflight.calibrationEvidenceHash;
   input.dryRunStatus = preflight.dryRunStatus;
   input.dryRunEvidenceHash = preflight.dryRunEvidenceHash;
   input.typedConfirmation = preflight.requiredConfirmation;
   await runSpeedsterLearningActivation(store, input);
   await assert.rejects(runSpeedsterLearningRollback(store, {
     typedConfirmation: "wrong",
-    expectedActiveRowHash: input.calibratedBankHash,
+    expectedActiveRowHash: preflight.calibratedBankHash,
     actorUserId: "admin-user",
   }), /typed confirmation mismatch/);
   await assert.rejects(runSpeedsterLearningRollback(store, {

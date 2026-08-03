@@ -38,6 +38,12 @@ const finding = (seed: number, input: Record<string, unknown> = {}) => ({
   ...input,
 });
 
+const positiveFinding = (seed: number) => finding(seed, {
+  origin: "SMART_MARK",
+  detectedDefectType: undefined,
+  reviewResult: "SMART_MARKED",
+});
+
 const inspectionCapture = () => ({
   front: {
     inspectionStorageKey: "speedster/front/inspection.webp",
@@ -204,7 +210,7 @@ test("V1 audit applies the documented absolute/relative float tolerance", () => 
 });
 
 test("excludes only the target Articuno session and reports exact per-session deltas", () => {
-  const control = historyRow("unrelated-control-session", 1);
+  const control = historyRow("unrelated-control-session", 1, [finding(1), positiveFinding(9)]);
   const target = historyRow(SPEEDSTER_ARTICUNO_POISONED_SESSION_ID, 2);
   const result = analyzeSpeedsterArticunoDryRun({
     history: [control, target],
@@ -213,6 +219,7 @@ test("excludes only the target Articuno session and reports exact per-session de
   });
 
   assert.equal(result.status, "SAFE_TO_REQUEST_APPROVAL");
+  assert.equal(result.target.exclusionDisposition, "EXPLICIT_EXEMPLAR_REMOVAL");
   assert.deepEqual(result.target.requestedExcludedSessionIds, [SPEEDSTER_ARTICUNO_POISONED_SESSION_ID]);
   assert.deepEqual(result.v2.affectedSessionIds, [SPEEDSTER_ARTICUNO_POISONED_SESSION_ID]);
   assert.deepEqual(result.v2.exemplarSessionDeltas, [{
@@ -221,7 +228,7 @@ test("excludes only the target Articuno session and reports exact per-session de
     after: 0,
     delta: -1,
   }]);
-  assert.equal(result.v2.excluded.exemplars, 1);
+  assert.equal(result.v2.excluded.exemplars, 2);
   assert.equal(result.v2.countDeltas.VISIBLE_WHITENING.NEGATIVE, -1);
 });
 
@@ -265,12 +272,37 @@ test("counts and skips incompatible pre-inspection sessions without silent conve
     SPEEDSTER_ARTICUNO_POISONED_SESSION_ID,
   ]);
   assert.equal(result.target.targetFingerprintCompatible, false);
+  assert.equal(result.target.exclusionDisposition, "ALREADY_INELIGIBLE_FINGERPRINT");
   assert.equal(result.v2.unexcluded.deterministicHash, result.v2.excluded.deterministicHash);
+  assert.equal(result.status, "INSUFFICIENT_EVIDENCE");
+  assert.match(result.reasons.join(" "), /no positive exemplars/);
+});
+
+test("refuses approval when the canonical V2 bank lacks either polarity", () => {
+  const target = historyRow(SPEEDSTER_ARTICUNO_POISONED_SESSION_ID, 1, [], false);
+  const negativeOnly = historyRow("negative-only", 2, [finding(2)]);
+  const negativeResult = analyzeSpeedsterArticunoDryRun({
+    history: [target, negativeOnly],
+    liveBank: liveRow([target, negativeOnly]),
+    calibration: { tau: 0.9, margin: 0.05 },
+  });
+  assert.equal(negativeResult.target.exclusionDisposition, "ALREADY_INELIGIBLE_FINGERPRINT");
+  assert.equal(negativeResult.status, "INSUFFICIENT_EVIDENCE");
+  assert.match(negativeResult.reasons.join(" "), /no positive exemplars/);
+
+  const positiveOnly = historyRow("positive-only", 2, [positiveFinding(2)]);
+  const positiveResult = analyzeSpeedsterArticunoDryRun({
+    history: [target, positiveOnly],
+    liveBank: liveRow([target, positiveOnly]),
+    calibration: { tau: 0.9, margin: 0.05 },
+  });
+  assert.equal(positiveResult.status, "INSUFFICIENT_EVIDENCE");
+  assert.match(positiveResult.reasons.join(" "), /no negative exemplars/);
 });
 
 test("output, hashes, sizes, and source inputs are deterministic and immutable", () => {
   const rows = [
-    historyRow("earlier-compatible-session", 1),
+    historyRow("earlier-compatible-session", 1, [finding(1), positiveFinding(9)]),
     historyRow(SPEEDSTER_ARTICUNO_POISONED_SESSION_ID, 2),
   ];
   const live = liveRow(rows);

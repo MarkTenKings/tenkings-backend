@@ -87,6 +87,7 @@ export const speedsterImageService = {
   measure(
     token: string,
     input: {
+      sessionId: string;
       side: SpeedsterCardSide;
       cornerShape: SpeedsterCornerShape;
       evidenceView: {

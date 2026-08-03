@@ -75,6 +75,7 @@ test("Smart-Mark measure sends the same ORIGINAL inspection evidence in one requ
   const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
 
   assert.match(page, /evidenceView:\s*\{/);
+  assert.match(page, /sessionId:\s*draft\.id/);
   assert.match(page, /id:\s*`\$\{side\}:ORIGINAL`/);
   assert.match(page, /sourceImageUrls\[`\$\{side\}:ORIGINAL`\]/);
   assert.match(page, /inspectionFrame:\s*side === "FRONT"/);

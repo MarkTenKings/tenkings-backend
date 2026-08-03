@@ -146,12 +146,13 @@ export default function AiGraderV2AdminPage() {
     side: SpeedsterCardSide,
     box: { x: number; y: number; width: number; height: number },
   ) => {
-    if (!session?.token || !capture || working) return;
+    if (!session?.token || !draft || !capture || working) return;
     setWorking(true);
     setMessage("Measuring the Smart-Mark.");
     const id = `${side}:smart-${crypto.randomUUID()}`;
     try {
       const measured = await speedsterImageService.measure(session.token, {
+        sessionId: draft.id,
         side,
         cornerShape: capture.cornerShape,
         evidenceView: {
