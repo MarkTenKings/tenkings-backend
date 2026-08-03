@@ -124,7 +124,11 @@ export default function AiGraderV2AdminPage() {
       setCapture(bundle);
       const scanned = await scanSpeedsterCapture({
         capture: bundle,
-        detect: (request) => speedsterImageService.detect(session.token, request),
+        detect: (request) => speedsterImageService.detect(session.token, {
+          ...request,
+          sessionId: draft.id,
+          requestTraceId: `${draft.id}:${request.side}:detect`,
+        }),
         onSide: (side) => setMessage(`SAM 3 is scanning the ${side === "FRONT" ? "Front" : "Back"} card views.`),
       });
       setDetectorVersion(scanned.detectorVersion);
@@ -150,6 +154,13 @@ export default function AiGraderV2AdminPage() {
       const measured = await speedsterImageService.measure(session.token, {
         side,
         cornerShape: capture.cornerShape,
+        evidenceView: {
+          id: `${side}:ORIGINAL`,
+          imageUrl: sourceImageUrls[`${side}:ORIGINAL`],
+          inspectionFrame: side === "FRONT"
+            ? capture.front.inspectionFrame
+            : capture.back.inspectionFrame,
+        },
         marks: [{
           id,
           defectType: "FAINT_COLOR_VARIATION",

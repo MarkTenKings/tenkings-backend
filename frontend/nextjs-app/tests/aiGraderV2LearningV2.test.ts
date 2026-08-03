@@ -7,6 +7,7 @@ import { inventorySpeedsterLearningHistory } from "../lib/ai-grader-v2/learning-
 import {
   SPEEDSTER_LEARNING_CAPACITY_PER_TYPE_POLARITY,
   SPEEDSTER_LEARNING_DEFECT_TYPES,
+  SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
   SPEEDSTER_LEARNING_FINGERPRINT_SIZE,
   SPEEDSTER_LEARNING_SERIALIZED_BANK_BUDGET_BYTES,
   deriveSpeedsterLearningBankV2,
@@ -30,6 +31,7 @@ const historySession = (index: number): SpeedsterLearningHistoryLessonsV2 => ({
   sessionId: `session-${index.toString().padStart(3, "0")}`,
   completedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
   completionOrder: index + 1,
+  fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
   lessons: [{
     defectType: "VISIBLE_WHITENING",
     polarity: "NEGATIVE",
@@ -106,6 +108,7 @@ test("an edge Smart-Mark lesson stores visual features rather than its clipped d
     sessionId: "edge-smart-mark",
     completedAt: "2026-01-01T00:00:00.000Z",
     completionOrder: 1,
+    fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
     lessons: [{
       defectType: "FRAYING",
       polarity: "POSITIVE",
@@ -131,6 +134,7 @@ test("a completely full V2 bank stays inside its explicit serialized-size budget
       sessionId: `full-bank-${sessionIndex.toString().padStart(2, "0")}`,
       completedAt: new Date(Date.UTC(2026, 0, 1, 0, sessionIndex)).toISOString(),
       completionOrder: sessionIndex + 1,
+      fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
       lessons: SPEEDSTER_LEARNING_DEFECT_TYPES.flatMap((defectType, typeIndex) => ([
         {
           defectType,

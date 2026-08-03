@@ -68,3 +68,27 @@ test("uses a square magnifier while retaining full-stage boundary clamping", () 
   assert.match(lens, /top:\s*clamp\(0px,/);
   assert.doesNotMatch(lens, /border-radius:\s*50%/);
 });
+
+test("Smart-Mark measure sends the same ORIGINAL inspection evidence in one request", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+  const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
+
+  assert.match(page, /evidenceView:\s*\{/);
+  assert.match(page, /id:\s*`\$\{side\}:ORIGINAL`/);
+  assert.match(page, /sourceImageUrls\[`\$\{side\}:ORIGINAL`\]/);
+  assert.match(page, /inspectionFrame:\s*side === "FRONT"/);
+  assert.match(service, /evidenceView:\s*\{/);
+  assert.doesNotMatch(page, /fingerprint.*(?:queue|poll)/i);
+});
+
+test("SAM Memory decisions reuse deterministic session and side diagnostics", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+  const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
+
+  assert.match(page, /sessionId:\s*draft\.id/);
+  assert.match(page, /requestTraceId:\s*`\$\{draft\.id\}:\$\{request\.side\}:detect`/);
+  assert.match(service, /sessionId:\s*string/);
+  assert.match(service, /requestTraceId:\s*string/);
+});

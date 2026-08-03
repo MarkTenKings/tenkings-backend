@@ -7,12 +7,17 @@ import {
   formatHumanGradeCertificateNumber,
 } from "../../../../../../lib/humanGrade";
 import {
-  cleanSpeedsterLearningBank,
   updateSpeedsterLearningBank,
 } from "../../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
 import { completeSpeedsterPresentationImages } from "../../../../../../lib/server/aiGraderV2PresentationWorkflow";
+import {
+  afterDurableSpeedsterCompletion,
+  catchUpSpeedsterLearningBankV2,
+  dispatchSpeedsterLearningBank,
+  type SpeedsterLearningCatchUpClient,
+} from "../../../../../../lib/server/aiGraderV2LearningBank";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const score = z.number().finite().min(1).max(10);
@@ -133,7 +138,7 @@ const labelResult = (label: {
 });
 
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
-  return prisma.$transaction(async (tx) => {
+  return afterDurableSpeedsterCompletion(() => prisma.$transaction(async (tx) => {
     const session = await tx.aiGraderV2Session.findFirst({
       where: { id: input.sessionId, createdByUserId: input.createdByUserId },
       select: { id: true, cardProfile: true, workflowState: true, publicReportSlug: true, identity: true },
@@ -178,14 +183,19 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
     `;
     const storedLearningBank = await tx.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
-    const currentLearningBank = cleanSpeedsterLearningBank(storedLearningBank?.state);
-    const nextLearningBank = updateSpeedsterLearningBank(currentLearningBank, input.reviewedDefects);
-    if (JSON.stringify(nextLearningBank) !== JSON.stringify(currentLearningBank)) {
-      await tx.aiGraderV2LearningBank.upsert({
-        where: { id: "GLOBAL" },
-        create: { id: "GLOBAL", state: nextLearningBank as Prisma.InputJsonValue },
-        update: { state: nextLearningBank as Prisma.InputJsonValue },
-      });
+    const learningBank = dispatchSpeedsterLearningBank(storedLearningBank?.state);
+    // V1 remains byte-for-byte on its established completion path. V2 learns
+    // after this durable grade+label transaction so a cache failure cannot
+    // roll back the human-authoritative completion.
+    if (learningBank.kind === "V1") {
+      const nextLearningBank = updateSpeedsterLearningBank(learningBank.bank, input.reviewedDefects);
+      if (JSON.stringify(nextLearningBank) !== JSON.stringify(learningBank.bank)) {
+        await tx.aiGraderV2LearningBank.upsert({
+          where: { id: "GLOBAL" },
+          create: { id: "GLOBAL", state: nextLearningBank as Prisma.InputJsonValue },
+          update: { state: nextLearningBank as Prisma.InputJsonValue },
+        });
+      }
     }
     let sheet = await tx.humanGradeLabelSheet.findFirst({
       where: { status: "OPEN" },
@@ -222,6 +232,10 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       });
     }
     return { outcome: "CREATED", label: labelResult(label), publicReportSlug };
+  }), () => catchUpSpeedsterLearningBankV2(
+    prisma as unknown as SpeedsterLearningCatchUpClient,
+  ), (error) => {
+    console.error(`[Speedster] SAM Memory V2 catch-up failed after durable completion for ${input.sessionId}:`, error);
   });
 }
 

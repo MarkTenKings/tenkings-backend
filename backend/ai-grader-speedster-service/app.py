@@ -84,6 +84,8 @@ class DetectRequest(BaseModel):
     cornerShape: str
     views: List[CanonicalView]
     learningBank: Optional[dict] = None
+    sessionId: Optional[str] = None
+    requestTraceId: Optional[str] = None
 
 
 class SmartMark(BaseModel):
@@ -93,10 +95,28 @@ class SmartMark(BaseModel):
     sourceViewId: str
 
 
+class InspectionBounds(BaseModel):
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class InspectionFrame(BaseModel):
+    width: int
+    height: int
+    cardBounds: InspectionBounds
+
+
+class SmartMarkEvidenceView(CanonicalView):
+    inspectionFrame: InspectionFrame
+
+
 class MeasureRequest(BaseModel):
     side: str
     cornerShape: str
     marks: List[SmartMark]
+    evidenceView: Optional[SmartMarkEvidenceView] = None
 
 
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
@@ -262,7 +282,12 @@ def detect(request: DetectRequest):
             for view in request.views
         ]
         return detect_views(
-            views, request.side, request.cornerShape, learning_bank=request.learningBank
+            views,
+            request.side,
+            request.cornerShape,
+            learning_bank=request.learningBank,
+            session_id=request.sessionId,
+            trace_id=request.requestTraceId,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -275,6 +300,18 @@ def detect(request: DetectRequest):
 
 @app.post("/measure")
 def measure(request: MeasureRequest):
+    evidence_image = None
+    evidence_failed = False
+    if request.evidenceView:
+        try:
+            evidence_image = load_image(
+                request.evidenceView.imageUrl,
+                request.evidenceView.imageBase64,
+            )
+        except Exception:
+            # Smart-Mark measurement is authoritative and must survive optional
+            # fingerprint evidence failures.
+            evidence_failed = True
     try:
         return measure_marks(
             [
@@ -288,6 +325,14 @@ def measure(request: MeasureRequest):
             ],
             request.side,
             request.cornerShape,
+            evidence_image=evidence_image,
+            evidence_view_id=request.evidenceView.id if request.evidenceView else None,
+            inspection_frame=(
+                request.evidenceView.inspectionFrame.model_dump()
+                if request.evidenceView
+                else None
+            ),
+            evidence_failed=evidence_failed,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

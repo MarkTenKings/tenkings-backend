@@ -75,6 +75,8 @@ export const speedsterImageService = {
       side: SpeedsterCardSide;
       cornerShape: SpeedsterCornerShape;
       views: readonly { id: string; imageUrl: string }[];
+      sessionId: string;
+      requestTraceId: string;
     },
   ) {
     return postImageAction<{
@@ -87,6 +89,11 @@ export const speedsterImageService = {
     input: {
       side: SpeedsterCardSide;
       cornerShape: SpeedsterCornerShape;
+      evidenceView: {
+        id: string;
+        imageUrl: string;
+        inspectionFrame: SpeedsterInspectionFrame;
+      };
       marks: readonly {
         id: string;
         defectType: SpeedsterDefectType;
