@@ -13,6 +13,12 @@ FINGERPRINT_VERSION = (
     "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543"
 )
 LEARNING_SCALE = 0.06
+POLICY_TAU = 0.80
+POLICY_MARGIN = 0.10
+POLICY_TAU_MIN = 0.70
+POLICY_TAU_MAX = 0.95
+POLICY_MARGIN_MIN = 0.03
+POLICY_MARGIN_MAX = 0.20
 
 DEFECT_TYPES = {
     "FAINT_COLOR_VARIATION",
@@ -42,7 +48,9 @@ class PreparedBankV2:
     fingerprint_version: Optional[str]
     tau: Optional[float]
     margin: Optional[float]
-    exemplars: dict[tuple[str, str, str], tuple[tuple[tuple[float, ...], str], ...]]
+    exemplars: dict[
+        tuple[str, str, str], tuple[tuple[tuple[float, ...], str, str], ...]
+    ]
 
 
 def _integer(value: object, minimum: int) -> bool:
@@ -129,7 +137,12 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
         return _inactive("malformed", fingerprint_version)
     tau = _number(calibration.get("tau"))
     margin = _number(calibration.get("margin"))
-    if tau is None or margin is None or not (0 <= tau <= 1 and 0 <= margin <= 1):
+    if (
+        tau is None
+        or margin is None
+        or not (POLICY_TAU_MIN <= tau <= POLICY_TAU_MAX)
+        or not (POLICY_MARGIN_MIN <= margin <= POLICY_MARGIN_MAX)
+    ):
         return _inactive("malformed", fingerprint_version)
 
     raw_exemplars = value.get("exemplars")
@@ -138,7 +151,9 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
     ):
         return _inactive("malformed", fingerprint_version)
 
-    grouped: dict[tuple[str, str, str], list[tuple[tuple[float, ...], str]]] = {}
+    grouped: dict[
+        tuple[str, str, str], list[tuple[tuple[float, ...], str, str]]
+    ] = {}
     counts: dict[tuple[str, str], int] = {}
     for exemplar in raw_exemplars:
         if not isinstance(exemplar, dict):
@@ -167,7 +182,7 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
         if counts[count_key] > CAPACITY_PER_TYPE_POLARITY:
             return _inactive("malformed", fingerprint_version)
         grouped.setdefault((defect_type, polarity, source_view), []).append(
-            (fingerprint, session_id.strip())
+            (fingerprint, session_id.strip(), exemplar.get("provenance"))
         )
 
     return PreparedBankV2(
@@ -181,11 +196,11 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
 
 def _maximum_similarity(
     fingerprint: tuple[float, ...],
-    exemplars: tuple[tuple[tuple[float, ...], str], ...],
+    exemplars: tuple[tuple[tuple[float, ...], str, str], ...],
 ) -> tuple[Optional[float], Optional[str]]:
     best_similarity = None
     best_session_id = None
-    for exemplar, session_id in exemplars:
+    for exemplar, session_id, _provenance in exemplars:
         similarity = max(0.0, sum(a * b for a, b in zip(fingerprint, exemplar)))
         if best_similarity is None or similarity > best_similarity:
             best_similarity = similarity
@@ -207,8 +222,8 @@ def decide_candidate_v2(
 
     source_view = normalize_source_view(source_view_id)
     candidate_fingerprint = _unit_fingerprint(fingerprint)
-    positive_max = negative_max = None
-    positive_session_id = negative_session_id = None
+    positive_max = gentle_positive_max = negative_max = None
+    positive_session_id = gentle_positive_session_id = negative_session_id = None
     adjustment = 0.0
     action = "retained"
 
@@ -219,20 +234,35 @@ def decide_candidate_v2(
         and source_view is not None
         and candidate_fingerprint is not None
     ):
+        positive_exemplars = prepared.exemplars.get(
+            (defect_type, "POSITIVE", source_view), ()
+        )
+        gentle_positive_max, gentle_positive_session_id = _maximum_similarity(
+            candidate_fingerprint,
+            positive_exemplars,
+        )
         positive_max, positive_session_id = _maximum_similarity(
             candidate_fingerprint,
-            prepared.exemplars.get((defect_type, "POSITIVE", source_view), ()),
+            tuple(
+                exemplar
+                for exemplar in positive_exemplars
+                if exemplar[2] != "UNTOUCHED_ACCEPTED_POSITIVE"
+            ),
         )
         negative_max, negative_session_id = _maximum_similarity(
             candidate_fingerprint,
             prepared.exemplars.get((defect_type, "NEGATIVE", source_view), ()),
         )
         positive_value = positive_max or 0.0
+        gentle_positive_value = gentle_positive_max or 0.0
         negative_value = negative_max or 0.0
         adjustment = round(
             max(
                 -LEARNING_SCALE,
-                min(LEARNING_SCALE, LEARNING_SCALE * (positive_value - negative_value)),
+                min(
+                    LEARNING_SCALE,
+                    LEARNING_SCALE * (gentle_positive_value - negative_value),
+                ),
             ),
             6,
         )
@@ -250,6 +280,8 @@ def decide_candidate_v2(
         "rawConfidence": raw_confidence,
         "positiveMax": positive_max,
         "positiveMatchSessionId": positive_session_id,
+        "gentlePositiveMax": gentle_positive_max,
+        "gentlePositiveMatchSessionId": gentle_positive_session_id,
         "negativeMax": negative_max,
         "negativeMatchSessionId": negative_session_id,
         "tau": prepared.tau,

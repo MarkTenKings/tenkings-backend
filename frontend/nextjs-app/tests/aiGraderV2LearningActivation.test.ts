@@ -15,9 +15,11 @@ import {
   SPEEDSTER_LEARNING_BANK_BACKUP_ID,
   SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID,
   buildSpeedsterLearningActivationConfirmation,
+  buildSpeedsterLearningPolicyCorrectionConfirmation,
   buildSpeedsterLearningRollbackConfirmation,
   hashSpeedsterLearningBankState,
   runSpeedsterLearningActivation,
+  runSpeedsterLearningPolicyCorrection,
   runSpeedsterLearningRollback,
   type SpeedsterLearningActivationClient,
   type SpeedsterLearningActivationInput,
@@ -32,6 +34,7 @@ import {
 import {
   SPEEDSTER_LEARNING_FINGERPRINT_SIZE,
   SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+  SPEEDSTER_LEARNING_POLICY_V2,
   type SpeedsterLearningBankV2,
 } from "../lib/ai-grader-v2/learning-v2";
 import { updateSpeedsterLearningBank, type SpeedsterLearningBank } from "../lib/ai-grader-v2/learning";
@@ -73,6 +76,10 @@ test("dispatch preserves V1 and forwards a valid calibrated V2 payload unchanged
   assert.equal(dispatchSpeedsterLearningBank(v2).kind, "V2");
   assert.equal(speedsterLearningBankForDetect(v2), v2);
   assert.equal(speedsterLearningBankForDetect({ ...v2, fingerprintVersion: "wrong" }), null);
+  assert.equal(speedsterLearningBankForDetect({
+    ...v2,
+    calibration: { status: "CALIBRATED", tau: 0.652262, margin: 0.652262 },
+  }), null);
   assert.equal(speedsterLearningBankForDetect({ version: 77, types: {} }), null);
 });
 
@@ -508,9 +515,67 @@ test("activation endpoint is admin-authenticated and defaults to zero-write dry-
   assert.match(source, /requireAdminSession/);
   assert.match(source, /z\.enum\(\["DRY_RUN", "ACTIVATE"\]\)\.default\("DRY_RUN"\)/);
   assert.match(source, /runSpeedsterLearningActivation/);
+  assert.match(source, /runSpeedsterLearningPolicyCorrection/);
   assert.match(source, /runSpeedsterLearningRollback/);
   assert.doesNotMatch(source, /calibratedBank(?:Hash)?/);
+  assert.doesNotMatch(source, /\btau\b|\bmargin\b/);
   assert.doesNotMatch(source, /delete|deleteMany|updateMany/);
+});
+
+test("policy correction rebuilds the active V2 bank, changes one row, and preserves the V1 backup", async () => {
+  const store = new ActivationStore(activationV1Bank);
+  const activation = activationInput();
+  const activationPreflight = await runSpeedsterLearningActivation(store, activation);
+  assert.equal(activationPreflight.mode, "DRY_RUN");
+  if (activationPreflight.mode !== "DRY_RUN") return;
+  await runSpeedsterLearningActivation(store, {
+    ...activation,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: activationPreflight.calibrationEvidenceHash,
+    dryRunStatus: activationPreflight.dryRunStatus,
+    dryRunEvidenceHash: activationPreflight.dryRunEvidenceHash,
+    typedConfirmation: activationPreflight.requiredConfirmation,
+  });
+  const oldActive = {
+    ...(store.rows.get("GLOBAL")?.state as SpeedsterLearningBankV2),
+    calibration: { status: "CALIBRATED" as const, tau: 0.652262, margin: 0.652262 },
+  };
+  store.rows.set("GLOBAL", { ...store.rows.get("GLOBAL")!, state: oldActive });
+  store.writes = 0;
+  const expectedActiveRowHash = hashSpeedsterLearningBankState(oldActive);
+  const backupBefore = structuredClone(store.rows.get(SPEEDSTER_LEARNING_BANK_BACKUP_ID)?.state);
+  const preflight = await runSpeedsterLearningPolicyCorrection(store, {
+    mode: "DRY_RUN",
+    expectedActiveRowHash,
+    actorUserId: "admin-user",
+  });
+  assert.equal(preflight.mode, "DRY_RUN");
+  assert.equal(preflight.writes, 0);
+  assert.equal(store.writes, 0);
+  assert.deepEqual(preflight.policy, SPEEDSTER_LEARNING_POLICY_V2);
+  assert.equal(preflight.requiredConfirmation, buildSpeedsterLearningPolicyCorrectionConfirmation({
+    expectedActiveRowHash,
+    correctedBankHash: preflight.correctedBankHash,
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+  }));
+
+  const corrected = await runSpeedsterLearningPolicyCorrection(store, {
+    mode: "CORRECT_POLICY",
+    expectedActiveRowHash,
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+    typedConfirmation: preflight.requiredConfirmation,
+    actorUserId: "admin-user",
+  });
+  assert.equal(corrected.mode, "CORRECT_POLICY");
+  assert.equal(corrected.writes, 1);
+  assert.equal(store.writes, 1);
+  assert.deepEqual(
+    (store.rows.get("GLOBAL")?.state as SpeedsterLearningBankV2).calibration,
+    { status: "CALIBRATED", ...SPEEDSTER_LEARNING_POLICY_V2 },
+  );
+  assert.deepEqual(store.rows.get(SPEEDSTER_LEARNING_BANK_BACKUP_ID)?.state, backupBefore);
+  assert.equal(corrected.exemplarCount, calibratedBank().exemplars.length);
+  assert.equal(corrected.replayCursor?.completionOrder, calibratedBank().replayCursor?.completionOrder);
 });
 
 test("activation transaction saves one inert backup, swaps only GLOBAL, verifies, and rolls back", async () => {

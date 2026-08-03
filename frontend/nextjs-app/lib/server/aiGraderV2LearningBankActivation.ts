@@ -16,6 +16,7 @@ import {
   type SpeedsterLearningReviewHistoryV2,
 } from "../ai-grader-v2/learning-harvest-v2";
 import {
+  SPEEDSTER_LEARNING_POLICY_V2,
   parseSpeedsterLearningBankV2,
   type SpeedsterLearningBankV2,
 } from "../ai-grader-v2/learning-v2";
@@ -75,6 +76,14 @@ export function buildSpeedsterLearningRollbackConfirmation(input: {
   return `ROLL BACK SPEEDSTER SAM MEMORY V2 ${input.expectedActiveRowHash} TO SAVED PREIMAGE ${input.savedPreimageHash}`;
 }
 
+export function buildSpeedsterLearningPolicyCorrectionConfirmation(input: {
+  expectedActiveRowHash: string;
+  correctedBankHash: string;
+  calibrationEvidenceHash: string;
+}) {
+  return `CORRECT SPEEDSTER SAM MEMORY V2 POLICY ${input.correctedBankHash} FROM EVIDENCE ${input.calibrationEvidenceHash} REPLACING ${input.expectedActiveRowHash}`;
+}
+
 export type SpeedsterLearningActivationInput = {
   mode?: "DRY_RUN" | "ACTIVATE";
   typedConfirmation?: string;
@@ -88,6 +97,14 @@ export type SpeedsterLearningActivationInput = {
 export type SpeedsterLearningRollbackInput = {
   typedConfirmation: string;
   expectedActiveRowHash: string;
+  actorUserId: string;
+};
+
+export type SpeedsterLearningPolicyCorrectionInput = {
+  mode?: "DRY_RUN" | "CORRECT_POLICY";
+  typedConfirmation?: string;
+  expectedActiveRowHash: string;
+  calibrationEvidenceHash?: string;
   actorUserId: string;
 };
 
@@ -153,26 +170,10 @@ const acquireLearningLock = (tx: SpeedsterLearningActivationTransaction) => tx.$
   FROM pg_advisory_xact_lock(hashtext('ten-kings-human-grade-label-slots'))
 `;
 
-const validateActivationPreimage = (
-  input: SpeedsterLearningActivationInput,
-  current: BankRow | null,
-  backup: BankRow | null,
-) => {
-  if (!current) throw new Error("SAM Memory activation requires the existing GLOBAL bank row");
-  if (backup) throw new Error("SAM Memory pre-activation backup already exists");
-  if (!SHA256.test(input.expectedCurrentRowHash)
-    || hashSpeedsterLearningBankState(current.state) !== input.expectedCurrentRowHash) {
-    throw new Error("SAM Memory activation current-row hash mismatch");
-  }
-  if (dispatchSpeedsterLearningBank(current.state).kind !== "V1") {
-    throw new Error("SAM Memory activation requires the current GLOBAL row to be valid V1");
-  }
-};
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
-async function recomputeActivationEvidence(
-  tx: SpeedsterLearningActivationTransaction,
-  current: BankRow,
-) {
+async function loadAuthoritativeHistory(tx: SpeedsterLearningActivationTransaction) {
   const labels = await tx.humanGradeLabel.findMany({
     where: { source: "SPEEDSTER" },
     orderBy: { certificateSequence: "asc" },
@@ -203,6 +204,30 @@ async function recomputeActivationEvidence(
       cardKey: speedsterLearningCardKeyV2(session.cardProfile, session.identity),
     }] : [];
   });
+  return { labels, sessions, calibrationHistory };
+}
+
+const validateActivationPreimage = (
+  input: SpeedsterLearningActivationInput,
+  current: BankRow | null,
+  backup: BankRow | null,
+) => {
+  if (!current) throw new Error("SAM Memory activation requires the existing GLOBAL bank row");
+  if (backup) throw new Error("SAM Memory pre-activation backup already exists");
+  if (!SHA256.test(input.expectedCurrentRowHash)
+    || hashSpeedsterLearningBankState(current.state) !== input.expectedCurrentRowHash) {
+    throw new Error("SAM Memory activation current-row hash mismatch");
+  }
+  if (dispatchSpeedsterLearningBank(current.state).kind !== "V1") {
+    throw new Error("SAM Memory activation requires the current GLOBAL row to be valid V1");
+  }
+};
+
+async function recomputeActivationEvidence(
+  tx: SpeedsterLearningActivationTransaction,
+  current: BankRow,
+) {
+  const { labels, sessions, calibrationHistory } = await loadAuthoritativeHistory(tx);
   const calibration = replaySpeedsterLearningCalibrationV2(calibrationHistory, { now: () => 0 });
   if (calibration.status !== "CANDIDATE_READY_FOR_MARK_REVIEW"
     || !calibration.recommendation
@@ -251,6 +276,43 @@ async function recomputeActivationEvidence(
     calibrationEvidenceHash,
     bank,
     calibratedBankHash,
+  };
+}
+
+async function recomputePolicyCorrectionEvidence(
+  tx: SpeedsterLearningActivationTransaction,
+  current: BankRow,
+) {
+  const { labels, calibrationHistory } = await loadAuthoritativeHistory(tx);
+  const calibration = replaySpeedsterLearningCalibrationV2(calibrationHistory, { now: () => 0 });
+  if (calibration.status !== "CANDIDATE_READY_FOR_MARK_REVIEW"
+    || !calibration.recommendation
+    || calibration.recommendation.tau !== SPEEDSTER_LEARNING_POLICY_V2.tau
+    || calibration.recommendation.margin !== SPEEDSTER_LEARNING_POLICY_V2.margin
+    || calibration.requiredEvidence.postUpdateBankSelfConflict.status !== "PASS"
+    || calibration.counts.positiveCases === 0
+    || calibration.counts.negativeCases === 0) {
+    throw new Error("SAM Memory policy correction authoritative evidence did not pass");
+  }
+  const bank = deriveSpeedsterLearningBankFromHistoryV2(
+    calibrationHistory as readonly SpeedsterLearningReviewHistoryV2[],
+    new Set([SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID]),
+    { status: "CALIBRATED", ...SPEEDSTER_LEARNING_POLICY_V2 },
+  ).bank;
+  const latestCompletionOrder = labels.at(-1)?.certificateSequence ?? null;
+  const currentWithCorrectedPolicy = isRecord(current.state) && current.state.version === 2
+    ? { ...current.state, calibration: bank.calibration }
+    : null;
+  if (!currentWithCorrectedPolicy
+    || bank.replayCursor?.completionOrder !== latestCompletionOrder
+    || !speedsterLearningBankTolerantEqual(currentWithCorrectedPolicy, bank)) {
+    throw new Error("SAM Memory policy correction active bank does not match authoritative history");
+  }
+  return {
+    calibration,
+    calibrationEvidenceHash: speedsterLearningDeterministicHashV2(calibration),
+    bank,
+    correctedBankHash: hashSpeedsterLearningBankState(bank),
   };
 }
 
@@ -377,6 +439,88 @@ export async function runSpeedsterLearningActivation(
       dryRunEvidenceHash: authoritative.dryRunEvidenceHash,
       exemplarCount: verified.parsed.exemplars.length,
       version: verified.parsed.version,
+    };
+  });
+}
+
+export async function runSpeedsterLearningPolicyCorrection(
+  client: SpeedsterLearningActivationClient,
+  input: SpeedsterLearningPolicyCorrectionInput,
+) {
+  return client.$transaction(async (tx) => {
+    await acquireLearningLock(tx);
+    const [current, backupRow] = await Promise.all([
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_ID } }),
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_BACKUP_ID } }),
+    ]);
+    const backup = parseBackup(backupRow?.state);
+    if (!current || !backup) {
+      throw new Error("SAM Memory policy correction requires the active V2 row and saved V1 backup");
+    }
+    const activeRowHash = hashSpeedsterLearningBankState(current.state);
+    if (!SHA256.test(input.expectedActiveRowHash)
+      || activeRowHash !== input.expectedActiveRowHash
+      || !isRecord(current.state)
+      || current.state.version !== 2) {
+      throw new Error("SAM Memory policy correction active-row hash mismatch");
+    }
+    const authoritative = await recomputePolicyCorrectionEvidence(tx, current);
+    if (input.calibrationEvidenceHash
+      && input.calibrationEvidenceHash !== authoritative.calibrationEvidenceHash) {
+      throw new Error("SAM Memory policy correction evidence hash mismatch");
+    }
+    const requiredConfirmation = buildSpeedsterLearningPolicyCorrectionConfirmation({
+      expectedActiveRowHash: activeRowHash,
+      correctedBankHash: authoritative.correctedBankHash,
+      calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+    });
+    if ((input.mode ?? "DRY_RUN") !== "CORRECT_POLICY") {
+      return {
+        mode: "DRY_RUN" as const,
+        writes: 0 as const,
+        ready: true as const,
+        requiredConfirmation,
+        activeRowHash,
+        correctedBankHash: authoritative.correctedBankHash,
+        calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+        policy: SPEEDSTER_LEARNING_POLICY_V2,
+        exemplarCount: authoritative.bank.exemplars.length,
+        replayCursor: authoritative.bank.replayCursor,
+      };
+    }
+    if (input.calibrationEvidenceHash !== authoritative.calibrationEvidenceHash) {
+      throw new Error("SAM Memory policy correction requires the exact authoritative evidence hash");
+    }
+    if (input.typedConfirmation !== requiredConfirmation) {
+      throw new Error("SAM Memory policy correction typed confirmation mismatch");
+    }
+    const backupHash = hashSpeedsterLearningBankState(backupRow!.state);
+    await tx.aiGraderV2LearningBank.update({
+      where: { id: SPEEDSTER_LEARNING_BANK_ID },
+      data: { state: authoritative.bank as unknown as Prisma.InputJsonValue },
+    });
+    const [readback, backupReadback] = await Promise.all([
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_ID } }),
+      tx.aiGraderV2LearningBank.findUnique({ where: { id: SPEEDSTER_LEARNING_BANK_BACKUP_ID } }),
+    ]);
+    if (!readback) throw new Error("SAM Memory policy correction GLOBAL readback is missing");
+    const verified = verifiedActivationReadback(readback.state, authoritative.bank);
+    if (!parseBackup(backupReadback?.state)
+      || hashSpeedsterLearningBankState(backupReadback!.state) !== backupHash) {
+      throw new Error("SAM Memory policy correction changed the saved V1 backup");
+    }
+    return {
+      mode: "CORRECT_POLICY" as const,
+      writes: 1 as const,
+      corrected: true as const,
+      previousActiveRowHash: activeRowHash,
+      activeRowHash: verified.persistedHash,
+      correctedBankHash: authoritative.correctedBankHash,
+      calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
+      policy: SPEEDSTER_LEARNING_POLICY_V2,
+      exemplarCount: verified.parsed.exemplars.length,
+      replayCursor: verified.parsed.replayCursor,
+      savedV1BackupHash: backup.originalStateHash,
     };
   });
 }

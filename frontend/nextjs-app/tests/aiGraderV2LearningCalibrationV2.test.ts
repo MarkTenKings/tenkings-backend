@@ -17,6 +17,7 @@ import { deriveSpeedsterLearningBankV2 } from "../lib/ai-grader-v2/learning-v2";
 import {
   SPEEDSTER_LEARNING_FINGERPRINT_SIZE,
   SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+  SPEEDSTER_LEARNING_POLICY_V2,
 } from "../lib/ai-grader-v2/learning-v2";
 
 const axis = (index: number) => Array.from(
@@ -109,6 +110,40 @@ test("mirrors the frozen Python max, null, adjustment, veto, and protection sema
   assert.equal(noEvidence.action, "retained");
 });
 
+test("untouched acceptance contributes only the gentle nudge and cannot protect a human removal", () => {
+  const bank = deriveSpeedsterLearningBankV2([{
+    sessionId: "same-card",
+    completionOrder: 1,
+    completedAt: "2026-08-02T00:00:00.000Z",
+    fingerprintVersion: SPEEDSTER_LEARNING_FINGERPRINT_VERSION,
+    lessons: [{
+      defectType: "VISIBLE_WHITENING",
+      polarity: "NEGATIVE",
+      fingerprint: axis(0),
+      provenance: "DETECTOR_REMOVED",
+      sourceViewId: "ORIGINAL",
+      proposalOrder: 0,
+    }, {
+      defectType: "VISIBLE_WHITENING",
+      polarity: "POSITIVE",
+      fingerprint: axis(0),
+      provenance: "UNTOUCHED_ACCEPTED_POSITIVE",
+      sourceViewId: "ORIGINAL",
+      proposalOrder: 1,
+    }],
+  }], new Set(), { status: "CALIBRATED", ...SPEEDSTER_LEARNING_POLICY_V2 }).bank;
+  const decision = evaluateSpeedsterLearningDecisionV2({
+    bank,
+    lesson: { defectType: "VISIBLE_WHITENING", fingerprint: axis(0), sourceViewId: "ORIGINAL" },
+    thresholds: SPEEDSTER_LEARNING_POLICY_V2,
+  });
+
+  assert.equal(decision.action, "vetoed");
+  assert.equal(decision.positiveMax, null);
+  assert.equal(decision.gentlePositiveMax, 1);
+  assert.equal(decision.gentleAdjustment, 0);
+});
+
 test("uses certificate sequence chronology and never leaks future lessons", () => {
   const report = replaySpeedsterLearningCalibrationV2([
     session("second", 2, [finding()], { completedAt: "2026-01-01T00:00:00.000Z" }),
@@ -121,6 +156,38 @@ test("uses certificate sequence chronology and never leaks future lessons", () =
   assert.equal(first?.negativeMax, null);
   assert.equal(second?.negativeMax, 1);
   assert.equal(second?.negativeMatchSessionId, "first");
+});
+
+test("uses the fixed V2 policy and proves the completed bank cannot neutralize its own explicit lessons", () => {
+  const safe = replaySpeedsterLearningCalibrationV2([
+    session("same-card", 1, [
+      finding({ featureFingerprint: axis(0) }),
+      finding({
+        origin: "SMART_MARK",
+        reviewResult: "SMART_MARKED",
+        detectedDefectType: undefined,
+        featureFingerprint: unitWithFirst(0.807931),
+      }),
+    ]),
+  ]);
+  assert.equal(safe.requiredEvidence.postUpdateBankSelfConflict.status, "PASS");
+  assert.equal(safe.requiredEvidence.postUpdateBankSelfConflict.failedNegativeCaseIds.length, 0);
+  assert.equal(safe.requiredEvidence.postUpdateBankSelfConflict.failedPositiveCaseIds.length, 0);
+
+  const neutralized = replaySpeedsterLearningCalibrationV2([
+    session("same-card", 1, [
+      finding({ featureFingerprint: axis(0) }),
+      finding({
+        origin: "SMART_MARK",
+        reviewResult: "SMART_MARKED",
+        detectedDefectType: undefined,
+        featureFingerprint: unitWithFirst(0.96),
+      }),
+    ]),
+  ]);
+  assert.equal(neutralized.requiredEvidence.postUpdateBankSelfConflict.status, "FAIL");
+  assert.equal(neutralized.requiredEvidence.postUpdateBankSelfConflict.failedNegativeCaseIds.length, 1);
+  assert.match(neutralized.insufficientReasons.join(" "), /completed bank/i);
 });
 
 test("enforces exact fingerprint and view boundaries", () => {
@@ -178,7 +245,8 @@ test("uses untouched accepts only in earlier banks and never as trusted evaluati
 
   assert.equal(report.counts.untouchedLessonsUsedOnlyInEarlierBanks, 1);
   assert.equal(report.counts.trustedExplicitCases, 1);
-  assert.equal(report.cases[0].positiveMax, 1);
+  assert.equal(report.cases[0].positiveMax, null);
+  assert.equal(report.cases[0].gentlePositiveMax, 1);
 });
 
 test("reports compact adjacent sensitivity, bank size, measured latency, and honest insufficiency", () => {
@@ -238,9 +306,10 @@ test("uses the exact attested Articuno repeat cohort despite different identity 
   assert.equal(evidence.matches[0].negativeSimilarity, 1);
   assert.equal(report.requiredEvidence.explicitPositiveRetention.status, "PASS");
   assert.equal(report.requiredEvidence.unrelatedControlSuppression.status, "PASS");
+  assert.equal(report.requiredEvidence.postUpdateBankSelfConflict.status, "PASS");
   assert.equal(report.requiredEvidence.damageOnTextPositiveProtection.status, "INSUFFICIENT_EVIDENCE");
   assert.equal(report.status, "CANDIDATE_READY_FOR_MARK_REVIEW");
-  assert.ok(report.recommendation);
+  assert.deepEqual(report.recommendation, SPEEDSTER_LEARNING_POLICY_V2);
   assert.deepEqual(report.insufficientReasons, []);
 });
 

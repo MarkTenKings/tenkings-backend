@@ -7,6 +7,10 @@ the inert backup preserves V1 preimage hash
 Do not attempt activation again or run rollback without Mark's separate explicit
 approval.
 
+The active row still carries the superseded first-activation policy
+`tau=0.652262`, `margin=0.652262` until the approved policy-correction release
+below is deployed and its exact hash-bound correction completes.
+
 ## One active cache
 
 `AiGraderV2LearningBank/GLOBAL` is the only row read by detection and completion.
@@ -64,6 +68,39 @@ ROLL BACK SPEEDSTER SAM MEMORY V2 <active-bank-hash> TO SAVED PREIMAGE <saved-pr
 Rollback reacquires the same lock, verifies the active row and saved copy,
 restores only `GLOBAL`, and verifies its readback. It does not change or delete
 sessions, cards, grades, labels, reports, images, history, or the backup row.
+
+## Approved fixed-policy correction
+
+The live Cubone repeat proved the data-selected first-activation thresholds were
+not decisive. The corrected V2 policy is fixed at `tau=0.80`, `margin=0.10`;
+the parser accepts only the safety ranges `tau=[0.70, 0.95]` and
+`margin=[0.03, 0.20]`. Untouched automatic accepts may contribute to the
+existing bounded gentle nudge but cannot protect a candidate from an explicit
+human-removal lesson. Smart-Marks and relabel positives remain full positive
+protection.
+
+`operation: "POLICY_DRY_RUN"` is authenticated and zero-write. Supply only the
+exact current active-row hash. Under the existing completion advisory lock it:
+
+- rebuilds the bank and evidence from authoritative completed history;
+- excludes only the already-approved poisoned Articuno session;
+- requires the fixed policy plus PASS for Articuno removal, explicit-positive
+  retention, unrelated-control suppression, and final-bank self-conflict proof;
+- requires the current active bank to equal the canonical rebuild after changing
+  only its policy; and
+- returns the exact corrected-bank hash, evidence hash, and typed confirmation.
+
+The approved mutating operation is `operation: "CORRECT_POLICY"`. It must carry
+the same expected active hash, returned evidence hash, and this dynamic phrase:
+
+```text
+CORRECT SPEEDSTER SAM MEMORY V2 POLICY <corrected-bank-hash> FROM EVIDENCE <calibration-evidence-hash> REPLACING <active-bank-hash>
+```
+
+The locked transaction writes only `AiGraderV2LearningBank/GLOBAL`, verifies the
+durable readback, and verifies the inert V1 backup is byte/hash unchanged. It
+does not accept caller-supplied thresholds or bank bytes. Any history, hash,
+proof, confirmation, readback, or backup mismatch aborts the transaction.
 
 ## Completion behavior after activation
 

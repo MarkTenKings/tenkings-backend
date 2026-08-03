@@ -160,20 +160,28 @@ V2 does not lower SAM's pinned internal `0.50` processor threshold, add a
 collection floor, or attempt positive promotion. Masks discarded inside SAM
 stay discarded.
 
-For each returned candidate, compare only exemplars of its proposed defect type:
+For each returned candidate, compare only exemplars of its proposed defect type.
+Explicit human-positive lessons (Smart-Marks and relabel positives) are the only
+positive evidence strong enough to protect a candidate from an explicit human
+removal. Untouched automatic accepts remain admitted, but honor the original
+"inaction teaches a little" boundary: they contribute only to the bounded gentle
+nudge and never block a negative veto.
 
 ```text
-positiveMax = maximum cosine similarity to positive exemplars
+positiveMax = maximum cosine similarity to explicit human-positive exemplars
+gentlePositiveMax = maximum cosine similarity to all positive exemplars
 negativeMax = maximum cosine similarity to negative exemplars
 
 veto when:
-  negativeMax >= tau
-  and negativeMax - positiveMax >= margin
+  negativeMax >= 0.80
+  and negativeMax - positiveMax >= 0.10
 ```
 
-Otherwise retain the existing bounded `+/-0.06` gentle nudge. Positive evidence
-can protect and gently support an already-returned mask but cannot resurrect a
-discarded mask. Raw SAM confidence is persisted separately and never overwritten.
+Otherwise retain the existing bounded `+/-0.06` gentle nudge, calculated with
+`gentlePositiveMax`. Explicit positive evidence can protect and all positive
+evidence can gently support an already-returned mask, but neither can resurrect
+a discarded mask. Raw SAM confidence is persisted separately and never
+overwritten.
 
 Maximum exemplar similarity replaces centroid similarity so one precise removal
 remains matchable on the next card. The margin is the damage-on-text protection:
@@ -183,9 +191,10 @@ This must be proven by control/replay evidence, not merely assumed.
 ## Diagnostics
 
 Emit one compact structured record per decision with session/request trace,
-proposed type, source view, raw confidence, positive/negative maxima and matched
-exemplar sessions, active `tau`/`margin`, gentle adjustment, final action
-(`retained`, `protected`, or `vetoed`), and fingerprint/bank version.
+proposed type, source view, raw confidence, explicit-positive, all-positive
+gentle, and negative maxima plus matched exemplar sessions, active `tau`/`margin`,
+gentle adjustment, final action (`retained`, `protected`, or `vetoed`), and
+fingerprint/bank version.
 
 At Smart-Mark save, record whether an OpenCV proposal overlapped the human box
 at IoU greater than `0.3`. Completion is too late. If data later proves OpenCV
@@ -193,7 +202,10 @@ often never proposes where humans mark, learned proposals may return to design.
 
 ## Read-only calibration
 
-Calibration recommends values; it never writes Production.
+Calibration/replay proves the fixed policy; it never writes Production. The
+authoritative live V2 policy is `tau=0.80`, `margin=0.10`. Bank parsing rejects
+values outside the safety bounds `tau=[0.70, 0.95]` and
+`margin=[0.03, 0.20]`.
 
 - Model the real maximum-over-a-50-example-bank decision, not isolated pairwise
   similarity.
@@ -204,7 +216,10 @@ Calibration recommends values; it never writes Production.
 - Preserve view/version compatibility and prefer `ORIGINAL` comparisons.
 - Report distributions, counts, false-veto candidates, adjacent-value
   sensitivity, serialized size, and request latency.
-- Mark approves `tau` and `margin` before anything writes them.
+- Mark approves the fixed policy before anything writes it.
+- Re-evaluate every admitted explicit negative and positive against the final
+  post-update bank. Every negative must still veto and every positive must still
+  survive; any self-conflict fails the replay closed.
 
 Implementation clarification after live evidence review:
 
@@ -227,6 +242,19 @@ Required evidence:
 - An unrelated control card has no material suppression increase.
 - Real damage crossing text survives when positive protection is comparable.
 - Size and latency budgets pass.
+- The final post-update bank cannot neutralize any admitted explicit human
+  lesson.
+
+Live Cubone correction evidence (2026-08-03): the original data-selected
+`tau=0.652262`, `margin=0.652262` could never veto the observed repeat-card
+candidates because its margin was larger than their negative-versus-positive
+gaps. Replaying fixed `0.80/0.10` against the actual 130-exemplar Production
+bank then found four human removals shielded only by untouched auto-accepts,
+including one exact `1.0` conflict. Restricting veto protection to explicit
+human-positive lessons resolved all four while preserving untouched accepts for
+the gentle nudge. The full authoritative replay and final-bank self-conflict
+proof pass without changing fingerprints, exemplar capacity, replay cursor,
+detector geometry, measurements, or grade math.
 
 Recalibrate after any SAM/model/processor repin or fingerprint-space change.
 
@@ -278,7 +306,9 @@ Harvest/Smart-Mark:
 Detection/safety:
 
 - strong negative veto defeats even high raw confidence;
-- comparable positive evidence blocks the veto;
+- comparable explicit human-positive evidence blocks the veto;
+- untouched auto-accepts contribute only to the gentle nudge and cannot block a
+  human-removal veto;
 - weak evidence stays within `+/-0.06`;
 - no promotion resurrects a discarded mask;
 - type/view/version boundaries are enforced;
@@ -288,6 +318,8 @@ Detection/safety:
 Acceptance:
 
 - chronological replay passes all calibration conditions;
+- final-bank replay proves every admitted explicit negative still vetoes and
+  every admitted explicit positive survives;
 - reconstruct-versus-Production audit passes before mutation;
 - the same-card live proof at the top passes.
 
