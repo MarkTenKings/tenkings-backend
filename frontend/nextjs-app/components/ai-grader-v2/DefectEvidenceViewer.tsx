@@ -57,6 +57,7 @@ type DefectEvidenceViewerProps = {
   onRemoveDefect?: (defectId: string) => void;
   onDefectTypeChange?: (defectId: string, defectType: SpeedsterDefectType) => void;
   onSmartMark?: (box: { x: number; y: number; width: number; height: number }) => void;
+  onImageError?: () => void;
 };
 
 type ReviewMode = "INSPECT" | "MAGNIFY" | "SMART_MARK";
@@ -111,6 +112,7 @@ export function DefectEvidenceViewer({
   onRemoveDefect,
   onDefectTypeChange,
   onSmartMark,
+  onImageError,
 }: DefectEvidenceViewerProps) {
   const [localId, setLocalId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -234,6 +236,7 @@ export function DefectEvidenceViewer({
             fill
             sizes="(max-width: 860px) 100vw, 55vw"
             unoptimized
+            onError={onImageError}
           />
           <svg className={styles.overlay} viewBox="0 0 1000 1000" preserveAspectRatio="none">
             {visibleDefects.map((defect, index) => {
@@ -288,7 +291,13 @@ export function DefectEvidenceViewer({
           <>
             <div className={styles.closeUp}>
               <svg viewBox={activeCrop.join(" ")} preserveAspectRatio="none">
-                <image href={sourceImageUrls[active.sourceViewId]} width="1" height="1" preserveAspectRatio="none" />
+                <image
+                  href={sourceImageUrls[active.sourceViewId]}
+                  width="1"
+                  height="1"
+                  preserveAspectRatio="none"
+                  onError={onImageError}
+                />
                 <polygon className={styles.closeContour} points={points(activeContour)} />
               </svg>
               <span>EVIDENCE CLOSE-UP</span>

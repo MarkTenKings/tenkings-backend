@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
 import { CaptureWorkspace, type SpeedsterCaptureBundle } from "../../components/ai-grader-v2/CaptureWorkspace";
@@ -19,6 +19,12 @@ import type {
   SpeedsterMeasuredDefect,
 } from "../../lib/ai-grader-v2/contracts";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
+import {
+  SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
+  createCoalescedReviewImageRefresh,
+  fetchSpeedsterReviewImageUrls,
+  type SpeedsterReviewImageUrls,
+} from "../../lib/ai-grader-v2/review-image-urls";
 import {
   calculateSpeedsterReview,
   correctSpeedsterDefectType,
@@ -45,6 +51,7 @@ export default function AiGraderV2AdminPage() {
   const [lastRemovedDefect, setLastRemovedDefect] = useState<SpeedsterMeasuredDefect | null>(null);
   const [detectorVersion, setDetectorVersion] = useState<string | null>(null);
   const [completion, setCompletion] = useState<SpeedsterCompletion | null>(null);
+  const [reviewImageUrls, setReviewImageUrls] = useState<SpeedsterReviewImageUrls | null>(null);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Enter the exact information that belongs on the Ten Kings label.");
   const isAdmin = useMemo(
@@ -55,10 +62,62 @@ export default function AiGraderV2AdminPage() {
     () => capture ? calculateSpeedsterReview(capture, defects ?? []) : null,
     [capture, defects],
   );
-  const sourceImageUrls = useMemo(() => capture ? Object.fromEntries([
-    ...speedsterDetectorViews(capture.front),
-    ...speedsterDetectorViews(capture.back),
-  ].map(({ id, imageUrl }) => [id, imageUrl])) : {}, [capture]);
+  const sourceImageUrls = useMemo(() => {
+    if (reviewImageUrls) {
+      return Object.fromEntries(([
+        "FRONT",
+        "BACK",
+      ] as const).flatMap((side) => Object.entries(reviewImageUrls[side].views)
+        .map(([view, imageUrl]) => [`${side}:${view}`, imageUrl])));
+    }
+    return capture ? Object.fromEntries([
+      ...speedsterDetectorViews(capture.front),
+      ...speedsterDetectorViews(capture.back),
+    ].map(({ id, imageUrl }) => [id, imageUrl])) : {};
+  }, [capture, reviewImageUrls]);
+  const reviewActive = Boolean(capture && review && defects !== null && !completion);
+  const imageErrorRetryUsed = useRef(false);
+  const refreshReviewImages = useMemo(() => {
+    if (!session?.token || !draft?.id) return null;
+    return createCoalescedReviewImageRefresh(async () => {
+      const urls = await fetchSpeedsterReviewImageUrls({ token: session.token!, sessionId: draft.id });
+      setReviewImageUrls(urls);
+      return urls;
+    });
+  }, [draft?.id, session?.token]);
+
+  const silentlyRefreshReviewImages = useCallback(() => {
+    imageErrorRetryUsed.current = false;
+    void refreshReviewImages?.().catch(() => undefined);
+  }, [refreshReviewImages]);
+
+  const retryReviewImagesOnce = useCallback(() => {
+    if (imageErrorRetryUsed.current) return;
+    imageErrorRetryUsed.current = true;
+    void refreshReviewImages?.().catch(() => undefined);
+  }, [refreshReviewImages]);
+
+  useEffect(() => {
+    setReviewImageUrls(null);
+    imageErrorRetryUsed.current = false;
+  }, [draft?.id]);
+
+  useEffect(() => {
+    if (!reviewActive || !refreshReviewImages) return;
+    silentlyRefreshReviewImages();
+    const timer = window.setInterval(
+      silentlyRefreshReviewImages,
+      SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
+    );
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") silentlyRefreshReviewImages();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [refreshReviewImages, reviewActive, silentlyRefreshReviewImages]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
     setIdentity((current) => ({ ...current, [field]: value }));
@@ -262,7 +321,10 @@ export default function AiGraderV2AdminPage() {
 
         {capture && review && defects !== null && !completion ? (
           <ReviewWorkspace
-            masterImageUrls={{ FRONT: capture.front.inspectionUrl, BACK: capture.back.inspectionUrl }}
+            masterImageUrls={reviewImageUrls ? {
+              FRONT: reviewImageUrls.FRONT.master,
+              BACK: reviewImageUrls.BACK.master,
+            } : { FRONT: capture.front.inspectionUrl, BACK: capture.back.inspectionUrl }}
             inspectionFrames={{ FRONT: capture.front.inspectionFrame, BACK: capture.back.inspectionFrame }}
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
@@ -290,6 +352,7 @@ export default function AiGraderV2AdminPage() {
               setMessage("Defect type and grade math updated.");
             }}
             onSmartMark={(side, box) => void smartMark(side, box)}
+            onImageError={retryReviewImagesOnce}
             onComplete={() => void completeGrade()}
           />
         ) : null}
