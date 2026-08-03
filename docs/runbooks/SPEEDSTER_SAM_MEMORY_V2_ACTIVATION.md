@@ -41,8 +41,13 @@ ACTIVATE SPEEDSTER SAM MEMORY V2 <calibrated-bank-hash> FROM CALIBRATION <calibr
 
 The transaction reacquires the same lock, recomputes all evidence, verifies the
 expected current preimage, creates the fixed inert backup row, swaps only
-`GLOBAL`, and verifies version, exemplar count, exact deterministic hash, and
-tolerant numeric equality before commit. Any mismatch aborts the transaction.
+`GLOBAL`, and verifies version, exemplar count, and tolerant numeric equality on
+the first persisted readback. It captures that readback's exact deterministic
+`activeRowHash`, binds the backup to it, then rereads both `GLOBAL` and the backup
+and requires the exact active hash plus a valid hash-bound backup before commit.
+The response returns `activeRowHash` (the durable rollback identity) separately
+from `calibratedBankHash` (the pre-write approval/evidence identity). Any mismatch
+aborts the transaction.
 
 ## Rollback (do not run without approval)
 
