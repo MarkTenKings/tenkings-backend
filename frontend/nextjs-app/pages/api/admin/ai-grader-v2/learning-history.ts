@@ -5,11 +5,20 @@ import {
   inventorySpeedsterLearningHistory,
   type SpeedsterLearningHistoryInventory,
 } from "../../../../lib/ai-grader-v2/learning-history";
+import {
+  replaySpeedsterLearningCalibrationV2,
+  speedsterLearningCardKeyV2,
+  speedsterLearningFingerprintVersionForDetectorV2,
+  type SpeedsterLearningCalibrationReplayV2,
+} from "../../../../lib/ai-grader-v2/learning-calibration-v2";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 type CompletedHistoryRow = {
   id: string;
+  cardProfile: string;
+  identity: Prisma.JsonValue;
   reviewedDefects: Prisma.JsonValue;
+  gradeReport: Prisma.JsonValue;
 };
 
 type CompletionLabel = {
@@ -29,7 +38,13 @@ const dependencies: Dependencies = {
   listCompletedHistory: () => prisma.aiGraderV2Session.findMany({
     where: { workflowState: "COMPLETED" },
     orderBy: { id: "asc" },
-    select: { id: true, reviewedDefects: true },
+    select: {
+      id: true,
+      cardProfile: true,
+      identity: true,
+      reviewedDefects: true,
+      gradeReport: true,
+    },
   }),
   listCompletionLabels: (sessionIds) => prisma.humanGradeLabel.findMany({
     where: { source: "SPEEDSTER", sourceSessionId: { in: sessionIds } },
@@ -41,7 +56,10 @@ const dependencies: Dependencies = {
 export function createSpeedsterLearningHistoryHandler(deps: Dependencies = dependencies) {
   return async function handler(
     req: NextApiRequest,
-    res: NextApiResponse<{ inventory: SpeedsterLearningHistoryInventory } | { message: string }>,
+    res: NextApiResponse<{
+      inventory: SpeedsterLearningHistoryInventory;
+      calibration: SpeedsterLearningCalibrationReplayV2;
+    } | { message: string }>,
   ) {
     if (req.method !== "GET") {
       res.setHeader("Allow", "GET");
@@ -54,6 +72,10 @@ export function createSpeedsterLearningHistoryHandler(deps: Dependencies = depen
       const completionBySession = new Map(labels.flatMap((label) => label.sourceSessionId
         ? [[label.sourceSessionId, label] as const]
         : []));
+      const detectorVersion = (gradeReport: Prisma.JsonValue) =>
+        gradeReport && typeof gradeReport === "object" && !Array.isArray(gradeReport)
+          ? gradeReport.detectorVersion
+          : undefined;
       return res.status(200).json({
         inventory: inventorySpeedsterLearningHistory(rows.map((row) => ({
           id: row.id,
@@ -61,6 +83,19 @@ export function createSpeedsterLearningHistoryHandler(deps: Dependencies = depen
           completionOrder: completionBySession.get(row.id)?.certificateSequence ?? 0,
           reviewedDefects: row.reviewedDefects,
         }))),
+        calibration: replaySpeedsterLearningCalibrationV2(rows.flatMap((row) => {
+          const completion = completionBySession.get(row.id);
+          return completion ? [{
+            sessionId: row.id,
+            completedAt: completion.createdAt,
+            completionOrder: completion.certificateSequence,
+            fingerprintVersion: speedsterLearningFingerprintVersionForDetectorV2(
+              detectorVersion(row.gradeReport),
+            ),
+            reviewedDefects: Array.isArray(row.reviewedDefects) ? row.reviewedDefects : [],
+            cardKey: speedsterLearningCardKeyV2(row.cardProfile, row.identity),
+          }] : [];
+        })),
       });
     } catch (error) {
       const response = toErrorResponse(error);
