@@ -161,6 +161,7 @@ test("upload planning binds the requested session to the existing admin identity
   const source = readFileSync(`${root}/pages/api/admin/ai-grader-v2/upload-plan.ts`, "utf8");
   assert.match(source, /where: \{ id: sessionId, createdByUserId: admin\.user\.id \}/);
   assert.match(source, /if \(!session\) return res\.status\(404\)/);
+  assert.match(source, /"RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"/);
 });
 
 test("SAM proxy adds its one optional server-only bearer header", () => {

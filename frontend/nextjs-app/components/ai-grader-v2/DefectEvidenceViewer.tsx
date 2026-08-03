@@ -10,6 +10,12 @@ import type {
   SpeedsterMeasuredDefect,
   SpeedsterPoint,
 } from "../../lib/ai-grader-v2/contracts";
+import {
+  SPEEDSTER_CANONICAL_FRAME,
+  canonicalContourToInspection,
+  inspectionBoxToCanonical,
+  type SpeedsterInspectionFrame,
+} from "../../lib/ai-grader-v2/inspection-frame";
 import styles from "./DefectEvidenceViewer.module.css";
 
 const LABELS: Record<SpeedsterDefectType, string> = {
@@ -38,10 +44,10 @@ const SURFACE_TYPES: readonly SpeedsterDefectType[] = [
   "DENT_MATERIAL_DAMAGE",
   "PEELING_HEAVY_DAMAGE",
 ];
-const CARD_ASPECT = 63.5 / 88.9;
-
 type DefectEvidenceViewerProps = {
   masterImageUrl: string;
+  magnifyImageUrl?: string;
+  inspectionFrame?: SpeedsterInspectionFrame;
   sourceImageUrls: Readonly<Record<string, string>>;
   side: SpeedsterCardSide;
   defects: readonly SpeedsterMeasuredDefect[];
@@ -67,7 +73,10 @@ function center(contour: readonly SpeedsterPoint[]): SpeedsterPoint {
   return { x: sum.x / contour.length, y: sum.y / contour.length };
 }
 
-function crop(contour: readonly SpeedsterPoint[]): [number, number, number, number] {
+function crop(
+  contour: readonly SpeedsterPoint[],
+  frameAspect: number,
+): [number, number, number, number] {
   const xs = contour.map(({ x }) => x);
   const ys = contour.map(({ y }) => y);
   const minX = Math.min(...xs);
@@ -76,9 +85,9 @@ function crop(contour: readonly SpeedsterPoint[]): [number, number, number, numb
   const maxY = Math.max(...ys);
   const halfWidth = Math.min(
     0.5,
-    Math.max((maxX - minX) * 0.9, ((maxY - minY) * 0.9) / CARD_ASPECT, 0.065),
+    Math.max((maxX - minX) * 0.9, ((maxY - minY) * 0.9) / frameAspect, 0.065),
   );
-  const halfHeight = halfWidth * CARD_ASPECT;
+  const halfHeight = halfWidth * frameAspect;
   const width = halfWidth * 2;
   const height = halfHeight * 2;
   return [
@@ -91,6 +100,8 @@ function crop(contour: readonly SpeedsterPoint[]): [number, number, number, numb
 
 export function DefectEvidenceViewer({
   masterImageUrl,
+  magnifyImageUrl,
+  inspectionFrame = SPEEDSTER_CANONICAL_FRAME,
   sourceImageUrls,
   side,
   defects,
@@ -115,7 +126,11 @@ export function DefectEvidenceViewer({
       : selectedDefectId;
   const activeId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : selectedId;
   const active = visibleDefects.find(({ id }) => id === activeId);
-  const activeCrop = active ? crop(active.canonicalContour) : null;
+  const frameAspect = inspectionFrame.width / inspectionFrame.height;
+  const activeContour = active
+    ? canonicalContourToInspection(active.canonicalContour, inspectionFrame)
+    : null;
+  const activeCrop = activeContour ? crop(activeContour, frameAspect) : null;
   const activeTypes = active?.zone === "SURFACE" ? SURFACE_TYPES : EDGE_CORNER_TYPES;
   const metrics = active
     ? [
@@ -144,7 +159,7 @@ export function DefectEvidenceViewer({
   const finishMark = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (mode !== "SMART_MARK" || !markStart) return;
     const end = pointFromEvent(event);
-    const box = {
+    const inspectionBox = {
       x: Math.min(markStart.x, end.x),
       y: Math.min(markStart.y, end.y),
       width: Math.abs(end.x - markStart.x),
@@ -152,7 +167,8 @@ export function DefectEvidenceViewer({
     };
     setMarkStart(null);
     setMarkEnd(null);
-    if (box.width > 0.005 && box.height > 0.005) onSmartMark?.(box);
+    const box = inspectionBoxToCanonical(inspectionBox, inspectionFrame);
+    if (box && box.width > 0.005 && box.height > 0.005) onSmartMark?.(box);
     setMode("INSPECT");
   };
 
@@ -166,7 +182,7 @@ export function DefectEvidenceViewer({
   const lensStyle = pointer ? {
     "--lens-x": `${pointer.x * 100}%`,
     "--lens-y": `${pointer.y * 100}%`,
-    backgroundImage: `url(${masterImageUrl})`,
+    backgroundImage: `url(${magnifyImageUrl ?? masterImageUrl})`,
   } as CSSProperties : undefined;
 
   return (
@@ -195,6 +211,7 @@ export function DefectEvidenceViewer({
         </header>
         <div
           className={`${styles.cardStage} ${mode === "SMART_MARK" ? styles.marking : ""}`}
+          style={{ aspectRatio: `${inspectionFrame.width} / ${inspectionFrame.height}` }}
           onPointerMove={(event) => {
             if (mode === "MAGNIFY") setPointer(pointFromEvent(event));
             if (mode === "SMART_MARK" && markStart) setMarkEnd(pointFromEvent(event));
@@ -220,7 +237,11 @@ export function DefectEvidenceViewer({
           />
           <svg className={styles.overlay} viewBox="0 0 1000 1000" preserveAspectRatio="none">
             {visibleDefects.map((defect, index) => {
-              const marker = center(defect.canonicalContour);
+              const inspectionContour = canonicalContourToInspection(
+                defect.canonicalContour,
+                inspectionFrame,
+              );
+              const marker = center(inspectionContour);
               const activeClass = defect.id === activeId ? styles.active : styles.defect;
               return (
                 <g
@@ -241,7 +262,7 @@ export function DefectEvidenceViewer({
                   onFocus={() => setHoveredId(defect.id)}
                   onBlur={() => setHoveredId(null)}
                 >
-                  <polygon className={styles.contour} points={points(defect.canonicalContour, 1000)} />
+                  <polygon className={styles.contour} points={points(inspectionContour, 1000)} />
                   <circle className={styles.hitTarget} cx={marker.x * 1000} cy={marker.y * 1000} r="34" />
                   <circle className={styles.halo} cx={marker.x * 1000} cy={marker.y * 1000} r="25" />
                   <circle className={styles.marker} cx={marker.x * 1000} cy={marker.y * 1000} r="11" />
@@ -263,12 +284,12 @@ export function DefectEvidenceViewer({
       </div>
 
       <aside className={styles.detail} aria-live="polite">
-        {active && activeCrop ? (
+        {active && activeContour && activeCrop ? (
           <>
             <div className={styles.closeUp}>
               <svg viewBox={activeCrop.join(" ")} preserveAspectRatio="none">
                 <image href={sourceImageUrls[active.sourceViewId]} width="1" height="1" preserveAspectRatio="none" />
-                <polygon className={styles.closeContour} points={points(active.canonicalContour)} />
+                <polygon className={styles.closeContour} points={points(activeContour)} />
               </svg>
               <span>EVIDENCE CLOSE-UP</span>
             </div>

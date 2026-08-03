@@ -8,6 +8,7 @@ import numpy as np
 from fastapi import HTTPException
 
 from app import DetectRequest, MeasureRequest, detect, health, lifespan, measure, ping
+from card_geometry import INSPECTION_HEIGHT, INSPECTION_MARGIN_PX, INSPECTION_WIDTH
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import (
     DETECTOR_VERSION,
@@ -23,8 +24,8 @@ class FakeMaskProcessor:
     def __init__(self):
         self.calls = []
 
-    def scan(self, image, candidates, learning_bank=None):
-        self.calls.append((image.shape, candidates, learning_bank))
+    def scan(self, image, candidates, learning_bank=None, allowed_mask=None):
+        self.calls.append((image.shape, candidates, learning_bank, allowed_mask))
         mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         mask[500:650, 450:600] = 1
         return [
@@ -207,9 +208,9 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(result["detectorVersion"], DETECTOR_VERSION)
         self.assertEqual(len(processor.calls), 2)
         self.assertTrue(
-            all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _, _ in processor.calls)
+            all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _, _, _ in processor.calls)
         )
-        self.assertTrue(all(candidates is localized for _, candidates, _ in processor.calls))
+        self.assertTrue(all(candidates is localized for _, candidates, _, _ in processor.calls))
         self.assertEqual(len(result["defects"]), 1)
         defect = result["defects"][0]
         self.assertTrue(defect["id"].startswith("sam3-front-"))
@@ -298,6 +299,32 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.9, places=3)
         self.assertEqual(candidates[1]["learningAdjustment"], 0.0)
         self.assertEqual(fake.scores.float_calls, 2)
+
+    def test_inspection_view_prompts_include_context_but_returns_canonical_masks(self):
+        fake = FakeOfficialImageProcessor()
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        margin = INSPECTION_MARGIN_PX
+        localized = [{
+            "box": (margin - 8, margin, 28, 40),
+            "coreBox": (margin, margin, 20, 32),
+            "coreMask": np.ones((32, 20), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+        allowed = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH), dtype=np.uint8)
+        allowed[margin : margin + GRID_HEIGHT, margin : margin + GRID_WIDTH] = 1
+
+        candidates = processor.scan(
+            np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8),
+            localized,
+            allowed_mask=allowed,
+        )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["mask"].shape, (GRID_HEIGHT, GRID_WIDTH))
+        self.assertEqual(candidates[0]["mask"][:, -1].sum(), 0)
+        prompt = fake.prompts[0][0]
+        self.assertLess(prompt[0] - prompt[2] / 2, margin / INSPECTION_WIDTH)
 
     def test_existing_backbone_features_make_one_compact_normalized_fingerprint(self):
         features = np.arange(256 * 4 * 3, dtype=np.float32).reshape(256, 4, 3)

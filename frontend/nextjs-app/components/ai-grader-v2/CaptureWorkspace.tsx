@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
+import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
 import {
   speedsterImageService,
   planSpeedsterPreparedOutputs,
@@ -23,6 +24,9 @@ export type SpeedsterPreparedSide = {
   sourceCorners: SpeedsterQuad;
   rectifiedUrl: string;
   rectifiedStorageKey: string;
+  inspectionUrl: string;
+  inspectionStorageKey: string;
+  inspectionFrame: SpeedsterInspectionFrame;
   transform: readonly number[];
   views: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
   viewStorageKeys: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
@@ -52,6 +56,9 @@ type SideState = {
   automaticGeometry: boolean;
   rectifiedUrl?: string;
   rectifiedStorageKey?: string;
+  inspectionUrl?: string;
+  inspectionStorageKey?: string;
+  inspectionFrame?: SpeedsterInspectionFrame;
   transform?: readonly number[];
   views?: SpeedsterPreparedSide["views"];
   viewStorageKeys?: SpeedsterPreparedSide["viewStorageKeys"];
@@ -204,6 +211,9 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         ...current,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
         rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
+        inspectionUrl: outputPlan.INSPECTION.readUrl,
+        inspectionStorageKey: outputPlan.INSPECTION.storageKey,
+        inspectionFrame: prepared.inspectionFrame,
         transform: prepared.transform,
         proposedCentering: prepared.borders,
         detectedBorders: prepared.detectedBorders,
@@ -249,6 +259,9 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
       sourceCorners: value.corners,
       rectifiedUrl: value.rectifiedUrl!,
       rectifiedStorageKey: value.rectifiedStorageKey!,
+      inspectionUrl: value.inspectionUrl!,
+      inspectionStorageKey: value.inspectionStorageKey!,
+      inspectionFrame: value.inspectionFrame!,
       transform: value.transform!,
       views: value.views!,
       viewStorageKeys: value.viewStorageKeys!,

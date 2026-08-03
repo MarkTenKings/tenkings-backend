@@ -9,10 +9,12 @@ const sessionId = "presentation-session-123";
 const createdByUserId = "admin-1";
 const frontRectifiedStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/front/rectified.webp`;
 const backRectifiedStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/back/rectified.webp`;
+const frontInspectionStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/front/inspection.webp`;
+const backInspectionStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/back/inspection.webp`;
 const capture = {
   cornerShape: "ROUNDED",
-  front: { rectifiedStorageKey: frontRectifiedStorageKey, evidence: "front-evidence" },
-  back: { rectifiedStorageKey: backRectifiedStorageKey, evidence: "back-evidence" },
+  front: { rectifiedStorageKey: frontRectifiedStorageKey, inspectionStorageKey: frontInspectionStorageKey, evidence: "front-evidence" },
+  back: { rectifiedStorageKey: backRectifiedStorageKey, inspectionStorageKey: backInspectionStorageKey, evidence: "back-evidence" },
 };
 
 test("presentation storage keys are stable and independent of the source-image stage", () => {
@@ -26,7 +28,7 @@ test("presentation storage keys are stable and independent of the source-image s
   );
 });
 
-test("post-grade workflow sends rectified evidence to the isolated adapter and saves both report keys", async () => {
+test("post-grade workflow sends expanded inspection evidence to the isolated adapter and saves both report keys", async () => {
   let savedCapture: unknown;
   const result = await completeSpeedsterPresentationImages({ sessionId, createdByUserId }, {
     async findCompletedSession(id, userId) {
@@ -37,12 +39,12 @@ test("post-grade workflow sends rectified evidence to the isolated adapter and s
     async createImages(input) {
       assert.deepEqual(input, {
         front: {
-          sourceStorageKey: frontRectifiedStorageKey,
+          sourceStorageKey: frontInspectionStorageKey,
           sourceContentType: "image/webp",
           outputStorageKey: `ai-grader-v2/${createdByUserId}/${sessionId}/report/front-clean.png`,
         },
         back: {
-          sourceStorageKey: backRectifiedStorageKey,
+          sourceStorageKey: backInspectionStorageKey,
           sourceContentType: "image/webp",
           outputStorageKey: `ai-grader-v2/${createdByUserId}/${sessionId}/report/back-clean.png`,
         },
@@ -117,4 +119,23 @@ test("a PhotoRoom failure leaves the completed capture unchanged for a clean ret
     /PhotoRoom unavailable/,
   );
   assert.equal(saves, 0);
+});
+
+test("legacy completed captures still use rectified evidence when no inspection image exists", async () => {
+  const legacyCapture = {
+    front: { rectifiedStorageKey: frontRectifiedStorageKey },
+    back: { rectifiedStorageKey: backRectifiedStorageKey },
+  };
+  await completeSpeedsterPresentationImages({ sessionId, createdByUserId }, {
+    async findCompletedSession() { return { capture: legacyCapture }; },
+    async createImages(input) {
+      assert.equal(input.front.sourceStorageKey, frontRectifiedStorageKey);
+      assert.equal(input.back.sourceStorageKey, backRectifiedStorageKey);
+      return {
+        frontCleanStorageKey: input.front.outputStorageKey,
+        backCleanStorageKey: input.back.outputStorageKey,
+      };
+    },
+    async saveCapture() { return true; },
+  });
 });

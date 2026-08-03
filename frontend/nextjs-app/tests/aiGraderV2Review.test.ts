@@ -122,6 +122,7 @@ test("the production orchestration scans Front then Back and produces a completa
       front: {
         side: "FRONT",
         rectifiedUrl: "https://images.test/front-original",
+        inspectionUrl: "https://images.test/front-inspection",
         views: {
           NORMALIZED: "https://images.test/front-normalized",
           MICRO_DEFECT: "https://images.test/front-micro",
@@ -131,6 +132,7 @@ test("the production orchestration scans Front then Back and produces a completa
       back: {
         side: "BACK",
         rectifiedUrl: "https://images.test/back-original",
+        inspectionUrl: "https://images.test/back-inspection",
         views: {
           NORMALIZED: "https://images.test/back-normalized",
           MICRO_DEFECT: "https://images.test/back-micro",
@@ -146,6 +148,10 @@ test("the production orchestration scans Front then Back and produces a completa
         `${request.side}:MICRO_DEFECT`,
         `${request.side}:DIRECTIONAL`,
       ]);
+      assert.equal(
+        request.views[0].imageUrl,
+        `https://images.test/${request.side.toLowerCase()}-inspection`,
+      );
       return {
         detectorVersion: "sam3-test",
         defects: request.side === "FRONT" ? [] : [{

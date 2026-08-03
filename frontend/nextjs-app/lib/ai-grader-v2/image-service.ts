@@ -6,6 +6,7 @@ import type {
   SpeedsterPoint,
   SpeedsterQuad,
 } from "./contracts";
+import type { SpeedsterInspectionFrame } from "./inspection-frame";
 
 type ImageAction = "geometry" | "prepare" | "detect" | "measure";
 type SpeedsterCornerShape = "ROUNDED_3_18_MM" | "SQUARE";
@@ -22,9 +23,10 @@ export type SpeedsterPrepareResponse = {
   transform: readonly number[];
   borders: SpeedsterQuad;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
+  inspectionFrame: SpeedsterInspectionFrame;
 };
 
-type PreparedArtifact = "RECTIFIED" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
+type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
 type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
 
@@ -60,6 +62,7 @@ export const speedsterImageService = {
       corners,
       outputUploads: {
         rectified: outputPlan.RECTIFIED.uploadUrl,
+        inspection: outputPlan.INSPECTION.uploadUrl,
         normalized: outputPlan.NORMALIZED.uploadUrl,
         microDefect: outputPlan.MICRO_DEFECT.uploadUrl,
         directional: outputPlan.DIRECTIONAL.uploadUrl,
