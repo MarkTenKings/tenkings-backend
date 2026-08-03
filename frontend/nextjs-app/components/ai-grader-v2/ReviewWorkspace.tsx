@@ -23,6 +23,7 @@ type ReviewWorkspaceProps = {
   onUndo: () => void;
   onDefectTypeChange: (defectId: string, defectType: SpeedsterDefectType) => void;
   onSmartMark: (side: SpeedsterCardSide, box: { x: number; y: number; width: number; height: number }) => void;
+  onImageError?: () => void;
   onComplete: () => void;
 };
 
@@ -37,6 +38,7 @@ export function ReviewWorkspace({
   onUndo,
   onDefectTypeChange,
   onSmartMark,
+  onImageError,
   onComplete,
 }: ReviewWorkspaceProps) {
   const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
@@ -69,6 +71,7 @@ export function ReviewWorkspace({
         onRemoveDefect={onRemoveDefect}
         onDefectTypeChange={onDefectTypeChange}
         onSmartMark={(box) => onSmartMark(side, box)}
+        onImageError={onImageError}
       />
 
       <GradeSummary grade={grade} />
