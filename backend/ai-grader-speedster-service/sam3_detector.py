@@ -1,6 +1,8 @@
 """Single-model SAM 3 defect detection on the Speedster canonical grid."""
 
 import hashlib
+import json
+import logging
 from contextlib import nullcontext
 from threading import Lock
 from typing import Optional, Protocol
@@ -17,6 +19,7 @@ from card_geometry import (
     detector_material_mask,
 )
 from defect_math import GRID_HEIGHT, GRID_WIDTH, measure_defects
+from sam_memory_v2 import decide_candidate_v2, prepare_bank_v2
 
 
 SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
@@ -27,6 +30,7 @@ MAX_SAM_AREA_MM2 = 120.0
 PX_PER_MM = GRID_WIDTH / 63.5
 FINGERPRINT_SIZE = 32
 LEARNING_SCALE = 0.06
+LOGGER = logging.getLogger(__name__)
 
 
 class MaskProcessor(Protocol):
@@ -36,6 +40,9 @@ class MaskProcessor(Protocol):
         candidates: list[dict],
         learning_bank: Optional[dict] = None,
         allowed_mask: Optional[np.ndarray] = None,
+        source_view_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> list[dict]: ...
 
 
@@ -151,12 +158,16 @@ class Sam3ImageProcessor:
         candidates: list[dict],
         learning_bank: Optional[dict] = None,
         allowed_mask: Optional[np.ndarray] = None,
+        source_view_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
     ) -> list[dict]:
         image_height, image_width = image.shape[:2]
         if allowed_mask is None:
             allowed_mask = np.ones((image_height, image_width), dtype=np.uint8)
         if allowed_mask.shape != (image_height, image_width):
             raise ValueError("Detector material mask does not match the image")
+        prepared_v2 = prepare_bank_v2(learning_bank)
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
             processor = self.load()
@@ -223,18 +234,41 @@ class Sam3ImageProcessor:
                         if not (MIN_SAM_AREA_MM2 <= area_mm2 <= MAX_SAM_AREA_MM2):
                             continue
                         fingerprint = feature_fingerprint(feature_map, clipped)
-                        adjustment = learning_adjustment(
-                            fingerprint, candidate["defectType"], learning_bank
-                        )
+                        raw_confidence = float(score)
+                        if prepared_v2 is not None:
+                            decision = decide_candidate_v2(
+                                prepared_v2,
+                                fingerprint=fingerprint,
+                                defect_type=candidate["defectType"],
+                                source_view_id=source_view_id,
+                                raw_confidence=raw_confidence,
+                                session_id=session_id,
+                                trace_id=trace_id,
+                            )
+                            LOGGER.info(
+                                "sam_memory_decision %s",
+                                json.dumps(
+                                    decision["diagnostic"],
+                                    separators=(",", ":"),
+                                    sort_keys=True,
+                                ),
+                            )
+                            if decision["veto"]:
+                                continue
+                            adjustment = decision["adjustment"]
+                        else:
+                            adjustment = learning_adjustment(
+                                fingerprint, candidate["defectType"], learning_bank
+                            )
                         adjusted_confidence = float(
-                            np.clip(float(score) + adjustment, 0, 1)
+                            np.clip(raw_confidence + adjustment, 0, 1)
                         )
                         if adjusted_confidence < 0.5:
                             continue
                         if best is None or adjusted_confidence > best["rankingConfidence"]:
                             best = {
                                 "defectType": candidate["defectType"],
-                                "confidence": float(score),
+                                "confidence": raw_confidence,
                                 "rankingConfidence": adjusted_confidence,
                                 "learningAdjustment": adjustment,
                                 "featureFingerprint": fingerprint,
@@ -377,6 +411,8 @@ def detect_views(
     corner_shape: str,
     processor: Optional[MaskProcessor] = None,
     learning_bank: Optional[dict] = None,
+    session_id: Optional[str] = None,
+    trace_id: Optional[str] = None,
 ) -> dict:
     active_processor = processor or get_processor()
     proposals = []
@@ -393,7 +429,13 @@ def detect_views(
             detector_image, corner_shape, view_id
         )
         for candidate in active_processor.scan(
-            detector_image, localized_candidates, learning_bank, allowed_mask
+            detector_image,
+            localized_candidates,
+            learning_bank,
+            allowed_mask,
+            source_view_id=view_id,
+            session_id=session_id,
+            trace_id=trace_id,
         ):
             for contour in _mask_contours(candidate["mask"]):
                 proposals.append(

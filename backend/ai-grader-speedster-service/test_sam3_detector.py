@@ -1,5 +1,7 @@
 import base64
 import asyncio
+import inspect
+import json
 import unittest
 from unittest.mock import patch
 
@@ -18,13 +20,55 @@ from sam3_detector import (
     learning_adjustment,
     measure_marks,
 )
+from sam_memory_v2 import CAPACITY_PER_TYPE_POLARITY, FINGERPRINT_VERSION
+
+
+SAM_UNIT = [1 / np.sqrt(32)] * 32
+
+
+def v2_exemplar(polarity, session_id):
+    return {
+        "defectType": "VISIBLE_WHITENING",
+        "polarity": polarity,
+        "sessionId": session_id,
+        "completedAt": "2026-08-02T12:00:00.000Z",
+        "completionOrder": 1,
+        "proposalOrder": 0,
+        "lessonOrder": 0,
+        "fingerprint": SAM_UNIT,
+        "provenance": (
+            "DETECTOR_REMOVED"
+            if polarity == "NEGATIVE"
+            else "SMART_MARK_POSITIVE"
+        ),
+        "sourceViewId": "ORIGINAL",
+    }
+
+
+def v2_bank(*exemplars):
+    return {
+        "version": 2,
+        "fingerprintVersion": FINGERPRINT_VERSION,
+        "capacityPerTypePolarity": CAPACITY_PER_TYPE_POLARITY,
+        "calibration": {"status": "CALIBRATED", "tau": 0.9, "margin": 0.05},
+        "exemplars": list(exemplars),
+    }
 
 
 class FakeMaskProcessor:
     def __init__(self):
         self.calls = []
 
-    def scan(self, image, candidates, learning_bank=None, allowed_mask=None):
+    def scan(
+        self,
+        image,
+        candidates,
+        learning_bank=None,
+        allowed_mask=None,
+        source_view_id=None,
+        session_id=None,
+        trace_id=None,
+    ):
         self.calls.append((image.shape, candidates, learning_bank, allowed_mask))
         mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         mask[500:650, 450:600] = 1
@@ -124,6 +168,8 @@ class Sam3DetectorTests(unittest.TestCase):
             side="FRONT",
             cornerShape="SQUARE",
             learningBank={"version": 1, "types": {}},
+            sessionId="session-123",
+            requestTraceId="session-123:FRONT:detect",
             views=[
                 {
                     "id": "ORIGINAL",
@@ -144,6 +190,10 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(
             scan.call_args.kwargs["learning_bank"],
             {"version": 1, "types": {}},
+        )
+        self.assertEqual(scan.call_args.kwargs["session_id"], "session-123")
+        self.assertEqual(
+            scan.call_args.kwargs["trace_id"], "session-123:FRONT:detect"
         )
 
     def test_detect_endpoint_returns_the_single_detector_error(self):
@@ -365,6 +415,118 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(
             learning_adjustment(fingerprint, "LIGHT_SCRATCH_SCUFF", positive), 0.0
         )
+
+    def test_v2_strong_negative_veto_logs_one_compact_traceable_decision(self):
+        fake = FakeOfficialImageProcessor()
+        fake.scores = FakeTensor(np.array([0.96], dtype=np.float32))
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        localized = [{
+            "box": (450, 500, 100, 100),
+            "coreBox": (470, 520, 60, 60),
+            "coreMask": np.ones((60, 60), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+
+        with self.assertLogs("sam3_detector", level="INFO") as captured:
+            candidates = processor.scan(
+                np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                localized,
+                v2_bank(v2_exemplar("NEGATIVE", "removed-text")),
+                source_view_id="FRONT:ORIGINAL",
+                session_id="current-session",
+                trace_id="request-trace",
+            )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(len(captured.records), 1)
+        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
+        self.assertEqual(diagnostic["action"], "vetoed")
+        self.assertAlmostEqual(diagnostic["rawConfidence"], 0.96, places=6)
+        self.assertEqual(diagnostic["sessionId"], "current-session")
+        self.assertEqual(diagnostic["traceId"], "request-trace")
+        self.assertEqual(diagnostic["sourceViewId"], "ORIGINAL")
+        self.assertEqual(diagnostic["negativeMatchSessionId"], "removed-text")
+
+    def test_v2_positive_protection_keeps_surviving_measurements_identical(self):
+        localized = [{
+            "box": (450, 500, 100, 100),
+            "coreBox": (470, 520, 60, 60),
+            "coreMask": np.ones((60, 60), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+        baseline_processor = Sam3ImageProcessor()
+        baseline_processor._processor = FakeOfficialImageProcessor()
+        protected_processor = Sam3ImageProcessor()
+        protected_processor._processor = FakeOfficialImageProcessor()
+        image = np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8)
+
+        with patch("sam3_detector.defect_candidates", return_value=localized):
+            baseline = detect_views(
+                [("FRONT:ORIGINAL", image)],
+                "FRONT",
+                "SQUARE",
+                baseline_processor,
+            )
+            with self.assertLogs("sam3_detector", level="INFO") as captured:
+                protected = detect_views(
+                    [("FRONT:ORIGINAL", image)],
+                    "FRONT",
+                    "SQUARE",
+                    protected_processor,
+                    v2_bank(
+                        v2_exemplar("NEGATIVE", "removed-text"),
+                        v2_exemplar("POSITIVE", "real-damage"),
+                    ),
+                )
+
+        self.assertEqual(len(baseline["defects"]), 1)
+        self.assertEqual(len(protected["defects"]), 1)
+        self.assertEqual(
+            baseline["defects"][0]["canonicalContour"],
+            protected["defects"][0]["canonicalContour"],
+        )
+        self.assertEqual(
+            baseline["defects"][0]["measurement"],
+            protected["defects"][0]["measurement"],
+        )
+        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
+        self.assertEqual(diagnostic["action"], "protected")
+
+    def test_malformed_v2_is_inert_and_does_not_block_detection(self):
+        fake = FakeOfficialImageProcessor()
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        malformed = v2_bank(v2_exemplar("NEGATIVE", "bad-bank"))
+        malformed["exemplars"][0]["fingerprint"] = [1.0]
+        localized = [{
+            "box": (450, 500, 100, 100),
+            "coreBox": (470, 520, 60, 60),
+            "coreMask": np.ones((60, 60), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+
+        with self.assertLogs("sam3_detector", level="INFO") as captured:
+            candidates = processor.scan(
+                np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                localized,
+                malformed,
+                source_view_id="FRONT:ORIGINAL",
+            )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertAlmostEqual(candidates[0]["confidence"], 0.84, places=3)
+        self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.84, places=3)
+        self.assertEqual(candidates[0]["learningAdjustment"], 0.0)
+        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
+        self.assertEqual(diagnostic["bankStatus"], "malformed")
+        self.assertEqual(diagnostic["action"], "retained")
+
+    def test_positive_evidence_cannot_change_the_pinned_sam_collection_threshold(self):
+        source = inspect.getsource(Sam3ImageProcessor.load)
+
+        self.assertIn("Sam3Processor(model, confidence_threshold=0.5)", source)
+        self.assertNotIn("confidence_threshold=0.44", source)
 
 
 if __name__ == "__main__":
