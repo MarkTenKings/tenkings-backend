@@ -84,6 +84,7 @@ test("one global bank is injected into every detect request and updated in compl
   assert.match(migration, /CREATE TABLE "AiGraderV2LearningBank"/);
   assert.doesNotMatch(migration, /\bUPDATE\b|\bDELETE\b/i);
   assert.match(proxy, /action !== "detect"/);
-  assert.match(proxy, /learningBank: cleanSpeedsterLearningBank/);
-  assert.match(completion, /updateSpeedsterLearningBank\(currentLearningBank, input\.reviewedDefects\)/);
+  assert.match(proxy, /learningBank: speedsterLearningBankForDetect/);
+  assert.match(completion, /dispatchSpeedsterLearningBank/);
+  assert.match(completion, /updateSpeedsterLearningBank\(learningBank\.bank, input\.reviewedDefects\)/);
 });

@@ -170,6 +170,7 @@ const stableValue = (value: unknown): unknown => {
 
 const stableJson = (value: unknown) => JSON.stringify(stableValue(value));
 const sha256 = (value: unknown) => createHash("sha256").update(stableJson(value)).digest("hex");
+export const speedsterLearningDeterministicHashV2 = (value: unknown) => sha256(value);
 
 const exactInspectionFrame = (value: unknown) => {
   if (!isRecord(value) || !isRecord(value.cardBounds)) return false;

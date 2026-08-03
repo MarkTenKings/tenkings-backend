@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
-import { cleanSpeedsterLearningBank } from "../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { speedsterLearningBankForDetect } from "../../../../../lib/server/aiGraderV2LearningBank";
 
 const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
 
@@ -16,7 +16,7 @@ export function speedsterServiceHeaders() {
 export async function speedsterServiceBody(action: string, body: Record<string, unknown>) {
   if (action !== "detect") return body;
   const bank = await prisma.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
-  return { ...body, learningBank: cleanSpeedsterLearningBank(bank?.state) };
+  return { ...body, learningBank: speedsterLearningBankForDetect(bank?.state) };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
