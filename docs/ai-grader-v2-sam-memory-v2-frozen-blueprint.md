@@ -282,10 +282,10 @@ Acceptance:
 1. Production-validate the isolated 2 mm inspection frame. **Completed
    2026-08-02.** Mark confirmed four-sided context, aligned overlays, full-edge
    Smart-Marks, expanded PhotoRoom/report canvas, and normal completion.
-2. Add read-only history inventory and pure V2 bank types/functions. **Built
-   locally; Production release pending.** This release also changes only the
-   review magnifier presentation from a circle to a square; its size, zoom,
-   pointer math, and boundary clamping remain unchanged.
+2. Add read-only history inventory and pure V2 bank types/functions. **Released
+   to Production 2026-08-02.** This release also changes only the review
+   magnifier presentation from a circle to a square; its size, zoom, pointer
+   math, and boundary clamping remain unchanged.
 3. Add provenance harvest plus incremental/rebuild equivalence tests.
 4. Add Smart-Mark fingerprinting and failure tests.
 5. Add Python veto-only decision and diagnostics.
