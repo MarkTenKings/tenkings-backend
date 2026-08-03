@@ -117,7 +117,7 @@
   width: var(--lens-size);
   height: var(--lens-size);
   border: 2px solid var(--bright);
-  border-radius: 50%;
+  border-radius: 0;
   background-repeat: no-repeat;
   background-position: var(--lens-x) var(--lens-y);
   background-size: 420% 420%;
