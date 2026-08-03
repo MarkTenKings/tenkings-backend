@@ -17,10 +17,14 @@ import {
 
 export const SPEEDSTER_LEARNING_POISONED_ARTICUNO_SESSION_ID =
   "cmscem6960006accgpc69tgwp" as const;
+export const SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT = [
+  { sessionId: "cmscq0ght000011tyoq07u2gc", completionOrder: 226 },
+  { sessionId: "cmsdelcbq0000hgh9qmd5xyfl", completionOrder: 227 },
+] as const;
 export const SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION =
   "sam3-local-box-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543" as const;
 export const SPEEDSTER_LEARNING_CALIBRATION_SCHEMA =
-  "ten-kings-speedster-sam-memory-v2-calibration-replay-v1" as const;
+  "ten-kings-speedster-sam-memory-v2-calibration-replay-v2" as const;
 
 const LEARNING_SCALE = 0.06;
 const MAX_DECISION_BOUNDARIES = 64;
@@ -39,11 +43,18 @@ export type SpeedsterLearningCalibrationThresholdsV2 = {
   margin: number;
 };
 
+export type SpeedsterLearningCalibrationExemplarMatchV2 = Pick<
+  SpeedsterLearningExemplarV2,
+  "sessionId" | "completionOrder" | "proposalOrder" | "lessonOrder" | "provenance"
+>;
+
 export type SpeedsterLearningCalibrationDecisionV2 = {
   positiveMax: number | null;
   positiveMatchSessionId: string | null;
+  positiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
   negativeMax: number | null;
   negativeMatchSessionId: string | null;
+  negativeMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
   gentleAdjustment: number;
   action: DecisionAction;
 };
@@ -61,8 +72,24 @@ type ReplayCase = {
   expectedAction: ExpectedAction;
   positiveMax: number | null;
   positiveMatchSessionId: string | null;
+  positiveMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
   negativeMax: number | null;
   negativeMatchSessionId: string | null;
+  negativeMatch: SpeedsterLearningCalibrationExemplarMatchV2 | null;
+};
+
+type AttestedArticunoMatch = {
+  caseId: string;
+  laterLesson: {
+    sessionId: string;
+    completionOrder: number;
+    proposalOrder: number;
+    lessonOrder: number;
+  };
+  earlierLesson: SpeedsterLearningCalibrationExemplarMatchV2;
+  defectType: SpeedsterLearningLessonCandidateV2["defectType"];
+  sourceViewId: SpeedsterViewType;
+  negativeSimilarity: number;
 };
 
 type SensitivityRow = SpeedsterLearningCalibrationThresholdsV2 & {
@@ -99,11 +126,18 @@ export type SpeedsterLearningCalibrationReplayV2 = {
   recommendation: SpeedsterLearningCalibrationThresholdsV2 | null;
   adjacentSensitivity: SensitivityRow[];
   requiredEvidence: {
-    articunoClassRemovalAfterEarlierLesson: { status: EvidenceStatus; caseIds: string[] };
+    articunoClassRemovalAfterEarlierLesson: {
+      status: EvidenceStatus;
+      attestedCohort: typeof SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT;
+      caseIds: string[];
+      matches: AttestedArticunoMatch[];
+    };
     explicitPositiveRetention: { status: EvidenceStatus; caseIds: string[] };
     unrelatedControlSuppression: { status: EvidenceStatus; caseIds: string[] };
     damageOnTextPositiveProtection: {
       status: "INSUFFICIENT_EVIDENCE";
+      blocksCandidateReadiness: false;
+      reviewAuthority: "MARK_VISUAL_REVIEW";
       comparableProtectionCaseIds: string[];
       limitation: string;
     };
@@ -182,17 +216,23 @@ const cleanUnitFingerprint = (value: readonly number[]) => {
 function maximumSimilarity(
   fingerprint: readonly number[],
   exemplars: readonly SpeedsterLearningExemplarV2[],
-): { similarity: number | null; sessionId: string | null } {
+): { similarity: number | null; match: SpeedsterLearningCalibrationExemplarMatchV2 | null } {
   let similarity: number | null = null;
-  let sessionId: string | null = null;
+  let match: SpeedsterLearningCalibrationExemplarMatchV2 | null = null;
   for (const exemplar of exemplars) {
     const candidate = cosine(fingerprint, exemplar.fingerprint);
     if (similarity === null || candidate > similarity) {
       similarity = candidate;
-      sessionId = exemplar.sessionId;
+      match = {
+        sessionId: exemplar.sessionId,
+        completionOrder: exemplar.completionOrder,
+        proposalOrder: exemplar.proposalOrder,
+        lessonOrder: exemplar.lessonOrder,
+        provenance: exemplar.provenance,
+      };
     }
   }
-  return { similarity, sessionId };
+  return { similarity, match };
 }
 
 /** Exact TypeScript mirror of the frozen Python V2 max/margin equation. */
@@ -206,8 +246,10 @@ export function evaluateSpeedsterLearningDecisionV2(input: {
     return {
       positiveMax: null,
       positiveMatchSessionId: null,
+      positiveMatch: null,
       negativeMax: null,
       negativeMatchSessionId: null,
+      negativeMatch: null,
       gentleAdjustment: 0,
       action: "retained",
     };
@@ -238,9 +280,11 @@ export function evaluateSpeedsterLearningDecisionV2(input: {
     : "retained";
   return {
     positiveMax: positive.similarity,
-    positiveMatchSessionId: positive.sessionId,
+    positiveMatchSessionId: positive.match?.sessionId ?? null,
+    positiveMatch: positive.match,
     negativeMax: negative.similarity,
-    negativeMatchSessionId: negative.sessionId,
+    negativeMatchSessionId: negative.match?.sessionId ?? null,
+    negativeMatch: negative.match,
     gentleAdjustment,
     action,
   };
@@ -311,9 +355,6 @@ export function replaySpeedsterLearningCalibrationV2(
 ): SpeedsterLearningCalibrationReplayV2 {
   const now = options.now ?? (() => performance.now());
   const history = chronological(inputHistory);
-  const poisoned = history.find(({ sessionId }) =>
-    sessionId === SPEEDSTER_LEARNING_POISONED_ARTICUNO_SESSION_ID);
-  const poisonedCardKey = poisoned?.cardKey ?? null;
   const eligible: SpeedsterLearningCalibrationHistoryRowV2[] = [];
   const cases: ReplayCase[] = [];
   const decisionLatencies: number[] = [];
@@ -351,8 +392,10 @@ export function replaySpeedsterLearningCalibrationV2(
         expectedAction: lesson.polarity === "NEGATIVE" ? "VETO" : "RETAIN",
         positiveMax: decision.positiveMax,
         positiveMatchSessionId: decision.positiveMatchSessionId,
+        positiveMatch: decision.positiveMatch,
         negativeMax: decision.negativeMax,
         negativeMatchSessionId: decision.negativeMatchSessionId,
+        negativeMatch: decision.negativeMatch,
       });
     }
     untouchedLessonsUsedOnlyInEarlierBanks += harvested.history.lessons.filter(({ provenance }) =>
@@ -389,13 +432,39 @@ export function replaySpeedsterLearningCalibrationV2(
     : [];
 
   const matchedSessionCardKeys = new Map(history.map(({ sessionId, cardKey }) => [sessionId, cardKey]));
-  const articunoCases = evidenceCandidate && poisonedCardKey
-    ? cases.filter((entry) => entry.expectedAction === "VETO"
-      && entry.cardKey === poisonedCardKey
-      && entry.negativeMatchSessionId
-      && entry.negativeMax! >= evidenceCandidate.tau
+  const attestedCohort = new Map<string, number>(SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT.map((entry) =>
+    [entry.sessionId, entry.completionOrder] as const));
+  const completeCompatibleAttestedCohort = SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT.every((expected) =>
+    history.some((entry) => entry.sessionId === expected.sessionId
+      && entry.completionOrder === expected.completionOrder
+      && entry.fingerprintVersion === SPEEDSTER_LEARNING_FINGERPRINT_VERSION));
+  const observableArticunoMatches = cases.filter((entry) => {
+    const expectedOrder = attestedCohort.get(entry.sessionId);
+    const earlierOrder = entry.negativeMatch ? attestedCohort.get(entry.negativeMatch.sessionId) : undefined;
+    return entry.expectedAction === "VETO"
+      && expectedOrder === entry.completionOrder
+      && earlierOrder === entry.negativeMatch?.completionOrder
+      && typeof earlierOrder === "number"
+      && earlierOrder < entry.completionOrder;
+  });
+  const articunoCases = evidenceCandidate
+    ? observableArticunoMatches.filter((entry) => entry.negativeMax! >= evidenceCandidate.tau
       && entry.negativeMax! - (entry.positiveMax ?? 0) >= evidenceCandidate.margin)
     : [];
+  const articunoMatches = articunoCases.flatMap((entry): AttestedArticunoMatch[] => entry.negativeMatch
+    && entry.negativeMax !== null ? [{
+      caseId: entry.caseId,
+      laterLesson: {
+        sessionId: entry.sessionId,
+        completionOrder: entry.completionOrder,
+        proposalOrder: entry.proposalOrder,
+        lessonOrder: entry.lessonOrder,
+      },
+      earlierLesson: entry.negativeMatch,
+      defectType: entry.defectType,
+      sourceViewId: entry.sourceViewId,
+      negativeSimilarity: entry.negativeMax,
+    }] : []);
   const evaluatedPositives = cases.filter((entry) => entry.expectedAction === "RETAIN"
     && (entry.positiveMax !== null || entry.negativeMax !== null));
   const retainedPositiveCases = evidenceCandidate
@@ -405,6 +474,9 @@ export function replaySpeedsterLearningCalibrationV2(
     : [];
   const unrelatedControls = evidenceCandidate
     ? evaluatedPositives.filter((entry) => {
+      if (entry.negativeMatchSessionId
+        && attestedCohort.has(entry.sessionId)
+        && attestedCohort.has(entry.negativeMatchSessionId)) return false;
       const matchedCardKey = entry.negativeMatchSessionId
         ? matchedSessionCardKeys.get(entry.negativeMatchSessionId)
         : null;
@@ -428,11 +500,12 @@ export function replaySpeedsterLearningCalibrationV2(
 
   const evidence = {
     articunoClassRemovalAfterEarlierLesson: {
-      status: (!poisonedCardKey || !cases.some((entry) => entry.expectedAction === "VETO"
-        && entry.cardKey === poisonedCardKey && entry.negativeMatchSessionId))
+      status: (!completeCompatibleAttestedCohort || observableArticunoMatches.length === 0)
         ? "INSUFFICIENT_EVIDENCE" as const
         : articunoCases.length > 0 ? "PASS" as const : "FAIL" as const,
+      attestedCohort: SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT,
       caseIds: compactIds(articunoCases),
+      matches: articunoMatches,
     },
     explicitPositiveRetention: {
       status: evaluatedPositives.length === 0
@@ -448,8 +521,10 @@ export function replaySpeedsterLearningCalibrationV2(
     },
     damageOnTextPositiveProtection: {
       status: "INSUFFICIENT_EVIDENCE" as const,
+      blocksCandidateReadiness: false as const,
+      reviewAuthority: "MARK_VISUAL_REVIEW" as const,
       comparableProtectionCaseIds: compactIds(comparableProtection),
-      limitation: "Completed-session history has no authoritative damage-crossing-text label; similarity alone cannot prove that condition.",
+      limitation: "Completed-session history has no authoritative damage-crossing-text label; Mark must review this visually before final approval.",
     },
   };
   const incompatibleSessions = history.filter(({ fingerprintVersion }) =>
@@ -469,7 +544,6 @@ export function replaySpeedsterLearningCalibrationV2(
       ? "Compatible trusted explicit-positive retention evidence is incomplete or fails." : null,
     evidence.unrelatedControlSuppression.status !== "PASS"
       ? "Compatible unrelated-control suppression evidence is incomplete or fails." : null,
-    "Damage-on-text protection is not authoritatively labeled in completed-session history.",
   ].filter((reason): reason is string => Boolean(reason));
   const status = insufficientReasons.length === 0
     ? "CANDIDATE_READY_FOR_MARK_REVIEW" as const

@@ -7,7 +7,10 @@ import { SPEEDSTER_RULE_VERSION } from "../lib/ai-grader-v2/contracts";
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
 import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
-import { speedsterServiceHeaders } from "../pages/api/admin/ai-grader-v2/image/[action]";
+import {
+  freshSpeedsterMeasureEvidence,
+  speedsterServiceHeaders,
+} from "../pages/api/admin/ai-grader-v2/image/[action]";
 
 function request(method: string, body?: unknown, sessionId?: string): NextApiRequest {
   return {
@@ -178,6 +181,99 @@ test("SAM proxy adds its one optional server-only bearer header", () => {
     if (original === undefined) delete process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY;
     else process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY = original;
   }
+});
+
+test("Smart-Mark proxy replaces a stale browser URL from the owned persisted inspection key", async () => {
+  const calls: unknown[] = [];
+  const body = {
+    sessionId: "speedster-1",
+    side: "BACK",
+    cornerShape: "SQUARE",
+    evidenceView: {
+      id: "BACK:ORIGINAL",
+      imageUrl: "https://stale.example/back.webp",
+      inspectionFrame: { width: 1350, height: 1858 },
+    },
+    marks: [{ id: "smart-1" }],
+  };
+  const refreshed = await freshSpeedsterMeasureEvidence(body, "admin-1", {
+    async findOwnedCapture(sessionId, createdByUserId) {
+      calls.push(["find", sessionId, createdByUserId]);
+      return {
+        capture: {
+          front: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/front/inspection.webp" },
+          back: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp" },
+        },
+      };
+    },
+    async presignRead(storageKey, expiresInSeconds) {
+      calls.push(["sign", storageKey, expiresInSeconds]);
+      return "https://fresh.example/back.webp";
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ["find", "speedster-1", "admin-1"],
+    ["sign", "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp", 600],
+  ]);
+  assert.equal("sessionId" in refreshed, false);
+  assert.deepEqual(refreshed, {
+    side: body.side,
+    cornerShape: body.cornerShape,
+    evidenceView: { ...body.evidenceView, imageUrl: "https://fresh.example/back.webp" },
+    marks: body.marks,
+  });
+});
+
+test("Smart-Mark evidence refresh is side-bound, owner-bound, and nonblocking", async () => {
+  const body = {
+    sessionId: "speedster-1",
+    side: "BACK",
+    evidenceView: { id: "BACK:ORIGINAL", imageUrl: "https://stale.example/back.webp" },
+  };
+  let signCalls = 0;
+  const missingRequestedSide = await freshSpeedsterMeasureEvidence(body, "admin-1", {
+    async findOwnedCapture() {
+      return { capture: { front: { inspectionStorageKey: "private/front.webp" } } };
+    },
+    async presignRead() {
+      signCalls += 1;
+      return "unexpected";
+    },
+  });
+  assert.equal(signCalls, 0);
+  assert.equal((missingRequestedSide.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
+
+  const wrongPersistedKey = await freshSpeedsterMeasureEvidence(body, "admin-1", {
+    async findOwnedCapture() {
+      return { capture: { back: { inspectionStorageKey: "ai-grader-v2/another-admin/speedster-1/prepared/back/inspection.webp" } } };
+    },
+    async presignRead() {
+      signCalls += 1;
+      return "unexpected";
+    },
+  });
+  assert.equal(signCalls, 0);
+  assert.equal((wrongPersistedKey.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
+
+  const unowned = await freshSpeedsterMeasureEvidence(body, "another-admin", {
+    async findOwnedCapture() { return null; },
+    async presignRead() {
+      signCalls += 1;
+      return "unexpected";
+    },
+  });
+  assert.equal(signCalls, 0);
+  assert.equal((unowned.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
+
+  const signingFailure = await freshSpeedsterMeasureEvidence(body, "admin-1", {
+    async findOwnedCapture() {
+      return { capture: { back: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp" } } };
+    },
+    async presignRead() { throw new Error("signer unavailable"); },
+  });
+  assert.equal((signingFailure.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
+  assert.equal("sessionId" in signingFailure, false);
 });
 
 test("PATCH keeps an assigned public report slug stable", async () => {

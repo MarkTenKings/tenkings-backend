@@ -206,6 +206,20 @@ Calibration recommends values; it never writes Production.
   sensitivity, serialized size, and request latency.
 - Mark approves `tau` and `margin` before anything writes them.
 
+Implementation clarification after live evidence review:
+
+- Repeated-Articuno evidence is the explicitly Mark-attested compatible cohort
+  at certificate sequences `226` and `227`; the later explicit negative must
+  match an earlier cohort negative exemplar. Differing free-form identity keys
+  inside that cohort cannot be misclassified as an unrelated control.
+- Completed history cannot authoritatively label "damage crossing printed text."
+  The report keeps that limitation visible for Mark's visual review, while the
+  machine readiness decision remains bound to the observable Articuno replay,
+  explicit-positive retention, and genuinely unrelated-control evidence.
+- Activation derives the recommendation and canonical bank internally from the
+  same locked authoritative history. It does not accept caller-authored
+  thresholds or bank bytes.
+
 Required evidence:
 
 - Articuno-class removed text is vetoed once its lessons exist.
@@ -294,6 +308,14 @@ Acceptance:
 8. Only after Mark's typed approval, swap the cache transactionally.
 9. Deploy through protected PR checks.
 10. Run live same-card proof and monitor diagnostics.
+
+Live defect correction: the prepared inspection read URL originally expired ten
+minutes after capture and could therefore be stale by the time a human created a
+Smart-Mark. The existing authenticated proxy now signs the exact persisted,
+admin-owned Front or Back inspection image immediately before measurement. This
+changes only fingerprint evidence transport; human geometry, measurements,
+subgrades, final grade math, and the nonblocking hard-failure behavior are
+unchanged.
 
 ## Explicitly deferred or rejected
 
