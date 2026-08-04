@@ -5,6 +5,7 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
+import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
   planSpeedsterPreparedOutputs,
@@ -175,20 +176,22 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         ? backPhoto
         : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file });
       const backGeometry = await speedsterImageService.proposeGeometry(token, uploadedBack.readUrl);
+      const frontCorners = sanitizeSpeedsterUnitQuad(frontGeometry.corners);
+      const backCorners = sanitizeSpeedsterUnitQuad(backGeometry.corners);
       setFront({
         originalStorageKey: uploadedFront.storageKey,
         sourceUrl: uploadedFront.readUrl,
-        corners: frontGeometry.corners ?? manualStartQuad(frontGeometry.width, frontGeometry.height),
-        automaticGeometry: frontGeometry.corners !== null,
+        corners: frontCorners ?? manualStartQuad(frontGeometry.width, frontGeometry.height),
+        automaticGeometry: frontCorners !== null,
       });
       setBack({
         originalStorageKey: uploadedBack.storageKey,
         sourceUrl: uploadedBack.readUrl,
-        corners: backGeometry.corners ?? manualStartQuad(backGeometry.width, backGeometry.height),
-        automaticGeometry: backGeometry.corners !== null,
+        corners: backCorners ?? manualStartQuad(backGeometry.width, backGeometry.height),
+        automaticGeometry: backCorners !== null,
       });
       setStage("FRONT_GEOMETRY");
-      const automaticCount = Number(frontGeometry.corners !== null) + Number(backGeometry.corners !== null);
+      const automaticCount = Number(frontCorners !== null) + Number(backCorners !== null);
       setMessage(automaticCount === 2
         ? "Both physical cards found. Move only points that need correction."
         : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
