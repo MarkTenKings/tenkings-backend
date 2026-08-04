@@ -1,7 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { speedsterLearningBankForDetect } from "../../../../../lib/server/aiGraderV2LearningBank";
+import {
+  speedsterLearningBankForDetectRequest,
+  type SpeedsterLearningDetectClient,
+} from "../../../../../lib/server/aiGraderV2LearningBank";
 import { presignReadUrl } from "../../../../../lib/server/storage";
 
 const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
@@ -19,12 +22,23 @@ type MeasureEvidenceDependencies = {
   presignRead: (storageKey: string, expiresInSeconds: number) => Promise<string>;
 };
 
+type DetectLearningDependencies = {
+  learningBankForDetect: () => Promise<unknown>;
+};
+
 const measureEvidenceDependencies: MeasureEvidenceDependencies = {
   findOwnedCapture: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
     select: { capture: true },
   }),
   presignRead: presignReadUrl,
+};
+
+const detectLearningDependencies: DetectLearningDependencies = {
+  learningBankForDetect: () => speedsterLearningBankForDetectRequest(
+    prisma as unknown as SpeedsterLearningDetectClient,
+    (error) => console.error("[Speedster] SAM Memory catch-up failed before detect:", error),
+  ),
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -71,13 +85,13 @@ export async function speedsterServiceBody(
   action: string,
   body: Record<string, unknown>,
   createdByUserId?: string,
+  detectDeps: DetectLearningDependencies = detectLearningDependencies,
 ) {
   if (action === "measure" && createdByUserId) {
     return freshSpeedsterMeasureEvidence(body, createdByUserId);
   }
   if (action !== "detect") return body;
-  const bank = await prisma.aiGraderV2LearningBank.findUnique({ where: { id: "GLOBAL" } });
-  return { ...body, learningBank: speedsterLearningBankForDetect(bank?.state) };
+  return { ...body, learningBank: await detectDeps.learningBankForDetect() };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {

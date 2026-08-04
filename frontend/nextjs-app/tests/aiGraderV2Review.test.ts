@@ -229,6 +229,22 @@ test("the production orchestration scans Front then Back and produces a completa
           side: "BACK",
           sourceViewId: "BACK:DIRECTIONAL",
           supportingViewIds: ["BACK:MICRO_DEFECT"],
+        }, {
+          ...defect,
+          id: "memory-result-1",
+          side: "BACK",
+          defectType: "VISIBLE_WHITENING",
+          origin: "MEMORY",
+          sourceViewId: "BACK:ORIGINAL",
+          supportingViewIds: ["BACK:MICRO_DEFECT"],
+          memoryProposal: {
+            lessonSessionId: "cubone-reviewed-session",
+            lessonCompletionOrder: 228,
+            lessonProposalOrder: 7,
+            lessonOrder: 0,
+            lessonSourceViewId: "ORIGINAL",
+            similarity: 0.94,
+          },
         }],
       };
     },
@@ -236,11 +252,22 @@ test("the production orchestration scans Front then Back and produces a completa
 
   assert.deepEqual(scanOrder, ["FRONT", "BACK"]);
   assert.equal(scanned.detectorVersion, "sam3-test");
-  assert.equal(scanned.defects.length, 1);
+  assert.equal(scanned.defects.length, 2);
   assert.equal(scanned.defects[0].id, "BACK:sam-result-1:SURFACE");
   assert.equal(scanned.defects[0].origin, "DETECTOR");
   assert.equal(scanned.defects[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   assert.equal(scanned.defects[0].reviewResult, "UNREVIEWED");
+  assert.equal(scanned.defects[1].id, "BACK:memory-result-1:SURFACE");
+  assert.equal(scanned.defects[1].origin, "MEMORY");
+  assert.equal(scanned.defects[1].detectedDefectType, "VISIBLE_WHITENING");
+  assert.deepEqual(scanned.defects[1].memoryProposal, {
+    lessonSessionId: "cubone-reviewed-session",
+    lessonCompletionOrder: 228,
+    lessonProposalOrder: 7,
+    lessonOrder: 0,
+    lessonSourceViewId: "ORIGINAL",
+    similarity: 0.94,
+  });
 
   const review = calculateSpeedsterReview(capture, scanned.defects);
   const prepared = prepareSpeedsterCompletion(scanned.defects, review.grade, scanned.detectorVersion);
@@ -248,6 +275,10 @@ test("the production orchestration scans Front then Back and produces a completa
   assert.equal(prepared.body.reviewedDefects[0].origin, "DETECTOR");
   assert.equal(prepared.body.reviewedDefects[0].detectedDefectType, "LIGHT_SCRATCH_SCUFF");
   assert.equal(prepared.body.reviewedDefects[0].sourceViewId, "DIRECTIONAL");
+  assert.equal(prepared.completedDefects[1].reviewResult, "ACCEPTED");
+  assert.equal(prepared.body.reviewedDefects[1].origin, "MEMORY");
+  assert.equal(prepared.body.reviewedDefects[1].sourceViewId, "ORIGINAL");
+  assert.deepEqual(prepared.body.reviewedDefects[1].memoryProposal, scanned.defects[1].memoryProposal);
   assert.equal(prepared.body.gradeReport.detectorVersion, "sam3-test");
 
   const { buildSpeedsterLabelData, speedsterReportSlug } = await import(

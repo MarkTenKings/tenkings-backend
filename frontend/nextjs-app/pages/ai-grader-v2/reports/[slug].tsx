@@ -93,7 +93,9 @@ function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
   const defectType = typeof value.defectType === "string" && DEFECT_TYPES.has(value.defectType as SpeedsterDefectType)
     ? value.defectType as SpeedsterDefectType
     : null;
-  const origin = value.origin === "DETECTOR" || value.origin === "SMART_MARK" ? value.origin : null;
+  const origin = value.origin === "DETECTOR" || value.origin === "SMART_MARK" || value.origin === "MEMORY"
+    ? value.origin
+    : null;
   const detectedDefectType = typeof value.detectedDefectType === "string" &&
     DEFECT_TYPES.has(value.detectedDefectType as SpeedsterDefectType)
     ? value.detectedDefectType as SpeedsterDefectType

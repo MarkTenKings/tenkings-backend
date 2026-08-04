@@ -19,6 +19,8 @@ POLICY_TAU_MIN = 0.70
 POLICY_TAU_MAX = 0.95
 POLICY_MARGIN_MIN = 0.03
 POLICY_MARGIN_MAX = 0.20
+MEMORY_PROPOSAL_SIMILARITY_THRESHOLD = 0.90
+MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE = 3
 
 DEFECT_TYPES = {
     "FAINT_COLOR_VARIATION",
@@ -43,14 +45,23 @@ PROVENANCE = {
 
 
 @dataclass(frozen=True)
+class PreparedExemplarV2:
+    fingerprint: tuple[float, ...]
+    session_id: str
+    provenance: str
+    completion_order: int
+    proposal_order: int
+    lesson_order: int
+    source_view_id: str
+
+
+@dataclass(frozen=True)
 class PreparedBankV2:
     status: str
     fingerprint_version: Optional[str]
     tau: Optional[float]
     margin: Optional[float]
-    exemplars: dict[
-        tuple[str, str, str], tuple[tuple[tuple[float, ...], str, str], ...]
-    ]
+    exemplars: dict[tuple[str, str, str], tuple[PreparedExemplarV2, ...]]
 
 
 def _integer(value: object, minimum: int) -> bool:
@@ -151,9 +162,7 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
     ):
         return _inactive("malformed", fingerprint_version)
 
-    grouped: dict[
-        tuple[str, str, str], list[tuple[tuple[float, ...], str, str]]
-    ] = {}
+    grouped: dict[tuple[str, str, str], list[PreparedExemplarV2]] = {}
     counts: dict[tuple[str, str], int] = {}
     for exemplar in raw_exemplars:
         if not isinstance(exemplar, dict):
@@ -182,7 +191,15 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
         if counts[count_key] > CAPACITY_PER_TYPE_POLARITY:
             return _inactive("malformed", fingerprint_version)
         grouped.setdefault((defect_type, polarity, source_view), []).append(
-            (fingerprint, session_id.strip(), exemplar.get("provenance"))
+            PreparedExemplarV2(
+                fingerprint=fingerprint,
+                session_id=session_id.strip(),
+                provenance=exemplar.get("provenance"),
+                completion_order=exemplar.get("completionOrder"),
+                proposal_order=exemplar.get("proposalOrder"),
+                lesson_order=exemplar.get("lessonOrder"),
+                source_view_id=source_view,
+            )
         )
 
     return PreparedBankV2(
@@ -196,16 +213,38 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
 
 def _maximum_similarity(
     fingerprint: tuple[float, ...],
-    exemplars: tuple[tuple[tuple[float, ...], str, str], ...],
+    exemplars: tuple[PreparedExemplarV2, ...],
 ) -> tuple[Optional[float], Optional[str]]:
     best_similarity = None
     best_session_id = None
-    for exemplar, session_id, _provenance in exemplars:
-        similarity = max(0.0, sum(a * b for a, b in zip(fingerprint, exemplar)))
+    for exemplar in exemplars:
+        similarity = max(
+            0.0,
+            sum(a * b for a, b in zip(fingerprint, exemplar.fingerprint)),
+        )
         if best_similarity is None or similarity > best_similarity:
             best_similarity = similarity
-            best_session_id = session_id
+            best_session_id = exemplar.session_id
     return best_similarity, best_session_id
+
+
+def smart_mark_proposal_seeds_v2(
+    prepared: PreparedBankV2,
+    source_view_id: object,
+) -> tuple[tuple[str, PreparedExemplarV2], ...]:
+    """Return only explicit human Smart-Marks that may originate proposals."""
+
+    source_view = normalize_source_view(source_view_id)
+    if prepared.status != "calibrated" or source_view is None:
+        return ()
+    seeds = []
+    for defect_type in sorted(DEFECT_TYPES):
+        for exemplar in prepared.exemplars.get(
+            (defect_type, "POSITIVE", source_view), ()
+        ):
+            if exemplar.provenance == "SMART_MARK_POSITIVE":
+                seeds.append((defect_type, exemplar))
+    return tuple(seeds)
 
 
 def decide_candidate_v2(
@@ -246,7 +285,7 @@ def decide_candidate_v2(
             tuple(
                 exemplar
                 for exemplar in positive_exemplars
-                if exemplar[2] != "UNTOUCHED_ACCEPTED_POSITIVE"
+                if exemplar.provenance != "UNTOUCHED_ACCEPTED_POSITIVE"
             ),
         )
         negative_max, negative_session_id = _maximum_similarity(

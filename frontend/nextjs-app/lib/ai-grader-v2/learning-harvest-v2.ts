@@ -33,6 +33,7 @@ export type SpeedsterLearningHarvestDiagnosticsV2 = {
   skippedMissingFingerprints: number;
   skippedInvalidFingerprints: number;
   skippedVersionMismatch: number;
+  skippedUntouchedMemory: number;
   skippedUntouchedCap: number;
   skippedSameCardDuplicate: number;
 };
@@ -81,6 +82,7 @@ export function harvestSpeedsterLearningSessionV2(
     skippedMissingFingerprints: 0,
     skippedInvalidFingerprints: 0,
     skippedVersionMismatch: 0,
+    skippedUntouchedMemory: 0,
     skippedUntouchedCap: 0,
     skippedSameCardDuplicate: 0,
   };
@@ -110,8 +112,16 @@ export function harvestSpeedsterLearningSessionV2(
       return;
     }
     const view = sourceView(raw.sourceViewId);
-    if (!view || (raw.origin !== "DETECTOR" && raw.origin !== "SMART_MARK")) {
+    if (!view || (raw.origin !== "DETECTOR" && raw.origin !== "SMART_MARK" && raw.origin !== "MEMORY")) {
       diagnostics.skippedInvalidFindings += 1;
+      return;
+    }
+    // Memory proposals may affect the current grade, but untouched acceptance
+    // is never learning authority. This skipped write prevents positive-memory
+    // proposals from recursively teaching themselves.
+    if (raw.origin === "MEMORY" && raw.reviewResult === "ACCEPTED") {
+      diagnostics.untouchedFindings += 1;
+      diagnostics.skippedUntouchedMemory += 1;
       return;
     }
     if (raw.featureFingerprint == null) {

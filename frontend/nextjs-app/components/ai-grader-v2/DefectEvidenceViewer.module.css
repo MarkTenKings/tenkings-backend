@@ -194,6 +194,18 @@
 }
 
 .title { padding: 22px 0 18px; border-bottom: 1px solid var(--line); }
+.titleMeta { display: flex; align-items: center; gap: 9px; }
+.memoryLabel {
+  padding: 3px 7px;
+  color: #090a08;
+  background: var(--bright);
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: lowercase;
+}
 .title h3 { font-size: clamp(21px, 2.2vw, 30px); }
 .metrics {
   display: grid;

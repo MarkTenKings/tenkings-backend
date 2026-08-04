@@ -60,12 +60,13 @@ function canonicalDefects(
 ) {
   return defects.map((defect) => {
     const rawId = canonicalViewId(side, defect.id);
+    const origin = defect.origin === "MEMORY" ? "MEMORY" as const : "DETECTOR" as const;
     return {
       ...defect,
       id: rawId.endsWith(`:${defect.zone}`) ? rawId : `${rawId}:${defect.zone}`,
       side,
-      origin: "DETECTOR" as const,
-      detectedDefectType: defect.defectType,
+      origin,
+      detectedDefectType: defect.detectedDefectType ?? defect.defectType,
       sourceViewId: canonicalViewId(side, defect.sourceViewId),
       supportingViewIds: defect.supportingViewIds.map((id) => canonicalViewId(side, id)),
       reviewResult,

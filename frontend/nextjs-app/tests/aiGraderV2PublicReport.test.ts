@@ -116,6 +116,30 @@ test("maps only a completed session into public identity, reviewed evidence, gra
   assert.equal(JSON.stringify(source).includes("private-upload"), false);
 });
 
+test("public review preserves the memory label without exposing lesson diagnostics", async () => {
+  const reportModule = await reportModulePromise;
+  const memory = persisted();
+  memory.reviewedDefects = [{
+    ...defect,
+    origin: "MEMORY",
+    memoryProposal: {
+      lessonSessionId: "private-learning-session",
+      lessonCompletionOrder: 228,
+      lessonProposalOrder: 7,
+      lessonOrder: 0,
+      lessonSourceViewId: "ORIGINAL",
+      similarity: 0.94,
+    },
+  }];
+
+  const source = reportModule.mapCompletedSpeedsterSession(memory);
+
+  assert.ok(source);
+  assert.equal(source.defects[0].origin, "MEMORY");
+  assert.equal(source.defects[0].memoryProposal, undefined);
+  assert.equal(JSON.stringify(source).includes("private-learning-session"), false);
+});
+
 test("completed reports created before PhotoRoom keep their rectified master images", async () => {
   const reportModule = await reportModulePromise;
   const legacy = persisted("COMPLETED", false, false);

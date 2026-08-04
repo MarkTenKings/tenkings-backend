@@ -107,6 +107,35 @@ class DefectMathTests(unittest.TestCase):
         self.assertEqual(result["defectType"], "LIFTING_DEFORMATION")
         self.assertEqual(result["multiplier"], 2.0)
 
+    def test_memory_provenance_survives_fusion_without_changing_measurement(self):
+        contour = rectangle(20, 20, 22, 22)
+        baseline = measure_defects([proposal(contour, "original")], "SQUARE")[0]
+        diagnostic = {
+            "lessonSessionId": "cubone-lesson",
+            "lessonCompletionOrder": 228,
+            "lessonProposalOrder": 7,
+            "lessonOrder": 0,
+            "lessonSourceViewId": "ORIGINAL",
+            "similarity": 0.94,
+        }
+        memory = measure_defects(
+            [
+                {
+                    **proposal(contour, "original"),
+                    "origin": "MEMORY",
+                    "memoryProposal": diagnostic,
+                }
+            ],
+            "SQUARE",
+        )[0]
+
+        self.assertEqual(memory["origin"], "MEMORY")
+        self.assertEqual(memory["memoryProposal"], diagnostic)
+        self.assertEqual(
+            {key: value for key, value in memory.items() if key not in {"origin", "memoryProposal"}},
+            baseline,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
