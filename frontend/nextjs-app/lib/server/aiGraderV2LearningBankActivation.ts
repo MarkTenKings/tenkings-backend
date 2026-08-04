@@ -300,12 +300,26 @@ async function recomputePolicyCorrectionEvidence(
     { status: "CALIBRATED", ...SPEEDSTER_LEARNING_POLICY_V2 },
   ).bank;
   const latestCompletionOrder = labels.at(-1)?.certificateSequence ?? null;
+  const currentCompletionOrder = isRecord(current.state)
+    && isRecord(current.state.replayCursor)
+    && Number.isInteger(current.state.replayCursor.completionOrder)
+    ? Number(current.state.replayCursor.completionOrder)
+    : null;
+  const currentHistory = currentCompletionOrder === null
+    ? []
+    : calibrationHistory.filter(({ completionOrder }) => completionOrder <= currentCompletionOrder);
+  const currentCanonicalBank = deriveSpeedsterLearningBankFromHistoryV2(
+    currentHistory as readonly SpeedsterLearningReviewHistoryV2[],
+    new Set([SPEEDSTER_LEARNING_V2_EXCLUDED_SESSION_ID]),
+    { status: "CALIBRATED", ...SPEEDSTER_LEARNING_POLICY_V2 },
+  ).bank;
   const currentWithCorrectedPolicy = isRecord(current.state) && current.state.version === 2
     ? { ...current.state, calibration: bank.calibration }
     : null;
   if (!currentWithCorrectedPolicy
+    || !parseSpeedsterLearningBankV2(currentWithCorrectedPolicy)
     || bank.replayCursor?.completionOrder !== latestCompletionOrder
-    || !speedsterLearningBankTolerantEqual(currentWithCorrectedPolicy, bank)) {
+    || !speedsterLearningBankTolerantEqual(currentWithCorrectedPolicy, currentCanonicalBank)) {
     throw new Error("SAM Memory policy correction active bank does not match authoritative history");
   }
   return {
@@ -313,6 +327,9 @@ async function recomputePolicyCorrectionEvidence(
     calibrationEvidenceHash: speedsterLearningDeterministicHashV2(calibration),
     bank,
     correctedBankHash: hashSpeedsterLearningBankState(bank),
+    previousReplayCursor: currentCanonicalBank.replayCursor,
+    replayedCompletionCount: labels.filter(({ certificateSequence }) =>
+      certificateSequence > (currentCompletionOrder ?? 0)).length,
   };
 }
 
@@ -485,6 +502,8 @@ export async function runSpeedsterLearningPolicyCorrection(
         calibrationEvidenceHash: authoritative.calibrationEvidenceHash,
         policy: SPEEDSTER_LEARNING_POLICY_V2,
         exemplarCount: authoritative.bank.exemplars.length,
+        previousReplayCursor: authoritative.previousReplayCursor,
+        replayedCompletionCount: authoritative.replayedCompletionCount,
         replayCursor: authoritative.bank.replayCursor,
       };
     }

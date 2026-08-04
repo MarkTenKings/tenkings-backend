@@ -11,6 +11,13 @@ The active row still carries the superseded first-activation policy
 `tau=0.652262`, `margin=0.652262` until the approved policy-correction release
 below is deployed and its exact hash-bound correction completes.
 
+Read-only Production forensics on 2026-08-03 found that authoritative Speedster
+history advanced to certificate sequence `229` after the active row's sequence
+`228` replay cursor. The fixed-policy correction must first prove that the live
+row is the exact canonical sequence-228 prefix after changing only its policy,
+then rebuild through the current authoritative tip under the same lock. It must
+not force the earlier sequence-228 target hash or exemplar count.
+
 ## One active cache
 
 `AiGraderV2LearningBank/GLOBAL` is the only row read by detection and completion.
