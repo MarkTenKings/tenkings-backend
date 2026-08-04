@@ -1,18 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
-import { buildSpeedsterGeometryStart } from "../../lib/ai-grader-v2/capture-geometry";
+import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
   planSpeedsterPreparedOutputs,
   uploadSpeedsterOriginal,
 } from "../../lib/ai-grader-v2/image-service";
 import { CenteringAssist, type CenteringAssistResult } from "./CenteringAssist";
-import { GeometryAssist, type SpeedsterCornerShape } from "./GeometryAssist";
+import {
+  GeometryAssist,
+  logSpeedsterGeometryAttempt,
+  type SpeedsterCornerShape,
+  type SpeedsterGeometryAttemptDiagnostic,
+} from "./GeometryAssist";
 import PhotoUploadPair, { type SpeedsterOriginalPhoto } from "./PhotoUploadPair";
 import styles from "./CaptureWorkspace.module.css";
 
@@ -55,6 +60,7 @@ type SideState = {
   sourceUrl: string;
   corners: SpeedsterQuad;
   automaticGeometry: boolean;
+  geometryDiagnostic: SpeedsterGeometryAttemptDiagnostic;
   rectifiedUrl?: string;
   rectifiedStorageKey?: string;
   inspectionUrl?: string;
@@ -68,6 +74,24 @@ type SideState = {
   centering?: CenteringAssistResult;
 };
 
+const CARD_ASPECT = 63.5 / 88.9;
+
+function manualStartQuad(width: number, height: number): SpeedsterQuad {
+  const frameAspect = width / height;
+  const widthFraction = frameAspect > CARD_ASPECT ? 0.9 * CARD_ASPECT / frameAspect : 0.9;
+  const heightFraction = frameAspect > CARD_ASPECT ? 0.9 : 0.9 * frameAspect / CARD_ASPECT;
+  const left = (1 - widthFraction) / 2;
+  const top = (1 - heightFraction) / 2;
+  const right = 1 - left;
+  const bottom = 1 - top;
+  return [
+    { x: left, y: top },
+    { x: right, y: top },
+    { x: right, y: bottom },
+    { x: left, y: bottom },
+  ];
+}
+
 export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -79,13 +103,19 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
   const [cornerShape, setCornerShape] = useState<SpeedsterCornerShape>("ROUNDED_3_18_MM");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Add one original image of each side.");
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const geometryAttempt = useRef(0);
+
+  useEffect(() => {
+    iphoneVersion.current = 0;
+    geometryAttempt.current = 0;
+    setWorkflowError(null);
+  }, [sessionId]);
 
   useEffect(() => {
     if (stage !== "PHOTOS" || working) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    iphoneVersion.current = 0;
-
     const poll = async () => {
       try {
         const response = await fetch(
@@ -147,52 +177,78 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
 
   const beginGeometry = async () => {
     if (!frontPhoto || !backPhoto || working) return;
+    const attemptId = geometryAttempt.current + 1;
+    geometryAttempt.current = attemptId;
     setWorking(true);
+    setWorkflowError(null);
     setMessage("Uploading originals and locking onto the card geometry.");
     try {
       const uploadedFront = frontPhoto.kind === "IPHONE"
         ? frontPhoto
         : await uploadSpeedsterOriginal({ token, sessionId, side: "FRONT", file: frontPhoto.file });
-      const frontGeometry = await speedsterImageService.proposeGeometry(token, uploadedFront.readUrl);
+      const requestGeometry = async (side: SpeedsterCardSide, imageUrl: string) => {
+        const startedAt = Date.now();
+        try {
+          const geometry = await speedsterImageService.proposeGeometry(token, imageUrl);
+          const corners = sanitizeSpeedsterUnitQuad(geometry.corners);
+          return {
+            geometry,
+            corners,
+            diagnostic: {
+              sessionId,
+              attemptId,
+              side,
+              durationMs: Date.now() - startedAt,
+              corners: corners ? "present" as const : "null" as const,
+            },
+          };
+        } catch (error) {
+          logSpeedsterGeometryAttempt({
+            sessionId,
+            attemptId,
+            side,
+            durationMs: Date.now() - startedAt,
+            corners: "unavailable",
+          }, "not-rendered");
+          throw error;
+        }
+      };
+      const frontResult = await requestGeometry("FRONT", uploadedFront.readUrl);
       const uploadedBack = backPhoto.kind === "IPHONE"
         ? backPhoto
         : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file });
-      const backGeometry = await speedsterImageService.proposeGeometry(token, uploadedBack.readUrl);
-      const next = buildSpeedsterGeometryStart({
-        front: {
-          originalStorageKey: uploadedFront.storageKey,
-          sourceUrl: uploadedFront.readUrl,
-          geometry: frontGeometry,
-        },
-        back: {
-          originalStorageKey: uploadedBack.storageKey,
-          sourceUrl: uploadedBack.readUrl,
-          geometry: backGeometry,
-        },
+      const backResult = await requestGeometry("BACK", uploadedBack.readUrl);
+      setFront({
+        originalStorageKey: uploadedFront.storageKey,
+        sourceUrl: uploadedFront.readUrl,
+        corners: frontResult.corners ?? manualStartQuad(frontResult.geometry.width, frontResult.geometry.height),
+        automaticGeometry: frontResult.corners !== null,
+        geometryDiagnostic: frontResult.diagnostic,
       });
-      setFront(next.front);
-      setBack(next.back);
-      setStage(next.stage);
-      setMessage(next.message);
+      setBack({
+        originalStorageKey: uploadedBack.storageKey,
+        sourceUrl: uploadedBack.readUrl,
+        corners: backResult.corners ?? manualStartQuad(backResult.geometry.width, backResult.geometry.height),
+        automaticGeometry: backResult.corners !== null,
+        geometryDiagnostic: backResult.diagnostic,
+      });
+      setStage("FRONT_GEOMETRY");
+      const automaticCount = Number(frontResult.corners !== null) + Number(backResult.corners !== null);
+      setMessage(automaticCount === 2
+        ? "Both physical cards found. Move only points that need correction."
+        : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
+      setWorkflowError(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
     } finally {
       setWorking(false);
     }
   };
 
-  const handleGeometryImageFailure = useCallback((detail: string) => {
-    setFront(null);
-    setBack(null);
-    setStage("PHOTOS");
-    setWorking(false);
-    setMessage(detail);
-  }, []);
-
   const confirmGeometry = async (side: SpeedsterCardSide) => {
     const current = side === "FRONT" ? front : back;
     if (!current || working) return;
     setWorking(true);
+    setWorkflowError(null);
     setMessage(`Preparing the ${side.toLowerCase()} card map.`);
     try {
       const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
@@ -227,7 +283,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
       }
       setMessage(side === "FRONT" ? "Confirm the back geometry." : "Confirm the printed-border geometry.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Speedster image preparation failed.");
+      setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
     } finally {
       setWorking(false);
     }
@@ -281,21 +337,28 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         <p role="status">{working ? "RACING · " : ""}{message}</p>
       </header>
 
+      {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
+
       {stage === "PHOTOS" ? (
         <div className={styles.photos}>
           <PhotoUploadPair
             front={frontPhoto}
             back={backPhoto}
             pairingUrl={iphonePairingUrl}
-            onChange={(side, file) => side === "FRONT"
-              ? setFrontPhoto({ kind: "LOCAL", file })
-              : setBackPhoto({ kind: "LOCAL", file })}
+            onChange={(side, file) => {
+              setWorkflowError(null);
+              side === "FRONT"
+                ? setFrontPhoto({ kind: "LOCAL", file })
+                : setBackPhoto({ kind: "LOCAL", file });
+            }}
             onRetake={() => {
+              setWorkflowError(null);
               setFrontPhoto(null);
               setBackPhoto(null);
               setMessage("Retake front + back, then run the Speedster Shortcut again.");
             }}
             onSwap={() => {
+              setWorkflowError(null);
               setFrontPhoto(backPhoto);
               setBackPhoto(frontPhoto);
             }}
@@ -308,17 +371,19 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
 
       {activeGeometry ? (
         <GeometryAssist
+          key={`${activeSide}:${activeGeometry.sourceUrl}`}
           imageUrl={activeGeometry.sourceUrl}
           side={activeSide}
           proposedQuad={activeGeometry.corners}
           automaticPlacement={activeGeometry.automaticGeometry}
+          diagnostic={activeGeometry.geometryDiagnostic}
           cornerShape={cornerShape}
           onQuadChange={(corners) => activeSide === "FRONT"
             ? setFront((current) => current ? { ...current, corners } : current)
             : setBack((current) => current ? { ...current, corners } : current)}
           onCornerShapeChange={setCornerShape}
           onContinue={() => void confirmGeometry(activeSide)}
-          onImageFailure={handleGeometryImageFailure}
+          onImageError={setWorkflowError}
         />
       ) : null}
 

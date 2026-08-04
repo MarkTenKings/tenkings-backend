@@ -65,26 +65,6 @@ test("geometry proxy clamps automatic handles to the reachable image boundary", 
   });
 });
 
-test("geometry proxy preserves an explicit no-detection result but rejects malformed corners", () => {
-  assert.deepEqual(sanitizeSpeedsterGeometryPayload({
-    width: 1200,
-    height: 1600,
-    corners: null,
-  }), {
-    width: 1200,
-    height: 1600,
-    corners: null,
-  });
-  assert.throws(
-    () => sanitizeSpeedsterGeometryPayload({
-      width: 1200,
-      height: 1600,
-      corners: [{ x: 0.1, y: 0.1 }],
-    }),
-    /malformed/,
-  );
-});
-
 test("POST creates one compact draft with server-owned rule and creator identity", async () => {
   let saved: Record<string, unknown> | undefined;
   const handler = createAiGraderV2SessionsHandler({

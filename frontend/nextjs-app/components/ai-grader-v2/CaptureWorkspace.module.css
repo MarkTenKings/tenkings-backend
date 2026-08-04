@@ -21,6 +21,17 @@
   letter-spacing: 0;
 }
 
+.errorBanner {
+  margin: 0;
+  padding: 14px 18px;
+  color: #fff4d6;
+  background: #4a160f;
+  border: 1px solid #d86a56;
+  border-radius: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .photos {
   display: grid;
   gap: 18px;

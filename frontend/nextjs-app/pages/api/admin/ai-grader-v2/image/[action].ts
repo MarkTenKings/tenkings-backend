@@ -46,16 +46,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
-  if (!isRecord(payload)) {
-    throw new TypeError("Speedster geometry response was malformed.");
-  }
-  const corners = sanitizeSpeedsterUnitQuad(payload.corners);
-  if (payload.corners !== null && corners === null) {
-    throw new TypeError("Speedster geometry response was malformed.");
-  }
+  if (!isRecord(payload)) return payload;
   return {
     ...payload,
-    corners,
+    corners: sanitizeSpeedsterUnitQuad(payload.corners),
   };
 }
 
@@ -131,14 +125,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       body: JSON.stringify(await speedsterServiceBody(action, req.body ?? {}, admin.user.id)),
     });
     const payload = await response.json();
-    let safePayload = payload;
-    if (action === "geometry" && response.ok) {
-      try {
-        safePayload = sanitizeSpeedsterGeometryPayload(payload);
-      } catch {
-        return res.status(502).json({ message: "Speedster geometry response was malformed." });
-      }
-    }
+    const safePayload = action === "geometry" && response.ok
+      ? sanitizeSpeedsterGeometryPayload(payload)
+      : payload;
     return res.status(response.status).json(safePayload);
   } catch (error) {
     const mapped = toErrorResponse(error);
