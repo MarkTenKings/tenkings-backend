@@ -16,7 +16,10 @@ import {
   afterDurableSpeedsterCompletion,
   catchUpSpeedsterLearningBankV2,
   dispatchSpeedsterLearningBank,
+  speedsterLearningCompletionReadiness,
   type SpeedsterLearningCatchUpClient,
+  type SpeedsterLearningCatchUpResult,
+  type SpeedsterLearningCompletionReadiness,
 } from "../../../../../../lib/server/aiGraderV2LearningBank";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
@@ -77,9 +80,12 @@ type CompletionResult = {
     sheetId: string;
     slot: number;
     certificateNumber: string;
+    completionOrder: number;
   };
   publicReportSlug: string;
+  learning: SpeedsterLearningCompletionReadiness;
 };
+type DurableCompletionResult = Omit<CompletionResult, "learning">;
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   completeSession: (input: CompletionInput) => Promise<CompletionResult>;
@@ -135,10 +141,12 @@ const labelResult = (label: {
   sheetId: label.sheetId,
   slot: label.slot,
   certificateNumber: label.certificateNumber ?? formatHumanGradeCertificateNumber(label.certificateSequence),
+  completionOrder: label.certificateSequence,
 });
 
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
-  return afterDurableSpeedsterCompletion(() => prisma.$transaction(async (tx) => {
+  let catchUpResult: SpeedsterLearningCatchUpResult | null = null;
+  const result = await afterDurableSpeedsterCompletion<DurableCompletionResult>(() => prisma.$transaction(async (tx) => {
     const session = await tx.aiGraderV2Session.findFirst({
       where: { id: input.sessionId, createdByUserId: input.createdByUserId },
       select: { id: true, cardProfile: true, workflowState: true, publicReportSlug: true, identity: true },
@@ -232,11 +240,17 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       });
     }
     return { outcome: "CREATED", label: labelResult(label), publicReportSlug };
-  }), () => catchUpSpeedsterLearningBankV2(
-    prisma as unknown as SpeedsterLearningCatchUpClient,
-  ), (error) => {
+  }), async () => {
+    catchUpResult = await catchUpSpeedsterLearningBankV2(
+      prisma as unknown as SpeedsterLearningCatchUpClient,
+    );
+  }, (error) => {
     console.error(`[Speedster] SAM Memory V2 catch-up failed after durable completion for ${input.sessionId}:`, error);
   });
+  return {
+    ...result,
+    learning: speedsterLearningCompletionReadiness(result.label.completionOrder, catchUpResult),
+  };
 }
 
 const dependencies: Dependencies = {

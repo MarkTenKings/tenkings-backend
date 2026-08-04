@@ -3,11 +3,14 @@ import unittest
 from sam_memory_v2 import (
     CAPACITY_PER_TYPE_POLARITY,
     FINGERPRINT_VERSION,
+    MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE,
+    MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
     POLICY_MARGIN,
     POLICY_TAU,
     decide_candidate_v2,
     normalize_source_view,
     prepare_bank_v2,
+    smart_mark_proposal_seeds_v2,
 )
 
 
@@ -200,6 +203,32 @@ class SamMemoryV2Tests(unittest.TestCase):
     def test_non_v2_input_is_left_for_the_unchanged_v1_path(self):
         self.assertIsNone(prepare_bank_v2({"version": 1, "types": {}}))
         self.assertIsNone(prepare_bank_v2(None))
+
+    def test_only_explicit_smart_marks_are_proposal_seeds(self):
+        prepared = prepare_bank_v2(
+            bank(
+                exemplar("POSITIVE", session_id="human-smart-mark"),
+                exemplar(
+                    "POSITIVE",
+                    session_id="human-relabel",
+                    provenance="DETECTOR_RELABELED_POSITIVE",
+                ),
+                exemplar(
+                    "POSITIVE",
+                    session_id="untouched-auto-accept",
+                    provenance="UNTOUCHED_ACCEPTED_POSITIVE",
+                ),
+                exemplar("NEGATIVE", session_id="human-removal"),
+            )
+        )
+
+        seeds = smart_mark_proposal_seeds_v2(prepared, "FRONT:ORIGINAL")
+
+        self.assertEqual(len(seeds), 1)
+        self.assertEqual(seeds[0][0], "VISIBLE_WHITENING")
+        self.assertEqual(seeds[0][1].session_id, "human-smart-mark")
+        self.assertEqual(MEMORY_PROPOSAL_SIMILARITY_THRESHOLD, 0.90)
+        self.assertEqual(MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE, 3)
 
 
 if __name__ == "__main__":

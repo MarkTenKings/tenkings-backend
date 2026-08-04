@@ -302,7 +302,13 @@ export function DefectEvidenceViewer({
               </svg>
               <span>EVIDENCE CLOSE-UP</span>
             </div>
-            <div className={styles.title}><span>{active.zone}</span><h3>{LABELS[active.defectType]}</h3></div>
+            <div className={styles.title}>
+              <div className={styles.titleMeta}>
+                <span>{active.zone}</span>
+                {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
+              </div>
+              <h3>{LABELS[active.defectType]}</h3>
+            </div>
             <dl className={styles.metrics}>
               {metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
             </dl>

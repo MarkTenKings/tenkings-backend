@@ -188,6 +188,14 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                     "confidence": float(primary["confidence"]),
                     "featureFingerprint": primary.get("featureFingerprint"),
                     "learningAdjustment": float(primary.get("learningAdjustment", 0.0)),
+                    **(
+                        {
+                            "origin": "MEMORY",
+                            "memoryProposal": primary["memoryProposal"],
+                        }
+                        if primary.get("origin") == "MEMORY"
+                        else {}
+                    ),
                     "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
                     "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
                     "areaMm2": area_mm2,

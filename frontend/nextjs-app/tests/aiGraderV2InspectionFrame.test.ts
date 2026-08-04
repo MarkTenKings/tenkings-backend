@@ -69,6 +69,23 @@ test("uses a square magnifier while retaining full-stage boundary clamping", () 
   assert.doesNotMatch(lens, /border-radius:\s*50%/);
 });
 
+test("the existing defect detail panel surfaces compact memory provenance", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const component = readFileSync(
+    `${root}/components/ai-grader-v2/DefectEvidenceViewer.tsx`,
+    "utf8",
+  );
+  const css = readFileSync(
+    `${root}/components/ai-grader-v2/DefectEvidenceViewer.module.css`,
+    "utf8",
+  );
+
+  assert.match(component, /active\.origin === "MEMORY"/);
+  assert.match(component, /className=\{styles\.memoryLabel\}>memory<\/small>/);
+  assert.match(css, /\.memoryLabel\s*\{/);
+  assert.doesNotMatch(component, /memory.*(?:confirm|modal|screen)/i);
+});
+
 test("Smart-Mark measure sends the same ORIGINAL inspection evidence in one request", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");

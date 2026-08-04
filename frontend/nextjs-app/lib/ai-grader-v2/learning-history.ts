@@ -19,6 +19,7 @@ export type SpeedsterLearningHistorySessionInventory = {
   findings: number;
   detectorFindings: number;
   smartMarks: number;
+  memoryFindings: number;
   usableFingerprints: number;
   missingFingerprints: number;
   invalidFingerprints: number;
@@ -34,6 +35,7 @@ export type SpeedsterLearningHistoryInventory = {
   findings: number;
   detectorFindings: number;
   smartMarks: number;
+  memoryFindings: number;
   usableFingerprints: number;
   missingFingerprints: number;
   invalidFingerprints: number;
@@ -78,6 +80,7 @@ export function inventorySpeedsterLearningHistory(
     findings: 0,
     detectorFindings: 0,
     smartMarks: 0,
+    memoryFindings: 0,
     usableFingerprints: 0,
     missingFingerprints: 0,
     invalidFingerprints: 0,
@@ -95,6 +98,7 @@ export function inventorySpeedsterLearningHistory(
       findings: 0,
       detectorFindings: 0,
       smartMarks: 0,
+      memoryFindings: 0,
       usableFingerprints: 0,
       missingFingerprints: 0,
       invalidFingerprints: 0,
@@ -111,6 +115,9 @@ export function inventorySpeedsterLearningHistory(
       } else if (finding.origin === "SMART_MARK") {
         inventory.smartMarks += 1;
         session.smartMarks += 1;
+      } else if (finding.origin === "MEMORY") {
+        inventory.memoryFindings += 1;
+        session.memoryFindings += 1;
       }
       if (typeof finding.reviewResult === "string") increment(inventory.byReviewResult, finding.reviewResult);
       if (isSpeedsterLearningDefectTypeV2(finding.defectType)) increment(inventory.byDefectType, finding.defectType);

@@ -22,34 +22,52 @@ from sam3_detector import (
     DETECTOR_VERSION,
     LOGGER,
     Sam3ImageProcessor,
+    _cap_memory_candidates_per_side,
     _smart_mark_mask,
     detect_views,
     feature_fingerprint,
     learning_adjustment,
+    memory_proposal_candidates,
     measure_marks,
 )
-from sam_memory_v2 import CAPACITY_PER_TYPE_POLARITY, FINGERPRINT_VERSION
+from sam_memory_v2 import (
+    CAPACITY_PER_TYPE_POLARITY,
+    FINGERPRINT_VERSION,
+    prepare_bank_v2,
+)
 
 
 SAM_UNIT = [1 / np.sqrt(32)] * 32
 
 
-def v2_exemplar(polarity, session_id):
+def v2_exemplar(
+    polarity,
+    session_id,
+    *,
+    fingerprint=SAM_UNIT,
+    provenance=None,
+    defect_type="VISIBLE_WHITENING",
+    source_view="ORIGINAL",
+    completion_order=1,
+    proposal_order=0,
+    lesson_order=0,
+):
     return {
-        "defectType": "VISIBLE_WHITENING",
+        "defectType": defect_type,
         "polarity": polarity,
         "sessionId": session_id,
         "completedAt": "2026-08-02T12:00:00.000Z",
-        "completionOrder": 1,
-        "proposalOrder": 0,
-        "lessonOrder": 0,
-        "fingerprint": SAM_UNIT,
-        "provenance": (
+        "completionOrder": completion_order,
+        "proposalOrder": proposal_order,
+        "lessonOrder": lesson_order,
+        "fingerprint": fingerprint,
+        "provenance": provenance
+        or (
             "DETECTOR_REMOVED"
             if polarity == "NEGATIVE"
             else "SMART_MARK_POSITIVE"
         ),
-        "sourceViewId": "ORIGINAL",
+        "sourceViewId": source_view,
     }
 
 
@@ -171,6 +189,20 @@ class FakeSmartMarkImageProcessor(FakeOfficialImageProcessor):
         }
 
 
+class FakeDenseMemoryImageProcessor(FakeOfficialImageProcessor):
+    def set_image(self, image):
+        self.images.append(image)
+        compact = np.zeros((32, 72, 72), dtype=np.float32)
+        compact[1, :, :] = 1.0
+        compact[:, 30, 40] = 0.0
+        compact[0, 30, 40] = 1.0
+        return {
+            "backbone_out": {
+                "backbone_fpn": [FakeTensor(dense_feature_map(compact)[None, ...])]
+            }
+        }
+
+
 class FixedSmartMarkProcessor:
     def __init__(self, result=None, error=None):
         self.result = result
@@ -191,6 +223,32 @@ def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
         {"x": x2_mm / 63.5, "y": y2_mm / 88.9},
         {"x": x1_mm / 63.5, "y": y2_mm / 88.9},
     ]
+
+
+def dense_feature_map(compact: np.ndarray) -> np.ndarray:
+    return np.repeat(np.asarray(compact, dtype=np.float32), 8, axis=0)
+
+
+def memory_match(similarity, session_id, box=(100, 100, 20, 20)):
+    return {
+        "box": box,
+        "coreBox": (box[0] + 5, box[1] + 5, 5, 5),
+        "coreMask": np.ones((5, 5), dtype=bool),
+        "canonicalMatchBox": tuple(
+            value / scale
+            for value, scale in zip(box, (GRID_WIDTH, GRID_HEIGHT, GRID_WIDTH, GRID_HEIGHT))
+        ),
+        "defectType": "VISIBLE_WHITENING",
+        "origin": "MEMORY",
+        "memoryProposal": {
+            "lessonSessionId": session_id,
+            "lessonCompletionOrder": 228,
+            "lessonProposalOrder": 7,
+            "lessonOrder": 0,
+            "lessonSourceViewId": "ORIGINAL",
+            "similarity": similarity,
+        },
+    }
 
 
 class Sam3DetectorTests(unittest.TestCase):
@@ -646,6 +704,253 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertIsNotNone(fingerprint)
         self.assertEqual(len(fingerprint), 32)
         self.assertAlmostEqual(float(np.linalg.norm(fingerprint)), 1.0, places=5)
+
+    def test_dense_memory_search_starts_at_point_nine_and_keeps_provenance(self):
+        axis = [1.0] + [0.0] * 31
+        compact = np.zeros((32, 3, 4), dtype=np.float32)
+        compact[1, :, :] = 1.0
+        compact[:, 1, 1] = np.array(
+            [0.899, np.sqrt(1 - 0.899**2)] + [0.0] * 30,
+            dtype=np.float32,
+        )
+        compact[:, 1, 2] = np.array(
+            [0.901, np.sqrt(1 - 0.901**2)] + [0.0] * 30,
+            dtype=np.float32,
+        )
+        prepared = prepare_bank_v2(
+            v2_bank(
+                v2_exemplar(
+                    "POSITIVE",
+                    "cubone-smart-mark",
+                    fingerprint=axis,
+                    completion_order=228,
+                    proposal_order=7,
+                )
+            )
+        )
+
+        matches = memory_proposal_candidates(
+            dense_feature_map(compact),
+            prepared,
+            source_view_id="FRONT:ORIGINAL",
+            image_width=400,
+            image_height=300,
+            allowed_mask=np.ones((300, 400), dtype=np.uint8),
+        )
+
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["origin"], "MEMORY")
+        self.assertEqual(
+            matches[0]["memoryProposal"],
+            {
+                "lessonSessionId": "cubone-smart-mark",
+                "lessonCompletionOrder": 228,
+                "lessonProposalOrder": 7,
+                "lessonOrder": 0,
+                "lessonSourceViewId": "ORIGINAL",
+                "similarity": 0.901,
+            },
+        )
+
+    def test_existing_smart_mark_bank_surfaces_memory_with_exact_diagnostics(self):
+        fake = FakeDenseMemoryImageProcessor()
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+
+        with self.assertLogs("sam3_detector", level="INFO") as captured:
+            candidates = processor.scan(
+                np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                [],
+                v2_bank(
+                    v2_exemplar(
+                        "POSITIVE",
+                        "cubone-smart-mark",
+                        fingerprint=[1.0] + [0.0] * 31,
+                        completion_order=228,
+                        proposal_order=7,
+                    )
+                ),
+                allowed_mask=np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8),
+                source_view_id="FRONT:ORIGINAL",
+                session_id="repeat-cubone",
+                trace_id="repeat-cubone:FRONT:detect",
+            )
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["origin"], "MEMORY")
+        self.assertEqual(
+            candidates[0]["memoryProposal"],
+            {
+                "lessonSessionId": "cubone-smart-mark",
+                "lessonCompletionOrder": 228,
+                "lessonProposalOrder": 7,
+                "lessonOrder": 0,
+                "lessonSourceViewId": "ORIGINAL",
+                "similarity": 1.0,
+            },
+        )
+        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
+        self.assertEqual(diagnostic["proposalOrigin"], "MEMORY")
+        self.assertEqual(diagnostic["memoryProposal"], candidates[0]["memoryProposal"])
+
+    def test_dense_memory_search_ignores_non_smart_mark_positives(self):
+        compact = np.zeros((32, 2, 2), dtype=np.float32)
+        compact[0, 0, 0] = 1.0
+        prepared = prepare_bank_v2(
+            v2_bank(
+                v2_exemplar(
+                    "POSITIVE",
+                    "relabel",
+                    fingerprint=[1.0] + [0.0] * 31,
+                    provenance="DETECTOR_RELABELED_POSITIVE",
+                ),
+                v2_exemplar(
+                    "POSITIVE",
+                    "auto-accepted",
+                    fingerprint=[1.0] + [0.0] * 31,
+                    provenance="UNTOUCHED_ACCEPTED_POSITIVE",
+                ),
+            )
+        )
+
+        matches = memory_proposal_candidates(
+            dense_feature_map(compact),
+            prepared,
+            source_view_id="ORIGINAL",
+            image_width=40,
+            image_height=40,
+            allowed_mask=np.ones((40, 40), dtype=np.uint8),
+        )
+
+        self.assertEqual(matches, [])
+
+    def test_side_scan_ranks_before_prompting_and_caps_three_across_views(self):
+        fake = FakeOfficialImageProcessor()
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        prepared_views = [
+            {
+                "sourceViewId": view,
+                "image": np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                "candidates": [],
+                "allowedMask": np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8),
+            }
+            for view in ("ORIGINAL", "NORMALIZED")
+        ]
+        per_view = [
+            [
+                memory_match(0.96, "best-duplicate", (100, 100, 20, 20)),
+                memory_match(0.94, "second", (200, 200, 20, 20)),
+            ],
+            [
+                memory_match(0.95, "lower-duplicate", (100, 100, 20, 20)),
+                memory_match(0.93, "third", (300, 300, 20, 20)),
+                memory_match(0.92, "fourth", (400, 400, 20, 20)),
+            ],
+        ]
+
+        with patch("sam3_detector.memory_proposal_candidates", side_effect=per_view):
+            with self.assertLogs("sam3_detector", level="INFO"):
+                candidates = processor.scan_side(
+                    prepared_views,
+                    v2_bank(),
+                    session_id="current-session",
+                    trace_id="trace",
+                )
+
+        self.assertEqual(len(fake.images), 2)
+        self.assertEqual(len(fake.prompts), 3)
+        self.assertEqual(len(candidates), 3)
+        self.assertEqual(
+            {candidate["memoryProposal"]["lessonSessionId"] for candidate in candidates},
+            {"best-duplicate", "second", "third"},
+        )
+
+    def test_negative_memory_veto_applies_to_memory_generated_proposal(self):
+        fake = FakeOfficialImageProcessor()
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        positive = [0.8, 0.6] + [0.0] * 30
+        negative = [1.0] + [0.0] * 31
+
+        with patch(
+            "sam3_detector.memory_proposal_candidates",
+            return_value=[memory_match(0.90, "smart-mark")],
+        ), patch("sam3_detector.feature_fingerprint", return_value=negative):
+            with self.assertLogs("sam3_detector", level="INFO") as captured:
+                candidates = processor.scan(
+                    np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                    [],
+                    v2_bank(
+                        v2_exemplar(
+                            "POSITIVE",
+                            "smart-mark",
+                            fingerprint=positive,
+                        ),
+                        v2_exemplar(
+                            "NEGATIVE",
+                            "removed-lookalike",
+                            fingerprint=negative,
+                        ),
+                    ),
+                    allowed_mask=np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8),
+                    source_view_id="ORIGINAL",
+                )
+
+        self.assertEqual(candidates, [])
+        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
+        self.assertEqual(diagnostic["proposalOrigin"], "MEMORY")
+        self.assertEqual(diagnostic["action"], "vetoed")
+        self.assertEqual(
+            diagnostic["memoryProposal"]["lessonSessionId"], "smart-mark"
+        )
+
+    def test_no_smart_mark_seed_leaves_detector_output_and_prompt_count_unchanged(self):
+        localized = [{
+            "box": (450, 500, 100, 100),
+            "coreBox": (470, 520, 60, 60),
+            "coreMask": np.ones((60, 60), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+        image = np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8)
+        baseline_fake = FakeOfficialImageProcessor()
+        baseline_processor = Sam3ImageProcessor()
+        baseline_processor._processor = baseline_fake
+        no_seed_fake = FakeOfficialImageProcessor()
+        no_seed_processor = Sam3ImageProcessor()
+        no_seed_processor._processor = no_seed_fake
+
+        baseline = baseline_processor.scan(
+            image,
+            localized,
+            v2_bank(),
+            allowed_mask=np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8),
+            source_view_id="ORIGINAL",
+        )
+        with self.assertLogs("sam3_detector", level="INFO"):
+            no_seed = no_seed_processor.scan(
+                image,
+                localized,
+                v2_bank(
+                    v2_exemplar(
+                        "POSITIVE",
+                        "other-type-relabel",
+                        defect_type="FRAYING",
+                        provenance="DETECTOR_RELABELED_POSITIVE",
+                    )
+                ),
+                allowed_mask=np.ones((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8),
+                source_view_id="ORIGINAL",
+            )
+
+        self.assertEqual(len(no_seed), 1)
+        self.assertEqual(
+            {key: value for key, value in no_seed[0].items() if key != "mask"},
+            {key: value for key, value in baseline[0].items() if key != "mask"},
+        )
+        np.testing.assert_array_equal(no_seed[0]["mask"], baseline[0]["mask"])
+        self.assertEqual(len(baseline_fake.prompts), 1)
+        self.assertEqual(len(no_seed_fake.prompts), 1)
 
     def test_cosine_learning_adds_only_the_tiny_matching_type_adjustment(self):
         fingerprint = [1.0] + [0.0] * 31

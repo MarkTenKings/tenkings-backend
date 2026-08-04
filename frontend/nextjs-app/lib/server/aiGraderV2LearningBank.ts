@@ -85,11 +85,45 @@ export type SpeedsterLearningCatchUpClient = {
   $transaction: <T>(work: (tx: SpeedsterLearningCatchUpTransaction) => Promise<T>) => Promise<T>;
 };
 
+export type SpeedsterLearningDetectClient = SpeedsterLearningCatchUpClient & {
+  aiGraderV2LearningBank: {
+    findUnique: (args: unknown) => Promise<{ state: unknown } | null>;
+  };
+};
+
 export type SpeedsterLearningCatchUpResult = {
   status: "V1_ACTIVE" | "INVALID_ACTIVE_BANK" | "V2_CURRENT" | "V2_UPDATED";
   appliedSessions: number;
   lastCompletionOrder: number | null;
 };
+
+export type SpeedsterLearningCompletionReadiness = {
+  catchUpStatus: SpeedsterLearningCatchUpResult["status"] | "FAILED";
+  ready: boolean;
+  completionOrder: number;
+  lastCompletionOrder: number | null;
+  completionReflected: boolean;
+  appliedSessions: number;
+};
+
+export function speedsterLearningCompletionReadiness(
+  completionOrder: number,
+  catchUp: SpeedsterLearningCatchUpResult | null,
+): SpeedsterLearningCompletionReadiness {
+  const completionReflected = catchUp?.lastCompletionOrder != null
+    && catchUp.lastCompletionOrder >= completionOrder;
+  const ready = catchUp != null
+    && catchUp.status !== "INVALID_ACTIVE_BANK"
+    && completionReflected;
+  return {
+    catchUpStatus: catchUp?.status ?? "FAILED",
+    ready,
+    completionOrder,
+    lastCompletionOrder: catchUp?.lastCompletionOrder ?? null,
+    completionReflected,
+    appliedSessions: catchUp?.appliedSessions ?? 0,
+  };
+}
 
 export async function catchUpSpeedsterLearningBankV2InTransaction(
   tx: SpeedsterLearningCatchUpTransaction,
@@ -169,6 +203,45 @@ export async function catchUpSpeedsterLearningBankV2InTransaction(
 
 export function catchUpSpeedsterLearningBankV2(client: SpeedsterLearningCatchUpClient) {
   return client.$transaction((tx) => catchUpSpeedsterLearningBankV2InTransaction(tx));
+}
+
+/**
+ * Detection obtains the completion lock, heals any V2 cursor gap, then reads
+ * the exact post-catch-up bank without releasing the lock in between. This
+ * keeps V1 dispatch unchanged while making a newly completed V2 lesson
+ * available to the very next detect request.
+ */
+export function catchUpSpeedsterLearningBankForDetect(client: SpeedsterLearningCatchUpClient) {
+  return client.$transaction(async (tx) => {
+    const catchUp = await catchUpSpeedsterLearningBankV2InTransaction(tx);
+    const stored = await tx.aiGraderV2LearningBank.findUnique({
+      where: { id: SPEEDSTER_LEARNING_BANK_ID },
+      select: { state: true },
+    });
+    return {
+      catchUp,
+      learningBank: speedsterLearningBankForDetect(stored?.state),
+    };
+  });
+}
+
+export async function speedsterLearningBankForDetectRequest(
+  client: SpeedsterLearningDetectClient,
+  onCatchUpFailure: (error: unknown) => void = () => undefined,
+) {
+  try {
+    return (await catchUpSpeedsterLearningBankForDetect(client)).learningBank;
+  } catch (error) {
+    onCatchUpFailure(error);
+    // Memory is advisory to grading. A failed locked catch-up may leave the
+    // cache stale, but the current validated bank remains safer than blocking
+    // the detector; a later completion/detect attempt will heal the cursor.
+    const stored = await client.aiGraderV2LearningBank.findUnique({
+      where: { id: SPEEDSTER_LEARNING_BANK_ID },
+      select: { state: true },
+    });
+    return speedsterLearningBankForDetect(stored?.state);
+  }
 }
 
 export async function afterDurableSpeedsterCompletion<T>(

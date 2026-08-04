@@ -116,8 +116,29 @@ completion after Bank V2's replay cursor in ascending `certificateSequence`
 using the exact Step 3 harvest/increment function. Normally this is one session.
 If concurrent completions reorder the second transaction, it catches up the
 whole gap without losing a lesson. A learning failure cannot roll back the
-durable grade; the next completion or explicit reuse of the same catch-up helper
-heals the gap. There is no queue, worker, retry service, or second algorithm.
+durable grade. The completion response reports the label completion order and
+the observed V2 cursor/readiness. Every detect request also acquires the same
+lock, heals any gap, and reads the post-catch-up `GLOBAL` row before release, so
+the newest successful human lesson is available to the next card. If that
+advisory catch-up fails, detection logs the failure and uses the current
+validated bank rather than blocking grading; a later completion or detect heals
+the gap. There is no queue, worker, retry service, or completion gate.
+
+## Explicit Smart-Mark proposal generation
+
+Only completed `SMART_MARK_POSITIVE` exemplars may originate learned proposals.
+Detection compares them with the already-computed SAM FPN fingerprint space,
+requires similarity `>=0.90`, deduplicates registered canonical regions, and
+selects at most the best three matches per defect type per card side before the
+existing SAM box prompt. The unchanged material/mask/area gates, negative-memory
+veto, fusion, measurement, grading, and review flow remain authoritative.
+
+Learned results carry `MEMORY` origin and exact lesson/session diagnostics and
+show the compact `memory` label in the existing review panel. An untouched
+accepted memory result is never harvested as a positive. Explicit removal or
+relabel retains the ordinary negative or negative-old/positive-new semantics,
+but only human Smart Marks are proposal sources. No new model, retraining,
+schema, queue, worker, screen, confirmation, or reviewer gate is involved.
 
 ## Smart-Mark evidence freshness
 

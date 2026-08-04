@@ -195,6 +195,13 @@ test("read-only history inventory exposes Smart-Mark and fingerprint gaps withou
           sourceViewId: "DIRECTIONAL",
           featureFingerprint: [1, 2],
         },
+        {
+          origin: "MEMORY",
+          reviewResult: "ACCEPTED",
+          defectType: "VISIBLE_WHITENING",
+          sourceViewId: "ORIGINAL",
+          featureFingerprint: fingerprint(2),
+        },
       ],
     },
   ]);
@@ -203,12 +210,14 @@ test("read-only history inventory exposes Smart-Mark and fingerprint gaps withou
   assert.equal(inventory.inputRows, 2);
   assert.equal(inventory.invalidHistoryRows, 0);
   assert.equal(inventory.completedSessions, 2);
-  assert.equal(inventory.findings, 3);
+  assert.equal(inventory.findings, 4);
   assert.equal(inventory.detectorFindings, 2);
   assert.equal(inventory.smartMarks, 1);
-  assert.equal(inventory.usableFingerprints, 1);
+  assert.equal(inventory.memoryFindings, 1);
+  assert.equal(inventory.usableFingerprints, 2);
   assert.equal(inventory.invalidFingerprints, 1);
   assert.equal(inventory.missingFingerprints, 1);
+  assert.equal(inventory.sessions[0].memoryFindings, 1);
   assert.deepEqual(inventory.sessions.map(({ sessionId }) => sessionId), ["session-earlier", "session-later"]);
 });
 

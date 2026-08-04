@@ -4,11 +4,14 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import {
+  catchUpSpeedsterLearningBankForDetect,
   catchUpSpeedsterLearningBankV2,
   dispatchSpeedsterLearningBank,
   speedsterLearningBankForDetect,
+  speedsterLearningBankForDetectRequest,
   afterDurableSpeedsterCompletion,
-  type SpeedsterLearningCatchUpClient,
+  speedsterLearningCompletionReadiness,
+  type SpeedsterLearningDetectClient,
   type SpeedsterLearningCatchUpTransaction,
 } from "../lib/server/aiGraderV2LearningBank";
 import {
@@ -92,10 +95,11 @@ type CatchUpSession = {
   gradeReport: unknown;
 };
 
-class CatchUpStore implements SpeedsterLearningCatchUpClient {
+class CatchUpStore implements SpeedsterLearningDetectClient {
   bank: unknown;
   labels: CatchUpLabel[] = [];
   sessions: CatchUpSession[] = [];
+  events: string[] = [];
   failNextUpdate = false;
   private tail: Promise<unknown> = Promise.resolve();
 
@@ -103,14 +107,29 @@ class CatchUpStore implements SpeedsterLearningCatchUpClient {
     this.bank = bank;
   }
 
+  aiGraderV2LearningBank = {
+    findUnique: async () => {
+      this.events.push("fallback-bank-read");
+      return { state: structuredClone(this.bank) };
+    },
+  };
+
   $transaction<T>(work: (tx: SpeedsterLearningCatchUpTransaction) => Promise<T>): Promise<T> {
     const run = this.tail.then(async () => {
+      this.events.push("transaction-start");
       const before = structuredClone(this.bank);
       const tx: SpeedsterLearningCatchUpTransaction = {
-        $queryRaw: async () => [{ lockAcquired: 1 }],
+        $queryRaw: async () => {
+          this.events.push("lock");
+          return [{ lockAcquired: 1 }];
+        },
         aiGraderV2LearningBank: {
-          findUnique: async () => ({ state: structuredClone(this.bank) }),
+          findUnique: async () => {
+            this.events.push("bank-read");
+            return { state: structuredClone(this.bank) };
+          },
           update: async (raw) => {
+            this.events.push("bank-update");
             if (this.failNextUpdate) {
               this.failNextUpdate = false;
               throw new Error("simulated bank write failure");
@@ -122,6 +141,7 @@ class CatchUpStore implements SpeedsterLearningCatchUpClient {
         },
         humanGradeLabel: {
           findMany: async (raw) => {
+            this.events.push("labels-read");
             const args = raw as { where: { certificateSequence: { gt: number } } };
             return this.labels
               .filter((label) => label.certificateSequence > args.where.certificateSequence.gt)
@@ -130,6 +150,7 @@ class CatchUpStore implements SpeedsterLearningCatchUpClient {
         },
         aiGraderV2Session: {
           findMany: async (raw) => {
+            this.events.push("sessions-read");
             const args = raw as { where: { id: { in: string[] }; workflowState: string } };
             return this.sessions.filter((session) =>
               args.where.id.in.includes(session.id) && session.workflowState === args.where.workflowState);
@@ -267,6 +288,53 @@ test("two out-of-order catch-up attempts serialize and preserve every completion
   assert.deepEqual(bank.bank.exemplars.map(({ completionOrder }) => completionOrder), [1, 2]);
 });
 
+test("detect catches up under the completion lock and reads only the post-catch-up bank", async () => {
+  const store = new CatchUpStore(emptyCalibratedBank());
+  addCompleted(store, 1, 1);
+
+  const detected = await catchUpSpeedsterLearningBankForDetect(store);
+  const bank = dispatchSpeedsterLearningBank(detected.learningBank);
+
+  assert.equal(detected.catchUp.status, "V2_UPDATED");
+  assert.equal(bank.kind, "V2");
+  if (bank.kind !== "V2") return;
+  assert.equal(bank.bank.replayCursor?.completionOrder, 1);
+  assert.deepEqual(store.events, [
+    "transaction-start",
+    "lock",
+    "bank-read",
+    "labels-read",
+    "sessions-read",
+    "bank-update",
+    "bank-read",
+  ]);
+});
+
+test("detect catch-up failure logs once and falls back to the current validated bank", async () => {
+  const store = new CatchUpStore(emptyCalibratedBank());
+  addCompleted(store, 1, 1);
+  store.failNextUpdate = true;
+  const failures: unknown[] = [];
+
+  const detected = await speedsterLearningBankForDetectRequest(store, (error) => failures.push(error));
+  const bank = dispatchSpeedsterLearningBank(detected);
+
+  assert.equal(failures.length, 1);
+  assert.match(String(failures[0]), /simulated bank write failure/);
+  assert.equal(bank.kind, "V2");
+  if (bank.kind !== "V2") return;
+  assert.equal(bank.bank.replayCursor, null);
+  assert.deepEqual(store.events, [
+    "transaction-start",
+    "lock",
+    "bank-read",
+    "labels-read",
+    "sessions-read",
+    "bank-update",
+    "fallback-bank-read",
+  ]);
+});
+
 test("a failed best-effort V2 write cannot undo completion and the next catch-up heals the gap", async () => {
   let completed = false;
   let failureObserved = false;
@@ -281,6 +349,26 @@ test("a failed best-effort V2 write cannot undo completion and the next catch-up
   assert.equal(result, "durable-grade");
   assert.equal(completed, true);
   assert.equal(failureObserved, true);
+  assert.deepEqual(speedsterLearningCompletionReadiness(1, null), {
+    catchUpStatus: "FAILED",
+    ready: false,
+    completionOrder: 1,
+    lastCompletionOrder: null,
+    completionReflected: false,
+    appliedSessions: 0,
+  });
+  assert.deepEqual(speedsterLearningCompletionReadiness(1, {
+    status: "V1_ACTIVE",
+    appliedSessions: 0,
+    lastCompletionOrder: null,
+  }), {
+    catchUpStatus: "V1_ACTIVE",
+    ready: false,
+    completionOrder: 1,
+    lastCompletionOrder: null,
+    completionReflected: false,
+    appliedSessions: 0,
+  });
 
   const store = new CatchUpStore(emptyCalibratedBank());
   addCompleted(store, 1);
@@ -290,6 +378,14 @@ test("a failed best-effort V2 write cannot undo completion and the next catch-up
   const healed = await catchUpSpeedsterLearningBankV2(store);
   assert.equal(healed.appliedSessions, 1);
   assert.equal((dispatchSpeedsterLearningBank(store.bank) as { bank: SpeedsterLearningBankV2 }).bank.replayCursor?.completionOrder, 1);
+  assert.deepEqual(speedsterLearningCompletionReadiness(1, healed), {
+    catchUpStatus: "V2_UPDATED",
+    ready: true,
+    completionOrder: 1,
+    lastCompletionOrder: 1,
+    completionReflected: true,
+    appliedSessions: 1,
+  });
 });
 
 test("catch-up uses certificate order, exact retry is inert, and capacity remains 50", async () => {

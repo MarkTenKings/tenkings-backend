@@ -363,3 +363,42 @@ The frozen one-sentence contract is:
 > comparable positive example protects it. Ordinary completion updates the cache
 > immediately, while deterministic history rebuild remains the authority for
 > audit, migration, removal, and recovery.
+
+## Frozen addendum — explicit Smart-Mark proposal generation
+
+Status: approved by Mark, Fable 5, and Codex on 2026-08-03 before build. This
+addendum narrowly supersedes the earlier rejection of learned proposals and the
+veto-only limitation; every other frozen safety, geometry, measurement, grading,
+history, capacity, and deployment rule remains authoritative.
+
+The required reconsideration evidence now exists. Production retained 19 valid
+explicit Smart-Mark positives from the completed Cubone, while the same-card
+repeat produced materially fewer false positives but re-proposed none of those
+human-marked regions. Positive memory therefore must be allowed to propose a
+missed region from the already-computed SAM FPN feature map.
+
+- Only explicit completed human Smart-Marks are proposal sources. Search the
+  existing feature map for similar regions, box-prompt top matches through the
+  existing SAM, then use the unchanged on-card mask gate, physical measurement,
+  deduplication, negative-memory veto, and review flow.
+- Proposal similarity starts at `>=0.90`. Admit at most the top `3` matches per
+  defect type per card side. Loosening either constant requires calibration
+  evidence and a new approved addendum.
+- Memory-generated findings carry explicit `MEMORY` origin/provenance, retain
+  the generating lesson/session and match diagnostic, and display a small
+  `memory` label in the existing defect panel. No screen, step, confirmation,
+  queue, worker, model, or reviewer gate is added.
+- No self-replication: an untouched memory-generated finding never becomes a
+  positive exemplar. It teaches only after explicit human removal or relabel.
+  This is a harvest-path skipped write, never a completion gate. Removal teaches
+  one negative for the proposed type; relabel teaches the existing negative-old
+  plus positive-new pair.
+- Completion awaits the ordinary locked cache catch-up and exposes cursor
+  advancement; the next detect path also catches up before reading `GLOBAL`, so
+  the newest completed explicit Smart-Mark is available on the very next card.
+
+Acceptance is one properly reviewed completion of the current Cubone after its
+year is corrected from `2022` to `1999`, followed by one repeat scan. The repeat
+passes only if the human-marked regions appear as correctly typed memory-tagged
+proposals, removed false positives remain vetoed, and an unrelated control card
+shows no material proposal increase.

@@ -11,6 +11,20 @@ import {
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label";
 
 const sessionId = "clabelsession1234567890";
+const completionOrder = 207;
+const readyLearning = {
+  catchUpStatus: "V2_UPDATED" as const,
+  ready: true,
+  completionOrder,
+  lastCompletionOrder: completionOrder,
+  completionReflected: true,
+  appliedSessions: 1,
+};
+const currentLearning = {
+  ...readyLearning,
+  catchUpStatus: "V2_CURRENT" as const,
+  appliedSessions: 0,
+};
 const gradeReport = {
   front: {
     centering: {
@@ -97,19 +111,28 @@ test("Human labels retain their existing weighted-grade validation", () => {
 });
 
 test("completion retry returns the original label without consuming another slot", async () => {
-  let saved: { label: { id: string; sheetId: string; slot: number; certificateNumber: string }; publicReportSlug: string } | null = null;
+  let saved: {
+    label: { id: string; sheetId: string; slot: number; certificateNumber: string; completionOrder: number };
+    publicReportSlug: string;
+  } | null = null;
   let creations = 0;
   const handler = createAiGraderV2CompleteLabelHandler({
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
     async completeSession(input) {
       assert.equal(input.createdByUserId, "admin-1");
-      if (saved) return { outcome: "EXISTING" as const, ...saved };
+      if (saved) return { outcome: "EXISTING" as const, ...saved, learning: currentLearning };
       creations += 1;
       saved = {
-        label: { id: "label-1", sheetId: "sheet-1", slot: 7, certificateNumber: "TKH-000207" },
+        label: {
+          id: "label-1",
+          sheetId: "sheet-1",
+          slot: 7,
+          certificateNumber: "TKH-000207",
+          completionOrder,
+        },
         publicReportSlug: speedsterReportSlug(sessionId),
       };
-      return { outcome: "CREATED" as const, ...saved };
+      return { outcome: "CREATED" as const, ...saved, learning: readyLearning };
     },
     async completePresentation(input) {
       assert.equal(input.sessionId, sessionId);
@@ -126,6 +149,43 @@ test("completion retry returns the original label without consuming another slot
   assert.equal(retry.state.status, 200);
   assert.equal(creations, 1);
   assert.deepEqual((retry.state.body as { label: unknown }).label, (first.state.body as { label: unknown }).label);
+  assert.deepEqual((first.state.body as { learning: unknown }).learning, readyLearning);
+  assert.deepEqual((retry.state.body as { learning: unknown }).learning, currentLearning);
+});
+
+test("a learning catch-up failure is exposed as not ready without blocking the durable completion response", async () => {
+  const learning = {
+    catchUpStatus: "FAILED" as const,
+    ready: false,
+    completionOrder,
+    lastCompletionOrder: null,
+    completionReflected: false,
+    appliedSessions: 0,
+  };
+  const handler = createAiGraderV2CompleteLabelHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async completeSession() {
+      return {
+        outcome: "CREATED",
+        label: {
+          id: "label-1",
+          sheetId: "sheet-1",
+          slot: 7,
+          certificateNumber: "TKH-000207",
+          completionOrder,
+        },
+        publicReportSlug: speedsterReportSlug(sessionId),
+        learning,
+      };
+    },
+    async completePresentation() { return undefined; },
+  });
+  const completed = response();
+
+  await handler(request(), completed.res);
+
+  assert.equal(completed.state.status, 201);
+  assert.deepEqual((completed.state.body as { learning: unknown }).learning, learning);
 });
 
 test("PhotoRoom starts only after durable completion and can fail without rolling the grade back", async () => {
@@ -141,8 +201,15 @@ test("PhotoRoom starts only after durable completion and can fail without rollin
         completed = true;
         return {
           outcome: "CREATED",
-          label: { id: "label-1", sheetId: "sheet-1", slot: 7, certificateNumber: "TKH-000207" },
+          label: {
+            id: "label-1",
+            sheetId: "sheet-1",
+            slot: 7,
+            certificateNumber: "TKH-000207",
+            completionOrder,
+          },
           publicReportSlug: speedsterReportSlug(sessionId),
+          learning: readyLearning,
         };
       },
       async completePresentation() {

@@ -146,6 +146,75 @@ test("a removed Smart-Mark teaches nothing because no detector proposal was reje
   assert.equal(harvested.diagnostics.explicitFindings, 0);
 });
 
+test("an untouched memory proposal is a counted skipped write and never self-replicates", () => {
+  const harvested = harvestSpeedsterLearningSessionV2(session("memory-untouched", 4, [
+    finding({
+      origin: "MEMORY",
+      reviewResult: "ACCEPTED",
+      featureFingerprint: undefined,
+    }),
+  ]));
+
+  assert.equal(harvested.history.lessons.length, 0);
+  assert.equal(harvested.diagnostics.untouchedFindings, 1);
+  assert.equal(harvested.diagnostics.skippedUntouchedMemory, 1);
+  assert.equal(harvested.diagnostics.skippedMissingFingerprints, 0);
+  assert.equal(harvested.diagnostics.skippedInvalidFindings, 0);
+});
+
+test("explicit memory removal teaches one negative for its original proposed type", () => {
+  const harvested = harvestSpeedsterLearningSessionV2(session("memory-removed", 5, [
+    finding({
+      origin: "MEMORY",
+      detectedDefectType: "VISIBLE_WHITENING",
+      defectType: "VISIBLE_WHITENING",
+      reviewResult: "REMOVED",
+    }),
+  ]));
+
+  assert.deepEqual(harvested.history.lessons.map(({ defectType, polarity, provenance }) => ({
+    defectType,
+    polarity,
+    provenance,
+  })), [{
+    defectType: "VISIBLE_WHITENING",
+    polarity: "NEGATIVE",
+    provenance: "DETECTOR_REMOVED",
+  }]);
+  assert.equal(harvested.diagnostics.explicitFindings, 1);
+  assert.equal(harvested.diagnostics.skippedUntouchedMemory, 0);
+});
+
+test("explicit memory relabel teaches negative-old and positive-new only", () => {
+  const harvested = harvestSpeedsterLearningSessionV2(session("memory-relabeled", 6, [
+    finding({
+      origin: "MEMORY",
+      detectedDefectType: "FAINT_COLOR_VARIATION",
+      defectType: "FRAYING",
+      reviewResult: "TYPE_CORRECTED",
+    }),
+  ]));
+
+  assert.deepEqual(harvested.history.lessons.map(({
+    defectType, polarity, provenance, lessonOrder,
+  }) => ({ defectType, polarity, provenance, lessonOrder })), [
+    {
+      defectType: "FAINT_COLOR_VARIATION",
+      polarity: "NEGATIVE",
+      provenance: "DETECTOR_RELABELED_NEGATIVE",
+      lessonOrder: 0,
+    },
+    {
+      defectType: "FRAYING",
+      polarity: "POSITIVE",
+      provenance: "DETECTOR_RELABELED_POSITIVE",
+      lessonOrder: 1,
+    },
+  ]);
+  assert.equal(harvested.diagnostics.explicitFindings, 1);
+  assert.equal(harvested.diagnostics.admittedLessons, 2);
+});
+
 test("a 43-finding lazy finalize admits at most three per final type", () => {
   const reviewedDefects = Array.from({ length: 43 }, (_, index) => finding({
     id: `lazy-${index}`,

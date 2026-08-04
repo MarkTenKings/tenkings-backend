@@ -43,13 +43,22 @@ export type SpeedsterReviewResult =
   | "SMART_MARKED"
   | "TYPE_CORRECTED";
 
-export type SpeedsterDefectOrigin = "DETECTOR" | "SMART_MARK";
+export type SpeedsterDefectOrigin = "DETECTOR" | "SMART_MARK" | "MEMORY";
 
 export type SpeedsterSmartMarkLearning = {
   fingerprintProvenance: "SAM_TRACE" | "HUMAN_BOX_POOL" | "HARD_FAILURE";
   traceAttempts: 0 | 1 | 2;
   proposalOverlapIouGt03: boolean;
   proposalMaxIou: number;
+};
+
+export type SpeedsterMemoryProposal = {
+  lessonSessionId: string;
+  lessonCompletionOrder: number;
+  lessonProposalOrder: number;
+  lessonOrder: number;
+  lessonSourceViewId: SpeedsterViewType;
+  similarity: number;
 };
 
 export type SpeedsterDefect = {
@@ -61,6 +70,7 @@ export type SpeedsterDefect = {
   detectedDefectType?: SpeedsterDefectType;
   featureFingerprint?: readonly number[];
   smartMarkLearning?: SpeedsterSmartMarkLearning;
+  memoryProposal?: SpeedsterMemoryProposal;
   learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];
