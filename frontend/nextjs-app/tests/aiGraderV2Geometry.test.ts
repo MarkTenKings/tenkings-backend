@@ -12,6 +12,7 @@ import {
   getEdgeZones,
   getSpeedsterCardDimensions,
   isCanonicalPoint,
+  sanitizeSpeedsterUnitQuad,
   unitPointToCanonicalPoint,
 } from "../lib/ai-grader-v2/geometry";
 import {
@@ -41,6 +42,27 @@ test("canonical points validate and clamp to the physical card", () => {
     () => clampCanonicalPoint({ x: Number.NaN, y: 1 }, "POKEMON"),
     /finite numbers/,
   );
+});
+
+test("automatic geometry stays reachable inside the source image", () => {
+  assert.deepEqual(sanitizeSpeedsterUnitQuad([
+    { x: -0.04, y: 0.08 },
+    { x: 0.94, y: 0.07 },
+    { x: 1.06, y: 0.95 },
+    { x: -0.18, y: 1.37 },
+  ]), [
+    { x: 0, y: 0.08 },
+    { x: 0.94, y: 0.07 },
+    { x: 1, y: 0.95 },
+    { x: 0, y: 1 },
+  ]);
+  assert.equal(sanitizeSpeedsterUnitQuad([{ x: 0, y: 0 }]), null);
+  assert.equal(sanitizeSpeedsterUnitQuad([
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: Number.NaN, y: 1 },
+  ]), null);
 });
 
 test("the four corner scoring zones are fixed 5 mm squares", () => {

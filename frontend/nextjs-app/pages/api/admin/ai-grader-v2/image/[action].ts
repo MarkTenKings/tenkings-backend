@@ -6,6 +6,7 @@ import {
   type SpeedsterLearningDetectClient,
 } from "../../../../../lib/server/aiGraderV2LearningBank";
 import { presignReadUrl } from "../../../../../lib/server/storage";
+import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 
 const ACTIONS = new Set(["geometry", "prepare", "detect", "measure"]);
 
@@ -43,6 +44,14 @@ const detectLearningDependencies: DetectLearningDependencies = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
+  if (!isRecord(payload)) return payload;
+  return {
+    ...payload,
+    corners: sanitizeSpeedsterUnitQuad(payload.corners),
+  };
+}
 
 export async function freshSpeedsterMeasureEvidence(
   body: Record<string, unknown>,
@@ -116,7 +125,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       body: JSON.stringify(await speedsterServiceBody(action, req.body ?? {}, admin.user.id)),
     });
     const payload = await response.json();
-    return res.status(response.status).json(payload);
+    const safePayload = action === "geometry" && response.ok
+      ? sanitizeSpeedsterGeometryPayload(payload)
+      : payload;
+    return res.status(response.status).json(safePayload);
   } catch (error) {
     const mapped = toErrorResponse(error);
     return res.status(mapped.status).json({ message: mapped.message });

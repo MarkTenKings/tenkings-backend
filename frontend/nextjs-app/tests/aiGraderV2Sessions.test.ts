@@ -9,6 +9,7 @@ import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2
 import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
 import {
   freshSpeedsterMeasureEvidence,
+  sanitizeSpeedsterGeometryPayload,
   speedsterServiceHeaders,
 } from "../pages/api/admin/ai-grader-v2/image/[action]";
 
@@ -41,6 +42,28 @@ function response() {
 }
 
 const admin = async () => ({ user: { id: "admin-1" } });
+
+test("geometry proxy clamps automatic handles to the reachable image boundary", () => {
+  assert.deepEqual(sanitizeSpeedsterGeometryPayload({
+    width: 1200,
+    height: 1600,
+    corners: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: -0.3, y: 1.4 },
+    ],
+  }), {
+    width: 1200,
+    height: 1600,
+    corners: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: 0, y: 1 },
+    ],
+  });
+});
 
 test("POST creates one compact draft with server-owned rule and creator identity", async () => {
   let saved: Record<string, unknown> | undefined;

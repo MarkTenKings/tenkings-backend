@@ -2,6 +2,7 @@ import type {
   SpeedsterCardProfile,
   SpeedsterConditionZone,
   SpeedsterPoint,
+  SpeedsterQuad,
 } from "./contracts";
 
 export const SPEEDSTER_CARD_WIDTH_MM = 63.5;
@@ -53,6 +54,34 @@ function requireFinitePoint(point: SpeedsterPoint): void {
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
     throw new TypeError("Speedster point coordinates must be finite numbers");
   }
+}
+
+function clampUnitCoordinate(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+export function sanitizeSpeedsterUnitQuad(value: unknown): SpeedsterQuad | null {
+  if (!Array.isArray(value) || value.length !== 4) return null;
+
+  const points = value.map((point): SpeedsterPoint | null => {
+    if (!point || typeof point !== "object" || Array.isArray(point)) return null;
+    const candidate = point as Record<string, unknown>;
+    if (
+      typeof candidate.x !== "number"
+      || typeof candidate.y !== "number"
+      || !Number.isFinite(candidate.x)
+      || !Number.isFinite(candidate.y)
+    ) {
+      return null;
+    }
+    return {
+      x: clampUnitCoordinate(candidate.x),
+      y: clampUnitCoordinate(candidate.y),
+    };
+  });
+  const [topLeft, topRight, bottomRight, bottomLeft] = points;
+  if (!topLeft || !topRight || !bottomRight || !bottomLeft) return null;
+  return [topLeft, topRight, bottomRight, bottomLeft];
 }
 
 function requirePositiveDisplaySize(widthPx: number, heightPx: number): void {
