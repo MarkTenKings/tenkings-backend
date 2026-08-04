@@ -23,11 +23,52 @@ type GeometryAssistProps = {
   side: SpeedsterCardSide;
   proposedQuad: SpeedsterQuad;
   automaticPlacement: boolean;
+  diagnostic: SpeedsterGeometryAttemptDiagnostic;
   cornerShape: SpeedsterCornerShape;
   onQuadChange: (quad: SpeedsterQuad) => void;
   onCornerShapeChange: (shape: SpeedsterCornerShape) => void;
   onContinue: () => void;
+  onImageError: (message: string) => void;
 };
+
+export type SpeedsterGeometryAttemptDiagnostic = {
+  sessionId: string;
+  attemptId: number;
+  side: SpeedsterCardSide;
+  durationMs: number;
+  corners: "present" | "null" | "unavailable";
+};
+
+export type SpeedsterGeometryImageOutcome =
+  | "loaded"
+  | "loaded-without-edge-map"
+  | "load-error"
+  | "render-error"
+  | "not-rendered";
+
+export function logSpeedsterGeometryAttempt(
+  diagnostic: SpeedsterGeometryAttemptDiagnostic,
+  imageLoadOutcome: SpeedsterGeometryImageOutcome,
+) {
+  console.info(`[Speedster geometry attempt] ${JSON.stringify({
+    ...diagnostic,
+    imageLoadOutcome,
+  })}`);
+}
+
+function hasVisibleRenderedArea(image: HTMLImageElement) {
+  const imageBounds = image.getBoundingClientRect();
+  const frameBounds = image.parentElement?.getBoundingClientRect();
+  if (!frameBounds) return false;
+  const intersectionWidth = Math.min(imageBounds.right, frameBounds.right) - Math.max(imageBounds.left, frameBounds.left);
+  const intersectionHeight = Math.min(imageBounds.bottom, frameBounds.bottom) - Math.max(imageBounds.top, frameBounds.top);
+  return image.clientWidth > 0
+    && image.clientHeight > 0
+    && imageBounds.width > 0
+    && imageBounds.height > 0
+    && intersectionWidth > 0
+    && intersectionHeight > 0;
+}
 
 const CORNER_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
 const CORNER_DIRECTIONS = [
@@ -82,13 +123,22 @@ export function GeometryAssist({
   side,
   proposedQuad,
   automaticPlacement,
+  diagnostic,
   cornerShape,
   onQuadChange,
   onCornerShapeChange,
   onContinue,
+  onImageError,
 }: GeometryAssistProps) {
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
   const gradientMap = useRef<SpeedsterGradientMap | null>(null);
+  const outcomeLogged = useRef(false);
+
+  const reportImageOutcome = (outcome: SpeedsterGeometryImageOutcome) => {
+    if (outcomeLogged.current) return;
+    outcomeLogged.current = true;
+    logSpeedsterGeometryAttempt(diagnostic, outcome);
+  };
 
   const moveHandle = (event: ReactPointerEvent<SVGSVGElement>) => {
     const active = activeHandle.current;
@@ -144,7 +194,33 @@ export function GeometryAssist({
             alt={`${side.toLowerCase()} trading card`}
             draggable={false}
             onLoad={(event) => {
-              gradientMap.current = gradientMapFromImage(event.currentTarget);
+              const image = event.currentTarget;
+              const nextGradientMap = gradientMapFromImage(image);
+              gradientMap.current = nextGradientMap;
+              window.requestAnimationFrame(() => {
+                if (!image.isConnected) return;
+                if (!hasVisibleRenderedArea(image)) {
+                  onImageError(
+                    `The ${side.toLowerCase()} card image loaded but has no visible rendered area. Manual corner controls remain available.`,
+                  );
+                  reportImageOutcome("render-error");
+                  return;
+                }
+                if (!nextGradientMap) {
+                  onImageError(
+                    `The ${side.toLowerCase()} card image loaded, but edge snapping could not read it. Manual corner controls remain available.`,
+                  );
+                  reportImageOutcome("loaded-without-edge-map");
+                  return;
+                }
+                reportImageOutcome("loaded");
+              });
+            }}
+            onError={() => {
+              onImageError(
+                `The ${side.toLowerCase()} card image failed to load. Manual corner controls remain available.`,
+              );
+              reportImageOutcome("load-error");
             }}
           />
           <svg
