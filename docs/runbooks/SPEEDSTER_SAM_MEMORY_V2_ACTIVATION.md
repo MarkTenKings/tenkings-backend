@@ -1,21 +1,20 @@
 # Speedster SAM Memory V2 Activation Runbook
 
-Status: Production active since 2026-08-03. `GLOBAL` is Bank V2 at durable hash
-`5d8520e8ae7861f3cd0c8fac421e38ad0fc05034f339e5e15aeaad6d12a0204e`;
+Status: Production active and fixed-policy corrected since 2026-08-03. `GLOBAL`
+is Bank V2 at durable hash
+`fc9a3cec4a065c3e18e05650c51d6ec6b2ffacb7bf8d4afbf4e8077713031780`,
+with `tau=0.80`, `margin=0.10`, 136 exemplars, and replay cursor sequence
+`229`;
 the inert backup preserves V1 preimage hash
 `6352e0aec6d54c81dc6d00f13f4987a8137cf2bab7a900c3938c1a2c155bce06`.
 Do not attempt activation again or run rollback without Mark's separate explicit
 approval.
 
-The active row still carries the superseded first-activation policy
-`tau=0.652262`, `margin=0.652262` until the approved policy-correction release
-below is deployed and its exact hash-bound correction completes.
-
 Read-only Production forensics on 2026-08-03 found that authoritative Speedster
 history advanced to certificate sequence `229` after the active row's sequence
-`228` replay cursor. The fixed-policy correction must first prove that the live
-row is the exact canonical sequence-228 prefix after changing only its policy,
-then rebuild through the current authoritative tip under the same lock. It must
+`228` replay cursor. The completed fixed-policy correction proved that the live
+row was the exact canonical sequence-228 prefix after changing only its policy,
+then rebuilt through the current authoritative tip under the same lock. It did
 not force the earlier sequence-228 target hash or exemplar count.
 
 ## One active cache
@@ -76,7 +75,7 @@ Rollback reacquires the same lock, verifies the active row and saved copy,
 restores only `GLOBAL`, and verifies its readback. It does not change or delete
 sessions, cards, grades, labels, reports, images, history, or the backup row.
 
-## Approved fixed-policy correction
+## Fixed-policy correction (completed; do not rerun)
 
 The live Cubone repeat proved the data-selected first-activation thresholds were
 not decisive. The corrected V2 policy is fixed at `tau=0.80`, `margin=0.10`;
@@ -97,7 +96,7 @@ exact current active-row hash. Under the existing completion advisory lock it:
   only its policy; and
 - returns the exact corrected-bank hash, evidence hash, and typed confirmation.
 
-The approved mutating operation is `operation: "CORRECT_POLICY"`. It must carry
+The completed mutating operation was `operation: "CORRECT_POLICY"`. It carried
 the same expected active hash, returned evidence hash, and this dynamic phrase:
 
 ```text
