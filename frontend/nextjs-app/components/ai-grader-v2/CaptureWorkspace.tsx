@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
-import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
+import { buildSpeedsterGeometryStart } from "../../lib/ai-grader-v2/capture-geometry";
 import {
   speedsterImageService,
   planSpeedsterPreparedOutputs,
@@ -67,24 +67,6 @@ type SideState = {
   detectedBorders?: readonly ("top" | "right" | "bottom" | "left")[];
   centering?: CenteringAssistResult;
 };
-
-const CARD_ASPECT = 63.5 / 88.9;
-
-function manualStartQuad(width: number, height: number): SpeedsterQuad {
-  const frameAspect = width / height;
-  const widthFraction = frameAspect > CARD_ASPECT ? 0.9 * CARD_ASPECT / frameAspect : 0.9;
-  const heightFraction = frameAspect > CARD_ASPECT ? 0.9 : 0.9 * frameAspect / CARD_ASPECT;
-  const left = (1 - widthFraction) / 2;
-  const top = (1 - heightFraction) / 2;
-  const right = 1 - left;
-  const bottom = 1 - top;
-  return [
-    { x: left, y: top },
-    { x: right, y: top },
-    { x: right, y: bottom },
-    { x: left, y: bottom },
-  ];
-}
 
 export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -176,31 +158,36 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         ? backPhoto
         : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file });
       const backGeometry = await speedsterImageService.proposeGeometry(token, uploadedBack.readUrl);
-      const frontCorners = sanitizeSpeedsterUnitQuad(frontGeometry.corners);
-      const backCorners = sanitizeSpeedsterUnitQuad(backGeometry.corners);
-      setFront({
-        originalStorageKey: uploadedFront.storageKey,
-        sourceUrl: uploadedFront.readUrl,
-        corners: frontCorners ?? manualStartQuad(frontGeometry.width, frontGeometry.height),
-        automaticGeometry: frontCorners !== null,
+      const next = buildSpeedsterGeometryStart({
+        front: {
+          originalStorageKey: uploadedFront.storageKey,
+          sourceUrl: uploadedFront.readUrl,
+          geometry: frontGeometry,
+        },
+        back: {
+          originalStorageKey: uploadedBack.storageKey,
+          sourceUrl: uploadedBack.readUrl,
+          geometry: backGeometry,
+        },
       });
-      setBack({
-        originalStorageKey: uploadedBack.storageKey,
-        sourceUrl: uploadedBack.readUrl,
-        corners: backCorners ?? manualStartQuad(backGeometry.width, backGeometry.height),
-        automaticGeometry: backCorners !== null,
-      });
-      setStage("FRONT_GEOMETRY");
-      const automaticCount = Number(frontCorners !== null) + Number(backCorners !== null);
-      setMessage(automaticCount === 2
-        ? "Both physical cards found. Move only points that need correction."
-        : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
+      setFront(next.front);
+      setBack(next.back);
+      setStage(next.stage);
+      setMessage(next.message);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
     } finally {
       setWorking(false);
     }
   };
+
+  const handleGeometryImageFailure = useCallback((detail: string) => {
+    setFront(null);
+    setBack(null);
+    setStage("PHOTOS");
+    setWorking(false);
+    setMessage(detail);
+  }, []);
 
   const confirmGeometry = async (side: SpeedsterCardSide) => {
     const current = side === "FRONT" ? front : back;
@@ -331,6 +318,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
             : setBack((current) => current ? { ...current, corners } : current)}
           onCornerShapeChange={setCornerShape}
           onContinue={() => void confirmGeometry(activeSide)}
+          onImageFailure={handleGeometryImageFailure}
         />
       ) : null}
 

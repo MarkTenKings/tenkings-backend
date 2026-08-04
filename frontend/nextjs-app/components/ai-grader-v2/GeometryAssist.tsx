@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 
 import type {
@@ -13,6 +13,11 @@ import {
   snapSpeedsterPoint,
   type SpeedsterGradientMap,
 } from "../../lib/ai-grader-v2/gradient-snap";
+import {
+  evaluateSpeedsterImageReadiness,
+  speedsterGeometryInteractionState,
+  type SpeedsterImageReadiness,
+} from "../../lib/ai-grader-v2/image-readiness";
 
 import styles from "./GeometryAssist.module.css";
 
@@ -27,7 +32,10 @@ type GeometryAssistProps = {
   onQuadChange: (quad: SpeedsterQuad) => void;
   onCornerShapeChange: (shape: SpeedsterCornerShape) => void;
   onContinue: () => void;
+  onImageFailure: (message: string) => void;
 };
+
+const SPEEDSTER_IMAGE_LOAD_TIMEOUT_MS = 10_000;
 
 const CORNER_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
 const CORNER_DIRECTIONS = [
@@ -86,9 +94,107 @@ export function GeometryAssist({
   onQuadChange,
   onCornerShapeChange,
   onContinue,
+  onImageFailure,
 }: GeometryAssistProps) {
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
   const gradientMap = useRef<SpeedsterGradientMap | null>(null);
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const readinessKey = `${side}:${imageUrl}`;
+  const readinessKeyRef = useRef(readinessKey);
+  readinessKeyRef.current = readinessKey;
+  const readyKeyRef = useRef<string | null>(null);
+  const failedKeyRef = useRef<string | null>(null);
+  const [readiness, setReadiness] = useState<{
+    key: string;
+    status: SpeedsterImageReadiness;
+  }>({ key: readinessKey, status: "LOADING" });
+  const currentReadiness = readiness.key === readinessKey ? readiness.status : "LOADING";
+  const interaction = speedsterGeometryInteractionState(currentReadiness);
+
+  const clearPendingChecks = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  }, []);
+
+  const reportImageFailure = useCallback((reason: string) => {
+    if (
+      !mountedRef.current
+      || readinessKeyRef.current !== readinessKey
+      || failedKeyRef.current === readinessKey
+    ) return;
+    failedKeyRef.current = readinessKey;
+    clearPendingChecks();
+    setReadiness({ key: readinessKey, status: "FAILED" });
+    onImageFailure(
+      `The ${side.toLowerCase()} card image could not be displayed: ${reason}. Both captured photos are intact; try Set geometry again.`,
+    );
+  }, [clearPendingChecks, onImageFailure, readinessKey, side]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    failedKeyRef.current = null;
+    if (readyKeyRef.current !== readinessKey) {
+      gradientMap.current = null;
+      setReadiness({ key: readinessKey, status: "LOADING" });
+      timeoutRef.current = setTimeout(() => {
+        reportImageFailure("the image load timed out");
+      }, SPEEDSTER_IMAGE_LOAD_TIMEOUT_MS);
+    }
+    return () => {
+      mountedRef.current = false;
+      clearPendingChecks();
+    };
+  }, [clearPendingChecks, readinessKey, reportImageFailure]);
+
+  const handleImageLoad = useCallback((image: HTMLImageElement) => {
+    const loadKey = readinessKey;
+    void (async () => {
+      try {
+        if (typeof image.decode === "function") await image.decode();
+      } catch {
+        reportImageFailure("the image could not be decoded");
+        return;
+      }
+      if (!mountedRef.current || readinessKeyRef.current !== loadKey) return;
+      animationFrameRef.current = requestAnimationFrame(() => {
+        animationFrameRef.current = null;
+        if (!mountedRef.current || readinessKeyRef.current !== loadKey) return;
+        const frame = frameRef.current;
+        if (!frame) {
+          reportImageFailure("the usable image frame was unavailable");
+          return;
+        }
+        const result = evaluateSpeedsterImageReadiness({
+          complete: image.complete,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          clientWidth: image.clientWidth,
+          clientHeight: image.clientHeight,
+          frameClientWidth: frame.clientWidth,
+          frameClientHeight: frame.clientHeight,
+          imageRect: image.getBoundingClientRect(),
+          frameRect: frame.getBoundingClientRect(),
+        });
+        if (!result.ready) {
+          reportImageFailure(result.reason);
+          return;
+        }
+        clearPendingChecks();
+        gradientMap.current = gradientMapFromImage(image);
+        readyKeyRef.current = loadKey;
+        setReadiness({ key: loadKey, status: "READY" });
+      });
+    })();
+  }, [clearPendingChecks, readinessKey, reportImageFailure]);
 
   const moveHandle = (event: ReactPointerEvent<SVGSVGElement>) => {
     const active = activeHandle.current;
@@ -135,7 +241,7 @@ export function GeometryAssist({
       </header>
 
       <div className={styles.workspace}>
-        <div className={styles.imageFrame}>
+        <div ref={frameRef} className={styles.imageFrame} aria-busy={!interaction.continueEnabled}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             className={styles.image}
@@ -143,51 +249,52 @@ export function GeometryAssist({
             crossOrigin="anonymous"
             alt={`${side.toLowerCase()} trading card`}
             draggable={false}
-            onLoad={(event) => {
-              gradientMap.current = gradientMapFromImage(event.currentTarget);
-            }}
+            onLoad={(event) => handleImageLoad(event.currentTarget)}
+            onError={() => reportImageFailure("the browser could not load the image")}
           />
-          <svg
-            className={styles.overlay}
-            viewBox="0 0 1000 1000"
-            preserveAspectRatio="none"
-            aria-label="Adjustable card corner geometry"
-            onPointerMove={moveHandle}
-            onPointerUp={endDrag}
-            onPointerCancel={endDrag}
-          >
-            {cornerShape === "ROUNDED_3_18_MM" ? (
-              <path className={styles.quad} d={roundedQuadPath(proposedQuad)} vectorEffect="non-scaling-stroke" />
-            ) : (
-              <polygon
-                className={styles.quad}
-                points={proposedQuad.map(overlayPoint).join(" ")}
-                vectorEffect="non-scaling-stroke"
-              />
-            )}
-            {proposedQuad.map((point, index) => {
-              const x = point.x * 1000;
-              const y = point.y * 1000;
-              return (
-                <g
-                  key={CORNER_LABELS[index]}
-                  className={styles.handle}
-                  aria-label={CORNER_LABELS[index]}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    activeHandle.current = { index, pointerId: event.pointerId };
-                    event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
-                  }}
-                >
-                  <circle className={styles.handleHit} cx={x} cy={y} r="42" />
-                  <circle className={styles.handleRing} cx={x} cy={y} r="23" vectorEffect="non-scaling-stroke" />
-                  <line className={styles.crosshair} x1={x - 34} y1={y} x2={x + 34} y2={y} vectorEffect="non-scaling-stroke" />
-                  <line className={styles.crosshair} x1={x} y1={y - 34} x2={x} y2={y + 34} vectorEffect="non-scaling-stroke" />
-                  <circle className={styles.handleCore} cx={x} cy={y} r="5" />
-                </g>
-              );
-            })}
-          </svg>
+          {interaction.overlayVisible ? (
+            <svg
+              className={styles.overlay}
+              viewBox="0 0 1000 1000"
+              preserveAspectRatio="none"
+              aria-label="Adjustable card corner geometry"
+              onPointerMove={moveHandle}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
+            >
+              {cornerShape === "ROUNDED_3_18_MM" ? (
+                <path className={styles.quad} d={roundedQuadPath(proposedQuad)} vectorEffect="non-scaling-stroke" />
+              ) : (
+                <polygon
+                  className={styles.quad}
+                  points={proposedQuad.map(overlayPoint).join(" ")}
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+              {proposedQuad.map((point, index) => {
+                const x = point.x * 1000;
+                const y = point.y * 1000;
+                return (
+                  <g
+                    key={CORNER_LABELS[index]}
+                    className={styles.handle}
+                    aria-label={CORNER_LABELS[index]}
+                    onPointerDown={(event) => {
+                      event.preventDefault();
+                      activeHandle.current = { index, pointerId: event.pointerId };
+                      event.currentTarget.ownerSVGElement?.setPointerCapture(event.pointerId);
+                    }}
+                  >
+                    <circle className={styles.handleHit} cx={x} cy={y} r="42" />
+                    <circle className={styles.handleRing} cx={x} cy={y} r="23" vectorEffect="non-scaling-stroke" />
+                    <line className={styles.crosshair} x1={x - 34} y1={y} x2={x + 34} y2={y} vectorEffect="non-scaling-stroke" />
+                    <line className={styles.crosshair} x1={x} y1={y - 34} x2={x} y2={y + 34} vectorEffect="non-scaling-stroke" />
+                    <circle className={styles.handleCore} cx={x} cy={y} r="5" />
+                  </g>
+                );
+              })}
+            </svg>
+          ) : null}
         </div>
 
         <aside className={styles.controls}>
@@ -213,7 +320,12 @@ export function GeometryAssist({
             </div>
           </div>
 
-          <button type="button" className={styles.continueButton} onClick={onContinue}>
+          <button
+            type="button"
+            className={styles.continueButton}
+            onClick={onContinue}
+            disabled={!interaction.continueEnabled}
+          >
             Continue <span aria-hidden="true">→</span>
           </button>
         </aside>
