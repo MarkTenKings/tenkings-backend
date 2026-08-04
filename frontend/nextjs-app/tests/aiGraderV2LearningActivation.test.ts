@@ -578,6 +578,112 @@ test("policy correction rebuilds the active V2 bank, changes one row, and preser
   assert.equal(corrected.replayCursor?.completionOrder, calibratedBank().replayCursor?.completionOrder);
 });
 
+test("policy correction proves the active canonical prefix and catches up newer authoritative history", async () => {
+  const store = new ActivationStore(activationV1Bank);
+  const activation = activationInput();
+  const activationPreflight = await runSpeedsterLearningActivation(store, activation);
+  assert.equal(activationPreflight.mode, "DRY_RUN");
+  if (activationPreflight.mode !== "DRY_RUN") return;
+  await runSpeedsterLearningActivation(store, {
+    ...activation,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: activationPreflight.calibrationEvidenceHash,
+    dryRunStatus: activationPreflight.dryRunStatus,
+    dryRunEvidenceHash: activationPreflight.dryRunEvidenceHash,
+    typedConfirmation: activationPreflight.requiredConfirmation,
+  });
+  const oldActive = {
+    ...(store.rows.get("GLOBAL")?.state as SpeedsterLearningBankV2),
+    calibration: { status: "CALIBRATED" as const, tau: 0.652262, margin: 0.652262 },
+  };
+  store.rows.set("GLOBAL", { ...store.rows.get("GLOBAL")!, state: oldActive });
+  store.labels.push({
+    sourceSessionId: "new-completion-after-activation",
+    certificateSequence: 229,
+    createdAt: authoritativeCompletedAt(229),
+  });
+  store.sessions.push({
+    id: "new-completion-after-activation",
+    reviewedDefects: [removedFinding(2)],
+    capture: compatibleCapture,
+    gradeReport: compatibleGradeReport,
+    cardProfile: "SPORTS",
+    identity: { cardName: "Later authoritative completion" },
+  });
+  store.writes = 0;
+  const expectedActiveRowHash = hashSpeedsterLearningBankState(oldActive);
+  const preflight = await runSpeedsterLearningPolicyCorrection(store, {
+    mode: "DRY_RUN",
+    expectedActiveRowHash,
+    actorUserId: "admin-user",
+  });
+  assert.equal(preflight.mode, "DRY_RUN");
+  assert.equal(preflight.writes, 0);
+  assert.equal(store.writes, 0);
+  assert.equal(preflight.previousReplayCursor?.completionOrder, 228);
+  assert.equal(preflight.replayedCompletionCount, 1);
+  assert.equal(preflight.replayCursor?.completionOrder, 229);
+  assert.equal(preflight.exemplarCount, calibratedBank().exemplars.length + 1);
+
+  const corrected = await runSpeedsterLearningPolicyCorrection(store, {
+    mode: "CORRECT_POLICY",
+    expectedActiveRowHash,
+    calibrationEvidenceHash: preflight.calibrationEvidenceHash,
+    typedConfirmation: preflight.requiredConfirmation,
+    actorUserId: "admin-user",
+  });
+  assert.equal(corrected.mode, "CORRECT_POLICY");
+  assert.equal(corrected.writes, 1);
+  assert.equal(corrected.replayCursor?.completionOrder, 229);
+  assert.equal(
+    (store.rows.get("GLOBAL")?.state as SpeedsterLearningBankV2).exemplars.at(-1)?.sessionId,
+    "new-completion-after-activation",
+  );
+});
+
+test("policy correction rejects a noncanonical active prefix even when authoritative history advanced", async () => {
+  const store = new ActivationStore(activationV1Bank);
+  const activation = activationInput();
+  const activationPreflight = await runSpeedsterLearningActivation(store, activation);
+  assert.equal(activationPreflight.mode, "DRY_RUN");
+  if (activationPreflight.mode !== "DRY_RUN") return;
+  await runSpeedsterLearningActivation(store, {
+    ...activation,
+    mode: "ACTIVATE",
+    calibrationEvidenceHash: activationPreflight.calibrationEvidenceHash,
+    dryRunStatus: activationPreflight.dryRunStatus,
+    dryRunEvidenceHash: activationPreflight.dryRunEvidenceHash,
+    typedConfirmation: activationPreflight.requiredConfirmation,
+  });
+  const tamperedActive = {
+    ...(store.rows.get("GLOBAL")?.state as SpeedsterLearningBankV2),
+    calibration: { status: "CALIBRATED" as const, tau: 0.652262, margin: 0.652262 },
+  };
+  tamperedActive.exemplars[0].fingerprint[0] += 0.01;
+  store.rows.set("GLOBAL", { ...store.rows.get("GLOBAL")!, state: tamperedActive });
+  store.labels.push({
+    sourceSessionId: "new-completion-after-tamper",
+    certificateSequence: 229,
+    createdAt: authoritativeCompletedAt(229),
+  });
+  store.sessions.push({
+    id: "new-completion-after-tamper",
+    reviewedDefects: [removedFinding(2)],
+    capture: compatibleCapture,
+    gradeReport: compatibleGradeReport,
+    cardProfile: "SPORTS",
+    identity: { cardName: "Later authoritative completion" },
+  });
+  store.writes = 0;
+
+  await assert.rejects(runSpeedsterLearningPolicyCorrection(store, {
+    mode: "DRY_RUN",
+    expectedActiveRowHash: hashSpeedsterLearningBankState(tamperedActive),
+    actorUserId: "admin-user",
+  }), /active bank does not match authoritative history/);
+  assert.equal(store.writes, 0);
+});
+
 test("activation transaction saves one inert backup, swaps only GLOBAL, verifies, and rolls back", async () => {
   const store = new ActivationStore(activationV1Bank);
   const unrelatedBefore = structuredClone(store.unrelated);
