@@ -1,4 +1,6 @@
 import unittest
+from hashlib import sha256
+from pathlib import Path
 from unittest.mock import patch
 
 import cv2
@@ -9,12 +11,56 @@ from card_geometry import (
     INSPECTION_HEIGHT,
     INSPECTION_MARGIN_PX,
     INSPECTION_WIDTH,
+    PX_PER_MM,
     _candidate_contours,
     detect_card_quad,
+    find_printed_border_offsets,
     printed_border_quad,
     warp_to_card_map,
     warp_to_inspection_map,
 )
+
+
+GEOMETRY_FIXTURES = Path(__file__).with_name("test-fixtures") / "geometry"
+# Frozen once with `sips -s format jpeg -s formatOptions 95`; these are the
+# original photos encoded so the old detector reproduces the production failure.
+# Sources: IMG_9073.heic (Front, SHA-256
+# 85ebd7389cb0f07d02d565e5cdca94637a793ca0c18eccf8b722f9db5b4dd47a)
+# and IMG_9074.heic (Back, SHA-256
+# 38827c30879da6e80079d1cd498a9cf829da77e415f8d3b7b3d0461ab9b49338).
+CUBONE_FIXTURES = {
+    "front": {
+        "path": GEOMETRY_FIXTURES / "cubone-front.jpg",
+        "sha256": "d2136a44fb8504727a48325282b573cf10c73a79b890be0db1b69f744840cd56",
+        "expected": np.array(
+            [
+                [360.4451, 256.0918],
+                [2727.0352, 270.9390],
+                [2761.9783, 3653.6440],
+                [289.4054, 3633.1233],
+            ],
+            dtype=np.float32,
+        ),
+    },
+    "back": {
+        "path": GEOMETRY_FIXTURES / "cubone-back.jpg",
+        "sha256": "fa71097ee566bed76efab30543fbdacfc84e6d9c0a0ab3552b4e251b1cbe2338",
+        "expected": np.array(
+            [
+                [371.4259, 398.2110],
+                [2602.8545, 398.7044],
+                [2627.9880, 3567.2173],
+                [326.6972, 3548.3083],
+            ],
+            dtype=np.float32,
+        ),
+    },
+}
+
+# Derived only from the two immutable Cubone fixtures. The worst reconstructed
+# source-corner error is 23.6475 px (ceil = 24); the worst canonical edge-normal
+# residual is 9.9347 px and centering offset drift is 0.4000 mm (8 canonical px).
+CUBONE_CORNER_ERROR_TOLERANCE_PX = 24
 
 
 class SpeedsterGeometryTest(unittest.TestCase):
@@ -124,6 +170,83 @@ class SpeedsterGeometryTest(unittest.TestCase):
         cv2.fillConvexPoly(image, clipped, (245, 245, 245))
 
         self.assertIsNone(detect_card_quad(image))
+
+    def test_real_cubone_quads_stay_within_the_derived_corner_tolerance(self):
+        canonical = np.array(
+            [
+                [0, 0],
+                [TARGET_WIDTH - 1, 0],
+                [TARGET_WIDTH - 1, TARGET_HEIGHT - 1],
+                [0, TARGET_HEIGHT - 1],
+            ],
+            dtype=np.float32,
+        )
+        for side, fixture in CUBONE_FIXTURES.items():
+            with self.subTest(side=side):
+                encoded = fixture["path"].read_bytes()
+                self.assertEqual(sha256(encoded).hexdigest(), fixture["sha256"])
+                image = cv2.imdecode(
+                    np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR
+                )
+                self.assertIsNotNone(image)
+
+                expected = fixture["expected"]
+                actual = detect_card_quad(image)
+                self.assertIsNotNone(actual)
+
+                expected_to_canonical = cv2.getPerspectiveTransform(
+                    expected, canonical
+                )
+                actual_canonical = cv2.perspectiveTransform(
+                    np.asarray(actual, dtype=np.float32)[None, :, :],
+                    expected_to_canonical,
+                )[0]
+                canonical_delta = actual_canonical - canonical
+                canonical_edge_residuals = np.abs(
+                    np.array(
+                        [
+                            canonical_delta[0, 1],
+                            canonical_delta[1, 1],
+                            canonical_delta[1, 0],
+                            canonical_delta[2, 0],
+                            canonical_delta[2, 1],
+                            canonical_delta[3, 1],
+                            canonical_delta[3, 0],
+                            canonical_delta[0, 0],
+                        ]
+                    )
+                )
+                self.assertTrue(np.all(np.isfinite(canonical_edge_residuals)))
+
+                expected_map, _ = warp_to_card_map(image, expected)
+                actual_map, _ = warp_to_card_map(image, actual)
+                expected_offsets = find_printed_border_offsets(expected_map)
+                actual_offsets = find_printed_border_offsets(actual_map)
+                centering_drift_mm = [
+                    abs(expected_offsets[edge] - actual_offsets[edge])
+                    for edge in expected_offsets
+                    if expected_offsets[edge] is not None
+                    and actual_offsets[edge] is not None
+                ]
+                self.assertEqual(len(centering_drift_mm), len(expected_offsets))
+
+                source_corner_error_px = float(
+                    np.max(
+                        np.linalg.norm(
+                            np.asarray(actual, dtype=np.float32) - expected,
+                            axis=1,
+                        )
+                    )
+                )
+                observed_corner_error_px = max(
+                    source_corner_error_px,
+                    float(np.max(canonical_edge_residuals)),
+                    max(centering_drift_mm) * PX_PER_MM,
+                )
+                self.assertLessEqual(
+                    observed_corner_error_px,
+                    CUBONE_CORNER_ERROR_TOLERANCE_PX,
+                )
 
 
 if __name__ == "__main__":
