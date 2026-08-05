@@ -1,12 +1,11 @@
-# Speedster Measurement Accuracy — Draft Frozen-Spec Addendum
+# Speedster Measurement Accuracy — Frozen-Spec Addendum
 
-**Status: DRAFT ONLY — NOT APPROVED — NO IMPLEMENTATION AUTHORITY**
+**Status: APPROVED FROZEN ADDENDUM**
 
-This document records the proposed measurement-accuracy contract for Mark's
-review. It does not authorize code, test, schema, runtime, data, deployment, or
-Production changes. It becomes a frozen addendum only after Mark explicitly
-approves this exact draft. Until then, the current frozen SAM Memory V2
-blueprint and current Production behavior remain authoritative.
+This document records the approved measurement-accuracy contract. Mark
+explicitly approved this exact addendum after the Section 6, Section 8, and
+Section 10 edits recorded here. The current frozen SAM Memory V2 blueprint
+remains authoritative except for the exact conflicts superseded in Section 9.
 
 ## 1. Purpose and incident boundary
 
@@ -15,7 +14,7 @@ produce an incorrect Corner result when the mask supplied to that arithmetic is
 substantially larger than the visible defect. This is a measurement-authority
 problem, not a reason to change the published score curve.
 
-This draft defines one direct correction path:
+This addendum defines one direct correction path:
 
 `human highlight intent -> existing SAM 3 point prompt -> editable final trace -> physical-material clipping -> one measurement pass`
 
@@ -118,9 +117,12 @@ canonical card grid.
 The active implementation must use the smallest deterministic trace
 serialization that reproduces those exact canonical pixels. The existing JSON
 `reviewedDefects` persistence is the intended storage seam; no schema migration
-or new object store is expected. If the existing seam cannot preserve the trace
-and stroke exactly, implementation must stop and report that evidence rather
-than introduce an unapproved storage system.
+or new object store is expected. The exact serialization format choice is an
+approval boundary: implementation must name and show Mark the proposed format
+in the first code review and stop for his approval before persisting it. If the
+existing seam cannot preserve the trace and stroke exactly, implementation must
+stop for approval of any migration or storage change rather than introduce an
+unapproved storage system.
 
 ## 4. One review interaction
 
@@ -214,16 +216,17 @@ This subtraction is narrowly defined:
 
 The immutable Cubone Back top-right reproduction is the required fixture. Its
 current approximately `80 x 73 px` candidate core must no longer occupy most of
-the corner. After subtraction, the core must be confined to the fixture's
-visible rim-scale residual rather than the rounded-corner wedge. The fixture
-must store the expected rim region so this is a deterministic pixel assertion,
-not a visual-only claim.
+the corner. After subtraction, the candidate core must have area below a
+fixture-derived bound of approximately `30%` of the corner zone and must
+intersect the stored rim region. The fixture must store that rim region and the
+derivation of the bound so this is a deterministic area-and-intersection
+assertion, not a visual-only or pixel-exact rim-confinement claim.
 
 ## 7. Conditional material-boundary wedge rejection
 
-Wedge rejection is not authorized merely because this draft exists. After the
-proposal-boundary subtraction above is implemented and its Cubone fixtures are
-run, inspect the resulting masks:
+Wedge rejection is not authorized merely by approval of this addendum. After
+the proposal-boundary subtraction above is implemented and its Cubone fixtures
+are run, inspect the resulting masks:
 
 - If the two known oversized Cubone masks already fail acceptance, add no wedge
   rejection code.
@@ -254,7 +257,9 @@ Re-run the completed Cubone evidence using reviewer-corrected traces without
 writing the session, report, label, learning bank, image, or historical grade.
 
 - Front Corner weighted damage must fall from approximately `35%` to less than
-  `10%`.
+  `5%`. This is a one-time read-only release-validation check on the known
+  Cubone fixture only. It does not run in Production, is not a grading rule,
+  and places no limit on how much Corner damage any real card may have.
 - The corrected visible traces must match Mark's visual judgment of the physical
   damage.
 - The calculation must use the unchanged denominator, multipliers, thresholds,
@@ -272,13 +277,13 @@ historical row or report is rewritten.
 The Cubone and control runs are release-validation evidence, not new steps in
 the ordinary grading workflow.
 
-## 9. Exact conflicts this addendum would supersede after approval
+## 9. Exact conflicts this addendum supersedes
 
-Approval would supersede only the following Smart-Mark measurement clauses in
-`docs/ai-grader-v2-sam-memory-v2-frozen-blueprint.md`; it would not edit that
-frozen file or change SAM Memory proposal generation:
+This approved addendum supersedes only the following Smart-Mark measurement
+clauses in `docs/ai-grader-v2-sam-memory-v2-frozen-blueprint.md`; it does not
+edit that frozen file or change SAM Memory proposal generation:
 
-| Current frozen clause | Draft replacement |
+| Current frozen clause | Approved replacement |
 | --- | --- |
 | The human rectangle remains grading authority. | The persisted human stroke is intent; the saved final trace is sole grading authority. |
 | SAM receives a box prompt. | The same SAM 3 receives positive points along the stroke plus geometry-derived known-clean negative points. |
@@ -289,7 +294,7 @@ frozen file or change SAM Memory proposal generation:
 | Trace/fingerprint branches must leave human geometry, measurement, grade, and completion identical. | The final trace intentionally determines geometry and measurement; failure leaves state unchanged and remains non-blocking. |
 
 The following existing tests encode the current behavior and must be replaced,
-not weakened or retained as a second path, only after approval:
+not weakened or retained as a second path, under the mandatory sequencing below:
 
 - `frontend/nextjs-app/tests/aiGraderV2Review.test.ts` — **Smart-Mark
   fingerprint branches cannot change geometry, measurement, grade, or
@@ -305,20 +310,29 @@ not weakened or retained as a second path, only after approval:
 - the same Python file — **measure endpoint survives evidence image load
   failure**, where survival currently means measuring the rectangle.
 
+Replacement sequencing is mandatory and does not change the normative behavior
+above: write each replacement test and observe it failing before changing the
+behavior; keep the Lane 2 provenance regression green both before and after the
+change; and do not delete any existing contract test until its replacement
+exists.
+
 Historical completed findings remain readable under their stored historical
 geometry and grade. Compatibility is read-only; no old rectangle is remeasured,
 rewritten, or relabeled as a trace.
 
-## 10. Minimal implementation plan — inactive pending Mark approval
+## 10. Minimal implementation plan
 
-No step below is authorized until Mark explicitly approves this draft.
+Implementation remains subject to the format and migration/storage approval
+boundaries in Section 3.3 and Step 1.
 
 1. **Contract and regressions.** Add the minimal stroke/final-trace provenance
-   fields to the existing Speedster finding JSON contract. Write failing tests
-   for trace-only authority, no-valid-trace behavior, affine mapping, immutable
-   post-save trace, historical parsing, and the current Cubone/control fixtures.
-   Do not add a database migration unless evidence proves the existing JSON seam
-   cannot preserve the contract; stop for approval if that occurs.
+   fields to the existing Speedster finding JSON contract. In the first code
+   review, name and show Mark the exact proposed trace serialization format and
+   stop for his approval of that format before persistence work. Write failing
+   tests for trace-only authority, no-valid-trace behavior, affine mapping,
+   immutable post-save trace, historical parsing, and the current Cubone/control
+   fixtures. Do not add a database migration unless evidence proves the existing
+   JSON seam cannot preserve the contract; stop for approval if that occurs.
 2. **Single zoom drawing surface.** Replace drag-box interaction with a master-map
    anchor that opens the existing enlarged evidence area as the only drawing
    panel. Add highlighter, plain brush, and eraser to that surface. Reuse the
