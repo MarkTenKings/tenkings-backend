@@ -198,11 +198,16 @@ export function DefectEvidenceViewer({
   const [newTraceAnchor, setNewTraceAnchor] = useState<SpeedsterPoint | null>(null);
   const [editingFindingId, setEditingFindingId] = useState<string | null>(null);
   const [traceError, setTraceError] = useState("");
+  const [readyMasterKey, setReadyMasterKey] = useState<string | null>(null);
+  const [failedMasterKey, setFailedMasterKey] = useState<string | null>(null);
   const [hydratedTrace, setHydratedTrace] = useState<{
     findingId: string;
     trace: SpeedsterTraceRleV1;
   } | null>(null);
   const requestedTraceKey = useRef<string | null>(null);
+  const masterKey = `${side}:${masterImageUrl}`;
+  const masterReady = readyMasterKey === masterKey;
+  const masterFailed = failedMasterKey === masterKey;
   const visibleDefects = useMemo(
     () => defects.filter((defect) => defect.side === side),
     [defects, side],
@@ -386,15 +391,36 @@ export function DefectEvidenceViewer({
           }}
         >
           <Image
+            key={masterKey}
             className={styles.masterImage}
             src={masterImageUrl}
             alt={`${side.toLowerCase()} card with measured defect overlays`}
             fill
             sizes="(max-width: 860px) 100vw, 55vw"
             unoptimized
-            onError={onImageError}
+            onLoad={() => {
+              setFailedMasterKey(null);
+              setReadyMasterKey(masterKey);
+            }}
+            onError={() => {
+              setReadyMasterKey(null);
+              setFailedMasterKey(masterKey);
+              onImageError?.();
+            }}
           />
-          <svg className={styles.overlay} viewBox="0 0 1000 1000" preserveAspectRatio="none">
+          {!masterReady ? (
+            <div className={styles.imageReadiness} role="status">
+              {masterFailed
+                ? `${side === "FRONT" ? "Front" : "Back"} evidence image unavailable.`
+                : `Loading ${side === "FRONT" ? "Front" : "Back"} evidence…`}
+            </div>
+          ) : null}
+          {masterReady ? <svg
+            className={styles.overlay}
+            data-evidence-overlay={side}
+            viewBox="0 0 1000 1000"
+            preserveAspectRatio="none"
+          >
             {visibleDefects.map((defect, index) => {
               const inspectionContours = speedsterFindingRegions(defect).map((region) =>
                 canonicalContourToInspection(region.canonicalContour, inspectionFrame));
@@ -446,14 +472,21 @@ export function DefectEvidenceViewer({
                 </g>
               );
             })}
-          </svg>
-          <ExactTraceOverlay trace={activeTrace} inspectionFrame={inspectionFrame} />
-          {mode === "MAGNIFY" && pointer ? <div className={styles.lens} style={lensStyle} /> : null}
+          </svg> : null}
+          {masterReady ? <ExactTraceOverlay trace={activeTrace} inspectionFrame={inspectionFrame} /> : null}
+          {masterReady && mode === "MAGNIFY" && pointer ? <div className={styles.lens} style={lensStyle} /> : null}
         </div>
       </div>
 
       <aside className={styles.detail} aria-live="polite">
-        {traceTarget ? (
+        {!masterReady ? (
+          <div className={styles.empty}>
+            <span>{masterFailed ? "EVIDENCE UNAVAILABLE" : "LOADING EVIDENCE"}</span>
+            <p>{masterFailed
+              ? `The ${side === "FRONT" ? "Front" : "Back"} master image could not be loaded.`
+              : `Loading ${side === "FRONT" ? "Front" : "Back"} evidence…`}</p>
+          </div>
+        ) : traceTarget ? (
           <>
             <DefectTraceEditor
               key={traceTarget.findingId ?? `new:${newTraceAnchor?.x}:${newTraceAnchor?.y}`}
@@ -553,7 +586,7 @@ export function DefectEvidenceViewer({
             <p>{mode === "SMART_MARK" ? "Choose the missed-defect location on the master map." : "Select a marker to inspect its measurements."}</p>
           </div>
         )}
-        {traceError ? <p className={styles.traceError}>{traceError}</p> : null}
+        {masterReady && traceError ? <p className={styles.traceError}>{traceError}</p> : null}
       </aside>
     </section>
   );

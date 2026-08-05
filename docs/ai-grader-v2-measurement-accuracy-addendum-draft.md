@@ -453,3 +453,63 @@ immediately. SAM Memory gains are compounding because approved human evidence
 accumulates over completed cards. Documentation, UI, tests, and release notes
 must never claim that SAM learns instantly from a stroke or that one correction
 retrained the model.
+
+## 13. Approved post-release corrections — 2026-08-05
+
+Mark approved the following narrow corrections after the first live exact-trace
+test. They refine the implementation of this addendum without changing its
+measurement authority, scoring, models, screens, queues, or proposal-source
+contract.
+
+1. **Atomic public evidence.** A Front/Back selection remounts the evidence
+   viewer for that side. The exact side master image must finish loading before
+   that side's annotations, exact traces, magnifier, or detail can render. A
+   neutral loading/error state is shown in the same report area; a stale image
+   can never remain under labels for the other side.
+2. **Visible Highlighter failure.** The browser displays the sanitized service
+   failure and request correlation ID in the existing editor. The web proxy and
+   service log the same ID without signed URLs, credentials, or image bytes.
+3. **One pending proposal.** While the one SAM proposal requested at stroke-end
+   is pending, Save, pointer drawing, and tool changes are temporarily disabled.
+   Completion and all other card workflow remain unchanged. The literal human
+   stroke remains intent/provenance; backend-only prompt projection may move a
+   prompt point to the nearest rounded physical-material pixel but may not edit
+   the saved stroke.
+4. **Pinned point-coordinate fix.** The pinned SAM predictor receives
+   inspection-image pixel coordinates with `normalize_coords=False`. This is
+   the direct fix for the observed trace-proposal 500; no second prompt or
+   retry path is added.
+5. **Final-trace fingerprint.** Every explicit `TRACE_SAVE` is included in the
+   same measurement request. The fingerprint is recomputed from the final
+   saved trace and stored only when it is bound to that trace's SHA-256. A
+   failed recomputation removes the stale fingerprint/binding but leaves the
+   valid human trace and measurement authoritative.
+6. **Human-corrected Memory lesson.** An accepted `MEMORY` finding teaches
+   `HUMAN_TRACE_CORRECTION_POSITIVE` only when it has an exact final trace and a
+   fingerprint bound to that trace. An untouched accepted Memory proposal stays
+   a counted non-teaching skip. Human correction examples participate in the
+   existing same-type Memory decision/protection math, but they do not originate
+   proposals. Only `SMART_MARK_POSITIVE` remains a proposal seed, as required by
+   the frozen Memory blueprint.
+7. **Read-only lesson receipt.** The existing completion result shows Memory
+   readiness/status, admitted and skipped lesson totals, and the exact replay
+   cursor when present. The receipt is observational: it does not gate, delay,
+   confirm, or roll back grade/label completion.
+8. **No hidden trace fallback.** Invalid proposal responses do not append
+   Highlighter provenance or replace the visible trace. Brush/Eraser remain
+   local human edits and the visible trace at Save remains the sole measurement
+   authority.
+9. **One-time stale-wedge cleanup.** Before Cubone release certification, use
+   read-only evidence to identify the exact `SMART_MARK_POSITIVE` bank exemplars
+   that generated the stale Corner wedge Memory findings. The dry run must name
+   each source session, type, view, fingerprint identity, and exact pre/post bank
+   hash. After approval of those exact targets, one transaction removes only
+   those exemplars from `GLOBAL`; the replay cursor and every unrelated exemplar
+   remain unchanged. Do not add a permanent expiry rule, heuristic, endpoint,
+   model behavior, or historical report mutation. Mark then supplies the honest
+   corrected Cubone trace for the Section 8 read-only `<5%` Front acceptance,
+   followed by the unchanged unrelated control.
+
+The one-time bank cleanup and the Cubone/control acceptance are release
+operations, not ordinary reviewer steps and not application code. They remain
+unperformed until the exact Production dry-run targets are reviewed.

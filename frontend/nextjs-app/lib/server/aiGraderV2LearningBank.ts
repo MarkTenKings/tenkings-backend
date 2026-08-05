@@ -2,6 +2,7 @@ import type { Prisma } from "@tenkings/database";
 
 import {
   incrementSpeedsterLearningBankFromHistoryV2,
+  type SpeedsterLearningHarvestReceiptV2,
   type SpeedsterLearningReviewHistoryV2,
 } from "../ai-grader-v2/learning-harvest-v2";
 import {
@@ -95,6 +96,7 @@ export type SpeedsterLearningCatchUpResult = {
   status: "V1_ACTIVE" | "INVALID_ACTIVE_BANK" | "V2_CURRENT" | "V2_UPDATED";
   appliedSessions: number;
   lastCompletionOrder: number | null;
+  bankCursor: SpeedsterLearningBankV2["replayCursor"];
 };
 
 export type SpeedsterLearningCompletionReadiness = {
@@ -104,11 +106,14 @@ export type SpeedsterLearningCompletionReadiness = {
   lastCompletionOrder: number | null;
   completionReflected: boolean;
   appliedSessions: number;
+  bankCursor: SpeedsterLearningBankV2["replayCursor"];
+  harvest: SpeedsterLearningHarvestReceiptV2;
 };
 
 export function speedsterLearningCompletionReadiness(
   completionOrder: number,
   catchUp: SpeedsterLearningCatchUpResult | null,
+  harvest: SpeedsterLearningHarvestReceiptV2,
 ): SpeedsterLearningCompletionReadiness {
   const completionReflected = catchUp?.lastCompletionOrder != null
     && catchUp.lastCompletionOrder >= completionOrder;
@@ -122,6 +127,8 @@ export function speedsterLearningCompletionReadiness(
     lastCompletionOrder: catchUp?.lastCompletionOrder ?? null,
     completionReflected,
     appliedSessions: catchUp?.appliedSessions ?? 0,
+    bankCursor: catchUp?.bankCursor ?? null,
+    harvest,
   };
 }
 
@@ -138,10 +145,10 @@ export async function catchUpSpeedsterLearningBankV2InTransaction(
   });
   const dispatch = dispatchSpeedsterLearningBank(stored?.state);
   if (dispatch.kind === "V1") {
-    return { status: "V1_ACTIVE", appliedSessions: 0, lastCompletionOrder: null };
+    return { status: "V1_ACTIVE", appliedSessions: 0, lastCompletionOrder: null, bankCursor: null };
   }
   if (dispatch.kind === "INVALID") {
-    return { status: "INVALID_ACTIVE_BANK", appliedSessions: 0, lastCompletionOrder: null };
+    return { status: "INVALID_ACTIVE_BANK", appliedSessions: 0, lastCompletionOrder: null, bankCursor: null };
   }
 
   const after = dispatch.bank.replayCursor?.completionOrder ?? 0;
@@ -159,6 +166,7 @@ export async function catchUpSpeedsterLearningBankV2InTransaction(
       status: "V2_CURRENT",
       appliedSessions: 0,
       lastCompletionOrder: dispatch.bank.replayCursor?.completionOrder ?? null,
+      bankCursor: dispatch.bank.replayCursor,
     };
   }
 
@@ -198,6 +206,7 @@ export async function catchUpSpeedsterLearningBankV2InTransaction(
     status: "V2_UPDATED",
     appliedSessions: labels.length,
     lastCompletionOrder: nextBank.replayCursor?.completionOrder ?? null,
+    bankCursor: nextBank.replayCursor,
   };
 }
 

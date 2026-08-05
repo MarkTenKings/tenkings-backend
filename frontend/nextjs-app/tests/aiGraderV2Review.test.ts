@@ -283,7 +283,7 @@ test("a fully contained Smart-Mark Save is an idempotent successful remeasuremen
   assert.deepEqual(result, [defect]);
 });
 
-test("trace Save sends only final RLE authority and preserves existing identity/review/fingerprint/Memory bytes", async () => {
+test("trace Save sends one exact revision mark and installs its final-trace-bound fingerprint without changing Memory identity", async () => {
   const existing = {
     ...defect,
     id: "front-memory-trace",
@@ -310,7 +310,9 @@ test("trace Save sends only final RLE authority and preserves existing identity/
       trace: { finalTrace, traceProvenance: existingTraceProvenance },
     },
     measure: async ({ findings, marks }) => {
-      assert.equal(marks.length, 0);
+      assert.equal(marks.length, 1);
+      assert.equal(marks[0].id, existing.id);
+      assert.deepEqual(marks[0].finalTrace, finalTrace);
       assert.equal(findings.length, 1);
       assert.deepEqual(findings[0].finalTrace, finalTrace);
       assert.deepEqual(findings[0].traceProvenance, existingTraceProvenance);
@@ -319,7 +321,8 @@ test("trace Save sends only final RLE authority and preserves existing identity/
           ...findings[0],
           origin: "DETECTOR",
           reviewResult: "ACCEPTED",
-          featureFingerprint: [0],
+          featureFingerprint: [0, ...Array.from({ length: 31 }, () => 0)],
+          featureFingerprintTraceSha256: finalTrace.sha256,
           memoryProposal: undefined,
           measurement: {
             ...("measurement" in findings[0] ? findings[0].measurement : defect.measurement),
@@ -334,7 +337,8 @@ test("trace Save sends only final RLE authority and preserves existing identity/
   assert.equal(result[0].origin, existing.origin);
   assert.equal(result[0].reviewResult, existing.reviewResult);
   assert.equal(result[0].defectType, existing.defectType);
-  assert.deepEqual(result[0].featureFingerprint, existing.featureFingerprint);
+  assert.deepEqual(result[0].featureFingerprint, [0, ...Array.from({ length: 31 }, () => 0)]);
+  assert.equal(result[0].featureFingerprintTraceSha256, finalTrace.sha256);
   assert.deepEqual(result[0].memoryProposal, existing.memoryProposal);
   assert.deepEqual(result[0].finalTrace, finalTrace);
   assert.deepEqual(result[0].traceProvenance, existingTraceProvenance);

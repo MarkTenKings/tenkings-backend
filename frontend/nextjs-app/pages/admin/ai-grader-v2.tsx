@@ -52,6 +52,12 @@ type SpeedsterDraft = { id: string; cardProfile: "POKEMON" | "SPORTS" };
 type SpeedsterCompletion = {
   label: { certificateNumber: string; slot: number };
   publicReportSlug: string;
+  learning: {
+    catchUpStatus: string;
+    ready: boolean;
+    bankCursor: { completionOrder: number } | null;
+    harvest: { admittedLessons: number; skippedLessons: number };
+  };
 };
 
 export default function AiGraderV2AdminPage() {
@@ -303,23 +309,19 @@ export default function AiGraderV2AdminPage() {
           return encodeSpeedsterTraceBitmapWireV1(input.visibleTrace, rle.sha256);
         })()
       : null;
-    try {
-      const proposal = await speedsterImageService.traceProposal(session.token, {
-        sessionId: draft.id,
-        side: input.target.side,
-        findingId: input.target.findingId,
-        stroke: {
-          canonicalPoints: input.canonicalPoints,
-          strokeWidthPixels: input.strokeWidthPixels,
-          strokeWidthMm: input.strokeWidthMm,
-          cropTransformVersion: input.cropTransform.version,
-        },
-        currentTraceWire,
-      });
-      return decodeSpeedsterTraceBitmapWireV1(proposal.traceWire);
-    } catch {
-      return null;
-    }
+    const proposal = await speedsterImageService.traceProposal(session.token, {
+      sessionId: draft.id,
+      side: input.target.side,
+      findingId: input.target.findingId,
+      stroke: {
+        canonicalPoints: input.canonicalPoints,
+        strokeWidthPixels: input.strokeWidthPixels,
+        strokeWidthMm: input.strokeWidthMm,
+        cropTransformVersion: input.cropTransform.version,
+      },
+      currentTraceWire,
+    });
+    return decodeSpeedsterTraceBitmapWireV1(proposal.traceWire);
   };
 
   const saveTrace = async (input: SpeedsterInMemoryTraceSave): Promise<boolean> => {
@@ -496,6 +498,12 @@ export default function AiGraderV2AdminPage() {
             <span>04 · COMPLETE</span>
             <h2>{completion.label.certificateNumber}</h2>
             <p>Label queue slot {completion.label.slot} · Grade {review?.grade.overall.displayGrade.toFixed(1)}</p>
+            <p>
+              Memory {completion.learning.ready ? "ready" : completion.learning.catchUpStatus.toLowerCase()}
+              {" · "}{completion.learning.harvest.admittedLessons} lessons saved
+              {" · "}{completion.learning.harvest.skippedLessons} skipped
+              {" · cursor "}{completion.learning.bankCursor?.completionOrder ?? "none"}
+            </p>
             <Link href={`/ai-grader-v2/reports/${completion.publicReportSlug}`}>
               Open public evidence report →
             </Link>

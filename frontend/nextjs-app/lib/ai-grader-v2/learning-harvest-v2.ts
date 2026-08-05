@@ -32,6 +32,7 @@ export type SpeedsterLearningHarvestDiagnosticsV2 = {
   skippedInvalidFindings: number;
   skippedMissingFingerprints: number;
   skippedInvalidFingerprints: number;
+  skippedUnboundTraceFingerprints: number;
   skippedVersionMismatch: number;
   skippedUntouchedMemory: number;
   skippedUntouchedCap: number;
@@ -42,6 +43,43 @@ export type SpeedsterLearningHarvestV2 = {
   history: SpeedsterLearningHistoryLessonsV2;
   diagnostics: SpeedsterLearningHarvestDiagnosticsV2;
 };
+
+export type SpeedsterLearningHarvestReceiptV2 = {
+  findings: number;
+  admittedLessons: number;
+  skippedLessons: number;
+  skipped: {
+    invalidFindings: number;
+    missingFingerprints: number;
+    invalidFingerprints: number;
+    unboundTraceFingerprints: number;
+    versionMismatch: number;
+    untouchedMemory: number;
+    untouchedCap: number;
+    sameCardDuplicate: number;
+  };
+};
+
+export function speedsterLearningHarvestReceiptV2(
+  diagnostics: SpeedsterLearningHarvestDiagnosticsV2,
+): SpeedsterLearningHarvestReceiptV2 {
+  const skipped = {
+    invalidFindings: diagnostics.skippedInvalidFindings,
+    missingFingerprints: diagnostics.skippedMissingFingerprints,
+    invalidFingerprints: diagnostics.skippedInvalidFingerprints,
+    unboundTraceFingerprints: diagnostics.skippedUnboundTraceFingerprints,
+    versionMismatch: diagnostics.skippedVersionMismatch,
+    untouchedMemory: diagnostics.skippedUntouchedMemory,
+    untouchedCap: diagnostics.skippedUntouchedCap,
+    sameCardDuplicate: diagnostics.skippedSameCardDuplicate,
+  };
+  return {
+    findings: diagnostics.findings,
+    admittedLessons: diagnostics.admittedLessons,
+    skippedLessons: Object.values(skipped).reduce((total, count) => total + count, 0),
+    skipped,
+  };
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -59,6 +97,22 @@ const sourceView = (value: unknown): SpeedsterViewType | null => {
 
 const cosine = (left: readonly number[], right: readonly number[]) =>
   left.reduce((total, part, index) => total + part * right[index], 0);
+
+const traceHash = (value: unknown) => isRecord(value)
+  && typeof value.sha256 === "string"
+  && /^[a-f0-9]{64}$/.test(value.sha256)
+  ? value.sha256
+  : null;
+
+const traceFingerprintIsBound = (value: Record<string, unknown>) => {
+  const finalTraceSha256 = traceHash(value.finalTrace);
+  const provenanceSha256 = isRecord(value.traceProvenance)
+    ? value.traceProvenance.finalTraceSha256
+    : null;
+  return finalTraceSha256 !== null
+    && provenanceSha256 === finalTraceSha256
+    && value.featureFingerprintTraceSha256 === finalTraceSha256;
+};
 
 const lesson = (input: {
   defectType: SpeedsterDefectType;
@@ -81,6 +135,7 @@ export function harvestSpeedsterLearningSessionV2(
     skippedInvalidFindings: 0,
     skippedMissingFingerprints: 0,
     skippedInvalidFingerprints: 0,
+    skippedUnboundTraceFingerprints: 0,
     skippedVersionMismatch: 0,
     skippedUntouchedMemory: 0,
     skippedUntouchedCap: 0,
@@ -116,12 +171,17 @@ export function harvestSpeedsterLearningSessionV2(
       diagnostics.skippedInvalidFindings += 1;
       return;
     }
+    const hasFinalTrace = traceHash(raw.finalTrace) !== null;
     // Memory proposals may affect the current grade, but untouched acceptance
-    // is never learning authority. This skipped write prevents positive-memory
-    // proposals from recursively teaching themselves.
-    if (raw.origin === "MEMORY" && raw.reviewResult === "ACCEPTED") {
+    // is never learning authority. An exact trace with a trace-bound refreshed
+    // fingerprint is distinct evidence of an explicit human TRACE_SAVE.
+    if (raw.origin === "MEMORY" && raw.reviewResult === "ACCEPTED" && !hasFinalTrace) {
       diagnostics.untouchedFindings += 1;
       diagnostics.skippedUntouchedMemory += 1;
+      return;
+    }
+    if (hasFinalTrace && !traceFingerprintIsBound(raw)) {
+      diagnostics.skippedUnboundTraceFingerprints += 1;
       return;
     }
     if (raw.featureFingerprint == null) {
@@ -131,6 +191,19 @@ export function harvestSpeedsterLearningSessionV2(
     const fingerprint = normalizeSpeedsterLearningFingerprintV2(raw.featureFingerprint);
     if (!fingerprint) {
       diagnostics.skippedInvalidFingerprints += 1;
+      return;
+    }
+
+    if (raw.origin === "MEMORY" && raw.reviewResult === "ACCEPTED") {
+      diagnostics.explicitFindings += 1;
+      lessons.push(lesson({
+        defectType: raw.defectType,
+        polarity: "POSITIVE",
+        fingerprint,
+        provenance: "HUMAN_TRACE_CORRECTION_POSITIVE",
+        sourceViewId: view,
+        proposalOrder,
+      }));
       return;
     }
 

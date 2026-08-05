@@ -336,6 +336,21 @@ test("detect catch-up failure logs once and falls back to the current validated 
 });
 
 test("a failed best-effort V2 write cannot undo completion and the next catch-up heals the gap", async () => {
+  const harvestReceipt = {
+    findings: 3,
+    admittedLessons: 2,
+    skippedLessons: 1,
+    skipped: {
+      invalidFindings: 0,
+      missingFingerprints: 0,
+      invalidFingerprints: 0,
+      unboundTraceFingerprints: 0,
+      versionMismatch: 0,
+      untouchedMemory: 1,
+      untouchedCap: 0,
+      sameCardDuplicate: 0,
+    },
+  };
   let completed = false;
   let failureObserved = false;
   const result = await afterDurableSpeedsterCompletion(async () => {
@@ -349,25 +364,30 @@ test("a failed best-effort V2 write cannot undo completion and the next catch-up
   assert.equal(result, "durable-grade");
   assert.equal(completed, true);
   assert.equal(failureObserved, true);
-  assert.deepEqual(speedsterLearningCompletionReadiness(1, null), {
+  assert.deepEqual(speedsterLearningCompletionReadiness(1, null, harvestReceipt), {
     catchUpStatus: "FAILED",
     ready: false,
     completionOrder: 1,
     lastCompletionOrder: null,
     completionReflected: false,
     appliedSessions: 0,
+    bankCursor: null,
+    harvest: harvestReceipt,
   });
   assert.deepEqual(speedsterLearningCompletionReadiness(1, {
     status: "V1_ACTIVE",
     appliedSessions: 0,
     lastCompletionOrder: null,
-  }), {
+    bankCursor: null,
+  }, harvestReceipt), {
     catchUpStatus: "V1_ACTIVE",
     ready: false,
     completionOrder: 1,
     lastCompletionOrder: null,
     completionReflected: false,
     appliedSessions: 0,
+    bankCursor: null,
+    harvest: harvestReceipt,
   });
 
   const store = new CatchUpStore(emptyCalibratedBank());
@@ -378,13 +398,19 @@ test("a failed best-effort V2 write cannot undo completion and the next catch-up
   const healed = await catchUpSpeedsterLearningBankV2(store);
   assert.equal(healed.appliedSessions, 1);
   assert.equal((dispatchSpeedsterLearningBank(store.bank) as { bank: SpeedsterLearningBankV2 }).bank.replayCursor?.completionOrder, 1);
-  assert.deepEqual(speedsterLearningCompletionReadiness(1, healed), {
+  assert.deepEqual(speedsterLearningCompletionReadiness(1, healed, harvestReceipt), {
     catchUpStatus: "V2_UPDATED",
     ready: true,
     completionOrder: 1,
     lastCompletionOrder: 1,
     completionReflected: true,
     appliedSessions: 1,
+    bankCursor: {
+      completionOrder: 1,
+      sessionId: "completed-session-001",
+      sessionDigest: (dispatchSpeedsterLearningBank(store.bank) as { bank: SpeedsterLearningBankV2 }).bank.replayCursor?.sessionDigest,
+    },
+    harvest: harvestReceipt,
   });
 });
 

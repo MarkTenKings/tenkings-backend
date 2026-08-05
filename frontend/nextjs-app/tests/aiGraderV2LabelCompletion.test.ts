@@ -12,6 +12,21 @@ import {
 
 const sessionId = "clabelsession1234567890";
 const completionOrder = 207;
+const harvestReceipt = {
+  findings: 4,
+  admittedLessons: 2,
+  skippedLessons: 2,
+  skipped: {
+    invalidFindings: 0,
+    missingFingerprints: 1,
+    invalidFingerprints: 0,
+    unboundTraceFingerprints: 0,
+    versionMismatch: 0,
+    untouchedMemory: 1,
+    untouchedCap: 0,
+    sameCardDuplicate: 0,
+  },
+};
 const readyLearning = {
   catchUpStatus: "V2_UPDATED" as const,
   ready: true,
@@ -19,6 +34,12 @@ const readyLearning = {
   lastCompletionOrder: completionOrder,
   completionReflected: true,
   appliedSessions: 1,
+  bankCursor: {
+    completionOrder,
+    sessionId,
+    sessionDigest: "d".repeat(64),
+  },
+  harvest: harvestReceipt,
 };
 const currentLearning = {
   ...readyLearning,
@@ -177,6 +198,8 @@ test("a learning catch-up failure is exposed as not ready without blocking the d
     lastCompletionOrder: null,
     completionReflected: false,
     appliedSessions: 0,
+    bankCursor: null,
+    harvest: harvestReceipt,
   };
   const handler = createAiGraderV2CompleteLabelHandler({
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
@@ -279,4 +302,15 @@ test("additive schema seam defaults existing labels to HUMAN and uniquely links 
   assert.equal((humanGradeEndpoint.match(/pg_advisory_xact_lock/g) ?? []).length, 2);
   assert.equal((`${endpoint}\n${humanGradeEndpoint}`.match(/SELECT 1 AS "lockAcquired"/g) ?? []).length, 3);
   assert.doesNotMatch(`${endpoint}\n${humanGradeEndpoint}`, /SELECT\s+pg_advisory_xact_lock/);
+});
+
+test("the completed-card panel shows the read-only Memory receipt without gating the workflow", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+
+  assert.match(page, /completion\.learning\.ready/);
+  assert.match(page, /completion\.learning\.harvest\.admittedLessons/);
+  assert.match(page, /completion\.learning\.harvest\.skippedLessons/);
+  assert.match(page, /completion\.learning\.bankCursor\?\.completionOrder/);
+  assert.doesNotMatch(page, /disabled=\{[^}]*completion\.learning/);
 });

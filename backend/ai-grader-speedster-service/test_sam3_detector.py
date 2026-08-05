@@ -285,7 +285,7 @@ def memory_match(similarity, session_id, box=(100, 100, 20, 20)):
 
 
 class Sam3DetectorTests(unittest.TestCase):
-    def test_stroke_prompt_rejects_off_material_point_even_when_sampling_omits_it(self):
+    def test_stroke_prompt_projects_rounded_corner_points_to_physical_material(self):
         allowed = detector_material_mask(
             "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
         )
@@ -293,21 +293,29 @@ class Sam3DetectorTests(unittest.TestCase):
             {"x": 0.30 + index * 0.005, "y": 0.45}
             for index in range(17)
         ]
-        # np.linspace(0, 16, 16, dtype=int) omits index 15. Validation must
-        # nevertheless apply to the complete ordered stroke.
+        # np.linspace(0, 16, 16, dtype=int) omits index 15. Projection must
+        # nevertheless apply to the complete ordered stroke before sampling.
+        stroke[0] = {"x": 0.0, "y": 0.0}
         stroke[15] = {"x": 0.0, "y": 0.0}
 
-        with self.assertRaisesRegex(
-            ValueError, "stroke leaves physical card material"
-        ):
-            _smart_mark_prompt_inputs(
-                stroke,
-                1.0,
-                allowed,
-                np.zeros_like(allowed),
-                np.zeros_like(allowed),
-                INSPECTION_FRAME,
+        points, labels, corridor = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            np.zeros_like(allowed),
+            np.zeros_like(allowed),
+            INSPECTION_FRAME,
+        )
+
+        positive = np.rint(points[labels == 1]).astype(int)
+        self.assertTrue(np.all(allowed[positive[:, 1], positive[:, 0]] > 0))
+        self.assertFalse(
+            np.array_equal(
+                positive[0], [INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX]
             )
+        )
+        self.assertEqual(corridor[INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX], 0)
+        self.assertEqual(np.count_nonzero(corridor & ~allowed), 0)
 
     def test_stroke_corridor_uses_complete_path_before_positive_sampling(self):
         allowed = detector_material_mask(
@@ -426,7 +434,7 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(len(interactive.calls), 1)
         prompt_call = interactive.calls[0]
         self.assertNotIn("box", prompt_call)
-        self.assertNotIn("normalize_coords", prompt_call)
+        self.assertIs(prompt_call["normalize_coords"], False)
         self.assertGreater(float(np.max(prompt_call["point_coords"])), 1.0)
         self.assertEqual(set(prompt_call["point_labels"].tolist()), {0, 1})
         self.assertGreater(

@@ -407,6 +407,7 @@ export default function SpeedsterPublicReport({
           </div>
         </header>
         <DefectEvidenceViewer
+          key={side}
           masterImageUrl={imageUrls[side].master}
           magnifyImageUrl={imageUrls[side].views.ORIGINAL}
           inspectionFrame={inspectionFrames[side]}

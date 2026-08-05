@@ -7,6 +7,7 @@ import {
   deriveSpeedsterLearningBankFromHistoryV2,
   harvestSpeedsterLearningSessionV2,
   incrementSpeedsterLearningBankFromHistoryV2,
+  speedsterLearningHarvestReceiptV2,
   type SpeedsterLearningReviewHistoryV2,
 } from "../lib/ai-grader-v2/learning-harvest-v2";
 import {
@@ -160,6 +161,71 @@ test("an untouched memory proposal is a counted skipped write and never self-rep
   assert.equal(harvested.diagnostics.skippedUntouchedMemory, 1);
   assert.equal(harvested.diagnostics.skippedMissingFingerprints, 0);
   assert.equal(harvested.diagnostics.skippedInvalidFindings, 0);
+});
+
+test("an accepted Memory finding with a human-saved exact trace teaches one trace-bound correction", () => {
+  const finalTraceSha256 = "a".repeat(64);
+  const harvested = harvestSpeedsterLearningSessionV2(session("memory-trace-corrected", 5, [
+    finding({
+      origin: "MEMORY",
+      reviewResult: "ACCEPTED",
+      finalTrace: { sha256: finalTraceSha256 },
+      traceProvenance: { finalTraceSha256 },
+      featureFingerprintTraceSha256: finalTraceSha256,
+    }),
+  ]));
+
+  assert.deepEqual(harvested.history.lessons.map(({ defectType, polarity, provenance }) => ({
+    defectType,
+    polarity,
+    provenance,
+  })), [{
+    defectType: "VISIBLE_WHITENING",
+    polarity: "POSITIVE",
+    provenance: "HUMAN_TRACE_CORRECTION_POSITIVE",
+  }]);
+  assert.equal(harvested.diagnostics.explicitFindings, 1);
+  assert.equal(harvested.diagnostics.skippedUntouchedMemory, 0);
+});
+
+test("a Memory trace without a fingerprint bound to its final hash remains non-teaching", () => {
+  const finalTraceSha256 = "b".repeat(64);
+  const harvested = harvestSpeedsterLearningSessionV2(session("memory-stale-fingerprint", 6, [
+    finding({
+      origin: "MEMORY",
+      reviewResult: "ACCEPTED",
+      finalTrace: { sha256: finalTraceSha256 },
+      traceProvenance: { finalTraceSha256 },
+      featureFingerprintTraceSha256: "c".repeat(64),
+    }),
+  ]));
+
+  assert.equal(harvested.history.lessons.length, 0);
+  assert.equal(harvested.diagnostics.skippedUntouchedMemory, 0);
+  assert.equal(harvested.diagnostics.skippedUnboundTraceFingerprints, 1);
+});
+
+test("completion receipt reports admitted and skipped learning without changing admission", () => {
+  const harvested = harvestSpeedsterLearningSessionV2(session("receipt", 7, [
+    finding({ reviewResult: "REMOVED" }),
+    finding({ origin: "MEMORY", reviewResult: "ACCEPTED" }),
+  ]));
+
+  assert.deepEqual(speedsterLearningHarvestReceiptV2(harvested.diagnostics), {
+    findings: 2,
+    admittedLessons: 1,
+    skippedLessons: 1,
+    skipped: {
+      invalidFindings: 0,
+      missingFingerprints: 0,
+      invalidFingerprints: 0,
+      unboundTraceFingerprints: 0,
+      versionMismatch: 0,
+      untouchedMemory: 1,
+      untouchedCap: 0,
+      sameCardDuplicate: 0,
+    },
+  });
 });
 
 test("explicit memory removal teaches one negative for its original proposed type", () => {

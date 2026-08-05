@@ -335,6 +335,34 @@ export function clipSpeedsterTraceToEditorBounds(
   );
 }
 
+export function acceptSpeedsterHighlighterProposal(input: {
+  proposal: Uint8Array | null | void;
+  request: SpeedsterHighlighterProposalRequest;
+  priorHighlighterStrokes: readonly SpeedsterHighlighterProposalRequest[];
+  cropTransform: SpeedsterCanonicalCropTransform;
+  cornerShape: SpeedsterTraceCornerShape;
+}): { trace: Uint8Array; highlighterStrokes: SpeedsterHighlighterProposalRequest[] } | null {
+  if (!input.proposal || input.proposal.length !== (
+    SPEEDSTER_CANONICAL_TRACE_GRID.width * SPEEDSTER_CANONICAL_TRACE_GRID.height
+  )) return null;
+  const trace = clipSpeedsterTraceToEditorBounds(
+    input.proposal,
+    input.cropTransform,
+    input.cornerShape,
+  );
+  if (!isNonEmptySpeedsterTrace(trace)) return null;
+  return {
+    trace,
+    highlighterStrokes: [
+      ...input.priorHighlighterStrokes,
+      {
+        ...input.request,
+        canonicalPoints: input.request.canonicalPoints.map((point) => ({ ...point })),
+      },
+    ],
+  };
+}
+
 function paintDisc(
   trace: Uint8Array,
   center: SpeedsterCanonicalPixel,

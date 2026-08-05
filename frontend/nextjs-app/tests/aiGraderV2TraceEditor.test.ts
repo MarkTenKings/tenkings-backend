@@ -3,9 +3,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { speedsterImageService } from "../lib/ai-grader-v2/image-service";
+
 import {
   SPEEDSTER_CANONICAL_TRACE_GRID,
   applyCompletedSpeedsterTraceStroke,
+  acceptSpeedsterHighlighterProposal,
   buildSpeedsterTraceProvenanceRevision,
   canonicalPixelToPanelPoint,
   clipSpeedsterTraceToCrop,
@@ -166,6 +169,81 @@ test("highlighter emits one proposal request while brush and eraser directly edi
   assert.equal(erased.trace.some((value) => value === 1), false);
 });
 
+test("rounded-corner Highlighter requests preserve the literal human stroke", () => {
+  const points = [{ x: 0, y: 0 }, { x: 8, y: 8 }];
+  const highlighted = applyCompletedSpeedsterTraceStroke({
+    trace: createEmptySpeedsterTrace(),
+    tool: "HIGHLIGHTER",
+    points,
+    strokeWidthPixels: 20,
+  });
+
+  assert.deepEqual(highlighted.proposalRequest?.canonicalPoints, points);
+});
+
+test("Highlighter provenance is appended only with a valid accepted proposal", () => {
+  const request = {
+    canonicalPoints: [{ x: 600, y: 800 }],
+    strokeWidthPixels: 20,
+    strokeWidthMm: 1,
+  } as const;
+  const cropTransform = createSpeedsterCanonicalCropTransform({ anchor: { x: 0.5, y: 0.5 } });
+  const prior = [request];
+
+  assert.equal(acceptSpeedsterHighlighterProposal({
+    proposal: null,
+    request,
+    priorHighlighterStrokes: prior,
+    cropTransform,
+    cornerShape: "ROUNDED_3_18_MM",
+  }), null);
+  assert.equal(acceptSpeedsterHighlighterProposal({
+    proposal: new Uint8Array(1),
+    request,
+    priorHighlighterStrokes: prior,
+    cropTransform,
+    cornerShape: "ROUNDED_3_18_MM",
+  }), null);
+
+  const proposal = createEmptySpeedsterTrace();
+  setTracePixel(proposal, 635, 889);
+  const accepted = acceptSpeedsterHighlighterProposal({
+    proposal,
+    request,
+    priorHighlighterStrokes: prior,
+    cropTransform,
+    cornerShape: "ROUNDED_3_18_MM",
+  });
+  assert.ok(accepted);
+  assert.deepEqual(accepted.highlighterStrokes, [request, request]);
+  assert.notEqual(accepted.highlighterStrokes, prior);
+  assert.equal(prior.length, 1);
+});
+
+test("the Highlighter client preserves the proxy's sanitized error and request ID", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    message: "SAM proposal failed: RuntimeError: CUDA fault (request sam-request-123).",
+    requestId: "sam-request-123",
+  }), { status: 500, headers: { "Content-Type": "application/json" } });
+  try {
+    await assert.rejects(() => speedsterImageService.traceProposal("admin-token", {
+      sessionId: "speedster-123",
+      side: "FRONT",
+      findingId: null,
+      stroke: {
+        canonicalPoints: [{ x: 0, y: 0 }],
+        strokeWidthPixels: 20,
+        strokeWidthMm: 1,
+        cropTransformVersion: "speedster-canonical-crop-affine-v1",
+      },
+      currentTraceWire: null,
+    }), new Error("SAM proposal failed: RuntimeError: CUDA fault (request sam-request-123)."));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("existing finding contours open as editable binary traces and Save copies exactly what is visible", () => {
   const trace = rasterizeSpeedsterCanonicalContour([
     { x: 0.4, y: 0.4 },
@@ -244,6 +322,7 @@ test("the master map only anchors and the enlarged close-up is the sole drawing 
     `${root}/components/ai-grader-v2/DefectTraceEditor.tsx`,
     "utf8",
   );
+  const adminPage = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
 
   assert.match(viewer, /openTraceEditorAtMasterAnchor/);
   assert.match(viewer, /editingFindingId !== active\.id/);
@@ -261,8 +340,15 @@ test("the master map only anchors and the enlarged close-up is the sole drawing 
   assert.match(editor, /applied === false/);
   assert.match(editor, /clipSpeedsterTraceToEditorBounds\(initialTrace, cropTransform, cornerShape\)/);
   assert.match(editor, /clipSpeedsterTraceToEditorBounds\(result\.trace, cropTransform, cornerShape\)/);
-  assert.match(editor, /clipSpeedsterTraceToEditorBounds\(proposal, cropTransform, cornerShape\)/);
+  assert.match(editor, /acceptSpeedsterHighlighterProposal/);
   assert.match(editor, /initializeSpeedsterHighlighterStrokes/);
+  assert.match(editor, /if \(proposalPending \|\| savePending \|\| activePointerIdRef\.current !== null\) return/);
+  assert.match(editor, /disabled=\{proposalPending \|\| savePending\}/);
+  assert.match(editor, /disabled=\{!validTrace \|\| proposalPending \|\| savePending\}/);
+  assert.match(editor, /error instanceof Error\s+\? error\.message/);
+  const proposalStart = adminPage.indexOf("const traceProposal =");
+  const proposalEnd = adminPage.indexOf("const saveTrace =", proposalStart);
+  assert.doesNotMatch(adminPage.slice(proposalStart, proposalEnd), /catch/);
   assert.match(editor, /priorTraceProvenance/);
   assert.match(viewer, /clipSpeedsterTraceToMaterial/);
   assert.match(editor, /Uint8Array/);

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { randomUUID } from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { presignReadUrl } from "../../../../../lib/server/storage";
@@ -55,11 +56,42 @@ export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
   };
 }
 
+function sanitizedUpstreamText(value: unknown, maximumLength: number) {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\b(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b/gi, "[redacted-credential]")
+    .replace(/\bBearer\s+\S+/gi, "Bearer [redacted-credential]")
+    .replace(/data:image\/[A-Za-z0-9.+-]+;base64,[A-Za-z0-9+/=_-]+/gi, "[redacted-image]")
+    .replace(/https?:\/\/\S+/gi, "[redacted-url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maximumLength);
+  return sanitized || undefined;
+}
+
+export function sanitizeSpeedsterTraceProposalFailure(
+  payload: unknown,
+  requestId: string,
+) {
+  const fields = isRecord(payload) ? payload : {};
+  const detail = isRecord(fields.detail) ? fields.detail : null;
+  const upstream = sanitizedUpstreamText(
+    detail?.message ?? fields.detail ?? fields.message,
+    300,
+  )?.replace(/[.]+$/, "");
+  return {
+    message: `SAM proposal failed: ${upstream ?? "upstream service error"} (request ${requestId}).`,
+    requestId,
+  };
+}
+
 export async function speedsterServiceBody(
   action: string,
   body: Record<string, unknown>,
   createdByUserId?: string,
   evidenceDeps: TraceEvidenceDependencies = traceEvidenceDependencies,
+  requestTraceId?: string,
 ) {
   if (action === "trace-proposal" && createdByUserId) {
     const { sessionId, currentTraceWire, ...proposal } = body;
@@ -136,6 +168,7 @@ export async function speedsterServiceBody(
       findings: reviewedDefects
         .filter((finding) => finding.side === side && finding.reviewResult !== "REMOVED" && finding.id !== findingId)
         .map(stripSpeedsterFindingPrivateFields),
+      ...(requestTraceId ? { requestTraceId } : {}),
     };
   }
   return body;
@@ -147,6 +180,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ message: "Method not allowed" });
   }
 
+  const requestTraceId = randomUUID();
   try {
     const admin = await requireAdminSession(req);
     const action = Array.isArray(req.query.action) ? req.query.action[0] : req.query.action;
@@ -160,9 +194,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const response = await fetch(`${serviceUrl}/${action}`, {
       method: "POST",
       headers: speedsterServiceHeaders(),
-      body: JSON.stringify(await speedsterServiceBody(action, req.body ?? {}, admin.user.id)),
+      body: JSON.stringify(await speedsterServiceBody(
+        action,
+        req.body ?? {},
+        admin.user.id,
+        traceEvidenceDependencies,
+        action === "trace-proposal" ? requestTraceId : undefined,
+      )),
     });
-    const payload = await response.json();
+    const payload = await response.json().catch(() => ({}));
+    if (action === "trace-proposal" && !response.ok) {
+      res.setHeader("X-Request-ID", requestTraceId);
+      return res.status(response.status).json(
+        sanitizeSpeedsterTraceProposalFailure(payload, requestTraceId),
+      );
+    }
     const safePayload = action === "geometry" && response.ok
       ? sanitizeSpeedsterGeometryPayload(payload)
       : action === "trace-proposal" && response.ok

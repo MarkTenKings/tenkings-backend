@@ -1,4 +1,6 @@
 import base64
+import logging
+import re
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -24,6 +26,9 @@ from card_geometry import (
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
 from trace_rle import decode_trace_rle, encode_trace_rle
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -146,6 +151,27 @@ class TraceProposalRequest(BaseModel):
     stroke: TraceProposalStroke
     currentTrace: Optional[dict] = None
     findings: List[dict] = Field(default_factory=list)
+    requestTraceId: Optional[str] = Field(default=None, max_length=100)
+
+
+def _trace_proposal_error_detail(error: Exception, request_trace_id: Optional[str]):
+    message = re.sub(
+        r"https?://\S+",
+        "[redacted-url]",
+        f"{type(error).__name__}: {error}",
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(
+        r"\b(?:Bearer\s+)?(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b",
+        "[redacted-credential]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    message = " ".join(message.split())[:300]
+    detail = {"message": message}
+    if request_trace_id:
+        detail["requestId"] = request_trace_id
+    return detail
 
 
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
@@ -441,12 +467,21 @@ def trace_proposal(request: TraceProposalRequest):
         canonical = proposed_mask[y : y + height, x : x + width].astype(np.uint8)
         return {"trace": encode_trace_rle(canonical)}
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        detail = _trace_proposal_error_detail(error, request.requestTraceId)
+        LOGGER.error(
+            "trace_proposal_failed requestTraceId=%s error=%s",
+            request.requestTraceId or "missing",
+            detail["message"],
+        )
+        raise HTTPException(status_code=400, detail=detail) from error
     except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"{type(error).__name__}: {error}",
-        ) from error
+        detail = _trace_proposal_error_detail(error, request.requestTraceId)
+        LOGGER.error(
+            "trace_proposal_failed requestTraceId=%s error=%s",
+            request.requestTraceId or "missing",
+            detail["message"],
+        )
+        raise HTTPException(status_code=500, detail=detail) from error
 
 
 @app.post("/measure")

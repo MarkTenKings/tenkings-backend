@@ -215,6 +215,44 @@ class TraceProposalTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 400)
         self.assertEqual(processor.proposal_calls, [])
 
+    def test_point_head_failure_returns_sanitized_error_with_request_id(self):
+        processor = FixedTraceProcessor(
+            error=RuntimeError(
+                "CUDA failed at https://signed.example/object?token=secret "
+                "Bearer sk-secret12345678"
+            )
+        )
+        request = TraceProposalRequest(
+            side="FRONT",
+            cornerShape="SQUARE",
+            sourceViewId="FRONT:ORIGINAL",
+            evidenceView={
+                "id": "FRONT:ORIGINAL",
+                "imageBase64": image_base64(),
+                "inspectionFrame": INSPECTION_FRAME,
+            },
+            stroke={
+                "canonicalPoints": [{"x": 600, "y": 500}],
+                "strokeWidthPixels": 20,
+                "strokeWidthMm": 1,
+                "cropTransformVersion": "speedster-canonical-crop-affine-v1",
+            },
+            requestTraceId="sam-request-123",
+        )
+
+        with patch("app.get_processor", return_value=processor):
+            with self.assertLogs("app", level="ERROR") as captured:
+                with self.assertRaises(HTTPException) as raised:
+                    trace_proposal(request)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        self.assertEqual(raised.exception.detail, {
+            "message": "RuntimeError: CUDA failed at [redacted-url] [redacted-credential]",
+            "requestId": "sam-request-123",
+        })
+        self.assertIn("requestTraceId=sam-request-123", captured.output[0])
+        self.assertNotIn("signed.example", captured.output[0])
+
 
 class TraceMeasurementTests(unittest.TestCase):
     def test_partial_same_type_exact_overlap_preserves_sources_and_counts_union_once(self):
@@ -906,8 +944,9 @@ class TraceMeasurementTests(unittest.TestCase):
         self.assertEqual(len(processor.fingerprint_calls), 1)
         self.assertEqual(matching["defects"][0]["featureFingerprint"], [1.0] + [0.0] * 31)
 
-    def test_remeasurement_never_replaces_existing_fingerprint_or_memory_provenance(self):
-        final_trace = encode_trace_rle(trace_rectangle(300, 500, 320, 520))
+    def test_human_trace_revision_replaces_existing_fingerprint_and_binds_it_to_final_trace(self):
+        prior_trace = encode_trace_rle(trace_rectangle(300, 500, 320, 520))
+        final_trace = encode_trace_rle(trace_rectangle(300, 500, 330, 530))
         provenance = trace_provenance(final_trace)
         prior_fingerprint = [1.0] + [0.0] * 31
         prior_memory = {
@@ -929,8 +968,8 @@ class TraceMeasurementTests(unittest.TestCase):
             "reviewResult": "ACCEPTED",
             "featureFingerprint": prior_fingerprint,
             "memoryProposal": prior_memory,
-            "finalTrace": final_trace,
-            "traceProvenance": provenance,
+            "finalTrace": prior_trace,
+            "traceProvenance": trace_provenance(prior_trace),
         }
         processor = FixedTraceProcessor(fingerprint=[0.0, 1.0] + [0.0] * 30)
 
@@ -960,9 +999,10 @@ class TraceMeasurementTests(unittest.TestCase):
             findings=[existing],
         )
 
-        self.assertEqual(processor.fingerprint_calls, [])
+        self.assertEqual(len(processor.fingerprint_calls), 1)
         source = measured["defects"][0]
-        self.assertEqual(source["featureFingerprint"], prior_fingerprint)
+        self.assertEqual(source["featureFingerprint"], [0.0, 1.0] + [0.0] * 30)
+        self.assertEqual(source["featureFingerprintTraceSha256"], final_trace["sha256"])
         self.assertEqual(source["memoryProposal"], prior_memory)
         self.assertEqual(source["traceProvenance"], provenance)
 
