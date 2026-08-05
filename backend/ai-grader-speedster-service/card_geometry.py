@@ -99,11 +99,13 @@ def _candidate_contours(image: np.ndarray) -> list[np.ndarray]:
     low = max(12, int(0.66 * median))
     high = max(low + 20, min(255, int(1.33 * median)))
     visual_edges = cv2.Canny(gray, low, high)
-    combined = cv2.bitwise_or(visual_edges, _material_boundary(image))
-    combined = cv2.dilate(combined, np.ones((3, 3), dtype=np.uint8))
-    contours, _ = cv2.findContours(
-        combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
-    )
+    contours = []
+    for boundary in (visual_edges, _material_boundary(image)):
+        boundary = cv2.dilate(boundary, np.ones((3, 3), dtype=np.uint8))
+        found, _ = cv2.findContours(
+            boundary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE
+        )
+        contours.extend(found)
     return contours
 
 
@@ -166,6 +168,14 @@ def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
     frame_area = working.shape[0] * working.shape[1]
     best = None
     for contour in _candidate_contours(working):
+        x, y, width, height = cv2.boundingRect(contour)
+        if (
+            x <= 0
+            or y <= 0
+            or x + width >= working.shape[1]
+            or y + height >= working.shape[0]
+        ):
+            continue
         area = float(cv2.contourArea(contour))
         if not (
             MIN_COMPONENT_AREA_FRACTION * frame_area

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import cv2
 import numpy as np
@@ -8,6 +9,7 @@ from card_geometry import (
     INSPECTION_HEIGHT,
     INSPECTION_MARGIN_PX,
     INSPECTION_WIDTH,
+    _candidate_contours,
     detect_card_quad,
     printed_border_quad,
     warp_to_card_map,
@@ -85,6 +87,42 @@ class SpeedsterGeometryTest(unittest.TestCase):
 
     def test_returns_none_instead_of_calling_the_photo_frame_a_card(self):
         image = np.full((900, 700, 3), 120, dtype=np.uint8)
+        self.assertIsNone(detect_card_quad(image))
+
+    def test_searches_visual_and_material_contours_separately_with_retr_list(self):
+        image = np.full((900, 700, 3), 120, dtype=np.uint8)
+        visual = np.array([[[10, 10]], [[20, 10]], [[20, 20]], [[10, 20]]])
+        material = np.array([[[30, 30]], [[40, 30]], [[40, 40]], [[30, 40]]])
+
+        with patch(
+            "card_geometry.cv2.findContours",
+            side_effect=[([visual], None), ([material], None)],
+        ) as find:
+            contours = _candidate_contours(image)
+
+        self.assertEqual(len(find.call_args_list), 2)
+        self.assertTrue(
+            all(call.args[1] == cv2.RETR_LIST for call in find.call_args_list)
+        )
+        self.assertIs(contours[0], visual)
+        self.assertIs(contours[1], material)
+
+    def test_rejects_a_valid_scoring_contour_when_it_touches_the_photo_frame(self):
+        image = np.full((900, 700, 3), 120, dtype=np.uint8)
+        frame_touching = np.array(
+            [[[0, 50]], [[500, 50]], [[500, 750]], [[0, 750]]], dtype=np.int32
+        )
+
+        with patch("card_geometry._candidate_contours", return_value=[frame_touching]):
+            self.assertIsNone(detect_card_quad(image))
+
+    def test_returns_none_for_a_clipped_card_at_the_photo_boundary(self):
+        image = np.zeros((1600, 1200, 3), dtype=np.uint8)
+        clipped = np.array(
+            [[150, 0], [1060, 20], [1040, 1295], [130, 1270]], dtype=np.int32
+        )
+        cv2.fillConvexPoly(image, clipped, (245, 245, 245))
+
         self.assertIsNone(detect_card_quad(image))
 
 
