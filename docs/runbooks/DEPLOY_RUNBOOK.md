@@ -1,6 +1,6 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-last_verified_at: 2026-07-22
+last_verified_at: 2026-08-05
 owner: Mark
 
 ## Rules
@@ -16,13 +16,15 @@ owner: Mark
 
 ## Workstation Deploy Flow
 ```bash
-cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+cd /Users/markthomas/tenkings/ten-kings-speedster-v2
 git status -sb
 git branch --show-current
 git fetch --all --prune
 git log --oneline -n 10
 git push origin <branch>
 ```
+
+Live verification on 2026-08-05 found no GitHub branch-protection object and no repository ruleset for `main`. Until protection is restored, the complete PR check set is an operator-enforced release policy: verify the exact head and every required result immediately before merge, never use an admin bypass, and do not describe the checks as mechanically protected.
 
 ## Droplet Sync Flow
 ```bash
@@ -86,7 +88,7 @@ Never create or trust a snapshot merely to unlock measurements. Under the normal
 
 The sole policy exception is the separately versioned product-owner operational acceptance for exact session `math-cal-v1-20260722-4cfa410c-01`. Its profile and mathematical acceptance remain `status=rejected` and `isCalibrated=false`, with the original measurements and all 36 rejection issues unchanged. Its transparent 13-member bundle may become operationally usable only when the exact owner authority, loader result, registry identity, bundle manifest, member ledger, runtime context, rig characterization, rig ID, and operating context all verify, followed by a fresh-human-admin ECDSA-signed `ACTIVE` activation that binds those exact identities. The content-addressed owner record is decision metadata; it is not independently authenticated and cannot replace the signed activation. Owner-accepted reports require that activation and must display the rejected status, owner/reason/timestamp, every exception, and signature/bundle provenance. A browser boolean, caller-authored hash, threshold-pass label, cross-session replay, fallback, newest/closest/LKG selection, or automatic rollback is prohibited. Revocation and supersession are explicit and append-only. This exception neither changes the normal 12-member V1.2 mathematical-acceptance gate nor authorizes another rejected calibration.
 
-Before any protected rollout, require the complete disposable PostgreSQL migration chain plus second-deploy no-op, all normal GitHub/Docker/Vercel checks, and the separately required independent Mac architecture/calibration review. Apply the additive migration, import/trust a real bundle, install/update a Dell helper, deploy, or enable V1 only under a separately authorized rollout; none is an ordinary consequence of merging the implementation PR.
+Before any rollout, require the complete disposable PostgreSQL migration chain plus second-deploy no-op, all normal GitHub/Docker/Vercel checks, and the separately required independent Mac architecture/calibration review. If GitHub is not mechanically enforcing branch protection, verify and enforce that policy set manually on the exact PR head immediately before merge. Apply the additive migration, import/trust a real bundle, install/update a Dell helper, deploy, or enable V1 only under a separately authorized rollout; none is an ordinary consequence of merging the implementation PR.
 
 ## One-Time Stale Invalid Rapid-Review Archive Gate
 

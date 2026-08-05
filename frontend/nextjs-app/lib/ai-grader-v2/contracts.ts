@@ -85,6 +85,7 @@ export type SpeedsterDefect = {
   origin?: SpeedsterDefectOrigin;
   detectedDefectType?: SpeedsterDefectType;
   featureFingerprint?: readonly number[];
+  featureFingerprintTraceSha256?: string;
   smartMarkLearning?: SpeedsterSmartMarkLearning;
   memoryProposal?: SpeedsterMemoryProposal;
   learningAdjustment?: number;

@@ -26,6 +26,12 @@ import {
   completeSpeedsterReview,
   publicSpeedsterDefects,
 } from "../../../../../../lib/ai-grader-v2/review";
+import {
+  harvestSpeedsterLearningSessionV2,
+  speedsterLearningHarvestReceiptV2,
+  type SpeedsterLearningHarvestReceiptV2,
+} from "../../../../../../lib/ai-grader-v2/learning-harvest-v2";
+import { speedsterHistoryFingerprintVersion } from "../../../../../../lib/ai-grader-v2/learning-articuno-dry-run-v2";
 import { parseSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
 import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
 
@@ -92,7 +98,9 @@ type CompletionResult = {
   publicReportSlug: string;
   learning: SpeedsterLearningCompletionReadiness;
 };
-type DurableCompletionResult = Omit<CompletionResult, "learning">;
+type DurableCompletionResult = Omit<CompletionResult, "learning"> & {
+  learningHarvest: SpeedsterLearningHarvestReceiptV2;
+};
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   completeSession: (input: CompletionInput) => Promise<CompletionResult>;
@@ -175,6 +183,21 @@ const labelResult = (label: {
   completionOrder: label.certificateSequence,
 });
 
+const completionHarvestReceipt = (input: {
+  sessionId: string;
+  completedAt: Date;
+  completionOrder: number;
+  capture: unknown;
+  gradeReport: unknown;
+  reviewedDefects: unknown;
+}) => speedsterLearningHarvestReceiptV2(harvestSpeedsterLearningSessionV2({
+  sessionId: input.sessionId,
+  completedAt: input.completedAt,
+  completionOrder: input.completionOrder,
+  fingerprintVersion: speedsterHistoryFingerprintVersion(input.capture, input.gradeReport),
+  reviewedDefects: Array.isArray(input.reviewedDefects) ? input.reviewedDefects : [],
+}).diagnostics);
+
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
   let catchUpResult: SpeedsterLearningCatchUpResult | null = null;
   const result = await afterDurableSpeedsterCompletion<DurableCompletionResult>(() => prisma.$transaction(async (tx) => {
@@ -208,6 +231,14 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
         outcome: "EXISTING",
         label: labelResult(existing),
         publicReportSlug: session.publicReportSlug,
+        learningHarvest: completionHarvestReceipt({
+          sessionId: session.id,
+          completedAt: existing.createdAt,
+          completionOrder: existing.certificateSequence,
+          capture: session.capture,
+          gradeReport: session.gradeReport,
+          reviewedDefects: session.reviewedDefects,
+        }),
       };
     }
     if (session.workflowState !== "CAPTURED") {
@@ -236,7 +267,19 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     if (claimed.count === 0) {
       const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
       if (!existing) throw new HttpError(409, "Speedster completion is already in progress");
-      return { outcome: "EXISTING", label: labelResult(existing), publicReportSlug };
+      return {
+        outcome: "EXISTING",
+        label: labelResult(existing),
+        publicReportSlug,
+        learningHarvest: completionHarvestReceipt({
+          sessionId: session.id,
+          completedAt: existing.createdAt,
+          completionOrder: existing.certificateSequence,
+          capture: session.capture,
+          gradeReport: completedReview.gradeReport,
+          reviewedDefects: completedReview.reviewedDefects,
+        }),
+      };
     }
 
     await tx.$queryRaw`
@@ -292,7 +335,19 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
         data: { status: "READY", readyAt: new Date() },
       });
     }
-    return { outcome: "CREATED", label: labelResult(label), publicReportSlug };
+    return {
+      outcome: "CREATED",
+      label: labelResult(label),
+      publicReportSlug,
+      learningHarvest: completionHarvestReceipt({
+        sessionId: session.id,
+        completedAt: label.createdAt,
+        completionOrder: label.certificateSequence,
+        capture: session.capture,
+        gradeReport: completedReview.gradeReport,
+        reviewedDefects: completedReview.reviewedDefects,
+      }),
+    };
   }), async () => {
     catchUpResult = await catchUpSpeedsterLearningBankV2(
       prisma as unknown as SpeedsterLearningCatchUpClient,
@@ -300,9 +355,14 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
   }, (error) => {
     console.error(`[Speedster] SAM Memory V2 catch-up failed after durable completion for ${input.sessionId}:`, error);
   });
+  const { learningHarvest, ...completion } = result;
   return {
-    ...result,
-    learning: speedsterLearningCompletionReadiness(result.label.completionOrder, catchUpResult),
+    ...completion,
+    learning: speedsterLearningCompletionReadiness(
+      result.label.completionOrder,
+      catchUpResult,
+      learningHarvest,
+    ),
   };
 }
 

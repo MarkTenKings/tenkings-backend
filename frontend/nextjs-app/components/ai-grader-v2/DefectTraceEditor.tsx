@@ -14,6 +14,7 @@ import {
 } from "../../lib/ai-grader-v2/inspection-frame";
 import {
   SPEEDSTER_CANONICAL_TRACE_GRID,
+  acceptSpeedsterHighlighterProposal,
   applyCompletedSpeedsterTraceStroke,
   canonicalCropToNormalizedBounds,
   canonicalPixelToPanelPoint,
@@ -206,7 +207,6 @@ export function DefectTraceEditor({
     }
 
     const request = result.proposalRequest;
-    highlighterStrokesRef.current = [...highlighterStrokesRef.current, request];
     const requestRevision = editRevisionRef.current;
     const requestGeneration = mountedGenerationRef.current;
     const proposalId = latestProposalRef.current + 1;
@@ -223,15 +223,25 @@ export function DefectTraceEditor({
         proposalId !== latestProposalRef.current ||
         requestRevision !== editRevisionRef.current
       ) return;
-      if (!proposal || proposal.length !== trace.length) {
+      const accepted = acceptSpeedsterHighlighterProposal({
+        proposal,
+        request,
+        priorHighlighterStrokes: highlighterStrokesRef.current,
+        cropTransform,
+        cornerShape,
+      });
+      if (!accepted) {
         onError?.("SAM could not propose a trace. The visible trace is unchanged and remains editable.");
         return;
       }
       editRevisionRef.current += 1;
-      setTrace(clipSpeedsterTraceToEditorBounds(proposal, cropTransform, cornerShape));
+      highlighterStrokesRef.current = accepted.highlighterStrokes;
+      setTrace(accepted.trace);
       onError?.("");
-    }).catch(() => {
-      onError?.("SAM could not propose a trace. The visible trace is unchanged and remains editable.");
+    }).catch((error) => {
+      onError?.(error instanceof Error
+        ? error.message
+        : "SAM could not propose a trace. The visible trace is unchanged and remains editable.");
     }).finally(() => {
       if (
         requestGeneration === mountedGenerationRef.current &&
@@ -247,6 +257,7 @@ export function DefectTraceEditor({
           <button
             key={value}
             type="button"
+            disabled={proposalPending || savePending}
             className={tool === value ? styles.activeTool : undefined}
             onClick={() => setTool(value)}
           >{value === "HIGHLIGHTER" ? "Highlighter" : value === "BRUSH" ? "Brush" : "Eraser"}</button>
@@ -255,7 +266,7 @@ export function DefectTraceEditor({
       <div
         className={styles.surface}
         onPointerDown={(event) => {
-          if (savePending || activePointerIdRef.current !== null) return;
+          if (proposalPending || savePending || activePointerIdRef.current !== null) return;
           activePointerIdRef.current = event.pointerId;
           const point = panelPointToCanonicalPixel(normalizedPanelPoint(event), cropTransform);
           activeStrokeRef.current = [point];
@@ -308,8 +319,9 @@ export function DefectTraceEditor({
         <button
           type="button"
           className={styles.save}
-          disabled={!validTrace || savePending}
+          disabled={!validTrace || proposalPending || savePending}
           onClick={() => {
+            if (proposalPending || savePending) return;
             if (!validTrace) {
               onError?.("Draw or accept a non-empty trace before Save.");
               return;

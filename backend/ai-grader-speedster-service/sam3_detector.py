@@ -53,6 +53,7 @@ LOGGER.setLevel(logging.INFO)
 SMART_MARK_PROMPT_MAX_POSITIVE_POINTS = 16
 SMART_MARK_PROMPT_MAX_NEGATIVE_POINTS = 16
 SMART_MARK_NEGATIVE_SPACING_MM = 2.0
+SMART_MARK_MATERIAL_PROJECTION_MAX_PX = round(3.18 * PX_PER_MM) + 2
 TRACE_PROVENANCE_VERSION = "speedster-trace-provenance-v1"
 TRACE_CROP_TRANSFORM_VERSION = "speedster-canonical-crop-affine-v1"
 
@@ -68,6 +69,39 @@ class MaskProcessor(Protocol):
         session_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> list[dict]: ...
+
+
+def _project_prompt_points_to_material(
+    points: np.ndarray, material: np.ndarray
+) -> np.ndarray:
+    """Snap rounded-corner intent to the nearest physical material pixel."""
+
+    projected = []
+    height, width = material.shape
+    for x, y in points:
+        pixel_x = int(round(float(x)))
+        pixel_y = int(round(float(y)))
+        if material[pixel_y, pixel_x]:
+            candidate = (float(x), float(y))
+        else:
+            radius = SMART_MARK_MATERIAL_PROJECTION_MAX_PX
+            minimum_x = max(0, pixel_x - radius)
+            maximum_x = min(width - 1, pixel_x + radius)
+            minimum_y = max(0, pixel_y - radius)
+            maximum_y = min(height - 1, pixel_y + radius)
+            local_y, local_x = np.nonzero(
+                material[minimum_y : maximum_y + 1, minimum_x : maximum_x + 1]
+            )
+            if len(local_x) == 0:
+                raise ValueError("Smart-Mark stroke cannot reach physical card material")
+            candidate_x = local_x + minimum_x
+            candidate_y = local_y + minimum_y
+            distances = (candidate_x - x) ** 2 + (candidate_y - y) ** 2
+            nearest = int(np.argmin(distances))
+            candidate = (float(candidate_x[nearest]), float(candidate_y[nearest]))
+        if not projected or candidate != projected[-1]:
+            projected.append(candidate)
+    return np.asarray(projected, dtype=np.float32)
 
 
 def _smart_mark_prompt_inputs(
@@ -122,11 +156,9 @@ def _smart_mark_prompt_inputs(
         )
         if not mapped or pixel != mapped[-1]:
             mapped.append(pixel)
-    full_mapped_points = np.asarray(mapped, dtype=np.float32)
-    full_mapped_x = np.rint(full_mapped_points[:, 0]).astype(int)
-    full_mapped_y = np.rint(full_mapped_points[:, 1]).astype(int)
-    if not np.all(material[full_mapped_y, full_mapped_x]):
-        raise ValueError("Smart-Mark stroke leaves physical card material")
+    full_mapped_points = _project_prompt_points_to_material(
+        np.asarray(mapped, dtype=np.float32), material
+    )
 
     positive_points = full_mapped_points
     if len(positive_points) > SMART_MARK_PROMPT_MAX_POSITIVE_POINTS:
@@ -157,6 +189,7 @@ def _smart_mark_prompt_inputs(
             1,
             thickness=stroke_width_px,
         )
+    corridor &= material.astype(np.uint8)
 
     boundary_response = expected_material_boundary_response_mask_from_material(
         material
@@ -553,6 +586,9 @@ class Sam3ImageProcessor:
                     point_coords=points,
                     point_labels=labels,
                     multimask_output=True,
+                    # The pinned predictor defaults to normalized points; these
+                    # are inspection-image pixel coordinates.
+                    normalize_coords=False,
                 )
 
         masks = np.asarray(masks)
@@ -1077,6 +1113,7 @@ def _trace_source_record(
         record.setdefault("reviewResult", result.get("reviewResult", review_result))
         for key in (
             "featureFingerprint",
+            "featureFingerprintTraceSha256",
             "learningAdjustment",
             "smartMarkLearning",
             "origin",
@@ -1512,9 +1549,6 @@ def measure_marks(
         allowed_mask = None
         evidence_failed = True
 
-    existing_finding_ids = {
-        finding.get("id") for finding in findings or [] if finding.get("id") is not None
-    }
     normalized_evidence_view_id = _canonical_source_view_id(side, evidence_view_id)
     for mark, exact_mask in exact_marks:
         fingerprint = None
@@ -1522,8 +1556,7 @@ def measure_marks(
             side, mark.get("sourceViewId")
         )
         if (
-            mark["id"] not in existing_finding_ids
-            and not evidence_failed
+            not evidence_failed
             and allowed_mask is not None
             and normalized_evidence_view_id == normalized_mark_view_id
         ):
@@ -1536,11 +1569,20 @@ def measure_marks(
                 )
             except Exception:
                 fingerprint = None
-        evidence_by_id[mark["id"]] = (
-            {"featureFingerprint": fingerprint}
+        evidence = (
+            {
+                "featureFingerprint": fingerprint,
+                "featureFingerprintTraceSha256": mark["finalTrace"]["sha256"],
+            }
             if fingerprint is not None
             else {}
         )
+        evidence_by_id[mark["id"]] = evidence
+        if fingerprint is None:
+            trace_sources[mark["id"]].pop("featureFingerprint", None)
+            trace_sources[mark["id"]].pop("featureFingerprintTraceSha256", None)
+        else:
+            trace_sources[mark["id"]].update(evidence)
 
     proposals = [
         {

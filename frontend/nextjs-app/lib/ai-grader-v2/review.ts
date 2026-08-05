@@ -349,14 +349,19 @@ function validateTraceSave(action: Extract<SpeedsterReviewMeasurementAction, { t
 function preserveRemeasuredFinding(
   measured: SpeedsterReviewFinding,
   prior: SpeedsterReviewFinding,
+  replaceTraceFingerprint = false,
 ): SpeedsterReviewFinding {
   if (isSpeedsterSourceMeasuredDefect(measured)) {
-    const { zone: _zone, canonicalContour: _contour, measurement: _measurement, ...stablePrior } =
-      prior as SpeedsterMeasuredDefect & Record<string, unknown>;
+    const stablePrior = Object.fromEntries(Object.entries(prior).filter(([key]) =>
+      !["zone", "canonicalContour", "measurement"].includes(key)
+      && (!replaceTraceFingerprint
+        || !["featureFingerprint", "featureFingerprintTraceSha256"].includes(key))));
     return { ...measured, ...stablePrior, measurementRegions: measured.measurementRegions } as SpeedsterReviewFinding;
   }
-  const { canonicalContour: _contour, measurement: _measurement, zone: _zone, ...stablePrior } =
-    prior as SpeedsterMeasuredDefect;
+  const stablePrior = Object.fromEntries(Object.entries(prior).filter(([key]) =>
+    !["zone", "canonicalContour", "measurement"].includes(key)
+    && (!replaceTraceFingerprint
+      || !["featureFingerprint", "featureFingerprintTraceSha256"].includes(key))));
   return {
     ...measured,
     ...stablePrior,
@@ -434,8 +439,16 @@ export async function remeasureSpeedsterReviewAction(input: {
     findings: nextDefects.filter(
       (finding) => finding.side === side && finding.reviewResult !== "REMOVED",
     ),
-    marks: input.action.type === "TRACE_SAVE" && input.action.findingId === null && traceSave
-      ? [traceSave as SpeedsterSmartMark]
+    marks: input.action.type === "TRACE_SAVE" && traceSave
+      ? [input.action.findingId === null
+          ? traceSave as SpeedsterSmartMark
+          : {
+              id: input.action.findingId,
+              defectType: existingTraceTarget!.defectType,
+              sourceViewId: existingTraceTarget!.sourceViewId,
+              finalTrace: traceSave.finalTrace,
+              traceProvenance: traceSave.traceProvenance,
+            }]
       : [],
   });
   const newTraceId = input.action.type === "TRACE_SAVE" && input.action.findingId === null
@@ -443,7 +456,11 @@ export async function remeasureSpeedsterReviewAction(input: {
     : null;
   const preservedMeasurements = measured.defects.map((finding): SpeedsterReviewFinding => {
     const prior = nextDefects.find(({ id }) => id === finding.id);
-    if (prior) return preserveRemeasuredFinding(finding, prior);
+    if (prior) return preserveRemeasuredFinding(
+      finding,
+      prior,
+      input.action.type === "TRACE_SAVE" && input.action.findingId === finding.id,
+    );
     if (newTraceId && finding.id === newTraceId && traceSave) {
       const learning = finding.smartMarkLearning?.fingerprintProvenance === "SAM_TRACE"
         ? finding.smartMarkLearning

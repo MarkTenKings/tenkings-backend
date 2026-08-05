@@ -9,6 +9,7 @@ import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
 import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
 import {
+  sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
   speedsterServiceBody,
   speedsterServiceHeaders,
@@ -447,15 +448,25 @@ test("trace proposal authorizes a persisted non-ORIGINAL source view and supplie
       assert.equal(storageKey, `${prefix}/directional.webp`);
       return "https://fresh.example/directional.webp";
     },
-  });
+  }, "sam-request-123");
 
   assert.equal((body.evidenceView as { imageUrl: string }).imageUrl, "https://fresh.example/directional.webp");
   assert.equal((body.evidenceView as { id: string }).id, "FRONT:DIRECTIONAL");
   assert.equal(body.sourceViewId, "FRONT:DIRECTIONAL");
   assert.equal(body.cornerShape, "SQUARE");
+  assert.equal(body.requestTraceId, "sam-request-123");
   assert.deepEqual(body.findings, []);
   assert.equal("sessionId" in body, false);
   assert.equal("currentTraceWire" in body, false);
+});
+
+test("trace proposal proxy preserves a sanitized upstream failure with its request ID", () => {
+  assert.deepEqual(sanitizeSpeedsterTraceProposalFailure({
+    detail: "RuntimeError: CUDA failed at https://signed.example/object?token=secret\nBearer sk-secret12345678",
+  }, "sam-request-123"), {
+    message: "SAM proposal failed: RuntimeError: CUDA failed at [redacted-url] Bearer [redacted-credential] (request sam-request-123).",
+    requestId: "sam-request-123",
+  });
 });
 
 test("PATCH rejects public report slug mutation through the generic route", async () => {

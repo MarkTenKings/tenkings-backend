@@ -275,6 +275,9 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                             "defectType": defect_type,
                             "confidence": float(primary["confidence"]),
                             "featureFingerprint": primary.get("featureFingerprint"),
+                            "featureFingerprintTraceSha256": primary.get(
+                                "featureFingerprintTraceSha256"
+                            ),
                             **(
                                 {
                                     "learningAdjustment": float(

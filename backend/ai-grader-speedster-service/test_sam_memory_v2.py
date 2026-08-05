@@ -210,6 +210,11 @@ class SamMemoryV2Tests(unittest.TestCase):
                 exemplar("POSITIVE", session_id="human-smart-mark"),
                 exemplar(
                     "POSITIVE",
+                    session_id="human-memory-trace-correction",
+                    provenance="HUMAN_TRACE_CORRECTION_POSITIVE",
+                ),
+                exemplar(
+                    "POSITIVE",
                     session_id="human-relabel",
                     provenance="DETECTOR_RELABELED_POSITIVE",
                 ),
