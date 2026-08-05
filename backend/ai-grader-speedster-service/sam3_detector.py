@@ -22,7 +22,14 @@ from card_geometry import (
     expected_material_boundary_response_mask,
     material_distance_from_cut,
 )
-from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH, measure_defects
+from defect_math import (
+    CARD_HEIGHT_MM,
+    CARD_WIDTH_MM,
+    DEFECT_MULTIPLIERS,
+    GRID_HEIGHT,
+    GRID_WIDTH,
+    measure_defects,
+)
 from sam_memory_v2 import (
     MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE,
     MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
@@ -30,6 +37,7 @@ from sam_memory_v2 import (
     prepare_bank_v2,
     smart_mark_proposal_seeds_v2,
 )
+from trace_rle import decode_trace_rle
 
 
 SAM3_REPOSITORY_COMMIT = "96914d2425f90a64f45ca977c2b5165418099543"
@@ -42,13 +50,11 @@ FINGERPRINT_SIZE = 32
 LEARNING_SCALE = 0.06
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
-SMART_MARK_TRACE_MIN_INSIDE = 0.80
-SMART_MARK_TRACE_MIN_BOX_AREA = 0.10
-SMART_MARK_TRACE_MAX_BOX_AREA = 1.00
-SMART_MARK_PROPOSAL_IOU_THRESHOLD = 0.30
 SMART_MARK_PROMPT_MAX_POSITIVE_POINTS = 16
 SMART_MARK_PROMPT_MAX_NEGATIVE_POINTS = 16
 SMART_MARK_NEGATIVE_SPACING_MM = 2.0
+TRACE_PROVENANCE_VERSION = "speedster-trace-provenance-v1"
+TRACE_CROP_TRANSFORM_VERSION = "speedster-canonical-crop-affine-v1"
 
 
 class MaskProcessor(Protocol):
@@ -116,22 +122,24 @@ def _smart_mark_prompt_inputs(
         )
         if not mapped or pixel != mapped[-1]:
             mapped.append(pixel)
-    mapped_points = np.asarray(mapped, dtype=np.float32)
-    if len(mapped_points) > SMART_MARK_PROMPT_MAX_POSITIVE_POINTS:
+    full_mapped_points = np.asarray(mapped, dtype=np.float32)
+    full_mapped_x = np.rint(full_mapped_points[:, 0]).astype(int)
+    full_mapped_y = np.rint(full_mapped_points[:, 1]).astype(int)
+    if not np.all(material[full_mapped_y, full_mapped_x]):
+        raise ValueError("Smart-Mark stroke leaves physical card material")
+
+    positive_points = full_mapped_points
+    if len(positive_points) > SMART_MARK_PROMPT_MAX_POSITIVE_POINTS:
         indexes = np.linspace(
             0,
-            len(mapped_points) - 1,
+            len(positive_points) - 1,
             SMART_MARK_PROMPT_MAX_POSITIVE_POINTS,
             dtype=np.int32,
         )
-        mapped_points = mapped_points[indexes]
-    mapped_x = np.rint(mapped_points[:, 0]).astype(int)
-    mapped_y = np.rint(mapped_points[:, 1]).astype(int)
-    if not np.all(material[mapped_y, mapped_x]):
-        raise ValueError("Smart-Mark stroke leaves physical card material")
+        positive_points = positive_points[indexes]
 
     corridor = np.zeros((height, width), dtype=np.uint8)
-    integer_points = np.rint(mapped_points).astype(np.int32)
+    integer_points = np.rint(full_mapped_points).astype(np.int32)
     stroke_width_px = max(1, round(stroke_width_mm * PX_PER_MM))
     if len(integer_points) == 1:
         cv2.circle(
@@ -182,10 +190,10 @@ def _smart_mark_prompt_inputs(
         negatives.append((int(x), int(y)))
 
     negative_points = np.asarray(negatives, dtype=np.float32)
-    points = np.concatenate((mapped_points, negative_points), axis=0)
+    points = np.concatenate((positive_points, negative_points), axis=0)
     labels = np.concatenate(
         (
-            np.ones(len(mapped_points), dtype=np.int32),
+            np.ones(len(positive_points), dtype=np.int32),
             np.zeros(len(negative_points), dtype=np.int32),
         )
     )
@@ -576,6 +584,52 @@ class Sam3ImageProcessor:
             "negativePointCount": int(np.count_nonzero(labels == 0)),
         }
 
+    def fingerprint_saved_trace(
+        self,
+        image: np.ndarray,
+        canonical_mask: np.ndarray,
+        allowed_mask: np.ndarray,
+        inspection_frame: dict,
+    ) -> Optional[list[float]]:
+        """Pool one saved exact trace in the existing feature space without a prompt."""
+
+        image_height, image_width = image.shape[:2]
+        if allowed_mask.shape != (image_height, image_width):
+            raise ValueError("Speedster material mask does not match the evidence image")
+        canonical = np.asarray(canonical_mask) > 0
+        if canonical.shape != (GRID_HEIGHT, GRID_WIDTH) or not np.any(canonical):
+            raise ValueError("Speedster saved trace is not a non-empty canonical mask")
+        bounds = inspection_frame.get("cardBounds", {})
+        if (image_width, image_height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+            expected_origin = (INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX)
+        elif (image_width, image_height) == (GRID_WIDTH, GRID_HEIGHT):
+            expected_origin = (0, 0)
+        else:
+            expected_origin = None
+        if (
+            expected_origin is None
+            or inspection_frame.get("width") != image_width
+            or inspection_frame.get("height") != image_height
+            or bounds.get("width") != GRID_WIDTH
+            or bounds.get("height") != GRID_HEIGHT
+            or (bounds.get("x"), bounds.get("y")) != expected_origin
+        ):
+            raise ValueError("Speedster inspection frame does not match the evidence image")
+
+        evidence_trace = np.zeros((image_height, image_width), dtype=np.uint8)
+        x, y = bounds["x"], bounds["y"]
+        evidence_trace[y : y + GRID_HEIGHT, x : x + GRID_WIDTH] = canonical
+        evidence_trace &= (np.asarray(allowed_mask) > 0).astype(np.uint8)
+        if not np.any(evidence_trace):
+            raise ValueError("Speedster saved trace leaves physical card material")
+        rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        with self._lock:
+            processor = self.load()
+            with self._autocast():
+                state = processor.set_image(rgb_image)
+                feature_map = self._feature_map(state)
+        return feature_fingerprint(feature_map, evidence_trace)
+
     @staticmethod
     def _feature_map(state: dict) -> np.ndarray:
         # At the pinned official commit, image-model scalp=1 makes this final
@@ -865,117 +919,6 @@ class Sam3ImageProcessor:
                     for candidate in (scanned or [])
                 ]
 
-    def fingerprint_smart_mark(
-        self,
-        image: np.ndarray,
-        human_box_mask: np.ndarray,
-        allowed_mask: np.ndarray,
-    ) -> dict:
-        """Fingerprint one human mark without changing its authoritative geometry."""
-
-        image_height, image_width = image.shape[:2]
-        if human_box_mask.shape != (image_height, image_width):
-            raise ValueError("Smart-Mark box mask does not match the evidence image")
-        if allowed_mask.shape != (image_height, image_width):
-            raise ValueError("Smart-Mark material mask does not match the evidence image")
-        human_box = np.asarray(human_box_mask) > 0
-        on_card_box = human_box & (np.asarray(allowed_mask) > 0)
-        if not np.any(on_card_box):
-            raise ValueError("Smart-Mark does not intersect physical card material")
-        x, y, width, height = cv2.boundingRect(human_box.astype(np.uint8))
-        rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-
-        with self._lock:
-            processor = self.load()
-            with self._autocast():
-                state = processor.set_image(rgb_image)
-                feature_map = (
-                    state["backbone_out"]["backbone_fpn"][-1][0]
-                    .detach()
-                    .float()
-                    .cpu()
-                    .numpy()
-                )
-                output = None
-                trace_attempts = 0
-                for attempt in range(2):
-                    trace_attempts = attempt + 1
-                    try:
-                        processor.reset_all_prompts(state)
-                        output = processor.add_geometric_prompt(
-                            box=[
-                                (x + width / 2) / image_width,
-                                (y + height / 2) / image_height,
-                                width / image_width,
-                                height / image_height,
-                            ],
-                            label=True,
-                            state=state,
-                        )
-                        break
-                    except Exception:
-                        if attempt == 1:
-                            output = None
-
-                valid_trace = None
-                if output is not None:
-                    try:
-                        masks = output["masks"].detach().float().cpu().numpy()
-                        scores = output["scores"].detach().float().cpu().numpy().reshape(-1)
-                        masks = masks.reshape((-1, masks.shape[-2], masks.shape[-1]))
-                        if len(masks) != len(scores):
-                            raise ValueError("SAM 3 returned mismatched Smart-Mark masks and scores")
-                        candidates = []
-                        on_card_box_area = int(np.count_nonzero(on_card_box))
-                        for mask, score in zip(masks, scores):
-                            binary = np.asarray(mask) > 0
-                            if binary.shape != (image_height, image_width):
-                                binary = cv2.resize(
-                                    binary.astype(np.uint8),
-                                    (image_width, image_height),
-                                    interpolation=cv2.INTER_NEAREST,
-                                ).astype(bool)
-                            on_card_trace = binary & (np.asarray(allowed_mask) > 0)
-                            trace_area = int(np.count_nonzero(on_card_trace))
-                            inside = on_card_trace & human_box
-                            inside_area = int(np.count_nonzero(inside))
-                            inside_fraction = inside_area / trace_area if trace_area else 0.0
-                            area_ratio = trace_area / on_card_box_area
-                            if (
-                                inside_fraction >= SMART_MARK_TRACE_MIN_INSIDE
-                                and SMART_MARK_TRACE_MIN_BOX_AREA
-                                <= area_ratio
-                                <= SMART_MARK_TRACE_MAX_BOX_AREA
-                            ):
-                                candidates.append((float(score), inside))
-                        if candidates:
-                            valid_trace = max(candidates, key=lambda entry: entry[0])[1]
-                    except Exception:
-                        valid_trace = None
-
-                if valid_trace is not None:
-                    fingerprint = feature_fingerprint(feature_map, valid_trace)
-                    if fingerprint is not None:
-                        return {
-                            "featureFingerprint": fingerprint,
-                            "fingerprintProvenance": "SAM_TRACE",
-                            "traceAttempts": trace_attempts,
-                        }
-
-                fingerprint = feature_fingerprint(feature_map, on_card_box)
-                if fingerprint is not None:
-                    return {
-                        "featureFingerprint": fingerprint,
-                        "fingerprintProvenance": "HUMAN_BOX_POOL",
-                        "traceAttempts": trace_attempts,
-                    }
-                return {
-                    "featureFingerprint": None,
-                    "fingerprintProvenance": "HARD_FAILURE",
-                    "traceAttempts": trace_attempts,
-                }
-
-
 _processor = Sam3ImageProcessor()
 
 
@@ -1049,8 +992,115 @@ def _defect_id(side: str, result: dict, index: int) -> str:
     return f"sam3-{side.lower()}-{hashlib.sha256(identity).hexdigest()[:16]}"
 
 
+def _measurement_payload(
+    result: dict, weighted_percent_by_zone: dict, side_weight: float, *, exact: bool
+) -> dict:
+    total_percent = weighted_percent_by_zone[result["zone"]]
+    defect_percent = result["eligibleZonePercent"] * result["multiplier"]
+    subgrade_effect = max(
+        0.0,
+        (
+            _condition_score(total_percent - defect_percent)
+            - _condition_score(total_percent)
+        )
+        * side_weight,
+    )
+    return {
+        **({"pixelCount": result["pixelCount"]} if exact else {}),
+        "widthMm": result["widthMm"],
+        "heightMm": result["heightMm"],
+        "areaMm2": result["areaMm2"],
+        "zonePercent": result["eligibleZonePercent"],
+        "multiplier": result["multiplier"],
+        "weightedAreaMm2": result["weightedAreaMm2"],
+        "subgradeEffect": subgrade_effect,
+    }
+
+
+def _measurement_region_contour(result: dict) -> list[dict]:
+    contours = result["canonicalContours"]
+    if not contours:
+        raise ValueError("A measured Speedster region requires a derived contour")
+    if result.get("finalTrace") is None or (
+        len(contours) == 1 and len(contours[0]) >= 3
+    ):
+        return max(contours, key=len)
+
+    points = [point for contour in contours for point in contour]
+    if not points:
+        raise ValueError("A measured Speedster region requires contour points")
+    x_min = min(point["x"] for point in points)
+    x_max = max(point["x"] for point in points)
+    y_min = min(point["y"] for point in points)
+    y_max = max(point["y"] for point in points)
+    if x_min == x_max:
+        if x_max < 1.0:
+            x_max = min(1.0, x_max + 1.0 / (GRID_WIDTH - 1))
+        else:
+            x_min = max(0.0, x_min - 1.0 / (GRID_WIDTH - 1))
+    if y_min == y_max:
+        if y_max < 1.0:
+            y_max = min(1.0, y_max + 1.0 / (GRID_HEIGHT - 1))
+        else:
+            y_min = max(0.0, y_min - 1.0 / (GRID_HEIGHT - 1))
+    return [
+        {"x": x_min, "y": y_min},
+        {"x": x_max, "y": y_min},
+        {"x": x_max, "y": y_max},
+        {"x": x_min, "y": y_max},
+    ]
+
+
+def _trace_source_record(
+    source: dict, result: Optional[dict], side: str, review_result: str
+) -> dict:
+    record = {
+        key: value
+        for key, value in source.items()
+        if key
+        not in {
+            "canonicalContour",
+            "canonicalContours",
+            "canonicalMask",
+            "mask",
+            "measurement",
+            "measurementRegions",
+            "zone",
+        }
+    }
+    if result is not None:
+        record.setdefault("id", result.get("proposalId"))
+        record.setdefault("defectType", result["defectType"])
+        record.setdefault("confidence", result["confidence"])
+        record.setdefault("sourceViewId", result["sourceViewId"])
+        record.setdefault("supportingViewIds", result["supportingViewIds"])
+        record.setdefault("reviewResult", result.get("reviewResult", review_result))
+        for key in (
+            "featureFingerprint",
+            "learningAdjustment",
+            "smartMarkLearning",
+            "origin",
+            "detectedDefectType",
+            "memoryProposal",
+            "finalTrace",
+            "traceProvenance",
+        ):
+            if record.get(key) is None and result.get(key) is not None:
+                record[key] = result[key]
+    record.setdefault("side", side)
+    record.setdefault("confidence", 1.0)
+    record.setdefault("supportingViewIds", [])
+    record.setdefault("origin", "SMART_MARK")
+    record.setdefault("reviewResult", review_result)
+    record["measurementRegions"] = []
+    return record
+
+
 def _to_speedster_defects(
-    measured: list[dict], side: str, review_result: str
+    measured: list[dict],
+    side: str,
+    review_result: str,
+    trace_sources: Optional[dict[str, dict]] = None,
 ) -> list[dict]:
     weighted_percent_by_zone = {}
     for result in measured:
@@ -1060,18 +1110,38 @@ def _to_speedster_defects(
 
     side_weight = 0.7 if side == "FRONT" else 0.3
     defects = []
+    trace_records = {}
     for index, result in enumerate(measured):
-        contour = max(result["canonicalContours"], key=len)
-        total_percent = weighted_percent_by_zone[result["zone"]]
-        defect_percent = result["eligibleZonePercent"] * result["multiplier"]
-        subgrade_effect = max(
-            0.0,
-            (
-                _condition_score(total_percent - defect_percent)
-                - _condition_score(total_percent)
-            )
-            * side_weight,
+        contour = _measurement_region_contour(result)
+        measurement = _measurement_payload(
+            result,
+            weighted_percent_by_zone,
+            side_weight,
+            exact=result.get("finalTrace") is not None,
         )
+        if result.get("finalTrace") is not None:
+            source_id = result.get("proposalId")
+            if not source_id:
+                raise ValueError("An exact trace measurement requires a stable source id")
+            source_record = trace_records.get(source_id)
+            if source_record is None:
+                source_record = _trace_source_record(
+                    (trace_sources or {}).get(source_id, {}),
+                    result,
+                    side,
+                    review_result,
+                )
+                trace_records[source_id] = source_record
+                defects.append(source_record)
+            source_record["measurementRegions"].append(
+                {
+                    "zone": result["zone"],
+                    "canonicalContour": contour,
+                    "measurement": measurement,
+                }
+            )
+            continue
+
         defects.append(
             {
                 "id": _defect_id(side, result, index),
@@ -1119,16 +1189,25 @@ def _to_speedster_defects(
                 "sourceViewId": result["sourceViewId"],
                 "supportingViewIds": result["supportingViewIds"],
                 "reviewResult": result.get("reviewResult", review_result),
-                "measurement": {
-                    "widthMm": result["widthMm"],
-                    "heightMm": result["heightMm"],
-                    "areaMm2": result["areaMm2"],
-                    "zonePercent": result["eligibleZonePercent"],
-                    "multiplier": result["multiplier"],
-                    "weightedAreaMm2": result["weightedAreaMm2"],
-                    "subgradeEffect": subgrade_effect,
-                },
+                "measurement": measurement,
             }
+        )
+    pixel_area_mm2 = CARD_WIDTH_MM * CARD_HEIGHT_MM / (GRID_WIDTH * GRID_HEIGHT)
+    for source_record in trace_records.values():
+        regions = source_record["measurementRegions"]
+        if not regions:
+            continue
+        exact_total_area = (
+            sum(region["measurement"]["pixelCount"] for region in regions)
+            * pixel_area_mm2
+        )
+        prior_area = sum(
+            region["measurement"]["areaMm2"] for region in regions[:-1]
+        )
+        last_measurement = regions[-1]["measurement"]
+        last_measurement["areaMm2"] = exact_total_area - prior_area
+        last_measurement["weightedAreaMm2"] = (
+            last_measurement["areaMm2"] * last_measurement["multiplier"]
         )
     return defects
 
@@ -1219,42 +1298,6 @@ def detect_views(
     }
 
 
-def _smart_mark_mask(
-    contour: list[dict], image_shape: tuple[int, int], inspection_frame: dict
-) -> np.ndarray:
-    height, width = image_shape
-    bounds = inspection_frame["cardBounds"]
-    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
-        expected_origin = (INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX)
-    elif (width, height) == (GRID_WIDTH, GRID_HEIGHT):
-        expected_origin = (0, 0)
-    else:
-        expected_origin = None
-    if (
-        expected_origin is None
-        or inspection_frame.get("width") != width
-        or inspection_frame.get("height") != height
-        or bounds.get("width") != GRID_WIDTH
-        or bounds.get("height") != GRID_HEIGHT
-        or (bounds.get("x"), bounds.get("y")) != expected_origin
-    ):
-        raise ValueError("Smart-Mark inspection frame does not match the evidence image")
-    points = np.array(
-        [
-            [
-                round(bounds["x"] + float(point["x"]) * (bounds["width"] - 1)),
-                round(bounds["y"] + float(point["y"]) * (bounds["height"] - 1)),
-            ]
-            for point in contour
-        ],
-        dtype=np.int32,
-    )
-    mask = np.zeros((height, width), dtype=np.uint8)
-    if len(points) >= 3:
-        cv2.fillPoly(mask, [points], 1)
-    return mask
-
-
 def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]) -> float:
     ax, ay, aw, ah = first
     bx, by, bw, bh = second
@@ -1263,6 +1306,108 @@ def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]
     intersection = max(0, right - left) * max(0, bottom - top)
     union = aw * ah + bw * bh - intersection
     return intersection / union if union > 0 else 0.0
+
+
+def _canonical_source_view_id(side: str, source_view_id: object) -> Optional[str]:
+    if not isinstance(source_view_id, str) or not source_view_id.strip():
+        return None
+    source_view_id = source_view_id.strip()
+    if source_view_id.startswith("FRONT:") or source_view_id.startswith("BACK:"):
+        return source_view_id
+    return f"{side}:{source_view_id}"
+
+
+def _finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and np.isfinite(value)
+    )
+
+
+def _valid_trace_provenance(
+    provenance: object,
+    final_trace: dict,
+    source_view_id: object,
+    side: str,
+) -> bool:
+    if not isinstance(provenance, dict) or set(provenance) != {
+        "version",
+        "sourceViewId",
+        "cropTransform",
+        "highlighterStrokes",
+        "finalTraceSha256",
+    }:
+        return False
+    if provenance.get("version") != TRACE_PROVENANCE_VERSION:
+        return False
+    expected_view = _canonical_source_view_id(side, source_view_id)
+    provenance_view = _canonical_source_view_id(side, provenance.get("sourceViewId"))
+    if (
+        expected_view is None
+        or provenance_view != expected_view
+        or not expected_view.startswith(f"{side}:")
+    ):
+        return False
+    if provenance.get("finalTraceSha256") != final_trace.get("sha256"):
+        return False
+
+    crop_transform = provenance.get("cropTransform")
+    if not isinstance(crop_transform, dict) or set(crop_transform) != {
+        "version",
+        "crop",
+    }:
+        return False
+    if crop_transform.get("version") != TRACE_CROP_TRANSFORM_VERSION:
+        return False
+    crop = crop_transform.get("crop")
+    if not isinstance(crop, dict) or set(crop) != {"x", "y", "width", "height"}:
+        return False
+    x, y, width, height = (
+        crop.get("x"),
+        crop.get("y"),
+        crop.get("width"),
+        crop.get("height"),
+    )
+    if (
+        not all(_finite_number(value) for value in (x, y, width, height))
+        or x < 0
+        or y < 0
+        or width <= 0
+        or height <= 0
+        or x + width > GRID_WIDTH - 1
+        or y + height > GRID_HEIGHT - 1
+    ):
+        return False
+
+    strokes = provenance.get("highlighterStrokes")
+    if not isinstance(strokes, list):
+        return False
+    for stroke in strokes:
+        if not isinstance(stroke, dict) or set(stroke) != {
+            "canonicalPoints",
+            "strokeWidthMm",
+        }:
+            return False
+        if not _finite_number(stroke.get("strokeWidthMm")) or stroke["strokeWidthMm"] <= 0:
+            return False
+        points = stroke.get("canonicalPoints")
+        if not isinstance(points, list) or not points:
+            return False
+        for point in points:
+            if not isinstance(point, dict) or set(point) != {"x", "y"}:
+                return False
+            point_x, point_y = point.get("x"), point.get("y")
+            if (
+                isinstance(point_x, bool)
+                or not isinstance(point_x, int)
+                or isinstance(point_y, bool)
+                or not isinstance(point_y, int)
+                or not 0 <= point_x < GRID_WIDTH
+                or not 0 <= point_y < GRID_HEIGHT
+            ):
+                return False
+    return True
 
 
 def measure_marks(
@@ -1276,6 +1421,84 @@ def measure_marks(
     processor=None,
     findings: Optional[list[dict]] = None,
 ) -> dict:
+    exact_marks = []
+    for mark in marks:
+        if mark.get("finalTrace") is None or mark.get("traceProvenance") is None:
+            continue
+        try:
+            mask = decode_trace_rle(mark.get("finalTrace"))
+        except ValueError:
+            # New Smart-Marks require one approved non-empty exact trace and
+            # stroke provenance. A contour is never an active fallback.
+            continue
+        if not _valid_trace_provenance(
+            mark.get("traceProvenance"),
+            mark["finalTrace"],
+            mark.get("sourceViewId"),
+            side,
+        ):
+            continue
+        exact_marks.append((mark, mask))
+
+    trace_findings = []
+    legacy_findings = []
+    frozen_findings = []
+    trace_errors = []
+    for finding in findings or []:
+        if finding.get("finalTrace") is not None:
+            try:
+                mask = decode_trace_rle(finding.get("finalTrace"))
+            except ValueError:
+                frozen_findings.append(finding)
+                trace_errors.append(
+                    {
+                        "code": "INVALID_EXISTING_FINAL_TRACE",
+                        "findingId": finding.get("id"),
+                    }
+                )
+                continue
+            if not _valid_trace_provenance(
+                finding.get("traceProvenance"),
+                finding["finalTrace"],
+                finding.get("sourceViewId"),
+                side,
+            ):
+                frozen_findings.append(finding)
+                trace_errors.append(
+                    {
+                        "code": "INVALID_EXISTING_TRACE_PROVENANCE",
+                        "findingId": finding.get("id"),
+                    }
+                )
+                continue
+            trace_findings.append((finding, mask))
+        elif finding.get("traceProvenance") is not None:
+            frozen_findings.append(finding)
+            trace_errors.append(
+                {
+                    "code": "MISSING_EXISTING_FINAL_TRACE",
+                    "findingId": finding.get("id"),
+                }
+            )
+        elif finding.get("canonicalContour") is not None:
+            # Contour-era active findings remain dual-readable and participate
+            # in the same overlap pass. Published history never calls /measure.
+            legacy_findings.append(finding)
+
+    trace_sources = {finding["id"]: finding for finding, _mask in trace_findings}
+    for mark, _mask in exact_marks:
+        prior = trace_sources.get(mark["id"], {})
+        trace_sources[mark["id"]] = {
+            **prior,
+            **mark,
+            "side": prior.get("side", side),
+            "confidence": prior.get("confidence", 1.0),
+            "supportingViewIds": prior.get("supportingViewIds", []),
+            "origin": prior.get("origin", "SMART_MARK"),
+            "reviewResult": prior.get("reviewResult", "SMART_MARKED"),
+        }
+    exact_mark_ids = {mark["id"] for mark, _mask in exact_marks}
+
     evidence_by_id = {}
     if evidence_image is not None and inspection_frame is not None:
         try:
@@ -1285,79 +1508,101 @@ def measure_marks(
         except Exception:
             allowed_mask = None
             evidence_failed = True
-        try:
-            candidates = defect_candidates(
-                evidence_image, corner_shape, evidence_view_id or "ORIGINAL"
-            )
-        except Exception:
-            candidates = []
     else:
         allowed_mask = None
-        candidates = []
         evidence_failed = True
 
-    for mark in marks:
+    existing_finding_ids = {
+        finding.get("id") for finding in findings or [] if finding.get("id") is not None
+    }
+    normalized_evidence_view_id = _canonical_source_view_id(side, evidence_view_id)
+    for mark, exact_mask in exact_marks:
         fingerprint = None
-        provenance = "HARD_FAILURE"
-        attempts = 0
-        max_iou = 0.0
-        try:
-            human_mask = _smart_mark_mask(
-                mark["canonicalContour"], evidence_image.shape[:2], inspection_frame
-            )
-            human_box = cv2.boundingRect(human_mask)
-            max_iou = max(
-                (
-                    _box_iou(human_box, candidate.get("coreBox", candidate["box"]))
-                    for candidate in candidates
-                ),
-                default=0.0,
-            )
-            if not evidence_failed and allowed_mask is not None:
-                result = (processor or get_processor()).fingerprint_smart_mark(
-                    evidence_image, human_mask, allowed_mask
+        normalized_mark_view_id = _canonical_source_view_id(
+            side, mark.get("sourceViewId")
+        )
+        if (
+            mark["id"] not in existing_finding_ids
+            and not evidence_failed
+            and allowed_mask is not None
+            and normalized_evidence_view_id == normalized_mark_view_id
+        ):
+            try:
+                fingerprint = (processor or get_processor()).fingerprint_saved_trace(
+                    evidence_image,
+                    exact_mask,
+                    allowed_mask,
+                    inspection_frame,
                 )
-                fingerprint = result.get("featureFingerprint")
-                provenance = result.get("fingerprintProvenance", "HARD_FAILURE")
-                attempts = int(result.get("traceAttempts", 0))
-        except Exception:
-            fingerprint = None
-            provenance = "HARD_FAILURE"
-        evidence_by_id[mark["id"]] = {
-            "featureFingerprint": fingerprint,
-            "smartMarkLearning": {
-                "fingerprintProvenance": provenance,
-                "traceAttempts": attempts,
-                "proposalOverlapIouGt03": max_iou > SMART_MARK_PROPOSAL_IOU_THRESHOLD,
-                "proposalMaxIou": round(float(max_iou), 6),
-            },
-        }
+            except Exception:
+                fingerprint = None
+        evidence_by_id[mark["id"]] = (
+            {"featureFingerprint": fingerprint}
+            if fingerprint is not None
+            else {}
+        )
 
     proposals = [
         {
             **finding,
             "confidence": float(finding["confidence"]),
         }
-        for finding in (findings or [])
+        for finding in legacy_findings
     ] + [
         {
-            "id": mark["id"],
-            "canonicalContour": mark["canonicalContour"],
-            "sourceViewId": mark["sourceViewId"],
-            "defectType": mark["defectType"],
-            "confidence": 1.0,
-            "origin": "SMART_MARK",
-            "reviewResult": "SMART_MARKED",
+            **{
+                key: value
+                for key, value in finding.items()
+                if key not in {"canonicalContour", "canonicalMask", "measurement"}
+            },
+            "canonicalMask": mask,
+            "confidence": float(finding["confidence"]),
         }
-        for mark in marks
+        for finding, mask in trace_findings
+        if finding["id"] not in exact_mark_ids
+    ] + [
+        {
+            **{
+                key: value
+                for key, value in trace_sources[mark["id"]].items()
+                if key
+                not in {
+                    "canonicalContour",
+                    "canonicalMask",
+                    "measurement",
+                    "measurementRegions",
+                    "zone",
+                }
+            },
+            "canonicalMask": mask,
+        }
+        for mark, mask in exact_marks
     ]
-    measured = measure_defects(proposals, corner_shape)
+    measured = measure_defects(proposals, corner_shape) if proposals else []
     for result in measured:
         evidence = evidence_by_id.get(result.get("proposalId"), {})
         result.update(evidence)
-    defects = _to_speedster_defects(measured, side, "SMART_MARKED")
+    defects = _to_speedster_defects(
+        measured,
+        side,
+        "SMART_MARKED",
+        trace_sources=trace_sources,
+    )
     measured_ids = {defect["id"] for defect in defects}
-    for finding in findings or []:
+    appended_trace_ids = set()
+    for finding, _mask in trace_findings:
+        if finding["id"] in measured_ids or finding["id"] in appended_trace_ids:
+            continue
+        defects.append(
+            _trace_source_record(
+                trace_sources[finding["id"]],
+                None,
+                side,
+                finding.get("reviewResult", "SMART_MARKED"),
+            )
+        )
+        appended_trace_ids.add(finding["id"])
+    for finding in legacy_findings:
         if finding["id"] in measured_ids:
             continue
         defects.append(
@@ -1374,4 +1619,8 @@ def measure_marks(
                 },
             }
         )
-    return {"defects": defects}
+    defects.extend(frozen_findings)
+    return {
+        "defects": defects,
+        **({"traceErrors": trace_errors} if trace_errors else {}),
+    }

@@ -1,16 +1,13 @@
 import { buildAdminHeaders } from "../adminHeaders";
 import type {
   SpeedsterCardSide,
-  SpeedsterDefectType,
-  SpeedsterMeasuredDefect,
-  SpeedsterPoint,
   SpeedsterQuad,
 } from "./contracts";
 import type { SpeedsterInspectionFrame } from "./inspection-frame";
+import type { SpeedsterTraceBitmapWireV1 } from "./trace-bitmap-wire";
+import type { SpeedsterCanonicalPixel } from "./trace-editor";
 
-type ImageAction = "geometry" | "prepare" | "detect" | "measure";
-type SpeedsterCornerShape = "ROUNDED_3_18_MM" | "SQUARE";
-
+type ImageAction = "geometry" | "prepare" | "trace-proposal";
 export type SpeedsterGeometryResponse = {
   width: number;
   height: number;
@@ -69,42 +66,22 @@ export const speedsterImageService = {
       },
     });
   },
-  detect(
-    token: string,
-    input: {
-      side: SpeedsterCardSide;
-      cornerShape: SpeedsterCornerShape;
-      views: readonly { id: string; imageUrl: string }[];
-      sessionId: string;
-      requestTraceId: string;
-    },
-  ) {
-    return postImageAction<{
-      detectorVersion: string;
-      defects: SpeedsterMeasuredDefect[];
-    }>(token, "detect", input);
-  },
-  measure(
+  traceProposal(
     token: string,
     input: {
       sessionId: string;
       side: SpeedsterCardSide;
-      cornerShape: SpeedsterCornerShape;
-      evidenceView: {
-        id: string;
-        imageUrl: string;
-        inspectionFrame: SpeedsterInspectionFrame;
+      findingId: string | null;
+      stroke: {
+        canonicalPoints: readonly SpeedsterCanonicalPixel[];
+        strokeWidthPixels: number;
+        strokeWidthMm: number;
+        cropTransformVersion: "speedster-canonical-crop-affine-v1";
       };
-      marks: readonly {
-        id: string;
-        defectType: SpeedsterDefectType;
-        canonicalContour: readonly SpeedsterPoint[];
-        sourceViewId: string;
-      }[];
-      findings: readonly SpeedsterMeasuredDefect[];
+      currentTraceWire: SpeedsterTraceBitmapWireV1 | null;
     },
   ) {
-    return postImageAction<{ defects: SpeedsterMeasuredDefect[] }>(token, "measure", input);
+    return postImageAction<{ traceWire: SpeedsterTraceBitmapWireV1 }>(token, "trace-proposal", input);
   },
 };
 

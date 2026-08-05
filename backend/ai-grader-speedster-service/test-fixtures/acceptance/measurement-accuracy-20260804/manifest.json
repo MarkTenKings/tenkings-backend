@@ -1,0 +1,286 @@
+{
+  "schemaVersion": "TEN_KINGS_MEASUREMENT_ACCURACY_ACCEPTANCE_EVIDENCE_V1",
+  "capturedAt": "2026-08-04T22:40:06-07:00",
+  "mode": "READ_ONLY_EVIDENCE_INVENTORY",
+  "productionWrites": 0,
+  "reports": {
+    "cubone": {
+      "publicUrl": "https://collect.tenkings.co/ai-grader-v2/reports/speedster-cmsf6xyr600009uceq8pvjlzz",
+      "sessionId": "cmsf6xyr600009uceq8pvjlzz",
+      "identity": {
+        "cardProfile": "POKEMON",
+        "cardName": "cubone",
+        "year": "1999 pokemon",
+        "productSet": "jungle",
+        "cardNumber": "50/64"
+      },
+      "findingCount": 26,
+      "canonicalSnapshot": {
+        "pagePropsSha256": "434a204a80b140fc4fe63273e71d59e7d55353ceec0ebbfbb8675237ab65dde7",
+        "defectLedgerSha256": "15311f82ebcabc569e8d122a993cf7261fea7ada8db13f42f4e8164b41ac90e2",
+        "hashCanonicalization": "Recursively sort object keys, preserve array order, replace each signed asset URL with only its URL pathname, JSON encode without presentation whitespace, then SHA-256 the UTF-8 bytes."
+      },
+      "inspectionFrames": {
+        "FRONT": { "width": 1350, "height": 1858, "cardBounds": { "x": 40, "y": 40, "width": 1270, "height": 1778 } },
+        "BACK": { "width": 1350, "height": 1858, "cardBounds": { "x": 40, "y": 40, "width": 1270, "height": 1778 } }
+      },
+      "groupTotals": {
+        "FRONT.CORNERS": { "count": 2, "areaMm2": 13.68, "weightedAreaMm2": 19.0825 },
+        "FRONT.EDGES": { "count": 4, "areaMm2": 27.6025, "weightedAreaMm2": 25.5175 },
+        "FRONT.SURFACE": { "count": 2, "areaMm2": 229.2325, "weightedAreaMm2": 337.02875 },
+        "BACK.CORNERS": { "count": 3, "areaMm2": 32.4425, "weightedAreaMm2": 43.85375 },
+        "BACK.EDGES": { "count": 5, "areaMm2": 27.9675, "weightedAreaMm2": 27.9675 },
+        "BACK.SURFACE": { "count": 10, "areaMm2": 228.0325, "weightedAreaMm2": 282.7975 }
+      },
+      "grade": {
+        "front": {
+          "centering": { "score": 10, "leftRight": [46.942026567855, 53.057973432145], "topBottom": [48.542182102037, 51.457817897963] },
+          "corners": { "score": 1, "weightedPercent": 20.903165735568 },
+          "edges": { "score": 6, "weightedPercent": 4.818259063444 },
+          "surface": { "score": 4, "weightedPercent": 6.719676805136 }
+        },
+        "back": {
+          "centering": { "score": 10, "leftRight": [52.470970291279, 47.529029708721], "topBottom": [50.234675090398, 49.765324909602] },
+          "corners": { "score": 1, "weightedPercent": 48.037846423486 },
+          "edges": { "score": 5, "weightedPercent": 5.280872356495 },
+          "surface": { "score": 5, "weightedPercent": 5.638414530809 }
+        },
+        "subgrades": { "centering": 10, "corners": 1, "edges": 5.7, "surface": 4.3 },
+        "raw": 5.25,
+        "display": 5.3
+      }
+    },
+    "unrelatedControl": {
+      "publicUrl": "https://collect.tenkings.co/ai-grader-v2/reports/speedster-cmsasqis10000117qzol1ly3a",
+      "sessionId": "cmsasqis10000117qzol1ly3a",
+      "identity": {
+        "cardProfile": "SPORTS",
+        "playerName": "nick bosa",
+        "year": "2021",
+        "manufacturer": "panini",
+        "productSet": "obsidian",
+        "parallel": "electric red",
+        "cardNumber": "90"
+      },
+      "findingCount": 6,
+      "findingScope": "All six findings are FRONT.SURFACE FAINT_COLOR_VARIATION. Public origin is absent and must remain absent; no origin is inferred by this fixture.",
+      "canonicalSnapshot": {
+        "pagePropsSha256": "18fe764b548668e6c8cff27c4806d7456e8642777e87eda077c27ec9286b1ce4",
+        "defectLedgerSha256": "48c85e3997ee264120772dbd7fa7d5f77ad0d1301a65efa7f921c3404dbdb642"
+      },
+      "inspectionFrames": {
+        "FRONT": { "width": 1270, "height": 1778, "cardBounds": { "x": 0, "y": 0, "width": 1270, "height": 1778 } },
+        "BACK": { "width": 1270, "height": 1778, "cardBounds": { "x": 0, "y": 0, "width": 1270, "height": 1778 } }
+      },
+      "frontSurface": { "areaMm2": 28.1475, "weightedAreaMm2": 14.07375, "weightedPercent": 0.280602326764, "score": 9 },
+      "grade": {
+        "frontCentering": 8.2357985572214,
+        "backCentering": 8.2763381477372,
+        "subgrades": { "centering": 8.24796043437614, "corners": 10, "edges": 10, "surface": 9.3 },
+        "raw": 9.386990108594034,
+        "display": 9.4
+      }
+    }
+  },
+  "localSources": {
+    "phoneCaptures": [
+      {
+        "side": "FRONT",
+        "path": "/Users/markthomas/Library/Messages/Attachments/84/04/2D0689CE-4AAD-4885-8CD9-532C1CFF27CC/IMG_9073.heic",
+        "width": 4032,
+        "height": 3024,
+        "bytes": 2026068,
+        "sha256": "85ebd7389cb0f07d02d565e5cdca94637a793ca0c18eccf8b722f9db5b4dd47a"
+      },
+      {
+        "side": "BACK",
+        "path": "/Users/markthomas/Library/Messages/Attachments/66/06/E071B48E-E47D-411D-91A1-81961D39C1AF/IMG_9074.heic",
+        "width": 4032,
+        "height": 3024,
+        "bytes": 1678763,
+        "sha256": "38827c30879da6e80079d1cd498a9cf829da77e415f8d3b7b3d0461ab9b49338"
+      }
+    ],
+    "committedQ95JpegDerivatives": [
+      {
+        "side": "FRONT",
+        "path": "backend/ai-grader-speedster-service/test-fixtures/geometry/cubone-front.jpg",
+        "width": 4032,
+        "height": 3024,
+        "sha256": "d2136a44fb8504727a48325282b573cf10c73a79b890be0db1b69f744840cd56",
+        "gitBlob": "0443cad2c8d9fff5839dfa3d936dc808c2be1733"
+      },
+      {
+        "side": "BACK",
+        "path": "backend/ai-grader-speedster-service/test-fixtures/geometry/cubone-back.jpg",
+        "width": 4032,
+        "height": 3024,
+        "sha256": "fa71097ee566bed76efab30543fbdacfc84e6d9c0a0ab3552b4e251b1cbe2338",
+        "gitBlob": "bbe05d018d7a0e5c7213b88bab7606d19d681d85"
+      }
+    ],
+    "renderedEvidenceOnly": {
+      "path": "/Users/markthomas/Downloads/Cubone’s four Corner findings- evidence and published contours.png",
+      "width": 800,
+      "height": 1800,
+      "bytes": 613003,
+      "sha256": "6ea216cd9485df6d3e8ec107842b26c150da592fc369163e43581f34870fdc4c",
+      "authority": "Antialiased screenshot only; not exact binary trace bytes and not Mark approval."
+    }
+  },
+  "publicAssets": {
+    "cubone": [
+      { "side": "FRONT", "view": "MASTER", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/report/front-clean.png", "bytes": 5036253, "contentType": "image/png", "sha256": "be849ad38d32b6e9c58fe0ef874fe38d20cba570429ee8ec570741e722d45b20" },
+      { "side": "FRONT", "view": "ORIGINAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/front/inspection.webp", "bytes": 940496, "contentType": "image/webp", "sha256": "273dd709a499bb607b4fbdf45bc0d71ba730c2a5aa8c509af29d52a8f3f988b9" },
+      { "side": "FRONT", "view": "NORMALIZED", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/front/normalized.webp", "bytes": 1198164, "contentType": "image/webp", "sha256": "5efe0b7f60e4f1a05b1ae00278c44545b4b2d9d36ff49d28d0d3429803ca8713" },
+      { "side": "FRONT", "view": "MICRO_DEFECT", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/front/micro_defect.webp", "bytes": 980016, "contentType": "image/webp", "sha256": "865e51376764a859eb348c4fbc8f1e271de9e664336ddd1e0a6bf8237b2ac293" },
+      { "side": "FRONT", "view": "DIRECTIONAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/front/directional.webp", "bytes": 1623688, "contentType": "image/webp", "sha256": "65795b1d676917abc2794bf67affc68d0f5feadb1b638ef0fecad217132b5d6e" },
+      { "side": "BACK", "view": "MASTER", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/report/back-clean.png", "bytes": 5075090, "contentType": "image/png", "sha256": "a47c96a10e3eb8b37d235b100a61e4c4ac1c3f5cc520e308fe6cc7e639dcb355" },
+      { "side": "BACK", "view": "ORIGINAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/back/inspection.webp", "bytes": 793974, "contentType": "image/webp", "sha256": "f9dd0a65ed2341c13d2fca51897c07f8575e0a4f24d040599c61e0e66353eec0" },
+      { "side": "BACK", "view": "NORMALIZED", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/back/normalized.webp", "bytes": 1056888, "contentType": "image/webp", "sha256": "d38f85efa9b14da5694e0cf0abd4dce8f7a1430e6ca29bee973e145c7579f0ce" },
+      { "side": "BACK", "view": "MICRO_DEFECT", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/back/micro_defect.webp", "bytes": 853378, "contentType": "image/webp", "sha256": "37709b91dec70bef118e962589e393c087d740161fa9e5a1b9dcb466a8092486" },
+      { "side": "BACK", "view": "DIRECTIONAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsf6xyr600009uceq8pvjlzz/prepared/back/directional.webp", "bytes": 1510808, "contentType": "image/webp", "sha256": "d5d1fb956e03dd0887d87d8e08597e77e9b547ef4b00391fe741698d43f941d6" }
+    ],
+    "unrelatedControl": [
+      { "side": "FRONT", "view": "MASTER_ORIGINAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/front/rectified.webp", "bytes": 366838, "sha256": "ca4f94718a06ebc608a606495c4817d85445555a559b02541e5046876f5d1608" },
+      { "side": "FRONT", "view": "NORMALIZED", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/front/normalized.webp", "bytes": 518852, "sha256": "960b54d91732fb49c567f80ab769f886559ff2facbd9c7979907ddead84f21d0" },
+      { "side": "FRONT", "view": "MICRO_DEFECT", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/front/micro_defect.webp", "bytes": 441964, "sha256": "a218659b2c43feddef335b13025a96e4ca517cebfe4afebe09f27fdad000b9d6" },
+      { "side": "FRONT", "view": "DIRECTIONAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/front/directional.webp", "bytes": 997368, "sha256": "9f4cd367e884c996e918033188d6a89ae6036f6a808fe8c897bfd3ce39217024" },
+      { "side": "BACK", "view": "MASTER_ORIGINAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/back/rectified.webp", "bytes": 251430, "sha256": "c2b0d78dd387ebe8f03ab367f9b05b6a5edd4e4a6f5485fbb2a65ff030ef35ab" },
+      { "side": "BACK", "view": "NORMALIZED", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/back/normalized.webp", "bytes": 344770, "sha256": "8670deae3fdaaebf1a5c99cdb888b10c0de3bd5f7a48483b099597d076daa7f7" },
+      { "side": "BACK", "view": "MICRO_DEFECT", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/back/micro_defect.webp", "bytes": 259642, "sha256": "b7b2ae59ebebaff0c4a225a98d0ac8c938a9942a3acb084d8fac26cbce73139e" },
+      { "side": "BACK", "view": "DIRECTIONAL", "objectPath": "/tenkings-cards/ai-grader-v2/fe0ff4d9-50ae-40ec-87e8-d92a845e5ab8/cmsasqis10000117qzol1ly3a/prepared/back/directional.webp", "bytes": 772106, "sha256": "3a0dabf3e70d6febb4d6c3884d8754a55095c2c091297e7a11ac1822cd3e8c75" }
+    ]
+  },
+  "historicalAcceptedMasks": {
+    "authority": "Lossless raster reconstructions of the public historical canonical contours. They are immutable pre-addendum accepted masks, not reviewer-corrected final traces and not post-boundary-subtraction model replay outputs.",
+    "rasterization": {
+      "shape": [1778, 1270],
+      "dtype": "uint8",
+      "values": [0, 1],
+      "pointMapping": "x=round(normalizedX*1269), y=round(normalizedY*1777), using Python 3 round",
+      "fill": "cv2.fillPoly",
+      "maskHashPreimage": "raw row-major 0/1 bytes",
+      "versions": { "python": "3", "numpy": "1.26.4", "opencvPythonHeadless": "4.10.0.84" },
+      "pixelAreaMm2": 0.0025
+    },
+    "cuboneConditionalWedgeSet": [
+      {
+        "role": "large Front Memory mask must fail if wedge is required",
+        "id": "FRONT:sam3-front-f6e40a8bc7221aaa:CORNERS",
+        "side": "FRONT",
+        "type": "CHIPPING_EXPOSED_STOCK",
+        "origin": "MEMORY",
+        "detectedOrigin": "MEMORY",
+        "sourceView": "ORIGINAL",
+        "reviewState": "ACCEPTED",
+        "confidence": 0.78515625,
+        "areaMm2": 12.2425,
+        "multiplier": 1.5,
+        "weightedAreaMm2": 18.36375,
+        "zonePercent": 13.41055975462811,
+        "widthMm": 4.55,
+        "heightMm": 4.45,
+        "subgradeEffect": 5.6,
+        "contourPointCount": 127,
+        "canonicalContourSha256": "86eba696ad6f6f3f87bf3d9e374a9403c3741ae782cd1866f450db41b69c56ac",
+        "rasterPixelCount": 4897,
+        "rasterBoundingBox": [1179, 1689, 91, 89],
+        "rasterMaskSha256": "b3acd50b06caf8c455a87acb607f8c1486a37dd05dd19517081e1f4628388047"
+      },
+      {
+        "role": "small Front sliver must pass if wedge is required",
+        "id": "FRONT:sam3-front-df248ee2ceb99b12:CORNERS",
+        "side": "FRONT",
+        "type": "FAINT_COLOR_VARIATION",
+        "origin": "MEMORY",
+        "detectedOrigin": "MEMORY",
+        "sourceView": "ORIGINAL",
+        "reviewState": "ACCEPTED",
+        "confidence": 0.625,
+        "areaMm2": 1.4375,
+        "multiplier": 0.5,
+        "weightedAreaMm2": 0.71875,
+        "zonePercent": 1.574652207251616,
+        "widthMm": 0.45,
+        "heightMm": 3.2,
+        "subgradeEffect": 0,
+        "contourPointCount": 5,
+        "canonicalContourSha256": "fb36c39c0746a678283a12b85a9a10658771c66ef92fc5e987061da229da6e66",
+        "rasterPixelCount": 575,
+        "rasterBoundingBox": [91, 0, 9, 64],
+        "rasterMaskSha256": "2981813a8042399011debee14ec408a94c6d7008852c4756a1bd3bc145c0fe02"
+      },
+      {
+        "role": "large Back detector mask must fail if wedge is required",
+        "id": "BACK:sam3-back-f04caec71a2852bc:CORNERS",
+        "side": "BACK",
+        "type": "VISIBLE_WHITENING",
+        "origin": "DETECTOR",
+        "detectedOrigin": "DETECTOR",
+        "sourceView": "MICRO_DEFECT",
+        "supportingViews": ["ORIGINAL"],
+        "reviewState": "ACCEPTED",
+        "confidence": 0.859375,
+        "areaMm2": 9.5975,
+        "multiplier": 1,
+        "weightedAreaMm2": 9.5975,
+        "zonePercent": 10.51319969328513,
+        "widthMm": 4.35,
+        "heightMm": 4.1,
+        "subgradeEffect": 0,
+        "contourPointCount": 108,
+        "canonicalContourSha256": "893e323fef53a211cf143e615491e638095b6e36268d08639af26b54420782a4",
+        "rasterPixelCount": 3839,
+        "rasterBoundingBox": [1182, 0, 87, 82],
+        "rasterMaskSha256": "ac158826fdf403e441e63a1f296966d4a0bc97fa93fc241df9534f122c83c13c"
+      }
+    ],
+    "unrelatedControl": [
+      { "id": "FRONT:sam3-front-ea84a35cc7a63a64:SURFACE", "confidence": 0.91796875, "sourceView": "ORIGINAL", "supportingViews": ["NORMALIZED"], "areaMm2": 7.285, "widthMm": 4.2, "heightMm": 3.1, "contourPointCount": 128, "canonicalContourSha256": "d2982cbae9b689384db8ccf310c8a52e9f18c1e5227cca6e8f01c3d22f06633c", "rasterPixelCount": 2914, "rasterBoundingBox": [446, 269, 84, 62], "rasterMaskSha256": "8f07359fd6598f4c175d6cb05c9ef7c6234118f917e1b85d70ac55ba8f858bf6" },
+      { "id": "FRONT:sam3-front-61bfdc3cc071d58e:SURFACE", "confidence": 0.8828125, "sourceView": "ORIGINAL", "supportingViews": [], "areaMm2": 5.8575, "widthMm": 3.25, "heightMm": 6.1, "contourPointCount": 94, "canonicalContourSha256": "c2a89e60920bfb6ff757d0ef6fe67e77aa962e0e7071e78a8f8f0f84585fa615", "rasterPixelCount": 2343, "rasterBoundingBox": [174, 582, 65, 122], "rasterMaskSha256": "3be43ecc46b581ab49fd69800043a77480d07b33455d8a846c9fee8f14a9aafc" },
+      { "id": "FRONT:sam3-front-983ea2078e876771:SURFACE", "confidence": 0.8828125, "sourceView": "ORIGINAL", "supportingViews": [], "areaMm2": 0.03, "widthMm": 0.25, "heightMm": 0.25, "contourPointCount": 8, "canonicalContourSha256": "10ceaafbf2ed8d22d933841690fede939af4d2e6d6627c52386e22bb99bc44d5", "rasterPixelCount": 12, "rasterBoundingBox": [209, 604, 5, 5], "rasterMaskSha256": "50efc6ddee85345082dac33d10987cccb8e00dda47b65a747e6f498fa25be194" },
+      { "id": "FRONT:sam3-front-dbfc7302e58290c8:SURFACE", "confidence": 0.8046875, "sourceView": "NORMALIZED", "supportingViews": [], "areaMm2": 4.4525, "widthMm": 3.1, "heightMm": 3.15, "contourPointCount": 88, "canonicalContourSha256": "aa3155d4af8e51026709729e5dce59a9cea27f9f43d59635892155bde1a911ab", "rasterPixelCount": 1781, "rasterBoundingBox": [864, 608, 62, 63], "rasterMaskSha256": "dc5e09644326f04cbcde5ef6ccfd8fd0b4cf7c22713ce9084e4284e7a954ac6a" },
+      { "id": "FRONT:sam3-front-7adb47eec716b2b5:SURFACE", "confidence": 0.88671875, "sourceView": "NORMALIZED", "supportingViews": [], "areaMm2": 6.065, "widthMm": 1.85, "heightMm": 4.65, "contourPointCount": 73, "canonicalContourSha256": "364ce53204f0bf76240c2cd12e04a11d026a36ced81f3fdff5ae96b4c704e694", "rasterPixelCount": 2426, "rasterBoundingBox": [629, 1190, 37, 93], "rasterMaskSha256": "47e05c01aad482843ff2725adfd6dd168b394b00d7ce9dc9de757cdeddbc1511" },
+      { "id": "FRONT:sam3-front-e2ff61aceb6680e0:SURFACE", "confidence": 0.796875, "sourceView": "MICRO_DEFECT", "supportingViews": [], "areaMm2": 4.4575, "widthMm": 3.05, "heightMm": 6.85, "contourPointCount": 177, "canonicalContourSha256": "9a689fe8a1797972f114eb83c18f5c9cd88b98e4342c2d7cc2b1823af2a24479", "rasterPixelCount": 1783, "rasterBoundingBox": [315, 489, 61, 137], "rasterMaskSha256": "572af6d626b28388176469fbff6a53e18e0f413c642a99cc57a6e4af0a167edc" }
+    ]
+  },
+  "measurementAcceptance": {
+    "canonicalCornerZonePixelCount": 9129,
+    "canonicalCornerZoneAreaMm2": 91.29,
+    "publishedFrontCornerWeightedAreaMm2": 19.0825,
+    "publishedFrontCornerWeightedPercent": 20.903165735568,
+    "frozenAddendumNarrativePercent": "approximately 35%",
+    "evidenceConflict": "The exact public 5.3 report baseline is 20.903165735568%, not approximately 35%. The frozen less-than-5% target is unchanged.",
+    "strictTargetWeightedPercent": 5,
+    "strictTargetWeightedAreaMm2UpperBoundExclusive": 4.5645,
+    "conditionalBoundIfSmallSliverUnchanged": {
+      "smallSliverWeightedAreaMm2": 0.71875,
+      "remainingWeightedAreaMm2UpperBoundExclusive": 3.84575,
+      "maximumLargeChippingRawAreaMm2ExclusiveAtMultiplier1_5": 2.563833333333333
+    },
+    "status": "NOT_CERTIFIED",
+    "blocker": "Mark must draw/save and visually approve the exact corrected FRONT final trace bytes and their canonical hashes (at minimum the large chipping trace, and also the small sliver if changed). No such corrected final trace bytes exist in the recoverable evidence."
+  },
+  "boundarySubtractionEvidence": {
+    "scope": "OpenCV candidate-core formation and ranking only; no SAM inference, acceptance, final trace, or reviewer approval is implied.",
+    "fixtureSha256": "fa71097ee566bed76efab30543fbdacfc84e6d9c0a0ab3552b4e251b1cbe2338",
+    "sourceQuad": [[371.4259, 398.211], [2602.8545, 398.7044], [2627.988, 3567.2173], [326.6972, 3548.3083]],
+    "rimDefinition": { "version": "CUBONE_BACK_TOP_RIGHT_GEOMETRY_RIM_V1", "cornerZoneMm": 5, "maximumDistanceFromCutMm": 3.18, "maximumCoreFraction": 0.3 },
+    "cornerZonePixels": 9129,
+    "maximumCoreBoxPixels": 2739,
+    "before": { "coreBox": [1223, 41, 83, 73], "coreBoxPixels": 6059, "coreAreaMm2": 15.1475, "foregroundPixels": 505, "zeroBasedRank": 6, "ordinalRank": 7, "inTopEight": true, "intersectsRim": true },
+    "after": { "coreBox": [1244, 46, 10, 4], "coreBoxPixels": 40, "coreAreaMm2": 0.1, "foregroundPixels": 22, "zeroBasedRank": 142, "ordinalRank": 143, "inTopEight": false, "intersectsRim": true }
+  },
+  "conditionalWedgeDecision": {
+    "historicalInputsRecoverable": true,
+    "decisionRunnableFromHistoricalMasksAlone": false,
+    "status": "BLOCKED_ON_POST_CHANGE_REPLAY_EVIDENCE",
+    "reason": "The three historical accepted masks can be reconstructed exactly, but they predate boundary subtraction. They do not prove whether either oversized proposal still passes the final detector/Memory acceptance path after the change.",
+    "missingExactEvidence": [
+      "Post-boundary-subtraction proposal/final mask bytes and acceptance outcomes for the large Front Memory finding, small Front Memory sliver, and large Back detector finding.",
+      "A replay bound to the pinned SAM 3 model commit 96914d2425f90a64f45ca977c2b5165418099543, the exact prepared assets listed above, and the exact bank/policy preimage consumed by the replay."
+    ],
+    "authorizedConclusion": "Do not derive a boundary distance or wedge threshold from the historical masks alone. The local Back OpenCV evidence proves that candidate is absent from the ordinary top eight after subtraction, but it does not settle the full three-mask conditional decision."
+  }
+}

@@ -4,12 +4,13 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { SPEEDSTER_RULE_VERSION } from "../lib/ai-grader-v2/contracts";
+import { SPEEDSTER_TRACE_PIXEL_COUNT, encodeSpeedsterTraceRleV1 } from "../lib/ai-grader-v2/trace-codec";
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
 import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
 import {
-  freshSpeedsterMeasureEvidence,
   sanitizeSpeedsterGeometryPayload,
+  speedsterServiceBody,
   speedsterServiceHeaders,
 } from "../pages/api/admin/ai-grader-v2/image/[action]";
 
@@ -110,6 +111,28 @@ test("POST accepts only the two Speedster card profiles", async () => {
   assert.equal(calls, 0);
 });
 
+test("POST cannot inject capture, reviewed findings, or grade authority into a draft", async () => {
+  let calls = 0;
+  const handler = createAiGraderV2SessionsHandler({
+    requireAdminSession: admin,
+    async createSession() {
+      calls += 1;
+      return {};
+    },
+  });
+
+  for (const injected of [
+    { capture: { cornerShape: "SQUARE" } },
+    { reviewedDefects: [{ id: "browser-owned" }] },
+    { gradeReport: { detectorVersion: "browser-owned" } },
+  ]) {
+    const { state, res } = response();
+    await handler(request("POST", { cardProfile: "POKEMON", ...injected }), res);
+    assert.equal(state.status, 400);
+  }
+  assert.equal(calls, 0);
+});
+
 test("POST requires the existing admin session", async () => {
   let calls = 0;
   const handler = createAiGraderV2SessionsHandler({
@@ -155,7 +178,7 @@ test("GET returns one V2 session after admin authentication", async () => {
   assert.deepEqual(state.body, { session: existing });
 });
 
-test("PATCH sends only supplied V2 fields", async () => {
+test("generic PATCH rejects client-owned reviewedDefects and gradeReport authority", async () => {
   let update: Record<string, unknown> | undefined;
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
@@ -176,10 +199,178 @@ test("PATCH sends only supplied V2 fields", async () => {
     res,
   );
 
-  assert.equal(state.status, 200);
-  assert.deepEqual(update, {
-    reviewedDefects: [{ id: "defect-1", reviewResult: "ACCEPTED" }],
+  assert.equal(state.status, 400);
+  assert.equal(update, undefined);
+});
+
+test("generic PATCH permits only the DRAFT to CAPTURED transition with required capture", async () => {
+  const attempts = [
+    { workflowState: "REVIEWED", capture: {} },
+    { workflowState: "CAPTURED" },
+    { workflowState: "CAPTURED", capture: {}, identity: { cardName: "bypass" } },
+    { cardProfile: "SPORTS" },
+    { publicReportSlug: "client-owned" },
+  ];
+  for (const body of attempts) {
+    let updateCalls = 0;
+    const handler = createAiGraderV2SessionHandler({
+      requireAdminSession: admin,
+      async findSession() {
+        return { id: "speedster-1", publicReportSlug: null, workflowState: "DRAFT", reviewedDefects: [] };
+      },
+      async updateSession() { updateCalls += 1; return {}; },
+    });
+    const result = response();
+    await handler(request("PATCH", body, "speedster-1"), result.res);
+    assert.equal(result.state.status, 400, JSON.stringify(body));
+    assert.equal(updateCalls, 0, JSON.stringify(body));
+  }
+});
+
+test("generic capture PATCH rejects a non-DRAFT session", async () => {
+  let updateCalls = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() {
+      return { id: "speedster-1", publicReportSlug: null, workflowState: "COMPLETED", reviewedDefects: [] };
+    },
+    async updateSession() { updateCalls += 1; return {}; },
   });
+  const result = response();
+  await handler(request("PATCH", { workflowState: "CAPTURED", capture: { cornerShape: "SQUARE" } }, "speedster-1"), result.res);
+  assert.equal(result.state.status, 409);
+  assert.equal(updateCalls, 0);
+});
+
+test("GET and PATCH responses strip private removal state from aggregate findings", async () => {
+  const tracePixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  tracePixels[1000] = 1;
+  const finalTrace = encodeSpeedsterTraceRleV1(tracePixels);
+  const privateFinding = {
+    id: "FRONT:removed",
+    side: "FRONT",
+    zone: "SURFACE",
+    defectType: "LIGHT_SCRATCH_SCUFF",
+    origin: "DETECTOR",
+    confidence: 0.9,
+    canonicalContour: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.1 }, { x: 0.2, y: 0.2 }],
+    sourceViewId: "FRONT:ORIGINAL",
+    supportingViewIds: [],
+    reviewResult: "REMOVED",
+    reviewResultBeforeRemoval: "TYPE_CORRECTED",
+    measurement: {
+      widthMm: 1, heightMm: 1, areaMm2: 1, zonePercent: 1,
+      multiplier: 1, weightedAreaMm2: 1, subgradeEffect: 0,
+    },
+  };
+  const {
+    zone: _zone,
+    canonicalContour: _contour,
+    measurement: _measurement,
+    reviewResultBeforeRemoval: _prior,
+    ...sourceCommon
+  } = privateFinding;
+  const existing = {
+    id: "speedster-1",
+    publicReportSlug: null,
+    workflowState: "DRAFT",
+    reviewedDefects: [privateFinding, {
+      ...sourceCommon,
+      id: "FRONT:trace-source",
+      reviewResult: "TYPE_CORRECTED",
+      finalTrace,
+      traceProvenance: { finalTraceSha256: finalTrace.sha256 },
+      measurementRegions: [{
+        zone: "SURFACE",
+        canonicalContour: privateFinding.canonicalContour,
+        measurement: { ...privateFinding.measurement, pixelCount: 1 },
+      }],
+    }],
+  };
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return existing; },
+    async updateSession() { return { ...existing, workflowState: "CAPTURED" }; },
+  });
+  const getResult = response();
+  await handler(request("GET", undefined, "speedster-1"), getResult.res);
+  assert.equal(JSON.stringify(getResult.state.body).includes("reviewResultBeforeRemoval"), false);
+  assert.equal(JSON.stringify(getResult.state.body).includes("\"runs\""), false);
+  const patchResult = response();
+  await handler(request("PATCH", { workflowState: "CAPTURED", capture: { cornerShape: "SQUARE" } }, "speedster-1"), patchResult.res);
+  assert.equal(JSON.stringify(patchResult.state.body).includes("reviewResultBeforeRemoval"), false);
+  assert.equal(JSON.stringify(patchResult.state.body).includes("\"runs\""), false);
+});
+
+test("review changes use the one owned review-action route and never call client measure or generic PATCH", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+  const start = page.indexOf("const runReviewRemeasurement");
+  const end = page.indexOf("const traceProposal", start);
+  const action = page.slice(start, end);
+
+  assert.match(action, /\/review-action/);
+  assert.match(action, /method: "POST"/);
+  assert.doesNotMatch(action, /speedsterImageService\.measure/);
+  assert.doesNotMatch(action, /method: "PATCH"/);
+  assert.ok(action.indexOf("await fetch") < action.indexOf("setDefects(payload.reviewedDefects)"));
+  assert.doesNotMatch(action, /hydratedById|new Map\(|setDefects\(nextDefects\)/);
+  assert.doesNotMatch(action, /finalTrace:\s*undefined/);
+  assert.match(action, /const \{ finalTrace, \.\.\.trace \} = action\.trace/);
+  assert.match(action, /traceWire: encodeSpeedsterTraceBitmapWireV1/);
+
+  const loaderStart = page.indexOf("const loadTrace", start);
+  const loaderEnd = page.indexOf("const traceProposal", loaderStart);
+  const loader = page.slice(loaderStart, loaderEnd);
+  assert.match(loader, /method:\s*"GET"/);
+  assert.match(loader, /\/review-action\?findingId=/);
+  assert.match(loader, /decodeSpeedsterTraceBitmapWireV1/);
+  assert.match(page, /onTraceLoad=\{loadTrace\}/);
+
+  const workspace = readFileSync(
+    `${root}/components/ai-grader-v2/ReviewWorkspace.tsx`,
+    "utf8",
+  );
+  assert.match(workspace, /onTraceLoad\?:/);
+  assert.match(workspace, /onTraceLoad=\{onTraceLoad\}/);
+
+  const proposalEnd = page.indexOf("const saveTrace", loaderEnd);
+  const proposal = page.slice(loaderEnd, proposalEnd);
+  assert.match(proposal, /findingId: input\.target\.findingId/);
+  assert.match(proposal, /currentTraceWire/);
+  assert.doesNotMatch(proposal, /evidenceView|sourceImageUrls|sourceViewId|cornerShape/);
+
+  assert.match(page, /JSON\.stringify\(\{ action: \{ type: "INITIALIZE" \} \}\)/);
+  assert.doesNotMatch(page, /speedsterImageService\.detect|initialDefects|detectorVersion/);
+  assert.match(page, /Retry server scan/);
+  assert.match(page, /void initializeReview\(\)/);
+
+  const imageProxy = readFileSync(`${root}/pages/api/admin/ai-grader-v2/image/[action].ts`, "utf8");
+  assert.doesNotMatch(imageProxy, /ACTIONS[^\n]+detect/);
+  const reviewRoute = readFileSync(
+    `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
+    "utf8",
+  );
+  assert.match(reviewRoute, /z\.object\(\{ type: z\.literal\("INITIALIZE"\) \}\)\.strict\(\)/);
+  assert.doesNotMatch(reviewRoute, /initialDefects/);
+});
+
+test("review CAS is short, serializable, and compares the exact persisted updatedAt after external work", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const core = readFileSync(`${root}/lib/server/aiGraderV2ReviewAction.ts`, "utf8");
+  const route = readFileSync(
+    `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
+    "utf8",
+  );
+  assert.ok(core.indexOf("await deps.measure") < core.lastIndexOf("await deps.persistReviewIfRevision"));
+  assert.ok(core.indexOf("serverOwnedInitialization") < core.indexOf("await deps.persistReviewIfRevision"));
+  assert.match(route, /current\.updatedAt\.getTime\(\) !== expectedUpdatedAt\.getTime\(\)/);
+  assert.match(route, /updatedAt: expectedUpdatedAt/);
+  assert.match(route, /FOR UPDATE/);
+  assert.match(route, /isolationLevel: "Serializable"/);
+  const casStart = route.indexOf("persistReviewIfRevision:");
+  const casEnd = route.indexOf("},\n};", casStart);
+  assert.doesNotMatch(route.slice(casStart, casEnd), /presignRead|fetch\(|\/measure|\/detect/);
 });
 
 test("upload planning binds the requested session to the existing admin identity", () => {
@@ -206,100 +397,68 @@ test("SAM proxy adds its one optional server-only bearer header", () => {
   }
 });
 
-test("Smart-Mark proxy replaces a stale browser URL from the owned persisted inspection key", async () => {
-  const calls: unknown[] = [];
-  const body = {
-    sessionId: "speedster-1",
-    side: "BACK",
-    cornerShape: "SQUARE",
-    evidenceView: {
-      id: "BACK:ORIGINAL",
-      imageUrl: "https://stale.example/back.webp",
-      inspectionFrame: { width: 1350, height: 1858 },
-    },
-    marks: [{ id: "smart-1" }],
-  };
-  const refreshed = await freshSpeedsterMeasureEvidence(body, "admin-1", {
-    async findOwnedCapture(sessionId, createdByUserId) {
-      calls.push(["find", sessionId, createdByUserId]);
+test("trace proposal authorizes a persisted non-ORIGINAL source view and supplies server findings", async () => {
+  const sessionId = "speedster-12345678901234567890";
+  const prefix = `ai-grader-v2/admin-1/${sessionId}/prepared/front`;
+  const body = await speedsterServiceBody("trace-proposal", {
+    sessionId,
+    side: "FRONT",
+    findingId: "front-directional-1",
+    stroke: { canonicalPoints: [{ x: 1, y: 1 }], strokeWidthPixels: 1, strokeWidthMm: 1 },
+    currentTraceWire: null,
+  }, "admin-1", {
+    async findOwnedCapture() {
       return {
         capture: {
-          front: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/front/inspection.webp" },
-          back: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp" },
+          cornerShape: "SQUARE",
+          front: {
+            inspectionStorageKey: `${prefix}/inspection.webp`,
+            inspectionFrame: { width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
+            viewStorageKeys: {
+              NORMALIZED: `${prefix}/normalized.webp`,
+              MICRO_DEFECT: `${prefix}/micro_defect.webp`,
+              DIRECTIONAL: `${prefix}/directional.webp`,
+            },
+          },
         },
+        reviewedDefects: [{
+          id: "front-directional-1",
+          side: "FRONT",
+          zone: "SURFACE",
+          defectType: "LIGHT_SCRATCH_SCUFF",
+          confidence: 0.9,
+          canonicalContour: [{ x: 0.1, y: 0.1 }, { x: 0.2, y: 0.1 }, { x: 0.2, y: 0.2 }],
+          sourceViewId: "FRONT:DIRECTIONAL",
+          supportingViewIds: [],
+          reviewResult: "UNREVIEWED",
+          measurement: {
+            widthMm: 1,
+            heightMm: 1,
+            areaMm2: 1,
+            zonePercent: 1,
+            multiplier: 1,
+            weightedAreaMm2: 1,
+            subgradeEffect: 0,
+          },
+        }],
       };
     },
-    async presignRead(storageKey, expiresInSeconds) {
-      calls.push(["sign", storageKey, expiresInSeconds]);
-      return "https://fresh.example/back.webp";
+    async presignRead(storageKey) {
+      assert.equal(storageKey, `${prefix}/directional.webp`);
+      return "https://fresh.example/directional.webp";
     },
   });
 
-  assert.deepEqual(calls, [
-    ["find", "speedster-1", "admin-1"],
-    ["sign", "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp", 600],
-  ]);
-  assert.equal("sessionId" in refreshed, false);
-  assert.deepEqual(refreshed, {
-    side: body.side,
-    cornerShape: body.cornerShape,
-    evidenceView: { ...body.evidenceView, imageUrl: "https://fresh.example/back.webp" },
-    marks: body.marks,
-  });
+  assert.equal((body.evidenceView as { imageUrl: string }).imageUrl, "https://fresh.example/directional.webp");
+  assert.equal((body.evidenceView as { id: string }).id, "FRONT:DIRECTIONAL");
+  assert.equal(body.sourceViewId, "FRONT:DIRECTIONAL");
+  assert.equal(body.cornerShape, "SQUARE");
+  assert.deepEqual(body.findings, []);
+  assert.equal("sessionId" in body, false);
+  assert.equal("currentTraceWire" in body, false);
 });
 
-test("Smart-Mark evidence refresh is side-bound, owner-bound, and nonblocking", async () => {
-  const body = {
-    sessionId: "speedster-1",
-    side: "BACK",
-    evidenceView: { id: "BACK:ORIGINAL", imageUrl: "https://stale.example/back.webp" },
-  };
-  let signCalls = 0;
-  const missingRequestedSide = await freshSpeedsterMeasureEvidence(body, "admin-1", {
-    async findOwnedCapture() {
-      return { capture: { front: { inspectionStorageKey: "private/front.webp" } } };
-    },
-    async presignRead() {
-      signCalls += 1;
-      return "unexpected";
-    },
-  });
-  assert.equal(signCalls, 0);
-  assert.equal((missingRequestedSide.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
-
-  const wrongPersistedKey = await freshSpeedsterMeasureEvidence(body, "admin-1", {
-    async findOwnedCapture() {
-      return { capture: { back: { inspectionStorageKey: "ai-grader-v2/another-admin/speedster-1/prepared/back/inspection.webp" } } };
-    },
-    async presignRead() {
-      signCalls += 1;
-      return "unexpected";
-    },
-  });
-  assert.equal(signCalls, 0);
-  assert.equal((wrongPersistedKey.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
-
-  const unowned = await freshSpeedsterMeasureEvidence(body, "another-admin", {
-    async findOwnedCapture() { return null; },
-    async presignRead() {
-      signCalls += 1;
-      return "unexpected";
-    },
-  });
-  assert.equal(signCalls, 0);
-  assert.equal((unowned.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
-
-  const signingFailure = await freshSpeedsterMeasureEvidence(body, "admin-1", {
-    async findOwnedCapture() {
-      return { capture: { back: { inspectionStorageKey: "ai-grader-v2/admin-1/speedster-1/prepared/back/inspection.webp" } } };
-    },
-    async presignRead() { throw new Error("signer unavailable"); },
-  });
-  assert.equal((signingFailure.evidenceView as Record<string, unknown>).imageUrl, body.evidenceView.imageUrl);
-  assert.equal("sessionId" in signingFailure, false);
-});
-
-test("PATCH keeps an assigned public report slug stable", async () => {
+test("PATCH rejects public report slug mutation through the generic route", async () => {
   let updateCalls = 0;
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
@@ -318,7 +477,7 @@ test("PATCH keeps an assigned public report slug stable", async () => {
     res,
   );
 
-  assert.equal(state.status, 409);
+  assert.equal(state.status, 400);
   assert.equal(updateCalls, 0);
 });
 

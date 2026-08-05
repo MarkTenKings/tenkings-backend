@@ -16,9 +16,6 @@ const createSchema = z
     cardProfile: z.enum(["POKEMON", "SPORTS"]),
     publicReportSlug: publicReportSlug.optional(),
     identity: jsonObject.optional(),
-    capture: jsonObject.optional(),
-    reviewedDefects: z.array(z.unknown()).optional(),
-    gradeReport: jsonObject.optional(),
   })
   .strict();
 
@@ -67,9 +64,9 @@ export function createAiGraderV2SessionsHandler(deps: Dependencies = dependencie
           ? { publicReportSlug: parsed.data.publicReportSlug }
           : {}),
         identity: (parsed.data.identity ?? {}) as Prisma.InputJsonValue,
-        capture: (parsed.data.capture ?? {}) as Prisma.InputJsonValue,
-        reviewedDefects: (parsed.data.reviewedDefects ?? []) as Prisma.InputJsonValue,
-        gradeReport: (parsed.data.gradeReport ?? {}) as Prisma.InputJsonValue,
+        capture: {} as Prisma.InputJsonValue,
+        reviewedDefects: [] as Prisma.InputJsonValue,
+        gradeReport: {} as Prisma.InputJsonValue,
       });
 
       return res.status(201).json({ session });

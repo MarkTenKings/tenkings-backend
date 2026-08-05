@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Head from "next/head";
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { GetServerSideProps, GetServerSidePropsContext } from "next";
 
 import { DefectEvidenceViewer } from "../../../components/ai-grader-v2/DefectEvidenceViewer";
@@ -11,6 +11,7 @@ import type {
   SpeedsterDefectType,
   SpeedsterMeasuredDefect,
   SpeedsterPoint,
+  SpeedsterReviewFinding,
 } from "../../../lib/ai-grader-v2/contracts";
 import type { calculateSpeedsterGrade } from "../../../lib/ai-grader-v2/scoring";
 import {
@@ -18,6 +19,11 @@ import {
   parseSpeedsterInspectionFrame,
   type SpeedsterInspectionFrame,
 } from "../../../lib/ai-grader-v2/inspection-frame";
+import {
+  encodeSpeedsterTraceRleV1,
+  parseSpeedsterTraceRleV1,
+} from "../../../lib/ai-grader-v2/trace-codec";
+import { decodeSpeedsterTraceBitmapWireV1 } from "../../../lib/ai-grader-v2/trace-bitmap-wire";
 import styles from "../../../styles/AiGraderV2Report.module.css";
 
 type Grade = ReturnType<typeof calculateSpeedsterGrade>;
@@ -38,8 +44,9 @@ type SourceKeys = Readonly<Record<SpeedsterCardSide, {
   views: Readonly<Record<"ORIGINAL" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
 }>>;
 type PublicReportSource = {
+  publicReportSlug: string;
   identity: PublicIdentity;
-  defects: SpeedsterMeasuredDefect[];
+  defects: SpeedsterReviewFinding[];
   grade: Grade;
   sourceKeys: SourceKeys;
   slabKeys: { front: string | null; back: string | null };
@@ -86,10 +93,9 @@ function point(value: unknown): SpeedsterPoint | null {
   return x !== null && y !== null && x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
 }
 
-function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
+function measuredDefect(value: unknown): SpeedsterReviewFinding | null {
   if (!isRecord(value)) return null;
   const side = value.side === "FRONT" || value.side === "BACK" ? value.side : null;
-  const zone = value.zone === "CORNERS" || value.zone === "EDGES" || value.zone === "SURFACE" ? value.zone : null;
   const defectType = typeof value.defectType === "string" && DEFECT_TYPES.has(value.defectType as SpeedsterDefectType)
     ? value.defectType as SpeedsterDefectType
     : null;
@@ -104,40 +110,77 @@ function measuredDefect(value: unknown): SpeedsterMeasuredDefect | null {
     ? value.reviewResult as SpeedsterMeasuredDefect["reviewResult"]
     : null;
   const contour = Array.isArray(value.canonicalContour) ? value.canonicalContour.map(point) : [];
-  const measurement = isRecord(value.measurement) ? value.measurement : null;
-  const metrics = measurement ? {
-    widthMm: number(measurement.widthMm),
-    heightMm: number(measurement.heightMm),
-    areaMm2: number(measurement.areaMm2),
-    zonePercent: number(measurement.zonePercent),
-    multiplier: number(measurement.multiplier),
-    weightedAreaMm2: number(measurement.weightedAreaMm2),
-    subgradeEffect: number(measurement.subgradeEffect),
-  } : null;
-  if (
-    !text(value.id) || !side || !zone || !defectType || !reviewResult ||
-    !text(value.sourceViewId) || contour.length < 3 || contour.some((entry) => !entry) ||
-    !metrics || Object.values(metrics).some((entry) => entry === null || entry < 0)
-  ) return null;
+  let finalTrace: SpeedsterMeasuredDefect["finalTrace"];
+  if (value.finalTrace !== undefined) {
+    try {
+      finalTrace = parseSpeedsterTraceRleV1(value.finalTrace);
+    } catch {
+      return null;
+    }
+  }
+  const metrics = (measurement: unknown) => {
+    if (!isRecord(measurement)) return null;
+    const parsed = {
+      ...(measurement.pixelCount !== undefined ? { pixelCount: number(measurement.pixelCount) } : {}),
+      widthMm: number(measurement.widthMm),
+      heightMm: number(measurement.heightMm),
+      areaMm2: number(measurement.areaMm2),
+      zonePercent: number(measurement.zonePercent),
+      multiplier: number(measurement.multiplier),
+      weightedAreaMm2: number(measurement.weightedAreaMm2),
+      subgradeEffect: number(measurement.subgradeEffect),
+    };
+    return Object.values(parsed).some((entry) => entry === null || entry < 0) ? null : parsed;
+  };
+  if (!text(value.id) || !side || !defectType || !reviewResult || !text(value.sourceViewId)) return null;
   const confidence = number(value.confidence);
   if (confidence === null) return null;
   const supportingViewIds = Array.isArray(value.supportingViewIds)
     ? value.supportingViewIds.map(text).filter((entry): entry is string => Boolean(entry))
     : [];
-  return {
+  const common = {
     id: text(value.id)!,
     side,
-    zone,
     defectType,
     ...(origin ? { origin } : {}),
     ...(detectedDefectType ? { detectedDefectType } : {}),
     confidence,
-    canonicalContour: contour as SpeedsterPoint[],
     sourceViewId: text(value.sourceViewId)!,
     supportingViewIds,
     reviewResult,
-    measurement: metrics as SpeedsterMeasuredDefect["measurement"],
   };
+  if (finalTrace) {
+    if (
+      "zone" in value || "canonicalContour" in value || "measurement" in value ||
+      !Array.isArray(value.measurementRegions)
+    ) return null;
+    const measurementRegions = value.measurementRegions.map((region) => {
+      if (!isRecord(region)) return null;
+      const regionZone = region.zone === "CORNERS" || region.zone === "EDGES" || region.zone === "SURFACE"
+        ? region.zone
+        : null;
+      const regionContour = Array.isArray(region.canonicalContour) ? region.canonicalContour.map(point) : [];
+      const measurement = metrics(region.measurement);
+      return regionZone && regionContour.length >= 3 && !regionContour.some((entry) => !entry) && measurement
+        ? { zone: regionZone, canonicalContour: regionContour as SpeedsterPoint[], measurement }
+        : null;
+    });
+    if (measurementRegions.some((region) => !region)) return null;
+    return {
+      ...common,
+      traceSha256: finalTrace.sha256,
+      measurementRegions: measurementRegions as NonNullable<typeof measurementRegions[number]>[],
+    } as SpeedsterReviewFinding;
+  }
+  const zone = value.zone === "CORNERS" || value.zone === "EDGES" || value.zone === "SURFACE" ? value.zone : null;
+  const measurement = metrics(value.measurement);
+  if (!zone || contour.length < 3 || contour.some((entry) => !entry) || !measurement) return null;
+  return {
+    ...common,
+    zone,
+    canonicalContour: contour as SpeedsterPoint[],
+    measurement,
+  } as SpeedsterMeasuredDefect;
 }
 
 function pair(value: unknown): readonly [number, number] | null {
@@ -219,7 +262,8 @@ export function mapCompletedSpeedsterSession(value: unknown): PublicReportSource
   const cardProfile = value.cardProfile === "POKEMON" || value.cardProfile === "SPORTS" ? value.cardProfile : null;
   const grade = gradeReport(value.gradeReport);
   const keys = sourceKeys(value.capture);
-  if (!cardProfile || !grade || !keys || !Array.isArray(value.reviewedDefects)) return null;
+  const publicReportSlug = text(value.publicReportSlug);
+  if (!cardProfile || !grade || !keys || !publicReportSlug || !Array.isArray(value.reviewedDefects)) return null;
   const defects = value.reviewedDefects
     .filter((entry): entry is Record<string, unknown> => (
       isRecord(entry) &&
@@ -234,8 +278,9 @@ export function mapCompletedSpeedsterSession(value: unknown): PublicReportSource
     if (fieldValue) identity[field] = fieldValue;
   }
   return {
+    publicReportSlug,
     identity,
-    defects: defects as SpeedsterMeasuredDefect[],
+    defects: defects as SpeedsterReviewFinding[],
     grade,
     sourceKeys: keys,
     slabKeys: { front: text(value.slabFrontKey), back: text(value.slabBackKey) },
@@ -262,6 +307,7 @@ export async function materializeSpeedsterReport(
     source.slabKeys.back ? presign(source.slabKeys.back) : null,
   ]);
   return {
+    publicReportSlug: source.publicReportSlug,
     identity: source.identity,
     defects: source.defects,
     grade: source.grade,
@@ -295,6 +341,7 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
     findCompletedSession: (slug) => prisma.aiGraderV2Session.findFirst({
       where: { publicReportSlug: slug, workflowState: "COMPLETED" },
       select: {
+        publicReportSlug: true,
         cardProfile: true,
         workflowState: true,
         identity: true,
@@ -310,6 +357,7 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
 };
 
 export default function SpeedsterPublicReport({
+  publicReportSlug,
   identity,
   defects,
   grade,
@@ -318,6 +366,15 @@ export default function SpeedsterPublicReport({
   slabImageUrls,
 }: PublicReportProps) {
   const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
+  const loadTrace = useCallback(async (findingId: string) => {
+    const response = await fetch(
+      `/api/ai-grader-v2/reports/${encodeURIComponent(publicReportSlug)}/trace?findingId=${encodeURIComponent(findingId)}`,
+      { cache: "no-store" },
+    );
+    const payload = (await response.json().catch(() => ({}))) as { traceWire?: unknown };
+    if (!response.ok || !payload.traceWire) return null;
+    return encodeSpeedsterTraceRleV1(decodeSpeedsterTraceBitmapWireV1(payload.traceWire));
+  }, [publicReportSlug]);
   const title = (identity.cardProfile === "POKEMON" ? identity.cardName : identity.playerName) || "Ten Kings card";
   const details = [identity.year, identity.manufacturer, identity.productSet, identity.parallel, identity.insert, identity.cardNumber]
     .filter(Boolean)
@@ -357,6 +414,7 @@ export default function SpeedsterPublicReport({
           side={side}
           defects={defects}
           readOnly
+          onTraceLoad={loadTrace}
         />
       </section>
 

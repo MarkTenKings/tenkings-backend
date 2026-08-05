@@ -407,15 +407,12 @@ def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]
     return overlap / float(aw * ah + bw * bh - overlap)
 
 
-def defect_candidates(
-    image: np.ndarray,
-    corner_shape: str,
-    view_id: str,
-    maximum: int = 8,
-) -> list[dict]:
-    """Return only small, localized anomaly boxes for geometric SAM prompts."""
+def _boundary_subtracted_anomaly_response(
+    image: np.ndarray, corner_shape: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the full anomaly response before proposal filtering or selection."""
+
     height_px, width_px = image.shape[:2]
-    card_origin = detector_card_origin(width_px, height_px)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (ANOMALY_KERNEL_SIZE, ANOMALY_KERNEL_SIZE)
@@ -429,6 +426,30 @@ def defect_candidates(
     binary = np.uint8(heat >= threshold)
     binary &= detector_material_mask(corner_shape, width_px, height_px)
     binary &= ~_boundary_aligned_response_mask(gray, corner_shape)
+    return binary, bright, dark, heat
+
+
+def boundary_subtracted_anomaly_mask(
+    image: np.ndarray, corner_shape: str
+) -> np.ndarray:
+    """Expose every material anomaly pixel before component proposal filters."""
+
+    binary, _, _, _ = _boundary_subtracted_anomaly_response(image, corner_shape)
+    return binary
+
+
+def defect_candidates(
+    image: np.ndarray,
+    corner_shape: str,
+    view_id: str,
+    maximum: int = 8,
+) -> list[dict]:
+    """Return only small, localized anomaly boxes for geometric SAM prompts."""
+    height_px, width_px = image.shape[:2]
+    card_origin = detector_card_origin(width_px, height_px)
+    binary, bright, dark, heat = _boundary_subtracted_anomaly_response(
+        image, corner_shape
+    )
     count, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
     proposals = []
     padding = max(2, round(0.4 * PX_PER_MM))

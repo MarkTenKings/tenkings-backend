@@ -6,8 +6,6 @@ export type SpeedsterInspectionFrame = {
   cardBounds: { x: number; y: number; width: number; height: number };
 };
 
-export type SpeedsterNormalizedBox = { x: number; y: number; width: number; height: number };
-
 export const SPEEDSTER_CANONICAL_FRAME: SpeedsterInspectionFrame = {
   width: 1270,
   height: 1778,
@@ -70,22 +68,16 @@ export function canonicalContourToInspection(
   return contour.map((point) => canonicalPointToInspection(point, frame));
 }
 
-export function inspectionBoxToCanonical(
-  box: SpeedsterNormalizedBox,
+export function inspectionPointToCanonical(
+  point: SpeedsterPoint,
   frame: SpeedsterInspectionFrame,
-): SpeedsterNormalizedBox | null {
+): SpeedsterPoint | null {
   const card = normalizedCardBounds(frame);
-  const left = Math.max(box.x, card.left);
-  const top = Math.max(box.y, card.top);
-  const right = Math.min(box.x + box.width, card.right);
-  const bottom = Math.min(box.y + box.height, card.bottom);
-  if (right <= left || bottom <= top) return null;
-  const cardWidth = card.right - card.left;
-  const cardHeight = card.bottom - card.top;
+  if (point.x < card.left || point.x > card.right || point.y < card.top || point.y > card.bottom) {
+    return null;
+  }
   return {
-    x: (left - card.left) / cardWidth,
-    y: (top - card.top) / cardHeight,
-    width: (right - left) / cardWidth,
-    height: (bottom - top) / cardHeight,
+    x: (point.x - card.left) / (card.right - card.left),
+    y: (point.y - card.top) / (card.bottom - card.top),
   };
 }

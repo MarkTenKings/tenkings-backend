@@ -6,7 +6,6 @@ import test from "node:test";
 import {
   SPEEDSTER_CANONICAL_FRAME,
   canonicalPointToInspection,
-  inspectionBoxToCanonical,
   parseSpeedsterInspectionFrame,
 } from "../lib/ai-grader-v2/inspection-frame";
 
@@ -25,21 +24,6 @@ test("maps canonical card corners into the exact 40-pixel inspection inset", () 
     x: 1309 / 1349,
     y: 1817 / 1857,
   });
-});
-
-test("Smart-Mark boxes may use the context but measurement receives only card intersection", () => {
-  const canonical = inspectionBoxToCanonical({
-    x: 20 / 1349,
-    y: 30 / 1857,
-    width: 50 / 1349,
-    height: 60 / 1857,
-  }, frame);
-  assert.ok(canonical);
-  assert.equal(canonical.x, 0);
-  assert.equal(canonical.y, 0);
-  assert.ok(canonical.width > 0);
-  assert.ok(canonical.height > 0);
-  assert.equal(inspectionBoxToCanonical({ x: 0, y: 0, width: 10 / 1349, height: 10 / 1857 }, frame), null);
 });
 
 test("legacy full-frame evidence remains an identity mapping", () => {
@@ -86,27 +70,30 @@ test("the existing defect detail panel surfaces compact memory provenance", () =
   assert.doesNotMatch(component, /memory.*(?:confirm|modal|screen)/i);
 });
 
-test("Smart-Mark measure sends the same ORIGINAL inspection evidence in one request", () => {
+test("review measurement uses one server-owned ORIGINAL inspection evidence request", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
-  const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
+  const service = readFileSync(`${root}/lib/server/aiGraderV2ReviewAction.ts`, "utf8");
 
-  assert.match(page, /evidenceView:\s*\{/);
-  assert.match(page, /sessionId:\s*draft\.id/);
-  assert.match(page, /id:\s*`\$\{side\}:ORIGINAL`/);
-  assert.match(page, /sourceImageUrls\[`\$\{side\}:ORIGINAL`\]/);
-  assert.match(page, /inspectionFrame:\s*side === "FRONT"/);
+  assert.match(page, /\/review-action/);
+  assert.doesNotMatch(page, /speedsterImageService\.measure/);
   assert.match(service, /evidenceView:\s*\{/);
+  assert.match(service, /id:\s*`\$\{side\}:ORIGINAL`/);
+  assert.match(service, /inspectionStorageKey/);
+  assert.match(service, /await deps\.measure/);
   assert.doesNotMatch(page, /fingerprint.*(?:queue|poll)/i);
 });
 
 test("SAM Memory decisions reuse deterministic session and side diagnostics", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
-  const page = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
-  const service = readFileSync(`${root}/lib/ai-grader-v2/image-service.ts`, "utf8");
+  const service = readFileSync(`${root}/lib/server/aiGraderV2ReviewAction.ts`, "utf8");
+  const route = readFileSync(
+    `${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`,
+    "utf8",
+  );
 
-  assert.match(page, /sessionId:\s*draft\.id/);
-  assert.match(page, /requestTraceId:\s*`\$\{draft\.id\}:\$\{request\.side\}:detect`/);
-  assert.match(service, /sessionId:\s*string/);
-  assert.match(service, /requestTraceId:\s*string/);
+  assert.match(service, /sessionId:\s*input\.sessionId/);
+  assert.match(service, /requestTraceId:\s*`\$\{input\.sessionId\}:\$\{request\.side\}:detect`/);
+  assert.match(service, /learningBank,/);
+  assert.match(route, /speedsterLearningBankForDetectRequest/);
 });

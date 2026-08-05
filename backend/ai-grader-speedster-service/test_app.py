@@ -13,6 +13,7 @@ from card_geometry import (
     INSPECTION_WIDTH,
     PX_PER_MM,
     _candidate_contours,
+    boundary_subtracted_anomaly_mask,
     defect_candidates,
     detector_material_mask,
     detect_card_quad,
@@ -73,6 +74,32 @@ CUBONE_CORNER_ERROR_TOLERANCE_PX = 24
 
 
 class SpeedsterGeometryTest(unittest.TestCase):
+    def test_raw_anomaly_mask_keeps_component_filtered_from_detector_candidates(self):
+        image = np.full(
+            (INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), 128, dtype=np.uint8
+        )
+        anomaly_x = INSPECTION_MARGIN_PX + TARGET_WIDTH // 2
+        anomaly_y = INSPECTION_MARGIN_PX + TARGET_HEIGHT // 2
+        image[anomaly_y, anomaly_x] = 255
+
+        residual = boundary_subtracted_anomaly_mask(image, "SQUARE")
+        candidates = defect_candidates(
+            image,
+            "SQUARE",
+            "FRONT:ORIGINAL",
+            maximum=1000,
+        )
+
+        self.assertTrue(residual[anomaly_y, anomaly_x])
+        self.assertFalse(
+            any(
+                x <= anomaly_x < x + width and y <= anomaly_y < y + height
+                for x, y, width, height in (
+                    candidate["coreBox"] for candidate in candidates
+                )
+            )
+        )
+
     def test_non_boundary_aligned_chip_at_the_rim_survives_subtraction(self):
         image = np.full(
             (INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), 25, dtype=np.uint8

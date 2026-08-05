@@ -4,11 +4,19 @@ import { useState } from "react";
 import type {
   SpeedsterCardSide,
   SpeedsterDefectType,
-  SpeedsterMeasuredDefect,
+  SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
 import type { calculateSpeedsterGrade } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
-import { DefectEvidenceViewer } from "./DefectEvidenceViewer";
+import type { SpeedsterTraceRleV1 } from "../../lib/ai-grader-v2/trace-codec";
+import {
+  DefectEvidenceViewer,
+} from "./DefectEvidenceViewer";
+import type {
+  SpeedsterInMemoryTraceSave,
+  SpeedsterTraceCornerShape,
+  SpeedsterTraceProposalInput,
+} from "./DefectTraceEditor";
 import { GradeSummary } from "./GradeSummary";
 import styles from "./ReviewWorkspace.module.css";
 
@@ -16,13 +24,18 @@ type ReviewWorkspaceProps = {
   masterImageUrls: Readonly<Record<SpeedsterCardSide, string>>;
   inspectionFrames: Readonly<Record<SpeedsterCardSide, SpeedsterInspectionFrame>>;
   sourceImageUrls: Readonly<Record<string, string>>;
-  defects: readonly SpeedsterMeasuredDefect[];
+  cornerShape: SpeedsterTraceCornerShape;
+  defects: readonly SpeedsterReviewFinding[];
   grade: ReturnType<typeof calculateSpeedsterGrade>;
   canUndo: boolean;
   onRemoveDefect: (defectId: string) => void;
   onUndo: () => void;
   onDefectTypeChange: (defectId: string, defectType: SpeedsterDefectType) => void;
-  onSmartMark: (side: SpeedsterCardSide, box: { x: number; y: number; width: number; height: number }) => void;
+  onTraceProposal?: (
+    input: SpeedsterTraceProposalInput,
+  ) => Uint8Array | null | void | Promise<Uint8Array | null | void>;
+  onTraceSave?: (input: SpeedsterInMemoryTraceSave) => boolean | void | Promise<boolean | void>;
+  onTraceLoad?: (findingId: string) => Promise<SpeedsterTraceRleV1 | null>;
   onImageError?: () => void;
   onComplete: () => void;
 };
@@ -31,13 +44,16 @@ export function ReviewWorkspace({
   masterImageUrls,
   inspectionFrames,
   sourceImageUrls,
+  cornerShape,
   defects,
   grade,
   canUndo,
   onRemoveDefect,
   onUndo,
   onDefectTypeChange,
-  onSmartMark,
+  onTraceProposal,
+  onTraceSave,
+  onTraceLoad,
   onImageError,
   onComplete,
 }: ReviewWorkspaceProps) {
@@ -61,16 +77,20 @@ export function ReviewWorkspace({
       </header>
 
       <DefectEvidenceViewer
+        key={side}
         masterImageUrl={masterImageUrls[side]}
         magnifyImageUrl={sourceImageUrls[`${side}:ORIGINAL`]}
         inspectionFrame={inspectionFrames[side]}
         sourceImageUrls={sourceImageUrls}
+        cornerShape={cornerShape}
         side={side}
         defects={defects}
         readOnly={false}
         onRemoveDefect={onRemoveDefect}
         onDefectTypeChange={onDefectTypeChange}
-        onSmartMark={(box) => onSmartMark(side, box)}
+        onTraceProposal={onTraceProposal}
+        onTraceSave={onTraceSave}
+        onTraceLoad={onTraceLoad}
         onImageError={onImageError}
       />
 

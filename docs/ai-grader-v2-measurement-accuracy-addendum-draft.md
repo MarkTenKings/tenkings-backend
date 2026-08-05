@@ -124,6 +124,75 @@ existing seam cannot preserve the trace and stroke exactly, implementation must
 stop for approval of any migration or storage change rather than introduce an
 unapproved storage system.
 
+### 3.4 Approved trace serialization
+
+Mark approved `TK_SPEEDSTER_TRACE_RLE_V1` on 2026-08-04. It is the sole
+persisted final-trace serialization approved by this addendum:
+
+- grid: `1270 x 1778` binary pixels;
+- origin and order: `TOP_LEFT`, `ROW_MAJOR_Y_X`;
+- `runs`: alternating maximal zero/one run lengths, beginning with the zero
+  run; `runs[0]` may be zero, every later run is positive, and the exact sum is
+  `2,258,060`;
+- fields: `format`, `width`, `height`, `origin`, `order`, `runs`, and `sha256`,
+  with no additional fields; and
+- SHA-256 preimage: the six metadata lines (`format`, `width`, `height`,
+  `origin`, `order`, initial value `0`), followed by the comma-joined runs, all
+  LF-terminated including the final line.
+
+The cross-language golden trace has one set pixel at row-major index
+`1,129,665`, runs `[1129665,1,1128394]`, and SHA-256
+`928e33389ba8eb03acf1325532e93cfb615cf1527099bd53dbecd7e769cc6ed0`.
+This approval does not authorize a second persisted trace format, a schema
+migration, or a new storage system.
+
+### 3.5 Approved bitmap transport and finding shape
+
+Mark approved `TK_SPEEDSTER_TRACE_BITMAP_WIRE_V1` on 2026-08-04 as a
+transport-only representation. It never becomes persisted or grading
+authority. The server deterministically converts it to and from the approved
+`TK_SPEEDSTER_TRACE_RLE_V1` source trace.
+
+- grid, origin, and order: `1270 x 1778`, `TOP_LEFT`, `ROW_MAJOR_Y_X`;
+- bit packing: one bit per canonical pixel, `MSB_FIRST` in each byte;
+- exact byte length: `282,258`; the low four padding bits of the final byte are
+  zero;
+- exact base64 length: `376,344` characters; and
+- exact fields: `format`, `width`, `height`, `origin`, `order`, `bitOrder`,
+  `byteLength`, `dataBase64`, and `rleSha256`.
+
+`rleSha256` must equal the SHA-256 of the deterministic approved RLE produced
+from the transported pixels. Ordinary session, report, and action responses do
+not embed aggregate RLE bodies. An authenticated review client or a published
+report may fetch one trace at a time, and that response uses only the approved
+bitmap wire. Persisted JSON continues to contain only RLE.
+
+One saved exact trace is represented as one stable source finding. Its original
+finding ID, origin, review result, source views, fingerprint, Memory provenance,
+trace provenance, and RLE occur once at source level. It has no top-level zone,
+contour, or measurement. Its ordered `measurementRegions` children contain only
+the non-empty disjoint `CORNERS`, `EDGES`, and `SURFACE` partitions with each
+partition's derived contour and measurement. The integer child pixel counts
+must sum exactly to the material-clipped pixels attributed to that source, and
+overlap ownership may count each scoring pixel only once. Historical
+contour-era findings remain flat and read-only compatible.
+
+### 3.6 One server-owned review-action path
+
+Smart-Mark Save, Remove, Undo, and Change Type use one authenticated
+server-owned action path. The server loads the current persisted capture and
+findings, accepts only the changed action and at most one bitmap-wire trace,
+performs one measurement pass, recalculates the grade, and persists the RLE,
+source/measurement-region findings, and grade together. The generic session
+update path cannot write reviewed findings or grade reports.
+
+Remove stores the exact prior review result as server-private action state.
+Undo accepts only the finding ID, restores that state, and removes the private
+marker in the same persistence operation. No private marker, trace body, or
+client-supplied restored finding may appear in public/report/service payloads.
+Completion accepts no client findings or grade, rereads the server-owned state,
+and applies the existing completion dispositions and grade calculation there.
+
 ## 4. One review interaction
 
 There is one drawing surface: the enlarged zoom panel. There is no drawing on
@@ -256,8 +325,9 @@ Acceptance is read-only with respect to every completed report and card.
 Re-run the completed Cubone evidence using reviewer-corrected traces without
 writing the session, report, label, learning bank, image, or historical grade.
 
-- Front Corner weighted damage must fall from approximately `35%` to less than
-  `5%`. This is a one-time read-only release-validation check on the known
+- Front Corner weighted damage must fall from the verified published baseline
+  `20.903165735568%` to less than `5%`. This is a one-time read-only
+  release-validation check on the known
   Cubone fixture only. It does not run in Production, is not a grading rule,
   and places no limit on how much Corner damage any real card may have.
 - The corrected visible traces must match Mark's visual judgment of the physical
@@ -351,7 +421,9 @@ boundaries in Section 3.3 and Step 1.
    trace bytes; never append a separately remeasured Smart-Mark region.
 5. **Boundary subtraction.** Modify only the existing anomaly-residual/core
    formation to subtract the expected material-boundary and rounded-arc
-   response. Freeze the Cubone `80 x 73 px` to rim-scale regression.
+   response. Freeze the Cubone approximately `80 x 73 px` pre-change core and
+   assert that the post-subtraction core is below the fixture-derived bound of
+   approximately `30%` of the Corner zone and intersects the stored rim region.
 6. **Conditional wedge decision.** Run the three Cubone mask fixtures. Add the
    single boundary-coincidence rule only if either oversized mask still passes;
    otherwise add no code. Assert two fails and the `1.44 mm²` sliver passes.

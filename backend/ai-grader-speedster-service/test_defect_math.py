@@ -1,5 +1,6 @@
 import unittest
 
+import cv2
 import numpy as np
 
 from defect_math import (
@@ -28,6 +29,22 @@ def proposal(contour, view, confidence=0.8, defect_type="VISIBLE_WHITENING"):
         "defectType": defect_type,
         "confidence": confidence,
     }
+
+
+def _rasterized_rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
+    mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+    points = np.array(
+        [
+            [
+                round(point["x"] * (GRID_WIDTH - 1)),
+                round(point["y"] * (GRID_HEIGHT - 1)),
+            ]
+            for point in rectangle(x1_mm, y1_mm, x2_mm, y2_mm)
+        ],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(mask, [points], 1)
+    return mask
 
 
 class DefectMathTests(unittest.TestCase):
@@ -62,6 +79,10 @@ class DefectMathTests(unittest.TestCase):
             sum(result["areaMm2"] for result in results),
             expected_area,
             places=10,
+        )
+        self.assertEqual(
+            sum(result["pixelCount"] for result in results),
+            expected_pixels,
         )
 
         empty = measure_defects(
@@ -133,6 +154,10 @@ class DefectMathTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(zones, {"CORNERS", "EDGES", "SURFACE"})
+        self.assertEqual(
+            sum(item["pixelCount"] for item in whole),
+            int(np.count_nonzero(_rasterized_rectangle(4, 0, 6, 6))),
+        )
         self.assertAlmostEqual(split_area, 12.0, delta=0.5)
         self.assertEqual(surface_only["multiplier"], 1.0)
         self.assertAlmostEqual(
