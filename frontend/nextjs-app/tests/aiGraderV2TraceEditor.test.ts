@@ -262,6 +262,25 @@ test("existing finding contours open as editable binary traces and Save copies e
   assert.ok(saved.some((value) => value === 1));
 });
 
+test("Brush adds pixels to an existing detector or Memory contour trace", () => {
+  const trace = rasterizeSpeedsterCanonicalContour([
+    { x: 0.4, y: 0.4 },
+    { x: 0.6, y: 0.4 },
+    { x: 0.6, y: 0.6 },
+    { x: 0.4, y: 0.6 },
+  ]);
+  const before = trace.reduce((total, value) => total + value, 0);
+  const brushed = applyCompletedSpeedsterTraceStroke({
+    trace,
+    tool: "BRUSH",
+    points: [{ x: 760, y: 889 }],
+    strokeWidthPixels: 12,
+  });
+
+  assert.equal(brushed.proposalRequest, null);
+  assert.ok(brushed.trace.reduce((total, value) => total + value, 0) > before);
+});
+
 test("an existing trace revision preserves source, crop, and ordered strokes while updating only its hash", () => {
   const prior = {
     version: "speedster-trace-provenance-v1" as const,
@@ -345,6 +364,7 @@ test("the master map only anchors and the enlarged close-up is the sole drawing 
   assert.match(editor, /if \(proposalPending \|\| savePending \|\| activePointerIdRef\.current !== null\) return/);
   assert.match(editor, /disabled=\{proposalPending \|\| savePending\}/);
   assert.match(editor, /disabled=\{!validTrace \|\| proposalPending \|\| savePending\}/);
+  assert.match(editor, /Brush added no pixels because that area is already in the trace/);
   assert.match(editor, /error instanceof Error\s+\? error\.message/);
   const proposalStart = adminPage.indexOf("const traceProposal =");
   const proposalEnd = adminPage.indexOf("const saveTrace =", proposalStart);

@@ -86,6 +86,10 @@ function samePixel(left: SpeedsterCanonicalPixel | undefined, right: SpeedsterCa
   return left?.x === right.x && left.y === right.y;
 }
 
+function sameTrace(left: Uint8Array, right: Uint8Array) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 export function DefectTraceEditor({
   target,
   imageUrl,
@@ -200,8 +204,15 @@ export function DefectTraceEditor({
       strokeWidthPixels: TOOL_WIDTH_PIXELS[tool],
     });
     if (!result.proposalRequest) {
+      const nextTrace = clipSpeedsterTraceToEditorBounds(result.trace, cropTransform, cornerShape);
+      if (sameTrace(trace, nextTrace)) {
+        onError?.(tool === "BRUSH"
+          ? "Brush added no pixels because that area is already in the trace. Draw beyond the amber trace or use Eraser to shrink it."
+          : "Eraser removed no pixels because that area is outside the trace.");
+        return;
+      }
       editRevisionRef.current += 1;
-      setTrace(clipSpeedsterTraceToEditorBounds(result.trace, cropTransform, cornerShape));
+      setTrace(nextTrace);
       onError?.("");
       return;
     }

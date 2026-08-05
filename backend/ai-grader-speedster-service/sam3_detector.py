@@ -573,16 +573,14 @@ class Sam3ImageProcessor:
 
         with self._lock:
             processor = self.load()
-            interactive = getattr(
-                getattr(processor, "model", None),
-                "inst_interactive_predictor",
-                None,
-            )
+            model = getattr(processor, "model", None)
+            interactive = getattr(model, "inst_interactive_predictor", None)
             if interactive is None:
                 raise RuntimeError("Pinned SAM 3 point-prompt head is unavailable")
             with self._autocast():
-                interactive.set_image(rgb_image)
-                masks, scores, _ = interactive.predict(
+                state = processor.set_image(rgb_image)
+                masks, scores, _ = model.predict_inst(
+                    state,
                     point_coords=points,
                     point_labels=labels,
                     multimask_output=True,
