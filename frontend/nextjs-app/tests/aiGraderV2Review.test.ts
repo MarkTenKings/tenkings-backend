@@ -8,6 +8,7 @@ import {
   correctSpeedsterDefectType,
   prepareSpeedsterCompletion,
   publicSpeedsterDefects,
+  remeasureSpeedsterReviewAction,
   removeSpeedsterDefect,
   replaceSpeedsterSideMeasurements,
   restoreSpeedsterDefect,
@@ -114,6 +115,137 @@ test("side remeasurement replaces active findings and preserves removed provenan
   assert.equal(result[0], removed);
   assert.equal(result[1], back);
   assert.equal(result[2], remeasured);
+});
+
+test("Smart-Mark Save, Remove, Undo, and Change Type each run the same immediate measurement pass", async () => {
+  const memory = {
+    ...defect,
+    id: "front-memory",
+    origin: "MEMORY" as const,
+    detectedDefectType: "VISIBLE_WHITENING" as const,
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    memoryProposal: {
+      lessonSessionId: "cubone-reviewed-session",
+      lessonCompletionOrder: 228,
+      lessonProposalOrder: 7,
+      lessonOrder: 0,
+      lessonSourceViewId: "ORIGINAL" as const,
+      similarity: 0.94,
+    },
+  };
+  const back = { ...defect, id: "back-1", side: "BACK" as const };
+  const removedMemory = removeSpeedsterDefect([memory], memory.id)[0];
+  const mark = {
+    id: "FRONT:smart-no-op",
+    defectType: "FAINT_COLOR_VARIATION" as const,
+    canonicalContour: memory.canonicalContour,
+    sourceViewId: "FRONT:ORIGINAL",
+  };
+  const cases = [
+    {
+      name: "Smart-Mark Save",
+      defects: [memory, back],
+      action: { type: "SMART_MARK_SAVE" as const, side: "FRONT" as const, mark },
+      expectedReviewResult: "UNREVIEWED",
+      expectedDefectType: "LIGHT_SCRATCH_SCUFF",
+      expectedMarkCount: 1,
+    },
+    {
+      name: "Remove",
+      defects: [memory, back],
+      action: { type: "REMOVE" as const, defectId: memory.id },
+      expectedReviewResult: undefined,
+      expectedDefectType: undefined,
+      expectedMarkCount: 0,
+    },
+    {
+      name: "Undo",
+      defects: [removedMemory, back],
+      action: { type: "UNDO" as const, restored: memory },
+      expectedReviewResult: "UNREVIEWED",
+      expectedDefectType: "LIGHT_SCRATCH_SCUFF",
+      expectedMarkCount: 0,
+    },
+    {
+      name: "Change Type",
+      defects: [memory, back],
+      action: {
+        type: "CHANGE_TYPE" as const,
+        defectId: memory.id,
+        defectType: "PEELING_HEAVY_DAMAGE" as const,
+      },
+      expectedReviewResult: "TYPE_CORRECTED",
+      expectedDefectType: "PEELING_HEAVY_DAMAGE",
+      expectedMarkCount: 0,
+    },
+  ];
+
+  for (const scenario of cases) {
+    let calls = 0;
+    const result = await remeasureSpeedsterReviewAction({
+      defects: scenario.defects,
+      action: scenario.action,
+      measure: async ({ side, findings, marks }) => {
+        calls += 1;
+        assert.equal(side, "FRONT", scenario.name);
+        assert.equal(marks.length, scenario.expectedMarkCount, scenario.name);
+        assert.equal(findings.some(({ side: findingSide }) => findingSide === "BACK"), false, scenario.name);
+        if (scenario.expectedReviewResult) {
+          assert.equal(findings[0].reviewResult, scenario.expectedReviewResult, scenario.name);
+          assert.equal(findings[0].defectType, scenario.expectedDefectType, scenario.name);
+        } else {
+          assert.equal(findings.length, 0, scenario.name);
+        }
+        return {
+          defects: findings.map((finding) => ({
+            ...finding,
+            measurement: {
+              ...finding.measurement,
+              areaMm2: 7,
+              zonePercent: 14,
+              weightedAreaMm2: 14,
+            },
+          })),
+        };
+      },
+    });
+
+    assert.equal(calls, 1, scenario.name);
+    assert.equal(result.find(({ id }) => id === back.id), back, scenario.name);
+    if (scenario.name === "Remove") {
+      const removed = result.find(({ id }) => id === memory.id);
+      assert.equal(removed?.reviewResult, "REMOVED");
+      assert.deepEqual(removed?.featureFingerprint, memory.featureFingerprint);
+      assert.deepEqual(removed?.memoryProposal, memory.memoryProposal);
+    } else {
+      assert.equal(result.find(({ id }) => id === memory.id)?.measurement.areaMm2, 7, scenario.name);
+    }
+  }
+});
+
+test("a fully contained Smart-Mark Save is an idempotent successful remeasurement", async () => {
+  let calls = 0;
+  const result = await remeasureSpeedsterReviewAction({
+    defects: [defect],
+    action: {
+      type: "SMART_MARK_SAVE",
+      side: "FRONT",
+      mark: {
+        id: "FRONT:smart-contained",
+        defectType: "FAINT_COLOR_VARIATION",
+        canonicalContour: defect.canonicalContour,
+        sourceViewId: "FRONT:ORIGINAL",
+      },
+    },
+    measure: async ({ findings, marks }) => {
+      calls += 1;
+      assert.equal(marks.length, 1);
+      return { defects: [...findings] };
+    },
+  });
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result, [defect]);
 });
 
 test("fully contained full and partial Smart-Mark overlaps change neither union damage nor grade", () => {

@@ -203,6 +203,62 @@ export function replaceSpeedsterSideMeasurements(
   ];
 }
 
+type SpeedsterSmartMark = {
+  id: string;
+  defectType: SpeedsterDefectType;
+  canonicalContour: SpeedsterMeasuredDefect["canonicalContour"];
+  sourceViewId: string;
+};
+
+export type SpeedsterReviewMeasurementAction =
+  | { type: "SMART_MARK_SAVE"; side: SpeedsterCardSide; mark: SpeedsterSmartMark }
+  | { type: "REMOVE"; defectId: string }
+  | { type: "UNDO"; restored: SpeedsterMeasuredDefect }
+  | { type: "CHANGE_TYPE"; defectId: string; defectType: SpeedsterDefectType };
+
+type SpeedsterReviewMeasurementPass = (input: {
+  side: SpeedsterCardSide;
+  findings: readonly SpeedsterMeasuredDefect[];
+  marks: readonly SpeedsterSmartMark[];
+}) => Promise<{ defects: SpeedsterMeasuredDefect[] }>;
+
+export async function remeasureSpeedsterReviewAction(input: {
+  defects: readonly SpeedsterMeasuredDefect[];
+  action: SpeedsterReviewMeasurementAction;
+  measure: SpeedsterReviewMeasurementPass;
+}): Promise<SpeedsterMeasuredDefect[]> {
+  const defectId = input.action.type === "REMOVE" || input.action.type === "CHANGE_TYPE"
+    ? input.action.defectId
+    : null;
+  const target = defectId === null
+    ? null
+    : input.defects.find(({ id }) => id === defectId);
+  if ((input.action.type === "REMOVE" || input.action.type === "CHANGE_TYPE") && !target) {
+    throw new Error("Speedster review finding was not found.");
+  }
+
+  const side = input.action.type === "SMART_MARK_SAVE"
+    ? input.action.side
+    : input.action.type === "UNDO"
+      ? input.action.restored.side
+      : target!.side;
+  const nextDefects = input.action.type === "REMOVE"
+    ? removeSpeedsterDefect(input.defects, input.action.defectId)
+    : input.action.type === "UNDO"
+      ? restoreSpeedsterDefect(input.defects, input.action.restored)
+      : input.action.type === "CHANGE_TYPE"
+        ? correctSpeedsterDefectType(input.defects, input.action.defectId, input.action.defectType)
+        : [...input.defects];
+  const measured = await input.measure({
+    side,
+    findings: nextDefects.filter(
+      (finding) => finding.side === side && finding.reviewResult !== "REMOVED",
+    ),
+    marks: input.action.type === "SMART_MARK_SAVE" ? [input.action.mark] : [],
+  });
+  return replaceSpeedsterSideMeasurements(nextDefects, side, measured.defects);
+}
+
 export function correctSpeedsterDefectType(
   defects: readonly SpeedsterMeasuredDefect[],
   defectId: string,

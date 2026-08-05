@@ -27,13 +27,11 @@ import {
 } from "../../lib/ai-grader-v2/review-image-urls";
 import {
   calculateSpeedsterReview,
-  correctSpeedsterDefectType,
   prepareSpeedsterCompletion,
-  removeSpeedsterDefect,
-  replaceSpeedsterSideMeasurements,
-  restoreSpeedsterDefect,
+  remeasureSpeedsterReviewAction,
   scanSpeedsterCapture,
   speedsterDetectorViews,
+  type SpeedsterReviewMeasurementAction,
 } from "../../lib/ai-grader-v2/review";
 import styles from "../../styles/AiGraderV2Admin.module.css";
 
@@ -202,31 +200,55 @@ export default function AiGraderV2AdminPage() {
     }
   };
 
+  const runReviewRemeasurement = async (
+    action: SpeedsterReviewMeasurementAction,
+    pendingMessage: string,
+    successMessage: string,
+    fallbackErrorMessage: string,
+  ): Promise<boolean> => {
+    if (!session?.token || !draft || !capture || !defects || working) return false;
+    setWorking(true);
+    setMessage(pendingMessage);
+    try {
+      const nextDefects = await remeasureSpeedsterReviewAction({
+        defects,
+        action,
+        measure: ({ side, findings, marks }) => speedsterImageService.measure(session.token, {
+          sessionId: draft.id,
+          side,
+          cornerShape: capture.cornerShape,
+          evidenceView: {
+            id: `${side}:ORIGINAL`,
+            imageUrl: sourceImageUrls[`${side}:ORIGINAL`],
+            inspectionFrame: side === "FRONT"
+              ? capture.front.inspectionFrame
+              : capture.back.inspectionFrame,
+          },
+          findings,
+          marks,
+        }),
+      });
+      setDefects(nextDefects);
+      setMessage(successMessage);
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : fallbackErrorMessage);
+      return false;
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const smartMark = async (
     side: SpeedsterCardSide,
     box: { x: number; y: number; width: number; height: number },
   ) => {
-    if (!session?.token || !draft || !capture || working) return;
-    setWorking(true);
-    setMessage("Measuring the Smart-Mark.");
     const id = `${side}:smart-${crypto.randomUUID()}`;
-    const activeSideFindings = (defects ?? []).filter(
-      (defect) => defect.side === side && defect.reviewResult !== "REMOVED",
-    );
-    try {
-      const measured = await speedsterImageService.measure(session.token, {
-        sessionId: draft.id,
+    await runReviewRemeasurement(
+      {
+        type: "SMART_MARK_SAVE",
         side,
-        cornerShape: capture.cornerShape,
-        evidenceView: {
-          id: `${side}:ORIGINAL`,
-          imageUrl: sourceImageUrls[`${side}:ORIGINAL`],
-          inspectionFrame: side === "FRONT"
-            ? capture.front.inspectionFrame
-            : capture.back.inspectionFrame,
-        },
-        findings: activeSideFindings,
-        marks: [{
+        mark: {
           id,
           defectType: "FAINT_COLOR_VARIATION",
           sourceViewId: `${side}:ORIGINAL`,
@@ -236,19 +258,12 @@ export default function AiGraderV2AdminPage() {
             { x: box.x + box.width, y: box.y + box.height },
             { x: box.x, y: box.y + box.height },
           ],
-        }],
-      });
-      const added = measured.defects.filter((defect) => defect.id.startsWith(`${id}:`));
-      if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
-      setDefects((current) => current
-        ? replaceSpeedsterSideMeasurements(current, side, measured.defects)
-        : current);
-      setMessage("Smart-Mark measured. Select its defect type if needed.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Smart-Mark measurement failed.");
-    } finally {
-      setWorking(false);
-    }
+        },
+      },
+      "Measuring the Smart-Mark.",
+      "Smart-Mark measured. Select its defect type if needed.",
+      "Smart-Mark measurement failed.",
+    );
   };
 
   const completeGrade = async () => {
@@ -336,23 +351,34 @@ export default function AiGraderV2AdminPage() {
             onRemoveDefect={(defectId) => {
               const removed = defects.find((defect) => defect.id === defectId);
               if (!removed) return;
-              setLastRemovedDefect(removed);
-              setDefects(removeSpeedsterDefect(defects, defectId));
-              setMessage("Finding removed from grading and saved as reviewer feedback.");
+              void runReviewRemeasurement(
+                { type: "REMOVE", defectId },
+                "Removing the finding and recalculating its card measurements.",
+                "Finding removed from grading and saved as reviewer feedback.",
+                "Finding removal measurement failed.",
+              ).then((applied) => {
+                if (applied) setLastRemovedDefect(removed);
+              });
             }}
             onUndo={() => {
               if (!lastRemovedDefect) return;
-              setDefects((current) => current
-                ? restoreSpeedsterDefect(current, lastRemovedDefect)
-                : current);
-              setLastRemovedDefect(null);
-              setMessage("Last removed finding restored.");
+              const restored = lastRemovedDefect;
+              void runReviewRemeasurement(
+                { type: "UNDO", restored },
+                "Restoring the finding and recalculating its card measurements.",
+                "Last removed finding restored.",
+                "Finding restore measurement failed.",
+              ).then((applied) => {
+                if (applied) setLastRemovedDefect(null);
+              });
             }}
             onDefectTypeChange={(defectId: string, defectType: SpeedsterDefectType) => {
-              setDefects((current) => current
-                ? correctSpeedsterDefectType(current, defectId, defectType)
-                : current);
-              setMessage("Defect type and grade math updated.");
+              void runReviewRemeasurement(
+                { type: "CHANGE_TYPE", defectId, defectType },
+                "Changing the defect type and recalculating its card measurements.",
+                "Defect type and grade math updated.",
+                "Defect type measurement failed.",
+              );
             }}
             onSmartMark={(side, box) => void smartMark(side, box)}
             onImageError={retryReviewImagesOnce}
