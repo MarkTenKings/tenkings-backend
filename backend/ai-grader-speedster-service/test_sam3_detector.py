@@ -196,16 +196,21 @@ class FakeDenseMemoryImageProcessor(FakeOfficialImageProcessor):
 class FakeInteractivePointPredictor:
     def __init__(self, mask):
         self.mask = mask
-        self.images = []
-        self.calls = []
 
     def set_image(self, image):
-        self.images.append(image)
+        del image
+        raise AttributeError("'NoneType' object has no attribute 'forward_image'")
 
-    def predict(self, **kwargs):
-        self.calls.append(kwargs)
+
+class FakePointPromptModel:
+    def __init__(self, interactive):
+        self.inst_interactive_predictor = interactive
+        self.calls = []
+
+    def predict_inst(self, state, **kwargs):
+        self.calls.append((state, kwargs))
         return (
-            self.mask[None, :, :],
+            self.inst_interactive_predictor.mask[None, :, :],
             np.array([0.92], dtype=np.float32),
             np.zeros((1, 256, 256), dtype=np.float32),
         )
@@ -213,7 +218,12 @@ class FakeInteractivePointPredictor:
 
 class FakePointPromptProcessor:
     def __init__(self, interactive):
-        self.model = SimpleNamespace(inst_interactive_predictor=interactive)
+        self.model = FakePointPromptModel(interactive)
+        self.images = []
+
+    def set_image(self, image):
+        self.images.append(image)
+        return {"original_height": image.height, "original_width": image.width}
 
 
 def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
@@ -413,8 +423,15 @@ class Sam3DetectorTests(unittest.TestCase):
         )
         raw = np.ones((INSPECTION_HEIGHT, INSPECTION_WIDTH), dtype=np.uint8)
         interactive = FakeInteractivePointPredictor(raw)
+        live_shaped = FakePointPromptProcessor(interactive)
         processor = Sam3ImageProcessor()
-        processor._processor = FakePointPromptProcessor(interactive)
+        processor._processor = live_shaped
+
+        with self.assertRaisesRegex(
+            AttributeError,
+            "NoneType.*forward_image",
+        ):
+            interactive.set_image(object())
 
         result = processor.propose_smart_mark_trace(
             image,
@@ -430,9 +447,11 @@ class Sam3DetectorTests(unittest.TestCase):
             INSPECTION_FRAME,
         )
 
-        self.assertEqual(len(interactive.images), 1)
-        self.assertEqual(len(interactive.calls), 1)
-        prompt_call = interactive.calls[0]
+        self.assertEqual(len(live_shaped.images), 1)
+        self.assertEqual(len(live_shaped.model.calls), 1)
+        state, prompt_call = live_shaped.model.calls[0]
+        self.assertEqual(state["original_height"], INSPECTION_HEIGHT)
+        self.assertEqual(state["original_width"], INSPECTION_WIDTH)
         self.assertNotIn("box", prompt_call)
         self.assertIs(prompt_call["normalize_coords"], False)
         self.assertGreater(float(np.max(prompt_call["point_coords"])), 1.0)
