@@ -3,6 +3,7 @@ import asyncio
 import inspect
 import json
 import logging
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -21,8 +22,10 @@ from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import (
     DETECTOR_VERSION,
     LOGGER,
+    SAM3_REPOSITORY_COMMIT,
     Sam3ImageProcessor,
     _cap_memory_candidates_per_side,
+    _smart_mark_prompt_inputs,
     _smart_mark_mask,
     detect_views,
     feature_fingerprint,
@@ -203,6 +206,29 @@ class FakeDenseMemoryImageProcessor(FakeOfficialImageProcessor):
         }
 
 
+class FakeInteractivePointPredictor:
+    def __init__(self, mask):
+        self.mask = mask
+        self.images = []
+        self.calls = []
+
+    def set_image(self, image):
+        self.images.append(image)
+
+    def predict(self, **kwargs):
+        self.calls.append(kwargs)
+        return (
+            self.mask[None, :, :],
+            np.array([0.92], dtype=np.float32),
+            np.zeros((1, 256, 256), dtype=np.float32),
+        )
+
+
+class FakePointPromptProcessor:
+    def __init__(self, interactive):
+        self.model = SimpleNamespace(inst_interactive_predictor=interactive)
+
+
 class FixedSmartMarkProcessor:
     def __init__(self, result=None, error=None):
         self.result = result
@@ -252,6 +278,110 @@ def memory_match(similarity, session_id, box=(100, 100, 20, 20)):
 
 
 class Sam3DetectorTests(unittest.TestCase):
+    def test_stroke_prompt_uses_ordered_positives_and_only_geometry_clean_negatives(self):
+        allowed = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        residual = np.zeros_like(allowed)
+        residual[400:500, 500:600] = 1
+        existing = np.zeros_like(allowed)
+        existing[700:800, 700:800] = 1
+        stroke = [
+            {"x": 0.40, "y": 0.40},
+            {"x": 0.42, "y": 0.42},
+            {"x": 0.44, "y": 0.43},
+        ]
+
+        points, labels, corridor = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            residual,
+            existing,
+            INSPECTION_FRAME,
+        )
+
+        positive = points[labels == 1]
+        negative = points[labels == 0]
+        self.assertGreater(len(positive), 1)
+        self.assertGreater(len(negative), 0)
+        self.assertTrue(np.all(labels[: len(positive)] == 1))
+        self.assertTrue(np.all(labels[len(positive) :] == 0))
+        negative_x = np.rint(negative[:, 0]).astype(int)
+        negative_y = np.rint(negative[:, 1]).astype(int)
+        self.assertTrue(np.all(allowed[negative_y, negative_x] > 0))
+        self.assertTrue(np.all(corridor[negative_y, negative_x] == 0))
+        self.assertTrue(np.all(residual[negative_y, negative_x] == 0))
+        self.assertTrue(np.all(existing[negative_y, negative_x] == 0))
+        self.assertTrue(
+            np.all(
+                cv2.distanceTransform(allowed, cv2.DIST_L2, 5)[
+                    negative_y, negative_x
+                ]
+                > 7
+            )
+        )
+
+        repeated = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            residual,
+            existing,
+            INSPECTION_FRAME,
+        )
+        np.testing.assert_array_equal(repeated[0], points)
+        np.testing.assert_array_equal(repeated[1], labels)
+        np.testing.assert_array_equal(repeated[2], corridor)
+
+    def test_same_pinned_sam_model_point_head_proposes_one_material_clipped_trace(self):
+        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
+        allowed = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        raw = np.ones((INSPECTION_HEIGHT, INSPECTION_WIDTH), dtype=np.uint8)
+        interactive = FakeInteractivePointPredictor(raw)
+        processor = Sam3ImageProcessor()
+        processor._processor = FakePointPromptProcessor(interactive)
+
+        result = processor.propose_smart_mark_trace(
+            image,
+            [
+                {"x": 0.40, "y": 0.40},
+                {"x": 0.42, "y": 0.42},
+                {"x": 0.44, "y": 0.43},
+            ],
+            1.0,
+            allowed,
+            np.zeros_like(allowed),
+            np.zeros_like(allowed),
+            INSPECTION_FRAME,
+        )
+
+        self.assertEqual(len(interactive.images), 1)
+        self.assertEqual(len(interactive.calls), 1)
+        prompt_call = interactive.calls[0]
+        self.assertNotIn("box", prompt_call)
+        self.assertNotIn("normalize_coords", prompt_call)
+        self.assertGreater(float(np.max(prompt_call["point_coords"])), 1.0)
+        self.assertEqual(set(prompt_call["point_labels"].tolist()), {0, 1})
+        self.assertGreater(
+            np.count_nonzero(prompt_call["point_labels"] == 0), 0
+        )
+        np.testing.assert_array_equal(result["mask"], allowed > 0)
+        self.assertEqual(result["promptAttempts"], 1)
+
+    def test_point_prompt_uses_the_optional_head_in_the_same_pinned_model(self):
+        source = inspect.getsource(Sam3ImageProcessor.load)
+
+        self.assertIn("enable_inst_interactivity=True", source)
+        self.assertIn("checkpoint_path=checkpoint_path", source)
+        module_source = inspect.getsource(inspect.getmodule(Sam3ImageProcessor))
+        self.assertIn(
+            f'SAM3_REPOSITORY_COMMIT = "{SAM3_REPOSITORY_COMMIT}"',
+            module_source,
+        )
+
     def test_sam_memory_decision_logger_emits_info_diagnostics(self):
         self.assertEqual(LOGGER.level, logging.INFO)
 
@@ -547,6 +677,26 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertGreater(defect["measurement"]["areaMm2"], 0)
         self.assertGreater(defect["measurement"]["zonePercent"], 0)
         self.assertEqual(defect["measurement"]["multiplier"], 1.0)
+
+    def test_detector_measurement_receives_the_exact_trace_without_polygon_round_trip(self):
+        processor = FakeMaskProcessor()
+        image = np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8)
+        with patch("sam3_detector.defect_candidates", return_value=[]):
+            with patch("sam3_detector.measure_defects", return_value=[]) as measure:
+                detect_views(
+                    [("ORIGINAL", image)],
+                    "FRONT",
+                    "SQUARE",
+                    processor,
+                )
+
+        proposals = measure.call_args.args[0]
+        self.assertEqual(len(proposals), 1)
+        self.assertIn("canonicalMask", proposals[0])
+        self.assertNotIn("canonicalContour", proposals[0])
+        expected = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        expected[500:650, 450:600] = 1
+        np.testing.assert_array_equal(proposals[0]["canonicalMask"], expected)
 
     def test_smart_mark_crossing_zones_has_unique_stable_zone_ids(self):
         result = measure_marks(

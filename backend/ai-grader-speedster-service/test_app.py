@@ -13,8 +13,11 @@ from card_geometry import (
     INSPECTION_WIDTH,
     PX_PER_MM,
     _candidate_contours,
+    defect_candidates,
+    detector_material_mask,
     detect_card_quad,
     find_printed_border_offsets,
+    material_distance_from_cut,
     printed_border_quad,
     warp_to_card_map,
     warp_to_inspection_map,
@@ -54,6 +57,12 @@ CUBONE_FIXTURES = {
             ],
             dtype=np.float32,
         ),
+        "topRightRimRegion": {
+            "version": "CUBONE_BACK_TOP_RIGHT_GEOMETRY_RIM_V1",
+            "cornerZoneMm": 5.0,
+            "maximumDistanceFromCutMm": 3.18,
+            "maximumCoreFraction": 0.30,
+        },
     },
 }
 
@@ -64,6 +73,106 @@ CUBONE_CORNER_ERROR_TOLERANCE_PX = 24
 
 
 class SpeedsterGeometryTest(unittest.TestCase):
+    def test_non_boundary_aligned_chip_at_the_rim_survives_subtraction(self):
+        image = np.full(
+            (INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), 25, dtype=np.uint8
+        )
+        material = detector_material_mask(
+            "SQUARE", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        image[material > 0] = 200
+        chip_x = INSPECTION_MARGIN_PX + 560
+        cv2.line(
+            image,
+            (chip_x, INSPECTION_MARGIN_PX),
+            (chip_x, INSPECTION_MARGIN_PX + 6),
+            (20, 20, 20),
+            thickness=3,
+        )
+
+        candidates = defect_candidates(
+            image,
+            "SQUARE",
+            "BACK:ORIGINAL",
+            maximum=1000,
+        )
+
+        self.assertTrue(
+            any(
+                x <= chip_x < x + width
+                and y <= INSPECTION_MARGIN_PX + 3 < y + height
+                for x, y, width, height in (
+                    candidate["coreBox"] for candidate in candidates
+                )
+            )
+        )
+
+    def test_cubone_back_corner_residual_is_rim_scale_after_boundary_subtraction(self):
+        fixture = CUBONE_FIXTURES["back"]
+        rim_definition = fixture["topRightRimRegion"]
+        self.assertEqual(
+            rim_definition["version"],
+            "CUBONE_BACK_TOP_RIGHT_GEOMETRY_RIM_V1",
+        )
+        encoded = fixture["path"].read_bytes()
+        self.assertEqual(sha256(encoded).hexdigest(), fixture["sha256"])
+        image = cv2.imdecode(np.frombuffer(encoded, dtype=np.uint8), cv2.IMREAD_COLOR)
+        self.assertIsNotNone(image)
+        inspection, _ = warp_to_inspection_map(image, fixture["expected"])
+
+        candidates = defect_candidates(
+            inspection,
+            "ROUNDED_3_18_MM",
+            "BACK:ORIGINAL",
+            maximum=1000,
+        )
+        material = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        distance_from_cut = material_distance_from_cut(material)
+        y, x = np.indices(material.shape)
+        corner_zone = (
+            (
+                x
+                >= INSPECTION_MARGIN_PX
+                + TARGET_WIDTH
+                - round(rim_definition["cornerZoneMm"] * PX_PER_MM)
+            )
+            & (
+                y
+                < INSPECTION_MARGIN_PX
+                + round(rim_definition["cornerZoneMm"] * PX_PER_MM)
+            )
+            & (material > 0)
+        )
+        rim_region = corner_zone & (
+            distance_from_cut
+            <= round(rim_definition["maximumDistanceFromCutMm"] * PX_PER_MM)
+        )
+        core_area_bound = round(
+            rim_definition["maximumCoreFraction"]
+            * np.count_nonzero(corner_zone)
+        )
+
+        corner_candidates = []
+        for candidate in candidates:
+            core_x, core_y, core_width, core_height = candidate["coreBox"]
+            core = np.zeros_like(material, dtype=bool)
+            core[
+                core_y : core_y + core_height,
+                core_x : core_x + core_width,
+            ] = candidate["coreMask"]
+            if np.any(core & corner_zone):
+                corner_candidates.append((candidate, core))
+
+        self.assertTrue(corner_candidates)
+        strongest, strongest_core = max(
+            corner_candidates, key=lambda entry: entry[0]["score"]
+        )
+        _, _, core_width, core_height = strongest["coreBox"]
+        self.assertLessEqual(core_width * core_height, core_area_bound)
+        self.assertTrue(np.any(strongest_core & rim_region))
+
     def test_prepare_upload_contract_keeps_backend_first_rollout_compatible(self):
         legacy = PreparedUploads(
             rectified="rectified",

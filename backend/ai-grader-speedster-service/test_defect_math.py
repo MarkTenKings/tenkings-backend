@@ -1,6 +1,15 @@
 import unittest
 
-from defect_math import measure_defects
+import numpy as np
+
+from defect_math import (
+    CARD_HEIGHT_MM,
+    CARD_WIDTH_MM,
+    GRID_HEIGHT,
+    GRID_WIDTH,
+    material_mask,
+    measure_defects,
+)
 
 
 def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
@@ -22,6 +31,52 @@ def proposal(contour, view, confidence=0.8, defect_type="VISIBLE_WHITENING"):
 
 
 class DefectMathTests(unittest.TestCase):
+    def test_exact_in_memory_trace_is_clipped_to_material_without_a_contour_fallback(self):
+        trace = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        trace[:80, GRID_WIDTH - 80 :] = 1
+        trace[20:25, GRID_WIDTH - 25 : GRID_WIDTH - 20] = 0
+
+        results = measure_defects(
+            [
+                {
+                    "canonicalMask": trace,
+                    "sourceViewId": "trace-editor",
+                    "defectType": "VISIBLE_WHITENING",
+                    "confidence": 1.0,
+                }
+            ],
+            "ROUNDED_3_18_MM",
+        )
+
+        expected_pixels = np.count_nonzero(
+            trace & material_mask("ROUNDED_3_18_MM")
+        )
+        expected_area = (
+            expected_pixels
+            * CARD_WIDTH_MM
+            * CARD_HEIGHT_MM
+            / (GRID_WIDTH * GRID_HEIGHT)
+        )
+        self.assertGreater(expected_pixels, 0)
+        self.assertAlmostEqual(
+            sum(result["areaMm2"] for result in results),
+            expected_area,
+            places=10,
+        )
+
+        empty = measure_defects(
+            [
+                {
+                    "canonicalMask": np.zeros_like(trace),
+                    "sourceViewId": "trace-editor",
+                    "defectType": "VISIBLE_WHITENING",
+                    "confidence": 1.0,
+                }
+            ],
+            "ROUNDED_3_18_MM",
+        )
+        self.assertEqual(empty, [])
+
     def test_fuses_shifted_evidence_across_views_without_confidence_voting(self):
         first = rectangle(20, 20, 20.2, 20.2)
         shifted = rectangle(20.25, 20, 20.45, 20.2)

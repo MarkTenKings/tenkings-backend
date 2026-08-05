@@ -144,7 +144,22 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
         defect_type = proposal["defectType"]
         if defect_type not in DEFECT_MULTIPLIERS:
             raise ValueError(f"Unknown defect type: {defect_type}")
-        prepared.append({**proposal, "mask": _rasterize(proposal["canonicalContour"])})
+        has_mask = "canonicalMask" in proposal
+        has_contour = "canonicalContour" in proposal
+        if has_mask == has_contour:
+            raise ValueError(
+                "A defect proposal requires exactly one canonical mask or contour"
+            )
+        if has_mask:
+            if not isinstance(proposal["canonicalMask"], np.ndarray):
+                raise ValueError("An exact canonical mask must remain in-memory")
+            mask = np.asarray(proposal["canonicalMask"])
+            if mask.shape != (GRID_HEIGHT, GRID_WIDTH):
+                raise ValueError("Exact canonical mask has unsupported dimensions")
+            mask = (mask > 0).astype(np.uint8)
+        else:
+            mask = _rasterize(proposal["canonicalContour"])
+        prepared.append({**proposal, "mask": mask})
 
     material = material_mask(corner_shape)
     zones = _zone_masks(material)

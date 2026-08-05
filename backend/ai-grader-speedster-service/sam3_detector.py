@@ -12,12 +12,15 @@ import numpy as np
 from PIL import Image
 
 from card_geometry import (
+    EXPECTED_BOUNDARY_RESPONSE_PX,
     INSPECTION_HEIGHT,
     INSPECTION_MARGIN_PX,
     INSPECTION_WIDTH,
     crop_detector_mask_to_card,
     defect_candidates,
     detector_material_mask,
+    expected_material_boundary_response_mask,
+    material_distance_from_cut,
 )
 from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH, measure_defects
 from sam_memory_v2 import (
@@ -43,6 +46,9 @@ SMART_MARK_TRACE_MIN_INSIDE = 0.80
 SMART_MARK_TRACE_MIN_BOX_AREA = 0.10
 SMART_MARK_TRACE_MAX_BOX_AREA = 1.00
 SMART_MARK_PROPOSAL_IOU_THRESHOLD = 0.30
+SMART_MARK_PROMPT_MAX_POSITIVE_POINTS = 16
+SMART_MARK_PROMPT_MAX_NEGATIVE_POINTS = 16
+SMART_MARK_NEGATIVE_SPACING_MM = 2.0
 
 
 class MaskProcessor(Protocol):
@@ -56,6 +62,144 @@ class MaskProcessor(Protocol):
         session_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> list[dict]: ...
+
+
+def _smart_mark_prompt_inputs(
+    stroke_points: list[dict],
+    stroke_width_mm: float,
+    allowed_mask: np.ndarray,
+    anomaly_residual_mask: np.ndarray,
+    existing_trace_mask: np.ndarray,
+    inspection_frame: dict,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Map intent to deterministic positive and proven-clean negative points."""
+
+    material = np.asarray(allowed_mask) > 0
+    residual = np.asarray(anomaly_residual_mask) > 0
+    existing = np.asarray(existing_trace_mask) > 0
+    if material.ndim != 2:
+        raise ValueError("Smart-Mark material mask must be two-dimensional")
+    if residual.shape != material.shape or existing.shape != material.shape:
+        raise ValueError("Smart-Mark prompt exclusion masks do not match material")
+    if not np.isfinite(stroke_width_mm) or stroke_width_mm <= 0:
+        raise ValueError("Smart-Mark stroke width must be positive")
+    if not stroke_points:
+        raise ValueError("Smart-Mark stroke requires at least one point")
+
+    height, width = material.shape
+    bounds = inspection_frame.get("cardBounds", {})
+    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        expected_origin = (INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX)
+    elif (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        expected_origin = (0, 0)
+    else:
+        expected_origin = None
+    if (
+        expected_origin is None
+        or inspection_frame.get("width") != width
+        or inspection_frame.get("height") != height
+        or bounds.get("width") != GRID_WIDTH
+        or bounds.get("height") != GRID_HEIGHT
+        or (bounds.get("x"), bounds.get("y")) != expected_origin
+    ):
+        raise ValueError("Smart-Mark inspection frame does not match prompt masks")
+
+    mapped = []
+    for point in stroke_points:
+        x = float(point["x"])
+        y = float(point["y"])
+        if not np.isfinite(x) or not np.isfinite(y) or not (0 <= x <= 1 and 0 <= y <= 1):
+            raise ValueError("Smart-Mark stroke point is outside the canonical card")
+        pixel = (
+            float(bounds["x"] + x * (bounds["width"] - 1)),
+            float(bounds["y"] + y * (bounds["height"] - 1)),
+        )
+        if not mapped or pixel != mapped[-1]:
+            mapped.append(pixel)
+    mapped_points = np.asarray(mapped, dtype=np.float32)
+    if len(mapped_points) > SMART_MARK_PROMPT_MAX_POSITIVE_POINTS:
+        indexes = np.linspace(
+            0,
+            len(mapped_points) - 1,
+            SMART_MARK_PROMPT_MAX_POSITIVE_POINTS,
+            dtype=np.int32,
+        )
+        mapped_points = mapped_points[indexes]
+    mapped_x = np.rint(mapped_points[:, 0]).astype(int)
+    mapped_y = np.rint(mapped_points[:, 1]).astype(int)
+    if not np.all(material[mapped_y, mapped_x]):
+        raise ValueError("Smart-Mark stroke leaves physical card material")
+
+    corridor = np.zeros((height, width), dtype=np.uint8)
+    integer_points = np.rint(mapped_points).astype(np.int32)
+    stroke_width_px = max(1, round(stroke_width_mm * PX_PER_MM))
+    if len(integer_points) == 1:
+        cv2.circle(
+            corridor,
+            tuple(integer_points[0]),
+            max(1, stroke_width_px // 2),
+            1,
+            thickness=-1,
+        )
+    else:
+        cv2.polylines(
+            corridor,
+            [integer_points],
+            False,
+            1,
+            thickness=stroke_width_px,
+        )
+
+    boundary_response = expected_material_boundary_response_mask_from_material(
+        material
+    )
+    clean = material & ~(corridor > 0) & ~residual & ~existing & ~boundary_response
+    if not np.any(clean):
+        raise ValueError("No geometry-proven clean material exists for negative points")
+
+    clean_distance = cv2.distanceTransform(clean.astype(np.uint8), cv2.DIST_L2, 5)
+    spacing = max(1, round(SMART_MARK_NEGATIVE_SPACING_MM * PX_PER_MM))
+    offset = spacing // 2
+    candidates = [
+        (float(clean_distance[y, x]), y, x)
+        for y in range(offset, height, spacing)
+        for x in range(offset, width, spacing)
+        if clean[y, x]
+    ]
+    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1], candidate[2]))
+    negatives = []
+    for _, y, x in candidates:
+        if any(
+            (x - prior_x) ** 2 + (y - prior_y) ** 2 < spacing**2
+            for prior_x, prior_y in negatives
+        ):
+            continue
+        negatives.append((x, y))
+        if len(negatives) == SMART_MARK_PROMPT_MAX_NEGATIVE_POINTS:
+            break
+    if not negatives:
+        y, x = np.argwhere(clean)[0]
+        negatives.append((int(x), int(y)))
+
+    negative_points = np.asarray(negatives, dtype=np.float32)
+    points = np.concatenate((mapped_points, negative_points), axis=0)
+    labels = np.concatenate(
+        (
+            np.ones(len(mapped_points), dtype=np.int32),
+            np.zeros(len(negative_points), dtype=np.int32),
+        )
+    )
+    return points, labels, corridor > 0
+
+
+def expected_material_boundary_response_mask_from_material(
+    material_mask_value: np.ndarray,
+) -> np.ndarray:
+    """Derive the same expected cut-response band from an existing material mask."""
+
+    material = (np.asarray(material_mask_value) > 0).astype(np.uint8)
+    distance_from_cut = material_distance_from_cut(material)
+    return (material > 0) & (distance_from_cut <= EXPECTED_BOUNDARY_RESPONSE_PX)
 
 
 def _normalize(values: np.ndarray) -> Optional[list[float]]:
@@ -352,7 +496,7 @@ class Sam3ImageProcessor:
                 device="cuda",
                 eval_mode=True,
                 enable_segmentation=True,
-                enable_inst_interactivity=False,
+                enable_inst_interactivity=True,
                 compile=False,
             )
             self._processor = Sam3Processor(model, confidence_threshold=0.5)
@@ -360,6 +504,77 @@ class Sam3ImageProcessor:
                 device_type="cuda", dtype=torch.bfloat16
             )
         return self._processor
+
+    def propose_smart_mark_trace(
+        self,
+        image: np.ndarray,
+        stroke_points: list[dict],
+        stroke_width_mm: float,
+        allowed_mask: np.ndarray,
+        anomaly_residual_mask: np.ndarray,
+        existing_trace_mask: np.ndarray,
+        inspection_frame: dict,
+    ) -> dict:
+        """Run the pinned model's point head once; returned pixels are transient."""
+
+        image_height, image_width = image.shape[:2]
+        if allowed_mask.shape != (image_height, image_width):
+            raise ValueError("Smart-Mark material mask does not match the evidence image")
+        points, labels, corridor = _smart_mark_prompt_inputs(
+            stroke_points,
+            stroke_width_mm,
+            allowed_mask,
+            anomaly_residual_mask,
+            existing_trace_mask,
+            inspection_frame,
+        )
+        rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+
+        with self._lock:
+            processor = self.load()
+            interactive = getattr(
+                getattr(processor, "model", None),
+                "inst_interactive_predictor",
+                None,
+            )
+            if interactive is None:
+                raise RuntimeError("Pinned SAM 3 point-prompt head is unavailable")
+            with self._autocast():
+                interactive.set_image(rgb_image)
+                masks, scores, _ = interactive.predict(
+                    point_coords=points,
+                    point_labels=labels,
+                    multimask_output=True,
+                )
+
+        masks = np.asarray(masks)
+        scores = np.asarray(scores, dtype=np.float32).reshape(-1)
+        if masks.ndim == 2:
+            masks = masks[None, :, :]
+        if masks.ndim != 3 or len(masks) != len(scores):
+            raise ValueError("SAM 3 returned invalid point-prompt masks")
+        candidates = []
+        for mask, score in zip(masks, scores):
+            binary = np.asarray(mask) > 0
+            if binary.shape != (image_height, image_width):
+                binary = cv2.resize(
+                    binary.astype(np.uint8),
+                    (image_width, image_height),
+                    interpolation=cv2.INTER_NEAREST,
+                ).astype(bool)
+            clipped = binary & (np.asarray(allowed_mask) > 0)
+            if np.any(clipped & corridor):
+                candidates.append((float(score), clipped))
+        if not candidates:
+            raise ValueError("SAM 3 point prompt produced no material trace")
+        score, trace = max(candidates, key=lambda candidate: candidate[0])
+        return {
+            "mask": trace,
+            "score": score,
+            "promptAttempts": 1,
+            "positivePointCount": int(np.count_nonzero(labels == 1)),
+            "negativePointCount": int(np.count_nonzero(labels == 0)),
+        }
 
     @staticmethod
     def _feature_map(state: dict) -> np.ndarray:
@@ -975,28 +1190,27 @@ def detect_views(
 
     proposals = []
     for candidate in _cap_memory_candidates_per_side(scanned_candidates):
-        for contour in _mask_contours(candidate["mask"]):
-            proposals.append(
-                {
-                    "canonicalContour": contour,
-                    "sourceViewId": candidate["sourceViewId"],
-                    "defectType": candidate["defectType"],
-                    "confidence": candidate["confidence"],
-                    "rankingConfidence": candidate.get(
-                        "rankingConfidence", candidate["confidence"]
-                    ),
-                    "learningAdjustment": candidate.get("learningAdjustment", 0.0),
-                    "featureFingerprint": candidate.get("featureFingerprint"),
-                    **(
-                        {
-                            "origin": "MEMORY",
-                            "memoryProposal": candidate["memoryProposal"],
-                        }
-                        if candidate.get("origin") == "MEMORY"
-                        else {}
-                    ),
-                }
-            )
+        proposals.append(
+            {
+                "canonicalMask": np.asarray(candidate["mask"]).copy(),
+                "sourceViewId": candidate["sourceViewId"],
+                "defectType": candidate["defectType"],
+                "confidence": candidate["confidence"],
+                "rankingConfidence": candidate.get(
+                    "rankingConfidence", candidate["confidence"]
+                ),
+                "learningAdjustment": candidate.get("learningAdjustment", 0.0),
+                "featureFingerprint": candidate.get("featureFingerprint"),
+                **(
+                    {
+                        "origin": "MEMORY",
+                        "memoryProposal": candidate["memoryProposal"],
+                    }
+                    if candidate.get("origin") == "MEMORY"
+                    else {}
+                ),
+            }
+        )
 
     measured = measure_defects(proposals, corner_shape)
     return {
