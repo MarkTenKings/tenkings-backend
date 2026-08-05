@@ -153,55 +153,121 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
 
     for group in _fused_groups(prepared):
         members = [prepared[index] for index in group]
-        primary = max(
-            members,
-            key=lambda proposal: (
-                DEFECT_MULTIPLIERS[proposal["defectType"]],
-                proposal.get("rankingConfidence", proposal["confidence"]),
-            ),
-        )
-        fused = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        winning_type = np.full((GRID_HEIGHT, GRID_WIDTH), -1, dtype=np.int16)
+        winning_multiplier = np.full((GRID_HEIGHT, GRID_WIDTH), -1.0, dtype=np.float32)
+        winning_confidence = np.full((GRID_HEIGHT, GRID_WIDTH), -1.0, dtype=np.float32)
+        defect_types = list(DEFECT_MULTIPLIERS)
+        type_indexes = {defect_type: index for index, defect_type in enumerate(defect_types)}
+
         for member in members:
-            fused |= member["mask"]
-        fused &= material
-
-        view_ids = list(dict.fromkeys(member["sourceViewId"] for member in members))
-        supporting_views = [view_id for view_id in view_ids if view_id != primary["sourceViewId"]]
-        multiplier = DEFECT_MULTIPLIERS[primary["defectType"]]
-
-        for zone_name, zone_mask in zones.items():
-            measured = fused & zone_mask
-            pixel_count = int(np.count_nonzero(measured))
-            if not pixel_count:
-                continue
-            _, _, width_px, height_px = cv2.boundingRect(measured)
-            area_mm2 = pixel_count * pixel_area_mm2
-            eligible_area_mm2 = np.count_nonzero(zone_mask) * pixel_area_mm2
-            results.append(
-                {
-                    "proposalId": primary.get("id"),
-                    "zone": zone_name,
-                    "canonicalContours": _normalized_contours(measured),
-                    "sourceViewId": primary["sourceViewId"],
-                    "supportingViewIds": supporting_views,
-                    "defectType": primary["defectType"],
-                    "confidence": float(primary["confidence"]),
-                    "featureFingerprint": primary.get("featureFingerprint"),
-                    "learningAdjustment": float(primary.get("learningAdjustment", 0.0)),
-                    **(
-                        {
-                            "origin": "MEMORY",
-                            "memoryProposal": primary["memoryProposal"],
-                        }
-                        if primary.get("origin") == "MEMORY"
-                        else {}
-                    ),
-                    "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
-                    "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
-                    "areaMm2": area_mm2,
-                    "eligibleZonePercent": area_mm2 / eligible_area_mm2 * 100,
-                    "multiplier": multiplier,
-                    "weightedAreaMm2": area_mm2 * multiplier,
-                }
+            member_mask = (member["mask"] & material) > 0
+            multiplier = DEFECT_MULTIPLIERS[member["defectType"]]
+            ranking_confidence = float(
+                member.get("rankingConfidence", member["confidence"])
             )
+            wins = member_mask & (
+                (multiplier > winning_multiplier)
+                | (
+                    (multiplier == winning_multiplier)
+                    & (ranking_confidence > winning_confidence)
+                )
+            )
+            winning_type[wins] = type_indexes[member["defectType"]]
+            winning_multiplier[wins] = multiplier
+            winning_confidence[wins] = ranking_confidence
+
+        winning_types = [
+            defect_type
+            for defect_type in dict.fromkeys(member["defectType"] for member in members)
+            if np.any(winning_type == type_indexes[defect_type])
+        ]
+        for defect_type in winning_types:
+            type_mask = (winning_type == type_indexes[defect_type]).astype(np.uint8)
+            type_members = [
+                member
+                for member in members
+                if member["defectType"] == defect_type
+                and np.any(member["mask"] & type_mask)
+            ]
+            primary = max(
+                type_members,
+                key=lambda proposal: proposal.get(
+                    "rankingConfidence", proposal["confidence"]
+                ),
+            )
+            view_ids = list(
+                dict.fromkeys(
+                    view_id
+                    for member in type_members
+                    for view_id in [
+                        member["sourceViewId"],
+                        *member.get("supportingViewIds", []),
+                    ]
+                )
+            )
+            supporting_views = [
+                view_id for view_id in view_ids if view_id != primary["sourceViewId"]
+            ]
+            multiplier = DEFECT_MULTIPLIERS[defect_type]
+
+            for zone_name, zone_mask in zones.items():
+                measured = type_mask & zone_mask
+                pixel_count = int(np.count_nonzero(measured))
+                if not pixel_count:
+                    continue
+                _, _, width_px, height_px = cv2.boundingRect(measured)
+                area_mm2 = pixel_count * pixel_area_mm2
+                eligible_area_mm2 = np.count_nonzero(zone_mask) * pixel_area_mm2
+                results.append(
+                    {
+                        "proposalId": primary.get("id"),
+                        "zone": zone_name,
+                        "canonicalContours": _normalized_contours(measured),
+                        "sourceViewId": primary["sourceViewId"],
+                        "supportingViewIds": supporting_views,
+                        "defectType": defect_type,
+                        "confidence": float(primary["confidence"]),
+                        "featureFingerprint": primary.get("featureFingerprint"),
+                        **(
+                            {
+                                "learningAdjustment": float(
+                                    primary["learningAdjustment"]
+                                )
+                            }
+                            if primary.get("learningAdjustment") is not None
+                            else {}
+                        ),
+                        **(
+                            {"origin": primary["origin"]}
+                            if primary.get("origin") is not None
+                            else {}
+                        ),
+                        **(
+                            {"detectedDefectType": primary["detectedDefectType"]}
+                            if primary.get("detectedDefectType") is not None
+                            else {}
+                        ),
+                        **(
+                            {"reviewResult": primary["reviewResult"]}
+                            if primary.get("reviewResult") is not None
+                            else {}
+                        ),
+                        **(
+                            {"smartMarkLearning": primary["smartMarkLearning"]}
+                            if primary.get("smartMarkLearning") is not None
+                            else {}
+                        ),
+                        **(
+                            {"memoryProposal": primary["memoryProposal"]}
+                            if primary.get("memoryProposal") is not None
+                            else {}
+                        ),
+                        "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
+                        "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
+                        "areaMm2": area_mm2,
+                        "eligibleZonePercent": area_mm2 / eligible_area_mm2 * 100,
+                        "multiplier": multiplier,
+                        "weightedAreaMm2": area_mm2 * multiplier,
+                    }
+                )
     return results

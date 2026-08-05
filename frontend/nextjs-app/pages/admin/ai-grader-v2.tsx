@@ -30,6 +30,7 @@ import {
   correctSpeedsterDefectType,
   prepareSpeedsterCompletion,
   removeSpeedsterDefect,
+  replaceSpeedsterSideMeasurements,
   restoreSpeedsterDefect,
   scanSpeedsterCapture,
   speedsterDetectorViews,
@@ -209,6 +210,9 @@ export default function AiGraderV2AdminPage() {
     setWorking(true);
     setMessage("Measuring the Smart-Mark.");
     const id = `${side}:smart-${crypto.randomUUID()}`;
+    const activeSideFindings = (defects ?? []).filter(
+      (defect) => defect.side === side && defect.reviewResult !== "REMOVED",
+    );
     try {
       const measured = await speedsterImageService.measure(session.token, {
         sessionId: draft.id,
@@ -221,6 +225,7 @@ export default function AiGraderV2AdminPage() {
             ? capture.front.inspectionFrame
             : capture.back.inspectionFrame,
         },
+        findings: activeSideFindings,
         marks: [{
           id,
           defectType: "FAINT_COLOR_VARIATION",
@@ -233,13 +238,11 @@ export default function AiGraderV2AdminPage() {
           ],
         }],
       });
-      const added = measured.defects.map((defect) => ({
-        ...defect,
-        origin: "SMART_MARK" as const,
-        reviewResult: "SMART_MARKED" as const,
-      }));
+      const added = measured.defects.filter((defect) => defect.id.startsWith(`${id}:`));
       if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
-      setDefects((current) => [...(current ?? []), ...added]);
+      setDefects((current) => current
+        ? replaceSpeedsterSideMeasurements(current, side, measured.defects)
+        : current);
       setMessage("Smart-Mark measured. Select its defect type if needed.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Smart-Mark measurement failed.");

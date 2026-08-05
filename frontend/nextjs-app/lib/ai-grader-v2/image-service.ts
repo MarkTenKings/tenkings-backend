@@ -101,6 +101,7 @@ export const speedsterImageService = {
         canonicalContour: readonly SpeedsterPoint[];
         sourceViewId: string;
       }[];
+      findings: readonly SpeedsterMeasuredDefect[];
     },
   ) {
     return postImageAction<{ defects: SpeedsterMeasuredDefect[] }>(token, "measure", input);

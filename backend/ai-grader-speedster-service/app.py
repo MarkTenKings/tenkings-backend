@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from card_geometry import (
     INSPECTION_HEIGHT,
@@ -116,6 +116,7 @@ class MeasureRequest(BaseModel):
     side: str
     cornerShape: str
     marks: List[SmartMark]
+    findings: List[dict] = Field(default_factory=list)
     evidenceView: Optional[SmartMarkEvidenceView] = None
 
 
@@ -325,6 +326,7 @@ def measure(request: MeasureRequest):
             ],
             request.side,
             request.cornerShape,
+            findings=request.findings,
             evidence_image=evidence_image,
             evidence_view_id=request.evidenceView.id if request.evidenceView else None,
             inspection_frame=(

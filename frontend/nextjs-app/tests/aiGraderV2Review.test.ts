@@ -9,6 +9,7 @@ import {
   prepareSpeedsterCompletion,
   publicSpeedsterDefects,
   removeSpeedsterDefect,
+  replaceSpeedsterSideMeasurements,
   restoreSpeedsterDefect,
   scanSpeedsterCapture,
 } from "../lib/ai-grader-v2/review";
@@ -77,6 +78,119 @@ test("restores only the last removed finding without replacing later defect edit
   assert.equal(restored[1].origin, "DETECTOR");
   assert.equal(restored[1].detectedDefectType, "VISIBLE_WHITENING");
   assert.equal(restored[1].reviewResult, "TYPE_CORRECTED");
+});
+
+test("side remeasurement replaces active findings and preserves removed provenance byte-for-byte", () => {
+  const removed = {
+    ...defect,
+    id: "front-removed",
+    origin: "MEMORY" as const,
+    reviewResult: "REMOVED" as const,
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    memoryProposal: {
+      lessonSessionId: "cubone-reviewed-session",
+      lessonCompletionOrder: 228,
+      lessonProposalOrder: 7,
+      lessonOrder: 0,
+      lessonSourceViewId: "ORIGINAL" as const,
+      similarity: 0.94,
+    },
+  };
+  const back = { ...defect, id: "back-1", side: "BACK" as const };
+  const remeasured = {
+    ...defect,
+    id: "front-remeasured",
+    origin: "SMART_MARK" as const,
+    reviewResult: "SMART_MARKED" as const,
+  };
+
+  const result = replaceSpeedsterSideMeasurements(
+    [defect, removed, back],
+    "FRONT",
+    [remeasured],
+  );
+
+  assert.deepEqual(result, [removed, back, remeasured]);
+  assert.equal(result[0], removed);
+  assert.equal(result[1], back);
+  assert.equal(result[2], remeasured);
+});
+
+test("fully contained full and partial Smart-Mark overlaps change neither union damage nor grade", () => {
+  const existing = {
+    ...defect,
+    id: "front-existing",
+    defectType: "VISIBLE_WHITENING" as const,
+    origin: "DETECTOR" as const,
+    detectedDefectType: "VISIBLE_WHITENING" as const,
+    measurement: {
+      ...defect.measurement,
+      areaMm2: 4,
+      zonePercent: 8,
+      weightedAreaMm2: 4,
+    },
+  };
+  const zeroExisting = {
+    ...existing,
+    measurement: {
+      ...existing.measurement,
+      widthMm: 0,
+      heightMm: 0,
+      areaMm2: 0,
+      zonePercent: 0,
+      weightedAreaMm2: 0,
+      subgradeEffect: 0,
+    },
+  };
+  const fullSmartMark = {
+    ...existing,
+    id: "front-smart-full",
+    origin: "SMART_MARK" as const,
+    detectedDefectType: undefined,
+    reviewResult: "SMART_MARKED" as const,
+  };
+  const partialExisting = {
+    ...existing,
+    measurement: {
+      ...existing.measurement,
+      areaMm2: 3,
+      zonePercent: 6,
+      weightedAreaMm2: 3,
+    },
+  };
+  const partialSmartMark = {
+    ...fullSmartMark,
+    id: "front-smart-partial",
+    measurement: {
+      ...fullSmartMark.measurement,
+      areaMm2: 1,
+      zonePercent: 2,
+      weightedAreaMm2: 1,
+    },
+  };
+
+  const baseline = calculateSpeedsterReview(capture, [existing]);
+  const fullFindings = replaceSpeedsterSideMeasurements(
+    [existing],
+    "FRONT",
+    [fullSmartMark, zeroExisting],
+  );
+  const partialFindings = replaceSpeedsterSideMeasurements(
+    [existing],
+    "FRONT",
+    [partialExisting, partialSmartMark],
+  );
+  const full = calculateSpeedsterReview(capture, fullFindings);
+  const partial = calculateSpeedsterReview(capture, partialFindings);
+  const unionArea = (findings: readonly SpeedsterMeasuredDefect[]) =>
+    findings.reduce((total, finding) => total + finding.measurement.areaMm2, 0);
+
+  assert.equal(unionArea([existing]), 4);
+  assert.equal(unionArea(fullFindings), 4);
+  assert.equal(unionArea(partialFindings), 4);
+  assert.deepEqual(full.grade, baseline.grade);
+  assert.deepEqual(partial.grade, baseline.grade);
+  assert.equal(fullFindings.some(({ id }) => id === existing.id), true);
 });
 
 test("type correction preserves Smart-Mark provenance without inventing a detector label", () => {

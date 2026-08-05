@@ -190,6 +190,19 @@ export function restoreSpeedsterDefect(
   return defects.map((defect) => defect.id === restored.id ? restored : defect);
 }
 
+export function replaceSpeedsterSideMeasurements(
+  defects: readonly SpeedsterMeasuredDefect[],
+  side: SpeedsterCardSide,
+  measured: readonly SpeedsterMeasuredDefect[],
+): SpeedsterMeasuredDefect[] {
+  return [
+    ...defects.filter(
+      (defect) => defect.side !== side || defect.reviewResult === "REMOVED",
+    ),
+    ...measured,
+  ];
+}
+
 export function correctSpeedsterDefectType(
   defects: readonly SpeedsterMeasuredDefect[],
   defectId: string,

@@ -350,6 +350,168 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(result["defects"][0]["id"], "missed-2:SURFACE")
         self.assertEqual(result["defects"][0]["reviewResult"], "SMART_MARKED")
 
+    def test_full_and_partial_smart_mark_overlap_do_not_add_damage(self):
+        existing = {
+            "id": "FRONT:memory-1:SURFACE",
+            "side": "FRONT",
+            "zone": "SURFACE",
+            "defectType": "LIFTING_DEFORMATION",
+            "detectedDefectType": "VISIBLE_WHITENING",
+            "origin": "MEMORY",
+            "confidence": 0.91,
+            "canonicalContour": rectangle(20, 20, 23, 22),
+            "sourceViewId": "FRONT:ORIGINAL",
+            "supportingViewIds": ["FRONT:MICRO_DEFECT"],
+            "reviewResult": "TYPE_CORRECTED",
+            "featureFingerprint": [1.0] + [0.0] * 31,
+            "learningAdjustment": 0.0,
+            "memoryProposal": {
+                "lessonSessionId": "cubone-lesson",
+                "lessonCompletionOrder": 228,
+                "lessonProposalOrder": 7,
+                "lessonOrder": 0,
+                "lessonSourceViewId": "ORIGINAL",
+                "similarity": 0.94,
+            },
+        }
+        existing_smart = {
+            "id": "FRONT:smart-existing:SURFACE",
+            "side": "FRONT",
+            "zone": "SURFACE",
+            "defectType": "VISIBLE_WHITENING",
+            "origin": "SMART_MARK",
+            "confidence": 1.0,
+            "canonicalContour": rectangle(30, 20, 32, 22),
+            "sourceViewId": "FRONT:ORIGINAL",
+            "supportingViewIds": [],
+            "reviewResult": "SMART_MARKED",
+            "featureFingerprint": [0.0, 1.0] + [0.0] * 30,
+            "smartMarkLearning": {
+                "fingerprintProvenance": "SAM_TRACE",
+                "traceAttempts": 1,
+                "proposalOverlapIouGt03": False,
+                "proposalMaxIou": 0.0,
+            },
+        }
+        findings = [existing, existing_smart]
+        baseline = measure_marks([], "FRONT", "SQUARE", findings=findings)
+        full = measure(
+            MeasureRequest(
+                side="FRONT",
+                cornerShape="SQUARE",
+                findings=findings,
+                marks=[{
+                    "id": "FRONT:smart-full",
+                    "defectType": "FAINT_COLOR_VARIATION",
+                    "canonicalContour": rectangle(20, 20, 23, 22),
+                    "sourceViewId": "FRONT:ORIGINAL",
+                }],
+            )
+        )
+        partial = measure_marks(
+            [{
+                "id": "FRONT:smart-partial",
+                "defectType": "FAINT_COLOR_VARIATION",
+                "canonicalContour": rectangle(21, 20, 22, 22),
+                "sourceViewId": "FRONT:ORIGINAL",
+            }],
+            "FRONT",
+            "SQUARE",
+            findings=findings,
+        )
+        shadowed = measure_marks(
+            [{
+                "id": "FRONT:smart-winning",
+                "defectType": "PEELING_HEAVY_DAMAGE",
+                "canonicalContour": rectangle(20, 20, 32, 22),
+                "sourceViewId": "FRONT:ORIGINAL",
+            }],
+            "FRONT",
+            "SQUARE",
+            findings=findings,
+        )
+
+        baseline_damage = sum(
+            defect["measurement"]["weightedAreaMm2"]
+            for defect in baseline["defects"]
+        )
+        baseline_area = sum(
+            defect["measurement"]["areaMm2"] for defect in baseline["defects"]
+        )
+        for measured in (full, partial):
+            self.assertEqual(
+                sum(
+                    defect["measurement"]["weightedAreaMm2"]
+                    for defect in measured["defects"]
+                ),
+                baseline_damage,
+            )
+            self.assertEqual(
+                sum(
+                    defect["measurement"]["areaMm2"]
+                    for defect in measured["defects"]
+                ),
+                baseline_area,
+            )
+        self.assertNotIn(
+            "FRONT:smart-full:SURFACE",
+            {defect["id"] for defect in full["defects"]},
+        )
+        self.assertNotIn(
+            "FRONT:smart-partial:SURFACE",
+            {defect["id"] for defect in partial["defects"]},
+        )
+
+        provenance_keys = {
+            "id",
+            "side",
+            "zone",
+            "defectType",
+            "detectedDefectType",
+            "origin",
+            "confidence",
+            "sourceViewId",
+            "supportingViewIds",
+            "reviewResult",
+            "featureFingerprint",
+            "learningAdjustment",
+            "smartMarkLearning",
+            "memoryProposal",
+        }
+        for result in (full, shadowed):
+            by_id = {defect["id"]: defect for defect in result["defects"]}
+            for original in findings:
+                expected = {
+                    key: original[key] for key in provenance_keys if key in original
+                }
+                actual = {
+                    key: by_id[original["id"]][key]
+                    for key in provenance_keys
+                    if key in by_id[original["id"]]
+                }
+                self.assertEqual(actual, expected)
+
+        shadowed_by_id = {
+            defect["id"]: defect for defect in shadowed["defects"]
+        }
+        for original in findings:
+            self.assertEqual(
+                shadowed_by_id[original["id"]]["measurement"],
+                {
+                    "widthMm": 0.0,
+                    "heightMm": 0.0,
+                    "areaMm2": 0.0,
+                    "zonePercent": 0.0,
+                    "multiplier": (
+                        2.0
+                        if original["defectType"] == "LIFTING_DEFORMATION"
+                        else 1.0
+                    ),
+                    "weightedAreaMm2": 0.0,
+                    "subgradeEffect": 0.0,
+                },
+            )
+
     def test_scans_each_view_and_returns_measured_speedster_defect(self):
         processor = FakeMaskProcessor()
         image = np.zeros((200, 100, 3), dtype=np.uint8)

@@ -19,7 +19,7 @@ from card_geometry import (
     defect_candidates,
     detector_material_mask,
 )
-from defect_math import GRID_HEIGHT, GRID_WIDTH, measure_defects
+from defect_math import DEFECT_MULTIPLIERS, GRID_HEIGHT, GRID_WIDTH, measure_defects
 from sam_memory_v2 import (
     MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE,
     MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
@@ -815,7 +815,12 @@ def _condition_score(weighted_percent: float) -> float:
 
 def _defect_id(side: str, result: dict, index: int) -> str:
     if result.get("proposalId"):
-        return f'{result["proposalId"]}:{result["zone"]}'
+        proposal_id = result["proposalId"]
+        return (
+            proposal_id
+            if proposal_id.endswith(f':{result["zone"]}')
+            else f'{proposal_id}:{result["zone"]}'
+        )
     identity = repr(
         (
             side,
@@ -866,7 +871,7 @@ def _to_speedster_defects(
                 ),
                 **(
                     {"learningAdjustment": result["learningAdjustment"]}
-                    if result.get("learningAdjustment")
+                    if result.get("learningAdjustment") is not None
                     else {}
                 ),
                 **(
@@ -876,16 +881,29 @@ def _to_speedster_defects(
                 ),
                 **(
                     {
-                        "origin": "MEMORY",
+                        "origin": result["origin"],
+                    }
+                    if result.get("origin") is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "detectedDefectType": result["detectedDefectType"],
+                    }
+                    if result.get("detectedDefectType") is not None
+                    else {}
+                ),
+                **(
+                    {
                         "memoryProposal": result["memoryProposal"],
                     }
-                    if result.get("origin") == "MEMORY"
+                    if result.get("memoryProposal") is not None
                     else {}
                 ),
                 "canonicalContour": contour,
                 "sourceViewId": result["sourceViewId"],
                 "supportingViewIds": result["supportingViewIds"],
-                "reviewResult": review_result,
+                "reviewResult": result.get("reviewResult", review_result),
                 "measurement": {
                     "widthMm": result["widthMm"],
                     "heightMm": result["heightMm"],
@@ -1042,6 +1060,7 @@ def measure_marks(
     inspection_frame: Optional[dict] = None,
     evidence_failed: bool = False,
     processor=None,
+    findings: Optional[list[dict]] = None,
 ) -> dict:
     evidence_by_id = {}
     if evidence_image is not None and inspection_frame is not None:
@@ -1102,11 +1121,19 @@ def measure_marks(
 
     proposals = [
         {
+            **finding,
+            "confidence": float(finding["confidence"]),
+        }
+        for finding in (findings or [])
+    ] + [
+        {
             "id": mark["id"],
             "canonicalContour": mark["canonicalContour"],
             "sourceViewId": mark["sourceViewId"],
             "defectType": mark["defectType"],
             "confidence": 1.0,
+            "origin": "SMART_MARK",
+            "reviewResult": "SMART_MARKED",
         }
         for mark in marks
     ]
@@ -1114,4 +1141,23 @@ def measure_marks(
     for result in measured:
         evidence = evidence_by_id.get(result.get("proposalId"), {})
         result.update(evidence)
-    return {"defects": _to_speedster_defects(measured, side, "SMART_MARKED")}
+    defects = _to_speedster_defects(measured, side, "SMART_MARKED")
+    measured_ids = {defect["id"] for defect in defects}
+    for finding in findings or []:
+        if finding["id"] in measured_ids:
+            continue
+        defects.append(
+            {
+                **finding,
+                "measurement": {
+                    "widthMm": 0.0,
+                    "heightMm": 0.0,
+                    "areaMm2": 0.0,
+                    "zonePercent": 0.0,
+                    "multiplier": DEFECT_MULTIPLIERS[finding["defectType"]],
+                    "weightedAreaMm2": 0.0,
+                    "subgradeEffect": 0.0,
+                },
+            }
+        )
+    return {"defects": defects}
