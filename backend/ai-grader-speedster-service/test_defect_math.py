@@ -1,6 +1,16 @@
 import unittest
 
-from defect_math import measure_defects
+import cv2
+import numpy as np
+
+from defect_math import (
+    CARD_HEIGHT_MM,
+    CARD_WIDTH_MM,
+    GRID_HEIGHT,
+    GRID_WIDTH,
+    material_mask,
+    measure_defects,
+)
 
 
 def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
@@ -21,7 +31,73 @@ def proposal(contour, view, confidence=0.8, defect_type="VISIBLE_WHITENING"):
     }
 
 
+def _rasterized_rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
+    mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+    points = np.array(
+        [
+            [
+                round(point["x"] * (GRID_WIDTH - 1)),
+                round(point["y"] * (GRID_HEIGHT - 1)),
+            ]
+            for point in rectangle(x1_mm, y1_mm, x2_mm, y2_mm)
+        ],
+        dtype=np.int32,
+    )
+    cv2.fillPoly(mask, [points], 1)
+    return mask
+
+
 class DefectMathTests(unittest.TestCase):
+    def test_exact_in_memory_trace_is_clipped_to_material_without_a_contour_fallback(self):
+        trace = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        trace[:80, GRID_WIDTH - 80 :] = 1
+        trace[20:25, GRID_WIDTH - 25 : GRID_WIDTH - 20] = 0
+
+        results = measure_defects(
+            [
+                {
+                    "canonicalMask": trace,
+                    "sourceViewId": "trace-editor",
+                    "defectType": "VISIBLE_WHITENING",
+                    "confidence": 1.0,
+                }
+            ],
+            "ROUNDED_3_18_MM",
+        )
+
+        expected_pixels = np.count_nonzero(
+            trace & material_mask("ROUNDED_3_18_MM")
+        )
+        expected_area = (
+            expected_pixels
+            * CARD_WIDTH_MM
+            * CARD_HEIGHT_MM
+            / (GRID_WIDTH * GRID_HEIGHT)
+        )
+        self.assertGreater(expected_pixels, 0)
+        self.assertAlmostEqual(
+            sum(result["areaMm2"] for result in results),
+            expected_area,
+            places=10,
+        )
+        self.assertEqual(
+            sum(result["pixelCount"] for result in results),
+            expected_pixels,
+        )
+
+        empty = measure_defects(
+            [
+                {
+                    "canonicalMask": np.zeros_like(trace),
+                    "sourceViewId": "trace-editor",
+                    "defectType": "VISIBLE_WHITENING",
+                    "confidence": 1.0,
+                }
+            ],
+            "ROUNDED_3_18_MM",
+        )
+        self.assertEqual(empty, [])
+
     def test_fuses_shifted_evidence_across_views_without_confidence_voting(self):
         first = rectangle(20, 20, 20.2, 20.2)
         shifted = rectangle(20.25, 20, 20.45, 20.2)
@@ -33,12 +109,17 @@ class DefectMathTests(unittest.TestCase):
             "ROUNDED_3_18_MM",
         )
 
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0]["zone"], "SURFACE")
-        self.assertEqual(results[0]["sourceViewId"], "micro")
-        self.assertEqual(results[0]["supportingViewIds"], ["original"])
-        self.assertEqual(results[0]["defectType"], "FRAYING")
-        self.assertEqual(results[0]["confidence"], 0.91)
+        self.assertEqual(len(results), 2)
+        by_type = {result["defectType"]: result for result in results}
+        self.assertEqual(set(by_type), {"VISIBLE_WHITENING", "FRAYING"})
+        self.assertEqual(by_type["VISIBLE_WHITENING"]["zone"], "SURFACE")
+        self.assertEqual(by_type["VISIBLE_WHITENING"]["sourceViewId"], "original")
+        self.assertEqual(by_type["VISIBLE_WHITENING"]["supportingViewIds"], [])
+        self.assertEqual(by_type["VISIBLE_WHITENING"]["confidence"], 0.72)
+        self.assertEqual(by_type["FRAYING"]["zone"], "SURFACE")
+        self.assertEqual(by_type["FRAYING"]["sourceViewId"], "micro")
+        self.assertEqual(by_type["FRAYING"]["supportingViewIds"], [])
+        self.assertEqual(by_type["FRAYING"]["confidence"], 0.91)
 
     def test_identical_masks_are_not_counted_twice(self):
         contour = rectangle(20, 20, 22, 22)
@@ -73,6 +154,10 @@ class DefectMathTests(unittest.TestCase):
         )[0]
 
         self.assertEqual(zones, {"CORNERS", "EDGES", "SURFACE"})
+        self.assertEqual(
+            sum(item["pixelCount"] for item in whole),
+            int(np.count_nonzero(_rasterized_rectangle(4, 0, 6, 6))),
+        )
         self.assertAlmostEqual(split_area, 12.0, delta=0.5)
         self.assertEqual(surface_only["multiplier"], 1.0)
         self.assertAlmostEqual(
@@ -106,6 +191,73 @@ class DefectMathTests(unittest.TestCase):
 
         self.assertEqual(result["defectType"], "LIFTING_DEFORMATION")
         self.assertEqual(result["multiplier"], 2.0)
+
+    def test_partial_overlap_applies_highest_multiplier_per_pixel(self):
+        results = measure_defects(
+            [
+                proposal(
+                    rectangle(20, 20, 23, 22),
+                    "original",
+                    0.99,
+                    "VISIBLE_WHITENING",
+                ),
+                proposal(
+                    rectangle(21, 20, 23, 22),
+                    "micro",
+                    0.70,
+                    "LIFTING_DEFORMATION",
+                ),
+            ],
+            "SQUARE",
+        )
+
+        by_type = {result["defectType"]: result for result in results}
+        self.assertEqual(set(by_type), {"VISIBLE_WHITENING", "LIFTING_DEFORMATION"})
+        self.assertEqual(by_type["VISIBLE_WHITENING"]["areaMm2"], 2.05)
+        self.assertEqual(by_type["LIFTING_DEFORMATION"]["areaMm2"], 4.2025)
+        self.assertAlmostEqual(
+            sum(result["weightedAreaMm2"] for result in results),
+            10.455,
+            places=10,
+        )
+
+    def test_non_overlapping_measurements_remain_numerically_identical(self):
+        whitening = measure_defects(
+            [proposal(rectangle(20, 20, 22, 22), "original")],
+            "SQUARE",
+        )[0]
+        lifting = measure_defects(
+            [
+                proposal(
+                    rectangle(24, 20, 26, 22),
+                    "micro",
+                    defect_type="LIFTING_DEFORMATION",
+                )
+            ],
+            "SQUARE",
+        )[0]
+        together = measure_defects(
+            [
+                proposal(rectangle(20, 20, 22, 22), "original"),
+                proposal(
+                    rectangle(24, 20, 26, 22),
+                    "micro",
+                    defect_type="LIFTING_DEFORMATION",
+                ),
+            ],
+            "SQUARE",
+        )
+
+        self.assertEqual(
+            [
+                (result["areaMm2"], result["weightedAreaMm2"])
+                for result in together
+            ],
+            [
+                (whitening["areaMm2"], whitening["weightedAreaMm2"]),
+                (lifting["areaMm2"], lifting["weightedAreaMm2"]),
+            ],
+        )
 
     def test_memory_provenance_survives_fusion_without_changing_measurement(self):
         contour = rectangle(20, 20, 22, 22)

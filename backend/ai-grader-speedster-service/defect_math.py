@@ -144,7 +144,22 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
         defect_type = proposal["defectType"]
         if defect_type not in DEFECT_MULTIPLIERS:
             raise ValueError(f"Unknown defect type: {defect_type}")
-        prepared.append({**proposal, "mask": _rasterize(proposal["canonicalContour"])})
+        has_mask = "canonicalMask" in proposal
+        has_contour = "canonicalContour" in proposal
+        if has_mask == has_contour:
+            raise ValueError(
+                "A defect proposal requires exactly one canonical mask or contour"
+            )
+        if has_mask:
+            if not isinstance(proposal["canonicalMask"], np.ndarray):
+                raise ValueError("An exact canonical mask must remain in-memory")
+            mask = np.asarray(proposal["canonicalMask"])
+            if mask.shape != (GRID_HEIGHT, GRID_WIDTH):
+                raise ValueError("Exact canonical mask has unsupported dimensions")
+            mask = (mask > 0).astype(np.uint8)
+        else:
+            mask = _rasterize(proposal["canonicalContour"])
+        prepared.append({**proposal, "mask": mask})
 
     material = material_mask(corner_shape)
     zones = _zone_masks(material)
@@ -153,55 +168,164 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
 
     for group in _fused_groups(prepared):
         members = [prepared[index] for index in group]
-        primary = max(
-            members,
-            key=lambda proposal: (
-                DEFECT_MULTIPLIERS[proposal["defectType"]],
-                proposal.get("rankingConfidence", proposal["confidence"]),
-            ),
-        )
-        fused = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
-        for member in members:
-            fused |= member["mask"]
-        fused &= material
+        winning_type = np.full((GRID_HEIGHT, GRID_WIDTH), -1, dtype=np.int16)
+        winning_member = np.full((GRID_HEIGHT, GRID_WIDTH), -1, dtype=np.int32)
+        winning_multiplier = np.full((GRID_HEIGHT, GRID_WIDTH), -1.0, dtype=np.float32)
+        winning_confidence = np.full((GRID_HEIGHT, GRID_WIDTH), -1.0, dtype=np.float64)
+        defect_types = list(DEFECT_MULTIPLIERS)
+        type_indexes = {defect_type: index for index, defect_type in enumerate(defect_types)}
 
-        view_ids = list(dict.fromkeys(member["sourceViewId"] for member in members))
-        supporting_views = [view_id for view_id in view_ids if view_id != primary["sourceViewId"]]
-        multiplier = DEFECT_MULTIPLIERS[primary["defectType"]]
-
-        for zone_name, zone_mask in zones.items():
-            measured = fused & zone_mask
-            pixel_count = int(np.count_nonzero(measured))
-            if not pixel_count:
-                continue
-            _, _, width_px, height_px = cv2.boundingRect(measured)
-            area_mm2 = pixel_count * pixel_area_mm2
-            eligible_area_mm2 = np.count_nonzero(zone_mask) * pixel_area_mm2
-            results.append(
-                {
-                    "proposalId": primary.get("id"),
-                    "zone": zone_name,
-                    "canonicalContours": _normalized_contours(measured),
-                    "sourceViewId": primary["sourceViewId"],
-                    "supportingViewIds": supporting_views,
-                    "defectType": primary["defectType"],
-                    "confidence": float(primary["confidence"]),
-                    "featureFingerprint": primary.get("featureFingerprint"),
-                    "learningAdjustment": float(primary.get("learningAdjustment", 0.0)),
-                    **(
-                        {
-                            "origin": "MEMORY",
-                            "memoryProposal": primary["memoryProposal"],
-                        }
-                        if primary.get("origin") == "MEMORY"
-                        else {}
-                    ),
-                    "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
-                    "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
-                    "areaMm2": area_mm2,
-                    "eligibleZonePercent": area_mm2 / eligible_area_mm2 * 100,
-                    "multiplier": multiplier,
-                    "weightedAreaMm2": area_mm2 * multiplier,
-                }
+        for prepared_index in group:
+            member = prepared[prepared_index]
+            member_mask = (member["mask"] & material) > 0
+            multiplier = DEFECT_MULTIPLIERS[member["defectType"]]
+            ranking_confidence = float(
+                member.get("rankingConfidence", member["confidence"])
             )
+            wins = member_mask & (
+                (multiplier > winning_multiplier)
+                | (
+                    (multiplier == winning_multiplier)
+                    & (ranking_confidence > winning_confidence)
+                )
+            )
+            winning_type[wins] = type_indexes[member["defectType"]]
+            winning_member[wins] = prepared_index
+            winning_multiplier[wins] = multiplier
+            winning_confidence[wins] = ranking_confidence
+
+        winning_types = [
+            defect_type
+            for defect_type in dict.fromkeys(member["defectType"] for member in members)
+            if np.any(winning_type == type_indexes[defect_type])
+        ]
+        for defect_type in winning_types:
+            type_mask = (winning_type == type_indexes[defect_type]).astype(np.uint8)
+            multiplier = DEFECT_MULTIPLIERS[defect_type]
+            member_indexes = [
+                prepared_index
+                for prepared_index in group
+                if prepared[prepared_index]["defectType"] == defect_type
+                and np.any(prepared[prepared_index]["mask"] & type_mask)
+            ]
+            exact_indexes = [
+                prepared_index
+                for prepared_index in member_indexes
+                if prepared[prepared_index].get("finalTrace") is not None
+            ]
+            non_exact_indexes = [
+                prepared_index
+                for prepared_index in member_indexes
+                if prepared[prepared_index].get("finalTrace") is None
+            ]
+            measurement_sources = []
+            for prepared_index in exact_indexes:
+                owned_mask = (winning_member == prepared_index).astype(np.uint8)
+                if np.any(owned_mask):
+                    measurement_sources.append(
+                        (owned_mask, prepared[prepared_index], [prepared[prepared_index]])
+                    )
+            if non_exact_indexes:
+                non_exact_mask = (
+                    (type_mask > 0) & np.isin(winning_member, non_exact_indexes)
+                ).astype(np.uint8)
+                if np.any(non_exact_mask):
+                    non_exact_members = [prepared[index] for index in non_exact_indexes]
+                    primary = max(
+                        non_exact_members,
+                        key=lambda proposal: proposal.get(
+                            "rankingConfidence", proposal["confidence"]
+                        ),
+                    )
+                    measurement_sources.append(
+                        (non_exact_mask, primary, non_exact_members)
+                    )
+
+            for source_mask, primary, source_members in measurement_sources:
+                view_ids = list(
+                    dict.fromkeys(
+                        view_id
+                        for member in source_members
+                        for view_id in [
+                            member["sourceViewId"],
+                            *member.get("supportingViewIds", []),
+                        ]
+                    )
+                )
+                supporting_views = [
+                    view_id
+                    for view_id in view_ids
+                    if view_id != primary["sourceViewId"]
+                ]
+                for zone_name, zone_mask in zones.items():
+                    measured = source_mask & zone_mask
+                    pixel_count = int(np.count_nonzero(measured))
+                    if not pixel_count:
+                        continue
+                    _, _, width_px, height_px = cv2.boundingRect(measured)
+                    area_mm2 = pixel_count * pixel_area_mm2
+                    eligible_area_mm2 = np.count_nonzero(zone_mask) * pixel_area_mm2
+                    results.append(
+                        {
+                            "proposalId": primary.get("id"),
+                            "zone": zone_name,
+                            "canonicalContours": _normalized_contours(measured),
+                            "sourceViewId": primary["sourceViewId"],
+                            "supportingViewIds": supporting_views,
+                            "defectType": defect_type,
+                            "confidence": float(primary["confidence"]),
+                            "featureFingerprint": primary.get("featureFingerprint"),
+                            **(
+                                {
+                                    "learningAdjustment": float(
+                                        primary["learningAdjustment"]
+                                    )
+                                }
+                                if primary.get("learningAdjustment") is not None
+                                else {}
+                            ),
+                            **(
+                                {"origin": primary["origin"]}
+                                if primary.get("origin") is not None
+                                else {}
+                            ),
+                            **(
+                                {"detectedDefectType": primary["detectedDefectType"]}
+                                if primary.get("detectedDefectType") is not None
+                                else {}
+                            ),
+                            **(
+                                {"reviewResult": primary["reviewResult"]}
+                                if primary.get("reviewResult") is not None
+                                else {}
+                            ),
+                            **(
+                                {"smartMarkLearning": primary["smartMarkLearning"]}
+                                if primary.get("smartMarkLearning") is not None
+                                else {}
+                            ),
+                            **(
+                                {"memoryProposal": primary["memoryProposal"]}
+                                if primary.get("memoryProposal") is not None
+                                else {}
+                            ),
+                            **(
+                                {"finalTrace": primary["finalTrace"]}
+                                if primary.get("finalTrace") is not None
+                                else {}
+                            ),
+                            **(
+                                {"traceProvenance": primary["traceProvenance"]}
+                                if primary.get("traceProvenance") is not None
+                                else {}
+                            ),
+                            "widthMm": width_px * CARD_WIDTH_MM / GRID_WIDTH,
+                            "heightMm": height_px * CARD_HEIGHT_MM / GRID_HEIGHT,
+                            "pixelCount": pixel_count,
+                            "areaMm2": area_mm2,
+                            "eligibleZonePercent": area_mm2 / eligible_area_mm2 * 100,
+                            "multiplier": multiplier,
+                            "weightedAreaMm2": area_mm2 * multiplier,
+                        }
+                    )
     return results

@@ -3,6 +3,7 @@ import asyncio
 import inspect
 import json
 import logging
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -17,13 +18,20 @@ from card_geometry import (
     INSPECTION_WIDTH,
     detector_material_mask,
 )
-from defect_math import GRID_HEIGHT, GRID_WIDTH
+from defect_math import (
+    CARD_HEIGHT_MM,
+    CARD_WIDTH_MM,
+    GRID_HEIGHT,
+    GRID_WIDTH,
+    material_mask,
+)
 from sam3_detector import (
     DETECTOR_VERSION,
     LOGGER,
+    SAM3_REPOSITORY_COMMIT,
     Sam3ImageProcessor,
     _cap_memory_candidates_per_side,
-    _smart_mark_mask,
+    _smart_mark_prompt_inputs,
     detect_views,
     feature_fingerprint,
     learning_adjustment,
@@ -35,6 +43,7 @@ from sam_memory_v2 import (
     FINGERPRINT_VERSION,
     prepare_bank_v2,
 )
+from trace_rle import encode_trace_rle
 
 
 SAM_UNIT = [1 / np.sqrt(32)] * 32
@@ -170,25 +179,6 @@ class FakeOfficialImageProcessor:
         }
 
 
-class FakeSmartMarkImageProcessor(FakeOfficialImageProcessor):
-    def __init__(self, mask, prompt_failures=0):
-        super().__init__()
-        self.mask = mask
-        self.prompt_failures = prompt_failures
-        self.prompt_calls = 0
-
-    def add_geometric_prompt(self, box, label, state):
-        self.prompt_calls += 1
-        self.prompts.append((box, label, state))
-        if self.prompt_calls <= self.prompt_failures:
-            raise RuntimeError("transient prompt failure")
-        return {
-            **state,
-            "masks": FakeTensor(self.mask[None, None, :, :]),
-            "scores": self.scores,
-        }
-
-
 class FakeDenseMemoryImageProcessor(FakeOfficialImageProcessor):
     def set_image(self, image):
         self.images.append(image)
@@ -203,17 +193,27 @@ class FakeDenseMemoryImageProcessor(FakeOfficialImageProcessor):
         }
 
 
-class FixedSmartMarkProcessor:
-    def __init__(self, result=None, error=None):
-        self.result = result
-        self.error = error
+class FakeInteractivePointPredictor:
+    def __init__(self, mask):
+        self.mask = mask
+        self.images = []
         self.calls = []
 
-    def fingerprint_smart_mark(self, image, human_box_mask, allowed_mask):
-        self.calls.append((image, human_box_mask, allowed_mask))
-        if self.error:
-            raise self.error
-        return self.result
+    def set_image(self, image):
+        self.images.append(image)
+
+    def predict(self, **kwargs):
+        self.calls.append(kwargs)
+        return (
+            self.mask[None, :, :],
+            np.array([0.92], dtype=np.float32),
+            np.zeros((1, 256, 256), dtype=np.float32),
+        )
+
+
+class FakePointPromptProcessor:
+    def __init__(self, interactive):
+        self.model = SimpleNamespace(inst_interactive_predictor=interactive)
 
 
 def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
@@ -223,6 +223,39 @@ def rectangle(x1_mm, y1_mm, x2_mm, y2_mm):
         {"x": x2_mm / 63.5, "y": y2_mm / 88.9},
         {"x": x1_mm / 63.5, "y": y2_mm / 88.9},
     ]
+
+
+def exact_trace(contour):
+    points = np.array(
+        [[
+            round(point["x"] * (GRID_WIDTH - 1)),
+            round(point["y"] * (GRID_HEIGHT - 1)),
+        ] for point in contour],
+        dtype=np.int32,
+    )
+    mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+    cv2.fillPoly(mask, [points], 1)
+    return encode_trace_rle(mask)
+
+
+def trace_provenance(final_trace, source_view_id):
+    side = source_view_id.split(":", 1)[0] if ":" in source_view_id else "FRONT"
+    canonical_view_id = (
+        source_view_id if ":" in source_view_id else f"{side}:{source_view_id}"
+    )
+    return {
+        "version": "speedster-trace-provenance-v1",
+        "sourceViewId": canonical_view_id,
+        "cropTransform": {
+            "version": "speedster-canonical-crop-affine-v1",
+            "crop": {"x": 0, "y": 0, "width": 1269, "height": 1777},
+        },
+        "highlighterStrokes": [{
+            "canonicalPoints": [{"x": 1, "y": 1}],
+            "strokeWidthMm": 1.0,
+        }],
+        "finalTraceSha256": final_trace["sha256"],
+    }
 
 
 def dense_feature_map(compact: np.ndarray) -> np.ndarray:
@@ -252,6 +285,167 @@ def memory_match(similarity, session_id, box=(100, 100, 20, 20)):
 
 
 class Sam3DetectorTests(unittest.TestCase):
+    def test_stroke_prompt_rejects_off_material_point_even_when_sampling_omits_it(self):
+        allowed = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        stroke = [
+            {"x": 0.30 + index * 0.005, "y": 0.45}
+            for index in range(17)
+        ]
+        # np.linspace(0, 16, 16, dtype=int) omits index 15. Validation must
+        # nevertheless apply to the complete ordered stroke.
+        stroke[15] = {"x": 0.0, "y": 0.0}
+
+        with self.assertRaisesRegex(
+            ValueError, "stroke leaves physical card material"
+        ):
+            _smart_mark_prompt_inputs(
+                stroke,
+                1.0,
+                allowed,
+                np.zeros_like(allowed),
+                np.zeros_like(allowed),
+                INSPECTION_FRAME,
+            )
+
+    def test_stroke_corridor_uses_complete_path_before_positive_sampling(self):
+        allowed = detector_material_mask(
+            "SQUARE", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        stroke = [
+            {"x": 0.30 + index * 0.002, "y": 0.40}
+            for index in range(15)
+        ]
+        stroke.extend(
+            [
+                {"x": 0.80, "y": 0.70},
+                {"x": 0.33, "y": 0.42},
+            ]
+        )
+
+        points, labels, corridor = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            np.zeros_like(allowed),
+            np.zeros_like(allowed),
+            INSPECTION_FRAME,
+        )
+
+        spike_x = INSPECTION_MARGIN_PX + round(0.80 * (GRID_WIDTH - 1))
+        spike_y = INSPECTION_MARGIN_PX + round(0.70 * (GRID_HEIGHT - 1))
+        positive = np.rint(points[labels == 1]).astype(int)
+        negative = np.rint(points[labels == 0]).astype(int)
+        self.assertEqual(len(positive), 16)
+        self.assertFalse(np.any(np.all(positive == (spike_x, spike_y), axis=1)))
+        self.assertTrue(corridor[spike_y, spike_x])
+        self.assertTrue(np.all(corridor[negative[:, 1], negative[:, 0]] == 0))
+
+    def test_stroke_prompt_uses_ordered_positives_and_only_geometry_clean_negatives(self):
+        allowed = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        residual = np.zeros_like(allowed)
+        residual[400:500, 500:600] = 1
+        existing = np.zeros_like(allowed)
+        existing[700:800, 700:800] = 1
+        stroke = [
+            {"x": 0.40, "y": 0.40},
+            {"x": 0.42, "y": 0.42},
+            {"x": 0.44, "y": 0.43},
+        ]
+
+        points, labels, corridor = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            residual,
+            existing,
+            INSPECTION_FRAME,
+        )
+
+        positive = points[labels == 1]
+        negative = points[labels == 0]
+        self.assertGreater(len(positive), 1)
+        self.assertGreater(len(negative), 0)
+        self.assertTrue(np.all(labels[: len(positive)] == 1))
+        self.assertTrue(np.all(labels[len(positive) :] == 0))
+        negative_x = np.rint(negative[:, 0]).astype(int)
+        negative_y = np.rint(negative[:, 1]).astype(int)
+        self.assertTrue(np.all(allowed[negative_y, negative_x] > 0))
+        self.assertTrue(np.all(corridor[negative_y, negative_x] == 0))
+        self.assertTrue(np.all(residual[negative_y, negative_x] == 0))
+        self.assertTrue(np.all(existing[negative_y, negative_x] == 0))
+        self.assertTrue(
+            np.all(
+                cv2.distanceTransform(allowed, cv2.DIST_L2, 5)[
+                    negative_y, negative_x
+                ]
+                > 7
+            )
+        )
+
+        repeated = _smart_mark_prompt_inputs(
+            stroke,
+            1.0,
+            allowed,
+            residual,
+            existing,
+            INSPECTION_FRAME,
+        )
+        np.testing.assert_array_equal(repeated[0], points)
+        np.testing.assert_array_equal(repeated[1], labels)
+        np.testing.assert_array_equal(repeated[2], corridor)
+
+    def test_same_pinned_sam_model_point_head_proposes_one_material_clipped_trace(self):
+        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
+        allowed = detector_material_mask(
+            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
+        )
+        raw = np.ones((INSPECTION_HEIGHT, INSPECTION_WIDTH), dtype=np.uint8)
+        interactive = FakeInteractivePointPredictor(raw)
+        processor = Sam3ImageProcessor()
+        processor._processor = FakePointPromptProcessor(interactive)
+
+        result = processor.propose_smart_mark_trace(
+            image,
+            [
+                {"x": 0.40, "y": 0.40},
+                {"x": 0.42, "y": 0.42},
+                {"x": 0.44, "y": 0.43},
+            ],
+            1.0,
+            allowed,
+            np.zeros_like(allowed),
+            np.zeros_like(allowed),
+            INSPECTION_FRAME,
+        )
+
+        self.assertEqual(len(interactive.images), 1)
+        self.assertEqual(len(interactive.calls), 1)
+        prompt_call = interactive.calls[0]
+        self.assertNotIn("box", prompt_call)
+        self.assertNotIn("normalize_coords", prompt_call)
+        self.assertGreater(float(np.max(prompt_call["point_coords"])), 1.0)
+        self.assertEqual(set(prompt_call["point_labels"].tolist()), {0, 1})
+        self.assertGreater(
+            np.count_nonzero(prompt_call["point_labels"] == 0), 0
+        )
+        np.testing.assert_array_equal(result["mask"], allowed > 0)
+        self.assertEqual(result["promptAttempts"], 1)
+
+    def test_point_prompt_uses_the_optional_head_in_the_same_pinned_model(self):
+        source = inspect.getsource(Sam3ImageProcessor.load)
+
+        self.assertIn("enable_inst_interactivity=True", source)
+        self.assertIn("checkpoint_path=checkpoint_path", source)
+        module_source = inspect.getsource(inspect.getmodule(Sam3ImageProcessor))
+        self.assertIn(
+            f'SAM3_REPOSITORY_COMMIT = "{SAM3_REPOSITORY_COMMIT}"',
+            module_source,
+        )
+
     def test_sam_memory_decision_logger_emits_info_diagnostics(self):
         self.assertEqual(LOGGER.level, logging.INFO)
 
@@ -339,16 +533,198 @@ class Sam3DetectorTests(unittest.TestCase):
                     {
                         "id": "missed-2",
                         "defectType": "VISIBLE_WHITENING",
-                        "canonicalContour": rectangle(20, 20, 22, 22),
                         "sourceViewId": "ORIGINAL",
+                        "finalTrace": exact_trace(rectangle(20, 20, 22, 22)),
+                        "traceProvenance": trace_provenance(
+                            exact_trace(rectangle(20, 20, 22, 22)),
+                            "FRONT:ORIGINAL",
+                        ),
                     }
                 ],
             )
         )
 
         self.assertEqual(len(result["defects"]), 1)
-        self.assertEqual(result["defects"][0]["id"], "missed-2:SURFACE")
+        self.assertEqual(result["defects"][0]["id"], "missed-2")
         self.assertEqual(result["defects"][0]["reviewResult"], "SMART_MARKED")
+        self.assertEqual(
+            [region["zone"] for region in result["defects"][0]["measurementRegions"]],
+            ["SURFACE"],
+        )
+
+    def test_full_and_partial_smart_mark_overlap_do_not_add_damage(self):
+        existing = {
+            "id": "FRONT:memory-1:SURFACE",
+            "side": "FRONT",
+            "zone": "SURFACE",
+            "defectType": "LIFTING_DEFORMATION",
+            "detectedDefectType": "VISIBLE_WHITENING",
+            "origin": "MEMORY",
+            "confidence": 0.91,
+            "canonicalContour": rectangle(20, 20, 23, 22),
+            "sourceViewId": "FRONT:ORIGINAL",
+            "supportingViewIds": ["FRONT:MICRO_DEFECT"],
+            "reviewResult": "TYPE_CORRECTED",
+            "featureFingerprint": [1.0] + [0.0] * 31,
+            "learningAdjustment": 0.0,
+            "memoryProposal": {
+                "lessonSessionId": "cubone-lesson",
+                "lessonCompletionOrder": 228,
+                "lessonProposalOrder": 7,
+                "lessonOrder": 0,
+                "lessonSourceViewId": "ORIGINAL",
+                "similarity": 0.94,
+            },
+        }
+        existing_smart = {
+            "id": "FRONT:smart-existing:SURFACE",
+            "side": "FRONT",
+            "zone": "SURFACE",
+            "defectType": "VISIBLE_WHITENING",
+            "origin": "SMART_MARK",
+            "confidence": 1.0,
+            "canonicalContour": rectangle(30, 20, 32, 22),
+            "sourceViewId": "FRONT:ORIGINAL",
+            "supportingViewIds": [],
+            "reviewResult": "SMART_MARKED",
+            "featureFingerprint": [0.0, 1.0] + [0.0] * 30,
+            "smartMarkLearning": {
+                "fingerprintProvenance": "SAM_TRACE",
+                "traceAttempts": 1,
+                "proposalOverlapIouGt03": False,
+                "proposalMaxIou": 0.0,
+            },
+        }
+        findings = [existing, existing_smart]
+        baseline = measure_marks([], "FRONT", "SQUARE", findings=findings)
+        full = measure(
+            MeasureRequest(
+                side="FRONT",
+                cornerShape="SQUARE",
+                findings=findings,
+                marks=[{
+                    "id": "FRONT:smart-full",
+                    "defectType": "FAINT_COLOR_VARIATION",
+                    "sourceViewId": "FRONT:ORIGINAL",
+                    "finalTrace": exact_trace(rectangle(20, 20, 23, 22)),
+                    "traceProvenance": trace_provenance(
+                        exact_trace(rectangle(20, 20, 23, 22)),
+                        "FRONT:ORIGINAL",
+                    ),
+                }],
+            )
+        )
+        partial = measure_marks(
+            [{
+                "id": "FRONT:smart-partial",
+                "defectType": "FAINT_COLOR_VARIATION",
+                "sourceViewId": "FRONT:ORIGINAL",
+                "finalTrace": exact_trace(rectangle(21, 20, 22, 22)),
+                "traceProvenance": trace_provenance(
+                    exact_trace(rectangle(21, 20, 22, 22)),
+                    "FRONT:ORIGINAL",
+                ),
+            }],
+            "FRONT",
+            "SQUARE",
+            findings=findings,
+        )
+        shadowed = measure_marks(
+            [{
+                "id": "FRONT:smart-winning",
+                "defectType": "PEELING_HEAVY_DAMAGE",
+                "sourceViewId": "FRONT:ORIGINAL",
+                "finalTrace": exact_trace(rectangle(20, 20, 32, 22)),
+                "traceProvenance": trace_provenance(
+                    exact_trace(rectangle(20, 20, 32, 22)),
+                    "FRONT:ORIGINAL",
+                ),
+            }],
+            "FRONT",
+            "SQUARE",
+            findings=findings,
+        )
+
+        baseline_damage = sum(
+            defect["measurement"]["weightedAreaMm2"]
+            for defect in baseline["defects"]
+        )
+        baseline_area = sum(
+            defect["measurement"]["areaMm2"] for defect in baseline["defects"]
+        )
+        for measured in (full, partial):
+            self.assertEqual(
+                sum(
+                    defect["measurement"]["weightedAreaMm2"]
+                    for defect in measured["defects"]
+                ),
+                baseline_damage,
+            )
+            self.assertEqual(
+                sum(
+                    defect["measurement"]["areaMm2"]
+                    for defect in measured["defects"]
+                ),
+                baseline_area,
+            )
+        self.assertNotIn(
+            "FRONT:smart-full:SURFACE",
+            {defect["id"] for defect in full["defects"]},
+        )
+        self.assertNotIn(
+            "FRONT:smart-partial:SURFACE",
+            {defect["id"] for defect in partial["defects"]},
+        )
+
+        provenance_keys = {
+            "id",
+            "side",
+            "zone",
+            "defectType",
+            "detectedDefectType",
+            "origin",
+            "confidence",
+            "sourceViewId",
+            "supportingViewIds",
+            "reviewResult",
+            "featureFingerprint",
+            "learningAdjustment",
+            "smartMarkLearning",
+            "memoryProposal",
+        }
+        for result in (full, shadowed):
+            by_id = {defect["id"]: defect for defect in result["defects"]}
+            for original in findings:
+                expected = {
+                    key: original[key] for key in provenance_keys if key in original
+                }
+                actual = {
+                    key: by_id[original["id"]][key]
+                    for key in provenance_keys
+                    if key in by_id[original["id"]]
+                }
+                self.assertEqual(actual, expected)
+
+        shadowed_by_id = {
+            defect["id"]: defect for defect in shadowed["defects"]
+        }
+        for original in findings:
+            self.assertEqual(
+                shadowed_by_id[original["id"]]["measurement"],
+                {
+                    "widthMm": 0.0,
+                    "heightMm": 0.0,
+                    "areaMm2": 0.0,
+                    "zonePercent": 0.0,
+                    "multiplier": (
+                        2.0
+                        if original["defectType"] == "LIFTING_DEFORMATION"
+                        else 1.0
+                    ),
+                    "weightedAreaMm2": 0.0,
+                    "subgradeEffect": 0.0,
+                },
+            )
 
     def test_scans_each_view_and_returns_measured_speedster_defect(self):
         processor = FakeMaskProcessor()
@@ -385,211 +761,99 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertGreater(defect["measurement"]["areaMm2"], 0)
         self.assertGreater(defect["measurement"]["zonePercent"], 0)
         self.assertEqual(defect["measurement"]["multiplier"], 1.0)
+        self.assertNotIn("finalTrace", defect)
 
-    def test_smart_mark_crossing_zones_has_unique_stable_zone_ids(self):
+    def test_detector_measurement_receives_the_exact_trace_without_polygon_round_trip(self):
+        processor = FakeMaskProcessor()
+        image = np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8)
+        with patch("sam3_detector.defect_candidates", return_value=[]):
+            with patch("sam3_detector.measure_defects", return_value=[]) as measure:
+                detect_views(
+                    [("ORIGINAL", image)],
+                    "FRONT",
+                    "SQUARE",
+                    processor,
+                )
+
+        proposals = measure.call_args.args[0]
+        self.assertEqual(len(proposals), 1)
+        self.assertIn("canonicalMask", proposals[0])
+        self.assertNotIn("canonicalContour", proposals[0])
+        expected = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        expected[500:650, 450:600] = 1
+        np.testing.assert_array_equal(proposals[0]["canonicalMask"], expected)
+
+    def test_smart_mark_crossing_zones_has_one_stable_source_with_disjoint_regions(self):
+        source_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        source_mask[:140, :150] = 1
+        final_trace = encode_trace_rle(source_mask)
         result = measure_marks(
             [
                 {
                     "id": "missed-1",
                     "defectType": "VISIBLE_WHITENING",
-                    "canonicalContour": rectangle(4, 0, 6, 6),
                     "sourceViewId": "ORIGINAL",
+                    "finalTrace": final_trace,
+                    "traceProvenance": trace_provenance(
+                        final_trace, "BACK:ORIGINAL"
+                    ),
                 }
             ],
             "BACK",
-            "SQUARE",
+            "ROUNDED_3_18_MM",
         )
 
         defects = result["defects"]
-        self.assertEqual(len(defects), 3)
+        self.assertEqual(len(defects), 1)
+        source = defects[0]
+        self.assertEqual(source["id"], "missed-1")
+        self.assertEqual(source["finalTrace"], final_trace)
         self.assertEqual(
-            {defect["id"] for defect in defects},
-            {"missed-1:CORNERS", "missed-1:EDGES", "missed-1:SURFACE"},
+            source["traceProvenance"],
+            trace_provenance(final_trace, "BACK:ORIGINAL"),
         )
-        self.assertTrue(all(defect["confidence"] == 1.0 for defect in defects))
-        self.assertTrue(
-            all(defect["reviewResult"] == "SMART_MARKED" for defect in defects)
-        )
-
-    def test_valid_smart_mark_trace_uses_the_shared_top_level_fingerprint(self):
-        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
-        contour = rectangle(20, 20, 30, 30)
-        human_mask = _smart_mark_mask(
-            contour, image.shape[:2], INSPECTION_FRAME
-        )
-        fake = FakeSmartMarkImageProcessor(human_mask > 0)
-        processor = Sam3ImageProcessor()
-        processor._processor = fake
-
-        result = measure_marks(
-            [{
-                "id": "smart-valid",
-                "defectType": "VISIBLE_WHITENING",
-                "canonicalContour": contour,
-                "sourceViewId": "FRONT:ORIGINAL",
-            }],
-            "FRONT",
-            "SQUARE",
-            image,
-            "FRONT:ORIGINAL",
-            INSPECTION_FRAME,
-            processor=processor,
-        )
-
-        self.assertTrue(result["defects"])
-        for defect in result["defects"]:
-            self.assertEqual(len(defect["featureFingerprint"]), 32)
-            self.assertEqual(
-                defect["smartMarkLearning"]["fingerprintProvenance"],
-                "SAM_TRACE",
-            )
-            self.assertEqual(defect["smartMarkLearning"]["traceAttempts"], 1)
-        self.assertEqual(len(fake.images), 1)
-        self.assertEqual(fake.prompt_calls, 1)
-
-    def test_invalid_trace_pools_the_on_card_human_box_at_an_edge(self):
-        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
-        contour = rectangle(0, 0, 5, 5)
-        fake = FakeSmartMarkImageProcessor(
-            np.ones((INSPECTION_HEIGHT, INSPECTION_WIDTH), dtype=bool)
-        )
-        processor = Sam3ImageProcessor()
-        processor._processor = fake
-        captured_masks = []
-
-        def fingerprint(_features, mask):
-            captured_masks.append(np.asarray(mask).copy())
-            return [1.0] + [0.0] * 31
-
-        with patch("sam3_detector.feature_fingerprint", side_effect=fingerprint):
-            result = measure_marks(
-                [{
-                    "id": "smart-edge",
-                    "defectType": "FRAYING",
-                    "canonicalContour": contour,
-                    "sourceViewId": "BACK:ORIGINAL",
-                }],
-                "BACK",
-                "ROUNDED_3_18_MM",
-                image,
-                "BACK:ORIGINAL",
-                INSPECTION_FRAME,
-                processor=processor,
-            )
-
-        learning = result["defects"][0]["smartMarkLearning"]
-        self.assertEqual(learning["fingerprintProvenance"], "HUMAN_BOX_POOL")
-        self.assertEqual(len(captured_masks), 1)
-        material = detector_material_mask(
-            "ROUNDED_3_18_MM", INSPECTION_WIDTH, INSPECTION_HEIGHT
-        )
-        self.assertGreater(np.count_nonzero(captured_masks[0]), 0)
-        self.assertEqual(np.count_nonzero(captured_masks[0][material == 0]), 0)
+        self.assertNotIn("zone", source)
+        self.assertNotIn("canonicalContour", source)
+        self.assertNotIn("measurement", source)
+        regions = source["measurementRegions"]
         self.assertEqual(
-            np.count_nonzero(captured_masks[0][:INSPECTION_MARGIN_PX]), 0
+            [region["zone"] for region in regions],
+            ["CORNERS", "EDGES", "SURFACE"],
         )
+        material_clipped_pixels = int(
+            np.count_nonzero(source_mask & material_mask("ROUNDED_3_18_MM"))
+        )
+        pixel_area_mm2 = CARD_WIDTH_MM * CARD_HEIGHT_MM / (GRID_WIDTH * GRID_HEIGHT)
+        self.assertEqual(
+            sum(region["measurement"]["pixelCount"] for region in regions),
+            material_clipped_pixels,
+        )
+        self.assertEqual(
+            sum(region["measurement"]["areaMm2"] for region in regions),
+            material_clipped_pixels * pixel_area_mm2,
+        )
+        self.assertTrue(all(region["canonicalContour"] for region in regions))
+        self.assertEqual(source["confidence"], 1.0)
+        self.assertEqual(source["reviewResult"], "SMART_MARKED")
 
-    def test_smart_mark_prompt_gets_only_one_ordinary_retry(self):
+    def test_saved_exact_trace_pools_existing_features_without_any_prompt(self):
         image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
-        contour = rectangle(20, 20, 30, 30)
-        human_mask = _smart_mark_mask(contour, image.shape[:2], INSPECTION_FRAME)
-        fake = FakeSmartMarkImageProcessor(human_mask > 0, prompt_failures=1)
+        canonical = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        canonical[500:520, 600:630] = 1
+        fake = FakeOfficialImageProcessor()
         processor = Sam3ImageProcessor()
         processor._processor = fake
 
-        fingerprint = processor.fingerprint_smart_mark(
+        fingerprint = processor.fingerprint_saved_trace(
             image,
-            human_mask,
+            canonical,
             detector_material_mask("SQUARE", INSPECTION_WIDTH, INSPECTION_HEIGHT),
-        )
-
-        self.assertEqual(fingerprint["fingerprintProvenance"], "SAM_TRACE")
-        self.assertEqual(fingerprint["traceAttempts"], 2)
-        self.assertEqual(fake.prompt_calls, 2)
-
-    def test_hard_failure_keeps_human_geometry_measurement_and_completion_data(self):
-        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
-        mark = {
-            "id": "smart-failure",
-            "defectType": "VISIBLE_WHITENING",
-            "canonicalContour": rectangle(20, 20, 22, 22),
-            "sourceViewId": "FRONT:ORIGINAL",
-        }
-        baseline = measure_marks([mark], "FRONT", "SQUARE")
-        processor = FixedSmartMarkProcessor(error=RuntimeError("SAM unavailable"))
-        failed = measure_marks(
-            [mark],
-            "FRONT",
-            "SQUARE",
-            image,
-            "FRONT:ORIGINAL",
             INSPECTION_FRAME,
-            processor=processor,
         )
 
-        def authoritative(defect):
-            return {
-                key: value
-                for key, value in defect.items()
-                if key not in {"featureFingerprint", "smartMarkLearning"}
-            }
-
-        self.assertEqual(
-            [authoritative(defect) for defect in failed["defects"]],
-            [authoritative(defect) for defect in baseline["defects"]],
-        )
-        self.assertNotIn("featureFingerprint", failed["defects"][0])
-        self.assertEqual(
-            failed["defects"][0]["smartMarkLearning"]["fingerprintProvenance"],
-            "HARD_FAILURE",
-        )
-
-    def test_opencv_overlap_is_recorded_at_smart_mark_measure_time(self):
-        image = np.zeros((INSPECTION_HEIGHT, INSPECTION_WIDTH, 3), dtype=np.uint8)
-        contour = rectangle(20, 20, 22, 22)
-        human_mask = _smart_mark_mask(contour, image.shape[:2], INSPECTION_FRAME)
-        human_box = cv2.boundingRect(human_mask)
-        processor = FixedSmartMarkProcessor(result={
-            "featureFingerprint": [1.0] + [0.0] * 31,
-            "fingerprintProvenance": "SAM_TRACE",
-            "traceAttempts": 1,
-        })
-        with patch("sam3_detector.defect_candidates", return_value=[{
-            "box": human_box,
-            "coreBox": human_box,
-        }]):
-            result = measure_marks(
-                [{
-                    "id": "smart-overlap",
-                    "defectType": "VISIBLE_WHITENING",
-                    "canonicalContour": contour,
-                    "sourceViewId": "FRONT:ORIGINAL",
-                }],
-                "FRONT",
-                "SQUARE",
-                image,
-                "FRONT:ORIGINAL",
-                INSPECTION_FRAME,
-                processor=processor,
-            )
-
-        learning = result["defects"][0]["smartMarkLearning"]
-        self.assertTrue(learning["proposalOverlapIouGt03"])
-        self.assertEqual(learning["proposalMaxIou"], 1.0)
-
-    def test_legacy_measurement_never_loads_sam_without_evidence(self):
-        with patch("sam3_detector.get_processor", side_effect=AssertionError("loaded")):
-            result = measure_marks(
-                [{
-                    "id": "smart-legacy",
-                    "defectType": "VISIBLE_WHITENING",
-                    "canonicalContour": rectangle(20, 20, 22, 22),
-                    "sourceViewId": "ORIGINAL",
-                }],
-                "FRONT",
-                "SQUARE",
-            )
-        self.assertEqual(result["defects"][0]["reviewResult"], "SMART_MARKED")
+        self.assertEqual(len(fingerprint), 32)
+        self.assertEqual(len(fake.images), 1)
+        self.assertEqual(fake.prompts, [])
 
     def test_measure_endpoint_survives_evidence_image_load_failure(self):
         request = MeasureRequest(
@@ -603,18 +867,19 @@ class Sam3DetectorTests(unittest.TestCase):
             marks=[{
                 "id": "smart-load-failure",
                 "defectType": "VISIBLE_WHITENING",
-                "canonicalContour": rectangle(20, 20, 22, 22),
                 "sourceViewId": "FRONT:ORIGINAL",
+                "finalTrace": exact_trace(rectangle(20, 20, 22, 22)),
+                "traceProvenance": trace_provenance(
+                    exact_trace(rectangle(20, 20, 22, 22)),
+                    "FRONT:ORIGINAL",
+                ),
             }],
         )
         with patch("app.load_image", side_effect=RuntimeError("storage unavailable")):
             result = measure(request)
         self.assertEqual(result["defects"][0]["reviewResult"], "SMART_MARKED")
         self.assertNotIn("featureFingerprint", result["defects"][0])
-        self.assertEqual(
-            result["defects"][0]["smartMarkLearning"]["fingerprintProvenance"],
-            "HARD_FAILURE",
-        )
+        self.assertNotIn("smartMarkLearning", result["defects"][0])
 
     def test_official_processor_reuses_one_image_embedding_for_local_boxes(self):
         fake = FakeOfficialImageProcessor()

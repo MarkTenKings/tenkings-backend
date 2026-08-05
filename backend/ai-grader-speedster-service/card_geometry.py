@@ -31,6 +31,8 @@ MIN_DEFECT_AREA_MM2 = 0.02
 MAX_CANDIDATE_AREA_MM2 = 8.0
 MAX_CANDIDATE_BOX_AREA_MM2 = 20.0
 MAX_CANDIDATE_DIMENSION_MM = 10.0
+ANOMALY_KERNEL_SIZE = 15
+EXPECTED_BOUNDARY_RESPONSE_PX = ANOMALY_KERNEL_SIZE // 2
 
 
 def order_corners(points: np.ndarray) -> np.ndarray:
@@ -99,11 +101,13 @@ def _candidate_contours(image: np.ndarray) -> list[np.ndarray]:
     low = max(12, int(0.66 * median))
     high = max(low + 20, min(255, int(1.33 * median)))
     visual_edges = cv2.Canny(gray, low, high)
-    combined = cv2.bitwise_or(visual_edges, _material_boundary(image))
-    combined = cv2.dilate(combined, np.ones((3, 3), dtype=np.uint8))
-    contours, _ = cv2.findContours(
-        combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE
-    )
+    contours = []
+    for boundary in (visual_edges, _material_boundary(image)):
+        boundary = cv2.dilate(boundary, np.ones((3, 3), dtype=np.uint8))
+        found, _ = cv2.findContours(
+            boundary, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE
+        )
+        contours.extend(found)
     return contours
 
 
@@ -166,6 +170,14 @@ def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
     frame_area = working.shape[0] * working.shape[1]
     best = None
     for contour in _candidate_contours(working):
+        x, y, width, height = cv2.boundingRect(contour)
+        if (
+            x <= 0
+            or y <= 0
+            or x + width >= working.shape[1]
+            or y + height >= working.shape[0]
+        ):
+            continue
         area = float(cv2.contourArea(contour))
         if not (
             MIN_COMPONENT_AREA_FRACTION * frame_area
@@ -247,6 +259,54 @@ def detector_material_mask(corner_shape: str, width: int, height: int) -> np.nda
     margin = INSPECTION_MARGIN_PX
     allowed[margin : margin + GRID_HEIGHT, margin : margin + GRID_WIDTH] = canonical
     return allowed
+
+
+def expected_material_boundary_response_mask(
+    corner_shape: str, width: int, height: int
+) -> np.ndarray:
+    """Return only the expected inner cut response, including a 3.18 mm arc."""
+
+    physical_material = detector_material_mask(corner_shape, width, height)
+    distance_from_cut = material_distance_from_cut(physical_material)
+    return np.uint8(
+        (physical_material > 0)
+        & (distance_from_cut <= EXPECTED_BOUNDARY_RESPONSE_PX)
+    )
+
+
+def material_distance_from_cut(physical_material: np.ndarray) -> np.ndarray:
+    """Measure inward from every physical cut, including the image-frame edge."""
+
+    material = (np.asarray(physical_material) > 0).astype(np.uint8)
+    padded = cv2.copyMakeBorder(
+        material, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0
+    )
+    return cv2.distanceTransform(padded, cv2.DIST_L2, 5)[1:-1, 1:-1]
+
+
+def _boundary_aligned_response_mask(
+    gray: np.ndarray, corner_shape: str
+) -> np.ndarray:
+    """Select cut-normal image response, preserving normal-crossing damage."""
+
+    height, width = gray.shape
+    material = detector_material_mask(corner_shape, width, height)
+    distance_from_cut = material_distance_from_cut(material)
+    normal_x = cv2.Sobel(distance_from_cut, cv2.CV_32F, 1, 0, ksize=3)
+    normal_y = cv2.Sobel(distance_from_cut, cv2.CV_32F, 0, 1, ksize=3)
+    response_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    response_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    normal_energy = np.abs(response_x * normal_x + response_y * normal_y)
+    tangent_energy = np.abs(response_x * -normal_y + response_y * normal_x)
+    has_geometry_normal = (np.abs(normal_x) + np.abs(normal_y)) > 0
+    has_image_response = (np.abs(response_x) + np.abs(response_y)) > 0
+    return (
+        (material > 0)
+        & (distance_from_cut <= EXPECTED_BOUNDARY_RESPONSE_PX)
+        & has_geometry_normal
+        & has_image_response
+        & (normal_energy > tangent_energy)
+    )
 
 
 def detector_card_origin(width: int, height: int) -> tuple[int, int]:
@@ -347,6 +407,37 @@ def _box_iou(first: tuple[int, int, int, int], second: tuple[int, int, int, int]
     return overlap / float(aw * ah + bw * bh - overlap)
 
 
+def _boundary_subtracted_anomaly_response(
+    image: np.ndarray, corner_shape: str
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the full anomaly response before proposal filtering or selection."""
+
+    height_px, width_px = image.shape[:2]
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (ANOMALY_KERNEL_SIZE, ANOMALY_KERNEL_SIZE)
+    )
+    bright = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
+    dark = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
+    heat = cv2.max(bright, dark)
+    otsu, _ = cv2.threshold(heat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    percentile = float(np.percentile(heat, 97.0))
+    threshold = max(12.0, float(otsu), percentile)
+    binary = np.uint8(heat >= threshold)
+    binary &= detector_material_mask(corner_shape, width_px, height_px)
+    binary &= ~_boundary_aligned_response_mask(gray, corner_shape)
+    return binary, bright, dark, heat
+
+
+def boundary_subtracted_anomaly_mask(
+    image: np.ndarray, corner_shape: str
+) -> np.ndarray:
+    """Expose every material anomaly pixel before component proposal filters."""
+
+    binary, _, _, _ = _boundary_subtracted_anomaly_response(image, corner_shape)
+    return binary
+
+
 def defect_candidates(
     image: np.ndarray,
     corner_shape: str,
@@ -356,16 +447,9 @@ def defect_candidates(
     """Return only small, localized anomaly boxes for geometric SAM prompts."""
     height_px, width_px = image.shape[:2]
     card_origin = detector_card_origin(width_px, height_px)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    bright = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, kernel)
-    dark = cv2.morphologyEx(gray, cv2.MORPH_BLACKHAT, kernel)
-    heat = cv2.max(bright, dark)
-    otsu, _ = cv2.threshold(heat, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    percentile = float(np.percentile(heat, 97.0))
-    threshold = max(12.0, float(otsu), percentile)
-    binary = np.uint8(heat >= threshold)
-    binary &= detector_material_mask(corner_shape, width_px, height_px)
+    binary, bright, dark, heat = _boundary_subtracted_anomaly_response(
+        image, corner_shape
+    )
     count, labels, stats, _ = cv2.connectedComponentsWithStats(binary)
     proposals = []
     padding = max(2, round(0.4 * PX_PER_MM))

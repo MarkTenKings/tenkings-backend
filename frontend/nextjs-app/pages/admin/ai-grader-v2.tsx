@@ -5,6 +5,10 @@ import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
 import { CaptureWorkspace, type SpeedsterCaptureBundle } from "../../components/ai-grader-v2/CaptureWorkspace";
 import { ReviewWorkspace } from "../../components/ai-grader-v2/ReviewWorkspace";
+import type {
+  SpeedsterInMemoryTraceSave,
+  SpeedsterTraceProposalInput,
+} from "../../components/ai-grader-v2/DefectTraceEditor";
 import SharedLabelEditor from "../../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -14,9 +18,8 @@ import {
   type HumanGradeLabelEditorValue,
 } from "../../lib/humanGrade";
 import type {
-  SpeedsterCardSide,
   SpeedsterDefectType,
-  SpeedsterMeasuredDefect,
+  SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
@@ -27,13 +30,22 @@ import {
 } from "../../lib/ai-grader-v2/review-image-urls";
 import {
   calculateSpeedsterReview,
-  correctSpeedsterDefectType,
-  prepareSpeedsterCompletion,
-  removeSpeedsterDefect,
-  restoreSpeedsterDefect,
-  scanSpeedsterCapture,
+  completeSpeedsterReview,
   speedsterDetectorViews,
+  type SpeedsterReviewMeasurementAction,
 } from "../../lib/ai-grader-v2/review";
+import {
+  decodeSpeedsterTraceRleV1,
+  encodeSpeedsterTraceRleV1,
+} from "../../lib/ai-grader-v2/trace-codec";
+import {
+  decodeSpeedsterTraceBitmapWireV1,
+  encodeSpeedsterTraceBitmapWireV1,
+} from "../../lib/ai-grader-v2/trace-bitmap-wire";
+import {
+  buildSpeedsterTraceProvenanceRevision,
+  isNonEmptySpeedsterTrace,
+} from "../../lib/ai-grader-v2/trace-editor";
 import styles from "../../styles/AiGraderV2Admin.module.css";
 
 type SpeedsterDraft = { id: string; cardProfile: "POKEMON" | "SPORTS" };
@@ -47,11 +59,11 @@ export default function AiGraderV2AdminPage() {
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
-  const [defects, setDefects] = useState<SpeedsterMeasuredDefect[] | null>(null);
-  const [lastRemovedDefect, setLastRemovedDefect] = useState<SpeedsterMeasuredDefect | null>(null);
-  const [detectorVersion, setDetectorVersion] = useState<string | null>(null);
+  const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
+  const [lastRemovedDefectId, setLastRemovedDefectId] = useState<string | null>(null);
   const [completion, setCompletion] = useState<SpeedsterCompletion | null>(null);
   const [reviewImageUrls, setReviewImageUrls] = useState<SpeedsterReviewImageUrls | null>(null);
+  const [initializeFailed, setInitializeFailed] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Enter the exact information that belongs on the Ten Kings label.");
   const isAdmin = useMemo(
@@ -150,6 +162,29 @@ export default function AiGraderV2AdminPage() {
     }
   };
 
+  const initializeReview = useCallback(async () => {
+    if (!session?.token || !draft) throw new Error("Speedster detector state cannot initialize without its draft.");
+    setInitializeFailed(false);
+    setMessage("SAM 3 is scanning the server-owned Front and Back card views.");
+    const initializeResponse = await fetch(
+      `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/review-action`,
+      {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ action: { type: "INITIALIZE" } }),
+      },
+    );
+    const initialized = (await initializeResponse.json().catch(() => ({}))) as {
+      reviewedDefects?: SpeedsterReviewFinding[];
+      message?: string;
+    };
+    if (!initializeResponse.ok || !initialized.reviewedDefects) {
+      throw new Error(initialized.message ?? "Speedster detector state could not be initialized.");
+    }
+    setDefects(initialized.reviewedDefects);
+    setMessage("SAM 3 scan complete. Review the measured card map.");
+  }, [draft, session?.token]);
+
   const saveCapture = async (bundle: SpeedsterCaptureBundle) => {
     if (!session?.token || !draft) return;
     setWorking(true);
@@ -181,92 +216,166 @@ export default function AiGraderV2AdminPage() {
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "Card geometry could not be saved.");
       setCapture(bundle);
-      const scanned = await scanSpeedsterCapture({
-        capture: bundle,
-        detect: (request) => speedsterImageService.detect(session.token, {
-          ...request,
-          sessionId: draft.id,
-          requestTraceId: `${draft.id}:${request.side}:detect`,
-        }),
-        onSide: (side) => setMessage(`SAM 3 is scanning the ${side === "FRONT" ? "Front" : "Back"} card views.`),
-      });
-      setDetectorVersion(scanned.detectorVersion);
-      setDefects(scanned.defects);
-      setMessage("SAM 3 scan complete. Review the measured card map.");
+      await initializeReview();
     } catch (error) {
-      setCapture(null);
+      setInitializeFailed(true);
       setMessage(error instanceof Error ? error.message : "Card geometry could not be saved.");
     } finally {
       setWorking(false);
     }
   };
 
-  const smartMark = async (
-    side: SpeedsterCardSide,
-    box: { x: number; y: number; width: number; height: number },
-  ) => {
-    if (!session?.token || !draft || !capture || working) return;
+  const runReviewRemeasurement = async (
+    action: SpeedsterReviewMeasurementAction,
+    pendingMessage: string,
+    successMessage: string,
+    fallbackErrorMessage: string,
+  ): Promise<boolean> => {
+    if (!session?.token || !draft || !capture || !defects || working) return false;
     setWorking(true);
-    setMessage("Measuring the Smart-Mark.");
-    const id = `${side}:smart-${crypto.randomUUID()}`;
+    setMessage(pendingMessage);
     try {
-      const measured = await speedsterImageService.measure(session.token, {
-        sessionId: draft.id,
-        side,
-        cornerShape: capture.cornerShape,
-        evidenceView: {
-          id: `${side}:ORIGINAL`,
-          imageUrl: sourceImageUrls[`${side}:ORIGINAL`],
-          inspectionFrame: side === "FRONT"
-            ? capture.front.inspectionFrame
-            : capture.back.inspectionFrame,
+      const wireAction = action.type === "TRACE_SAVE"
+        ? (() => {
+            const { finalTrace, ...trace } = action.trace;
+            return {
+              ...action,
+              trace: {
+                ...trace,
+                traceWire: encodeSpeedsterTraceBitmapWireV1(
+                  decodeSpeedsterTraceRleV1(finalTrace),
+                  finalTrace.sha256,
+                ),
+              },
+            };
+          })()
+        : action;
+      const response = await fetch(
+        `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/review-action`,
+        {
+          method: "POST",
+          headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ action: wireAction }),
         },
-        marks: [{
-          id,
-          defectType: "FAINT_COLOR_VARIATION",
-          sourceViewId: `${side}:ORIGINAL`,
-          canonicalContour: [
-            { x: box.x, y: box.y },
-            { x: box.x + box.width, y: box.y },
-            { x: box.x + box.width, y: box.y + box.height },
-            { x: box.x, y: box.y + box.height },
-          ],
-        }],
-      });
-      const added = measured.defects.map((defect) => ({
-        ...defect,
-        origin: "SMART_MARK" as const,
-        reviewResult: "SMART_MARKED" as const,
-      }));
-      if (!added.length) throw new Error("Speedster did not return the Smart-Mark measurement.");
-      setDefects((current) => [...(current ?? []), ...added]);
-      setMessage("Smart-Mark measured. Select its defect type if needed.");
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        reviewedDefects?: SpeedsterReviewFinding[];
+        message?: string;
+      };
+      if (!response.ok || !payload.reviewedDefects) {
+        throw new Error(payload.message ?? "Measured review changes could not be saved to the draft.");
+      }
+      setDefects(payload.reviewedDefects);
+      setMessage(successMessage);
+      return true;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Smart-Mark measurement failed.");
+      setMessage(error instanceof Error ? error.message : fallbackErrorMessage);
+      return false;
     } finally {
       setWorking(false);
     }
+  };
+
+  const loadTrace = useCallback(async (findingId: string) => {
+    if (!session?.token || !draft) return null;
+    try {
+      const response = await fetch(
+        `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/review-action?findingId=${encodeURIComponent(findingId)}`,
+        {
+          method: "GET",
+          headers: buildAdminHeaders(session.token),
+          cache: "no-store",
+        },
+      );
+      const payload = (await response.json().catch(() => ({}))) as { traceWire?: unknown };
+      if (!response.ok || !payload.traceWire) return null;
+      return encodeSpeedsterTraceRleV1(decodeSpeedsterTraceBitmapWireV1(payload.traceWire));
+    } catch {
+      return null;
+    }
+  }, [draft, session?.token]);
+
+  const traceProposal = async (input: SpeedsterTraceProposalInput): Promise<Uint8Array | null> => {
+    if (!session?.token || !draft) return null;
+    const currentTraceWire = isNonEmptySpeedsterTrace(input.visibleTrace)
+      ? (() => {
+          const rle = encodeSpeedsterTraceRleV1(input.visibleTrace);
+          return encodeSpeedsterTraceBitmapWireV1(input.visibleTrace, rle.sha256);
+        })()
+      : null;
+    try {
+      const proposal = await speedsterImageService.traceProposal(session.token, {
+        sessionId: draft.id,
+        side: input.target.side,
+        findingId: input.target.findingId,
+        stroke: {
+          canonicalPoints: input.canonicalPoints,
+          strokeWidthPixels: input.strokeWidthPixels,
+          strokeWidthMm: input.strokeWidthMm,
+          cropTransformVersion: input.cropTransform.version,
+        },
+        currentTraceWire,
+      });
+      return decodeSpeedsterTraceBitmapWireV1(proposal.traceWire);
+    } catch {
+      return null;
+    }
+  };
+
+  const saveTrace = async (input: SpeedsterInMemoryTraceSave): Promise<boolean> => {
+    const finalTrace = encodeSpeedsterTraceRleV1(input.trace);
+    const traceProvenance = buildSpeedsterTraceProvenanceRevision({
+      sourceViewId: input.target.sourceViewId,
+      cropTransform: input.cropTransform,
+      highlighterStrokes: input.highlighterStrokes,
+      priorTraceProvenance: input.priorTraceProvenance,
+      finalTraceSha256: finalTrace.sha256,
+    });
+    const action: SpeedsterReviewMeasurementAction = input.target.findingId
+      ? {
+          type: "TRACE_SAVE",
+          side: input.target.side,
+          findingId: input.target.findingId,
+          trace: { finalTrace, traceProvenance },
+        }
+      : {
+          type: "TRACE_SAVE",
+          side: input.target.side,
+          findingId: null,
+          trace: {
+            id: `${input.target.side}:smart-${crypto.randomUUID()}`,
+            defectType: "FAINT_COLOR_VARIATION",
+            sourceViewId: input.target.sourceViewId,
+            finalTrace,
+            traceProvenance,
+          },
+        };
+    return runReviewRemeasurement(
+      action,
+      "Measuring the saved trace.",
+      "Trace measured. Select its defect type if needed.",
+      "Trace measurement failed. The visible trace remains editable.",
+    );
   };
 
   const completeGrade = async () => {
     if (!session?.token || !draft || !review || working) return;
     setWorking(true);
     setMessage("Completing the grade and adding its label to the print queue.");
-    const prepared = prepareSpeedsterCompletion(review.defects, review.grade, detectorVersion!);
     try {
       const response = await fetch(
         `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/complete-label`,
         {
           method: "POST",
           headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-          body: JSON.stringify(prepared.body),
+          body: JSON.stringify({}),
         },
       );
       const payload = (await response.json().catch(() => ({}))) as SpeedsterCompletion & { message?: string };
       if (!response.ok || !payload.label || !payload.publicReportSlug) {
         throw new Error(payload.message ?? "Speedster grade could not be completed.");
       }
-      setDefects(prepared.completedDefects);
+      setDefects(completeSpeedsterReview(defects ?? []));
       setCompletion(payload);
       setMessage("Grade complete. The public evidence report and label are ready.");
     } catch (error) {
@@ -316,11 +425,24 @@ export default function AiGraderV2AdminPage() {
             <span>03 · SAM 3</span>
             <h2>Scanning card views.</h2>
             <p>Every finding lands on one measured card map.</p>
+            {initializeFailed ? (
+              <button type="button" disabled={working} onClick={() => {
+                if (working) return;
+                setWorking(true);
+                void initializeReview()
+                  .catch((error) => {
+                    setInitializeFailed(true);
+                    setMessage(error instanceof Error ? error.message : "Speedster detector state could not be initialized.");
+                  })
+                  .finally(() => setWorking(false));
+              }}>Retry server scan</button>
+            ) : null}
           </section>
         ) : null}
 
         {capture && review && defects !== null && !completion ? (
           <ReviewWorkspace
+            cornerShape={capture.cornerShape}
             masterImageUrls={reviewImageUrls ? {
               FRONT: reviewImageUrls.FRONT.master,
               BACK: reviewImageUrls.BACK.master,
@@ -329,29 +451,41 @@ export default function AiGraderV2AdminPage() {
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
             grade={review.grade}
-            canUndo={lastRemovedDefect !== null}
+            canUndo={lastRemovedDefectId !== null}
             onRemoveDefect={(defectId) => {
               const removed = defects.find((defect) => defect.id === defectId);
               if (!removed) return;
-              setLastRemovedDefect(removed);
-              setDefects(removeSpeedsterDefect(defects, defectId));
-              setMessage("Finding removed from grading and saved as reviewer feedback.");
+              void runReviewRemeasurement(
+                { type: "REMOVE", defectId },
+                "Removing the finding and recalculating its card measurements.",
+                "Finding removed from grading and saved as reviewer feedback.",
+                "Finding removal measurement failed.",
+              ).then((applied) => {
+                if (applied) setLastRemovedDefectId(removed.id);
+              });
             }}
             onUndo={() => {
-              if (!lastRemovedDefect) return;
-              setDefects((current) => current
-                ? restoreSpeedsterDefect(current, lastRemovedDefect)
-                : current);
-              setLastRemovedDefect(null);
-              setMessage("Last removed finding restored.");
+              if (!lastRemovedDefectId) return;
+              void runReviewRemeasurement(
+                { type: "UNDO", defectId: lastRemovedDefectId },
+                "Restoring the finding and recalculating its card measurements.",
+                "Last removed finding restored.",
+                "Finding restore measurement failed.",
+              ).then((applied) => {
+                if (applied) setLastRemovedDefectId(null);
+              });
             }}
             onDefectTypeChange={(defectId: string, defectType: SpeedsterDefectType) => {
-              setDefects((current) => current
-                ? correctSpeedsterDefectType(current, defectId, defectType)
-                : current);
-              setMessage("Defect type and grade math updated.");
+              void runReviewRemeasurement(
+                { type: "CHANGE_TYPE", defectId, defectType },
+                "Changing the defect type and recalculating its card measurements.",
+                "Defect type and grade math updated.",
+                "Defect type measurement failed.",
+              );
             }}
-            onSmartMark={(side, box) => void smartMark(side, box)}
+            onTraceProposal={traceProposal}
+            onTraceSave={saveTrace}
+            onTraceLoad={loadTrace}
             onImageError={retryReviewImagesOnce}
             onComplete={() => void completeGrade()}
           />

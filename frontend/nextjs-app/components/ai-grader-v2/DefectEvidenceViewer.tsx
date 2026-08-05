@@ -1,21 +1,43 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 
-import type {
-  SpeedsterCardSide,
-  SpeedsterDefectType,
-  SpeedsterMeasuredDefect,
-  SpeedsterPoint,
+import {
+  isSpeedsterSourceMeasuredDefect,
+  type SpeedsterCardSide,
+  type SpeedsterDefectType,
+  type SpeedsterPoint,
+  type SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
+import { speedsterFindingRegions } from "../../lib/ai-grader-v2/review-findings";
 import {
   SPEEDSTER_CANONICAL_FRAME,
   canonicalContourToInspection,
-  inspectionBoxToCanonical,
+  canonicalPointToInspection,
+  inspectionPointToCanonical,
   type SpeedsterInspectionFrame,
 } from "../../lib/ai-grader-v2/inspection-frame";
+import {
+  createEmptySpeedsterTrace,
+  createSpeedsterCanonicalCropTransform,
+  createSpeedsterContourCropTransform,
+  createSpeedsterTraceCropTransform,
+  clipSpeedsterTraceToMaterial,
+  rasterizeSpeedsterCanonicalContour,
+  type SpeedsterTraceCornerShape,
+} from "../../lib/ai-grader-v2/trace-editor";
+import {
+  decodeSpeedsterTraceRleV1,
+  speedsterTraceRleV1Spans,
+  type SpeedsterTraceRleV1,
+} from "../../lib/ai-grader-v2/trace-codec";
+import {
+  DefectTraceEditor,
+  type SpeedsterInMemoryTraceSave,
+  type SpeedsterTraceProposalInput,
+} from "./DefectTraceEditor";
 import styles from "./DefectEvidenceViewer.module.css";
 
 const LABELS: Record<SpeedsterDefectType, string> = {
@@ -49,14 +71,19 @@ type DefectEvidenceViewerProps = {
   magnifyImageUrl?: string;
   inspectionFrame?: SpeedsterInspectionFrame;
   sourceImageUrls: Readonly<Record<string, string>>;
+  cornerShape?: SpeedsterTraceCornerShape;
   side: SpeedsterCardSide;
-  defects: readonly SpeedsterMeasuredDefect[];
+  defects: readonly SpeedsterReviewFinding[];
   readOnly: boolean;
   selectedDefectId?: string | null;
   onSelectedDefectChange?: (defectId: string) => void;
   onRemoveDefect?: (defectId: string) => void;
   onDefectTypeChange?: (defectId: string, defectType: SpeedsterDefectType) => void;
-  onSmartMark?: (box: { x: number; y: number; width: number; height: number }) => void;
+  onTraceProposal?: (
+    input: SpeedsterTraceProposalInput,
+  ) => Uint8Array | null | void | Promise<Uint8Array | null | void>;
+  onTraceSave?: (input: SpeedsterInMemoryTraceSave) => boolean | void | Promise<boolean | void>;
+  onTraceLoad?: (findingId: string) => Promise<SpeedsterTraceRleV1 | null>;
   onImageError?: () => void;
 };
 
@@ -67,11 +94,58 @@ function points(contour: readonly SpeedsterPoint[], scale = 1): string {
 }
 
 function center(contour: readonly SpeedsterPoint[]): SpeedsterPoint {
+  if (contour.length === 0) return { x: 0.5, y: 0.5 };
   const sum = contour.reduce(
     (value, point) => ({ x: value.x + point.x, y: value.y + point.y }),
     { x: 0, y: 0 },
   );
   return { x: sum.x / contour.length, y: sum.y / contour.length };
+}
+
+function traceCenter(trace: SpeedsterTraceRleV1): SpeedsterPoint {
+  let minimumX: number = trace.width;
+  let maximumX: number = 0;
+  let minimumY: number = trace.height;
+  let maximumY: number = 0;
+  for (const span of speedsterTraceRleV1Spans(trace)) {
+    minimumX = Math.min(minimumX, span.x);
+    maximumX = Math.max(maximumX, span.x + span.width - 1);
+    minimumY = Math.min(minimumY, span.y);
+    maximumY = Math.max(maximumY, span.y);
+  }
+  return {
+    x: ((minimumX + maximumX) / 2) / (trace.width - 1),
+    y: ((minimumY + maximumY) / 2) / (trace.height - 1),
+  };
+}
+
+function ExactTraceOverlay({
+  trace,
+  inspectionFrame,
+}: {
+  trace?: SpeedsterTraceRleV1;
+  inspectionFrame: SpeedsterInspectionFrame;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  useEffect(() => {
+    const context = canvasRef.current?.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, 1270, 1778);
+    context.fillStyle = "rgba(243, 213, 139, 0.42)";
+    if (trace) {
+      for (const span of speedsterTraceRleV1Spans(trace)) {
+        context.fillRect(span.x, span.y, span.width, 1);
+      }
+    }
+  }, [trace]);
+  const { cardBounds } = inspectionFrame;
+  const style = {
+    left: `${(cardBounds.x / (inspectionFrame.width - 1)) * 100}%`,
+    top: `${(cardBounds.y / (inspectionFrame.height - 1)) * 100}%`,
+    width: `${((cardBounds.width - 1) / (inspectionFrame.width - 1)) * 100}%`,
+    height: `${((cardBounds.height - 1) / (inspectionFrame.height - 1)) * 100}%`,
+  };
+  return <canvas ref={canvasRef} className={styles.traceOverlay} style={style} width={1270} height={1778} aria-hidden="true" />;
 }
 
 function crop(
@@ -104,6 +178,7 @@ export function DefectEvidenceViewer({
   magnifyImageUrl,
   inspectionFrame = SPEEDSTER_CANONICAL_FRAME,
   sourceImageUrls,
+  cornerShape = "SQUARE",
   side,
   defects,
   readOnly,
@@ -111,46 +186,140 @@ export function DefectEvidenceViewer({
   onSelectedDefectChange,
   onRemoveDefect,
   onDefectTypeChange,
-  onSmartMark,
+  onTraceProposal,
+  onTraceSave,
+  onTraceLoad,
   onImageError,
 }: DefectEvidenceViewerProps) {
   const [localId, setLocalId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [mode, setMode] = useState<ReviewMode>("INSPECT");
   const [pointer, setPointer] = useState<SpeedsterPoint | null>(null);
-  const [markStart, setMarkStart] = useState<SpeedsterPoint | null>(null);
-  const [markEnd, setMarkEnd] = useState<SpeedsterPoint | null>(null);
-  const visibleDefects = defects.filter((defect) => defect.side === side);
-  const visibleIds = new Set(visibleDefects.map(({ id }) => id));
+  const [newTraceAnchor, setNewTraceAnchor] = useState<SpeedsterPoint | null>(null);
+  const [editingFindingId, setEditingFindingId] = useState<string | null>(null);
+  const [traceError, setTraceError] = useState("");
+  const [hydratedTrace, setHydratedTrace] = useState<{
+    findingId: string;
+    trace: SpeedsterTraceRleV1;
+  } | null>(null);
+  const requestedTraceKey = useRef<string | null>(null);
+  const visibleDefects = useMemo(
+    () => defects.filter((defect) => defect.side === side),
+    [defects, side],
+  );
+  const visibleIds = useMemo(
+    () => new Set(visibleDefects.map(({ id }) => id)),
+    [visibleDefects],
+  );
   const selectedId =
     selectedDefectId === undefined
       ? localId && visibleIds.has(localId) ? localId : visibleDefects[0]?.id
       : selectedDefectId;
-  const activeId = hoveredId && visibleIds.has(hoveredId) ? hoveredId : selectedId;
+  const activeId = readOnly && hoveredId && visibleIds.has(hoveredId) ? hoveredId : selectedId;
   const active = visibleDefects.find(({ id }) => id === activeId);
+  const activeTrace = active?.finalTrace ?? (
+    active && hydratedTrace?.findingId === active.id && hydratedTrace.trace.sha256 === active.traceSha256
+      ? hydratedTrace.trace
+      : undefined
+  );
+  useEffect(() => {
+    const findingId = active?.id;
+    const traceSha256 = active?.traceSha256;
+    setHydratedTrace((current) => (
+      current && current.findingId === findingId && current.trace.sha256 === traceSha256
+        ? current
+        : null
+    ));
+    if (!findingId || !traceSha256 || active?.finalTrace || !onTraceLoad) {
+      if (!findingId || !traceSha256) requestedTraceKey.current = null;
+      if (!traceSha256 || active?.finalTrace) setTraceError("");
+      return;
+    }
+    if (hydratedTrace?.findingId === findingId && hydratedTrace.trace.sha256 === traceSha256) return;
+    const requestKey = `${findingId}:${traceSha256}`;
+    if (requestedTraceKey.current === requestKey) return;
+    requestedTraceKey.current = requestKey;
+    let cancelled = false;
+    setTraceError("");
+    void onTraceLoad(findingId).then((trace) => {
+      if (cancelled || requestedTraceKey.current !== requestKey) return;
+      if (!trace || trace.sha256 !== traceSha256) {
+        setTraceError("The exact saved trace could not be loaded. The finding remains unchanged.");
+        return;
+      }
+      setHydratedTrace({ findingId, trace });
+      setTraceError("");
+    }).catch(() => {
+      if (!cancelled && requestedTraceKey.current === requestKey) {
+        setTraceError("The exact saved trace could not be loaded. The finding remains unchanged.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [active?.finalTrace, active?.id, active?.traceSha256, hydratedTrace, onTraceLoad]);
+  const activeRegions = useMemo(
+    () => active ? speedsterFindingRegions(active) : [],
+    [active],
+  );
   const frameAspect = inspectionFrame.width / inspectionFrame.height;
-  const activeContour = active
-    ? canonicalContourToInspection(active.canonicalContour, inspectionFrame)
-    : null;
+  const activeContours = activeRegions.map((region) =>
+    canonicalContourToInspection(region.canonicalContour, inspectionFrame));
+  const activeContour = activeContours.length > 0 ? activeContours.flat() : null;
   const activeCrop = activeContour ? crop(activeContour, frameAspect) : null;
-  const activeTypes = active?.zone === "SURFACE" ? SURFACE_TYPES : EDGE_CORNER_TYPES;
-  const metrics = active
-    ? [
-        ["WIDTH", `${active.measurement.widthMm.toFixed(2)} mm`],
-        ["HEIGHT", `${active.measurement.heightMm.toFixed(2)} mm`],
-        ["AREA", `${active.measurement.areaMm2.toFixed(2)} mm²`],
-        ["ZONE", `${active.measurement.zonePercent.toFixed(2)}%`],
-        ["MULTIPLIER", `${active.measurement.multiplier.toFixed(2)}×`],
-        ["SUBGRADE EFFECT", `−${Math.abs(active.measurement.subgradeEffect).toFixed(2)}`],
-      ]
-    : [];
+  const traceTarget = useMemo(() => {
+    if (!readOnly && newTraceAnchor) {
+      return {
+        side,
+        findingId: null,
+        sourceViewId: `${side}:ORIGINAL`,
+        cropTransform: createSpeedsterCanonicalCropTransform({ anchor: newTraceAnchor }),
+        initialTrace: createEmptySpeedsterTrace(),
+        initialTraceProvenance: undefined,
+      };
+    }
+    if (readOnly || !active || editingFindingId !== active.id) return null;
+    if (isSpeedsterSourceMeasuredDefect(active) && !activeTrace) return null;
+    if (active.traceSha256 && !activeTrace) return null;
+    const representative = activeRegions[0];
+    if (!representative) return null;
+    const sourceTrace = activeTrace
+      ? decodeSpeedsterTraceRleV1(activeTrace)
+      : rasterizeSpeedsterCanonicalContour(representative.canonicalContour);
+    const initialTrace = clipSpeedsterTraceToMaterial(sourceTrace, cornerShape);
+    return {
+      side,
+      findingId: active.id,
+      sourceViewId: active.sourceViewId,
+      cropTransform: activeTrace
+        ? createSpeedsterTraceCropTransform(initialTrace)
+        : createSpeedsterContourCropTransform(representative.canonicalContour),
+      initialTrace,
+      initialTraceProvenance: activeTrace ? active.traceProvenance : undefined,
+    };
+  }, [active, activeRegions, activeTrace, cornerShape, editingFindingId, newTraceAnchor, readOnly, side]);
+  const activeTypes = !active || active.defectType === "FAINT_COLOR_VARIATION"
+    ? Object.keys(LABELS) as SpeedsterDefectType[]
+    : SURFACE_TYPES.includes(active.defectType)
+      ? SURFACE_TYPES
+      : EDGE_CORNER_TYPES;
+  const metrics = activeRegions.flatMap((region) => [
+    [`${region.zone} · WIDTH`, `${region.measurement.widthMm.toFixed(2)} mm`],
+    [`${region.zone} · HEIGHT`, `${region.measurement.heightMm.toFixed(2)} mm`],
+    [`${region.zone} · AREA`, `${region.measurement.areaMm2.toFixed(2)} mm²`],
+    [`${region.zone} · ZONE`, `${region.measurement.zonePercent.toFixed(2)}%`],
+    [`${region.zone} · MULTIPLIER`, `${region.measurement.multiplier.toFixed(2)}×`],
+    [`${region.zone} · SUBGRADE EFFECT`, `−${Math.abs(region.measurement.subgradeEffect).toFixed(2)}`],
+  ]);
 
   const select = (id: string) => {
     if (selectedDefectId === undefined) setLocalId(id);
     onSelectedDefectChange?.(id);
   };
 
-  const pointFromEvent = (event: ReactPointerEvent<HTMLDivElement>): SpeedsterPoint => {
+  const pointFromEvent = (event: {
+    clientX: number;
+    clientY: number;
+    currentTarget: HTMLDivElement;
+  }): SpeedsterPoint => {
     const bounds = event.currentTarget.getBoundingClientRect();
     return {
       x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)),
@@ -158,28 +327,17 @@ export function DefectEvidenceViewer({
     };
   };
 
-  const finishMark = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (mode !== "SMART_MARK" || !markStart) return;
-    const end = pointFromEvent(event);
-    const inspectionBox = {
-      x: Math.min(markStart.x, end.x),
-      y: Math.min(markStart.y, end.y),
-      width: Math.abs(end.x - markStart.x),
-      height: Math.abs(end.y - markStart.y),
-    };
-    setMarkStart(null);
-    setMarkEnd(null);
-    const box = inspectionBoxToCanonical(inspectionBox, inspectionFrame);
-    if (box && box.width > 0.005 && box.height > 0.005) onSmartMark?.(box);
+  const openTraceEditorAtMasterAnchor = (point: SpeedsterPoint) => {
+    const canonical = inspectionPointToCanonical(point, inspectionFrame);
+    if (!canonical) {
+      setTraceError("Choose a point on the physical card to open the trace editor.");
+      return;
+    }
+    setTraceError("");
+    setEditingFindingId(null);
+    setNewTraceAnchor(canonical);
     setMode("INSPECT");
   };
-
-  const markBox = markStart && markEnd ? {
-    x: Math.min(markStart.x, markEnd.x),
-    y: Math.min(markStart.y, markEnd.y),
-    width: Math.abs(markEnd.x - markStart.x),
-    height: Math.abs(markEnd.y - markStart.y),
-  } : null;
 
   const lensStyle = pointer ? {
     "--lens-x": `${pointer.x * 100}%`,
@@ -205,7 +363,11 @@ export function DefectEvidenceViewer({
               <button
                 type="button"
                 className={mode === "SMART_MARK" ? styles.toolActive : undefined}
-                onClick={() => setMode(mode === "SMART_MARK" ? "INSPECT" : "SMART_MARK")}
+                onClick={() => {
+                  setTraceError("");
+                  setNewTraceAnchor(null);
+                  setMode(mode === "SMART_MARK" ? "INSPECT" : "SMART_MARK");
+                }}
               >Smart-Mark</button>
             ) : null}
             <b>{visibleDefects.length.toString().padStart(2, "0")}</b>
@@ -216,18 +378,12 @@ export function DefectEvidenceViewer({
           style={{ aspectRatio: `${inspectionFrame.width} / ${inspectionFrame.height}` }}
           onPointerMove={(event) => {
             if (mode === "MAGNIFY") setPointer(pointFromEvent(event));
-            if (mode === "SMART_MARK" && markStart) setMarkEnd(pointFromEvent(event));
           }}
           onPointerLeave={() => setPointer(null)}
-          onPointerDown={(event) => {
+          onClick={(event) => {
             if (mode !== "SMART_MARK") return;
-            const next = pointFromEvent(event);
-            setMarkStart(next);
-            setMarkEnd(next);
-            event.currentTarget.setPointerCapture(event.pointerId);
+            openTraceEditorAtMasterAnchor(pointFromEvent(event));
           }}
-          onPointerUp={finishMark}
-          onPointerCancel={() => { setMarkStart(null); setMarkEnd(null); }}
         >
           <Image
             className={styles.masterImage}
@@ -240,11 +396,12 @@ export function DefectEvidenceViewer({
           />
           <svg className={styles.overlay} viewBox="0 0 1000 1000" preserveAspectRatio="none">
             {visibleDefects.map((defect, index) => {
-              const inspectionContour = canonicalContourToInspection(
-                defect.canonicalContour,
-                inspectionFrame,
-              );
-              const marker = center(inspectionContour);
+              const inspectionContours = speedsterFindingRegions(defect).map((region) =>
+                canonicalContourToInspection(region.canonicalContour, inspectionFrame));
+              const resolvedTrace = defect.id === activeId ? activeTrace : undefined;
+              const marker = resolvedTrace
+                ? canonicalPointToInspection(traceCenter(resolvedTrace), inspectionFrame)
+                : center(inspectionContours.flat());
               const activeClass = defect.id === activeId ? styles.active : styles.defect;
               return (
                 <g
@@ -253,10 +410,21 @@ export function DefectEvidenceViewer({
                   role="button"
                   tabIndex={0}
                   aria-label={`Defect ${index + 1}: ${LABELS[defect.defectType]}`}
-                  onClick={() => select(defect.id)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setNewTraceAnchor(null);
+                    setEditingFindingId(defect.id);
+                    if (!defect.traceSha256) setTraceError("");
+                    setMode("INSPECT");
+                    select(defect.id);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
+                      setNewTraceAnchor(null);
+                      setEditingFindingId(defect.id);
+                      if (!defect.traceSha256) setTraceError("");
+                      setMode("INSPECT");
                       select(defect.id);
                     }
                   }}
@@ -265,54 +433,72 @@ export function DefectEvidenceViewer({
                   onFocus={() => setHoveredId(defect.id)}
                   onBlur={() => setHoveredId(null)}
                 >
-                  <polygon className={styles.contour} points={points(inspectionContour, 1000)} />
+                  {!resolvedTrace ? inspectionContours.map((inspectionContour, regionIndex) => (
+                    <polygon
+                      key={`${defect.id}:region:${regionIndex}`}
+                      className={styles.contour}
+                      points={points(inspectionContour, 1000)}
+                    />
+                  )) : null}
                   <circle className={styles.hitTarget} cx={marker.x * 1000} cy={marker.y * 1000} r="34" />
                   <circle className={styles.halo} cx={marker.x * 1000} cy={marker.y * 1000} r="25" />
                   <circle className={styles.marker} cx={marker.x * 1000} cy={marker.y * 1000} r="11" />
                 </g>
               );
             })}
-            {markBox ? (
-              <rect
-                className={styles.smartMarkBox}
-                x={markBox.x * 1000}
-                y={markBox.y * 1000}
-                width={markBox.width * 1000}
-                height={markBox.height * 1000}
-              />
-            ) : null}
           </svg>
+          <ExactTraceOverlay trace={activeTrace} inspectionFrame={inspectionFrame} />
           {mode === "MAGNIFY" && pointer ? <div className={styles.lens} style={lensStyle} /> : null}
         </div>
       </div>
 
       <aside className={styles.detail} aria-live="polite">
-        {active && activeContour && activeCrop ? (
+        {traceTarget ? (
           <>
-            <div className={styles.closeUp}>
-              <svg viewBox={activeCrop.join(" ")} preserveAspectRatio="none">
-                <image
-                  href={sourceImageUrls[active.sourceViewId]}
-                  width="1"
-                  height="1"
-                  preserveAspectRatio="none"
-                  onError={onImageError}
-                />
-                <polygon className={styles.closeContour} points={points(activeContour)} />
-              </svg>
-              <span>EVIDENCE CLOSE-UP</span>
-            </div>
-            <div className={styles.title}>
-              <div className={styles.titleMeta}>
-                <span>{active.zone}</span>
-                {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
-              </div>
-              <h3>{LABELS[active.defectType]}</h3>
-            </div>
-            <dl className={styles.metrics}>
-              {metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-            </dl>
-            {!readOnly ? (
+            <DefectTraceEditor
+              key={traceTarget.findingId ?? `new:${newTraceAnchor?.x}:${newTraceAnchor?.y}`}
+              target={{
+                side: traceTarget.side,
+                findingId: traceTarget.findingId,
+                sourceViewId: traceTarget.sourceViewId,
+              }}
+              imageUrl={sourceImageUrls[traceTarget.sourceViewId] ?? masterImageUrl}
+              inspectionFrame={inspectionFrame}
+              cropTransform={traceTarget.cropTransform}
+              cornerShape={cornerShape}
+              initialTrace={traceTarget.initialTrace}
+              initialTraceProvenance={traceTarget.initialTraceProvenance}
+              onHighlighterStrokeEnd={onTraceProposal}
+              onSave={async (saved) => {
+                const applied = await onTraceSave?.(saved);
+                if (applied === false) return false;
+                setTraceError("");
+                if (!saved.target.findingId) setNewTraceAnchor(null);
+                return true;
+              }}
+              onCancel={newTraceAnchor ? () => {
+                setTraceError("");
+                setNewTraceAnchor(null);
+                setEditingFindingId(null);
+              } : undefined}
+              onImageError={onImageError}
+              onError={setTraceError}
+            />
+            {active && !newTraceAnchor ? (
+              <>
+                <div className={styles.title}>
+                  <div className={styles.titleMeta}>
+                    <span>{activeRegions.map(({ zone }) => zone).join(" · ")}</span>
+                    {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
+                  </div>
+                  <h3>{LABELS[active.defectType]}</h3>
+                </div>
+                <dl className={styles.metrics}>
+                  {metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+                </dl>
+              </>
+            ) : null}
+            {active && !newTraceAnchor ? (
               <div className={styles.actions}>
                 <span>DEFECT TYPE</span>
                 <div className={styles.pills}>
@@ -329,12 +515,45 @@ export function DefectEvidenceViewer({
               </div>
             ) : null}
           </>
+        ) : active ? (
+          <>
+            {activeContour && activeCrop ? <div className={styles.closeUp}>
+              <svg viewBox={activeCrop.join(" ")} preserveAspectRatio="none">
+                <image
+                  href={sourceImageUrls[active.sourceViewId]}
+                  width="1"
+                  height="1"
+                  preserveAspectRatio="none"
+                  onError={onImageError}
+                />
+                {activeContours.map((inspectionContour, regionIndex) => (
+                  <polygon
+                    key={`${active.id}:close:${regionIndex}`}
+                    className={styles.closeContour}
+                    points={points(inspectionContour)}
+                  />
+                ))}
+              </svg>
+              <span>EVIDENCE CLOSE-UP</span>
+            </div> : null}
+            <div className={styles.title}>
+              <div className={styles.titleMeta}>
+                <span>{activeRegions.map(({ zone }) => zone).join(" · ")}</span>
+                {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
+              </div>
+              <h3>{LABELS[active.defectType]}</h3>
+            </div>
+            <dl className={styles.metrics}>
+              {metrics.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+            </dl>
+          </>
         ) : (
           <div className={styles.empty}>
             <span>{mode === "SMART_MARK" ? "SMART-MARK" : "DEFECT EVIDENCE"}</span>
-            <p>{mode === "SMART_MARK" ? "Drag a box around the missed defect." : "Select a marker to inspect its measurements."}</p>
+            <p>{mode === "SMART_MARK" ? "Choose the missed-defect location on the master map." : "Select a marker to inspect its measurements."}</p>
           </div>
         )}
+        {traceError ? <p className={styles.traceError}>{traceError}</p> : null}
       </aside>
     </section>
   );

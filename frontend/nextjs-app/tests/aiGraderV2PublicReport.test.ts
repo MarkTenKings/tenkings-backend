@@ -58,7 +58,7 @@ function persisted(
   workflowState = "COMPLETED",
   includePresentationImages = true,
   includeInspectionImages = true,
-) {
+): Record<string, any> {
   const side = (name: string) => ({
     originalStorageKey: `${name}/raw.webp`,
     rectifiedStorageKey: `${name}/rectified.webp`,
@@ -77,6 +77,7 @@ function persisted(
   return {
     id: "private-session-id",
     createdByUserId: "private-admin-id",
+    publicReportSlug: "charizard-2025",
     workflowState,
     cardProfile: "POKEMON",
     identity: { cardName: "Charizard", year: "2025", productSet: "Journey Together", internalNote: "private" },
@@ -140,6 +141,51 @@ test("public review preserves the memory label without exposing lesson diagnosti
   assert.equal(JSON.stringify(source).includes("private-learning-session"), false);
 });
 
+test("public parsing keeps historical contours and exposes only a lazy trace hash for source/region findings", async () => {
+  const reportModule = await reportModulePromise;
+  const traceReport = persisted();
+  const { zone, canonicalContour, measurement, ...sourceDefect } = defect;
+  traceReport.reviewedDefects = [{
+    ...sourceDefect,
+    origin: "SMART_MARK",
+    reviewResult: "SMART_MARKED",
+    finalTrace: {
+      format: "TK_SPEEDSTER_TRACE_RLE_V1",
+      width: 1270,
+      height: 1778,
+      origin: "TOP_LEFT",
+      order: "ROW_MAJOR_Y_X",
+      runs: [1_129_665, 1, 1_128_394],
+      sha256: "928e33389ba8eb03acf1325532e93cfb615cf1527099bd53dbecd7e769cc6ed0",
+    },
+    traceProvenance: {
+      version: "speedster-trace-provenance-v1",
+      sourceViewId: "DIRECTIONAL",
+      cropTransform: { version: "speedster-canonical-crop-affine-v1", crop: { x: 0, y: 0, width: 100, height: 100 } },
+      highlighterStrokes: [],
+      finalTraceSha256: "928e33389ba8eb03acf1325532e93cfb615cf1527099bd53dbecd7e769cc6ed0",
+    },
+    measurementRegions: [{
+      zone,
+      canonicalContour,
+      measurement: { ...measurement, pixelCount: 1 },
+    }],
+  }];
+
+  const traced = reportModule.mapCompletedSpeedsterSession(traceReport);
+  assert.ok(traced);
+  assert.equal("canonicalContour" in traced.defects[0], false);
+  assert.equal(traced.defects[0].finalTrace, undefined);
+  assert.equal(traced.defects[0].traceSha256, "928e33389ba8eb03acf1325532e93cfb615cf1527099bd53dbecd7e769cc6ed0");
+  assert.equal(JSON.stringify(traced).includes("1129665"), false);
+
+  const historical = reportModule.mapCompletedSpeedsterSession(persisted());
+  assert.ok(historical);
+  assert.equal(historical.defects[0].finalTrace, undefined);
+  assert.ok("canonicalContour" in historical.defects[0]);
+  assert.deepEqual(historical.defects[0].canonicalContour, defect.canonicalContour);
+});
+
 test("completed reports created before PhotoRoom keep their rectified master images", async () => {
   const reportModule = await reportModulePromise;
   const legacy = persisted("COMPLETED", false, false);
@@ -168,6 +214,7 @@ test("materializes short-lived image URLs without returning object keys or priva
   assert.ok(source);
   const props = await reportModule.materializeSpeedsterReport(source, async (key) => `https://read.example/${encodeURIComponent(key)}`);
   assert.equal(props.imageUrls.FRONT.master, "https://read.example/front%2Freport.webp");
+  assert.equal(props.publicReportSlug, "charizard-2025");
   assert.equal(props.imageUrls.FRONT.views.ORIGINAL, "https://read.example/front%2Finspection.webp");
   assert.deepEqual(props.inspectionFrames.FRONT, inspectionFrame);
   assert.match(props.imageUrls.FRONT.views.DIRECTIONAL, /^https:\/\/read\.example\//);

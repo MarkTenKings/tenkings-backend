@@ -7,19 +7,23 @@ import cv2
 import numpy as np
 import requests
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from card_geometry import (
     INSPECTION_HEIGHT,
     INSPECTION_MARGIN_PX,
     INSPECTION_WIDTH,
+    PX_PER_MM,
+    boundary_subtracted_anomaly_mask,
     detect_card_quad,
+    detector_material_mask,
     printed_border_quad,
     warp_to_card_map,
     warp_to_inspection_map,
 )
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
+from trace_rle import decode_trace_rle, encode_trace_rle
 
 
 @asynccontextmanager
@@ -91,8 +95,9 @@ class DetectRequest(BaseModel):
 class SmartMark(BaseModel):
     id: str
     defectType: str
-    canonicalContour: List[Point]
     sourceViewId: str
+    finalTrace: Optional[dict] = None
+    traceProvenance: Optional[dict] = None
 
 
 class InspectionBounds(BaseModel):
@@ -116,7 +121,31 @@ class MeasureRequest(BaseModel):
     side: str
     cornerShape: str
     marks: List[SmartMark]
+    findings: List[dict] = Field(default_factory=list)
     evidenceView: Optional[SmartMarkEvidenceView] = None
+
+
+class CanonicalPixel(BaseModel):
+    x: int = Field(ge=0, lt=GRID_WIDTH)
+    y: int = Field(ge=0, lt=GRID_HEIGHT)
+
+
+class TraceProposalStroke(BaseModel):
+    canonicalPoints: List[CanonicalPixel]
+    strokeWidthPixels: int = Field(gt=0)
+    strokeWidthMm: float = Field(gt=0)
+    cropTransformVersion: str
+
+
+class TraceProposalRequest(BaseModel):
+    side: str
+    cornerShape: str
+    evidenceView: SmartMarkEvidenceView
+    findingId: Optional[str] = None
+    sourceViewId: str
+    stroke: TraceProposalStroke
+    currentTrace: Optional[dict] = None
+    findings: List[dict] = Field(default_factory=list)
 
 
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
@@ -298,6 +327,128 @@ def detect(request: DetectRequest):
         ) from error
 
 
+def _validated_card_bounds(
+    image: np.ndarray, inspection_frame: dict
+) -> tuple[int, int, int, int]:
+    height, width = image.shape[:2]
+    bounds = inspection_frame.get("cardBounds", {})
+    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        expected_origin = (INSPECTION_MARGIN_PX, INSPECTION_MARGIN_PX)
+    elif (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        expected_origin = (0, 0)
+    else:
+        expected_origin = None
+    if (
+        expected_origin is None
+        or inspection_frame.get("width") != width
+        or inspection_frame.get("height") != height
+        or bounds.get("width") != GRID_WIDTH
+        or bounds.get("height") != GRID_HEIGHT
+        or (bounds.get("x"), bounds.get("y")) != expected_origin
+    ):
+        raise ValueError("Speedster inspection frame does not match the evidence image")
+    return bounds["x"], bounds["y"], bounds["width"], bounds["height"]
+
+
+def _canonical_trace_in_evidence(
+    canonical_mask: np.ndarray,
+    image_shape: tuple[int, int],
+    bounds: tuple[int, int, int, int],
+) -> np.ndarray:
+    height, width = image_shape
+    x, y, card_width, card_height = bounds
+    if (card_width, card_height) != (GRID_WIDTH, GRID_HEIGHT):
+        raise ValueError("Speedster trace bounds are not canonical")
+    evidence_mask = np.zeros((height, width), dtype=np.uint8)
+    evidence_mask[y : y + card_height, x : x + card_width] = canonical_mask
+    return evidence_mask
+
+
+def _boundary_subtracted_anomaly_residual(
+    image: np.ndarray, corner_shape: str, source_view_id: str
+) -> np.ndarray:
+    del source_view_id
+    return boundary_subtracted_anomaly_mask(image, corner_shape)
+
+
+@app.post("/trace-proposal")
+def trace_proposal(request: TraceProposalRequest):
+    try:
+        if request.sourceViewId != request.evidenceView.id:
+            raise ValueError("Speedster trace source view does not match its evidence")
+        if (
+            request.stroke.cropTransformVersion
+            != "speedster-canonical-crop-affine-v1"
+        ):
+            raise ValueError("Speedster trace crop transform is not approved")
+        if not request.stroke.canonicalPoints:
+            raise ValueError("Speedster trace proposal requires one stroke point")
+        if not np.isclose(
+            request.stroke.strokeWidthMm * PX_PER_MM,
+            request.stroke.strokeWidthPixels,
+            rtol=0,
+            atol=1e-9,
+        ):
+            raise ValueError("Speedster trace stroke widths do not agree")
+
+        image = load_image(
+            request.evidenceView.imageUrl,
+            request.evidenceView.imageBase64,
+        )
+        frame = request.evidenceView.inspectionFrame.model_dump()
+        bounds = _validated_card_bounds(image, frame)
+        allowed_mask = detector_material_mask(
+            request.cornerShape, image.shape[1], image.shape[0]
+        )
+        residual = _boundary_subtracted_anomaly_residual(
+            image, request.cornerShape, request.sourceViewId
+        )
+        existing = np.zeros(image.shape[:2], dtype=np.uint8)
+        saved_traces = []
+        if request.currentTrace is not None:
+            saved_traces.append(request.currentTrace)
+        saved_traces.extend(
+            finding["finalTrace"]
+            for finding in request.findings
+            if finding.get("finalTrace") is not None
+        )
+        for saved_trace in saved_traces:
+            existing |= _canonical_trace_in_evidence(
+                decode_trace_rle(saved_trace), image.shape[:2], bounds
+            )
+
+        normalized_points = [
+            {
+                "x": point.x / (GRID_WIDTH - 1),
+                "y": point.y / (GRID_HEIGHT - 1),
+            }
+            for point in request.stroke.canonicalPoints
+        ]
+        proposed = get_processor().propose_smart_mark_trace(
+            image,
+            normalized_points,
+            request.stroke.strokeWidthMm,
+            allowed_mask,
+            residual,
+            existing,
+            frame,
+        )
+        proposed_mask = np.asarray(proposed.get("mask")) > 0
+        if proposed_mask.shape != image.shape[:2]:
+            raise ValueError("SAM 3 returned an invalid Speedster trace shape")
+        proposed_mask &= allowed_mask > 0
+        x, y, width, height = bounds
+        canonical = proposed_mask[y : y + height, x : x + width].astype(np.uint8)
+        return {"trace": encode_trace_rle(canonical)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(error).__name__}: {error}",
+        ) from error
+
+
 @app.post("/measure")
 def measure(request: MeasureRequest):
     evidence_image = None
@@ -313,18 +464,31 @@ def measure(request: MeasureRequest):
             # fingerprint evidence failures.
             evidence_failed = True
     try:
-        return measure_marks(
+        result = measure_marks(
             [
                 {
                     "id": mark.id,
                     "defectType": mark.defectType,
-                    "canonicalContour": [point.model_dump() for point in mark.canonicalContour],
                     "sourceViewId": mark.sourceViewId,
+                    **(
+                        {"finalTrace": mark.finalTrace}
+                        if (
+                            mark.finalTrace is not None
+                            or "finalTrace" in mark.model_fields_set
+                        )
+                        else {}
+                    ),
+                    **(
+                        {"traceProvenance": mark.traceProvenance}
+                        if mark.traceProvenance is not None
+                        else {}
+                    ),
                 }
                 for mark in request.marks
             ],
             request.side,
             request.cornerShape,
+            findings=request.findings,
             evidence_image=evidence_image,
             evidence_view_id=request.evidenceView.id if request.evidenceView else None,
             inspection_frame=(
@@ -334,5 +498,17 @@ def measure(request: MeasureRequest):
             ),
             evidence_failed=evidence_failed,
         )
+        if result.get("traceErrors"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_EXISTING_SPEEDSTER_TRACE",
+                    "findingIds": [
+                        error.get("findingId")
+                        for error in result["traceErrors"]
+                    ],
+                },
+            )
+        return result
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

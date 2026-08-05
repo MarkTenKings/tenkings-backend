@@ -21,6 +21,13 @@ import {
   type SpeedsterLearningCatchUpResult,
   type SpeedsterLearningCompletionReadiness,
 } from "../../../../../../lib/server/aiGraderV2LearningBank";
+import {
+  calculateSpeedsterReview,
+  completeSpeedsterReview,
+  publicSpeedsterDefects,
+} from "../../../../../../lib/ai-grader-v2/review";
+import { parseSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
+import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const score = z.number().finite().min(1).max(10);
@@ -43,10 +50,7 @@ const gradeReportSchema = z
   })
   .passthrough();
 const completeSchema = z
-  .object({
-    reviewedDefects: z.array(z.unknown()),
-    gradeReport: gradeReportSchema,
-  })
+  .object({})
   .strict();
 const optionalText = z.string().trim().max(120).optional().nullable();
 const identitySchema = z
@@ -68,8 +72,11 @@ type CompletionSession = {
   workflowState: string;
   publicReportSlug: string | null;
   identity: Prisma.JsonValue;
+  capture?: Prisma.JsonValue;
+  reviewedDefects?: Prisma.JsonValue;
+  gradeReport?: Prisma.JsonValue;
 };
-type CompletionInput = z.infer<typeof completeSchema> & {
+type CompletionInput = {
   sessionId: string;
   createdByUserId: string;
 };
@@ -93,6 +100,30 @@ type Dependencies = {
 };
 
 const optional = (value: string | null | undefined) => value?.trim() || null;
+
+const record = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+function serverOwnedReview(session: CompletionSession) {
+  const capture = record(session.capture);
+  const front = record(capture?.front);
+  const back = record(capture?.back);
+  const frontBorders = record(front?.centeringBorders);
+  const backBorders = record(back?.centeringBorders);
+  const persistedGrade = record(session.gradeReport);
+  if (!frontBorders || !backBorders || typeof persistedGrade?.detectorVersion !== "string") {
+    throw new HttpError(409, "Speedster server-owned review state is incomplete");
+  }
+  const defects = completeSpeedsterReview(parseSpeedsterReviewFindings(session.reviewedDefects));
+  const review = calculateSpeedsterReview({
+    front: { centeringBorders: frontBorders as SpeedsterCenteringBorders },
+    back: { centeringBorders: backBorders as SpeedsterCenteringBorders },
+  }, defects);
+  return {
+    reviewedDefects: publicSpeedsterDefects(review.defects),
+    gradeReport: { ...review.grade, detectorVersion: persistedGrade.detectorVersion },
+  };
+}
 
 export function buildSpeedsterLabelData(session: CompletionSession, report: z.infer<typeof gradeReportSchema>) {
   const parsedIdentity = identitySchema.safeParse(session.identity);
@@ -147,9 +178,24 @@ const labelResult = (label: {
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
   let catchUpResult: SpeedsterLearningCatchUpResult | null = null;
   const result = await afterDurableSpeedsterCompletion<DurableCompletionResult>(() => prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`
+      SELECT "id"
+      FROM "AiGraderV2Session"
+      WHERE "id" = ${input.sessionId} AND "createdByUserId" = ${input.createdByUserId}
+      FOR UPDATE
+    `;
     const session = await tx.aiGraderV2Session.findFirst({
       where: { id: input.sessionId, createdByUserId: input.createdByUserId },
-      select: { id: true, cardProfile: true, workflowState: true, publicReportSlug: true, identity: true },
+      select: {
+        id: true,
+        cardProfile: true,
+        workflowState: true,
+        publicReportSlug: true,
+        identity: true,
+        capture: true,
+        reviewedDefects: true,
+        gradeReport: true,
+      },
     });
     if (!session) throw new HttpError(404, "Speedster session not found");
 
@@ -164,20 +210,27 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
         publicReportSlug: session.publicReportSlug,
       };
     }
+    if (session.workflowState !== "CAPTURED") {
+      throw new HttpError(409, "Only a CAPTURED Speedster session can be completed");
+    }
 
-    const labelData = buildSpeedsterLabelData(session, input.gradeReport);
+    const completedReview = serverOwnedReview(session);
+    const labelData = buildSpeedsterLabelData(
+      session,
+      completedReview.gradeReport as unknown as z.infer<typeof gradeReportSchema>,
+    );
     const publicReportSlug = session.publicReportSlug ?? speedsterReportSlug(session.id);
     const claimed = await tx.aiGraderV2Session.updateMany({
       where: {
         id: session.id,
         createdByUserId: input.createdByUserId,
-        workflowState: { not: "COMPLETED" },
+        workflowState: "CAPTURED",
       },
       data: {
         workflowState: "COMPLETED",
         publicReportSlug,
-        reviewedDefects: input.reviewedDefects as Prisma.InputJsonValue,
-        gradeReport: input.gradeReport as Prisma.InputJsonValue,
+        reviewedDefects: completedReview.reviewedDefects as Prisma.InputJsonValue,
+        gradeReport: completedReview.gradeReport as Prisma.InputJsonValue,
       },
     });
     if (claimed.count === 0) {
@@ -196,7 +249,7 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     // after this durable grade+label transaction so a cache failure cannot
     // roll back the human-authoritative completion.
     if (learningBank.kind === "V1") {
-      const nextLearningBank = updateSpeedsterLearningBank(learningBank.bank, input.reviewedDefects);
+      const nextLearningBank = updateSpeedsterLearningBank(learningBank.bank, completedReview.reviewedDefects);
       if (JSON.stringify(nextLearningBank) !== JSON.stringify(learningBank.bank)) {
         await tx.aiGraderV2LearningBank.upsert({
           where: { id: "GLOBAL" },
@@ -279,8 +332,6 @@ export function createAiGraderV2CompleteLabelHandler(deps: Dependencies = depend
       const result = await deps.completeSession({
         sessionId,
         createdByUserId: admin.user.id,
-        reviewedDefects: parsed.data.reviewedDefects,
-        gradeReport: parsed.data.gradeReport,
       });
       try {
         await deps.completePresentation({ sessionId, createdByUserId: admin.user.id });

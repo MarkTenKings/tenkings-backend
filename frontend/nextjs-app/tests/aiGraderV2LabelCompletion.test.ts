@@ -64,14 +64,29 @@ const speedsterSession = {
   },
 };
 
-function request(): NextApiRequest {
+function request(body: unknown = {}): NextApiRequest {
   return {
     method: "POST",
     query: { sessionId },
-    body: { reviewedDefects: [], gradeReport },
+    body,
     headers: {},
   } as unknown as NextApiRequest;
 }
+
+test("completion rejects client-owned findings and grade authority", async () => {
+  let completed = false;
+  const handler = createAiGraderV2CompleteLabelHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async completeSession() { completed = true; throw new Error("must not run"); },
+    async completePresentation() { return undefined; },
+  });
+  const rejected = response();
+
+  await handler(request({ reviewedDefects: [], gradeReport }), rejected.res);
+
+  assert.equal(rejected.state.status, 400);
+  assert.equal(completed, false);
+});
 
 function response() {
   const state: { status?: number; body?: unknown } = {};
@@ -120,6 +135,7 @@ test("completion retry returns the original label without consuming another slot
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
     async completeSession(input) {
       assert.equal(input.createdByUserId, "admin-1");
+      assert.deepEqual(Object.keys(input).sort(), ["createdByUserId", "sessionId"]);
       if (saved) return { outcome: "EXISTING" as const, ...saved, learning: currentLearning };
       creations += 1;
       saved = {
@@ -251,7 +267,12 @@ test("additive schema seam defaults existing labels to HUMAN and uniquely links 
   assert.match(schema, /sourceSessionId\s+String\?\s+@unique/);
   assert.match(migration, /ADD COLUMN "source"[^\n]+NOT NULL DEFAULT 'HUMAN'/);
   assert.doesNotMatch(migration, /\bUPDATE\s+"HumanGradeLabel"/i);
-  assert.match(endpoint, /workflowState: \{ not: "COMPLETED" \}/);
+  assert.match(endpoint, /if \(session\.workflowState !== "CAPTURED"\)/);
+  assert.match(endpoint, /workflowState: "CAPTURED"/);
+  const completionLock = endpoint.indexOf("FROM \"AiGraderV2Session\"");
+  const authoritativeRead = endpoint.indexOf("const session = await tx.aiGraderV2Session.findFirst");
+  assert.ok(completionLock >= 0 && completionLock < authoritativeRead, "completion must lock before its authoritative read");
+  assert.match(endpoint.slice(completionLock, authoritativeRead), /FOR UPDATE/);
   assert.match(endpoint, /where: \{ sourceSessionId: session\.id \}/);
   assert.match(endpoint, /createdByUserId: input\.createdByUserId/);
   assert.equal((endpoint.match(/pg_advisory_xact_lock/g) ?? []).length, 1);

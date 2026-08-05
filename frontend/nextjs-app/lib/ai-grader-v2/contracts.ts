@@ -1,3 +1,5 @@
+import type { SpeedsterTraceRleV1 } from "./trace-codec";
+
 export const SPEEDSTER_RULE_VERSION = "TK_SPEEDSTER_2026_07_31" as const;
 
 export type SpeedsterCardProfile = "POKEMON" | "SPORTS";
@@ -61,6 +63,20 @@ export type SpeedsterMemoryProposal = {
   similarity: number;
 };
 
+export type SpeedsterTraceProvenance = Readonly<{
+  version: "speedster-trace-provenance-v1";
+  sourceViewId: string;
+  cropTransform: Readonly<{
+    version: "speedster-canonical-crop-affine-v1";
+    crop: Readonly<{ x: number; y: number; width: number; height: number }>;
+  }>;
+  highlighterStrokes: readonly Readonly<{
+    canonicalPoints: readonly Readonly<{ x: number; y: number }>[];
+    strokeWidthMm: number;
+  }>[];
+  finalTraceSha256: string;
+}>;
+
 export type SpeedsterDefect = {
   id: string;
   side: SpeedsterCardSide;
@@ -74,12 +90,16 @@ export type SpeedsterDefect = {
   learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];
+  finalTrace?: SpeedsterTraceRleV1;
+  traceSha256?: string;
+  traceProvenance?: SpeedsterTraceProvenance;
   sourceViewId: string;
   supportingViewIds: readonly string[];
   reviewResult: SpeedsterReviewResult;
 };
 
 export type SpeedsterDefectMeasurement = {
+  pixelCount?: number;
   widthMm: number;
   heightMm: number;
   areaMm2: number;
@@ -92,6 +112,29 @@ export type SpeedsterDefectMeasurement = {
 export type SpeedsterMeasuredDefect = SpeedsterDefect & {
   measurement: SpeedsterDefectMeasurement;
 };
+
+export type SpeedsterMeasurementRegion = Readonly<{
+  zone: SpeedsterConditionZone;
+  canonicalContour: readonly SpeedsterPoint[];
+  measurement: SpeedsterDefectMeasurement;
+}>;
+
+export type SpeedsterSourceMeasuredDefect = Omit<
+  SpeedsterMeasuredDefect,
+  "zone" | "canonicalContour" | "measurement"
+> & {
+  finalTrace?: SpeedsterTraceRleV1;
+  traceProvenance?: SpeedsterTraceProvenance;
+  measurementRegions: readonly SpeedsterMeasurementRegion[];
+};
+
+export type SpeedsterReviewFinding = SpeedsterMeasuredDefect | SpeedsterSourceMeasuredDefect;
+
+export function isSpeedsterSourceMeasuredDefect(
+  finding: SpeedsterReviewFinding,
+): finding is SpeedsterSourceMeasuredDefect {
+  return Array.isArray((finding as SpeedsterSourceMeasuredDefect).measurementRegions);
+}
 
 export type SpeedsterDetectorResult = {
   detectorVersion: string;
