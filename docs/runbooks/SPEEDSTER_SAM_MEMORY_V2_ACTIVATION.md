@@ -128,13 +128,14 @@ the gap. There is no queue, worker, retry service, or completion gate.
 
 Only completed `SMART_MARK_POSITIVE` exemplars may originate learned proposals.
 Detection compares them with the already-computed SAM FPN fingerprint space,
-requires similarity `>=0.90`, deduplicates registered canonical regions, and
+requires similarity `>=0.75`, deduplicates registered canonical regions, and
 selects at most the best three matches per defect type per card side before the
 existing SAM box prompt. The unchanged material/mask/area gates, negative-memory
 veto, fusion, measurement, grading, and review flow remain authoritative.
 
 Learned results carry `MEMORY` origin and exact lesson/session diagnostics and
-show the compact `memory` label in the existing review panel. An untouched
+show their exact similarity on the Memory pin and compact `memory` label in the
+existing reviewer panel. An untouched
 accepted memory result is never harvested as a positive. Explicit removal or
 relabel retains the ordinary negative or negative-old/positive-new semantics,
 but only human Smart Marks are proposal sources. No new model, retraining,

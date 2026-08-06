@@ -53,7 +53,7 @@ test("uses a square magnifier while retaining full-stage boundary clamping", () 
   assert.doesNotMatch(lens, /border-radius:\s*50%/);
 });
 
-test("the existing defect detail panel surfaces compact memory provenance", () => {
+test("Memory pins and the existing detail panel surface the proposal similarity", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const component = readFileSync(
     `${root}/components/ai-grader-v2/DefectEvidenceViewer.tsx`,
@@ -64,8 +64,10 @@ test("the existing defect detail panel surfaces compact memory provenance", () =
     "utf8",
   );
 
-  assert.match(component, /active\.origin === "MEMORY"/);
-  assert.match(component, /className=\{styles\.memoryLabel\}>memory<\/small>/);
+  assert.match(component, /function memorySimilarity\(/);
+  assert.match(component, /className=\{styles\.memoryScore\}/);
+  assert.match(component, /`memory · sim \$\{activeSimilarity\}`/);
+  assert.match(css, /\.memoryScore\s*\{/);
   assert.match(css, /\.memoryLabel\s*\{/);
   assert.doesNotMatch(component, /memory.*(?:confirm|modal|screen)/i);
 });

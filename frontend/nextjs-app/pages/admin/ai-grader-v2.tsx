@@ -49,6 +49,9 @@ import {
 import styles from "../../styles/AiGraderV2Admin.module.css";
 
 type SpeedsterDraft = { id: string; cardProfile: "POKEMON" | "SPORTS" };
+type SpeedsterReviewRemeasurementResult =
+  | Readonly<{ applied: true }>
+  | Readonly<{ applied: false; message: string }>;
 type SpeedsterCompletion = {
   label: { certificateNumber: string; slot: number };
   publicReportSlug: string;
@@ -236,8 +239,10 @@ export default function AiGraderV2AdminPage() {
     pendingMessage: string,
     successMessage: string,
     fallbackErrorMessage: string,
-  ): Promise<boolean> => {
-    if (!session?.token || !draft || !capture || !defects || working) return false;
+  ): Promise<SpeedsterReviewRemeasurementResult> => {
+    if (!session?.token || !draft || !capture || !defects || working) {
+      return { applied: false, message: fallbackErrorMessage };
+    }
     setWorking(true);
     setMessage(pendingMessage);
     try {
@@ -273,10 +278,11 @@ export default function AiGraderV2AdminPage() {
       }
       setDefects(payload.reviewedDefects);
       setMessage(successMessage);
-      return true;
+      return { applied: true };
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : fallbackErrorMessage);
-      return false;
+      const failureMessage = error instanceof Error ? error.message : fallbackErrorMessage;
+      setMessage(failureMessage);
+      return { applied: false, message: failureMessage };
     } finally {
       setWorking(false);
     }
@@ -324,7 +330,7 @@ export default function AiGraderV2AdminPage() {
     return decodeSpeedsterTraceBitmapWireV1(proposal.traceWire);
   };
 
-  const saveTrace = async (input: SpeedsterInMemoryTraceSave): Promise<boolean> => {
+  const saveTrace = async (input: SpeedsterInMemoryTraceSave): Promise<boolean | string> => {
     const finalTrace = encodeSpeedsterTraceRleV1(input.trace);
     const traceProvenance = buildSpeedsterTraceProvenanceRevision({
       sourceViewId: input.target.sourceViewId,
@@ -333,6 +339,9 @@ export default function AiGraderV2AdminPage() {
       priorTraceProvenance: input.priorTraceProvenance,
       finalTraceSha256: finalTrace.sha256,
     });
+    const newFindingId = input.target.findingId
+      ? null
+      : `${input.target.side}:smart-${crypto.randomUUID()}`;
     const action: SpeedsterReviewMeasurementAction = input.target.findingId
       ? {
           type: "TRACE_SAVE",
@@ -345,19 +354,21 @@ export default function AiGraderV2AdminPage() {
           side: input.target.side,
           findingId: null,
           trace: {
-            id: `${input.target.side}:smart-${crypto.randomUUID()}`,
+            id: newFindingId as string,
             defectType: "FAINT_COLOR_VARIATION",
             sourceViewId: input.target.sourceViewId,
             finalTrace,
             traceProvenance,
           },
         };
-    return runReviewRemeasurement(
+    const measurement = await runReviewRemeasurement(
       action,
       "Measuring the saved trace.",
       "Trace measured. Select its defect type if needed.",
       "Trace measurement failed. The visible trace remains editable.",
     );
+    if (!measurement.applied) throw new Error(measurement.message);
+    return newFindingId ?? true;
   };
 
   const completeGrade = async () => {
