@@ -16,6 +16,7 @@ import type {
   SpeedsterInMemoryTraceSave,
   SpeedsterTraceCornerShape,
   SpeedsterTraceProposalInput,
+  SpeedsterTraceSaveResult,
 } from "./DefectTraceEditor";
 import { GradeSummary } from "./GradeSummary";
 import styles from "./ReviewWorkspace.module.css";
@@ -34,7 +35,9 @@ type ReviewWorkspaceProps = {
   onTraceProposal?: (
     input: SpeedsterTraceProposalInput,
   ) => Uint8Array | null | void | Promise<Uint8Array | null | void>;
-  onTraceSave?: (input: SpeedsterInMemoryTraceSave) => boolean | void | Promise<boolean | void>;
+  onTraceSave?: (
+    input: SpeedsterInMemoryTraceSave,
+  ) => SpeedsterTraceSaveResult | Promise<SpeedsterTraceSaveResult>;
   onTraceLoad?: (findingId: string) => Promise<SpeedsterTraceRleV1 | null>;
   onImageError?: () => void;
   onComplete: () => void;

@@ -37,6 +37,7 @@ import {
   DefectTraceEditor,
   type SpeedsterInMemoryTraceSave,
   type SpeedsterTraceProposalInput,
+  type SpeedsterTraceSaveResult,
 } from "./DefectTraceEditor";
 import styles from "./DefectEvidenceViewer.module.css";
 
@@ -82,7 +83,9 @@ type DefectEvidenceViewerProps = {
   onTraceProposal?: (
     input: SpeedsterTraceProposalInput,
   ) => Uint8Array | null | void | Promise<Uint8Array | null | void>;
-  onTraceSave?: (input: SpeedsterInMemoryTraceSave) => boolean | void | Promise<boolean | void>;
+  onTraceSave?: (
+    input: SpeedsterInMemoryTraceSave,
+  ) => SpeedsterTraceSaveResult | Promise<SpeedsterTraceSaveResult>;
   onTraceLoad?: (findingId: string) => Promise<SpeedsterTraceRleV1 | null>;
   onImageError?: () => void;
 };
@@ -506,8 +509,14 @@ export function DefectEvidenceViewer({
                 const applied = await onTraceSave?.(saved);
                 if (applied === false) return false;
                 setTraceError("");
-                if (!saved.target.findingId) setNewTraceAnchor(null);
-                return true;
+                if (!saved.target.findingId) {
+                  setNewTraceAnchor(null);
+                  if (typeof applied === "string") {
+                    setEditingFindingId(applied);
+                    select(applied);
+                  }
+                }
+                return applied;
               }}
               onCancel={newTraceAnchor ? () => {
                 setTraceError("");

@@ -281,6 +281,35 @@ test("Brush adds pixels to an existing detector or Memory contour trace", () => 
   assert.ok(brushed.trace.reduce((total, value) => total + value, 0) > before);
 });
 
+test("the review Brush is 1.20 mm and a saved new trace becomes the active finding immediately", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const editor = readFileSync(
+    `${root}/components/ai-grader-v2/DefectTraceEditor.tsx`,
+    "utf8",
+  );
+  const viewer = readFileSync(
+    `${root}/components/ai-grader-v2/DefectEvidenceViewer.tsx`,
+    "utf8",
+  );
+  const adminPage = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+
+  assert.match(editor, /BRUSH:\s*24/);
+  assert.match(viewer, /typeof applied === "string"/);
+  assert.match(viewer, /setEditingFindingId\(applied\)/);
+  assert.match(viewer, /select\(applied\)/);
+  assert.match(adminPage, /const newFindingId = input\.target\.findingId\s*\? null\s*:\s*`\$\{input\.target\.side\}:smart-\$\{crypto\.randomUUID\(\)\}`/);
+  assert.match(adminPage, /if \(!measurement\.applied\) throw new Error\(measurement\.message\)/);
+  assert.match(adminPage, /return newFindingId \?\? true/);
+
+  const saveStart = editor.indexOf("Promise.resolve(onSave?.");
+  const saveEnd = editor.indexOf(".finally(() => setSavePending(false))", saveStart);
+  assert.ok(saveStart >= 0 && saveEnd > saveStart);
+  assert.match(
+    editor.slice(saveStart, saveEnd),
+    /catch\(\(error\) => \{[\s\S]*?error instanceof Error[\s\S]*?error\.message/,
+  );
+});
+
 test("an existing trace revision preserves source, crop, and ordered strokes while updating only its hash", () => {
   const prior = {
     version: "speedster-trace-provenance-v1" as const,

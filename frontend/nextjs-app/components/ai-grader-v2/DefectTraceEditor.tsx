@@ -51,6 +51,8 @@ export type SpeedsterInMemoryTraceSave = Readonly<{
   priorTraceProvenance?: SpeedsterTraceProvenance;
 }>;
 
+export type SpeedsterTraceSaveResult = boolean | string | void;
+
 type DefectTraceEditorProps = {
   target: SpeedsterTraceEditorTarget;
   imageUrl: string;
@@ -62,7 +64,7 @@ type DefectTraceEditorProps = {
   onHighlighterStrokeEnd?: (
     input: SpeedsterTraceProposalInput,
   ) => Uint8Array | null | void | Promise<Uint8Array | null | void>;
-  onSave?: (input: SpeedsterInMemoryTraceSave) => boolean | void | Promise<boolean | void>;
+  onSave?: (input: SpeedsterInMemoryTraceSave) => SpeedsterTraceSaveResult | Promise<SpeedsterTraceSaveResult>;
   onCancel?: () => void;
   onImageError?: () => void;
   onError?: (message: string) => void;
@@ -70,7 +72,7 @@ type DefectTraceEditorProps = {
 
 const TOOL_WIDTH_PIXELS: Readonly<Record<SpeedsterTraceTool, number>> = {
   HIGHLIGHTER: 30,
-  BRUSH: 12,
+  BRUSH: 24,
   ERASER: 20,
 };
 
@@ -357,8 +359,10 @@ export function DefectTraceEditor({
                 return;
               }
               onError?.("");
-            }).catch(() => {
-              onError?.("The trace was not saved. The visible trace remains editable.");
+            }).catch((error) => {
+              onError?.(error instanceof Error
+                ? error.message
+                : "The trace was not saved. The visible trace remains editable.");
             }).finally(() => setSavePending(false));
           }}
         >Save trace</button>
