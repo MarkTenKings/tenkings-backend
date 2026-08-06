@@ -69,8 +69,8 @@ export type SpeedsterReviewAction =
       findingId: null;
       trace: TraceWireEdit & { id: string; defectType: SpeedsterDefectType; sourceViewId: string };
     }
-  | { type: "REMOVE"; defectId: string }
-  | { type: "UNDO"; defectId: string }
+  | { type: "REMOVE"; defectIds: readonly string[] }
+  | { type: "UNDO"; defectIds: readonly string[] }
   | { type: "CHANGE_TYPE"; defectId: string; defectType: SpeedsterDefectType };
 
 export type SpeedsterReviewActionInput = {
@@ -205,22 +205,38 @@ function validateTransition(findings: readonly SpeedsterReviewFinding[], action:
     }
     return;
   }
-  const target = findings.find(({ id }) => id === action.defectId) as
-    | (SpeedsterReviewFinding & { reviewResultBeforeRemoval?: unknown })
-    | undefined;
+  if (action.type === "REMOVE" || action.type === "UNDO") {
+    if (action.defectIds.length === 0 || new Set(action.defectIds).size !== action.defectIds.length) {
+      throw new HttpError(409, "Speedster batch review action requires unique finding IDs.");
+    }
+    const targets = action.defectIds.flatMap((defectId) => {
+      const target = findings.find(({ id }) => id === defectId) as
+        | (SpeedsterReviewFinding & { reviewResultBeforeRemoval?: unknown })
+        | undefined;
+      return target ? [target] : [];
+    });
+    if (targets.length !== action.defectIds.length) {
+      throw new HttpError(404, "Speedster review finding was not found.");
+    }
+    if (targets.some(({ side }) => side !== targets[0].side)) {
+      throw new HttpError(409, "Speedster batch review action must stay on one card side.");
+    }
+    for (const target of targets) {
+      if (action.type === "REMOVE" && (
+        target.reviewResult === "REMOVED" || target.reviewResultBeforeRemoval !== undefined
+      )) {
+        throw new HttpError(409, "Speedster review finding is already removed.");
+      }
+      if (action.type === "UNDO" && (
+        target.reviewResult !== "REMOVED" || typeof target.reviewResultBeforeRemoval !== "string"
+      )) {
+        throw new HttpError(409, "Speedster review finding is not removed.");
+      }
+    }
+    return;
+  }
+  const target = findings.find(({ id }) => id === action.defectId);
   if (!target) throw new HttpError(404, "Speedster review finding was not found.");
-  if (action.type === "REMOVE") {
-    if (target.reviewResult === "REMOVED" || target.reviewResultBeforeRemoval !== undefined) {
-      throw new HttpError(409, "Speedster review finding is already removed.");
-    }
-    return;
-  }
-  if (action.type === "UNDO") {
-    if (target.reviewResult !== "REMOVED" || typeof target.reviewResultBeforeRemoval !== "string") {
-      throw new HttpError(409, "Speedster review finding is not removed.");
-    }
-    return;
-  }
   if (target.reviewResult === "REMOVED") {
     throw new HttpError(409, "A removed Speedster finding cannot change type.");
   }

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type {
   SpeedsterMeasuredDefect,
+  SpeedsterReviewFinding,
   SpeedsterSourceMeasuredDefect,
 } from "../lib/ai-grader-v2/contracts";
 import { parseSpeedsterTraceRleV1 } from "../lib/ai-grader-v2/trace-codec";
@@ -184,7 +185,7 @@ test("Smart-Mark Save, Remove, Undo, and Change Type each run the same immediate
     {
       name: "Remove",
       defects: [memory, back],
-      action: { type: "REMOVE" as const, defectId: memory.id },
+      action: { type: "REMOVE" as const, defectIds: [memory.id] },
       expectedReviewResult: undefined,
       expectedDefectType: undefined,
       expectedMarkCount: 0,
@@ -192,7 +193,7 @@ test("Smart-Mark Save, Remove, Undo, and Change Type each run the same immediate
     {
       name: "Undo",
       defects: [removedMemory, back],
-      action: { type: "UNDO" as const, defectId: memory.id },
+      action: { type: "UNDO" as const, defectIds: [memory.id] },
       expectedReviewResult: "UNREVIEWED",
       expectedDefectType: "LIGHT_SCRATCH_SCUFF",
       expectedMarkCount: 0,
@@ -254,6 +255,70 @@ test("Smart-Mark Save, Remove, Undo, and Change Type each run the same immediate
       assert.equal(remeasured.measurement.areaMm2, 7, scenario.name);
     }
   }
+});
+
+test("batch Remove and Undo each measure once and preserve every finding's provenance", async () => {
+  const memoryA = {
+    ...defect,
+    id: "front-memory-a",
+    origin: "MEMORY" as const,
+    detectedDefectType: "LIGHT_SCRATCH_SCUFF" as const,
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    memoryProposal: {
+      lessonSessionId: "lesson-a",
+      lessonCompletionOrder: 100,
+      lessonProposalOrder: 1,
+      lessonOrder: 0,
+      lessonSourceViewId: "ORIGINAL" as const,
+      similarity: 0.94,
+    },
+  };
+  const memoryB = {
+    ...memoryA,
+    id: "front-memory-b",
+    featureFingerprint: [0, 1, ...Array.from({ length: 30 }, () => 0)],
+    memoryProposal: { ...memoryA.memoryProposal, lessonSessionId: "lesson-b", lessonProposalOrder: 2 },
+  };
+  const back = { ...defect, id: "back-control", side: "BACK" as const };
+  let calls = 0;
+  const measure = async ({ side, findings }: {
+    side: "FRONT" | "BACK";
+    findings: readonly SpeedsterReviewFinding[];
+  }) => {
+    calls += 1;
+    assert.equal(side, "FRONT");
+    return { defects: [...findings] };
+  };
+
+  const removed = await remeasureSpeedsterReviewAction({
+    defects: [memoryA, memoryB, back],
+    action: { type: "REMOVE", defectIds: [memoryA.id, memoryB.id] },
+    measure,
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    removed.filter(({ side }) => side === "FRONT").map(({ reviewResult }) => reviewResult),
+    ["REMOVED", "REMOVED"],
+  );
+  assert.deepEqual(removed[0].featureFingerprint, memoryA.featureFingerprint);
+  assert.deepEqual(removed[0].memoryProposal, memoryA.memoryProposal);
+  assert.deepEqual(removed[1].featureFingerprint, memoryB.featureFingerprint);
+  assert.deepEqual(removed[1].memoryProposal, memoryB.memoryProposal);
+  assert.equal(removed.find(({ id }) => id === back.id), back);
+
+  const restored = await remeasureSpeedsterReviewAction({
+    defects: removed,
+    action: { type: "UNDO", defectIds: [memoryA.id, memoryB.id] },
+    measure,
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(
+    restored.filter(({ side }) => side === "FRONT").map(({ reviewResult }) => reviewResult),
+    ["UNREVIEWED", "UNREVIEWED"],
+  );
+  assert.deepEqual(restored.find(({ id }) => id === memoryA.id)?.memoryProposal, memoryA.memoryProposal);
+  assert.deepEqual(restored.find(({ id }) => id === memoryB.id)?.memoryProposal, memoryB.memoryProposal);
+  assert.equal(restored.find(({ id }) => id === back.id), back);
 });
 
 test("a fully contained Smart-Mark Save is an idempotent successful remeasurement", async () => {

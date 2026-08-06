@@ -307,8 +307,8 @@ type SpeedsterTraceEdit = Pick<SpeedsterSmartMark, "finalTrace" | "traceProvenan
 export type SpeedsterReviewMeasurementAction =
   | { type: "TRACE_SAVE"; side: SpeedsterCardSide; findingId: null; trace: SpeedsterSmartMark }
   | { type: "TRACE_SAVE"; side: SpeedsterCardSide; findingId: string; trace: SpeedsterTraceEdit }
-  | { type: "REMOVE"; defectId: string }
-  | { type: "UNDO"; defectId: string }
+  | { type: "REMOVE"; defectIds: readonly string[] }
+  | { type: "UNDO"; defectIds: readonly string[] }
   | { type: "CHANGE_TYPE"; defectId: string; defectType: SpeedsterDefectType };
 
 type SpeedsterReviewMeasurementPass = (input: {
@@ -376,14 +376,27 @@ export async function remeasureSpeedsterReviewAction(input: {
   action: SpeedsterReviewMeasurementAction;
   measure: SpeedsterReviewMeasurementPass;
 }): Promise<SpeedsterReviewFinding[]> {
-  const defectId = input.action.type === "REMOVE" || input.action.type === "UNDO" || input.action.type === "CHANGE_TYPE"
-    ? input.action.defectId
-    : null;
-  const target = defectId === null
-    ? null
-    : input.defects.find(({ id }) => id === defectId);
-  if ((input.action.type === "REMOVE" || input.action.type === "UNDO" || input.action.type === "CHANGE_TYPE") && !target) {
+  const defectIds = input.action.type === "REMOVE" || input.action.type === "UNDO"
+    ? input.action.defectIds
+    : input.action.type === "CHANGE_TYPE"
+      ? [input.action.defectId]
+      : [];
+  const uniqueDefectIds = new Set(defectIds);
+  const targets = defectIds.flatMap((defectId) => {
+    const target = input.defects.find(({ id }) => id === defectId);
+    return target ? [target] : [];
+  });
+  if (
+    (input.action.type === "REMOVE" || input.action.type === "UNDO") &&
+    (defectIds.length === 0 || uniqueDefectIds.size !== defectIds.length)
+  ) {
+    throw new Error("Speedster batch review action requires unique finding IDs.");
+  }
+  if (defectIds.length !== targets.length) {
     throw new Error("Speedster review finding was not found.");
+  }
+  if (targets.some(({ side }) => side !== targets[0]?.side)) {
+    throw new Error("Speedster batch review action must stay on one card side.");
   }
 
   const traceSave = input.action.type === "TRACE_SAVE" ? validateTraceSave(input.action) : null;
@@ -408,18 +421,16 @@ export async function remeasureSpeedsterReviewAction(input: {
 
   const side = input.action.type === "TRACE_SAVE"
     ? input.action.side
-    : input.action.type === "UNDO"
-      ? target!.side
-      : target!.side;
+    : targets[0]!.side;
   const nextDefects = input.action.type === "REMOVE"
-    ? input.defects.map((finding) => finding.id === defectId ? {
+    ? input.defects.map((finding) => uniqueDefectIds.has(finding.id) ? {
         ...finding,
         reviewResultBeforeRemoval: finding.reviewResult,
         reviewResult: "REMOVED" as const,
       } : finding)
     : input.action.type === "UNDO"
       ? input.defects.map((finding) => {
-          if (finding.id !== defectId) return finding;
+          if (!uniqueDefectIds.has(finding.id)) return finding;
           const privateFinding = finding as SpeedsterReviewFinding & { reviewResultBeforeRemoval?: unknown };
           const prior = privateFinding.reviewResultBeforeRemoval;
           const { reviewResultBeforeRemoval: _removed, ...restored } = privateFinding;

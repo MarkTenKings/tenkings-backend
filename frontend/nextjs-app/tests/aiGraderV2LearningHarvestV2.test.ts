@@ -251,6 +251,35 @@ test("explicit memory removal teaches one negative for its original proposed typ
   assert.equal(harvested.diagnostics.skippedUntouchedMemory, 0);
 });
 
+test("seven batch-equivalent Memory removals harvest seven separate negative lessons", () => {
+  const harvested = harvestSpeedsterLearningSessionV2(session(
+    "batch-memory-removals",
+    8,
+    Array.from({ length: 7 }, (_, index) => finding({
+      id: `memory-false-positive-${index}`,
+      origin: "MEMORY",
+      detectedDefectType: "VISIBLE_WHITENING",
+      defectType: "VISIBLE_WHITENING",
+      reviewResult: "REMOVED",
+      featureFingerprint: fingerprintAt(index),
+    })),
+  ));
+
+  assert.equal(harvested.history.lessons.length, 7);
+  assert.deepEqual(
+    harvested.history.lessons.map(({ polarity, provenance, proposalOrder }) => ({
+      polarity,
+      provenance,
+      proposalOrder,
+    })),
+    Array.from({ length: 7 }, (_, proposalOrder) => ({
+      polarity: "NEGATIVE",
+      provenance: "DETECTOR_REMOVED",
+      proposalOrder,
+    })),
+  );
+});
+
 test("explicit memory relabel teaches negative-old and positive-new only", () => {
   const harvested = harvestSpeedsterLearningSessionV2(session("memory-relabeled", 6, [
     finding({

@@ -96,7 +96,7 @@ test("one server-owned REMOVE measures once, persists grade+findings atomically,
   const result = await applySpeedsterReviewAction({
     sessionId: session().id,
     createdByUserId: "admin-1",
-    action: { type: "REMOVE", defectId: defect.id },
+    action: { type: "REMOVE", defectIds: [defect.id] },
   }, {
     async loadOwnedSession() { events.push("load"); return session(); },
     async persistReviewIfRevision(_identity, expectedUpdatedAt, data) {
@@ -122,6 +122,82 @@ test("one server-owned REMOVE measures once, persists grade+findings atomically,
   assert.equal(saved?.reviewedDefects[0].reviewResult, "REMOVED");
   assert.equal(JSON.stringify(result).includes("finalTrace"), false);
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
+});
+
+test("one server-owned batch REMOVE persists every removal atomically and batch UNDO restores all", async () => {
+  const second = {
+    ...defect,
+    id: "FRONT:source-2:SURFACE",
+    origin: "MEMORY" as const,
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    memoryProposal: {
+      lessonSessionId: "lesson-session",
+      lessonCompletionOrder: 12,
+      lessonProposalOrder: 2,
+      lessonOrder: 0,
+      lessonSourceViewId: "ORIGINAL" as const,
+      similarity: 0.94,
+    },
+  };
+  let current = session([defect, second]);
+  let measureCalls = 0;
+  const deps = {
+    async loadOwnedSession() { return current; },
+    async persistReviewIfRevision(
+      _identity: unknown,
+      _expectedUpdatedAt: Date,
+      data: { reviewedDefects: readonly unknown[]; gradeReport: unknown },
+    ) {
+      current = { ...current, ...data, updatedAt: new Date(current.updatedAt.getTime() + 1) };
+    },
+    async presignRead() { return "https://fresh.example/front.webp"; },
+    async learningBankForDetect() { return {}; },
+    async detect() { throw new Error("must not detect"); },
+    async measure(body: { findings: readonly SpeedsterReviewFinding[] }) {
+      measureCalls += 1;
+      return { defects: [...body.findings] };
+    },
+  };
+
+  await applySpeedsterReviewAction({
+    sessionId: current.id,
+    createdByUserId: current.createdByUserId,
+    action: { type: "REMOVE", defectIds: [defect.id, second.id] },
+  }, deps);
+  assert.equal(measureCalls, 1);
+  assert.deepEqual(
+    (current.reviewedDefects as SpeedsterReviewFinding[]).map(({ reviewResult }) => reviewResult),
+    ["REMOVED", "REMOVED"],
+  );
+  assert.deepEqual((current.reviewedDefects as SpeedsterReviewFinding[])[1].memoryProposal, second.memoryProposal);
+
+  await applySpeedsterReviewAction({
+    sessionId: current.id,
+    createdByUserId: current.createdByUserId,
+    action: { type: "UNDO", defectIds: [defect.id, second.id] },
+  }, deps);
+  assert.equal(measureCalls, 2);
+  assert.deepEqual(
+    (current.reviewedDefects as SpeedsterReviewFinding[]).map(({ reviewResult }) => reviewResult),
+    ["TYPE_CORRECTED", "TYPE_CORRECTED"],
+  );
+  assert.deepEqual((current.reviewedDefects as SpeedsterReviewFinding[])[1].memoryProposal, second.memoryProposal);
+
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: current.id,
+    createdByUserId: current.createdByUserId,
+    action: { type: "REMOVE", defectIds: [defect.id, defect.id] },
+  }, deps), /unique finding IDs/i);
+  assert.equal(measureCalls, 2);
+
+  const back = { ...second, id: "BACK:source-2:SURFACE", side: "BACK" as const };
+  current = session([defect, back]);
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: current.id,
+    createdByUserId: current.createdByUserId,
+    action: { type: "REMOVE", defectIds: [defect.id, back.id] },
+  }, deps), /one card side/i);
+  assert.equal(measureCalls, 2);
 });
 
 test("INITIALIZE owns both detector calls and accepts no browser detector payload", async () => {
@@ -401,20 +477,20 @@ test("REMOVE/UNDO uses only a server-private prior result marker and rejects rep
   await applySpeedsterReviewAction({
     sessionId: current.id,
     createdByUserId: "admin-1",
-    action: { type: "REMOVE", defectId: defect.id },
+    action: { type: "REMOVE", defectIds: [defect.id] },
   }, deps);
   assert.equal(((current.reviewedDefects as unknown[])[0] as Record<string, unknown>).reviewResult, "REMOVED");
   assert.equal(((current.reviewedDefects as unknown[])[0] as Record<string, unknown>).reviewResultBeforeRemoval, "TYPE_CORRECTED");
   await assert.rejects(() => applySpeedsterReviewAction({
     sessionId: current.id,
     createdByUserId: "admin-1",
-    action: { type: "REMOVE", defectId: defect.id },
+    action: { type: "REMOVE", defectIds: [defect.id] },
   }, deps), /already removed/i);
 
   const restored = await applySpeedsterReviewAction({
     sessionId: current.id,
     createdByUserId: "admin-1",
-    action: { type: "UNDO", defectId: defect.id },
+    action: { type: "UNDO", defectIds: [defect.id] },
   }, deps);
   assert.equal(((current.reviewedDefects as unknown[])[0] as Record<string, unknown>).reviewResult, "TYPE_CORRECTED");
   assert.equal("reviewResultBeforeRemoval" in ((current.reviewedDefects as unknown[])[0] as Record<string, unknown>), false);
@@ -422,7 +498,7 @@ test("REMOVE/UNDO uses only a server-private prior result marker and rejects rep
   await assert.rejects(() => applySpeedsterReviewAction({
     sessionId: current.id,
     createdByUserId: "admin-1",
-    action: { type: "UNDO", defectId: defect.id },
+    action: { type: "UNDO", defectIds: [defect.id] },
   }, deps), /not removed/i);
 });
 

@@ -69,7 +69,7 @@ export default function AiGraderV2AdminPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
-  const [lastRemovedDefectId, setLastRemovedDefectId] = useState<string | null>(null);
+  const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
   const [completion, setCompletion] = useState<SpeedsterCompletion | null>(null);
   const [reviewImageUrls, setReviewImageUrls] = useState<SpeedsterReviewImageUrls | null>(null);
   const [initializeFailed, setInitializeFailed] = useState(false);
@@ -464,28 +464,28 @@ export default function AiGraderV2AdminPage() {
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
             grade={review.grade}
-            canUndo={lastRemovedDefectId !== null}
-            onRemoveDefect={(defectId) => {
-              const removed = defects.find((defect) => defect.id === defectId);
-              if (!removed) return;
-              void runReviewRemeasurement(
-                { type: "REMOVE", defectId },
+            canUndo={lastRemovedDefectIds.length > 0}
+            onRemoveDefects={async (defectIds) => {
+              if (defectIds.length === 0 || defectIds.some((defectId) =>
+                !defects.some((defect) => defect.id === defectId))) return false;
+              const measurement = await runReviewRemeasurement(
+                { type: "REMOVE", defectIds },
                 "Removing the finding and recalculating its card measurements.",
-                "Finding removed from grading and saved as reviewer feedback.",
+                `${defectIds.length} finding${defectIds.length === 1 ? "" : "s"} removed from grading and saved as reviewer feedback.`,
                 "Finding removal measurement failed.",
-              ).then((applied) => {
-                if (applied) setLastRemovedDefectId(removed.id);
-              });
+              );
+              if (measurement.applied) setLastRemovedDefectIds([...defectIds]);
+              return measurement.applied;
             }}
             onUndo={() => {
-              if (!lastRemovedDefectId) return;
+              if (lastRemovedDefectIds.length === 0) return;
               void runReviewRemeasurement(
-                { type: "UNDO", defectId: lastRemovedDefectId },
-                "Restoring the finding and recalculating its card measurements.",
-                "Last removed finding restored.",
+                { type: "UNDO", defectIds: lastRemovedDefectIds },
+                "Restoring the findings and recalculating their card measurements.",
+                "Last removed finding set restored.",
                 "Finding restore measurement failed.",
-              ).then((applied) => {
-                if (applied) setLastRemovedDefectId(null);
+              ).then((measurement) => {
+                if (measurement.applied) setLastRemovedDefectIds([]);
               });
             }}
             onDefectTypeChange={(defectId: string, defectType: SpeedsterDefectType) => {

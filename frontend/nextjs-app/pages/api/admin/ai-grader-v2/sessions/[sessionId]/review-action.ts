@@ -88,8 +88,8 @@ const action = z.union([
       sourceViewId: z.string().trim().min(1).max(180),
     }).strict(),
   }).strict(),
-  z.object({ type: z.literal("REMOVE"), defectId: FINDING_ID }).strict(),
-  z.object({ type: z.literal("UNDO"), defectId: FINDING_ID }).strict(),
+  z.object({ type: z.literal("REMOVE"), defectIds: z.array(FINDING_ID).min(1) }).strict(),
+  z.object({ type: z.literal("UNDO"), defectIds: z.array(FINDING_ID).min(1) }).strict(),
   z.object({ type: z.literal("CHANGE_TYPE"), defectId: FINDING_ID, defectType }).strict(),
 ]);
 const postSchema = z.object({ action }).strict();

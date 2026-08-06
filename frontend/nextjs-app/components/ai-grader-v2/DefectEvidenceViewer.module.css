@@ -119,6 +119,16 @@
 }
 
 .marking { cursor: crosshair; touch-action: none; }
+.selecting { cursor: crosshair; touch-action: none; user-select: none; }
+
+.selectionBox {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  background: #f3d58b24;
+  border: 2px solid var(--bright);
+  box-shadow: 0 0 0 1px #070807;
+}
 
 .lens {
   --lens-size: 180px;
@@ -138,7 +148,8 @@
 }
 
 .defect,
-.active { cursor: pointer; outline: none; }
+.active,
+.batchSelected { cursor: pointer; outline: none; }
 .contour {
   fill: #d8aa4f22;
   stroke: var(--bright);
@@ -178,6 +189,9 @@
 .defect:focus .contour { fill: #f3d58b47; stroke-width: 2.5; }
 .active .halo,
 .defect:focus .halo { fill: #d8aa4f38; stroke-width: 2.5; }
+.batchSelected .contour { fill: #e2777752; stroke: #ffaaa6; stroke-width: 2.5; }
+.batchSelected .halo { fill: #7a2525cc; stroke: #ffaaa6; stroke-width: 3; }
+.batchSelected .marker { fill: #ffaaa6; }
 
 .detail {
   display: flex;
@@ -272,6 +286,23 @@
 .remove:focus-visible { outline: 2px solid var(--bright); outline-offset: 2px; }
 .remove { width: 100%; color: #c7a0a0; }
 .remove:hover { color: #fff; background: #291414; border-color: #e2777794; }
+.remove:disabled { opacity: 0.55; cursor: wait; }
+
+.selectionPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 260px;
+  justify-content: center;
+}
+.selectionPanel > span {
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+}
+.selectionPanel h3 { margin: 0; font-size: clamp(23px, 2.3vw, 32px); font-weight: 400; }
+.selectionPanel p { margin: 0 0 10px; color: var(--muted); line-height: 1.55; }
 
 .empty {
   display: grid;
