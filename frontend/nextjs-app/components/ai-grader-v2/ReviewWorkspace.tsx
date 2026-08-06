@@ -29,7 +29,7 @@ type ReviewWorkspaceProps = {
   defects: readonly SpeedsterReviewFinding[];
   grade: ReturnType<typeof calculateSpeedsterGrade>;
   canUndo: boolean;
-  onRemoveDefect: (defectId: string) => void;
+  onRemoveDefects: (defectIds: readonly string[]) => boolean | Promise<boolean>;
   onUndo: () => void;
   onDefectTypeChange: (defectId: string, defectType: SpeedsterDefectType) => void;
   onTraceProposal?: (
@@ -51,7 +51,7 @@ export function ReviewWorkspace({
   defects,
   grade,
   canUndo,
-  onRemoveDefect,
+  onRemoveDefects,
   onUndo,
   onDefectTypeChange,
   onTraceProposal,
@@ -89,7 +89,7 @@ export function ReviewWorkspace({
         side={side}
         defects={defects}
         readOnly={false}
-        onRemoveDefect={onRemoveDefect}
+        onRemoveDefects={onRemoveDefects}
         onDefectTypeChange={onDefectTypeChange}
         onTraceProposal={onTraceProposal}
         onTraceSave={onTraceSave}

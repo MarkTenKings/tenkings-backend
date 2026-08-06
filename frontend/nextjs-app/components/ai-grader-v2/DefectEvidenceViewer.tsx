@@ -34,6 +34,10 @@ import {
   type SpeedsterTraceRleV1,
 } from "../../lib/ai-grader-v2/trace-codec";
 import {
+  speedsterSelectionBox,
+  speedsterSelectionIds,
+} from "../../lib/ai-grader-v2/multi-select";
+import {
   DefectTraceEditor,
   type SpeedsterInMemoryTraceSave,
   type SpeedsterTraceProposalInput,
@@ -78,7 +82,9 @@ type DefectEvidenceViewerProps = {
   readOnly: boolean;
   selectedDefectId?: string | null;
   onSelectedDefectChange?: (defectId: string) => void;
-  onRemoveDefect?: (defectId: string) => void;
+  onRemoveDefects?: (
+    defectIds: readonly string[],
+  ) => boolean | void | Promise<boolean | void>;
   onDefectTypeChange?: (defectId: string, defectType: SpeedsterDefectType) => void;
   onTraceProposal?: (
     input: SpeedsterTraceProposalInput,
@@ -90,7 +96,7 @@ type DefectEvidenceViewerProps = {
   onImageError?: () => void;
 };
 
-type ReviewMode = "INSPECT" | "MAGNIFY" | "SMART_MARK";
+type ReviewMode = "INSPECT" | "MAGNIFY" | "SMART_MARK" | "SELECT";
 
 function points(contour: readonly SpeedsterPoint[], scale = 1): string {
   return contour.map(({ x, y }) => `${x * scale},${y * scale}`).join(" ");
@@ -129,6 +135,16 @@ function traceCenter(trace: SpeedsterTraceRleV1): SpeedsterPoint {
     x: ((minimumX + maximumX) / 2) / (trace.width - 1),
     y: ((minimumY + maximumY) / 2) / (trace.height - 1),
   };
+}
+
+function findingMarker(
+  finding: SpeedsterReviewFinding,
+  inspectionFrame: SpeedsterInspectionFrame,
+  trace?: SpeedsterTraceRleV1,
+): SpeedsterPoint {
+  if (trace) return canonicalPointToInspection(traceCenter(trace), inspectionFrame);
+  return center(speedsterFindingRegions(finding).flatMap((region) =>
+    canonicalContourToInspection(region.canonicalContour, inspectionFrame)));
 }
 
 function ExactTraceOverlay({
@@ -196,7 +212,7 @@ export function DefectEvidenceViewer({
   readOnly,
   selectedDefectId,
   onSelectedDefectChange,
-  onRemoveDefect,
+  onRemoveDefects,
   onDefectTypeChange,
   onTraceProposal,
   onTraceSave,
@@ -210,6 +226,10 @@ export function DefectEvidenceViewer({
   const [newTraceAnchor, setNewTraceAnchor] = useState<SpeedsterPoint | null>(null);
   const [editingFindingId, setEditingFindingId] = useState<string | null>(null);
   const [traceError, setTraceError] = useState("");
+  const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(() => new Set());
+  const [selectionStart, setSelectionStart] = useState<SpeedsterPoint | null>(null);
+  const [selectionCurrent, setSelectionCurrent] = useState<SpeedsterPoint | null>(null);
+  const [batchRemovePending, setBatchRemovePending] = useState(false);
   const [readyMasterKey, setReadyMasterKey] = useState<string | null>(null);
   const [failedMasterKey, setFailedMasterKey] = useState<string | null>(null);
   const [hydratedTrace, setHydratedTrace] = useState<{
@@ -217,6 +237,7 @@ export function DefectEvidenceViewer({
     trace: SpeedsterTraceRleV1;
   } | null>(null);
   const requestedTraceKey = useRef<string | null>(null);
+  const selectionDragged = useRef(false);
   const masterKey = `${side}:${masterImageUrl}`;
   const masterReady = readyMasterKey === masterKey;
   const masterFailed = failedMasterKey === masterKey;
@@ -228,6 +249,12 @@ export function DefectEvidenceViewer({
     () => new Set(visibleDefects.map(({ id }) => id)),
     [visibleDefects],
   );
+  useEffect(() => {
+    setBatchSelectedIds((current) => {
+      const retained = new Set([...current].filter((id) => visibleIds.has(id)));
+      return retained.size === current.size ? current : retained;
+    });
+  }, [visibleIds]);
   const selectedId =
     selectedDefectId === undefined
       ? localId && visibleIds.has(localId) ? localId : visibleDefects[0]?.id
@@ -362,6 +389,39 @@ export function DefectEvidenceViewer({
     "--lens-y": `${pointer.y * 100}%`,
     backgroundImage: `url(${magnifyImageUrl ?? masterImageUrl})`,
   } as CSSProperties : undefined;
+  const selection = selectionStart && selectionCurrent
+    ? speedsterSelectionBox(selectionStart, selectionCurrent)
+    : null;
+  const selectionStyle = selection ? {
+    left: `${selection.left * 100}%`,
+    top: `${selection.top * 100}%`,
+    width: `${(selection.right - selection.left) * 100}%`,
+    height: `${(selection.bottom - selection.top) * 100}%`,
+  } as CSSProperties : undefined;
+
+  const clearBatchSelection = () => {
+    setBatchSelectedIds(new Set());
+    setSelectionStart(null);
+    setSelectionCurrent(null);
+  };
+
+  const toggleBatchSelection = (defectId: string) => {
+    setBatchSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(defectId)) next.delete(defectId);
+      else next.add(defectId);
+      return next;
+    });
+  };
+
+  const removeBatchSelection = () => {
+    if (batchRemovePending || batchSelectedIds.size === 0) return;
+    const defectIds = visibleDefects.flatMap(({ id }) => batchSelectedIds.has(id) ? [id] : []);
+    setBatchRemovePending(true);
+    void Promise.resolve(onRemoveDefects?.(defectIds)).then((applied) => {
+      if (applied !== false) clearBatchSelection();
+    }).finally(() => setBatchRemovePending(false));
+  };
 
   return (
     <section className={styles.viewer} aria-label={`${side.toLowerCase()} defect evidence`}>
@@ -373,6 +433,7 @@ export function DefectEvidenceViewer({
               type="button"
               className={mode === "MAGNIFY" ? styles.toolActive : undefined}
               onClick={() => {
+                clearBatchSelection();
                 setPointer(null);
                 setMode(mode === "MAGNIFY" ? "INSPECT" : "MAGNIFY");
               }}
@@ -380,8 +441,23 @@ export function DefectEvidenceViewer({
             {!readOnly ? (
               <button
                 type="button"
+                className={mode === "SELECT" ? styles.toolActive : undefined}
+                onClick={() => {
+                  setTraceError("");
+                  setNewTraceAnchor(null);
+                  setEditingFindingId(null);
+                  setPointer(null);
+                  if (mode === "SELECT") clearBatchSelection();
+                  setMode(mode === "SELECT" ? "INSPECT" : "SELECT");
+                }}
+              >Select</button>
+            ) : null}
+            {!readOnly ? (
+              <button
+                type="button"
                 className={mode === "SMART_MARK" ? styles.toolActive : undefined}
                 onClick={() => {
+                  clearBatchSelection();
                   setTraceError("");
                   setNewTraceAnchor(null);
                   setMode(mode === "SMART_MARK" ? "INSPECT" : "SMART_MARK");
@@ -392,13 +468,60 @@ export function DefectEvidenceViewer({
           </div>
         </header>
         <div
-          className={`${styles.cardStage} ${mode === "SMART_MARK" ? styles.marking : ""}`}
+          className={`${styles.cardStage} ${mode === "SMART_MARK" ? styles.marking : ""} ${mode === "SELECT" ? styles.selecting : ""}`}
           style={{ aspectRatio: `${inspectionFrame.width} / ${inspectionFrame.height}` }}
+          onPointerDown={(event) => {
+            if (mode !== "SELECT" || event.button !== 0) return;
+            const point = pointFromEvent(event);
+            selectionDragged.current = false;
+            setSelectionStart(point);
+            setSelectionCurrent(point);
+            event.currentTarget.setPointerCapture(event.pointerId);
+            event.preventDefault();
+          }}
           onPointerMove={(event) => {
             if (mode === "MAGNIFY") setPointer(pointFromEvent(event));
+            if (mode === "SELECT" && selectionStart) setSelectionCurrent(pointFromEvent(event));
+          }}
+          onPointerUp={(event) => {
+            if (mode !== "SELECT" || !selectionStart) return;
+            const end = pointFromEvent(event);
+            const dragged = Math.hypot(end.x - selectionStart.x, end.y - selectionStart.y) >= 0.006;
+            if (dragged) {
+              const box = speedsterSelectionBox(selectionStart, end);
+              setBatchSelectedIds(new Set(speedsterSelectionIds(
+                visibleDefects.map((defect) => ({
+                  id: defect.id,
+                  point: findingMarker(
+                    defect,
+                    inspectionFrame,
+                    defect.id === activeId ? activeTrace : undefined,
+                  ),
+                })),
+                box,
+              )));
+              selectionDragged.current = true;
+            }
+            setSelectionStart(null);
+            setSelectionCurrent(null);
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          }}
+          onPointerCancel={(event) => {
+            setSelectionStart(null);
+            setSelectionCurrent(null);
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
           }}
           onPointerLeave={() => setPointer(null)}
           onClick={(event) => {
+            if (mode === "SELECT") {
+              if (selectionDragged.current) selectionDragged.current = false;
+              else clearBatchSelection();
+              return;
+            }
             if (mode !== "SMART_MARK") return;
             openTraceEditorAtMasterAnchor(pointFromEvent(event));
           }}
@@ -438,11 +561,11 @@ export function DefectEvidenceViewer({
               const inspectionContours = speedsterFindingRegions(defect).map((region) =>
                 canonicalContourToInspection(region.canonicalContour, inspectionFrame));
               const resolvedTrace = defect.id === activeId ? activeTrace : undefined;
-              const marker = resolvedTrace
-                ? canonicalPointToInspection(traceCenter(resolvedTrace), inspectionFrame)
-                : center(inspectionContours.flat());
+              const marker = findingMarker(defect, inspectionFrame, resolvedTrace);
               const similarity = memorySimilarity(defect);
-              const activeClass = defect.id === activeId ? styles.active : styles.defect;
+              const activeClass = batchSelectedIds.has(defect.id)
+                ? styles.batchSelected
+                : defect.id === activeId ? styles.active : styles.defect;
               return (
                 <g
                   key={defect.id}
@@ -450,8 +573,17 @@ export function DefectEvidenceViewer({
                   role="button"
                   tabIndex={0}
                   aria-label={`Defect ${index + 1}: ${LABELS[defect.defectType]}${similarity ? `, Memory similarity ${similarity}` : ""}`}
+                  aria-pressed={mode === "SELECT" ? batchSelectedIds.has(defect.id) : defect.id === activeId}
+                  onPointerDown={(event) => {
+                    if (mode === "SELECT") event.stopPropagation();
+                  }}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (mode === "SELECT") {
+                      if (selectionDragged.current) selectionDragged.current = false;
+                      else toggleBatchSelection(defect.id);
+                      return;
+                    }
                     setNewTraceAnchor(null);
                     setEditingFindingId(defect.id);
                     if (!defect.traceSha256) setTraceError("");
@@ -461,6 +593,10 @@ export function DefectEvidenceViewer({
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
+                      if (mode === "SELECT") {
+                        toggleBatchSelection(defect.id);
+                        return;
+                      }
                       setNewTraceAnchor(null);
                       setEditingFindingId(defect.id);
                       if (!defect.traceSha256) setTraceError("");
@@ -492,6 +628,7 @@ export function DefectEvidenceViewer({
               );
             })}
           </svg> : null}
+          {masterReady && selectionStyle ? <div className={styles.selectionBox} style={selectionStyle} aria-hidden="true" /> : null}
           {masterReady ? <ExactTraceOverlay trace={activeTrace} inspectionFrame={inspectionFrame} /> : null}
           {masterReady && mode === "MAGNIFY" && pointer ? <div className={styles.lens} style={lensStyle} /> : null}
         </div>
@@ -504,6 +641,22 @@ export function DefectEvidenceViewer({
             <p>{masterFailed
               ? `The ${side === "FRONT" ? "Front" : "Back"} master image could not be loaded.`
               : `Loading ${side === "FRONT" ? "Front" : "Back"} evidence…`}</p>
+          </div>
+        ) : mode === "SELECT" ? (
+          <div className={styles.selectionPanel}>
+            <span>MULTI-SELECT</span>
+            <h3>{batchSelectedIds.size > 0
+              ? `${batchSelectedIds.size} defects selected`
+              : "Drag over false defects"}</h3>
+            <p>Drag a box around defect pins, then click any pin to add or remove it.</p>
+            {batchSelectedIds.size > 0 ? (
+              <button
+                className={styles.remove}
+                type="button"
+                disabled={batchRemovePending}
+                onClick={removeBatchSelection}
+              >Remove {batchSelectedIds.size} selected</button>
+            ) : null}
           </div>
         ) : traceTarget ? (
           <>
@@ -571,7 +724,7 @@ export function DefectEvidenceViewer({
                     >{LABELS[type]}</button>
                   ))}
                 </div>
-                <button className={styles.remove} type="button" onClick={() => onRemoveDefect?.(active.id)}>Remove</button>
+                <button className={styles.remove} type="button" onClick={() => onRemoveDefects?.([active.id])}>Remove</button>
               </div>
             ) : null}
           </>
