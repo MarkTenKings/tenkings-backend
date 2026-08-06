@@ -96,6 +96,15 @@ function points(contour: readonly SpeedsterPoint[], scale = 1): string {
   return contour.map(({ x, y }) => `${x * scale},${y * scale}`).join(" ");
 }
 
+function memorySimilarity(finding?: SpeedsterReviewFinding): string | null {
+  const similarity = finding?.origin === "MEMORY"
+    ? finding.memoryProposal?.similarity
+    : undefined;
+  return typeof similarity === "number" && Number.isFinite(similarity)
+    ? similarity.toFixed(3)
+    : null;
+}
+
 function center(contour: readonly SpeedsterPoint[]): SpeedsterPoint {
   if (contour.length === 0) return { x: 0.5, y: 0.5 };
   const sum = contour.reduce(
@@ -273,6 +282,7 @@ export function DefectEvidenceViewer({
     canonicalContourToInspection(region.canonicalContour, inspectionFrame));
   const activeContour = activeContours.length > 0 ? activeContours.flat() : null;
   const activeCrop = activeContour ? crop(activeContour, frameAspect) : null;
+  const activeSimilarity = memorySimilarity(active);
   const traceTarget = useMemo(() => {
     if (!readOnly && newTraceAnchor) {
       return {
@@ -431,6 +441,7 @@ export function DefectEvidenceViewer({
               const marker = resolvedTrace
                 ? canonicalPointToInspection(traceCenter(resolvedTrace), inspectionFrame)
                 : center(inspectionContours.flat());
+              const similarity = memorySimilarity(defect);
               const activeClass = defect.id === activeId ? styles.active : styles.defect;
               return (
                 <g
@@ -438,7 +449,7 @@ export function DefectEvidenceViewer({
                   className={activeClass}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Defect ${index + 1}: ${LABELS[defect.defectType]}`}
+                  aria-label={`Defect ${index + 1}: ${LABELS[defect.defectType]}${similarity ? `, Memory similarity ${similarity}` : ""}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     setNewTraceAnchor(null);
@@ -472,6 +483,11 @@ export function DefectEvidenceViewer({
                   <circle className={styles.hitTarget} cx={marker.x * 1000} cy={marker.y * 1000} r="34" />
                   <circle className={styles.halo} cx={marker.x * 1000} cy={marker.y * 1000} r="25" />
                   <circle className={styles.marker} cx={marker.x * 1000} cy={marker.y * 1000} r="11" />
+                  {similarity ? <text
+                    className={styles.memoryScore}
+                    x={marker.x * 1000}
+                    y={marker.y < 0.08 ? marker.y * 1000 + 52 : marker.y * 1000 - 34}
+                  >{similarity}</text> : null}
                 </g>
               );
             })}
@@ -531,7 +547,9 @@ export function DefectEvidenceViewer({
                 <div className={styles.title}>
                   <div className={styles.titleMeta}>
                     <span>{activeRegions.map(({ zone }) => zone).join(" · ")}</span>
-                    {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
+                    {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>
+                      {activeSimilarity ? `memory · sim ${activeSimilarity}` : "memory"}
+                    </small> : null}
                   </div>
                   <h3>{LABELS[active.defectType]}</h3>
                 </div>
@@ -581,7 +599,9 @@ export function DefectEvidenceViewer({
             <div className={styles.title}>
               <div className={styles.titleMeta}>
                 <span>{activeRegions.map(({ zone }) => zone).join(" · ")}</span>
-                {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>memory</small> : null}
+                {active.origin === "MEMORY" ? <small className={styles.memoryLabel}>
+                  {activeSimilarity ? `memory · sim ${activeSimilarity}` : "memory"}
+                </small> : null}
               </div>
               <h3>{LABELS[active.defectType]}</h3>
             </div>

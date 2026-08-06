@@ -371,6 +371,11 @@ addendum narrowly supersedes the earlier rejection of learned proposals and the
 veto-only limitation; every other frozen safety, geometry, measurement, grading,
 history, capacity, and deployment rule remains authoritative.
 
+Threshold amendment: Mark explicitly approved lowering proposal similarity from
+`>=0.90` to `>=0.75` on 2026-08-05 and showing the exact similarity on each
+Memory pin and in the existing reviewer detail panel. No other proposal,
+measurement, grading, or learning rule changes.
+
 The required reconsideration evidence now exists. Production retained 19 valid
 explicit Smart-Mark positives from the completed Cubone, while the same-card
 repeat produced materially fewer false positives but re-proposed none of those
@@ -381,12 +386,13 @@ missed region from the already-computed SAM FPN feature map.
   existing feature map for similar regions, box-prompt top matches through the
   existing SAM, then use the unchanged on-card mask gate, physical measurement,
   deduplication, negative-memory veto, and review flow.
-- Proposal similarity starts at `>=0.90`. Admit at most the top `3` matches per
+- Proposal similarity starts at `>=0.75`. Admit at most the top `3` matches per
   defect type per card side. Loosening either constant requires calibration
   evidence and a new approved addendum.
 - Memory-generated findings carry explicit `MEMORY` origin/provenance, retain
-  the generating lesson/session and match diagnostic, and display a small
-  `memory` label in the existing defect panel. No screen, step, confirmation,
+  the generating lesson/session and match diagnostic, and display the exact
+  similarity on its pin and compact `memory` label in the existing reviewer
+  defect panel. No screen, step, confirmation,
   queue, worker, model, or reviewer gate is added.
 - No self-replication: an untouched memory-generated finding never becomes a
   positive exemplar. It teaches only after explicit human removal or relabel.

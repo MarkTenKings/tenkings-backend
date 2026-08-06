@@ -165,6 +165,15 @@
   vector-effect: non-scaling-stroke;
   pointer-events: none;
 }
+.memoryScore {
+  fill: var(--bright);
+  stroke: #070807;
+  stroke-width: 7px;
+  paint-order: stroke;
+  font: 700 22px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-anchor: middle;
+  pointer-events: none;
+}
 .active .contour,
 .defect:focus .contour { fill: #f3d58b47; stroke-width: 2.5; }
 .active .halo,
