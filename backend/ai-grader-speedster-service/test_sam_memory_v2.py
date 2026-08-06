@@ -232,7 +232,7 @@ class SamMemoryV2Tests(unittest.TestCase):
         self.assertEqual(len(seeds), 1)
         self.assertEqual(seeds[0][0], "VISIBLE_WHITENING")
         self.assertEqual(seeds[0][1].session_id, "human-smart-mark")
-        self.assertEqual(MEMORY_PROPOSAL_SIMILARITY_THRESHOLD, 0.75)
+        self.assertEqual(MEMORY_PROPOSAL_SIMILARITY_THRESHOLD, 0.90)
         self.assertEqual(MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE, 3)
 
 

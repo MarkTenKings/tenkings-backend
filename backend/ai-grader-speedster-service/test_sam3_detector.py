@@ -1028,16 +1028,16 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(len(fingerprint), 32)
         self.assertAlmostEqual(float(np.linalg.norm(fingerprint)), 1.0, places=5)
 
-    def test_dense_memory_search_starts_at_point_seven_five_and_keeps_provenance(self):
+    def test_dense_memory_search_starts_at_point_nine_zero_and_keeps_provenance(self):
         axis = [1.0] + [0.0] * 31
         compact = np.zeros((32, 3, 4), dtype=np.float32)
         compact[1, :, :] = 1.0
-        compact[:, 1, 1] = np.array(
-            [0.749, np.sqrt(1 - 0.749**2)] + [0.0] * 30,
+        compact[:, 0, 0] = np.array(
+            [0.899, np.sqrt(1 - 0.899**2)] + [0.0] * 30,
             dtype=np.float32,
         )
-        compact[:, 1, 2] = np.array(
-            [0.75, np.sqrt(1 - 0.75**2)] + [0.0] * 30,
+        compact[:, 2, 3] = np.array(
+            [0.90, np.sqrt(1 - 0.90**2)] + [0.0] * 30,
             dtype=np.float32,
         )
         prepared = prepare_bank_v2(
@@ -1071,7 +1071,7 @@ class Sam3DetectorTests(unittest.TestCase):
                 "lessonProposalOrder": 7,
                 "lessonOrder": 0,
                 "lessonSourceViewId": "ORIGINAL",
-                "similarity": 0.75,
+                "similarity": 0.90,
             },
         )
 

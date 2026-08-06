@@ -372,9 +372,10 @@ veto-only limitation; every other frozen safety, geometry, measurement, grading,
 history, capacity, and deployment rule remains authoritative.
 
 Threshold amendment: Mark explicitly approved lowering proposal similarity from
-`>=0.90` to `>=0.75` on 2026-08-05 and showing the exact similarity on each
-Memory pin and in the existing reviewer detail panel. No other proposal,
-measurement, grading, or learning rule changes.
+`>=0.90` to `>=0.75` on 2026-08-05, then restoring it to `>=0.90` on 2026-08-06
+while keeping the exact similarity on each Memory pin and in the existing
+reviewer detail panel. No other proposal, measurement, grading, or learning rule
+changes.
 
 The required reconsideration evidence now exists. Production retained 19 valid
 explicit Smart-Mark positives from the completed Cubone, while the same-card
@@ -386,7 +387,7 @@ missed region from the already-computed SAM FPN feature map.
   existing feature map for similar regions, box-prompt top matches through the
   existing SAM, then use the unchanged on-card mask gate, physical measurement,
   deduplication, negative-memory veto, and review flow.
-- Proposal similarity starts at `>=0.75`. Admit at most the top `3` matches per
+- Proposal similarity starts at `>=0.90`. Admit at most the top `3` matches per
   defect type per card side. Loosening either constant requires calibration
   evidence and a new approved addendum.
 - Memory-generated findings carry explicit `MEMORY` origin/provenance, retain
