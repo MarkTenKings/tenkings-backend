@@ -1055,10 +1055,11 @@ def _measurement_region_contour(result: dict) -> list[dict]:
     contours = result["canonicalContours"]
     if not contours:
         raise ValueError("A measured Speedster region requires a derived contour")
-    if result.get("finalTrace") is None or (
-        len(contours) == 1 and len(contours[0]) >= 3
+    primary = max(contours, key=len)
+    if len(primary) >= 3 and (
+        result.get("finalTrace") is None or len(contours) == 1
     ):
-        return max(contours, key=len)
+        return primary
 
     points = [point for contour in contours for point in contour]
     if not points:

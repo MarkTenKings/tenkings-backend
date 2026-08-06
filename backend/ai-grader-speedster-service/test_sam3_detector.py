@@ -24,6 +24,7 @@ from defect_math import (
     GRID_HEIGHT,
     GRID_WIDTH,
     material_mask,
+    measure_defects,
 )
 from sam3_detector import (
     DETECTOR_VERSION,
@@ -32,6 +33,7 @@ from sam3_detector import (
     Sam3ImageProcessor,
     _cap_memory_candidates_per_side,
     _smart_mark_prompt_inputs,
+    _to_speedster_defects,
     detect_views,
     feature_fingerprint,
     learning_adjustment,
@@ -809,6 +811,35 @@ class Sam3DetectorTests(unittest.TestCase):
         expected = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
         expected[500:650, 450:600] = 1
         np.testing.assert_array_equal(proposals[0]["canonicalMask"], expected)
+
+    def test_sparse_detector_mask_serializes_as_a_valid_polygon_without_changing_area(self):
+        mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        mask[100:108, 100] = 1
+        proposal = {
+            "canonicalMask": mask,
+            "sourceViewId": "FRONT:ORIGINAL",
+            "defectType": "VISIBLE_WHITENING",
+            "confidence": 0.8,
+            "origin": "MEMORY",
+            "memoryProposal": {
+                "lessonSessionId": "sparse-memory-lesson",
+                "lessonCompletionOrder": 1,
+                "lessonProposalOrder": 0,
+                "lessonOrder": 0,
+                "lessonSourceViewId": "ORIGINAL",
+                "similarity": 0.75,
+            },
+        }
+
+        defects = _to_speedster_defects(
+            measure_defects([proposal], "ROUNDED_3_18_MM"),
+            "FRONT",
+            "UNREVIEWED",
+        )
+
+        self.assertEqual(len(defects), 1)
+        self.assertGreaterEqual(len(defects[0]["canonicalContour"]), 3)
+        self.assertEqual(defects[0]["measurement"]["areaMm2"], 0.02)
 
     def test_smart_mark_crossing_zones_has_one_stable_source_with_disjoint_regions(self):
         source_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
