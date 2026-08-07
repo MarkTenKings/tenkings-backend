@@ -31037,6 +31037,23 @@ By enabling Rip It Live, I confirm:
 - The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
 
+## 2026-08-07 - Owner-approved Speedster identity correction and historical V2-card backfill plan
+
+### Exact authority and pre-write evidence
+
+- Mark approved session-authoritative identity corrections for TKH-000226, TKH-000227, TKH-000233, TKH-000692, TKH-000693, TKH-000696, TKH-000698, and TKH-000700 before any card creation. Only the specifically listed identity fields may change; no global case normalization, gate, fallback, duplicate state, or free-form permanent-card editing is authorized.
+- Mark approved historical V2-card backfill for exactly 27 listed Speedster session IDs. Every completed session remains an independent grading event even when physical-card identity fields repeat. Repeated player/set/number identity is permanently not a duplicate signal and must not be used to merge, exclude, or warn on future backfills.
+- The checked-in Production backfill dry run reported 32 nominal candidates. A stricter read-only writer-equivalent check classified 27 as clean, five as session/label identity conflicts, three additional completed sessions as having no HumanGradeLabel row, and one later TKH-000701 session as already linked to a permanent V2 card. No write occurred during those reads.
+- A final read-only pre-write snapshot found that several HumanGradeLabel rows had been directly edited after the initial dry run while their authoritative Speedster sessions remained unchanged. Those label-side edits are not being adopted as authority. The approved operation will patch only the listed session fields and atomically regenerate the linked label identity from the corrected session. It will preserve TKH-000227 session card number `035/195` as the still-authoritative value pending Mark's physical-card check.
+
+### Planned bounded Production actions
+
+- Phase A: lock and correct only the eight approved completed sessions, derive each existing SPEEDSTER label identity from the corrected session in the same transaction, confirm no permanent card exists yet, and rerun writer-equivalent validation for all 27 approved sessions.
+- Phase B: run the existing idempotent backfill with its exact typed confirmation for only the 27 owner-approved session IDs, then verify one card, one immutable SYSTEM_CREATION event, one permanent token/page, and no CardAsset/Item creation per session.
+- Phase C: correct only the five approved conflict sessions through the same session-authoritative identity path, diagnose the two entry defects, and return a zero-write five-ID dry run. Their card backfill remains prohibited until separate owner approval.
+- Phase D remains read-only for the three completed sessions without HumanGradeLabel rows. Phase E will expose the printed-label view and the same session-anchored edit path on the internal graded-card page; direct editing of SPEEDSTER-owned labels will be closed.
+- No Production mutation had occurred when this plan entry was appended. No migration, deployment, environment change, SerpAPI request, Dell/helper/GoToTags action, NFC hardware operation, V1 write, or Batch 2 card creation is part of Phases A or B.
+
 ## 2026-08-07 - Comps V2 and hosted NFC V2 Production release result
 
 ### Exact release and migration evidence
@@ -31098,3 +31115,167 @@ By enabling Rip It Live, I confirm:
 
 - The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
+
+## 2026-08-07 - Owner-approved Speedster identity/backfill implementation and local verification
+
+### Exact bounded implementation
+
+- Added one strict session-authoritative completed-Speedster identity correction writer. It accepts only the known printed-identity fields, enforces category shape, locks session then issued SPEEDSTER label then linked V2 card, updates the session first, regenerates the label from that session, and re-syncs an existing V2 card only through the established writer. A converged replay is an exact no-op; no direct label identity is accepted as authority.
+- Replaced the correction executable with frozen Phase A eight-row and Phase C five-row manifests plus the exact Phase B 27-row validation manifest. Phase A mappings now bind TKH-000233, TKH-000692, TKH-000693, TKH-000696, TKH-000698, and TKH-000700 to their owner-approved sessions rather than the unrelated sessions present in the incomplete worktree. Default operation is zero-write; apply requires the phase-specific typed phrase and an operator admin ID. That ID is identified explicitly as captured command-output evidence only and does not claim or create a database audit record for pre-backfill rows.
+- Both correction phases treat verification after a returned transaction as potentially post-commit: any later failure says changes may already be committed, tells the operator not to assume rollback, requires exact-row inspection, and identifies the same exact-phase rerun as safe and idempotent.
+- Replaced the historical V2-card backfill executable with a single exact-27 manifest and no arbitrary session-ID input. It defaults to zero-write, requires the exact typed apply phrase, locks every exact session/label plus any existing V2 card/event in deterministic order, and performs creation and in-transaction postconditions inside one serializable transaction. It proves exact 27-card/27-creation-event counts and unchanged global `CardAsset`/`Item` counts, then performs read-only post-commit verification and a second locked idempotency replay.
+- Added a shared zero-write materialization verifier for exact session/label/card identity, immutable grade snapshot, permanent token, creator, one card, and one immutable SYSTEM_CREATION/GRADED_CREATED event. Verification reports the current V2 lifecycle state and rejects only `VOID`, because VOID has no public card page; it deliberately permits every other lifecycle state so later legitimate inventory, listing, ownership, vault, or shipping transitions do not break idempotency verification.
+- Backfill output emits all 27 stable token/public-path facts and marks deployed HTTP GET verification as a mandatory post-commit operator step rather than coupling HTTP into the database transaction. The two owner review flags for TKH-000219/220/221 years and TKH-000226/227 card numbers remain visible and nonblocking. Phase C card creation remains prohibited.
+
+### Local evidence and bounded forensic result
+
+- The database workspace strict TypeScript build passed. The concrete Node test file passed `27/27`, including exact manifests, session-to-label-to-card propagation, invalid/stale identity rejection, no-op replay, exact-five Phase C zero-write validation, exact-27 backfill safety, lifecycle-aware materialization verification, immutable creation evidence, V1-count protection, post-commit ambiguity wording, and required HTTP evidence. Both executables' `--help` paths and `git diff --check` passed. The package-level `node --test tests` wrapper is not green under the installed Node `25.6.1` because that runtime treats the directory operand as a missing module; the repository requires Node `20.x`, and the concrete test-file invocation is green.
+- Code/history forensics found that the Speedster UI shallow-merges one identity object across category switches and submits the remaining fields through a permissive session API; a stale Sports `playerName` can therefore persist in a Pokémon session even though label rendering omits it. The smallest future fix is category-aware session payload normalization plus a strict API identity schema, not global normalization.
+- Code/history forensics found that the generic Human Grade PATCH/DELETE route does not exclude SPEEDSTER-owned labels. Its PATCH path can produce the TKH-000457 label/session divergence by editing the derived label alone; its DELETE path can remove a label without changing a completed session. Existing session evidence proves sessions `cmsgozxz2002ifxynel0jrcb5` (TKH-000641) and `cmsgracjh0000wpk10h35wouz` (TKH-000642) had labels when they completed, making later deletion the strongest explanation for their current missing-label state. Repository evidence does not prove exact timestamps/identity or the same history for `cmshwkopg0000t4y5o6jhtmod`; that remains a read-only Production evidence question. The future minimal boundary is to deny generic PATCH/DELETE for `source=SPEEDSTER` and route corrections through the session-authoritative writer.
+
+### Safety boundary
+
+- No Production connection, query, mutation, correction, migration, deploy, restart, backfill, card/event creation, V1 write, HTTP public-page check, commit, push, paid API call, Dell/helper/GoToTags action, NFC operation, or destructive operation occurred. This is implementation and local verification only; all Production phases still require their separately authorized operator run.
+
+## 2026-08-07 - Phase A TKH-000696 exact observed-before correction
+
+- The authorized Production operator reported that a fresh Phase A zero-write dry run failed safely before any write because session `cmsiajjru0006vcg05jmgy7hi` currently contains owner-evidenced lowercase product set `pheonix`; its frozen precondition had incorrectly expected uppercase `PHEONIX` or the corrected target `PHOENIX`.
+- Changed only TKH-000696's product-set precondition to accept exact observed lowercase `pheonix` or idempotent target `PHOENIX`. Its player-name precondition and target identity are unchanged, and every other Phase A row retains its existing exact allowed-before values. Added a regression that pins this complete two-field TKH-000696 precondition.
+- The database TypeScript build passed, the focused card-platform suite passed `27/27`, and `git diff --check` passed under the same local Node `25.6.1` environment warning that the repository requires Node `20.x`.
+- This follow-up made no Production connection or query and performed no Production/local database write, correction, backfill, migration, deploy, restart, commit, push, V1 write, HTTP check, or destructive operation.
+
+## 2026-08-07 - Phase A exact TKH-000219 label-only convergence
+
+- The authorized Production operator reported a new read-only Phase A dry run with `18` clean and `9` conflict rows and no write. All eight approved session-correction rows were exact with no permanent card; the ninth conflict was completed SPORTS session `cmsanu8zn0000nw1oopkh0m2m` / TKH-000219, whose authoritative session year remains `2019` while its directly edited SPEEDSTER label year is `2021`, label `updatedAt` is exactly `2026-08-07T17:37:12.782Z`, every other identity field matches, and no permanent card exists.
+- Added one separate frozen Phase A label-convergence authority for that exact session, certificate, SPORTS category, session year, divergent label year, and divergent-label timestamp. It is not added to the eight session-correction rows. The operation rejects any other identity difference or label version, preserves the session without a write, and re-renders only that label's complete identity from the unchanged session. An already converged session-year-2019 label is an exact no-op for safe replay.
+- Phase A output now distinguishes `sessionCorrectionCount: 8` from `labelOnlyConvergenceCount: 1`, retains the TKH-000219 year question as a nonblocking owner review flag, performs the label-only convergence under the existing exact-27 deterministic row locks and serializable transaction, and then requires the real writer-equivalent validator to pass all 27 before commit and again after commit. TKH-000219's future physical-card correction, if any, remains the owner's separate session-edit action.
+- Added a regression pinning the exact session ID, certificate, category, session year, label year, label timestamp, nonblocking flag, eight-row correction count, label-only write, unchanged session, idempotent no-op, and rejection of another mismatch or label timestamp. The database TypeScript build passed, focused card-platform tests passed `28/28`, the correction help path passed, and `git diff --check` passed.
+- This implementation follow-up made no Production connection or query and performed no database write, correction, backfill, migration, deploy, restart, commit, push, V1 write, HTTP check, or destructive operation.
+
+## 2026-08-07 - Phase A Production dry-run evidence and planned approved apply
+
+- A fresh Production zero-write Phase A dry run resolved exactly the eight owner-approved session corrections and the separately pinned TKH-000219 label-only convergence. Every one of those nine rows has no permanent V2 card. The proposed before/after fields exactly match the owner authority: eight sessions change only their listed fields; TKH-000219's session remains byte-for-byte authoritative at year `2019` while only its directly edited SPEEDSTER label returns from year `2021` to session-derived `2019`.
+- The same read showed the expected pre-apply state: `18` of the exact 27 sources are writer-equivalent clean and the only `9` conflicts are those eight approved session corrections plus the exact TKH-000219 label-only convergence. The two physical-card questions remain nonblocking flags: TKH-000219 year `2019` versus TKH-000220/221 year `2021`, and TKH-000226 `036/195` versus TKH-000227 `035/195`.
+- Planned next action is the already owner-approved exact Phase A apply with its phase-specific typed confirmation and configured Production operator identity. It will use the reviewed serializable exact-27 transaction, make exactly eight bounded session corrections plus the one exact label-only convergence, and commit only if all 27 pass the real writer-equivalent validator. No permanent card or ownership event is created by Phase A.
+- No Production write had occurred when this planned-action entry was appended. The Production environment file used for each read was permission-restricted, never printed, and removed immediately after the command.
+
+## 2026-08-07 - Phase A Production correction result and Phase B dry-run plan
+
+- The first owner-approved Phase A apply attempt expired safely at the old `60000ms` interactive-transaction limit before the first session update. An immediate zero-write rerun proved all nine affected rows remained unchanged at `18` clean / `9` exact expected conflicts. The failure was therefore not reported as a success and no partial correction occurred.
+- After independent builder/critic review replaced more than `110` sequential lock-window round trips with at most `13` set-based statements, the fresh exact Phase A dry run remained unchanged and exact. The reviewed Production apply then completed successfully under Serializable isolation and the bounded `180000ms` timeout.
+- Observed Phase A result: exactly eight approved completed sessions were corrected; one exact TKH-000219 SPEEDSTER label was converged from its unchanged session; no permanent card, ownership event, CardAsset, or Item was created; the TKH-000219 convergence replay was `NOOP`; and post-commit writer-equivalent validation returned exactly `27` clean approved sources with `permanentCardWrites: 0`.
+- The nonblocking owner flags remain: TKH-000219 year `2019` versus TKH-000220/221 year `2021`, and TKH-000226 `036/195` versus TKH-000227 `035/195`.
+- Planned next action is the mandatory Production zero-write Phase B dry run of the frozen exact-27 manifest. It will create nothing and must report all exact session/certificate bindings ready before the separately approved typed apply is run.
+- Each temporary Production environment file was permission-restricted, never printed, and removed immediately after use. No deploy, migration, restart, environment/config change, paid API call, NFC action, V1 write, Batch 2 write, or destructive operation occurred.
+
+## 2026-08-07 - Exact-27 Phase B Production backfill planned action
+
+- The fresh post-Phase-A Production Phase B dry run returned exactly `27` approved targets, `readyToCreateCount: 27`, `existingVerifiedCount: 0`, and `writes: 0`. Every frozen session ID resolved to its exact approved certificate, SPEEDSTER label, public report slug, category, and session-authoritative identity.
+- The two owner questions remain printed and nonblocking: TKH-000219 year `2019` versus TKH-000220/221 year `2021`, and TKH-000226 `036/195` versus TKH-000227 `035/195`.
+- Planned next action is the already owner-approved exact-27 Phase B apply with typed confirmation. The reviewed implementation accepts no caller-selected IDs, locks the exact 27 rows deterministically, creates cards/events in one Serializable transaction, verifies exact identity/grade/token/one-card/one-GRADED_CREATED-event facts, requires unchanged global CardAsset/Item counts, and performs a token-stable idempotency replay. The database command will emit the exact ID/token/public-path mapping.
+- After a successful commit, every emitted `/c/tk2c_...` path will be fetched from the deployed site and all 27 HTTP results recorded. HTTP evidence is deliberately post-commit and cannot roll back the database transaction.
+- No Phase B write had occurred when this planned-action entry was appended. No deploy, migration, restart, environment/config change, paid API call, NFC action, V1 write, Batch 2 write, or destructive operation occurred.
+
+## 2026-08-07 - Exact-27 Phase B Production backfill result
+
+- The owner-approved exact-27 backfill committed successfully. Observed database evidence: `cardsCreated: 27`, `creationEventsCreated: 27`, `cardAssetRowsCreated: 0`, and `itemRowsCreated: 0`. Every created card was `GRADED` with exactly one card row and exactly one immutable `SYSTEM_CREATION` / `GRADED_CREATED` event.
+- The required locked idempotency replay returned card count `27 -> 27`, creation-event count `27 -> 27`, and `tokenMappingUnchanged: true`.
+- External Production GET verification returned HTTP `200` for all `27/27` permanent `/c/tk2c_...` pages. The public template does not render certificate text, so correct route binding was verified against each page's embedded exact `speedster-<sessionId>` report slug; `27/27` matched.
+- Exact certificate-to-token mapping:
+  - TKH-000219 -> `tk2c_La0u3AiWNwDXb6-ejh9O_vLcoK-ClZbk`
+  - TKH-000220 -> `tk2c_lWB6JJzgGuCyfFCLxm6OIZIWjDDytcXC`
+  - TKH-000221 -> `tk2c_08M9C2ex8JG2gv-gHr5xTxMqwTc45gbP`
+  - TKH-000226 -> `tk2c_ZLpVpk6P19DL2zL4yWIZ-MHDzwWLMfLr`
+  - TKH-000227 -> `tk2c_7asfnVGXOAZhN10wdRFA_YR_foZdulBE`
+  - TKH-000228 -> `tk2c_4Uj7sqtg5lbhO79Ushmr0SAonblxI7-p`
+  - TKH-000229 -> `tk2c_CmMDrKBLBjN16jgqDmBIwBQwC77lQ9u4`
+  - TKH-000230 -> `tk2c_zVKuVnxRKm4PoGm5wKMrr_o8p72bp1oR`
+  - TKH-000231 -> `tk2c_pEmoieNSduLdYd664fWxZp-M0FhCoscv`
+  - TKH-000232 -> `tk2c_mreNP6iTEpSXBgAJiX9jHKiiDw67lbG-`
+  - TKH-000233 -> `tk2c_3TCD4QZ3vV3UXztcxkPor0B5tPd93Q7e`
+  - TKH-000644 -> `tk2c_8joW2ThmjjOFPIJv1PF1tIltcAD6rtS9`
+  - TKH-000645 -> `tk2c_XWQX_ZM5e1vMITYtbiPL_AHO7aLSYS_g`
+  - TKH-000646 -> `tk2c_b0DFFHVAeAKZyIC2UjMqC-sy_V25Y3UK`
+  - TKH-000655 -> `tk2c_m6FgCsmLN_5HzDHRMoQvMq6WvVZSQQ0Y`
+  - TKH-000665 -> `tk2c_Vzzi0GzLbJnMKiBIDaDhgo6Cw-_QzHPC`
+  - TKH-000670 -> `tk2c_JEOCi4JP0OVNRV_7f27DxWSYUe8G8s5D`
+  - TKH-000682 -> `tk2c_NFsUmOf770wc4MmiSnRLg_gjsCLhlFYx`
+  - TKH-000692 -> `tk2c_xsIy3SMQFJ_8GD2_4TtDNqqs__kVivC4`
+  - TKH-000693 -> `tk2c_x74s8-sSbRiU_6LbftUUGpZjQaR_TMuf`
+  - TKH-000694 -> `tk2c_UpJJ1pvI0qDYfUgQ3iOVI23LaSEEwswZ`
+  - TKH-000695 -> `tk2c_jpmfquGTl6SzzTJEGQ_Ykp-JjvNrW210`
+  - TKH-000696 -> `tk2c_vlvfB19WDi6v2X7z7MRNQ4_qlcVrl1FB`
+  - TKH-000697 -> `tk2c_qPqaFzNJPm4rDTGHKloq1zuO-CCh-H1V`
+  - TKH-000698 -> `tk2c_fCxQIf8uqCQDMwNrFCLVLFSlToZejxOn`
+  - TKH-000699 -> `tk2c_kJ-x8pTmrlxISwKGdRTY0jRfiU_5uio7`
+  - TKH-000700 -> `tk2c_1NVR4seS3qN_hX5DUydKnlXkroLZ4IDg`
+- The nonblocking physical-card questions remain unresolved by design: TKH-000219 year `2019` versus TKH-000220/221 year `2021`, and TKH-000226 `036/195` versus TKH-000227 `035/195`.
+- Planned next action is the owner-approved Phase C exact-five zero-write preview, followed only by the separately specified session corrections if that preview is exact. No Phase C permanent-card backfill is authorized.
+- Each temporary Production environment file was permission-restricted, never printed, and removed immediately after use. No deploy, migration, restart, environment/config change, paid API call, NFC action, Batch 2 card creation, V1 write, or destructive operation occurred.
+
+## 2026-08-07 - Exact-five Phase C Production dry-run and planned correction
+
+- The fresh Production Phase C zero-write preview resolved exactly five approved conflict sessions and no permanent cards. TKH-000222/223/224/225 each remove only the inactive Pokémon `playerName` key while preserving `cardName` and every other identity field. TKH-000457 changes only from stale Cubone/Jungle identity to the owner-confirmed printed identity `PIKACHU V`, `2022 POKEMON SWSH`, `PIKACHU V BOX`, `BSP`, `SWSH198`.
+- The pre-correction writer-equivalent result is exactly `0` clean / `5` expected conflicts, with `permanentCardWrites: 0`.
+- Planned next action is the owner-approved exact-five Phase C correction under the reviewed Serializable transaction and phase-specific typed confirmation, followed by the required exact-five zero-write writer-equivalent dry run. Phase C creates no permanent cards or ownership events, and Batch 2 card backfill remains prohibited without separate approval.
+- No Phase C write had occurred when this planned-action entry was appended. No deploy, migration, restart, environment/config change, paid API call, NFC action, Batch 2 card creation, V1 write, or destructive operation occurred.
+
+## 2026-08-07 - Exact-five Phase C result and Phase D read-only report
+
+### Phase C result
+
+- The owner-approved exact-five Phase C correction completed successfully. TKH-000222/223/224/225 each removed only the inactive Pokémon `playerName`; TKH-000457 now carries the exact owner-confirmed Pikachu V session identity. No permanent card or ownership event was created.
+- The required post-correction zero-write run returned exactly `5` clean / `0` conflicts and `permanentCardWrites: 0`. Batch 2 permanent-card creation remains prohibited without separate owner approval.
+- Root cause for TKH-000222/223/224/225 is high confidence: the Speedster UI retained a shallow-merged identity object across category changes; the create-session API accepted arbitrary identity JSON; completion validated only the active Pokémon `cardName`; and label materialization deliberately omitted inactive `playerName`. The session could therefore retain an invalid Sports field that the derived label hid.
+- Root cause mechanism for TKH-000457 is high confidence: the generic Human Grade PATCH route allowed direct edits to `source=SPEEDSTER` labels and did not update their authoritative sessions. This exactly permits a label-only Pikachu edit while the session remains stale Cubone. Current data cannot prove the exact human click/time, so that operator-specific claim is not made.
+
+### Phase D read-only evidence
+
+- `cmsgozxz2002ifxynel0jrcb5`: POKEMON Cubone, 1999 Pokémon Jungle, #50/64; created `2026-08-05T23:02:42.103Z`; updated/completed `2026-08-05T23:12:47.249Z`; 30 reviewed defects; full capture and grade report; public slug `speedster-cmsgozxz2002ifxynel0jrcb5`; current label `null`; current V2 card `null`.
+- `cmsgracjh0000wpk10h35wouz`: POKEMON Cubone, 1999 Pokémon Jungle, #50/64; created `2026-08-06T00:06:46.773Z`; updated/completed `2026-08-06T00:17:33.711Z`; 38 reviewed defects; full capture and grade report; public slug `speedster-cmsgracjh0000wpk10h35wouz`; current label `null`; current V2 card `null`.
+- `cmshwkopg0000t4y5o6jhtmod`: POKEMON Cubone, 1999 Pokémon Jungle, parallel `50/64`, card #50/64; created `2026-08-06T19:22:33.364Z`; updated/completed `2026-08-06T19:34:55.298Z`; 39 reviewed defects; full capture and grade report; public slug `speedster-cmshwkopg0000t4y5o6jhtmod`; current label `null`; current V2 card `null`.
+- Current label rows jump from certificate sequence `640` to `644`; sequences `641`, `642`, and `643` are absent. Historical session logs explicitly bind the first two sessions to TKH-000641 and TKH-000642 and record their completion-learning timestamps immediately after label creation. The third session completed before TKH-000644 was issued and is therefore strongly inferred to have held deleted sequence 643, but no surviving row or log proves that certificate binding exactly.
+- At the historical completion release, the same database transaction changed `CAPTURED -> COMPLETED` and created the exact `source=SPEEDSTER` label; a missing label could not be the successful transaction's immediate result. The generic Human Grade DELETE route, however, accepted any label ID on an OPEN sheet, did not exclude `source=SPEEDSTER`, deleted that label, and never changed the completed session. This is the proven code path capable of producing the present state and, for the first two sessions with documented prior labels, the strongest explanation. Exact delete request timestamps/operator identity are not retained in current data.
+- Phase D was read-only. No session, label, certificate, card, event, public report, CardAsset, Item, or V1 row was created, repaired, or deleted.
+
+### Next bounded implementation
+
+- Phase E will close the generic SPEEDSTER label PATCH/DELETE path, close inactive category-field persistence at session creation, render the printed Human Grade label on the completed-card page, and route the one Edit action through the authoritative session -> derived label -> existing-card re-sync writer. No free-form permanent-card editor, second identity write path, gate, fallback, new table, or Batch 2 card creation is authorized.
+
+## 2026-08-07 - Phase A timeout incident and set-based correction/backfill latency fix
+
+### Observed failed apply and zero-write evidence
+
+- The authorized Production operator reported that the exact Phase A apply failed safely when the prior Prisma interactive serializable transaction exceeded its `60000 ms` timeout after `68549 ms`, at the first `AiGraderV2Session.update` following the exact row locks and prevalidation. A subsequent read-only exact rerun again showed `18` clean and the same exact `9` conflicts with all nine rows unchanged, proving that the expired transaction committed none of the eight session corrections or the TKH-000219 label-only convergence.
+- The failure exposed a latency design defect rather than a data/precondition defect: the prior Phase A path repeated per-row locks and source reads despite already holding exact-27 locks and would have performed more than 110 database statements. The prior Phase B path had more than 400 potential per-row statements and therefore could not be made safe merely by increasing its timeout.
+
+### Set-based bounded correction
+
+- Phase A still takes the exact deterministic session-then-label-then-card locks for all 27 approved rows in one serializable transaction. It now loads the eight correction rows and TKH-000219 together, derives every target from its authoritative session in memory, performs at most one set-based JSONB session UPDATE and one set-based label UPDATE with exact affected-row counts, reloads the exact operation rows once, and runs the same writer source contract through two set-based source reads. It no longer calls the per-row correction service or reacquires/re-reads already locked rows.
+- The Phase A transaction now has a manifest-size-independent maximum of `13` database statements. Its bounded timeout is `180000 ms`: roughly three times the observed time for the former first 12 statements, while the statement-count reduction—not the timeout increase—is the primary fix. All-or-none exact-27 validation, exact TKH-000219 fail-closed version binding, serializable isolation, post-commit verification, ambiguity warning, and idempotent replay semantics remain unchanged.
+
+### Set-based bounded backfill
+
+- Added shared set-based source audit/validation and exact batch materialization verification. Phase B now validates sources in two reads, inserts all missing permanent cards with one `createMany`, inserts all missing immutable creation events with one `createMany`, then verifies exact identity/grade/creator/token/event semantics, non-VOID lifecycle, one card, and exactly one GRADED_CREATED event using set reads. Existing-card replay uses the same checks and rejects drift, VOID, token changes, or a duplicate GRADED_CREATED event.
+- The locked fresh Phase B transaction now has a maximum of `23` database statements and locked idempotency replay a maximum of `20`, independent of the 27-row manifest. Its bounded timeout is `600000 ms`, providing explicit remote-Production latency and batched-write headroom without restoring the former per-row behavior. Exact deterministic locks, serializable isolation, exact 27-card/27-SYSTEM_CREATION totals, unchanged global CardAsset/Item counts, post-commit verification, stable token replay, mandatory later HTTP checks, and post-commit ambiguity wording remain intact.
+
+### Local verification and safety
+
+- The database strict TypeScript build passed. The focused card-platform suite passed `30/30`, including functional set-based two-card creation, exact token-preserving replay, set-based verification, and rejection of identity drift, VOID, and duplicate GRADED_CREATED evidence; it also proves Phase A uses at most two set-based writes and fails if either affected-row count differs. Static contracts reject the old per-row script calls and pin both bounded timeout values. Both executable help paths and `git diff --check` passed under the existing local Node `25.6.1` warning that the repository requires Node `20.x`.
+- This local repair made no Production connection or query and performed no database write, correction, backfill, migration, deploy, restart, commit, push, V1 write, HTTP check, or destructive operation. A new Production dry run/apply remains a separate operator action under the existing owner authority.
+
+## 2026-08-07 - Owner-approved Phase E identity and exact-label workspace implemented locally
+
+- Added one shared strict category-aware Speedster identity canonicalizer used by both the browser payload and the create-session API. Sports sessions persist only Sports identity fields (`playerName`, year, manufacturer, product/set, optional parallel/insert/card number); Pokémon sessions persist only Pokémon fields (`cardName`, year, set, optional parallel/card number). Unknown, grade, and inactive-category fields are rejected server-side. Surrounding whitespace is trimmed without changing operator-entered letter case; no global fallback, case rewrite, gate, table, or state was added.
+- Replaced the completed-card `Re-sync identity from session` control with one prominent authoritative session identity panel and one locked-category Edit/Save flow. A valid Save calls `correctCompletedSpeedsterIdentity` once through one database transaction, then reloads the session and linked label. The established writer remains solely responsible for session -> derived existing SPEEDSTER label -> any existing V2 card synchronization. A missing/wrong-source/unissued label disables or rejects editing; the route does not repair a Phase D label or create a Phase C/Batch 2 card.
+- Added an authenticated, private/no-store one-label PDF endpoint for the completed-card page. It selects the exact label bound by `sourceSessionId`, requires `source=SPEEDSTER` and a completed session, and calls the existing Human Grade renderer's same `drawLabel`, approved fonts, crown asset, and physical `196.56 x 59.76 pt` geometry. The browser fetches the PDF with the existing Bearer admin header and embeds a revocable Blob URL; no token is placed in the iframe URL and no CSS approximation was added.
+- Generic Human Grade PATCH and DELETE now reject `source=SPEEDSTER` before any update/delete or slot shift, while HUMAN behavior is unchanged and newly created generic labels are explicitly HUMAN. The Human Grade page hides those generic mutation controls for SPEEDSTER labels and links back to the authoritative completed Speedster card.
+- Updated the canonical V2 blueprint to replace the superseded re-sync-only language with the approved session-authoritative Edit/Save contract and strict session-creation identity boundary.
+- Local verification passed: focused API/unit/renderer/component tests `47/47`; focused ESLint with no warnings/errors; database strict TypeScript build; full Next.js production build after building its local workspace dependencies; and `git diff --check`. The full build emitted only pre-existing repository warnings, including image/hook warnings, outdated browser data, a Tailwind glob warning, and optional Sharp development-module resolution warnings; it completed successfully and included `/api/admin/ai-grader-v2/completed/[sessionId]/label`.
+- No Production connection/query/write, label repair, permanent-card creation, ownership event, CardAsset/Item/V1 write, migration, deploy, restart, commit, push, paid API call, NFC action, or destructive operation occurred in Phase E implementation.
+
+## 2026-08-07 - Phase E normal Production release planned action
+
+- Fresh builder and independent safety-critic review are complete with a final GO. Release-owner verification passed the database strict TypeScript build and `30/30` card-platform tests; the focused completed-card/session/Human Grade/label-renderer suite passed `47/47`; focused ESLint passed with zero findings; `git diff --check` passed; and the optimized Next.js Production build completed all `75/75` static pages with only the repository's pre-existing unrelated warnings.
+- Planned next action is to commit the exact reviewed Phase A-E implementation, push its `codex/v2-backfill-identity-corrections` branch, open a normal pull request, require the repository's emitted CI and Vercel Preview checks, merge without bypass only after those checks succeed, and verify that Vercel Production becomes Ready and Current on the exact merge commit.
+- This release contains no Prisma schema change or migration. `RUN_DB_MIGRATIONS` must remain `false`; no migration command, database correction/backfill replay, Batch 2 card creation, environment/secret change, paid SerpAPI query, Dell/helper/GoToTags action, physical NFC operation, V1 write, or destructive data operation is part of the release.

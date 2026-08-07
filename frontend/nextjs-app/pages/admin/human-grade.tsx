@@ -286,10 +286,18 @@ export default function HumanGradePage() {
                 <strong>{label.playerName ?? label.cardName}</strong>
                 <small>{label.certificateNumber} · Grade {label.grade}</small>
                 <div className="slot-actions">
-                  <button type="button" className="edit-label" onClick={() => openEditLabel(label, sheet.id)}>
-                    Edit
-                  </button>
-                  {allowDelete ? (
+                  {label.source === "SPEEDSTER" ? (
+                    label.sourceSessionId ? (
+                      <Link href={`/admin/ai-grader-v2/completed/${encodeURIComponent(label.sourceSessionId)}`}>
+                        Edit in Speedster
+                      </Link>
+                    ) : <span>Managed in Speedster</span>
+                  ) : (
+                    <button type="button" className="edit-label" onClick={() => openEditLabel(label, sheet.id)}>
+                      Edit
+                    </button>
+                  )}
+                  {allowDelete && label.source !== "SPEEDSTER" ? (
                     <button
                       type="button"
                       className="delete-label"
@@ -453,8 +461,8 @@ export default function HumanGradePage() {
                     <section className="completed-label-editor" aria-label="Edit completed page labels">
                       <div>
                         <p className="eyebrow">Completed Page Labels</p>
-                        <h3>Edit any saved label</h3>
-                        <p>Saving an edit regenerates this page’s PDF with the updated label.</p>
+                        <h3>Edit Human Grade entries</h3>
+                        <p>Human-owned edits regenerate this PDF; Speedster labels return to their completed card.</p>
                       </div>
                       {renderLabelSlots(selectedSheet, false)}
                     </section>

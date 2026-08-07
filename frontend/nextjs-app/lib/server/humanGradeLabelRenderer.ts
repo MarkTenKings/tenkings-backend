@@ -489,3 +489,24 @@ export async function renderHumanGradeLabelSheetPdf(entries: readonly HumanGrade
   }
   return pdfBuffer(doc);
 }
+
+/** Render one label through the exact same drawing function used by print sheets. */
+export async function renderHumanGradeLabelPdf(snapshot: HumanGradeLabelSnapshot) {
+  const doc = new PDFDocument({
+    autoFirstPage: false,
+    margin: 0,
+    compress: false,
+    info: {
+      Title: `Ten Kings Human Grade Label ${snapshot.certificateNumber}`,
+      Author: "Ten Kings",
+      Creator: "Ten Kings Human Grade",
+    },
+  });
+  doc.addPage({
+    size: [HUMAN_GRADE_LABEL_GEOMETRY.label.widthPt, HUMAN_GRADE_LABEL_GEOMETRY.label.heightPt],
+    margin: 0,
+  });
+  registerFonts(doc);
+  drawLabel(doc, openCrown(doc), snapshot, 0, 0, false);
+  return pdfBuffer(doc);
+}

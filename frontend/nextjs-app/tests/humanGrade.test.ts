@@ -12,11 +12,13 @@ import {
   calculateHumanGrade,
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
+  isHumanOwnedGradeLabel,
   type HumanGradeLabelSnapshot,
 } from "../lib/humanGrade";
 import {
   HUMAN_GRADE_LABEL_FINISH_GEOMETRY,
   HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY,
+  renderHumanGradeLabelPdf,
   renderHumanGradeLabelSheetPdf,
 } from "../lib/server/humanGradeLabelRenderer";
 
@@ -252,6 +254,24 @@ test("human-grade renderer validates and renders mixed legacy and equal-formula 
   );
 });
 
+test("one linked-label preview uses the exact physical label page and shared renderer assets", async () => {
+  const pdf = await renderHumanGradeLabelPdf({ ...sports, source: "SPEEDSTER" });
+  const source = pdf.toString("latin1");
+  assert.equal(pdf.subarray(0, 4).toString("ascii"), "%PDF");
+  assert.ok(pdf.byteLength > 20_000);
+  assert.match(source, /\/MediaBox \[0 0 196\.56 59\.76\]/);
+  assert.equal((source.match(/\/Type \/Page\b/g) ?? []).length, 1);
+  assert.match(source, /BebasNeue-Regular/);
+  assert.match(source, /Barlow-Regular/);
+  assert.doesNotMatch(source, /-0\.375 -0\.375 197\.31 60\.51 re/);
+});
+
+test("generic Human Grade ownership permits HUMAN and rejects SPEEDSTER mutations", () => {
+  assert.equal(isHumanOwnedGradeLabel("HUMAN"), true);
+  assert.equal(isHumanOwnedGradeLabel(undefined), true);
+  assert.equal(isHumanOwnedGradeLabel("SPEEDSTER"), false);
+});
+
 test("human-grade formula migration keeps a legacy-safe rollout default without a data rewrite", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const schema = readFileSync(`${root}/../../packages/database/prisma/schema.prisma`, "utf8");
@@ -287,17 +307,24 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(page, /editingLabel\?\.gradingFormulaVersion \?\? NEW_HUMAN_GRADE_FORMULA_VERSION/);
   assert.match(api, /calculateHumanGrade/);
   assert.match(api, /gradingFormulaVersion: NEW_HUMAN_GRADE_FORMULA_VERSION/);
-  assert.match(patchBlock, /select: \{ id: true, gradingFormulaVersion: true \}/);
+  assert.match(patchBlock, /select: \{ id: true, source: true, gradingFormulaVersion: true \}/);
+  assert.match(patchBlock, /isHumanOwnedGradeLabel\(existing\.source\)/);
+  assert.match(patchBlock, /SPEEDSTER_OWNED/);
   assert.match(patchBlock, /labelData\(parsed\.data, existing\.gradingFormulaVersion\)/);
   assert.match(api, /req\.method === "PATCH"/);
   assert.match(api, /req\.method === "DELETE"/);
   assert.doesNotMatch(patchBlock, /existing\.sheet\.status !== "OPEN"|Ready-to-print label pages cannot be edited/);
   assert.match(deleteBlock, /existing\.sheet\.status !== "OPEN"/);
+  assert.match(deleteBlock, /isHumanOwnedGradeLabel\(existing\.source\)/);
+  assert.match(deleteBlock, /SPEEDSTER_OWNED/);
+  assert.match(api, /source: "HUMAN"/);
+  assert.match(page, /label\.source === "SPEEDSTER"/);
+  assert.match(page, /Edit in Speedster/);
   assert.match(page, /Save Changes/);
   assert.match(page, /Delete/);
   assert.match(page, /editingLabelId/);
   assert.match(page, /Completed Page Labels/);
-  assert.match(page, /Saving an edit regenerates this page’s PDF with the updated label/);
+  assert.match(page, /Human-owned edits regenerate this PDF/);
   assert.match(page, /PDF rendered from its current saved labels/);
   assert.match(page, /cache: "no-store"/);
   assert.match(page, /SharedLabelEditor/);
@@ -313,6 +340,8 @@ test("human-grade code stays outside AI Grader station and production routes", (
   assert.match(pdfApi, /"Cache-Control", "private, no-store"/);
   assert.match(renderer, /HUMAN_GRADE_SUBGRADE_GRID_GEOMETRY/);
   assert.match(renderer, /drawSubgradePair/);
+  assert.match(renderer, /renderHumanGradeLabelPdf/);
+  assert.match(renderer, /drawLabel\(doc, openCrown\(doc\), snapshot, 0, 0, false\)/);
   assert.match(renderer, /CENTERING: "CTR"/);
   assert.match(renderer, /CORNERS: "CRN"/);
   assert.match(renderer, /EDGES: "EDG"/);

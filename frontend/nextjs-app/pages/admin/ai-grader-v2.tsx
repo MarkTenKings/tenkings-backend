@@ -17,6 +17,7 @@ import {
   EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
   type HumanGradeLabelEditorValue,
 } from "../../lib/humanGrade";
+import { canonicalizeSpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
 import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
@@ -141,7 +142,16 @@ export default function AiGraderV2AdminPage() {
   }, [refreshReviewImages, reviewActive, silentlyRefreshReviewImages]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
-    setIdentity((current) => ({ ...current, [field]: value }));
+    setIdentity((current) => field === "cardType"
+      ? {
+          ...current,
+          cardType: value as HumanGradeLabelEditorValue["cardType"],
+          playerName: "",
+          cardName: "",
+          manufacturer: "",
+          insert: "",
+        }
+      : { ...current, [field]: value });
   };
 
   const createDraft = async (event: FormEvent<HTMLFormElement>) => {
@@ -149,9 +159,27 @@ export default function AiGraderV2AdminPage() {
     if (!session?.token || working) return;
     setWorking(true);
     setMessage("Creating the Speedster card.");
-    const { centeringGrade, cornersGrade, edgesGrade, surfaceGrade, ...printedIdentity } = identity;
-    void centeringGrade; void cornersGrade; void edgesGrade; void surfaceGrade;
     try {
+      const printedIdentity = canonicalizeSpeedsterSessionIdentity(
+        identity.cardType,
+        identity.cardType === "SPORTS"
+          ? {
+              playerName: identity.playerName,
+              year: identity.year,
+              manufacturer: identity.manufacturer,
+              productSet: identity.productSet,
+              parallel: identity.parallel,
+              insert: identity.insert,
+              cardNumber: identity.cardNumber,
+            }
+          : {
+              cardName: identity.cardName,
+              year: identity.year,
+              productSet: identity.productSet,
+              parallel: identity.parallel,
+              cardNumber: identity.cardNumber,
+            },
+      );
       const response = await fetch("/api/admin/ai-grader-v2/sessions", {
         method: "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
