@@ -30725,3 +30725,26 @@ By enabling Rip It Live, I confirm:
 - NFC and comps remain optional and ungated. V1 NFC/KingsReview/CardAsset/Item behavior remains untouched. No new NFC table, failed-tag row, remote Dell control, shipping evidence, or comps status flag is authorized.
 - Every schema/release/Dell step still follows the blueprint's exact evidence and rollback rules. Historical Speedster backfill still requires its own dry-run list and explicit owner approval before any apply action.
 - This update records owner authority only. No application code, database, migration, deploy, backfill, SerpAPI request, Dell/helper/GoToTags action, NFC hardware operation, or Production/customer state changed.
+
+## 2026-08-06 - eBay Sold Comps V2 pure-engine package — local implementation result
+
+### Authorized scope and dependency evidence
+
+- Mark prioritized the independent eBay sold-comps/SerpAPI V2 engine while Speedster remains the first overall product priority. Work was isolated in clean worktree `/Users/markthomas/tenkings/ten-kings-comps-v2` on branch `codex/ten-kings-comps-v2`; the owner-approved canonical blueprint commit was cherry-picked as `d76f4afb` before final validation.
+- Current `origin/main` has no `CollectibleCardV2`, `CardOwnershipEventV2`, `card-platform-v2` write boundary, or permanent `/c/[tk2c_token]` page. Therefore the S3 API, admin UI, automatic post-completion adapter, `compsSnapshot` persistence, public toggle, and public card display correctly remain blocked on S1 rather than being coupled to the old report/session or V1 CardAsset/Item paths.
+- V1 inspection confirmed useful provider lessons but prohibited coupling: `kingsreviewEbayComps.ts` contains prior sold-search parsing, while the Bytebot/Playwright and V1 valuation/CardAsset/Item persistence paths are deliberately not imported or reused.
+
+### Implementation
+
+- Added pure server-side monorepo package `packages/ebay-sold-comps-v2` with no database, HTTP route, UI, Speedster session, grade, lifecycle, CardAsset, Item, KingsReview, Bytebot, or NFC dependency.
+- The engine implements the blueprint input contract, one visible deterministic query or exact admin override, no serial-number query input, `SERPAPI_KEY`-injected sold-only eBay requests, safe typed/redacted failures, bounded timeout/retry/response handling, stable listing dedupe, and 30-result windows with a returned raw offset for `Fetch 30 More`.
+- Parsed candidates retain safe listing identity/link, safe eBay image URL, title, sold price, shipping context, sold date, condition, parsed grader/grade/raw facts, variant match, and concise score/reason. Explicitly unsold rows are rejected; sold-filter results missing a usable sold date remain visible and sort last in their group.
+- Deterministic ordering is PSA at the target grade, remaining PSA grades from highest to lowest, BGS/SGC/CGC, then raw. Human candidates are never auto-included or hidden for weak identity. Common manufacturer/grader aliases are normalized, and grader-label wording such as BGS Black Label is not treated as a card-parallel contradiction.
+- Selection arithmetic accepts only returned candidate IDs with one positive sold price, dedupes repeated selections, returns `null` facts for an empty selection, calculates the rounded arithmetic mean in cents, and returns the observed selected-price range. Shipping is retained but never added. The package contains no comps status flag/boolean and never confirms or persists market value itself.
+- Added package documentation and the workspace-lock importer only. Generated `dist/` and package `node_modules/` remain covered by the repository ignore rules and are not tracked.
+
+### Validation and safety
+
+- `pnpm --filter @tenkings/ebay-sold-comps-v2 test` passed all `20/20` deterministic fixture tests after a successful strict TypeScript build. The local shell uses unsupported Node `25.6.1`, so the same compiled suite was also run with exact Node 20 through `npx -y node@20 --test packages/ebay-sold-comps-v2/tests/*.test.js`; all `20/20` passed.
+- The suite covers visible/default/override and no-grade queries, missing/invalid input, alias normalization, whole-token identity/variant matching (`41` does not match `141`, and `Gold` does not match `Golden`), exact grade groups, other-PSA grade order, recency and missing-date handling, parallel contradiction ranking, safe URL/image parsing, explicit unsold rejection, ambiguous range/non-USD price rejection even when the provider supplies an extracted first bound, sold-price-only `$100/$110/$90 = $100`, selected range, stable merge/dedupe, 30+30 cross-page offsets, sold-only SerpAPI parameters, secret redaction, retryable and non-retryable HTTP failures, invalid/provider responses, missing credentials, and abort timeout.
+- `git diff --check` passed. A focused forbidden-coupling scan found no prohibited code dependency or comps-status field. No live or paid SerpAPI request, secret read/write, database/schema/migration, runtime data mutation, API/UI integration, deploy, restart, card/grade/report change, NFC action, or V1 change occurred.
