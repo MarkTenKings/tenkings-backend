@@ -30986,6 +30986,19 @@ By enabling Rip It Live, I confirm:
 
 - No Production/remote migration, database/customer/card write, backfill, deploy, restart, environment or secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, scheduled-task change, or physical NFC tag read/write/lock occurred during final integration.
 
+## 2026-08-07 - Combined V2 protected Production release plan
+
+### Planned release actions
+
+- Push only clean branch `codex/ten-kings-v2-comps-nfc-release` from the exact reviewed release-candidate head, open one PR to current `main`, and require every ordinary exact-head GitHub/Vercel check that actually exists. Do not use admin bypass, do not claim repository branch protection, and do not merge a stale or unchecked head.
+- Before the merge deployment, verify the existing server-only SerpAPI credential remains present without revealing it. Provision the new NFC server signing key only through the exact Ten Kings Vercel Production environment without printing or logging the private value. Preserve the existing workstation allowlist. Keep NFC programming disabled until the separately authorized Windows/Dell acceptance and trust transition are complete.
+- Apply the one additive permanent-card foundation migration through the repository's reviewed migration path. If Vercel `RUN_DB_MIGRATIONS` is used, set it true only for the exact approved deployment, verify the migration/deployment result, then restore it false and verify the follow-up deployment. Do not execute the historical-card backfill; it still requires a separate exact dry-run ID list and owner approval.
+- After merge, verify the exact Production deployment and non-mutating public/admin route health for `/admin/comps`, `/admin/nfc`, and `/c/<token>` behavior. Perform at most one owner-authorized live Comps Research query only after deployment; do not save to a card unless an existing Production V2 card is explicitly selected by Mark.
+
+### Explicit exclusions
+
+- No Dell access, V1 terminal-incident resolution, helper install/update/restart, V3-to-V4 config transition, GoToTags launch, scheduled-task change, NFC hardware/tag operation, historical backfill, customer/card completion, paid purchase, or V1 mutation is authorized by this hosted release plan.
+
 ## 2026-08-07 - Combined Comps V2 and NFC V2 release integration validation plan
 
 ### Planned local disposable migration validation
