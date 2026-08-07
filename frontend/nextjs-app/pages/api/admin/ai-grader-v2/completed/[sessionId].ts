@@ -1,5 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import {
+  prisma,
+  resyncIdentityFromSpeedster,
+  voidCard,
+} from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { getStorageMode, presignReadUrl, presignUploadUrl } from "../../../../../lib/server/storage";
@@ -17,7 +21,21 @@ const actionSchema = z.discriminatedUnion("action", [
     side: z.enum(["FRONT", "BACK"]),
     storageKey: z.string().min(1).max(500),
   }).strict(),
+  z.object({
+    action: z.literal("RESYNC_IDENTITY"),
+  }).strict(),
+  z.object({
+    action: z.literal("VOID_CARD"),
+    reason: z.string().trim().min(1).max(500),
+  }).strict(),
 ]);
+
+type PermanentCard = {
+  id: string;
+  publicToken: string;
+  lifecycleState: string;
+  nfcVerifiedAt: Date | null;
+};
 
 type CompletedSession = {
   id: string;
@@ -26,9 +44,7 @@ type CompletedSession = {
   publicReportSlug: string | null;
   slabFrontKey: string | null;
   slabBackKey: string | null;
-  nfcDone: boolean;
-  compsDone: boolean;
-  inventoryDone: boolean;
+  collectibleCardV2: PermanentCard | null;
 };
 type Label = { certificateNumber: string | null; slot: number; sheet: { sheetNumber: number } } | null;
 type Dependencies = {
@@ -36,6 +52,14 @@ type Dependencies = {
   findSession: (id: string) => Promise<CompletedSession | null>;
   findLabel: (id: string) => Promise<Label>;
   updateSlabKey: (id: string, side: "FRONT" | "BACK", storageKey: string) => Promise<CompletedSession>;
+  resyncCard: (cardId: string, adminId: string) => Promise<void>;
+  voidCard: (cardId: string, reason: string, adminId: string) => Promise<void>;
+  logAdminAction: (entry: {
+    action: "RESYNC_IDENTITY" | "VOID_CARD";
+    adminId: string;
+    cardId: string;
+    reason: string;
+  }) => void;
   presignUpload: typeof presignUploadUrl;
   presignRead: typeof presignReadUrl;
   storageReady: () => boolean;
@@ -59,12 +83,13 @@ const publicState = async (session: CompletedSession, label: Label, presignRead:
     front: session.slabFrontKey ? await presignRead(session.slabFrontKey, 60 * 60) : null,
     back: session.slabBackKey ? await presignRead(session.slabBackKey, 60 * 60) : null,
   },
-  status: {
-    slabPhotosDone: Boolean(session.slabFrontKey && session.slabBackKey),
-    nfcDone: session.nfcDone,
-    compsDone: session.compsDone,
-    inventoryDone: session.inventoryDone,
-  },
+  status: { slabPhotosDone: Boolean(session.slabFrontKey && session.slabBackKey) },
+  permanentCard: session.collectibleCardV2 ? {
+    id: session.collectibleCardV2.id,
+    publicToken: session.collectibleCardV2.publicToken,
+    lifecycleState: session.collectibleCardV2.lifecycleState,
+    nfcVerifiedAt: session.collectibleCardV2.nfcVerifiedAt?.toISOString() ?? null,
+  } : null,
 });
 
 const dependencies: Dependencies = {
@@ -78,9 +103,9 @@ const dependencies: Dependencies = {
       publicReportSlug: true,
       slabFrontKey: true,
       slabBackKey: true,
-      nfcDone: true,
-      compsDone: true,
-      inventoryDone: true,
+      collectibleCardV2: {
+        select: { id: true, publicToken: true, lifecycleState: true, nfcVerifiedAt: true },
+      },
     },
   }),
   findLabel: (id) => prisma.humanGradeLabel.findUnique({
@@ -97,11 +122,18 @@ const dependencies: Dependencies = {
       publicReportSlug: true,
       slabFrontKey: true,
       slabBackKey: true,
-      nfcDone: true,
-      compsDone: true,
-      inventoryDone: true,
+      collectibleCardV2: {
+        select: { id: true, publicToken: true, lifecycleState: true, nfcVerifiedAt: true },
+      },
     },
   }),
+  resyncCard: async (cardId, adminId) => {
+    await prisma.$transaction((tx) => resyncIdentityFromSpeedster(tx, cardId, adminId));
+  },
+  voidCard: async (cardId, reason, adminId) => {
+    await prisma.$transaction((tx) => voidCard(tx, cardId, reason, adminId));
+  },
+  logAdminAction: (entry) => console.info("[TenKingsV2] admin_card_action", entry),
   presignUpload: presignUploadUrl,
   presignRead: presignReadUrl,
   storageReady: () => getStorageMode() === "s3",
@@ -114,7 +146,7 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
       return res.status(405).json({ message: "Method not allowed" });
     }
     try {
-      await deps.requireAdminSession(req);
+      const adminSession = await deps.requireAdminSession(req);
       const sessionId = sessionIdFrom(req);
       if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
       const session = await deps.findSession(sessionId);
@@ -128,6 +160,29 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
 
       const parsed = actionSchema.safeParse(req.body ?? {});
       if (!parsed.success) return res.status(400).json({ message: "Invalid post-grading action" });
+      if (parsed.data.action === "RESYNC_IDENTITY" || parsed.data.action === "VOID_CARD") {
+        const permanentCard = session.collectibleCardV2;
+        if (!permanentCard) {
+          return res.status(409).json({ message: "This completed grade does not have a permanent V2 card" });
+        }
+        const reason = parsed.data.action === "VOID_CARD"
+          ? parsed.data.reason
+          : "Re-synced from authoritative Speedster session";
+        if (parsed.data.action === "VOID_CARD") {
+          await deps.voidCard(permanentCard.id, reason, adminSession.user.id);
+        } else {
+          await deps.resyncCard(permanentCard.id, adminSession.user.id);
+        }
+        deps.logAdminAction({
+          action: parsed.data.action,
+          adminId: adminSession.user.id,
+          cardId: permanentCard.id,
+          reason,
+        });
+        const updated = await deps.findSession(session.id);
+        if (!updated) throw new Error("Updated permanent V2 card could not be loaded");
+        return res.status(200).json({ card: await publicState(updated, label, deps.presignRead) });
+      }
       if (!deps.storageReady()) throw new Error("Speedster slab photos require configured object storage");
 
       if (parsed.data.action === "SLAB_PLAN") {

@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { nonVoidSpeedsterCardFilter } from "../../../../../lib/server/tenKingsV2PublicReport";
 
 type CompletedSession = {
   id: string;
@@ -10,9 +11,12 @@ type CompletedSession = {
   gradeReport: Prisma.JsonValue;
   slabFrontKey: string | null;
   slabBackKey: string | null;
-  nfcDone: boolean;
-  compsDone: boolean;
-  inventoryDone: boolean;
+  collectibleCardV2: {
+    id: string;
+    publicToken: string;
+    lifecycleState: string;
+    nfcVerifiedAt: Date | null;
+  } | null;
   createdAt: Date;
 };
 type Label = {
@@ -55,9 +59,12 @@ export function mapCompletedCard(session: CompletedSession, label?: Label) {
     labelSheetNumber: label?.sheet.sheetNumber ?? null,
     labelSlot: label?.slot ?? null,
     slabPhotosDone: Boolean(session.slabFrontKey && session.slabBackKey),
-    nfcDone: session.nfcDone,
-    compsDone: session.compsDone,
-    inventoryDone: session.inventoryDone,
+    permanentCard: session.collectibleCardV2 ? {
+      id: session.collectibleCardV2.id,
+      publicToken: session.collectibleCardV2.publicToken,
+      lifecycleState: session.collectibleCardV2.lifecycleState,
+      nfcVerifiedAt: session.collectibleCardV2.nfcVerifiedAt?.toISOString() ?? null,
+    } : null,
     createdAt: session.createdAt.toISOString(),
   };
 }
@@ -65,7 +72,7 @@ export function mapCompletedCard(session: CompletedSession, label?: Label) {
 const dependencies: Dependencies = {
   requireAdminSession,
   listSessions: () => prisma.aiGraderV2Session.findMany({
-    where: { workflowState: "COMPLETED" },
+    where: { workflowState: "COMPLETED", ...nonVoidSpeedsterCardFilter },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -75,9 +82,9 @@ const dependencies: Dependencies = {
       gradeReport: true,
       slabFrontKey: true,
       slabBackKey: true,
-      nfcDone: true,
-      compsDone: true,
-      inventoryDone: true,
+      collectibleCardV2: {
+        select: { id: true, publicToken: true, lifecycleState: true, nfcVerifiedAt: true },
+      },
       createdAt: true,
     },
   }),

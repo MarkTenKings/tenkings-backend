@@ -1,0 +1,10 @@
+{
+  "purpose": "Ten Kings V2 NFC server-job signature verification",
+  "environment": "production",
+  "algorithm": "ECDSA_P256_SHA256_P1363",
+  "encoding": "SPKI_DER_BASE64",
+  "keyIdSha256": "5e0685a5d6e1f481715fb886be6afefe7c01c7946c5fe56cdff0cb70c4c998d7",
+  "spkiDerBase64": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+HDd4o8RauM7R/ebtoIkRKhTIH68OOSz8weuIGRuZ3PZqa1D6aKdGlPGEvHI0rFaqfvYqHmnq8jqNiJ22e/oWA==",
+  "recordedAt": "2026-08-07T03:01:10-07:00",
+  "notes": "Public verification material only. The matching private key is stored exclusively as a sensitive Production environment variable and must never be committed. This key is not authorized on the Dell until the separately approved Windows/Dell acceptance and V3-to-V4 trust transition complete."
+}

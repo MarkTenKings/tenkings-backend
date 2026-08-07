@@ -16,7 +16,13 @@ type CardWorkspace = {
   labelSheetNumber: number | null;
   labelSlot: number | null;
   slabPhotos: { front: string | null; back: string | null };
-  status: { slabPhotosDone: boolean; nfcDone: boolean; compsDone: boolean; inventoryDone: boolean };
+  status: { slabPhotosDone: boolean };
+  permanentCard: {
+    id: string;
+    publicToken: string;
+    lifecycleState: string;
+    nfcVerifiedAt: string | null;
+  } | null;
 };
 
 const SIDE_LABEL = { FRONT: "Front", BACK: "Back" } as const;
@@ -27,6 +33,7 @@ export default function CompletedSpeedsterCardPage() {
   const [card, setCard] = useState<CardWorkspace | null>(null);
   const [message, setMessage] = useState("Loading completed card.");
   const [uploading, setUploading] = useState<"FRONT" | "BACK" | null>(null);
+  const [acting, setActing] = useState<"RESYNC_IDENTITY" | "VOID_CARD" | null>(null);
   const inputRefs = {
     FRONT: useRef<HTMLInputElement>(null),
     BACK: useRef<HTMLInputElement>(null),
@@ -81,6 +88,33 @@ export default function CompletedSpeedsterCardPage() {
     }
   };
 
+  const runCardAction = async (action: "RESYNC_IDENTITY" | "VOID_CARD", reason?: string) => {
+    if (!session?.token || !sessionId || acting) return;
+    setActing(action);
+    setMessage(action === "VOID_CARD" ? "Voiding erroneous card." : "Re-syncing identity from Speedster.");
+    try {
+      const response = await fetch(`/api/admin/ai-grader-v2/completed/${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify(action === "VOID_CARD" ? { action, reason } : { action }),
+      });
+      const payload = await response.json().catch(() => ({})) as { card?: CardWorkspace; message?: string };
+      if (!response.ok || !payload.card) throw new Error(payload.message ?? "Permanent card action failed.");
+      setCard(payload.card);
+      setMessage(action === "VOID_CARD" ? "Card voided and removed from every public page and active list." : "Identity re-synced from the authoritative Speedster session.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Permanent card action failed.");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const requestVoid = () => {
+    const reason = window.prompt("Why is this card erroneous?")?.trim();
+    if (!reason || !window.confirm("Void this card? It will disappear from every public page and active list.")) return;
+    void runCardAction("VOID_CARD", reason);
+  };
+
   if (loading) return <AppShell background="black"><div className={styles.center}>Loading Speedster…</div></AppShell>;
   if (!session) return <AppShell background="black"><div className={styles.center}><button onClick={() => void ensureSession()}>Sign in to Speedster</button></div></AppShell>;
   if (!isAdmin) return <AppShell background="black"><div className={styles.center}>Admin access required.</div></AppShell>;
@@ -120,17 +154,43 @@ export default function CompletedSpeedsterCardPage() {
               );
             })}
             <article className={styles.finishTools}>
-              <small>FINISH STATUS</small>
-              <div><span className={card.status.slabPhotosDone ? styles.done : undefined}>Slab photos</span><span className={card.status.nfcDone ? styles.done : undefined}>NFC</span><span className={card.status.compsDone ? styles.done : undefined}>Comps</span><span className={card.status.inventoryDone ? styles.done : undefined}>Inventory</span></div>
+              <small>PERMANENT CARD</small>
+              <div>
+                <span className={card.status.slabPhotosDone ? styles.done : undefined}>Slab photos</span>
+                {card.permanentCard ? <span className={styles.done}>{card.permanentCard.lifecycleState}</span> : null}
+                {card.permanentCard?.nfcVerifiedAt ? <span className={styles.done}>NFC verified</span> : null}
+              </div>
               <p>Label page {card.labelSheetNumber ?? "—"} · Slot {card.labelSlot ?? "—"}</p>
+              {card.permanentCard ? <>
+                <Link href={`/admin/comps?card=${encodeURIComponent(card.permanentCard.id)}&from=${encodeURIComponent(`/admin/ai-grader-v2/completed/${sessionId}`)}`}>Open Sold Comps</Link>
+                {card.permanentCard.lifecycleState !== "VOID" ? (
+                  <Link href={`/admin/nfc?card=${encodeURIComponent(card.permanentCard.id)}`}>
+                    Open NFC →
+                  </Link>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={Boolean(acting)}
+                  onClick={() => void runCardAction("RESYNC_IDENTITY")}
+                >
+                  {acting === "RESYNC_IDENTITY" ? "Re-syncing…" : "Re-sync identity from session"}
+                </button>
+                {card.permanentCard.lifecycleState !== "VOID" ? (
+                  <button type="button" disabled={Boolean(acting)} onClick={requestVoid}>
+                    {acting === "VOID_CARD" ? "Voiding…" : "Void erroneous card"}
+                  </button>
+                ) : null}
+              </> : <p>Permanent V2 card unavailable.</p>}
               <Link href="/admin/human-grade">Open label pages →</Link>
             </article>
           </section>
 
-          <section className={styles.reportFrame}>
-            <header><span>PUBLIC REPORT · LIVE PREVIEW</span><a href={`/ai-grader-v2/reports/${card.publicReportSlug}`} target="_blank" rel="noreferrer">Open report ↗</a></header>
-            <iframe title="Public Speedster report" src={`/ai-grader-v2/reports/${card.publicReportSlug}`} />
-          </section>
+          {card.permanentCard && card.permanentCard.lifecycleState !== "VOID" ? (
+            <section className={styles.reportFrame}>
+              <header><span>PERMANENT CARD · LIVE PREVIEW</span><a href={`/c/${card.permanentCard.publicToken}`} target="_blank" rel="noreferrer">Open card ↗</a></header>
+              <iframe title="Permanent Ten Kings card" src={`/c/${card.permanentCard.publicToken}`} />
+            </section>
+          ) : null}
         </> : null}
       </main>
     </AppShell>

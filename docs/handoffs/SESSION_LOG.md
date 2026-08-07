@@ -30695,3 +30695,384 @@ By enabling Rip It Live, I confirm:
 - Authorized release plan: incorporate the independent code, UX/test, and deployment audits; commit and push only this batch-selection/removal scope plus append-only evidence; open one reviewable PR; require the ordinary exact-head GitHub/Vercel checks; merge without admin bypass; require the exact Vercel Production deployment with `RUN_DB_MIGRATIONS` unset/false; and verify `collect.tenkings.co/admin/ai-grader-v2` plus the existing unauthenticated review-action boundary before inviting Mark to test.
 - This is a Next.js reviewer/server-route change only. No RunPod build, image, worker, endpoint, model, detector, SAM prompt, Memory threshold, database/schema migration, data cleanup, historical report recomputation, scoring change, Centering/miscut work, queue, fallback, new screen, or Production data mutation is part of this release.
 - Pull request `#301` opened at exact code head `cf08475e17e87aeb818bc1315faec628133e68fd`; its Vercel Preview and Preview Comments passed, while no GitHub Actions run was created. GitHub Status simultaneously reported an active major Actions outage and stated that pull-request/push webhook triggers were throttled to about `15%`. Before any merge or Production action, this append-only observation is being pushed as one fresh `synchronize` event; the reviewed code and local validation evidence remain unchanged.
+
+## 2026-08-06 - Ten Kings V2 final master blueprint owner-approved
+
+### Summary
+
+- Mark approved `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md` as the canonical product and architecture planning authority for the future Ten Kings V2 card platform.
+- The canonical blueprint includes the approved 2026-08-06 correction memo: NFC and comps are optional per card, DIRECT does not require comps or market value, buyback is 80% of market value in TKD, and the minimal VOID, identity re-sync, catalog, pack, shipment, and public-comps rules are incorporated.
+- `AGENTS.md` now makes the complete blueprint mandatory session-start reading for every Codex agent.
+- `docs/context/MASTER_PRODUCT_CONTEXT.md` and `docs/HANDOFF_SET_OPS.md` carry short canonical pointers and clearly distinguish approved future V2 intent from currently implemented/deployed evidence.
+- The full blueprint is intentionally not copied into handoff files, preventing multiple editable versions from drifting.
+
+### Scope and safety
+
+- This approval makes the blueprint the planning authority; it does not authorize implementation, deployment, migration, V1 freeze, cutover, or a later phase outside its explicit gates.
+- No application code, database, migration, deployment, restart, Production configuration, runtime data, grading result, or customer record changed.
+
+## 2026-08-06 - Owner-approved comps display and standalone NFC workflow correction
+
+### Locked corrections
+
+- Mark removed shipping from eBay Sold Comps V2. Provider shipping data is discarded at the engine boundary; it is not displayed, stored in the V2 snapshot/public evidence, or used in market-value math.
+- Mark confirmed NFC V2 must have its own reusable standalone admin engine/screen, independent of AI Grader V1. A permanent card's Speedster Finish workspace is one optional entry point; later V2 admin surfaces may link to the same screen.
+- The Dell is the first physical station, not a permanent architectural dependency. The actual browser programming action runs on the same Windows workstation connected to its reader/helper. Additional Windows workstations use their own reader, helper installation, protected non-exportable key, server-allowlisted public identity, and supervised acceptance tag.
+- Mark authorized the existing comps and NFC lead agents to complete their respective projects through adversarial implementation/design review cycles, protected Production merge/release, and live readiness for owner testing. Implementation/review subagent groups remain separate from each lead's three-role UI/UX design group, and independent critic agents review the lead outputs rather than approving their own work.
+
+### Safety still in force
+
+- NFC and comps remain optional and ungated. V1 NFC/KingsReview/CardAsset/Item behavior remains untouched. No new NFC table, failed-tag row, remote Dell control, shipping evidence, or comps status flag is authorized.
+- Every schema/release/Dell step still follows the blueprint's exact evidence and rollback rules. Historical Speedster backfill still requires its own dry-run list and explicit owner approval before any apply action.
+- This update records owner authority only. No application code, database, migration, deploy, backfill, SerpAPI request, Dell/helper/GoToTags action, NFC hardware operation, or Production/customer state changed.
+
+## 2026-08-06 - eBay Sold Comps V2 pure-engine package — local implementation result
+
+### Authorized scope and dependency evidence
+
+- Mark prioritized the independent eBay sold-comps/SerpAPI V2 engine while Speedster remains the first overall product priority. Work was isolated in clean worktree `/Users/markthomas/tenkings/ten-kings-comps-v2` on branch `codex/ten-kings-comps-v2`; the owner-approved canonical blueprint commit was cherry-picked as `d76f4afb` before final validation.
+- Current `origin/main` has no `CollectibleCardV2`, `CardOwnershipEventV2`, `card-platform-v2` write boundary, or permanent `/c/[tk2c_token]` page. Therefore the S3 API, admin UI, automatic post-completion adapter, `compsSnapshot` persistence, public toggle, and public card display correctly remain blocked on S1 rather than being coupled to the old report/session or V1 CardAsset/Item paths.
+- V1 inspection confirmed useful provider lessons but prohibited coupling: `kingsreviewEbayComps.ts` contains prior sold-search parsing, while the Bytebot/Playwright and V1 valuation/CardAsset/Item persistence paths are deliberately not imported or reused.
+
+### Implementation
+
+- Added pure server-side monorepo package `packages/ebay-sold-comps-v2` with no database, HTTP route, UI, Speedster session, grade, lifecycle, CardAsset, Item, KingsReview, Bytebot, or NFC dependency.
+- The engine implements the blueprint input contract, one visible deterministic query or exact admin override, no serial-number query input, `SERPAPI_KEY`-injected sold-only eBay requests, safe typed/redacted failures, bounded timeout/retry/response handling, stable listing dedupe, and 30-result windows with a returned raw offset for `Fetch 30 More`.
+- Parsed candidates retain safe listing identity/link, safe eBay image URL, title, sold price, shipping context, sold date, condition, parsed grader/grade/raw facts, variant match, and concise score/reason. Explicitly unsold rows are rejected; sold-filter results missing a usable sold date remain visible and sort last in their group.
+- Deterministic ordering is PSA at the target grade, remaining PSA grades from highest to lowest, BGS/SGC/CGC, then raw. Human candidates are never auto-included or hidden for weak identity. Common manufacturer/grader aliases are normalized, and grader-label wording such as BGS Black Label is not treated as a card-parallel contradiction.
+- Selection arithmetic accepts only returned candidate IDs with one positive sold price, dedupes repeated selections, returns `null` facts for an empty selection, calculates the rounded arithmetic mean in cents, and returns the observed selected-price range. Shipping is retained but never added. The package contains no comps status flag/boolean and never confirms or persists market value itself.
+- Added package documentation and the workspace-lock importer only. Generated `dist/` and package `node_modules/` remain covered by the repository ignore rules and are not tracked.
+
+### Validation and safety
+
+- `pnpm --filter @tenkings/ebay-sold-comps-v2 test` passed all `20/20` deterministic fixture tests after a successful strict TypeScript build. The local shell uses unsupported Node `25.6.1`, so the same compiled suite was also run with exact Node 20 through `npx -y node@20 --test packages/ebay-sold-comps-v2/tests/*.test.js`; all `20/20` passed.
+- The suite covers visible/default/override and no-grade queries, missing/invalid input, alias normalization, whole-token identity/variant matching (`41` does not match `141`, and `Gold` does not match `Golden`), exact grade groups, other-PSA grade order, recency and missing-date handling, parallel contradiction ranking, safe URL/image parsing, explicit unsold rejection, ambiguous range/non-USD price rejection even when the provider supplies an extracted first bound, sold-price-only `$100/$110/$90 = $100`, selected range, stable merge/dedupe, 30+30 cross-page offsets, sold-only SerpAPI parameters, secret redaction, retryable and non-retryable HTTP failures, invalid/provider responses, missing credentials, and abort timeout.
+- `git diff --check` passed. A focused forbidden-coupling scan found no prohibited code dependency or comps-status field. No live or paid SerpAPI request, secret read/write, database/schema/migration, runtime data mutation, API/UI integration, deploy, restart, card/grade/report change, NFC action, or V1 change occurred.
+
+## 2026-08-06 - Ten Kings V2 S1 permanent-card foundation implementation and disposable validation plan
+
+### Owner authorization and scope
+
+- Mark authorized lead-agent implementation of the first eBay sold-comps V2 and Dell-first NFC V2 priorities under the approved master blueprint. Both require the S1 permanent-card identity seam, so this isolated branch implements only that shared additive prerequisite.
+- The implementation adds only the approved `CollectibleCardV2` and append-only `CardOwnershipEventV2` schema, the single `card-platform-v2` writer, atomic Speedster completion linkage, the permanent `/c/tk2c_...` report route, and a dry-run-first exact-ID backfill command.
+- It does not add CardAsset/Item writes, copied media, inventory/pack/sales behavior, NFC rows or gates, comp rows or gates, `IN_TRANSIT`, deployment, Production migration, backfill execution, Dell access, hardware work, live SerpAPI use, or V1 mutation.
+
+### Local validation completed
+
+- Prisma generation and `@tenkings/database` TypeScript build passed.
+- Focused V2 database tests passed `6/6`.
+- Focused Speedster label-completion and public-report/card-route tests passed `17/17`.
+- `git diff --check` passed.
+- The local environment is Node `25.6.1`, while the repository requests Node `20.x`; exact release validation must use the repository's Node 20 baseline.
+
+### Planned disposable database action
+
+- Run the repository's explicit loopback-only disposable PostgreSQL validator against the complete migration chain and second-deploy no-op using `--ack-disposable-local-postgres`.
+- This action may create and then destroy only the validator's uniquely named disposable local container and storage. It must not use Production or any remote Docker context/database.
+- Record the exact observed result below before any handoff. No Production migration or backfill is authorized.
+
+### Disposable database result
+
+- The first disposable run failed closed while applying the new migration because `CollectibleCardV2.locationId` had been emitted as `TEXT` while the reused authoritative `Location.id` is `UUID`. The validator destroyed its disposable container and storage. No persistent database was contacted.
+- Corrected both Prisma and SQL to use the existing `Location.id` UUID type and added a regression assertion for the exact migration column type.
+- The complete loopback-only disposable PostgreSQL validation then passed all `84` migrations, the existing live lifecycle/constraint checks, the second `prisma migrate deploy` no-op, and final migration status. The validator destroyed its disposable container and tmpfs storage.
+- No Production migration, persistent database write, backfill, deploy, restart, hardware action, Dell access, or external API call occurred.
+
+### Final local implementation evidence
+
+- Re-ran on repository-required Node `20.x`: Prisma generation and database build passed; focused permanent-card service/migration/backfill/error-handling tests passed `9/9`; focused Speedster completion and permanent public-card route tests passed `17/17`; changed frontend files passed focused ESLint with zero findings; `git diff --check` passed.
+- The full dependency-aware optimized Next.js Production build passed and emitted all `73/73` static pages plus dynamic `/c/[token]`. Output contained only the repository's pre-existing image, hook, browser-data, Tailwind-glob, and optional Sharp target warnings.
+- The broader legacy database test command completed `149/163` tests and failed `14` unrelated baseline calibration/production assertions or missing prebuilt-helper fixtures in files untouched by this change. The new permanent-card tests were all green within that run; this branch does not alter or hide the legacy failures.
+- The S1 Production done gate remains intentionally open: no reviewed migration/deploy/backfill has occurred and no real completed card has yet proven one label, one V2 card, one creation event, and one stable public URL in Production.
+
+## 2026-08-06 - Ten Kings V2 S1 independent-review corrections and revalidation plan
+
+### Review corrections
+
+- Independent lead review found six foundation gaps before integration: VOID cards were still reachable through legacy report/trace URLs; ownership rows were not database-enforced append-only; mocked tests did not prove real rollback/concurrency/constraints; category identity shape was not enforced; approved void/re-sync actions were not reachable with structured provenance; and card creation attribution used the session creator rather than the durable label-completion actor.
+- Corrected the single writer to validate the complete immutable identity, grade snapshot, public token, creator, and creation-event semantics on retry; use `HumanGradeLabel.createdByUserId`; and reject invalid SPORTS/POKEMON identity shapes during creation and re-sync.
+- Added database category-shape enforcement and an UPDATE/DELETE rejection trigger for `CardOwnershipEventV2`.
+- Added a shared non-VOID query boundary to the permanent page, legacy report, trace API, and completed-card list while preserving unlinked historical Speedster reports.
+- Converted the completed-card workspace endpoint to V2 card facts and added only the approved authenticated `Re-sync identity from session` and `Void erroneous card` actions. Each action emits one ordinary structured operational log with exact safe card/admin/action/reason fields; no audit framework, table, or free-form identity editor was added.
+- Added an exact loopback/disposable-only real PostgreSQL validator for forced card-insert rollback, two concurrent completions under the production row-lock pattern, retry identity/token stability, one-card/one-event counts, database category shape, and append-only UPDATE/DELETE rejection.
+
+### Planned disposable database action
+
+- Re-run the explicit local Docker validator against the complete migration chain and second-deploy no-op with `--ack-disposable-local-postgres`. The new live S1 check requires both the existing disposable sentinel and its own exact loopback/database-name sentinel.
+- The action may create and destroy only the uniquely named tmpfs-backed local validation container. No Production/remote database, deploy, backfill, Dell/helper, NFC hardware, or paid SerpAPI action is authorized.
+
+### Observed correction validation
+
+- Repository-required Node `20.x` Prisma generation and strict database TypeScript build passed.
+- Corrected focused tests passed `14/14` Card Platform V2 service/migration/backfill/live-validator contracts and `27/27` Speedster completion, public report/card/VOID boundary, completed-card state, and authenticated admin-action contracts.
+- The exact loopback-only tmpfs PostgreSQL validator passed all `84` migrations, forced card-insert rollback of the surrounding completion transaction, concurrent row-locked completion idempotency, retry token/event stability, database identity-shape enforcement, append-only ownership UPDATE/DELETE rejection, the existing live lifecycle checks, second-deploy no-op, and final readiness. The disposable container and storage were destroyed.
+- No Production/remote database, migration, deployment, backfill, Dell/helper, GoToTags, NFC hardware/tag, paid/live SerpAPI, V1, customer, grading, label, report, or persistent runtime state changed.
+
+### Final nullable-identity constraint recheck plan
+
+- Static review of the corrected SQL caught PostgreSQL CHECK three-valued-logic risk when both category identity names are null. Added explicit `IS NOT NULL` terms and a real-database regression for the both-null case.
+- Re-run the same exact loopback-only disposable validator and second-deploy no-op before handoff. Authorization remains limited to the uniquely named tmpfs local validation container, which must be destroyed afterward; no persistent or Production action is authorized.
+
+### Final nullable-identity constraint recheck result
+
+- Node `20.x` focused Card Platform V2 tests again passed `14/14`.
+- The exact loopback-only tmpfs PostgreSQL validator again passed all `84` migrations, including explicit rejection of a POKEMON card with the wrong name field and a POKEMON card with both identity names null, plus the forced card-insert rollback, concurrent completion, append-only UPDATE/DELETE, existing lifecycle, second-deploy no-op, and final-readiness checks.
+- The validator destroyed the disposable container and storage. No persistent/Production database, migration, deploy, backfill, Dell/helper, NFC hardware, paid/live SerpAPI, V1, customer, grading, label, report, or runtime state changed.
+- Focused changed-file ESLint passed with zero warnings/errors, `git diff --check` passed, and the exact Node `20.x` optimized Next.js Production build passed all `73/73` static pages including dynamic `/c/[token]`; output contained only the repository's existing unrelated warnings.
+## 2026-08-06 - eBay Sold Comps V2 S3 full-stack implementation ready for independent review
+
+### Implemented scope
+
+- Completed the additive S3 eBay Sold Comps V2 implementation in the isolated worktree `/Users/markthomas/tenkings/ten-kings-comps-v2` on branch `codex/ten-kings-comps-v2`, based on foundation head `28ac9bbc5e37a089c8ad69e8d2b4bb492cb09c88`.
+- Hardened the independent server-only comps engine to discard provider shipping recursively, return only canonical numeric eBay item links and approved eBay image hosts, bound streamed provider responses before parsing, cap retained provider text, preserve deterministic 30-result pagination and dedupe, and keep sold-price-only human selection math.
+- Added the three approved card-platform V2 writer functions only: normalized bounded comps snapshot save, confirmed market value, and public visibility. The database boundary revalidates non-VOID cards, discards unknown/provider fields, recalculates selected facts from candidate rows, and records the authenticated admin identity. No schema or migration was added.
+- Added one authenticated, no-store V2 admin API surface and one server integration helper. Card mutations row-lock the permanent non-VOID card and compare a SHA-256 revision over the complete comps/value/public state. A selected-snapshot refresh stays zero-write until confirmation through a 15-minute HMAC proof bound to the exact prior revision; confirmation rechecks the lock/revision/proof and comp IDs before atomically composing the approved writers. Research-without-a-card is zero-write.
+- Added the standalone black/gold `/admin/comps` workspace with permanent-card lookup, editable visible query, optional research mode, exact four review groups, image/title/price/date/grader/reason/listing evidence, human Include controls, sold-price average/range, explicit market value, exact public toggle, 30+30 retrieval, one best-effort automatic search after a completed card first loads, and safe same-tab return to the exact completed-card route. Draft selections/value/public choice survive `Fetch 30 More`; unpriced evidence remains visible but cannot be selected.
+- Added `Open Sold Comps` to the Speedster completed-card workspace. Public permanent card pages render no comps section at all unless explicitly enabled and eligible; when enabled they expose only the graded card image, large green selected-comp average, and selected image/price/date rows linking to canonical eBay sold listings. Internal query, match, provider, rejected-row, and engine details are not projected publicly.
+
+### Exact local validation evidence
+
+- Repository-required Node `20.20.2` focused validation passed: `22/22` engine tests, `17/17` card-platform V2 database-boundary tests, and `27/27` Speedster/public/comps frontend integration tests (`66/66` total). Changed frontend files passed focused ESLint with zero warnings or errors.
+- The exact Node `20.20.2` dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed, generating all `74/74` static pages plus dynamic `/admin/comps`, `/api/v2/admin/comps/[...action]`, and `/c/[token]`. Its only warnings were the repository's pre-existing unrelated image/hook/browser-data/Tailwind and optional Sharp target warnings; the final Sharp trace verifier passed.
+- `git diff --check` passed. Focused runtime scans found no provider-shipping field or text, no V1 CardAsset/Item/KingsReview/Bytebot dependency, no comps engine import outside the single server helper, and no credential value in the diff.
+
+### Safety and open gates
+
+- No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell access, NFC helper/hardware/tag operation, V1 write, or external system change occurred.
+- This local implementation is ready for the required independent lead/adversarial review. It is not self-approved for merge or Production, and S3's live owner acceptance gate remains open until reviewed release configuration supplies the existing server-side `SERPAPI_KEY` and Mark performs the approved real-card workflow.
+
+## 2026-08-07 - eBay Sold Comps V2 independent-review corrections
+
+### Corrections completed
+
+- Closed the independent critic's pagination gap by accepting SerpAPI's current `pagination.next` contract as well as the legacy pagination shape. A short 20-row first page with a next link now continues to page 2 and fills the deterministic 30-result review window.
+- Removed all client authority over the confirmed dollar amount. The strict confirmation request accepts only selected candidate IDs and the public-display choice; the server recomputes the rounded sold-price arithmetic mean from the signed or persisted candidate snapshot and uses that exact value as `marketValueCents`.
+- Bound snapshot confirmation provenance to the authenticated confirmer. Ordinary search/fetch-more saves preserve the existing card-level confirmer and timestamp exactly, while confirmation-mode saves require a nonempty selection and require the confirmation value to equal the database writer's independently recomputed mean.
+- Corrected deterministic query construction to use whole-token sequence dedupe, preserving legitimate repeated words such as player surname `Green` plus the `Green` parallel while avoiding duplicated year/manufacturer/card-number identity.
+- Corrected variant evidence matching to subtract authoritative card identity, set, manufacturer, year, insert, card number, and grading tokens before testing parallel signals. Identity words no longer create false variant matches, while an actual second parallel signal remains detectable.
+- Enforced the 60-candidate ceiling across engine snapshots, writer normalization, signed research continuation, UI controls, and provider-call preflight. Known stale revisions, query mismatches, and capped reviews now fail before paid provider I/O.
+- Added server-signed zero-write research continuation so page-two results are merged and reranked server-side instead of being concatenated by the browser. Added safe bounded cents handling through the PostgreSQL integer maximum and BigInt mean arithmetic at engine, server, writer, and public-projection boundaries.
+- Added admin-only match score/reason display, safe structured operational success/rejection/provider/rate-limit signals without queries, credentials, listing URLs, tokens, or customer fields, and corrected research-mode routing so removing a card leaves a clean research workspace without refetching the prior card.
+- Bumped the independent engine contract version to `ebay-sold-comps-v2.1.1`. No schema, migration, new table, comps-status flag, shipping field, V1 coupling, or additional framework was added.
+
+### Exact validation evidence
+
+- Repository-required Node `20.x` focused validation passed `25/25` engine tests, `19/19` card-platform V2 database-boundary tests, and `31/31` Speedster/public/comps frontend integration tests (`75/75` total). Changed frontend files passed focused ESLint with zero warnings or errors.
+- The final exact Node `20.x` dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed after all corrections, generated all `74/74` static pages plus the dynamic comps routes, and passed the Sharp trace verifier. Output contained only the repository's pre-existing unrelated image, hook, browser-data, Tailwind-glob, and optional Sharp-target warnings.
+- `git diff --check` passed. Focused runtime scans confirmed the comps engine is imported only by the server integration helper, and found no V1 CardAsset/Item/KingsReview/Bytebot dependency or newly introduced credential value.
+
+### Safety and remaining gate
+
+- No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell access, NFC helper/hardware/tag operation, V1 write, or external-system change occurred.
+- The correction commit is for independent critic re-review. It is not release approval, and no merge or Production action is authorized by this log entry.
+
+## 2026-08-07 - eBay Sold Comps V2 research-to-card routing correction
+
+### Correction completed
+
+- Closed the independent critic's final UI routing defect: choosing a permanent card from the lookup results now explicitly returns the standalone workspace from zero-write Research mode to Card mode, clears all research-only draft state, preserves the approved return path, and loads the exact selected card.
+- Added a focused regression contract for the explicit mode transition and result-button handler. No engine, database, schema, provider, market-value, public-display, NFC, V1, or shipping behavior changed.
+
+### Validation and safety
+
+- Repository-required Node `20.x` validation passed `25/25` engine tests, `19/19` Card Platform V2 database-boundary tests, the changed `12/12` frontend Comps contract, focused changed-file ESLint with zero warnings/errors, `git diff --check`, and the exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` with all `74/74` static pages and the Sharp trace verifier. Build warnings were the repository's existing unrelated image/hook/browser-data/Tailwind and optional Sharp-target warnings.
+- An intentionally broader six-file frontend diagnostic passed `47/48`; its sole failure was the pre-existing untouched AI Grader public-defect adjudication fixture expecting `8.5` while current shared grading logic returned `8.7`. The changed Comps contract passed within that run, and neither the routing correction nor the Comps implementation touches that unrelated fixture or grading path.
+- No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell/helper/GoToTags action, NFC hardware/tag operation, or V1 write occurred.
+
+## 2026-08-06 - Ten Kings V2 NFC protocol foundation (local, hardware-free)
+
+### Authority and review
+
+- Mark prioritized Dell-first V2 NFC after Speedster and explicitly requested a lead review agent with multiple subordinate reviews. The owner-approved authority is `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md`, especially S1 and Section 10.
+- One read-only review mapped the existing Dell/ACR1552U/F8215/GoToTags helper and found the reusable loopback, one-operation gate, readback/lock, CNG workstation key, and Windows installer foundations. It also confirmed that V1 `/nfc/<id>`, UID fingerprints, attempt/audit tables, CardAsset/Item links, revoke/replace records, and inventory gates must not enter V2.
+- A separate adversarial protocol review required domain-separated server-job and workstation-result signatures, exact ASCII canonicalization, no UID field or digest, delayed submission of terminal evidence completed inside the signed job window, server-transaction verification timestamps, and exact local discard acknowledgement in the later helper phase.
+
+### Local implementation
+
+- Added an isolated TypeScript V2 NFC protocol module for a short-lived ECDSA P-256/SHA-256 P1363 server job bound to the exact card ID, `tk2c_` token, permanent `/c/` URL, nonce, F8215/static-URL/GoToTags profile, issue time, and expiry.
+- Added a domain-separated workstation terminal-result contract bound to the exact signed-job envelope, card/token/URL/nonce, ACR1552U, GoToTags `4.37.0.1`, exact readback digest, and permanent-lock result. It contains no UID, UID fingerprint, V1 attempt identity, callback digest, or secret.
+- Added one server-facing composition function that always verifies both the server-job signature/trust set and the workstation-result signature/allowlist before returning verified evidence. The lower-level result verifier is private so a future completion route cannot accidentally skip server-job verification.
+- Added a matching additive C# contract. Its result creator refuses to sign unless it first verifies the signed server job against the trusted server SPKI. Its strict JSON parser rejects missing, duplicate, unknown, non-string, noncanonical, alternate-domain, alternate-URL, and wrong-profile input.
+- Added the minimal three-field idempotency decision: a first valid job writes using server transaction time; a replay or stale job whose `issuedAt` is not later than the existing `nfcVerifiedAt` is a no-op; a genuinely later replacement job may update the informational facts.
+- Existing V1 NFC contracts and behavior were not modified. No S1 schema, database writer, API route, browser UI, helper HTTP endpoint, GoToTags adapter, Dell task/config, or physical discard operation was added in this scope.
+
+### Validation evidence
+
+- Focused TypeScript protocol tests passed `8/8`, covering exact canonical job shape, P-256 signature/trust validation, staged current/prior job-key rotation, field/profile/URL/token/unknown-field tamper rejection, mandatory two-signature completion composition, result-to-job substitution rejection, no UID authority, delayed terminal submission, and replay/stale-write decisions.
+- A strict TypeScript `5.5.4` no-emit typecheck with Node `20.14.12` types passed for the new module and tests.
+- A disposable official `.NET SDK 8.0` container compiled and ran the complete hardware-free NFC helper suite with `21/21` groups passing, including the new Ten Kings V2 signed-job/terminal-result group. No NFC hardware or Windows production key was accessed.
+- `git diff --check` passed.
+
+### Exact Node 20 signature-tamper test correction
+
+- An independent rerun on the repository-supported Node `20.20.1` exposed a test-only nondeterminism: the server-job tamper case changed the final Base64URL character, which can produce a noncanonical encoding for some valid ECDSA signatures. The strict contract correctly rejected that malformed encoding before reaching the test's expected cryptographic-signature failure.
+- The test now decodes the valid 64-byte P1363 signature, flips one signature byte, and re-encodes it as canonical Base64URL. This guarantees structurally valid but cryptographically invalid evidence and does not weaken or change production validation.
+- Exact Node `20.20.1` focused protocol tests now pass `8/8`; the strict TypeScript `5.5.4` no-emit typecheck under Node 20 passes; and `git diff --check` passes.
+
+### Remaining gates and safety
+
+- S1 remains a hard dependency before hosted NFC integration: `CollectibleCardV2`, `CardOwnershipEventV2`, `card-platform-v2`, permanent `tk2c_` token minting, and `/c/[token]` do not yet exist on the implementation base.
+- The Dell remains blocked by a preserved terminal F8215 job whose exact source/runtime state is contradictory in prior handoff evidence. Before any helper install, update, restart, acknowledgement, retry, or new physical job, Mark must separately approve a read-only exact-state preflight and the evidence must select the existing bounded resolver or a newly reviewed incident-bound resolver.
+- No database write, migration, deployment, Production configuration, secret/key provisioning, helper installation/restart, Dell action, GoToTags action, NFC read/write/lock, physical tag use, V1 mutation, or customer/runtime data change occurred.
+
+## 2026-08-07 - Ten Kings V2 NFC hosted/workstation foundation (hardware-free only)
+
+### Implemented scope
+
+- Added the optional NFC V2 hosted flow over the existing S1 permanent card: authenticated card lookup, server-derived signed ISSUE job, strict signed COMPLETE verification, and one row-locked writer that updates only `nfcVerifiedAt`, `nfcVerifiedByAdminId`, and `nfcVerifiedByWorkstationId`. No lifecycle or inventory gate was added.
+- Added the standalone `/admin/nfc` workstation-neutral admin screen and optional Speedster Finish link. The screen requires exact hosted/helper V4/capability/current-and-prior-signing-key-set readiness, stores only one bounded active browser operation, supports reload replay, and never claims NFC proves card, slab, chip, authenticity, or ownership.
+- Extended the existing loopback helper to V4 with a bounded current/prior server-job trust reader, shared V1/V2 operation gate, signed V2 prepare/status/success/discard routes, protected one-operation persistence, GoToTags F8215 exact URL/readback/permanent-lock verification, and a V2 callback DTO that validates the transient UID shape but never hashes, returns, logs, or persists UID authority.
+- Made success and discard cleanup crash-safe. Recovered `closing_success`, `closing_discard_failed`, and `closing_discard_uncertain` states retry only their matching idempotent acknowledgement. A lost success response reconciles only against authoritative `nfcVerifiedAt >= signed job.issuedAt`; a lost discard response reconciles only after the browser saved the exact human-acknowledged hash/nonce/phase fact.
+- Kept signed results replayable after arbitrary hosted receipt delay when their observed time was inside the signed job window. Hosted receipt validation rejects only excessive future skew; it does not add a new receipt-age limit.
+- Added a V3-compatible/V4-enabled configuration reader and a separate, unrun V3-to-V4 public-trust transition script. It requires the operator-approved exact V3 config SHA-256, proves exact current/prior key IDs and count, preserves every prior config value except schema while adding only the exact trust string, and restores the byte-exact V3 preimage plus readiness on any failed validation. Ordinary helper updates preserve config and workstation CNG identity; configuring GoToTags no longer downgrades V4.
+
+### Hardware-free validation evidence
+
+- `@tenkings/database` strict TypeScript build passed. Focused permanent-card/NFC writer tests passed `15/15`, including optional GRADED-card use, token binding, server transaction time, three-field-only writes, replay no-op, and VOID rejection.
+- Focused TypeScript NFC protocol/browser recovery tests passed `11/11`, including current/prior trust, two-signature exact binding, delayed hosted receipt, no UID authority, every recovered closing phase, authoritative success reconciliation, and discard response-loss reconciliation.
+- The hardware-free C# helper suite compiled and passed `22/22` test groups in the local `mcr.microsoft.com/dotnet/sdk:8.0` container with Windows targeting enabled. This includes the signed V2 protocol, protected coordinator lifecycle and closing recovery, strict GoToTags callback evidence with V2 UID exclusion, V1 recovery behavior, loopback HTTP boundaries, and static CNG/installer safety contracts.
+- Focused changed-file ESLint passed with zero findings.
+- After building the existing dependent workspaces, the optimized Next.js Production build passed all `74/74` static pages and emitted `/admin/nfc`, `/api/v2/admin/nfc/[...action]`, and `/c/[token]`. Output contained only existing unrelated warnings.
+- `git diff --check` passed.
+- The local Mac has no PowerShell runtime, so the expanded PowerShell transition/maintenance suites could not be executed here. Their source tests cover exact trust/config transition success, wrong-preimage rejection, property/key-set drift rejection, and byte-exact rollback. These remain required in the reviewed Windows/PowerShell test environment before any helper update.
+
+### Safety and remaining gates
+
+- No Production deployment, database migration, backfill, config transition, secret/key provisioning, helper install/update/restart, Dell access, GoToTags launch, NFC read/write/lock, physical tag use/discard, V1 mutation/quarantine resolution, customer data write, or external API call occurred.
+- The V3-to-V4 transition script was written and reviewed but not run. The Dell's preserved V1 terminal-job incident remains untouched and must be resolved through its separately approved exact-state procedure before any helper maintenance or new physical NFC operation.
+- Production environment values, current/prior public trust, workstation allowlist, Node 20 release rerun, complete Windows/PowerShell test pass, owner-approved deploy, and Dell commissioning remain open gates.
+
+## 2026-08-07 - Ten Kings V2 NFC independent-critic correction pass (hardware-free only)
+
+### Corrected implementation
+
+- Persisted the exact server-issued provisional card/job/envelope-digest pointer before contacting the helper. Browser recovery now fails closed for corrupted pointers, proves the exact card/job/digest and signer trust set, resumes an exact helper operation, or re-prepares only that same signed job after an exact helper absence.
+- Added one persisted automatic attempt per terminal phase. Transient polling/receipt failures remain retryable, while explicit permanent completed-tag discard is limited to narrow non-recordable/signature/readback/result failures and stores the exact human acknowledgement before helper cleanup.
+- Made helper success and completed-but-unrecorded discard cleanup interruption-safe and idempotent. Exact completed helper evidence is reconciled first against the authoritative hosted NFC fact, without issuing a new job.
+- Bound readback evidence to SHA-256 of the exact UTF-8 programmed URL in both TypeScript and C#, with a fixed cross-contract vector and tamper tests. The V2 prepare HTTP boundary now rejects duplicate, unknown, malformed, and oversized JSON before accepting a signed job.
+- Exposed the helper workstation key identity and required membership in the hosted allowlist in addition to current/prior server-job signer trust.
+- Corrected the standalone V4 programming URL to `/admin/nfc` while preserving the legacy V3 `/ai-grader/nfc` value. The V3-to-V4 transition now uses a protected interruption journal containing exact V3 bytes/hash/ACL and exact staged V4 bytes/hash; entry recovery proves V4 success or restores and proves byte-exact V3 before clearing the journal.
+- Corrected the maintenance test scenario count to five and split portable helper tests from seven real Windows protected-state/CNG/HTTP runtime groups so non-Windows runs report truthful skips instead of false passes.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- Focused NFC protocol/browser tests passed `15/15`; focused changed-file ESLint passed with zero findings.
+- The optimized Next.js Production build passed type checking and all `74/74` static pages, including `/admin/nfc` and `/api/v2/admin/nfc/[...action]`. Output contained only existing unrelated repository warnings.
+- The C# helper suite compiled under the .NET 8 Linux container and truthfully reported `17 passed, 7 skipped, 0 failed` across `24` groups. The earlier foundation entry's `22/22` statement is superseded for the corrected head: those Windows-only groups had returned early and are now explicit skips, not Windows acceptance evidence.
+- All four PowerShell files changed by this correction parsed successfully in PowerShell 7 on Linux; the related unchanged `test-ai-grader-nfc-versioned-update.ps1` also parsed, for five relevant files checked in total. This is syntax evidence only, not execution evidence. `git diff --check` passed.
+
+### Mandatory Windows/Dell acceptance gates
+
+- Run all seven skipped C# groups on Windows: Ten Kings V2 protected coordinator/recovery; Ten Kings V2 strict loopback HTTP lifecycle; F8215 protected lifecycle/idempotency; F8215 restart recovery; F8215 expired/rejected-callback recovery; F8215 loopback HTTP boundary; and Windows CNG runtime safety.
+- Run `scripts/ai-grader-nfc/tests/test-ai-grader-nfc-maintenance.ps1` and `scripts/ai-grader-nfc/tests/test-ai-grader-nfc-versioned-update.ps1` under Windows PowerShell, including the interruption journal, DACL, scheduled-task, readiness, rollback, and retry cases.
+- The Dell's preserved V1 terminal-job incident still requires its separately approved read-only exact-state resolution before helper maintenance or any new physical operation.
+
+### Safety
+
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
+
+## 2026-08-07 - Combined Comps V2 and NFC V2 independent-critic release candidate
+
+### Review outcome and exact integration evidence
+
+- The independent Comps critic issued `COMPS IMPLEMENTATION CRITIC PASS` on the exact isolated Comps head. The independent NFC critic completed repeated defect/fix cycles and issued `NFC IMPLEMENTATION CRITIC PASS` on exact NFC head `4381bd7a9e1fa76a333ab4c90148e22b6dcdf941`.
+- The final combined release branch is based on current `origin/main` and includes the canonical blueprint, S1 permanent-card foundation, Comps V2, and NFC V2 stacks. Final Node `20.x` integration tests passed `25/25` Comps engine, `20/20` combined permanent-card/Comps/NFC database boundary, and `40/40` combined Speedster/Comps/NFC frontend workflow and protocol tests. Focused combined ESLint and `git diff --check` passed.
+- The final exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed lint/type checking, generated all `75/75` static pages, emitted `/admin/comps`, `/admin/nfc`, both V2 API routes, and `/c/[token]`, and passed the Sharp trace verifier. Output contained only existing unrelated repository warnings.
+- The earlier exact disposable local PostgreSQL run remains valid because the later critic corrections changed only NFC browser/hosted recovery code and tests, not schema or database writers. It passed all `84` migrations, the combined real database checks, second-deploy no-op, and destroyed its local tmpfs container/storage.
+- The .NET and PowerShell portable evidence remains `17` pass / `7` explicit Windows-only skips / `0` fail and five relevant parser passes. Both implementation critics' PASS decisions leave the recorded Windows/Dell physical commissioning gates explicitly open; neither critic represented them as completed.
+
+### Safety
+
+- No Production/remote migration, database/customer/card write, backfill, deploy, restart, environment or secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, scheduled-task change, or physical NFC tag read/write/lock occurred during final integration.
+
+## 2026-08-07 - Combined V2 protected Production release plan
+
+### Planned release actions
+
+- Push only clean branch `codex/ten-kings-v2-comps-nfc-release` from the exact reviewed release-candidate head, open one PR to current `main`, and require every ordinary exact-head GitHub/Vercel check that actually exists. Do not use admin bypass, do not claim repository branch protection, and do not merge a stale or unchecked head.
+- Before the merge deployment, verify the existing server-only SerpAPI credential remains present without revealing it. Provision the new NFC server signing key only through the exact Ten Kings Vercel Production environment without printing or logging the private value. Preserve the existing workstation allowlist. Keep NFC programming disabled until the separately authorized Windows/Dell acceptance and trust transition are complete.
+- Apply the one additive permanent-card foundation migration through the repository's reviewed migration path. If Vercel `RUN_DB_MIGRATIONS` is used, set it true only for the exact approved deployment, verify the migration/deployment result, then restore it false and verify the follow-up deployment. Do not execute the historical-card backfill; it still requires a separate exact dry-run ID list and owner approval.
+- After merge, verify the exact Production deployment and non-mutating public/admin route health for `/admin/comps`, `/admin/nfc`, and `/c/<token>` behavior. Perform at most one owner-authorized live Comps Research query only after deployment; do not save to a card unless an existing Production V2 card is explicitly selected by Mark.
+
+### Explicit exclusions
+
+- No Dell access, V1 terminal-incident resolution, helper install/update/restart, V3-to-V4 config transition, GoToTags launch, scheduled-task change, NFC hardware/tag operation, historical backfill, customer/card completion, paid purchase, or V1 mutation is authorized by this hosted release plan.
+
+## 2026-08-07 - Combined Comps V2 and NFC V2 release integration validation plan
+
+### Planned local disposable migration validation
+
+- The exact Comps/NFC release integration is based on current `origin/main` and contains the approved permanent-card foundation, Comps V2, and NFC V2 commit stacks. Before any push, PR, Production configuration, or deploy, run the repository's explicit `--ack-disposable-local-postgres` validator against the complete migration chain and second-deploy no-op.
+- The validator is authorized to create and destroy only its uniquely named tmpfs-backed PostgreSQL container through the verified local Docker context and loopback-only port. It must not contact Production or any remote database, and it must destroy its container and storage when complete.
+- After the disposable result, record exact combined test/build evidence here. No historical-card backfill, Dell/V1 incident action, NFC helper/config/tag operation, live SerpAPI request, Production migration, or customer/card mutation is part of this local validation.
+
+### Observed combined integration result
+
+- The explicit local validator verified the Docker context was local, created only its uniquely named loopback/tmpfs PostgreSQL container, deployed all `84` migrations, passed the NFC, Mathematical V1, and Card Platform V2 catalog/constraint/lifecycle/rollback/concurrency checks, proved the second deploy was a no-op, reconfirmed final readiness, and destroyed the container and storage.
+- Repository Node `20.x` combined validation passed `25/25` Comps engine tests, `20/20` combined permanent-card/Comps/NFC database-boundary tests, and `36/36` combined Speedster/Comps/NFC frontend protocol and workflow tests. Combined changed-file ESLint, strict database build, and `git diff --check` passed.
+- The exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed type checking, generated all `75/75` static pages including `/admin/comps` and `/admin/nfc`, emitted both V2 API routes and `/c/[token]`, and passed the Sharp trace verifier. Output contained only the repository's existing unrelated warnings.
+- The integrated .NET 8 Linux-container helper suite truthfully passed `17`, skipped the seven named Windows-only protected runtime groups, and failed `0`. All five relevant PowerShell files parsed successfully under PowerShell 7 in Linux; this remains syntax evidence only. The Windows/Dell gates recorded above remain open and are not represented as passed.
+- No Production/remote migration, database/customer/card write, backfill, deploy, restart, secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, or physical NFC tag read/write/lock occurred.
+
+## 2026-08-07 - Ten Kings V2 NFC final browser-recovery corrections (hardware-free only)
+
+### Recovery corrections
+
+- Added the exact permanent completion-rejection escape codes for a locked tag whose original server-job key or workstation key is no longer trusted, plus the generic terminal signature failure. These and the existing exact card/signature/binding failures expose only the explicit completed-but-unrecorded discard path; time, transport, server-availability, unknown, and non-409 failures remain retry-only.
+- Reordered reload recovery so the browser validates its exact saved pointer and queries the helper's protected operation before calling the hosted non-VOID card endpoint. A subsequently VOID or missing card no longer hides the protected operation: the recovery-only panel keeps its stored card identity plus exact polling, retry, acknowledgement, and completed-but-unrecorded discard controls available. It does not issue a new hosted job or create database/ownership history.
+- Added a bounded abandonment path for an issued job that never started. Clearing requires all of the following: exact helper status `v2_nfc_job_not_found`; `helperPrepared=false`; no local operation, terminal attempt, or discard acknowledgement; exact stored card binding; a strictly passed canonical signed-job expiry; and a second exact helper prepare rejection `v2_nfc_job_expired`. The second proof makes the protected helper validate trust, signature, canonical job shape, and workstation time before rejecting without persistence. A successful prepare, lost response, or any trust, signature, time, transport, or other error preserves the pointer.
+- Corrected the preceding PowerShell parser statement: four PowerShell files changed in that correction; the fifth parsed file was the related unchanged versioned-update test.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- Focused NFC browser/protocol tests passed `17/17`, including executable permanent-rejection, helper-before-card, cardless recovery UI, and two-proof expired-provisional regressions. Focused changed-file ESLint passed with zero findings.
+- The optimized Next.js Production build passed lint/type checking and all `74/74` static pages. Output contained only existing unrelated repository warnings.
+- The .NET 8 Linux container again reported `17 passed, 7 explicitly skipped Windows-only groups, 0 failed` across `24` helper groups. This is portable evidence only and does not close any Windows gate.
+- The four changed PowerShell files and related unchanged versioned-update test all parsed successfully in PowerShell 7 on Linux. This is syntax evidence only. `git diff --check` passed.
+
+### Safety and remaining gates
+
+- The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
+
+## 2026-08-07 - Combined V2 protected Production environment pre-deploy result
+
+### Observed configuration evidence
+
+- Verified the existing Ten Kings Vercel Production project still contains `SERPAPI_KEY`, `AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON`, `DATABASE_URL`, and `RUN_DB_MIGRATIONS` without revealing any values. The existing workstation allowlist was preserved unchanged.
+- Set the existing sensitive Production-only `RUN_DB_MIGRATIONS` value to `true` for the exact reviewed merge deployment. Vercel confirmed the update and that no deployment had yet consumed it. It must be restored to `false` immediately after the exact migration deployment and followed by a verified redeploy.
+- Added the new sensitive Production-only `TEN_KINGS_V2_NFC_JOB_SIGNING_PRIVATE_KEY_PKCS8_BASE64` value without printing or committing the private key.
+- Added the new sensitive Production-only `TEN_KINGS_V2_NFC_PROGRAMMING_ENABLED=false` safety switch. Hosted NFC programming therefore remains disabled through release and cannot be enabled until the separately approved Windows/Dell acceptance, preserved V1 incident resolution, public-trust transition, and physical commissioning are complete.
+- Recorded only the matching non-secret server public verification material and SHA-256 key ID in `docs/handoffs/TEN_KINGS_V2_NFC_SERVER_PUBLIC_KEY.json` for the future reviewed Dell trust transition. No prior server-job signing key was configured.
+- After Vercel accepted the private value and the non-secret public record was committed, removed the exact temporary local key-staging files and directory. The private staging copy is not recoverable from that path.
+
+### Runtime and safety status
+
+- These environment changes require a new deployment and did not themselves deploy code or run a migration. At this point no Production database/card/customer write, historical backfill, live SerpAPI query, Dell/helper/config/GoToTags action, scheduled-task change, NFC hardware/tag operation, or V1 mutation occurred.
+- PR `#302` remained open on exact reviewed head `d95e13e05449abec42d41acd0c19eba5cda5b035`. The GitHub Install & Build, disposable migration-chain, service-image, and Vercel Preview checks observed so far were successful; the frontend Docker-image check was still in progress. This log update intentionally creates a new exact PR head, so all actual checks must be re-evaluated on that new head before merge.
+
+## 2026-08-07 - Ten Kings V2 NFC cardless recovery state-machine correction (hardware-free only)
+
+### Corrected recovery authority
+
+- Replaced the helper-404 browser branches with one pure five-outcome recovery decision: recover an exact local helper operation; clear an exact saved discard acknowledgement; clear an exact hosted verification fact; prepare the exact saved job only for an exact ordinary non-VOID card; or fail closed.
+- Exact saved discard acknowledgement is evaluated before any card lookup, so a lost discard-cleanup response clears the stale browser pointer even if the card was later VOID or is missing.
+- Added one authenticated recovery-only POST action for an exact saved card ID. It reads the retained row without the ordinary non-VOID filter and returns only `{id,nfcVerifiedAt}` or `null`. It does not expose VOID cards through search, public pages, the ordinary NFC card endpoint, or any other list and adds no table, state, or history.
+- A lost success-ack response can now clear after helper 404 when that narrow fact proves `nfcVerifiedAt >= signed job.issuedAt`, including after the row becomes VOID.
+- Cardless or VOID recovery with no exact discard or verification proof never calls helper prepare. Its UI contains no fresh-tag instruction and performs only a bounded fact recheck. If the ordinary card later becomes recordable, the operator must newly confirm a fresh unused tag before the exact saved prepare path can run.
+- The helper-authoritative two-proof expiry policy remains unchanged downstream of an allowed ordinary-card prepare attempt. Cardless recovery cannot manufacture that proof by starting a new physical operation and therefore remains fail closed without other evidence.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` focused NFC browser/protocol tests passed `19/19`, including the complete recovery decision table, minimal authenticated recovery-fact boundary, cardless no-prepare UI, exact discard, VOID verification, and existing two-proof expiry tests. Focused changed-file ESLint passed with zero findings.
+- Database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- The optimized Next.js Production build passed lint/type checking and all `74/74` static pages. Output contained only existing unrelated repository warnings.
+- The .NET 8 Linux container again reported `17 passed, 7 explicitly skipped Windows-only groups, 0 failed` across `24` helper groups. The five relevant PowerShell files parsed successfully in PowerShell 7 on Linux. These remain portable syntax/logic evidence only and do not close Windows acceptance gates.
+- `git diff --check` passed.
+
+### Safety and remaining gates
+
+- The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.

@@ -696,6 +696,7 @@ model Location {
   supportConversations Conversation[]
   stockerStops         StockerStop[]
   goldenTicketSource GoldenTicket[]
+  collectibleCardsV2 CollectibleCardV2[]
 
   @@index([state])
   @@index([locationType])
@@ -3481,6 +3482,45 @@ enum HumanGradeLabelSource {
   SPEEDSTER
 }
 
+enum CollectibleCardV2OwnerType {
+  HOUSE
+  ACCOUNT
+  EXTERNAL
+}
+
+enum CollectibleCardV2SaleMode {
+  PACK
+  DIRECT
+}
+
+enum CollectibleCardV2LifecycleState {
+  GRADED
+  IN_INVENTORY
+  ASSIGNED_TO_PACK
+  LISTED_DIRECT
+  AT_LOCATION
+  VAULTED
+  SHIP_REQUESTED
+  SHIPPED
+  EXTERNAL
+  VOID
+}
+
+enum CardOwnershipEventV2Reason {
+  GRADED_CREATED
+  PACK_PURCHASE
+  DIRECT_PURCHASE
+  BUYBACK
+  ADMIN_CORRECTION
+}
+
+enum CardOwnershipEventV2Channel {
+  ONLINE
+  KIOSK
+  STORE
+  ADMIN
+}
+
 model HumanGradeLabelSheet {
   id          String                     @id @default(cuid())
   sheetNumber Int                        @unique @default(autoincrement())
@@ -3520,6 +3560,7 @@ model HumanGradeLabel {
   createdByUserId     String
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
+  collectibleCardV2   CollectibleCardV2?
 
   @@unique([sheetId, slot])
   @@index([sheetId, slot])
@@ -3544,6 +3585,7 @@ model AiGraderV2Session {
   inventoryDone    Boolean  @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  collectibleCardV2 CollectibleCardV2?
 }
 
 model AiGraderV2CaptureDevice {
@@ -3554,6 +3596,71 @@ model AiGraderV2CaptureDevice {
   readyVersion    Int      @default(0)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+}
+
+model CollectibleCardV2 {
+  id                              String                          @id @default(cuid())
+  speedsterSessionId              String                          @unique
+  speedsterSession                AiGraderV2Session               @relation(fields: [speedsterSessionId], references: [id], onDelete: Restrict)
+  humanGradeLabelId               String                          @unique
+  humanGradeLabel                 HumanGradeLabel                 @relation(fields: [humanGradeLabelId], references: [id], onDelete: Restrict)
+  publicReportSlug                String                          @unique
+  publicToken                     String                          @unique
+  category                        HumanGradeCardType
+  playerName                      String?
+  cardName                        String?
+  year                            String
+  manufacturer                    String?
+  productSet                      String
+  parallel                        String?
+  insert                          String?
+  cardNumber                      String?
+  gradeSnapshot                   Json                            @db.JsonB
+  currentOwnerType                CollectibleCardV2OwnerType      @default(HOUSE)
+  currentOwnerId                  String?
+  saleMode                        CollectibleCardV2SaleMode       @default(PACK)
+  lifecycleState                  CollectibleCardV2LifecycleState @default(GRADED)
+  locationId                      String?                         @db.Uuid
+  location                        Location?                       @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  marketValueCents                Int?
+  marketValueConfirmedAt          DateTime?
+  marketValueConfirmedByAdminId   String?
+  directPriceCents                Int?
+  compsSnapshot                   Json?                           @db.JsonB
+  compsPublic                     Boolean                         @default(false)
+  nfcVerifiedAt                   DateTime?
+  nfcVerifiedByAdminId            String?
+  nfcVerifiedByWorkstationId      String?
+  createdByAdminId                String
+  createdAt                       DateTime                        @default(now())
+  updatedAt                       DateTime                        @updatedAt
+  ownershipEvents                 CardOwnershipEventV2[]
+
+  @@index([lifecycleState, category, saleMode])
+  @@index([currentOwnerType, currentOwnerId])
+  @@index([locationId, lifecycleState])
+}
+
+model CardOwnershipEventV2 {
+  id             String                         @id @default(cuid())
+  cardId         String
+  card           CollectibleCardV2              @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  fromOwnerType  CollectibleCardV2OwnerType?
+  fromOwnerId    String?
+  toOwnerType    CollectibleCardV2OwnerType
+  toOwnerId      String?
+  reason         CardOwnershipEventV2Reason
+  referenceType  String
+  referenceId    String
+  pricePaidCents Int?
+  tkdAmountCents Int?
+  channel        CardOwnershipEventV2Channel?
+  actorAdminId   String?
+  createdAt      DateTime                       @default(now())
+
+  @@unique([referenceType, referenceId])
+  @@index([cardId, createdAt])
+  @@index([reason, createdAt])
 }
 
 model AiGraderV2LearningBank {

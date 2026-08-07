@@ -254,7 +254,8 @@ public sealed class GoToTagsOperationFactory
         string callbackIdentity,
         string exactUrl,
         int callbackPort,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        string callbackRoute = "gototags/callback")
     {
         options.ValidateConfiguration();
         if (callbackPort is < 1024 or > 65535) throw TemplateInvalid();
@@ -270,11 +271,13 @@ public sealed class GoToTagsOperationFactory
         operation["updatedAt"] = now.ToString("O");
         // GoToTags redaction cannot be enabled without persisting an operation
         // password. The bounded callback therefore receives tag.uid only in
-        // transient helper memory, hashes it immediately, and never logs,
-        // returns, or persists the raw value.
+        // transient helper memory. The V1 parser produces its legacy digest;
+        // the V2 parser validates shape and clears bytes without producing UID
+        // authority. Neither path logs, returns, or persists the raw value.
         operation.Remove("redactionKey");
         var integration = operation["integrations"]!.AsArray()[0]!.AsObject();
-        integration["urlString"] = $"http://127.0.0.1:{callbackPort}/gototags/callback/{callbackIdentity}";
+        if (callbackRoute is not ("gototags/callback" or "gototags/v2/callback")) throw TemplateInvalid();
+        integration["urlString"] = $"http://127.0.0.1:{callbackPort}/{callbackRoute}/{callbackIdentity}";
         var tag = operation["tags"]!.AsArray()[0]!.AsObject();
         tag["id"] = RandomText(10);
         tag["status"] = "READY";
@@ -287,7 +290,7 @@ public sealed class GoToTagsOperationFactory
         var record = ndef["records"]!.AsArray()[0]!.AsObject();
         record["type"] = "WEBSITE";
         record["url"] = exactUrl;
-        ValidateGenerated(operation, attemptId, correlationId, callbackIdentity, exactUrl, callbackPort);
+        ValidateGenerated(operation, attemptId, correlationId, callbackIdentity, exactUrl, callbackPort, callbackRoute);
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(operation, new JsonSerializerOptions { WriteIndented = false });
         try
@@ -390,7 +393,8 @@ public sealed class GoToTagsOperationFactory
         string correlationId,
         string callbackIdentity,
         string exactUrl,
-        int callbackPort)
+        int callbackPort,
+        string callbackRoute)
     {
         if (operation.ContainsKey("redactionKey")) throw TemplateInvalid();
         var integration = operation["integrations"]!.AsArray()[0]!.AsObject();
@@ -400,7 +404,7 @@ public sealed class GoToTagsOperationFactory
         var record = ndef["records"]!.AsArray()[0]!.AsObject();
         if (operation["externalId"]?.GetValue<string>() != attemptId ||
             operation["chipType"]?.GetValue<string>() != "F8215" ||
-            integration["urlString"]?.GetValue<string>() != $"http://127.0.0.1:{callbackPort}/gototags/callback/{callbackIdentity}" ||
+            integration["urlString"]?.GetValue<string>() != $"http://127.0.0.1:{callbackPort}/{callbackRoute}/{callbackIdentity}" ||
             tag["status"]?.GetValue<string>() != "READY" ||
             encoding["correlationId"]?.GetValue<string>() != correlationId ||
             encoding["lock"]?.GetValue<bool>() != true ||

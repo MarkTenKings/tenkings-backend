@@ -24,6 +24,7 @@ import {
   parseSpeedsterTraceRleV1,
 } from "../../../lib/ai-grader-v2/trace-codec";
 import { decodeSpeedsterTraceBitmapWireV1 } from "../../../lib/ai-grader-v2/trace-bitmap-wire";
+import { activeSpeedsterPublicReportWhere } from "../../../lib/server/tenKingsV2PublicReport";
 import styles from "../../../styles/AiGraderV2Report.module.css";
 
 type Grade = ReturnType<typeof calculateSpeedsterGrade>;
@@ -58,6 +59,10 @@ type PublicReportProps = Omit<PublicReportSource, "sourceKeys" | "slabKeys"> & {
   }>>;
   inspectionFrames: Readonly<Record<SpeedsterCardSide, SpeedsterInspectionFrame>>;
   slabImageUrls: { front: string | null; back: string | null };
+  publicComps?: {
+    averageSoldPriceCents: number;
+    comps: Array<{ id: string; imageUrl: string; soldPriceCents: number; soldDate: string; listingUrl: string }>;
+  } | null;
 };
 type ReportDependencies = {
   findCompletedSession: (slug: string) => Promise<unknown | null>;
@@ -339,7 +344,7 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
   ]);
   return createSpeedsterReportGetServerSideProps({
     findCompletedSession: (slug) => prisma.aiGraderV2Session.findFirst({
-      where: { publicReportSlug: slug, workflowState: "COMPLETED" },
+      where: activeSpeedsterPublicReportWhere(slug),
       select: {
         publicReportSlug: true,
         cardProfile: true,
@@ -364,6 +369,7 @@ export default function SpeedsterPublicReport({
   imageUrls,
   inspectionFrames,
   slabImageUrls,
+  publicComps = null,
 }: PublicReportProps) {
   const [side, setSide] = useState<SpeedsterCardSide>("FRONT");
   const loadTrace = useCallback(async (findingId: string) => {
@@ -426,6 +432,24 @@ export default function SpeedsterPublicReport({
           <div>
             {slabImageUrls.front ? <figure><img src={slabImageUrls.front} alt="Front of sealed Ten Kings slab" /><figcaption>Front</figcaption></figure> : null}
             {slabImageUrls.back ? <figure><img src={slabImageUrls.back} alt="Back of sealed Ten Kings slab" /><figcaption>Back</figcaption></figure> : null}
+          </div>
+        </section>
+      ) : null}
+      {publicComps ? (
+        <section className={styles.publicComps} aria-label="Selected eBay sold comps">
+          <header><span>MARKET VALUE</span><h2>Selected sold evidence.</h2></header>
+          <div className={styles.publicCompsLead}>
+            <img src={slabImageUrls.front ?? imageUrls.FRONT.master} alt={`Graded ${title} card`} />
+            <div><small>AVERAGE SOLD VALUE</small><strong>{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(publicComps.averageSoldPriceCents / 100)}</strong></div>
+          </div>
+          <div className={styles.publicCompList}>
+            {publicComps.comps.map((comp) => (
+              <a key={comp.id} href={comp.listingUrl} target="_blank" rel="noopener noreferrer">
+                <img src={comp.imageUrl} alt="Selected eBay sold comp" />
+                <span><strong>{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(comp.soldPriceCents / 100)}</strong><small>{comp.soldDate}</small></span>
+                <b>View sold listing ↗</b>
+              </a>
+            ))}
           </div>
         </section>
       ) : null}

@@ -79,7 +79,9 @@ try {
   Set-NfcConfigProperty -Config $config -Name "goToTagsExecutableSha256" -Value $script:NfcGoToTagsExecutableSha256
   Set-NfcConfigProperty -Config $config -Name "goToTagsTemplateSha256" -Value $script:NfcGoToTagsTemplateSha256
   Set-NfcConfigProperty -Config $config -Name "goToTagsJobRoot" -Value $script:NfcGoToTagsJobRoot
-  $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v3"
+  if ($config.schemaVersion -ne "tenkings-ai-grader-nfc-helper-config-v4") {
+    $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v3"
+  }
   Save-NfcConfig -Config $config -Path $ConfigPath
   $validated = Read-NfcConfig -Path $ConfigPath
   [pscustomobject]@{

@@ -70,6 +70,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
     private readonly NfcHttpServerOptions _options;
     private readonly NfcOperationsService _operations;
     private readonly F8215JobCoordinator? _f8215;
+    private readonly TenKingsV2NfcCoordinator? _tenKingsV2;
     private readonly ISafeLogger _logger;
     private readonly ConcurrentDictionary<long, Task> _requests = new();
     private long _requestSequence;
@@ -81,12 +82,14 @@ public sealed class NfcHttpServer : IAsyncDisposable
         NfcHttpServerOptions options,
         NfcOperationsService operations,
         ISafeLogger? logger = null,
-        F8215JobCoordinator? f8215 = null)
+        F8215JobCoordinator? f8215 = null,
+        TenKingsV2NfcCoordinator? tenKingsV2 = null)
     {
         options.Validate();
         _options = options;
         _operations = operations;
         _f8215 = f8215;
+        _tenKingsV2 = tenKingsV2;
         _logger = logger ?? new ConsoleSafeLogger();
         _listener.Prefixes.Add($"http://127.0.0.1:{options.Port}/");
         _listener.IgnoreWriteExceptions = true;
@@ -145,6 +148,11 @@ public sealed class NfcHttpServer : IAsyncDisposable
         try
         {
             var path = context.Request.Url?.AbsolutePath ?? string.Empty;
+            if (path.StartsWith("/gototags/v2/callback/", StringComparison.Ordinal))
+            {
+                await HandleGoToTagsV2CallbackAsync(context, path, requestId, timeout.Token);
+                return;
+            }
             if (path.StartsWith("/gototags/callback/", StringComparison.Ordinal))
             {
                 await HandleGoToTagsCallbackAsync(context, path, requestId, timeout.Token);
@@ -207,6 +215,34 @@ public sealed class NfcHttpServer : IAsyncDisposable
                     var acknowledgeResult = RequireF8215().Acknowledge(acknowledge, requestId);
                     await WriteSuccessAsync(context.Response, acknowledgeResult, NfcJsonContext.Default.ApiEnvelopeF8215OperationAcknowledgeResponse, timeout.Token);
                     break;
+                case "/v2/prepare":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var v2Prepare = await ReadTenKingsV2PrepareJsonAsync(context.Request, timeout.Token);
+                    var v2PrepareResult = RequireTenKingsV2().Prepare(v2Prepare, requestId);
+                    await WriteSuccessAsync(context.Response, v2PrepareResult, NfcJsonContext.Default.ApiEnvelopeTenKingsV2NfcOperationResponse, timeout.Token);
+                    break;
+                case "/v2/status":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var v2Status = await ReadJsonAsync(context.Request, NfcJsonContext.Default.TenKingsV2NfcStatusRequest, timeout.Token);
+                    var v2StatusResult = RequireTenKingsV2().Status(v2Status);
+                    await WriteSuccessAsync(context.Response, v2StatusResult, NfcJsonContext.Default.ApiEnvelopeTenKingsV2NfcOperationResponse, timeout.Token);
+                    break;
+                case "/v2/success-ack":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var v2Success = await ReadJsonAsync(context.Request, NfcJsonContext.Default.TenKingsV2NfcSuccessAcknowledgeRequest, timeout.Token);
+                    var v2SuccessResult = RequireTenKingsV2().AcknowledgeSuccess(v2Success, requestId);
+                    await WriteSuccessAsync(context.Response, v2SuccessResult, NfcJsonContext.Default.ApiEnvelopeTenKingsV2NfcAcknowledgeResponse, timeout.Token);
+                    break;
+                case "/v2/discard-ack":
+                    RequireMethod(context.Request, "POST");
+                    RequireToken(context.Request);
+                    var v2Discard = await ReadJsonAsync(context.Request, NfcJsonContext.Default.TenKingsV2NfcDiscardAcknowledgeRequest, timeout.Token);
+                    var v2DiscardResult = RequireTenKingsV2().AcknowledgeDiscard(v2Discard, requestId);
+                    await WriteSuccessAsync(context.Response, v2DiscardResult, NfcJsonContext.Default.ApiEnvelopeTenKingsV2NfcAcknowledgeResponse, timeout.Token);
+                    break;
                 default:
                     throw new NfcHelperException("route_not_found", "The NFC helper route does not exist.", false, 404);
             }
@@ -264,11 +300,42 @@ public sealed class NfcHttpServer : IAsyncDisposable
             ],
             GoToTagsReady = inspection.Ready,
             GoToTagsErrorCode = inspection.ErrorCode,
+            HelperVersion = NfcProtocol.HelperVersion,
+            TenKingsV2NfcEnabled = _tenKingsV2?.Available == true,
+            TenKingsV2NfcCapability = _tenKingsV2?.Available == true ? TenKingsV2NfcProtocol.HelperCapability : null,
+            TenKingsV2TrustedJobSigningKeyIds = _tenKingsV2?.TrustedJobSigningKeyIds,
+            TenKingsV2WorkstationKeyId = _tenKingsV2?.Available == true ? _tenKingsV2.WorkstationKeyId : null,
         };
     }
 
     private F8215JobCoordinator RequireF8215() => _f8215 ??
         throw new NfcHelperException("gototags_configuration_invalid", "The Feiju encoding adapter is not configured safely.", false, 503);
+
+    private TenKingsV2NfcCoordinator RequireTenKingsV2() => _tenKingsV2 is { Available: true } coordinator
+        ? coordinator
+        : throw new NfcHelperException("v2_nfc_unavailable", "NFC V2 is unavailable on this helper configuration.", false, 503);
+
+    private async Task HandleGoToTagsV2CallbackAsync(
+        HttpListenerContext context,
+        string path,
+        string requestId,
+        CancellationToken cancellationToken)
+    {
+        ValidateGoToTagsBoundary(context.Request);
+        var identity = path["/gototags/v2/callback/".Length..];
+        if (identity.Length == 0 || identity.Contains('/'))
+            throw new NfcHelperException("gototags_callback_not_found", "The GoToTags callback identity is invalid.", false, 404);
+        var body = await ReadGoToTagsBodyAsync(context.Request, cancellationToken);
+        try
+        {
+            RequireTenKingsV2().AcceptCallback(identity, body, requestId);
+            context.Response.StatusCode = (int)HttpStatusCode.NoContent;
+            context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            context.Response.Close();
+        }
+        finally { CryptographicOperations.ZeroMemory(body); }
+    }
 
     private async Task HandleGoToTagsCallbackAsync(
         HttpListenerContext context,
@@ -439,6 +506,62 @@ public sealed class NfcHttpServer : IAsyncDisposable
         body.Position = 0;
         return await JsonSerializer.DeserializeAsync(body, typeInfo, cancellationToken)
             ?? throw new NfcHelperException("invalid_json", "The NFC helper request JSON is invalid.", false, 400);
+    }
+
+    private static async Task<TenKingsV2NfcPrepareRequest> ReadTenKingsV2PrepareJsonAsync(
+        HttpListenerRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.ContentType?.Split(';', 2)[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new NfcHelperException("content_type_required", "The NFC helper accepts application/json only.", false, 415);
+        if (request.ContentLength64 > NfcProtocol.MaxJsonBytes)
+            throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+        using var body = new MemoryStream();
+        var buffer = new byte[4096];
+        try
+        {
+            while (true)
+            {
+                var read = await request.InputStream.ReadAsync(buffer, cancellationToken);
+                if (read == 0) break;
+                if (body.Length + read > NfcProtocol.MaxJsonBytes)
+                    throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+                body.Write(buffer, 0, read);
+            }
+            if (body.Length == 0)
+                throw new NfcHelperException("body_required", "The NFC helper request body is required.", false, 400);
+            var bytes = body.ToArray();
+            try
+            {
+                using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = false,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    MaxDepth = 6,
+                });
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw new JsonException();
+                var seenJob = false;
+                JsonElement jobElement = default;
+                foreach (var property in root.EnumerateObject())
+                {
+                    if (property.Name != "job" || seenJob || property.Value.ValueKind != JsonValueKind.Object)
+                        throw new JsonException();
+                    seenJob = true;
+                    jobElement = property.Value;
+                }
+                if (!seenJob) throw new JsonException();
+                var jobBytes = Encoding.UTF8.GetBytes(jobElement.GetRawText());
+                try
+                {
+                    return new TenKingsV2NfcPrepareRequest(TenKingsV2NfcProtocol.ParseSignedJobJson(jobBytes));
+                }
+                finally { CryptographicOperations.ZeroMemory(jobBytes); }
+            }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
+        }
+        finally { CryptographicOperations.ZeroMemory(buffer); }
     }
 
     private static async Task WriteSuccessAsync<T>(

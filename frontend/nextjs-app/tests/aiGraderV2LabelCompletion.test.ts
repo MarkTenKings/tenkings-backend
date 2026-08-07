@@ -150,6 +150,7 @@ test("completion retry returns the original label without consuming another slot
   let saved: {
     label: { id: string; sheetId: string; slot: number; certificateNumber: string; completionOrder: number };
     publicReportSlug: string;
+    card: { id: string; publicToken: string };
   } | null = null;
   let creations = 0;
   const handler = createAiGraderV2CompleteLabelHandler({
@@ -168,6 +169,7 @@ test("completion retry returns the original label without consuming another slot
           completionOrder,
         },
         publicReportSlug: speedsterReportSlug(sessionId),
+        card: { id: "card-v2-1", publicToken: `tk2c_${"A".repeat(32)}` },
       };
       return { outcome: "CREATED" as const, ...saved, learning: readyLearning };
     },
@@ -214,6 +216,7 @@ test("a learning catch-up failure is exposed as not ready without blocking the d
           completionOrder,
         },
         publicReportSlug: speedsterReportSlug(sessionId),
+        card: { id: "card-v2-1", publicToken: `tk2c_${"A".repeat(32)}` },
         learning,
       };
     },
@@ -248,6 +251,7 @@ test("PhotoRoom starts only after durable completion and can fail without rollin
             completionOrder,
           },
           publicReportSlug: speedsterReportSlug(sessionId),
+          card: { id: "card-v2-1", publicToken: `tk2c_${"A".repeat(32)}` },
           learning: readyLearning,
         };
       },

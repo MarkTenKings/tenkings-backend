@@ -56,7 +56,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "The NFC helper failed hardware-free build verification." }
   $verification = ($verificationOutput -join [Environment]::NewLine) | ConvertFrom-Json
   if (-not $verification.ok -or
-      $verification.helperVersion -cne "tenkings-ai-grader-nfc-helper-v3" -or
+      $verification.helperVersion -cne "tenkings-ai-grader-nfc-helper-v4" -or
       $verification.helperProtocolVersion -cne "tenkings-ai-grader-nfc-loopback-v2" -or
       $verification.attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1" -or
       $verification.multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2" -or

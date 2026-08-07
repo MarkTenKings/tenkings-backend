@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma, type Prisma } from "@tenkings/database";
+import { createCardFromSpeedster, prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
   HUMAN_GRADE_SHEET_CAPACITY,
@@ -96,6 +96,10 @@ type CompletionResult = {
     completionOrder: number;
   };
   publicReportSlug: string;
+  card: {
+    id: string;
+    publicToken: string;
+  };
   learning: SpeedsterLearningCompletionReadiness;
 };
 type DurableCompletionResult = Omit<CompletionResult, "learning"> & {
@@ -183,6 +187,11 @@ const labelResult = (label: {
   completionOrder: label.certificateSequence,
 });
 
+const cardResult = (card: { id: string; publicToken: string }) => ({
+  id: card.id,
+  publicToken: card.publicToken,
+});
+
 const completionHarvestReceipt = (input: {
   sessionId: string;
   completedAt: Date;
@@ -227,10 +236,12 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       if (!existing || !session.publicReportSlug) {
         throw new HttpError(409, "Completed Speedster session is missing its label identity");
       }
+      const card = await createCardFromSpeedster(tx, session.id, existing.id);
       return {
         outcome: "EXISTING",
         label: labelResult(existing),
         publicReportSlug: session.publicReportSlug,
+        card: cardResult(card),
         learningHarvest: completionHarvestReceipt({
           sessionId: session.id,
           completedAt: existing.createdAt,
@@ -267,10 +278,12 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     if (claimed.count === 0) {
       const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
       if (!existing) throw new HttpError(409, "Speedster completion is already in progress");
+      const card = await createCardFromSpeedster(tx, session.id, existing.id);
       return {
         outcome: "EXISTING",
         label: labelResult(existing),
         publicReportSlug,
+        card: cardResult(card),
         learningHarvest: completionHarvestReceipt({
           sessionId: session.id,
           completedAt: existing.createdAt,
@@ -335,10 +348,12 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
         data: { status: "READY", readyAt: new Date() },
       });
     }
+    const card = await createCardFromSpeedster(tx, session.id, label.id);
     return {
       outcome: "CREATED",
       label: labelResult(label),
       publicReportSlug,
+      card: cardResult(card),
       learningHarvest: completionHarvestReceipt({
         sessionId: session.id,
         completedAt: label.createdAt,

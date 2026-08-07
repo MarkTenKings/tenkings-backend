@@ -42,3 +42,4 @@ export * from "./aiGraderMathematicalCalibrationSnapshotService";
 export * from "./aiGraderNfcService";
 export * from "./aiGraderNfcSchemaReadiness";
 export * from "./aiGraderDesignReferenceService";
+export * from "./cardPlatformV2";
