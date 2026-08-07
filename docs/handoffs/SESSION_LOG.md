@@ -31037,6 +31037,21 @@ By enabling Rip It Live, I confirm:
 - The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
 
+## 2026-08-07 - Combined V2 protected Production environment pre-deploy result
+
+### Observed configuration evidence
+
+- Verified the existing Ten Kings Vercel Production project still contains `SERPAPI_KEY`, `AI_GRADER_NFC_WORKSTATION_PUBLIC_KEYS_JSON`, `DATABASE_URL`, and `RUN_DB_MIGRATIONS` without revealing any values. The existing workstation allowlist was preserved unchanged.
+- Set the existing sensitive Production-only `RUN_DB_MIGRATIONS` value to `true` for the exact reviewed merge deployment. Vercel confirmed the update and that no deployment had yet consumed it. It must be restored to `false` immediately after the exact migration deployment and followed by a verified redeploy.
+- Added the new sensitive Production-only `TEN_KINGS_V2_NFC_JOB_SIGNING_PRIVATE_KEY_PKCS8_BASE64` value without printing or committing the private key.
+- Added the new sensitive Production-only `TEN_KINGS_V2_NFC_PROGRAMMING_ENABLED=false` safety switch. Hosted NFC programming therefore remains disabled through release and cannot be enabled until the separately approved Windows/Dell acceptance, preserved V1 incident resolution, public-trust transition, and physical commissioning are complete.
+- Recorded only the matching non-secret server public verification material and SHA-256 key ID in `docs/handoffs/TEN_KINGS_V2_NFC_SERVER_PUBLIC_KEY.json` for the future reviewed Dell trust transition. No prior server-job signing key was configured.
+
+### Runtime and safety status
+
+- These environment changes require a new deployment and did not themselves deploy code or run a migration. At this point no Production database/card/customer write, historical backfill, live SerpAPI query, Dell/helper/config/GoToTags action, scheduled-task change, NFC hardware/tag operation, or V1 mutation occurred.
+- PR `#302` remained open on exact reviewed head `d95e13e05449abec42d41acd0c19eba5cda5b035`. The GitHub Install & Build, disposable migration-chain, service-image, and Vercel Preview checks observed so far were successful; the frontend Docker-image check was still in progress. This log update intentionally creates a new exact PR head, so all actual checks must be re-evaluated on that new head before merge.
+
 ## 2026-08-07 - Ten Kings V2 NFC cardless recovery state-machine correction (hardware-free only)
 
 ### Corrected recovery authority
