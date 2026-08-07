@@ -30710,3 +30710,18 @@ By enabling Rip It Live, I confirm:
 
 - This approval makes the blueprint the planning authority; it does not authorize implementation, deployment, migration, V1 freeze, cutover, or a later phase outside its explicit gates.
 - No application code, database, migration, deployment, restart, Production configuration, runtime data, grading result, or customer record changed.
+
+## 2026-08-06 - Owner-approved comps display and standalone NFC workflow correction
+
+### Locked corrections
+
+- Mark removed shipping from eBay Sold Comps V2. Provider shipping data is discarded at the engine boundary; it is not displayed, stored in the V2 snapshot/public evidence, or used in market-value math.
+- Mark confirmed NFC V2 must have its own reusable standalone admin engine/screen, independent of AI Grader V1. A permanent card's Speedster Finish workspace is one optional entry point; later V2 admin surfaces may link to the same screen.
+- The Dell is the first physical station, not a permanent architectural dependency. The actual browser programming action runs on the same Windows workstation connected to its reader/helper. Additional Windows workstations use their own reader, helper installation, protected non-exportable key, server-allowlisted public identity, and supervised acceptance tag.
+- Mark authorized the existing comps and NFC lead agents to complete their respective projects through adversarial implementation/design review cycles, protected Production merge/release, and live readiness for owner testing. Implementation/review subagent groups remain separate from each lead's three-role UI/UX design group, and independent critic agents review the lead outputs rather than approving their own work.
+
+### Safety still in force
+
+- NFC and comps remain optional and ungated. V1 NFC/KingsReview/CardAsset/Item behavior remains untouched. No new NFC table, failed-tag row, remote Dell control, shipping evidence, or comps status flag is authorized.
+- Every schema/release/Dell step still follows the blueprint's exact evidence and rollback rules. Historical Speedster backfill still requires its own dry-run list and explicit owner approval before any apply action.
+- This update records owner authority only. No application code, database, migration, deploy, backfill, SerpAPI request, Dell/helper/GoToTags action, NFC hardware operation, or Production/customer state changed.

@@ -658,7 +658,7 @@ When no final grade exists, the query uses confirmed card identity without inven
 - Filter: sold items only; do not combine sold and merely completed/unsold listings.
 - Reuse the existing `SERPAPI_KEY` and proven safe HTTP, retry, pagination, and redaction patterns.
 - Do not reuse V1 CardAsset/Item/Bytebot/KingsReview persistence.
-- Parse and retain listing title, link, image, sold price, shipping information, sold date, condition, and safe source identifiers when returned.
+- Parse and retain listing title, link, image, sold price, sold date, condition, and safe source identifiers when returned. If the provider returns shipping information, discard it at the engine boundary.
 - Since eBay/SerpAPI does not provide a dedicated “most recently sold” sort contract, sort parsed sold results by sold date inside the engine. Results without a usable sold date go last in their group.
 
 ### 9.5 Variant/parallel mini-engine
@@ -723,7 +723,7 @@ $100 + $110 + $90 = $300
 $300 / 3 selected comps = $100 suggested market value
 ```
 
-Shipping is saved and displayed as context but is not added to the arithmetic market-value calculation.
+Shipping is not displayed, saved in the V2 comps snapshot/public evidence, or used in the arithmetic market-value calculation.
 
 The system never writes the suggested value automatically. The admin confirms the final `marketValueCents`.
 
@@ -745,7 +745,6 @@ If no comps are included:
 - result image;
 - title;
 - sold price;
-- shipping information;
 - sold date;
 - listing link/source identity;
 - parsed grader/grade/raw status;
@@ -835,8 +834,8 @@ Do not reuse:
 ### 10.3 Minimal V2 programming protocol
 
 1. Grade completion has already minted the permanent card token and URL.
-2. An authenticated admin opens the completed V2 card.
-3. Admin clicks `Program NFC`.
+2. An authenticated admin opens the standalone NFC V2 screen directly or enters it from a permanent card's Speedster Finish workspace. NFC V2 does not depend on any AI Grader V1 screen or V1 NFC workflow.
+3. On the same Windows workstation that is physically connected to the reader and running the local helper, the admin clicks `Program NFC`.
 4. The server returns a short-lived, signed job describing the exact card ID, token, URL, expiry, and safe nonce. No database attempt row is required.
 5. The browser sends the signed job to the authorized local helper.
 6. The helper validates the signature, domain, token shape, F8215 profile, and local operation gate.
@@ -878,6 +877,8 @@ NFC is optional per card. When an admin chooses to tag a card, the three `nfcVer
 ### 10.7 Adding more workstations
 
 The Dell is the only launch station, but the protocol is workstation-neutral.
+
+The standalone NFC V2 screen is a reusable entry point, not a Dell-specific page. A permanent card may open it from Speedster Finish, and later V2 admin surfaces may link to the same screen. The actual write must be initiated from the workstation physically connected to its own reader/helper; opening the screen elsewhere does not remotely control the Dell.
 
 To add a station later:
 
@@ -1235,6 +1236,8 @@ V1 is “frozen” for supply but may still perform the minimum writes necessary
 
 - Existing Speedster grading page
 - Existing Speedster completed-cards page, converted to V2 card facts
+- Standalone eBay Sold Comps V2 engine screen, also launchable with a permanent card selected
+- Standalone NFC V2 engine screen, also launchable from the permanent card's Speedster Finish workspace
 - Identity Catalog upload/list page
 - Parallel/Variant Help inside Speedster identity entry
 - Reusable V2 card list/workspace
@@ -1422,7 +1425,7 @@ Physical vending pack identification, NFC location check-in, and exact kiosk pac
 - Same-grade PSA group appears first.
 - Other graders and raw results remain visible.
 - Initial 30 and appended 30 are deduplicated.
-- Selected price average excludes shipping.
+- Shipping is absent from the admin/public comps display and saved snapshot and is excluded from the selected-price average.
 - No selection produces no value, not zero.
 - Cache persists until explicit rerun.
 - No comps or disabled `compsPublic` renders no public section, status, or placeholder.
@@ -1558,6 +1561,7 @@ Restraint is part of the architecture.
 - Exact Speedster identity fields are preserved.
 - Permanent card URL is `collect.tenkings.co/c/tk2c_...`.
 - F8215/Dell/ACR1552U/GoToTags is the first NFC path.
+- NFC V2 has its own standalone admin engine/screen, independent of AI Grader V1, and Speedster Finish is one optional entry point into it.
 - More Windows NFC workstations must be easy to add later.
 - Failed tags are discarded and not tracked as inventory.
 - Public NFC launch view is the report only.
@@ -1568,7 +1572,7 @@ Restraint is part of the architecture.
 - Query excludes serial numbering.
 - Results show 30, then 30 more.
 - PSA same-grade comps appear first; other PSA, other graders, then raw.
-- Suggested market value is the arithmetic mean of included sold prices, excluding shipping.
+- Suggested market value is the arithmetic mean of included sold prices only; shipping is neither displayed, stored in V2 comp evidence, nor used.
 - Snapshot is reused until explicit refresh/rerun.
 - Full comp detail is admin-only; public comps require an explicit checkbox.
 - Every mystery pack contains exactly one graded card.
