@@ -11,6 +11,7 @@ const PAIRING_CODE_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 type JsonRecord = Record<string, unknown>;
 
 export type AiGraderNfcHelperStatus = {
+  helperVersion?: string;
   helperProtocolVersion: string;
   readerConnected: boolean;
   pcscReady: boolean;
@@ -36,6 +37,9 @@ export type AiGraderNfcHelperStatus = {
   }> | null;
   goToTagsReady?: boolean;
   goToTagsErrorCode?: string | null;
+  tenKingsV2NfcEnabled?: boolean;
+  tenKingsV2NfcCapability?: string | null;
+  tenKingsV2TrustedJobSigningKeyIds?: string[] | null;
 };
 
 export type AiGraderNfcHelperHostedReadiness = {
@@ -169,7 +173,8 @@ export function consumeAiGraderNfcLauncherFragment(input: {
 }
 
 async function helperRequest<T>(
-  path: "/pair" | "/status" | "/read" | "/write" | "/prepare" | "/operation-status" | "/operation-ack",
+  path: "/pair" | "/status" | "/read" | "/write" | "/prepare" | "/operation-status" | "/operation-ack" |
+    "/v2/prepare" | "/v2/status" | "/v2/success-ack" | "/v2/discard-ack",
   input: { method?: "GET" | "POST"; body?: JsonRecord; tokenRequired?: boolean; timeoutMs?: number } = {},
 ): Promise<T> {
   const token = workstationToken();
@@ -227,6 +232,55 @@ async function helperRequest<T>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+export type TenKingsV2NfcLocalOperation = {
+  helperProtocolVersion: string;
+  helperVersion: string;
+  helperCapability: string;
+  jobEnvelopeSha256: string;
+  cardId: string;
+  publicToken: string;
+  url: string;
+  phase: "preparing" | "awaiting_manual_start" | "completed" | "failed" | "uncertain" |
+    "closing_success" | "closing_discard_failed" | "closing_discard_uncertain";
+  terminal: boolean;
+  errorCode: string | null;
+  discardAcknowledgementNonce: string | null;
+  result: Record<string, string> | null;
+};
+
+export function prepareTenKingsV2NfcOperation(job: Record<string, string>) {
+  return helperRequest<TenKingsV2NfcLocalOperation>("/v2/prepare", {
+    method: "POST",
+    body: { job },
+    timeoutMs: WRITE_TIMEOUT_MS,
+  });
+}
+
+export function getTenKingsV2NfcOperationStatus(jobEnvelopeSha256: string) {
+  return helperRequest<TenKingsV2NfcLocalOperation>("/v2/status", {
+    method: "POST",
+    body: { jobEnvelopeSha256 },
+  });
+}
+
+export function acknowledgeTenKingsV2NfcSuccess(jobEnvelopeSha256: string) {
+  return helperRequest<{ cleaned: boolean }>("/v2/success-ack", {
+    method: "POST",
+    body: { jobEnvelopeSha256 },
+  });
+}
+
+export function acknowledgeTenKingsV2NfcDiscard(input: {
+  jobEnvelopeSha256: string;
+  acknowledgementNonce: string;
+  phase: "failed" | "uncertain";
+}) {
+  return helperRequest<{ cleaned: boolean }>("/v2/discard-ack", {
+    method: "POST",
+    body: input,
+  });
 }
 
 export async function pairAiGraderNfcHelper(pairingCode: string) {

@@ -34,7 +34,7 @@ function Invoke-ReplacementScenario {
   New-VersionedInstall -Path $install -Version $PriorVersion
   New-VersionedInstall -Path $staging -Version $ReplacementVersion
   $dllName = "NfcBuildVerificationFixture.dll"
-  $capturedPrior = Invoke-NfcBuildVerification -DllPath (Join-Path $install $dllName) -AllowedHelperVersion @($script:NfcHelperVersionV2, $script:NfcHelperVersionV3)
+  $capturedPrior = Invoke-NfcBuildVerification -DllPath (Join-Path $install $dllName) -AllowedHelperVersion @($script:NfcHelperVersionV2, $script:NfcHelperVersionV3, $script:NfcHelperVersionV4)
   Assert-True ($capturedPrior -ceq $PriorVersion) "$Name did not capture the exact prior helper version."
 
   $failed = $false
@@ -46,7 +46,7 @@ function Invoke-ReplacementScenario {
       -AllowedRoot $scenarioRoot `
       -ValidateReplacement {
         param($activated)
-        Invoke-NfcBuildVerification -DllPath (Join-Path $activated $dllName) -AllowedHelperVersion @($script:NfcHelperVersionV3) | Out-Null
+        Invoke-NfcBuildVerification -DllPath (Join-Path $activated $dllName) -AllowedHelperVersion @($ReplacementVersion) | Out-Null
         if ($InjectActivationFailure) { throw "injected activation/readiness failure" }
       } `
       -AfterRollback {
@@ -75,6 +75,8 @@ try {
     Invoke-ReplacementScenario -Name "v2-to-v3-success" -PriorVersion $script:NfcHelperVersionV2 -ReplacementVersion $script:NfcHelperVersionV3
     Invoke-ReplacementScenario -Name "v2-to-v3-rollback" -PriorVersion $script:NfcHelperVersionV2 -ReplacementVersion $script:NfcHelperVersionV3 -InjectActivationFailure
     Invoke-ReplacementScenario -Name "v3-to-v3-idempotent" -PriorVersion $script:NfcHelperVersionV3 -ReplacementVersion $script:NfcHelperVersionV3
+    Invoke-ReplacementScenario -Name "v3-to-v4-success" -PriorVersion $script:NfcHelperVersionV3 -ReplacementVersion $script:NfcHelperVersionV4
+    Invoke-ReplacementScenario -Name "v3-to-v4-rollback" -PriorVersion $script:NfcHelperVersionV3 -ReplacementVersion $script:NfcHelperVersionV4 -InjectActivationFailure
   )
   [pscustomobject]@{
     ok = $true

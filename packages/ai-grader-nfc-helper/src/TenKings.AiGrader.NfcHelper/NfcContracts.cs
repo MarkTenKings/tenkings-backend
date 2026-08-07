@@ -4,7 +4,7 @@ namespace TenKings.AiGrader.NfcHelper;
 
 public static class NfcProtocol
 {
-    public const string HelperVersion = "tenkings-ai-grader-nfc-helper-v3";
+    public const string HelperVersion = "tenkings-ai-grader-nfc-helper-v4";
     public const string ProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2";
     public const string AttestationSchemaVersion = "ai-grader-nfc-helper-attestation-v1";
     public const string MultiProfileAttestationSchemaVersion = "ai-grader-nfc-helper-attestation-v2";
@@ -52,7 +52,11 @@ public sealed record HelperStatusResponse(
     string? ErrorCode = null,
     IReadOnlyList<SupportedNfcProfile>? SupportedProfiles = null,
     bool GoToTagsReady = false,
-    string? GoToTagsErrorCode = null);
+    string? GoToTagsErrorCode = null,
+    string HelperVersion = NfcProtocol.HelperVersion,
+    bool TenKingsV2NfcEnabled = false,
+    string? TenKingsV2NfcCapability = null,
+    IReadOnlyList<string>? TenKingsV2TrustedJobSigningKeyIds = null);
 
 public sealed record SupportedNfcProfile(
     string ChipType,
@@ -169,6 +173,30 @@ public sealed record F8215AbandonedResolutionResult(
     bool OperationGateReleasedOnNextStart,
     bool EncodingSuccessClaimed);
 
+public sealed record TenKingsV2NfcPrepareRequest(TenKingsV2NfcSignedJob Job);
+public sealed record TenKingsV2NfcStatusRequest(string JobEnvelopeSha256);
+public sealed record TenKingsV2NfcSuccessAcknowledgeRequest(string JobEnvelopeSha256);
+public sealed record TenKingsV2NfcDiscardAcknowledgeRequest(
+    string JobEnvelopeSha256,
+    string AcknowledgementNonce,
+    string Phase);
+
+public sealed record TenKingsV2NfcOperationResponse(
+    string HelperProtocolVersion,
+    string HelperVersion,
+    string HelperCapability,
+    string JobEnvelopeSha256,
+    string CardId,
+    string PublicToken,
+    string Url,
+    string Phase,
+    bool Terminal,
+    string? ErrorCode,
+    string? DiscardAcknowledgementNonce,
+    TenKingsV2NfcTerminalResult? Result);
+
+public sealed record TenKingsV2NfcAcknowledgeResponse(bool Cleaned);
+
 public sealed record WorkstationKeyMetadata(
     string KeyName,
     string KeyId,
@@ -227,6 +255,10 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(F8215PrepareRequest))]
 [JsonSerializable(typeof(F8215OperationStatusRequest))]
 [JsonSerializable(typeof(F8215OperationAcknowledgeRequest))]
+[JsonSerializable(typeof(TenKingsV2NfcPrepareRequest))]
+[JsonSerializable(typeof(TenKingsV2NfcStatusRequest))]
+[JsonSerializable(typeof(TenKingsV2NfcSuccessAcknowledgeRequest))]
+[JsonSerializable(typeof(TenKingsV2NfcDiscardAcknowledgeRequest))]
 [JsonSerializable(typeof(NfcOperationalAttestation))]
 [JsonSerializable(typeof(WorkstationKeyMetadata))]
 [JsonSerializable(typeof(WorkstationPublicKeyExport))]
@@ -238,6 +270,8 @@ public sealed class NfcHelperException : Exception
 [JsonSerializable(typeof(ApiEnvelope<F8215PrepareResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<F8215OperationStatusResponse>))]
 [JsonSerializable(typeof(ApiEnvelope<F8215OperationAcknowledgeResponse>))]
+[JsonSerializable(typeof(ApiEnvelope<TenKingsV2NfcOperationResponse>))]
+[JsonSerializable(typeof(ApiEnvelope<TenKingsV2NfcAcknowledgeResponse>))]
 [JsonSerializable(typeof(F8215AbandonedResolutionResult))]
 [JsonSerializable(typeof(ApiEnvelope<object>))]
 public partial class NfcJsonContext : JsonSerializerContext;

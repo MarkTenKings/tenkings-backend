@@ -26,6 +26,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("multi-profile attestation canonical signing and tamper", TestMultiProfileAttestation),
     ("Ten Kings V2 signed job and terminal-result contract", TestTenKingsV2Protocol),
+    ("Ten Kings V2 protected coordinator and closing recovery", TestTenKingsV2CoordinatorRecovery),
     ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
     ("F8215 protected job lifecycle and idempotency", TestF8215JobLifecycle),
     ("F8215 helper restart and terminal callback recovery", TestF8215RestartRecovery),
@@ -437,12 +438,161 @@ static Task TestTenKingsV2Protocol()
     return Task.CompletedTask;
 }
 
+static Task TestTenKingsV2CoordinatorRecovery()
+{
+    if (!OperatingSystem.IsWindows()) return Task.CompletedTask;
+    var root = CreateProtectedTestDirectory();
+    try
+    {
+        var templatePath = Path.Combine(root, "f8215-gototags-manual-start-v1.json");
+        File.Copy(
+            Path.Combine(FindRepoRoot(), "packages", "ai-grader-nfc-helper", "src", "TenKings.AiGrader.NfcHelper", "Templates", "f8215-gototags-manual-start-v1.json"),
+            templatePath);
+        var options = new GoToTagsAdapterOptions(
+            Path.Combine(root, "fake.exe"),
+            templatePath,
+            NfcProtocol.ApprovedGoToTagsTemplateSha256,
+            root);
+        File.WriteAllBytes(options.ExecutablePath, [0x4d, 0x5a]);
+        using var serverSigner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var serverSpki = serverSigner.ExportSubjectPublicKeyInfo();
+        using var trust = TenKingsV2ServerTrust.ParseV4(JsonSerializer.Serialize(new
+        {
+            current = new
+            {
+                algorithm = TenKingsV2NfcProtocol.Algorithm,
+                keyId = WorkstationAttestation.KeyId(serverSpki),
+                publicSpkiDerBase64 = Convert.ToBase64String(serverSpki),
+            },
+            prior = (object?)null,
+        }));
+        CryptographicOperations.ZeroMemory(serverSpki);
+        using var workstation = new EphemeralTestWorkstationAttestationSigner();
+        var clock = new MutableTimeProvider(DateTimeOffset.Parse("2026-08-06T20:00:00.000Z", CultureInfo.InvariantCulture));
+        using var firstGate = new NfcOperationGate();
+        var runtime = new FakeGoToTagsRuntime();
+        var first = new TenKingsV2NfcCoordinator(
+            options, runtime, new GoToTagsOperationFactory(), workstation, firstGate, trust, 47662,
+            new CollectingSafeLogger(), clock);
+        var job = CreateSignedTenKingsV2Job(serverSigner, "card-v2.recovery-1", "tk2c_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", clock.GetUtcNow());
+        var v1ConflictPath = Path.Combine(root, TenKingsV2NfcCoordinator.V1StateFileName);
+        File.WriteAllText(v1ConflictPath, "{}");
+        Throws("v2_nfc_recovery_conflict", () => first.Prepare(new TenKingsV2NfcPrepareRequest(job), "v2_v1_conflict"));
+        False(File.Exists(Path.Combine(root, TenKingsV2NfcCoordinator.StateFileName)));
+        File.Delete(v1ConflictPath);
+        var prepared = first.Prepare(new TenKingsV2NfcPrepareRequest(job), "v2_prepare");
+        Equal("awaiting_manual_start", prepared.Phase);
+        True(firstGate.Busy);
+        var generated = ReadGeneratedOperation(runtime.LaunchedPath!);
+        var integrationUrl = generated["integrations"]!.AsArray()[0]!["urlString"]!.GetValue<string>();
+        var callbackIdentity = new Uri(integrationUrl).AbsolutePath.Split('/').Last();
+        var correlation = generated["tags"]!.AsArray()[0]!["encoding"]!["correlationId"]!.GetValue<string>();
+        var body = GoToTagsCallback(correlation, job.Url);
+        try { first.AcceptCallback(callbackIdentity, body, "v2_callback"); }
+        finally { CryptographicOperations.ZeroMemory(body); }
+        var statePath = Path.Combine(root, TenKingsV2NfcCoordinator.StateFileName);
+        var persistedText = File.ReadAllText(statePath);
+        False(persistedText.Contains("04112233445566", StringComparison.OrdinalIgnoreCase));
+        False(persistedText.Contains("uidFingerprint", StringComparison.OrdinalIgnoreCase));
+        var successClosing = JsonNode.Parse(persistedText)!.AsObject();
+        successClosing["phase"] = "closing";
+        successClosing["updatedAt"] = clock.GetUtcNow().ToString("O");
+        File.WriteAllText(statePath, successClosing.ToJsonString());
+
+        using var successRecoveryGate = new NfcOperationGate();
+        var successRecovered = new TenKingsV2NfcCoordinator(
+            options, new FakeGoToTagsRuntime(), new GoToTagsOperationFactory(), workstation,
+            successRecoveryGate, trust, 47662, new CollectingSafeLogger(), clock);
+        var recoveredSuccess = successRecovered.Status(new TenKingsV2NfcStatusRequest(prepared.JobEnvelopeSha256));
+        Equal("closing_success", recoveredSuccess.Phase);
+        True(recoveredSuccess.Terminal);
+        True(recoveredSuccess.Result is not null);
+        True(successRecovered.AcknowledgeSuccess(
+            new TenKingsV2NfcSuccessAcknowledgeRequest(prepared.JobEnvelopeSha256), "v2_success_ack").Cleaned);
+        False(File.Exists(statePath));
+        False(successRecoveryGate.Busy);
+
+        var discardRuntime = new FakeGoToTagsRuntime();
+        var discardJob = CreateSignedTenKingsV2Job(
+            serverSigner, "card-v2.recovery-2", "tk2c_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", clock.GetUtcNow());
+        var discardPrepared = successRecovered.Prepare(
+            new TenKingsV2NfcPrepareRequest(discardJob), "v2_discard_prepare");
+        clock.Advance(TimeSpan.FromMinutes(11));
+        var uncertain = successRecovered.Status(new TenKingsV2NfcStatusRequest(discardPrepared.JobEnvelopeSha256));
+        Equal("uncertain", uncertain.Phase);
+        True(uncertain.DiscardAcknowledgementNonce is not null);
+        var uncertainState = JsonNode.Parse(File.ReadAllText(statePath))!.AsObject();
+        uncertainState["phase"] = "closing";
+        uncertainState["errorCode"] = "closing_from_uncertain";
+        uncertainState["updatedAt"] = clock.GetUtcNow().ToString("O");
+        File.WriteAllText(statePath, uncertainState.ToJsonString());
+        var exactBeforeDualConflict = File.ReadAllBytes(statePath);
+        File.WriteAllText(Path.Combine(root, TenKingsV2NfcCoordinator.V1StateFileName), "{}");
+        using (var conflictGate = new NfcOperationGate())
+        {
+            Throws("v2_nfc_dual_recovery_state", () => _ = new TenKingsV2NfcCoordinator(
+                options, discardRuntime, new GoToTagsOperationFactory(), workstation,
+                conflictGate, trust, 47662, new CollectingSafeLogger(), clock));
+        }
+        Sequence(exactBeforeDualConflict, File.ReadAllBytes(statePath));
+        File.Delete(Path.Combine(root, TenKingsV2NfcCoordinator.V1StateFileName));
+        CryptographicOperations.ZeroMemory(exactBeforeDualConflict);
+
+        using var discardRecoveryGate = new NfcOperationGate();
+        var discardRecovered = new TenKingsV2NfcCoordinator(
+            options, discardRuntime, new GoToTagsOperationFactory(), workstation,
+            discardRecoveryGate, trust, 47662, new CollectingSafeLogger(), clock);
+        var recoveredDiscard = discardRecovered.Status(new TenKingsV2NfcStatusRequest(discardPrepared.JobEnvelopeSha256));
+        Equal("closing_discard_uncertain", recoveredDiscard.Phase);
+        True(recoveredDiscard.Terminal);
+        True(discardRecovered.AcknowledgeDiscard(new TenKingsV2NfcDiscardAcknowledgeRequest(
+            discardPrepared.JobEnvelopeSha256,
+            recoveredDiscard.DiscardAcknowledgementNonce!,
+            "uncertain"), "v2_discard_ack").Cleaned);
+        False(File.Exists(statePath));
+        False(discardRecoveryGate.Busy);
+
+        var failedJob = CreateSignedTenKingsV2Job(
+            serverSigner, "card-v2.recovery-3", "tk2c_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", clock.GetUtcNow());
+        var failedPrepared = discardRecovered.Prepare(
+            new TenKingsV2NfcPrepareRequest(failedJob), "v2_failed_prepare");
+        clock.Advance(TimeSpan.FromMinutes(11));
+        var failedSeed = discardRecovered.Status(new TenKingsV2NfcStatusRequest(failedPrepared.JobEnvelopeSha256));
+        True(failedSeed.DiscardAcknowledgementNonce is not null);
+        var failedClosing = JsonNode.Parse(File.ReadAllText(statePath))!.AsObject();
+        failedClosing["phase"] = "closing";
+        failedClosing["errorCode"] = "closing_from_failed";
+        failedClosing["updatedAt"] = clock.GetUtcNow().ToString("O");
+        File.WriteAllText(statePath, failedClosing.ToJsonString());
+        using var failedRecoveryGate = new NfcOperationGate();
+        var failedRecovered = new TenKingsV2NfcCoordinator(
+            options, new FakeGoToTagsRuntime(), new GoToTagsOperationFactory(), workstation,
+            failedRecoveryGate, trust, 47662, new CollectingSafeLogger(), clock);
+        var recoveredFailed = failedRecovered.Status(new TenKingsV2NfcStatusRequest(failedPrepared.JobEnvelopeSha256));
+        Equal("closing_discard_failed", recoveredFailed.Phase);
+        True(failedRecovered.AcknowledgeDiscard(new TenKingsV2NfcDiscardAcknowledgeRequest(
+            failedPrepared.JobEnvelopeSha256,
+            recoveredFailed.DiscardAcknowledgementNonce!,
+            "failed"), "v2_failed_ack").Cleaned);
+        False(File.Exists(statePath));
+        False(failedRecoveryGate.Busy);
+    }
+    finally
+    {
+        Directory.Delete(root, true);
+    }
+    return Task.CompletedTask;
+}
+
 static Task TestGoToTagsCallback()
 {
     const string correlation = "synthetic_callback_correlation_0001";
     var body = GoToTagsCallback(correlation, Url);
     Equal(NfcProtocol.ApprovedGoToTagsVersion, GoToTagsCallbackParser.SafeReportedAppVersion(body));
     var result = GoToTagsCallbackParser.Parse(body, correlation, Url);
+    var v2Result = GoToTagsCallbackParser.ParseV2(body, correlation, Url);
+    Equal(NdefCodec.Sha256Hex(Encoding.UTF8.GetBytes(Url)), v2Result.ReadbackPayloadSha256);
+    False(JsonSerializer.Serialize(v2Result).Contains("uid", StringComparison.OrdinalIgnoreCase));
     var observedVersionBody = GoToTagsCallback(correlation, Url, appVersion: $"v{NfcProtocol.ApprovedGoToTagsVersion}");
     Equal(NfcProtocol.ApprovedGoToTagsVersion, GoToTagsCallbackParser.SafeReportedAppVersion(observedVersionBody));
     _ = GoToTagsCallbackParser.Parse(observedVersionBody, correlation, Url);
@@ -1414,6 +1564,7 @@ static Task TestProvisioningContracts()
     var update = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "update-ai-grader-nfc-helper.ps1"));
     var rotate = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "rotate-ai-grader-nfc-helper-token.ps1"));
     var configureFeiju = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "configure-ai-grader-nfc-feiju-f8215.ps1"));
+    var transitionV4 = File.ReadAllText(Path.Combine(root, "scripts", "ai-grader-nfc", "transition-ai-grader-nfc-v3-to-v4.ps1"));
     True(install.Contains("--ensure-workstation-attestation-key", StringComparison.Ordinal));
     True(common.Contains("workstationKeyName", StringComparison.Ordinal));
     True(common.Contains("workstationKeyId", StringComparison.Ordinal));
@@ -1455,7 +1606,7 @@ static Task TestProvisioningContracts()
     True(common.Contains("Copy-NfcStableMaintenancePayload", StringComparison.Ordinal));
     True(common.Contains("Assert-NfcScheduledTaskDefinition", StringComparison.Ordinal));
     True(common.Contains("the prior working install was restored", StringComparison.Ordinal));
-    True(install.Contains("tenkings-ai-grader-nfc-helper-v3", StringComparison.Ordinal));
+    True(install.Contains("tenkings-ai-grader-nfc-helper-v4", StringComparison.Ordinal));
     True(install.Contains(NfcProtocol.MultiProfileAttestationSchemaVersion, StringComparison.Ordinal));
     True(configureFeiju.Contains(NfcProtocol.ApprovedGoToTagsVersion, StringComparison.Ordinal));
     True(configureFeiju.Contains("CN=GoToTags, O=GoToTags, S=Washington, C=US", StringComparison.Ordinal));
@@ -1463,6 +1614,16 @@ static Task TestProvisioningContracts()
     False(configureFeiju.Contains("Set-Service", StringComparison.OrdinalIgnoreCase));
     False(start.Contains("TENKINGS_NFC_FEIJU_F8215_ENABLED", StringComparison.Ordinal));
     True(start.Contains("TENKINGS_NFC_GOTOTAGS_JOB_ROOT", StringComparison.Ordinal));
+    True(start.Contains("TENKINGS_NFC_CONFIG_SCHEMA_VERSION", StringComparison.Ordinal));
+    True(start.Contains("TENKINGS_NFC_V2_SERVER_JOB_PUBLIC_KEYS_JSON", StringComparison.Ordinal));
+    True(transitionV4.Contains("Assert-NfcNoActiveGoToTagsRecovery", StringComparison.Ordinal));
+    True(transitionV4.Contains("Invoke-NfcExactConfigFileTransition", StringComparison.Ordinal));
+    True(common.Contains("[IO.File]::ReadAllBytes($Path)", StringComparison.Ordinal));
+    True(common.Contains("[IO.File]::WriteAllBytes($Path, $preimage)", StringComparison.Ordinal));
+    True(transitionV4.Contains("ExpectedConfigSha256", StringComparison.Ordinal));
+    True(transitionV4.Contains("Assert-NfcExactKeyIdSet", StringComparison.Ordinal));
+    True(transitionV4.Contains("Assert-NfcV4SemanticTransition", StringComparison.Ordinal));
+    False(transitionV4.Contains("TENKINGS_NFC_WORKSTATION_KEY", StringComparison.Ordinal));
 
     var publicOnly = JsonSerializer.Serialize(
         new WorkstationPublicKeyExport(new string('a', 64), NfcProtocol.AttestationAlgorithm, "public-spki-only"),
@@ -1659,6 +1820,50 @@ static int FreePort()
 
 static string Base64Url(byte[] bytes) =>
     Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+static TenKingsV2NfcSignedJob CreateSignedTenKingsV2Job(
+    ECDsa signer,
+    string cardId,
+    string publicToken,
+    DateTimeOffset issuedAt)
+{
+    var publicSpki = signer.ExportSubjectPublicKeyInfo();
+    try
+    {
+        var placeholder = Base64Url(new byte[64]);
+        var job = new TenKingsV2NfcSignedJob(
+            TenKingsV2NfcProtocol.JobSchema,
+            TenKingsV2NfcProtocol.Algorithm,
+            WorkstationAttestation.KeyId(publicSpki),
+            TenKingsV2NfcProtocol.Purpose,
+            Base64Url(RandomNumberGenerator.GetBytes(32)),
+            cardId,
+            publicToken,
+            $"{TenKingsV2NfcProtocol.UrlPrefix}{publicToken}",
+            TenKingsV2NfcProtocol.ChipType,
+            TenKingsV2NfcProtocol.SecurityMode,
+            TenKingsV2NfcProtocol.ProgrammingProfile,
+            issuedAt.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
+            issuedAt.AddMinutes(10).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture),
+            placeholder);
+        var statement = Encoding.UTF8.GetBytes(TenKingsV2NfcProtocol.CanonicalJobStatement(job));
+        byte[]? signature = null;
+        try
+        {
+            signature = signer.SignData(
+                statement,
+                HashAlgorithmName.SHA256,
+                DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+            return job with { Signature = Base64Url(signature) };
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(statement);
+            if (signature is not null) CryptographicOperations.ZeroMemory(signature);
+        }
+    }
+    finally { CryptographicOperations.ZeroMemory(publicSpki); }
+}
 
 static async Task WaitUntil(Func<bool> condition)
 {

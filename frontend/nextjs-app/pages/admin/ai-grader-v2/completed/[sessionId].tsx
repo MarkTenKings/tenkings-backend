@@ -163,6 +163,11 @@ export default function CompletedSpeedsterCardPage() {
               <p>Label page {card.labelSheetNumber ?? "—"} · Slot {card.labelSlot ?? "—"}</p>
               {card.permanentCard ? <>
                 <Link href={`/admin/comps?card=${encodeURIComponent(card.permanentCard.id)}&from=${encodeURIComponent(`/admin/ai-grader-v2/completed/${sessionId}`)}`}>Open Sold Comps</Link>
+                {card.permanentCard.lifecycleState !== "VOID" ? (
+                  <Link href={`/admin/nfc?card=${encodeURIComponent(card.permanentCard.id)}`}>
+                    Open NFC →
+                  </Link>
+                ) : null}
                 <button
                   type="button"
                   disabled={Boolean(acting)}

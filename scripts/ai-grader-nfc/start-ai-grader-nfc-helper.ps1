@@ -20,7 +20,11 @@ $env:TENKINGS_NFC_HELPER_PORT = [string]$config.port
 $env:TENKINGS_NFC_BACKEND = "pcsc"
 $env:TENKINGS_NFC_WORKSTATION_KEY_NAME = [string]$config.workstationKeyName
 $env:TENKINGS_NFC_WORKSTATION_KEY_ID = [string]$config.workstationKeyId
-if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v3" -and
+$env:TENKINGS_NFC_CONFIG_SCHEMA_VERSION = [string]$config.schemaVersion
+if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v4") {
+  $env:TENKINGS_NFC_V2_SERVER_JOB_PUBLIC_KEYS_JSON = [string]$config.tenKingsV2ServerJobPublicKeysJson
+}
+if ($config.schemaVersion -in @("tenkings-ai-grader-nfc-helper-config-v3", "tenkings-ai-grader-nfc-helper-config-v4") -and
     -not [string]::IsNullOrWhiteSpace([string]$config.goToTagsExecutablePath)) {
   $env:TENKINGS_NFC_GOTOTAGS_EXECUTABLE_PATH = [string]$config.goToTagsExecutablePath
   $env:TENKINGS_NFC_GOTOTAGS_TEMPLATE_PATH = [string]$config.goToTagsTemplatePath
@@ -41,6 +45,8 @@ try {
   Remove-Item Env:\TENKINGS_NFC_BACKEND -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_NAME -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_WORKSTATION_KEY_ID -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_CONFIG_SCHEMA_VERSION -ErrorAction SilentlyContinue
+  Remove-Item Env:\TENKINGS_NFC_V2_SERVER_JOB_PUBLIC_KEYS_JSON -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_EXECUTABLE_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_TEMPLATE_PATH -ErrorAction SilentlyContinue
   Remove-Item Env:\TENKINGS_NFC_GOTOTAGS_TEMPLATE_SHA256 -ErrorAction SilentlyContinue

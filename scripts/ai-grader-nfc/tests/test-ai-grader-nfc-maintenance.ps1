@@ -25,6 +25,72 @@ try {
   Assert-Throws { Assert-NfcPathWithinRoot -Path (Join-Path $testRoot "..\escape") -AllowedRoot $testRoot } "Traversal escaped the test root."
   Assert-Throws { Assert-NfcPathWithinRoot -Path $testRoot -AllowedRoot $testRoot } "Root deletion was accepted without -AllowRoot."
 
+  $semanticBefore = [pscustomobject]@{
+    schemaVersion = "tenkings-ai-grader-nfc-helper-config-v3"
+    updatedAt = "2026-08-06T20:00:00.000Z"
+    workstationToken = "preserved-token"
+    nested = [pscustomobject]@{ enabled = $true }
+  }
+  $exactTrustFixture = '{"current":{"algorithm":"ecdsa-p256-sha256-p1363","keyId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publicSpkiDerBase64":"fixture"},"prior":null}'
+  $semanticAfter = [pscustomobject]@{
+    schemaVersion = "tenkings-ai-grader-nfc-helper-config-v4"
+    updatedAt = "2026-08-06T20:00:00.000Z"
+    workstationToken = "preserved-token"
+    nested = [pscustomobject]@{ enabled = $true }
+    tenKingsV2ServerJobPublicKeysJson = $exactTrustFixture
+  }
+  Assert-NfcV4SemanticTransition -Before $semanticBefore -After $semanticAfter -ExactTrustJson $exactTrustFixture
+  Assert-Throws {
+    Assert-NfcV4SemanticTransition -Before $semanticBefore -After ($semanticAfter | Select-Object *, @{ Name = "drift"; Expression = { "forbidden" } }) -ExactTrustJson $exactTrustFixture
+  } "V4 semantic transition accepted an added property."
+  $semanticAfter.workstationToken = "drifted-token"
+  Assert-Throws {
+    Assert-NfcV4SemanticTransition -Before $semanticBefore -After $semanticAfter -ExactTrustJson $exactTrustFixture
+  } "V4 semantic transition accepted pre-existing property drift."
+  $semanticAfter.workstationToken = "preserved-token"
+
+  Assert-NfcExactKeyIdSet -Expected @(("a" * 64), ("b" * 64)) -Actual @(("b" * 64), ("a" * 64))
+  Assert-Throws { Assert-NfcExactKeyIdSet -Expected @(("a" * 64), ("b" * 64)) -Actual @(("a" * 64)) } "V4 trust accepted a missing key."
+  Assert-Throws { Assert-NfcExactKeyIdSet -Expected @(("a" * 64)) -Actual @(("a" * 64), ("c" * 64)) } "V4 trust accepted an extra key."
+
+  $transitionFixture = Join-Path $testRoot "helper-v3-fixture.json"
+  $v3Preimage = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v3","token":"exact"}')
+  $v4Bytes = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v4","token":"exact"}')
+  try {
+    [IO.File]::WriteAllBytes($transitionFixture, $v3Preimage)
+    $approvedPreimage = Get-NfcFileFingerprint -Path $transitionFixture
+    $proven = Invoke-NfcExactConfigFileTransition `
+      -Path $transitionFixture `
+      -ExpectedPreimageSha256 $approvedPreimage `
+      -Mutate { [IO.File]::WriteAllBytes($transitionFixture, $v4Bytes) } `
+      -Validate { if ((Get-NfcFileFingerprint -Path $transitionFixture) -eq $approvedPreimage) { throw "mutation missing" } }
+    Assert-True ($proven -ceq $approvedPreimage) "Successful V4 transition did not return its proven prior hash."
+    $mutationRan = $false
+    Assert-Throws {
+      Invoke-NfcExactConfigFileTransition `
+        -Path $transitionFixture `
+        -ExpectedPreimageSha256 ("0" * 64) `
+        -Mutate { $mutationRan = $true } `
+        -Validate { }
+    } "Wrong operator preimage hash was accepted."
+    Assert-True (-not $mutationRan) "Wrong preimage hash allowed config mutation."
+    [IO.File]::WriteAllBytes($transitionFixture, $v3Preimage)
+    try {
+      Invoke-NfcExactConfigFileTransition `
+        -Path $transitionFixture `
+        -ExpectedPreimageSha256 $approvedPreimage `
+        -Mutate { [IO.File]::WriteAllBytes($transitionFixture, $v4Bytes) } `
+        -Validate { throw "injected readiness failure" }
+      throw "Injected transition failure did not fail."
+    } catch {
+      Assert-True ($_.Exception.Message -match "exact prior preimage was restored") "Injected transition failure did not report exact rollback."
+    }
+    Assert-True ([Convert]::ToBase64String($v3Preimage) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($transitionFixture))) "Injected V4 failure did not restore byte-exact V3 preimage."
+  } finally {
+    [Array]::Clear($v3Preimage, 0, $v3Preimage.Length)
+    [Array]::Clear($v4Bytes, 0, $v4Bytes.Length)
+  }
+
   $keyNameVariable = "TENKINGS_NFC_WORKSTATION_KEY_NAME"
   $keyIdVariable = "TENKINGS_NFC_WORKSTATION_KEY_ID"
   $originalKeyName = [Environment]::GetEnvironmentVariable($keyNameVariable, [EnvironmentVariableTarget]::Process)
@@ -242,6 +308,7 @@ try {
   $uninstall = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\uninstall-ai-grader-nfc-helper.ps1") -Raw
   $resolveAbandoned = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\resolve-ai-grader-nfc-abandoned-job.ps1") -Raw
   $recoverStuck = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\recover-ai-grader-nfc-f8215-stuck-job.ps1") -Raw
+  $transitionV4 = Get-Content -LiteralPath (Join-Path $repoRoot "scripts\ai-grader-nfc\transition-ai-grader-nfc-v3-to-v4.ps1") -Raw
 
   # Execute only the exact launcher functions under synthetic Windows snapshots.
   # This avoids running the production entry point, task, helper, listener, or Chrome.
@@ -380,7 +447,16 @@ try {
   Assert-True ($install.IndexOf("CNG key, if created, was preserved", [StringComparison]::Ordinal) -ge 0) "Initial install can silently discard its named key identity."
   Assert-True ($install.IndexOf("`$script:NfcStableStartScript", [StringComparison]::Ordinal) -ge 0) "Scheduled Task does not use the stable installed launcher."
   Assert-True ($install.IndexOf("`$script:NfcStableOpenScript", [StringComparison]::Ordinal) -ge 0) "Shortcut does not use the stable installed launcher."
-  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v3"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
+  Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v4"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
+  Assert-True ($transitionV4.IndexOf('Assert-NfcNoActiveGoToTagsRecovery', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition does not require an idle protected operation directory."
+  Assert-True ($transitionV4.IndexOf('Invoke-NfcExactConfigFileTransition', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('[IO.File]::ReadAllBytes($Path)', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('[IO.File]::WriteAllBytes($Path, $preimage)', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition does not capture and restore the exact config preimage."
+  Assert-True ($transitionV4.IndexOf('productionPrivateKeyAccessed = $false', [StringComparison]::Ordinal) -ge 0 -and
+    $transitionV4.IndexOf('TENKINGS_NFC_WORKSTATION_KEY', [StringComparison]::Ordinal) -lt 0) "V3-to-V4 public-trust transition can rotate or import the workstation private key."
+  Assert-True ($transitionV4.IndexOf('ExpectedConfigSha256', [StringComparison]::Ordinal) -ge 0 -and
+    $transitionV4.IndexOf('Assert-NfcExactKeyIdSet', [StringComparison]::Ordinal) -ge 0 -and
+    $transitionV4.IndexOf('Assert-NfcV4SemanticTransition', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition is missing exact preimage, trust-set, or semantic-preservation proof."
   Assert-True ($install.IndexOf('attestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v1"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation schema."
   Assert-True ($install.IndexOf('multiProfileAttestationSchemaVersion -cne "ai-grader-nfc-helper-attestation-v2"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the multi-profile attestation schema."
   Assert-True ($install.IndexOf("attestationAlgorithm -cne `$script:NfcAttestationAlgorithm", [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the attestation algorithm."
@@ -467,6 +543,8 @@ try {
   Assert-True ($versionedResult.scenarios[0].prior -ceq $script:NfcHelperVersionV2 -and $versionedResult.scenarios[0].final -ceq $script:NfcHelperVersionV3) "Real v2-to-v3 replacement did not pass."
   Assert-True ([bool]$versionedResult.scenarios[1].rolledBack -and $versionedResult.scenarios[1].final -ceq $script:NfcHelperVersionV2) "Injected v3 activation failure did not restore exact v2."
   Assert-True ($versionedResult.scenarios[2].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[2].final -ceq $script:NfcHelperVersionV3) "Idempotent v3-to-v3 replacement did not pass."
+  Assert-True ($versionedResult.scenarios[3].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[3].final -ceq $script:NfcHelperVersionV4) "Real v3-to-v4 replacement did not pass."
+  Assert-True ([bool]$versionedResult.scenarios[4].rolledBack -and $versionedResult.scenarios[4].final -ceq $script:NfcHelperVersionV3) "Injected v4 activation failure did not restore exact v3."
 
   Write-Output "PASS NFC maintenance path/ACL containment, exact GoToTags template bytes, v2-to-v3 upgrade/rollback, quarantine recovery, HTTP.sys-aware stable launcher, preservation, and explicit-rotation contracts"
 } finally {

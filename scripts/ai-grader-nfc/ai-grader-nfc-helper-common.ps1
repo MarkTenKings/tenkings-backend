@@ -23,6 +23,7 @@ $script:NfcGoToTagsRoot = "C:\TenKings\config\ai-grader-nfc\gototags"
 $script:NfcGoToTagsJobRoot = "C:\TenKings\config\ai-grader-nfc\gototags\jobs"
 $script:NfcHelperVersionV2 = "tenkings-ai-grader-nfc-helper-v2"
 $script:NfcHelperVersionV3 = "tenkings-ai-grader-nfc-helper-v3"
+$script:NfcHelperVersionV4 = "tenkings-ai-grader-nfc-helper-v4"
 $script:NfcHelperProtocolVersion = "tenkings-ai-grader-nfc-loopback-v2"
 $script:NfcAttestationSchemaVersionV1 = "ai-grader-nfc-helper-attestation-v1"
 $script:NfcMultiProfileAttestationSchemaVersionV2 = "ai-grader-nfc-helper-attestation-v2"
@@ -32,7 +33,8 @@ function Assert-NfcHelperBuildVerificationResult {
     [Parameter(Mandatory = $true)]$Result,
     [Parameter(Mandatory = $true)][ValidateSet(
       "tenkings-ai-grader-nfc-helper-v2",
-      "tenkings-ai-grader-nfc-helper-v3"
+      "tenkings-ai-grader-nfc-helper-v3",
+      "tenkings-ai-grader-nfc-helper-v4"
     )][string[]]$AllowedHelperVersion
   )
   $helperVersion = [string]$Result.helperVersion
@@ -45,7 +47,7 @@ function Assert-NfcHelperBuildVerificationResult {
       [bool]$Result.productionKeyAccessed) {
     throw "The NFC helper build verification returned an incompatible or unsafe result."
   }
-  if ($helperVersion -ceq $script:NfcHelperVersionV3 -and
+  if ($helperVersion -in @($script:NfcHelperVersionV3, $script:NfcHelperVersionV4) -and
       [string]$Result.multiProfileAttestationSchemaVersion -cne $script:NfcMultiProfileAttestationSchemaVersionV2) {
     throw "The NFC helper v3 build is missing its required multi-profile attestation capability."
   }
@@ -57,7 +59,8 @@ function Invoke-NfcBuildVerification {
     [Parameter(Mandatory = $true)][string]$DllPath,
     [Parameter(Mandatory = $true)][ValidateSet(
       "tenkings-ai-grader-nfc-helper-v2",
-      "tenkings-ai-grader-nfc-helper-v3"
+      "tenkings-ai-grader-nfc-helper-v3",
+      "tenkings-ai-grader-nfc-helper-v4"
     )][string[]]$AllowedHelperVersion
   )
   $output = @(& dotnet $DllPath --verify-build)
@@ -171,6 +174,7 @@ function Copy-NfcStableMaintenancePayload {
       "start-ai-grader-nfc-helper.ps1",
       "status-ai-grader-nfc-helper.ps1",
       "stop-ai-grader-nfc-helper.ps1",
+      "transition-ai-grader-nfc-v3-to-v4.ps1",
       "uninstall-ai-grader-nfc-helper.ps1")) {
     $sourceFile = Join-Path $source $name
     if (-not (Test-Path -LiteralPath $sourceFile -PathType Leaf)) {
@@ -398,6 +402,52 @@ function Assert-NfcProtectedTree {
   }
 }
 
+function Assert-NfcV2ServerTrustJson {
+  param([Parameter(Mandatory = $true)][string]$Value)
+  if ([string]::IsNullOrWhiteSpace($Value) -or [Text.Encoding]::UTF8.GetByteCount($Value) -gt 4096) {
+    throw "The NFC V2 server trust is missing or outside its size bound."
+  }
+  try { $trust = $Value | ConvertFrom-Json } catch { throw "The NFC V2 server trust is invalid JSON." }
+  $rootProperties = @($trust.PSObject.Properties | ForEach-Object { $_.Name })
+  if ($rootProperties.Count -ne 2 -or
+      @($rootProperties | Where-Object { $_ -cnotin @("current", "prior") }).Count -ne 0 -or
+      $null -eq $trust.current) {
+    throw "The NFC V2 server trust must contain exactly current and prior."
+  }
+  $keyIds = @()
+  foreach ($entry in @($trust.current, $trust.prior)) {
+    if ($null -eq $entry) { continue }
+    $properties = @($entry.PSObject.Properties | ForEach-Object { $_.Name })
+    if ($properties.Count -ne 3 -or
+        @($properties | Where-Object { $_ -cnotin @("algorithm", "keyId", "publicSpkiDerBase64") }).Count -ne 0 -or
+        [string]$entry.algorithm -cne $script:NfcAttestationAlgorithm -or
+        [string]$entry.keyId -cnotmatch '^[a-f0-9]{64}$' -or
+        [string]$entry.publicSpkiDerBase64 -cnotmatch '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$') {
+      throw "The NFC V2 server trust contains an invalid key entry."
+    }
+    try { $spki = [Convert]::FromBase64String([string]$entry.publicSpkiDerBase64) } catch {
+      throw "The NFC V2 server trust contains invalid public-key bytes."
+    }
+    try {
+      if ($spki.Length -lt 64 -or $spki.Length -gt 512 -or
+          [Convert]::ToBase64String($spki) -cne [string]$entry.publicSpkiDerBase64) {
+        throw "The NFC V2 server trust contains non-canonical public-key bytes."
+      }
+      $sha = [Security.Cryptography.SHA256]::Create()
+      try { $actualKeyId = (($sha.ComputeHash($spki) | ForEach-Object { $_.ToString("x2") }) -join "") }
+      finally { $sha.Dispose() }
+      if ($actualKeyId -cne [string]$entry.keyId -or $keyIds -ccontains $actualKeyId) {
+        throw "The NFC V2 server trust key identity is invalid or duplicated."
+      }
+      $keyIds += $actualKeyId
+    } finally { [Array]::Clear($spki, 0, $spki.Length) }
+  }
+  if ($keyIds.Count -lt 1 -or $keyIds.Count -gt 2) {
+    throw "The NFC V2 server trust must contain one current and at most one prior key."
+  }
+  return $Value
+}
+
 function Read-NfcConfig {
   param(
     [string]$Path = $script:NfcConfigPath,
@@ -409,7 +459,7 @@ function Read-NfcConfig {
   Assert-NfcProtectedAcl -Path (Split-Path -Parent $Path)
   Assert-NfcProtectedAcl -Path $Path
   $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v1", "tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3") -or
+  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v1", "tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3", "tenkings-ai-grader-nfc-helper-config-v4") -or
       $config.host -ne "127.0.0.1" -or [int]$config.port -ne 47662 -or
       $config.allowedOrigin -ne $script:NfcAllowedOrigin) {
     throw "The NFC helper config failed its fixed loopback/origin validation."
@@ -432,7 +482,7 @@ function Read-NfcConfig {
        [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$')) {
     throw "The NFC helper config failed its workstation attestation-key validation."
   }
-  if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v3") {
+  if ($config.schemaVersion -in @("tenkings-ai-grader-nfc-helper-config-v3", "tenkings-ai-grader-nfc-helper-config-v4")) {
     if ($config.workstationKeyName -cne $script:NfcAttestationKeyName -or
         [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$' -or
         [string]$config.goToTagsExecutableSha256 -cne $script:NfcGoToTagsExecutableSha256 -or
@@ -459,13 +509,17 @@ function Read-NfcConfig {
         -AllowInheritedLeafFiles:$AllowInheritedGoToTagsLeafFiles
     }
   }
+  if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v4") {
+    Assert-NfcV2ServerTrustJson -Value ([string]$config.tenKingsV2ServerJobPublicKeysJson) | Out-Null
+  }
   return $config
 }
 
 function Save-NfcConfig {
   param(
     [Parameter(Mandatory = $true)]$Config,
-    [string]$Path = $script:NfcConfigPath
+    [string]$Path = $script:NfcConfigPath,
+    [switch]$PreserveUpdatedAt
   )
   $Path = (Assert-NfcProductionLayout -ConfigPath $Path).ConfigPath
   $directory = Split-Path -Parent $Path
@@ -473,7 +527,7 @@ function Save-NfcConfig {
     New-Item -ItemType Directory -Path $directory -Force | Out-Null
   }
   Protect-NfcPath -Path $directory -AllowedRoot $script:NfcConfigRoot
-  $Config.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+  if (-not $PreserveUpdatedAt) { $Config.updatedAt = (Get-Date).ToUniversalTime().ToString("o") }
   $Config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path -Encoding UTF8
   Protect-NfcPath -Path $Path -AllowedRoot $script:NfcConfigRoot
 }
@@ -539,7 +593,7 @@ function Initialize-NfcConfig {
       $config.schemaVersion = "tenkings-ai-grader-nfc-helper-config-v2"
     }
   }
-  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3") -or
+  if ($config.schemaVersion -notin @("tenkings-ai-grader-nfc-helper-config-v2", "tenkings-ai-grader-nfc-helper-config-v3", "tenkings-ai-grader-nfc-helper-config-v4") -or
       [string]$config.workstationKeyName -cne $script:NfcAttestationKeyName -or
       [string]$config.workstationKeyId -cnotmatch '^[a-f0-9]{64}$') {
     throw "Run the NFC helper installer to attach the existing named workstation attestation key."
@@ -576,6 +630,88 @@ function Set-NfcConfigProperty {
 function Get-NfcFileFingerprint {
   param([Parameter(Mandatory = $true)][string]$Path)
   return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Assert-NfcExactKeyIdSet {
+  param(
+    [Parameter(Mandatory = $true)][string[]]$Expected,
+    [Parameter(Mandatory = $true)][string[]]$Actual
+  )
+  $expectedSorted = @($Expected | Sort-Object -CaseSensitive -Unique)
+  $actualSorted = @($Actual | Sort-Object -CaseSensitive -Unique)
+  if ($expectedSorted.Count -ne $Expected.Count -or
+      $actualSorted.Count -ne $Actual.Count -or
+      $expectedSorted.Count -ne $actualSorted.Count -or
+      ($expectedSorted -join "`n") -cne ($actualSorted -join "`n")) {
+    throw "The NFC V2 trusted job-signing key set does not exactly match the staged trust."
+  }
+}
+
+function Assert-NfcV4SemanticTransition {
+  param(
+    [Parameter(Mandatory = $true)]$Before,
+    [Parameter(Mandatory = $true)]$After,
+    [Parameter(Mandatory = $true)][string]$ExactTrustJson
+  )
+  $beforeNames = @($Before.PSObject.Properties | ForEach-Object { $_.Name })
+  $afterNames = @($After.PSObject.Properties | ForEach-Object { $_.Name })
+  if ([string]$Before.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v3" -or
+      [string]$After.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v4" -or
+      [string]$After.tenKingsV2ServerJobPublicKeysJson -cne $ExactTrustJson -or
+      $afterNames.Count -ne $beforeNames.Count + 1 -or
+      @($beforeNames | Where-Object { $afterNames -cnotcontains $_ }).Count -ne 0 -or
+      $afterNames -cnotcontains "tenKingsV2ServerJobPublicKeysJson") {
+    throw "The NFC V4 config transition changed properties outside its exact contract."
+  }
+  foreach ($name in @($beforeNames | Where-Object { $_ -cne "schemaVersion" })) {
+    $beforeValue = $Before.$name | ConvertTo-Json -Compress -Depth 10
+    $afterValue = $After.$name | ConvertTo-Json -Compress -Depth 10
+    if ($beforeValue -cne $afterValue) {
+      throw "The NFC V4 config transition changed a pre-existing config value."
+    }
+  }
+}
+
+function Invoke-NfcExactConfigFileTransition {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedPreimageSha256,
+    [Parameter(Mandatory = $true)][scriptblock]$Mutate,
+    [Parameter(Mandatory = $true)][scriptblock]$Validate,
+    [scriptblock]$BeforeRollback,
+    [scriptblock]$ProtectRestored,
+    [scriptblock]$AfterRollback
+  )
+  $actualPreimageSha256 = Get-NfcFileFingerprint -Path $Path
+  if ($actualPreimageSha256 -cne $ExpectedPreimageSha256) {
+    throw "The protected NFC config does not match the operator-approved exact V3 preimage."
+  }
+  $preimage = [IO.File]::ReadAllBytes($Path)
+  if ($preimage.Length -le 0 -or $preimage.Length -gt 16384) {
+    [Array]::Clear($preimage, 0, $preimage.Length)
+    throw "The protected NFC config preimage is outside its reviewed size bound."
+  }
+  try {
+    & $Mutate | Out-Null
+    & $Validate | Out-Null
+    return $actualPreimageSha256
+  } catch {
+    $transitionFailure = $_
+    try {
+      if ($BeforeRollback) { & $BeforeRollback }
+      [IO.File]::WriteAllBytes($Path, $preimage)
+      if ($ProtectRestored) { & $ProtectRestored }
+      if ((Get-NfcFileFingerprint -Path $Path) -cne $actualPreimageSha256) {
+        throw "Exact config preimage restoration could not be proven."
+      }
+      if ($AfterRollback) { & $AfterRollback }
+    } catch {
+      throw "The NFC config transition failed and exact rollback could not be proven. $($_.Exception.Message)"
+    }
+    throw "The NFC config transition failed; the exact prior preimage was restored. $($transitionFailure.Exception.Message)"
+  } finally {
+    [Array]::Clear($preimage, 0, $preimage.Length)
+  }
 }
 
 function Assert-NfcF8215RecoveryAudit {

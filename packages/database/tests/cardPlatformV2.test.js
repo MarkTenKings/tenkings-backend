@@ -11,6 +11,7 @@ const {
   saveCompsSnapshot,
   confirmMarketValue,
   setCompsPublic,
+  markNfcVerified,
   resyncIdentityFromSpeedster,
   voidCard,
 } = require("../dist/database/src/cardPlatformV2");
@@ -143,6 +144,60 @@ test("V2 public card tokens use the permanent tk2c_ 192-bit URL-safe shape", () 
   const tokens = new Set(Array.from({ length: 100 }, generateCollectibleCardV2PublicToken));
   assert.equal(tokens.size, 100);
   for (const token of tokens) assert.match(token, /^tk2c_[A-Za-z0-9_-]{32}$/);
+});
+
+test("NFC verification is optional, token-bound, replay-safe, and writes only three informational facts", async () => {
+  const token = `tk2c_${"A".repeat(32)}`;
+  const transactionTime = new Date("2026-08-06T21:00:00.000Z");
+  const locked = {
+    id: "card-v2-1",
+    publicToken: token,
+    lifecycleState: "GRADED",
+    nfcVerifiedAt: null,
+    nfcVerifiedByAdminId: null,
+    nfcVerifiedByWorkstationId: null,
+    transactionTime,
+  };
+  const updates = [];
+  const tx = {
+    async $queryRaw() { return [locked]; },
+    collectibleCardV2: {
+      async update(input) {
+        updates.push(input);
+        return { ...locked, ...input.data };
+      },
+    },
+  };
+  const verification = {
+    publicToken: token,
+    jobIssuedAt: "2026-08-06T20:00:00.000Z",
+    workstationKeyId: "f".repeat(64),
+  };
+  const result = await markNfcVerified(tx, locked.id, verification, "admin-1");
+  assert.equal(result.outcome, "UPDATED");
+  assert.deepEqual(updates[0].data, {
+    nfcVerifiedAt: transactionTime,
+    nfcVerifiedByAdminId: "admin-1",
+    nfcVerifiedByWorkstationId: "f".repeat(64),
+  });
+  assert.equal("lifecycleState" in updates[0].data, false);
+
+  locked.nfcVerifiedAt = transactionTime;
+  locked.nfcVerifiedByAdminId = "admin-1";
+  locked.nfcVerifiedByWorkstationId = "f".repeat(64);
+  const replay = await markNfcVerified(tx, locked.id, verification, "admin-1");
+  assert.equal(replay.outcome, "NOOP_REPLAY_OR_STALE");
+  assert.equal(updates.length, 1);
+
+  await assert.rejects(
+    markNfcVerified(tx, locked.id, { ...verification, publicToken: `tk2c_${"B".repeat(32)}` }, "admin-1"),
+    /no longer matches/,
+  );
+  locked.lifecycleState = "VOID";
+  await assert.rejects(markNfcVerified(tx, locked.id, {
+    ...verification,
+    jobIssuedAt: "2026-08-06T22:00:00.000Z",
+  }, "admin-1"), /not found/);
 });
 
 test("Speedster completion creates one permanent card and one immutable HOUSE creation event", async () => {

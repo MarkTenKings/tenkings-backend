@@ -10,8 +10,93 @@ public sealed record GoToTagsTerminalResult(
     string ReadbackPayloadSha256,
     string CallbackBodySha256);
 
+public sealed record GoToTagsV2TerminalResult(string ReadbackPayloadSha256);
+
 public static partial class GoToTagsCallbackParser
 {
+    /// <summary>
+    /// V2 validates the transient callback UID shape only. It deliberately does
+    /// not compute, return, log, or persist a UID fingerprint.
+    /// </summary>
+    public static GoToTagsV2TerminalResult ParseV2(
+        ReadOnlyMemory<byte> body,
+        string expectedCorrelationId,
+        string expectedUrl)
+    {
+        if (body.Length is <= 0 or > NfcProtocol.MaxGoToTagsCallbackBytes)
+            throw Invalid("gototags_callback_size_invalid");
+        try
+        {
+            using var document = JsonDocument.Parse(body, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = false,
+                CommentHandling = JsonCommentHandling.Disallow,
+                MaxDepth = 32,
+            });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) throw Invalid("gototags_callback_invalid");
+            var encoding = Object(root, "encoding");
+            var encodingNdef = Object(encoding, "ndef");
+            var encodedRecord = OneRecord(encodingNdef);
+            var tag = Object(root, "tag");
+            var tagCc = Object(tag, "cc");
+            var tagNdef = Object(tag, "ndef");
+            var tagMessage = Object(tagNdef, "message");
+            var readbackRecord = OneRecord(tagMessage);
+            var client = Object(root, "client");
+            var reader = Object(root, "reader");
+
+            RequireExact(String(encoding, "correlationId"), expectedCorrelationId, "gototags_correlation_mismatch");
+            RequireExact(String(root, "status"), "VERIFIED", "gototags_terminal_status_missing");
+            RequireTrue(encoding, "lock", "gototags_lock_missing");
+            RequireTrue(encodingNdef, "lock", "gototags_lock_missing");
+            RequireExact(String(encodedRecord, "type"), "WEBSITE", "gototags_record_invalid");
+            RequireExact(String(encodedRecord, "url"), expectedUrl, "gototags_url_mismatch");
+            RequireExact(NormalizeApprovedAppVersion(String(client, "appVersion")), NfcProtocol.ApprovedGoToTagsVersion, "gototags_version_unapproved");
+            RequireExact(String(reader, "hardware"), "ACR1552U", "gototags_reader_mismatch");
+            var readerName = String(reader, "name");
+            if (!ReaderNamePattern().IsMatch(readerName) || readerName.Contains("ACR1252", StringComparison.OrdinalIgnoreCase))
+                throw Invalid("gototags_reader_connection_mismatch");
+            RequireExact(String(tag, "manufacturer"), "FEIJU", "gototags_chip_mismatch");
+            RequireExact(String(tag, "chipType"), "F8215", "gototags_chip_mismatch");
+            RequireExact(String(tag, "tagType"), "TYPE_2", "gototags_chip_mismatch");
+            RequireExact(String(tag, "tech"), "TYPE2", "gototags_chip_mismatch");
+            RequireExact(String(tag, "technology"), "NFC", "gototags_chip_mismatch");
+            RequireExact(String(tag, "format"), "NDEF", "gototags_ndef_invalid");
+            RequireExact(String(tagCc, "ndefVersion"), "V1_0", "gototags_ndef_invalid");
+            if (Integer(tagCc, "memorySize") != 496) throw Invalid("gototags_capacity_mismatch");
+            RequireTrue(tag, "locked", "gototags_lock_missing");
+            RequireTrue(tag, "lockedStatic", "gototags_lock_missing");
+            RequireExact(String(readbackRecord, "type"), "WEBSITE", "gototags_readback_invalid");
+            RequireExact(String(readbackRecord, "url"), expectedUrl, "gototags_readback_mismatch");
+
+            var rawUidText = String(tag, "uid");
+            if (!RawUidPattern().IsMatch(rawUidText)) throw Invalid("gototags_uid_missing");
+            byte[]? uidBytes = null;
+            var urlBytes = Encoding.UTF8.GetBytes(expectedUrl);
+            try
+            {
+                uidBytes = Convert.FromHexString(rawUidText);
+                return new GoToTagsV2TerminalResult(
+                    Convert.ToHexString(SHA256.HashData(urlBytes)).ToLowerInvariant());
+            }
+            finally
+            {
+                if (uidBytes is not null) CryptographicOperations.ZeroMemory(uidBytes);
+                CryptographicOperations.ZeroMemory(urlBytes);
+                rawUidText = string.Empty;
+            }
+        }
+        catch (NfcHelperException)
+        {
+            throw;
+        }
+        catch (Exception error) when (error is JsonException or InvalidOperationException or FormatException)
+        {
+            throw Invalid("gototags_callback_invalid");
+        }
+    }
+
     public static string SafeReportedAppVersion(ReadOnlyMemory<byte> body)
     {
         try

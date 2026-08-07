@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 
 const PUBLIC_TOKEN = /^tk2c_[A-Za-z0-9_-]{32}$/;
 const TOKEN_ATTEMPTS = 8;
@@ -764,4 +764,114 @@ export async function setCompsPublic(
     data: { compsPublic: isPublic },
     select: { id: true, compsPublic: true, updatedAt: true },
   });
+}
+
+const NFC_WORKSTATION_KEY_ID = /^[a-f0-9]{64}$/;
+const CANONICAL_UTC_MILLIS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+type NfcLockedCard = {
+  id: string;
+  publicToken: string;
+  lifecycleState: string;
+  nfcVerifiedAt: Date | null;
+  nfcVerifiedByAdminId: string | null;
+  nfcVerifiedByWorkstationId: string | null;
+  transactionTime: Date;
+};
+
+export type MarkNfcVerifiedResult = {
+  outcome: "UPDATED" | "NOOP_REPLAY_OR_STALE";
+  card: {
+    id: string;
+    publicToken: string;
+    lifecycleState: string;
+    nfcVerifiedAt: Date | null;
+    nfcVerifiedByAdminId: string | null;
+    nfcVerifiedByWorkstationId: string | null;
+  };
+};
+
+/**
+ * Persists only the three owner-approved, informational NFC facts. The row lock
+ * makes replacement and replay decisions deterministic without an attempt,
+ * audit, tag-history, or failed-tag table.
+ */
+export async function markNfcVerified(
+  tx: CardPlatformV2Transaction,
+  cardId: string,
+  verification: {
+    publicToken: string;
+    jobIssuedAt: string;
+    workstationKeyId: string;
+  },
+  adminId: string,
+): Promise<MarkNfcVerifiedResult> {
+  const normalizedCardId = requireAdminText(cardId, "Card identity");
+  const normalizedAdminId = requireAdminText(adminId, "Admin identity");
+  if (!PUBLIC_TOKEN.test(verification.publicToken)) {
+    throw new Error("NFC verification has an invalid permanent card token");
+  }
+  if (!NFC_WORKSTATION_KEY_ID.test(verification.workstationKeyId)) {
+    throw new Error("NFC verification has an invalid workstation identity");
+  }
+  if (!CANONICAL_UTC_MILLIS.test(verification.jobIssuedAt)) {
+    throw new Error("NFC verification has an invalid signed job time");
+  }
+  const issuedAt = new Date(verification.jobIssuedAt);
+  if (!Number.isFinite(issuedAt.getTime()) || issuedAt.toISOString() !== verification.jobIssuedAt) {
+    throw new Error("NFC verification has an invalid signed job time");
+  }
+
+  const rows = await tx.$queryRaw<NfcLockedCard[]>(Prisma.sql`
+    SELECT
+      "id",
+      "publicToken",
+      "lifecycleState"::text AS "lifecycleState",
+      "nfcVerifiedAt",
+      "nfcVerifiedByAdminId",
+      "nfcVerifiedByWorkstationId",
+      CURRENT_TIMESTAMP AS "transactionTime"
+    FROM "CollectibleCardV2"
+    WHERE "id" = ${normalizedCardId}
+    FOR UPDATE
+  `);
+  const locked = rows[0];
+  if (!locked || locked.lifecycleState === "VOID") {
+    throw new Error("Permanent Ten Kings V2 card was not found");
+  }
+  if (locked.publicToken !== verification.publicToken) {
+    throw new Error("NFC verification no longer matches the permanent card token");
+  }
+
+  if (locked.nfcVerifiedAt && issuedAt.getTime() <= locked.nfcVerifiedAt.getTime()) {
+    return {
+      outcome: "NOOP_REPLAY_OR_STALE",
+      card: {
+        id: locked.id,
+        publicToken: locked.publicToken,
+        lifecycleState: locked.lifecycleState,
+        nfcVerifiedAt: locked.nfcVerifiedAt,
+        nfcVerifiedByAdminId: locked.nfcVerifiedByAdminId,
+        nfcVerifiedByWorkstationId: locked.nfcVerifiedByWorkstationId,
+      },
+    };
+  }
+
+  const card = await tx.collectibleCardV2.update({
+    where: { id: locked.id },
+    data: {
+      nfcVerifiedAt: locked.transactionTime,
+      nfcVerifiedByAdminId: normalizedAdminId,
+      nfcVerifiedByWorkstationId: verification.workstationKeyId,
+    },
+    select: {
+      id: true,
+      publicToken: true,
+      lifecycleState: true,
+      nfcVerifiedAt: true,
+      nfcVerifiedByAdminId: true,
+      nfcVerifiedByWorkstationId: true,
+    },
+  });
+  return { outcome: "UPDATED", card };
 }

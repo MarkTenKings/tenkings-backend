@@ -30914,3 +30914,30 @@ By enabling Rip It Live, I confirm:
 - S1 remains a hard dependency before hosted NFC integration: `CollectibleCardV2`, `CardOwnershipEventV2`, `card-platform-v2`, permanent `tk2c_` token minting, and `/c/[token]` do not yet exist on the implementation base.
 - The Dell remains blocked by a preserved terminal F8215 job whose exact source/runtime state is contradictory in prior handoff evidence. Before any helper install, update, restart, acknowledgement, retry, or new physical job, Mark must separately approve a read-only exact-state preflight and the evidence must select the existing bounded resolver or a newly reviewed incident-bound resolver.
 - No database write, migration, deployment, Production configuration, secret/key provisioning, helper installation/restart, Dell action, GoToTags action, NFC read/write/lock, physical tag use, V1 mutation, or customer/runtime data change occurred.
+
+## 2026-08-07 - Ten Kings V2 NFC hosted/workstation foundation (hardware-free only)
+
+### Implemented scope
+
+- Added the optional NFC V2 hosted flow over the existing S1 permanent card: authenticated card lookup, server-derived signed ISSUE job, strict signed COMPLETE verification, and one row-locked writer that updates only `nfcVerifiedAt`, `nfcVerifiedByAdminId`, and `nfcVerifiedByWorkstationId`. No lifecycle or inventory gate was added.
+- Added the standalone `/admin/nfc` workstation-neutral admin screen and optional Speedster Finish link. The screen requires exact hosted/helper V4/capability/current-and-prior-signing-key-set readiness, stores only one bounded active browser operation, supports reload replay, and never claims NFC proves card, slab, chip, authenticity, or ownership.
+- Extended the existing loopback helper to V4 with a bounded current/prior server-job trust reader, shared V1/V2 operation gate, signed V2 prepare/status/success/discard routes, protected one-operation persistence, GoToTags F8215 exact URL/readback/permanent-lock verification, and a V2 callback DTO that validates the transient UID shape but never hashes, returns, logs, or persists UID authority.
+- Made success and discard cleanup crash-safe. Recovered `closing_success`, `closing_discard_failed`, and `closing_discard_uncertain` states retry only their matching idempotent acknowledgement. A lost success response reconciles only against authoritative `nfcVerifiedAt >= signed job.issuedAt`; a lost discard response reconciles only after the browser saved the exact human-acknowledged hash/nonce/phase fact.
+- Kept signed results replayable after arbitrary hosted receipt delay when their observed time was inside the signed job window. Hosted receipt validation rejects only excessive future skew; it does not add a new receipt-age limit.
+- Added a V3-compatible/V4-enabled configuration reader and a separate, unrun V3-to-V4 public-trust transition script. It requires the operator-approved exact V3 config SHA-256, proves exact current/prior key IDs and count, preserves every prior config value except schema while adding only the exact trust string, and restores the byte-exact V3 preimage plus readiness on any failed validation. Ordinary helper updates preserve config and workstation CNG identity; configuring GoToTags no longer downgrades V4.
+
+### Hardware-free validation evidence
+
+- `@tenkings/database` strict TypeScript build passed. Focused permanent-card/NFC writer tests passed `15/15`, including optional GRADED-card use, token binding, server transaction time, three-field-only writes, replay no-op, and VOID rejection.
+- Focused TypeScript NFC protocol/browser recovery tests passed `11/11`, including current/prior trust, two-signature exact binding, delayed hosted receipt, no UID authority, every recovered closing phase, authoritative success reconciliation, and discard response-loss reconciliation.
+- The hardware-free C# helper suite compiled and passed `22/22` test groups in the local `mcr.microsoft.com/dotnet/sdk:8.0` container with Windows targeting enabled. This includes the signed V2 protocol, protected coordinator lifecycle and closing recovery, strict GoToTags callback evidence with V2 UID exclusion, V1 recovery behavior, loopback HTTP boundaries, and static CNG/installer safety contracts.
+- Focused changed-file ESLint passed with zero findings.
+- After building the existing dependent workspaces, the optimized Next.js Production build passed all `74/74` static pages and emitted `/admin/nfc`, `/api/v2/admin/nfc/[...action]`, and `/c/[token]`. Output contained only existing unrelated warnings.
+- `git diff --check` passed.
+- The local Mac has no PowerShell runtime, so the expanded PowerShell transition/maintenance suites could not be executed here. Their source tests cover exact trust/config transition success, wrong-preimage rejection, property/key-set drift rejection, and byte-exact rollback. These remain required in the reviewed Windows/PowerShell test environment before any helper update.
+
+### Safety and remaining gates
+
+- No Production deployment, database migration, backfill, config transition, secret/key provisioning, helper install/update/restart, Dell access, GoToTags launch, NFC read/write/lock, physical tag use/discard, V1 mutation/quarantine resolution, customer data write, or external API call occurred.
+- The V3-to-V4 transition script was written and reviewed but not run. The Dell's preserved V1 terminal-job incident remains untouched and must be resolved through its separately approved exact-state procedure before any helper maintenance or new physical NFC operation.
+- Production environment values, current/prior public trust, workstation allowlist, Node 20 release rerun, complete Windows/PowerShell test pass, owner-approved deploy, and Dell commissioning remain open gates.

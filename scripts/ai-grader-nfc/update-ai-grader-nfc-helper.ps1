@@ -101,7 +101,7 @@ $liveDll = Join-Path $InstallDirectory "TenKings.AiGrader.NfcHelper.dll"
 if (-not (Test-Path -LiteralPath $liveDll -PathType Leaf)) { throw "The current NFC helper executable is missing." }
 $priorHelperVersion = Invoke-NfcBuildVerification `
   -DllPath $liveDll `
-  -AllowedHelperVersion @($script:NfcHelperVersionV2, $script:NfcHelperVersionV3)
+  -AllowedHelperVersion @($script:NfcHelperVersionV2, $script:NfcHelperVersionV3, $script:NfcHelperVersionV4)
 Assert-NfcInstalledKeyIdentity -DllPath $liveDll -Config $config
 
 $wasRunning = $task.State -eq "Running" -or @(Get-NfcHelperProcess -Config $config).Count -gt 0
@@ -127,7 +127,7 @@ try {
   Protect-NfcTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   Assert-NfcProtectedTree -Path $stagingDirectory -AllowedRoot $script:NfcToolsRoot
   $stagedDll = Join-Path $stagingDirectory "TenKings.AiGrader.NfcHelper.dll"
-  Invoke-NfcBuildVerification -DllPath $stagedDll -AllowedHelperVersion @($script:NfcHelperVersionV3) | Out-Null
+  Invoke-NfcBuildVerification -DllPath $stagedDll -AllowedHelperVersion @($script:NfcHelperVersionV4) | Out-Null
   Assert-NfcInstalledKeyIdentity -DllPath $stagedDll -Config $config
 
   # Everything above is hardware-free and completes before the working helper is stopped.
@@ -143,7 +143,7 @@ try {
       param($activatedInstall)
       Assert-NfcProtectedTree -Path $activatedInstall -AllowedRoot $script:NfcToolsRoot
       $activatedDll = Join-Path $activatedInstall "TenKings.AiGrader.NfcHelper.dll"
-      Invoke-NfcBuildVerification -DllPath $activatedDll -AllowedHelperVersion @($script:NfcHelperVersionV3) | Out-Null
+      Invoke-NfcBuildVerification -DllPath $activatedDll -AllowedHelperVersion @($script:NfcHelperVersionV4) | Out-Null
       Assert-NfcInstalledKeyIdentity -DllPath $activatedDll -Config $config
       Assert-NfcPreservedState -Expected $preserved -Config $config -ConfigPath $ConfigPath -TaskName $TaskName
       if ($wasRunning) {
@@ -180,7 +180,7 @@ try {
   [pscustomobject]@{
     ok = $true
     priorHelperVersion = $priorHelperVersion
-    helperVersion = $script:NfcHelperVersionV3
+    helperVersion = $script:NfcHelperVersionV4
     helperProtocolVersion = $script:NfcHelperProtocolVersion
     priorRunningStatePreserved = $true
     protectedConfigPreserved = $true

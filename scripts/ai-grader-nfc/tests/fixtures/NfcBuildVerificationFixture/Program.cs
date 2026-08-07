@@ -15,7 +15,7 @@ var result = new Dictionary<string, object?>
     ["hardwareAccessed"] = false,
     ["productionKeyAccessed"] = false,
 };
-if (version == "tenkings-ai-grader-nfc-helper-v3")
+if (version is "tenkings-ai-grader-nfc-helper-v3" or "tenkings-ai-grader-nfc-helper-v4")
     result["multiProfileAttestationSchemaVersion"] = "ai-grader-nfc-helper-attestation-v2";
 
 Console.WriteLine(JsonSerializer.Serialize(result));

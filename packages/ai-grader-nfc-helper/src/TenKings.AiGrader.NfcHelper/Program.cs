@@ -47,7 +47,17 @@ internal static class Program
                 operationGate,
                 options.Port,
                 logger);
-            await using var server = new NfcHttpServer(options, operations, logger, coordinator);
+            using var serverTrust = TenKingsV2ServerTrust.FromEnvironment();
+            var tenKingsV2 = new TenKingsV2NfcCoordinator(
+                GoToTagsAdapterOptions.FromEnvironment(),
+                new WindowsGoToTagsAdapterRuntime(),
+                new GoToTagsOperationFactory(),
+                signer,
+                operationGate,
+                serverTrust,
+                options.Port,
+                logger);
+            await using var server = new NfcHttpServer(options, operations, logger, coordinator, tenKingsV2);
             using var shutdown = new CancellationTokenSource();
             Console.CancelKeyPress += (_, eventArgs) =>
             {
