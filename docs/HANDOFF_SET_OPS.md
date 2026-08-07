@@ -1,5 +1,13 @@
 # Set Ops Handoff (Living)
 
+## Approved Ten Kings V2 Blueprint Authority (2026-08-06)
+
+- Mark approved `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md` as the canonical product and architecture planning authority for the future Ten Kings V2 card platform.
+- `AGENTS.md` now requires every Codex agent to read the complete blueprint before beginning work.
+- The blueprint is not duplicated here. This handoff carries only the canonical pointer so corrections cannot drift between copies.
+- The blueprint governs approved future intent; current code/runtime/DB evidence still governs what is implemented or deployed today.
+- Speedster remains first. No later V2 phase, migration, deployment, V1 freeze, or cutover is authorized merely because the blueprint is approved.
+
 ## Session Update (2026-07-18, AI Grader Mathematical Calibration V1 implementation candidate)
 
 - Isolated branch/worktree: `feature/ai-grader-mathematical-calibration-v1` from exact protected base `4b48a386e79718ac4e1d88e431d29304b7d7a685`; the original dirty checkout and PR #97 remain untouched.

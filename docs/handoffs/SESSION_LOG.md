@@ -30695,3 +30695,18 @@ By enabling Rip It Live, I confirm:
 - Authorized release plan: incorporate the independent code, UX/test, and deployment audits; commit and push only this batch-selection/removal scope plus append-only evidence; open one reviewable PR; require the ordinary exact-head GitHub/Vercel checks; merge without admin bypass; require the exact Vercel Production deployment with `RUN_DB_MIGRATIONS` unset/false; and verify `collect.tenkings.co/admin/ai-grader-v2` plus the existing unauthenticated review-action boundary before inviting Mark to test.
 - This is a Next.js reviewer/server-route change only. No RunPod build, image, worker, endpoint, model, detector, SAM prompt, Memory threshold, database/schema migration, data cleanup, historical report recomputation, scoring change, Centering/miscut work, queue, fallback, new screen, or Production data mutation is part of this release.
 - Pull request `#301` opened at exact code head `cf08475e17e87aeb818bc1315faec628133e68fd`; its Vercel Preview and Preview Comments passed, while no GitHub Actions run was created. GitHub Status simultaneously reported an active major Actions outage and stated that pull-request/push webhook triggers were throttled to about `15%`. Before any merge or Production action, this append-only observation is being pushed as one fresh `synchronize` event; the reviewed code and local validation evidence remain unchanged.
+
+## 2026-08-06 - Ten Kings V2 final master blueprint owner-approved
+
+### Summary
+
+- Mark approved `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md` as the canonical product and architecture planning authority for the future Ten Kings V2 card platform.
+- The canonical blueprint includes the approved 2026-08-06 correction memo: NFC and comps are optional per card, DIRECT does not require comps or market value, buyback is 80% of market value in TKD, and the minimal VOID, identity re-sync, catalog, pack, shipment, and public-comps rules are incorporated.
+- `AGENTS.md` now makes the complete blueprint mandatory session-start reading for every Codex agent.
+- `docs/context/MASTER_PRODUCT_CONTEXT.md` and `docs/HANDOFF_SET_OPS.md` carry short canonical pointers and clearly distinguish approved future V2 intent from currently implemented/deployed evidence.
+- The full blueprint is intentionally not copied into handoff files, preventing multiple editable versions from drifting.
+
+### Scope and safety
+
+- This approval makes the blueprint the planning authority; it does not authorize implementation, deployment, migration, V1 freeze, cutover, or a later phase outside its explicit gates.
+- No application code, database, migration, deployment, restart, Production configuration, runtime data, grading result, or customer record changed.

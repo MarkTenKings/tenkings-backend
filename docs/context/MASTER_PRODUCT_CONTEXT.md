@@ -1,7 +1,9 @@
 # Ten Kings Master Product Context
 
-last_verified_at: 2026-07-23
+last_verified_at: 2026-08-06
 verified_by: Codex from protected-main evidence, the Mathematical Calibration V1 implementation/offline validation branch, protected PRs #106-#107 one-road Rapid/OCR and launcher corrections through d75998837f5e9d6fb994f5efa09decc5ef03035d, the reviewed incident-bound product-owner operational-acceptance contract through f25a197d55f45f2a44c8bca1d303da437e717910, and Mark's 2026-07-23 public-report presentation decision
+v2_blueprint_approved_at: 2026-08-06
+v2_blueprint_approved_by: Mark Thomas
 repo_root_workstation: C:\TenKings\repos\tenkings-rip-it-live
 repo_root_droplet: /root/tenkings-backend
 default_branch: main
@@ -20,6 +22,16 @@ When there is a conflict, use this order:
 4. Docs
 
 If docs conflict with evidence, update docs in the same session.
+
+## Approved Ten Kings V2 Planning Authority
+
+- Canonical document: `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md`
+- Mark approved this final product and architecture blueprint on 2026-08-06.
+- Every Codex agent must read it in full at session start as required by `AGENTS.md`.
+- It governs future V2 product and architecture decisions, including Speedster's permanent-card foundation and the later inventory, packs, DIRECT, ownership, buyback, shipping, and V1-freeze phases.
+- Speedster remains the immediate execution priority, and the blueprint's phase and owner-approval gates remain binding.
+- This blueprint describes approved future intent. Code, runtime, and database evidence remain authoritative for which portions are currently implemented or deployed.
+- Do not duplicate the full blueprint into context or handoff files; link to the canonical document so there is only one editable copy.
 
 ## Product Summary
 Ten Kings is a hybrid physical-digital collectibles platform with:
