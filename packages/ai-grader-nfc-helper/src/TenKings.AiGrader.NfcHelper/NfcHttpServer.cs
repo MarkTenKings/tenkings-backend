@@ -218,7 +218,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
                 case "/v2/prepare":
                     RequireMethod(context.Request, "POST");
                     RequireToken(context.Request);
-                    var v2Prepare = await ReadJsonAsync(context.Request, NfcJsonContext.Default.TenKingsV2NfcPrepareRequest, timeout.Token);
+                    var v2Prepare = await ReadTenKingsV2PrepareJsonAsync(context.Request, timeout.Token);
                     var v2PrepareResult = RequireTenKingsV2().Prepare(v2Prepare, requestId);
                     await WriteSuccessAsync(context.Response, v2PrepareResult, NfcJsonContext.Default.ApiEnvelopeTenKingsV2NfcOperationResponse, timeout.Token);
                     break;
@@ -304,6 +304,7 @@ public sealed class NfcHttpServer : IAsyncDisposable
             TenKingsV2NfcEnabled = _tenKingsV2?.Available == true,
             TenKingsV2NfcCapability = _tenKingsV2?.Available == true ? TenKingsV2NfcProtocol.HelperCapability : null,
             TenKingsV2TrustedJobSigningKeyIds = _tenKingsV2?.TrustedJobSigningKeyIds,
+            TenKingsV2WorkstationKeyId = _tenKingsV2?.Available == true ? _tenKingsV2.WorkstationKeyId : null,
         };
     }
 
@@ -505,6 +506,62 @@ public sealed class NfcHttpServer : IAsyncDisposable
         body.Position = 0;
         return await JsonSerializer.DeserializeAsync(body, typeInfo, cancellationToken)
             ?? throw new NfcHelperException("invalid_json", "The NFC helper request JSON is invalid.", false, 400);
+    }
+
+    private static async Task<TenKingsV2NfcPrepareRequest> ReadTenKingsV2PrepareJsonAsync(
+        HttpListenerRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(request.ContentType?.Split(';', 2)[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase))
+            throw new NfcHelperException("content_type_required", "The NFC helper accepts application/json only.", false, 415);
+        if (request.ContentLength64 > NfcProtocol.MaxJsonBytes)
+            throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+        using var body = new MemoryStream();
+        var buffer = new byte[4096];
+        try
+        {
+            while (true)
+            {
+                var read = await request.InputStream.ReadAsync(buffer, cancellationToken);
+                if (read == 0) break;
+                if (body.Length + read > NfcProtocol.MaxJsonBytes)
+                    throw new NfcHelperException("body_too_large", "The NFC helper request body is too large.", false, 413);
+                body.Write(buffer, 0, read);
+            }
+            if (body.Length == 0)
+                throw new NfcHelperException("body_required", "The NFC helper request body is required.", false, 400);
+            var bytes = body.ToArray();
+            try
+            {
+                using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions
+                {
+                    AllowTrailingCommas = false,
+                    CommentHandling = JsonCommentHandling.Disallow,
+                    MaxDepth = 6,
+                });
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw new JsonException();
+                var seenJob = false;
+                JsonElement jobElement = default;
+                foreach (var property in root.EnumerateObject())
+                {
+                    if (property.Name != "job" || seenJob || property.Value.ValueKind != JsonValueKind.Object)
+                        throw new JsonException();
+                    seenJob = true;
+                    jobElement = property.Value;
+                }
+                if (!seenJob) throw new JsonException();
+                var jobBytes = Encoding.UTF8.GetBytes(jobElement.GetRawText());
+                try
+                {
+                    return new TenKingsV2NfcPrepareRequest(TenKingsV2NfcProtocol.ParseSignedJobJson(jobBytes));
+                }
+                finally { CryptographicOperations.ZeroMemory(jobBytes); }
+            }
+            finally { CryptographicOperations.ZeroMemory(bytes); }
+        }
+        finally { CryptographicOperations.ZeroMemory(buffer); }
     }
 
     private static async Task WriteSuccessAsync<T>(

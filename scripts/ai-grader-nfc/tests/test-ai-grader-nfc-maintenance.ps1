@@ -27,6 +27,7 @@ try {
 
   $semanticBefore = [pscustomobject]@{
     schemaVersion = "tenkings-ai-grader-nfc-helper-config-v3"
+    programmingUrl = "https://collect.tenkings.co/ai-grader/nfc"
     updatedAt = "2026-08-06T20:00:00.000Z"
     workstationToken = "preserved-token"
     nested = [pscustomobject]@{ enabled = $true }
@@ -34,6 +35,7 @@ try {
   $exactTrustFixture = '{"current":{"algorithm":"ecdsa-p256-sha256-p1363","keyId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","publicSpkiDerBase64":"fixture"},"prior":null}'
   $semanticAfter = [pscustomobject]@{
     schemaVersion = "tenkings-ai-grader-nfc-helper-config-v4"
+    programmingUrl = "https://collect.tenkings.co/admin/nfc"
     updatedAt = "2026-08-06T20:00:00.000Z"
     workstationToken = "preserved-token"
     nested = [pscustomobject]@{ enabled = $true }
@@ -48,44 +50,189 @@ try {
     Assert-NfcV4SemanticTransition -Before $semanticBefore -After $semanticAfter -ExactTrustJson $exactTrustFixture
   } "V4 semantic transition accepted pre-existing property drift."
   $semanticAfter.workstationToken = "preserved-token"
+  $semanticAfter.programmingUrl = "https://collect.tenkings.co/ai-grader/nfc"
+  Assert-Throws {
+    Assert-NfcV4SemanticTransition -Before $semanticBefore -After $semanticAfter -ExactTrustJson $exactTrustFixture
+  } "V4 semantic transition accepted the legacy V3 programming URL."
+  $semanticAfter.programmingUrl = "https://collect.tenkings.co/admin/nfc"
 
   Assert-NfcExactKeyIdSet -Expected @(("a" * 64), ("b" * 64)) -Actual @(("b" * 64), ("a" * 64))
   Assert-Throws { Assert-NfcExactKeyIdSet -Expected @(("a" * 64), ("b" * 64)) -Actual @(("a" * 64)) } "V4 trust accepted a missing key."
   Assert-Throws { Assert-NfcExactKeyIdSet -Expected @(("a" * 64)) -Actual @(("a" * 64), ("c" * 64)) } "V4 trust accepted an extra key."
 
   $transitionFixture = Join-Path $testRoot "helper-v3-fixture.json"
-  $v3Preimage = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v3","token":"exact"}')
-  $v4Bytes = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v4","token":"exact"}')
+  $transitionJournal = Join-Path $testRoot "v3-to-v4-transition-journal.json"
+  $v3Preimage = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v3","programmingUrl":"https://collect.tenkings.co/ai-grader/nfc","token":"exact"}')
+  $v4Bytes = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"tenkings-ai-grader-nfc-helper-config-v4","programmingUrl":"https://collect.tenkings.co/admin/nfc","token":"exact"}')
+  $transitionKeyId = "a" * 64
   try {
     [IO.File]::WriteAllBytes($transitionFixture, $v3Preimage)
+    Protect-NfcPath -Path $testRoot -AllowedRoot $testRoot
+    Protect-NfcPath -Path $transitionFixture -AllowedRoot $testRoot
     $approvedPreimage = Get-NfcFileFingerprint -Path $transitionFixture
-    $proven = Invoke-NfcExactConfigFileTransition `
+    $approvedAcl = Get-NfcAclFingerprint -Path $transitionFixture
+
+    # Synthetic process kill immediately after the durable journal was moved
+    # into place, before config mutation. Entry recovery must restore/prove V3.
+    $journal = New-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -V4ConfigBytes $v4Bytes `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId)
+    Assert-True ((Test-Path -LiteralPath $transitionJournal -PathType Leaf) -and
+      [string]$journal.v3ConfigSha256 -ceq $approvedPreimage -and
+      [string]$journal.v3ConfigAclSha256 -ceq $approvedAcl) "Durable transition journal did not bind exact V3 bytes/hash/ACL identity."
+    $v3ValidationEvents = New-Object Collections.ArrayList
+    $preMutationOutcome = Resolve-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId) `
+      -ValidateV4 { throw "V4 cannot be complete before config mutation" } `
+      -StopBeforeRestore { } `
+      -ValidateRestoredV3 { [void]$v3ValidationEvents.Add("ready") }
+    Assert-True ($preMutationOutcome -ceq "restored_v3" -and $v3ValidationEvents.Count -eq 1) "Post-journal/pre-mutation kill did not prove restored V3 readiness."
+    Assert-True (-not (Test-Path -LiteralPath $transitionJournal) -and
+      (Get-NfcFileFingerprint -Path $transitionFixture) -ceq $approvedPreimage -and
+      (Get-NfcAclFingerprint -Path $transitionFixture) -ceq $approvedAcl) "Pre-mutation recovery removed its journal without byte-exact V3 and ACL proof."
+
+    # Synthetic process kill after the atomic V4 replace but before the caller
+    # could record readiness. Entry recovery may complete only after V4 proof.
+    $journal = New-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -V4ConfigBytes $v4Bytes `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId)
+    Set-NfcProtectedFileBytesAtomic `
       -Path $transitionFixture `
-      -ExpectedPreimageSha256 $approvedPreimage `
-      -Mutate { [IO.File]::WriteAllBytes($transitionFixture, $v4Bytes) } `
-      -Validate { if ((Get-NfcFileFingerprint -Path $transitionFixture) -eq $approvedPreimage) { throw "mutation missing" } }
-    Assert-True ($proven -ceq $approvedPreimage) "Successful V4 transition did not return its proven prior hash."
+      -AllowedRoot $testRoot `
+      -Bytes $v4Bytes `
+      -ExactAclSddl ([string]$journal.v3ConfigAclSddl) `
+      -ExpectedSha256 ([string]$journal.v4ConfigSha256)
+    $v4ValidationEvents = New-Object Collections.ArrayList
+    $postMutationOutcome = Resolve-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId) `
+      -ValidateV4 { [void]$v4ValidationEvents.Add("ready") } `
+      -StopBeforeRestore { throw "Successful V4 recovery cannot roll back" } `
+      -ValidateRestoredV3 { throw "Successful V4 recovery cannot validate V3" }
+    Assert-True ($postMutationOutcome -ceq "completed_v4" -and $v4ValidationEvents.Count -eq 1 -and
+      -not (Test-Path -LiteralPath $transitionJournal)) "Post-mutation kill did not prove completed V4 before journal removal."
+
+    # Synthetic process kill with V4 readiness failure must restore exact V3.
+    Set-NfcProtectedFileBytesAtomic `
+      -Path $transitionFixture `
+      -AllowedRoot $testRoot `
+      -Bytes $v3Preimage `
+      -ExactAclSddl ([string]$journal.v3ConfigAclSddl) `
+      -ExpectedSha256 $approvedPreimage
+    $journal = New-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -V4ConfigBytes $v4Bytes `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId)
+    Set-NfcProtectedFileBytesAtomic `
+      -Path $transitionFixture `
+      -AllowedRoot $testRoot `
+      -Bytes $v4Bytes `
+      -ExactAclSddl ([string]$journal.v3ConfigAclSddl) `
+      -ExpectedSha256 ([string]$journal.v4ConfigSha256)
+    $rollbackOutcome = Resolve-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId) `
+      -ValidateV4 { throw "synthetic killed V4 readiness" } `
+      -StopBeforeRestore { } `
+      -ValidateRestoredV3 { }
+    Assert-True ($rollbackOutcome -ceq "restored_v3" -and
+      (Get-NfcFileFingerprint -Path $transitionFixture) -ceq $approvedPreimage -and
+      (Get-NfcAclFingerprint -Path $transitionFixture) -ceq $approvedAcl -and
+      -not (Test-Path -LiteralPath $transitionJournal)) "Killed V4 readiness did not restore exact V3 bytes and ACL before journal removal."
+
+    # A failed restored-V3 readiness proof must leave the journal for retry.
+    $journal = New-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -V4ConfigBytes $v4Bytes `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId)
+    Assert-Throws {
+      Resolve-NfcV3ToV4TransitionJournal `
+        -ConfigPath $transitionFixture `
+        -JournalPath $transitionJournal `
+        -AllowedRoot $testRoot `
+        -ExpectedV3Sha256 $approvedPreimage `
+        -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+        -ExpectedTrustedJobSigningKeyIds @($transitionKeyId) `
+        -ValidateV4 { throw "not V4" } `
+        -StopBeforeRestore { } `
+        -ValidateRestoredV3 { throw "synthetic restored V3 readiness failure" }
+    } "Failed restored-V3 readiness proof was accepted."
+    Assert-True (Test-Path -LiteralPath $transitionJournal -PathType Leaf) "Transition journal was removed before restored V3 readiness proof."
+    $retryOutcome = Resolve-NfcV3ToV4TransitionJournal `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+      -ExpectedTrustedJobSigningKeyIds @($transitionKeyId) `
+      -ValidateV4 { throw "not V4" } `
+      -StopBeforeRestore { } `
+      -ValidateRestoredV3 { }
+    Assert-True ($retryOutcome -ceq "restored_v3" -and -not (Test-Path -LiteralPath $transitionJournal)) "Retry did not remove journal after restored V3 readiness proof."
+
+    # Synthetic kill while the create-new journal staging file is partial.
+    $journalStaging = "$transitionJournal.staging"
+    $partialJournal = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":"partial"')
+    try {
+      Write-NfcDurableCreateNewFile -Path $journalStaging -Bytes $partialJournal
+      Protect-NfcPath -Path $journalStaging -AllowedRoot $testRoot
+    } finally {
+      [Array]::Clear($partialJournal, 0, $partialJournal.Length)
+    }
+    $stagingProofEvents = New-Object Collections.ArrayList
+    $stagingOutcome = Resolve-NfcV3ToV4TransitionStagingArtifact `
+      -ConfigPath $transitionFixture `
+      -JournalPath $transitionJournal `
+      -AllowedRoot $testRoot `
+      -ExpectedV3Sha256 $approvedPreimage `
+      -ValidateV3 { [void]$stagingProofEvents.Add("ready") }
+    Assert-True ($stagingOutcome -ceq "discarded_after_v3_proof" -and $stagingProofEvents.Count -eq 1 -and
+      -not (Test-Path -LiteralPath $journalStaging)) "Partial create-new staging recovery did not require exact V3 proof before cleanup."
+
     $mutationRan = $false
     Assert-Throws {
-      Invoke-NfcExactConfigFileTransition `
-        -Path $transitionFixture `
-        -ExpectedPreimageSha256 ("0" * 64) `
-        -Mutate { $mutationRan = $true } `
-        -Validate { }
+      New-NfcV3ToV4TransitionJournal `
+        -ConfigPath $transitionFixture `
+        -JournalPath $transitionJournal `
+        -AllowedRoot $testRoot `
+        -ExpectedV3Sha256 ("0" * 64) `
+        -V4ConfigBytes $v4Bytes `
+        -ExpectedCurrentJobSigningKeyId $transitionKeyId `
+        -ExpectedTrustedJobSigningKeyIds @($transitionKeyId)
+      $mutationRan = $true
     } "Wrong operator preimage hash was accepted."
-    Assert-True (-not $mutationRan) "Wrong preimage hash allowed config mutation."
-    [IO.File]::WriteAllBytes($transitionFixture, $v3Preimage)
-    try {
-      Invoke-NfcExactConfigFileTransition `
-        -Path $transitionFixture `
-        -ExpectedPreimageSha256 $approvedPreimage `
-        -Mutate { [IO.File]::WriteAllBytes($transitionFixture, $v4Bytes) } `
-        -Validate { throw "injected readiness failure" }
-      throw "Injected transition failure did not fail."
-    } catch {
-      Assert-True ($_.Exception.Message -match "exact prior preimage was restored") "Injected transition failure did not report exact rollback."
-    }
-    Assert-True ([Convert]::ToBase64String($v3Preimage) -ceq [Convert]::ToBase64String([IO.File]::ReadAllBytes($transitionFixture))) "Injected V4 failure did not restore byte-exact V3 preimage."
+    Assert-True (-not $mutationRan -and -not (Test-Path -LiteralPath $transitionJournal)) "Wrong preimage hash allowed journal creation or config mutation."
   } finally {
     [Array]::Clear($v3Preimage, 0, $v3Preimage.Length)
     [Array]::Clear($v4Bytes, 0, $v4Bytes.Length)
@@ -449,9 +596,23 @@ try {
   Assert-True ($install.IndexOf("`$script:NfcStableOpenScript", [StringComparison]::Ordinal) -ge 0) "Shortcut does not use the stable installed launcher."
   Assert-True ($install.IndexOf('helperVersion -cne "tenkings-ai-grader-nfc-helper-v4"', [StringComparison]::Ordinal) -ge 0) "Initial install does not pin the helper version."
   Assert-True ($transitionV4.IndexOf('Assert-NfcNoActiveGoToTagsRecovery', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition does not require an idle protected operation directory."
-  Assert-True ($transitionV4.IndexOf('Invoke-NfcExactConfigFileTransition', [StringComparison]::Ordinal) -ge 0 -and
-    $common.IndexOf('[IO.File]::ReadAllBytes($Path)', [StringComparison]::Ordinal) -ge 0 -and
-    $common.IndexOf('[IO.File]::WriteAllBytes($Path, $preimage)', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition does not capture and restore the exact config preimage."
+  Assert-True ($transitionV4.IndexOf('New-NfcV3ToV4TransitionJournal', [StringComparison]::Ordinal) -ge 0 -and
+    $transitionV4.IndexOf('Resolve-NfcV3ToV4TransitionJournal', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('tenkings-ai-grader-nfc-v3-to-v4-transition-journal-v1', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('v3ConfigBytesBase64', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('v3ConfigSha256', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('v3ConfigAclSddl', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('[IO.File]::Replace($temporaryPath, $Path, $null, $true)', [StringComparison]::Ordinal) -ge 0) "V3-to-V4 transition lacks its bounded protected journal or atomic exact config replacement."
+  Assert-True ($common.IndexOf('$script:NfcProgrammingUrlV3 = "https://collect.tenkings.co/ai-grader/nfc"', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('$script:NfcProgrammingUrlV4 = "https://collect.tenkings.co/admin/nfc"', [StringComparison]::Ordinal) -ge 0 -and
+    $common.IndexOf('programmingUrl = $script:NfcProgrammingUrlV3', [StringComparison]::Ordinal) -ge 0 -and
+    $transitionV4.IndexOf('$v4Config.programmingUrl = $script:NfcProgrammingUrlV4', [StringComparison]::Ordinal) -ge 0 -and
+    $open.IndexOf('$config.programmingUrl', [StringComparison]::Ordinal) -ge 0) "V3 legacy and V4 canonical programming launch URLs are not exactly separated."
+  $journalDeleteIndex = $common.IndexOf('[IO.File]::Delete($JournalPath)', [StringComparison]::Ordinal)
+  $v4ProofIndex = $common.IndexOf('& $ValidateV4 | Out-Null', [StringComparison]::Ordinal)
+  $v3ProofIndex = $common.LastIndexOf('& $ValidateRestoredV3 | Out-Null', [StringComparison]::Ordinal)
+  Assert-True ($journalDeleteIndex -gt $v4ProofIndex -and
+    $common.LastIndexOf('[IO.File]::Delete($JournalPath)', [StringComparison]::Ordinal) -gt $v3ProofIndex) "Transition journal can be removed before completed V4 or restored V3 readiness proof."
   Assert-True ($transitionV4.IndexOf('productionPrivateKeyAccessed = $false', [StringComparison]::Ordinal) -ge 0 -and
     $transitionV4.IndexOf('TENKINGS_NFC_WORKSTATION_KEY', [StringComparison]::Ordinal) -lt 0) "V3-to-V4 public-trust transition can rotate or import the workstation private key."
   Assert-True ($transitionV4.IndexOf('ExpectedConfigSha256', [StringComparison]::Ordinal) -ge 0 -and
@@ -539,7 +700,7 @@ try {
 
   $versionedResult = (& (Join-Path $PSScriptRoot "test-ai-grader-nfc-versioned-update.ps1") | Out-String) | ConvertFrom-Json
   Assert-True ([bool]$versionedResult.ok -and [bool]$versionedResult.filesystemReplacementExecuted) "Versioned update did not execute real filesystem replacement."
-  Assert-True ($versionedResult.scenarios.Count -eq 3) "Versioned update did not cover all required upgrade/rollback paths."
+  Assert-True ($versionedResult.scenarios.Count -eq 5) "Versioned update did not cover all five required upgrade/rollback paths."
   Assert-True ($versionedResult.scenarios[0].prior -ceq $script:NfcHelperVersionV2 -and $versionedResult.scenarios[0].final -ceq $script:NfcHelperVersionV3) "Real v2-to-v3 replacement did not pass."
   Assert-True ([bool]$versionedResult.scenarios[1].rolledBack -and $versionedResult.scenarios[1].final -ceq $script:NfcHelperVersionV2) "Injected v3 activation failure did not restore exact v2."
   Assert-True ($versionedResult.scenarios[2].prior -ceq $script:NfcHelperVersionV3 -and $versionedResult.scenarios[2].final -ceq $script:NfcHelperVersionV3) "Idempotent v3-to-v3 replacement did not pass."

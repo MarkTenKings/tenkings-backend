@@ -56,7 +56,8 @@ public sealed record HelperStatusResponse(
     string HelperVersion = NfcProtocol.HelperVersion,
     bool TenKingsV2NfcEnabled = false,
     string? TenKingsV2NfcCapability = null,
-    IReadOnlyList<string>? TenKingsV2TrustedJobSigningKeyIds = null);
+    IReadOnlyList<string>? TenKingsV2TrustedJobSigningKeyIds = null,
+    string? TenKingsV2WorkstationKeyId = null);
 
 public sealed record SupportedNfcProfile(
     string ChipType,

@@ -72,6 +72,7 @@ public sealed partial class TenKingsV2NfcCoordinator
     public bool Available => _serverTrust.Enabled && _options.IsConfigured;
     public bool HasActiveOperation { get { lock (_sync) return _operation is not null; } }
     public IReadOnlyList<string> TrustedJobSigningKeyIds => _serverTrust.KeyIds;
+    public string WorkstationKeyId => _signer.WorkstationKeyId;
 
     public TenKingsV2NfcOperationResponse Prepare(TenKingsV2NfcPrepareRequest request, string requestId)
     {
@@ -182,9 +183,16 @@ public sealed partial class TenKingsV2NfcCoordinator
         lock (_sync)
         {
             var operation = RequireMatching(request.JobEnvelopeSha256);
-            if (operation.Phase != "completed" && !(operation.Phase == "closing" && operation.TerminalResult is not null))
+            if (operation.Phase != "completed" &&
+                !(operation.Phase == "closing" && operation.TerminalResult is not null && operation.ErrorCode is null))
                 throw Error("v2_nfc_success_not_ready", "Only a completed NFC V2 result may be acknowledged.", false, 409);
-            operation = operation with { Phase = "closing", ErrorCode = null, UpdatedAt = CanonicalUtc(UtcNow()) };
+            operation = operation with
+            {
+                Phase = "closing",
+                ErrorCode = null,
+                DiscardAcknowledgementNonce = null,
+                UpdatedAt = CanonicalUtc(UtcNow()),
+            };
             _operation = operation;
             Persist(operation);
             Close(operation);
@@ -198,17 +206,19 @@ public sealed partial class TenKingsV2NfcCoordinator
         string requestId)
     {
         ValidateHash(request.JobEnvelopeSha256);
-        if (request.Phase is not ("failed" or "uncertain") ||
+        if (request.Phase is not ("failed" or "uncertain" or "completed_unrecorded") ||
             string.IsNullOrEmpty(request.AcknowledgementNonce) ||
             !NoncePattern().IsMatch(request.AcknowledgementNonce))
-            throw Error("v2_nfc_discard_ack_invalid", "The failed-tag discard acknowledgement is invalid.", false, 400);
+            throw Error("v2_nfc_discard_ack_invalid", "The exact tag discard acknowledgement is invalid.", false, 400);
         lock (_sync)
         {
             var operation = RequireMatching(request.JobEnvelopeSha256);
             var acceptedClosing = operation.Phase == "closing" &&
                 operation.ErrorCode == $"closing_from_{request.Phase}";
-            if ((!acceptedClosing && operation.Phase != request.Phase) ||
+            var expectedActivePhase = request.Phase == "completed_unrecorded" ? "completed" : request.Phase;
+            if ((!acceptedClosing && operation.Phase != expectedActivePhase) ||
                 operation.DiscardAcknowledgementNonce is null ||
+                request.Phase == "completed_unrecorded" && operation.TerminalResult is null ||
                 !SecureEquals(operation.DiscardAcknowledgementNonce, request.AcknowledgementNonce))
                 throw Error("v2_nfc_discard_ack_mismatch", "The discard acknowledgement does not match the exact failed operation.", false, 409);
             operation = operation with
@@ -263,7 +273,7 @@ public sealed partial class TenKingsV2NfcCoordinator
                 {
                     Phase = "completed",
                     ErrorCode = null,
-                    DiscardAcknowledgementNonce = null,
+                    DiscardAcknowledgementNonce = RandomIdentity(24),
                     TerminalResult = result,
                     UpdatedAt = CanonicalUtc(UtcNow()),
                 };
@@ -278,6 +288,7 @@ public sealed partial class TenKingsV2NfcCoordinator
                     Phase = "uncertain",
                     ErrorCode = error.Code,
                     DiscardAcknowledgementNonce = RandomIdentity(24),
+                    TerminalResult = null,
                     UpdatedAt = CanonicalUtc(UtcNow()),
                 };
                 _operation = operation;
@@ -348,10 +359,14 @@ public sealed partial class TenKingsV2NfcCoordinator
             operation.TerminalResult is null &&
             operation.ErrorCode is "closing_from_failed" or "closing_from_uncertain" &&
             operation.DiscardAcknowledgementNonce is not null;
+        var completedUnrecordedClosing = operation.Phase == "closing" &&
+            operation.TerminalResult is not null &&
+            operation.ErrorCode == "closing_from_completed_unrecorded" &&
+            operation.DiscardAcknowledgementNonce is not null;
         var completed = operation.Phase == "completed" &&
             operation.TerminalResult is not null &&
             operation.ErrorCode is null &&
-            operation.DiscardAcknowledgementNonce is null;
+            operation.DiscardAcknowledgementNonce is not null;
         var failedOrUncertain = operation.Phase is "failed" or "uncertain";
         if (!TryParseInternalTimestamp(operation.CreatedAt, out var createdAt) ||
             !TryParseInternalTimestamp(operation.UpdatedAt, out var updatedAt) ||
@@ -365,7 +380,7 @@ public sealed partial class TenKingsV2NfcCoordinator
             !AllowedPhase(operation.Phase) ||
             operation.ErrorCode is not null && !ErrorCodePattern().IsMatch(operation.ErrorCode) ||
             operation.DiscardAcknowledgementNonce is not null && !NoncePattern().IsMatch(operation.DiscardAcknowledgementNonce) ||
-            operation.Phase == "closing" && !successClosing && !discardClosing ||
+            operation.Phase == "closing" && !successClosing && !discardClosing && !completedUnrecordedClosing ||
             operation.Phase == "completed" && !completed ||
             failedOrUncertain && (operation.TerminalResult is not null || operation.DiscardAcknowledgementNonce is null || operation.ErrorCode is null) ||
             operation.Phase is "preparing" or "awaiting_manual_start" &&
@@ -476,13 +491,15 @@ public sealed partial class TenKingsV2NfcCoordinator
         operation.SignedJob.CardId,
         operation.SignedJob.PublicToken,
         operation.Url,
-        operation.Phase == "closing" && operation.TerminalResult is not null
+        operation.Phase == "closing" && operation.TerminalResult is not null && operation.ErrorCode is null
             ? "closing_success"
-            : operation.Phase == "closing" && operation.ErrorCode == "closing_from_failed"
-                ? "closing_discard_failed"
-                : operation.Phase == "closing" && operation.ErrorCode == "closing_from_uncertain"
-                    ? "closing_discard_uncertain"
-                    : operation.Phase,
+            : operation.Phase == "closing" && operation.ErrorCode == "closing_from_completed_unrecorded"
+                ? "closing_discard_completed_unrecorded"
+                : operation.Phase == "closing" && operation.ErrorCode == "closing_from_failed"
+                    ? "closing_discard_failed"
+                    : operation.Phase == "closing" && operation.ErrorCode == "closing_from_uncertain"
+                        ? "closing_discard_uncertain"
+                        : operation.Phase,
         Terminal(operation.Phase) || operation.Phase == "closing",
         operation.ErrorCode,
         operation.DiscardAcknowledgementNonce,

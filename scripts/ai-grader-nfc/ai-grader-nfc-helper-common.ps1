@@ -11,7 +11,8 @@ $script:NfcStableStartScript = "C:\TenKings\tools\ai-grader-nfc-helper\maintenan
 $script:NfcStableOpenScript = "C:\TenKings\tools\ai-grader-nfc-helper\maintenance\open-ai-grader-nfc-workstation.ps1"
 $script:NfcPairingConsumptionPath = "C:\TenKings\config\ai-grader-nfc\pairing-consumed.sha256"
 $script:NfcHelperUrl = "http://127.0.0.1:47662"
-$script:NfcProgrammingUrl = "https://collect.tenkings.co/ai-grader/nfc"
+$script:NfcProgrammingUrlV3 = "https://collect.tenkings.co/ai-grader/nfc"
+$script:NfcProgrammingUrlV4 = "https://collect.tenkings.co/admin/nfc"
 $script:NfcAllowedOrigin = "https://collect.tenkings.co"
 $script:NfcShortcutName = "Ten Kings AI Grader NFC.lnk"
 $script:NfcAttestationKeyName = "TenKings.AiGrader.Nfc.WorkstationAttestation.v1"
@@ -21,6 +22,7 @@ $script:NfcGoToTagsTemplateSha256 = "31bfcca6cfd0e947d5368643a0aeed2ce730b9e0ad2
 $script:NfcGoToTagsExecutableSha256 = "d21adfdef57393b948ce4e6d8771f6daa215041fa27c777ef33de24057883774"
 $script:NfcGoToTagsRoot = "C:\TenKings\config\ai-grader-nfc\gototags"
 $script:NfcGoToTagsJobRoot = "C:\TenKings\config\ai-grader-nfc\gototags\jobs"
+$script:NfcV3ToV4TransitionJournalPath = "C:\TenKings\config\ai-grader-nfc\v3-to-v4-transition-journal.json"
 $script:NfcHelperVersionV2 = "tenkings-ai-grader-nfc-helper-v2"
 $script:NfcHelperVersionV3 = "tenkings-ai-grader-nfc-helper-v3"
 $script:NfcHelperVersionV4 = "tenkings-ai-grader-nfc-helper-v4"
@@ -467,8 +469,13 @@ function Read-NfcConfig {
   $pairingExpiry = [DateTimeOffset]::MinValue
   $installDirectory = Get-NfcCanonicalPath -Path ([string]$config.installDirectory)
   $pairingConsumptionPath = Get-NfcCanonicalPath -Path ([string]$config.pairingConsumptionPath)
+  $expectedProgrammingUrl = if ($config.schemaVersion -eq "tenkings-ai-grader-nfc-helper-config-v4") {
+    $script:NfcProgrammingUrlV4
+  } else {
+    $script:NfcProgrammingUrlV3
+  }
   if ($config.helperUrl -cne $script:NfcHelperUrl -or
-      $config.programmingUrl -cne $script:NfcProgrammingUrl -or
+      $config.programmingUrl -cne $expectedProgrammingUrl -or
       $config.backend -cne "pcsc" -or
       -not $installDirectory.Equals((Get-NfcCanonicalPath -Path $script:NfcInstallDir), [StringComparison]::OrdinalIgnoreCase) -or
       -not $pairingConsumptionPath.Equals((Get-NfcCanonicalPath -Path $script:NfcPairingConsumptionPath), [StringComparison]::OrdinalIgnoreCase) -or
@@ -555,7 +562,7 @@ function Initialize-NfcConfig {
       port = 47662
       helperUrl = $script:NfcHelperUrl
       allowedOrigin = $script:NfcAllowedOrigin
-      programmingUrl = $script:NfcProgrammingUrl
+      programmingUrl = $script:NfcProgrammingUrlV3
       workstationToken = (New-NfcSecret -ByteCount 32)
       pairingCode = (New-NfcSecret -ByteCount 24)
       pairingCodeExpiresAt = $now.AddMinutes(10).ToString("o")
@@ -657,13 +664,15 @@ function Assert-NfcV4SemanticTransition {
   $afterNames = @($After.PSObject.Properties | ForEach-Object { $_.Name })
   if ([string]$Before.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v3" -or
       [string]$After.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v4" -or
+      [string]$Before.programmingUrl -cne $script:NfcProgrammingUrlV3 -or
+      [string]$After.programmingUrl -cne $script:NfcProgrammingUrlV4 -or
       [string]$After.tenKingsV2ServerJobPublicKeysJson -cne $ExactTrustJson -or
       $afterNames.Count -ne $beforeNames.Count + 1 -or
       @($beforeNames | Where-Object { $afterNames -cnotcontains $_ }).Count -ne 0 -or
       $afterNames -cnotcontains "tenKingsV2ServerJobPublicKeysJson") {
     throw "The NFC V4 config transition changed properties outside its exact contract."
   }
-  foreach ($name in @($beforeNames | Where-Object { $_ -cne "schemaVersion" })) {
+  foreach ($name in @($beforeNames | Where-Object { $_ -notin @("schemaVersion", "programmingUrl") })) {
     $beforeValue = $Before.$name | ConvertTo-Json -Compress -Depth 10
     $afterValue = $After.$name | ConvertTo-Json -Compress -Depth 10
     if ($beforeValue -cne $afterValue) {
@@ -672,46 +681,357 @@ function Assert-NfcV4SemanticTransition {
   }
 }
 
-function Invoke-NfcExactConfigFileTransition {
+function Get-NfcSha256Bytes {
+  param([Parameter(Mandatory = $true)][byte[]]$Bytes)
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    $digest = $sha.ComputeHash($Bytes)
+    try { return (($digest | ForEach-Object { $_.ToString("x2") }) -join "") }
+    finally { [Array]::Clear($digest, 0, $digest.Length) }
+  } finally {
+    $sha.Dispose()
+  }
+}
+
+function Write-NfcDurableCreateNewFile {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedPreimageSha256,
-    [Parameter(Mandatory = $true)][scriptblock]$Mutate,
-    [Parameter(Mandatory = $true)][scriptblock]$Validate,
-    [scriptblock]$BeforeRollback,
-    [scriptblock]$ProtectRestored,
-    [scriptblock]$AfterRollback
+    [Parameter(Mandatory = $true)][byte[]]$Bytes
   )
-  $actualPreimageSha256 = Get-NfcFileFingerprint -Path $Path
-  if ($actualPreimageSha256 -cne $ExpectedPreimageSha256) {
-    throw "The protected NFC config does not match the operator-approved exact V3 preimage."
+  if ($Bytes.Length -le 0 -or $Bytes.Length -gt 65536) {
+    throw "The protected NFC transition artifact is outside its reviewed size bound."
   }
-  $preimage = [IO.File]::ReadAllBytes($Path)
-  if ($preimage.Length -le 0 -or $preimage.Length -gt 16384) {
-    [Array]::Clear($preimage, 0, $preimage.Length)
-    throw "The protected NFC config preimage is outside its reviewed size bound."
+  $stream = [IO.FileStream]::new(
+    $Path,
+    [IO.FileMode]::CreateNew,
+    [IO.FileAccess]::Write,
+    [IO.FileShare]::None,
+    4096,
+    [IO.FileOptions]::WriteThrough
+  )
+  try {
+    $stream.Write($Bytes, 0, $Bytes.Length)
+    $stream.Flush($true)
+  } finally {
+    $stream.Dispose()
+  }
+}
+
+function Set-NfcExactFileAclSddl {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Sddl
+  )
+  if ([string]::IsNullOrWhiteSpace($Sddl) -or $Sddl.Length -gt 4096) {
+    throw "The protected NFC config ACL identity is outside its reviewed size bound."
+  }
+  $acl = New-Object Security.AccessControl.FileSecurity
+  try {
+    $acl.SetSecurityDescriptorSddlForm($Sddl)
+    Set-Acl -LiteralPath $Path -AclObject $acl -ErrorAction Stop
+  } catch {
+    throw "The exact protected NFC config ACL identity could not be applied. $($_.Exception.Message)"
+  }
+}
+
+function Set-NfcProtectedFileBytesAtomic {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [Parameter(Mandatory = $true)][byte[]]$Bytes,
+    [Parameter(Mandatory = $true)][string]$ExactAclSddl,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedSha256
+  )
+  $Path = Assert-NfcPathWithinRoot -Path $Path -AllowedRoot $AllowedRoot
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    throw "The protected NFC config target is unavailable for atomic replacement."
+  }
+  if ($Bytes.Length -le 0 -or $Bytes.Length -gt 16384 -or
+      (Get-NfcSha256Bytes -Bytes $Bytes) -cne $ExpectedSha256) {
+    throw "The exact NFC config replacement bytes failed their reviewed bound or identity."
+  }
+  $temporaryPath = "$Path.v3-v4-replace.tmp"
+  Assert-NfcPathWithinRoot -Path $temporaryPath -AllowedRoot $AllowedRoot | Out-Null
+  if (Test-Path -LiteralPath $temporaryPath) {
+    throw "A protected NFC config replacement temporary artifact requires journal recovery."
   }
   try {
-    & $Mutate | Out-Null
-    & $Validate | Out-Null
-    return $actualPreimageSha256
-  } catch {
-    $transitionFailure = $_
-    try {
-      if ($BeforeRollback) { & $BeforeRollback }
-      [IO.File]::WriteAllBytes($Path, $preimage)
-      if ($ProtectRestored) { & $ProtectRestored }
-      if ((Get-NfcFileFingerprint -Path $Path) -cne $actualPreimageSha256) {
-        throw "Exact config preimage restoration could not be proven."
-      }
-      if ($AfterRollback) { & $AfterRollback }
-    } catch {
-      throw "The NFC config transition failed and exact rollback could not be proven. $($_.Exception.Message)"
+    Write-NfcDurableCreateNewFile -Path $temporaryPath -Bytes $Bytes
+    Set-NfcExactFileAclSddl -Path $temporaryPath -Sddl $ExactAclSddl
+    if ((Get-NfcFileFingerprint -Path $temporaryPath) -cne $ExpectedSha256 -or
+        (Get-NfcAclFingerprint -Path $temporaryPath) -cne (Get-NfcSha256Text -Value $ExactAclSddl)) {
+      throw "The protected NFC config replacement temporary artifact failed exact verification."
     }
-    throw "The NFC config transition failed; the exact prior preimage was restored. $($transitionFailure.Exception.Message)"
+    [IO.File]::Replace($temporaryPath, $Path, $null, $true)
+    Set-NfcExactFileAclSddl -Path $Path -Sddl $ExactAclSddl
+    if ((Get-NfcFileFingerprint -Path $Path) -cne $ExpectedSha256 -or
+        (Get-NfcAclFingerprint -Path $Path) -cne (Get-NfcSha256Text -Value $ExactAclSddl)) {
+      throw "The protected NFC config atomic replacement could not be proven."
+    }
   } finally {
-    [Array]::Clear($preimage, 0, $preimage.Length)
+    if (Test-Path -LiteralPath $temporaryPath) {
+      [IO.File]::Delete($temporaryPath)
+    }
   }
+}
+
+function New-NfcV3ToV4TransitionJournal {
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)][string]$JournalPath,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedV3Sha256,
+    [Parameter(Mandatory = $true)][byte[]]$V4ConfigBytes,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedCurrentJobSigningKeyId,
+    [Parameter(Mandatory = $true)][ValidateCount(1, 2)][string[]]$ExpectedTrustedJobSigningKeyIds
+  )
+  $ConfigPath = Assert-NfcPathWithinRoot -Path $ConfigPath -AllowedRoot $AllowedRoot
+  $JournalPath = Assert-NfcPathWithinRoot -Path $JournalPath -AllowedRoot $AllowedRoot
+  $stagingPath = "$JournalPath.staging"
+  Assert-NfcPathWithinRoot -Path $stagingPath -AllowedRoot $AllowedRoot | Out-Null
+  if ((Test-Path -LiteralPath $JournalPath) -or (Test-Path -LiteralPath $stagingPath)) {
+    throw "A protected NFC V3-to-V4 transition journal already exists and requires entry recovery."
+  }
+  Assert-NfcProtectedAcl -Path $ConfigPath
+  $v3Bytes = [IO.File]::ReadAllBytes($ConfigPath)
+  try {
+    if ($v3Bytes.Length -le 0 -or $v3Bytes.Length -gt 16384 -or
+        (Get-NfcSha256Bytes -Bytes $v3Bytes) -cne $ExpectedV3Sha256 -or
+        $V4ConfigBytes.Length -le 0 -or $V4ConfigBytes.Length -gt 16384) {
+      throw "The protected NFC transition config bytes failed their exact identity or size bound."
+    }
+    Assert-NfcExactKeyIdSet `
+      -Expected $ExpectedTrustedJobSigningKeyIds `
+      -Actual $ExpectedTrustedJobSigningKeyIds
+    if ($ExpectedTrustedJobSigningKeyIds -cnotcontains $ExpectedCurrentJobSigningKeyId) {
+      throw "The current NFC V2 signing key is absent from the exact transition trust set."
+    }
+    $v3AclSddl = [string](Get-Acl -LiteralPath $ConfigPath).Sddl
+    if ([string]::IsNullOrWhiteSpace($v3AclSddl) -or $v3AclSddl.Length -gt 4096) {
+      throw "The protected NFC V3 config ACL identity is outside its reviewed bound."
+    }
+    $journal = [ordered]@{
+      schemaVersion = "tenkings-ai-grader-nfc-v3-to-v4-transition-journal-v1"
+      configPath = $ConfigPath
+      v3ConfigBytesBase64 = [Convert]::ToBase64String($v3Bytes)
+      v3ConfigSha256 = $ExpectedV3Sha256
+      v3ConfigAclSddl = $v3AclSddl
+      v3ConfigAclSha256 = Get-NfcSha256Text -Value $v3AclSddl
+      v4ConfigBytesBase64 = [Convert]::ToBase64String($V4ConfigBytes)
+      v4ConfigSha256 = Get-NfcSha256Bytes -Bytes $V4ConfigBytes
+      expectedCurrentJobSigningKeyId = $ExpectedCurrentJobSigningKeyId
+      expectedTrustedJobSigningKeyIds = @($ExpectedTrustedJobSigningKeyIds)
+      createdAt = [DateTimeOffset]::UtcNow.ToString("o")
+    }
+    $journalBytes = [Text.UTF8Encoding]::new($false).GetBytes(($journal | ConvertTo-Json -Depth 5))
+    try {
+      if ($journalBytes.Length -le 0 -or $journalBytes.Length -gt 65536) {
+        throw "The protected NFC transition journal exceeds its reviewed size bound."
+      }
+      Assert-NfcProtectedAcl -Path $AllowedRoot
+      Write-NfcDurableCreateNewFile -Path $stagingPath -Bytes $journalBytes
+      Protect-NfcPath -Path $stagingPath -AllowedRoot $AllowedRoot
+      [IO.File]::Move($stagingPath, $JournalPath)
+      Protect-NfcPath -Path $JournalPath -AllowedRoot $AllowedRoot
+    } finally {
+      [Array]::Clear($journalBytes, 0, $journalBytes.Length)
+    }
+  } finally {
+    [Array]::Clear($v3Bytes, 0, $v3Bytes.Length)
+  }
+  $validatedJournal = Read-NfcV3ToV4TransitionJournal `
+    -ConfigPath $ConfigPath `
+    -JournalPath $JournalPath `
+    -AllowedRoot $AllowedRoot `
+    -ExpectedV3Sha256 $ExpectedV3Sha256 `
+    -ExpectedCurrentJobSigningKeyId $ExpectedCurrentJobSigningKeyId `
+    -ExpectedTrustedJobSigningKeyIds $ExpectedTrustedJobSigningKeyIds
+  return $validatedJournal
+}
+
+function Resolve-NfcV3ToV4TransitionStagingArtifact {
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)][string]$JournalPath,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedV3Sha256,
+    [Parameter(Mandatory = $true)][scriptblock]$ValidateV3
+  )
+  $ConfigPath = Assert-NfcPathWithinRoot -Path $ConfigPath -AllowedRoot $AllowedRoot
+  $JournalPath = Assert-NfcPathWithinRoot -Path $JournalPath -AllowedRoot $AllowedRoot
+  $stagingPath = "$JournalPath.staging"
+  Assert-NfcPathWithinRoot -Path $stagingPath -AllowedRoot $AllowedRoot | Out-Null
+  if (Test-Path -LiteralPath $JournalPath) { return "journal_present" }
+  if (-not (Test-Path -LiteralPath $stagingPath)) { return "none" }
+  if (-not (Test-Path -LiteralPath $stagingPath -PathType Leaf) -or
+      (Get-Item -LiteralPath $stagingPath).Length -gt 65536 -or
+      (Get-NfcFileFingerprint -Path $ConfigPath) -cne $ExpectedV3Sha256) {
+    throw "An interrupted NFC transition journal staging artifact cannot be reconciled with exact V3."
+  }
+  Assert-NfcProtectedAcl -Path $ConfigPath
+  Protect-NfcPath -Path $stagingPath -AllowedRoot $AllowedRoot
+  & $ValidateV3 | Out-Null
+  if ((Get-NfcFileFingerprint -Path $ConfigPath) -cne $ExpectedV3Sha256) {
+    throw "Exact V3 config identity changed during interrupted journal-staging recovery."
+  }
+  [IO.File]::Delete($stagingPath)
+  return "discarded_after_v3_proof"
+}
+
+function Read-NfcV3ToV4TransitionJournal {
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)][string]$JournalPath,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedV3Sha256,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedCurrentJobSigningKeyId,
+    [Parameter(Mandatory = $true)][ValidateCount(1, 2)][string[]]$ExpectedTrustedJobSigningKeyIds
+  )
+  $ConfigPath = Assert-NfcPathWithinRoot -Path $ConfigPath -AllowedRoot $AllowedRoot
+  $JournalPath = Assert-NfcPathWithinRoot -Path $JournalPath -AllowedRoot $AllowedRoot
+  if (-not (Test-Path -LiteralPath $JournalPath -PathType Leaf) -or
+      (Get-Item -LiteralPath $JournalPath).Length -le 0 -or
+      (Get-Item -LiteralPath $JournalPath).Length -gt 65536) {
+    throw "The protected NFC V3-to-V4 transition journal is unavailable or outside its bound."
+  }
+  Assert-NfcProtectedAcl -Path $JournalPath
+  try { $journal = Get-Content -LiteralPath $JournalPath -Raw | ConvertFrom-Json }
+  catch { throw "The protected NFC V3-to-V4 transition journal is invalid JSON." }
+  $names = @($journal.PSObject.Properties | ForEach-Object { $_.Name })
+  $requiredNames = @(
+    "schemaVersion", "configPath", "v3ConfigBytesBase64", "v3ConfigSha256",
+    "v3ConfigAclSddl", "v3ConfigAclSha256", "v4ConfigBytesBase64", "v4ConfigSha256",
+    "expectedCurrentJobSigningKeyId", "expectedTrustedJobSigningKeyIds", "createdAt"
+  )
+  $createdAt = [DateTimeOffset]::MinValue
+  $actualKeys = @($journal.expectedTrustedJobSigningKeyIds | ForEach-Object { [string]$_ })
+  if ($names.Count -ne $requiredNames.Count -or
+      @($names | Where-Object { $requiredNames -cnotcontains $_ }).Count -ne 0 -or
+      [string]$journal.schemaVersion -cne "tenkings-ai-grader-nfc-v3-to-v4-transition-journal-v1" -or
+      -not (Get-NfcCanonicalPath -Path ([string]$journal.configPath)).Equals($ConfigPath, [StringComparison]::OrdinalIgnoreCase) -or
+      [string]$journal.v3ConfigSha256 -cne $ExpectedV3Sha256 -or
+      [string]$journal.v3ConfigAclSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+      [string]$journal.v4ConfigSha256 -cnotmatch '^[a-f0-9]{64}$' -or
+      [string]$journal.expectedCurrentJobSigningKeyId -cne $ExpectedCurrentJobSigningKeyId -or
+      -not [DateTimeOffset]::TryParse([string]$journal.createdAt, [ref]$createdAt)) {
+    throw "The protected NFC V3-to-V4 transition journal failed its exact schema."
+  }
+  Assert-NfcExactKeyIdSet -Expected $ExpectedTrustedJobSigningKeyIds -Actual $actualKeys
+  if ($actualKeys -cnotcontains $ExpectedCurrentJobSigningKeyId -or
+      [string]$journal.v3ConfigAclSddl -eq "" -or
+      ([string]$journal.v3ConfigAclSddl).Length -gt 4096 -or
+      (Get-NfcSha256Text -Value ([string]$journal.v3ConfigAclSddl)) -cne [string]$journal.v3ConfigAclSha256) {
+    throw "The protected NFC V3-to-V4 transition journal failed its trust or ACL identity."
+  }
+  $v3Bytes = $null
+  $v4Bytes = $null
+  try {
+    $v3Bytes = [Convert]::FromBase64String([string]$journal.v3ConfigBytesBase64)
+    $v4Bytes = [Convert]::FromBase64String([string]$journal.v4ConfigBytesBase64)
+  } catch {
+    if ($null -ne $v3Bytes) { [Array]::Clear($v3Bytes, 0, $v3Bytes.Length) }
+    if ($null -ne $v4Bytes) { [Array]::Clear($v4Bytes, 0, $v4Bytes.Length) }
+    throw "The protected NFC V3-to-V4 transition journal contains invalid config bytes."
+  }
+  try {
+    if ($v3Bytes.Length -le 0 -or $v3Bytes.Length -gt 16384 -or
+        $v4Bytes.Length -le 0 -or $v4Bytes.Length -gt 16384 -or
+        [Convert]::ToBase64String($v3Bytes) -cne [string]$journal.v3ConfigBytesBase64 -or
+        [Convert]::ToBase64String($v4Bytes) -cne [string]$journal.v4ConfigBytesBase64 -or
+        (Get-NfcSha256Bytes -Bytes $v3Bytes) -cne $ExpectedV3Sha256 -or
+        (Get-NfcSha256Bytes -Bytes $v4Bytes) -cne [string]$journal.v4ConfigSha256) {
+      throw "The protected NFC V3-to-V4 transition journal config bytes failed exact verification."
+    }
+    try {
+      $v3Config = [Text.Encoding]::UTF8.GetString($v3Bytes) | ConvertFrom-Json
+      $v4Config = [Text.Encoding]::UTF8.GetString($v4Bytes) | ConvertFrom-Json
+    } catch {
+      throw "The protected NFC V3-to-V4 transition journal config preimages are invalid JSON."
+    }
+    if ([string]$v3Config.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v3" -or
+        [string]$v3Config.programmingUrl -cne $script:NfcProgrammingUrlV3 -or
+        [string]$v4Config.schemaVersion -cne "tenkings-ai-grader-nfc-helper-config-v4" -or
+        [string]$v4Config.programmingUrl -cne $script:NfcProgrammingUrlV4) {
+      throw "The protected NFC V3-to-V4 transition journal does not bind the exact canonical launch routes."
+    }
+  } finally {
+    [Array]::Clear($v3Bytes, 0, $v3Bytes.Length)
+    [Array]::Clear($v4Bytes, 0, $v4Bytes.Length)
+  }
+  return $journal
+}
+
+function Restore-NfcV3ConfigFromTransitionJournal {
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)]$Journal,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot
+  )
+  $v3Bytes = [Convert]::FromBase64String([string]$Journal.v3ConfigBytesBase64)
+  try {
+    Set-NfcProtectedFileBytesAtomic `
+      -Path $ConfigPath `
+      -AllowedRoot $AllowedRoot `
+      -Bytes $v3Bytes `
+      -ExactAclSddl ([string]$Journal.v3ConfigAclSddl) `
+      -ExpectedSha256 ([string]$Journal.v3ConfigSha256)
+  } finally {
+    [Array]::Clear($v3Bytes, 0, $v3Bytes.Length)
+  }
+}
+
+function Resolve-NfcV3ToV4TransitionJournal {
+  param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath,
+    [Parameter(Mandatory = $true)][string]$JournalPath,
+    [Parameter(Mandatory = $true)][string]$AllowedRoot,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedV3Sha256,
+    [Parameter(Mandatory = $true)][ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedCurrentJobSigningKeyId,
+    [Parameter(Mandatory = $true)][ValidateCount(1, 2)][string[]]$ExpectedTrustedJobSigningKeyIds,
+    [Parameter(Mandatory = $true)][scriptblock]$ValidateV4,
+    [Parameter(Mandatory = $true)][scriptblock]$StopBeforeRestore,
+    [Parameter(Mandatory = $true)][scriptblock]$ValidateRestoredV3
+  )
+  $journal = Read-NfcV3ToV4TransitionJournal `
+    -ConfigPath $ConfigPath `
+    -JournalPath $JournalPath `
+    -AllowedRoot $AllowedRoot `
+    -ExpectedV3Sha256 $ExpectedV3Sha256 `
+    -ExpectedCurrentJobSigningKeyId $ExpectedCurrentJobSigningKeyId `
+    -ExpectedTrustedJobSigningKeyIds $ExpectedTrustedJobSigningKeyIds
+  $expectedAclSha256 = [string]$journal.v3ConfigAclSha256
+  $expectedV4Sha256 = [string]$journal.v4ConfigSha256
+  $currentSha256 = Get-NfcFileFingerprint -Path $ConfigPath
+  if ($currentSha256 -ceq $expectedV4Sha256 -and
+      (Get-NfcAclFingerprint -Path $ConfigPath) -ceq $expectedAclSha256) {
+    try {
+      & $ValidateV4 | Out-Null
+      if ((Get-NfcFileFingerprint -Path $ConfigPath) -cne $expectedV4Sha256 -or
+          (Get-NfcAclFingerprint -Path $ConfigPath) -cne $expectedAclSha256) {
+        throw "Completed V4 config identity changed during readiness proof."
+      }
+      [IO.File]::Delete($JournalPath)
+      return "completed_v4"
+    } catch { }
+  }
+  & $StopBeforeRestore | Out-Null
+  $temporaryPath = "$ConfigPath.v3-v4-replace.tmp"
+  if (Test-Path -LiteralPath $temporaryPath) {
+    Assert-NfcPathWithinRoot -Path $temporaryPath -AllowedRoot $AllowedRoot | Out-Null
+    if (-not (Test-Path -LiteralPath $temporaryPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $temporaryPath).Length -gt 16384) {
+      throw "The interrupted protected NFC config replacement artifact is outside its bound."
+    }
+    [IO.File]::Delete($temporaryPath)
+  }
+  Restore-NfcV3ConfigFromTransitionJournal -ConfigPath $ConfigPath -Journal $journal -AllowedRoot $AllowedRoot
+  & $ValidateRestoredV3 | Out-Null
+  if ((Get-NfcFileFingerprint -Path $ConfigPath) -cne [string]$journal.v3ConfigSha256 -or
+      (Get-NfcAclFingerprint -Path $ConfigPath) -cne $expectedAclSha256) {
+    throw "Interrupted NFC transition V3 restoration could not be proven after readiness."
+  }
+  [IO.File]::Delete($JournalPath)
+  return "restored_v3"
 }
 
 function Assert-NfcF8215RecoveryAudit {

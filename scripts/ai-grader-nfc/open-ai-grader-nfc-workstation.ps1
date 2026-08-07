@@ -177,7 +177,15 @@ Invoke-NfcAfterHelperLoopbackListenerReady `
       }
     }
 
-    $url = "$([string]$config.programmingUrl)#aiGraderNfcLaunch=v1"
+    $canonicalProgrammingUrl = if ([string]$config.schemaVersion -ceq "tenkings-ai-grader-nfc-helper-config-v4") {
+      $script:NfcProgrammingUrlV4
+    } else {
+      $script:NfcProgrammingUrlV3
+    }
+    if ([string]$config.programmingUrl -cne $canonicalProgrammingUrl) {
+      throw "The NFC workstation config does not bind its canonical schema-specific programming page."
+    }
+    $url = "$canonicalProgrammingUrl#aiGraderNfcLaunch=v1"
     if (-not $pairingConsumed) {
       $expiry = [DateTimeOffset]::MinValue
       if (-not [DateTimeOffset]::TryParse([string]$config.pairingCodeExpiresAt, [ref]$expiry) -or

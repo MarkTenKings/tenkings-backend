@@ -12,7 +12,9 @@ import {
 import type { Prisma } from "@prisma/client";
 import {
   issueTenKingsV2NfcJob,
+  tenKingsV2NfcJobEnvelopeSha256,
   tenKingsV2NfcKeyId,
+  TenKingsV2NfcProtocolError,
   verifyTenKingsV2NfcCompletion,
   type TenKingsV2NfcSignedJob,
   type TenKingsV2NfcSignedResult,
@@ -292,11 +294,12 @@ export async function issueTenKingsV2NfcCardJob(cardId: string, env: EnvLike = p
     select: { id: true, publicToken: true },
   });
   if (!card) throw new TenKingsV2NfcHostedError("TEN_KINGS_V2_NFC_CARD_NOT_FOUND", 404, "Permanent card not found.");
-  return issueTenKingsV2NfcJob({
+  const job = issueTenKingsV2NfcJob({
     cardId: card.id,
     publicToken: card.publicToken,
     privateKey: runtime.current.privateKey,
   });
+  return { job, jobEnvelopeSha256: tenKingsV2NfcJobEnvelopeSha256(job) };
 }
 
 export async function completeTenKingsV2NfcCardJob(input: {
@@ -310,12 +313,20 @@ export async function completeTenKingsV2NfcCardJob(input: {
   if (!runtime.enabled) {
     throw new TenKingsV2NfcHostedError("TEN_KINGS_V2_NFC_PROGRAMMING_DISABLED", 503, "NFC V2 programming is disabled.");
   }
-  const verified = verifyTenKingsV2NfcCompletion({
-    job: input.job,
-    result: input.result,
-    trustedJobSigningKeys: runtime.jobTrust,
-    trustedWorkstationKeys: runtime.workstationTrust,
-  });
+  let verified: ReturnType<typeof verifyTenKingsV2NfcCompletion>;
+  try {
+    verified = verifyTenKingsV2NfcCompletion({
+      job: input.job,
+      result: input.result,
+      trustedJobSigningKeys: runtime.jobTrust,
+      trustedWorkstationKeys: runtime.workstationTrust,
+    });
+  } catch (error) {
+    if (error instanceof TenKingsV2NfcProtocolError) {
+      throw new TenKingsV2NfcHostedError(error.code, 409, "The signed NFC completion was permanently rejected.");
+    }
+    throw error;
+  }
   const now = input.now ?? new Date();
   const observedAt = new Date(verified.result.observedAt);
   if (
@@ -324,14 +335,32 @@ export async function completeTenKingsV2NfcCardJob(input: {
   ) {
     throw new TenKingsV2NfcHostedError("TEN_KINGS_V2_NFC_RESULT_TIME_REJECTED", 409, "NFC terminal result is outside the accepted completion window.");
   }
-  return prisma.$transaction((tx: Prisma.TransactionClient) => markNfcVerified(
-    tx,
-    verified.job.cardId,
-    {
-      publicToken: verified.job.publicToken,
-      jobIssuedAt: verified.job.issuedAt,
-      workstationKeyId: verified.result.workstationKeyId,
-    },
-    input.adminId,
-  ));
+  try {
+    return await prisma.$transaction((tx: Prisma.TransactionClient) => markNfcVerified(
+      tx,
+      verified.job.cardId,
+      {
+        publicToken: verified.job.publicToken,
+        jobIssuedAt: verified.job.issuedAt,
+        workstationKeyId: verified.result.workstationKeyId,
+      },
+      input.adminId,
+    ));
+  } catch (error) {
+    if (error instanceof Error && error.message === "Permanent Ten Kings V2 card was not found") {
+      throw new TenKingsV2NfcHostedError(
+        "TEN_KINGS_V2_NFC_CARD_NO_LONGER_RECORDABLE",
+        409,
+        "The permanent card is no longer eligible to record this NFC result.",
+      );
+    }
+    if (error instanceof Error && error.message === "NFC verification no longer matches the permanent card token") {
+      throw new TenKingsV2NfcHostedError(
+        "TEN_KINGS_V2_NFC_CARD_TOKEN_CHANGED",
+        409,
+        "The permanent card token no longer matches this NFC result.",
+      );
+    }
+    throw error;
+  }
 }

@@ -30941,3 +30941,33 @@ By enabling Rip It Live, I confirm:
 - No Production deployment, database migration, backfill, config transition, secret/key provisioning, helper install/update/restart, Dell access, GoToTags launch, NFC read/write/lock, physical tag use/discard, V1 mutation/quarantine resolution, customer data write, or external API call occurred.
 - The V3-to-V4 transition script was written and reviewed but not run. The Dell's preserved V1 terminal-job incident remains untouched and must be resolved through its separately approved exact-state procedure before any helper maintenance or new physical NFC operation.
 - Production environment values, current/prior public trust, workstation allowlist, Node 20 release rerun, complete Windows/PowerShell test pass, owner-approved deploy, and Dell commissioning remain open gates.
+
+## 2026-08-07 - Ten Kings V2 NFC independent-critic correction pass (hardware-free only)
+
+### Corrected implementation
+
+- Persisted the exact server-issued provisional card/job/envelope-digest pointer before contacting the helper. Browser recovery now fails closed for corrupted pointers, proves the exact card/job/digest and signer trust set, resumes an exact helper operation, or re-prepares only that same signed job after an exact helper absence.
+- Added one persisted automatic attempt per terminal phase. Transient polling/receipt failures remain retryable, while explicit permanent completed-tag discard is limited to narrow non-recordable/signature/readback/result failures and stores the exact human acknowledgement before helper cleanup.
+- Made helper success and completed-but-unrecorded discard cleanup interruption-safe and idempotent. Exact completed helper evidence is reconciled first against the authoritative hosted NFC fact, without issuing a new job.
+- Bound readback evidence to SHA-256 of the exact UTF-8 programmed URL in both TypeScript and C#, with a fixed cross-contract vector and tamper tests. The V2 prepare HTTP boundary now rejects duplicate, unknown, malformed, and oversized JSON before accepting a signed job.
+- Exposed the helper workstation key identity and required membership in the hosted allowlist in addition to current/prior server-job signer trust.
+- Corrected the standalone V4 programming URL to `/admin/nfc` while preserving the legacy V3 `/ai-grader/nfc` value. The V3-to-V4 transition now uses a protected interruption journal containing exact V3 bytes/hash/ACL and exact staged V4 bytes/hash; entry recovery proves V4 success or restores and proves byte-exact V3 before clearing the journal.
+- Corrected the maintenance test scenario count to five and split portable helper tests from seven real Windows protected-state/CNG/HTTP runtime groups so non-Windows runs report truthful skips instead of false passes.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- Focused NFC protocol/browser tests passed `15/15`; focused changed-file ESLint passed with zero findings.
+- The optimized Next.js Production build passed type checking and all `74/74` static pages, including `/admin/nfc` and `/api/v2/admin/nfc/[...action]`. Output contained only existing unrelated repository warnings.
+- The C# helper suite compiled under the .NET 8 Linux container and truthfully reported `17 passed, 7 skipped, 0 failed` across `24` groups. The earlier foundation entry's `22/22` statement is superseded for the corrected head: those Windows-only groups had returned early and are now explicit skips, not Windows acceptance evidence.
+- All five changed PowerShell files parsed successfully in PowerShell 7 on Linux. This is syntax evidence only, not execution evidence. `git diff --check` passed.
+
+### Mandatory Windows/Dell acceptance gates
+
+- Run all seven skipped C# groups on Windows: Ten Kings V2 protected coordinator/recovery; Ten Kings V2 strict loopback HTTP lifecycle; F8215 protected lifecycle/idempotency; F8215 restart recovery; F8215 expired/rejected-callback recovery; F8215 loopback HTTP boundary; and Windows CNG runtime safety.
+- Run `scripts/ai-grader-nfc/tests/test-ai-grader-nfc-maintenance.ps1` and `scripts/ai-grader-nfc/tests/test-ai-grader-nfc-versioned-update.ps1` under Windows PowerShell, including the interruption journal, DACL, scheduled-task, readiness, rollback, and retry cases.
+- The Dell's preserved V1 terminal-job incident still requires its separately approved read-only exact-state resolution before helper maintenance or any new physical operation.
+
+### Safety
+
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.

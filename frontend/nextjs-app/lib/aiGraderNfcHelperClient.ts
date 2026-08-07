@@ -40,6 +40,7 @@ export type AiGraderNfcHelperStatus = {
   tenKingsV2NfcEnabled?: boolean;
   tenKingsV2NfcCapability?: string | null;
   tenKingsV2TrustedJobSigningKeyIds?: string[] | null;
+  tenKingsV2WorkstationKeyId?: string | null;
 };
 
 export type AiGraderNfcHelperHostedReadiness = {
@@ -243,7 +244,8 @@ export type TenKingsV2NfcLocalOperation = {
   publicToken: string;
   url: string;
   phase: "preparing" | "awaiting_manual_start" | "completed" | "failed" | "uncertain" |
-    "closing_success" | "closing_discard_failed" | "closing_discard_uncertain";
+    "closing_success" | "closing_discard_failed" | "closing_discard_uncertain" |
+    "closing_discard_completed_unrecorded";
   terminal: boolean;
   errorCode: string | null;
   discardAcknowledgementNonce: string | null;
@@ -275,7 +277,7 @@ export function acknowledgeTenKingsV2NfcSuccess(jobEnvelopeSha256: string) {
 export function acknowledgeTenKingsV2NfcDiscard(input: {
   jobEnvelopeSha256: string;
   acknowledgementNonce: string;
-  phase: "failed" | "uncertain";
+  phase: "failed" | "uncertain" | "completed_unrecorded";
 }) {
   return helperRequest<{ cleaned: boolean }>("/v2/discard-ack", {
     method: "POST",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import {
   TEN_KINGS_V2_NFC_JOB_SCHEMA,
@@ -20,6 +20,7 @@ const TOKEN = `tk2c_${"A".repeat(32)}`;
 const OTHER_TOKEN = `tk2c_${"B".repeat(32)}`;
 const ISSUED_AT = new Date("2026-08-06T20:00:00.000Z");
 const NONCE = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+const digest = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 
 function keyPair() {
   return generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -46,7 +47,7 @@ function fixture() {
     job,
     trustedJobSigningKeys: { [tenKingsV2NfcKeyId(server.publicKey)]: server.publicKey },
     workstationPrivateKey: workstation.privateKey,
-    readbackPayloadSha256: "a".repeat(64),
+    readbackPayloadSha256: digest(job.url),
     observedAt: "2026-08-06T20:04:00.000Z",
   });
   return { server, workstation, job, result };
@@ -152,6 +153,7 @@ test("V2 terminal result binds the exact signed job and excludes UID authority",
   assert.equal(serialized.includes("attempt"), false);
   assert.match(tenKingsV2NfcResultCanonicalStatement(result), /permanently_read_only_verified/);
   assert.match(tenKingsV2NfcResultCanonicalStatement(result), /write_locked_verified_gototags_readback/);
+  assert.equal(result.readbackPayloadSha256, "2eddd18c646f8a0cf18fd2562fdbf1933c91cf9c6a1f2aa223e5b470f3b334b6");
 });
 
 test("server completion composition cannot skip server-job verification", () => {
@@ -221,7 +223,7 @@ test("V2 terminal result rejects substitution, profile tamper, untrusted worksta
       job,
       trustedJobSigningKeys: trustedServer,
       workstationPrivateKey: workstation.privateKey,
-      readbackPayloadSha256: "a".repeat(64),
+      readbackPayloadSha256: digest(job.url),
       observedAt: "2026-08-06T20:10:00.001Z",
     }),
     /inside its signed job window/,

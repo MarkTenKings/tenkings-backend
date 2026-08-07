@@ -210,6 +210,8 @@ public static partial class TenKingsV2NfcProtocol
         if (!VerifyJob(job, trustedServerPublicSpki)) throw Invalid("The V2 NFC server job signature is invalid.");
         if (!string.Equals(signer.Algorithm, Algorithm, StringComparison.Ordinal) || !Sha256Pattern().IsMatch(signer.WorkstationKeyId))
             throw Invalid("The V2 NFC workstation signer is invalid.");
+        if (!string.Equals(readbackPayloadSha256, UrlSha256(job.Url), StringComparison.Ordinal))
+            throw Invalid("The V2 NFC readback digest does not prove the exact signed URL bytes.");
 
         var unsigned = new TenKingsV2NfcTerminalResult(
             ResultSchema,
@@ -351,6 +353,8 @@ public static partial class TenKingsV2NfcProtocol
             result.SecurityMode != job.SecurityMode ||
             result.ProgrammingProfile != job.ProgrammingProfile)
             throw Invalid("The V2 NFC result does not match the exact signed job.");
+        if (!string.Equals(result.ReadbackPayloadSha256, UrlSha256(job.Url), StringComparison.Ordinal))
+            throw Invalid("The V2 NFC readback digest does not prove the exact signed URL bytes.");
         var observedAt = ParseTimestamp(result.ObservedAt, "observedAt");
         var issuedAt = ParseTimestamp(job.IssuedAt, "issuedAt");
         var expiresAt = ParseTimestamp(job.ExpiresAt, "expiresAt");
@@ -399,6 +403,9 @@ public static partial class TenKingsV2NfcProtocol
             !string.Equals(parsed.AbsolutePath, "/c/" + publicToken, StringComparison.Ordinal))
             throw Invalid("The V2 NFC URL is not the exact permanent card URL.");
     }
+
+    private static string UrlSha256(string url) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url))).ToLowerInvariant();
 
     private static DateTimeOffset ParseTimestamp(string value, string label)
     {

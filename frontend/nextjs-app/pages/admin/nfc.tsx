@@ -20,8 +20,14 @@ import {
 } from "../../lib/aiGraderNfcHelperClient";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
+  claimTenKingsV2AutomaticTerminalAttempt,
   reconcileMissingTenKingsV2LocalOperation,
   tenKingsV2ClosingRecovery,
+  tenKingsV2ExactKeySetMatches,
+  tenKingsV2HelperSignerAllowed,
+  tenKingsV2LocalOperationMatchesStored,
+  tenKingsV2PermanentCompletionRejection,
+  tenKingsV2ProvisionalRecoveryAction,
 } from "../../lib/tenKingsV2NfcBrowserState";
 import styles from "../../styles/NfcV2.module.css";
 
@@ -49,6 +55,7 @@ type Readiness = {
   currentJobSigningKeyId: string | null;
   trustedJobSigningKeyIds: string[];
   trustedJobSigningKeyCount: number;
+  workstationKeyIds: string[];
   workstationKeyCount: number;
   expectedHelperVersion: string;
   expectedHelperProtocolVersion: string;
@@ -60,10 +67,12 @@ type StoredOperation = {
   cardId: string;
   job: Record<string, string>;
   jobEnvelopeSha256: string;
+  helperPrepared: boolean;
+  automaticTerminalAttempts: string[];
   discardAcknowledgement?: {
     jobEnvelopeSha256: string;
     acknowledgementNonce: string;
-    phase: "failed" | "uncertain";
+    phase: "failed" | "uncertain" | "completed_unrecorded";
   };
 };
 const STORED_OPERATION = "tenkings.nfc.v2.activeOperation.v1";
@@ -77,7 +86,13 @@ const readStoredOperation = (): StoredOperation | null => {
     if (
       typeof row.cardId !== "string" ||
       !row.job || typeof row.job !== "object" || Array.isArray(row.job) ||
-      typeof row.jobEnvelopeSha256 !== "string" || !SHA256.test(row.jobEnvelopeSha256)
+      Object.values(row.job).some((value) => typeof value !== "string") ||
+      (row.job as Record<string, unknown>).cardId !== row.cardId ||
+      typeof row.jobEnvelopeSha256 !== "string" || !SHA256.test(row.jobEnvelopeSha256) ||
+      typeof row.helperPrepared !== "boolean" ||
+      !Array.isArray(row.automaticTerminalAttempts) ||
+      row.automaticTerminalAttempts.length > 4 ||
+      row.automaticTerminalAttempts.some((value) => typeof value !== "string" || value.length > 120)
     ) return null;
     const discard = row.discardAcknowledgement;
     if (discard !== undefined) {
@@ -87,7 +102,7 @@ const readStoredOperation = (): StoredOperation | null => {
         acknowledgement.jobEnvelopeSha256 !== row.jobEnvelopeSha256 ||
         typeof acknowledgement.acknowledgementNonce !== "string" ||
         !/^[A-Za-z0-9_-]{32}$/.test(acknowledgement.acknowledgementNonce) ||
-        (acknowledgement.phase !== "failed" && acknowledgement.phase !== "uncertain")
+        (acknowledgement.phase !== "failed" && acknowledgement.phase !== "uncertain" && acknowledgement.phase !== "completed_unrecorded")
       ) return null;
     }
     return row as StoredOperation;
@@ -97,6 +112,17 @@ const readStoredOperation = (): StoredOperation | null => {
 };
 
 const safeMessage = (error: unknown) => error instanceof Error ? error.message : "The NFC operation stopped safely.";
+
+class HostedNfcError extends Error {
+  constructor(public readonly code: string | null, public readonly status: number, message: string) {
+    super(message);
+    this.name = "HostedNfcError";
+  }
+}
+
+const permanentCompletionRejection = (error: unknown) =>
+  error instanceof HostedNfcError &&
+  tenKingsV2PermanentCompletionRejection(error.status, error.code);
 
 export default function TenKingsNfcV2Page() {
   const router = useRouter();
@@ -112,6 +138,11 @@ export default function TenKingsNfcV2Page() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Choose a permanent V2 card to begin.");
   const [launcherReady, setLauncherReady] = useState(false);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [terminalError, setTerminalError] = useState<string | null>(null);
+  const [completedUnrecorded, setCompletedUnrecorded] = useState(false);
+  const [pollRevision, setPollRevision] = useState(0);
+  const [storedPointerBlocked, setStoredPointerBlocked] = useState(false);
   const pairingCodeRef = useRef("");
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAdmin = useMemo(
@@ -127,8 +158,12 @@ export default function TenKingsNfcV2Page() {
       ...init,
       headers: buildAdminHeaders(session.token, init?.body ? { "Content-Type": "application/json" } : undefined),
     });
-    const payload = await response.json().catch(() => ({})) as T & { message?: string };
-    if (!response.ok) throw new Error(payload.message ?? "NFC V2 request failed.");
+    const payload = await response.json().catch(() => ({})) as T & { message?: string; code?: string };
+    if (!response.ok) throw new HostedNfcError(
+      typeof payload.code === "string" ? payload.code : null,
+      response.status,
+      payload.message ?? "NFC V2 request failed.",
+    );
     return payload;
   }, [session?.token]);
 
@@ -164,14 +199,43 @@ export default function TenKingsNfcV2Page() {
           setHelper(await pairAiGraderNfcHelper(pairingCodeRef.current));
           pairingCodeRef.current = "";
         }
+        const rawStored = window.localStorage.getItem(STORED_OPERATION);
         const stored = readStoredOperation();
+        if (rawStored !== null && !stored) {
+          setStoredPointerBlocked(true);
+          throw new Error("The protected NFC browser pointer is invalid. It was preserved and must be reviewed before another job can be issued.");
+        }
         if (stored) {
           setJob(stored.job);
-          if (!selectedCardId || selectedCardId !== stored.cardId) await loadCard(stored.cardId);
+          const authoritativeCard = await loadCard(stored.cardId);
           try {
             const local = await getTenKingsV2NfcOperationStatus(stored.jobEnvelopeSha256);
+            if (tenKingsV2ProvisionalRecoveryAction(stored, local) !== "ACCEPT_EXACT_HELPER_STATE") {
+              throw new Error("Recovered helper state does not match the exact issued card and job.");
+            }
+            if (!stored.helperPrepared) {
+              window.localStorage.setItem(STORED_OPERATION, JSON.stringify({ ...stored, helperPrepared: true } satisfies StoredOperation));
+            }
+            if (
+              local.phase === "completed" &&
+              reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard) === "verified"
+            ) {
+              setOperation(local);
+              await acknowledgeTenKingsV2NfcSuccess(local.jobEnvelopeSha256);
+              window.localStorage.removeItem(STORED_OPERATION);
+              setJob(null);
+              setOperation(null);
+              setMessage("Hosted NFC verification was already saved. Exact protected workstation cleanup completed during recovery.");
+              return;
+            }
             setOperation(local);
-            setMessage(local.phase === "completed" ? "Verified local result recovered. Completing the hosted card fact now." : "Protected NFC operation recovered after reload.");
+            const recoveredAttemptKey = `${local.jobEnvelopeSha256}:${local.phase}`;
+            if (stored.automaticTerminalAttempts.includes(recoveredAttemptKey)) {
+              setTerminalError("The earlier automatic terminal request did not finish visibly.");
+              setMessage("Protected NFC terminal state recovered. Use Retry this exact operation; no automatic loop will run.");
+            } else {
+              setMessage(local.phase === "completed" ? "Verified local result recovered. Completing the hosted card fact now." : "Protected NFC operation recovered after reload.");
+            }
           } catch (error) {
             if (error instanceof AiGraderNfcHelperError && error.code === "v2_nfc_job_not_found") {
               const authoritativeCard = await loadCard(stored.cardId);
@@ -183,6 +247,17 @@ export default function TenKingsNfcV2Page() {
                 setMessage(reconciliation === "verified"
                   ? "NFC verification was already saved. The completed local operation was safely cleaned up."
                   : "The explicitly acknowledged failed tag was already cleaned up. The stale browser pointer was safely removed.");
+              } else if (!stored.discardAcknowledgement) {
+                if (tenKingsV2ProvisionalRecoveryAction(stored, null) !== "PREPARE_EXACT_ISSUED_JOB") {
+                  throw new Error("The protected issued pointer does not match its card.");
+                }
+                const resumed = await prepareTenKingsV2NfcOperation(stored.job);
+                if (tenKingsV2ProvisionalRecoveryAction(stored, resumed) !== "ACCEPT_EXACT_HELPER_STATE") {
+                  throw new Error("The helper did not resume the exact issued NFC job.");
+                }
+                window.localStorage.setItem(STORED_OPERATION, JSON.stringify({ ...stored, helperPrepared: true } satisfies StoredOperation));
+                setOperation(resumed);
+                setMessage("The exact issued NFC job was safely resumed after the earlier response was lost.");
               } else {
                 throw new Error("The local NFC operation is missing, but hosted verification is not new enough to prove completion. Browser state was preserved for admin review.");
               }
@@ -200,6 +275,7 @@ export default function TenKingsNfcV2Page() {
   const completeHosted = useCallback(async (activeJob: Record<string, string>, local: TenKingsV2NfcLocalOperation) => {
     if (!local.result) return;
     setBusy(true);
+    setTerminalError(null);
     try {
       const completed = await hosted<{ outcome: string; nfcVerifiedAt: string }>("complete", {
         method: "POST",
@@ -207,13 +283,19 @@ export default function TenKingsNfcV2Page() {
       });
       await acknowledgeTenKingsV2NfcSuccess(local.jobEnvelopeSha256);
       window.localStorage.removeItem(STORED_OPERATION);
+      setStoredPointerBlocked(false);
       setOperation(null);
       setJob(null);
       setFreshConfirmed(false);
+      setCompletedUnrecorded(false);
       if (card) await loadCard(card.id);
       setMessage(completed.outcome === "UPDATED" ? "NFC verified. The permanent card URL was read back and permanently locked." : "NFC result safely replayed. The existing verification fact was unchanged.");
     } catch (error) {
-      setMessage(`${safeMessage(error)} The signed result is preserved and can be replayed after reload.`);
+      setTerminalError(safeMessage(error));
+      setCompletedUnrecorded(permanentCompletionRejection(error));
+      setMessage(permanentCompletionRejection(error)
+        ? `${safeMessage(error)} No card row or ownership history was changed. You may retry, or explicitly remove and discard this completed but unrecorded tag.`
+        : `${safeMessage(error)} The signed result is preserved. Use Retry; transient failures never default to discard.`);
     } finally {
       setBusy(false);
     }
@@ -221,26 +303,32 @@ export default function TenKingsNfcV2Page() {
 
   const finishSuccessCleanup = useCallback(async (local: TenKingsV2NfcLocalOperation) => {
     setBusy(true);
+    setTerminalError(null);
     try {
       await acknowledgeTenKingsV2NfcSuccess(local.jobEnvelopeSha256);
       window.localStorage.removeItem(STORED_OPERATION);
+      setStoredPointerBlocked(false);
       setOperation(null);
       setJob(null);
       setFreshConfirmed(false);
       if (card) await loadCard(card.id);
       setMessage("NFC verification was already saved. Protected workstation cleanup is complete.");
     } catch (error) {
+      setTerminalError(safeMessage(error));
       setMessage(`${safeMessage(error)} Cleanup remains protected and will resume after reload.`);
     } finally {
       setBusy(false);
     }
   }, [card, loadCard]);
 
-  const finishDiscardCleanup = useCallback(async (local: TenKingsV2NfcLocalOperation) => {
+  const finishDiscardCleanup = useCallback(async (
+    local: TenKingsV2NfcLocalOperation,
+    explicitPhase?: "failed" | "uncertain" | "completed_unrecorded",
+  ) => {
     if (!local.discardAcknowledgementNonce) return;
     const closing = tenKingsV2ClosingRecovery(local.phase);
-    const phase = closing?.kind === "discard" ? closing.phase : local.phase;
-    if (phase !== "failed" && phase !== "uncertain") return;
+    const phase = explicitPhase ?? (closing?.kind === "discard" ? closing.phase : local.phase);
+    if (phase !== "failed" && phase !== "uncertain" && phase !== "completed_unrecorded") return;
     setBusy(true);
     try {
       const stored = readStoredOperation();
@@ -261,10 +349,14 @@ export default function TenKingsNfcV2Page() {
         phase,
       });
       window.localStorage.removeItem(STORED_OPERATION);
+      setStoredPointerBlocked(false);
       setOperation(null);
       setJob(null);
       setFreshConfirmed(false);
-      setMessage("Discard acknowledged. The failed tag was not recorded. Select a fresh tag only when you are ready to begin a new operation.");
+      setCompletedUnrecorded(false);
+      setMessage(phase === "completed_unrecorded"
+        ? "Completed but unrecorded tag discarded. No NFC verification row or ownership history was created."
+        : "Discard acknowledged. The failed tag was not recorded. Select a fresh tag only when you are ready to begin a new operation.");
     } catch (error) {
       setMessage(`${safeMessage(error)} Cleanup remains protected and will resume after reload.`);
     } finally {
@@ -272,19 +364,37 @@ export default function TenKingsNfcV2Page() {
     }
   }, []);
 
+  const claimAutomaticTerminalAttempt = useCallback((local: TenKingsV2NfcLocalOperation) => {
+    const stored = readStoredOperation();
+    if (!stored || !tenKingsV2LocalOperationMatchesStored(stored, local)) return false;
+    const claim = claimTenKingsV2AutomaticTerminalAttempt(stored, local.phase);
+    if (!claim.claimed) return false;
+    window.localStorage.setItem(STORED_OPERATION, JSON.stringify({
+      ...stored,
+      automaticTerminalAttempts: claim.attempts,
+    } satisfies StoredOperation));
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!operation || !job || busy) return;
     if (operation.phase === "completed") {
-      void completeHosted(job, operation);
+      if (claimAutomaticTerminalAttempt(operation)) {
+        void completeHosted(job, operation);
+      }
       return;
     }
     const closing = tenKingsV2ClosingRecovery(operation.phase);
     if (closing?.kind === "success") {
-      void finishSuccessCleanup(operation);
+      if (claimAutomaticTerminalAttempt(operation)) {
+        void finishSuccessCleanup(operation);
+      }
       return;
     }
     if (closing?.kind === "discard") {
-      void finishDiscardCleanup(operation);
+      if (claimAutomaticTerminalAttempt(operation)) {
+        void finishDiscardCleanup(operation);
+      }
       return;
     }
     if (operation.phase === "failed" || operation.phase === "uncertain") {
@@ -293,11 +403,36 @@ export default function TenKingsNfcV2Page() {
     }
     pollingRef.current = setTimeout(() => {
       void getTenKingsV2NfcOperationStatus(operation.jobEnvelopeSha256)
-        .then(setOperation)
-        .catch((error) => setMessage(safeMessage(error)));
+        .then((next) => {
+          setPollError(null);
+          setOperation(next);
+        })
+        .catch((error) => {
+          setPollError(safeMessage(error));
+          setMessage(`${safeMessage(error)} Polling will continue for this exact operation.`);
+          pollingRef.current = setTimeout(() => setPollRevision((value) => value + 1), 1200);
+        });
     }, 1200);
     return () => { if (pollingRef.current) clearTimeout(pollingRef.current); };
-  }, [busy, completeHosted, finishDiscardCleanup, finishSuccessCleanup, job, operation]);
+  }, [busy, claimAutomaticTerminalAttempt, completeHosted, finishDiscardCleanup, finishSuccessCleanup, job, operation, pollRevision]);
+
+  const retryCurrent = async () => {
+    if (!operation || !job || busy) return;
+    if (operation.phase === "completed") return completeHosted(job, operation);
+    const closing = tenKingsV2ClosingRecovery(operation.phase);
+    if (closing?.kind === "success") return finishSuccessCleanup(operation);
+    if (closing?.kind === "discard") return finishDiscardCleanup(operation);
+    setPollError(null);
+    setBusy(true);
+    try {
+      setOperation(await getTenKingsV2NfcOperationStatus(operation.jobEnvelopeSha256));
+    } catch (error) {
+      setPollError(safeMessage(error));
+      setMessage(safeMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const search = async () => {
     setBusy(true);
@@ -316,21 +451,81 @@ export default function TenKingsNfcV2Page() {
     if (!card || !freshConfirmed || operation) return;
     setBusy(true);
     try {
-      const issued = await hosted<{ job: Record<string, string> }>("issue", {
+      if (window.localStorage.getItem(STORED_OPERATION) !== null) {
+        throw new Error("Recover the existing protected NFC job before issuing another one.");
+      }
+      const issued = await hosted<{ job: Record<string, string>; jobEnvelopeSha256: string }>("issue", {
         method: "POST",
         body: JSON.stringify({ cardId: card.id }),
       });
-      const local = await prepareTenKingsV2NfcOperation(issued.job);
-      window.localStorage.setItem(STORED_OPERATION, JSON.stringify({
+      if (!SHA256.test(issued.jobEnvelopeSha256) || issued.job.cardId !== card.id) {
+        throw new Error("The hosted NFC issue response did not match the selected permanent card.");
+      }
+      const provisional = {
         cardId: card.id,
         job: issued.job,
-        jobEnvelopeSha256: local.jobEnvelopeSha256,
-      } satisfies StoredOperation));
+        jobEnvelopeSha256: issued.jobEnvelopeSha256,
+        helperPrepared: false,
+        automaticTerminalAttempts: [],
+      } satisfies StoredOperation;
+      // Persist the exact server-issued pointer before contacting the helper. A
+      // lost prepare response can then only resume this same digest.
+      window.localStorage.setItem(STORED_OPERATION, JSON.stringify(provisional));
+      setStoredPointerBlocked(false);
       setJob(issued.job);
+      const local = await prepareTenKingsV2NfcOperation(issued.job);
+      if (tenKingsV2ProvisionalRecoveryAction(provisional, local) !== "ACCEPT_EXACT_HELPER_STATE") {
+        throw new Error("The helper prepared a different NFC job than the hosted issue response.");
+      }
+      window.localStorage.setItem(STORED_OPERATION, JSON.stringify({
+        ...provisional,
+        helperPrepared: true,
+      } satisfies StoredOperation));
       setOperation(local);
       setMessage("GoToTags is prepared. Click Start Encoding once in GoToTags, then place the one fresh F8215 on the reader.");
     } catch (error) {
-      setMessage(safeMessage(error));
+      setMessage(`${safeMessage(error)} The exact issued job pointer is preserved; use Retry exact issued job.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryProvisionalPrepare = async () => {
+    const stored = readStoredOperation();
+    if (!stored || operation || busy) return;
+    setBusy(true);
+    try {
+      let local: TenKingsV2NfcLocalOperation;
+      try {
+        local = await getTenKingsV2NfcOperationStatus(stored.jobEnvelopeSha256);
+      } catch (error) {
+        if (!(error instanceof AiGraderNfcHelperError) || error.code !== "v2_nfc_job_not_found") throw error;
+        const authoritativeCard = await loadCard(stored.cardId);
+        const reconciliation = reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard);
+        if (reconciliation === "verified" || reconciliation === "discard_acknowledged") {
+          window.localStorage.removeItem(STORED_OPERATION);
+          setStoredPointerBlocked(false);
+          setJob(null);
+          setOperation(null);
+          setMessage(reconciliation === "verified"
+            ? "NFC verification and protected cleanup were already completed."
+            : "The exact acknowledged discard and protected cleanup were already completed.");
+          return;
+        }
+        if (tenKingsV2ProvisionalRecoveryAction(stored, null) !== "PREPARE_EXACT_ISSUED_JOB") {
+          throw new Error("The protected issued pointer does not match its card.");
+        }
+        local = await prepareTenKingsV2NfcOperation(stored.job);
+      }
+      if (tenKingsV2ProvisionalRecoveryAction(stored, local) !== "ACCEPT_EXACT_HELPER_STATE") {
+        throw new Error("The helper did not resume the exact issued NFC job.");
+      }
+      window.localStorage.setItem(STORED_OPERATION, JSON.stringify({ ...stored, helperPrepared: true } satisfies StoredOperation));
+      setJob(stored.job);
+      setOperation(local);
+      setMessage("The exact issued NFC job is recovered and protected.");
+    } catch (error) {
+      setMessage(`${safeMessage(error)} The issued pointer remains preserved; do not issue another job.`);
     } finally {
       setBusy(false);
     }
@@ -338,6 +533,12 @@ export default function TenKingsNfcV2Page() {
 
   const discard = async () => {
     if (operation) await finishDiscardCleanup(operation);
+  };
+
+  const discardCompletedUnrecorded = async () => {
+    if (operation?.phase === "completed" && completedUnrecorded) {
+      await finishDiscardCleanup(operation, "completed_unrecorded");
+    }
   };
 
   if (loading) return <AppShell background="black"><div className={styles.center}>Loading NFC V2…</div></AppShell>;
@@ -351,16 +552,14 @@ export default function TenKingsNfcV2Page() {
     helper.tenKingsV2NfcEnabled === true &&
     helper.tenKingsV2NfcCapability === readiness?.expectedHelperCapability &&
     readiness.currentJobSigningKeyId &&
-    helper.tenKingsV2TrustedJobSigningKeyIds &&
-    helper.tenKingsV2TrustedJobSigningKeyIds.length === readiness.trustedJobSigningKeyIds.length &&
-    [...helper.tenKingsV2TrustedJobSigningKeyIds].sort().every(
-      (keyId, index) => keyId === [...readiness.trustedJobSigningKeyIds].sort()[index],
-    ) &&
+    tenKingsV2ExactKeySetMatches(helper.tenKingsV2TrustedJobSigningKeyIds, readiness.trustedJobSigningKeyIds) &&
+    tenKingsV2HelperSignerAllowed(helper.tenKingsV2WorkstationKeyId, readiness.workstationKeyIds) &&
     helper.goToTagsReady &&
     !helper.busy &&
     readiness?.configured &&
     readiness.programmingEnabled,
   );
+  const provisionalPending = Boolean(job && !operation);
 
   return (
     <AppShell background="black" brandVariant="collectibles" hideFooter>
@@ -404,7 +603,10 @@ export default function TenKingsNfcV2Page() {
               {!operation ? <>
                 <ol><li>Take exactly one unused F8215 from controlled inventory.</li><li>Keep it off the reader until GoToTags asks for it.</li><li>Failed or uncertain tags are removed and discarded.</li></ol>
                 <label className={styles.confirm}><input type="checkbox" checked={freshConfirmed} onChange={(event) => setFreshConfirmed(event.target.checked)} /><span>I have one fresh unused F8215, and it is not on the reader.</span></label>
-                <button className={styles.primary} disabled={!freshConfirmed || !helperReady || busy} onClick={() => void prepare()}>{busy ? "Preparing…" : "Confirm Fresh F8215 & Prepare"}</button>
+                {provisionalPending
+                  ? <button className={styles.primary} disabled={!helper || busy} onClick={() => void retryProvisionalPrepare()}>{busy ? "Recovering…" : "Retry exact issued job"}</button>
+                  : <button className={styles.primary} disabled={!freshConfirmed || !helperReady || busy || storedPointerBlocked} onClick={() => void prepare()}>{busy ? "Preparing…" : "Confirm Fresh F8215 & Prepare"}</button>}
+                {storedPointerBlocked ? <p className={styles.help}>The preserved browser pointer is invalid. Do not issue or program another tag until an admin reviews that exact local pointer.</p> : null}
                 {!helperReady ? <p className={styles.help}>Open this screen from the approved NFC workstation shortcut. Hosted V2, helper V4, idle shared gate, and GoToTags must all be ready.</p> : null}
               </> : <>
                 <div className={styles.phase}><span>{operation.phase.replaceAll("_", " ")}</span><div className={styles.pulse} aria-hidden="true" /></div>
@@ -412,7 +614,10 @@ export default function TenKingsNfcV2Page() {
                 {operation.phase === "completed" ? <p>Exact URL readback and permanent lock verified. Saving the three informational facts.</p> : null}
                 {operation.phase === "closing_success" ? <p>The hosted verification is saved. Protected workstation cleanup is resuming.</p> : null}
                 {operation.phase === "closing_discard_failed" || operation.phase === "closing_discard_uncertain" ? <p>The discard is acknowledged. Protected workstation cleanup is resuming.</p> : null}
+                {operation.phase === "closing_discard_completed_unrecorded" ? <p>The completed-but-unrecorded discard is acknowledged. Protected workstation cleanup is resuming.</p> : null}
                 {operation.phase === "failed" || operation.phase === "uncertain" ? <button className={styles.discard} disabled={busy || !operation.discardAcknowledgementNonce} onClick={() => void discard()}>I removed and discarded this failed tag</button> : null}
+                {(terminalError || pollError) ? <button className={styles.primary} disabled={busy} onClick={() => void retryCurrent()}>Retry this exact operation</button> : null}
+                {operation.phase === "completed" && completedUnrecorded ? <button className={styles.discard} disabled={busy || !operation.discardAcknowledgementNonce} onClick={() => void discardCompletedUnrecorded()}>I removed and discarded this completed but unrecorded tag</button> : null}
               </>}
             </section>
           </div>

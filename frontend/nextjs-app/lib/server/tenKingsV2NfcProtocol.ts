@@ -410,6 +410,9 @@ function validateUnsignedResult(value: unknown): TenKingsV2NfcUnsignedResult {
   exact(result.adapterIdentity, TEN_KINGS_V2_NFC_ADAPTER_IDENTITY, "TEN_KINGS_V2_NFC_RESULT_INVALID", "adapterIdentity");
   exact(result.adapterVersion, TEN_KINGS_V2_NFC_ADAPTER_VERSION, "TEN_KINGS_V2_NFC_RESULT_INVALID", "adapterVersion");
   shaped(result.readbackPayloadSha256, /^[a-f0-9]{64}$/, "TEN_KINGS_V2_NFC_RESULT_INVALID", "readbackPayloadSha256");
+  if (result.readbackPayloadSha256 !== sha256Hex(result.url)) {
+    invalid("TEN_KINGS_V2_NFC_READBACK_DIGEST_MISMATCH", "readbackPayloadSha256 does not prove the exact signed URL bytes.");
+  }
   exact(
     result.writeProtectionState,
     TEN_KINGS_V2_NFC_WRITE_PROTECTION_STATE,

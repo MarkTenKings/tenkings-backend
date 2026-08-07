@@ -46,7 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (req.method === "POST" && action === "issue") {
       const parsed = issueSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid NFC V2 job request." });
-      return res.status(200).json({ job: await issueTenKingsV2NfcCardJob(parsed.data.cardId) });
+      return res.status(200).json(await issueTenKingsV2NfcCardJob(parsed.data.cardId));
     }
     if (req.method === "POST" && action === "complete") {
       const parsed = completeSchema.safeParse(req.body);
