@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   claimTenKingsV2AutomaticTerminalAttempt,
@@ -7,8 +8,10 @@ import {
   tenKingsV2ExactKeySetMatches,
   tenKingsV2HelperSignerAllowed,
   tenKingsV2LocalOperationMatchesStored,
+  tenKingsV2MayClearUnstartedExpiredProvisional,
   tenKingsV2PermanentCompletionRejection,
   tenKingsV2ProvisionalRecoveryAction,
+  type TenKingsV2StoredOperationFacts,
 } from "../lib/tenKingsV2NfcBrowserState";
 
 const HASH = "a".repeat(64);
@@ -117,7 +120,70 @@ test("each exact terminal digest and phase receives at most one automatic attemp
 test("only permanent signed-evidence or card-binding rejection exposes completed-tag discard", () => {
   assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_RESULT_JOB_MISMATCH"), true);
   assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_CARD_NO_LONGER_RECORDABLE"), true);
+  assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_JOB_KEY_UNTRUSTED"), true);
+  assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_WORKSTATION_UNTRUSTED"), true);
+  assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_SIGNATURE_INVALID"), true);
   assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_RESULT_TIME_REJECTED"), false);
-  assert.equal(tenKingsV2PermanentCompletionRejection(409, "TEN_KINGS_V2_NFC_WORKSTATION_UNTRUSTED"), false);
   assert.equal(tenKingsV2PermanentCompletionRejection(503, "TEN_KINGS_V2_NFC_RESULT_JOB_MISMATCH"), false);
+});
+
+test("expired provisional cleanup requires exact authoritative absence and proves no operation ever started", () => {
+  const expired: TenKingsV2StoredOperationFacts & { helperPrepared: boolean } = {
+    ...base,
+    helperPrepared: false,
+    automaticTerminalAttempts: [],
+    job: {
+      ...base.job,
+      expiresAt: "2026-08-06T20:05:00.000Z",
+    },
+  };
+  const mayClear = (overrides: Partial<typeof expired> = {}, input: {
+    helperErrorCode?: string | null;
+    localOperation?: { cardId: string; jobEnvelopeSha256: string } | null;
+    now?: Date;
+  } = {}) => tenKingsV2MayClearUnstartedExpiredProvisional({ ...expired, ...overrides }, {
+    helperStatusErrorCode: input.helperErrorCode === undefined ? "v2_nfc_job_not_found" : input.helperErrorCode,
+    helperPrepareErrorCode: "v2_nfc_job_expired",
+    localOperation: input.localOperation === undefined ? null : input.localOperation,
+    now: input.now ?? new Date("2026-08-06T20:05:00.001Z"),
+  });
+
+  assert.equal(mayClear(), true);
+  assert.equal(mayClear({}, { helperErrorCode: "v2_nfc_operation_failed" }), false);
+  assert.equal(tenKingsV2MayClearUnstartedExpiredProvisional(expired, {
+    helperStatusErrorCode: "v2_nfc_job_not_found",
+    helperPrepareErrorCode: "v2_nfc_job_signature_invalid",
+    localOperation: null,
+    now: new Date("2026-08-06T20:05:00.001Z"),
+  }), false);
+  assert.equal(mayClear({ helperPrepared: true }), false);
+  assert.equal(mayClear({ automaticTerminalAttempts: undefined }), false);
+  assert.equal(mayClear({ automaticTerminalAttempts: [`${HASH}:completed`] }), false);
+  assert.equal(mayClear({
+    discardAcknowledgement: {
+      jobEnvelopeSha256: HASH,
+      acknowledgementNonce: NONCE,
+      phase: "failed",
+    },
+  }), false);
+  assert.equal(mayClear({}, { localOperation: { cardId: base.cardId, jobEnvelopeSha256: HASH } }), false);
+  assert.equal(mayClear({}, { now: new Date("2026-08-06T20:05:00.000Z") }), false);
+  assert.equal(mayClear({ job: { ...expired.job, expiresAt: "2026-08-06T20:05:00Z" } }), false);
+  assert.equal(mayClear({ job: { ...expired.job, expiresAt: "not-a-time" } }), false);
+  assert.equal(mayClear({ job: { ...expired.job, cardId: "another-card" } }), false);
+});
+
+test("admin recovery structurally reaches the helper before card lookup and exposes recovery without a card", () => {
+  const source = readFileSync(new URL("../pages/admin/nfc.tsx", import.meta.url), "utf8");
+  const storedBranch = source.indexOf("if (stored) {");
+  const helperRecovery = source.indexOf("getTenKingsV2NfcOperationStatus(stored.jobEnvelopeSha256)", storedBranch);
+  const recoveryCardLookup = source.indexOf("loadRecoveryCard(stored.cardId)", helperRecovery);
+  assert.ok(storedBranch >= 0, "stored recovery branch must exist");
+  assert.ok(helperRecovery > storedBranch, "stored recovery must query the exact helper operation");
+  assert.ok(recoveryCardLookup > helperRecovery, "stored recovery must query helper state before the non-VOID card endpoint");
+  assert.match(source, /const recoveryWorkspace = Boolean\(card \|\| operation \|\| provisionalPending\);/);
+  assert.match(source, /\{!recoveryWorkspace \? \(/);
+  assert.match(source, /recoveryCardUnavailable/);
+  assert.match(source, /helperStatusErrorCode: error\.code/);
+  assert.match(source, /helperPrepareErrorCode: prepareError\.code/);
 });

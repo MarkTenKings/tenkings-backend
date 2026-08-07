@@ -26,6 +26,7 @@ import {
   tenKingsV2ExactKeySetMatches,
   tenKingsV2HelperSignerAllowed,
   tenKingsV2LocalOperationMatchesStored,
+  tenKingsV2MayClearUnstartedExpiredProvisional,
   tenKingsV2PermanentCompletionRejection,
   tenKingsV2ProvisionalRecoveryAction,
 } from "../../lib/tenKingsV2NfcBrowserState";
@@ -143,6 +144,7 @@ export default function TenKingsNfcV2Page() {
   const [completedUnrecorded, setCompletedUnrecorded] = useState(false);
   const [pollRevision, setPollRevision] = useState(0);
   const [storedPointerBlocked, setStoredPointerBlocked] = useState(false);
+  const [recoveryCardUnavailable, setRecoveryCardUnavailable] = useState(false);
   const pairingCodeRef = useRef("");
   const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isAdmin = useMemo(
@@ -170,10 +172,23 @@ export default function TenKingsNfcV2Page() {
   const loadCard = useCallback(async (cardId: string) => {
     const payload = await hosted<{ card: Card }>(`card?cardId=${encodeURIComponent(cardId)}`);
     setCard(payload.card);
+    setRecoveryCardUnavailable(false);
     setResults([]);
     setMessage(payload.card.nfcVerifiedAt ? "This card has a verified informational NFC fact. You may write the same permanent URL to a replacement tag." : "Card ready. NFC is optional and does not affect its grade or inventory state.");
     return payload.card;
   }, [hosted]);
+
+  const loadRecoveryCard = useCallback(async (cardId: string) => {
+    try {
+      return await loadCard(cardId);
+    } catch (error) {
+      if (!(error instanceof HostedNfcError) || error.status !== 404) throw error;
+      setCard(null);
+      setResults([]);
+      setRecoveryCardUnavailable(true);
+      return null;
+    }
+  }, [loadCard]);
 
   useEffect(() => {
     const launch = consumeAiGraderNfcLauncherFragment({
@@ -192,23 +207,23 @@ export default function TenKingsNfcV2Page() {
       try {
         const status = await hosted<{ readiness: Readiness }>("status");
         setReadiness(status.readiness);
-        if (selectedCardId) await loadCard(selectedCardId);
-        if (hasAiGraderNfcHelperPairing()) {
-          setHelper(await getAiGraderNfcHelperStatus());
-        } else if (pairingCodeRef.current) {
-          setHelper(await pairAiGraderNfcHelper(pairingCodeRef.current));
-          pairingCodeRef.current = "";
-        }
         const rawStored = window.localStorage.getItem(STORED_OPERATION);
         const stored = readStoredOperation();
         if (rawStored !== null && !stored) {
           setStoredPointerBlocked(true);
           throw new Error("The protected NFC browser pointer is invalid. It was preserved and must be reviewed before another job can be issued.");
         }
+        if (hasAiGraderNfcHelperPairing()) {
+          setHelper(await getAiGraderNfcHelperStatus());
+        } else if (pairingCodeRef.current) {
+          setHelper(await pairAiGraderNfcHelper(pairingCodeRef.current));
+          pairingCodeRef.current = "";
+        }
         if (stored) {
           setJob(stored.job);
-          const authoritativeCard = await loadCard(stored.cardId);
           try {
+            // The helper is the physical-operation authority. Recover it before
+            // asking the hosted non-VOID card endpoint about this old pointer.
             const local = await getTenKingsV2NfcOperationStatus(stored.jobEnvelopeSha256);
             if (tenKingsV2ProvisionalRecoveryAction(stored, local) !== "ACCEPT_EXACT_HELPER_STATE") {
               throw new Error("Recovered helper state does not match the exact issued card and job.");
@@ -216,11 +231,13 @@ export default function TenKingsNfcV2Page() {
             if (!stored.helperPrepared) {
               window.localStorage.setItem(STORED_OPERATION, JSON.stringify({ ...stored, helperPrepared: true } satisfies StoredOperation));
             }
+            setOperation(local);
+            const authoritativeCard = await loadRecoveryCard(stored.cardId);
             if (
+              authoritativeCard &&
               local.phase === "completed" &&
               reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard) === "verified"
             ) {
-              setOperation(local);
               await acknowledgeTenKingsV2NfcSuccess(local.jobEnvelopeSha256);
               window.localStorage.removeItem(STORED_OPERATION);
               setJob(null);
@@ -228,18 +245,21 @@ export default function TenKingsNfcV2Page() {
               setMessage("Hosted NFC verification was already saved. Exact protected workstation cleanup completed during recovery.");
               return;
             }
-            setOperation(local);
             const recoveredAttemptKey = `${local.jobEnvelopeSha256}:${local.phase}`;
             if (stored.automaticTerminalAttempts.includes(recoveredAttemptKey)) {
               setTerminalError("The earlier automatic terminal request did not finish visibly.");
               setMessage("Protected NFC terminal state recovered. Use Retry this exact operation; no automatic loop will run.");
+            } else if (!authoritativeCard) {
+              setMessage("The original card is missing or voided. The exact protected tag operation is still shown below; finish its bounded recovery, then discard the tag if hosted recording is permanently rejected.");
             } else {
               setMessage(local.phase === "completed" ? "Verified local result recovered. Completing the hosted card fact now." : "Protected NFC operation recovered after reload.");
             }
           } catch (error) {
             if (error instanceof AiGraderNfcHelperError && error.code === "v2_nfc_job_not_found") {
-              const authoritativeCard = await loadCard(stored.cardId);
-              const reconciliation = reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard);
+              const authoritativeCard = await loadRecoveryCard(stored.cardId);
+              const reconciliation = authoritativeCard
+                ? reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard)
+                : "unresolved";
               if (reconciliation === "verified" || reconciliation === "discard_acknowledged") {
                 window.localStorage.removeItem(STORED_OPERATION);
                 setJob(null);
@@ -251,13 +271,36 @@ export default function TenKingsNfcV2Page() {
                 if (tenKingsV2ProvisionalRecoveryAction(stored, null) !== "PREPARE_EXACT_ISSUED_JOB") {
                   throw new Error("The protected issued pointer does not match its card.");
                 }
-                const resumed = await prepareTenKingsV2NfcOperation(stored.job);
+                let resumed: TenKingsV2NfcLocalOperation;
+                try {
+                  resumed = await prepareTenKingsV2NfcOperation(stored.job);
+                } catch (prepareError) {
+                  if (
+                    prepareError instanceof AiGraderNfcHelperError &&
+                    tenKingsV2MayClearUnstartedExpiredProvisional(stored, {
+                      helperStatusErrorCode: error.code,
+                      helperPrepareErrorCode: prepareError.code,
+                      localOperation: null,
+                      now: new Date(),
+                    })
+                  ) {
+                    window.localStorage.removeItem(STORED_OPERATION);
+                    setStoredPointerBlocked(false);
+                    setJob(null);
+                    setOperation(null);
+                    setMessage("The helper proved the exact signed job was absent and expired before preparation, so the unstarted browser pointer was removed.");
+                    return;
+                  }
+                  throw prepareError;
+                }
                 if (tenKingsV2ProvisionalRecoveryAction(stored, resumed) !== "ACCEPT_EXACT_HELPER_STATE") {
                   throw new Error("The helper did not resume the exact issued NFC job.");
                 }
                 window.localStorage.setItem(STORED_OPERATION, JSON.stringify({ ...stored, helperPrepared: true } satisfies StoredOperation));
                 setOperation(resumed);
-                setMessage("The exact issued NFC job was safely resumed after the earlier response was lost.");
+                setMessage(authoritativeCard
+                  ? "The exact issued NFC job was safely resumed after the earlier response was lost."
+                  : "The original card is missing or voided, but the exact helper operation was recovered. Complete the bounded operation and discard the tag if hosted recording is permanently rejected.");
               } else {
                 throw new Error("The local NFC operation is missing, but hosted verification is not new enough to prove completion. Browser state was preserved for admin review.");
               }
@@ -265,12 +308,14 @@ export default function TenKingsNfcV2Page() {
               throw error;
             }
           }
+          return;
         }
+        if (selectedCardId) await loadCard(selectedCardId);
       } catch (error) {
         setMessage(safeMessage(error));
       }
     })();
-  }, [hosted, isAdmin, launcherReady, loadCard, selectedCardId, session?.token]);
+  }, [hosted, isAdmin, launcherReady, loadCard, loadRecoveryCard, selectedCardId, session?.token]);
 
   const completeHosted = useCallback(async (activeJob: Record<string, string>, local: TenKingsV2NfcLocalOperation) => {
     if (!local.result) return;
@@ -500,8 +545,10 @@ export default function TenKingsNfcV2Page() {
         local = await getTenKingsV2NfcOperationStatus(stored.jobEnvelopeSha256);
       } catch (error) {
         if (!(error instanceof AiGraderNfcHelperError) || error.code !== "v2_nfc_job_not_found") throw error;
-        const authoritativeCard = await loadCard(stored.cardId);
-        const reconciliation = reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard);
+        const authoritativeCard = await loadRecoveryCard(stored.cardId);
+        const reconciliation = authoritativeCard
+          ? reconcileMissingTenKingsV2LocalOperation(stored, authoritativeCard)
+          : "unresolved";
         if (reconciliation === "verified" || reconciliation === "discard_acknowledged") {
           window.localStorage.removeItem(STORED_OPERATION);
           setStoredPointerBlocked(false);
@@ -515,7 +562,27 @@ export default function TenKingsNfcV2Page() {
         if (tenKingsV2ProvisionalRecoveryAction(stored, null) !== "PREPARE_EXACT_ISSUED_JOB") {
           throw new Error("The protected issued pointer does not match its card.");
         }
-        local = await prepareTenKingsV2NfcOperation(stored.job);
+        try {
+          local = await prepareTenKingsV2NfcOperation(stored.job);
+        } catch (prepareError) {
+          if (
+            prepareError instanceof AiGraderNfcHelperError &&
+            tenKingsV2MayClearUnstartedExpiredProvisional(stored, {
+              helperStatusErrorCode: error.code,
+              helperPrepareErrorCode: prepareError.code,
+              localOperation: null,
+              now: new Date(),
+            })
+          ) {
+            window.localStorage.removeItem(STORED_OPERATION);
+            setStoredPointerBlocked(false);
+            setJob(null);
+            setOperation(null);
+            setMessage("The helper proved the exact signed job was absent and expired before preparation, so the unstarted browser pointer was removed.");
+            return;
+          }
+          throw prepareError;
+        }
       }
       if (tenKingsV2ProvisionalRecoveryAction(stored, local) !== "ACCEPT_EXACT_HELPER_STATE") {
         throw new Error("The helper did not resume the exact issued NFC job.");
@@ -560,6 +627,7 @@ export default function TenKingsNfcV2Page() {
     readiness.programmingEnabled,
   );
   const provisionalPending = Boolean(job && !operation);
+  const recoveryWorkspace = Boolean(card || operation || provisionalPending);
 
   return (
     <AppShell background="black" brandVariant="collectibles" hideFooter>
@@ -577,7 +645,7 @@ export default function TenKingsNfcV2Page() {
           <p>{message}</p>
         </div>
 
-        {!card ? (
+        {!recoveryWorkspace ? (
           <section className={styles.lookup} aria-labelledby="lookup-title">
             <div><span>01</span><h2 id="lookup-title">Choose a card</h2><p>Search by certificate, permanent token, player, card name, or card number.</p></div>
             <form onSubmit={(event) => { event.preventDefault(); void search(); }}>
@@ -590,12 +658,18 @@ export default function TenKingsNfcV2Page() {
           <div className={styles.workspace}>
             <section className={styles.cardPanel} aria-labelledby="selected-card-title">
               <span className={styles.step}>01 · PERMANENT CARD</span>
-              <h2 id="selected-card-title">{card.displayName}</h2>
-              <p>{card.year} · {card.manufacturer ? `${card.manufacturer} · ` : ""}{card.productSet}</p>
-              <dl><div><dt>Variant</dt><dd>{card.parallel ?? "Base"}</dd></div><div><dt>Card</dt><dd>{card.cardNumber ?? "—"}</dd></div><div><dt>Grade</dt><dd>{card.grade}</dd></div><div><dt>Certificate</dt><dd>{card.certificateNumber ?? "—"}</dd></div></dl>
-              <a href={card.permanentUrl} target="_blank" rel="noreferrer">{card.permanentUrl} ↗</a>
-              {card.nfcVerifiedAt ? <div className={styles.verified}>NFC verified · {new Date(card.nfcVerifiedAt).toLocaleString()}</div> : null}
-              {!operation ? <button className={styles.quiet} onClick={() => { setCard(null); setFreshConfirmed(false); void router.replace("/admin/nfc"); }}>Change card</button> : null}
+              {card ? <>
+                <h2 id="selected-card-title">{card.displayName}</h2>
+                <p>{card.year} · {card.manufacturer ? `${card.manufacturer} · ` : ""}{card.productSet}</p>
+                <dl><div><dt>Variant</dt><dd>{card.parallel ?? "Base"}</dd></div><div><dt>Card</dt><dd>{card.cardNumber ?? "—"}</dd></div><div><dt>Grade</dt><dd>{card.grade}</dd></div><div><dt>Certificate</dt><dd>{card.certificateNumber ?? "—"}</dd></div></dl>
+                <a href={card.permanentUrl} target="_blank" rel="noreferrer">{card.permanentUrl} ↗</a>
+                {card.nfcVerifiedAt ? <div className={styles.verified}>NFC verified · {new Date(card.nfcVerifiedAt).toLocaleString()}</div> : null}
+                {!operation ? <button className={styles.quiet} onClick={() => { setCard(null); setFreshConfirmed(false); void router.replace("/admin/nfc"); }}>Change card</button> : null}
+              </> : <>
+                <h2 id="selected-card-title">Recover protected operation</h2>
+                <p>The saved card <strong>{job?.cardId ?? "unknown"}</strong> is missing or voided. Its row is not required to recover the exact physical tag operation.</p>
+                {recoveryCardUnavailable ? <div className={styles.verified}>CARD UNAVAILABLE · RECOVERY ONLY</div> : null}
+              </>}
             </section>
 
             <section className={styles.programPanel} aria-labelledby="program-title">

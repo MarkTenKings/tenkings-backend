@@ -16,12 +16,15 @@ const PERMANENT_COMPLETION_REJECTIONS = new Set([
   "TEN_KINGS_V2_NFC_CARD_NO_LONGER_RECORDABLE",
   "TEN_KINGS_V2_NFC_CARD_TOKEN_CHANGED",
   "TEN_KINGS_V2_NFC_JOB_INVALID",
+  "TEN_KINGS_V2_NFC_JOB_KEY_UNTRUSTED",
   "TEN_KINGS_V2_NFC_JOB_SIGNATURE_INVALID",
   "TEN_KINGS_V2_NFC_READBACK_DIGEST_MISMATCH",
   "TEN_KINGS_V2_NFC_RESULT_INVALID",
   "TEN_KINGS_V2_NFC_RESULT_JOB_MISMATCH",
   "TEN_KINGS_V2_NFC_RESULT_OUTSIDE_JOB_WINDOW",
   "TEN_KINGS_V2_NFC_RESULT_SIGNATURE_INVALID",
+  "TEN_KINGS_V2_NFC_SIGNATURE_INVALID",
+  "TEN_KINGS_V2_NFC_WORKSTATION_UNTRUSTED",
 ]);
 
 export function tenKingsV2PermanentCompletionRejection(status: number, code: string | null) {
@@ -73,6 +76,35 @@ export function claimTenKingsV2AutomaticTerminalAttempt(
   const attempts = stored.automaticTerminalAttempts ?? [];
   if (attempts.includes(key)) return { claimed: false, attempts };
   return { claimed: true, attempts: [...attempts, key].slice(-4) };
+}
+
+const canonicalUtcMillis = (value: unknown) => {
+  if (typeof value !== "string") return null;
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis)) return null;
+  return new Date(millis).toISOString() === value ? millis : null;
+};
+
+export function tenKingsV2MayClearUnstartedExpiredProvisional(
+  stored: TenKingsV2StoredOperationFacts & { helperPrepared: boolean },
+  input: {
+    helperStatusErrorCode: string | null;
+    helperPrepareErrorCode: string | null;
+    localOperation: TenKingsV2LocalIdentity | null;
+    now: Date;
+  },
+) {
+  if (
+    input.helperStatusErrorCode !== "v2_nfc_job_not_found" ||
+    input.helperPrepareErrorCode !== "v2_nfc_job_expired"
+  ) return false;
+  if (stored.helperPrepared || input.localOperation !== null) return false;
+  if (!Array.isArray(stored.automaticTerminalAttempts) || stored.automaticTerminalAttempts.length !== 0) return false;
+  if (stored.discardAcknowledgement) return false;
+  if (stored.job.cardId !== stored.cardId) return false;
+  const expiresAt = canonicalUtcMillis(stored.job.expiresAt);
+  const nowMillis = input.now.getTime();
+  return expiresAt !== null && Number.isFinite(nowMillis) && nowMillis > expiresAt;
 }
 
 export function tenKingsV2ClosingRecovery(

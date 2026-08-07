@@ -30960,7 +30960,7 @@ By enabling Rip It Live, I confirm:
 - Focused NFC protocol/browser tests passed `15/15`; focused changed-file ESLint passed with zero findings.
 - The optimized Next.js Production build passed type checking and all `74/74` static pages, including `/admin/nfc` and `/api/v2/admin/nfc/[...action]`. Output contained only existing unrelated repository warnings.
 - The C# helper suite compiled under the .NET 8 Linux container and truthfully reported `17 passed, 7 skipped, 0 failed` across `24` groups. The earlier foundation entry's `22/22` statement is superseded for the corrected head: those Windows-only groups had returned early and are now explicit skips, not Windows acceptance evidence.
-- All five changed PowerShell files parsed successfully in PowerShell 7 on Linux. This is syntax evidence only, not execution evidence. `git diff --check` passed.
+- All four PowerShell files changed by this correction parsed successfully in PowerShell 7 on Linux; the related unchanged `test-ai-grader-nfc-versioned-update.ps1` also parsed, for five relevant files checked in total. This is syntax evidence only, not execution evidence. `git diff --check` passed.
 
 ### Mandatory Windows/Dell acceptance gates
 
@@ -30987,3 +30987,25 @@ By enabling Rip It Live, I confirm:
 - The exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed type checking, generated all `75/75` static pages including `/admin/comps` and `/admin/nfc`, emitted both V2 API routes and `/c/[token]`, and passed the Sharp trace verifier. Output contained only the repository's existing unrelated warnings.
 - The integrated .NET 8 Linux-container helper suite truthfully passed `17`, skipped the seven named Windows-only protected runtime groups, and failed `0`. All five relevant PowerShell files parsed successfully under PowerShell 7 in Linux; this remains syntax evidence only. The Windows/Dell gates recorded above remain open and are not represented as passed.
 - No Production/remote migration, database/customer/card write, backfill, deploy, restart, secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, or physical NFC tag read/write/lock occurred.
+
+## 2026-08-07 - Ten Kings V2 NFC final browser-recovery corrections (hardware-free only)
+
+### Recovery corrections
+
+- Added the exact permanent completion-rejection escape codes for a locked tag whose original server-job key or workstation key is no longer trusted, plus the generic terminal signature failure. These and the existing exact card/signature/binding failures expose only the explicit completed-but-unrecorded discard path; time, transport, server-availability, unknown, and non-409 failures remain retry-only.
+- Reordered reload recovery so the browser validates its exact saved pointer and queries the helper's protected operation before calling the hosted non-VOID card endpoint. A subsequently VOID or missing card no longer hides the protected operation: the recovery-only panel keeps its stored card identity plus exact polling, retry, acknowledgement, and completed-but-unrecorded discard controls available. It does not issue a new hosted job or create database/ownership history.
+- Added a bounded abandonment path for an issued job that never started. Clearing requires all of the following: exact helper status `v2_nfc_job_not_found`; `helperPrepared=false`; no local operation, terminal attempt, or discard acknowledgement; exact stored card binding; a strictly passed canonical signed-job expiry; and a second exact helper prepare rejection `v2_nfc_job_expired`. The second proof makes the protected helper validate trust, signature, canonical job shape, and workstation time before rejecting without persistence. A successful prepare, lost response, or any trust, signature, time, transport, or other error preserves the pointer.
+- Corrected the preceding PowerShell parser statement: four PowerShell files changed in that correction; the fifth parsed file was the related unchanged versioned-update test.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- Focused NFC browser/protocol tests passed `17/17`, including executable permanent-rejection, helper-before-card, cardless recovery UI, and two-proof expired-provisional regressions. Focused changed-file ESLint passed with zero findings.
+- The optimized Next.js Production build passed lint/type checking and all `74/74` static pages. Output contained only existing unrelated repository warnings.
+- The .NET 8 Linux container again reported `17 passed, 7 explicitly skipped Windows-only groups, 0 failed` across `24` helper groups. This is portable evidence only and does not close any Windows gate.
+- The four changed PowerShell files and related unchanged versioned-update test all parsed successfully in PowerShell 7 on Linux. This is syntax evidence only. `git diff --check` passed.
+
+### Safety and remaining gates
+
+- The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
