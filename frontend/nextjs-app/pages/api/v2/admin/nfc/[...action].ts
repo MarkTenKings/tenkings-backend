@@ -5,6 +5,7 @@ import {
   TenKingsV2NfcHostedError,
   completeTenKingsV2NfcCardJob,
   getTenKingsV2NfcCard,
+  getTenKingsV2NfcRecoveryCardFact,
   issueTenKingsV2NfcCardJob,
   searchTenKingsV2NfcCards,
   tenKingsV2NfcReadiness,
@@ -12,6 +13,7 @@ import {
 
 const cardId = z.string().trim().min(1).max(160);
 const issueSchema = z.object({ cardId }).strict();
+const recoveryCardFactSchema = z.object({ cardId }).strict();
 const completeSchema = z.object({
   job: z.record(z.string(), z.string()),
   result: z.record(z.string(), z.string()),
@@ -47,6 +49,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const parsed = issueSchema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ message: "Invalid NFC V2 job request." });
       return res.status(200).json(await issueTenKingsV2NfcCardJob(parsed.data.cardId));
+    }
+    if (req.method === "POST" && action === "recovery-card-fact") {
+      const parsed = recoveryCardFactSchema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ message: "Invalid NFC V2 recovery identity." });
+      return res.status(200).json({ fact: await getTenKingsV2NfcRecoveryCardFact(parsed.data.cardId) });
     }
     if (req.method === "POST" && action === "complete") {
       const parsed = completeSchema.safeParse(req.body);

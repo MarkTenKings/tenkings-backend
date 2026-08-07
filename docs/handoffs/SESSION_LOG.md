@@ -31009,3 +31009,27 @@ By enabling Rip It Live, I confirm:
 
 - The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
+
+## 2026-08-07 - Ten Kings V2 NFC cardless recovery state-machine correction (hardware-free only)
+
+### Corrected recovery authority
+
+- Replaced the helper-404 browser branches with one pure five-outcome recovery decision: recover an exact local helper operation; clear an exact saved discard acknowledgement; clear an exact hosted verification fact; prepare the exact saved job only for an exact ordinary non-VOID card; or fail closed.
+- Exact saved discard acknowledgement is evaluated before any card lookup, so a lost discard-cleanup response clears the stale browser pointer even if the card was later VOID or is missing.
+- Added one authenticated recovery-only POST action for an exact saved card ID. It reads the retained row without the ordinary non-VOID filter and returns only `{id,nfcVerifiedAt}` or `null`. It does not expose VOID cards through search, public pages, the ordinary NFC card endpoint, or any other list and adds no table, state, or history.
+- A lost success-ack response can now clear after helper 404 when that narrow fact proves `nfcVerifiedAt >= signed job.issuedAt`, including after the row becomes VOID.
+- Cardless or VOID recovery with no exact discard or verification proof never calls helper prepare. Its UI contains no fresh-tag instruction and performs only a bounded fact recheck. If the ordinary card later becomes recordable, the operator must newly confirm a fresh unused tag before the exact saved prepare path can run.
+- The helper-authoritative two-proof expiry policy remains unchanged downstream of an allowed ordinary-card prepare attempt. Cardless recovery cannot manufacture that proof by starting a new physical operation and therefore remains fail closed without other evidence.
+
+### Final portable validation evidence
+
+- Repository Node `20.x` focused NFC browser/protocol tests passed `19/19`, including the complete recovery decision table, minimal authenticated recovery-fact boundary, cardless no-prepare UI, exact discard, VOID verification, and existing two-proof expiry tests. Focused changed-file ESLint passed with zero findings.
+- Database NFC tests passed `15/15`; the database workspace strict TypeScript build passed.
+- The optimized Next.js Production build passed lint/type checking and all `74/74` static pages. Output contained only existing unrelated repository warnings.
+- The .NET 8 Linux container again reported `17 passed, 7 explicitly skipped Windows-only groups, 0 failed` across `24` helper groups. The five relevant PowerShell files parsed successfully in PowerShell 7 on Linux. These remain portable syntax/logic evidence only and do not close Windows acceptance gates.
+- `git diff --check` passed.
+
+### Safety and remaining gates
+
+- The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
+- No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.

@@ -284,6 +284,14 @@ export async function getTenKingsV2NfcCard(cardId: string) {
   return card ? publicCard(card) : null;
 }
 
+export async function getTenKingsV2NfcRecoveryCardFact(cardId: string) {
+  const card = await prisma.collectibleCardV2.findUnique({
+    where: { id: cardId },
+    select: { id: true, nfcVerifiedAt: true },
+  });
+  return card ? { id: card.id, nfcVerifiedAt: card.nfcVerifiedAt?.toISOString() ?? null } : null;
+}
+
 export async function issueTenKingsV2NfcCardJob(cardId: string, env: EnvLike = process.env) {
   const runtime = tenKingsV2NfcRuntime(env);
   if (!runtime.enabled) {
