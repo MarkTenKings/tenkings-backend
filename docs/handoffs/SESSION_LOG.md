@@ -31046,6 +31046,7 @@ By enabling Rip It Live, I confirm:
 - Added the new sensitive Production-only `TEN_KINGS_V2_NFC_JOB_SIGNING_PRIVATE_KEY_PKCS8_BASE64` value without printing or committing the private key.
 - Added the new sensitive Production-only `TEN_KINGS_V2_NFC_PROGRAMMING_ENABLED=false` safety switch. Hosted NFC programming therefore remains disabled through release and cannot be enabled until the separately approved Windows/Dell acceptance, preserved V1 incident resolution, public-trust transition, and physical commissioning are complete.
 - Recorded only the matching non-secret server public verification material and SHA-256 key ID in `docs/handoffs/TEN_KINGS_V2_NFC_SERVER_PUBLIC_KEY.json` for the future reviewed Dell trust transition. No prior server-job signing key was configured.
+- After Vercel accepted the private value and the non-secret public record was committed, removed the exact temporary local key-staging files and directory. The private staging copy is not recoverable from that path.
 
 ### Runtime and safety status
 
