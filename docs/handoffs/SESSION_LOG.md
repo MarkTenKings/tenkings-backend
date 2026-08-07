@@ -30865,3 +30865,16 @@ By enabling Rip It Live, I confirm:
 
 - No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell access, NFC helper/hardware/tag operation, V1 write, or external-system change occurred.
 - The correction commit is for independent critic re-review. It is not release approval, and no merge or Production action is authorized by this log entry.
+
+## 2026-08-07 - eBay Sold Comps V2 research-to-card routing correction
+
+### Correction completed
+
+- Closed the independent critic's final UI routing defect: choosing a permanent card from the lookup results now explicitly returns the standalone workspace from zero-write Research mode to Card mode, clears all research-only draft state, preserves the approved return path, and loads the exact selected card.
+- Added a focused regression contract for the explicit mode transition and result-button handler. No engine, database, schema, provider, market-value, public-display, NFC, V1, or shipping behavior changed.
+
+### Validation and safety
+
+- Repository-required Node `20.x` validation passed `25/25` engine tests, `19/19` Card Platform V2 database-boundary tests, the changed `12/12` frontend Comps contract, focused changed-file ESLint with zero warnings/errors, `git diff --check`, and the exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` with all `74/74` static pages and the Sharp trace verifier. Build warnings were the repository's existing unrelated image/hook/browser-data/Tailwind and optional Sharp-target warnings.
+- An intentionally broader six-file frontend diagnostic passed `47/48`; its sole failure was the pre-existing untouched AI Grader public-defect adjudication fixture expecting `8.5` while current shared grading logic returned `8.7`. The changed Comps contract passed within that run, and neither the routing correction nor the Comps implementation touches that unrelated fixture or grading path.
+- No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell/helper/GoToTags action, NFC hardware/tag operation, or V1 write occurred.

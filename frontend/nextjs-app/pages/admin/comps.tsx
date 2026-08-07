@@ -96,6 +96,22 @@ export default function CompsV2Page() {
     finally { setBusy(false); }
   };
 
+  const chooseCard = (id: string) => {
+    setMode("CARD");
+    setCard(null);
+    setCandidates([]);
+    setSelected([]);
+    setQuery("");
+    setReviewProof(null);
+    setResearchNextOffset(0);
+    setResearchHasMore(false);
+    setMessage("Loading the selected permanent card…");
+    void router.push({
+      pathname: "/admin/comps",
+      query: { card: id, ...(returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {}) },
+    });
+  };
+
   const runSearch = async (operation: "FIND" | "FETCH_MORE" | "REFRESH") => {
     if (!query.trim() || busy) return;
     const replacingSelection = operation !== "FETCH_MORE" && (selected.length > 0 || Boolean(card?.snapshot?.selection.includedCount));
@@ -202,7 +218,7 @@ export default function CompsV2Page() {
       <section className={styles.panel} aria-label="Choose card or research mode">
         <div className={styles.lookup}><input className={styles.input} value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void findCards(); }} placeholder="Token, certificate, player, card name, or card number" aria-label="Find a permanent card" /><button className={styles.button} disabled={busy} onClick={() => void findCards()}>Find Card</button></div>
         <button className={styles.modeButton} type="button" onClick={() => { setMode("RESEARCH"); setCard(null); setCandidates([]); setSelected([]); setQuery(""); setReviewProof(null); setMessage("Research mode never saves to a card."); void router.replace({ pathname: "/admin/comps", query: returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {} }, undefined, { shallow: true }); }}>Search without a card</button>
-        {matches.length ? <div className={styles.searchResults}>{matches.map((match) => <button className={styles.searchResult} key={match.id} onClick={() => void router.push({ pathname: "/admin/comps", query: { card: match.id, ...(returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {}) } })}><span>{match.name ?? "Permanent card"}<small>{match.certificateNumber ?? "No certificate"} · {match.details}</small></span><span>Choose →</span></button>)}</div> : null}
+        {matches.length ? <div className={styles.searchResults}>{matches.map((match) => <button className={styles.searchResult} key={match.id} onClick={() => chooseCard(match.id)}><span>{match.name ?? "Permanent card"}<small>{match.certificateNumber ?? "No certificate"} · {match.details}</small></span><span>Choose →</span></button>)}</div> : null}
       </section>
 
       {card ? <section className={styles.panel}><div className={styles.cardHero}>{card.imageUrl ? <img src={card.imageUrl} alt="Graded card" /> : <div className={styles.cardImagePlaceholder}>CARD</div>}<div><span className={styles.eyebrow}>{card.certificateNumber ?? card.publicToken}</span><h2>{card.category === "SPORTS" ? card.playerName : card.cardName}</h2><p>{[card.year, card.manufacturer, card.productSet, card.parallel, card.cardNumber].filter(Boolean).join(" · ")}</p></div></div></section> : null}

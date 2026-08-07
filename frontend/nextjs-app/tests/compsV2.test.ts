@@ -261,6 +261,8 @@ test("admin surface keeps engine server-only, exact groups/label, one-shot auto 
   assert.equal(page.includes("[...candidates"), false);
   assert.equal(page.includes('mode === "CARD" && id'), true);
   assert.equal(page.includes('router.replace({ pathname: "/admin/comps"'), true);
+  assert.equal(page.includes('const chooseCard = (id: string) => {\n    setMode("CARD");'), true);
+  assert.equal(page.includes('onClick={() => chooseCard(match.id)}'), true);
   assert.equal(page.includes("setMarketValue"), false);
   assert.equal(server.includes("researchProof: createCompsV2ReviewProof"), true);
   assert.equal(server.includes("const selectedIds = current.candidates.filter"), true);
