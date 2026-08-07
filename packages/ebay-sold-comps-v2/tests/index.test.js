@@ -3,6 +3,7 @@ const test = require("node:test");
 
 const {
   EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
+  EBAY_SOLD_COMPS_V2_MAX_CENTS,
   EbaySoldCompsV2Error,
   canonicalEbaySoldCompsV2ListingUrl,
   isApprovedEbaySoldCompsV2ImageUrl,
@@ -86,6 +87,24 @@ test("builds one visible deterministic query without duplicating set identity", 
   }), "2023 Pokemon Scarlet & Violet 151 Pikachu Cosmos Holo #025 PSA 10");
   assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: null }), "1990 SkyBox Michael Jordan #41");
   assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, queryOverride: "  exact admin query  " }), "exact admin query");
+  assert.equal(buildEbaySoldCompsV2Query({
+    ...sportsInput,
+    playerName: "Freddie Freeman",
+    year: "2024",
+    manufacturer: "Topps",
+    productSet: "2024 Topps Chrome",
+    parallel: "Red",
+    cardNumber: "24",
+  }), "2024 Topps Chrome Freddie Freeman Red #24 PSA 9");
+  assert.equal(buildEbaySoldCompsV2Query({
+    ...sportsInput,
+    playerName: "Draymond Green",
+    parallel: "Green",
+  }), "1990 SkyBox Draymond Green Green #41 PSA 9");
+  assert.equal(buildEbaySoldCompsV2Query({
+    ...sportsInput,
+    productSet: "1990 SkyBox #41",
+  }), "1990 SkyBox #41 Michael Jordan PSA 9");
 });
 
 test("rejects unsafe or incomplete search contracts", () => {
@@ -176,6 +195,21 @@ test("recognizes variant contradictions without rejecting human-review candidate
   assert.match(parsed.matchReason, /contradiction/);
 });
 
+test("variant matching subtracts authoritative set and color-surname identity tokens", () => {
+  const draymond = {
+    ...sportsInput,
+    playerName: "Draymond Green",
+    year: "2024",
+    manufacturer: "Panini",
+    productSet: "2024 Panini Prizm",
+    cardNumber: "24",
+  };
+  const baseTitle = "2024 Panini Prizm Draymond Green #24 PSA 9";
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789031", { title: baseTitle }), { ...draymond, parallel: "Base" }).parallelMatch, "MATCH");
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789032", { title: baseTitle }), { ...draymond, parallel: "Green" }).parallelMatch, "UNKNOWN");
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789033", { title: `${baseTitle} Green` }), { ...draymond, parallel: "Green" }).parallelMatch, "MATCH");
+});
+
 test("identity and variant phrases match whole tokens, not substrings", () => {
   const wrongCardNumber = parseEbaySoldCompsV2Candidate(item("123456789027", {
     title: "1990 SkyBox Michael Jordan #141 PSA 9",
@@ -236,6 +270,9 @@ test("averages only unique human-selected sold prices", () => {
   });
   assert.throws(() => calculateEbaySoldCompsV2AverageCents(rows, ["missing"]), /not a returned candidate/);
   assert.throws(() => calculateEbaySoldCompsV2AverageCents([candidate("empty", { soldPriceCents: null })], ["empty"]), /positive sold price/);
+  const maxRows = Array.from({ length: 60 }, (_, index) => candidate(`max-${index}`, { soldPriceCents: EBAY_SOLD_COMPS_V2_MAX_CENTS }));
+  assert.equal(calculateEbaySoldCompsV2AverageCents(maxRows, maxRows.map(({ id }) => id)), EBAY_SOLD_COMPS_V2_MAX_CENTS);
+  assert.throws(() => calculateEbaySoldCompsV2AverageCents([candidate("too-large", { soldPriceCents: EBAY_SOLD_COMPS_V2_MAX_CENTS + 1 })], ["too-large"]), /positive sold price/);
 });
 
 test("merges 30+30 candidates by stable listing identity without mutating inputs", () => {
@@ -245,6 +282,15 @@ test("merges 30+30 candidates by stable listing identity without mutating inputs
   assert.equal(merged.length, 3);
   assert.equal(merged.find((row) => row.id === "ebay:2").soldPriceCents, 10000);
   assert.equal(appended[0].soldPriceCents, 1);
+  assert.deepEqual(mergeEbaySoldCompsV2Candidates(
+    [candidate("ebay:4", { soldDate: "2026-01-01" })],
+    [candidate("ebay:5", { soldDate: "2026-08-01" })],
+  ).map(({ id }) => id), ["ebay:5", "ebay:4"]);
+});
+
+test("provider prices must fit the PostgreSQL integer cents boundary", () => {
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789034", { price: { raw: "$21,474,836.47", extracted: 21_474_836.47 } }), sportsInput).soldPriceCents, EBAY_SOLD_COMPS_V2_MAX_CENTS);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789035", { price: { raw: "$21,474,836.48", extracted: 21_474_836.48 } }), sportsInput).soldPriceCents, null);
 });
 
 test("search sends the exact sold-only contract and returns a redacted deterministic result", async () => {
@@ -265,6 +311,7 @@ test("search sends the exact sold-only contract and returns a redacted determini
   assert.equal(request.searchParams.get("api_key"), "top-secret");
   assert.equal(JSON.stringify(result).includes("top-secret"), false);
   assert.equal(result.engineVersion, EBAY_SOLD_COMPS_V2_ENGINE_VERSION);
+  assert.equal(result.engineVersion, "ebay-sold-comps-v2.1.1");
   assert.equal(result.retrievedAt, "2026-08-06T12:00:00.000Z");
   assert.equal(result.candidates.length, 1);
 });
@@ -302,6 +349,23 @@ test("offset contract retrieves the next 30 unique raw results across provider p
   assert.equal(second.nextOffset, 60);
   assert.equal(merged.length, 60);
   assert.deepEqual(calls.map((url) => url.searchParams.get("_pgn")), [null, null, "2"]);
+});
+
+test("current SerpAPI pagination.next continues after a short first page", async () => {
+  const calls = [];
+  const page = (start, count) => Array.from({ length: count }, (_, index) => item(String(start + index).padStart(12, "0")));
+  const result = await searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async (url) => {
+      const parsed = new URL(url);
+      calls.push(parsed);
+      return parsed.searchParams.get("_pgn") === "2"
+        ? jsonResponse({ organic_results: page(21, 30) })
+        : jsonResponse({ organic_results: page(1, 20), pagination: { next: "https://serpapi.com/next" } });
+    },
+  });
+  assert.equal(result.candidates.length, 30);
+  assert.deepEqual(calls.map((url) => url.searchParams.get("_pgn")), [null, "2"]);
 });
 
 test("duplicate rows do not consume a requested result slot", async () => {

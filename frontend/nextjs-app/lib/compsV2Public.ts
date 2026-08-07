@@ -5,6 +5,7 @@ export type PublicCompsV2Projection = {
 
 const record = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const MAX_CENTS = 2_147_483_647;
 
 const canonicalListing = (value: unknown) => {
   if (typeof value !== "string" || value.length > 500) return null;
@@ -40,7 +41,7 @@ const canonicalSoldDate = (value: unknown) => {
 
 export function projectPublicCompsV2(input: { compsPublic?: boolean; compsSnapshot?: unknown }): PublicCompsV2Projection | null {
   if (!input.compsPublic || !record(input.compsSnapshot) || !Array.isArray(input.compsSnapshot.candidates) || input.compsSnapshot.candidates.length > 60) return null;
-  if (!record(input.compsSnapshot.confirmation) || !Number.isSafeInteger(input.compsSnapshot.confirmation.marketValueCents) || Number(input.compsSnapshot.confirmation.marketValueCents) <= 0 ||
+  if (!record(input.compsSnapshot.confirmation) || !Number.isSafeInteger(input.compsSnapshot.confirmation.marketValueCents) || Number(input.compsSnapshot.confirmation.marketValueCents) <= 0 || Number(input.compsSnapshot.confirmation.marketValueCents) > MAX_CENTS ||
     typeof input.compsSnapshot.confirmation.confirmedByAdminId !== "string" || !input.compsSnapshot.confirmation.confirmedByAdminId.trim() || input.compsSnapshot.confirmation.confirmedByAdminId.length > 256 ||
     typeof input.compsSnapshot.confirmation.confirmedAt !== "string" || !Number.isFinite(Date.parse(input.compsSnapshot.confirmation.confirmedAt)) ||
     new Date(Date.parse(input.compsSnapshot.confirmation.confirmedAt)).toISOString() !== input.compsSnapshot.confirmation.confirmedAt) return null;
@@ -51,7 +52,7 @@ export function projectPublicCompsV2(input: { compsPublic?: boolean; compsSnapsh
     const id = typeof row.id === "string" && row.id.length <= 100 ? row.id : null;
     const listingUrl = canonicalListing(row.listingUrl);
     const imageUrl = approvedImage(row.imageUrl);
-    const soldPriceCents = Number.isSafeInteger(row.soldPriceCents) && Number(row.soldPriceCents) > 0 ? Number(row.soldPriceCents) : null;
+    const soldPriceCents = Number.isSafeInteger(row.soldPriceCents) && Number(row.soldPriceCents) > 0 && Number(row.soldPriceCents) <= MAX_CENTS ? Number(row.soldPriceCents) : null;
     const soldDate = canonicalSoldDate(row.soldDate);
     return id && listingUrl && imageUrl && soldPriceCents && soldDate
       ? { id, listingUrl, imageUrl, soldPriceCents, soldDate }
@@ -59,8 +60,12 @@ export function projectPublicCompsV2(input: { compsPublic?: boolean; compsSnapsh
   });
   if (comps.some((comp) => !comp)) return null;
   const safeComps = comps as PublicCompsV2Projection["comps"];
+  const divisor = BigInt(safeComps.length);
+  const total = safeComps.reduce((sum, comp) => sum + BigInt(comp.soldPriceCents), 0n);
+  const averageSoldPriceCents = Number((total + divisor / 2n) / divisor);
+  if (input.compsSnapshot.confirmation.marketValueCents !== averageSoldPriceCents) return null;
   return {
-    averageSoldPriceCents: Math.round(safeComps.reduce((sum, comp) => sum + comp.soldPriceCents, 0) / safeComps.length),
+    averageSoldPriceCents,
     comps: safeComps,
   };
 }

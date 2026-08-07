@@ -20,6 +20,7 @@ export { projectPublicCompsV2, type PublicCompsV2Projection } from "../compsV2Pu
 
 export const COMPS_V2_MAX_CANDIDATES = 60;
 export const COMPS_V2_MAX_SNAPSHOT_BYTES = 256 * 1024;
+export const COMPS_V2_MAX_CENTS = 2_147_483_647;
 const CARD_QUERY_MAX = 160;
 const QUERY_MAX = 400;
 
@@ -113,7 +114,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const text = (value: unknown, maximum = 500) =>
   typeof value === "string" && value.trim() && value.trim().length <= maximum ? value.trim() : null;
-const safePositiveCents = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
+const safePositiveCents = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= COMPS_V2_MAX_CENTS;
 const canonicalSoldDate = (value: unknown) => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const epoch = Date.parse(`${value}T00:00:00.000Z`);
@@ -137,10 +139,12 @@ const summarizeSelection = (candidates: readonly CompsV2Candidate[], selectedCan
     if (!candidate || !safePositiveCents(candidate.soldPriceCents)) throw new Error("Invalid selected candidate");
     return candidate.soldPriceCents;
   });
+  const divisor = BigInt(prices.length);
+  const total = prices.reduce((sum, price) => sum + BigInt(price), 0n);
   return {
     includedCandidateIds,
     includedCount: prices.length,
-    averageSoldPriceCents: Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length),
+    averageSoldPriceCents: Number((total + divisor / 2n) / divisor),
     lowestSoldPriceCents: Math.min(...prices),
     highestSoldPriceCents: Math.max(...prices),
   };
@@ -177,7 +181,8 @@ const parseCandidate = (value: unknown): CompsV2Candidate | null => {
   const title = text(value.title, 500);
   const listingUrl = canonicalEbaySoldCompsV2ListingUrl(value.listingUrl);
   const imageUrl = value.imageUrl === null ? null : isApprovedEbaySoldCompsV2ImageUrl(value.imageUrl) ? value.imageUrl : null;
-  const soldPriceCents = value.soldPriceCents === null ? null : safePositiveCents(value.soldPriceCents) ? value.soldPriceCents : null;
+  if (value.soldPriceCents !== null && !safePositiveCents(value.soldPriceCents)) return null;
+  const soldPriceCents = value.soldPriceCents === null ? null : value.soldPriceCents;
   const soldDate = canonicalSoldDate(value.soldDate);
   const grader = value.grader === "PSA" || value.grader === "BGS" || value.grader === "SGC" || value.grader === "CGC" ? value.grader : null;
   const group = value.group === "PSA_TARGET" || value.group === "PSA_OTHER" || value.group === "OTHER_GRADED" || value.group === "RAW" ? value.group : null;
@@ -233,7 +238,7 @@ export function parseCompsV2Snapshot(value: unknown): CompsV2Snapshot | null {
     query,
     retrievedAt,
     nextOffset,
-    hasMore: value.hasMore === true,
+    hasMore: rows.length < COMPS_V2_MAX_CANDIDATES && value.hasMore === true,
     candidates: rows,
     selection,
     confirmation: isRecord(value.confirmation) && safePositiveCents(value.confirmation.marketValueCents) &&
@@ -258,14 +263,15 @@ export function createCompsV2ReviewProof(
   secret: string,
   now = new Date(),
 ): CompsV2ReviewProof {
-  if (!parseCompsV2Snapshot(snapshot) || !/^[a-f0-9]{64}$/.test(baseCompsStateRevision) || !secret.trim() || !Number.isFinite(now.getTime())) {
+  const normalizedSnapshot = parseCompsV2Snapshot(snapshot);
+  if (!normalizedSnapshot || !/^[a-f0-9]{64}$/.test(baseCompsStateRevision) || !secret.trim() || !Number.isFinite(now.getTime())) {
     throw new CompsV2HttpError(500, "Refresh review could not be secured", "REVIEW_PROOF_UNAVAILABLE");
   }
   const unsigned = {
     version: 1 as const,
     baseCompsStateRevision,
     expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
-    snapshot,
+    snapshot: normalizedSnapshot,
   };
   return {
     ...unsigned,
@@ -407,18 +413,28 @@ const emptySelection = () => ({
   lowestSoldPriceCents: null, highestSoldPriceCents: null,
 });
 
-const snapshotFromSearch = (result: Awaited<ReturnType<typeof searchEbaySoldCompsV2>>, candidates?: CompsV2Candidate[]): CompsV2Snapshot => ({
-  version: 1,
-  source: "EBAY_SOLD",
-  engineVersion: result.engineVersion,
-  query: result.query,
-  retrievedAt: result.retrievedAt,
-  nextOffset: result.nextOffset,
-  hasMore: result.hasMore,
-  candidates: candidates ?? result.candidates.map(candidateFromEngine),
-  selection: emptySelection(),
-  confirmation: null,
-});
+const snapshotFromSearch = (result: Awaited<ReturnType<typeof searchEbaySoldCompsV2>>, candidates?: CompsV2Candidate[]): CompsV2Snapshot => {
+  const rows = candidates ?? result.candidates.map(candidateFromEngine);
+  return {
+    version: 1,
+    source: "EBAY_SOLD",
+    engineVersion: result.engineVersion,
+    query: result.query,
+    retrievedAt: result.retrievedAt,
+    nextOffset: result.nextOffset,
+    hasMore: rows.length < COMPS_V2_MAX_CANDIDATES && result.hasMore,
+    candidates: rows,
+    selection: emptySelection(),
+    confirmation: null,
+  };
+};
+
+const engineCandidatesFromSnapshot = (snapshot: CompsV2Snapshot) => snapshot.candidates.map(({ included: _included, ...candidate }) => ({
+  ...candidate,
+  source: "EBAY_SOLD" as const,
+  productId: null,
+  soldPriceDisplay: null,
+}));
 
 async function lockedCard(tx: Prisma.TransactionClient, cardId: string): Promise<CompsCardRow> {
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -441,6 +457,7 @@ const assertRevision = (card: CompsCardRow, expected: string) => {
 const publicEligible = (snapshot: CompsV2Snapshot | null) => Boolean(
   snapshot && snapshot.confirmation && safePositiveCents(snapshot.confirmation.marketValueCents) &&
   snapshot.selection.includedCount > 0 && snapshot.selection.averageSoldPriceCents &&
+  snapshot.confirmation.marketValueCents === snapshot.selection.averageSoldPriceCents &&
   snapshot.candidates.filter(({ included }) => included).every((candidate) => (
     safePositiveCents(candidate.soldPriceCents) &&
     Boolean(candidate.soldDate && /^\d{4}-\d{2}-\d{2}$/.test(candidate.soldDate)) &&
@@ -458,18 +475,45 @@ export async function runCompsV2Search(input: {
   acknowledgeReplaceSelected?: boolean;
   reviewProof?: unknown;
   adminId: string;
-}) {
+}, dependencies: {
+  getCard?: typeof getCompsV2Card;
+  search?: typeof searchEbaySoldCompsV2;
+} = {}) {
   const query = text(input.query, QUERY_MAX);
   if (!query) throw new CompsV2HttpError(400, "A visible search query is required", "INVALID_QUERY");
+  const getCard = dependencies.getCard ?? getCompsV2Card;
+  const search = dependencies.search ?? searchEbaySoldCompsV2;
   if (!input.cardId) {
     if (!input.researchIdentity) throw new CompsV2HttpError(400, "Research identity is required", "INVALID_RESEARCH");
-    return { mode: "RESEARCH" as const, result: snapshotFromSearch(await searchEbaySoldCompsV2({ ...input.researchIdentity, queryOverride: query }, { apiKey: process.env.SERPAPI_KEY ?? "" })) };
+    const researchInput = { ...input.researchIdentity, offset: 0, queryOverride: query };
+    const researchRevision = createHash("sha256").update(canonicalJson(researchInput)).digest("hex");
+    const review = input.reviewProof
+      ? verifyCompsV2ReviewProof(input.reviewProof, researchRevision, process.env.SERPAPI_KEY ?? "")
+      : null;
+    if (input.operation === "FETCH_MORE" && !review) throw new CompsV2HttpError(409, "No signed research search is available to extend", "NO_RESEARCH_SNAPSHOT");
+    if (review && review.snapshot.query !== query) throw new CompsV2HttpError(409, "Research query changed. Search again.", "STALE_RESEARCH_SNAPSHOT");
+    if (review && review.snapshot.candidates.length >= COMPS_V2_MAX_CANDIDATES) throw new CompsV2HttpError(409, "The 60-result review limit has been reached", "COMPS_LIMIT_REACHED");
+    const result = await search({
+      ...researchInput,
+      offset: review?.snapshot.nextOffset ?? 0,
+    }, { apiKey: process.env.SERPAPI_KEY ?? "" });
+    const candidates = review
+      ? mergeEbaySoldCompsV2Candidates(engineCandidatesFromSnapshot(review.snapshot), result.candidates)
+        .slice(0, COMPS_V2_MAX_CANDIDATES).map(candidateFromEngine)
+      : undefined;
+    const snapshot = snapshotFromSearch(result, candidates);
+    return {
+      mode: "RESEARCH" as const,
+      result: snapshot,
+      researchProof: createCompsV2ReviewProof(snapshot, researchRevision, process.env.SERPAPI_KEY ?? ""),
+    };
   }
 
-  const before = await getCompsV2Card(input.cardId);
+  const before = await getCard(input.cardId);
   if (!before) throw new CompsV2HttpError(404, "Ten Kings V2 card not found", "CARD_NOT_FOUND");
-  const currentSnapshot = parseCompsV2Snapshot(before.compsSnapshot);
   if (!input.expectedCompsStateRevision) throw new CompsV2HttpError(400, "Current comps revision is required", "REVISION_REQUIRED");
+  assertRevision(before, input.expectedCompsStateRevision);
+  const currentSnapshot = parseCompsV2Snapshot(before.compsSnapshot);
   const reviewProof = input.reviewProof
     ? verifyCompsV2ReviewProof(input.reviewProof, input.expectedCompsStateRevision ?? "", process.env.SERPAPI_KEY ?? "")
     : null;
@@ -478,15 +522,21 @@ export async function runCompsV2Search(input: {
     throw new CompsV2HttpError(409, "Confirm that Refresh may replace the selected comp snapshot.", "REPLACE_CONFIRMATION_REQUIRED");
   }
   const searchBase = reviewProof?.snapshot ?? currentSnapshot;
+  if (input.operation === "FETCH_MORE" && searchBase?.query !== query) {
+    throw new CompsV2HttpError(409, "Saved search changed. Search again.", "STALE_COMPS_STATE");
+  }
+  if (input.operation === "FETCH_MORE" && searchBase!.candidates.length >= COMPS_V2_MAX_CANDIDATES) {
+    throw new CompsV2HttpError(409, "The 60-result review limit has been reached", "COMPS_LIMIT_REACHED");
+  }
   const offset = input.operation === "FETCH_MORE" ? searchBase!.nextOffset : 0;
-  const result = await searchEbaySoldCompsV2(searchInputForCard(before, query, offset), { apiKey: process.env.SERPAPI_KEY ?? "" });
+  const result = await search(searchInputForCard(before, query, offset), { apiKey: process.env.SERPAPI_KEY ?? "" });
 
   if (reviewProof) {
     if (input.operation !== "FETCH_MORE" || reviewProof.snapshot.query !== query) {
       throw new CompsV2HttpError(409, "Refresh review changed. Refresh again.", "STALE_REVIEW_PROOF");
     }
     const merged = mergeEbaySoldCompsV2Candidates(
-      reviewProof.snapshot.candidates.map(({ included: _included, ...candidate }) => ({ ...candidate, source: "EBAY_SOLD", productId: null, soldPriceDisplay: null })),
+      engineCandidatesFromSnapshot(reviewProof.snapshot),
       result.candidates,
     ).slice(0, COMPS_V2_MAX_CANDIDATES).map(candidateFromEngine);
     const snapshot = snapshotFromSearch(result, merged);
@@ -512,7 +562,7 @@ export async function runCompsV2Search(input: {
       if (!lockedSnapshot || lockedSnapshot.query !== query) throw new CompsV2HttpError(409, "Saved search changed. Reload before fetching more.", "STALE_COMPS_STATE");
       const preserved = new Map(lockedSnapshot.candidates.map((candidate) => [candidate.id, candidate.included]));
       const merged = mergeEbaySoldCompsV2Candidates(
-        lockedSnapshot.candidates.map(({ included: _included, ...candidate }) => ({ ...candidate, source: "EBAY_SOLD", productId: null, soldPriceDisplay: null })),
+        engineCandidatesFromSnapshot(lockedSnapshot),
         result.candidates,
       ).slice(0, COMPS_V2_MAX_CANDIDATES).map((candidate) => ({ ...candidateFromEngine(candidate), included: preserved.get(candidate.id) ?? false }));
       snapshot = snapshotFromSearch(result, merged);
@@ -532,12 +582,10 @@ export async function confirmCompsV2(input: {
   cardId: string;
   expectedCompsStateRevision: string;
   selectedCandidateIds: string[];
-  marketValueCents: number;
   compsPublic: boolean;
   reviewProof?: unknown;
   adminId: string;
 }) {
-  if (!safePositiveCents(input.marketValueCents)) throw new CompsV2HttpError(400, "Market value must be a positive whole number of cents", "INVALID_MARKET_VALUE");
   return prisma.$transaction(async (tx) => {
     const card = await lockedCard(tx, input.cardId);
     assertRevision(card, input.expectedCompsStateRevision);
@@ -559,12 +607,14 @@ export async function confirmCompsV2(input: {
     } catch {
       throw new CompsV2HttpError(400, "Selected comps are not part of the saved candidate snapshot", "TAMPERED_SELECTION");
     }
+    const marketValueCents = selection.averageSoldPriceCents;
+    if (!safePositiveCents(marketValueCents)) throw new CompsV2HttpError(400, "Selected comps require one positive arithmetic average", "INVALID_MARKET_VALUE");
     const snapshot: CompsV2Snapshot = {
       ...current,
       candidates: current.candidates.map((candidate) => ({ ...candidate, included: selectedIds.includes(candidate.id) })),
       selection,
       confirmation: {
-        marketValueCents: input.marketValueCents,
+        marketValueCents,
         confirmedAt: new Date().toISOString(),
         confirmedByAdminId: input.adminId,
       },
@@ -577,15 +627,15 @@ export async function confirmCompsV2(input: {
     if (
       !proof &&
       selectionUnchanged &&
-      card.marketValueCents === input.marketValueCents &&
+      card.marketValueCents === marketValueCents &&
       card.marketValueConfirmedByAdminId === input.adminId &&
       card.compsPublic === input.compsPublic
     ) {
       return publicCardState(card);
     }
     const confirmedAt = new Date(snapshot.confirmation!.confirmedAt);
-    await saveCompsSnapshot(tx, card.id, snapshot as unknown as Prisma.InputJsonValue, input.adminId);
-    await confirmMarketValue(tx, card.id, input.marketValueCents, input.adminId, confirmedAt);
+    await saveCompsSnapshot(tx, card.id, snapshot as unknown as Prisma.InputJsonValue, input.adminId, { confirmationMode: "CONFIRM" });
+    await confirmMarketValue(tx, card.id, marketValueCents, input.adminId, confirmedAt);
     await setCompsPublic(tx, card.id, input.compsPublic, input.adminId);
     const updated = await tx.collectibleCardV2.findUniqueOrThrow({ where: { id: card.id }, select: cardSelect });
     return publicCardState(updated as CompsCardRow);

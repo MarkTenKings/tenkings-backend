@@ -9,9 +9,10 @@ import {
   createCompsV2ReviewProof,
   parseCompsV2Snapshot,
   projectPublicCompsV2,
+  runCompsV2Search,
   verifyCompsV2ReviewProof,
 } from "../lib/server/compsV2";
-import { createCompsV2ApiHandler } from "../pages/api/v2/admin/comps/[...action]";
+import { createCompsV2ApiHandler, parseCompsV2ConfirmRequest } from "../pages/api/v2/admin/comps/[...action]";
 
 const candidate = (id: string, price: number, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -35,7 +36,7 @@ const candidate = (id: string, price: number, overrides: Record<string, unknown>
 const snapshot = (overrides: Record<string, unknown> = {}) => ({
   version: 1,
   source: "EBAY_SOLD",
-  engineVersion: "ebay-sold-comps-v2.1.0",
+  engineVersion: "ebay-sold-comps-v2.1.1",
   query: "1990 SkyBox Michael Jordan #41 PSA 9",
   retrievedAt: "2026-08-06T12:00:00.000Z",
   nextOffset: 30,
@@ -53,6 +54,34 @@ const revisionCard = (overrides: Record<string, unknown> = {}) => ({
   marketValueConfirmedByAdminId: "admin-1",
   compsPublic: false,
   ...overrides,
+});
+
+const searchCard = (overrides: Record<string, unknown> = {}) => ({
+  id: "card-v2-1",
+  publicToken: "tk2c_test",
+  publicReportSlug: "report-1",
+  category: "SPORTS",
+  playerName: "Michael Jordan",
+  cardName: null,
+  year: "1990",
+  manufacturer: "SkyBox",
+  productSet: "1990 SkyBox",
+  parallel: "Base",
+  insert: null,
+  cardNumber: "41",
+  gradeSnapshot: { finalGrade: "9" },
+  lifecycleState: "GRADED",
+  speedsterSession: { slabFrontKey: null, capture: {} },
+  humanGradeLabel: { certificateNumber: "TK-1" },
+  ...revisionCard(),
+  ...overrides,
+});
+
+const engineCandidate = (id: string, price: number, overrides: Record<string, unknown> = {}) => ({
+  ...candidate(id, price, overrides),
+  source: "EBAY_SOLD" as const,
+  productId: id,
+  soldPriceDisplay: `$${(price / 100).toFixed(2)}`,
 });
 
 test("full-state revision changes for snapshot, confirmed-value facts, or public visibility", () => {
@@ -73,6 +102,16 @@ test("snapshot parser reconstructs the bounded shape and excludes unknown provid
   assert.ok(parsed);
   assert.equal(JSON.stringify(parsed).toLowerCase().includes("shipping"), false);
   assert.equal(parsed.selection.averageSoldPriceCents, 10000);
+  assert.equal(parseCompsV2Snapshot(snapshot({
+    candidates: [candidate("123456789001", 2_147_483_648, { included: false })],
+  })), null);
+  const capped = parseCompsV2Snapshot(snapshot({
+    candidates: Array.from({ length: 60 }, (_, index) => candidate(String(123456780000 + index), 10000, { included: false })),
+    confirmation: null,
+    hasMore: true,
+  }));
+  assert.ok(capped);
+  assert.equal(capped.hasMore, false);
 });
 
 test("selected-snapshot refresh proof is bounded, revision-bound, expiring, and tamper-evident", () => {
@@ -103,7 +142,6 @@ test("30+30 review proof fits the bounded API envelope while oversized snapshots
     cardId: "card-v2-1",
     expectedCompsStateRevision: "a".repeat(64),
     selectedCandidateIds: [candidates[0].id],
-    marketValueCents: 10000,
     compsPublic: false,
     reviewProof: proof,
   }));
@@ -115,10 +153,73 @@ test("30+30 review proof fits the bounded API envelope while oversized snapshots
   assert.equal(api.includes('sizeLimit: "320kb"'), true);
 });
 
+test("card fetch-more rejects known stale state, query mismatch, and 60-row cap before provider I/O", async () => {
+  let providerCalls = 0;
+  const search = async () => { providerCalls += 1; throw new Error("provider must not run"); };
+  const base = searchCard();
+  const revision = compsStateRevision(base as never);
+  const common = { cardId: base.id, query: snapshot().query, operation: "FETCH_MORE" as const, adminId: "admin-1" };
+  await assert.rejects(runCompsV2Search({ ...common, expectedCompsStateRevision: "b".repeat(64) }, {
+    getCard: async () => base as never,
+    search: search as never,
+  }), (error: unknown) => (error as { code?: string }).code === "STALE_COMPS_STATE");
+  await assert.rejects(runCompsV2Search({ ...common, query: "changed query", expectedCompsStateRevision: revision }, {
+    getCard: async () => base as never,
+    search: search as never,
+  }), (error: unknown) => (error as { code?: string }).code === "STALE_COMPS_STATE");
+  const sixty = Array.from({ length: 60 }, (_, index) => candidate(String(123456780000 + index), 10000, { included: false }));
+  const capped = searchCard({ compsSnapshot: snapshot({ candidates: sixty, confirmation: null }) });
+  await assert.rejects(runCompsV2Search({ ...common, expectedCompsStateRevision: compsStateRevision(capped as never) }, {
+    getCard: async () => capped as never,
+    search: search as never,
+  }), (error: unknown) => (error as { code?: string }).code === "COMPS_LIMIT_REACHED");
+  assert.equal(providerCalls, 0);
+});
+
+test("zero-write research 30+30 merge stays signed, server-ranked, capped, and has no third provider call", async () => {
+  const previousKey = process.env.SERPAPI_KEY;
+  process.env.SERPAPI_KEY = "test-only-research-signing-key";
+  let providerCalls = 0;
+  const search = async (_input: unknown) => {
+    providerCalls += 1;
+    const newer = providerCalls === 2;
+    return {
+      source: "EBAY_SOLD" as const,
+      engineVersion: "ebay-sold-comps-v2.1.1" as const,
+      query: snapshot().query,
+      retrievedAt: newer ? "2026-08-07T12:00:00.000Z" : "2026-08-06T12:00:00.000Z",
+      offset: newer ? 30 : 0,
+      nextOffset: newer ? 60 : 30,
+      requestedResultCount: 30,
+      hasMore: true,
+      candidates: Array.from({ length: 30 }, (_, index) => engineCandidate(String((newer ? 223456780000 : 123456780000) + index), 10000, {
+        soldDate: newer ? "2026-08-07" : "2026-08-01",
+      })),
+    };
+  };
+  const identity = { category: "SPORTS" as const, playerName: "Michael Jordan", year: "1990", manufacturer: "SkyBox", productSet: "1990 SkyBox", parallel: "Base", cardNumber: "41", targetGrade: 9 };
+  try {
+    const first = await runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FIND", adminId: "admin-1" }, { search: search as never });
+    assert.equal(first.mode, "RESEARCH");
+    const second = await runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FETCH_MORE", reviewProof: first.researchProof, adminId: "admin-1" }, { search: search as never });
+    assert.equal(second.result.candidates.length, 60);
+    assert.equal(second.result.candidates[0].soldDate, "2026-08-07");
+    assert.equal(second.result.hasMore, false);
+    await assert.rejects(runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FETCH_MORE", reviewProof: second.researchProof, adminId: "admin-1" }, { search: search as never }), (error: unknown) => (error as { code?: string }).code === "COMPS_LIMIT_REACHED");
+    assert.equal(providerCalls, 2);
+  } finally {
+    if (previousKey === undefined) delete process.env.SERPAPI_KEY;
+    else process.env.SERPAPI_KEY = previousKey;
+  }
+});
+
 test("public projection is absent unless explicitly enabled and every selected row is complete", () => {
   assert.equal(projectPublicCompsV2({ compsPublic: false, compsSnapshot: snapshot() as never }), null);
   assert.equal(projectPublicCompsV2({ compsPublic: true, compsSnapshot: snapshot({
     confirmation: { marketValueCents: 10000, confirmedAt: "not-a-date", confirmedByAdminId: "admin-1" },
+  }) as never }), null);
+  assert.equal(projectPublicCompsV2({ compsPublic: true, compsSnapshot: snapshot({
+    confirmation: { marketValueCents: 9999, confirmedAt: "2026-08-06T12:00:00.000Z", confirmedByAdminId: "admin-1" },
   }) as never }), null);
   assert.equal(projectPublicCompsV2({ compsPublic: true, compsSnapshot: snapshot({
     candidates: [candidate("123456789001", 10000, { imageUrl: null })],
@@ -152,6 +253,16 @@ test("admin surface keeps engine server-only, exact groups/label, one-shot auto 
   for (const required of ["FOR UPDATE", "assertRevision", "STALE_COMPS_STATE", "lockedCard", "publicEligible"]) {
     assert.equal(server.includes(required), true, `missing server trust contract: ${required}`);
   }
+  assert.equal(server.includes("const marketValueCents = selection.averageSoldPriceCents"), true);
+  assert.equal(api.includes("marketValueCents: z.number"), false);
+  assert.equal(page.includes("Selected average becomes market value when confirmed"), true);
+  assert.equal(page.includes("candidate.matchScore"), true);
+  assert.equal(page.includes("candidates.length < 60"), true);
+  assert.equal(page.includes("[...candidates"), false);
+  assert.equal(page.includes('mode === "CARD" && id'), true);
+  assert.equal(page.includes('router.replace({ pathname: "/admin/comps"'), true);
+  assert.equal(page.includes("setMarketValue"), false);
+  assert.equal(server.includes("researchProof: createCompsV2ReviewProof"), true);
   assert.equal(server.includes("const selectedIds = current.candidates.filter"), true);
   for (const required of ["CARD_REVIEW", "createCompsV2ReviewProof", "verifyCompsV2ReviewProof", "reviewProof?.snapshot ?? currentSnapshot"]) {
     assert.equal(server.includes(required), true, `missing durable refresh contract: ${required}`);
@@ -160,6 +271,26 @@ test("admin surface keeps engine server-only, exact groups/label, one-shot auto 
   assert.equal(page.includes('operation === "FETCH_MORE" ? payload.review.snapshot.candidates.filter'), true);
   assert.equal(finish.includes("Open Sold Comps"), true);
   assert.equal(finish.includes("from=${encodeURIComponent"), true);
+});
+
+test("confirmation request rejects a client-supplied market-value override", () => {
+  const base = {
+    cardId: "card-v2-1",
+    expectedCompsStateRevision: "a".repeat(64),
+    selectedCandidateIds: ["123456789001"],
+    compsPublic: false,
+  };
+  assert.equal(parseCompsV2ConfirmRequest(base).success, true);
+  assert.equal(parseCompsV2ConfirmRequest({ ...base, marketValueCents: 1 }).success, false);
+});
+
+test("API operational logs expose typed safe signals without query, key, listing, or customer fields", () => {
+  const api = readFileSync(join(process.cwd(), "pages/api/v2/admin/comps/[...action].ts"), "utf8");
+  for (const required of ["request_succeeded", "request_rejected", "provider_rate_limited", "providerCode", "statusCode", "retryable", "rateLimited", "safeCardReference"]) {
+    assert.equal(api.includes(required), true, `missing safe operational signal: ${required}`);
+  }
+  const logHelper = api.slice(api.indexOf("const logSuccess"), api.indexOf("const cardPayload"));
+  for (const forbidden of ["query:", "apiKey", "listing", "customer", "token"]) assert.equal(logHelper.includes(forbidden), false);
 });
 
 test("public page renders selected projection only and has no empty-state comps copy", () => {

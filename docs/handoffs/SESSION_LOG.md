@@ -30840,3 +30840,28 @@ By enabling Rip It Live, I confirm:
 
 - No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell access, NFC helper/hardware/tag operation, V1 write, or external system change occurred.
 - This local implementation is ready for the required independent lead/adversarial review. It is not self-approved for merge or Production, and S3's live owner acceptance gate remains open until reviewed release configuration supplies the existing server-side `SERPAPI_KEY` and Mark performs the approved real-card workflow.
+
+## 2026-08-07 - eBay Sold Comps V2 independent-review corrections
+
+### Corrections completed
+
+- Closed the independent critic's pagination gap by accepting SerpAPI's current `pagination.next` contract as well as the legacy pagination shape. A short 20-row first page with a next link now continues to page 2 and fills the deterministic 30-result review window.
+- Removed all client authority over the confirmed dollar amount. The strict confirmation request accepts only selected candidate IDs and the public-display choice; the server recomputes the rounded sold-price arithmetic mean from the signed or persisted candidate snapshot and uses that exact value as `marketValueCents`.
+- Bound snapshot confirmation provenance to the authenticated confirmer. Ordinary search/fetch-more saves preserve the existing card-level confirmer and timestamp exactly, while confirmation-mode saves require a nonempty selection and require the confirmation value to equal the database writer's independently recomputed mean.
+- Corrected deterministic query construction to use whole-token sequence dedupe, preserving legitimate repeated words such as player surname `Green` plus the `Green` parallel while avoiding duplicated year/manufacturer/card-number identity.
+- Corrected variant evidence matching to subtract authoritative card identity, set, manufacturer, year, insert, card number, and grading tokens before testing parallel signals. Identity words no longer create false variant matches, while an actual second parallel signal remains detectable.
+- Enforced the 60-candidate ceiling across engine snapshots, writer normalization, signed research continuation, UI controls, and provider-call preflight. Known stale revisions, query mismatches, and capped reviews now fail before paid provider I/O.
+- Added server-signed zero-write research continuation so page-two results are merged and reranked server-side instead of being concatenated by the browser. Added safe bounded cents handling through the PostgreSQL integer maximum and BigInt mean arithmetic at engine, server, writer, and public-projection boundaries.
+- Added admin-only match score/reason display, safe structured operational success/rejection/provider/rate-limit signals without queries, credentials, listing URLs, tokens, or customer fields, and corrected research-mode routing so removing a card leaves a clean research workspace without refetching the prior card.
+- Bumped the independent engine contract version to `ebay-sold-comps-v2.1.1`. No schema, migration, new table, comps-status flag, shipping field, V1 coupling, or additional framework was added.
+
+### Exact validation evidence
+
+- Repository-required Node `20.x` focused validation passed `25/25` engine tests, `19/19` card-platform V2 database-boundary tests, and `31/31` Speedster/public/comps frontend integration tests (`75/75` total). Changed frontend files passed focused ESLint with zero warnings or errors.
+- The final exact Node `20.x` dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed after all corrections, generated all `74/74` static pages plus the dynamic comps routes, and passed the Sharp trace verifier. Output contained only the repository's pre-existing unrelated image, hook, browser-data, Tailwind-glob, and optional Sharp-target warnings.
+- `git diff --check` passed. Focused runtime scans confirmed the comps engine is imported only by the server integration helper, and found no V1 CardAsset/Item/KingsReview/Bytebot dependency or newly introduced credential value.
+
+### Safety and remaining gate
+
+- No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell access, NFC helper/hardware/tag operation, V1 write, or external-system change occurred.
+- The correction commit is for independent critic re-review. It is not release approval, and no merge or Production action is authorized by this log entry.

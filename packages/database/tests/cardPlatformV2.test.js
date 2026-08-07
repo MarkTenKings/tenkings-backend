@@ -37,7 +37,7 @@ const compsCandidate = (id, price, overrides = {}) => ({
 const compsSnapshot = (overrides = {}) => ({
   version: 1,
   source: "EBAY_SOLD",
-  engineVersion: "ebay-sold-comps-v2.1.0",
+  engineVersion: "ebay-sold-comps-v2.1.1",
   query: "1990 SkyBox Michael Jordan #41 PSA 9",
   retrievedAt: "2026-08-06T12:00:00.000Z",
   nextOffset: 30,
@@ -446,6 +446,13 @@ test("comps writer rejects VOID cards, oversized snapshots, unsafe links, and in
   assert.throws(() => normalizeCompsSnapshotForWrite(compsSnapshot({
     candidates: [compsCandidate("123456789001", null)],
   })), /positive sold price/);
+  assert.throws(() => normalizeCompsSnapshotForWrite(compsSnapshot({
+    candidates: [compsCandidate("123456789001", 2_147_483_648)],
+  })), /candidate is invalid/);
+  const maxRows = Array.from({ length: 60 }, (_, index) => compsCandidate(String(123456780000 + index), 2_147_483_647));
+  const maxSnapshot = normalizeCompsSnapshotForWrite(compsSnapshot({ candidates: maxRows }));
+  assert.equal(maxSnapshot.selection.averageSoldPriceCents, 2_147_483_647);
+  assert.equal(maxSnapshot.hasMore, false);
 });
 
 test("market-value and public-setting writers validate server-owned facts and remain unavailable for VOID cards", async () => {
@@ -463,7 +470,57 @@ test("market-value and public-setting writers validate server-owned facts and re
     marketValueConfirmedAt: new Date("2026-08-06T12:00:00.000Z"),
     marketValueConfirmedByAdminId: "admin-1",
   }, { compsPublic: true }]);
-  await assert.rejects(confirmMarketValue(tx, "card-v2-1", 0, "admin-1"), /positive safe integer/);
+  await assert.rejects(confirmMarketValue(tx, "card-v2-1", 0, "admin-1"), /positive PostgreSQL integer/);
+  await assert.rejects(confirmMarketValue(tx, "card-v2-1", 2_147_483_648, "admin-1"), /positive PostgreSQL integer/);
+});
+
+test("admin-B fetch-more preserves admin-A confirmation provenance in snapshot and card facts", async () => {
+  const state = {
+    id: "card-v2-1",
+    lifecycleState: "GRADED",
+    compsSnapshot: null,
+    marketValueCents: null,
+    marketValueConfirmedAt: null,
+    marketValueConfirmedByAdminId: null,
+  };
+  const tx = {
+    collectibleCardV2: {
+      async findUnique() { return { ...state }; },
+      async update(input) { Object.assign(state, input.data); return { ...state, updatedAt: new Date() }; },
+    },
+  };
+  const confirmedAt = new Date("2026-08-06T12:00:00.000Z");
+  const confirmedSnapshot = compsSnapshot({ confirmation: {
+    marketValueCents: 10000,
+    confirmedAt: confirmedAt.toISOString(),
+    confirmedByAdminId: "untrusted-client-value",
+  } });
+  await saveCompsSnapshot(tx, state.id, confirmedSnapshot, "admin-A", { confirmationMode: "CONFIRM" });
+  await confirmMarketValue(tx, state.id, 10000, "admin-A", confirmedAt);
+  await saveCompsSnapshot(tx, state.id, state.compsSnapshot, "admin-B");
+  assert.equal(state.compsSnapshot.confirmation.confirmedByAdminId, "admin-A");
+  assert.equal(state.marketValueConfirmedByAdminId, "admin-A");
+  assert.equal(state.compsSnapshot.confirmation.confirmedAt, state.marketValueConfirmedAt.toISOString());
+});
+
+test("confirmation-mode snapshot save requires a nonempty selection and exact recomputed average", async () => {
+  const tx = {
+    collectibleCardV2: {
+      async findUnique() { return { id: "card-v2-1", lifecycleState: "GRADED", marketValueCents: null, marketValueConfirmedAt: null, marketValueConfirmedByAdminId: null }; },
+      async update(input) { return { id: input.where.id, ...input.data, updatedAt: new Date() }; },
+    },
+  };
+  const confirmation = { marketValueCents: 9999, confirmedAt: "2026-08-06T12:00:00.000Z", confirmedByAdminId: "untrusted" };
+  await assert.rejects(saveCompsSnapshot(tx, "card-v2-1", compsSnapshot({ confirmation }), "admin-A", { confirmationMode: "CONFIRM" }), /must equal/);
+  await assert.rejects(saveCompsSnapshot(tx, "card-v2-1", compsSnapshot({
+    candidates: compsSnapshot().candidates.map((row) => ({ ...row, included: false })),
+    confirmation: { ...confirmation, marketValueCents: 10000 },
+  }), "admin-A", { confirmationMode: "CONFIRM" }), /nonempty/);
+  const accepted = await saveCompsSnapshot(tx, "card-v2-1", compsSnapshot({
+    confirmation: { ...confirmation, marketValueCents: 10000 },
+  }), "admin-A", { confirmationMode: "CONFIRM" });
+  assert.equal(accepted.compsSnapshot.confirmation.marketValueCents, 10000);
+  assert.equal(accepted.compsSnapshot.confirmation.confirmedByAdminId, "admin-A");
 });
 
 test("foundation migration contains only the approved two tables and permanent-card invariants", () => {

@@ -1,7 +1,8 @@
-export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.1.0";
+export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.1.1";
 export const EBAY_SOLD_COMPS_V2_SOURCE = "EBAY_SOLD" as const;
 export const EBAY_SOLD_COMPS_V2_PAGE_SIZE = 50;
 export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 30;
+export const EBAY_SOLD_COMPS_V2_MAX_CENTS = 2_147_483_647;
 
 export type EbaySoldCompsV2Category = "SPORTS" | "POKEMON";
 export type EbaySoldCompsV2Group = "PSA_TARGET" | "PSA_OTHER" | "OTHER_GRADED" | "RAW";
@@ -241,21 +242,23 @@ export function buildEbaySoldCompsV2Query(input: EbaySoldCompsV2SearchInput): st
   const productSet = validated.productSet!;
   const normalizedSet = normalizeEbaySoldCompsV2Text(productSet);
   const parts: string[] = [];
-  if (!normalizedSet.includes(normalizeEbaySoldCompsV2Text(year))) parts.push(year);
-  if (manufacturer && !normalizedSet.includes(normalizeEbaySoldCompsV2Text(manufacturer))) parts.push(manufacturer);
+  if (!includesTokenSequence(year, normalizedSet)) parts.push(year);
+  if (manufacturer && !includesTokenSequence(manufacturer, normalizedSet)) parts.push(manufacturer);
   parts.push(productSet, validated.identityName!);
 
+  const qualifierParts = [year, manufacturer, productSet].filter((value): value is string => Boolean(value));
   const appendIfNew = (value: unknown) => {
     const text = cleanText(value);
     if (!text) return;
-    const normalized = normalizeEbaySoldCompsV2Text(text);
-    const existing = normalizeEbaySoldCompsV2Text(parts.join(" "));
-    if (normalized && !existing.includes(normalized)) parts.push(text);
+    if (!includesTokenSequence(text, qualifierParts.join(" "))) {
+      parts.push(text);
+      qualifierParts.push(text);
+    }
   };
   appendIfNew(input.insert);
   if (!BASE_PARALLELS.has(normalizeEbaySoldCompsV2Text(input.parallel))) appendIfNew(input.parallel);
   const cardNumber = cleanText(input.cardNumber);
-  if (cardNumber) appendIfNew(cardNumber.startsWith("#") ? cardNumber : `#${cardNumber}`);
+  if (cardNumber && !includesTokenSequence(cardNumber, productSet)) parts.push(cardNumber.startsWith("#") ? cardNumber : `#${cardNumber}`);
   if (validated.targetGrade != null) parts.push(`PSA ${formatTargetGrade(validated.targetGrade)}`);
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
@@ -273,9 +276,29 @@ const variantSignals = (value: unknown): string[] => {
 function parallelMatch(input: EbaySoldCompsV2SearchInput, title: string): EbaySoldCompsV2ParallelMatch {
   const expected = normalizeEbaySoldCompsV2Text(input.parallel);
   const expectedIsBase = BASE_PARALLELS.has(expected);
-  const actualSignals = variantSignals(title);
+  const identityValues = [
+    input.category === "SPORTS" ? input.playerName : input.cardName,
+    input.productSet,
+    input.manufacturer,
+    input.year,
+    input.insert,
+    input.cardNumber,
+  ].map(normalizedTokens).filter((tokens) => tokens.length).sort((left, right) => right.length - left.length);
+  const evidenceTokens = normalizedTokens(title);
+  for (const identityTokens of identityValues) {
+    const start = evidenceTokens.findIndex((token, index) => (
+      token === identityTokens[0] && identityTokens.every((identityToken, offset) => evidenceTokens[index + offset] === identityToken)
+    ));
+    if (start >= 0) evidenceTokens.splice(start, identityTokens.length);
+  }
+  const evidence = evidenceTokens.join(" ")
+    .replace(/\bbgs\s+(?:pristine\s+)?10\s+black\s+label\b/g, " ")
+    .replace(/\b(?:psa|bgs|sgc|cgc)\s*(?:(?:gem|mint|pristine|nm|mt)\s*)*(?:10|[1-9])(?:\s+(?:0|5))?\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const actualSignals = variantSignals(evidence);
   if (expectedIsBase) return actualSignals.length ? "CONTRADICTORY" : "MATCH";
-  if (phraseMatches(expected, title, 1)) return "MATCH";
+  if (phraseMatches(expected, evidence, 1)) return "MATCH";
   if (!actualSignals.length) return "UNKNOWN";
   const expectedTokens = new Set(normalizedTokens(expected));
   return actualSignals.some((signal) => normalizedTokens(signal).some((token) => expectedTokens.has(token)))
@@ -397,15 +420,17 @@ export function summarizeEbaySoldCompsV2Selection(
   const prices = selectedIds.map((id) => {
     const candidate = byId.get(id);
     if (!candidate) invalidInput(`Selected comp ${id} is not a returned candidate.`);
-    if (!Number.isSafeInteger(candidate.soldPriceCents) || (candidate.soldPriceCents ?? 0) <= 0) {
+    if (!Number.isSafeInteger(candidate.soldPriceCents) || (candidate.soldPriceCents ?? 0) <= 0 || candidate.soldPriceCents! > EBAY_SOLD_COMPS_V2_MAX_CENTS) {
       invalidInput(`Selected comp ${id} does not have one positive sold price.`);
     }
     return candidate.soldPriceCents!;
   });
+  const divisor = BigInt(prices.length);
+  const total = prices.reduce((sum, price) => sum + BigInt(price), 0n);
   return {
     includedCandidateIds: selectedIds,
     includedCount: selectedIds.length,
-    averageSoldPriceCents: Math.round(prices.reduce((total, price) => total + price, 0) / prices.length),
+    averageSoldPriceCents: Number((total + divisor / 2n) / divisor),
     lowestSoldPriceCents: Math.min(...prices),
     highestSoldPriceCents: Math.max(...prices),
   };
@@ -491,8 +516,9 @@ const priceFrom = (value: unknown) => {
     ? Number(display.replace(/,/g, "").match(/\$\s*([0-9]+(?:\.[0-9]{1,2})?)/)?.[1] ?? Number.NaN)
     : Number.NaN;
   const amount = extracted ?? (Number.isFinite(parsedDisplay) ? parsedDisplay : null);
+  const cents = amount != null && amount > 0 ? Math.round(amount * 100) : null;
   return {
-    soldPriceCents: amount != null && amount > 0 ? Math.round(amount * 100) : null,
+    soldPriceCents: cents && Number.isSafeInteger(cents) && cents <= EBAY_SOLD_COMPS_V2_MAX_CENTS ? cents : null,
     soldPriceDisplay: display,
   };
 };
@@ -652,8 +678,12 @@ async function fetchPayload(url: string, runtime: Required<Pick<EbaySoldCompsV2R
 }
 
 const hasNextPage = (payload: JsonRecord, rawCount: number) => {
-  const pagination = isRecord(payload.serpapi_pagination) ? payload.serpapi_pagination : null;
-  return Boolean(cleanText(pagination?.next) ?? cleanText(pagination?.next_link)) || rawCount >= EBAY_SOLD_COMPS_V2_PAGE_SIZE;
+  const pagination = isRecord(payload.pagination) ? payload.pagination : null;
+  const legacyPagination = isRecord(payload.serpapi_pagination) ? payload.serpapi_pagination : null;
+  return Boolean(
+    cleanText(pagination?.next) ?? cleanText(pagination?.next_link) ??
+    cleanText(legacyPagination?.next) ?? cleanText(legacyPagination?.next_link),
+  ) || rawCount >= EBAY_SOLD_COMPS_V2_PAGE_SIZE;
 };
 
 export async function searchEbaySoldCompsV2(

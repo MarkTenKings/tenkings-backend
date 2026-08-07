@@ -13,7 +13,7 @@ import styles from "../../styles/CompsV2.module.css";
 type Candidate = {
   id: string; title: string; listingUrl: string; imageUrl: string | null; soldPriceCents: number | null;
   soldDate: string | null; grader: string | null; numericGrade: number | null; raw: boolean;
-  group: "PSA_TARGET" | "PSA_OTHER" | "OTHER_GRADED" | "RAW"; matchReason: string; included: boolean;
+  group: "PSA_TARGET" | "PSA_OTHER" | "OTHER_GRADED" | "RAW"; matchScore: number; matchReason: string; included: boolean;
 };
 type Snapshot = {
   query: string; nextOffset: number; hasMore: boolean; candidates: Candidate[];
@@ -46,7 +46,6 @@ export default function CompsV2Page() {
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
-  const [marketValue, setMarketValue] = useState("");
   const [compsPublic, setCompsPublic] = useState(false);
   const [research, setResearch] = useState({ category: "SPORTS", name: "", year: "", manufacturer: "", productSet: "", parallel: "", cardNumber: "", targetGrade: "" });
   const [busy, setBusy] = useState(false);
@@ -64,7 +63,6 @@ export default function CompsV2Page() {
     setCard(next); setMode("CARD"); setQuery(next.snapshot?.query ?? next.defaultQuery);
     setCandidates(next.snapshot?.candidates ?? []);
     setSelected(next.snapshot?.candidates.filter(({ included }) => included).map(({ id }) => id) ?? []);
-    setMarketValue(next.marketValueCents ? (next.marketValueCents / 100).toFixed(2) : "");
     setCompsPublic(next.compsPublic); setMatches([]);
     setReviewProof(null);
   }, []);
@@ -83,8 +81,8 @@ export default function CompsV2Page() {
 
   useEffect(() => {
     const id = typeof router.query.card === "string" ? router.query.card : null;
-    if (id && session?.token && isAdmin && card?.id !== id) void loadCard(id);
-  }, [card?.id, isAdmin, loadCard, router.query.card, session?.token]);
+    if (mode === "CARD" && id && session?.token && isAdmin && card?.id !== id) void loadCard(id);
+  }, [card?.id, isAdmin, loadCard, mode, router.query.card, session?.token]);
 
   const findCards = async () => {
     if (!lookup.trim()) return;
@@ -104,7 +102,6 @@ export default function CompsV2Page() {
     const acknowledgeReplaceSelected = !replacingSelection || window.confirm("Refresh will replace the current selected-comp snapshot. Continue?");
     if (!acknowledgeReplaceSelected) return;
     const draftSelected = operation === "FETCH_MORE" ? selected : [];
-    const draftMarketValue = marketValue;
     const draftCompsPublic = compsPublic;
     setBusy(true); setMessage(operation === "FETCH_MORE" ? "Fetching 30 more sold results…" : "Searching eBay sold listings…");
     try {
@@ -121,15 +118,15 @@ export default function CompsV2Page() {
           targetGrade: research.targetGrade ? Number(research.targetGrade) : null,
           offset: operation === "FETCH_MORE" ? researchNextOffset : 0,
         }, query: query.trim(), operation,
+        ...(operation === "FETCH_MORE" && reviewProof ? { reviewProof } : {}),
       };
       const response = await fetch("/api/v2/admin/comps/search", { method: "POST", headers: headers(true), body: JSON.stringify(body) });
-      const payload = await response.json().catch(() => ({})) as { mode?: string; card?: Card; result?: Snapshot; review?: ReviewProof; message?: string; code?: string };
+      const payload = await response.json().catch(() => ({})) as { mode?: string; card?: Card; result?: Snapshot; review?: ReviewProof; researchProof?: ReviewProof; message?: string; code?: string };
       if (!response.ok) throw new Error(payload.message ?? "Sold comps search failed.");
       if (payload.card) {
         adoptCard(payload.card);
         if (operation === "FETCH_MORE") {
           setSelected(payload.card.snapshot?.candidates.filter(({ id, included }) => included || draftSelected.includes(id)).map(({ id }) => id) ?? []);
-          setMarketValue(draftMarketValue);
           setCompsPublic(draftCompsPublic);
         }
       }
@@ -140,8 +137,9 @@ export default function CompsV2Page() {
         setSelected(operation === "FETCH_MORE" ? payload.review.snapshot.candidates.filter(({ id }) => draftSelected.includes(id)).map(({ id }) => id) : []);
       }
       else if (payload.result) {
-        setCandidates(operation === "FETCH_MORE" ? [...candidates, ...payload.result.candidates.filter((row) => !candidates.some(({ id }) => id === row.id))].slice(0, 60) : payload.result.candidates);
+        setCandidates(payload.result.candidates);
         if (operation !== "FETCH_MORE") setSelected([]);
+        setReviewProof(payload.researchProof ?? null);
         setResearchNextOffset(payload.result.nextOffset);
         setResearchHasMore(payload.result.hasMore);
       }
@@ -164,13 +162,12 @@ export default function CompsV2Page() {
 
   const confirmValue = async () => {
     if (!card || busy) return;
-    const marketValueCents = Math.round(Number(marketValue) * 100);
-    if (!Number.isSafeInteger(marketValueCents) || marketValueCents <= 0) { setMessage("Enter a positive market value."); return; }
+    if (!average) { setMessage("Select at least one sold comp with a price."); return; }
     setBusy(true); setMessage("Confirming selected comps and market value…");
     try {
       const response = await fetch("/api/v2/admin/comps/confirm", { method: "POST", headers: headers(true), body: JSON.stringify({
         cardId: card.id, expectedCompsStateRevision: card.compsStateRevision,
-        selectedCandidateIds: selected, marketValueCents, compsPublic,
+        selectedCandidateIds: selected, compsPublic,
         ...(reviewProof ? { reviewProof } : {}),
       }) });
       const payload = await response.json().catch(() => ({})) as { card?: Card; message?: string };
@@ -204,7 +201,7 @@ export default function CompsV2Page() {
       <header className={styles.header}><div><span className={styles.eyebrow}>TEN KINGS · MARKET RESEARCH</span><h1>eBay Sold Comps</h1><p>Review real sold listings, choose the evidence, then confirm the value.</p></div><Link href={returnPath}>{returnPath === "/admin/ai-grader-v2/completed" ? "Completed cards" : "Back to card"}</Link></header>
       <section className={styles.panel} aria-label="Choose card or research mode">
         <div className={styles.lookup}><input className={styles.input} value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void findCards(); }} placeholder="Token, certificate, player, card name, or card number" aria-label="Find a permanent card" /><button className={styles.button} disabled={busy} onClick={() => void findCards()}>Find Card</button></div>
-        <button className={styles.modeButton} type="button" onClick={() => { setMode("RESEARCH"); setCard(null); setCandidates([]); setSelected([]); setQuery(""); setMessage("Research mode never saves to a card."); }}>Search without a card</button>
+        <button className={styles.modeButton} type="button" onClick={() => { setMode("RESEARCH"); setCard(null); setCandidates([]); setSelected([]); setQuery(""); setReviewProof(null); setMessage("Research mode never saves to a card."); void router.replace({ pathname: "/admin/comps", query: returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {} }, undefined, { shallow: true }); }}>Search without a card</button>
         {matches.length ? <div className={styles.searchResults}>{matches.map((match) => <button className={styles.searchResult} key={match.id} onClick={() => void router.push({ pathname: "/admin/comps", query: { card: match.id, ...(returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {}) } })}><span>{match.name ?? "Permanent card"}<small>{match.certificateNumber ?? "No certificate"} · {match.details}</small></span><span>Choose →</span></button>)}</div> : null}
       </section>
 
@@ -216,8 +213,8 @@ export default function CompsV2Page() {
 
       {(card || mode === "RESEARCH") ? <section className={styles.panel}><div className={styles.queryRow}><label>Exact eBay sold search query<input className={styles.input} value={query} onChange={(e) => setQuery(e.target.value)} /></label><div className={styles.queryActions}><button className={styles.button} disabled={busy} onClick={() => void runSearch(candidates.length ? "REFRESH" : "FIND")}>{candidates.length ? "Refresh" : "Find Comps"}</button></div></div><p className={styles.status} role="status" aria-live="polite">{message}</p></section> : <p className={styles.status} role="status">{message}</p>}
 
-      {candidates.length ? <div className={styles.layout}><section aria-label="Sold comp candidates">{GROUPS.map(([group, label]) => { const rows = candidates.filter((candidate) => candidate.group === group); return rows.length ? <div className={styles.group} key={group}><h2>{label}</h2><div className={styles.rows}>{rows.map((candidate) => <article className={styles.row} key={candidate.id}><label className={styles.check}><span className="sr-only">Include {candidate.title}</span><input type="checkbox" disabled={!candidate.soldPriceCents} checked={selected.includes(candidate.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, candidate.id] : selected.filter((id) => id !== candidate.id))} /></label>{candidate.imageUrl ? <img src={candidate.imageUrl} alt="" /> : <div className={styles.noImage}>No image</div>}<div><h3>{candidate.title}</h3><div className={styles.meta}><span>{candidate.grader ? `${candidate.grader}${candidate.numericGrade ? ` ${candidate.numericGrade}` : ""}` : "Raw"}</span><span>{candidate.soldDate ?? "Sold date unavailable"}</span></div><p className={styles.reason}>{candidate.matchReason}</p></div><div className={styles.price}>{money(candidate.soldPriceCents)}<a href={candidate.listingUrl} target="_blank" rel="noopener noreferrer">View sold listing ↗</a></div></article>)}</div></div> : null; })}{(reviewProof?.snapshot.hasMore || (!reviewProof && card?.snapshot?.hasMore) || (mode === "RESEARCH" && researchHasMore && candidates.length < 60)) ? <div className={styles.more}><button className={styles.button} disabled={busy} onClick={() => void runSearch("FETCH_MORE")}>Fetch 30 More</button></div> : null}</section>
-        <aside className={styles.rail} aria-label="Market value review"><span className={styles.eyebrow}>REVIEW</span><h2>{selected.length} selected</h2><div className={styles.math}>{priced.length ? `${priced.map(({ soldPriceCents }) => money(soldPriceCents)).join(" + ")} ÷ ${priced.length}` : "Select priced sold comps"}<strong>{money(average)}</strong>{priced.length ? <small>Range {money(Math.min(...priced.map((row) => row.soldPriceCents!)))}–{money(Math.max(...priced.map((row) => row.soldPriceCents!)))}</small> : null}</div>{mode === "CARD" ? <><label>Market Value ($)<input className={styles.input} inputMode="decimal" value={marketValue} onChange={(e) => setMarketValue(e.target.value)} placeholder={average ? (average / 100).toFixed(2) : "0.00"} /></label><label className={styles.publicCheck}><input type="checkbox" checked={compsPublic} onChange={(e) => setCompsPublic(e.target.checked)} /><span>Show selected comps on the public card page</span></label><button className={styles.button} disabled={busy || !selected.length} onClick={() => void confirmValue()}>Confirm Market Value</button>{!reviewProof && card?.snapshot?.selection.includedCount ? <button className={styles.modeButton} disabled={busy} onClick={() => void savePublic()}>Save Public Setting</button> : null}</> : <p className={styles.status}>Research mode does not save.</p>}</aside>
+      {candidates.length ? <div className={styles.layout}><section aria-label="Sold comp candidates">{GROUPS.map(([group, label]) => { const rows = candidates.filter((candidate) => candidate.group === group); return rows.length ? <div className={styles.group} key={group}><h2>{label}</h2><div className={styles.rows}>{rows.map((candidate) => <article className={styles.row} key={candidate.id}><label className={styles.check}><span className="sr-only">Include {candidate.title}</span><input type="checkbox" disabled={!candidate.soldPriceCents} checked={selected.includes(candidate.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, candidate.id] : selected.filter((id) => id !== candidate.id))} /></label>{candidate.imageUrl ? <img src={candidate.imageUrl} alt="" /> : <div className={styles.noImage}>No image</div>}<div><h3>{candidate.title}</h3><div className={styles.meta}><span>{candidate.grader ? `${candidate.grader}${candidate.numericGrade ? ` ${candidate.numericGrade}` : ""}` : "Raw"}</span><span>{candidate.soldDate ?? "Sold date unavailable"}</span></div><p className={styles.reason}><b>{candidate.matchScore}/100</b> · {candidate.matchReason}</p></div><div className={styles.price}>{money(candidate.soldPriceCents)}<a href={candidate.listingUrl} target="_blank" rel="noopener noreferrer">View sold listing ↗</a></div></article>)}</div></div> : null; })}{candidates.length < 60 && (reviewProof?.snapshot.hasMore || (!reviewProof && card?.snapshot?.hasMore) || (mode === "RESEARCH" && researchHasMore)) ? <div className={styles.more}><button className={styles.button} disabled={busy} onClick={() => void runSearch("FETCH_MORE")}>Fetch 30 More</button></div> : null}</section>
+        <aside className={styles.rail} aria-label="Market value review"><span className={styles.eyebrow}>REVIEW</span><h2>{selected.length} selected</h2><div className={styles.math}>{priced.length ? `${priced.map(({ soldPriceCents }) => money(soldPriceCents)).join(" + ")} ÷ ${priced.length}` : "Select priced sold comps"}<strong>{money(average)}</strong>{priced.length ? <><small>Range {money(Math.min(...priced.map((row) => row.soldPriceCents!)))}–{money(Math.max(...priced.map((row) => row.soldPriceCents!)))}</small><small>Selected average becomes market value when confirmed</small></> : null}</div>{mode === "CARD" ? <><label className={styles.publicCheck}><input type="checkbox" checked={compsPublic} onChange={(e) => setCompsPublic(e.target.checked)} /><span>Show selected comps on the public card page</span></label><button className={styles.button} disabled={busy || !average} onClick={() => void confirmValue()}>Confirm Market Value</button>{!reviewProof && card?.snapshot?.selection.includedCount ? <button className={styles.modeButton} disabled={busy} onClick={() => void savePublic()}>Save Public Setting</button> : null}</> : <p className={styles.status}>Research mode does not save.</p>}</aside>
       </div> : (card || mode === "RESEARCH") ? <div className={styles.empty}>Sold results will appear here after you search.</div> : null}
     </main>
   </AppShell>;

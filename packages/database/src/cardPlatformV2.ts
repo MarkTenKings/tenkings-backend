@@ -494,7 +494,13 @@ async function requireMutableCompsCard(tx: CardPlatformV2Transaction, cardId: st
   const id = requireAdminText(cardId, "Card identity");
   const card = await tx.collectibleCardV2.findUnique({
     where: { id },
-    select: { id: true, lifecycleState: true },
+    select: {
+      id: true,
+      lifecycleState: true,
+      marketValueCents: true,
+      marketValueConfirmedAt: true,
+      marketValueConfirmedByAdminId: true,
+    },
   });
   if (!card || card.lifecycleState === "VOID") {
     throw new Error("Ten Kings V2 card was not found");
@@ -504,6 +510,7 @@ async function requireMutableCompsCard(tx: CardPlatformV2Transaction, cardId: st
 
 const COMPS_SNAPSHOT_MAX_BYTES = 256 * 1024;
 const COMPS_SNAPSHOT_MAX_CANDIDATES = 60;
+const COMPS_MAX_CENTS = 2_147_483_647;
 const COMPS_GROUPS = new Set(["PSA_TARGET", "PSA_OTHER", "OTHER_GRADED", "RAW"]);
 const COMPS_PARALLEL_MATCHES = new Set(["MATCH", "CONTRADICTORY", "UNKNOWN"]);
 const COMPS_GRADERS = new Set(["PSA", "BGS", "SGC", "CGC"]);
@@ -512,7 +519,8 @@ const compsRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const compsText = (value: unknown, maximum: number) =>
   typeof value === "string" && value.trim() && value.trim().length <= maximum ? value.trim() : null;
-const positiveSafeCents = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
+const positiveSafeCents = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && Number(value) > 0 && Number(value) <= COMPS_MAX_CENTS;
 const normalizedEbayListingUrl = (value: unknown) => {
   const raw = compsText(value, 500);
   if (!raw) return null;
@@ -621,10 +629,12 @@ export function normalizeCompsSnapshotForWrite(snapshot: Prisma.InputJsonValue, 
     throw new Error("An included comp requires one positive sold price");
   }
   const prices: number[] = included.map((candidate) => candidate.soldPriceCents as number);
+  const divisor = BigInt(prices.length || 1);
+  const total = prices.reduce((sum, price) => sum + BigInt(price), 0n);
   const selection = prices.length ? {
     includedCandidateIds: included.map((candidate) => candidate.id),
     includedCount: prices.length,
-    averageSoldPriceCents: Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length),
+    averageSoldPriceCents: Number((total + divisor / 2n) / divisor),
     lowestSoldPriceCents: Math.min(...prices),
     highestSoldPriceCents: Math.max(...prices),
   } : {
@@ -655,7 +665,7 @@ export function normalizeCompsSnapshotForWrite(snapshot: Prisma.InputJsonValue, 
     query,
     retrievedAt,
     nextOffset,
-    hasMore: source.hasMore === true,
+    hasMore: candidates.length < COMPS_SNAPSHOT_MAX_CANDIDATES && source.hasMore === true,
     candidates,
     selection,
     confirmation,
@@ -667,10 +677,40 @@ export async function saveCompsSnapshot(
   cardId: string,
   snapshot: Prisma.InputJsonValue,
   adminId: string,
+  options: { confirmationMode?: "PRESERVE" | "CONFIRM" } = {},
 ) {
-  requireAdminText(adminId, "Admin identity");
+  const authenticatedAdminId = requireAdminText(adminId, "Admin identity");
   const card = await requireMutableCompsCard(tx, cardId);
-  const normalizedSnapshot = normalizeCompsSnapshotForWrite(snapshot, adminId);
+  const confirmationMode = options.confirmationMode ?? "PRESERVE";
+  const normalizedSnapshot = normalizeCompsSnapshotForWrite(
+    snapshot,
+    confirmationMode === "CONFIRM" ? authenticatedAdminId : undefined,
+  );
+  const normalized = normalizedSnapshot as unknown as Record<string, unknown>;
+  const incoming = compsRecord(normalized.confirmation) ? normalized.confirmation : null;
+  const selection = compsRecord(normalized.selection) ? normalized.selection : null;
+  if (confirmationMode === "CONFIRM" && (
+    !incoming || !selection || !Number.isSafeInteger(selection.includedCount) || Number(selection.includedCount) <= 0 ||
+    !positiveSafeCents(selection.averageSoldPriceCents) || incoming.marketValueCents !== selection.averageSoldPriceCents
+  )) throw new Error("Confirmed market value must equal the nonempty selected-price arithmetic average");
+  if (confirmationMode === "PRESERVE") {
+    const persisted = positiveSafeCents(card.marketValueCents) && card.marketValueConfirmedAt instanceof Date &&
+      Number.isFinite(card.marketValueConfirmedAt.getTime()) && compsText(card.marketValueConfirmedByAdminId, 256)
+      ? {
+        marketValueCents: card.marketValueCents,
+        confirmedAt: card.marketValueConfirmedAt.toISOString(),
+        confirmedByAdminId: card.marketValueConfirmedByAdminId,
+      }
+      : null;
+    if (
+      Boolean(incoming) !== Boolean(persisted) ||
+      (incoming && persisted && (
+        incoming.marketValueCents !== persisted.marketValueCents ||
+        incoming.confirmedAt !== persisted.confirmedAt ||
+        incoming.confirmedByAdminId !== persisted.confirmedByAdminId
+      ))
+    ) throw new Error("Comps snapshot confirmation provenance must be preserved");
+  }
   return tx.collectibleCardV2.update({
     where: { id: card.id },
     data: { compsSnapshot: normalizedSnapshot },
@@ -686,8 +726,8 @@ export async function confirmMarketValue(
   confirmedAt = new Date(),
 ) {
   const confirmedBy = requireAdminText(adminId, "Admin identity");
-  if (!Number.isSafeInteger(valueCents) || valueCents <= 0) {
-    throw new Error("Confirmed market value must be a positive safe integer in cents");
+  if (!positiveSafeCents(valueCents)) {
+    throw new Error("Confirmed market value must fit one positive PostgreSQL integer in cents");
   }
   if (!Number.isFinite(confirmedAt.getTime())) {
     throw new Error("Market-value confirmation time is invalid");
