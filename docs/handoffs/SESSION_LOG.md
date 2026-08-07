@@ -30971,3 +30971,19 @@ By enabling Rip It Live, I confirm:
 ### Safety
 
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
+
+## 2026-08-07 - Combined Comps V2 and NFC V2 release integration validation plan
+
+### Planned local disposable migration validation
+
+- The exact Comps/NFC release integration is based on current `origin/main` and contains the approved permanent-card foundation, Comps V2, and NFC V2 commit stacks. Before any push, PR, Production configuration, or deploy, run the repository's explicit `--ack-disposable-local-postgres` validator against the complete migration chain and second-deploy no-op.
+- The validator is authorized to create and destroy only its uniquely named tmpfs-backed PostgreSQL container through the verified local Docker context and loopback-only port. It must not contact Production or any remote database, and it must destroy its container and storage when complete.
+- After the disposable result, record exact combined test/build evidence here. No historical-card backfill, Dell/V1 incident action, NFC helper/config/tag operation, live SerpAPI request, Production migration, or customer/card mutation is part of this local validation.
+
+### Observed combined integration result
+
+- The explicit local validator verified the Docker context was local, created only its uniquely named loopback/tmpfs PostgreSQL container, deployed all `84` migrations, passed the NFC, Mathematical V1, and Card Platform V2 catalog/constraint/lifecycle/rollback/concurrency checks, proved the second deploy was a no-op, reconfirmed final readiness, and destroyed the container and storage.
+- Repository Node `20.x` combined validation passed `25/25` Comps engine tests, `20/20` combined permanent-card/Comps/NFC database-boundary tests, and `36/36` combined Speedster/Comps/NFC frontend protocol and workflow tests. Combined changed-file ESLint, strict database build, and `git diff --check` passed.
+- The exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed type checking, generated all `75/75` static pages including `/admin/comps` and `/admin/nfc`, emitted both V2 API routes and `/c/[token]`, and passed the Sharp trace verifier. Output contained only the repository's existing unrelated warnings.
+- The integrated .NET 8 Linux-container helper suite truthfully passed `17`, skipped the seven named Windows-only protected runtime groups, and failed `0`. All five relevant PowerShell files parsed successfully under PowerShell 7 in Linux; this remains syntax evidence only. The Windows/Dell gates recorded above remain open and are not represented as passed.
+- No Production/remote migration, database/customer/card write, backfill, deploy, restart, secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, or physical NFC tag read/write/lock occurred.
