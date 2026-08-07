@@ -7,6 +7,7 @@ import {
 } from "../../../../../lib/ai-grader-v2/review-findings";
 import { encodeSpeedsterTraceBitmapWireV1 } from "../../../../../lib/ai-grader-v2/trace-bitmap-wire";
 import { decodeSpeedsterTraceRleV1 } from "../../../../../lib/ai-grader-v2/trace-codec";
+import { activeSpeedsterPublicReportWhere } from "../../../../../lib/server/tenKingsV2PublicReport";
 
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -24,7 +25,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!slug || !findingId) return res.status(400).json({ message: "Invalid Speedster trace request" });
 
   const session = await prisma.aiGraderV2Session.findFirst({
-    where: { publicReportSlug: slug, workflowState: "COMPLETED" },
+    where: activeSpeedsterPublicReportWhere(slug),
     select: { reviewedDefects: true },
   });
   if (!session) return res.status(404).json({ message: "Speedster report not found" });

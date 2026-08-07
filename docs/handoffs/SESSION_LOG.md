@@ -30748,3 +30748,74 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/ebay-sold-comps-v2 test` passed all `20/20` deterministic fixture tests after a successful strict TypeScript build. The local shell uses unsupported Node `25.6.1`, so the same compiled suite was also run with exact Node 20 through `npx -y node@20 --test packages/ebay-sold-comps-v2/tests/*.test.js`; all `20/20` passed.
 - The suite covers visible/default/override and no-grade queries, missing/invalid input, alias normalization, whole-token identity/variant matching (`41` does not match `141`, and `Gold` does not match `Golden`), exact grade groups, other-PSA grade order, recency and missing-date handling, parallel contradiction ranking, safe URL/image parsing, explicit unsold rejection, ambiguous range/non-USD price rejection even when the provider supplies an extracted first bound, sold-price-only `$100/$110/$90 = $100`, selected range, stable merge/dedupe, 30+30 cross-page offsets, sold-only SerpAPI parameters, secret redaction, retryable and non-retryable HTTP failures, invalid/provider responses, missing credentials, and abort timeout.
 - `git diff --check` passed. A focused forbidden-coupling scan found no prohibited code dependency or comps-status field. No live or paid SerpAPI request, secret read/write, database/schema/migration, runtime data mutation, API/UI integration, deploy, restart, card/grade/report change, NFC action, or V1 change occurred.
+
+## 2026-08-06 - Ten Kings V2 S1 permanent-card foundation implementation and disposable validation plan
+
+### Owner authorization and scope
+
+- Mark authorized lead-agent implementation of the first eBay sold-comps V2 and Dell-first NFC V2 priorities under the approved master blueprint. Both require the S1 permanent-card identity seam, so this isolated branch implements only that shared additive prerequisite.
+- The implementation adds only the approved `CollectibleCardV2` and append-only `CardOwnershipEventV2` schema, the single `card-platform-v2` writer, atomic Speedster completion linkage, the permanent `/c/tk2c_...` report route, and a dry-run-first exact-ID backfill command.
+- It does not add CardAsset/Item writes, copied media, inventory/pack/sales behavior, NFC rows or gates, comp rows or gates, `IN_TRANSIT`, deployment, Production migration, backfill execution, Dell access, hardware work, live SerpAPI use, or V1 mutation.
+
+### Local validation completed
+
+- Prisma generation and `@tenkings/database` TypeScript build passed.
+- Focused V2 database tests passed `6/6`.
+- Focused Speedster label-completion and public-report/card-route tests passed `17/17`.
+- `git diff --check` passed.
+- The local environment is Node `25.6.1`, while the repository requests Node `20.x`; exact release validation must use the repository's Node 20 baseline.
+
+### Planned disposable database action
+
+- Run the repository's explicit loopback-only disposable PostgreSQL validator against the complete migration chain and second-deploy no-op using `--ack-disposable-local-postgres`.
+- This action may create and then destroy only the validator's uniquely named disposable local container and storage. It must not use Production or any remote Docker context/database.
+- Record the exact observed result below before any handoff. No Production migration or backfill is authorized.
+
+### Disposable database result
+
+- The first disposable run failed closed while applying the new migration because `CollectibleCardV2.locationId` had been emitted as `TEXT` while the reused authoritative `Location.id` is `UUID`. The validator destroyed its disposable container and storage. No persistent database was contacted.
+- Corrected both Prisma and SQL to use the existing `Location.id` UUID type and added a regression assertion for the exact migration column type.
+- The complete loopback-only disposable PostgreSQL validation then passed all `84` migrations, the existing live lifecycle/constraint checks, the second `prisma migrate deploy` no-op, and final migration status. The validator destroyed its disposable container and tmpfs storage.
+- No Production migration, persistent database write, backfill, deploy, restart, hardware action, Dell access, or external API call occurred.
+
+### Final local implementation evidence
+
+- Re-ran on repository-required Node `20.x`: Prisma generation and database build passed; focused permanent-card service/migration/backfill/error-handling tests passed `9/9`; focused Speedster completion and permanent public-card route tests passed `17/17`; changed frontend files passed focused ESLint with zero findings; `git diff --check` passed.
+- The full dependency-aware optimized Next.js Production build passed and emitted all `73/73` static pages plus dynamic `/c/[token]`. Output contained only the repository's pre-existing image, hook, browser-data, Tailwind-glob, and optional Sharp target warnings.
+- The broader legacy database test command completed `149/163` tests and failed `14` unrelated baseline calibration/production assertions or missing prebuilt-helper fixtures in files untouched by this change. The new permanent-card tests were all green within that run; this branch does not alter or hide the legacy failures.
+- The S1 Production done gate remains intentionally open: no reviewed migration/deploy/backfill has occurred and no real completed card has yet proven one label, one V2 card, one creation event, and one stable public URL in Production.
+
+## 2026-08-06 - Ten Kings V2 S1 independent-review corrections and revalidation plan
+
+### Review corrections
+
+- Independent lead review found six foundation gaps before integration: VOID cards were still reachable through legacy report/trace URLs; ownership rows were not database-enforced append-only; mocked tests did not prove real rollback/concurrency/constraints; category identity shape was not enforced; approved void/re-sync actions were not reachable with structured provenance; and card creation attribution used the session creator rather than the durable label-completion actor.
+- Corrected the single writer to validate the complete immutable identity, grade snapshot, public token, creator, and creation-event semantics on retry; use `HumanGradeLabel.createdByUserId`; and reject invalid SPORTS/POKEMON identity shapes during creation and re-sync.
+- Added database category-shape enforcement and an UPDATE/DELETE rejection trigger for `CardOwnershipEventV2`.
+- Added a shared non-VOID query boundary to the permanent page, legacy report, trace API, and completed-card list while preserving unlinked historical Speedster reports.
+- Converted the completed-card workspace endpoint to V2 card facts and added only the approved authenticated `Re-sync identity from session` and `Void erroneous card` actions. Each action emits one ordinary structured operational log with exact safe card/admin/action/reason fields; no audit framework, table, or free-form identity editor was added.
+- Added an exact loopback/disposable-only real PostgreSQL validator for forced card-insert rollback, two concurrent completions under the production row-lock pattern, retry identity/token stability, one-card/one-event counts, database category shape, and append-only UPDATE/DELETE rejection.
+
+### Planned disposable database action
+
+- Re-run the explicit local Docker validator against the complete migration chain and second-deploy no-op with `--ack-disposable-local-postgres`. The new live S1 check requires both the existing disposable sentinel and its own exact loopback/database-name sentinel.
+- The action may create and destroy only the uniquely named tmpfs-backed local validation container. No Production/remote database, deploy, backfill, Dell/helper, NFC hardware, or paid SerpAPI action is authorized.
+
+### Observed correction validation
+
+- Repository-required Node `20.x` Prisma generation and strict database TypeScript build passed.
+- Corrected focused tests passed `14/14` Card Platform V2 service/migration/backfill/live-validator contracts and `27/27` Speedster completion, public report/card/VOID boundary, completed-card state, and authenticated admin-action contracts.
+- The exact loopback-only tmpfs PostgreSQL validator passed all `84` migrations, forced card-insert rollback of the surrounding completion transaction, concurrent row-locked completion idempotency, retry token/event stability, database identity-shape enforcement, append-only ownership UPDATE/DELETE rejection, the existing live lifecycle checks, second-deploy no-op, and final readiness. The disposable container and storage were destroyed.
+- No Production/remote database, migration, deployment, backfill, Dell/helper, GoToTags, NFC hardware/tag, paid/live SerpAPI, V1, customer, grading, label, report, or persistent runtime state changed.
+
+### Final nullable-identity constraint recheck plan
+
+- Static review of the corrected SQL caught PostgreSQL CHECK three-valued-logic risk when both category identity names are null. Added explicit `IS NOT NULL` terms and a real-database regression for the both-null case.
+- Re-run the same exact loopback-only disposable validator and second-deploy no-op before handoff. Authorization remains limited to the uniquely named tmpfs local validation container, which must be destroyed afterward; no persistent or Production action is authorized.
+
+### Final nullable-identity constraint recheck result
+
+- Node `20.x` focused Card Platform V2 tests again passed `14/14`.
+- The exact loopback-only tmpfs PostgreSQL validator again passed all `84` migrations, including explicit rejection of a POKEMON card with the wrong name field and a POKEMON card with both identity names null, plus the forced card-insert rollback, concurrent completion, append-only UPDATE/DELETE, existing lifecycle, second-deploy no-op, and final-readiness checks.
+- The validator destroyed the disposable container and storage. No persistent/Production database, migration, deploy, backfill, Dell/helper, NFC hardware, paid/live SerpAPI, V1, customer, grading, label, report, or runtime state changed.
+- Focused changed-file ESLint passed with zero warnings/errors, `git diff --check` passed, and the exact Node `20.x` optimized Next.js Production build passed all `73/73` static pages including dynamic `/c/[token]`; output contained only the repository's existing unrelated warnings.

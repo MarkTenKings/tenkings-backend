@@ -15,14 +15,14 @@ type CompletedCard = {
   grade: number | null;
   certificateNumber: string | null;
   slabPhotosDone: boolean;
-  nfcDone: boolean;
-  compsDone: boolean;
-  inventoryDone: boolean;
+  permanentCard: {
+    id: string;
+    publicToken: string;
+    lifecycleState: string;
+    nfcVerifiedAt: string | null;
+  } | null;
   createdAt: string;
 };
-
-const statusCount = (card: CompletedCard) =>
-  [card.slabPhotosDone, card.nfcDone, card.compsDone, card.inventoryDone].filter(Boolean).length;
 
 export default function CompletedSpeedsterCardsPage() {
   const { session, loading, ensureSession } = useSession();
@@ -70,7 +70,10 @@ export default function CompletedSpeedsterCardsPage() {
                 <strong>{card.title}</strong>
                 <span>{card.details.join(" · ")}</span>
               </div>
-              <div className={styles.cardProgress}><strong>{statusCount(card)}/4</strong><span>FINISH</span></div>
+              <div className={styles.cardProgress}>
+                <strong>{card.permanentCard?.lifecycleState ?? "V2 PENDING"}</strong>
+                {card.permanentCard?.nfcVerifiedAt ? <span>NFC VERIFIED</span> : null}
+              </div>
               <time>{new Date(card.createdAt).toLocaleDateString()}</time>
               <b>→</b>
             </Link>

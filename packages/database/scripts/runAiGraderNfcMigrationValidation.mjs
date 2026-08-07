@@ -41,6 +41,7 @@ const advisoryLockValidationScript = resolve(
   repositoryRoot,
   "frontend/nextjs-app/scripts/validate-ai-grader-advisory-locks-postgres.ts",
 );
+const cardPlatformV2ValidationScript = resolve(scriptDir, "validateCardPlatformV2AgainstPostgres.mjs");
 const docker = process.platform === "win32" ? "docker.exe" : "docker";
 const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 
@@ -64,6 +65,7 @@ for (const requiredPath of [
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
+  cardPlatformV2ValidationScript,
 ]) {
   if (!existsSync(requiredPath)) fail("NFC migration validation support is incomplete.");
 }
@@ -249,6 +251,7 @@ try {
     ...composeEnv,
     DATABASE_URL: databaseUrl,
     [SENTINEL]: "1",
+    TEN_KINGS_V2_DISPOSABLE_VALIDATION: "1",
   };
 
   run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "validate", "--schema", "prisma/schema.prisma"], {
@@ -332,6 +335,13 @@ try {
   if (!advisoryLockResult.includes("AI_GRADER_ADVISORY_LOCK_REAL_POSTGRES_VALIDATION_PASS")) {
     fail("The real AI Grader advisory-lock validation did not reach its PASS marker.");
   }
+  const cardPlatformV2Result = run(process.execPath, [cardPlatformV2ValidationScript], {
+    env: databaseEnv,
+    label: "running card creation rollback, concurrency, identity, and append-only checks through real Prisma/PostgreSQL",
+  });
+  if (!cardPlatformV2Result.includes("TEN_KINGS_V2_CARD_PLATFORM_REAL_POSTGRES_VALIDATION_PASS")) {
+    fail("The real Card Platform V2 validation did not reach its PASS marker.");
+  }
 
   const secondDeploy = run(
     pnpm,
@@ -385,6 +395,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1 snapshot/activation catalog, constraint, lifecycle, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1 and Card Platform V2 catalog, constraint, lifecycle, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

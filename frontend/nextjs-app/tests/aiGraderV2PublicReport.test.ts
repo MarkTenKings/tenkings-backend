@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import test from "node:test";
 import type { GetServerSidePropsContext } from "next";
+import { activeSpeedsterPublicReportWhere } from "../lib/server/tenKingsV2PublicReport";
 
 const require = createRequire(import.meta.url);
 require.extensions[".css"] = () => undefined;
 
 const reportModulePromise = import("../pages/ai-grader-v2/reports/[slug]");
+const cardPageModulePromise = import("../pages/c/[token]");
 
 const grade = {
   front: {
@@ -250,4 +252,92 @@ test("SSR returns notFound for absent or incomplete reports and public props for
   const result = await complete(context("charizard-2025"));
   assert.ok("props" in result);
   assert.equal(headers["Cache-Control"], "private, no-store");
+});
+
+test("permanent V2 card route resolves only the card's exact completed Speedster report", async () => {
+  const cardPageModule = await cardPageModulePromise;
+  const headers: Record<string, string> = {};
+  const token = `tk2c_${"A".repeat(32)}`;
+  const context = (value: string): GetServerSidePropsContext => ({
+    params: { token: value },
+    req: {} as GetServerSidePropsContext["req"],
+    res: { setHeader: (name: string, header: string) => { headers[name] = header; } } as unknown as GetServerSidePropsContext["res"],
+    query: {},
+    resolvedUrl: `/c/${value}`,
+  });
+
+  let lookupCount = 0;
+  const handler = cardPageModule.createCollectibleCardV2GetServerSideProps({
+    async findCard(publicToken: string) {
+      lookupCount += 1;
+      assert.equal(publicToken, token);
+      return {
+        speedsterSessionId: "private-session-id",
+        publicReportSlug: "charizard-2025",
+        lifecycleState: "GRADED",
+      };
+    },
+    async findCompletedSession(sessionId: string, publicReportSlug: string) {
+      assert.equal(sessionId, "private-session-id");
+      assert.equal(publicReportSlug, "charizard-2025");
+      return persisted();
+    },
+    async presign(key: string) { return `https://read.example/${key}`; },
+  });
+
+  assert.deepEqual(await handler(context("not-a-token")), { notFound: true });
+  assert.equal(lookupCount, 0);
+
+  const result = await handler(context(token));
+  assert.ok("props" in result);
+  assert.equal(lookupCount, 1);
+  assert.equal((await result.props).publicReportSlug, "charizard-2025");
+  assert.equal(headers["Cache-Control"], "private, no-store");
+});
+
+test("permanent V2 card route is plain not-found for missing or voided cards", async () => {
+  const cardPageModule = await cardPageModulePromise;
+  const token = `tk2c_${"B".repeat(32)}`;
+  const context = {
+    params: { token },
+    req: {},
+    res: { setHeader() {} },
+    query: {},
+    resolvedUrl: `/c/${token}`,
+  } as unknown as GetServerSidePropsContext;
+  let reportLookupCount = 0;
+  const dependencyBase = {
+    async findCompletedSession() { reportLookupCount += 1; return persisted(); },
+    async presign(key: string) { return `https://read.example/${key}`; },
+  };
+
+  const missing = cardPageModule.createCollectibleCardV2GetServerSideProps({
+    ...dependencyBase,
+    async findCard() { return null; },
+  });
+  assert.deepEqual(await missing(context), { notFound: true });
+
+  const voided = cardPageModule.createCollectibleCardV2GetServerSideProps({
+    ...dependencyBase,
+    async findCard() {
+      return {
+        speedsterSessionId: "private-session-id",
+        publicReportSlug: "charizard-2025",
+        lifecycleState: "VOID",
+      };
+    },
+  });
+  assert.deepEqual(await voided(context), { notFound: true });
+  assert.equal(reportLookupCount, 0);
+});
+
+test("legacy Speedster report and trace lookups allow unlinked history but exclude linked VOID cards", () => {
+  assert.deepEqual(activeSpeedsterPublicReportWhere("charizard-2025"), {
+    publicReportSlug: "charizard-2025",
+    workflowState: "COMPLETED",
+    OR: [
+      { collectibleCardV2: { is: null } },
+      { collectibleCardV2: { is: { lifecycleState: { not: "VOID" } } } },
+    ],
+  });
 });

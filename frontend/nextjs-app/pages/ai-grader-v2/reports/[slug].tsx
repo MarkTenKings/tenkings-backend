@@ -24,6 +24,7 @@ import {
   parseSpeedsterTraceRleV1,
 } from "../../../lib/ai-grader-v2/trace-codec";
 import { decodeSpeedsterTraceBitmapWireV1 } from "../../../lib/ai-grader-v2/trace-bitmap-wire";
+import { activeSpeedsterPublicReportWhere } from "../../../lib/server/tenKingsV2PublicReport";
 import styles from "../../../styles/AiGraderV2Report.module.css";
 
 type Grade = ReturnType<typeof calculateSpeedsterGrade>;
@@ -339,7 +340,7 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
   ]);
   return createSpeedsterReportGetServerSideProps({
     findCompletedSession: (slug) => prisma.aiGraderV2Session.findFirst({
-      where: { publicReportSlug: slug, workflowState: "COMPLETED" },
+      where: activeSpeedsterPublicReportWhere(slug),
       select: {
         publicReportSlug: true,
         cardProfile: true,
