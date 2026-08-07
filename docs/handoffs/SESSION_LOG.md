@@ -30878,3 +30878,39 @@ By enabling Rip It Live, I confirm:
 - Repository-required Node `20.x` validation passed `25/25` engine tests, `19/19` Card Platform V2 database-boundary tests, the changed `12/12` frontend Comps contract, focused changed-file ESLint with zero warnings/errors, `git diff --check`, and the exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` with all `74/74` static pages and the Sharp trace verifier. Build warnings were the repository's existing unrelated image/hook/browser-data/Tailwind and optional Sharp-target warnings.
 - An intentionally broader six-file frontend diagnostic passed `47/48`; its sole failure was the pre-existing untouched AI Grader public-defect adjudication fixture expecting `8.5` while current shared grading logic returned `8.7`. The changed Comps contract passed within that run, and neither the routing correction nor the Comps implementation touches that unrelated fixture or grading path.
 - No live or paid SerpAPI request, secret read/write, database/schema/migration, deploy, restart, backfill, Production/customer/card mutation, Dell/helper/GoToTags action, NFC hardware/tag operation, or V1 write occurred.
+
+## 2026-08-06 - Ten Kings V2 NFC protocol foundation (local, hardware-free)
+
+### Authority and review
+
+- Mark prioritized Dell-first V2 NFC after Speedster and explicitly requested a lead review agent with multiple subordinate reviews. The owner-approved authority is `docs/specs/TEN_KINGS_V2_FINAL_MASTER_BLUEPRINT.md`, especially S1 and Section 10.
+- One read-only review mapped the existing Dell/ACR1552U/F8215/GoToTags helper and found the reusable loopback, one-operation gate, readback/lock, CNG workstation key, and Windows installer foundations. It also confirmed that V1 `/nfc/<id>`, UID fingerprints, attempt/audit tables, CardAsset/Item links, revoke/replace records, and inventory gates must not enter V2.
+- A separate adversarial protocol review required domain-separated server-job and workstation-result signatures, exact ASCII canonicalization, no UID field or digest, delayed submission of terminal evidence completed inside the signed job window, server-transaction verification timestamps, and exact local discard acknowledgement in the later helper phase.
+
+### Local implementation
+
+- Added an isolated TypeScript V2 NFC protocol module for a short-lived ECDSA P-256/SHA-256 P1363 server job bound to the exact card ID, `tk2c_` token, permanent `/c/` URL, nonce, F8215/static-URL/GoToTags profile, issue time, and expiry.
+- Added a domain-separated workstation terminal-result contract bound to the exact signed-job envelope, card/token/URL/nonce, ACR1552U, GoToTags `4.37.0.1`, exact readback digest, and permanent-lock result. It contains no UID, UID fingerprint, V1 attempt identity, callback digest, or secret.
+- Added one server-facing composition function that always verifies both the server-job signature/trust set and the workstation-result signature/allowlist before returning verified evidence. The lower-level result verifier is private so a future completion route cannot accidentally skip server-job verification.
+- Added a matching additive C# contract. Its result creator refuses to sign unless it first verifies the signed server job against the trusted server SPKI. Its strict JSON parser rejects missing, duplicate, unknown, non-string, noncanonical, alternate-domain, alternate-URL, and wrong-profile input.
+- Added the minimal three-field idempotency decision: a first valid job writes using server transaction time; a replay or stale job whose `issuedAt` is not later than the existing `nfcVerifiedAt` is a no-op; a genuinely later replacement job may update the informational facts.
+- Existing V1 NFC contracts and behavior were not modified. No S1 schema, database writer, API route, browser UI, helper HTTP endpoint, GoToTags adapter, Dell task/config, or physical discard operation was added in this scope.
+
+### Validation evidence
+
+- Focused TypeScript protocol tests passed `8/8`, covering exact canonical job shape, P-256 signature/trust validation, staged current/prior job-key rotation, field/profile/URL/token/unknown-field tamper rejection, mandatory two-signature completion composition, result-to-job substitution rejection, no UID authority, delayed terminal submission, and replay/stale-write decisions.
+- A strict TypeScript `5.5.4` no-emit typecheck with Node `20.14.12` types passed for the new module and tests.
+- A disposable official `.NET SDK 8.0` container compiled and ran the complete hardware-free NFC helper suite with `21/21` groups passing, including the new Ten Kings V2 signed-job/terminal-result group. No NFC hardware or Windows production key was accessed.
+- `git diff --check` passed.
+
+### Exact Node 20 signature-tamper test correction
+
+- An independent rerun on the repository-supported Node `20.20.1` exposed a test-only nondeterminism: the server-job tamper case changed the final Base64URL character, which can produce a noncanonical encoding for some valid ECDSA signatures. The strict contract correctly rejected that malformed encoding before reaching the test's expected cryptographic-signature failure.
+- The test now decodes the valid 64-byte P1363 signature, flips one signature byte, and re-encodes it as canonical Base64URL. This guarantees structurally valid but cryptographically invalid evidence and does not weaken or change production validation.
+- Exact Node `20.20.1` focused protocol tests now pass `8/8`; the strict TypeScript `5.5.4` no-emit typecheck under Node 20 passes; and `git diff --check` passes.
+
+### Remaining gates and safety
+
+- S1 remains a hard dependency before hosted NFC integration: `CollectibleCardV2`, `CardOwnershipEventV2`, `card-platform-v2`, permanent `tk2c_` token minting, and `/c/[token]` do not yet exist on the implementation base.
+- The Dell remains blocked by a preserved terminal F8215 job whose exact source/runtime state is contradictory in prior handoff evidence. Before any helper install, update, restart, acknowledgement, retry, or new physical job, Mark must separately approve a read-only exact-state preflight and the evidence must select the existing bounded resolver or a newly reviewed incident-bound resolver.
+- No database write, migration, deployment, Production configuration, secret/key provisioning, helper installation/restart, Dell action, GoToTags action, NFC read/write/lock, physical tag use, V1 mutation, or customer/runtime data change occurred.

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.IO.Compression;
+using System.Globalization;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Security.Cryptography;
@@ -24,6 +25,7 @@ var tests = new (string Name, Func<Task> Run)[]
     ("ACR1552 initial empty-reader PCSC classification", TestPcscInitialConnectClassification),
     ("operational attestation canonical signing and tamper", TestAttestation),
     ("multi-profile attestation canonical signing and tamper", TestMultiProfileAttestation),
+    ("Ten Kings V2 signed job and terminal-result contract", TestTenKingsV2Protocol),
     ("GoToTags terminal callback strict evidence and redaction", TestGoToTagsCallback),
     ("F8215 protected job lifecycle and idempotency", TestF8215JobLifecycle),
     ("F8215 helper restart and terminal callback recovery", TestF8215RestartRecovery),
@@ -311,6 +313,127 @@ static Task TestMultiProfileAttestation()
     {
         CryptographicOperations.ZeroMemory(spki);
     }
+    return Task.CompletedTask;
+}
+
+static Task TestTenKingsV2Protocol()
+{
+    const string token = "tk2c_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    const string nonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    using var server = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    var serverSpki = server.ExportSubjectPublicKeyInfo();
+    var serverKeyId = WorkstationAttestation.KeyId(serverSpki);
+    var placeholderSignature = Base64Url(new byte[64]);
+    var job = new TenKingsV2NfcSignedJob(
+        TenKingsV2NfcProtocol.JobSchema,
+        TenKingsV2NfcProtocol.Algorithm,
+        serverKeyId,
+        TenKingsV2NfcProtocol.Purpose,
+        nonce,
+        "card-v2.001",
+        token,
+        $"https://collect.tenkings.co/c/{token}",
+        TenKingsV2NfcProtocol.ChipType,
+        TenKingsV2NfcProtocol.SecurityMode,
+        TenKingsV2NfcProtocol.ProgrammingProfile,
+        "2026-08-06T20:00:00.000Z",
+        "2026-08-06T20:10:00.000Z",
+        placeholderSignature);
+
+    var canonical = TenKingsV2NfcProtocol.CanonicalJobStatement(job);
+    Equal(string.Join('\n',
+        "ten-kings-v2-nfc-job-v1",
+        "ecdsa-p256-sha256-p1363",
+        serverKeyId,
+        "program-permanent-card-url",
+        nonce,
+        "card-v2.001",
+        token,
+        $"https://collect.tenkings.co/c/{token}",
+        "FEIJU_F8215",
+        "static_url_v1",
+        "gototags_manual_start_v1",
+        "2026-08-06T20:00:00.000Z",
+        "2026-08-06T20:10:00.000Z"), canonical);
+
+    var statement = Encoding.UTF8.GetBytes(canonical);
+    var serverSignature = server.SignData(
+        statement,
+        HashAlgorithmName.SHA256,
+        DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+    job = job with { Signature = Base64Url(serverSignature) };
+    CryptographicOperations.ZeroMemory(statement);
+    CryptographicOperations.ZeroMemory(serverSignature);
+    True(TenKingsV2NfcProtocol.VerifyJob(job, serverSpki));
+    TenKingsV2NfcProtocol.RequireMayStart(job, DateTimeOffset.Parse("2026-08-06T20:09:59.999Z", CultureInfo.InvariantCulture));
+    Throws("v2_nfc_job_expired", () =>
+        TenKingsV2NfcProtocol.RequireMayStart(job, DateTimeOffset.Parse("2026-08-06T20:10:00.001Z", CultureInfo.InvariantCulture)));
+
+    var json = JsonSerializer.Serialize(job, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+    var jsonBytes = Encoding.UTF8.GetBytes(json);
+    try
+    {
+        Equal(job, TenKingsV2NfcProtocol.ParseSignedJobJson(jsonBytes));
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(jsonBytes);
+    }
+    var unknown = JsonNode.Parse(json)!.AsObject();
+    unknown["uidFingerprintSha256"] = new string('f', 64);
+    var unknownBytes = Encoding.UTF8.GetBytes(unknown.ToJsonString());
+    try
+    {
+        Throws("v2_nfc_protocol_invalid", () => TenKingsV2NfcProtocol.ParseSignedJobJson(unknownBytes));
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(unknownBytes);
+    }
+
+    using var workstation = new EphemeralTestWorkstationAttestationSigner();
+    var result = TenKingsV2NfcProtocol.CreateTerminalResult(
+        job,
+        serverSpki,
+        workstation,
+        new string('a', 64),
+        "2026-08-06T20:04:00.000Z");
+    var workstationSpki = workstation.ExportPublicSpki();
+    try
+    {
+        True(TenKingsV2NfcProtocol.VerifyTerminalResult(result, job, workstationSpki));
+        False(TenKingsV2NfcProtocol.VerifyTerminalResult(result with { CardId = "card-v2.002" }, job, workstationSpki));
+        False(TenKingsV2NfcProtocol.VerifyTerminalResult(result with { AdapterVersion = "4.38.0.0" }, job, workstationSpki));
+        False(JsonSerializer.Serialize(result).Contains("uid", StringComparison.OrdinalIgnoreCase));
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(workstationSpki);
+    }
+
+    using var wrongServer = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+    var wrongServerSpki = wrongServer.ExportSubjectPublicKeyInfo();
+    try
+    {
+        Throws("v2_nfc_protocol_invalid", () => TenKingsV2NfcProtocol.CreateTerminalResult(
+            job,
+            wrongServerSpki,
+            workstation,
+            new string('a', 64),
+            "2026-08-06T20:04:00.000Z"));
+    }
+    finally
+    {
+        CryptographicOperations.ZeroMemory(wrongServerSpki);
+    }
+
+    Throws("v2_nfc_protocol_invalid", () => TenKingsV2NfcProtocol.CreateTerminalResult(
+        job,
+        serverSpki,
+        workstation,
+        new string('a', 64),
+        "2026-08-06T20:10:00.001Z"));
+    CryptographicOperations.ZeroMemory(serverSpki);
     return Task.CompletedTask;
 }
 
