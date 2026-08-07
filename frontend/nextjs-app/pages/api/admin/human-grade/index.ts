@@ -7,6 +7,7 @@ import {
   calculateHumanGrade,
   formatHumanGrade,
   formatHumanGradeCertificateNumber,
+  isHumanOwnedGradeLabel,
   type HumanGradeFormulaVersion,
   type HumanGradeLabelSheetDto,
   type HumanGradeQueueDto,
@@ -64,6 +65,8 @@ type SheetRecord = {
     certificateNumber: string | null;
     certificateSequence: number;
     slot: number;
+    source: "HUMAN" | "SPEEDSTER";
+    sourceSessionId: string | null;
     gradingFormulaVersion: HumanGradeFormulaVersion;
     cardType: "SPORTS" | "POKEMON";
     playerName: string | null;
@@ -120,6 +123,8 @@ function serializeSheet(sheet: SheetRecord): HumanGradeLabelSheetDto {
       id: label.id,
       slot: label.slot,
       certificateNumber: label.certificateNumber ?? formatHumanGradeCertificateNumber(label.certificateSequence),
+      source: label.source,
+      sourceSessionId: label.sourceSessionId,
       gradingFormulaVersion: label.gradingFormulaVersion,
       cardType: label.cardType,
       playerName: label.playerName,
@@ -179,9 +184,10 @@ export default async function handler(
       const result = await prisma.$transaction(async (tx) => {
         const existing = await tx.humanGradeLabel.findUnique({
           where: { id: parsed.data.id },
-          select: { id: true, gradingFormulaVersion: true },
+          select: { id: true, source: true, gradingFormulaVersion: true },
         });
         if (!existing) return "NOT_FOUND" as const;
+        if (!isHumanOwnedGradeLabel(existing.source)) return "SPEEDSTER_OWNED" as const;
 
         await tx.humanGradeLabel.update({
           where: { id: existing.id },
@@ -191,6 +197,11 @@ export default async function handler(
       });
 
       if (result === "NOT_FOUND") return res.status(404).json({ message: "Human-grade label not found." });
+      if (result === "SPEEDSTER_OWNED") {
+        return res.status(409).json({
+          message: "Speedster-owned labels must be edited from their completed Speedster card.",
+        });
+      }
       return res.status(200).json(await loadQueue());
     }
 
@@ -208,6 +219,7 @@ export default async function handler(
           include: { sheet: { select: { status: true } } },
         });
         if (!existing) return "NOT_FOUND" as const;
+        if (!isHumanOwnedGradeLabel(existing.source)) return "SPEEDSTER_OWNED" as const;
         if (existing.sheet.status !== "OPEN") return "LOCKED" as const;
 
         await tx.humanGradeLabel.delete({ where: { id: existing.id } });
@@ -226,6 +238,11 @@ export default async function handler(
       });
 
       if (result === "NOT_FOUND") return res.status(404).json({ message: "Human-grade label not found." });
+      if (result === "SPEEDSTER_OWNED") {
+        return res.status(409).json({
+          message: "Speedster-owned labels must be edited from their completed Speedster card.",
+        });
+      }
       if (result === "LOCKED") {
         return res.status(409).json({ message: "Ready-to-print label pages cannot be changed." });
       }
@@ -271,6 +288,7 @@ export default async function handler(
         data: {
           sheetId: sheet.id,
           slot,
+          source: "HUMAN",
           gradingFormulaVersion: NEW_HUMAN_GRADE_FORMULA_VERSION,
           ...labelData(input, NEW_HUMAN_GRADE_FORMULA_VERSION),
           createdByUserId: admin.user.id,

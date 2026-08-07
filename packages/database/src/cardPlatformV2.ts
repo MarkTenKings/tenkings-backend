@@ -12,6 +12,11 @@ type CardBackfillReadClient = Pick<
   "aiGraderV2Session" | "humanGradeLabel"
 >;
 
+type CardMaterializationReadClient = Pick<
+  Prisma.TransactionClient,
+  "aiGraderV2Session" | "humanGradeLabel" | "collectibleCardV2" | "cardOwnershipEventV2"
+>;
+
 type SpeedsterIdentity = {
   playerName: string | null;
   cardName: string | null;
@@ -22,6 +27,30 @@ type SpeedsterIdentity = {
   insert: string | null;
   cardNumber: string | null;
 };
+
+export type CompletedSpeedsterIdentityInput = {
+  playerName?: string | null;
+  cardName?: string | null;
+  year: string;
+  manufacturer?: string | null;
+  productSet: string;
+  parallel?: string | null;
+  insert?: string | null;
+  cardNumber?: string | null;
+  cardType?: "SPORTS" | "POKEMON";
+};
+
+const SPEEDSTER_IDENTITY_KEYS = new Set([
+  "playerName",
+  "cardName",
+  "year",
+  "manufacturer",
+  "productSet",
+  "parallel",
+  "insert",
+  "cardNumber",
+  "cardType",
+]);
 
 const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : null;
 
@@ -111,6 +140,192 @@ const buildGradeSnapshot = (ruleVersion: string, label: GradeSnapshotLabel) => (
     surface: label.surfaceGrade.toString(),
   },
 });
+
+const speedsterSourceSessionSelect = {
+  id: true,
+  cardProfile: true,
+  workflowState: true,
+  ruleVersion: true,
+  publicReportSlug: true,
+  identity: true,
+} satisfies Prisma.AiGraderV2SessionSelect;
+
+const speedsterSourceLabelSelect = {
+  id: true,
+  source: true,
+  sourceSessionId: true,
+  certificateSequence: true,
+  certificateNumber: true,
+  gradingFormulaVersion: true,
+  createdByUserId: true,
+  cardType: true,
+  playerName: true,
+  cardName: true,
+  year: true,
+  manufacturer: true,
+  productSet: true,
+  parallel: true,
+  insert: true,
+  cardNumber: true,
+  centeringGrade: true,
+  cornersGrade: true,
+  edgesGrade: true,
+  surfaceGrade: true,
+  grade: true,
+} satisfies Prisma.HumanGradeLabelSelect;
+
+type SpeedsterSourceSession = Prisma.AiGraderV2SessionGetPayload<{
+  select: typeof speedsterSourceSessionSelect;
+}>;
+type SpeedsterSourceLabel = Prisma.HumanGradeLabelGetPayload<{
+  select: typeof speedsterSourceLabelSelect;
+}>;
+
+export type SpeedsterCardCreationBinding = {
+  sessionId: string;
+  humanGradeLabelId: string;
+};
+
+function validateSpeedsterCardCreationSourceRows(
+  session: SpeedsterSourceSession | null | undefined,
+  label: SpeedsterSourceLabel | null | undefined,
+) {
+  if (!session || session.workflowState !== "COMPLETED" || !session.publicReportSlug) {
+    throw new Error("A permanent V2 card requires a completed Speedster report");
+  }
+  if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+    throw new Error("Completed Speedster session has an unsupported card category");
+  }
+  if (
+    !label ||
+    label.source !== "SPEEDSTER" ||
+    label.sourceSessionId !== session.id ||
+    !label.certificateNumber
+  ) {
+    throw new Error("A permanent V2 card requires the exact completed Speedster label");
+  }
+
+  const identity = speedsterIdentity(session.identity);
+  assertIdentityMatch(session.cardProfile, identity, label);
+  const gradeSnapshot = buildGradeSnapshot(session.ruleVersion, {
+    ...label,
+    certificateNumber: label.certificateNumber,
+  });
+  return {
+    session: {
+      ...session,
+      cardProfile: session.cardProfile,
+      publicReportSlug: session.publicReportSlug,
+    } as typeof session & {
+      cardProfile: "SPORTS" | "POKEMON";
+      publicReportSlug: string;
+    },
+    label,
+    identity,
+    gradeSnapshot: gradeSnapshot as Prisma.InputJsonValue,
+  };
+}
+
+function assertExactSourceBindings(bindings: SpeedsterCardCreationBinding[]) {
+  if (!Array.isArray(bindings) || !bindings.length) {
+    throw new Error("Permanent V2 card source bindings are required");
+  }
+  const sessionIds = bindings.map(({ sessionId }) => sessionId);
+  const labelIds = bindings.map(({ humanGradeLabelId }) => humanGradeLabelId);
+  if (new Set(sessionIds).size !== sessionIds.length || new Set(labelIds).size !== labelIds.length) {
+    throw new Error("Permanent V2 card source bindings must be one-to-one");
+  }
+}
+
+async function loadSpeedsterCardCreationSourceRows(
+  db: CardBackfillReadClient,
+  bindings: SpeedsterCardCreationBinding[],
+) {
+  assertExactSourceBindings(bindings);
+  const [sessions, labels] = await Promise.all([
+    db.aiGraderV2Session.findMany({
+      where: { id: { in: bindings.map(({ sessionId }) => sessionId) } },
+      select: speedsterSourceSessionSelect,
+    }),
+    db.humanGradeLabel.findMany({
+      where: { id: { in: bindings.map(({ humanGradeLabelId }) => humanGradeLabelId) } },
+      select: speedsterSourceLabelSelect,
+    }),
+  ]);
+  return {
+    sessionsById: new Map(sessions.map((session) => [session.id, session])),
+    labelsById: new Map(labels.map((label) => [label.id, label])),
+  };
+}
+
+/**
+ * Zero-write validation through the same source reader used by permanent-card
+ * creation. Operations code uses this after session-authoritative corrections
+ * so a dry run cannot accidentally substitute a weaker definition of clean.
+ */
+export async function validateSpeedsterCardCreationSource(
+  db: CardBackfillReadClient,
+  sessionId: string,
+  humanGradeLabelId: string,
+) {
+  const session = await db.aiGraderV2Session.findUnique({
+    where: { id: sessionId },
+    select: speedsterSourceSessionSelect,
+  });
+  if (!session || session.workflowState !== "COMPLETED" || !session.publicReportSlug) {
+    throw new Error("A permanent V2 card requires a completed Speedster report");
+  }
+  if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+    throw new Error("Completed Speedster session has an unsupported card category");
+  }
+
+  const label = await db.humanGradeLabel.findUnique({
+    where: { id: humanGradeLabelId },
+    select: speedsterSourceLabelSelect,
+  });
+  return validateSpeedsterCardCreationSourceRows(session, label);
+}
+
+/** The same writer source contract, loaded in two set-based reads. */
+export async function validateSpeedsterCardCreationSources(
+  db: CardBackfillReadClient,
+  bindings: SpeedsterCardCreationBinding[],
+) {
+  const { sessionsById, labelsById } = await loadSpeedsterCardCreationSourceRows(db, bindings);
+  return bindings.map(({ sessionId, humanGradeLabelId }) =>
+    validateSpeedsterCardCreationSourceRows(
+      sessionsById.get(sessionId),
+      labelsById.get(humanGradeLabelId),
+    ));
+}
+
+/** Zero-write per-binding audit with set-based reads and exact writer errors. */
+export async function auditSpeedsterCardCreationSources(
+  db: CardBackfillReadClient,
+  bindings: SpeedsterCardCreationBinding[],
+) {
+  const { sessionsById, labelsById } = await loadSpeedsterCardCreationSourceRows(db, bindings);
+  return bindings.map(({ sessionId, humanGradeLabelId }) => {
+    try {
+      return {
+        sessionId,
+        humanGradeLabelId,
+        source: validateSpeedsterCardCreationSourceRows(
+          sessionsById.get(sessionId),
+          labelsById.get(humanGradeLabelId),
+        ),
+        error: null,
+      };
+    } catch (error) {
+      return {
+        sessionId,
+        humanGradeLabelId,
+        source: null,
+        error: error instanceof Error ? error.message : "Unknown writer-equivalent validation failure",
+      };
+    }
+  });
+}
 
 const canonicalJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -261,68 +476,201 @@ function assertExistingCard(
   }
 }
 
+type CreationEventSnapshot = {
+  cardId: string;
+  fromOwnerType: "HOUSE" | "ACCOUNT" | "EXTERNAL" | null;
+  fromOwnerId: string | null;
+  toOwnerType: "HOUSE" | "ACCOUNT" | "EXTERNAL";
+  toOwnerId: string | null;
+  reason: "GRADED_CREATED" | "PACK_PURCHASE" | "DIRECT_PURCHASE" | "BUYBACK" | "ADMIN_CORRECTION";
+  referenceType: string;
+  referenceId: string;
+  pricePaidCents: number | null;
+  tkdAmountCents: number | null;
+  channel: "ONLINE" | "KIOSK" | "STORE" | "ADMIN" | null;
+  actorAdminId: string | null;
+};
+
+const creationEventSelection = {
+  cardId: true,
+  fromOwnerType: true,
+  fromOwnerId: true,
+  toOwnerType: true,
+  toOwnerId: true,
+  reason: true,
+  referenceType: true,
+  referenceId: true,
+  pricePaidCents: true,
+  tkdAmountCents: true,
+  channel: true,
+  actorAdminId: true,
+} satisfies Prisma.CardOwnershipEventV2Select;
+
+function assertCreationEvent(
+  creationEvent: CreationEventSnapshot | null,
+  cardId: string,
+  sessionId: string,
+  createdByAdminId: string,
+) {
+  if (
+    !creationEvent ||
+    creationEvent.cardId !== cardId ||
+    creationEvent.fromOwnerType !== null ||
+    creationEvent.fromOwnerId !== null ||
+    creationEvent.toOwnerType !== "HOUSE" ||
+    creationEvent.toOwnerId !== null ||
+    creationEvent.reason !== "GRADED_CREATED" ||
+    creationEvent.referenceType !== "SYSTEM_CREATION" ||
+    creationEvent.referenceId !== `speedster:${sessionId}` ||
+    creationEvent.pricePaidCents !== null ||
+    creationEvent.tkdAmountCents !== null ||
+    creationEvent.channel !== "ADMIN" ||
+    creationEvent.actorAdminId !== createdByAdminId
+  ) {
+    throw new Error("Existing Ten Kings V2 card is missing its immutable creation event");
+  }
+}
+
+/** Read-only exact postcondition/idempotency verification for one Speedster card. */
+export async function verifySpeedsterCardMaterialization(
+  db: CardMaterializationReadClient,
+  sessionId: string,
+  humanGradeLabelId: string,
+) {
+  const { session, label, identity, gradeSnapshot } =
+    await validateSpeedsterCardCreationSource(db, sessionId, humanGradeLabelId);
+  const card = await db.collectibleCardV2.findUnique({
+    where: { speedsterSessionId: session.id },
+    select: cardSelection,
+  });
+  if (!card) throw new Error("Ten Kings V2 card materialization is missing");
+  if (card.lifecycleState === "VOID") {
+    throw new Error("Ten Kings V2 card materialization is VOID and has no public card page");
+  }
+  assertExistingCard(
+    card,
+    session.id,
+    label.id,
+    session.publicReportSlug,
+    session.cardProfile,
+    identity,
+    gradeSnapshot,
+    label.createdByUserId,
+  );
+  const creationEvent = await db.cardOwnershipEventV2.findUnique({
+    where: {
+      referenceType_referenceId: {
+        referenceType: "SYSTEM_CREATION",
+        referenceId: `speedster:${session.id}`,
+      },
+    },
+    select: creationEventSelection,
+  });
+  assertCreationEvent(creationEvent, card.id, session.id, label.createdByUserId);
+  const [cardCount, creationEventCount] = await Promise.all([
+    db.collectibleCardV2.count({ where: { speedsterSessionId: session.id } }),
+    db.cardOwnershipEventV2.count({
+      where: { cardId: card.id, reason: "GRADED_CREATED" },
+    }),
+  ]);
+  if (cardCount !== 1 || creationEventCount !== 1) {
+    throw new Error("Ten Kings V2 card materialization has an invalid card or creation-event count");
+  }
+  return {
+    cardId: card.id,
+    sessionId: session.id,
+    humanGradeLabelId: label.id,
+    certificateNumber: label.certificateNumber,
+    publicReportSlug: card.publicReportSlug,
+    publicToken: card.publicToken,
+    publicPath: `/c/${card.publicToken}`,
+    lifecycleState: card.lifecycleState,
+    cardCount,
+    creationEventCount,
+  };
+}
+
+/** Set-based exact postcondition verification for a bounded Speedster batch. */
+export async function verifySpeedsterCardMaterializations(
+  db: CardMaterializationReadClient,
+  bindings: SpeedsterCardCreationBinding[],
+) {
+  const sources = await validateSpeedsterCardCreationSources(db, bindings);
+  const sessionIds = sources.map(({ session }) => session.id);
+  const cards = await db.collectibleCardV2.findMany({
+    where: { speedsterSessionId: { in: sessionIds } },
+    select: cardSelection,
+  });
+  if (cards.length !== bindings.length) {
+    throw new Error("Ten Kings V2 batch materialization does not contain exactly one card per session");
+  }
+  const cardsBySession = new Map(cards.map((card) => [card.speedsterSessionId, card]));
+  const cardIds = cards.map(({ id }) => id);
+  const [creationEvents, gradedCreationEvents] = await Promise.all([
+    db.cardOwnershipEventV2.findMany({
+      where: {
+        referenceType: "SYSTEM_CREATION",
+        referenceId: { in: sessionIds.map((id) => `speedster:${id}`) },
+      },
+      select: creationEventSelection,
+    }),
+    db.cardOwnershipEventV2.findMany({
+      where: { cardId: { in: cardIds }, reason: "GRADED_CREATED" },
+      select: { cardId: true },
+    }),
+  ]);
+  const eventsByReference = new Map(creationEvents.map((event) => [event.referenceId, event]));
+  const gradedCounts = new Map<string, number>();
+  for (const event of gradedCreationEvents) {
+    gradedCounts.set(event.cardId, (gradedCounts.get(event.cardId) ?? 0) + 1);
+  }
+  return sources.map(({ session, label, identity, gradeSnapshot }) => {
+    const card = cardsBySession.get(session.id);
+    if (!card) throw new Error(`Ten Kings V2 card materialization is missing for ${session.id}`);
+    if (card.lifecycleState === "VOID") {
+      throw new Error("Ten Kings V2 card materialization is VOID and has no public card page");
+    }
+    assertExistingCard(
+      card,
+      session.id,
+      label.id,
+      session.publicReportSlug,
+      session.cardProfile,
+      identity,
+      gradeSnapshot,
+      label.createdByUserId,
+    );
+    assertCreationEvent(
+      eventsByReference.get(`speedster:${session.id}`) ?? null,
+      card.id,
+      session.id,
+      label.createdByUserId,
+    );
+    if ((gradedCounts.get(card.id) ?? 0) !== 1) {
+      throw new Error("Ten Kings V2 card materialization has an invalid card or creation-event count");
+    }
+    return {
+      cardId: card.id,
+      sessionId: session.id,
+      humanGradeLabelId: label.id,
+      certificateNumber: label.certificateNumber,
+      publicReportSlug: card.publicReportSlug,
+      publicToken: card.publicToken,
+      publicPath: `/c/${card.publicToken}`,
+      lifecycleState: card.lifecycleState,
+      cardCount: 1,
+      creationEventCount: 1,
+    };
+  });
+}
+
 export async function createCardFromSpeedster(
   tx: CardPlatformV2Transaction,
   sessionId: string,
   humanGradeLabelId: string,
 ) {
-  const session = await tx.aiGraderV2Session.findUnique({
-    where: { id: sessionId },
-    select: {
-      id: true,
-      cardProfile: true,
-      workflowState: true,
-      ruleVersion: true,
-      publicReportSlug: true,
-      identity: true,
-    },
-  });
-  if (!session || session.workflowState !== "COMPLETED" || !session.publicReportSlug) {
-    throw new Error("A permanent V2 card requires a completed Speedster report");
-  }
-  if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
-    throw new Error("Completed Speedster session has an unsupported card category");
-  }
-
-  const label = await tx.humanGradeLabel.findUnique({
-    where: { id: humanGradeLabelId },
-    select: {
-      id: true,
-      source: true,
-      sourceSessionId: true,
-      certificateSequence: true,
-      certificateNumber: true,
-      gradingFormulaVersion: true,
-      createdByUserId: true,
-      cardType: true,
-      playerName: true,
-      cardName: true,
-      year: true,
-      manufacturer: true,
-      productSet: true,
-      parallel: true,
-      insert: true,
-      cardNumber: true,
-      centeringGrade: true,
-      cornersGrade: true,
-      edgesGrade: true,
-      surfaceGrade: true,
-      grade: true,
-    },
-  });
-  if (
-    !label ||
-    label.source !== "SPEEDSTER" ||
-    label.sourceSessionId !== session.id ||
-    !label.certificateNumber
-  ) {
-    throw new Error("A permanent V2 card requires the exact completed Speedster label");
-  }
-  const certificateNumber = label.certificateNumber;
-
-  const identity = speedsterIdentity(session.identity);
-  assertIdentityMatch(session.cardProfile, identity, label);
-  const gradeSnapshot = buildGradeSnapshot(session.ruleVersion, { ...label, certificateNumber });
+  const source = await validateSpeedsterCardCreationSource(tx, sessionId, humanGradeLabelId);
+  const { session, label, identity, gradeSnapshot } = source;
 
   const existingBySession = await tx.collectibleCardV2.findUnique({
     where: { speedsterSessionId: session.id },
@@ -346,38 +694,9 @@ export async function createCardFromSpeedster(
           referenceId: `speedster:${session.id}`,
         },
       },
-      select: {
-        cardId: true,
-        fromOwnerType: true,
-        fromOwnerId: true,
-        toOwnerType: true,
-        toOwnerId: true,
-        reason: true,
-        referenceType: true,
-        referenceId: true,
-        pricePaidCents: true,
-        tkdAmountCents: true,
-        channel: true,
-        actorAdminId: true,
-      },
+      select: creationEventSelection,
     });
-    if (
-      !creationEvent ||
-      creationEvent.cardId !== existingBySession.id ||
-      creationEvent.fromOwnerType !== null ||
-      creationEvent.fromOwnerId !== null ||
-      creationEvent.toOwnerType !== "HOUSE" ||
-      creationEvent.toOwnerId !== null ||
-      creationEvent.reason !== "GRADED_CREATED" ||
-      creationEvent.referenceType !== "SYSTEM_CREATION" ||
-      creationEvent.referenceId !== `speedster:${session.id}` ||
-      creationEvent.pricePaidCents !== null ||
-      creationEvent.tkdAmountCents !== null ||
-      creationEvent.channel !== "ADMIN" ||
-      creationEvent.actorAdminId !== label.createdByUserId
-    ) {
-      throw new Error("Existing Ten Kings V2 card is missing its immutable creation event");
-    }
+    assertCreationEvent(creationEvent, existingBySession.id, session.id, label.createdByUserId);
     return existingBySession;
   }
 
@@ -426,6 +745,179 @@ export async function createCardFromSpeedster(
   return card;
 }
 
+async function uniquePublicTokens(tx: CardPlatformV2Transaction, count: number) {
+  if (count === 0) return [];
+  for (let attempt = 0; attempt < TOKEN_ATTEMPTS; attempt += 1) {
+    const tokens = Array.from({ length: count }, () => generateCollectibleCardV2PublicToken());
+    if (new Set(tokens).size !== tokens.length || tokens.some((token) => !PUBLIC_TOKEN.test(token))) {
+      continue;
+    }
+    const existing = await tx.collectibleCardV2.findMany({
+      where: { publicToken: { in: tokens } },
+      select: { publicToken: true },
+    });
+    if (!existing.length) return tokens;
+  }
+  throw new Error("Could not allocate unique Ten Kings V2 card tokens for the exact batch");
+}
+
+/**
+ * Set-based form of the same idempotent writer for a bounded, already locked
+ * historical batch. Source validation, existing-card checks, inserts, and
+ * immutable creation-event checks use a constant number of database reads.
+ */
+export async function createCardsFromSpeedster(
+  tx: CardPlatformV2Transaction,
+  bindings: SpeedsterCardCreationBinding[],
+) {
+  const sources = await validateSpeedsterCardCreationSources(tx, bindings);
+  const sessionIds = sources.map(({ session }) => session.id);
+  const labelIds = sources.map(({ label }) => label.id);
+  const existing = await tx.collectibleCardV2.findMany({
+    where: {
+      OR: [
+        { speedsterSessionId: { in: sessionIds } },
+        { humanGradeLabelId: { in: labelIds } },
+      ],
+    },
+    select: cardSelection,
+  });
+  const sourcesBySession = new Map(sources.map((source) => [source.session.id, source]));
+  for (const card of existing) {
+    if (card.lifecycleState === "VOID") {
+      throw new Error("Ten Kings V2 card materialization is VOID and has no public card page");
+    }
+    const source = sourcesBySession.get(card.speedsterSessionId);
+    if (!source) {
+      throw new Error("Human Grade label is already linked to a different Ten Kings V2 card");
+    }
+    assertExistingCard(
+      card,
+      source.session.id,
+      source.label.id,
+      source.session.publicReportSlug,
+      source.session.cardProfile,
+      source.identity,
+      source.gradeSnapshot,
+      source.label.createdByUserId,
+    );
+  }
+  const existingSessions = new Set(existing.map(({ speedsterSessionId }) => speedsterSessionId));
+  const missing = sources.filter(({ session }) => !existingSessions.has(session.id));
+  const tokens = await uniquePublicTokens(tx, missing.length);
+  if (missing.length) {
+    const inserted = await tx.collectibleCardV2.createMany({
+      data: missing.map(({ session, label, identity, gradeSnapshot }, index) => ({
+        speedsterSessionId: session.id,
+        humanGradeLabelId: label.id,
+        publicReportSlug: session.publicReportSlug,
+        publicToken: tokens[index],
+        category: session.cardProfile,
+        ...identity,
+        gradeSnapshot,
+        currentOwnerType: "HOUSE",
+        currentOwnerId: null,
+        saleMode: "PACK",
+        lifecycleState: "GRADED",
+        createdByAdminId: label.createdByUserId,
+      })),
+    });
+    if (inserted.count !== missing.length) {
+      throw new Error("Exact Speedster batch card insert count changed unexpectedly");
+    }
+  }
+  const cards = await tx.collectibleCardV2.findMany({
+    where: { speedsterSessionId: { in: sessionIds } },
+    select: cardSelection,
+  });
+  if (cards.length !== bindings.length) {
+    throw new Error("Exact Speedster batch does not have one permanent card per session");
+  }
+  const cardsBySession = new Map(cards.map((card) => [card.speedsterSessionId, card]));
+  if (missing.length) {
+    const insertedEvents = await tx.cardOwnershipEventV2.createMany({
+      data: missing.map(({ session, label }) => {
+        const card = cardsBySession.get(session.id);
+        if (!card) throw new Error(`Created card disappeared for ${session.id}`);
+        return {
+          cardId: card.id,
+          fromOwnerType: null,
+          fromOwnerId: null,
+          toOwnerType: "HOUSE",
+          toOwnerId: null,
+          reason: "GRADED_CREATED",
+          referenceType: "SYSTEM_CREATION",
+          referenceId: `speedster:${session.id}`,
+          channel: "ADMIN",
+          actorAdminId: label.createdByUserId,
+        };
+      }),
+    });
+    if (insertedEvents.count !== missing.length) {
+      throw new Error("Exact Speedster batch creation-event insert count changed unexpectedly");
+    }
+  }
+  const [creationEvents, gradedCreationEvents] = await Promise.all([
+    tx.cardOwnershipEventV2.findMany({
+      where: {
+        referenceType: "SYSTEM_CREATION",
+        referenceId: { in: sessionIds.map((id) => `speedster:${id}`) },
+      },
+      select: creationEventSelection,
+    }),
+    tx.cardOwnershipEventV2.findMany({
+      where: { cardId: { in: cards.map(({ id }) => id) }, reason: "GRADED_CREATED" },
+      select: { cardId: true },
+    }),
+  ]);
+  const eventsByReference = new Map(creationEvents.map((event) => [event.referenceId, event]));
+  const gradedCounts = new Map<string, number>();
+  for (const event of gradedCreationEvents) {
+    gradedCounts.set(event.cardId, (gradedCounts.get(event.cardId) ?? 0) + 1);
+  }
+  const orderedCards: typeof cards = [];
+  const verified = sources.map((source) => {
+    const card = cardsBySession.get(source.session.id);
+    if (!card) throw new Error(`Exact Speedster card is missing for ${source.session.id}`);
+    if (card.lifecycleState === "VOID") {
+      throw new Error("Ten Kings V2 card materialization is VOID and has no public card page");
+    }
+    assertExistingCard(
+      card,
+      source.session.id,
+      source.label.id,
+      source.session.publicReportSlug,
+      source.session.cardProfile,
+      source.identity,
+      source.gradeSnapshot,
+      source.label.createdByUserId,
+    );
+    assertCreationEvent(
+      eventsByReference.get(`speedster:${source.session.id}`) ?? null,
+      card.id,
+      source.session.id,
+      source.label.createdByUserId,
+    );
+    if ((gradedCounts.get(card.id) ?? 0) !== 1) {
+      throw new Error("Ten Kings V2 card materialization has an invalid card or creation-event count");
+    }
+    orderedCards.push(card);
+    return {
+      cardId: card.id,
+      sessionId: source.session.id,
+      humanGradeLabelId: source.label.id,
+      certificateNumber: source.label.certificateNumber,
+      publicReportSlug: card.publicReportSlug,
+      publicToken: card.publicToken,
+      publicPath: `/c/${card.publicToken}`,
+      lifecycleState: card.lifecycleState,
+      cardCount: 1,
+      creationEventCount: 1,
+    };
+  });
+  return { cards: orderedCards, verified };
+}
+
 const requireAdminText = (value: string, field: string) => {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} is required`);
@@ -467,6 +959,200 @@ export async function resyncIdentityFromSpeedster(
     },
     select: cardSelection,
   });
+}
+
+export function normalizeCompletedSpeedsterIdentity(
+  category: "SPORTS" | "POKEMON",
+  value: CompletedSpeedsterIdentityInput,
+) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Completed Speedster identity must be a JSON object");
+  }
+  const unsupported = Object.keys(value).filter((key) => !SPEEDSTER_IDENTITY_KEYS.has(key));
+  if (unsupported.length) {
+    throw new Error(`Completed Speedster identity contains unsupported fields: ${unsupported.join(", ")}`);
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (nested !== null && typeof nested !== "string") {
+      throw new Error(`Completed Speedster identity field ${key} must be text or null`);
+    }
+  }
+  if (value.cardType !== undefined && value.cardType !== category) {
+    throw new Error("Completed Speedster identity cardType does not match its authoritative session category");
+  }
+  const trimmed = Object.fromEntries(Object.entries(value).map(([key, nested]) => [
+    key,
+    typeof nested === "string" ? nested.trim() : nested,
+  ])) as CompletedSpeedsterIdentityInput;
+  const identity = speedsterIdentity(trimmed as Prisma.JsonValue);
+  assertCategoryIdentity(category, identity);
+  return {
+    session: trimmed as Prisma.InputJsonValue,
+    card: identity,
+  };
+}
+
+const cardIdentityFromStored = (card: {
+  playerName: string | null;
+  cardName: string | null;
+  year: string;
+  manufacturer: string | null;
+  productSet: string;
+  parallel: string | null;
+  insert: string | null;
+  cardNumber: string | null;
+}): SpeedsterIdentity => ({
+  playerName: card.playerName,
+  cardName: card.cardName,
+  year: card.year,
+  manufacturer: card.manufacturer,
+  productSet: card.productSet,
+  parallel: card.parallel,
+  insert: card.insert,
+  cardNumber: card.cardNumber,
+});
+
+const exactLabelIdentityMatches = (
+  category: "SPORTS" | "POKEMON",
+  label: { cardType: "SPORTS" | "POKEMON" } & SpeedsterIdentity,
+  identity: SpeedsterIdentity,
+) => label.cardType === category && canonicalJson(cardIdentityFromStored(label)) === canonicalJson(identity);
+
+/**
+ * The completed Speedster session is the sole editable identity authority.
+ * Its existing SPEEDSTER label is re-rendered from that session in the same
+ * transaction, and an existing permanent card is refreshed only through the
+ * established V2 re-sync writer.
+ */
+export async function correctCompletedSpeedsterIdentity(
+  tx: CardPlatformV2Transaction,
+  sessionId: string,
+  nextIdentity: CompletedSpeedsterIdentityInput,
+  adminId: string,
+) {
+  const exactSessionId = requireAdminText(sessionId, "Speedster session identity");
+  const exactAdminId = requireAdminText(adminId, "Admin identity");
+  const lockedSession = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "AiGraderV2Session"
+    WHERE "id" = ${exactSessionId}
+    FOR UPDATE
+  `;
+  if (lockedSession.length !== 1 || lockedSession[0]?.id !== exactSessionId) {
+    throw new Error("Completed Speedster session was not found");
+  }
+  const session = await tx.aiGraderV2Session.findUnique({
+    where: { id: exactSessionId },
+    select: {
+      id: true,
+      cardProfile: true,
+      workflowState: true,
+      identity: true,
+      collectibleCardV2: { select: { id: true } },
+    },
+  });
+  if (!session || session.workflowState !== "COMPLETED") {
+    throw new Error("Only a completed Speedster session can correct permanent identity");
+  }
+  if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+    throw new Error("Completed Speedster session has an unsupported card category");
+  }
+  const normalized = normalizeCompletedSpeedsterIdentity(session.cardProfile, nextIdentity);
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "HumanGradeLabel"
+    WHERE "sourceSessionId" = ${session.id}
+    FOR UPDATE
+  `;
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "CollectibleCardV2"
+    WHERE "speedsterSessionId" = ${session.id}
+    FOR UPDATE
+  `;
+  const label = await tx.humanGradeLabel.findUnique({
+    where: { sourceSessionId: session.id },
+    select: {
+      id: true,
+      source: true,
+      sourceSessionId: true,
+      certificateNumber: true,
+      cardType: true,
+      playerName: true,
+      cardName: true,
+      year: true,
+      manufacturer: true,
+      productSet: true,
+      parallel: true,
+      insert: true,
+      cardNumber: true,
+    },
+  });
+  if (
+    !label ||
+    label.source !== "SPEEDSTER" ||
+    label.sourceSessionId !== session.id ||
+    !label.certificateNumber
+  ) {
+    throw new Error("Completed Speedster identity correction requires its exact issued label");
+  }
+
+  const card = session.collectibleCardV2
+    ? await tx.collectibleCardV2.findUnique({
+      where: { id: session.collectibleCardV2.id },
+      select: cardSelection,
+    })
+    : null;
+  if (session.collectibleCardV2 && !card) {
+    throw new Error("Completed Speedster identity correction lost its linked permanent card");
+  }
+
+  const sessionChanged = canonicalJson(session.identity) !== canonicalJson(normalized.session);
+  const labelChanged = !exactLabelIdentityMatches(session.cardProfile, label, normalized.card);
+  const cardChanged = Boolean(card && (
+    card.category !== session.cardProfile ||
+    canonicalJson(cardIdentityFromStored(card)) !== canonicalJson(normalized.card)
+  ));
+
+  if (sessionChanged) {
+    await tx.aiGraderV2Session.update({
+      where: { id: session.id },
+      data: { identity: normalized.session },
+    });
+  }
+  if (labelChanged) {
+    await tx.humanGradeLabel.update({
+      where: { id: label.id },
+      data: {
+        cardType: session.cardProfile,
+        playerName: normalized.card.playerName,
+        cardName: normalized.card.cardName,
+        year: normalized.card.year,
+        manufacturer: normalized.card.manufacturer,
+        productSet: normalized.card.productSet,
+        parallel: normalized.card.parallel,
+        insert: normalized.card.insert,
+        cardNumber: normalized.card.cardNumber,
+      },
+    });
+  }
+  if (card && cardChanged) {
+    await resyncIdentityFromSpeedster(tx, card.id, exactAdminId);
+  }
+  return {
+    outcome: sessionChanged || labelChanged || cardChanged ? "UPDATED" as const : "NOOP" as const,
+    sessionId: session.id,
+    labelId: label.id,
+    certificateNumber: label.certificateNumber,
+    cardId: card?.id ?? null,
+    category: session.cardProfile,
+    identity: normalized.card,
+    writes: {
+      session: sessionChanged,
+      label: labelChanged,
+      card: cardChanged,
+    },
+  };
 }
 
 export async function voidCard(

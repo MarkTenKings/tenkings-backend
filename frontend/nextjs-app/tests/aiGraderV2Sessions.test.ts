@@ -81,7 +81,13 @@ test("POST creates one compact draft with server-owned rule and creator identity
   await handler(
     request("POST", {
       cardProfile: "POKEMON",
-      identity: { cardName: "Charizard" },
+      identity: {
+        cardName: "  Charizard  ",
+        year: "1999",
+        productSet: "Base Set",
+        parallel: "Holo",
+        cardNumber: "4/102",
+      },
     }),
     res,
   );
@@ -90,9 +96,101 @@ test("POST creates one compact draft with server-owned rule and creator identity
   assert.equal(saved?.createdByUserId, "admin-1");
   assert.equal(saved?.workflowState, "DRAFT");
   assert.equal(saved?.ruleVersion, SPEEDSTER_RULE_VERSION);
+  assert.deepEqual(saved?.identity, {
+    cardName: "Charizard",
+    year: "1999",
+    productSet: "Base Set",
+    parallel: "Holo",
+    cardNumber: "4/102",
+  });
   assert.deepEqual(saved?.capture, {});
   assert.deepEqual(saved?.reviewedDefects, []);
   assert.deepEqual(saved?.gradeReport, {});
+});
+
+test("POST creates a Sports draft with only category-valid identity fields", async () => {
+  let saved: Record<string, unknown> | undefined;
+  const handler = createAiGraderV2SessionsHandler({
+    requireAdminSession: admin,
+    async createSession(data) { saved = data; return data; },
+  });
+  const { state, res } = response();
+  await handler(request("POST", {
+    cardProfile: "SPORTS",
+    identity: {
+      playerName: "Victor Wembanyama",
+      year: "2023",
+      manufacturer: "Panini",
+      productSet: "Prizm",
+      parallel: null,
+      insert: "Rookie",
+      cardNumber: "136",
+    },
+  }), res);
+  assert.equal(state.status, 201);
+  assert.deepEqual(saved?.identity, {
+    playerName: "Victor Wembanyama",
+    year: "2023",
+    manufacturer: "Panini",
+    productSet: "Prizm",
+    parallel: null,
+    insert: "Rookie",
+    cardNumber: "136",
+  });
+  assert.equal(JSON.stringify(saved?.identity).includes("cardName"), false);
+});
+
+test("POST rejects inactive category fields and arbitrary identity keys before persistence", async () => {
+  let calls = 0;
+  const handler = createAiGraderV2SessionsHandler({
+    requireAdminSession: admin,
+    async createSession() { calls += 1; return {}; },
+  });
+  const attempts = [
+    {
+      cardProfile: "SPORTS",
+      identity: {
+        playerName: "Nick Bosa",
+        cardName: "stale pokemon value",
+        year: "2021",
+        manufacturer: "Panini",
+        productSet: "Obsidian",
+      },
+    },
+    {
+      cardProfile: "POKEMON",
+      identity: {
+        cardName: "Charizard",
+        playerName: "stale sports value",
+        year: "1999",
+        productSet: "Base Set",
+      },
+    },
+    {
+      cardProfile: "POKEMON",
+      identity: {
+        cardName: "Charizard",
+        year: "1999",
+        productSet: "Base Set",
+        manufacturer: "forbidden",
+      },
+    },
+    {
+      cardProfile: "POKEMON",
+      identity: {
+        cardName: "Charizard",
+        year: "1999",
+        productSet: "Base Set",
+        centeringGrade: "10",
+      },
+    },
+  ];
+  for (const body of attempts) {
+    const { state, res } = response();
+    await handler(request("POST", body), res);
+    assert.equal(state.status, 400);
+  }
+  assert.equal(calls, 0);
 });
 
 test("POST accepts only the two Speedster card profiles", async () => {

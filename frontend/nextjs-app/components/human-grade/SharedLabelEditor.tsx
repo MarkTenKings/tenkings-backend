@@ -17,6 +17,7 @@ type SharedLabelEditorProps = {
   editing?: boolean;
   primaryActionLabel?: string;
   subgradeAriaLabel?: string;
+  lockCardType?: boolean;
 };
 
 const SUBGRADE_FIELDS = [
@@ -39,17 +40,22 @@ export default function SharedLabelEditor({
   editing = false,
   primaryActionLabel,
   subgradeAriaLabel = "Calculated grade and human subgrades",
+  lockCardType = false,
 }: SharedLabelEditorProps) {
   const isHuman = mode === "HUMAN";
-  const primaryLabel = isHuman
-    ? primaryActionLabel ?? (editing ? "Save Changes" : "Save Graded Card")
-    : "Continue to Photos";
+  const primaryLabel = primaryActionLabel ?? (
+    isHuman ? (editing ? "Save Changes" : "Save Graded Card") : "Continue to Photos"
+  );
 
   return (
     <section className={`${styles.root} composer-card`}>
       <div className="composer-heading">
         <div>
-          <p className="eyebrow">{isHuman ? (editing ? "Edit Label" : "New Label") : "New Speedster Card"}</p>
+          <p className="eyebrow">{
+            isHuman
+              ? (editing ? "Edit Label" : "New Label")
+              : (editing ? "Edit Speedster Identity" : "New Speedster Card")
+          }</p>
           <h2>Enter printed card information</h2>
         </div>
         <div className="type-switch" aria-label="Card type">
@@ -59,6 +65,7 @@ export default function SharedLabelEditor({
               type="button"
               className={value.cardType === cardType ? "selected" : ""}
               onClick={() => onChange("cardType", cardType)}
+              disabled={lockCardType}
             >
               {cardType === "SPORTS" ? "Sports" : "Pokémon"}
             </button>
@@ -167,7 +174,7 @@ export default function SharedLabelEditor({
         <div className="form-actions">
           {onCancel ? <button type="button" className="cancel-button" onClick={onCancel} disabled={saving}>Cancel</button> : null}
           <button type="submit" className="save-button" disabled={saving}>
-            {saving ? (isHuman ? "Saving…" : "Preparing…") : primaryLabel}
+            {saving ? (isHuman || editing ? "Saving…" : "Preparing…") : primaryLabel}
           </button>
         </div>
       </form>

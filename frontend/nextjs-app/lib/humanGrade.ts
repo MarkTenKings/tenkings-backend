@@ -96,9 +96,14 @@ export type HumanGradeLabelContent = {
 
 export type HumanGradeLabelDto = HumanGradeLabelSnapshot & {
   id: string;
+  sourceSessionId?: string | null;
   slot: number;
   createdAt: string;
 };
+
+export function isHumanOwnedGradeLabel(source: HumanGradeLabelSnapshot["source"]) {
+  return (source ?? "HUMAN") === "HUMAN";
+}
 
 export type HumanGradeLabelSheetDto = {
   id: string;

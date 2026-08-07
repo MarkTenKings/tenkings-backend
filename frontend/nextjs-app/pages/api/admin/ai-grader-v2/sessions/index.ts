@@ -2,9 +2,12 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { SPEEDSTER_RULE_VERSION } from "../../../../../lib/ai-grader-v2/contracts";
+import {
+  SpeedsterIdentityValidationError,
+  canonicalizeSpeedsterSessionIdentity,
+} from "../../../../../lib/ai-grader-v2/identity";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
-const jsonObject = z.record(z.string(), z.unknown());
 const publicReportSlug = z
   .string()
   .min(3)
@@ -15,7 +18,7 @@ const createSchema = z
   .object({
     cardProfile: z.enum(["POKEMON", "SPORTS"]),
     publicReportSlug: publicReportSlug.optional(),
-    identity: jsonObject.optional(),
+    identity: z.unknown(),
   })
   .strict();
 
@@ -54,6 +57,15 @@ export function createAiGraderV2SessionsHandler(deps: Dependencies = dependencie
       if (!parsed.success) {
         return res.status(400).json({ message: "Invalid Speedster session" });
       }
+      let identity;
+      try {
+        identity = canonicalizeSpeedsterSessionIdentity(parsed.data.cardProfile, parsed.data.identity);
+      } catch (error) {
+        if (error instanceof SpeedsterIdentityValidationError) {
+          return res.status(400).json({ message: error.message, fields: error.fields });
+        }
+        throw error;
+      }
 
       const session = await deps.createSession({
         createdByUserId: admin.user.id,
@@ -63,7 +75,7 @@ export function createAiGraderV2SessionsHandler(deps: Dependencies = dependencie
         ...(parsed.data.publicReportSlug
           ? { publicReportSlug: parsed.data.publicReportSlug }
           : {}),
-        identity: (parsed.data.identity ?? {}) as Prisma.InputJsonValue,
+        identity: identity as Prisma.InputJsonValue,
         capture: {} as Prisma.InputJsonValue,
         reviewedDefects: [] as Prisma.InputJsonValue,
         gradeReport: {} as Prisma.InputJsonValue,

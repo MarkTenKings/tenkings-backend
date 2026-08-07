@@ -418,6 +418,8 @@ The existing durable Speedster completion transaction already owns:
 - permanent public report slug;
 - Human Grade label and certificate sequence.
 
+New Speedster sessions cross one strict category-aware identity boundary before persistence. Sports identity carries `playerName` and its Sports-only fields but never `cardName`; Pokémon identity carries `cardName` and never `playerName`, `manufacturer`, or `insert`. The boundary rejects unknown fields, trims surrounding whitespace, preserves operator-entered letter case, and does not add a global normalization, fallback, gate, table, or duplicate state.
+
 Inside that same database transaction, call:
 
 `cardPlatformV2.createCardFromSpeedster(tx, sessionId, humanGradeLabelId)`
@@ -903,7 +905,8 @@ This module accepts an existing database transaction where atomic composition is
 ### Speedster/card functions
 
 - `createCardFromSpeedster(tx, sessionId, labelId)`
-- `resyncIdentityFromSpeedster(cardId, adminId)` — powers the single admin action `Re-sync identity from session`; it re-copies identity fields from the authoritative Speedster session
+- `correctCompletedSpeedsterIdentity(tx, sessionId, identity, adminId)` — powers the completed-card page's single identity Edit/Save path; inside one transaction it updates the authoritative session, derives the existing SPEEDSTER label from that session, and re-syncs any existing permanent card through the established writer
+- `resyncIdentityFromSpeedster(tx, cardId, adminId)` — internal session-to-card sync used by the correction writer; it is not a direct UI editor
 - `voidCard(cardId, reason, adminId)`
 - `saveCompsSnapshot(cardId, snapshot, adminId)`
 - `confirmMarketValue(cardId, valueCents, adminId)`
@@ -979,7 +982,7 @@ State invariants:
 - A card in a paid shipment cannot be sold, bought back, assigned, or shipped twice.
 - `voidCard` may move an erroneous card to `VOID`; the card row and ownership history are never deleted, and the card is excluded from every list, count, and public page.
 
-The only identity-correction UI is the admin action `Re-sync identity from session`. It re-copies identity fields from the authoritative Speedster session. There is no free-form V2 card identity editor.
+The only identity-correction UI is one prominent `Edit authoritative identity` action on the internal completed-card page. The category is fixed to the session, the form contains identity fields only, and one Save calls `correctCompletedSpeedsterIdentity` so the authoritative session, its existing derived SPEEDSTER label, and any existing permanent card stay synchronized in one transaction. The page renders that exact linked label through the existing Human Grade renderer. If the label is missing, editing is unavailable and this surface does not create or repair it. Generic Human Grade PATCH/DELETE rejects SPEEDSTER-owned labels. There is no direct label editor or free-form V2 card identity editor.
 
 ---
 

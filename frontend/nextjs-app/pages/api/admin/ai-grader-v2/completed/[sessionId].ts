@@ -1,10 +1,18 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
+  correctCompletedSpeedsterIdentity,
   prisma,
-  resyncIdentityFromSpeedster,
+  type CompletedSpeedsterIdentityInput,
+  type Prisma,
   voidCard,
 } from "@tenkings/database";
 import { z } from "zod";
+import {
+  SpeedsterIdentityValidationError,
+  canonicalizeSpeedsterSessionIdentity,
+  type SpeedsterCardProfile,
+  type SpeedsterSessionIdentity,
+} from "../../../../../lib/ai-grader-v2/identity";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { getStorageMode, presignReadUrl, presignUploadUrl } from "../../../../../lib/server/storage";
 
@@ -22,7 +30,8 @@ const actionSchema = z.discriminatedUnion("action", [
     storageKey: z.string().min(1).max(500),
   }).strict(),
   z.object({
-    action: z.literal("RESYNC_IDENTITY"),
+    action: z.literal("UPDATE_IDENTITY"),
+    identity: z.unknown(),
   }).strict(),
   z.object({
     action: z.literal("VOID_CARD"),
@@ -40,24 +49,54 @@ type PermanentCard = {
 type CompletedSession = {
   id: string;
   createdByUserId: string;
+  cardProfile: string;
   workflowState: string;
   publicReportSlug: string | null;
+  identity: Prisma.JsonValue;
   slabFrontKey: string | null;
   slabBackKey: string | null;
   collectibleCardV2: PermanentCard | null;
 };
-type Label = { certificateNumber: string | null; slot: number; sheet: { sheetNumber: number } } | null;
+type DecimalText = { toString(): string };
+type Label = {
+  id: string;
+  source: "HUMAN" | "SPEEDSTER";
+  sourceSessionId: string | null;
+  certificateNumber: string | null;
+  gradingFormulaVersion: "LEGACY_30_25_25_20" | "EQUAL_25";
+  cardType: "SPORTS" | "POKEMON";
+  playerName: string | null;
+  cardName: string | null;
+  year: string;
+  manufacturer: string | null;
+  productSet: string;
+  parallel: string | null;
+  insert: string | null;
+  cardNumber: string | null;
+  centeringGrade: DecimalText;
+  cornersGrade: DecimalText;
+  edgesGrade: DecimalText;
+  surfaceGrade: DecimalText;
+  grade: DecimalText;
+  slot: number;
+  sheet: { sheetNumber: number };
+} | null;
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   findSession: (id: string) => Promise<CompletedSession | null>;
   findLabel: (id: string) => Promise<Label>;
   updateSlabKey: (id: string, side: "FRONT" | "BACK", storageKey: string) => Promise<CompletedSession>;
-  resyncCard: (cardId: string, adminId: string) => Promise<void>;
+  correctIdentity: (
+    sessionId: string,
+    identity: SpeedsterSessionIdentity,
+    adminId: string,
+  ) => Promise<void>;
   voidCard: (cardId: string, reason: string, adminId: string) => Promise<void>;
   logAdminAction: (entry: {
-    action: "RESYNC_IDENTITY" | "VOID_CARD";
+    action: "UPDATE_IDENTITY" | "VOID_CARD";
     adminId: string;
-    cardId: string;
+    cardId: string | null;
+    sessionId: string;
     reason: string;
   }) => void;
   presignUpload: typeof presignUploadUrl;
@@ -73,12 +112,66 @@ const sessionIdFrom = (req: NextApiRequest) => {
 const slabKey = (session: CompletedSession, side: "FRONT" | "BACK", extension: string) =>
   `ai-grader-v2/${session.createdByUserId}/${session.id}/slab/${side.toLowerCase()}.${extension}`;
 
+const identityRecord = (value: Prisma.JsonValue): Record<string, Prisma.JsonValue> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, Prisma.JsonValue>
+    : {};
+const identityText = (value: Prisma.JsonValue | undefined) => typeof value === "string" ? value : null;
+
+const authoritativeIdentity = (session: CompletedSession) => {
+  const identity = identityRecord(session.identity);
+  return session.cardProfile === "SPORTS"
+    ? {
+        playerName: identityText(identity.playerName),
+        year: identityText(identity.year),
+        manufacturer: identityText(identity.manufacturer),
+        productSet: identityText(identity.productSet),
+        parallel: identityText(identity.parallel),
+        insert: identityText(identity.insert),
+        cardNumber: identityText(identity.cardNumber),
+      }
+    : {
+        cardName: identityText(identity.cardName),
+        year: identityText(identity.year),
+        productSet: identityText(identity.productSet),
+        parallel: identityText(identity.parallel),
+        cardNumber: identityText(identity.cardNumber),
+      };
+};
+
 const publicState = async (session: CompletedSession, label: Label, presignRead: typeof presignReadUrl) => ({
   id: session.id,
+  cardProfile: session.cardProfile,
+  authoritativeIdentity: authoritativeIdentity(session),
   publicReportSlug: session.publicReportSlug,
   certificateNumber: label?.certificateNumber ?? null,
   labelSheetNumber: label?.sheet.sheetNumber ?? null,
   labelSlot: label?.slot ?? null,
+  linkedLabel: label ? {
+    id: label.id,
+    source: label.source,
+    certificateNumber: label.certificateNumber,
+    gradingFormulaVersion: label.gradingFormulaVersion,
+    cardType: label.cardType,
+    playerName: label.playerName,
+    cardName: label.cardName,
+    year: label.year,
+    manufacturer: label.manufacturer,
+    productSet: label.productSet,
+    parallel: label.parallel,
+    insert: label.insert,
+    cardNumber: label.cardNumber,
+    centeringGrade: label.centeringGrade.toString(),
+    cornersGrade: label.cornersGrade.toString(),
+    edgesGrade: label.edgesGrade.toString(),
+    surfaceGrade: label.surfaceGrade.toString(),
+    grade: label.grade.toString(),
+    sheetNumber: label.sheet.sheetNumber,
+    slot: label.slot,
+  } : null,
+  labelPreviewPath: label?.source === "SPEEDSTER" && label.sourceSessionId === session.id
+    ? `/api/admin/ai-grader-v2/completed/${encodeURIComponent(session.id)}/label`
+    : null,
   slabPhotos: {
     front: session.slabFrontKey ? await presignRead(session.slabFrontKey, 60 * 60) : null,
     back: session.slabBackKey ? await presignRead(session.slabBackKey, 60 * 60) : null,
@@ -99,8 +192,10 @@ const dependencies: Dependencies = {
     select: {
       id: true,
       createdByUserId: true,
+      cardProfile: true,
       workflowState: true,
       publicReportSlug: true,
+      identity: true,
       slabFrontKey: true,
       slabBackKey: true,
       collectibleCardV2: {
@@ -110,7 +205,29 @@ const dependencies: Dependencies = {
   }),
   findLabel: (id) => prisma.humanGradeLabel.findUnique({
     where: { sourceSessionId: id },
-    select: { certificateNumber: true, slot: true, sheet: { select: { sheetNumber: true } } },
+    select: {
+      id: true,
+      source: true,
+      sourceSessionId: true,
+      certificateNumber: true,
+      gradingFormulaVersion: true,
+      cardType: true,
+      playerName: true,
+      cardName: true,
+      year: true,
+      manufacturer: true,
+      productSet: true,
+      parallel: true,
+      insert: true,
+      cardNumber: true,
+      centeringGrade: true,
+      cornersGrade: true,
+      edgesGrade: true,
+      surfaceGrade: true,
+      grade: true,
+      slot: true,
+      sheet: { select: { sheetNumber: true } },
+    },
   }),
   updateSlabKey: (id, side, storageKey) => prisma.aiGraderV2Session.update({
     where: { id },
@@ -118,8 +235,10 @@ const dependencies: Dependencies = {
     select: {
       id: true,
       createdByUserId: true,
+      cardProfile: true,
       workflowState: true,
       publicReportSlug: true,
+      identity: true,
       slabFrontKey: true,
       slabBackKey: true,
       collectibleCardV2: {
@@ -127,8 +246,13 @@ const dependencies: Dependencies = {
       },
     },
   }),
-  resyncCard: async (cardId, adminId) => {
-    await prisma.$transaction((tx) => resyncIdentityFromSpeedster(tx, cardId, adminId));
+  correctIdentity: async (sessionId, identity, adminId) => {
+    await prisma.$transaction((tx) => correctCompletedSpeedsterIdentity(
+      tx,
+      sessionId,
+      identity as CompletedSpeedsterIdentityInput,
+      adminId,
+    ));
   },
   voidCard: async (cardId, reason, adminId) => {
     await prisma.$transaction((tx) => voidCard(tx, cardId, reason, adminId));
@@ -160,23 +284,59 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
 
       const parsed = actionSchema.safeParse(req.body ?? {});
       if (!parsed.success) return res.status(400).json({ message: "Invalid post-grading action" });
-      if (parsed.data.action === "RESYNC_IDENTITY" || parsed.data.action === "VOID_CARD") {
+      if (parsed.data.action === "UPDATE_IDENTITY") {
+        if (
+          !label ||
+          label.source !== "SPEEDSTER" ||
+          label.sourceSessionId !== session.id ||
+          !label.certificateNumber
+        ) {
+          return res.status(409).json({
+            message: "Identity editing requires this completed card's exact issued Speedster label.",
+          });
+        }
+        if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+          return res.status(409).json({ message: "This completed card has an unsupported category." });
+        }
+        let identity: SpeedsterSessionIdentity;
+        try {
+          identity = canonicalizeSpeedsterSessionIdentity(
+            session.cardProfile as SpeedsterCardProfile,
+            parsed.data.identity,
+          );
+        } catch (error) {
+          if (error instanceof SpeedsterIdentityValidationError) {
+            return res.status(400).json({ message: error.message, fields: error.fields });
+          }
+          throw error;
+        }
+        await deps.correctIdentity(session.id, identity, adminSession.user.id);
+        deps.logAdminAction({
+          action: "UPDATE_IDENTITY",
+          adminId: adminSession.user.id,
+          cardId: session.collectibleCardV2?.id ?? null,
+          sessionId: session.id,
+          reason: "Corrected authoritative Speedster identity",
+        });
+        const [updated, updatedLabel] = await Promise.all([
+          deps.findSession(session.id),
+          deps.findLabel(session.id),
+        ]);
+        if (!updated) throw new Error("Updated completed Speedster session could not be loaded");
+        return res.status(200).json({ card: await publicState(updated, updatedLabel, deps.presignRead) });
+      }
+      if (parsed.data.action === "VOID_CARD") {
         const permanentCard = session.collectibleCardV2;
         if (!permanentCard) {
           return res.status(409).json({ message: "This completed grade does not have a permanent V2 card" });
         }
-        const reason = parsed.data.action === "VOID_CARD"
-          ? parsed.data.reason
-          : "Re-synced from authoritative Speedster session";
-        if (parsed.data.action === "VOID_CARD") {
-          await deps.voidCard(permanentCard.id, reason, adminSession.user.id);
-        } else {
-          await deps.resyncCard(permanentCard.id, adminSession.user.id);
-        }
+        const reason = parsed.data.reason;
+        await deps.voidCard(permanentCard.id, reason, adminSession.user.id);
         deps.logAdminAction({
           action: parsed.data.action,
           adminId: adminSession.user.id,
           cardId: permanentCard.id,
+          sessionId: session.id,
           reason,
         });
         const updated = await deps.findSession(session.id);

@@ -4,17 +4,46 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../../../components/AppShell";
+import SharedLabelEditor from "../../../../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin";
 import { useSession } from "../../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../../lib/adminHeaders";
+import {
+  SpeedsterIdentityValidationError,
+  canonicalizeSpeedsterSessionIdentity,
+} from "../../../../lib/ai-grader-v2/identity";
+import {
+  EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
+  type HumanGradeLabelEditorValue,
+} from "../../../../lib/humanGrade";
 import styles from "../../../../styles/AiGraderV2PostGrade.module.css";
 
 type CardWorkspace = {
   id: string;
+  cardProfile: "SPORTS" | "POKEMON";
+  authoritativeIdentity: {
+    playerName?: string | null;
+    cardName?: string | null;
+    year: string | null;
+    manufacturer?: string | null;
+    productSet: string | null;
+    parallel: string | null;
+    insert?: string | null;
+    cardNumber: string | null;
+  };
   publicReportSlug: string;
   certificateNumber: string | null;
   labelSheetNumber: number | null;
   labelSlot: number | null;
+  linkedLabel: {
+    id: string;
+    source: "HUMAN" | "SPEEDSTER";
+    certificateNumber: string | null;
+    grade: string;
+    sheetNumber: number;
+    slot: number;
+  } | null;
+  labelPreviewPath: string | null;
   slabPhotos: { front: string | null; back: string | null };
   status: { slabPhotosDone: boolean };
   permanentCard: {
@@ -27,13 +56,35 @@ type CardWorkspace = {
 
 const SIDE_LABEL = { FRONT: "Front", BACK: "Back" } as const;
 
+function identityEditorValue(card: CardWorkspace): HumanGradeLabelEditorValue {
+  return {
+    ...EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
+    cardType: card.cardProfile,
+    playerName: card.authoritativeIdentity.playerName ?? "",
+    cardName: card.authoritativeIdentity.cardName ?? "",
+    year: card.authoritativeIdentity.year ?? "",
+    manufacturer: card.authoritativeIdentity.manufacturer ?? "",
+    productSet: card.authoritativeIdentity.productSet ?? "",
+    parallel: card.authoritativeIdentity.parallel ?? "",
+    insert: card.authoritativeIdentity.insert ?? "",
+    cardNumber: card.authoritativeIdentity.cardNumber ?? "",
+  };
+}
+
 export default function CompletedSpeedsterCardPage() {
   const router = useRouter();
   const { session, loading, ensureSession } = useSession();
   const [card, setCard] = useState<CardWorkspace | null>(null);
   const [message, setMessage] = useState("Loading completed card.");
   const [uploading, setUploading] = useState<"FRONT" | "BACK" | null>(null);
-  const [acting, setActing] = useState<"RESYNC_IDENTITY" | "VOID_CARD" | null>(null);
+  const [acting, setActing] = useState<"UPDATE_IDENTITY" | "VOID_CARD" | null>(null);
+  const [editingIdentity, setEditingIdentity] = useState(false);
+  const [identityForm, setIdentityForm] = useState<HumanGradeLabelEditorValue>(
+    EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
+  );
+  const [identityErrors, setIdentityErrors] = useState<Record<string, string>>({});
+  const [labelPreviewUrl, setLabelPreviewUrl] = useState<string | null>(null);
+  const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
   const inputRefs = {
     FRONT: useRef<HTMLInputElement>(null),
     BACK: useRef<HTMLInputElement>(null),
@@ -56,6 +107,43 @@ export default function CompletedSpeedsterCardPage() {
   }, [isAdmin, session?.token, sessionId]);
 
   useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Completed card could not be loaded.")); }, [load]);
+
+  useEffect(() => {
+    if (!card?.labelPreviewPath || !session?.token) {
+      setLabelPreviewUrl(null);
+      return;
+    }
+    let active = true;
+    let nextUrl: string | null = null;
+    setLabelPreviewLoading(true);
+    setLabelPreviewUrl(null);
+    void fetch(card.labelPreviewPath, {
+      headers: buildAdminHeaders(session.token),
+      cache: "no-store",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({})) as { message?: string };
+          throw new Error(payload.message ?? "The linked label could not be rendered.");
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        if (!active) return;
+        nextUrl = URL.createObjectURL(blob);
+        setLabelPreviewUrl(nextUrl);
+      })
+      .catch((error) => {
+        if (active) setMessage(error instanceof Error ? error.message : "The linked label could not be rendered.");
+      })
+      .finally(() => {
+        if (active) setLabelPreviewLoading(false);
+      });
+    return () => {
+      active = false;
+      if (nextUrl) URL.revokeObjectURL(nextUrl);
+    };
+  }, [card?.labelPreviewPath, card?.linkedLabel, session?.token]);
 
   const uploadSlab = async (side: "FRONT" | "BACK", file: File) => {
     if (!session?.token || !sessionId || uploading) return;
@@ -88,20 +176,20 @@ export default function CompletedSpeedsterCardPage() {
     }
   };
 
-  const runCardAction = async (action: "RESYNC_IDENTITY" | "VOID_CARD", reason?: string) => {
+  const runVoidAction = async (reason: string) => {
     if (!session?.token || !sessionId || acting) return;
-    setActing(action);
-    setMessage(action === "VOID_CARD" ? "Voiding erroneous card." : "Re-syncing identity from Speedster.");
+    setActing("VOID_CARD");
+    setMessage("Voiding erroneous card.");
     try {
       const response = await fetch(`/api/admin/ai-grader-v2/completed/${encodeURIComponent(sessionId)}`, {
         method: "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify(action === "VOID_CARD" ? { action, reason } : { action }),
+        body: JSON.stringify({ action: "VOID_CARD", reason }),
       });
       const payload = await response.json().catch(() => ({})) as { card?: CardWorkspace; message?: string };
       if (!response.ok || !payload.card) throw new Error(payload.message ?? "Permanent card action failed.");
       setCard(payload.card);
-      setMessage(action === "VOID_CARD" ? "Card voided and removed from every public page and active list." : "Identity re-synced from the authoritative Speedster session.");
+      setMessage("Card voided and removed from every public page and active list.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Permanent card action failed.");
     } finally {
@@ -112,7 +200,79 @@ export default function CompletedSpeedsterCardPage() {
   const requestVoid = () => {
     const reason = window.prompt("Why is this card erroneous?")?.trim();
     if (!reason || !window.confirm("Void this card? It will disappear from every public page and active list.")) return;
-    void runCardAction("VOID_CARD", reason);
+    void runVoidAction(reason);
+  };
+
+  const openIdentityEditor = () => {
+    if (!card?.labelPreviewPath) return;
+    setIdentityForm(identityEditorValue(card));
+    setIdentityErrors({});
+    setEditingIdentity(true);
+    setMessage("Editing the authoritative Speedster session identity.");
+  };
+
+  const saveIdentity = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!card || !session?.token || !sessionId || acting) return;
+    setIdentityErrors({});
+    setActing("UPDATE_IDENTITY");
+    setMessage("Saving one authoritative identity correction.");
+    try {
+      const identity = canonicalizeSpeedsterSessionIdentity(
+        card.cardProfile,
+        card.cardProfile === "SPORTS"
+          ? {
+              playerName: identityForm.playerName,
+              year: identityForm.year,
+              manufacturer: identityForm.manufacturer,
+              productSet: identityForm.productSet,
+              parallel: identityForm.parallel,
+              insert: identityForm.insert,
+              cardNumber: identityForm.cardNumber,
+            }
+          : {
+              cardName: identityForm.cardName,
+              year: identityForm.year,
+              productSet: identityForm.productSet,
+              parallel: identityForm.parallel,
+              cardNumber: identityForm.cardNumber,
+            },
+      );
+      const response = await fetch(`/api/admin/ai-grader-v2/completed/${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ action: "UPDATE_IDENTITY", identity }),
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        card?: CardWorkspace;
+        message?: string;
+        fields?: Record<string, string>;
+      };
+      if (!response.ok || !payload.card) {
+        if (payload.fields) setIdentityErrors(payload.fields);
+        throw new Error(payload.message ?? "Authoritative identity could not be saved.");
+      }
+      setCard(payload.card);
+      setIdentityForm(identityEditorValue(payload.card));
+      setEditingIdentity(false);
+      setMessage("Authoritative session, linked label, and any existing permanent card are synchronized.");
+    } catch (error) {
+      if (error instanceof SpeedsterIdentityValidationError) setIdentityErrors(error.fields);
+      setMessage(error instanceof Error ? error.message : "Authoritative identity could not be saved.");
+    } finally {
+      setActing(null);
+    }
+  };
+
+  const updateIdentityForm = (field: keyof HumanGradeLabelEditorValue, value: string) => {
+    if (field === "cardType") return;
+    setIdentityForm((current) => ({ ...current, [field]: value }));
+    setIdentityErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   };
 
   if (loading) return <AppShell background="black"><div className={styles.center}>Loading Speedster…</div></AppShell>;
@@ -129,6 +289,67 @@ export default function CompletedSpeedsterCardPage() {
         </header>
 
         {card ? <>
+          <section className={styles.identityLabelGrid}>
+            <article className={styles.identityPanel}>
+              <small>AUTHORITATIVE SPEEDSTER IDENTITY</small>
+              <h2>{card.authoritativeIdentity.playerName ?? card.authoritativeIdentity.cardName ?? "Identity incomplete"}</h2>
+              <p>{[
+                card.authoritativeIdentity.year,
+                card.authoritativeIdentity.manufacturer,
+                card.authoritativeIdentity.productSet,
+                card.authoritativeIdentity.parallel,
+                card.authoritativeIdentity.insert,
+                card.authoritativeIdentity.cardNumber ? `#${card.authoritativeIdentity.cardNumber.replace(/^#/, "")}` : null,
+              ].filter(Boolean).join(" · ")}</p>
+              <div className={styles.identityActions}>
+                <button
+                  type="button"
+                  disabled={Boolean(acting) || !card.labelPreviewPath}
+                  onClick={openIdentityEditor}
+                >
+                  Edit authoritative identity
+                </button>
+                {!card.labelPreviewPath ? (
+                  <span>No exact linked Speedster label. Editing is unavailable; none will be created or repaired here.</span>
+                ) : null}
+              </div>
+            </article>
+            <article className={styles.labelPanel}>
+              <header>
+                <div><small>LINKED HUMAN GRADE LABEL · EXACT RENDER</small><strong>{card.linkedLabel?.certificateNumber ?? "Unavailable"}</strong></div>
+                {card.linkedLabel ? <span>Grade {card.linkedLabel.grade}</span> : null}
+              </header>
+              {labelPreviewUrl ? (
+                <iframe
+                  title={`Exact linked Human Grade label ${card.linkedLabel?.certificateNumber ?? ""}`}
+                  src={`${labelPreviewUrl}#toolbar=0&navpanes=0&view=FitH`}
+                />
+              ) : (
+                <div className={styles.labelPlaceholder}>
+                  {labelPreviewLoading ? "Rendering exact saved label…" : "Exact linked label unavailable."}
+                </div>
+              )}
+            </article>
+          </section>
+
+          {editingIdentity ? (
+            <div className={styles.identityEditor}>
+              <SharedLabelEditor
+                mode="SPEEDSTER"
+                value={identityForm}
+                onChange={updateIdentityForm}
+                onSubmit={saveIdentity}
+                onCancel={() => setEditingIdentity(false)}
+                certificateNumber={card.certificateNumber ?? "TKH-ISSUED"}
+                fieldErrors={identityErrors}
+                saving={acting === "UPDATE_IDENTITY"}
+                editing
+                lockCardType
+                primaryActionLabel="Save Authoritative Identity"
+              />
+            </div>
+          ) : null}
+
           <section className={styles.toolGrid}>
             {(["FRONT", "BACK"] as const).map((side) => {
               const image = card.slabPhotos[side.toLowerCase() as "front" | "back"];
@@ -168,13 +389,6 @@ export default function CompletedSpeedsterCardPage() {
                     Open NFC →
                   </Link>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={Boolean(acting)}
-                  onClick={() => void runCardAction("RESYNC_IDENTITY")}
-                >
-                  {acting === "RESYNC_IDENTITY" ? "Re-syncing…" : "Re-sync identity from session"}
-                </button>
                 {card.permanentCard.lifecycleState !== "VOID" ? (
                   <button type="button" disabled={Boolean(acting)} onClick={requestVoid}>
                     {acting === "VOID_CARD" ? "Voiding…" : "Void erroneous card"}
