@@ -31037,6 +31037,28 @@ By enabling Rip It Live, I confirm:
 - The same seven Windows C# runtime groups, both Windows PowerShell suites, real DACL/journal/task/readiness execution, and separately approved Dell V1 terminal-incident resolution remain mandatory before physical commissioning.
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
 
+## 2026-08-07 - Comps V2 and hosted NFC V2 Production release result
+
+### Exact release and migration evidence
+
+- Every emitted check passed on exact PR head `3fe3347a3046b9d65d7d56c3224e3e951aa26428`: GitHub Install & Build, the disposable PostgreSQL migration chain, all eight service/frontend Docker-image jobs, Vercel Preview, and Vercel Preview Comments. No admin bypass was used.
+- PR `#302` merged normally to `main` as merge commit `ec440c3d5312716146507edf577dfb62266479fe` at `2026-08-07T10:09:57Z`.
+- Vercel Production deployment `FgozdLQnbMSgMtwDTzmuJHNQ5MmL` became Ready and Current on exact merge commit `ec440c3d5312716146507edf577dfb62266479fe`. Its build log proved `RUN_DB_MIGRATIONS=true`, found all `84` migrations, and applied only `20260806120000_ten_kings_v2_card_foundation` successfully.
+- Immediately restored the sensitive Production-only `RUN_DB_MIGRATIONS` value to `false`, then created Production redeploy `6dX5k5jZPgRcPVg7yYiLxhh5Uyum` from the exact current release. That deployment became Ready and Current on the same merge commit; its build log explicitly states `VERCEL_ENV=production and RUN_DB_MIGRATIONS is not true; skipping Prisma migrations.`
+- `TEN_KINGS_V2_NFC_PROGRAMMING_ENABLED` remains `false`. The Production NFC server signing private key remains sensitive and Production-only, the existing workstation allowlist remains unchanged, and the non-secret public verification key record remains in `docs/handoffs/TEN_KINGS_V2_NFC_SERVER_PUBLIC_KEY.json`.
+
+### Production smoke evidence
+
+- Non-mutating HTTP checks on the current Production deployment returned `200` for `/admin/comps` and `/admin/nfc`; unauthenticated V2 Comps and NFC API reads returned `401`; and a syntactically valid nonexistent permanent `tk2c_` card URL returned plain `404`.
+- In the authenticated Mark admin session, `/admin/comps` rendered the standalone eBay Sold Comps screen and its zero-write Research mode with the approved card identity, exact-query, and Find Comps controls. No paid SerpAPI query was submitted and no card was selected or changed.
+- In the authenticated Mark admin session, `/admin/nfc` rendered the standalone optional NFC screen. It truthfully reported `HOSTED OFF`, `WORKSTATION OFF`, and `GOTOTAGS OFF`: hosted programming is intentionally disabled, this browser is not the commissioned Dell workstation, and no GoToTags/helper operation was started.
+
+### Remaining physical NFC gate and safety
+
+- Comps V2 is deployed and ready for owner testing with a permanent V2 card or zero-write Research mode. Hosted NFC V2 is deployed and its admin surface is ready, but physical NFC writing is intentionally not yet commissioned or enabled.
+- Before any physical NFC test, Mark must separately authorize the Dell read-only exact-state preflight and preserved V1 terminal-job incident resolution. Then the seven Windows-only C# groups, both Windows PowerShell suites, exact public-trust transition, helper/readiness/DACL/task checks, and one physical F8215 write/readback/permanent-lock commissioning test must pass. Only after that evidence may the Production programming switch be enabled.
+- No historical Speedster card backfill, live/paid SerpAPI request, Comps save, card/customer/ownership mutation, Dell/V1 incident action, helper/config/GoToTags action, scheduled-task change, or physical NFC tag read/write/lock occurred during this release verification.
+
 ## 2026-08-07 - Combined V2 protected Production environment pre-deploy result
 
 ### Observed configuration evidence
