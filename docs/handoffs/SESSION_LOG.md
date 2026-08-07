@@ -30972,6 +30972,20 @@ By enabling Rip It Live, I confirm:
 
 - No Production deployment, migration, backfill, database/customer write, config transition, key or secret provisioning, Dell/helper/GoToTags action, scheduled-task change, NFC read/write/lock, physical tag use/discard, paid API call, or V1 mutation occurred.
 
+## 2026-08-07 - Combined Comps V2 and NFC V2 independent-critic release candidate
+
+### Review outcome and exact integration evidence
+
+- The independent Comps critic issued `COMPS IMPLEMENTATION CRITIC PASS` on the exact isolated Comps head. The independent NFC critic completed repeated defect/fix cycles and issued `NFC IMPLEMENTATION CRITIC PASS` on exact NFC head `4381bd7a9e1fa76a333ab4c90148e22b6dcdf941`.
+- The final combined release branch is based on current `origin/main` and includes the canonical blueprint, S1 permanent-card foundation, Comps V2, and NFC V2 stacks. Final Node `20.x` integration tests passed `25/25` Comps engine, `20/20` combined permanent-card/Comps/NFC database boundary, and `40/40` combined Speedster/Comps/NFC frontend workflow and protocol tests. Focused combined ESLint and `git diff --check` passed.
+- The final exact dependency-aware `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed lint/type checking, generated all `75/75` static pages, emitted `/admin/comps`, `/admin/nfc`, both V2 API routes, and `/c/[token]`, and passed the Sharp trace verifier. Output contained only existing unrelated repository warnings.
+- The earlier exact disposable local PostgreSQL run remains valid because the later critic corrections changed only NFC browser/hosted recovery code and tests, not schema or database writers. It passed all `84` migrations, the combined real database checks, second-deploy no-op, and destroyed its local tmpfs container/storage.
+- The .NET and PowerShell portable evidence remains `17` pass / `7` explicit Windows-only skips / `0` fail and five relevant parser passes. Both implementation critics' PASS decisions leave the recorded Windows/Dell physical commissioning gates explicitly open; neither critic represented them as completed.
+
+### Safety
+
+- No Production/remote migration, database/customer/card write, backfill, deploy, restart, environment or secret change, live/paid SerpAPI call, Dell/V1 incident action, helper/config/GoToTags action, scheduled-task change, or physical NFC tag read/write/lock occurred during final integration.
+
 ## 2026-08-07 - Combined Comps V2 and NFC V2 release integration validation plan
 
 ### Planned local disposable migration validation
