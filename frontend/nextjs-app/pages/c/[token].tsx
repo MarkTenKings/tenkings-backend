@@ -4,6 +4,7 @@ import SpeedsterPublicReport, {
   createSpeedsterReportGetServerSideProps,
   type PublicReportProps,
 } from "../ai-grader-v2/reports/[slug]";
+import { projectPublicCompsV2 } from "../../lib/compsV2Public";
 
 const PUBLIC_TOKEN = /^tk2c_[A-Za-z0-9_-]{32}$/;
 
@@ -12,6 +13,8 @@ type CardPageDependencies = {
     speedsterSessionId: string;
     publicReportSlug: string;
     lifecycleState: string;
+    compsSnapshot?: unknown;
+    compsPublic?: boolean;
   } | null>;
   findCompletedSession: (sessionId: string, publicReportSlug: string) => Promise<unknown | null>;
   presign: (storageKey: string) => Promise<string>;
@@ -38,10 +41,17 @@ export function createCollectibleCardV2GetServerSideProps(
       presign: deps.presign,
     });
 
-    return reportHandler({
+    const result = await reportHandler({
       ...context,
       params: { ...context.params, slug: card.publicReportSlug },
     });
+    if (!("props" in result) || !card.compsPublic) return result;
+    const resolvedProps = await result.props;
+    const publicComps = projectPublicCompsV2({
+      compsPublic: true,
+      compsSnapshot: (card.compsSnapshot ?? null) as never,
+    });
+    return { props: { ...resolvedProps, publicComps } };
   };
 }
 
@@ -57,6 +67,8 @@ export const getServerSideProps: GetServerSideProps<PublicReportProps> = async (
         speedsterSessionId: true,
         publicReportSlug: true,
         lifecycleState: true,
+        compsSnapshot: true,
+        compsPublic: true,
       },
     }),
     findCompletedSession: (sessionId, publicReportSlug) => prisma.aiGraderV2Session.findFirst({

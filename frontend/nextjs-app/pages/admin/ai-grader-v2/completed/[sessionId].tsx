@@ -162,6 +162,7 @@ export default function CompletedSpeedsterCardPage() {
               </div>
               <p>Label page {card.labelSheetNumber ?? "—"} · Slot {card.labelSlot ?? "—"}</p>
               {card.permanentCard ? <>
+                <Link href={`/admin/comps?card=${encodeURIComponent(card.permanentCard.id)}&from=${encodeURIComponent(`/admin/ai-grader-v2/completed/${sessionId}`)}`}>Open Sold Comps</Link>
                 <button
                   type="button"
                   disabled={Boolean(acting)}

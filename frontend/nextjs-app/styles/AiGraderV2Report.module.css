@@ -106,6 +106,18 @@
 .slabPhotos figure { margin: 0; padding: 18px; border: 1px solid #30291d; border-radius: 20px; background: #090a08; }
 .slabPhotos img { display: block; width: 100%; height: min(70vh, 820px); object-fit: contain; border-radius: 12px; background: #030403; }
 .slabPhotos figcaption { margin-top: 12px; color: #d4ad55; font-size: 11px; font-weight: 700; letter-spacing: .2em; text-transform: uppercase; }
+.publicComps { margin-top: 72px; padding-top: 52px; border-top: 1px solid #30291d; }
+.publicComps header span, .publicCompsLead small { color: #d4ad55; font-size: 11px; font-weight: 700; letter-spacing: .28em; }
+.publicComps h2 { margin: 10px 0 28px; font-size: clamp(28px, 4vw, 54px); font-weight: 400; letter-spacing: -.04em; }
+.publicCompsLead { display: grid; grid-template-columns: minmax(180px, 340px) 1fr; gap: clamp(24px, 6vw, 90px); align-items: center; padding: 28px; border: 1px solid #30291d; border-radius: 22px; background: #090a08; }
+.publicCompsLead img { display: block; width: 100%; height: min(55vh, 540px); object-fit: contain; border-radius: 14px; background: #030403; }
+.publicCompsLead strong { display: block; margin-top: 14px; color: #4cff83; font-size: clamp(50px, 8vw, 108px); font-weight: 400; letter-spacing: -.06em; line-height: .9; text-shadow: 0 0 24px rgba(76, 255, 131, .16); }
+.publicCompList { display: grid; gap: 10px; margin-top: 18px; }
+.publicCompList a { display: grid; grid-template-columns: 84px 1fr auto; gap: 18px; align-items: center; min-height: 112px; padding: 13px; color: #f8f5ed; border: 1px solid #30291d; border-radius: 16px; background: #090a08; text-decoration: none; }
+.publicCompList img { width: 84px; height: 84px; object-fit: contain; border-radius: 9px; background: #030403; }
+.publicCompList span strong { display: block; color: #f1d27b; font-size: 22px; }
+.publicCompList span small { display: block; margin-top: 6px; color: #969086; }
+.publicCompList b { color: #d4ad55; font-size: 11px; letter-spacing: .1em; }
 
 .footer {
   display: flex;
@@ -126,5 +138,9 @@
   .evidenceHeader { align-items: stretch; flex-direction: column; }
   .sides button { flex: 1; }
   .slabPhotos > div { grid-template-columns: 1fr; }
+  .publicCompsLead { grid-template-columns: 1fr; }
+  .publicCompList a { grid-template-columns: 68px 1fr; }
+  .publicCompList img { width: 68px; height: 68px; }
+  .publicCompList b { grid-column: 2; }
   .footer { flex-direction: column; }
 }

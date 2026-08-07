@@ -7,9 +7,49 @@ const {
   createCardFromSpeedster,
   generateCollectibleCardV2PublicToken,
   listSpeedsterCardBackfillCandidates,
+  normalizeCompsSnapshotForWrite,
+  saveCompsSnapshot,
+  confirmMarketValue,
+  setCompsPublic,
   resyncIdentityFromSpeedster,
   voidCard,
 } = require("../dist/database/src/cardPlatformV2");
+
+const compsCandidate = (id, price, overrides = {}) => ({
+  id,
+  title: `Sold card ${id}`,
+  listingUrl: `https://www.ebay.com/itm/${id}`,
+  imageUrl: "https://i.ebayimg.com/images/g/example/s-l1600.jpg",
+  soldPriceCents: price,
+  soldDate: "2026-08-01",
+  condition: "Graded",
+  grader: "PSA",
+  numericGrade: 9,
+  raw: false,
+  group: "PSA_TARGET",
+  parallelMatch: "MATCH",
+  matchScore: 90,
+  matchReason: "identity match",
+  included: true,
+  ...overrides,
+});
+
+const compsSnapshot = (overrides = {}) => ({
+  version: 1,
+  source: "EBAY_SOLD",
+  engineVersion: "ebay-sold-comps-v2.1.0",
+  query: "1990 SkyBox Michael Jordan #41 PSA 9",
+  retrievedAt: "2026-08-06T12:00:00.000Z",
+  nextOffset: 30,
+  hasMore: true,
+  candidates: [
+    compsCandidate("123456789001", 10000),
+    compsCandidate("123456789002", 11000),
+    compsCandidate("123456789003", 9000),
+  ],
+  selection: { includedCount: 999, averageSoldPriceCents: 1 },
+  ...overrides,
+});
 
 const decimal = (value) => ({ toString: () => value });
 
@@ -366,6 +406,64 @@ test("voiding is idempotent, keeps the row, and requires an admin plus reason", 
   await voidCard(tx, "card-v2-1", "wrong physical card", "admin-1");
   assert.equal(updates, 1);
   await assert.rejects(voidCard(tx, "card-v2-1", "", "admin-1"), /Void reason is required/);
+});
+
+test("comps writer owns bounded normalization, discards unknown provider fields, and recomputes selected math", async () => {
+  let stored = null;
+  const tx = {
+    collectibleCardV2: {
+      async findUnique() { return { id: "card-v2-1", lifecycleState: "GRADED" }; },
+      async update(input) { stored = input.data.compsSnapshot; return { id: input.where.id, compsSnapshot: stored, updatedAt: new Date() }; },
+    },
+  };
+  const unsafe = compsSnapshot({
+    provider: { shipping: "$999" },
+    candidates: compsSnapshot().candidates.map((candidate) => ({ ...candidate, shipping: { raw: "$99" } })),
+  });
+  await saveCompsSnapshot(tx, "card-v2-1", unsafe, "admin-1");
+  assert.equal(JSON.stringify(stored).toLowerCase().includes("shipping"), false);
+  assert.deepEqual(stored.selection, {
+    includedCandidateIds: ["123456789001", "123456789002", "123456789003"],
+    includedCount: 3,
+    averageSoldPriceCents: 10000,
+    lowestSoldPriceCents: 9000,
+    highestSoldPriceCents: 11000,
+  });
+});
+
+test("comps writer rejects VOID cards, oversized snapshots, unsafe links, and included rows without a sold price", async () => {
+  const mutable = (state = "GRADED") => ({
+    collectibleCardV2: {
+      async findUnique() { return { id: "card-v2-1", lifecycleState: state }; },
+      async update() { throw new Error("must not update"); },
+    },
+  });
+  await assert.rejects(saveCompsSnapshot(mutable("VOID"), "card-v2-1", compsSnapshot(), "admin-1"), /not found/);
+  assert.throws(() => normalizeCompsSnapshotForWrite(compsSnapshot({ query: "x".repeat(300000) })), /bounded size/);
+  assert.throws(() => normalizeCompsSnapshotForWrite(compsSnapshot({
+    candidates: [compsCandidate("123456789001", 10000, { listingUrl: "https://evil.example/itm/123456789001" })],
+  })), /candidate is invalid/);
+  assert.throws(() => normalizeCompsSnapshotForWrite(compsSnapshot({
+    candidates: [compsCandidate("123456789001", null)],
+  })), /positive sold price/);
+});
+
+test("market-value and public-setting writers validate server-owned facts and remain unavailable for VOID cards", async () => {
+  const updates = [];
+  const tx = {
+    collectibleCardV2: {
+      async findUnique() { return { id: "card-v2-1", lifecycleState: "GRADED" }; },
+      async update(input) { updates.push(input.data); return { id: input.where.id, ...input.data, updatedAt: new Date() }; },
+    },
+  };
+  await confirmMarketValue(tx, "card-v2-1", 10000, "admin-1", new Date("2026-08-06T12:00:00.000Z"));
+  await setCompsPublic(tx, "card-v2-1", true, "admin-1");
+  assert.deepEqual(updates, [{
+    marketValueCents: 10000,
+    marketValueConfirmedAt: new Date("2026-08-06T12:00:00.000Z"),
+    marketValueConfirmedByAdminId: "admin-1",
+  }, { compsPublic: true }]);
+  await assert.rejects(confirmMarketValue(tx, "card-v2-1", 0, "admin-1"), /positive safe integer/);
 });
 
 test("foundation migration contains only the approved two tables and permanent-card invariants", () => {

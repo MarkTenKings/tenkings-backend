@@ -489,3 +489,239 @@ export async function voidCard(
     select: { id: true, lifecycleState: true },
   });
 }
+
+async function requireMutableCompsCard(tx: CardPlatformV2Transaction, cardId: string) {
+  const id = requireAdminText(cardId, "Card identity");
+  const card = await tx.collectibleCardV2.findUnique({
+    where: { id },
+    select: { id: true, lifecycleState: true },
+  });
+  if (!card || card.lifecycleState === "VOID") {
+    throw new Error("Ten Kings V2 card was not found");
+  }
+  return card;
+}
+
+const COMPS_SNAPSHOT_MAX_BYTES = 256 * 1024;
+const COMPS_SNAPSHOT_MAX_CANDIDATES = 60;
+const COMPS_GROUPS = new Set(["PSA_TARGET", "PSA_OTHER", "OTHER_GRADED", "RAW"]);
+const COMPS_PARALLEL_MATCHES = new Set(["MATCH", "CONTRADICTORY", "UNKNOWN"]);
+const COMPS_GRADERS = new Set(["PSA", "BGS", "SGC", "CGC"]);
+
+const compsRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const compsText = (value: unknown, maximum: number) =>
+  typeof value === "string" && value.trim() && value.trim().length <= maximum ? value.trim() : null;
+const positiveSafeCents = (value: unknown): value is number => Number.isSafeInteger(value) && Number(value) > 0;
+const normalizedEbayListingUrl = (value: unknown) => {
+  const raw = compsText(value, 500);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    const match = url.pathname.match(/^\/itm\/(\d{6,20})\/?$/);
+    return url.protocol === "https:" && !url.username && !url.password &&
+      (host === "ebay.com" || host.endsWith(".ebay.com")) && match?.[1] && !url.search && !url.hash
+      ? `https://www.ebay.com/itm/${match[1]}`
+      : null;
+  } catch {
+    return null;
+  }
+};
+const normalizedEbayImageUrl = (value: unknown) => {
+  if (value === null) return null;
+  const raw = compsText(value, 1000);
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    const approved = host === "ebayimg.com" || host.endsWith(".ebayimg.com") || host === "ebaystatic.com" || host.endsWith(".ebaystatic.com");
+    return url.protocol === "https:" && !url.username && !url.password && approved ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
+const canonicalIsoTimestamp = (value: unknown) => {
+  const raw = compsText(value, 40);
+  if (!raw) return null;
+  const epoch = Date.parse(raw);
+  return Number.isFinite(epoch) && new Date(epoch).toISOString() === raw ? raw : null;
+};
+const canonicalSoldDate = (value: unknown) => {
+  const raw = compsText(value, 10);
+  if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const epoch = Date.parse(`${raw}T00:00:00.000Z`);
+  return Number.isFinite(epoch) && new Date(epoch).toISOString().slice(0, 10) === raw ? raw : null;
+};
+
+export function normalizeCompsSnapshotForWrite(snapshot: Prisma.InputJsonValue, authoritativeAdminId?: string): Prisma.InputJsonValue {
+  const candidateSnapshot: unknown = snapshot;
+  if (!compsRecord(candidateSnapshot) || candidateSnapshot.version !== 1 || candidateSnapshot.source !== "EBAY_SOLD" || !Array.isArray(candidateSnapshot.candidates)) {
+    throw new Error("Comps snapshot has an invalid bounded structure");
+  }
+  const source = candidateSnapshot;
+  const sourceCandidates = source.candidates as unknown[];
+  if (Buffer.byteLength(JSON.stringify(snapshot), "utf8") > COMPS_SNAPSHOT_MAX_BYTES) {
+    throw new Error("Comps snapshot exceeds the bounded size limit");
+  }
+  if (sourceCandidates.length > COMPS_SNAPSHOT_MAX_CANDIDATES) {
+    throw new Error("Comps snapshot exceeds the candidate limit");
+  }
+  const query = compsText(source.query, 400);
+  const engineVersion = compsText(source.engineVersion, 100);
+  const retrievedAt = canonicalIsoTimestamp(source.retrievedAt);
+  const nextOffset = Number.isSafeInteger(source.nextOffset) && Number(source.nextOffset) >= 0 ? Number(source.nextOffset) : null;
+  if (!query || !engineVersion || !retrievedAt || nextOffset === null) {
+    throw new Error("Comps snapshot metadata is invalid");
+  }
+
+  const seen = new Set<string>();
+  const candidates = sourceCandidates.map((candidateValue: unknown) => {
+    if (!compsRecord(candidateValue)) throw new Error("Comps snapshot candidate is invalid");
+    const id = compsText(candidateValue.id, 100);
+    const title = compsText(candidateValue.title, 500);
+    const listingUrl = normalizedEbayListingUrl(candidateValue.listingUrl);
+    const imageUrl = normalizedEbayImageUrl(candidateValue.imageUrl);
+    const group = compsText(candidateValue.group, 30);
+    const parallelMatch = compsText(candidateValue.parallelMatch, 30);
+    const grader = candidateValue.grader === null ? null : compsText(candidateValue.grader, 10);
+    const soldPriceCents = candidateValue.soldPriceCents === null ? null : positiveSafeCents(candidateValue.soldPriceCents) ? candidateValue.soldPriceCents : undefined;
+    const soldDate = candidateValue.soldDate === null ? null : canonicalSoldDate(candidateValue.soldDate);
+    const numericGrade = candidateValue.numericGrade === null ? null : typeof candidateValue.numericGrade === "number" && Number.isFinite(candidateValue.numericGrade) && candidateValue.numericGrade >= 1 && candidateValue.numericGrade <= 10 ? candidateValue.numericGrade : undefined;
+    if (
+      !id || seen.has(id) || !title || !listingUrl || imageUrl === undefined || soldPriceCents === undefined ||
+      !group || !COMPS_GROUPS.has(group) || !parallelMatch || !COMPS_PARALLEL_MATCHES.has(parallelMatch) ||
+      (grader !== null && !COMPS_GRADERS.has(grader)) || numericGrade === undefined ||
+      (candidateValue.soldDate !== null && soldDate === null) || typeof candidateValue.included !== "boolean"
+    ) throw new Error("Comps snapshot candidate is invalid");
+    seen.add(id);
+    const matchScore = typeof candidateValue.matchScore === "number" && Number.isFinite(candidateValue.matchScore)
+      ? Math.max(0, Math.min(100, Math.round(candidateValue.matchScore)))
+      : 0;
+    return {
+      id,
+      title,
+      listingUrl,
+      imageUrl,
+      soldPriceCents,
+      soldDate,
+      condition: candidateValue.condition === null ? null : compsText(candidateValue.condition, 200),
+      grader,
+      numericGrade,
+      raw: candidateValue.raw === true,
+      group,
+      parallelMatch,
+      matchScore,
+      matchReason: compsText(candidateValue.matchReason, 500) ?? "Human review required",
+      included: candidateValue.included,
+    };
+  });
+  const included = candidates.filter((candidate) => candidate.included);
+  if (included.some((candidate) => !positiveSafeCents(candidate.soldPriceCents))) {
+    throw new Error("An included comp requires one positive sold price");
+  }
+  const prices: number[] = included.map((candidate) => candidate.soldPriceCents as number);
+  const selection = prices.length ? {
+    includedCandidateIds: included.map((candidate) => candidate.id),
+    includedCount: prices.length,
+    averageSoldPriceCents: Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length),
+    lowestSoldPriceCents: Math.min(...prices),
+    highestSoldPriceCents: Math.max(...prices),
+  } : {
+    includedCandidateIds: [],
+    includedCount: 0,
+    averageSoldPriceCents: null,
+    lowestSoldPriceCents: null,
+    highestSoldPriceCents: null,
+  };
+  const confirmationSource = source.confirmation;
+  const confirmation = confirmationSource === null || confirmationSource === undefined
+    ? null
+    : compsRecord(confirmationSource) && positiveSafeCents(confirmationSource.marketValueCents) &&
+      canonicalIsoTimestamp(confirmationSource.confirmedAt) && compsText(confirmationSource.confirmedByAdminId, 256)
+      ? {
+        marketValueCents: confirmationSource.marketValueCents,
+        confirmedAt: canonicalIsoTimestamp(confirmationSource.confirmedAt)!,
+        confirmedByAdminId: authoritativeAdminId
+          ? requireAdminText(authoritativeAdminId, "Admin identity")
+          : compsText(confirmationSource.confirmedByAdminId, 256)!,
+      }
+      : undefined;
+  if (confirmation === undefined) throw new Error("Comps snapshot confirmation metadata is invalid");
+  return {
+    version: 1,
+    source: "EBAY_SOLD",
+    engineVersion,
+    query,
+    retrievedAt,
+    nextOffset,
+    hasMore: source.hasMore === true,
+    candidates,
+    selection,
+    confirmation,
+  } as Prisma.InputJsonValue;
+}
+
+export async function saveCompsSnapshot(
+  tx: CardPlatformV2Transaction,
+  cardId: string,
+  snapshot: Prisma.InputJsonValue,
+  adminId: string,
+) {
+  requireAdminText(adminId, "Admin identity");
+  const card = await requireMutableCompsCard(tx, cardId);
+  const normalizedSnapshot = normalizeCompsSnapshotForWrite(snapshot, adminId);
+  return tx.collectibleCardV2.update({
+    where: { id: card.id },
+    data: { compsSnapshot: normalizedSnapshot },
+    select: { id: true, compsSnapshot: true, updatedAt: true },
+  });
+}
+
+export async function confirmMarketValue(
+  tx: CardPlatformV2Transaction,
+  cardId: string,
+  valueCents: number,
+  adminId: string,
+  confirmedAt = new Date(),
+) {
+  const confirmedBy = requireAdminText(adminId, "Admin identity");
+  if (!Number.isSafeInteger(valueCents) || valueCents <= 0) {
+    throw new Error("Confirmed market value must be a positive safe integer in cents");
+  }
+  if (!Number.isFinite(confirmedAt.getTime())) {
+    throw new Error("Market-value confirmation time is invalid");
+  }
+  const card = await requireMutableCompsCard(tx, cardId);
+  return tx.collectibleCardV2.update({
+    where: { id: card.id },
+    data: {
+      marketValueCents: valueCents,
+      marketValueConfirmedAt: confirmedAt,
+      marketValueConfirmedByAdminId: confirmedBy,
+    },
+    select: {
+      id: true,
+      marketValueCents: true,
+      marketValueConfirmedAt: true,
+      marketValueConfirmedByAdminId: true,
+      updatedAt: true,
+    },
+  });
+}
+
+export async function setCompsPublic(
+  tx: CardPlatformV2Transaction,
+  cardId: string,
+  isPublic: boolean,
+  adminId: string,
+) {
+  requireAdminText(adminId, "Admin identity");
+  if (typeof isPublic !== "boolean") throw new Error("Public comps setting must be boolean");
+  const card = await requireMutableCompsCard(tx, cardId);
+  return tx.collectibleCardV2.update({
+    where: { id: card.id },
+    data: { compsPublic: isPublic },
+    select: { id: true, compsPublic: true, updatedAt: true },
+  });
+}

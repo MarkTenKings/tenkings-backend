@@ -9,7 +9,9 @@ Pure, server-only comparison-card engine for Ten Kings V2. It does not know abou
 - Orders candidates as PSA at the target numeric grade, other PSA grades, BGS/SGC/CGC, then raw.
 - Keeps uncertain and contradictory matches visible for human review; it never auto-selects a comp.
 - Computes market value only from the unique candidate IDs selected by the admin.
-- Uses sold price only. Shipping is retained for review but is never included in the average.
+- Uses sold price only. Provider shipping data is discarded recursively at the engine boundary and is never returned, stored, displayed, or included in the average.
+- Emits only canonical numeric `https://www.ebay.com/itm/<id>` links and approved eBay image hosts.
+- Reads provider responses through a bounded stream and rejects oversized bodies before parsing.
 - Returns `null` when no candidates are selected. It has no comps status field or boolean.
 - Makes no database write and does not affect grading, inventory readiness, listing readiness, NFC, or any other workflow.
 

@@ -1,4 +1,4 @@
-export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.0.1";
+export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.1.0";
 export const EBAY_SOLD_COMPS_V2_SOURCE = "EBAY_SOLD" as const;
 export const EBAY_SOLD_COMPS_V2_PAGE_SIZE = 50;
 export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 30;
@@ -32,7 +32,6 @@ export type EbaySoldCompV2Candidate = {
   imageUrl: string | null;
   soldPriceCents: number | null;
   soldPriceDisplay: string | null;
-  shipping: string | null;
   soldDate: string | null;
   condition: string | null;
   grader: "PSA" | "BGS" | "SGC" | "CGC" | null;
@@ -67,6 +66,8 @@ export type EbaySoldCompsV2SelectionSummary = {
 export type EbaySoldCompsV2FetchResponse = {
   ok: boolean;
   status: number;
+  headers?: { get(name: string): string | null };
+  body?: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }>; cancel?(): Promise<void> } } | null;
   text(): Promise<string>;
 };
 
@@ -117,6 +118,8 @@ const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const MAX_TITLE_LENGTH = 500;
+const MAX_CONDITION_LENGTH = 200;
 const RETRY_DELAYS_MS = [250, 750, 1_500, 3_000] as const;
 const GROUP_ORDER: Record<EbaySoldCompsV2Group, number> = {
   PSA_TARGET: 0,
@@ -421,7 +424,22 @@ const safeHttpsUrl = (value: unknown, allowedHost: (hostname: string) => boolean
   }
 };
 
-const ebayListingUrl = (value: unknown) => safeHttpsUrl(value, (hostname) => hostname === "ebay.com" || hostname.endsWith(".ebay.com"));
+export const canonicalEbaySoldCompsV2ListingUrl = (value: unknown): string | null => {
+  const safe = safeHttpsUrl(value, (hostname) => hostname === "ebay.com" || hostname.endsWith(".ebay.com"));
+  if (!safe) return null;
+  const parsed = new URL(safe);
+  const match = parsed.pathname.match(/\/itm\/(?:[^/]+\/)?(\d{6,20})(?:\/|$)/i);
+  if (!match?.[1]) return null;
+  return `https://www.ebay.com/itm/${match[1]}`;
+};
+
+export const isApprovedEbaySoldCompsV2ImageUrl = (value: unknown): value is string => Boolean(
+  safeHttpsUrl(value, (hostname) => (
+    hostname === "ebayimg.com" || hostname.endsWith(".ebayimg.com") || hostname === "ebaystatic.com" || hostname.endsWith(".ebaystatic.com")
+  )),
+);
+
+const ebayListingUrl = canonicalEbaySoldCompsV2ListingUrl;
 const ebayImageUrl = (value: unknown) => safeHttpsUrl(value, (hostname) => (
   hostname === "ebayimg.com" || hostname.endsWith(".ebayimg.com") || hostname === "ebaystatic.com" || hostname.endsWith(".ebaystatic.com")
 ));
@@ -479,11 +497,6 @@ const priceFrom = (value: unknown) => {
   };
 };
 
-const shippingFrom = (value: unknown): string | null => {
-  if (typeof value === "string") return cleanText(value);
-  return isRecord(value) ? cleanText(value.raw) : null;
-};
-
 export function normalizeEbaySoldCompsV2Date(value: unknown): string | null {
   const text = cleanText(value)?.replace(/^sold\s+/i, "");
   if (!text) return null;
@@ -515,7 +528,8 @@ export function parseEbaySoldCompsV2Candidate(
   input: EbaySoldCompsV2SearchInput,
 ): EbaySoldCompV2Candidate | null {
   if (!isRecord(value) || cleanText(value.unsold_date)) return null;
-  const title = cleanText(value.title);
+  const titleValue = cleanText(value.title);
+  const title = titleValue && titleValue.length <= MAX_TITLE_LENGTH ? titleValue : null;
   const listingUrl = ebayListingUrl(value.link);
   if (!title || !listingUrl) return null;
   const productId = productIdFrom(value, listingUrl);
@@ -532,9 +546,8 @@ export function parseEbaySoldCompsV2Candidate(
     listingUrl,
     imageUrl: firstImageUrl(value),
     ...price,
-    shipping: shippingFrom(value.shipping),
     soldDate: normalizeEbaySoldCompsV2Date(value.sold_date),
-    condition: cleanText(value.condition),
+    condition: cleanText(value.condition)?.slice(0, MAX_CONDITION_LENGTH) ?? null,
     grader,
     numericGrade,
     raw: grader === null,
@@ -552,6 +565,37 @@ const defaultFetch: EbaySoldCompsV2Fetch = async (url, init) => {
 };
 
 const retryableStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+
+async function readBoundedResponse(response: EbaySoldCompsV2FetchResponse): Promise<string> {
+  const declaredLength = Number(response.headers?.get("content-length") ?? Number.NaN);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
+    throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const body = await response.text();
+    if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) {
+      throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+    }
+    return body;
+  }
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let bytes = 0;
+  while (true) {
+    const part = await reader.read();
+    if (part.done) break;
+    if (!part.value) continue;
+    bytes += part.value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES) {
+      await reader.cancel?.().catch(() => undefined);
+      throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+    }
+    chunks.push(decoder.decode(part.value, { stream: true }));
+  }
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
 
 async function fetchPayload(url: string, runtime: Required<Pick<EbaySoldCompsV2Runtime, "fetch" | "sleep">> & {
   timeoutMs: number;
@@ -573,10 +617,7 @@ async function fetchPayload(url: string, runtime: Required<Pick<EbaySoldCompsV2R
           retryable: retryableStatus(response.status),
         });
       }
-      const body = await response.text();
-      if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) {
-        throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
-      }
+      const body = await readBoundedResponse(response);
       let payload: unknown;
       try {
         payload = JSON.parse(body);

@@ -361,6 +361,9 @@ importers:
       '@tenkings/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@tenkings/ebay-sold-comps-v2':
+        specifier: workspace:*
+        version: link:../../packages/ebay-sold-comps-v2
       '@tenkings/shared':
         specifier: workspace:*
         version: link:../../packages/shared

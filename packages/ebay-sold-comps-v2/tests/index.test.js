@@ -4,6 +4,8 @@ const test = require("node:test");
 const {
   EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
   EbaySoldCompsV2Error,
+  canonicalEbaySoldCompsV2ListingUrl,
+  isApprovedEbaySoldCompsV2ImageUrl,
   buildEbaySoldCompsV2Query,
   calculateEbaySoldCompsV2AverageCents,
   mergeEbaySoldCompsV2Candidates,
@@ -45,7 +47,6 @@ const candidate = (id, overrides = {}) => ({
   imageUrl: null,
   soldPriceCents: 10000,
   soldPriceDisplay: "$100.00",
-  shipping: "+$100.00 shipping",
   soldDate: "2026-08-01",
   condition: "Graded",
   grader: "PSA",
@@ -101,13 +102,12 @@ test("normalizes only supported, real calendar sold dates", () => {
   assert.equal(normalizeEbaySoldCompsV2Date("yesterday"), null);
 });
 
-test("parses a safe sold candidate and retains shipping without including it in price", () => {
+test("parses a safe sold candidate and recursively discards provider shipping", () => {
   const parsed = parseEbaySoldCompsV2Candidate(item("123456789012"), sportsInput);
   assert.deepEqual({
     id: parsed.id,
     productId: parsed.productId,
     price: parsed.soldPriceCents,
-    shipping: parsed.shipping,
     date: parsed.soldDate,
     group: parsed.group,
     image: parsed.imageUrl,
@@ -115,14 +115,22 @@ test("parses a safe sold candidate and retains shipping without including it in 
     id: "ebay:123456789012",
     productId: "123456789012",
     price: 10000,
-    shipping: "+$12.00 shipping",
     date: "2026-08-05",
     group: "PSA_TARGET",
     image: "https://i.ebayimg.com/images/g/example/s-l1600.jpg",
   });
+  assert.equal(JSON.stringify(parsed).toLowerCase().includes("shipping"), false);
   assert.equal(parseEbaySoldCompsV2Candidate(item("123456789013", { unsold_date: "Aug 5, 2026" }), sportsInput), null);
   assert.equal(parseEbaySoldCompsV2Candidate(item("123456789014", { link: "https://example.com/itm/123456789014" }), sportsInput), null);
   assert.equal(parseEbaySoldCompsV2Candidate(item("123456789015", { sold_date: undefined }), sportsInput).soldDate, null);
+});
+
+test("emits only canonical numeric eBay item links and approved image hosts", () => {
+  assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/itm/Card-Title/123456789012?hash=secret#x"), "https://www.ebay.com/itm/123456789012");
+  assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/sch/i.html?_nkw=card"), null);
+  assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://evil.example/itm/123456789012"), null);
+  assert.equal(isApprovedEbaySoldCompsV2ImageUrl("https://i.ebayimg.com/images/g/example/s-l1600.jpg"), true);
+  assert.equal(isApprovedEbaySoldCompsV2ImageUrl("https://images.evil.example/card.jpg"), false);
 });
 
 test("rejects misleading range prices instead of inventing one sold price", () => {
@@ -204,11 +212,11 @@ test("normalizes common manufacturer and grader aliases without treating a BGS l
   assert.equal(parsed.group, "OTHER_GRADED");
 });
 
-test("averages only unique human-selected sold prices and excludes shipping", () => {
+test("averages only unique human-selected sold prices", () => {
   const rows = [
-    candidate("one", { soldPriceCents: 10000, shipping: "$50 shipping" }),
-    candidate("two", { soldPriceCents: 11000, shipping: "Free shipping" }),
-    candidate("three", { soldPriceCents: 9000, shipping: "$999 shipping" }),
+    candidate("one", { soldPriceCents: 10000 }),
+    candidate("two", { soldPriceCents: 11000 }),
+    candidate("three", { soldPriceCents: 9000 }),
   ];
   assert.equal(calculateEbaySoldCompsV2AverageCents(rows, ["one", "two", "three", "one"]), 10000);
   assert.equal(calculateEbaySoldCompsV2AverageCents(rows, []), null);
@@ -340,6 +348,35 @@ test("maps provider errors, invalid JSON, and missing credentials to typed safe 
   await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "", fetch: async () => jsonResponse({}) }), "SERPAPI_CREDENTIAL_MISSING");
   await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch: async () => jsonResponse("not json") }), "SERPAPI_INVALID_RESPONSE");
   await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch: async () => jsonResponse({ error: "account detail" }) }), "SERPAPI_PROVIDER_ERROR");
+});
+
+test("rejects oversized provider bodies before unbounded parsing", async () => {
+  let textCalls = 0;
+  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (name) => name.toLowerCase() === "content-length" ? String(6 * 1024 * 1024) : null },
+      async text() { textCalls += 1; return "{}"; },
+    }),
+  }), "SERPAPI_INVALID_RESPONSE");
+  assert.equal(textCalls, 0);
+
+  let cancelled = false;
+  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      body: { getReader: () => ({
+        async read() { return { done: false, value: new Uint8Array(6 * 1024 * 1024) }; },
+        async cancel() { cancelled = true; },
+      }) },
+      async text() { throw new Error("stream path required"); },
+    }),
+  }), "SERPAPI_INVALID_RESPONSE");
+  assert.equal(cancelled, true);
 });
 
 test("aborts a hung request at the configured timeout", async () => {
