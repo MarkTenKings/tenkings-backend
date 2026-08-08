@@ -4,7 +4,7 @@ import {
   canonicalEbaySoldCompsV2ListingUrl,
   buildEbaySoldCompsV2Query,
   isApprovedEbaySoldCompsV2ImageUrl,
-  mergeEbaySoldCompsV2Candidates,
+  mapTenKingsGradeToPsaGrade,
   searchEbaySoldCompsV2,
   type EbaySoldCompV2Candidate,
   type EbaySoldCompsV2SearchInput,
@@ -23,6 +23,7 @@ export const COMPS_V2_MAX_SNAPSHOT_BYTES = 256 * 1024;
 export const COMPS_V2_MAX_CENTS = 2_147_483_647;
 const CARD_QUERY_MAX = 160;
 const QUERY_MAX = 400;
+const soldCompsSecret = () => process.env.SOLDCOMPS_API_KEY ?? "";
 
 export class CompsV2HttpError extends Error {
   constructor(readonly status: number, message: string, readonly code: string) {
@@ -311,6 +312,10 @@ const gradeFrom = (gradeSnapshot: Prisma.JsonValue) => {
     : Number.NaN;
   return Number.isFinite(raw) && raw >= 1 && raw <= 10 ? raw : null;
 };
+const psaGradeFrom = (gradeSnapshot: Prisma.JsonValue) => {
+  const grade = gradeFrom(gradeSnapshot);
+  return grade == null ? null : mapTenKingsGradeToPsaGrade(grade);
+};
 
 const reportImageKey = (card: CompsCardRow): string | null => {
   if (card.speedsterSession.slabFrontKey) return card.speedsterSession.slabFrontKey;
@@ -334,6 +339,7 @@ export const publicCardState = (card: CompsCardRow) => ({
   insert: card.insert,
   cardNumber: card.cardNumber,
   targetGrade: gradeFrom(card.gradeSnapshot),
+  psaTargetGrade: psaGradeFrom(card.gradeSnapshot),
   defaultQuery: buildEbaySoldCompsV2Query(searchInputForCard(card, null)),
   lifecycleState: card.lifecycleState,
   imageStorageKey: reportImageKey(card),
@@ -374,7 +380,7 @@ export async function getCompsV2Card(cardId: string) {
   return card as CompsCardRow | null;
 }
 
-const searchInputForCard = (card: CompsCardRow, queryOverride: string | null, offset = 0): EbaySoldCompsV2SearchInput => ({
+const searchInputForCard = (card: CompsCardRow, queryOverride: string | null): EbaySoldCompsV2SearchInput => ({
   category: card.category,
   playerName: card.playerName,
   cardName: card.cardName,
@@ -386,8 +392,6 @@ const searchInputForCard = (card: CompsCardRow, queryOverride: string | null, of
   cardNumber: card.cardNumber,
   targetGrade: gradeFrom(card.gradeSnapshot),
   queryOverride,
-  offset,
-  requestedResultCount: 30,
 });
 
 const candidateFromEngine = (candidate: EbaySoldCompV2Candidate): CompsV2Candidate => ({
@@ -429,13 +433,6 @@ const snapshotFromSearch = (result: Awaited<ReturnType<typeof searchEbaySoldComp
   };
 };
 
-const engineCandidatesFromSnapshot = (snapshot: CompsV2Snapshot) => snapshot.candidates.map(({ included: _included, ...candidate }) => ({
-  ...candidate,
-  source: "EBAY_SOLD" as const,
-  productId: null,
-  soldPriceDisplay: null,
-}));
-
 async function lockedCard(tx: Prisma.TransactionClient, cardId: string): Promise<CompsCardRow> {
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
     SELECT "id" FROM "CollectibleCardV2"
@@ -470,10 +467,9 @@ export async function runCompsV2Search(input: {
   cardId?: string;
   researchIdentity?: EbaySoldCompsV2SearchInput;
   query: string;
-  operation: "FIND" | "FETCH_MORE" | "REFRESH";
+  operation: "FIND" | "REFRESH";
   expectedCompsStateRevision?: string;
   acknowledgeReplaceSelected?: boolean;
-  reviewProof?: unknown;
   adminId: string;
 }, dependencies: {
   getCard?: typeof getCompsV2Card;
@@ -485,27 +481,11 @@ export async function runCompsV2Search(input: {
   const search = dependencies.search ?? searchEbaySoldCompsV2;
   if (!input.cardId) {
     if (!input.researchIdentity) throw new CompsV2HttpError(400, "Research identity is required", "INVALID_RESEARCH");
-    const researchInput = { ...input.researchIdentity, offset: 0, queryOverride: query };
-    const researchRevision = createHash("sha256").update(canonicalJson(researchInput)).digest("hex");
-    const review = input.reviewProof
-      ? verifyCompsV2ReviewProof(input.reviewProof, researchRevision, process.env.SERPAPI_KEY ?? "")
-      : null;
-    if (input.operation === "FETCH_MORE" && !review) throw new CompsV2HttpError(409, "No signed research search is available to extend", "NO_RESEARCH_SNAPSHOT");
-    if (review && review.snapshot.query !== query) throw new CompsV2HttpError(409, "Research query changed. Search again.", "STALE_RESEARCH_SNAPSHOT");
-    if (review && review.snapshot.candidates.length >= COMPS_V2_MAX_CANDIDATES) throw new CompsV2HttpError(409, "The 60-result review limit has been reached", "COMPS_LIMIT_REACHED");
-    const result = await search({
-      ...researchInput,
-      offset: review?.snapshot.nextOffset ?? 0,
-    }, { apiKey: process.env.SERPAPI_KEY ?? "" });
-    const candidates = review
-      ? mergeEbaySoldCompsV2Candidates(engineCandidatesFromSnapshot(review.snapshot), result.candidates)
-        .slice(0, COMPS_V2_MAX_CANDIDATES).map(candidateFromEngine)
-      : undefined;
-    const snapshot = snapshotFromSearch(result, candidates);
+    const result = await search({ ...input.researchIdentity, queryOverride: query }, { apiKey: soldCompsSecret() });
+    const snapshot = snapshotFromSearch(result);
     return {
       mode: "RESEARCH" as const,
       result: snapshot,
-      researchProof: createCompsV2ReviewProof(snapshot, researchRevision, process.env.SERPAPI_KEY ?? ""),
     };
   }
 
@@ -514,63 +494,23 @@ export async function runCompsV2Search(input: {
   if (!input.expectedCompsStateRevision) throw new CompsV2HttpError(400, "Current comps revision is required", "REVISION_REQUIRED");
   assertRevision(before, input.expectedCompsStateRevision);
   const currentSnapshot = parseCompsV2Snapshot(before.compsSnapshot);
-  const reviewProof = input.reviewProof
-    ? verifyCompsV2ReviewProof(input.reviewProof, input.expectedCompsStateRevision ?? "", process.env.SERPAPI_KEY ?? "")
-    : null;
-  if (input.operation === "FETCH_MORE" && !currentSnapshot && !reviewProof) throw new CompsV2HttpError(409, "No saved search is available to extend", "NO_SNAPSHOT");
-  if (input.operation !== "FETCH_MORE" && currentSnapshot?.selection.includedCount && !input.acknowledgeReplaceSelected) {
+  if (currentSnapshot?.selection.includedCount && !input.acknowledgeReplaceSelected) {
     throw new CompsV2HttpError(409, "Confirm that Refresh may replace the selected comp snapshot.", "REPLACE_CONFIRMATION_REQUIRED");
   }
-  const searchBase = reviewProof?.snapshot ?? currentSnapshot;
-  if (input.operation === "FETCH_MORE" && searchBase?.query !== query) {
-    throw new CompsV2HttpError(409, "Saved search changed. Search again.", "STALE_COMPS_STATE");
-  }
-  if (input.operation === "FETCH_MORE" && searchBase!.candidates.length >= COMPS_V2_MAX_CANDIDATES) {
-    throw new CompsV2HttpError(409, "The 60-result review limit has been reached", "COMPS_LIMIT_REACHED");
-  }
-  const offset = input.operation === "FETCH_MORE" ? searchBase!.nextOffset : 0;
-  const result = await search(searchInputForCard(before, query, offset), { apiKey: process.env.SERPAPI_KEY ?? "" });
+  const result = await search(searchInputForCard(before, null), { apiKey: soldCompsSecret() });
 
-  if (reviewProof) {
-    if (input.operation !== "FETCH_MORE" || reviewProof.snapshot.query !== query) {
-      throw new CompsV2HttpError(409, "Refresh review changed. Refresh again.", "STALE_REVIEW_PROOF");
-    }
-    const merged = mergeEbaySoldCompsV2Candidates(
-      engineCandidatesFromSnapshot(reviewProof.snapshot),
-      result.candidates,
-    ).slice(0, COMPS_V2_MAX_CANDIDATES).map(candidateFromEngine);
-    const snapshot = snapshotFromSearch(result, merged);
-    return {
-      mode: "CARD_REVIEW" as const,
-      review: createCompsV2ReviewProof(snapshot, input.expectedCompsStateRevision!, process.env.SERPAPI_KEY ?? ""),
-    };
-  }
-  if (input.operation !== "FETCH_MORE" && currentSnapshot?.selection.includedCount) {
+  if (currentSnapshot?.selection.includedCount) {
     const snapshot = snapshotFromSearch(result);
     return {
       mode: "CARD_REVIEW" as const,
-      review: createCompsV2ReviewProof(snapshot, input.expectedCompsStateRevision!, process.env.SERPAPI_KEY ?? ""),
+      review: createCompsV2ReviewProof(snapshot, input.expectedCompsStateRevision!, soldCompsSecret()),
     };
   }
 
   return prisma.$transaction(async (tx) => {
     const card = await lockedCard(tx, input.cardId!);
     assertRevision(card, input.expectedCompsStateRevision!);
-    const lockedSnapshot = parseCompsV2Snapshot(card.compsSnapshot);
-    let snapshot: CompsV2Snapshot;
-    if (input.operation === "FETCH_MORE") {
-      if (!lockedSnapshot || lockedSnapshot.query !== query) throw new CompsV2HttpError(409, "Saved search changed. Reload before fetching more.", "STALE_COMPS_STATE");
-      const preserved = new Map(lockedSnapshot.candidates.map((candidate) => [candidate.id, candidate.included]));
-      const merged = mergeEbaySoldCompsV2Candidates(
-        engineCandidatesFromSnapshot(lockedSnapshot),
-        result.candidates,
-      ).slice(0, COMPS_V2_MAX_CANDIDATES).map((candidate) => ({ ...candidateFromEngine(candidate), included: preserved.get(candidate.id) ?? false }));
-      snapshot = snapshotFromSearch(result, merged);
-      snapshot.selection = summarizeSelection(snapshot.candidates, snapshot.candidates.filter(({ included }) => included).map(({ id }) => id));
-      snapshot.confirmation = lockedSnapshot.confirmation;
-    } else {
-      snapshot = snapshotFromSearch(result);
-    }
+    const snapshot = snapshotFromSearch(result);
     if (!parseCompsV2Snapshot(snapshot)) throw new CompsV2HttpError(422, "Provider results could not be saved safely", "INVALID_PROVIDER_RESULTS");
     await saveCompsSnapshot(tx, card.id, snapshot as unknown as Prisma.InputJsonValue, input.adminId);
     const updated = await tx.collectibleCardV2.findUniqueOrThrow({ where: { id: card.id }, select: cardSelect });
@@ -590,7 +530,7 @@ export async function confirmCompsV2(input: {
     const card = await lockedCard(tx, input.cardId);
     assertRevision(card, input.expectedCompsStateRevision);
     const proof = input.reviewProof
-      ? verifyCompsV2ReviewProof(input.reviewProof, input.expectedCompsStateRevision, process.env.SERPAPI_KEY ?? "")
+      ? verifyCompsV2ReviewProof(input.reviewProof, input.expectedCompsStateRevision, soldCompsSecret())
       : null;
     const current = proof?.snapshot ?? parseCompsV2Snapshot(card.compsSnapshot);
     if (!current) throw new CompsV2HttpError(409, "Run a sold-comps search before confirming value", "NO_SNAPSHOT");

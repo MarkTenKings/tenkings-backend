@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const { createHash } = require("node:crypto");
 const test = require("node:test");
 
 const {
@@ -9,7 +10,7 @@ const {
   isApprovedEbaySoldCompsV2ImageUrl,
   buildEbaySoldCompsV2Query,
   calculateEbaySoldCompsV2AverageCents,
-  mergeEbaySoldCompsV2Candidates,
+  mapTenKingsGradeToPsaGrade,
   normalizeEbaySoldCompsV2Date,
   parseEbaySoldCompsV2Candidate,
   rankEbaySoldCompsV2Candidates,
@@ -28,14 +29,40 @@ const sportsInput = Object.freeze({
   targetGrade: 9,
 });
 
+const contractInput = Object.freeze({
+  category: "SPORTS",
+  playerName: "JALEN HURTS",
+  year: "2025",
+  manufacturer: "PANINI",
+  productSet: "2025 PANINI PHOENIX",
+  insert: "THUNDERBIRDS",
+  parallel: "SILVER",
+  cardNumber: "41",
+  targetGrade: 9.2,
+});
+const contractQuery = "2025 PANINI PHOENIX JALEN HURTS THUNDERBIRDS SILVER #41 PSA 9";
+
 const item = (id, overrides = {}) => ({
+  itemId: id,
+  url: `https://www.ebay.com/itm/${id}?nordt=true`,
+  thumbnailUrl: "https://i.ebayimg.com/images/g/example/s-l300.jpg",
   title: `1990 SkyBox Michael Jordan #41 PSA 9 ${id}`,
-  link: `https://www.ebay.com/itm/${id}`,
-  thumbnail: "https://i.ebayimg.com/images/g/example/s-l1600.jpg",
-  price: { raw: "$100.00", extracted: 100 },
-  shipping: { raw: "+$12.00 shipping", extracted: 12 },
-  sold_date: "Sold Aug 5, 2026",
+  soldPrice: "100.00",
+  soldCurrency: "USD",
+  endedAt: "2026-08-05",
+  bestOfferAccepted: false,
   condition: "Graded",
+  listingType: "sold",
+  shippingPrice: "12.00",
+  ...overrides,
+});
+
+const providerPayload = (items, overrides = {}) => ({
+  keyword: "1990 SkyBox Michael Jordan #41 PSA 9",
+  page: 1,
+  totalItems: items.length,
+  hasNextPage: false,
+  items,
   ...overrides,
 });
 
@@ -86,6 +113,9 @@ test("builds one visible deterministic query without duplicating set identity", 
     serialNumber: "7/50",
   }), "2023 Pokemon Scarlet & Violet 151 Pikachu Cosmos Holo #025 PSA 10");
   assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: null }), "1990 SkyBox Michael Jordan #41");
+  assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: 9.2 }), "1990 SkyBox Michael Jordan #41 PSA 9");
+  assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: 9.5 }), "1990 SkyBox Michael Jordan #41 PSA 9");
+  assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: 9.6 }), "1990 SkyBox Michael Jordan #41 PSA 10");
   assert.equal(buildEbaySoldCompsV2Query({ ...sportsInput, queryOverride: "  exact admin query  " }), "exact admin query");
   assert.equal(buildEbaySoldCompsV2Query({
     ...sportsInput,
@@ -105,13 +135,23 @@ test("builds one visible deterministic query without duplicating set identity", 
     ...sportsInput,
     productSet: "1990 SkyBox #41",
   }), "1990 SkyBox #41 Michael Jordan PSA 9");
+  assert.equal(buildEbaySoldCompsV2Query(contractInput), contractQuery);
+  assert.equal(Buffer.byteLength(contractQuery), 61);
+  assert.equal(createHash("sha256").update(contractQuery).digest("hex"), "c499160625eb8519e4e7e2db58fd9c1ff49a52fa00bc2c860b5d4dbad64c572c");
 });
 
 test("rejects unsafe or incomplete search contracts", () => {
   assert.throws(() => buildEbaySoldCompsV2Query({ ...sportsInput, targetGrade: 11 }), /between 1 and 10/);
-  assert.throws(() => buildEbaySoldCompsV2Query({ ...sportsInput, requestedResultCount: 31 }), /between 1 and 30/);
   assert.throws(() => buildEbaySoldCompsV2Query({ ...sportsInput, queryOverride: "x".repeat(401) }), /400 characters/);
   assert.throws(() => buildEbaySoldCompsV2Query({ ...sportsInput, playerName: "", queryOverride: "" }), /player name/);
+});
+
+test("maps Ten Kings decimals to one documented whole PSA grade with exact ties down", () => {
+  assert.equal(mapTenKingsGradeToPsaGrade(1), 1);
+  assert.equal(mapTenKingsGradeToPsaGrade(8.49), 8);
+  assert.equal(mapTenKingsGradeToPsaGrade(8.5), 8);
+  assert.equal(mapTenKingsGradeToPsaGrade(8.51), 9);
+  assert.equal(mapTenKingsGradeToPsaGrade(10), 10);
 });
 
 test("normalizes only supported, real calendar sold dates", () => {
@@ -121,7 +161,7 @@ test("normalizes only supported, real calendar sold dates", () => {
   assert.equal(normalizeEbaySoldCompsV2Date("yesterday"), null);
 });
 
-test("parses a safe sold candidate and recursively discards provider shipping", () => {
+test("maps only the approved SoldComps facts and discards provider shipping", () => {
   const parsed = parseEbaySoldCompsV2Candidate(item("123456789012"), sportsInput);
   assert.deepEqual({
     id: parsed.id,
@@ -136,33 +176,60 @@ test("parses a safe sold candidate and recursively discards provider shipping", 
     price: 10000,
     date: "2026-08-05",
     group: "PSA_TARGET",
-    image: "https://i.ebayimg.com/images/g/example/s-l1600.jpg",
+    image: "https://i.ebayimg.com/images/g/example/s-l300.jpg",
   });
   assert.equal(JSON.stringify(parsed).toLowerCase().includes("shipping"), false);
-  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789013", { unsold_date: "Aug 5, 2026" }), sportsInput), null);
-  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789014", { link: "https://example.com/itm/123456789014" }), sportsInput), null);
-  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789015", { sold_date: undefined }), sportsInput).soldDate, null);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789015", { endedAt: undefined }), sportsInput).soldDate, null);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789039", { url: "https://example.com/itm/123456789039" }), sportsInput), null);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789040", { itemId: "123456789041" }), sportsInput), null);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789041", { itemId: "not-numeric" }), sportsInput), null);
+  for (const url of [
+    "https://www.ebay.com/p/14088354918",
+    "https://www.ebay.com/help/home",
+    "https://www.ebay.com/sch/i.html?_nkw=card",
+    "https://www.ebay.com/arbitrary/path",
+  ]) {
+    assert.equal(parseEbaySoldCompsV2Candidate(item("123456789052", {
+      url,
+    }), sportsInput), null);
+  }
 });
 
 test("emits only canonical numeric eBay item links and approved image hosts", () => {
   assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/itm/Card-Title/123456789012?hash=secret#x"), "https://www.ebay.com/itm/123456789012");
+  assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/p/123?iid=123456789012"), null);
   assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/sch/i.html?_nkw=card"), null);
+  assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://www.ebay.com/help/home?iid=123456789012"), null);
   assert.equal(canonicalEbaySoldCompsV2ListingUrl("https://evil.example/itm/123456789012"), null);
   assert.equal(isApprovedEbaySoldCompsV2ImageUrl("https://i.ebayimg.com/images/g/example/s-l1600.jpg"), true);
   assert.equal(isApprovedEbaySoldCompsV2ImageUrl("https://images.evil.example/card.jpg"), false);
 });
 
-test("rejects misleading range prices instead of inventing one sold price", () => {
-  const parsed = parseEbaySoldCompsV2Candidate(item("123456789016", { price: "$20.00 to $40.00" }), sportsInput);
-  assert.equal(parsed.soldPriceCents, null);
-  const extractedRange = parseEbaySoldCompsV2Candidate(item("123456789025", {
-    price: { raw: "$20.00 – $40.00", extracted: 20 },
+test("uses only explicit SoldComps price, currency, and Best Offer facts", () => {
+  const exact = parseEbaySoldCompsV2Candidate(item("123456789016", { soldPrice: "20.00" }), sportsInput);
+  assert.equal(exact.soldPriceCents, 2000);
+  assert.equal(exact.soldPriceDisplay, "USD 20.00");
+
+  const bestOffer = parseEbaySoldCompsV2Candidate(item("123456789017", {
+    soldPrice: "110.00",
+    bestOfferAccepted: true,
   }), sportsInput);
-  assert.equal(extractedRange.soldPriceCents, null);
-  const foreignCurrency = parseEbaySoldCompsV2Candidate(item("123456789026", {
-    price: { raw: "GBP 100.00", extracted: 100 },
+  assert.equal(bestOffer.soldPriceCents, null);
+  assert.equal(bestOffer.soldPriceDisplay, "USD 110.00");
+  assert.match(bestOffer.matchReason, /SoldComps reported USD 110\.00, an upper bound/);
+
+  const foreignCurrency = parseEbaySoldCompsV2Candidate(item("123456789018", {
+    soldPrice: "90.00",
+    soldCurrency: "EUR",
   }), sportsInput);
   assert.equal(foreignCurrency.soldPriceCents, null);
+  assert.match(foreignCurrency.matchReason, /Non-USD sold price EUR 90\.00 is not selectable/);
+
+  for (const soldPrice of [undefined, "", "20-40", "$20.00", "1e2", "0.00", "20.001"]) {
+    const unsafe = parseEbaySoldCompsV2Candidate(item("123456789019", { soldPrice }), sportsInput);
+    assert.equal(unsafe.soldPriceCents, null);
+    assert.match(unsafe.matchReason, /missing or unsafe/);
+  }
 });
 
 test("ranks exact PSA, other PSA by grade, other graders, then raw", () => {
@@ -275,120 +342,96 @@ test("averages only unique human-selected sold prices", () => {
   assert.throws(() => calculateEbaySoldCompsV2AverageCents([candidate("too-large", { soldPriceCents: EBAY_SOLD_COMPS_V2_MAX_CENTS + 1 })], ["too-large"]), /positive sold price/);
 });
 
-test("merges 30+30 candidates by stable listing identity without mutating inputs", () => {
-  const current = [candidate("ebay:1"), candidate("ebay:2")];
-  const appended = [candidate("ebay:2", { soldPriceCents: 1 }), candidate("ebay:3")];
-  const merged = mergeEbaySoldCompsV2Candidates(current, appended);
-  assert.equal(merged.length, 3);
-  assert.equal(merged.find((row) => row.id === "ebay:2").soldPriceCents, 10000);
-  assert.equal(appended[0].soldPriceCents, 1);
-  assert.deepEqual(mergeEbaySoldCompsV2Candidates(
-    [candidate("ebay:4", { soldDate: "2026-01-01" })],
-    [candidate("ebay:5", { soldDate: "2026-08-01" })],
-  ).map(({ id }) => id), ["ebay:5", "ebay:4"]);
-});
-
 test("provider prices must fit the PostgreSQL integer cents boundary", () => {
-  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789034", { price: { raw: "$21,474,836.47", extracted: 21_474_836.47 } }), sportsInput).soldPriceCents, EBAY_SOLD_COMPS_V2_MAX_CENTS);
-  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789035", { price: { raw: "$21,474,836.48", extracted: 21_474_836.48 } }), sportsInput).soldPriceCents, null);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789034", { soldPrice: "21474836.47" }), sportsInput).soldPriceCents, EBAY_SOLD_COMPS_V2_MAX_CENTS);
+  assert.equal(parseEbaySoldCompsV2Candidate(item("123456789035", { soldPrice: "21474836.48" }), sportsInput).soldPriceCents, null);
 });
 
 test("search sends the exact sold-only contract and returns a redacted deterministic result", async () => {
   const urls = [];
-  const result = await searchEbaySoldCompsV2({ ...sportsInput, requestedResultCount: 1 }, {
+  const inits = [];
+  let calls = 0;
+  const result = await searchEbaySoldCompsV2(contractInput, {
     apiKey: "top-secret",
     now: () => new Date("2026-08-06T12:00:00.000Z"),
-    fetch: async (url) => {
+    fetch: async (url, init) => {
+      calls += 1;
       urls.push(url);
-      return jsonResponse({ organic_results: [item("123456789018")] });
+      inits.push(init);
+      return jsonResponse(providerPayload([item("123456789018", {
+        title: "2025 Panini Phoenix Jalen Hurts Thunderbirds Silver #41 PSA 9",
+      })], { keyword: contractQuery, hasNextPage: true }));
     },
   });
   const request = new URL(urls[0]);
-  assert.equal(request.searchParams.get("engine"), "ebay");
-  assert.equal(request.searchParams.get("show_only"), "Sold");
-  assert.equal(request.searchParams.get("_ipg"), "50");
-  assert.equal(request.searchParams.has("_sop"), false);
-  assert.equal(request.searchParams.get("api_key"), "top-secret");
+  assert.equal(request.origin, "https://api.sold-comps.com");
+  assert.equal(request.pathname, "/v1/scrape");
+  assert.deepEqual([...request.searchParams.keys()].sort(), ["count", "ebaySite", "keyword", "page"]);
+  assert.equal(request.searchParams.get("keyword"), contractQuery);
+  assert.equal(request.searchParams.get("ebaySite"), "ebay.com");
+  assert.equal(request.searchParams.get("count"), "240");
+  assert.equal(request.searchParams.get("page"), "1");
+  assert.equal(inits[0].headers.Authorization, "Bearer top-secret");
+  assert.equal(request.toString().includes("top-secret"), false);
   assert.equal(JSON.stringify(result).includes("top-secret"), false);
   assert.equal(result.engineVersion, EBAY_SOLD_COMPS_V2_ENGINE_VERSION);
-  assert.equal(result.engineVersion, "ebay-sold-comps-v2.1.1");
+  assert.equal(result.engineVersion, "ebay-sold-comps-v2.3.0");
   assert.equal(result.retrievedAt, "2026-08-06T12:00:00.000Z");
   assert.equal(result.candidates.length, 1);
+  assert.equal(result.hasMore, false);
+  assert.equal(calls, 1);
 });
 
-test("search omits explicit unsold rows but keeps sold-filter rows with an absent sold date", async () => {
-  const result = await searchEbaySoldCompsV2({ ...sportsInput, requestedResultCount: 1 }, {
-    apiKey: "key",
-    fetch: async () => jsonResponse({ organic_results: [
-      item("123456789019", { unsold_date: "Aug 1, 2026" }),
-      item("123456789020", { sold_date: undefined }),
-    ] }),
-  });
-  assert.equal(result.candidates.length, 1);
-  assert.equal(result.candidates[0].productId, "123456789020");
-  assert.equal(result.candidates[0].soldDate, null);
-});
-
-test("offset contract retrieves the next 30 unique raw results across provider pages", async () => {
-  const calls = [];
-  const page = (start) => Array.from({ length: 50 }, (_, index) => item(String(start + index).padStart(12, "0")));
-  const fetch = async (url) => {
-    const parsed = new URL(url);
-    calls.push(parsed);
-    return jsonResponse({
-      organic_results: parsed.searchParams.get("_pgn") === "2" ? page(51) : page(1),
-      serpapi_pagination: { next: "https://serpapi.com/next" },
-    });
-  };
-  const first = await searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch });
-  const second = await searchEbaySoldCompsV2({ ...sportsInput, offset: first.nextOffset }, { apiKey: "key", fetch });
-  const merged = mergeEbaySoldCompsV2Candidates(first.candidates, second.candidates);
-  assert.equal(first.candidates.length, 30);
-  assert.equal(first.nextOffset, 30);
-  assert.equal(second.candidates.length, 30);
-  assert.equal(second.nextOffset, 60);
-  assert.equal(merged.length, 60);
-  assert.deepEqual(calls.map((url) => url.searchParams.get("_pgn")), [null, null, "2"]);
-});
-
-test("current SerpAPI pagination.next continues after a short first page", async () => {
-  const calls = [];
-  const page = (start, count) => Array.from({ length: count }, (_, index) => item(String(start + index).padStart(12, "0")));
+test("one provider response is deduplicated and capped at 60 safe candidates", async () => {
+  const duplicate = item("123456789021");
   const result = await searchEbaySoldCompsV2(sportsInput, {
     apiKey: "key",
-    fetch: async (url) => {
-      const parsed = new URL(url);
-      calls.push(parsed);
-      return parsed.searchParams.get("_pgn") === "2"
-        ? jsonResponse({ organic_results: page(21, 30) })
-        : jsonResponse({ organic_results: page(1, 20), pagination: { next: "https://serpapi.com/next" } });
-    },
+    fetch: async () => jsonResponse(providerPayload([
+      duplicate,
+      duplicate,
+      item("123456789022", { url: "https://example.com/itm/123456789022" }),
+      ...Array.from({ length: 70 }, (_, index) => item(String(123456780000 + index))),
+    ])),
   });
-  assert.equal(result.candidates.length, 30);
-  assert.deepEqual(calls.map((url) => url.searchParams.get("_pgn")), [null, "2"]);
+  assert.equal(result.candidates.length, 60);
+  assert.equal(new Set(result.candidates.map(({ id }) => id)).size, 60);
+  assert.equal(result.nextOffset, 60);
 });
 
-test("duplicate rows do not consume a requested result slot", async () => {
-  const duplicate = item("123456789021");
-  const result = await searchEbaySoldCompsV2({ ...sportsInput, requestedResultCount: 2 }, {
-    apiKey: "key",
-    fetch: async () => jsonResponse({ organic_results: [duplicate, duplicate, item("123456789022")] }),
+test("parses all 200 observed provider rows before ranking and retains a late PSA target", async () => {
+  const rawRows = Array.from({ length: 199 }, (_, index) => item(String(123456700000 + index), {
+    title: `1990 SkyBox Michael Jordan #41 raw card ${index}`,
+  }));
+  const lateTarget = item("123456799999", {
+    title: "1990 SkyBox Michael Jordan #41 PSA 9 late exact target",
   });
-  assert.equal(result.candidates.length, 2);
-  assert.equal(result.nextOffset, 3);
+  const result = await searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async () => jsonResponse(providerPayload([...rawRows, lateTarget])),
+  });
+  assert.equal(result.candidates.length, 60);
+  assert.equal(result.candidates[0].productId, "123456799999");
+  assert.equal(result.candidates[0].group, "PSA_TARGET");
 });
 
-test("retries only retryable HTTP failures with bounded backoff", async () => {
-  let calls = 0;
-  const sleeps = [];
-  const result = await searchEbaySoldCompsV2({ ...sportsInput, requestedResultCount: 1 }, {
-    apiKey: "key",
-    fetch: async () => (++calls === 1 ? jsonResponse({}, 429) : jsonResponse({ organic_results: [item("123456789023")] })),
-    sleep: async (milliseconds) => sleeps.push(milliseconds),
-  });
-  assert.equal(result.candidates.length, 1);
-  assert.equal(calls, 2);
-  assert.deepEqual(sleeps, [250]);
+test("maps supplier statuses exactly and never retries", async () => {
+  for (const [status, code] of [
+    [401, "SOLDCOMPS_CONFIGURATION_ERROR"],
+    [403, "SOLDCOMPS_QUOTA_REACHED"],
+    [429, "SOLDCOMPS_TEMPORARY_UNAVAILABLE"],
+    [502, "SOLDCOMPS_TEMPORARY_UNAVAILABLE"],
+    [503, "SOLDCOMPS_TEMPORARY_UNAVAILABLE"],
+  ]) {
+    let calls = 0;
+    await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+      apiKey: "key",
+      fetch: async () => {
+        calls += 1;
+        return jsonResponse({}, status);
+      },
+    }), code);
+    assert.equal(calls, 1);
+  }
 });
 
 test("fails once on non-retryable provider HTTP errors without leaking credentials", async () => {
@@ -399,7 +442,7 @@ test("fails once on non-retryable provider HTTP errors without leaking credentia
       calls += 1;
       return jsonResponse("bad", 400);
     },
-  }), "SERPAPI_HTTP_ERROR");
+  }), "SOLDCOMPS_HTTP_ERROR");
   assert.equal(calls, 1);
   try {
     await searchEbaySoldCompsV2(sportsInput, { apiKey: "never-print-this", fetch: async () => jsonResponse("bad", 400) });
@@ -409,9 +452,37 @@ test("fails once on non-retryable provider HTTP errors without leaking credentia
 });
 
 test("maps provider errors, invalid JSON, and missing credentials to typed safe errors", async () => {
-  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "", fetch: async () => jsonResponse({}) }), "SERPAPI_CREDENTIAL_MISSING");
-  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch: async () => jsonResponse("not json") }), "SERPAPI_INVALID_RESPONSE");
-  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch: async () => jsonResponse({ error: "account detail" }) }), "SERPAPI_PROVIDER_ERROR");
+  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "", fetch: async () => jsonResponse({}) }), "SOLDCOMPS_CREDENTIAL_MISSING");
+  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, { apiKey: "key", fetch: async () => jsonResponse("not json") }), "SOLDCOMPS_INVALID_RESPONSE");
+  await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async () => ({
+      ...jsonResponse(providerPayload([])),
+      headers: { get: (name) => name.toLowerCase() === "content-type" ? "text/html" : null },
+    }),
+  }), "SOLDCOMPS_INVALID_RESPONSE");
+  for (const payload of [
+    {},
+    providerPayload([], { keyword: "wrong query" }),
+    providerPayload([], { page: 2 }),
+    providerPayload([], { totalItems: -1 }),
+    providerPayload([], { hasNextPage: "false" }),
+    providerPayload([], { items: {} }),
+  ]) {
+    await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
+      apiKey: "key",
+      fetch: async () => jsonResponse(payload),
+    }), "SOLDCOMPS_INVALID_RESPONSE");
+  }
+});
+
+test("accepts a structurally valid empty first page without pagination", async () => {
+  const result = await searchEbaySoldCompsV2(sportsInput, {
+    apiKey: "key",
+    fetch: async () => jsonResponse(providerPayload([])),
+  });
+  assert.deepEqual(result.candidates, []);
+  assert.equal(result.hasMore, false);
 });
 
 test("rejects oversized provider bodies before unbounded parsing", async () => {
@@ -424,7 +495,7 @@ test("rejects oversized provider bodies before unbounded parsing", async () => {
       headers: { get: (name) => name.toLowerCase() === "content-length" ? String(6 * 1024 * 1024) : null },
       async text() { textCalls += 1; return "{}"; },
     }),
-  }), "SERPAPI_INVALID_RESPONSE");
+  }), "SOLDCOMPS_INVALID_RESPONSE");
   assert.equal(textCalls, 0);
 
   let cancelled = false;
@@ -439,7 +510,7 @@ test("rejects oversized provider bodies before unbounded parsing", async () => {
       }) },
       async text() { throw new Error("stream path required"); },
     }),
-  }), "SERPAPI_INVALID_RESPONSE");
+  }), "SOLDCOMPS_INVALID_RESPONSE");
   assert.equal(cancelled, true);
 });
 
@@ -447,7 +518,6 @@ test("aborts a hung request at the configured timeout", async () => {
   await assertErrorCode(() => searchEbaySoldCompsV2(sportsInput, {
     apiKey: "key",
     timeoutMs: 2,
-    maxAttempts: 1,
     fetch: async (_url, { signal }) => new Promise((_resolve, reject) => {
       signal.addEventListener("abort", () => {
         const error = new Error("aborted");
@@ -455,5 +525,5 @@ test("aborts a hung request at the configured timeout", async () => {
         reject(error);
       });
     }),
-  }), "SERPAPI_TIMEOUT");
+  }), "SOLDCOMPS_TIMEOUT");
 });

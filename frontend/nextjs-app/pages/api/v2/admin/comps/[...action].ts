@@ -14,7 +14,7 @@ import {
 } from "../../../../../lib/server/compsV2";
 import { presignReadUrl } from "../../../../../lib/server/storage";
 
-export const config = { api: { bodyParser: { sizeLimit: "320kb" } } };
+export const config = { maxDuration: 60, api: { bodyParser: { sizeLimit: "320kb" } } };
 
 const revision = z.string().regex(/^[a-f0-9]{64}$/);
 const identity = z.object({
@@ -28,16 +28,14 @@ const identity = z.object({
   insert: z.string().trim().min(1).max(160).nullable().optional(),
   cardNumber: z.string().trim().min(1).max(80).nullable().optional(),
   targetGrade: z.number().min(1).max(10).nullable().optional(),
-  offset: z.number().int().min(0).max(100000).optional(),
 }).strict();
 const searchBody = z.object({
   cardId: z.string().trim().min(1).max(64).optional(),
   researchIdentity: identity.optional(),
   query: z.string().trim().min(1).max(400),
-  operation: z.enum(["FIND", "FETCH_MORE", "REFRESH"]),
+  operation: z.enum(["FIND", "REFRESH"]),
   expectedCompsStateRevision: revision.optional(),
   acknowledgeReplaceSelected: z.boolean().optional(),
-  reviewProof: z.unknown().optional(),
 }).strict().refine((value) => Boolean(value.cardId) !== Boolean(value.researchIdentity), {
   message: "Choose card mode or research mode",
 });
@@ -72,6 +70,24 @@ const providerFailureFacts = (error: unknown) => {
     statusCode: typeof source.statusCode === "number" ? source.statusCode : null,
     retryable: source.retryable === true,
     rateLimited: source.statusCode === 429,
+    quotaReached: source.statusCode === 403,
+    configurationError: source.statusCode === 401,
+  };
+};
+
+export const compsV2ProviderAdminError = (error: unknown) => {
+  const provider = providerFailureFacts(error);
+  if (!provider) return null;
+  return {
+    provider,
+    status: 503,
+    code: provider.quotaReached ? "COMPS_PROVIDER_QUOTA_REACHED" : "COMPS_PROVIDER_UNAVAILABLE",
+    message: provider.quotaReached ? "Monthly comps quota reached." : "eBay sold comps are temporarily unavailable.",
+    logEvent: provider.rateLimited
+      ? "[CompsV2] provider_rate_limited"
+      : provider.configurationError
+        ? "[CompsV2] provider_configuration_error"
+        : "[CompsV2] request_failed",
   };
 };
 
@@ -164,15 +180,15 @@ export function createCompsV2ApiHandler() {
         console.warn("[CompsV2] request_rejected", { action: actionFrom(req), statusCode: error.status, code: error.code });
         return res.status(error.status).json({ message: error.message, code: error.code });
       }
-      const provider = providerFailureFacts(error);
-      const code = provider ? "COMPS_PROVIDER_UNAVAILABLE" : "COMPS_REQUEST_FAILED";
-      console.error(provider?.rateLimited ? "[CompsV2] provider_rate_limited" : "[CompsV2] request_failed", {
+      const providerError = compsV2ProviderAdminError(error);
+      const code = providerError?.code ?? "COMPS_REQUEST_FAILED";
+      console.error(providerError?.logEvent ?? "[CompsV2] request_failed", {
         action: actionFrom(req),
         code,
-        ...(provider ?? {}),
+        ...(providerError?.provider ?? {}),
       });
-      return res.status(code === "COMPS_PROVIDER_UNAVAILABLE" ? 502 : 500).json({
-        message: code === "COMPS_PROVIDER_UNAVAILABLE" ? "eBay sold comps are temporarily unavailable. Try again." : "Sold comps request could not be completed.",
+      return res.status(providerError?.status ?? 500).json({
+        message: providerError?.message ?? "Sold comps request could not be completed.",
         code,
       });
     }

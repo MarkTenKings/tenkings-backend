@@ -8,6 +8,14 @@ import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+import {
+  COMPS_V2_INITIAL_VISIBLE_COUNT,
+  handleFetch30MoreCompsV2Click,
+  initialCompsV2VisibleCount,
+  isCompsV2QueryReadOnly,
+  shouldAutoRunCompsV2Search,
+  visibleCompsV2Candidates,
+} from "../../lib/compsV2Ui";
 import styles from "../../styles/CompsV2.module.css";
 
 type Candidate = {
@@ -23,7 +31,7 @@ type ReviewProof = { version: 1; baseCompsStateRevision: string; expiresAt: stri
 type Card = {
   id: string; publicToken: string; certificateNumber: string | null; category: "SPORTS" | "POKEMON";
   playerName: string | null; cardName: string | null; year: string; manufacturer: string | null; productSet: string;
-  parallel: string | null; insert: string | null; cardNumber: string | null; targetGrade: number | null;
+  parallel: string | null; insert: string | null; cardNumber: string | null; targetGrade: number | null; psaTargetGrade: number | null;
   defaultQuery: string; imageUrl: string | null; snapshot: Snapshot | null; marketValueCents: number | null;
   compsPublic: boolean; compsStateRevision: string;
 };
@@ -49,8 +57,7 @@ export default function CompsV2Page() {
   const [compsPublic, setCompsPublic] = useState(false);
   const [research, setResearch] = useState({ category: "SPORTS", name: "", year: "", manufacturer: "", productSet: "", parallel: "", cardNumber: "", targetGrade: "" });
   const [busy, setBusy] = useState(false);
-  const [researchNextOffset, setResearchNextOffset] = useState(0);
-  const [researchHasMore, setResearchHasMore] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(COMPS_V2_INITIAL_VISIBLE_COUNT);
   const [autoAttemptedCardId, setAutoAttemptedCardId] = useState<string | null>(null);
   const [reviewProof, setReviewProof] = useState<ReviewProof | null>(null);
   const [message, setMessage] = useState("Select a permanent V2 card or search without a card.");
@@ -65,6 +72,7 @@ export default function CompsV2Page() {
     setSelected(next.snapshot?.candidates.filter(({ included }) => included).map(({ id }) => id) ?? []);
     setCompsPublic(next.compsPublic); setMatches([]);
     setReviewProof(null);
+    setVisibleCount(initialCompsV2VisibleCount(next.snapshot?.selection.includedCount ?? 0));
   }, []);
 
   const loadCard = useCallback(async (id: string) => {
@@ -103,8 +111,7 @@ export default function CompsV2Page() {
     setSelected([]);
     setQuery("");
     setReviewProof(null);
-    setResearchNextOffset(0);
-    setResearchHasMore(false);
+    setVisibleCount(COMPS_V2_INITIAL_VISIBLE_COUNT);
     setMessage("Loading the selected permanent card…");
     void router.push({
       pathname: "/admin/comps",
@@ -112,19 +119,16 @@ export default function CompsV2Page() {
     });
   };
 
-  const runSearch = async (operation: "FIND" | "FETCH_MORE" | "REFRESH") => {
+  const runSearch = async (operation: "FIND" | "REFRESH") => {
     if (!query.trim() || busy) return;
-    const replacingSelection = operation !== "FETCH_MORE" && (selected.length > 0 || Boolean(card?.snapshot?.selection.includedCount));
+    const replacingSelection = selected.length > 0 || Boolean(card?.snapshot?.selection.includedCount);
     const acknowledgeReplaceSelected = !replacingSelection || window.confirm("Refresh will replace the current selected-comp snapshot. Continue?");
     if (!acknowledgeReplaceSelected) return;
-    const draftSelected = operation === "FETCH_MORE" ? selected : [];
-    const draftCompsPublic = compsPublic;
-    setBusy(true); setMessage(operation === "FETCH_MORE" ? "Fetching 30 more sold results…" : "Searching eBay sold listings…");
+    setBusy(true); setMessage("Searching eBay sold listings…");
     try {
       const body = mode === "CARD" && card ? {
         cardId: card.id, query: query.trim(), operation,
         expectedCompsStateRevision: card.compsStateRevision, acknowledgeReplaceSelected,
-        ...(operation === "FETCH_MORE" && reviewProof ? { reviewProof } : {}),
       } : {
         researchIdentity: {
           category: research.category,
@@ -132,32 +136,26 @@ export default function CompsV2Page() {
           year: research.year, manufacturer: research.manufacturer || null, productSet: research.productSet,
           parallel: research.parallel || null, cardNumber: research.cardNumber || null,
           targetGrade: research.targetGrade ? Number(research.targetGrade) : null,
-          offset: operation === "FETCH_MORE" ? researchNextOffset : 0,
         }, query: query.trim(), operation,
-        ...(operation === "FETCH_MORE" && reviewProof ? { reviewProof } : {}),
       };
       const response = await fetch("/api/v2/admin/comps/search", { method: "POST", headers: headers(true), body: JSON.stringify(body) });
-      const payload = await response.json().catch(() => ({})) as { mode?: string; card?: Card; result?: Snapshot; review?: ReviewProof; researchProof?: ReviewProof; message?: string; code?: string };
+      const payload = await response.json().catch(() => ({})) as { mode?: string; card?: Card; result?: Snapshot; review?: ReviewProof; message?: string; code?: string };
       if (!response.ok) throw new Error(payload.message ?? "Sold comps search failed.");
       if (payload.card) {
         adoptCard(payload.card);
-        if (operation === "FETCH_MORE") {
-          setSelected(payload.card.snapshot?.candidates.filter(({ id, included }) => included || draftSelected.includes(id)).map(({ id }) => id) ?? []);
-          setCompsPublic(draftCompsPublic);
-        }
       }
       else if (payload.review) {
         setReviewProof(payload.review);
         setQuery(payload.review.snapshot.query);
         setCandidates(payload.review.snapshot.candidates);
-        setSelected(operation === "FETCH_MORE" ? payload.review.snapshot.candidates.filter(({ id }) => draftSelected.includes(id)).map(({ id }) => id) : []);
+        setSelected([]);
+        setVisibleCount(COMPS_V2_INITIAL_VISIBLE_COUNT);
       }
       else if (payload.result) {
         setCandidates(payload.result.candidates);
-        if (operation !== "FETCH_MORE") setSelected([]);
-        setReviewProof(payload.researchProof ?? null);
-        setResearchNextOffset(payload.result.nextOffset);
-        setResearchHasMore(payload.result.hasMore);
+        setSelected([]);
+        setReviewProof(null);
+        setVisibleCount(COMPS_V2_INITIAL_VISIBLE_COUNT);
       }
       setMessage(`Loaded ${payload.card?.snapshot?.candidates.length ?? payload.review?.snapshot.candidates.length ?? payload.result?.candidates.length ?? 0} sold results.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Sold comps search failed."); }
@@ -165,7 +163,15 @@ export default function CompsV2Page() {
   };
 
   useEffect(() => {
-    if (mode !== "CARD" || !card || card.snapshot || candidates.length || !query || busy || autoAttemptedCardId === card.id) return;
+    if (!shouldAutoRunCompsV2Search({
+      mode,
+      cardId: card?.id ?? null,
+      hasSnapshot: Boolean(card?.snapshot),
+      candidateCount: candidates.length,
+      query,
+      busy,
+      autoAttemptedCardId,
+    }) || !card) return;
     setAutoAttemptedCardId(card.id);
     void runSearch("FIND");
     // The automatic attempt is deliberately once per selected completed card.
@@ -217,19 +223,19 @@ export default function CompsV2Page() {
       <header className={styles.header}><div><span className={styles.eyebrow}>TEN KINGS · MARKET RESEARCH</span><h1>eBay Sold Comps</h1><p>Review real sold listings, choose the evidence, then confirm the value.</p></div><Link href={returnPath}>{returnPath === "/admin/ai-grader-v2/completed" ? "Completed cards" : "Back to card"}</Link></header>
       <section className={styles.panel} aria-label="Choose card or research mode">
         <div className={styles.lookup}><input className={styles.input} value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void findCards(); }} placeholder="Token, certificate, player, card name, or card number" aria-label="Find a permanent card" /><button className={styles.button} disabled={busy} onClick={() => void findCards()}>Find Card</button></div>
-        <button className={styles.modeButton} type="button" onClick={() => { setMode("RESEARCH"); setCard(null); setCandidates([]); setSelected([]); setQuery(""); setReviewProof(null); setMessage("Research mode never saves to a card."); void router.replace({ pathname: "/admin/comps", query: returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {} }, undefined, { shallow: true }); }}>Search without a card</button>
+        <button className={styles.modeButton} type="button" onClick={() => { setMode("RESEARCH"); setCard(null); setCandidates([]); setSelected([]); setQuery(""); setReviewProof(null); setVisibleCount(COMPS_V2_INITIAL_VISIBLE_COUNT); setMessage("Research mode never saves to a card."); void router.replace({ pathname: "/admin/comps", query: returnPath !== "/admin/ai-grader-v2/completed" ? { from: returnPath } : {} }, undefined, { shallow: true }); }}>Search without a card</button>
         {matches.length ? <div className={styles.searchResults}>{matches.map((match) => <button className={styles.searchResult} key={match.id} onClick={() => chooseCard(match.id)}><span>{match.name ?? "Permanent card"}<small>{match.certificateNumber ?? "No certificate"} · {match.details}</small></span><span>Choose →</span></button>)}</div> : null}
       </section>
 
-      {card ? <section className={styles.panel}><div className={styles.cardHero}>{card.imageUrl ? <img src={card.imageUrl} alt="Graded card" /> : <div className={styles.cardImagePlaceholder}>CARD</div>}<div><span className={styles.eyebrow}>{card.certificateNumber ?? card.publicToken}</span><h2>{card.category === "SPORTS" ? card.playerName : card.cardName}</h2><p>{[card.year, card.manufacturer, card.productSet, card.parallel, card.cardNumber].filter(Boolean).join(" · ")}</p></div></div></section> : null}
+      {card ? <section className={styles.panel}><div className={styles.cardHero}>{card.imageUrl ? <img src={card.imageUrl} alt="Graded card" /> : <div className={styles.cardImagePlaceholder}>CARD</div>}<div><span className={styles.eyebrow}>{card.certificateNumber ?? card.publicToken}</span><h2>{card.category === "SPORTS" ? card.playerName : card.cardName}</h2><p>{[card.year, card.manufacturer, card.productSet, card.parallel, card.cardNumber].filter(Boolean).join(" · ")}</p>{card.targetGrade != null && card.psaTargetGrade != null ? <p>TK {card.targetGrade} — comping against PSA {card.psaTargetGrade}</p> : null}</div></div></section> : null}
       {mode === "RESEARCH" ? <section className={styles.panel}><span className={styles.eyebrow}>ZERO-WRITE RESEARCH</span><div className={styles.researchGrid}>
         <label>Category<select className={styles.select} value={research.category} onChange={(e) => setResearch({ ...research, category: e.target.value })}><option value="SPORTS">Sports</option><option value="POKEMON">Pokémon</option></select></label>
         {(["name", "year", "manufacturer", "productSet", "parallel", "cardNumber", "targetGrade"] as const).map((field) => <label key={field}>{field === "name" ? research.category === "SPORTS" ? "Player name" : "Card name" : ({ year: "Year", manufacturer: "Manufacturer", productSet: "Product / Set", parallel: "Parallel / Variant", cardNumber: "Card number", targetGrade: "Target grade" } as const)[field]}<input className={styles.input} value={research[field]} onChange={(e) => setResearch({ ...research, [field]: e.target.value })} /></label>)}
       </div></section> : null}
 
-      {(card || mode === "RESEARCH") ? <section className={styles.panel}><div className={styles.queryRow}><label>Exact eBay sold search query<input className={styles.input} value={query} onChange={(e) => setQuery(e.target.value)} /></label><div className={styles.queryActions}><button className={styles.button} disabled={busy} onClick={() => void runSearch(candidates.length ? "REFRESH" : "FIND")}>{candidates.length ? "Refresh" : "Find Comps"}</button></div></div><p className={styles.status} role="status" aria-live="polite">{message}</p></section> : <p className={styles.status} role="status">{message}</p>}
+      {(card || mode === "RESEARCH") ? <section className={styles.panel}><div className={styles.queryRow}><label>Exact eBay sold search query<input className={styles.input} value={query} readOnly={isCompsV2QueryReadOnly(mode)} onChange={(e) => setQuery(e.target.value)} /></label><div className={styles.queryActions}><button className={styles.button} disabled={busy} onClick={() => void runSearch(candidates.length ? "REFRESH" : "FIND")}>{candidates.length ? "Refresh" : "Find Comps"}</button></div></div><p className={styles.status} role="status" aria-live="polite">{message}</p></section> : <p className={styles.status} role="status">{message}</p>}
 
-      {candidates.length ? <div className={styles.layout}><section aria-label="Sold comp candidates">{GROUPS.map(([group, label]) => { const rows = candidates.filter((candidate) => candidate.group === group); return rows.length ? <div className={styles.group} key={group}><h2>{label}</h2><div className={styles.rows}>{rows.map((candidate) => <article className={styles.row} key={candidate.id}><label className={styles.check}><span className="sr-only">Include {candidate.title}</span><input type="checkbox" disabled={!candidate.soldPriceCents} checked={selected.includes(candidate.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, candidate.id] : selected.filter((id) => id !== candidate.id))} /></label>{candidate.imageUrl ? <img src={candidate.imageUrl} alt="" /> : <div className={styles.noImage}>No image</div>}<div><h3>{candidate.title}</h3><div className={styles.meta}><span>{candidate.grader ? `${candidate.grader}${candidate.numericGrade ? ` ${candidate.numericGrade}` : ""}` : "Raw"}</span><span>{candidate.soldDate ?? "Sold date unavailable"}</span></div><p className={styles.reason}><b>{candidate.matchScore}/100</b> · {candidate.matchReason}</p></div><div className={styles.price}>{money(candidate.soldPriceCents)}<a href={candidate.listingUrl} target="_blank" rel="noopener noreferrer">View sold listing ↗</a></div></article>)}</div></div> : null; })}{candidates.length < 60 && (reviewProof?.snapshot.hasMore || (!reviewProof && card?.snapshot?.hasMore) || (mode === "RESEARCH" && researchHasMore)) ? <div className={styles.more}><button className={styles.button} disabled={busy} onClick={() => void runSearch("FETCH_MORE")}>Fetch 30 More</button></div> : null}</section>
+      {candidates.length ? <div className={styles.layout}><section aria-label="Sold comp candidates">{GROUPS.map(([group, label]) => { const rows = visibleCompsV2Candidates(candidates, visibleCount).filter((candidate) => candidate.group === group); return rows.length ? <div className={styles.group} key={group}><h2>{label}</h2><div className={styles.rows}>{rows.map((candidate) => <article className={styles.row} key={candidate.id}><label className={styles.check}><span className="sr-only">Include {candidate.title}</span><input type="checkbox" disabled={!candidate.soldPriceCents} checked={selected.includes(candidate.id)} onChange={(e) => setSelected(e.target.checked ? [...selected, candidate.id] : selected.filter((id) => id !== candidate.id))} /></label>{candidate.imageUrl ? <img src={candidate.imageUrl} alt="" /> : <div className={styles.noImage}>No image</div>}<div><h3>{candidate.title}</h3><div className={styles.meta}><span>{candidate.grader ? `${candidate.grader}${candidate.numericGrade ? ` ${candidate.numericGrade}` : ""}` : "Raw"}</span><span>{candidate.soldDate ?? "Sold date unavailable"}</span></div><p className={styles.reason}><b>{candidate.matchScore}/100</b> · {candidate.matchReason}</p></div><div className={styles.price}>{money(candidate.soldPriceCents)}<a href={candidate.listingUrl} target="_blank" rel="noopener noreferrer">View sold listing ↗</a></div></article>)}</div></div> : null; })}{visibleCount < candidates.length ? <div className={styles.more}><button className={styles.button} type="button" onClick={() => handleFetch30MoreCompsV2Click({ currentVisibleCount: visibleCount, candidateCount: candidates.length, selectedIds: selected, compsPublic, setVisibleCount })}>Fetch 30 More</button></div> : null}</section>
         <aside className={styles.rail} aria-label="Market value review"><span className={styles.eyebrow}>REVIEW</span><h2>{selected.length} selected</h2><div className={styles.math}>{priced.length ? `${priced.map(({ soldPriceCents }) => money(soldPriceCents)).join(" + ")} ÷ ${priced.length}` : "Select priced sold comps"}<strong>{money(average)}</strong>{priced.length ? <><small>Range {money(Math.min(...priced.map((row) => row.soldPriceCents!)))}–{money(Math.max(...priced.map((row) => row.soldPriceCents!)))}</small><small>Selected average becomes market value when confirmed</small></> : null}</div>{mode === "CARD" ? <><label className={styles.publicCheck}><input type="checkbox" checked={compsPublic} onChange={(e) => setCompsPublic(e.target.checked)} /><span>Show selected comps on the public card page</span></label><button className={styles.button} disabled={busy || !average} onClick={() => void confirmValue()}>Confirm Market Value</button>{!reviewProof && card?.snapshot?.selection.includedCount ? <button className={styles.modeButton} disabled={busy} onClick={() => void savePublic()}>Save Public Setting</button> : null}</> : <p className={styles.status}>Research mode does not save.</p>}</aside>
       </div> : (card || mode === "RESEARCH") ? <div className={styles.empty}>Sold results will appear here after you search.</div> : null}
     </main>

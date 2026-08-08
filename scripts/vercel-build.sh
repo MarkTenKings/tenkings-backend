@@ -23,5 +23,6 @@ pnpm --filter @tenkings/database run build
 pnpm --filter @tenkings/shared run build
 pnpm --filter @tenkings/browser-rip-client run build
 pnpm --filter @tenkings/ai-grader-capture-helper run build
+pnpm --filter @tenkings/ebay-sold-comps-v2 run build
 pnpm --filter @tenkings/nextjs-app run build
 node scripts/verify-ai-grader-calibration-sharp-runtime.mjs

@@ -1,7 +1,7 @@
-export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.1.1";
+export const EBAY_SOLD_COMPS_V2_ENGINE_VERSION = "ebay-sold-comps-v2.3.0";
 export const EBAY_SOLD_COMPS_V2_SOURCE = "EBAY_SOLD" as const;
-export const EBAY_SOLD_COMPS_V2_PAGE_SIZE = 50;
-export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 30;
+export const EBAY_SOLD_COMPS_V2_REQUEST_COUNT = 240;
+export const EBAY_SOLD_COMPS_V2_RESULT_LIMIT = 60;
 export const EBAY_SOLD_COMPS_V2_MAX_CENTS = 2_147_483_647;
 
 export type EbaySoldCompsV2Category = "SPORTS" | "POKEMON";
@@ -20,8 +20,6 @@ export type EbaySoldCompsV2SearchInput = {
   cardNumber?: string | null;
   targetGrade?: number | null;
   queryOverride?: string | null;
-  offset?: number;
-  requestedResultCount?: number;
 };
 
 export type EbaySoldCompV2Candidate = {
@@ -74,26 +72,26 @@ export type EbaySoldCompsV2FetchResponse = {
 
 export type EbaySoldCompsV2Fetch = (
   url: string,
-  init: { method: "GET"; signal: AbortSignal },
+  init: { method: "GET"; signal: AbortSignal; headers: { Authorization: string } },
 ) => Promise<EbaySoldCompsV2FetchResponse>;
 
 export type EbaySoldCompsV2Runtime = {
   apiKey: string;
   fetch?: EbaySoldCompsV2Fetch;
   timeoutMs?: number;
-  maxAttempts?: number;
   now?: () => Date;
-  sleep?: (milliseconds: number) => Promise<void>;
 };
 
 export type EbaySoldCompsV2ErrorCode =
   | "INVALID_INPUT"
-  | "SERPAPI_CREDENTIAL_MISSING"
-  | "SERPAPI_HTTP_ERROR"
-  | "SERPAPI_NETWORK_ERROR"
-  | "SERPAPI_TIMEOUT"
-  | "SERPAPI_INVALID_RESPONSE"
-  | "SERPAPI_PROVIDER_ERROR";
+  | "SOLDCOMPS_CREDENTIAL_MISSING"
+  | "SOLDCOMPS_CONFIGURATION_ERROR"
+  | "SOLDCOMPS_QUOTA_REACHED"
+  | "SOLDCOMPS_TEMPORARY_UNAVAILABLE"
+  | "SOLDCOMPS_HTTP_ERROR"
+  | "SOLDCOMPS_NETWORK_ERROR"
+  | "SOLDCOMPS_TIMEOUT"
+  | "SOLDCOMPS_INVALID_RESPONSE";
 
 export class EbaySoldCompsV2Error extends Error {
   readonly code: EbaySoldCompsV2ErrorCode;
@@ -115,13 +113,11 @@ export class EbaySoldCompsV2Error extends Error {
 
 type JsonRecord = Record<string, unknown>;
 
-const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
-const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_MAX_ATTEMPTS = 3;
+const SOLDCOMPS_ENDPOINT = "https://api.sold-comps.com/v1/scrape";
+const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 const MAX_TITLE_LENGTH = 500;
 const MAX_CONDITION_LENGTH = 200;
-const RETRY_DELAYS_MS = [250, 750, 1_500, 3_000] as const;
 const GROUP_ORDER: Record<EbaySoldCompsV2Group, number> = {
   PSA_TARGET: 0,
   PSA_OTHER: 1,
@@ -222,16 +218,16 @@ function validatedSearchInput(input: EbaySoldCompsV2SearchInput) {
   if (targetGrade != null && (!Number.isFinite(targetGrade) || targetGrade < 1 || targetGrade > 10)) {
     invalidInput("Target grade must be between 1 and 10.");
   }
-  const offset = input.offset ?? 0;
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) invalidInput("Offset must be a non-negative safe integer.");
-  const requestedResultCount = input.requestedResultCount ?? EBAY_SOLD_COMPS_V2_RESULT_LIMIT;
-  if (!Number.isSafeInteger(requestedResultCount) || requestedResultCount < 1 || requestedResultCount > EBAY_SOLD_COMPS_V2_RESULT_LIMIT) {
-    invalidInput(`Requested result count must be between 1 and ${EBAY_SOLD_COMPS_V2_RESULT_LIMIT}.`);
-  }
-  return { queryOverride, identityName, year, productSet, targetGrade, offset, requestedResultCount };
+  return { queryOverride, identityName, year, productSet, targetGrade };
 }
 
-const formatTargetGrade = (grade: number) => String(Math.round(grade * 10) / 10);
+/** Nearest whole PSA grade; exact .5 ties round down (for example, TK 9.5 -> PSA 9). */
+export function mapTenKingsGradeToPsaGrade(grade: number): number {
+  if (!Number.isFinite(grade) || grade < 1 || grade > 10) invalidInput("Target grade must be between 1 and 10.");
+  const lower = Math.floor(grade);
+  const fraction = grade - lower;
+  return Math.min(10, fraction > 0.5 ? lower + 1 : lower);
+}
 
 export function buildEbaySoldCompsV2Query(input: EbaySoldCompsV2SearchInput): string {
   const validated = validatedSearchInput(input);
@@ -259,7 +255,7 @@ export function buildEbaySoldCompsV2Query(input: EbaySoldCompsV2SearchInput): st
   if (!BASE_PARALLELS.has(normalizeEbaySoldCompsV2Text(input.parallel))) appendIfNew(input.parallel);
   const cardNumber = cleanText(input.cardNumber);
   if (cardNumber && !includesTokenSequence(cardNumber, productSet)) parts.push(cardNumber.startsWith("#") ? cardNumber : `#${cardNumber}`);
-  if (validated.targetGrade != null) parts.push(`PSA ${formatTargetGrade(validated.targetGrade)}`);
+  if (validated.targetGrade != null) parts.push(`PSA ${mapTenKingsGradeToPsaGrade(validated.targetGrade)}`);
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
@@ -384,17 +380,6 @@ export function rankEbaySoldCompsV2Candidates(
   });
 }
 
-export function mergeEbaySoldCompsV2Candidates(
-  current: readonly EbaySoldCompV2Candidate[],
-  appended: readonly EbaySoldCompV2Candidate[],
-): EbaySoldCompV2Candidate[] {
-  const unique = new Map<string, EbaySoldCompV2Candidate>();
-  for (const candidate of [...current, ...appended]) {
-    if (!unique.has(candidate.id)) unique.set(candidate.id, { ...candidate });
-  }
-  return rankEbaySoldCompsV2Candidates([...unique.values()]);
-}
-
 export function calculateEbaySoldCompsV2AverageCents(
   candidates: readonly EbaySoldCompV2Candidate[],
   includedCandidateIds: readonly string[],
@@ -452,10 +437,19 @@ const safeHttpsUrl = (value: unknown, allowedHost: (hostname: string) => boolean
 export const canonicalEbaySoldCompsV2ListingUrl = (value: unknown): string | null => {
   const safe = safeHttpsUrl(value, (hostname) => hostname === "ebay.com" || hostname.endsWith(".ebay.com"));
   if (!safe) return null;
-  const parsed = new URL(safe);
-  const match = parsed.pathname.match(/\/itm\/(?:[^/]+\/)?(\d{6,20})(?:\/|$)/i);
-  if (!match?.[1]) return null;
-  return `https://www.ebay.com/itm/${match[1]}`;
+  const match = new URL(safe).pathname.match(/\/itm\/(?:[^/]+\/)?(\d{6,20})(?:\/|$)/i);
+  const itemId = match?.[1] ?? null;
+  return itemId ? `https://www.ebay.com/itm/${itemId}` : null;
+};
+
+const safeEbaySourceUrl = (value: unknown) => safeHttpsUrl(
+  value,
+  (hostname) => hostname === "ebay.com" || hostname.endsWith(".ebay.com"),
+);
+
+const ebayItemIdFromSafeUrl = (safeUrl: string): string | null => {
+  const match = new URL(safeUrl).pathname.match(/\/itm\/(?:[^/]+\/)?(\d{6,20})(?:\/|$)/i);
+  return match?.[1] ?? null;
 };
 
 export const isApprovedEbaySoldCompsV2ImageUrl = (value: unknown): value is string => Boolean(
@@ -464,39 +458,15 @@ export const isApprovedEbaySoldCompsV2ImageUrl = (value: unknown): value is stri
   )),
 );
 
-const ebayListingUrl = canonicalEbaySoldCompsV2ListingUrl;
 const ebayImageUrl = (value: unknown) => safeHttpsUrl(value, (hostname) => (
   hostname === "ebayimg.com" || hostname.endsWith(".ebayimg.com") || hostname === "ebaystatic.com" || hostname.endsWith(".ebaystatic.com")
 ));
 
-const firstImageUrl = (item: JsonRecord): string | null => {
-  const candidates = [item.thumbnail, item.image, item.main_image, item.original_image, item.image_url, item.imageUrl];
-  for (const value of candidates) {
-    if (typeof value === "string") {
-      const safe = ebayImageUrl(value);
-      if (safe) return safe;
-    } else if (isRecord(value)) {
-      for (const nested of [value.original, value.large, value.url, value.link]) {
-        const safe = ebayImageUrl(nested);
-        if (safe) return safe;
-      }
-    } else if (Array.isArray(value)) {
-      for (const nested of value) {
-        const safe = typeof nested === "string" ? ebayImageUrl(nested) : isRecord(nested) ? ebayImageUrl(nested.url ?? nested.link) : null;
-        if (safe) return safe;
-      }
-    }
-  }
-  return null;
-};
+const firstImageUrl = (item: JsonRecord): string | null => ebayImageUrl(item.thumbnailUrl);
 
-const productIdFrom = (item: JsonRecord, listingUrl: string): string | null => {
-  const direct = cleanText(item.product_id);
-  if (direct && /^\d{6,20}$/.test(direct)) return direct;
-  const parsed = new URL(listingUrl);
-  const pathMatch = parsed.pathname.match(/\/itm\/(?:[^/]+\/)?(\d{6,20})(?:\/|$)/i);
-  const queryValue = parsed.searchParams.get("iid");
-  return pathMatch?.[1] ?? (queryValue && /^\d{6,20}$/.test(queryValue) ? queryValue : null);
+const directProductIdFrom = (item: JsonRecord): string | null => {
+  const direct = cleanText(item.itemId);
+  return direct && /^\d{6,20}$/.test(direct) ? direct : null;
 };
 
 const listingIdentity = (listingUrl: string, productId: string | null) => {
@@ -505,22 +475,33 @@ const listingIdentity = (listingUrl: string, productId: string | null) => {
   return `ebay-url:${url.origin}${url.pathname}`;
 };
 
-const priceFrom = (value: unknown) => {
-  const display = typeof value === "string" ? cleanText(value) : isRecord(value) ? cleanText(value.raw) : null;
-  const isRange = Boolean(display && /\s(?:-|–|—|to)\s/i.test(display));
-  const isKnownNonUsd = Boolean(display && /(?:£|€|¥|\b(?:GBP|EUR|CAD|AUD|JPY)\b|C\s*\$|AU\s*\$)/i.test(display));
-  const extracted = !isRange && !isKnownNonUsd && isRecord(value) && typeof value.extracted === "number" && Number.isFinite(value.extracted)
-    ? value.extracted
-    : null;
-  const parsedDisplay = display && !isRange && !isKnownNonUsd
-    ? Number(display.replace(/,/g, "").match(/\$\s*([0-9]+(?:\.[0-9]{1,2})?)/)?.[1] ?? Number.NaN)
-    : Number.NaN;
-  const amount = extracted ?? (Number.isFinite(parsedDisplay) ? parsedDisplay : null);
-  const cents = amount != null && amount > 0 ? Math.round(amount * 100) : null;
-  return {
-    soldPriceCents: cents && Number.isSafeInteger(cents) && cents <= EBAY_SOLD_COMPS_V2_MAX_CENTS ? cents : null,
-    soldPriceDisplay: display,
-  };
+const decimalSoldPriceCents = (value: string): number | null => {
+  const match = value.match(/^(\d{1,8})(?:\.(\d{1,2}))?$/);
+  if (!match) return null;
+  const cents = BigInt(match[1]) * 100n + BigInt((match[2] ?? "").padEnd(2, "0") || "0");
+  return cents > 0n && cents <= BigInt(EBAY_SOLD_COMPS_V2_MAX_CENTS) ? Number(cents) : null;
+};
+
+const priceFrom = (item: JsonRecord) => {
+  const soldPrice = cleanText(item.soldPrice);
+  const soldCurrency = cleanText(item.soldCurrency);
+  const soldPriceDisplay = soldPrice ? [soldCurrency, soldPrice].filter(Boolean).join(" ") : null;
+  let soldPriceCents: number | null = null;
+  let selectionNote: string | null = null;
+  if (item.bestOfferAccepted === true) {
+    selectionNote = soldPriceDisplay
+      ? `Best Offer accepted; SoldComps reported ${soldPriceDisplay}, an upper bound because eBay does not disclose the accepted amount`
+      : "Best Offer accepted; eBay does not disclose the accepted amount";
+  } else if (soldCurrency !== "USD") {
+    selectionNote = soldCurrency
+      ? `Non-USD sold price${soldPriceDisplay ? ` ${soldPriceDisplay}` : ""} is not selectable`
+      : "Sold currency is unavailable; price is not selectable";
+  } else if (item.bestOfferAccepted !== false) {
+    selectionNote = "Best Offer status is unavailable; price is not selectable";
+  } else if (!soldPrice || (soldPriceCents = decimalSoldPriceCents(soldPrice)) == null) {
+    selectionNote = "Sold price is missing or unsafe and is not selectable";
+  }
+  return { soldPriceCents, soldPriceDisplay, selectionNote };
 };
 
 export function normalizeEbaySoldCompsV2Date(value: unknown): string | null {
@@ -553,17 +534,22 @@ export function parseEbaySoldCompsV2Candidate(
   value: unknown,
   input: EbaySoldCompsV2SearchInput,
 ): EbaySoldCompV2Candidate | null {
-  if (!isRecord(value) || cleanText(value.unsold_date)) return null;
+  if (!isRecord(value)) return null;
   const titleValue = cleanText(value.title);
   const title = titleValue && titleValue.length <= MAX_TITLE_LENGTH ? titleValue : null;
-  const listingUrl = ebayListingUrl(value.link);
+  const safeSourceLink = safeEbaySourceUrl(value.url);
+  if (!safeSourceLink) return null;
+  const linkItemId = safeSourceLink ? ebayItemIdFromSafeUrl(safeSourceLink) : null;
+  const directProductId = directProductIdFrom(value);
+  if (!linkItemId || !directProductId || linkItemId !== directProductId) return null;
+  const productId = directProductId;
+  const listingUrl = productId ? `https://www.ebay.com/itm/${productId}` : null;
   if (!title || !listingUrl) return null;
-  const productId = productIdFrom(value, listingUrl);
   const { grader, numericGrade } = graderFromTitle(title);
-  const targetGrade = input.targetGrade == null ? null : input.targetGrade;
+  const targetGrade = input.targetGrade == null ? null : mapTenKingsGradeToPsaGrade(input.targetGrade);
   const variant = parallelMatch(input, title);
   const identity = scoreIdentity(input, title, variant);
-  const price = priceFrom(value.price);
+  const price = priceFrom(value);
   return {
     id: listingIdentity(listingUrl, productId),
     source: EBAY_SOLD_COMPS_V2_SOURCE,
@@ -571,37 +557,35 @@ export function parseEbaySoldCompsV2Candidate(
     title,
     listingUrl,
     imageUrl: firstImageUrl(value),
-    ...price,
-    soldDate: normalizeEbaySoldCompsV2Date(value.sold_date),
+    soldPriceCents: price.soldPriceCents,
+    soldPriceDisplay: price.soldPriceDisplay,
+    soldDate: normalizeEbaySoldCompsV2Date(value.endedAt),
     condition: cleanText(value.condition)?.slice(0, MAX_CONDITION_LENGTH) ?? null,
     grader,
     numericGrade,
     raw: grader === null,
     group: groupFor(grader, numericGrade, targetGrade),
     parallelMatch: variant,
-    ...identity,
+    matchScore: identity.matchScore,
+    matchReason: [identity.matchReason, price.selectionNote].filter(Boolean).join("; "),
   };
 }
-
-const sleepDefault = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 const defaultFetch: EbaySoldCompsV2Fetch = async (url, init) => {
   const response = await globalThis.fetch(url, init);
   return response;
 };
 
-const retryableStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
-
 async function readBoundedResponse(response: EbaySoldCompsV2FetchResponse): Promise<string> {
   const declaredLength = Number(response.headers?.get("content-length") ?? Number.NaN);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
-    throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+    throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps response exceeded the safe size limit.");
   }
   const reader = response.body?.getReader();
   if (!reader) {
     const body = await response.text();
     if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) {
-      throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps response exceeded the safe size limit.");
     }
     return body;
   }
@@ -615,7 +599,7 @@ async function readBoundedResponse(response: EbaySoldCompsV2FetchResponse): Prom
     bytes += part.value.byteLength;
     if (bytes > MAX_RESPONSE_BYTES) {
       await reader.cancel?.().catch(() => undefined);
-      throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay response exceeded the safe size limit.");
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps response exceeded the safe size limit.");
     }
     chunks.push(decoder.decode(part.value, { stream: true }));
   }
@@ -623,138 +607,116 @@ async function readBoundedResponse(response: EbaySoldCompsV2FetchResponse): Prom
   return chunks.join("");
 }
 
-async function fetchPayload(url: string, runtime: Required<Pick<EbaySoldCompsV2Runtime, "fetch" | "sleep">> & {
-  timeoutMs: number;
-  maxAttempts: number;
-}) {
-  let lastError: EbaySoldCompsV2Error | null = null;
-  for (let attempt = 1; attempt <= runtime.maxAttempts; attempt += 1) {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, runtime.timeoutMs);
-    try {
-      const response = await runtime.fetch(url, { method: "GET", signal: controller.signal });
-      if (!response.ok) {
-        throw new EbaySoldCompsV2Error("SERPAPI_HTTP_ERROR", `SerpAPI eBay request failed (${response.status}).`, {
-          statusCode: response.status,
-          retryable: retryableStatus(response.status),
-        });
-      }
-      const body = await readBoundedResponse(response);
-      let payload: unknown;
-      try {
-        payload = JSON.parse(body);
-      } catch {
-        throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay returned invalid JSON.");
-      }
-      if (!isRecord(payload)) {
-        throw new EbaySoldCompsV2Error("SERPAPI_INVALID_RESPONSE", "SerpAPI eBay returned an invalid response shape.");
-      }
-      const metadata = isRecord(payload.search_metadata) ? payload.search_metadata : null;
-      if (cleanText(payload.error) || cleanText(metadata?.error) || (cleanText(metadata?.status) && metadata?.status !== "Success")) {
-        throw new EbaySoldCompsV2Error("SERPAPI_PROVIDER_ERROR", "SerpAPI eBay could not complete the search.");
-      }
-      return payload;
-    } catch (error) {
-      lastError = error instanceof EbaySoldCompsV2Error
-        ? error
-        : new EbaySoldCompsV2Error(
-          timedOut || (error instanceof Error && error.name === "AbortError") ? "SERPAPI_TIMEOUT" : "SERPAPI_NETWORK_ERROR",
-          timedOut || (error instanceof Error && error.name === "AbortError")
-            ? "SerpAPI eBay request timed out."
-            : "SerpAPI eBay network request failed.",
-          { retryable: true },
-        );
-    } finally {
-      clearTimeout(timeout);
+async function fetchPayload(
+  url: string,
+  apiKey: string,
+  expectedQuery: string,
+  fetcher: EbaySoldCompsV2Fetch,
+  timeoutMs: number,
+) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const response = await fetcher(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) {
+      const code: EbaySoldCompsV2ErrorCode = response.status === 401
+        ? "SOLDCOMPS_CONFIGURATION_ERROR"
+        : response.status === 403
+          ? "SOLDCOMPS_QUOTA_REACHED"
+          : response.status === 429 || response.status === 502 || response.status === 503
+            ? "SOLDCOMPS_TEMPORARY_UNAVAILABLE"
+            : "SOLDCOMPS_HTTP_ERROR";
+      throw new EbaySoldCompsV2Error(code, "SoldComps request failed.", {
+        statusCode: response.status,
+        retryable: code === "SOLDCOMPS_TEMPORARY_UNAVAILABLE",
+      });
     }
-    if (!lastError.retryable || attempt >= runtime.maxAttempts) throw lastError;
-    await runtime.sleep(RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]);
+    const contentType = response.headers?.get("content-type");
+    if (contentType && !/^application\/json\b/i.test(contentType)) {
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps returned an invalid content type.");
+    }
+    const body = await readBoundedResponse(response);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(body);
+    } catch {
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps returned invalid JSON.");
+    }
+    if (!isRecord(payload)) {
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps returned an invalid response shape.");
+    }
+    if (
+      cleanText(payload.keyword) !== expectedQuery ||
+      payload.page !== 1 ||
+      !Number.isSafeInteger(payload.totalItems) ||
+      (payload.totalItems as number) < 0 ||
+      typeof payload.hasNextPage !== "boolean" ||
+      !Array.isArray(payload.items)
+    ) {
+      throw new EbaySoldCompsV2Error("SOLDCOMPS_INVALID_RESPONSE", "SoldComps returned an invalid result shape.");
+    }
+    return payload;
+  } catch (error) {
+    if (error instanceof EbaySoldCompsV2Error) throw error;
+    const aborted = timedOut || (error instanceof Error && error.name === "AbortError");
+    throw new EbaySoldCompsV2Error(
+      aborted ? "SOLDCOMPS_TIMEOUT" : "SOLDCOMPS_NETWORK_ERROR",
+      aborted ? "SoldComps request timed out." : "SoldComps network request failed.",
+      { retryable: false },
+    );
+  } finally {
+    clearTimeout(timeout);
   }
-  throw lastError ?? new EbaySoldCompsV2Error("SERPAPI_NETWORK_ERROR", "SerpAPI eBay network request failed.", { retryable: true });
 }
-
-const hasNextPage = (payload: JsonRecord, rawCount: number) => {
-  const pagination = isRecord(payload.pagination) ? payload.pagination : null;
-  const legacyPagination = isRecord(payload.serpapi_pagination) ? payload.serpapi_pagination : null;
-  return Boolean(
-    cleanText(pagination?.next) ?? cleanText(pagination?.next_link) ??
-    cleanText(legacyPagination?.next) ?? cleanText(legacyPagination?.next_link),
-  ) || rawCount >= EBAY_SOLD_COMPS_V2_PAGE_SIZE;
-};
 
 export async function searchEbaySoldCompsV2(
   input: EbaySoldCompsV2SearchInput,
   runtimeInput: EbaySoldCompsV2Runtime,
 ): Promise<EbaySoldCompsV2SearchResult> {
-  const validated = validatedSearchInput(input);
+  validatedSearchInput(input);
   const apiKey = cleanText(runtimeInput.apiKey);
-  if (!apiKey) throw new EbaySoldCompsV2Error("SERPAPI_CREDENTIAL_MISSING", "A SerpAPI credential is required.");
+  if (!apiKey) throw new EbaySoldCompsV2Error("SOLDCOMPS_CREDENTIAL_MISSING", "A SoldComps credential is required.");
   const timeoutMs = runtimeInput.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const maxAttempts = runtimeInput.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) invalidInput("Timeout must be between 1 and 60000 milliseconds.");
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 5) invalidInput("Max attempts must be between 1 and 5.");
-
-  const runtime = {
-    fetch: runtimeInput.fetch ?? defaultFetch,
-    sleep: runtimeInput.sleep ?? sleepDefault,
-    timeoutMs,
-    maxAttempts,
-  };
   const query = buildEbaySoldCompsV2Query(input);
   const candidates = new Map<string, EbaySoldCompV2Candidate>();
-  let nextOffset = validated.offset;
-  let page = Math.floor(validated.offset / EBAY_SOLD_COMPS_V2_PAGE_SIZE) + 1;
-  let offsetWithinPage = validated.offset % EBAY_SOLD_COMPS_V2_PAGE_SIZE;
-  let more = false;
-  let pagesFetched = 0;
-
-  while (candidates.size < validated.requestedResultCount && pagesFetched < 3) {
-    const params = new URLSearchParams({
-      engine: "ebay",
-      _nkw: query,
-      ebay_domain: "ebay.com",
-      show_only: "Sold",
-      _ipg: String(EBAY_SOLD_COMPS_V2_PAGE_SIZE),
-      api_key: apiKey,
-    });
-    if (page > 1) params.set("_pgn", String(page));
-    const payload = await fetchPayload(`${SERPAPI_ENDPOINT}?${params.toString()}`, runtime);
-    const rawItems = Array.isArray(payload.organic_results) ? payload.organic_results : [];
-    const providerHasNextPage = hasNextPage(payload, rawItems.length);
-    let rawIndex = offsetWithinPage;
-    for (; rawIndex < rawItems.length; rawIndex += 1) {
-      nextOffset = (page - 1) * EBAY_SOLD_COMPS_V2_PAGE_SIZE + rawIndex + 1;
-      const candidate = parseEbaySoldCompsV2Candidate(rawItems[rawIndex], input);
-      if (candidate && !candidates.has(candidate.id)) candidates.set(candidate.id, candidate);
-      if (candidates.size >= validated.requestedResultCount) {
-        more = rawIndex + 1 < rawItems.length || providerHasNextPage;
-        break;
-      }
-    }
-    if (candidates.size >= validated.requestedResultCount) break;
-    if (!providerHasNextPage) {
-      more = false;
-      break;
-    }
-    more = true;
-    page += 1;
-    offsetWithinPage = 0;
-    pagesFetched += 1;
+  const params = new URLSearchParams({
+    keyword: query,
+    ebaySite: "ebay.com",
+    count: String(EBAY_SOLD_COMPS_V2_REQUEST_COUNT),
+    page: "1",
+  });
+  const payload = await fetchPayload(
+    `${SOLDCOMPS_ENDPOINT}?${params.toString()}`,
+    apiKey,
+    query,
+    runtimeInput.fetch ?? defaultFetch,
+    timeoutMs,
+  );
+  const rawItems = (payload.items as unknown[]).slice(0, EBAY_SOLD_COMPS_V2_REQUEST_COUNT);
+  for (const rawItem of rawItems) {
+    const candidate = parseEbaySoldCompsV2Candidate(rawItem, input);
+    if (candidate && !candidates.has(candidate.id)) candidates.set(candidate.id, candidate);
   }
 
+  const ranked = rankEbaySoldCompsV2Candidates([...candidates.values()]).slice(0, EBAY_SOLD_COMPS_V2_RESULT_LIMIT);
   return {
     source: EBAY_SOLD_COMPS_V2_SOURCE,
     engineVersion: EBAY_SOLD_COMPS_V2_ENGINE_VERSION,
     query,
     retrievedAt: (runtimeInput.now ?? (() => new Date()))().toISOString(),
-    offset: validated.offset,
-    nextOffset,
-    requestedResultCount: validated.requestedResultCount,
-    hasMore: more,
-    candidates: rankEbaySoldCompsV2Candidates([...candidates.values()]),
+    offset: 0,
+    nextOffset: ranked.length,
+    requestedResultCount: EBAY_SOLD_COMPS_V2_RESULT_LIMIT,
+    hasMore: false,
+    candidates: ranked,
   };
 }
