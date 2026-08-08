@@ -263,7 +263,7 @@ Prior Node 20 verification on the uncommitted correction:
 - Changed Comps files: no TypeScript errors
 - Full repository `tsc --noEmit` still contained 13 pre-existing unrelated AI Grader test errors.
 
-Current local truth as of 2026-08-08 supersedes that pre-adapter snapshot: the Comps V2 supplier boundary is implemented against SoldComps, the former SerpAPI request/parser/status coupling is removed from this path, and `scripts/vercel-build.sh` explicitly builds `@tenkings/ebay-sold-comps-v2` before Next.js so a clean checkout does not depend on an untracked `dist`. The adapter remains unreleased until the normal PR/deploy sequence completes.
+Current truth as of 2026-08-08 supersedes that pre-adapter snapshot: the Comps V2 supplier boundary is implemented against SoldComps, the former SerpAPI request/parser/status coupling is removed from this path, and `scripts/vercel-build.sh` explicitly builds `@tenkings/ebay-sold-comps-v2` before Next.js so a clean checkout does not depend on an untracked `dist`. PR `#306` merged normally as `5ada8204860dd40e14db38891e8e330c05272709`; Vercel deployment `48aTJTR3DeupTZzVmaHqzCuFewni` is Ready, Production, Current, and serves `collect.tenkings.co` from that exact merge commit.
 
 A brand-new independent post-adapter critic returned explicit `GO` after one correction: Best Offer and non-USD candidates retain their approved amount/currency in the existing visible `matchReason`, while `soldPriceCents` remains null so those rows cannot be selected or averaged. Root-owned Node 20 verification passes provider `24/24`, Comps server/UI/API `16/16`, database build, focused ESLint, `git diff --check`, and the complete `RUN_DB_MIGRATIONS=false pnpm vercel:build` with all `75/75` pages.
 
@@ -586,6 +586,15 @@ After successful acceptance only:
 - report the final simple Comps workflow to Mark.
 
 If cleanup/cancellation requires a fresh provider or billing login, use Mark’s authenticated session and do not expose credentials.
+
+### Production acceptance result — 2026-08-08
+
+- The completed-card `Open Sold Comps` link opened the exact permanent TKH-000700 card and one automatic search ran without an extra click.
+- The released page showed the exact locked 61-byte query, `TK 9.2 — comping against PSA 9`, and 60 saved candidates from one provider call. SoldComps usage moved from 1/100 to 2/100; local `Fetch 30 More` changed only 30 visible rows to 60 and usage remained 2/100.
+- All 60 visible candidates had approved eBay image hosts. Twenty-three Best Offer/unsafe rows were disabled; Best Offer rows visibly retained exact upper-bound amount/currency evidence in the existing reason. A returned eBay link opened the matching sold listing with the sold banner, title, date, and `$29.99` price.
+- No retained candidate matched Jalen Hurts + Thunderbirds + card #41 together. No false row was selected, no market value was confirmed, and public comps remained off/blank. Reloading the card showed `Saved sold-comps snapshot loaded.` without another provider call.
+- The stable rendered grade summary was byte-identical before/after (`588` bytes; SHA-256 `8e04569b01a95036497bed08cc5731e2d9897decaa21436a4ec88007be68d4e4`), and the completed-card return path remained correct.
+- The obsolete wrong-name Vercel variable `Ten_Kings_Sold_Comps_V2` was deleted only after this acceptance. The Sensitive Production/Preview `SOLDCOMPS_API_KEY` remains present. Global `SERPAPI_KEY`, `RUN_DB_MIGRATIONS`, subscriptions, NFC/Dell, V1, and every unrelated environment setting were unchanged.
 
 ---
 
