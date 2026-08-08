@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
+import { EbaySoldCompsV2Error } from "@tenkings/ebay-sold-comps-v2";
 
 import {
   compsStateRevision,
@@ -12,7 +13,17 @@ import {
   runCompsV2Search,
   verifyCompsV2ReviewProof,
 } from "../lib/server/compsV2";
-import { createCompsV2ApiHandler, parseCompsV2ConfirmRequest } from "../pages/api/v2/admin/comps/[...action]";
+import {
+  COMPS_V2_INITIAL_VISIBLE_COUNT,
+  COMPS_V2_MAX_VISIBLE_COUNT,
+  handleFetch30MoreCompsV2Click,
+  initialCompsV2VisibleCount,
+  isCompsV2QueryReadOnly,
+  revealCompsV2Locally,
+  shouldAutoRunCompsV2Search,
+  visibleCompsV2Candidates,
+} from "../lib/compsV2Ui";
+import { compsV2ProviderAdminError, createCompsV2ApiHandler, parseCompsV2ConfirmRequest } from "../pages/api/v2/admin/comps/[...action]";
 
 const candidate = (id: string, price: number, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -36,7 +47,7 @@ const candidate = (id: string, price: number, overrides: Record<string, unknown>
 const snapshot = (overrides: Record<string, unknown> = {}) => ({
   version: 1,
   source: "EBAY_SOLD",
-  engineVersion: "ebay-sold-comps-v2.1.1",
+  engineVersion: "ebay-sold-comps-v2.3.0",
   query: "1990 SkyBox Michael Jordan #41 PSA 9",
   retrievedAt: "2026-08-06T12:00:00.000Z",
   nextOffset: 30,
@@ -75,13 +86,6 @@ const searchCard = (overrides: Record<string, unknown> = {}) => ({
   humanGradeLabel: { certificateNumber: "TK-1" },
   ...revisionCard(),
   ...overrides,
-});
-
-const engineCandidate = (id: string, price: number, overrides: Record<string, unknown> = {}) => ({
-  ...candidate(id, price, overrides),
-  source: "EBAY_SOLD" as const,
-  productId: id,
-  soldPriceDisplay: `$${(price / 100).toFixed(2)}`,
 });
 
 test("full-state revision changes for snapshot, confirmed-value facts, or public visibility", () => {
@@ -126,7 +130,7 @@ test("selected-snapshot refresh proof is bounded, revision-bound, expiring, and 
   assert.throws(() => verifyCompsV2ReviewProof(proof, revision, "test-only-secret", new Date("2026-08-06T12:16:00.000Z")), /expired/);
 });
 
-test("30+30 review proof fits the bounded API envelope while oversized snapshots fail before confirmation", () => {
+test("one-call 60-row review proof fits the bounded API envelope while oversized snapshots fail before confirmation", () => {
   const longImage = `https://i.ebayimg.com/images/g/example/s-l1600.jpg?${"a".repeat(850)}`;
   const candidates = Array.from({ length: 60 }, (_, index) => candidate(String(123456780000 + index), 10000 + index, {
     title: `Sold card ${"T".repeat(480)}${index}`,
@@ -151,66 +155,154 @@ test("30+30 review proof fits the bounded API envelope while oversized snapshots
   assert.equal(parseCompsV2Snapshot({ ...snapshot(), ignored: "x".repeat(257 * 1024) }), null);
   const api = readFileSync(join(process.cwd(), "pages/api/v2/admin/comps/[...action].ts"), "utf8");
   assert.equal(api.includes('sizeLimit: "320kb"'), true);
+  assert.equal(api.includes("maxDuration: 60"), true);
 });
 
-test("card fetch-more rejects known stale state, query mismatch, and 60-row cap before provider I/O", async () => {
+test("card search rejects stale state before provider I/O", async () => {
   let providerCalls = 0;
   const search = async () => { providerCalls += 1; throw new Error("provider must not run"); };
   const base = searchCard();
-  const revision = compsStateRevision(base as never);
-  const common = { cardId: base.id, query: snapshot().query, operation: "FETCH_MORE" as const, adminId: "admin-1" };
-  await assert.rejects(runCompsV2Search({ ...common, expectedCompsStateRevision: "b".repeat(64) }, {
+  await assert.rejects(runCompsV2Search({
+    cardId: base.id,
+    query: snapshot().query,
+    operation: "REFRESH",
+    expectedCompsStateRevision: "b".repeat(64),
+    adminId: "admin-1",
+  }, {
     getCard: async () => base as never,
     search: search as never,
   }), (error: unknown) => (error as { code?: string }).code === "STALE_COMPS_STATE");
-  await assert.rejects(runCompsV2Search({ ...common, query: "changed query", expectedCompsStateRevision: revision }, {
-    getCard: async () => base as never,
-    search: search as never,
-  }), (error: unknown) => (error as { code?: string }).code === "STALE_COMPS_STATE");
-  const sixty = Array.from({ length: 60 }, (_, index) => candidate(String(123456780000 + index), 10000, { included: false }));
-  const capped = searchCard({ compsSnapshot: snapshot({ candidates: sixty, confirmation: null }) });
-  await assert.rejects(runCompsV2Search({ ...common, expectedCompsStateRevision: compsStateRevision(capped as never) }, {
-    getCard: async () => capped as never,
-    search: search as never,
-  }), (error: unknown) => (error as { code?: string }).code === "COMPS_LIMIT_REACHED");
   assert.equal(providerCalls, 0);
 });
 
-test("zero-write research 30+30 merge stays signed, server-ranked, capped, and has no third provider call", async () => {
-  const previousKey = process.env.SERPAPI_KEY;
-  process.env.SERPAPI_KEY = "test-only-research-signing-key";
+test("card refresh ignores client query overrides and searches the mapped PSA grade from authoritative identity", async () => {
+  const previousKey = process.env.SOLDCOMPS_API_KEY;
+  process.env.SOLDCOMPS_API_KEY = "test-only-review-key";
+  const base = searchCard({ gradeSnapshot: { finalGrade: "9.2" } });
+  const revision = compsStateRevision(base as never);
+  const receivedInputs: Array<{ targetGrade?: number | null; queryOverride?: string | null }> = [];
+  try {
+    const result = await runCompsV2Search({
+      cardId: base.id,
+      query: "malicious TK 9.2 override",
+      operation: "REFRESH",
+      expectedCompsStateRevision: revision,
+      acknowledgeReplaceSelected: true,
+      adminId: "admin-1",
+    }, {
+      getCard: async () => base as never,
+      search: (async (input: { targetGrade?: number | null; queryOverride?: string | null }) => {
+        receivedInputs.push(input);
+        return {
+          source: "EBAY_SOLD" as const,
+          engineVersion: "ebay-sold-comps-v2.3.0" as const,
+          query: "1990 SkyBox Michael Jordan #41 PSA 9",
+          retrievedAt: "2026-08-06T12:00:00.000Z",
+          offset: 0,
+          nextOffset: 1,
+          requestedResultCount: 60,
+          hasMore: false,
+          candidates: [{
+            ...candidate("123456789010", 10000, { included: false }),
+            source: "EBAY_SOLD" as const,
+            productId: "123456789010",
+            soldPriceDisplay: "$100.00",
+          }],
+        };
+      }) as never,
+    });
+    assert.equal(result.mode, "CARD_REVIEW");
+    assert.equal(receivedInputs[0]?.targetGrade, 9.2);
+    assert.equal(receivedInputs[0]?.queryOverride, null);
+    assert.equal(result.review.snapshot.query.includes("PSA 9"), true);
+    assert.equal(result.review.snapshot.query.includes("9.2"), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.SOLDCOMPS_API_KEY;
+    else process.env.SOLDCOMPS_API_KEY = previousKey;
+  }
+});
+
+test("zero-write research uses one provider result and retains at most 60 candidates", async () => {
   let providerCalls = 0;
-  const search = async (_input: unknown) => {
+  const search = async () => {
     providerCalls += 1;
-    const newer = providerCalls === 2;
     return {
       source: "EBAY_SOLD" as const,
-      engineVersion: "ebay-sold-comps-v2.1.1" as const,
+      engineVersion: "ebay-sold-comps-v2.3.0" as const,
       query: snapshot().query,
-      retrievedAt: newer ? "2026-08-07T12:00:00.000Z" : "2026-08-06T12:00:00.000Z",
-      offset: newer ? 30 : 0,
-      nextOffset: newer ? 60 : 30,
-      requestedResultCount: 30,
-      hasMore: true,
-      candidates: Array.from({ length: 30 }, (_, index) => engineCandidate(String((newer ? 223456780000 : 123456780000) + index), 10000, {
-        soldDate: newer ? "2026-08-07" : "2026-08-01",
+      retrievedAt: "2026-08-06T12:00:00.000Z",
+      offset: 0,
+      nextOffset: 60,
+      requestedResultCount: 60,
+      hasMore: false,
+      candidates: Array.from({ length: 60 }, (_, index) => ({
+        ...candidate(String(123456780000 + index), 10000, { included: false }),
+        source: "EBAY_SOLD" as const,
+        productId: String(123456780000 + index),
+        soldPriceDisplay: "$100.00",
       })),
     };
   };
   const identity = { category: "SPORTS" as const, playerName: "Michael Jordan", year: "1990", manufacturer: "SkyBox", productSet: "1990 SkyBox", parallel: "Base", cardNumber: "41", targetGrade: 9 };
+  const result = await runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FIND", adminId: "admin-1" }, { search: search as never });
+  assert.equal(result.mode, "RESEARCH");
+  assert.equal(result.result.candidates.length, 60);
+  assert.equal(result.result.hasMore, false);
+  assert.equal(providerCalls, 1);
+});
+
+test("the wired Fetch 30 More click controller changes only 30-to-60 visibility", () => {
+  const rows = Array.from({ length: 60 }, (_, index) => ({ id: index + 1 }));
+  let networkCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    networkCalls += 1;
+    throw new Error("local reveal must never fetch");
+  }) as typeof fetch;
   try {
-    const first = await runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FIND", adminId: "admin-1" }, { search: search as never });
-    assert.equal(first.mode, "RESEARCH");
-    const second = await runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FETCH_MORE", reviewProof: first.researchProof, adminId: "admin-1" }, { search: search as never });
-    assert.equal(second.result.candidates.length, 60);
-    assert.equal(second.result.candidates[0].soldDate, "2026-08-07");
-    assert.equal(second.result.hasMore, false);
-    await assert.rejects(runCompsV2Search({ researchIdentity: identity, query: snapshot().query, operation: "FETCH_MORE", reviewProof: second.researchProof, adminId: "admin-1" }, { search: search as never }), (error: unknown) => (error as { code?: string }).code === "COMPS_LIMIT_REACHED");
-    assert.equal(providerCalls, 2);
+    const initial = initialCompsV2VisibleCount(0);
+    assert.equal(initial, COMPS_V2_INITIAL_VISIBLE_COUNT);
+    assert.equal(visibleCompsV2Candidates(rows, initial).length, 30);
+    const selectedIds = ["one", "three"] as const;
+    let appliedVisibleCount = initial;
+    const result = handleFetch30MoreCompsV2Click({
+      currentVisibleCount: initial,
+      candidateCount: rows.length,
+      selectedIds,
+      compsPublic: true,
+      setVisibleCount: (nextVisibleCount) => { appliedVisibleCount = nextVisibleCount; },
+    });
+    assert.equal(appliedVisibleCount, COMPS_V2_MAX_VISIBLE_COUNT);
+    assert.equal(result.visibleCount, COMPS_V2_MAX_VISIBLE_COUNT);
+    assert.equal(visibleCompsV2Candidates(rows, result.visibleCount).length, 60);
+    assert.strictEqual(result.selectedIds, selectedIds);
+    assert.equal(result.compsPublic, true);
+    assert.equal(revealCompsV2Locally(result.visibleCount, rows.length), 60);
+    assert.equal(initialCompsV2VisibleCount(3), 60);
+    assert.equal(networkCalls, 0);
   } finally {
-    if (previousKey === undefined) delete process.env.SERPAPI_KEY;
-    else process.env.SERPAPI_KEY = previousKey;
+    globalThis.fetch = originalFetch;
   }
+});
+
+test("card query state is read-only and automatic search runs once without replacing retained state", () => {
+  assert.equal(isCompsV2QueryReadOnly("CARD"), true);
+  assert.equal(isCompsV2QueryReadOnly("RESEARCH"), false);
+  const ready = {
+    mode: "CARD" as const,
+    cardId: "card-1",
+    hasSnapshot: false,
+    candidateCount: 0,
+    query: "1990 SkyBox Michael Jordan #41 PSA 9",
+    busy: false,
+    autoAttemptedCardId: null,
+  };
+  assert.equal(shouldAutoRunCompsV2Search(ready), true);
+  assert.equal(shouldAutoRunCompsV2Search({ ...ready, autoAttemptedCardId: "card-1" }), false);
+  assert.equal(shouldAutoRunCompsV2Search({ ...ready, hasSnapshot: true }), false);
+  assert.equal(shouldAutoRunCompsV2Search({ ...ready, candidateCount: 30 }), false);
+  assert.equal(shouldAutoRunCompsV2Search({ ...ready, busy: true }), false);
+  assert.equal(shouldAutoRunCompsV2Search({ ...ready, mode: "RESEARCH" }), false);
 });
 
 test("public projection is absent unless explicitly enabled and every selected row is complete", () => {
@@ -245,7 +337,8 @@ test("admin surface keeps engine server-only, exact groups/label, one-shot auto 
   for (const required of [
     "PSA — Same Grade", "PSA — Other Grades", "BGS / SGC / CGC", "Raw", "Fetch 30 More",
     "Show selected comps on the public card page", "Confirm Market Value", "Search without a card",
-    "autoAttemptedCardId === card.id", 'void runSearch("FIND")',
+    "TK {card.targetGrade} — comping against PSA {card.psaTargetGrade}",
+    'void runSearch("FIND")',
     "^\\/admin\\/ai-grader-v2\\/completed\\/",
   ]) assert.equal(page.includes(required), true, `missing UI contract: ${required}`);
   assert.equal(page.includes("@tenkings/ebay-sold-comps-v2"), false);
@@ -257,20 +350,25 @@ test("admin surface keeps engine server-only, exact groups/label, one-shot auto 
   assert.equal(api.includes("marketValueCents: z.number"), false);
   assert.equal(page.includes("Selected average becomes market value when confirmed"), true);
   assert.equal(page.includes("candidate.matchScore"), true);
-  assert.equal(page.includes("candidates.length < 60"), true);
+  for (const helper of ["visibleCompsV2Candidates", "handleFetch30MoreCompsV2Click", "isCompsV2QueryReadOnly", "shouldAutoRunCompsV2Search"]) {
+    assert.equal(page.includes(helper), true, `page is not wired to ${helper}`);
+  }
+  assert.equal(page.includes("onClick={() => handleFetch30MoreCompsV2Click({"), true);
   assert.equal(page.includes("[...candidates"), false);
   assert.equal(page.includes('mode === "CARD" && id'), true);
   assert.equal(page.includes('router.replace({ pathname: "/admin/comps"'), true);
   assert.equal(page.includes('const chooseCard = (id: string) => {\n    setMode("CARD");'), true);
   assert.equal(page.includes('onClick={() => chooseCard(match.id)}'), true);
   assert.equal(page.includes("setMarketValue"), false);
-  assert.equal(server.includes("researchProof: createCompsV2ReviewProof"), true);
+  assert.equal(server.includes("researchProof: createCompsV2ReviewProof"), false);
   assert.equal(server.includes("const selectedIds = current.candidates.filter"), true);
-  for (const required of ["CARD_REVIEW", "createCompsV2ReviewProof", "verifyCompsV2ReviewProof", "reviewProof?.snapshot ?? currentSnapshot"]) {
+  for (const required of ["CARD_REVIEW", "createCompsV2ReviewProof", "verifyCompsV2ReviewProof", "proof?.snapshot ?? parseCompsV2Snapshot"]) {
     assert.equal(server.includes(required), true, `missing durable refresh contract: ${required}`);
   }
   assert.equal(server.includes("!proof &&"), true);
-  assert.equal(page.includes('operation === "FETCH_MORE" ? payload.review.snapshot.candidates.filter'), true);
+  assert.equal(page.includes("FETCH_MORE"), false);
+  assert.equal(api.includes("FETCH_MORE"), false);
+  assert.equal(server.includes("FETCH_MORE"), false);
   assert.equal(finish.includes("Open Sold Comps"), true);
   assert.equal(finish.includes("from=${encodeURIComponent"), true);
 });
@@ -293,6 +391,33 @@ test("API operational logs expose typed safe signals without query, key, listing
   }
   const logHelper = api.slice(api.indexOf("const logSuccess"), api.indexOf("const cardPayload"));
   for (const forbidden of ["query:", "apiKey", "listing", "customer", "token"]) assert.equal(logHelper.includes(forbidden), false);
+});
+
+test("SoldComps provider statuses map to the locked safe admin messages", () => {
+  for (const statusCode of [429, 502, 503]) {
+    const mapped = compsV2ProviderAdminError(new EbaySoldCompsV2Error(
+      "SOLDCOMPS_TEMPORARY_UNAVAILABLE",
+      "safe",
+      { statusCode, retryable: true },
+    ));
+    assert.equal(mapped?.message, "eBay sold comps are temporarily unavailable.");
+    assert.equal(mapped?.code, "COMPS_PROVIDER_UNAVAILABLE");
+    assert.equal(mapped?.status, 503);
+  }
+  const quota = compsV2ProviderAdminError(new EbaySoldCompsV2Error(
+    "SOLDCOMPS_QUOTA_REACHED",
+    "safe",
+    { statusCode: 403 },
+  ));
+  assert.equal(quota?.message, "Monthly comps quota reached.");
+  assert.equal(quota?.code, "COMPS_PROVIDER_QUOTA_REACHED");
+  const configuration = compsV2ProviderAdminError(new EbaySoldCompsV2Error(
+    "SOLDCOMPS_CONFIGURATION_ERROR",
+    "safe",
+    { statusCode: 401 },
+  ));
+  assert.equal(configuration?.message, "eBay sold comps are temporarily unavailable.");
+  assert.equal(configuration?.logEvent, "[CompsV2] provider_configuration_error");
 });
 
 test("public page renders selected projection only and has no empty-state comps copy", () => {
