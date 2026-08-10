@@ -256,7 +256,7 @@ export default function RemovedSpeedsterFindingsPage() {
                     ? <small>Originally proposed as {displayType(finding.detectedDefectType)}</small>
                     : null}
                   {finding.memoryProposal ? <small>
-                    Similarity {finding.memoryProposal.similarity.toFixed(3)} · exemplar session {finding.memoryProposal.lessonSessionId} · completion {finding.memoryProposal.lessonCompletionOrder}
+                    Similarity {finding.memoryProposal.similarity.toFixed(3)} · exemplar session {finding.memoryProposal.lessonSessionId} · completion {finding.memoryProposal.lessonCompletionOrder} · proposal {finding.memoryProposal.lessonProposalOrder} · source {finding.memoryProposal.lessonSourceViewId}
                   </small> : null}
                 </button>)}
               </section>

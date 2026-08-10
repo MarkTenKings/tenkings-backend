@@ -9,6 +9,14 @@
 - Implemented the release as a five-file viewer/API/test surface plus the completed-cards navigation link. The summary request bounds and explicitly counts unreadable history; card details return only final `REMOVED` findings and short-lived session-owned evidence URLs; no write method or Prisma mutation is present.
 - Local validation passed: all non-DOM AI Grader V2 tests `224/224`, including the audit security/history tests; focused ESLint completed with zero warnings/errors; and `git diff --check` passed.
 
+### Production result and exact-lesson display follow-up
+
+- Protected PR `#308` passed all `12/12` required GitHub, disposable PostgreSQL migration-chain, Docker-image, and Vercel Preview checks and merged at `8661486a2cfa957cd1b1dabed30a7a2635add994`.
+- The exact merge's normal Vercel Production deployment completed successfully at `2026-08-10T17:40:29Z`; deployment evidence is `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/HrZWZHKVd8zFotFcSd89jn1dXjWP`. No migration was required or applied.
+- Read-only Production verification loaded the authenticated audit and reconciled exactly `50` completed sessions, `49` sessions with saved removals, `1` session with zero removals, and `1,784` removed findings: Detector `1,431`, Memory `312`, Smart-Mark `41`.
+- Analysis found that one Memory completion/session can contain multiple proposal lessons. Planned follow-up is limited to displaying the already-returned `lessonProposalOrder` and `lessonSourceViewId` beside the existing Memory session/completion/similarity so repeated lessons can be counted exactly; the API, data, thresholds, and Memory bank remain unchanged.
+- Exact-lesson display follow-up validation passed: focused audit tests `3/3`, focused ESLint with zero warnings/errors, and `git diff --check`.
+
 ## 2026-07-30 - Human Grade right-third optical balance refinement
 
 - Mark authorized a narrowly scoped Human Grade label adjustment for the fastest protected Production path: keep every existing label field, value, weighted grade, certificate, page, PDF workflow, and all non-Human-Grade systems unchanged.
