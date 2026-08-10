@@ -197,4 +197,6 @@ test("removed-findings route and screen are admin-only, GET-only, and contain no
   assert.doesNotMatch(api, /prisma\.[a-zA-Z]+\.(create|update|updateMany|delete|deleteMany|upsert)\(/);
   assert.doesNotMatch(page, /method:\s*"(POST|PATCH|PUT|DELETE)"/);
   assert.match(page, /PRIVATE READ-ONLY AUDIT/);
+  assert.match(page, /lessonProposalOrder/);
+  assert.match(page, /lessonSourceViewId/);
 });
