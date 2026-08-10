@@ -1,5 +1,14 @@
 # Session Log (Append Only)
 
+## 2026-08-10 - Speedster removed-defects audit viewer release planned
+
+- Mark explicitly approved releasing the private read-only removed-defects audit viewer, then analyzing the saved removed findings across all 50 completed Speedster cards.
+- Release branch `codex/removed-defects-audit-release` was created from the verified current `origin/main` Production base `b4fcb930491ba32482f5aafd155e24806e724cb8` so the viewer can ship without the separate instrumentation migration or any instrumentation runtime changes.
+- Planned Production action is limited to the admin-authenticated GET-only audit page/API, a navigation link from completed cards, focused validation, one protected PR, merge after required checks, the normal Vercel Production deployment, and read-only Production smoke/analysis.
+- No database migration, `RUN_DB_MIGRATIONS=true`, Production card/session/Memory mutation, grading, capture, RunPod/provider, model/threshold, camera, NFC, PhotoRoom, hardware, or destructive action is authorized or planned.
+- Implemented the release as a five-file viewer/API/test surface plus the completed-cards navigation link. The summary request bounds and explicitly counts unreadable history; card details return only final `REMOVED` findings and short-lived session-owned evidence URLs; no write method or Prisma mutation is present.
+- Local validation passed: all non-DOM AI Grader V2 tests `224/224`, including the audit security/history tests; focused ESLint completed with zero warnings/errors; and `git diff --check` passed.
+
 ## 2026-07-30 - Human Grade right-third optical balance refinement
 
 - Mark authorized a narrowly scoped Human Grade label adjustment for the fastest protected Production path: keep every existing label field, value, weighted grade, certificate, page, PDF workflow, and all non-Human-Grade systems unchanged.

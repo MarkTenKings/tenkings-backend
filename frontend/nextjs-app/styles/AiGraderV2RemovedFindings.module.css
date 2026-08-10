@@ -1,0 +1,51 @@
+.page { width: min(1680px, 100%); margin: 0 auto; padding: 42px 28px 90px; color: #f7f5ef; }
+.hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 28px; margin-bottom: 28px; }
+.hero span, .cardHeader span, .findingList header span, .summary small, .cardRail small { color: #d8aa4f; font-size: 10px; font-weight: 800; letter-spacing: .2em; }
+.hero h1 { margin: 6px 0 10px; font-size: clamp(48px, 7vw, 96px); font-weight: 350; letter-spacing: -.06em; line-height: .92; }
+.hero p, .cardHeader p { margin: 0; color: #92958f; }
+.hero nav, .cardHeaderActions { display: flex; flex-wrap: wrap; gap: 9px; }
+.hero a, .cardHeaderActions a, .cardHeaderActions button, .cardRail header button { padding: 10px 14px; color: #f4f2ec; border: 1px solid #d8aa4f4a; border-radius: 999px; background: transparent; font: inherit; font-weight: 800; text-decoration: none; cursor: pointer; }
+.summary { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.summary div { display: grid; gap: 10px; padding: 18px; border: 1px solid #d8aa4f33; border-radius: 18px; background: #090b08; }
+.summary strong { color: #e5c579; font-size: 34px; font-weight: 400; }
+.warning { padding: 14px 18px; color: #f6d38c; border: 1px solid #b47b2e; border-radius: 14px; background: #241908; }
+.auditGrid { display: grid; grid-template-columns: minmax(290px, 360px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.cardRail, .detailPanel { overflow: hidden; border: 1px solid #d8aa4f33; border-radius: 22px; background: #080a08; }
+.cardRail { position: sticky; top: 18px; }
+.cardRail > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; border-bottom: 1px solid #292418; }
+.cardRail > header div { display: grid; gap: 4px; }
+.cardRail > header strong { font-size: 22px; }
+.cardButtons { overflow-y: auto; max-height: 72vh; }
+.cardButtons > button { display: grid; width: 100%; gap: 5px; padding: 15px 16px; color: #f7f5ef; border: 0; border-bottom: 1px solid #292418; background: transparent; text-align: left; cursor: pointer; }
+.cardButtons > button:hover, .cardButtons .selectedCard { background: #17150f; }
+.cardButtons span { color: #d8aa4f; font-size: 10px; font-weight: 800; letter-spacing: .12em; }
+.cardButtons strong { font-size: 17px; }
+.cardButtons small { color: #92958f; letter-spacing: .03em; }
+.detailPanel { padding: 20px; }
+.cardHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 22px; }
+.cardHeader h2 { margin: 5px 0 7px; font-size: clamp(30px, 4vw, 52px); font-weight: 400; letter-spacing: -.045em; }
+.cardHeaderActions { justify-content: flex-end; }
+.cardHeaderActions .activeSide { color: #090a08; border-color: #e3bc68; background: #e3bc68; }
+.evidenceUnavailable, .empty { display: grid; min-height: 260px; place-items: center; padding: 28px; color: #b0aca3; border: 1px dashed #4a402b; border-radius: 18px; text-align: center; }
+.findingList { margin-top: 22px; border: 1px solid #312a1b; border-radius: 18px; }
+.findingList > header { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid #312a1b; }
+.findingList > p { padding: 18px; color: #92958f; }
+.findingList > button { display: grid; width: 100%; gap: 5px; padding: 15px 18px; color: #f7f5ef; border: 0; border-bottom: 1px solid #312a1b; background: transparent; text-align: left; cursor: pointer; }
+.findingList > button:last-child { border-bottom: 0; }
+.findingList > button:hover, .findingList .selectedFinding { background: #17150f; }
+.findingList > button span { color: #d8aa4f; font-size: 10px; font-weight: 800; letter-spacing: .16em; }
+.findingList > button strong { font-size: 17px; text-transform: capitalize; }
+.findingList > button small { color: #9f9b92; overflow-wrap: anywhere; }
+.center { min-height: 70vh; display: grid; place-items: center; color: #d8aa4f; }
+.center button { padding: 12px 18px; border: 1px solid #d8aa4f; border-radius: 999px; background: #11120f; color: #f7f5ef; }
+@media (max-width: 1120px) {
+  .summary { grid-template-columns: repeat(3, 1fr); }
+  .auditGrid { grid-template-columns: 1fr; }
+  .cardRail { position: static; }
+  .cardButtons { max-height: 360px; }
+}
+@media (max-width: 760px) {
+  .page { padding: 28px 14px 70px; }
+  .hero, .cardHeader { align-items: flex-start; flex-direction: column; }
+  .summary { grid-template-columns: repeat(2, 1fr); }
+}

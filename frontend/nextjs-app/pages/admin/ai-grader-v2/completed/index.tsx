@@ -59,7 +59,11 @@ export default function CompletedSpeedsterCardsPage() {
       <main className={styles.page}>
         <header className={styles.hero}>
           <div><span>TEN KINGS · POST GRADING</span><h1>Completed cards.</h1><p>{message}</p></div>
-          <nav><Link href="/admin/ai-grader-v2">New card</Link><Link href="/admin/human-grade">Label pages</Link></nav>
+          <nav>
+            <Link href="/admin/ai-grader-v2/removed-findings">Removed defects</Link>
+            <Link href="/admin/ai-grader-v2">New card</Link>
+            <Link href="/admin/human-grade">Label pages</Link>
+          </nav>
         </header>
         <section className={styles.cardList} aria-label="Completed Speedster cards">
           {cards.map((card) => (
