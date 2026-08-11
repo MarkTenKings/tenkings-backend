@@ -31692,3 +31692,8 @@ By enabling Rip It Live, I confirm:
 - FAMILY editing displays nonblocking warnings for likely card-specific anchors/zones and directs operators to shared frame/layout landmarks, one per quadrant. The grading workflow shows the selected/applied EXACT or FAMILY scope and map name; lookup or registration failure is shown as no map/manual review and never triggers a retry or another-scope guess.
 - Existing geometry timing events now include the applied map scope/name/revision or bounded lookup/registration failure code. The legacy no-map and exact-map response shapes remain accepted.
 - Independent lane evidence: mounted/source UI coverage passed `25/25`, focused ESLint and changed-file TypeScript filtering passed with zero findings, and `git diff --check` passed. Root review confirmed no server schema, migration, detector, model, image, threshold, grading, Memory, or Production mutation.
+
+## 2026-08-11 - Layered map timing-name bound corrected locally
+
+- Independent integration review found that a valid category-aware exact map display name can exceed the client timing endpoint's prior 180-character bound, which would reject otherwise valid `GEOMETRY_CONFIRMED` telemetry. Commit `96f78efc` raises only that bounded display-name field to 1,024 characters, above the exact identity contract's maximum composed name, while every other strict instrumentation field remains unchanged.
+- Added endpoint coverage with an 864-character valid exact-map display name. Focused instrumentation tests pass `10/10`; changed-file ESLint and `git diff --check` pass. No schema, migration, database, Production, provider, model, image, threshold, grade, or Memory change occurred.
