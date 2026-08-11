@@ -20,7 +20,7 @@ import {
 import { SPEEDSTER_REVIEW_VIEW_TYPES } from "../../../../../lib/ai-grader-v2/review-image-urls";
 import {
   hashSpeedsterMapStorageEvidence,
-  loadExactActiveSpeedsterMapRevision,
+  loadEffectiveActiveSpeedsterMapRevision,
   parseSpeedsterMapRegistration,
   speedsterPhysicalQuadHash,
 } from "../../../../../lib/server/speedsterCardTypeMaps";
@@ -52,7 +52,7 @@ type TraceEvidenceDependencies = {
     workflowState: string;
     identity: unknown;
   } | null>;
-  loadActiveMap?: typeof loadExactActiveSpeedsterMapRevision;
+  loadActiveMap?: typeof loadEffectiveActiveSpeedsterMapRevision;
   hashMapEvidence?: typeof hashSpeedsterMapStorageEvidence;
 };
 
@@ -72,7 +72,7 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
       identity: true,
     },
   }),
-  loadActiveMap: loadExactActiveSpeedsterMapRevision,
+  loadActiveMap: loadEffectiveActiveSpeedsterMapRevision,
   hashMapEvidence: hashSpeedsterMapStorageEvidence,
 };
 
@@ -146,8 +146,9 @@ export async function speedsterServiceBody(
       throw new Error("Speedster map registration category is unsupported.");
     }
     const identity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
-    const revision = await loadActiveMap({ cardProfile: session.cardProfile, identity });
-    if (!revision) throw new Error("No exact active TRAIN map exists for this card identity.");
+    const selectedMap = await loadActiveMap({ cardProfile: session.cardProfile, identity });
+    if (!selectedMap) throw new Error("No active CARD MAP exists for this card identity.");
+    const revision = selectedMap.revision;
     const mapSide = side === "FRONT" ? revision.frontMap : revision.backMap;
     if (mapSide.side !== side) throw new Error("Active TRAIN map side is incoherent.");
     const currentStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}/inspection.webp`;

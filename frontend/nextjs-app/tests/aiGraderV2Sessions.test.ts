@@ -14,8 +14,13 @@ import {
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  speedsterCardTypeMapKey,
+  speedsterFamilyCardTypeMapKey,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
-import { speedsterPhysicalQuadHash } from "../lib/server/speedsterCardTypeMaps";
+import {
+  SpeedsterMapIntegrityError,
+  speedsterPhysicalQuadHash,
+} from "../lib/server/speedsterCardTypeMaps";
 import {
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
@@ -128,6 +133,32 @@ function mapBindingFixture() {
       registration: { front: registration("front"), back: registration("back") },
     },
   };
+}
+
+function appliedMapFixture(
+  fixture: ReturnType<typeof mapBindingFixture>,
+  appliedScope: "EXACT" | "FAMILY" = "EXACT",
+) {
+  const identity = fixture.session.identity;
+  const matchKey = appliedScope === "EXACT"
+    ? speedsterCardTypeMapKey("SPORTS", identity)
+    : speedsterFamilyCardTypeMapKey("SPORTS", identity);
+  return {
+    appliedScope,
+    appliedMapName: appliedScope === "EXACT"
+      ? "2021 Panini Obsidian Orange · Nick Bosa #12"
+      : "2021 Panini Obsidian Orange",
+    revision: {
+      mapId: "map-12345678901234567890",
+      revisionId: fixture.binding.revisionId,
+      matchKeyHash: mapBindingSha(JSON.stringify(matchKey)),
+      matchKey,
+    },
+    sourceProvenance: {
+      sourceSessionId: "source-session-1234567890",
+      sourceIdentity: identity,
+    },
+  } as never;
 }
 
 test("geometry proxy clamps automatic handles to the reachable image boundary", () => {
@@ -415,12 +446,13 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   const fixture = mapBindingFixture();
   const hashedKeys: string[] = [];
   const saves: Record<string, unknown>[] = [];
+  let events: readonly { eventType: string; details?: unknown }[] = [];
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
     async findSession() { return fixture.session; },
     async validateMapBinding(session, binding, capture) {
       return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
-        async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+        async loadActiveMap() { return appliedMapFixture(fixture); },
         async hashEvidence(storageKey) {
           hashedKeys.push(storageKey);
           return mapBindingSha(storageKey);
@@ -431,6 +463,7 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
       saves.push(data as unknown as Record<string, unknown>);
       return { ...fixture.session, ...data };
     },
+    async recordInstrumentation(input) { events = input; },
   });
   const result = response();
   await handler(request("PATCH", {
@@ -446,34 +479,131 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   assert.equal(saves[0]?.mapRevisionId, fixture.binding.revisionId);
   assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
   assert.deepEqual(saves[0]?.capture, fixture.capture);
+  assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
+  assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"EXACT"/);
 });
 
-test("capture PATCH cannot omit the binding for an exact active map", async () => {
+test("capture PATCH pins a family registration for a matching Card Type", async () => {
   const fixture = mapBindingFixture();
-  let updateCalls = 0;
+  let events: readonly { eventType: string; details?: unknown }[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { return appliedMapFixture(fixture, "FAMILY"); },
+        async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+      });
+    },
+    async updateSession(_id, _createdByUserId, data) {
+      return { ...fixture.session, ...data };
+    },
+    async recordInstrumentation(input) { events = input; },
+  });
+  const result = response();
+
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+    mapBinding: fixture.binding,
+  }, fixture.sessionId), result.res);
+
+  assert.equal(result.state.status, 200);
+  assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
+  assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"FAMILY"/);
+  assert.match(JSON.stringify(events[0]?.details), /"scope":"FAMILY"/);
+});
+
+test("capture PATCH safely uses normal human review when selected-map registration is omitted", async () => {
+  const fixture = mapBindingFixture();
+  const saves: Record<string, unknown>[] = [];
+  let events: readonly { eventType: string; details?: unknown }[] = [];
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
     async findSession() { return fixture.session; },
     async validateMapBinding(session, binding, capture) {
       assert.equal(binding, undefined);
       return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
-        async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+        async loadActiveMap() { return appliedMapFixture(fixture); },
         async hashEvidence() { throw new Error("not reached"); },
       });
     },
-    async updateSession() { updateCalls += 1; return fixture.session; },
+    async updateSession(_id, _createdByUserId, data) {
+      saves.push(data as unknown as Record<string, unknown>);
+      return { ...fixture.session, ...data };
+    },
+    async recordInstrumentation(input) { events = input; },
   });
   const result = response();
   await handler(request("PATCH", {
     workflowState: "CAPTURED",
     capture: fixture.capture,
   }, fixture.sessionId), result.res);
-  assert.equal(result.state.status, 409);
-  assert.equal(updateCalls, 0);
-  assert.match(JSON.stringify(result.state.body), /does not match the exact active revision/);
+  assert.equal(result.state.status, 200);
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].mapRevisionId, undefined);
+  assert.equal(events[0]?.eventType, "CARD_MAP_NOT_APPLIED");
+  assert.match(JSON.stringify(events[0]?.details), /NORMAL_HUMAN_REVIEW/);
+  assert.match(JSON.stringify(events[0]?.details), /MAP_REGISTRATION_NOT_APPLIED/);
 });
 
-test("capture PATCH keeps the unchanged no-map path only after exact server lookup", async () => {
+test("capture PATCH falls back to normal human review when effective map lookup fails before binding", async () => {
+  const fixture = mapBindingFixture();
+  let events: readonly { eventType: string; details?: unknown }[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { throw new Error("effective lookup unavailable"); },
+        async hashEvidence() { throw new Error("not reached"); },
+      });
+    },
+    async updateSession(_id, _createdByUserId, data) {
+      return { ...fixture.session, ...data };
+    },
+    async recordInstrumentation(input) { events = input; },
+  });
+  const result = response();
+
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+  }, fixture.sessionId), result.res);
+
+  assert.equal(result.state.status, 200);
+  assert.equal(events[0]?.eventType, "CARD_MAP_NOT_APPLIED");
+  assert.match(JSON.stringify(events[0]?.details), /MAP_LOOKUP_INTEGRITY_FAILED/);
+  assert.doesNotMatch(JSON.stringify(events[0]?.details), /effective lookup unavailable/);
+});
+
+test("capture PATCH never ignores an integrity failure after a map binding is submitted", async () => {
+  const fixture = mapBindingFixture();
+  let updates = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { throw new SpeedsterMapIntegrityError("pinned effective revision is malformed"); },
+        async hashEvidence() { throw new Error("not reached"); },
+      });
+    },
+    async updateSession() { updates += 1; return fixture.session; },
+  });
+  const result = response();
+
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+    mapBinding: fixture.binding,
+  }, fixture.sessionId), result.res);
+
+  assert.equal(result.state.status, 409);
+  assert.equal(updates, 0);
+});
+
+test("capture PATCH keeps the unchanged no-map path only after effective server lookup", async () => {
   const fixture = mapBindingFixture();
   let validationCalls = 0;
   let updateCalls = 0;
@@ -521,7 +651,7 @@ test("capture PATCH rejects either side when registration physical geometry is f
       async findSession() { return fixture.session; },
       async validateMapBinding(session, binding, submittedCapture) {
         return validateSpeedsterSubmittedMapBinding(session, binding, submittedCapture, {
-          async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+          async loadActiveMap() { return appliedMapFixture(fixture); },
           async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
         });
       },
@@ -549,7 +679,7 @@ test("capture PATCH rejects either side when server-hashed current inspection di
       async findSession() { return fixture.session; },
       async validateMapBinding(session, binding, submittedCapture) {
         return validateSpeedsterSubmittedMapBinding(session, binding, submittedCapture, {
-          async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+          async loadActiveMap() { return appliedMapFixture(fixture); },
           async hashEvidence(storageKey) {
             return mapBindingSha(storageKey === mismatchedKey ? `different:${storageKey}` : storageKey);
           },
@@ -738,6 +868,78 @@ test("SAM proxy adds its one optional server-only bearer header", () => {
     if (original === undefined) delete process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY;
     else process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY = original;
   }
+});
+
+test("map registration uses the effective family revision for projected boundary auto-positioning", async () => {
+  const fixture = mapBindingFixture();
+  const selected = appliedMapFixture(fixture, "FAMILY") as unknown as {
+    revision: Record<string, unknown>;
+  } & Record<string, unknown>;
+  const referenceSha256 = mapBindingSha("family-reference-front");
+  selected.revision = {
+    ...selected.revision,
+    frontMap: {
+      side: "FRONT",
+      referenceInspection: {
+        storageKey: "private/card-maps/family/front.webp",
+        sha256: referenceSha256,
+      },
+      designBoundary: { kind: "QUAD", points: mapBindingQuad },
+      anchors: [1, 2, 3, 4].map((number) => ({
+        id: `anchor-${number}`,
+        point: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
+      })),
+      zones: [{
+        id: "zone-1",
+        label: "Shared printed frame",
+        semanticType: "PRINT_BORDER",
+        polygon: mapBindingQuad,
+      }],
+    },
+  };
+  const body = await speedsterServiceBody("map-registration", {
+    sessionId: fixture.sessionId,
+    side: "FRONT",
+    currentPhysicalQuad: mapBindingQuad,
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async presignRead(storageKey) { return `https://signed.invalid/${storageKey}`; },
+    async findOwnedMapSession() { return fixture.session; },
+    async loadActiveMap() { return selected as never; },
+    async hashMapEvidence(storageKey) {
+      return storageKey === "private/card-maps/family/front.webp"
+        ? referenceSha256
+        : mapBindingSha(storageKey);
+    },
+  }) as Record<string, unknown>;
+
+  assert.equal(body.mapRevisionId, fixture.binding.revisionId);
+  assert.deepEqual(body.designBoundary, { kind: "QUAD", points: mapBindingQuad });
+  assert.equal((body.anchors as unknown[]).length, 4);
+});
+
+test("map registration never retries another scope after the selected revision fails", async () => {
+  const fixture = mapBindingFixture();
+  let lookupCalls = 0;
+  let presignCalls = 0;
+
+  await assert.rejects(() => speedsterServiceBody("map-registration", {
+    sessionId: fixture.sessionId,
+    side: "FRONT",
+    currentPhysicalQuad: mapBindingQuad,
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async presignRead() { presignCalls += 1; return "https://signed.invalid/not-reached"; },
+    async findOwnedMapSession() { return fixture.session; },
+    async loadActiveMap() {
+      lookupCalls += 1;
+      throw new Error("selected exact revision failed integrity validation");
+    },
+    async hashMapEvidence() { throw new Error("not reached"); },
+  }), /selected exact revision failed integrity validation/);
+
+  assert.equal(lookupCalls, 1);
+  assert.equal(presignCalls, 0);
 });
 
 test("trace proposal authorizes a persisted non-ORIGINAL source view and supplies server findings", async () => {
