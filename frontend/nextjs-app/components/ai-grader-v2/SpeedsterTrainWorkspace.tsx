@@ -25,6 +25,7 @@ import {
 } from "../../lib/ai-grader-v2/gradient-snap";
 import type { SpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
 import styles from "./SpeedsterTrainWorkspace.module.css";
 
 type EditableAnchor = Readonly<{ id: string; label: string; point: SpeedsterPoint }>;
@@ -474,7 +475,7 @@ export function SpeedsterTrainWorkspace({
       setMessage(`Revision ${payload.map.revision?.version} is active now for this exact card identity.`);
       onSaved(payload.map);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Card map could not be saved.");
+      setMessage(toCardMapOperatorMessage(error instanceof Error ? error.message : "Card map could not be saved."));
     } finally {
       setWorking(false);
     }
@@ -501,7 +502,9 @@ export function SpeedsterTrainWorkspace({
       setMessage(`Restored content is active as new revision ${payload.map.revision?.version}.`);
       onSaved(payload.map);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Card map version could not be restored.");
+      setMessage(toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "Card map version could not be restored.",
+      ));
     } finally {
       setWorking(false);
     }

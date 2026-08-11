@@ -347,11 +347,12 @@ test("malformed completed source stays local and links to the exact identity edi
     query: { sessionId: exactSessionId },
     fetchImpl: async (request) => {
       urls.push(String(request));
-      return jsonResponse({ message: "CARD MAP source identity is malformed." }, 409);
+      return jsonResponse({ message: "TRAIN source identity is malformed." }, 409);
     },
   });
   try {
     await waitFor(() => page.container.textContent?.includes("CARD MAP source identity is malformed.") ?? false, "Malformed source error did not render");
+    assert.doesNotMatch(page.container.textContent ?? "", /\bTRAIN\b/);
     assert.equal(urls.length, 1);
     const correction = Array.from(page.container.querySelectorAll("a")).find((link) => link.textContent === "FIX CARD IDENTITY");
     assert.equal(correction?.getAttribute("href"), `/admin/ai-grader-v2/completed/${encodeURIComponent(exactSessionId)}`);

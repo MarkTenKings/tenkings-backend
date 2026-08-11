@@ -28,6 +28,7 @@ import type {
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
 import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../lib/ai-grader-v2/card-type-map-contracts";
+import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
@@ -324,7 +325,7 @@ export default function AiGraderV2AdminPage() {
         message?: string;
       };
       if (!mapResponse.ok || !mapPayload.map) {
-        const failure = mapPayload.message ?? "Exact CARD MAP lookup failed.";
+        const failure = toCardMapOperatorMessage(mapPayload.message ?? "Exact CARD MAP lookup failed.");
         setMapIntegrityError(failure);
         throw new Error(failure);
       }
