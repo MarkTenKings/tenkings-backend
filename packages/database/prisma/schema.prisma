@@ -3592,8 +3592,35 @@ model AiGraderV2Session {
   collectibleCardV2 CollectibleCardV2?
   mapSourceRevisions AiGraderV2CardTypeMapRevision[] @relation("MapRevisionSourceSession")
   mapFilterDecisions AiGraderV2MapFilterDecision[]
+  instrumentationEvents AiGraderV2InstrumentationEvent[]
 
   @@index([mapRevisionId])
+}
+
+model AiGraderV2InstrumentationEvent {
+  id                 String   @id @default(cuid())
+  eventKey           String   @unique
+  sessionId          String
+  session            AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  cycleId            String
+  createdByUserId    String
+  category           String
+  eventType          String
+  findingId          String?
+  origin             String?
+  similarity         Float?
+  generatingExemplar Json?    @db.JsonB
+  operatorAction     String?
+  clientStartedAt    DateTime?
+  clientEndedAt      DateTime?
+  durationMs         Int?
+  details            Json?    @db.JsonB
+  createdAt          DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+  @@index([cycleId, createdAt])
+  @@index([sessionId, findingId, createdAt])
+  @@index([origin, operatorAction])
 }
 
 model AiGraderV2CaptureDevice {
