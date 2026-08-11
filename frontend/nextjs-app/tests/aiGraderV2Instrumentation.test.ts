@@ -300,6 +300,34 @@ test("geometry timing records map-assisted scope and revision for before-vs-afte
   });
 });
 
+test("geometry timing retains a maximum-length valid exact map display name", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+  const mapName = "x".repeat(864);
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f1",
+    eventType: "GEOMETRY_CONFIRMED",
+    clientStartedAt: "2026-08-09T12:00:00.000Z",
+    clientEndedAt: "2026-08-09T12:00:12.000Z",
+    details: {
+      side: "FRONT",
+      mapAppliedScope: "EXACT",
+      mapName,
+      mapRevisionId: "revision-123456789012345",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.equal((events[0].details as { mapName: string }).mapName, mapName);
+});
+
 test("geometry timing records a map registration failure as manual without private error text", async () => {
   let events: readonly SpeedsterInstrumentationEvent[] = [];
   const handler = createSpeedsterInstrumentationHandler({

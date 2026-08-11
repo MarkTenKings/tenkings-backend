@@ -37,7 +37,7 @@ const details = z.object({
   automaticGeometryCount: z.number().int().min(0).max(2).optional(),
   photoSource: z.enum(["IPHONE", "LOCAL", "MIXED"]).optional(),
   mapAppliedScope: z.enum(["EXACT", "FAMILY", "NONE"]).optional(),
-  mapName: z.string().trim().min(1).max(180).optional(),
+  mapName: z.string().trim().min(1).max(1024).optional(),
   mapRevisionId: z.string().trim().min(1).max(80).optional(),
   mapFailureCode: z.enum(["LOOKUP_FAILED", "REGISTRATION_FAILED"]).optional(),
   findingCount: z.number().int().min(0).max(2048).optional(),
