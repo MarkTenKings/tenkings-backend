@@ -31526,3 +31526,8 @@ By enabling Rip It Live, I confirm:
 
 - Exact Node `20.20.1` `RUN_DB_MIGRATIONS=false pnpm vercel:build` passed Prisma generation, database/shared/browser-rip/capture-helper/simulator/SoldComps builds, Next lint/type validation and optimized compilation, all `76/76` static pages, the `/admin/ai-grader-v2`, removed-findings, map/filter/restore/instrumentation/presentation routes, and the Sharp trace verifier. Output contained only the repository's existing unrelated image, hook-dependency, browser-data, Tailwind-glob, Webpack-cache, and optional Sharp development-package warnings.
 - Planned action: start the just-built Next application on a loopback-only non-Production port solely for read-only in-app-browser visual QA of the TRAIN and removed-findings surfaces, then stop that exact local process. Do not sign in with new credentials, mutate application data, use Production, deploy, restart a hosted service, call RunPod/PhotoRoom/provider services, or bypass authentication. If local authentication/data is unavailable, record the visual gate as blocked rather than fabricating screenshots.
+
+## 2026-08-10 - Speedster local visual-QA server wrapper attempt exited; direct retry planned
+
+- The first loopback start command exited immediately with code `1` before opening a listener because the filtered pnpm script forwarded its `--` separator to Next, which misread `-H` as a project directory. No application server or external service was started.
+- Planned corrective action: invoke this worktree's already-built Next binary directly with explicit host `127.0.0.1` and port `3108`, perform the same read-only authenticated-if-available visual check, and stop only that exact process afterward. All previously logged containment remains unchanged.
