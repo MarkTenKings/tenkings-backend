@@ -235,18 +235,37 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
   const initial = session([]);
   initial.gradeReport = {};
   let persisted: { reviewedDefects: readonly unknown[]; gradeReport: unknown } | null = null;
+  let persistenceCalls = 0;
+  let learningCalls = 0;
+  let detectorReturns = 0;
+  const learningBank = Object.freeze({ version: "bank" });
+  const detectorBodies: Array<{
+    side: "FRONT" | "BACK";
+    cornerShape: "SQUARE" | "ROUNDED_3_18_MM";
+    views: readonly { id: string; imageUrl: string }[];
+    sessionId: string;
+    requestTraceId: string;
+    learningBank: unknown;
+  }> = [];
   const deps = {
     async loadOwnedSession() { events.push("load"); return initial; },
     async persistReviewIfRevision(_identity: unknown, _revision: unknown, data: typeof persisted) {
+      assert.equal(detectorReturns, 2);
       events.push("persist");
+      persistenceCalls += 1;
       persisted = data;
     },
     async presignRead(key: string) { events.push(`presign:${key}`); return `https://fresh.example/${key}`; },
-    async learningBankForDetect() { events.push("learning"); return { version: "bank" }; },
-    async detect(body: { side: string; learningBank: unknown; views: readonly unknown[] }) {
+    async learningBankForDetect() {
+      events.push("learning");
+      learningCalls += 1;
+      return learningBank;
+    },
+    async detect(body: (typeof detectorBodies)[number]) {
       events.push(`detect:${body.side}`);
-      assert.deepEqual(body.learningBank, { version: "bank" });
-      assert.equal(body.views.length, 4);
+      detectorBodies.push(body);
+      assert.equal(body.learningBank, learningBank);
+      detectorReturns += 1;
       return { detectorVersion: "sam3-server-owned", defects: [] };
     },
     async measure() { throw new Error("INITIALIZE must not measure"); },
@@ -260,6 +279,22 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
 
   assert.equal(events.filter((event) => event.startsWith("detect:")).join(","), "detect:FRONT,detect:BACK");
   assert.equal(events.filter((event) => event.startsWith("presign:")).length, 8);
+  assert.equal(learningCalls, 1);
+  assert.equal(persistenceCalls, 1);
+  assert.deepEqual(learningBank, { version: "bank" });
+  assert.deepEqual(detectorBodies, (["FRONT", "BACK"] as const).map((side) => ({
+    side,
+    cornerShape: "SQUARE",
+    views: [
+      { id: `${side}:ORIGINAL`, imageUrl: `https://fresh.example/${side === "FRONT" ? capture.front.inspectionStorageKey : capture.back.inspectionStorageKey}` },
+      { id: `${side}:NORMALIZED`, imageUrl: `https://fresh.example/${side === "FRONT" ? capture.front.viewStorageKeys.NORMALIZED : capture.back.viewStorageKeys.NORMALIZED}` },
+      { id: `${side}:MICRO_DEFECT`, imageUrl: `https://fresh.example/${side === "FRONT" ? capture.front.viewStorageKeys.MICRO_DEFECT : capture.back.viewStorageKeys.MICRO_DEFECT}` },
+      { id: `${side}:DIRECTIONAL`, imageUrl: `https://fresh.example/${side === "FRONT" ? capture.front.viewStorageKeys.DIRECTIONAL : capture.back.viewStorageKeys.DIRECTIONAL}` },
+    ],
+    sessionId: initial.id,
+    requestTraceId: `${initial.id}:${side}:detect`,
+    learningBank,
+  })));
   const initializedPersisted = persisted as unknown as { gradeReport: { detectorVersion?: string } };
   assert.equal(initializedPersisted.gradeReport.detectorVersion, "sam3-server-owned");
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
@@ -285,8 +320,17 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
     },
   };
   let persisted: readonly Record<string, unknown>[] = [];
-  let instrumentation: readonly { eventType: string; details?: unknown }[] = [];
-  const result = await applySpeedsterReviewAction({
+  let instrumentation: readonly { eventType: string; durationMs?: number | null; details?: unknown }[] = [];
+  let resolveFront!: (value: unknown) => void;
+  let resolveBack!: (value: unknown) => void;
+  const detectorResponses = {
+    FRONT: new Promise<unknown>((resolve) => { resolveFront = resolve; }),
+    BACK: new Promise<unknown>((resolve) => { resolveBack = resolve; }),
+  };
+  const started: string[] = [];
+  let markBothStarted!: () => void;
+  const bothStarted = new Promise<void>((resolve) => { markBothStarted = resolve; });
+  const action = applySpeedsterReviewAction({
     sessionId: initial.id,
     createdByUserId: initial.createdByUserId,
     action: { type: "INITIALIZE" },
@@ -298,27 +342,53 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
     async presignRead(key) { return `https://fresh.example/${key}`; },
     async learningBankForDetect() { return {}; },
     async detect(body) {
-      return {
-        detectorVersion: "sam3-server-owned",
-        defects: body.side === "FRONT" ? [instrumented] : [],
-        instrumentation: {
-          version: "speedster-service-timing-v1",
-          side: body.side,
-          requestTraceId: body.requestTraceId,
-          serviceTotalMs: 12,
-          measurementMs: 3,
-        },
-      };
+      started.push(body.side);
+      if (started.length === 2) markBothStarted();
+      return detectorResponses[body.side];
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
   });
+  await bothStarted;
+  assert.deepEqual(started, ["FRONT", "BACK"]);
+  resolveBack({
+    detectorVersion: "sam3-server-owned",
+    defects: [],
+    instrumentation: {
+      version: "speedster-service-timing-v1",
+      side: "BACK",
+      requestTraceId: `${initial.id}:BACK:detect`,
+      serviceTotalMs: 27,
+      measurementMs: 5,
+    },
+  });
+  await Promise.resolve();
+  resolveFront({
+    detectorVersion: "sam3-server-owned",
+    defects: [instrumented],
+    instrumentation: {
+      version: "speedster-service-timing-v1",
+      side: "FRONT",
+      requestTraceId: `${initial.id}:FRONT:detect`,
+      serviceTotalMs: 13,
+      measurementMs: 3,
+    },
+  });
+  const result = await action;
 
   assert.equal("findingProvenance" in persisted[0], false);
   assert.equal(JSON.stringify(result).includes("findingProvenance"), false);
   const proposal = instrumentation.find(({ eventType }) => eventType === "FINDING_PROPOSED");
   assert.match(JSON.stringify(proposal?.details), /FRONT:0/);
-  assert.equal(instrumentation.filter(({ eventType }) => eventType === "SAM_MEMORY_SIDE_COMPLETED").length, 2);
+  const sideCompletions = instrumentation.filter(({ eventType }) => eventType === "SAM_MEMORY_SIDE_COMPLETED");
+  assert.equal(sideCompletions.length, 2);
+  assert.deepEqual(sideCompletions.map(({ durationMs, details }) => {
+    const timing = details as { side: string; requestTraceId: string };
+    return [timing.side, timing.requestTraceId, durationMs];
+  }), [
+    ["FRONT", `${initial.id}:FRONT:detect`, 13],
+    ["BACK", `${initial.id}:BACK:detect`, 27],
+  ]);
 });
 
 test("exact INITIALIZE retry returns the coherently initialized state without a second detector pass", async () => {
@@ -513,17 +583,141 @@ test("a completion revision win makes the review CAS fail once without remeasuri
   assert.equal(casCalls, 1);
 });
 
-test("INITIALIZE rejects invalid detector versions, mismatched versions, and wrong-side findings", async () => {
+test("an INITIALIZE CAS conflict does not trigger another detector pass or instrumentation write", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let detectCalls = 0;
+  let casCalls = 0;
+  let instrumentationCalls = 0;
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() {
+      casCalls += 1;
+      throw new Error("Speedster review state changed before it could be saved");
+    },
+    async presignRead(key: string) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect() {
+      detectCalls += 1;
+      return { detectorVersion: "sam3-server-owned", defects: [] };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation() { instrumentationCalls += 1; },
+  }), /state changed/i);
+  assert.equal(detectCalls, 2);
+  assert.equal(casCalls, 1);
+  assert.equal(instrumentationCalls, 0);
+});
+
+for (const failedSide of ["FRONT", "BACK"] as const) {
+  test(`INITIALIZE ${failedSide} failure produces zero persistence`, async () => {
+    const initial = session([]);
+    initial.gradeReport = {};
+    let persistCalls = 0;
+    let detectCalls = 0;
+    await assert.rejects(() => applySpeedsterReviewAction({
+      sessionId: initial.id,
+      createdByUserId: initial.createdByUserId,
+      action: { type: "INITIALIZE" },
+    }, {
+      async loadOwnedSession() { return initial; },
+      async persistReviewIfRevision() { persistCalls += 1; },
+      async presignRead(key: string) { return `https://fresh.example/${key}`; },
+      async learningBankForDetect() { return {}; },
+      async detect(body) {
+        detectCalls += 1;
+        if (body.side === failedSide) throw new Error(`${failedSide} detector failed`);
+        return { detectorVersion: "sam3-server-owned", defects: [] };
+      },
+      async measure() { throw new Error("must not measure"); },
+    }), new RegExp(`${failedSide} detector failed`, "i"));
+    assert.equal(detectCalls, 2);
+    assert.equal(persistCalls, 0);
+  });
+}
+
+test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicate outputs with zero persistence", async () => {
   const detectorFinding = { ...defect, reviewResult: "UNREVIEWED" as const };
   const variants = [
-    async () => ({ detectorVersion: 7, defects: [] }),
-    async (body: { side: string }) => ({ detectorVersion: body.side === "FRONT" ? "front-v" : "back-v", defects: [] }),
-    async (body: { side: string }) => ({
-      detectorVersion: "same-v",
-      defects: [{ ...detectorFinding, side: body.side === "FRONT" ? "BACK" : "FRONT" }],
-    }),
+    {
+      name: "malformed Front",
+      detect: async (body: { side: string }) => body.side === "FRONT"
+        ? { detectorVersion: "same-v", defects: "invalid" }
+        : { detectorVersion: "same-v", defects: [] },
+    },
+    {
+      name: "malformed Back",
+      detect: async (body: { side: string }) => body.side === "BACK"
+        ? { detectorVersion: "same-v", defects: "invalid" }
+        : { detectorVersion: "same-v", defects: [] },
+    },
+    {
+      name: "malformed Front finding",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: "same-v",
+        defects: body.side === "FRONT"
+          ? [{ ...detectorFinding, side: "FRONT", measurement: { ...measurement, areaMm2: -1 } }]
+          : [],
+      }),
+    },
+    {
+      name: "malformed Back finding",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: "same-v",
+        defects: body.side === "BACK"
+          ? [{ ...detectorFinding, side: "BACK", measurement: { ...measurement, areaMm2: -1 } }]
+          : [],
+      }),
+    },
+    {
+      name: "missing version",
+      detect: async () => ({ detectorVersion: 7, defects: [] }),
+    },
+    {
+      name: "blank version",
+      detect: async () => ({ detectorVersion: "   ", defects: [] }),
+    },
+    {
+      name: "version mismatch",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: body.side === "FRONT" ? "front-v" : "back-v",
+        defects: [],
+      }),
+    },
+    {
+      name: "wrong side",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: "same-v",
+        defects: [{ ...detectorFinding, side: body.side === "FRONT" ? "BACK" : "FRONT" }],
+      }),
+    },
+    {
+      name: "duplicate canonical ID",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: "same-v",
+        defects: body.side === "FRONT"
+          ? [
+              { ...detectorFinding, id: "duplicate", side: "FRONT" },
+              { ...detectorFinding, id: "FRONT:duplicate:SURFACE", side: "FRONT" },
+            ]
+          : [],
+      }),
+    },
+    {
+      name: "reviewed detector state",
+      detect: async (body: { side: string }) => ({
+        detectorVersion: "same-v",
+        defects: body.side === "FRONT"
+          ? [{ ...detectorFinding, side: "FRONT", reviewResult: "ACCEPTED" }]
+          : [],
+      }),
+    },
   ];
-  for (const detect of variants) {
+  for (const variant of variants) {
     const initial = session([]);
     initial.gradeReport = {};
     let persisted = false;
@@ -536,10 +730,10 @@ test("INITIALIZE rejects invalid detector versions, mismatched versions, and wro
       async persistReviewIfRevision() { persisted = true; },
       async presignRead(key: string) { return `https://fresh.example/${key}`; },
       async learningBankForDetect() { return {}; },
-      detect,
+      detect: variant.detect,
       async measure() { throw new Error("must not measure"); },
-    }), /detector|side/i);
-    assert.equal(persisted, false);
+    }), /detector|side|version|duplicate/i, variant.name);
+    assert.equal(persisted, false, variant.name);
   }
 });
 
