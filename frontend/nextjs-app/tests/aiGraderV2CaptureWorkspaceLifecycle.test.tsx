@@ -382,7 +382,7 @@ test("same-version iPhone polling cannot erase a visible geometry error", async 
   }
 });
 
-test("TRAIN boundary tool resets and requires exactly four human points before save", async () => {
+test("CARD MAP boundary tool resets and requires exactly four human points before save", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
   });
@@ -440,7 +440,7 @@ test("TRAIN boundary tool resets and requires exactly four human points before s
     });
     const save = buttonByText(harness.container, "Save + activate new revision");
     const reset = buttonByText(harness.container, "Reset Front boundary");
-    const stage = harness.container.querySelector<HTMLImageElement>('img[alt="Front TRAIN reference"]')?.parentElement;
+    const stage = harness.container.querySelector<HTMLImageElement>('img[alt="Front card map reference"]')?.parentElement;
     assert.ok(save && reset && stage);
     assert.equal(save.disabled, false);
     Object.defineProperty(stage, "getBoundingClientRect", {

@@ -1,4 +1,5 @@
 import { buildAdminHeaders } from "../adminHeaders";
+import { toCardMapOperatorMessage } from "./card-map-copy";
 import type {
   SpeedsterCardSide,
   SpeedsterQuad,
@@ -40,7 +41,7 @@ async function postImageAction<T>(
   });
   const payload = (await response.json().catch(() => ({}))) as T & { message?: string; detail?: string };
   if (!response.ok) {
-    throw new Error(payload.message ?? payload.detail ?? `Speedster ${action} failed.`);
+    throw new Error(toCardMapOperatorMessage(payload.message ?? payload.detail ?? `Speedster ${action} failed.`));
   }
   return payload;
 }
@@ -123,7 +124,7 @@ export async function uploadSpeedsterOriginal(input: {
     message?: string;
   };
   if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl || !plan.readUrl) {
-    throw new Error(plan.message ?? "Speedster upload could not be prepared.");
+    throw new Error(toCardMapOperatorMessage(plan.message ?? "Speedster upload could not be prepared."));
   }
 
   const uploadResponse = await fetch(plan.uploadUrl, {
@@ -152,7 +153,7 @@ export async function planSpeedsterPreparedOutputs(input: {
     message?: string;
   };
   if (!response.ok || !payload.outputs) {
-    throw new Error(payload.message ?? "Speedster output storage could not be prepared.");
+    throw new Error(toCardMapOperatorMessage(payload.message ?? "Speedster output storage could not be prepared."));
   }
   return payload.outputs;
 }

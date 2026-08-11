@@ -9,11 +9,7 @@ import {
   type SpeedsterCaptureInstrumentationEvent,
 } from "../../components/ai-grader-v2/CaptureWorkspace";
 import { ReviewWorkspace } from "../../components/ai-grader-v2/ReviewWorkspace";
-import {
-  SpeedsterTrainWorkspace,
-  type SpeedsterTrainMapState,
-  type SpeedsterTrainSource,
-} from "../../components/ai-grader-v2/SpeedsterTrainWorkspace";
+import type { SpeedsterTrainMapState } from "../../components/ai-grader-v2/SpeedsterTrainWorkspace";
 import type {
   SpeedsterInMemoryTraceSave,
   SpeedsterTraceProposalInput,
@@ -32,6 +28,7 @@ import type {
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
 import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../lib/ai-grader-v2/card-type-map-contracts";
+import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
@@ -92,11 +89,8 @@ export default function AiGraderV2AdminPage() {
   const { session, loading, ensureSession } = useSession();
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
-  const [draftIdentity, setDraftIdentity] = useState<ReturnType<typeof canonicalizeSpeedsterSessionIdentity> | null>(null);
   const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
   const [mapIntegrityError, setMapIntegrityError] = useState<string | null>(null);
-  const [trainRequested, setTrainRequested] = useState(false);
-  const [trainOpen, setTrainOpen] = useState(false);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
   const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
@@ -269,8 +263,8 @@ export default function AiGraderV2AdminPage() {
       : { ...current, [field]: value });
   };
 
-  const createDraft = async (event: FormEvent<HTMLFormElement> | null, train = false) => {
-    event?.preventDefault();
+  const createDraft = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!session?.token || working) return;
     const startedAtMs = beginCycle();
     setWorking(true);
@@ -322,8 +316,6 @@ export default function AiGraderV2AdminPage() {
         endedAtMs,
         details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" },
       });
-      setDraftIdentity(printedIdentity);
-      setTrainRequested(train);
       const mapResponse = await fetch(
         `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}`,
         { headers: buildAdminHeaders(session.token), cache: "no-store" },
@@ -333,17 +325,15 @@ export default function AiGraderV2AdminPage() {
         message?: string;
       };
       if (!mapResponse.ok || !mapPayload.map) {
-        const failure = mapPayload.message ?? "Exact TRAIN map lookup failed.";
+        const failure = toCardMapOperatorMessage(mapPayload.message ?? "Exact CARD MAP lookup failed.");
         setMapIntegrityError(failure);
         throw new Error(failure);
       }
       setMapState(mapPayload.map);
       setMapIntegrityError(null);
-      setMessage(train
-        ? "TRAIN selected. Add Front and Back, then set the current card geometry."
-        : mapPayload.map.status === "LOADED"
-          ? `Exact TRAIN map revision ${mapPayload.map.revision?.version} loaded. Add Front and Back.`
-          : "No exact TRAIN map exists. The unchanged Speedster review path will apply.");
+      setMessage(mapPayload.map.status === "LOADED"
+        ? `Exact CARD MAP revision ${mapPayload.map.revision?.version} loaded. Add Front and Back.`
+        : "No exact CARD MAP exists. The unchanged Speedster review path will apply.");
     } catch (error) {
       const failure = error instanceof Error ? error.message : "Speedster card could not be created.";
       setMessage(failure);
@@ -433,12 +423,7 @@ export default function AiGraderV2AdminPage() {
         endedAtMs: Date.now(),
         details: { outcome: "SUCCEEDED" },
       });
-      if (trainRequested) {
-        setTrainOpen(true);
-        setMessage("Draw the human Front and Back map. Saving activates the revision immediately.");
-      } else {
-        await initializeReview();
-      }
+      await initializeReview();
     } catch (error) {
       setInitializeFailed(true);
       setMessage(error instanceof Error ? error.message : "Card geometry could not be saved.");
@@ -660,14 +645,6 @@ export default function AiGraderV2AdminPage() {
   }
   if (!isAdmin) return <AppShell background="black"><div className={styles.center}>Admin access required.</div></AppShell>;
 
-  const trainSource: SpeedsterTrainSource | null = draft && draftIdentity && capture ? {
-    sessionId: draft.id,
-    cardProfile: draft.cardProfile,
-    identity: draftIdentity,
-    front: { rectifiedUrl: capture.front.rectifiedUrl, centeringQuad: capture.front.centeringQuad },
-    back: { rectifiedUrl: capture.back.rectifiedUrl, centeringQuad: capture.back.centeringQuad },
-  } : null;
-
   return (
     <AppShell background="black" hideFooter>
       <Head><title>AI Grader V2 Speedster | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head>
@@ -675,79 +652,39 @@ export default function AiGraderV2AdminPage() {
         <header className={styles.hero}>
           <div><span>TEN KINGS · AI GRADER V2</span><h1>Speedster</h1><p>{working ? "Racing · " : ""}{message}</p></div>
           <nav>
-            <Link href="#card-maps">Card Maps</Link>
+            <Link href="/card-maps">Card Maps</Link>
             <Link href="/admin/ai-grader-v2/completed">Completed cards</Link>
             <Link href="/admin">Admin Home</Link>
           </nav>
         </header>
 
         {!draft ? (
-          <>
-            <SharedLabelEditor
-              mode="SPEEDSTER"
-              value={identity}
-              onChange={updateIdentity}
-              onSubmit={(event) => void createDraft(event, false)}
-              onFirstInteraction={beginCycle}
-              saving={working}
-              certificateNumber="TKS-DRAFT"
-            />
-            <section
-              id="card-maps"
-              className={styles.cardMapsPanel}
-              aria-labelledby="card-maps-heading"
-            >
-              <div className={styles.cardMapsVisual} aria-hidden="true">
-                <div className={`${styles.mapCard} ${styles.mapCardRear}`}>
-                  <span className={styles.mapCardFrame} />
-                  <span className={styles.mapCardCrosshair} />
-                </div>
-                <div className={`${styles.mapCard} ${styles.mapCardFront}`}>
-                  <span className={styles.mapCardFrame} />
-                  <span className={styles.mapCardCrosshair} />
-                  <span className={styles.mapCardNode} />
-                  <span className={`${styles.mapCardNode} ${styles.mapCardNodeRight}`} />
-                  <span className={`${styles.mapCardNode} ${styles.mapCardNodeBottom}`} />
-                </div>
-                <span className={styles.mapScanLine} />
-                <span className={styles.mapSignal} />
-              </div>
-              <div className={styles.cardMapsContent}>
-                <span>GEOMETRY TRAINING CONTROL</span>
-                <h2 id="card-maps-heading">CARD MAPS</h2>
-                <p>Complete the card identity above, then create or correct its exact Front and Back map.</p>
-                <p className={styles.cardMapsStatus} role="status" aria-live="polite">{message}</p>
-                <button
-                  className={styles.cardMapsCta}
-                  type="button"
-                  disabled={working}
-                  onClick={() => void createDraft(null, true)}
-                >
-                  CREATE CARD MAP
-                </button>
-              </div>
-            </section>
-          </>
+          <SharedLabelEditor
+            mode="SPEEDSTER"
+            value={identity}
+            onChange={updateIdentity}
+            onSubmit={(event) => void createDraft(event)}
+            onFirstInteraction={beginCycle}
+            saving={working}
+            certificateNumber="TKS-DRAFT"
+          />
         ) : null}
 
         {draft && mapState && !capture ? (
           <section className={styles.statusPanel}>
-            <span>EXACT TRAIN MAP</span>
+            <span>EXACT CARD MAP</span>
             <h2>{mapState.status === "LOADED"
               ? `Loaded revision ${mapState.revision?.version}`
               : "No exact map"}</h2>
             <p>{mapState.status === "LOADED"
               ? `${mapState.revision?.revisionHash.slice(0, 12)} · The active map will register to this copy's physical geometry.`
               : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
-            <button type="button" onClick={() => setTrainRequested(true)}>
-              {mapState.status === "LOADED" ? "TRAIN / Edit map" : "TRAIN this card type"}
-            </button>
           </section>
         ) : null}
 
         {mapIntegrityError ? (
           <section className={styles.statusPanel} role="alert">
-            <span>TRAIN MAP INTEGRITY ERROR</span>
+            <span>CARD MAP INTEGRITY ERROR</span>
             <h2>Card initialization stopped.</h2>
             <p>{mapIntegrityError}</p>
           </section>
@@ -764,21 +701,7 @@ export default function AiGraderV2AdminPage() {
           />
         ) : null}
 
-        {trainOpen && trainSource && mapState ? (
-          <SpeedsterTrainWorkspace
-            token={session.token}
-            source={trainSource}
-            initialMap={mapState}
-            onSaved={(nextMap) => {
-              setMapState(nextMap);
-              setTrainOpen(false);
-              setTrainRequested(false);
-              void initializeReview();
-            }}
-          />
-        ) : null}
-
-        {capture && defects === null && !trainOpen ? (
+        {capture && defects === null ? (
           <section className={styles.statusPanel}>
             <span>03 · SAM 3</span>
             <h2>Scanning card views.</h2>

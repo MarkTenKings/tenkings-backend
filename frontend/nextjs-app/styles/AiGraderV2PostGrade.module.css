@@ -5,6 +5,7 @@
 .hero p, .workspaceHeader p, .finishTools p { margin: 0; color: #92958f; }
 .hero nav, .workspaceHeader nav { display: flex; gap: 10px; }
 .hero nav a, .workspaceHeader nav a, .finishTools a, .reportFrame header a { padding: 11px 16px; color: #f4f2ec; border: 1px solid #d8aa4f4a; border-radius: 999px; font-weight: 800; text-decoration: none; }
+.listSummary { margin: 0 0 12px; color: #b7b3aa; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 .cardList { overflow: hidden; border: 1px solid #d8aa4f33; border-radius: 22px; background: #080a08; }
 .cardRow { display: grid; grid-template-columns: 96px minmax(240px, 1fr) 88px 110px 28px; gap: 24px; align-items: center; min-height: 120px; padding: 18px 28px; color: #f7f5ef; border-bottom: 1px solid #262217; text-decoration: none; }
 .cardRow:last-child { border-bottom: 0; }

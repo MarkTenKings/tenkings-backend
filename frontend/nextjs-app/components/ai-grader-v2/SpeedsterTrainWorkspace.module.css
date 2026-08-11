@@ -12,7 +12,9 @@
 .footer,
 .sideTabs,
 .toolTabs,
-.history div {
+.history div,
+.preview header,
+.zoneHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -20,7 +22,8 @@
 }
 
 .header span,
-.mapIdentity strong {
+.mapIdentity strong,
+.preview header span {
   color: #56e5ff;
   font-size: 0.72rem;
   font-weight: 800;
@@ -28,13 +31,14 @@
 }
 
 .header h2,
-.history h3 {
+.history h3,
+.preview h3 {
   margin: 6px 0;
 }
 
 .header p,
 .controlBlock p,
-.boundaryNote {
+.preview header p {
   margin: 0;
   color: #aab7c2;
 }
@@ -45,20 +49,20 @@
   gap: 4px;
 }
 
-.mapIdentity code {
-  color: #d9f8ff;
-}
+.mapIdentity code { color: #d9f8ff; }
 
 .sideTabs,
 .toolTabs {
   justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .sideTabs button,
 .toolTabs button,
 .controls button,
 .footer button,
-.history button {
+.history button,
+.zoneList button {
   border: 1px solid rgba(145, 231, 255, 0.3);
   border-radius: 999px;
   padding: 10px 16px;
@@ -70,6 +74,7 @@
 
 .sideTabs button[aria-pressed="true"],
 .toolTabs button[aria-pressed="true"],
+.zoneList button[aria-pressed="true"],
 .footer button:last-child {
   background: #55e5ff;
   color: #021016;
@@ -77,7 +82,7 @@
 
 .editorGrid {
   display: grid;
-  grid-template-columns: minmax(260px, 0.72fr) minmax(240px, 0.28fr);
+  grid-template-columns: minmax(320px, 0.72fr) minmax(270px, 0.28fr);
   gap: 22px;
 }
 
@@ -86,6 +91,7 @@
   width: min(100%, 540px);
   aspect-ratio: 635 / 889;
   overflow: hidden;
+  border: 1px solid rgba(86, 229, 255, 0.16);
   border-radius: 18px;
   background: #000;
   touch-action: none;
@@ -93,61 +99,101 @@
 }
 
 .imageStage img,
-.imageStage svg {
+.imageStage svg,
+.previewCard img,
+.previewCard svg {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
 }
 
-.imageStage img {
+.imageStage img,
+.previewCard img {
   object-fit: fill;
+  user-select: none;
+}
+
+.imageStage svg {
+  z-index: 1;
+  overflow: visible;
+  touch-action: none;
 }
 
 .boundary,
 .fullBleed,
 .zone,
+.selectedZone,
 .zoneDraft {
-  fill: none;
   vector-effect: non-scaling-stroke;
 }
 
 .boundary,
 .fullBleed {
+  fill: rgba(255, 243, 92, 0.035);
   stroke: #fff35c;
   stroke-width: 3;
 }
 
-.boundaryPoint {
-  fill: #fff35c;
-  stroke: #161b20;
-  stroke-width: 4;
-  vector-effect: non-scaling-stroke;
-}
-
-.zone {
+.zone,
+.selectedZone {
   fill: rgba(255, 67, 145, 0.2);
   stroke: #ff4391;
   stroke-width: 2;
 }
 
+.selectedZone {
+  fill: rgba(255, 67, 145, 0.31);
+  stroke-width: 4;
+}
+
 .zoneDraft {
-  stroke: #ffffff;
+  fill: rgba(255, 255, 255, 0.08);
+  stroke: #fff;
   stroke-width: 2;
   stroke-dasharray: 7 6;
 }
 
 .anchor circle {
-  fill: rgba(14, 19, 24, 0.7);
+  fill: rgba(14, 19, 24, 0.78);
   stroke: #56e5ff;
   stroke-width: 4;
   vector-effect: non-scaling-stroke;
 }
 
-.anchor text {
+.anchor text,
+.boundaryHandle text {
   fill: #fff;
-  font-size: 48px;
+  font-size: 42px;
   font-weight: 900;
+  paint-order: stroke;
+  stroke: #071018;
+  stroke-width: 7px;
+  stroke-linejoin: round;
+}
+
+.dragHandle { cursor: grab; }
+.dragHandle:active { cursor: grabbing; }
+.handleHit { fill: transparent; }
+
+.handleRing {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 5;
+}
+
+.boundaryHandle .handleRing {
+  fill: rgba(7, 11, 15, 0.85);
+  stroke: #fff35c;
+}
+
+.anchorHandle .handleRing {
+  fill: rgba(7, 11, 15, 0.85);
+  stroke: #56e5ff;
+}
+
+.zoneHandle .handleRing {
+  fill: rgba(7, 11, 15, 0.85);
+  stroke: #ff7cb2;
 }
 
 .controls,
@@ -155,6 +201,17 @@
   display: grid;
   align-content: start;
   gap: 14px;
+}
+
+.controls {
+  padding: 2px 0;
+}
+
+.controlBlock {
+  padding: 18px;
+  border: 1px solid rgba(145, 231, 255, 0.16);
+  border-radius: 16px;
+  background: rgba(8, 15, 21, 0.72);
 }
 
 .controlBlock label {
@@ -176,11 +233,109 @@
 }
 
 .fullBleedToggle {
-  display: flex;
+  display: flex !important;
+  grid-template-columns: auto 1fr;
   align-items: center;
-  gap: 10px;
-  color: #f4fbff;
-  font-weight: 750;
+  gap: 10px !important;
+  color: #f4fbff !important;
+  font-weight: 750 !important;
+}
+
+.fullBleedToggle input { width: auto; }
+
+.undoButton {
+  width: fit-content;
+  border-color: rgba(255, 243, 92, 0.35) !important;
+  color: #fff3a1 !important;
+}
+
+.secondaryButton {
+  width: fit-content;
+  color: #aab7c2 !important;
+  background: transparent !important;
+}
+
+.zoneHeader { align-items: baseline; }
+
+.zoneList {
+  display: grid;
+  gap: 8px;
+  max-height: 230px;
+  overflow: auto;
+}
+
+.zoneList button {
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  width: 100%;
+  border-radius: 12px;
+  text-align: left;
+}
+
+.zoneList small {
+  color: #94a8b4;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.zoneList button[aria-pressed="true"] small { color: #17303a; }
+
+.preview {
+  display: grid;
+  gap: 15px;
+  padding: 18px;
+  border: 1px solid rgba(146, 220, 240, 0.16);
+  border-radius: 18px;
+  background: rgba(4, 9, 12, 0.68);
+}
+
+.preview header p {
+  max-width: 520px;
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.preview header b { color: #f4fbff; }
+
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.previewGrid article {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 190px);
+  align-items: center;
+  justify-content: center;
+  gap: 13px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(145, 231, 255, 0.12);
+  border-radius: 14px;
+}
+
+.previewGrid article > strong {
+  color: #a8bac6;
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.previewCard {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 635 / 889;
+  overflow: hidden;
+  background: #000;
+}
+
+.previewCard svg {
+  z-index: 1;
+  pointer-events: none;
 }
 
 .footer {
@@ -189,12 +344,15 @@
   padding-top: 18px;
 }
 
-.footer div {
+.readiness {
   display: grid;
-  gap: 5px;
-  color: #a8bac6;
-  font-size: 0.82rem;
+  gap: 6px;
+  max-width: 720px;
+  font-size: 0.8rem;
 }
+
+.readyStatus { color: #64f5b0; }
+.pendingStatus { color: #ffc76b; }
 
 .footer button:disabled,
 .controls button:disabled,
@@ -222,17 +380,21 @@
 }
 
 @media (max-width: 820px) {
-  .editorGrid {
-    grid-template-columns: 1fr;
-  }
+  .editorGrid { grid-template-columns: 1fr; }
 
   .header,
-  .footer {
+  .footer,
+  .preview header {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .mapIdentity {
-    justify-items: start;
-  }
+  .mapIdentity { justify-items: start; }
+  .preview header p { text-align: left; }
+}
+
+@media (max-width: 560px) {
+  .previewGrid { grid-template-columns: 1fr; }
+  .toolTabs { display: grid; grid-template-columns: 1fr; }
+  .toolTabs button { width: 100%; }
 }
