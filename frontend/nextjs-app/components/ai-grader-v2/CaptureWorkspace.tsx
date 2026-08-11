@@ -370,12 +370,12 @@ export function CaptureWorkspace({
           DIRECTIONAL: outputPlan.DIRECTIONAL.storageKey,
         },
       };
-      const endedAtMs = Date.now();
+      const preparedAtMs = Date.now();
       if (side === "FRONT") {
         setFront(next);
         setStage("BACK_GEOMETRY");
-        frontGeometryTiming.current = { startedAtMs: stageStartedAt.current, endedAtMs };
-        stageStartedAt.current = endedAtMs;
+        frontGeometryTiming.current = { startedAtMs: stageStartedAt.current, endedAtMs: preparedAtMs };
+        stageStartedAt.current = preparedAtMs;
         setMessage("Confirm the back geometry.");
         return;
       }
@@ -430,6 +430,7 @@ export function CaptureWorkspace({
           setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} could not register safely on both sides. No map will be applied; continuing with normal human review.`);
         }
       }
+      const endedAtMs = Date.now();
       setFront(finalFront);
       setBack(finalBack);
       setStage("FRONT_CENTERING");
@@ -471,11 +472,29 @@ export function CaptureWorkspace({
 
   const confirmCentering = (result: CenteringAssistResult) => {
     const endedAtMs = Date.now();
+    const frontRegistration = front?.mapRegistration;
+    const backRegistration = back?.mapRegistration;
+    const mapApplied = Boolean(
+      activeMapRevisionId
+      && frontRegistration?.mapRevisionId === activeMapRevisionId
+      && backRegistration?.mapRevisionId === activeMapRevisionId,
+    );
+    const registration = result.side === "FRONT" ? frontRegistration : backRegistration;
     onInstrumentationEvent?.({
       eventType: "CENTERING_CONFIRMED",
       startedAtMs: stageStartedAt.current,
       endedAtMs,
-      details: { side: result.side },
+      details: {
+        side: result.side,
+        mapAppliedScope: mapApplied ? (activeMapScope ?? "EXACT") : "NONE",
+        ...(mapApplied && activeMapName ? { mapName: activeMapName } : {}),
+        ...(mapApplied && registration ? { mapRevisionId: registration.mapRevisionId } : {}),
+        ...(mapRegistrationFailed.current
+          ? { mapFailureCode: "REGISTRATION_FAILED" as const }
+          : mapLookupFailed
+            ? { mapFailureCode: "LOOKUP_FAILED" as const }
+            : {}),
+      },
     });
     stageStartedAt.current = endedAtMs;
     if (result.side === "FRONT") {

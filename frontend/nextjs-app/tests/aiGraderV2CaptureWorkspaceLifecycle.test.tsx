@@ -77,6 +77,7 @@ async function mountWorkspace(input: {
   activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
+  onRegistrationRequest?: (side: "FRONT" | "BACK") => void | Promise<void>;
   mapLookupFailed?: boolean;
 }): Promise<Harness> {
   QRCode.toCanvas = async () => {};
@@ -159,6 +160,7 @@ async function mountWorkspace(input: {
     if (url === "/api/admin/ai-grader-v2/image/map-registration") {
       registrationCount += 1;
       const body = JSON.parse(String(init?.body)) as { side: "FRONT" | "BACK" };
+      await input.onRegistrationRequest?.(body.side);
       if (input.registrationFails || input.registrationFailsOnSide === body.side) {
         return jsonResponse({ message: "Registration unsafe" }, 409);
       }
@@ -439,9 +441,18 @@ test("same-version iPhone polling cannot erase a visible geometry error", async 
 });
 
 test("resolved FAMILY map applies only after both sides succeed and remains visible post-capture", async () => {
+  let now = 10_000;
+  const originalDateNow = Date.now;
+  Date.now = () => now;
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
     activeMap: { revisionId: "family-revision-7", scope: "FAMILY", name: "2022 Lost Origin Holo" },
+    onRegistrationRequest: async (side) => {
+      if (side === "BACK") {
+        await Promise.resolve();
+        now += 75;
+      }
+    },
   });
   try {
     await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
@@ -467,12 +478,30 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
       mapName: "2022 Lost Origin Holo",
       mapRevisionId: "family-revision-7",
     });
+    assert.equal(geometryEvents[0]?.endedAtMs, 10_000, "Front keeps its stored preparation end");
+    assert.equal(geometryEvents[1]?.startedAtMs, 10_000);
+    assert.equal(geometryEvents[1]?.endedAtMs, 10_075, "Back timing includes concurrent registration latency");
 
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     assert.equal(harness.bundles.length, 1);
+    const centeringEvents = harness.events.filter((candidate) => candidate.eventType === "CENTERING_CONFIRMED");
+    assert.deepEqual(centeringEvents.map((event) => event.details), [
+      {
+        side: "FRONT",
+        mapAppliedScope: "FAMILY",
+        mapName: "2022 Lost Origin Holo",
+        mapRevisionId: "family-revision-7",
+      },
+      {
+        side: "BACK",
+        mapAppliedScope: "FAMILY",
+        mapName: "2022 Lost Origin Holo",
+        mapRevisionId: "family-revision-7",
+      },
+    ]);
     await act(async () => harness.root.render(
       <SpeedsterAppliedMapBadge
         capture={harness.bundles[0]}
@@ -498,6 +527,7 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
     assert.match(harness.container.textContent ?? "", /NO CARD MAP · MANUAL/);
   } finally {
     await harness.cleanup();
+    Date.now = originalDateNow;
   }
 });
 
@@ -536,6 +566,11 @@ test("Front registration success plus Back failure rolls both sides back to manu
     assert.equal(harness.bundles.length, 1);
     assert.equal(harness.bundles[0].front.mapRegistration, undefined);
     assert.equal(harness.bundles[0].back.mapRegistration, undefined);
+    const centeringEvents = harness.events.filter((candidate) => candidate.eventType === "CENTERING_CONFIRMED");
+    assert.deepEqual(centeringEvents.map((event) => event.details), [
+      { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+      { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+    ]);
   } finally {
     await harness.cleanup();
   }
