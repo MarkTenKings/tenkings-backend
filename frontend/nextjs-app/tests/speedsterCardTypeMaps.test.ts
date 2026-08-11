@@ -6,17 +6,22 @@ import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
   SPEEDSTER_MAP_SCHEMA_VERSION,
   speedsterCardTypeMapKey,
+  speedsterFamilyCardTypeMapKey,
   type SpeedsterCardTypeMapSide,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 import {
   SpeedsterMapIntegrityError,
   canonicalSpeedsterMapRevisionPayload,
+  assertSpeedsterMapRevisionAppliesToIdentity,
+  loadEffectiveActiveSpeedsterMapRevision,
   loadExactActiveSpeedsterMapRevision,
   loadPinnedSpeedsterMapRevision,
   parseSpeedsterMapSourceSession,
+  promoteSpeedsterExactMapRevisionToFamily,
   restoreSpeedsterCardTypeMapRevision,
   saveSpeedsterCardTypeMapRevision,
   speedsterIdentityMapRegistration,
+  speedsterMapDisplayName,
   speedsterMapMatchKeyHash,
   speedsterPhysicalQuadHash,
   speedsterMapRevisionHash,
@@ -91,6 +96,17 @@ function payload(patch: Partial<SpeedsterMapRevisionHashPayload> = {}): Speedste
     supersedesRevisionId: null,
     ...patch,
   };
+}
+
+function familyPayload(patch: Partial<SpeedsterMapRevisionHashPayload> = {}): SpeedsterMapRevisionHashPayload {
+  const matchKey = speedsterFamilyCardTypeMapKey("SPORTS", identity);
+  return payload({
+    mapId: "family-map-1",
+    matchKeyHash: speedsterMapMatchKeyHash(matchKey),
+    matchKey,
+    normalizedIdentity: matchKey,
+    ...patch,
+  });
 }
 
 function record(source = payload()) {
@@ -294,6 +310,15 @@ test("revision hashing is deterministic, canonical, and rejects any immutable-fi
   );
 });
 
+test("legacy exact map key serialization and hash remain byte-for-byte compatible", () => {
+  const key = speedsterCardTypeMapKey("SPORTS", identity);
+  assert.equal(
+    JSON.stringify(key),
+    '{"category":"SPORTS","year":"2021","manufacturer":"panini","productSet":"obsidian","insert":null,"parallel":"orange","playerName":"nick bosa","cardNumber":"12"}',
+  );
+  assert.equal(speedsterMapMatchKeyHash(key), "416907b9c72bf6e81ff4236a15cb8c645e2020bdd4e900d7fc8e0d7f595ebdb7");
+});
+
 test("map parsing rejects collapsed boundaries, singular anchors, and invalid zone polygons", () => {
   const base = payload();
   const invalidFrontMaps = [
@@ -372,6 +397,66 @@ test("exact active and pinned loaders never guess another key or revision", asyn
     }),
     /active-revision relationship is invalid/,
   );
+});
+
+test("effective lookup uses one query and deterministically selects exact before family", async () => {
+  const exact = record(payload({ mapId: "exact-map" }));
+  const family = record(familyPayload({ mapId: "family-map" }));
+  let calls = 0;
+  const applied = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "SPORTS", identity }, {
+    async findActiveMap() { throw new Error("single-map lookup must not run"); },
+    async findActiveMaps(hashes) {
+      calls += 1;
+      assert.equal(hashes.length, 2);
+      return [family, exact].map((revision) => ({
+        id: revision.mapId,
+        matchKeyHash: revision.matchKeyHash,
+        currentRevisionId: revision.id,
+        currentRevision: revision,
+      }));
+    },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(calls, 1);
+  assert.equal(applied?.appliedScope, "EXACT");
+  assert.equal(applied?.revision.mapId, "exact-map");
+  assert.equal(applied?.sourceProvenance.sourceSessionId, SESSION_ID);
+  assert.equal(applied?.appliedMapName, "2021 · Panini · Obsidian · Orange · Nick Bosa · #12");
+});
+
+test("effective lookup selects family for another subject and returns null when neither key exists", async () => {
+  const family = record(familyPayload({ mapId: "family-map" }));
+  const sibling = { ...identity, playerName: "Brock Purdy", cardNumber: "13" };
+  const applied = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "SPORTS", identity: sibling }, {
+    async findActiveMap() { return null; },
+    async findActiveMaps() {
+      return [{
+        id: family.mapId,
+        matchKeyHash: family.matchKeyHash,
+        currentRevisionId: family.id,
+        currentRevision: family,
+      }];
+    },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(applied?.appliedScope, "FAMILY");
+  assert.equal(applied?.appliedMapName, "2021 · Panini · Obsidian · Orange");
+  assert.doesNotThrow(() => assertSpeedsterMapRevisionAppliesToIdentity(applied!.revision, {
+    cardProfile: "SPORTS",
+    identity: sibling,
+  }));
+  assert.throws(() => assertSpeedsterMapRevisionAppliesToIdentity(record(), {
+    cardProfile: "SPORTS",
+    identity: sibling,
+  }), /does not apply/);
+
+  const missing = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "SPORTS", identity: sibling }, {
+    async findActiveMap() { return null; },
+    async findActiveMaps() { return []; },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(missing, null);
+  assert.equal(speedsterMapDisplayName("FAMILY", "SPORTS", sibling), "2021 · Panini · Obsidian · Orange");
 });
 
 test("registered saved human boundaries drive unchanged current-copy borders, ratios, and centering grade", () => {
@@ -508,6 +593,70 @@ test("completed-card production save writes only map state and preserves authori
   assert.equal(harness.committed().sessionData, null);
   assert.equal(sha(JSON.stringify(authority)), before);
   assert.equal(authority.session.updatedAt, "2026-08-10T19:00:00.000Z");
+});
+
+test("family save omits subject identity from the key while retaining exact source provenance and imagery", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const harness = recordingMapTransaction();
+  const saved = await saveSpeedsterCardTypeMapRevision({
+    source,
+    authorAdminId: "admin-1",
+    scope: "FAMILY",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  });
+  assert.deepEqual(saved.revision.matchKey, speedsterFamilyCardTypeMapKey("SPORTS", identity));
+  assert.deepEqual(saved.revision.normalizedIdentity, saved.revision.matchKey);
+  assert.deepEqual(saved.revision.displayIdentity, identity);
+  assert.equal(saved.revision.sourceSessionId, SESSION_ID);
+  assert.equal(saved.revision.frontMap.referenceInspection.storageKey, source.front.inspectionStorageKey);
+  assert.equal(saved.revision.backMap.referenceInspection.storageKey, source.back.inspectionStorageKey);
+});
+
+test("restore rejects revisions from another scope before opening a transaction", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const exact = record();
+  const harness = recordingMapTransaction();
+  await assert.rejects(restoreSpeedsterCardTypeMapRevision({
+    source,
+    scope: "FAMILY",
+    targetRevisionId: exact.id,
+    authorAdminId: "admin-1",
+    transaction: harness.transaction,
+    async findTargetRevision() { return exact; },
+  }), /not a revision of this scoped card-type map/);
+  assert.equal(harness.transactionCount(), 0);
+});
+
+test("promotion copies an exact immutable revision into family scope without discarding provenance or imagery", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const exact = record();
+  const harness = recordingMapTransaction();
+  const promoted = await promoteSpeedsterExactMapRevisionToFamily({
+    source,
+    targetRevisionId: exact.id,
+    authorAdminId: "admin-2",
+    transaction: harness.transaction,
+    async findTargetRevision() { return exact; },
+  });
+  assert.deepEqual(promoted.revision.matchKey, speedsterFamilyCardTypeMapKey("SPORTS", identity));
+  assert.equal(promoted.revision.sourceSessionId, exact.sourceSessionId);
+  assert.deepEqual(promoted.revision.displayIdentity, exact.displayIdentity);
+  assert.deepEqual(promoted.revision.frontMap, exact.frontMap);
+  assert.deepEqual(promoted.revision.backMap, exact.backMap);
+  assert.deepEqual(exact.matchKey, payload().matchKey);
+  assert.deepEqual(harness.writes, {
+    mapCreate: 1,
+    revisionCreate: 1,
+    currentPointer: 1,
+    session: 0,
+    label: 0,
+    card: 0,
+    report: 0,
+    memory: 0,
+  });
 });
 
 test("captured-card version restore registers and pins the exact restored revision in the same production transaction", async () => {
@@ -711,4 +860,76 @@ test("TRAIN editor coordinates are exposed only on their exact reference image a
     const body = result.state.body as { map: { editable: unknown } };
     assert.equal(Boolean(body.map.editable), expectedEditable);
   }
+});
+
+test("map API current EFFECTIVE returns one server-selected family map with scope, name, and provenance", async () => {
+  const family = validateSpeedsterLoadedMapRevision(record(familyPayload()));
+  let effectiveCalls = 0;
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() { return captureRecord("COMPLETED"); },
+    async loadActiveMap() { throw new Error("scoped lookup must not run"); },
+    async loadEffectiveMap() {
+      effectiveCalls += 1;
+      return {
+        revision: family,
+        appliedScope: "FAMILY",
+        appliedMapName: "2021 · Panini · Obsidian · Orange",
+        sourceProvenance: { sourceSessionId: SESSION_ID, sourceIdentity: identity },
+      };
+    },
+    async listRevisions() { return []; },
+    async saveRevision() { throw new Error("not reached"); },
+    async restoreRevision() { throw new Error("not reached"); },
+    async sourceClientState() { throw new Error("not reached"); },
+  });
+  const result = response();
+  await handler({
+    method: "GET",
+    query: { action: ["current"], sessionId: SESSION_ID, scope: "EFFECTIVE" },
+    headers: {},
+  } as unknown as NextApiRequest, result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal(effectiveCalls, 1);
+  const map = (result.state.body as { map: Record<string, unknown> }).map;
+  assert.equal(map.status, "LOADED");
+  assert.equal(map.scope, "FAMILY");
+  assert.equal(map.name, "2021 · Panini · Obsidian · Orange");
+  assert.deepEqual((map.revision as { sourceProvenance: unknown }).sourceProvenance, {
+    sourceSessionId: SESSION_ID,
+    sourceIdentity: identity,
+  });
+});
+
+test("map API passes explicit FAMILY scope to save and rejects EFFECTIVE source editing", async () => {
+  const family = validateSpeedsterLoadedMapRevision(record(familyPayload()));
+  let savedScope: unknown;
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() { return captureRecord("CAPTURED"); },
+    async loadActiveMap() { return null; },
+    async loadEffectiveMap() { throw new Error("not reached"); },
+    async listRevisions() { return []; },
+    async saveRevision(input) { savedScope = input.scope; return { mapId: family.mapId, revision: family }; },
+    async restoreRevision() { throw new Error("not reached"); },
+    async sourceClientState() { return { sessionId: SESSION_ID } as never; },
+  });
+  const saved = response();
+  await handler(request("POST", "save", {
+    sessionId: SESSION_ID,
+    scope: "FAMILY",
+    front: trainingSide,
+    back: trainingSide,
+  }), saved.res);
+  assert.equal(saved.state.status, 201);
+  assert.equal(savedScope, "FAMILY");
+
+  const rejected = response();
+  await handler({
+    method: "GET",
+    query: { action: ["source"], sessionId: SESSION_ID, scope: "EFFECTIVE" },
+    headers: {},
+  } as unknown as NextApiRequest, rejected.res);
+  assert.equal(rejected.state.status, 400);
+  assert.match(JSON.stringify(rejected.state.body), /read-only/);
 });
