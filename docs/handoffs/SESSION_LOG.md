@@ -31708,3 +31708,9 @@ By enabling Rip It Live, I confirm:
 
 - Independent review found the legacy exact-map static hash regression covered Sports only. Commit `345047ee` adds the historical Pokémon key ordering and fixed SHA-256 for TKH-000231's canonical Cubone identity alongside the existing Sports fixture, so both category shapes are protected byte-for-byte while family keys evolve separately.
 - Focused persistence tests pass `23/23`; `git diff --check` passes. No runtime, schema, migration, database, Production, provider, model, image, threshold, detector, grade, or Memory change occurred.
+
+## 2026-08-11 - Front/Back map registration made all-or-none locally
+
+- Independent adversarial review found that Front registration could succeed and pre-position its border while Back registration later failed, leaving a partially map-shaped manual workflow. Commit `a7531916` now prepares both sides first, runs the independent Front/Back registrations concurrently, and applies projected boundaries and bindings only when both return the same selected revision. Any failure leaves both sides on their prepared manual borders, stores no binding, emits `NONE` with a bounded registration failure, and performs no retry or lower-scope lookup.
+- Added a persistent post-capture workflow badge derived from both actual registrations rather than the pre-capture selection, refined location warnings so shared top/bottom landmarks are not categorically treated as unsafe, and surfaces nonblocking family-safety guidance before promoting a legacy exact map.
+- Corrective mounted/source UI coverage passes `27/27`; focused ESLint, changed-file TypeScript filtering, and `git diff --check` pass. No schema, migration, database, Production, provider, model, image, threshold, detector, grade, report, label, or Memory mutation occurred.
