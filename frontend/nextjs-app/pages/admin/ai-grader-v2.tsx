@@ -674,7 +674,11 @@ export default function AiGraderV2AdminPage() {
       <main className={styles.page}>
         <header className={styles.hero}>
           <div><span>TEN KINGS · AI GRADER V2</span><h1>Speedster</h1><p>{working ? "Racing · " : ""}{message}</p></div>
-          <nav><Link href="/admin/ai-grader-v2/completed">Completed cards</Link><Link href="/admin">Admin Home</Link></nav>
+          <nav>
+            <Link href="#card-maps">Card Maps</Link>
+            <Link href="/admin/ai-grader-v2/completed">Completed cards</Link>
+            <Link href="/admin">Admin Home</Link>
+          </nav>
         </header>
 
         {!draft ? (
@@ -688,11 +692,40 @@ export default function AiGraderV2AdminPage() {
               saving={working}
               certificateNumber="TKS-DRAFT"
             />
-            <section className={styles.statusPanel}>
-              <span>TRAIN · NEW CARD</span>
-              <h2>Build or correct this exact card-type map.</h2>
-              <p>TRAIN uses the same identity, physical geometry, centering, and capture path.</p>
-              <button type="button" disabled={working} onClick={() => void createDraft(null, true)}>TRAIN</button>
+            <section
+              id="card-maps"
+              className={styles.cardMapsPanel}
+              aria-labelledby="card-maps-heading"
+            >
+              <div className={styles.cardMapsVisual} aria-hidden="true">
+                <div className={`${styles.mapCard} ${styles.mapCardRear}`}>
+                  <span className={styles.mapCardFrame} />
+                  <span className={styles.mapCardCrosshair} />
+                </div>
+                <div className={`${styles.mapCard} ${styles.mapCardFront}`}>
+                  <span className={styles.mapCardFrame} />
+                  <span className={styles.mapCardCrosshair} />
+                  <span className={styles.mapCardNode} />
+                  <span className={`${styles.mapCardNode} ${styles.mapCardNodeRight}`} />
+                  <span className={`${styles.mapCardNode} ${styles.mapCardNodeBottom}`} />
+                </div>
+                <span className={styles.mapScanLine} />
+                <span className={styles.mapSignal} />
+              </div>
+              <div className={styles.cardMapsContent}>
+                <span>GEOMETRY TRAINING CONTROL</span>
+                <h2 id="card-maps-heading">CARD MAPS</h2>
+                <p>Complete the card identity above, then create or correct its exact Front and Back map.</p>
+                <p className={styles.cardMapsStatus} role="status" aria-live="polite">{message}</p>
+                <button
+                  className={styles.cardMapsCta}
+                  type="button"
+                  disabled={working}
+                  onClick={() => void createDraft(null, true)}
+                >
+                  CREATE CARD MAP
+                </button>
+              </div>
             </section>
           </>
         ) : null}
