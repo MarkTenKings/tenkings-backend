@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { Prisma as PrismaRuntime } from "@prisma/client";
 import {
   prisma,
   type Prisma,
@@ -930,7 +931,7 @@ async function assertCapturedTrainSourceIsUninitialized(
   tx: SpeedsterMapWriteTransaction,
   source: SpeedsterMapSourceSession,
 ) {
-  if (source.workflowState !== "CAPTURED") return;
+  if (source.workflowState !== "CAPTURED") return null;
   await tx.$queryRaw`
     SELECT "id"
     FROM "AiGraderV2Session"
@@ -943,6 +944,7 @@ async function assertCapturedTrainSourceIsUninitialized(
       workflowState: true,
       reviewedDefects: true,
       gradeReport: true,
+      mapRevisionId: true,
       mapFilterDecisions: { take: 1, select: { id: true } },
     },
   });
@@ -958,6 +960,51 @@ async function assertCapturedTrainSourceIsUninitialized(
     throw new SpeedsterMapIntegrityError(
       "Captured-card TRAIN can change its pinned map only before detector review is initialized.",
     );
+  }
+  return current;
+}
+
+async function capturedExactOverrideRevisionId(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  scope: SpeedsterMapScope,
+) {
+  if (scope !== "FAMILY" || source.workflowState !== "CAPTURED") return null;
+  const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey(source.cardProfile, source.identity));
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${exactHash}`}, 0))`;
+  const exact = await tx.aiGraderV2CardTypeMap.findUnique({
+    where: { matchKeyHash: exactHash },
+    select: { currentRevisionId: true },
+  });
+  return exact?.currentRevisionId ?? null;
+}
+
+async function clearCapturedFamilyBindingIfStale(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  currentMapRevisionId: string | null | undefined,
+  exactOverrideRevisionId: string | null,
+) {
+  if (
+    source.workflowState !== "CAPTURED"
+    || !exactOverrideRevisionId
+    || !currentMapRevisionId
+    || currentMapRevisionId === exactOverrideRevisionId
+  ) return;
+  const cleared = await tx.aiGraderV2Session.updateMany({
+    where: {
+      id: source.id,
+      createdByUserId: source.createdByUserId,
+      workflowState: "CAPTURED",
+    },
+    data: {
+      mapRevisionId: null,
+      mapFilterPolicyVersion: null,
+      mapRegistration: PrismaRuntime.DbNull,
+    },
+  });
+  if (cleared.count !== 1) {
+    throw new SpeedsterMapIntegrityError("Captured source could not return safely to manual map review.");
   }
 }
 
@@ -1054,7 +1101,8 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
@@ -1108,7 +1156,13 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       where: { id: map.id },
       data: { currentRevisionId: revision.id },
     });
-    if (input.source.workflowState === "CAPTURED") {
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (input.source.workflowState === "CAPTURED" && !exactOverrideRevisionId) {
       const frontRegistration = speedsterIdentityMapRegistration(frontMap, input.source.front, revision.id);
       const backRegistration = speedsterIdentityMapRegistration(backMap, input.source.back, revision.id);
       const bound = await tx.aiGraderV2Session.updateMany({
@@ -1142,6 +1196,7 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
   scope?: SpeedsterMapScope;
   transaction?: SpeedsterMapTransactionRunner;
   registerCapturedRestore?: SpeedsterCapturedRestoreRegistration;
+  findActiveMap?: SpeedsterMapLookupDependencies["findActiveMap"];
   findTargetRevision?: SpeedsterMapLookupDependencies["findPinnedRevision"];
 }>): Promise<SpeedsterMapSaveResult> {
   const scope = input.scope ?? "EXACT";
@@ -1153,7 +1208,12 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
   }
   const validated = validateSpeedsterLoadedMapRevision(target, { matchKeyHash });
-  const registration = input.source.workflowState === "CAPTURED"
+  const exactOverrideWasActive = scope === "FAMILY" && input.source.workflowState === "CAPTURED"
+    ? Boolean((await (input.findActiveMap ?? defaultLookupDependencies.findActiveMap)(
+        speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity)),
+      ))?.currentRevisionId)
+    : false;
+  const registration = input.source.workflowState === "CAPTURED" && !exactOverrideWasActive
     ? await (input.registerCapturedRestore ?? registerCapturedRestore)(input.source, {
         revisionId,
         mapId: validated.mapId,
@@ -1165,7 +1225,8 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     const map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
@@ -1211,7 +1272,13 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
       select: mapRevisionSelect,
     });
     await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
-    if (registration) {
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (registration && !exactOverrideRevisionId) {
       const bound = await tx.aiGraderV2Session.updateMany({
         where: {
           id: input.source.id,
@@ -1239,6 +1306,7 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
   authorAdminId: string;
   transaction?: SpeedsterMapTransactionRunner;
   registerCapturedPromotion?: SpeedsterCapturedRestoreRegistration;
+  findActiveMap?: SpeedsterMapLookupDependencies["findActiveMap"];
   findTargetRevision?: SpeedsterMapLookupDependencies["findPinnedRevision"];
 }>): Promise<SpeedsterMapSaveResult> {
   const target = await (input.findTargetRevision ?? defaultLookupDependencies.findPinnedRevision)(input.targetRevisionId);
@@ -1254,7 +1322,12 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
   const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
   const matchKeyHash = speedsterMapMatchKeyHash(familyKey);
   const revisionId = randomUUID();
-  const registration = input.source.workflowState === "CAPTURED"
+  const exactOverrideWasActive = input.source.workflowState === "CAPTURED"
+    ? Boolean((await (input.findActiveMap ?? defaultLookupDependencies.findActiveMap)(
+        speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity)),
+      ))?.currentRevisionId)
+    : false;
+  const registration = input.source.workflowState === "CAPTURED" && !exactOverrideWasActive
     ? await (input.registerCapturedPromotion ?? registerCapturedRestore)(input.source, {
         revisionId,
         mapId: validated.mapId,
@@ -1266,7 +1339,8 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, "FAMILY");
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
@@ -1317,7 +1391,13 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
       select: mapRevisionSelect,
     });
     await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
-    if (registration) {
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (registration && !exactOverrideRevisionId) {
       const bound = await tx.aiGraderV2Session.updateMany({
         where: {
           id: input.source.id,

@@ -164,11 +164,13 @@ function response() {
 type RecordingTransaction = Parameters<Parameters<SpeedsterMapTransactionRunner>[0]>[0];
 
 function recordingMapTransaction(seed?: Readonly<{
-  map: Record<string, unknown>;
+  map?: Record<string, unknown>;
+  exactMap?: Record<string, unknown>;
   session?: Readonly<{
     workflowState: string;
     reviewedDefects: unknown;
     gradeReport: unknown;
+    mapRevisionId?: string | null;
     mapFilterDecisions: readonly Readonly<{ id: string }>[];
   }>;
 }>) {
@@ -183,13 +185,15 @@ function recordingMapTransaction(seed?: Readonly<{
     report: 0,
     memory: 0,
   };
-  let committedMap: Record<string, unknown> | null = seed ? structuredClone(seed.map) : null;
+  let committedMap: Record<string, unknown> | null = seed?.map ? structuredClone(seed.map) : null;
+  let committedExactMap: Record<string, unknown> | null = seed?.exactMap ? structuredClone(seed.exactMap) : null;
   let committedRevision: Record<string, unknown> | null = null;
   let committedSessionData: Record<string, unknown> | null = null;
   const currentSession = seed?.session ?? {
     workflowState: "CAPTURED",
     reviewedDefects: [],
     gradeReport: {},
+    mapRevisionId: null,
     mapFilterDecisions: [],
   };
   let transactionCount = 0;
@@ -198,6 +202,7 @@ function recordingMapTransaction(seed?: Readonly<{
     transactionCount += 1;
     operations.push("transaction.begin");
     let workingMap = committedMap ? structuredClone(committedMap) : null;
+    const workingExactMap = committedExactMap ? structuredClone(committedExactMap) : null;
     let workingRevision = committedRevision ? structuredClone(committedRevision) : null;
     let workingSessionData = committedSessionData ? structuredClone(committedSessionData) : null;
     const delegates = {
@@ -210,8 +215,11 @@ function recordingMapTransaction(seed?: Readonly<{
         return 1;
       },
       aiGraderV2CardTypeMap: {
-        async findUnique() {
+        async findUnique(args: unknown) {
           operations.push("map.findUnique");
+          const requestedHash = (args as { where?: { matchKeyHash?: string } }).where?.matchKeyHash;
+          if (requestedHash && workingExactMap?.matchKeyHash === requestedHash) return workingExactMap;
+          if (requestedHash && workingMap?.matchKeyHash !== requestedHash) return null;
           return workingMap;
         },
         async create(args: unknown) {
@@ -269,6 +277,7 @@ function recordingMapTransaction(seed?: Readonly<{
     });
     const result = await operation(tx as unknown as RecordingTransaction);
     committedMap = workingMap;
+    committedExactMap = workingExactMap;
     committedRevision = workingRevision;
     committedSessionData = workingSessionData;
     operations.push("transaction.commit");
@@ -445,7 +454,7 @@ test("effective lookup selects family for another subject and returns null when 
     cardProfile: "SPORTS",
     identity: sibling,
   }));
-  assert.throws(() => assertSpeedsterMapRevisionAppliesToIdentity(record(), {
+  assert.throws(() => assertSpeedsterMapRevisionAppliesToIdentity(validateSpeedsterLoadedMapRevision(record()), {
     cardProfile: "SPORTS",
     identity: sibling,
   }), /does not apply/);
@@ -457,6 +466,24 @@ test("effective lookup selects family for another subject and returns null when 
   });
   assert.equal(missing, null);
   assert.equal(speedsterMapDisplayName("FAMILY", "SPORTS", sibling), "2021 · Panini · Obsidian · Orange");
+});
+
+test("effective lookup never falls through from a malformed exact override to a valid family map", async () => {
+  const exact = record(payload({ mapId: "exact-map" }));
+  const malformedExact = { ...exact, revisionHash: sha("malformed-exact") };
+  const family = record(familyPayload({ mapId: "family-map" }));
+  await assert.rejects(loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "SPORTS", identity }, {
+    async findActiveMap() { throw new Error("single-map lookup must not run"); },
+    async findActiveMaps() {
+      return [malformedExact, family].map((revision) => ({
+        id: revision.mapId,
+        matchKeyHash: revision.matchKeyHash,
+        currentRevisionId: revision.id,
+        currentRevision: revision,
+      }));
+    },
+    async findPinnedRevision() { return null; },
+  }), /hash verification failed/);
 });
 
 test("registered saved human boundaries drive unchanged current-copy borders, ratios, and centering grade", () => {
@@ -615,6 +642,44 @@ test("family save omits subject identity from the key while retaining exact sour
   assert.equal(saved.revision.backMap.referenceInspection.storageKey, source.back.inspectionStorageKey);
 });
 
+test("captured family save never replaces an active exact override pin", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
+  const exact = record();
+  const harness = recordingMapTransaction({
+    exactMap: {
+      id: exact.mapId,
+      matchKeyHash: exact.matchKeyHash,
+      cardProfile: "SPORTS",
+      currentRevisionId: exact.id,
+      currentRevision: { id: exact.id, version: exact.version },
+    },
+    session: {
+      workflowState: "CAPTURED",
+      reviewedDefects: [],
+      gradeReport: {},
+      mapRevisionId: "old-family-revision",
+      mapFilterDecisions: [],
+    },
+  });
+  const saved = await saveSpeedsterCardTypeMapRevision({
+    source,
+    authorAdminId: "admin-1",
+    scope: "FAMILY",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  });
+  assert.deepEqual(saved.revision.matchKey, speedsterFamilyCardTypeMapKey("SPORTS", identity));
+  assert.equal(harness.writes.revisionCreate, 1);
+  assert.equal(harness.writes.currentPointer, 1);
+  assert.equal(harness.writes.session, 1);
+  const cleared = harness.committed().sessionData as Record<string, unknown>;
+  assert.equal(cleared.mapRevisionId, null);
+  assert.equal(cleared.mapFilterPolicyVersion, null);
+  assert.ok("mapRegistration" in cleared);
+});
+
 test("restore rejects revisions from another scope before opening a transaction", async () => {
   const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
   const exact = record();
@@ -628,6 +693,54 @@ test("restore rejects revisions from another scope before opening a transaction"
     async findTargetRevision() { return exact; },
   }), /not a revision of this scoped card-type map/);
   assert.equal(harness.transactionCount(), 0);
+});
+
+test("captured family restore keeps an active exact override and skips family registration", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
+  const exact = record(payload({ mapId: "exact-map" }));
+  const family = record(familyPayload({ mapId: "family-map" }));
+  const exactMap = {
+    id: exact.mapId,
+    matchKeyHash: exact.matchKeyHash,
+    cardProfile: "SPORTS",
+    currentRevisionId: exact.id,
+    currentRevision: { id: exact.id, version: exact.version },
+  };
+  const harness = recordingMapTransaction({
+    exactMap,
+    map: {
+      id: family.mapId,
+      matchKeyHash: family.matchKeyHash,
+      cardProfile: "SPORTS",
+      currentRevisionId: "family-current",
+      currentRevision: { id: "family-current", version: 2 },
+    },
+    session: {
+      workflowState: "CAPTURED",
+      reviewedDefects: [],
+      gradeReport: {},
+      mapRevisionId: exact.id,
+      mapFilterDecisions: [],
+    },
+  });
+  let registrations = 0;
+  const restored = await restoreSpeedsterCardTypeMapRevision({
+    source,
+    scope: "FAMILY",
+    targetRevisionId: family.id,
+    authorAdminId: "admin-1",
+    transaction: harness.transaction,
+    async findTargetRevision() { return family; },
+    async findActiveMap() { return { ...exactMap, currentRevision: exact }; },
+    async registerCapturedRestore() {
+      registrations += 1;
+      throw new Error("family registration must not run while exact is active");
+    },
+  });
+  assert.deepEqual(restored.revision.matchKey, family.matchKey);
+  assert.equal(registrations, 0);
+  assert.equal(harness.writes.session, 0);
+  assert.equal(harness.committed().sessionData, null);
 });
 
 test("promotion copies an exact immutable revision into family scope without discarding provenance or imagery", async () => {
@@ -657,6 +770,49 @@ test("promotion copies an exact immutable revision into family scope without dis
     report: 0,
     memory: 0,
   });
+});
+
+test("captured exact-to-family promotion keeps the active exact override and skips family registration", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
+  const exact = record();
+  const exactMap = {
+    id: exact.mapId,
+    matchKeyHash: exact.matchKeyHash,
+    cardProfile: "SPORTS",
+    currentRevisionId: exact.id,
+    currentRevision: { id: exact.id, version: exact.version },
+  };
+  const harness = recordingMapTransaction({
+    exactMap,
+    session: {
+      workflowState: "CAPTURED",
+      reviewedDefects: [],
+      gradeReport: {},
+      mapRevisionId: exact.id,
+      mapFilterDecisions: [],
+    },
+  });
+  let registrations = 0;
+  const promoted = await promoteSpeedsterExactMapRevisionToFamily({
+    source,
+    targetRevisionId: exact.id,
+    authorAdminId: "admin-1",
+    transaction: harness.transaction,
+    async findTargetRevision() { return exact; },
+    async findActiveMap() {
+      return { ...exactMap, currentRevision: exact };
+    },
+    async registerCapturedPromotion() {
+      registrations += 1;
+      throw new Error("family registration must not run while exact is active");
+    },
+  });
+  assert.deepEqual(promoted.revision.matchKey, speedsterFamilyCardTypeMapKey("SPORTS", identity));
+  assert.equal(registrations, 0);
+  assert.equal(harness.writes.revisionCreate, 1);
+  assert.equal(harness.writes.currentPointer, 1);
+  assert.equal(harness.writes.session, 0);
+  assert.equal(harness.committed().sessionData, null);
 });
 
 test("captured-card version restore registers and pins the exact restored revision in the same production transaction", async () => {
