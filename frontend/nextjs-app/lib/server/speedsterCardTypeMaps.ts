@@ -7,6 +7,9 @@ import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
   SPEEDSTER_MAP_SCHEMA_VERSION,
   canonicalSpeedsterMapKeyJson,
+  isSpeedsterNondegenerateAnchorSet,
+  isSpeedsterSimplePolygon,
+  isSpeedsterStrictConvexPolygon,
   speedsterCardTypeMapKey,
   type SpeedsterCardTypeMapKey,
   type SpeedsterCardTypeMapSide,
@@ -240,7 +243,11 @@ function designBoundary(value: unknown, label: string): SpeedsterMapDesignBounda
     return { kind: "FULL_BLEED" };
   }
   exactObjectKeys(value, ["kind", "points"], label);
-  return { kind: "QUAD", points: quad(value.points, `${label}.points`) };
+  const points = quad(value.points, `${label}.points`);
+  if (!isSpeedsterStrictConvexPolygon(points)) {
+    throw new SpeedsterMapIntegrityError(`${label} must be a non-collapsed convex quadrilateral in perimeter order.`);
+  }
+  return { kind: "QUAD", points };
 }
 
 const ZONE_TYPES = new Set([
@@ -263,11 +270,15 @@ function mapZone(value: unknown, label: string): SpeedsterMapZone {
   if (!Array.isArray(value.polygon) || value.polygon.length < 3 || value.polygon.length > 64) {
     throw new SpeedsterMapIntegrityError(`${label}.polygon must contain 3-64 points.`);
   }
+  const polygon = value.polygon.map((candidate, index) => point(candidate, `${label}.polygon[${index}]`));
+  if (!isSpeedsterSimplePolygon(polygon)) {
+    throw new SpeedsterMapIntegrityError(`${label}.polygon must be a non-collapsed simple polygon in perimeter order.`);
+  }
   return {
     id,
     label: zoneLabel,
     semanticType: value.semanticType as SpeedsterMapZone["semanticType"],
-    polygon: value.polygon.map((candidate, index) => point(candidate, `${label}.polygon[${index}]`)),
+    polygon,
   };
 }
 
@@ -311,6 +322,9 @@ export function parseSpeedsterMapSide(value: unknown, expectedSide: SpeedsterCar
   const zones = value.zones.map((candidate, index) => mapZone(candidate, `${expectedSide}.zones[${index}]`));
   if (new Set(anchors.map((anchor) => anchor.id)).size !== anchors.length) {
     throw new SpeedsterMapIntegrityError(`${expectedSide} map anchor IDs must be unique.`);
+  }
+  if (!isSpeedsterNondegenerateAnchorSet(anchors.map((anchor) => anchor.point))) {
+    throw new SpeedsterMapIntegrityError(`${expectedSide} map anchors must be four distinct non-collinear design points.`);
   }
   if (new Set(zones.map((zone) => zone.id)).size !== zones.length) {
     throw new SpeedsterMapIntegrityError(`${expectedSide} map zone IDs must be unique.`);
@@ -372,6 +386,9 @@ export function parseSpeedsterMapRegistration(
       score,
     };
   });
+  if (!isSpeedsterNondegenerateAnchorSet(anchors.map((entry) => entry.locatedPoint))) {
+    throw new SpeedsterMapIntegrityError("Current-copy map registration located anchors are degenerate.");
+  }
   if (!Array.isArray(value.projectedZones) || value.projectedZones.length < 1 || value.projectedZones.length > 100) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration zones are invalid.");
   }
@@ -753,12 +770,47 @@ export type SpeedsterMapSaveResult = Readonly<{
 
 type SpeedsterMapWriteTransaction = Pick<
   Prisma.TransactionClient,
-  "$executeRaw" | "aiGraderV2CardTypeMap" | "aiGraderV2CardTypeMapRevision" | "aiGraderV2Session"
+  "$executeRaw" | "$queryRaw" | "aiGraderV2CardTypeMap" | "aiGraderV2CardTypeMapRevision" | "aiGraderV2Session"
 >;
 
 export type SpeedsterMapTransactionRunner = <Result>(
   operation: (tx: SpeedsterMapWriteTransaction) => Promise<Result>,
 ) => Promise<Result>;
+
+async function assertCapturedTrainSourceIsUninitialized(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+) {
+  if (source.workflowState !== "CAPTURED") return;
+  await tx.$queryRaw`
+    SELECT "id"
+    FROM "AiGraderV2Session"
+    WHERE "id" = ${source.id} AND "createdByUserId" = ${source.createdByUserId}
+    FOR UPDATE
+  `;
+  const current = await tx.aiGraderV2Session.findFirst({
+    where: { id: source.id, createdByUserId: source.createdByUserId },
+    select: {
+      workflowState: true,
+      reviewedDefects: true,
+      gradeReport: true,
+      mapFilterDecisions: { take: 1, select: { id: true } },
+    },
+  });
+  if (
+    !current
+    || current.workflowState !== "CAPTURED"
+    || !Array.isArray(current.reviewedDefects)
+    || current.reviewedDefects.length !== 0
+    || !isRecord(current.gradeReport)
+    || Object.keys(current.gradeReport).length !== 0
+    || current.mapFilterDecisions.length !== 0
+  ) {
+    throw new SpeedsterMapIntegrityError(
+      "Captured-card TRAIN can change its pinned map only before detector review is initialized.",
+    );
+  }
+}
 
 export type SpeedsterCapturedRestoreRegistration = (
   source: SpeedsterMapSourceSession,
@@ -851,6 +903,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
+    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
@@ -959,6 +1012,7 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
+    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     const map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },

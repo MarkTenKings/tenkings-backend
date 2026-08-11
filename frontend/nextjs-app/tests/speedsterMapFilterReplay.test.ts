@@ -50,17 +50,23 @@ SpeedsterMeasuredDefect => ({
   reviewResult: origin === "SMART_MARK" ? "SMART_MARKED" : "UNREVIEWED",
   measurement,
 });
+const anchorPoints = [
+  { x: 0.1, y: 0.1 },
+  { x: 0.9, y: 0.1 },
+  { x: 0.9, y: 0.9 },
+  { x: 0.1, y: 0.9 },
+] as const;
 const mapSide = (side: "FRONT" | "BACK") => ({
   side,
   referenceInspection: { storageKey: `private/${side.toLowerCase()}.webp`, sha256: sha },
   sourcePhysicalQuadSha256: sha,
   designBoundary: { kind: "FULL_BLEED" as const },
-  anchors: [{
-    id: `${side}-anchor`,
-    label: "Anchor",
-    point: { x: 0.1, y: 0.1 },
+  anchors: anchorPoints.map((point, index) => ({
+    id: `${side}-anchor-${index + 1}`,
+    label: `Anchor ${index + 1}`,
+    point,
     referencePatch: { storageKey: `private/${side.toLowerCase()}-anchor.webp`, sha256: sha },
-  }],
+  })),
   zones: [{
     id: `${side}-print-zone`,
     label: "Printed artwork",
@@ -75,12 +81,12 @@ const registrationSide = (side: "FRONT" | "BACK") => ({
   currentPhysicalQuadSha256: sha,
   currentInspectionSha256: sha,
   homography: [1, 0, 0, 0, 1, 0, 0, 0, 1] as const,
-  anchors: [{
-    anchorId: `${side}-anchor`,
-    expectedPoint: { x: 0.1, y: 0.1 },
-    locatedPoint: { x: 0.1, y: 0.1 },
+  anchors: anchorPoints.map((point, index) => ({
+    anchorId: `${side}-anchor-${index + 1}`,
+    expectedPoint: point,
+    locatedPoint: point,
     score: 1,
-  }],
+  })),
   projectedDesignBoundary: { kind: "FULL_BLEED" as const },
   projectedZones: mapSide(side).zones,
 });

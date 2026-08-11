@@ -32,6 +32,7 @@ PhotoRoom presentation now starts through one separate automatic authenticated p
 - Backend filter evidence is permanent and immutable. Audit restore is the correction loop; it does not silently rewrite the original decision.
 - Active-session restore remeasures and regrades through existing authority, then atomically appends its calibration event. Completed-session restore is append-only calibration evidence and cannot rewrite the completed session, label, permanent card, grade/report, findings, public slug, or timestamps.
 - Filter decisions cannot become negative `GLOBAL` Memory lessons.
+- A restore on an active session follows the existing completion-harvested Memory path. A completed-session restore cannot enter the current `GLOBAL` Memory path without rewriting completed history or adding a second learning system, so it remains append-only calibration evidence for human TRAIN correction and replay.
 - The existing current-copy physical centering contract remains authoritative and untouchable. TRAIN reuses only human-authored design boundaries and anchors, never an old card's physical centering result.
 - Front and Back verification work runs simultaneously against the same captured Memory snapshot. Results remain deterministically Front then Back, failures wait for the sibling request to settle, and mismatched detector versions reject the pair before persistence.
 - SAM 3 remains the only detector. Detector and Memory thresholds, grade formulas, measurement behavior, capture/calibration, and the `GLOBAL` Memory bank were not changed.
@@ -46,10 +47,13 @@ PhotoRoom presentation now starts through one separate automatic authenticated p
 - Added captured-card and immutable completed-card TRAIN entry points for human Front/Back design boundaries, four anchors, and classified print/context zones.
 - Added immediate save/edit/restore-as-new activation, immutable revision history, current-revision pointer, captured-session revision pinning, and completed-source map-only writes.
 - Current-copy OpenCV registration locates only saved human anchors, transforms the human-authored boundary/zones, binds registration to the submitted physical quad and authoritative inspection hashes, and feeds the existing centering correction/formula path.
+- Every capture save now resolves the exact active map server-side. An active map cannot be bypassed by omitting the client binding; the unchanged no-map path remains available only after the exact lookup returns no map.
+- Captured TRAIN save/restore row-locks and reloads the session and can repin it only while reviewed findings, grade report, and filter decisions remain pristine. Completed sources retain their separate map-only behavior.
+- Boundaries, anchors, and zones reject collapsed, self-intersecting, or singular geometry. Existing coordinates are prefilled only when their immutable reference image and physical-quad hash match the selected source; a sibling copy starts from that current copy rather than transplanting old coordinates.
 
 ### Full-auto filtering, audit, restore, and replay
 
-- Added the frozen `human-zone-full-contour-containment-v1` rule under `speedster-map-filter-containment-v1` using exact pinned map/revision/policy/registration geometry.
+- Added the frozen `human-zone-full-contour-containment-v1` rule under `speedster-map-filter-containment-v1` using exact pinned map/revision/policy/registration geometry. Its versioned overlap evidence uses contour-segment containment, so a concave-zone edge crossing remains in review even when every contour vertex is inside; boundary contact remains contained.
 - Initialization writes active review findings, the recalculated grade, and complete immutable filter decisions in one serializable transaction.
 - Each filter decision retains the original finding snapshot, Detector/Memory provenance, available generating exemplar, supporting views, map/revision/zone, overlap geometry, exact policy inputs, detector version, and filter time.
 - The private audit separates `HUMAN_REMOVED` and `FILTER_REMOVED`, supports the approved provenance filters/grouping, renders owned crop/evidence and rationale, and exposes the one-click correction path.
@@ -75,8 +79,9 @@ All verification used Node `20.20.1` where applicable.
 | Map-integrity correction path | `30/30` passed |
 | Full-auto filter/replay/restore/audit/review | `53/53` passed |
 | Completion/presentation/instrumentation/review/restore focus | `44/44` passed |
+| Critic-blocker capture/map/geometry/containment regressions | `50/50` passed |
 | Complete Speedster backend suite | `93/93` passed |
-| Complete AI Grader V2/TRAIN/filter frontend suite | `277/277` passed |
+| Complete AI Grader V2/TRAIN/filter frontend suite | `284/284` passed |
 | Exact changed-file ESLint | clean |
 | Production build with `RUN_DB_MIGRATIONS=false` | passed; `76/76` pages |
 | Disposable PostgreSQL migration chain | all `86` migrations passed twice; second deploy no-op |

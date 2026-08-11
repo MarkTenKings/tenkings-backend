@@ -13,6 +13,9 @@ import {
   SPEEDSTER_MAP_FILTER_RULE_ID,
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
+  isSpeedsterNondegenerateAnchorSet,
+  isSpeedsterSimplePolygon,
+  isSpeedsterStrictConvexPolygon,
 } from "./card-type-map-contracts";
 import type { SpeedsterSessionIdentity } from "./identity";
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "./learning-calibration-v2";
@@ -52,7 +55,10 @@ function point(value: unknown): value is SpeedsterPoint {
 }
 
 function polygon(value: unknown): value is readonly SpeedsterPoint[] {
-  return Array.isArray(value) && value.length >= 3 && value.every(point);
+  return Array.isArray(value)
+    && value.length >= 3
+    && value.every(point)
+    && isSpeedsterSimplePolygon(value);
 }
 
 function zone(value: unknown): value is SpeedsterMapZone {
@@ -67,7 +73,13 @@ function zone(value: unknown): value is SpeedsterMapZone {
 function designBoundary(value: unknown) {
   return isRecord(value) && (
     value.kind === "FULL_BLEED"
-    || (value.kind === "QUAD" && Array.isArray(value.points) && value.points.length === 4 && value.points.every(point))
+    || (
+      value.kind === "QUAD"
+      && Array.isArray(value.points)
+      && value.points.length === 4
+      && value.points.every(point)
+      && isSpeedsterStrictConvexPolygon(value.points)
+    )
   );
 }
 
@@ -92,6 +104,7 @@ function registrationSide(
     || value.homography.length !== 9
     || value.homography.some((part) => typeof part !== "number" || !Number.isFinite(part))
     || !Array.isArray(value.anchors)
+    || value.anchors.length !== 4
     || value.anchors.some((entry) => !isRecord(entry)
       || !nonemptyText(entry.anchorId)
       || !point(entry.expectedPoint)
@@ -102,6 +115,13 @@ function registrationSide(
     || !designBoundary(value.projectedDesignBoundary)
   ) {
     throw new Error(`The pinned ${side} Speedster map registration is malformed.`);
+  }
+  const locatedPoints = value.anchors.map((entry) => (entry as Record<string, unknown>).locatedPoint as SpeedsterPoint);
+  if (!isSpeedsterNondegenerateAnchorSet(locatedPoints)) {
+    throw new Error(`The pinned ${side} Speedster map registration located anchors are degenerate.`);
+  }
+  if (!isSpeedsterNondegenerateAnchorSet(expectedAnchors.map((entry) => entry.point))) {
+    throw new Error(`The pinned ${side} Speedster map anchors are degenerate.`);
   }
   const expected = expectedZones.map(({ id, semanticType }) => `${id}\u0000${semanticType}`);
   const projected = value.projectedZones.map((entry) => `${entry.id}\u0000${entry.semanticType}`);
@@ -217,17 +237,89 @@ function pointInPolygon(pointValue: SpeedsterPoint, polygonValue: readonly Speed
   return inside;
 }
 
+function segmentIntersectionParameters(
+  start: SpeedsterPoint,
+  end: SpeedsterPoint,
+  edgeStart: SpeedsterPoint,
+  edgeEnd: SpeedsterPoint,
+) {
+  const ray = { x: end.x - start.x, y: end.y - start.y };
+  const edge = { x: edgeEnd.x - edgeStart.x, y: edgeEnd.y - edgeStart.y };
+  const offset = { x: edgeStart.x - start.x, y: edgeStart.y - start.y };
+  const denominator = ray.x * edge.y - ray.y * edge.x;
+  if (Math.abs(denominator) > 1e-12) {
+    const parameter = (offset.x * edge.y - offset.y * edge.x) / denominator;
+    const edgeParameter = (offset.x * ray.y - offset.y * ray.x) / denominator;
+    return parameter >= -1e-12 && parameter <= 1 + 1e-12
+      && edgeParameter >= -1e-12 && edgeParameter <= 1 + 1e-12
+      ? [Math.min(1, Math.max(0, parameter))]
+      : [];
+  }
+  if (Math.abs(offset.x * ray.y - offset.y * ray.x) > 1e-12) return [];
+  const axis = Math.abs(ray.x) >= Math.abs(ray.y) ? "x" : "y";
+  const length = ray[axis];
+  if (Math.abs(length) <= 1e-12) return [];
+  return [
+    (edgeStart[axis] - start[axis]) / length,
+    (edgeEnd[axis] - start[axis]) / length,
+  ].filter((parameter) => parameter >= -1e-12 && parameter <= 1 + 1e-12)
+    .map((parameter) => Math.min(1, Math.max(0, parameter)));
+}
+
+function segmentInsidePolygon(
+  start: SpeedsterPoint,
+  end: SpeedsterPoint,
+  polygonValue: readonly SpeedsterPoint[],
+) {
+  const parameters = [0, 1];
+  for (let index = 0; index < polygonValue.length; index += 1) {
+    parameters.push(...segmentIntersectionParameters(
+      start,
+      end,
+      polygonValue[index],
+      polygonValue[(index + 1) % polygonValue.length],
+    ));
+  }
+  const ordered = [...new Set(parameters.map((value) => Math.round(value * 1e12) / 1e12))]
+    .sort((left, right) => left - right);
+  for (let index = 0; index < ordered.length - 1; index += 1) {
+    if (ordered[index + 1] - ordered[index] <= 1e-12) continue;
+    const middle = (ordered[index] + ordered[index + 1]) / 2;
+    if (!pointInPolygon({
+      x: start.x + (end.x - start.x) * middle,
+      y: start.y + (end.y - start.y) * middle,
+    }, polygonValue)) return false;
+  }
+  return true;
+}
+
+function contourInsidePolygon(
+  contour: readonly SpeedsterPoint[],
+  polygonValue: readonly SpeedsterPoint[],
+) {
+  return contour.length >= 3
+    && contour.every((entry) => pointInPolygon(entry, polygonValue))
+    && contour.every((entry, index) => segmentInsidePolygon(
+      entry,
+      contour[(index + 1) % contour.length],
+      polygonValue,
+    ));
+}
+
 function overlap(
   finding: SpeedsterReviewFinding,
   candidateZone: SpeedsterMapZone,
 ) {
-  const vertices = speedsterFindingRegions(finding).flatMap(({ canonicalContour }) => canonicalContour);
+  const contours = speedsterFindingRegions(finding).map(({ canonicalContour }) => canonicalContour);
+  const vertices = contours.flat();
   const coveredVertices = vertices.filter((entry) => pointInPolygon(entry, candidateZone.polygon)).length;
   return {
     method: SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
     coveredVertices,
     totalVertices: vertices.length,
     ratio: vertices.length === 0 ? 0 : coveredVertices / vertices.length,
+    fullyContained: contours.length > 0
+      && contours.every((contour) => contourInsidePolygon(contour, candidateZone.polygon)),
   } as const;
 }
 
@@ -254,7 +346,7 @@ export function splitSpeedsterMapFilteredCandidates(input: {
     }
     const matching = registrations[finding.side].projectedZones
       .map((candidateZone) => ({ candidateZone, zoneOverlap: overlap(finding, candidateZone) }))
-      .find(({ zoneOverlap }) => zoneOverlap.ratio === 1);
+      .find(({ zoneOverlap }) => zoneOverlap.fullyContained);
     if (!matching) {
       activeFindings.push(finding);
       continue;

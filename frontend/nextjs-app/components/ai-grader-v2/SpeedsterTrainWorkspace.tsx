@@ -127,7 +127,9 @@ export function SpeedsterTrainWorkspace({
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState(
     map.status === "LOADED"
-      ? `Loaded exact map revision ${map.revision?.version}. Editing will save and activate a new immutable revision.`
+      ? map.editable
+        ? `Loaded exact map revision ${map.revision?.version}. Editing will save and activate a new immutable revision.`
+        : `Loaded exact map revision ${map.revision?.version}. Draw on this current copy to save a coordinate-safe new revision.`
       : "No exact map exists. Saving creates and immediately activates revision 1.",
   );
   const active = side === "FRONT" ? front : back;

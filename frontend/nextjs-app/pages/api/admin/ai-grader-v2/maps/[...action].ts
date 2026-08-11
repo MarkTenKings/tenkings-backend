@@ -14,6 +14,7 @@ import {
   parseSpeedsterMapSourceSession,
   restoreSpeedsterCardTypeMapRevision,
   saveSpeedsterCardTypeMapRevision,
+  speedsterPhysicalQuadHash,
   speedsterMapSourceClientState,
   type SpeedsterLoadedMapRevision,
   type SpeedsterMapSaveResult,
@@ -75,6 +76,9 @@ type SourceRecord = Readonly<{
   workflowState: string;
   identity: unknown;
   capture: unknown;
+  reviewedDefects: unknown;
+  gradeReport: unknown;
+  mapFilterDecisions: readonly Readonly<{ id: string }>[];
 }>;
 
 type Dependencies = Readonly<{
@@ -116,6 +120,9 @@ const dependencies: Dependencies = {
       workflowState: true,
       identity: true,
       capture: true,
+      reviewedDefects: true,
+      gradeReport: true,
+      mapFilterDecisions: { take: 1, select: { id: true } },
     },
   }),
   loadActiveMap: loadExactActiveSpeedsterMapRevision,
@@ -145,7 +152,18 @@ function editableMap(revision: SpeedsterLoadedMapRevision) {
   return { front: side(revision.frontMap), back: side(revision.backMap) };
 }
 
-async function mapState(revision: SpeedsterLoadedMapRevision | null, deps: Dependencies) {
+function sharesMapCoordinateBasis(revision: SpeedsterLoadedMapRevision, source: SpeedsterMapSourceSession) {
+  return revision.frontMap.referenceInspection.storageKey === source.front.inspectionStorageKey
+    && revision.backMap.referenceInspection.storageKey === source.back.inspectionStorageKey
+    && revision.frontMap.sourcePhysicalQuadSha256 === speedsterPhysicalQuadHash(source.front.sourceCorners)
+    && revision.backMap.sourcePhysicalQuadSha256 === speedsterPhysicalQuadHash(source.back.sourceCorners);
+}
+
+async function mapState(
+  revision: SpeedsterLoadedMapRevision | null,
+  deps: Dependencies,
+  source?: SpeedsterMapSourceSession,
+) {
   if (!revision) return { status: "MISSING" as const, revision: null, revisions: [], editable: null };
   return {
     status: "LOADED" as const,
@@ -160,7 +178,7 @@ async function mapState(revision: SpeedsterLoadedMapRevision | null, deps: Depen
       createdAt: revision.createdAt.toISOString(),
     },
     revisions: await deps.listRevisions(revision.mapId, revision.revisionId),
-    editable: editableMap(revision),
+    editable: source && sharesMapCoordinateBasis(revision, source) ? editableMap(revision) : null,
   };
 }
 
@@ -174,6 +192,22 @@ async function sourceFor(
   const source = parseSpeedsterMapSourceSession(record);
   if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
     throw new SpeedsterMapIntegrityError("TRAIN requires saved Front and Back physical geometry.");
+  }
+  if (
+    source.workflowState === "CAPTURED"
+    && (
+      !Array.isArray(record.reviewedDefects)
+      || record.reviewedDefects.length !== 0
+      || !record.gradeReport
+      || typeof record.gradeReport !== "object"
+      || Array.isArray(record.gradeReport)
+      || Object.keys(record.gradeReport).length !== 0
+      || record.mapFilterDecisions.length !== 0
+    )
+  ) {
+    throw new SpeedsterMapIntegrityError(
+      "Captured-card TRAIN can change its pinned map only before detector review is initialized.",
+    );
   }
   return source;
 }
@@ -202,17 +236,19 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
           throw new SpeedsterMapIntegrityError("TRAIN source identity is malformed.");
         }
         const revision = await deps.loadActiveMap({ cardProfile: record.cardProfile, identity });
-        const map = await mapState(revision, deps);
         if (action === "current") {
           res.setHeader("Cache-Control", "no-store");
-          return res.status(200).json({ map });
+          return res.status(200).json({ map: await mapState(revision, deps) });
         }
         const source = parseSpeedsterMapSourceSession(record);
         if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
           return res.status(409).json({ message: "TRAIN requires saved Front and Back physical geometry." });
         }
         res.setHeader("Cache-Control", "no-store");
-        return res.status(200).json({ source: await deps.sourceClientState(source), map });
+        return res.status(200).json({
+          source: await deps.sourceClientState(source),
+          map: await mapState(revision, deps, source),
+        });
       }
 
       if (req.method !== "POST" || (action !== "save" && action !== "restore")) {
@@ -229,7 +265,7 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
           front: parsed.data.front as SpeedsterMapTrainingSideInput,
           back: parsed.data.back as SpeedsterMapTrainingSideInput,
         });
-        return res.status(201).json({ map: await mapState(saved.revision, deps) });
+        return res.status(201).json({ map: await mapState(saved.revision, deps, source) });
       }
 
       const parsed = restoreSchema.safeParse(req.body ?? {});
@@ -241,7 +277,7 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         targetRevisionId: parsed.data.revisionId,
         authorAdminId: admin.user.id,
       });
-      return res.status(201).json({ map: await mapState(restored.revision, deps) });
+      return res.status(201).json({ map: await mapState(restored.revision, deps, source) });
     } catch (error) {
       if (error instanceof SpeedsterMapIntegrityError) {
         return res.status(409).json({ message: error.message });

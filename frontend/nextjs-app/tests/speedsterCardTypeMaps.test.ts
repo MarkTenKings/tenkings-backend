@@ -18,6 +18,7 @@ import {
   saveSpeedsterCardTypeMapRevision,
   speedsterIdentityMapRegistration,
   speedsterMapMatchKeyHash,
+  speedsterPhysicalQuadHash,
   speedsterMapRevisionHash,
   validateSpeedsterLoadedMapRevision,
   type SpeedsterMapRevisionHashPayload,
@@ -124,6 +125,9 @@ function captureRecord(workflowState: "CAPTURED" | "COMPLETED") {
     workflowState,
     identity,
     capture: { cornerShape: "ROUNDED_3_18_MM", front: side("front"), back: side("back") },
+    reviewedDefects: workflowState === "CAPTURED" ? [] : [{ id: "completed-finding" }],
+    gradeReport: workflowState === "CAPTURED" ? {} : { overall: 9.7 },
+    mapFilterDecisions: [],
   };
 }
 
@@ -145,6 +149,12 @@ type RecordingTransaction = Parameters<Parameters<SpeedsterMapTransactionRunner>
 
 function recordingMapTransaction(seed?: Readonly<{
   map: Record<string, unknown>;
+  session?: Readonly<{
+    workflowState: string;
+    reviewedDefects: unknown;
+    gradeReport: unknown;
+    mapFilterDecisions: readonly Readonly<{ id: string }>[];
+  }>;
 }>) {
   const operations: string[] = [];
   const writes = {
@@ -160,6 +170,12 @@ function recordingMapTransaction(seed?: Readonly<{
   let committedMap: Record<string, unknown> | null = seed ? structuredClone(seed.map) : null;
   let committedRevision: Record<string, unknown> | null = null;
   let committedSessionData: Record<string, unknown> | null = null;
+  const currentSession = seed?.session ?? {
+    workflowState: "CAPTURED",
+    reviewedDefects: [],
+    gradeReport: {},
+    mapFilterDecisions: [],
+  };
   let transactionCount = 0;
 
   const transaction: SpeedsterMapTransactionRunner = async (operation) => {
@@ -169,6 +185,10 @@ function recordingMapTransaction(seed?: Readonly<{
     let workingRevision = committedRevision ? structuredClone(committedRevision) : null;
     let workingSessionData = committedSessionData ? structuredClone(committedSessionData) : null;
     const delegates = {
+      async $queryRaw(..._args: unknown[]) {
+        operations.push("session.lock");
+        return [{ id: SESSION_ID }];
+      },
       async $executeRaw(..._args: unknown[]) {
         operations.push("map.lock");
         return 1;
@@ -207,6 +227,10 @@ function recordingMapTransaction(seed?: Readonly<{
         },
       },
       aiGraderV2Session: {
+        async findFirst() {
+          operations.push("session.findWritable");
+          return structuredClone(currentSession);
+        },
         async updateMany(args: unknown) {
           operations.push("session.updateMany");
           writes.session += 1;
@@ -268,6 +292,52 @@ test("revision hashing is deterministic, canonical, and rejects any immutable-fi
     () => validateSpeedsterLoadedMapRevision({ ...valid, frontMap: { ...valid.frontMap, zones: [] } }),
     SpeedsterMapIntegrityError,
   );
+});
+
+test("map parsing rejects collapsed boundaries, singular anchors, and invalid zone polygons", () => {
+  const base = payload();
+  const invalidFrontMaps = [
+    {
+      ...base.frontMap,
+      designBoundary: { kind: "QUAD" as const, points: [quad[0], quad[0], quad[0], quad[0]] as unknown as typeof quad },
+    },
+    {
+      ...base.frontMap,
+      anchors: base.frontMap.anchors.map((anchor) => ({ ...anchor, point: { x: 0.5, y: 0.5 } })),
+    },
+    {
+      ...base.frontMap,
+      zones: [{ ...base.frontMap.zones[0], polygon: [{ x: 0.1, y: 0.1 }, { x: 0.5, y: 0.5 }, { x: 0.9, y: 0.9 }] }],
+    },
+    {
+      ...base.frontMap,
+      zones: [{
+        ...base.frontMap.zones[0],
+        polygon: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }, { x: 0.9, y: 0.1 }],
+      }],
+    },
+  ];
+  for (const frontMap of invalidFrontMaps) {
+    assert.throws(
+      () => validateSpeedsterLoadedMapRevision(record({ ...base, frontMap } as SpeedsterMapRevisionHashPayload)),
+      SpeedsterMapIntegrityError,
+    );
+  }
+  const concave = {
+    ...base,
+    frontMap: {
+      ...base.frontMap,
+      zones: [{
+        ...base.frontMap.zones[0],
+        polygon: [
+          { x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 },
+          { x: 0.6, y: 0.9 }, { x: 0.6, y: 0.4 }, { x: 0.4, y: 0.4 },
+          { x: 0.4, y: 0.9 }, { x: 0.1, y: 0.9 },
+        ],
+      }],
+    },
+  };
+  assert.equal(validateSpeedsterLoadedMapRevision(record(concave)).frontMap.zones[0].polygon.length, 8);
 });
 
 test("exact active and pinned loaders never guess another key or revision", async () => {
@@ -360,6 +430,8 @@ test("new-card save invokes one production transaction for revision, current poi
   assert.equal(harness.transactionCount(), 1);
   assert.deepEqual(harness.operations, [
     "transaction.begin",
+    "session.lock",
+    "session.findWritable",
     "map.lock",
     "map.findUnique",
     "map.create",
@@ -478,6 +550,8 @@ test("captured-card version restore registers and pins the exact restored revisi
   assert.equal(harness.transactionCount(), 1);
   assert.deepEqual(harness.operations, [
     "transaction.begin",
+    "session.lock",
+    "session.findWritable",
     "map.lock",
     "map.findUnique",
     "revision.create",
@@ -490,6 +564,67 @@ test("captured-card version restore registers and pins the exact restored revisi
   assert.equal(sessionData.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
   assert.equal(sessionData.mapRegistration.front.mapRevisionId, restored.revision.revisionId);
   assert.equal(sessionData.mapRegistration.back.mapRevisionId, restored.revision.revisionId);
+});
+
+test("captured TRAIN save and restore reject initialized review state before any map write", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
+  const target = record();
+  const initializedSession = {
+    workflowState: "CAPTURED",
+    reviewedDefects: [{ id: "reviewed" }],
+    gradeReport: { overall: 9.4 },
+    mapFilterDecisions: [{ id: "filtered" }],
+  };
+  const saveHarness = recordingMapTransaction({
+    map: {
+      id: target.mapId,
+      matchKeyHash: target.matchKeyHash,
+      cardProfile: "SPORTS",
+      currentRevisionId: "revision-current",
+      currentRevision: { id: "revision-current", version: 2 },
+    },
+    session: initializedSession,
+  });
+  await assert.rejects(saveSpeedsterCardTypeMapRevision({
+    source,
+    authorAdminId: "admin-1",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: saveHarness.transaction,
+  }), /only before detector review is initialized/);
+  assert.deepEqual(saveHarness.operations, ["transaction.begin", "session.lock", "session.findWritable"]);
+  assert.equal(saveHarness.writes.revisionCreate, 0);
+  assert.equal(saveHarness.writes.currentPointer, 0);
+  assert.equal(saveHarness.writes.session, 0);
+
+  const restoreHarness = recordingMapTransaction({
+    map: {
+      id: target.mapId,
+      matchKeyHash: target.matchKeyHash,
+      cardProfile: "SPORTS",
+      currentRevisionId: "revision-current",
+      currentRevision: { id: "revision-current", version: 2 },
+    },
+    session: initializedSession,
+  });
+  await assert.rejects(restoreSpeedsterCardTypeMapRevision({
+    source,
+    targetRevisionId: target.id,
+    authorAdminId: "admin-1",
+    transaction: restoreHarness.transaction,
+    async findTargetRevision() { return target; },
+    async registerCapturedRestore(currentSource, revision) {
+      return {
+        front: speedsterIdentityMapRegistration(revision.frontMap, currentSource.front, revision.revisionId),
+        back: speedsterIdentityMapRegistration(revision.backMap, currentSource.back, revision.revisionId),
+      };
+    },
+  }), /only before detector review is initialized/);
+  assert.deepEqual(restoreHarness.operations, ["transaction.begin", "session.lock", "session.findWritable"]);
+  assert.equal(restoreHarness.writes.revisionCreate, 0);
+  assert.equal(restoreHarness.writes.currentPointer, 0);
+  assert.equal(restoreHarness.writes.session, 0);
 });
 
 test("map API rejects cross-admin active sources but permits shared completed-card retro-training", async () => {
@@ -513,4 +648,67 @@ test("map API rejects cross-admin active sources but permits shared completed-ca
     back: { designBoundary: { kind: "QUAD", points: quad }, anchors, zones },
   }), result.res);
   assert.equal(result.state.status, 404);
+});
+
+test("map API rejects a stale captured TRAIN save after review initialization", async () => {
+  let saves = 0;
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() {
+      return {
+        ...captureRecord("CAPTURED"),
+        reviewedDefects: [{ id: "reviewed" }],
+        gradeReport: { overall: 9.4 },
+        mapFilterDecisions: [{ id: "filtered" }],
+      };
+    },
+    async loadActiveMap() { return null; },
+    async listRevisions() { return []; },
+    async saveRevision() { saves += 1; throw new Error("not reached"); },
+    async restoreRevision() { throw new Error("not reached"); },
+    async sourceClientState() { throw new Error("not reached"); },
+  });
+  const result = response();
+  await handler(request("POST", "save", {
+    sessionId: SESSION_ID,
+    front: trainingSide,
+    back: trainingSide,
+  }), result.res);
+  assert.equal(result.state.status, 409);
+  assert.equal(saves, 0);
+  assert.match(JSON.stringify(result.state.body), /only before detector review is initialized/);
+});
+
+test("TRAIN editor coordinates are exposed only on their exact reference image and physical quad", async () => {
+  const compatible = payload();
+  const active = validateSpeedsterLoadedMapRevision(record({
+    ...compatible,
+    frontMap: { ...compatible.frontMap, sourcePhysicalQuadSha256: speedsterPhysicalQuadHash(quad) },
+    backMap: { ...compatible.backMap, sourcePhysicalQuadSha256: speedsterPhysicalQuadHash(quad) },
+  }));
+  const siblingId = "speedster-map-session-0002";
+  const sibling = JSON.parse(JSON.stringify(captureRecord("CAPTURED")).replaceAll(SESSION_ID, siblingId));
+  for (const [sourceRecord, expectedEditable] of [
+    [captureRecord("CAPTURED"), true],
+    [sibling, false],
+  ] as const) {
+    const handler = createSpeedsterCardTypeMapHandler({
+      async requireAdminSession() { return { user: { id: "admin-1" } }; },
+      async findSourceSession() { return sourceRecord; },
+      async loadActiveMap() { return active; },
+      async listRevisions() { return []; },
+      async saveRevision() { throw new Error("not reached"); },
+      async restoreRevision() { throw new Error("not reached"); },
+      async sourceClientState(source) { return { sessionId: source.id } as never; },
+    });
+    const result = response();
+    await handler({
+      method: "GET",
+      query: { action: ["source"], sessionId: sourceRecord.id },
+      headers: {},
+    } as unknown as NextApiRequest, result.res);
+    assert.equal(result.state.status, 200);
+    const body = result.state.body as { map: { editable: unknown } };
+    assert.equal(Boolean(body.map.editable), expectedEditable);
+  }
 });

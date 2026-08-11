@@ -81,17 +81,23 @@ const memoryInside: SpeedsterMeasuredDefect = {
   canonicalContour: [{ x: 0.2, y: 0.2 }, { x: 0.3, y: 0.2 }, { x: 0.3, y: 0.3 }],
 };
 const sha = "a".repeat(64);
+const anchorPoints = [
+  { x: 0.1, y: 0.1 },
+  { x: 0.9, y: 0.1 },
+  { x: 0.9, y: 0.9 },
+  { x: 0.1, y: 0.9 },
+] as const;
 const mapSide = (side: "FRONT" | "BACK") => ({
   side,
   referenceInspection: { storageKey: `private/${side.toLowerCase()}.webp`, sha256: sha },
   sourcePhysicalQuadSha256: sha,
   designBoundary: { kind: "FULL_BLEED" as const },
-  anchors: [{
-    id: `${side}-anchor`,
-    label: "Crown",
-    point: { x: 0.1, y: 0.1 },
+  anchors: anchorPoints.map((point, index) => ({
+    id: `${side}-anchor-${index + 1}`,
+    label: `Anchor ${index + 1}`,
+    point,
     referencePatch: { storageKey: `private/${side.toLowerCase()}-anchor.webp`, sha256: sha },
-  }],
+  })),
   zones: [{
     id: `${side}-print-zone`,
     label: "Printed artwork",
@@ -106,12 +112,12 @@ const registrationSide = (side: "FRONT" | "BACK") => ({
   currentPhysicalQuadSha256: sha,
   currentInspectionSha256: sha,
   homography: [1, 0, 0, 0, 1, 0, 0, 0, 1] as const,
-  anchors: [{
-    anchorId: `${side}-anchor`,
-    expectedPoint: { x: 0.1, y: 0.1 },
-    locatedPoint: { x: 0.1, y: 0.1 },
+  anchors: anchorPoints.map((point, index) => ({
+    anchorId: `${side}-anchor-${index + 1}`,
+    expectedPoint: point,
+    locatedPoint: point,
     score: 1,
-  }],
+  })),
   projectedDesignBoundary: { kind: "FULL_BLEED" as const },
   projectedZones: mapSide(side).zones,
 });
@@ -152,10 +158,11 @@ test("the frozen full-contour rule splits Detector/Memory candidates and Smart-M
   assert.equal(decision.mapRevisionId, map.revision.revisionId);
   assert.equal(decision.zoneId, "FRONT-print-zone");
   assert.deepEqual(decision.zoneOverlap, {
-    method: "candidate-contour-vertex-coverage-v1",
+    method: "candidate-contour-segment-containment-v1",
     coveredVertices: 3,
     totalVertices: 3,
     ratio: 1,
+    fullyContained: true,
   });
   assert.equal(decision.ruleId, SPEEDSTER_MAP_FILTER_RULE_ID);
   assert.equal(decision.filterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
@@ -231,7 +238,7 @@ test("partial containment stays in active review and invalid registration fails 
         back: registrationSide("BACK"),
       },
     },
-  }), /anchor projection/i);
+  }), /anchors are degenerate|anchor projection/i);
   const designBoundary = {
     kind: "QUAD" as const,
     points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.9, y: 0.9 }, { x: 0.1, y: 0.9 }] as const,
@@ -260,6 +267,55 @@ test("partial containment stays in active review and invalid registration fails 
     },
   }), /design boundary/i);
   assert.equal(inside.reviewResult, "UNREVIEWED");
+});
+
+test("full-contour containment rejects an edge that exits a valid concave zone while allowing boundary contact", () => {
+  const concaveZone = {
+    id: "FRONT-concave-zone",
+    label: "Concave print",
+    semanticType: "PRINT_ARTWORK" as const,
+    polygon: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: 0.65, y: 0.9 },
+      { x: 0.65, y: 0.35 },
+      { x: 0.35, y: 0.35 },
+      { x: 0.35, y: 0.9 },
+      { x: 0.1, y: 0.9 },
+    ],
+  };
+  const crossing = {
+    ...inside,
+    id: "FRONT:concave-crossing:SURFACE",
+    canonicalContour: [{ x: 0.2, y: 0.8 }, { x: 0.8, y: 0.8 }, { x: 0.5, y: 0.2 }],
+  };
+  const boundaryContact = {
+    ...inside,
+    id: "FRONT:concave-boundary:SURFACE",
+    canonicalContour: [{ x: 0.1, y: 0.1 }, { x: 0.35, y: 0.35 }, { x: 0.2, y: 0.4 }],
+  };
+  const frontRegistration = registrationSide("FRONT");
+  const concaveMap = {
+    ...map,
+    revision: {
+      ...map.revision,
+      frontMap: { ...map.revision.frontMap, zones: [concaveZone] },
+    },
+    registration: {
+      ...(map.registration as { front: typeof frontRegistration; back: ReturnType<typeof registrationSide> }),
+      front: { ...frontRegistration, projectedZones: [concaveZone] },
+    },
+  };
+  const result = splitSpeedsterMapFilteredCandidates({
+    findings: [crossing, boundaryContact],
+    cardIdentity: identity,
+    detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    map: concaveMap,
+  });
+  assert.deepEqual(result.activeFindings.map(({ id }) => id), [crossing.id]);
+  assert.deepEqual(result.filteredDecisions.map(({ finding }) => finding.id), [boundaryContact.id]);
+  assert.equal(result.filteredDecisions[0].zoneOverlap.fullyContained, true);
 });
 
 const capture = {

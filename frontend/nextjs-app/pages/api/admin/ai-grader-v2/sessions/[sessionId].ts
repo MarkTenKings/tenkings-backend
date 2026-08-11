@@ -58,7 +58,7 @@ const mapBindingValidationDependencies: MapBindingValidationDependencies = {
 
 export async function validateSpeedsterSubmittedMapBinding(
   session: PersistedSession,
-  binding: MapBindingInput,
+  binding: MapBindingInput | undefined,
   capture: Record<string, unknown>,
   deps: MapBindingValidationDependencies = mapBindingValidationDependencies,
 ): Promise<Pick<UpdateSessionData, "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration">> {
@@ -80,7 +80,13 @@ export async function validateSpeedsterSubmittedMapBinding(
     capture,
   });
   const revision = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
-  if (!revision || revision.revisionId !== binding.revisionId) {
+  if (!revision) {
+    if (binding) {
+      throw new SpeedsterMapIntegrityError("Speedster map binding was submitted without an exact active revision.");
+    }
+    return {};
+  }
+  if (!binding || revision.revisionId !== binding.revisionId) {
     throw new SpeedsterMapIntegrityError("Speedster map binding does not match the exact active revision.");
   }
   const front = parseSpeedsterMapRegistration(binding.registration.front, {
@@ -118,7 +124,7 @@ type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   findSession: (id: string, createdByUserId: string) => Promise<PersistedSession | null>;
   updateSession: (id: string, createdByUserId: string, data: UpdateSessionData) => Promise<PersistedSession | null>;
-  validateMapBinding?: (session: PersistedSession, binding: MapBindingInput, capture: Record<string, unknown>) => Promise<Pick<
+  validateMapBinding?: (session: PersistedSession, binding: MapBindingInput | undefined, capture: Record<string, unknown>) => Promise<Pick<
     UpdateSessionData,
     "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration"
   >>;
@@ -179,10 +185,8 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       if (existing.workflowState !== "DRAFT") {
         return res.status(409).json({ message: "Only a DRAFT Speedster session can save its capture" });
       }
-      const mapBinding = parsed.data.mapBinding
-        ? await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture)
-        : undefined;
-      if (parsed.data.mapBinding && !mapBinding) {
+      const mapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
+      if (!mapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
       }
       const session = await deps.updateSession(sessionId, admin.user.id, {

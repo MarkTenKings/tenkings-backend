@@ -448,6 +448,60 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   assert.deepEqual(saves[0]?.capture, fixture.capture);
 });
 
+test("capture PATCH cannot omit the binding for an exact active map", async () => {
+  const fixture = mapBindingFixture();
+  let updateCalls = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      assert.equal(binding, undefined);
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+        async hashEvidence() { throw new Error("not reached"); },
+      });
+    },
+    async updateSession() { updateCalls += 1; return fixture.session; },
+  });
+  const result = response();
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+  }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 409);
+  assert.equal(updateCalls, 0);
+  assert.match(JSON.stringify(result.state.body), /does not match the exact active revision/);
+});
+
+test("capture PATCH keeps the unchanged no-map path only after exact server lookup", async () => {
+  const fixture = mapBindingFixture();
+  let validationCalls = 0;
+  let updateCalls = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      validationCalls += 1;
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { return null; },
+        async hashEvidence() { throw new Error("not reached"); },
+      });
+    },
+    async updateSession(_id, _createdByUserId, data) {
+      updateCalls += 1;
+      return { ...fixture.session, ...data };
+    },
+  });
+  const result = response();
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+  }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal(validationCalls, 1);
+  assert.equal(updateCalls, 1);
+});
+
 test("capture PATCH rejects either side when registration physical geometry is from another submitted capture", async () => {
   for (const side of ["front", "back"] as const) {
     const fixture = mapBindingFixture();
@@ -578,6 +632,7 @@ test("GET and PATCH responses strip private removal state from aggregate finding
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
     async findSession() { return existing; },
+    async validateMapBinding() { return {}; },
     async updateSession() { return { ...existing, workflowState: "CAPTURED" }; },
   });
   const getResult = response();
