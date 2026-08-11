@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
+import type { Prisma } from "@prisma/client";
 
 import type {
   SpeedsterCardSide,
@@ -29,6 +30,7 @@ import {
   parseSpeedsterReviewFindings,
   speedsterFindingRegions,
   speedsterTraceHashes,
+  stripSpeedsterFindingInstrumentation,
   stripSpeedsterFindingPrivateFields,
   stripSpeedsterTraceBodies,
 } from "../ai-grader-v2/review-findings";
@@ -45,6 +47,14 @@ import {
 } from "../ai-grader-v2/trace-bitmap-wire";
 import { encodeSpeedsterTraceRleV1, type SpeedsterTraceRleV1 } from "../ai-grader-v2/trace-codec";
 import { clipSpeedsterTraceToMaterial } from "../ai-grader-v2/trace-editor";
+import {
+  speedsterFilterRemovedEvents,
+  speedsterFindingActionEvents,
+  speedsterFindingProposalEvents,
+  speedsterServerTimingEvent,
+  type SpeedsterInstrumentationEvent,
+  type SpeedsterOperatorInstrumentationAction,
+} from "./aiGraderV2Instrumentation";
 import { HttpError } from "./adminSessionAuthority";
 
 type PersistedCaptureSide = {
@@ -140,10 +150,72 @@ export type SpeedsterReviewActionDependencies = {
   learningBankForDetect: () => Promise<unknown>;
   detect: (body: DetectBody) => Promise<unknown>;
   measure: (body: MeasureBody) => Promise<{ defects: unknown }>;
+  recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const safeTimingNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+
+function safeDetectorTiming(value: unknown): Prisma.InputJsonObject | null {
+  if (!isRecord(value) || value.version !== "speedster-service-timing-v1") return null;
+  const numbers = [
+    "imageLoadTotalMs",
+    "detectorDurationMs",
+    "serviceTotalMs",
+    "localizedCandidateCount",
+    "scannedCandidateCount",
+    "cappedCandidateCount",
+    "measuredRegionCount",
+    "samMemoryMs",
+    "measurementMs",
+    "detectViewsTotalMs",
+  ] as const;
+  const output: Record<string, Prisma.InputJsonValue> = {
+    version: "speedster-service-timing-v1",
+    ...(typeof value.side === "string" ? { side: value.side.slice(0, 16) } : {}),
+    ...(typeof value.requestTraceId === "string"
+      ? { requestTraceId: value.requestTraceId.slice(0, 180) }
+      : {}),
+  };
+  for (const key of numbers) {
+    const number = safeTimingNumber(value[key]);
+    if (number !== null) output[key] = number;
+  }
+  const compactViews = (candidate: unknown, includeDimensions: boolean) => Array.isArray(candidate)
+    ? candidate.slice(0, 8).flatMap((entry): Prisma.InputJsonObject[] => {
+        if (!isRecord(entry) || typeof entry.viewId !== "string") return [];
+        const durationMs = safeTimingNumber(entry.durationMs ?? entry.localizationMs);
+        const count = safeTimingNumber(entry.candidateCount);
+        const width = safeTimingNumber(entry.width);
+        const height = safeTimingNumber(entry.height);
+        return [{
+          viewId: entry.viewId.slice(0, 180),
+          ...(durationMs !== null ? { durationMs } : {}),
+          ...(count !== null ? { candidateCount: count } : {}),
+          ...(includeDimensions && width !== null ? { width } : {}),
+          ...(includeDimensions && height !== null ? { height } : {}),
+        }];
+      })
+    : [];
+  output.imageLoads = compactViews(value.imageLoads, true);
+  output.views = compactViews(value.views, false);
+  return output as Prisma.InputJsonObject;
+}
+
+async function recordInstrumentationFailOpen(
+  deps: SpeedsterReviewActionDependencies,
+  sessionId: string,
+  events: readonly SpeedsterInstrumentationEvent[],
+) {
+  try {
+    await deps.recordInstrumentation?.(events);
+  } catch (error) {
+    console.error(`[Speedster] Review instrumentation failed for ${sessionId}:`, error);
+  }
+}
 
 function captureAuthority(value: unknown, sessionId: string, createdByUserId: string): PersistedCapture {
   if (!isRecord(value) || (value.cornerShape !== "SQUARE" && value.cornerShape !== "ROUNDED_3_18_MM")) {
@@ -401,12 +473,18 @@ async function serverOwnedInitialization(
       },
     };
   };
-  const [front, back, learningBank] = await Promise.all([
+  const learningStartedAt = Date.now();
+  const [front, back, learning] = await Promise.all([
     preparedSide("FRONT"),
     preparedSide("BACK"),
-    deps.learningBankForDetect(),
+    deps.learningBankForDetect().then((bank) => ({
+      bank,
+      durationMs: Date.now() - learningStartedAt,
+    })),
   ]);
+  const learningBank = learning.bank;
   let exactDetectorVersion: string | null = null;
+  const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
   const scanned = await scanSpeedsterCapture({
     capture: { cornerShape: capture.cornerShape, front, back },
     detect: async (request) => {
@@ -426,6 +504,8 @@ async function serverOwnedInitialization(
         throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
       }
       const result = rawResult as { detectorVersion: string; defects: SpeedsterMeasuredDefect[] };
+      const timing = safeDetectorTiming(rawResult.instrumentation);
+      if (timing) detectorTimings[request.side] = timing;
       if (exactDetectorVersion !== null && exactDetectorVersion !== result.detectorVersion) {
         throw new HttpError(502, "Front and Back Speedster detector versions do not match.");
       }
@@ -448,7 +528,28 @@ async function serverOwnedInitialization(
   if (initialized.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
     throw new HttpError(502, "Initial Speedster detector state contains reviewed trace authority.");
   }
-  return { initialized, detectorVersion: exactDetectorVersion };
+  const instrumentationEvents: SpeedsterInstrumentationEvent[] = [
+    speedsterServerTimingEvent({
+      eventKey: `${input.sessionId}:server:memory-bank-loaded`,
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      eventType: "MEMORY_BANK_LOADED",
+      durationMs: learning.durationMs,
+    }),
+    ...(["FRONT", "BACK"] as const).flatMap((side) => {
+      const timing = detectorTimings[side];
+      if (!timing) return [];
+      return [speedsterServerTimingEvent({
+        eventKey: `${input.sessionId}:server:scan:${side}`,
+        sessionId: input.sessionId,
+        createdByUserId: input.createdByUserId,
+        eventType: "SAM_MEMORY_SIDE_COMPLETED",
+        durationMs: typeof timing.serviceTotalMs === "number" ? timing.serviceTotalMs : 0,
+        details: timing,
+      })];
+    }),
+  ];
+  return { initialized, detectorVersion: exactDetectorVersion, instrumentationEvents };
 }
 
 function resultPayload(
@@ -535,6 +636,7 @@ export async function applySpeedsterReviewAction(
   input: SpeedsterReviewActionInput,
   deps: SpeedsterReviewActionDependencies,
 ) {
+  const actionStartedAt = new Date();
   const identity = { sessionId: input.sessionId, createdByUserId: input.createdByUserId };
   const session = await deps.loadOwnedSession(identity);
   if (!session) throw new HttpError(404, "Speedster session not found.");
@@ -611,13 +713,56 @@ export async function applySpeedsterReviewAction(
         throw new HttpError(409, `Speedster map initialization failed: ${reason}`);
       }
     }
+    const gradeStartedAt = Date.now();
     const review = calculateSpeedsterReview(capture, activeFindings);
+    const gradeDurationMs = Date.now() - gradeStartedAt;
     const gradeReport = { ...review.grade, detectorVersion: detected.detectorVersion };
+    const actionEndedAt = new Date();
+    const instrumentationEvents = [
+      ...detected.instrumentationEvents,
+      ...speedsterFindingProposalEvents({
+        sessionId: session.id,
+        createdByUserId: session.createdByUserId,
+        findings: detected.initialized,
+        startedAt: actionStartedAt,
+        endedAt: actionEndedAt,
+      }),
+      ...speedsterFilterRemovedEvents({
+        sessionId: session.id,
+        createdByUserId: session.createdByUserId,
+        decisions: filterDecisions ?? [],
+        startedAt: actionStartedAt,
+        endedAt: actionEndedAt,
+      }),
+      speedsterServerTimingEvent({
+        eventKey: `${session.id}:server:initial-grade-calculated`,
+        sessionId: session.id,
+        createdByUserId: session.createdByUserId,
+        eventType: "GRADE_CALCULATED",
+        durationMs: gradeDurationMs,
+        details: {
+          activeFindingCount: review.defects.length,
+          filteredFindingCount: filterDecisions?.length ?? 0,
+        },
+      }),
+      speedsterServerTimingEvent({
+        eventKey: `${session.id}:server:initial-review-ready`,
+        sessionId: session.id,
+        createdByUserId: session.createdByUserId,
+        eventType: "INITIAL_REVIEW_READY",
+        durationMs: actionEndedAt.getTime() - actionStartedAt.getTime(),
+        details: {
+          activeFindingCount: review.defects.length,
+          filteredFindingCount: filterDecisions?.length ?? 0,
+        },
+      }),
+    ];
     await deps.persistReviewIfRevision(identity, session.updatedAt, {
-      reviewedDefects: review.defects,
+      reviewedDefects: review.defects.map(stripSpeedsterFindingInstrumentation),
       gradeReport,
       ...(filterDecisions ? { filterDecisions } : {}),
     });
+    await recordInstrumentationFailOpen(deps, session.id, instrumentationEvents);
     return resultPayload(before, review.defects, gradeReport);
   }
 
@@ -658,11 +803,49 @@ export async function applySpeedsterReviewAction(
       };
     },
   });
+  const gradeStartedAt = Date.now();
   const review = calculateSpeedsterReview(capture, measuredDefects);
+  const gradeDurationMs = Date.now() - gradeStartedAt;
   const gradeReport = { ...review.grade, detectorVersion: version };
+  const actionFindingIds = authoritativeAction.type === "REMOVE" || authoritativeAction.type === "UNDO"
+    ? authoritativeAction.defectIds
+    : authoritativeAction.type === "CHANGE_TYPE"
+      ? [authoritativeAction.defectId]
+      : authoritativeAction.type === "TRACE_SAVE"
+        ? [authoritativeAction.findingId ?? authoritativeAction.trace.id]
+        : [];
+  const operatorAction: SpeedsterOperatorInstrumentationAction = authoritativeAction.type === "REMOVE"
+    ? "REMOVED"
+    : authoritativeAction.type === "UNDO"
+      ? "KEPT"
+      : authoritativeAction.type === "CHANGE_TYPE"
+        ? "RETYPED"
+        : "EDITED";
+  const actionEndedAt = new Date();
+  const instrumentationEvents = [
+    ...speedsterFindingActionEvents({
+      sessionId: session.id,
+      createdByUserId: session.createdByUserId,
+      operatorAction,
+      before,
+      after: review.defects,
+      findingIds: actionFindingIds,
+      startedAt: actionStartedAt,
+      endedAt: actionEndedAt,
+    }),
+    speedsterServerTimingEvent({
+      eventKey: `${session.id}:server:review-action:${actionStartedAt.getTime()}`,
+      sessionId: session.id,
+      createdByUserId: session.createdByUserId,
+      eventType: "REVIEW_ACTION_COMPLETED",
+      durationMs: actionEndedAt.getTime() - actionStartedAt.getTime(),
+      details: { actionType: authoritativeAction.type, gradeCalculationDurationMs: gradeDurationMs },
+    }),
+  ];
   await deps.persistReviewIfRevision(identity, session.updatedAt, {
-    reviewedDefects: review.defects,
+    reviewedDefects: review.defects.map(stripSpeedsterFindingInstrumentation),
     gradeReport,
   });
+  await recordInstrumentationFailOpen(deps, session.id, instrumentationEvents);
   return resultPayload(before, review.defects, gradeReport);
 }

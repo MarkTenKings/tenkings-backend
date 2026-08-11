@@ -274,6 +274,7 @@ class DefectMathTests(unittest.TestCase):
             [
                 {
                     **proposal(contour, "original"),
+                    "instrumentationProposalId": "FRONT:0",
                     "origin": "MEMORY",
                     "memoryProposal": diagnostic,
                 }
@@ -284,8 +285,73 @@ class DefectMathTests(unittest.TestCase):
         self.assertEqual(memory["origin"], "MEMORY")
         self.assertEqual(memory["memoryProposal"], diagnostic)
         self.assertEqual(
-            {key: value for key, value in memory.items() if key not in {"origin", "memoryProposal"}},
-            baseline,
+            memory["findingProvenance"]["contributors"],
+            [
+                {
+                    "proposalId": "FRONT:0",
+                    "origin": "MEMORY",
+                    "sourceViewId": "original",
+                    "defectType": "VISIBLE_WHITENING",
+                    "confidence": 0.8,
+                    "rankingConfidence": 0.8,
+                    "memoryProposal": diagnostic,
+                }
+            ],
+        )
+        self.assertEqual(
+            memory["findingProvenance"]["primaryProposalId"], "FRONT:0"
+        )
+        self.assertEqual(
+            {
+                key: value
+                for key, value in memory.items()
+                if key not in {"origin", "memoryProposal", "findingProvenance"}
+            },
+            {
+                key: value
+                for key, value in baseline.items()
+                if key != "findingProvenance"
+            },
+        )
+
+    def test_fusion_records_detector_and_memory_contributors_without_changing_winner(self):
+        contour = rectangle(20, 20, 22, 22)
+        diagnostic = {
+            "lessonSessionId": "cubone-lesson",
+            "lessonCompletionOrder": 228,
+            "lessonProposalOrder": 7,
+            "lessonOrder": 0,
+            "lessonSourceViewId": "ORIGINAL",
+            "similarity": 0.94,
+        }
+        measured = measure_defects(
+            [
+                {
+                    **proposal(contour, "original"),
+                    "instrumentationProposalId": "FRONT:0",
+                },
+                {
+                    **proposal(contour, "memory"),
+                    "instrumentationProposalId": "FRONT:1",
+                    "origin": "MEMORY",
+                    "memoryProposal": diagnostic,
+                    "rankingConfidence": 0.81,
+                },
+            ],
+            "SQUARE",
+        )[0]
+
+        self.assertEqual(measured["origin"], "MEMORY")
+        self.assertEqual(
+            [entry["origin"] for entry in measured["findingProvenance"]["contributors"]],
+            ["DETECTOR", "MEMORY"],
+        )
+        self.assertEqual(
+            [entry["proposalId"] for entry in measured["findingProvenance"]["contributors"]],
+            ["FRONT:0", "FRONT:1"],
+        )
+        self.assertEqual(
+            measured["findingProvenance"]["primaryProposalId"], "FRONT:1"
         )
 
 

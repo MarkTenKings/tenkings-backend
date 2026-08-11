@@ -11,7 +11,6 @@ import {
 } from "../../../../../../lib/ai-grader-v2/learning";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
-import { completeSpeedsterPresentationImages } from "../../../../../../lib/server/aiGraderV2PresentationWorkflow";
 import {
   afterDurableSpeedsterCompletion,
   catchUpSpeedsterLearningBankV2,
@@ -34,6 +33,11 @@ import {
 import { speedsterHistoryFingerprintVersion } from "../../../../../../lib/ai-grader-v2/learning-articuno-dry-run-v2";
 import { parseSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
 import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
+import {
+  insertSpeedsterInstrumentationEvents,
+  speedsterFindingFinalEvents,
+  speedsterServerTimingEvent,
+} from "../../../../../../lib/server/aiGraderV2Instrumentation";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const score = z.number().finite().min(1).max(10);
@@ -108,7 +112,6 @@ type DurableCompletionResult = Omit<CompletionResult, "learning"> & {
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   completeSession: (input: CompletionInput) => Promise<CompletionResult>;
-  completePresentation: (input: { sessionId: string; createdByUserId: string }) => Promise<unknown>;
 };
 
 const optional = (value: string | null | undefined) => value?.trim() || null;
@@ -208,7 +211,13 @@ const completionHarvestReceipt = (input: {
 }).diagnostics);
 
 async function completeSession(input: CompletionInput): Promise<CompletionResult> {
+  const completionStartedAt = Date.now();
   let catchUpResult: SpeedsterLearningCatchUpResult | null = null;
+  let completedFindings = [] as ReturnType<typeof parseSpeedsterReviewFindings>;
+  let gradeCalculationDurationMs = 0;
+  let durableCompletedAt = completionStartedAt;
+  let catchUpStartedAt = completionStartedAt;
+  let catchUpEndedAt = completionStartedAt;
   const result = await afterDurableSpeedsterCompletion<DurableCompletionResult>(() => prisma.$transaction(async (tx) => {
     await tx.$queryRaw`
       SELECT "id"
@@ -232,6 +241,7 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     if (!session) throw new HttpError(404, "Speedster session not found");
 
     if (session.workflowState === "COMPLETED") {
+      completedFindings = parseSpeedsterReviewFindings(session.reviewedDefects);
       const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
       if (!existing || !session.publicReportSlug) {
         throw new HttpError(409, "Completed Speedster session is missing its label identity");
@@ -256,7 +266,10 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       throw new HttpError(409, "Only a CAPTURED Speedster session can be completed");
     }
 
+    const gradeCalculationStartedAt = Date.now();
     const completedReview = serverOwnedReview(session);
+    gradeCalculationDurationMs = Date.now() - gradeCalculationStartedAt;
+    completedFindings = parseSpeedsterReviewFindings(completedReview.reviewedDefects);
     const labelData = buildSpeedsterLabelData(
       session,
       completedReview.gradeReport as unknown as z.infer<typeof gradeReportSchema>,
@@ -364,27 +377,69 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
       }),
     };
   }), async () => {
+    durableCompletedAt = Date.now();
+    catchUpStartedAt = durableCompletedAt;
     catchUpResult = await catchUpSpeedsterLearningBankV2(
       prisma as unknown as SpeedsterLearningCatchUpClient,
     );
+    catchUpEndedAt = Date.now();
   }, (error) => {
+    catchUpEndedAt = Date.now();
     console.error(`[Speedster] SAM Memory V2 catch-up failed after durable completion for ${input.sessionId}:`, error);
   });
   const { learningHarvest, ...completion } = result;
+  const learning = speedsterLearningCompletionReadiness(
+    result.label.completionOrder,
+    catchUpResult,
+    learningHarvest,
+  );
+  await insertSpeedsterInstrumentationEvents(prisma, [
+    ...speedsterFindingFinalEvents({
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      findings: completedFindings,
+    }),
+    speedsterServerTimingEvent({
+      eventKey: `${input.sessionId}:server:grade-calculated`,
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      eventType: "GRADE_CALCULATED",
+      durationMs: gradeCalculationDurationMs,
+    }),
+    speedsterServerTimingEvent({
+      eventKey: `${input.sessionId}:server:grade-durable-completion`,
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      eventType: "GRADE_DURABLE_COMPLETION",
+      durationMs: durableCompletedAt - completionStartedAt,
+      details: { completionOrder: result.label.completionOrder, outcome: result.outcome },
+    }),
+    speedsterServerTimingEvent({
+      eventKey: `${input.sessionId}:server:memory-readiness:${result.label.completionOrder}`,
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      eventType: "MEMORY_COMPLETION_READINESS",
+      durationMs: catchUpEndedAt - catchUpStartedAt,
+      details: {
+        ready: learning.ready,
+        catchUpStatus: learning.catchUpStatus,
+        completionReflected: learning.completionReflected,
+        completionOrder: learning.completionOrder,
+      },
+    }),
+  ]).catch((error) => {
+    console.error(`[Speedster] Completion instrumentation failed for ${input.sessionId}:`, error);
+    return 0;
+  });
   return {
     ...completion,
-    learning: speedsterLearningCompletionReadiness(
-      result.label.completionOrder,
-      catchUpResult,
-      learningHarvest,
-    ),
+    learning,
   };
 }
 
 const dependencies: Dependencies = {
   requireAdminSession,
   completeSession,
-  completePresentation: completeSpeedsterPresentationImages,
 };
 
 const sessionIdFrom = (req: NextApiRequest) => {
@@ -408,15 +463,6 @@ export function createAiGraderV2CompleteLabelHandler(deps: Dependencies = depend
         sessionId,
         createdByUserId: admin.user.id,
       });
-      try {
-        await deps.completePresentation({ sessionId, createdByUserId: admin.user.id });
-      } catch (error) {
-        console.error(`[Speedster] Presentation images failed after durable completion for ${sessionId}:`, error);
-        throw new HttpError(
-          502,
-          "The grade and label are safely complete, but the PhotoRoom report images failed. Press Complete Grade again to retry.",
-        );
-      }
       return res.status(result.outcome === "CREATED" ? 201 : 200).json(result);
     } catch (error) {
       const response = toErrorResponse(error);

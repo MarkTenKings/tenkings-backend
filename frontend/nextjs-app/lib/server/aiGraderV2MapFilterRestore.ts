@@ -76,6 +76,12 @@ export type SpeedsterMapFilterRestoreDependencies = Readonly<{
     created: boolean;
     immutableEvidence: SpeedsterCompletedRestoreEvidence;
   }>;
+  recordInstrumentation?: (input: {
+    decision: SpeedsterMapFilterRestoreDecision;
+    restoredByAdminId: string;
+    outcome: "ACTIVE_REINTRODUCED" | "COMPLETED_CALIBRATION_ONLY";
+    sessionLifecycleState: string;
+  }) => Promise<unknown>;
 }>;
 
 const DECISION_ID = /^[a-z0-9-]{20,40}$/i;
@@ -118,6 +124,17 @@ function existingResult(decision: SpeedsterMapFilterRestoreDecision) {
   };
 }
 
+async function recordRestoreInstrumentationFailOpen(
+  deps: SpeedsterMapFilterRestoreDependencies,
+  input: Parameters<NonNullable<SpeedsterMapFilterRestoreDependencies["recordInstrumentation"]>>[0],
+) {
+  try {
+    await deps.recordInstrumentation?.(input);
+  } catch (error) {
+    console.error(`[Speedster] Filter restore instrumentation failed for ${input.decision.id}:`, error);
+  }
+}
+
 export async function restoreSpeedsterMapFilterDecision(input: {
   decisionId: string;
   restoredByAdminId: string;
@@ -146,6 +163,12 @@ export async function restoreSpeedsterMapFilterDecision(input: {
       calibrationMistake,
       ...remeasured,
     });
+    await recordRestoreInstrumentationFailOpen(deps, {
+      decision,
+      restoredByAdminId: input.restoredByAdminId,
+      outcome: persisted.event.outcome,
+      sessionLifecycleState: lifecycle,
+    });
     return {
       restored: true as const,
       idempotent: !persisted.created,
@@ -162,6 +185,12 @@ export async function restoreSpeedsterMapFilterDecision(input: {
     decision,
     restoredByAdminId: input.restoredByAdminId,
     calibrationMistake,
+  });
+  await recordRestoreInstrumentationFailOpen(deps, {
+    decision,
+    restoredByAdminId: input.restoredByAdminId,
+    outcome: persisted.event.outcome,
+    sessionLifecycleState: lifecycle,
   });
   return {
     restored: true as const,

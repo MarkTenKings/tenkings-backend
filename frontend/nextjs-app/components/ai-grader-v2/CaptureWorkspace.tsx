@@ -56,7 +56,19 @@ type CaptureWorkspaceProps = {
   cardProfile: SpeedsterCardProfile;
   activeMapRevisionId?: string | null;
   onReady: (bundle: SpeedsterCaptureBundle) => void;
+  onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void;
 };
+
+export type SpeedsterCaptureInstrumentationEvent = Readonly<{
+  eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED";
+  startedAtMs: number;
+  endedAtMs: number;
+  details?: Readonly<{
+    side?: SpeedsterCardSide;
+    automaticGeometryCount?: number;
+    photoSource?: "IPHONE" | "LOCAL" | "MIXED";
+  }>;
+}>;
 
 type SideState = {
   originalStorageKey: string;
@@ -102,6 +114,7 @@ export function CaptureWorkspace({
   cardProfile,
   activeMapRevisionId = null,
   onReady,
+  onInstrumentationEvent,
 }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -115,12 +128,32 @@ export function CaptureWorkspace({
   const [message, setMessage] = useState("Add one original image of each side.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const geometryAttempt = useRef(0);
+  const photosStartedAt = useRef(Date.now());
+  const photosReadyRecorded = useRef(false);
+  const stageStartedAt = useRef(Date.now());
 
   useEffect(() => {
     iphoneVersion.current = 0;
     geometryAttempt.current = 0;
+    photosStartedAt.current = Date.now();
+    photosReadyRecorded.current = false;
+    stageStartedAt.current = Date.now();
     setWorkflowError(null);
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!frontPhoto || !backPhoto || photosReadyRecorded.current) return;
+    photosReadyRecorded.current = true;
+    const photoSource = frontPhoto.kind === backPhoto.kind
+      ? frontPhoto.kind
+      : "MIXED";
+    onInstrumentationEvent?.({
+      eventType: "PHOTOS_READY",
+      startedAtMs: photosStartedAt.current,
+      endedAtMs: Date.now(),
+      details: { photoSource },
+    });
+  }, [backPhoto, frontPhoto, onInstrumentationEvent]);
 
   useEffect(() => {
     if (stage !== "PHOTOS" || working) return;
@@ -188,6 +221,7 @@ export function CaptureWorkspace({
   const beginGeometry = async () => {
     if (!frontPhoto || !backPhoto || working) return;
     const attemptId = geometryAttempt.current + 1;
+    const startedAtMs = Date.now();
     geometryAttempt.current = attemptId;
     setWorking(true);
     setWorkflowError(null);
@@ -243,7 +277,14 @@ export function CaptureWorkspace({
         geometryDiagnostic: backResult.diagnostic,
       });
       setStage("FRONT_GEOMETRY");
+      stageStartedAt.current = Date.now();
       const automaticCount = Number(frontResult.corners !== null) + Number(backResult.corners !== null);
+      onInstrumentationEvent?.({
+        eventType: "GEOMETRY_PROPOSED",
+        startedAtMs,
+        endedAtMs: Date.now(),
+        details: { automaticGeometryCount: automaticCount },
+      });
       setMessage(automaticCount === 2
         ? "Both physical cards found. Move only points that need correction."
         : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
@@ -316,6 +357,14 @@ export function CaptureWorkspace({
         setBack(next);
         setStage("FRONT_CENTERING");
       }
+      const endedAtMs = Date.now();
+      onInstrumentationEvent?.({
+        eventType: "GEOMETRY_CONFIRMED",
+        startedAtMs: stageStartedAt.current,
+        endedAtMs,
+        details: { side },
+      });
+      stageStartedAt.current = endedAtMs;
       setMessage(side === "FRONT" ? "Confirm the back geometry." : "Confirm the printed-border geometry.");
     } catch (error) {
       setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
@@ -325,6 +374,14 @@ export function CaptureWorkspace({
   };
 
   const confirmCentering = (result: CenteringAssistResult) => {
+    const endedAtMs = Date.now();
+    onInstrumentationEvent?.({
+      eventType: "CENTERING_CONFIRMED",
+      startedAtMs: stageStartedAt.current,
+      endedAtMs,
+      details: { side: result.side },
+    });
+    stageStartedAt.current = endedAtMs;
     if (result.side === "FRONT") {
       setFront((current) => current ? { ...current, centering: result } : current);
       setStage("BACK_CENTERING");
@@ -391,6 +448,8 @@ export function CaptureWorkspace({
               setWorkflowError(null);
               setFrontPhoto(null);
               setBackPhoto(null);
+              photosStartedAt.current = Date.now();
+              photosReadyRecorded.current = false;
               setMessage("Retake front + back, then run the Speedster Shortcut again.");
             }}
             onSwap={() => {

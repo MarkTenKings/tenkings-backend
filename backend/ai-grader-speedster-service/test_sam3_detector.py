@@ -516,7 +516,21 @@ class Sam3DetectorTests(unittest.TestCase):
         expected = {"detectorVersion": DETECTOR_VERSION, "defects": []}
 
         with patch("app.detect_views", return_value=expected) as scan:
-            self.assertEqual(detect(request), expected)
+            result = detect(request)
+
+        self.assertEqual(result["detectorVersion"], expected["detectorVersion"])
+        self.assertEqual(result["defects"], expected["defects"])
+        self.assertEqual(
+            result["instrumentation"]["version"],
+            "speedster-service-timing-v1",
+        )
+        self.assertEqual(result["instrumentation"]["side"], "FRONT")
+        self.assertEqual(
+            result["instrumentation"]["requestTraceId"],
+            "session-123:FRONT:detect",
+        )
+        self.assertEqual(result["instrumentation"]["imageLoads"][0]["viewId"], "ORIGINAL")
+        self.assertGreaterEqual(result["instrumentation"]["serviceTotalMs"], 0)
 
         views, side, corner_shape = scan.call_args.args
         self.assertEqual(side, "FRONT")

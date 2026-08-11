@@ -194,6 +194,36 @@ test("one-click active restore appends the exact calibration mistake in the same
   assert.equal(mistake.ruleId, decision().ruleId);
 });
 
+test("restore instrumentation is fail-open and runs only after the authoritative restore event commits", async () => {
+  const order: string[] = [];
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    const restored = await restoreSpeedsterMapFilterDecision({
+      decisionId,
+      restoredByAdminId: "admin-2",
+    }, {
+      async loadDecision() { return decision(); },
+      async remeasureActive() { return { reviewedDefects: [finding], gradeReport: {} }; },
+      async persistActive() {
+        order.push("authority:committed");
+        return { event: event("ACTIVE_REINTRODUCED", "CAPTURED"), created: true };
+      },
+      async persistCompleted() { throw new Error("must not persist completed"); },
+      async recordInstrumentation(input) {
+        assert.equal(order.at(-1), "authority:committed");
+        assert.equal(input.outcome, "ACTIVE_REINTRODUCED");
+        order.push("telemetry:attempted");
+        throw new Error("telemetry unavailable");
+      },
+    });
+    assert.equal(restored.outcome, "ACTIVE_REINTRODUCED");
+    assert.deepEqual(order, ["authority:committed", "telemetry:attempted"]);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("completed restore writes calibration only and returns immutable grade/report/label/card/updatedAt evidence", async () => {
   const immutable = {
     sessionSha256: "e".repeat(64),

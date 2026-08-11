@@ -6,6 +6,7 @@ import type {
   SpeedsterDefectOrigin,
   SpeedsterReviewFinding,
 } from "../ai-grader-v2/contracts";
+import type { SpeedsterFilterDecisionEvidence } from "../ai-grader-v2/card-type-map-contracts";
 import { speedsterFindingRegions } from "../ai-grader-v2/review-findings";
 
 export type SpeedsterOperatorInstrumentationAction =
@@ -215,6 +216,84 @@ export function speedsterFindingFinalEvents(input: {
     finding,
     operatorAction: terminalOperatorAction(finding),
   }));
+}
+
+export function speedsterFilterRemovedEvents(input: {
+  sessionId: string;
+  createdByUserId: string;
+  decisions: readonly SpeedsterFilterDecisionEvidence[];
+  startedAt: Date;
+  endedAt: Date;
+}): SpeedsterInstrumentationEvent[] {
+  return input.decisions.map((decision) => ({
+    eventKey: `${input.sessionId}:filter-removed:${decision.mapRevisionId}:${decision.finding.id}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    category: "FILTER_ACTION",
+    eventType: "MAP_FILTER_REMOVED",
+    findingId: decision.finding.id,
+    origin: findingOrigin(decision.finding),
+    similarity: finite(decision.finding.memoryProposal?.similarity)
+      ? decision.finding.memoryProposal.similarity
+      : null,
+    generatingExemplar: generatingExemplar(decision.finding),
+    operatorAction: "FILTER_REMOVED",
+    durationMs: Math.max(0, input.endedAt.getTime() - input.startedAt.getTime()),
+    details: {
+      finding: speedsterFindingInstrumentationSnapshot(decision.finding),
+      mapId: decision.mapId,
+      mapRevisionId: decision.mapRevisionId,
+      zoneId: decision.zoneId,
+      zoneType: decision.zoneType,
+      zoneOverlap: decision.zoneOverlap,
+      filterPolicyVersion: decision.filterPolicyVersion,
+      ruleId: decision.ruleId,
+      ruleInputs: decision.ruleInputs,
+      detectorVersion: decision.detectorVersion,
+    },
+  }));
+}
+
+export function speedsterFilterRestoredEvent(input: {
+  sessionId: string;
+  createdByUserId: string;
+  decisionId: string;
+  finding: SpeedsterReviewFinding;
+  mapId: string;
+  mapRevisionId: string;
+  zoneId: string;
+  zoneType: string;
+  filterPolicyVersion: string;
+  ruleId: string;
+  outcome: "ACTIVE_REINTRODUCED" | "COMPLETED_CALIBRATION_ONLY";
+  sessionLifecycleState: string;
+}): SpeedsterInstrumentationEvent {
+  return {
+    eventKey: `${input.sessionId}:filter-restored:${input.decisionId}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    category: "FILTER_ACTION",
+    eventType: "MAP_FILTER_RESTORED",
+    findingId: input.finding.id,
+    origin: findingOrigin(input.finding),
+    similarity: finite(input.finding.memoryProposal?.similarity)
+      ? input.finding.memoryProposal.similarity
+      : null,
+    generatingExemplar: generatingExemplar(input.finding),
+    operatorAction: "FILTER_RESTORED",
+    details: {
+      finding: speedsterFindingInstrumentationSnapshot(input.finding),
+      decisionId: input.decisionId,
+      mapId: input.mapId,
+      mapRevisionId: input.mapRevisionId,
+      zoneId: input.zoneId,
+      zoneType: input.zoneType,
+      filterPolicyVersion: input.filterPolicyVersion,
+      ruleId: input.ruleId,
+      outcome: input.outcome,
+      sessionLifecycleState: input.sessionLifecycleState,
+    },
+  };
 }
 
 export function speedsterServerTimingEvent(input: {

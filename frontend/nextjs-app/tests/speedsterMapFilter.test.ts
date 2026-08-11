@@ -307,6 +307,21 @@ function initializeSession(withMap: boolean): SpeedsterReviewActionSession {
 
 test("INITIALIZE shares one Memory object across simultaneous detectors, then atomically persists the filtered split", async () => {
   const initial = initializeSession(true);
+  const instrumentedInside = {
+    ...inside,
+    findingProvenance: {
+      version: "speedster-finding-provenance-v1" as const,
+      primaryProposalId: "FRONT:0",
+      contributors: [{
+        proposalId: "FRONT:0",
+        origin: "DETECTOR" as const,
+        sourceViewId: inside.sourceViewId,
+        defectType: inside.defectType,
+        confidence: inside.confidence,
+        rankingConfidence: inside.confidence,
+      }],
+    },
+  };
   const sharedLearningBank = { version: "GLOBAL" };
   let learningBankCalls = 0;
   const detectorLearningBanks: unknown[] = [];
@@ -314,6 +329,7 @@ test("INITIALIZE shares one Memory object across simultaneous detectors, then at
   let backStartedWhileFrontPending = false;
   let detectorReturns = 0;
   let persistedAfterDetectorPair = false;
+  let instrumentation: readonly { operatorAction?: string | null; details?: unknown }[] = [];
   let persisted: {
     reviewedDefects: readonly unknown[];
     gradeReport: unknown;
@@ -347,10 +363,11 @@ test("INITIALIZE shares one Memory object across simultaneous detectors, then at
       detectorReturns += 1;
       return {
         detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
-        defects: body.side === "FRONT" ? [inside] : [outside],
+        defects: body.side === "FRONT" ? [instrumentedInside] : [outside],
       };
     },
     async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { instrumentation = events; },
   });
   const saved = persisted as unknown as {
     reviewedDefects: SpeedsterReviewFinding[];
@@ -374,6 +391,8 @@ test("INITIALIZE shares one Memory object across simultaneous detectors, then at
   assert.equal(savedDecision.ruleId, SPEEDSTER_MAP_FILTER_RULE_ID);
   assert.deepEqual(savedDecision.ruleInputs, { findingOrigin: "DETECTOR", requiredCoverageRatio: 1 });
   assert.equal(savedDecision.detectorVersion, SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION);
+  assert.match(JSON.stringify(savedDecision.finding), /speedster-finding-provenance-v1/);
+  assert.equal(instrumentation.some(({ operatorAction }) => operatorAction === "FILTER_REMOVED"), true);
   assert.deepEqual(result.reviewedDefects.map(({ id }) => id), [outside.id]);
   assert.deepEqual(
     result.gradeReport,

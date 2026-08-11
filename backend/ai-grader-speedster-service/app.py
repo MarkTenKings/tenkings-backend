@@ -1,6 +1,8 @@
 import base64
+import json
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -387,12 +389,26 @@ def map_registration(request: MapRegistrationRequest):
 
 @app.post("/detect")
 def detect(request: DetectRequest):
+    request_started = time.perf_counter()
     try:
-        views = [
-            (view.id, load_image(view.imageUrl, view.imageBase64))
-            for view in request.views
-        ]
-        return detect_views(
+        views = []
+        image_loads = []
+        for view in request.views:
+            load_started = time.perf_counter()
+            image = load_image(view.imageUrl, view.imageBase64)
+            image_loads.append(
+                {
+                    "viewId": view.id,
+                    "durationMs": round(
+                        (time.perf_counter() - load_started) * 1000, 3
+                    ),
+                    "width": int(image.shape[1]),
+                    "height": int(image.shape[0]),
+                }
+            )
+            views.append((view.id, image))
+        detection_started = time.perf_counter()
+        result = detect_views(
             views,
             request.side,
             request.cornerShape,
@@ -400,9 +416,38 @@ def detect(request: DetectRequest):
             session_id=request.sessionId,
             trace_id=request.requestTraceId,
         )
+        detector_duration_ms = round(
+            (time.perf_counter() - detection_started) * 1000, 3
+        )
+        instrumentation = {
+            **result.get("instrumentation", {}),
+            "version": "speedster-service-timing-v1",
+            "side": request.side,
+            "requestTraceId": request.requestTraceId,
+            "imageLoads": image_loads,
+            "imageLoadTotalMs": round(
+                sum(item["durationMs"] for item in image_loads), 3
+            ),
+            "detectorDurationMs": detector_duration_ms,
+            "serviceTotalMs": round(
+                (time.perf_counter() - request_started) * 1000, 3
+            ),
+        }
+        result["instrumentation"] = instrumentation
+        LOGGER.info(
+            "speedster_detect_timing %s",
+            json.dumps(instrumentation, separators=(",", ":"), sort_keys=True),
+        )
+        return result
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
+        LOGGER.exception(
+            "speedster_detect_timing_failed side=%s requestTraceId=%s durationMs=%.3f",
+            request.side,
+            request.requestTraceId,
+            (time.perf_counter() - request_started) * 1000,
+        )
         raise HTTPException(
             status_code=500,
             detail=f"{type(error).__name__}: {error}",

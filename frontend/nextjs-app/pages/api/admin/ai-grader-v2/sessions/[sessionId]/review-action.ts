@@ -23,6 +23,7 @@ import {
   type SpeedsterLearningDetectClient,
 } from "../../../../../../lib/server/aiGraderV2LearningBank";
 import { loadPinnedSpeedsterMapRevision } from "../../../../../../lib/server/speedsterCardTypeMaps";
+import { insertSpeedsterInstrumentationEvents } from "../../../../../../lib/server/aiGraderV2Instrumentation";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const FINDING_ID = z.string().trim().min(1).max(180);
@@ -179,6 +180,7 @@ const dependencies: HandlerDependencies = {
     }
     return payload as { defects: unknown };
   },
+  recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
   persistReviewIfRevision: (identity, expectedUpdatedAt, data) => prisma.$transaction(async (tx) => {
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "AiGraderV2Session" WHERE "id" = ${identity.sessionId} AND "createdByUserId" = ${identity.createdByUserId} FOR UPDATE`,

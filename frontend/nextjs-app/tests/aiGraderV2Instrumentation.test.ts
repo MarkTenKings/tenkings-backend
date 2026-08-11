@@ -6,6 +6,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 import type { SpeedsterMeasuredDefect } from "../lib/ai-grader-v2/contracts";
 import {
+  speedsterFilterRemovedEvents,
+  speedsterFilterRestoredEvent,
   speedsterFindingActionEvents,
   speedsterFindingFinalEvents,
   speedsterFindingProposalEvents,
@@ -43,12 +45,26 @@ const memoryFinding = {
     similarity: 0.947,
   },
   findingProvenance: {
+    version: "speedster-finding-provenance-v1",
     primaryProposalId: "FRONT:4",
-    contributors: [{ proposalId: "FRONT:4", origin: "MEMORY" }],
+    contributors: [{
+      proposalId: "FRONT:4",
+      origin: "MEMORY",
+      sourceViewId: "FRONT:ORIGINAL",
+      defectType: "LIGHT_SCRATCH_SCUFF",
+      confidence: 0.91,
+      rankingConfidence: 0.947,
+      memoryProposal: {
+        lessonSessionId: "lesson-session-1",
+        lessonCompletionOrder: 42,
+        lessonProposalOrder: 3,
+        lessonOrder: 1,
+        lessonSourceViewId: "ORIGINAL",
+        similarity: 0.947,
+      },
+    }],
   },
-} as SpeedsterMeasuredDefect & {
-  findingProvenance: { primaryProposalId: string; contributors: readonly unknown[] };
-};
+} as SpeedsterMeasuredDefect;
 
 test("proposal telemetry preserves exact Memory provenance and measurement", () => {
   const [event] = speedsterFindingProposalEvents({
@@ -106,6 +122,61 @@ test("review telemetry retains append-only operator history and final dispositio
     createdByUserId: "admin-1",
     findings: [removed],
   })[0].operatorAction, "REMOVED");
+});
+
+test("filter telemetry keeps immutable map rationale distinct from human review actions", () => {
+  const [removed] = speedsterFilterRemovedEvents({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    decisions: [{
+      finding: memoryFinding,
+      cardIdentity: {
+        cardName: "Cubone",
+        year: "1999",
+        productSet: "Jungle",
+        parallel: null,
+        cardNumber: "50",
+      },
+      mapId: "map-12345678901234567890",
+      mapRevisionId: "revision-123456789012345",
+      zoneId: "front-artwork",
+      zoneType: "PRINT_ARTWORK",
+      zoneOverlap: {
+        method: "candidate-contour-vertex-coverage-v1",
+        coveredVertices: 3,
+        totalVertices: 3,
+        ratio: 1,
+      },
+      filterPolicyVersion: "speedster-map-filter-containment-v1",
+      ruleId: "human-zone-full-contour-containment-v1",
+      ruleInputs: { findingOrigin: "MEMORY", requiredCoverageRatio: 1 },
+      detectorVersion: "sam3-speedster-v1",
+    }],
+    startedAt: new Date("2026-08-09T12:00:00.000Z"),
+    endedAt: new Date("2026-08-09T12:00:01.000Z"),
+  });
+  const restored = speedsterFilterRestoredEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    decisionId: "decision-123456789012345",
+    finding: memoryFinding,
+    mapId: "map-12345678901234567890",
+    mapRevisionId: "revision-123456789012345",
+    zoneId: "front-artwork",
+    zoneType: "PRINT_ARTWORK",
+    filterPolicyVersion: "speedster-map-filter-containment-v1",
+    ruleId: "human-zone-full-contour-containment-v1",
+    outcome: "ACTIVE_REINTRODUCED",
+    sessionLifecycleState: "CAPTURED",
+  });
+
+  assert.equal(removed.category, "FILTER_ACTION");
+  assert.equal(removed.operatorAction, "FILTER_REMOVED");
+  assert.equal(removed.similarity, 0.947);
+  assert.match(JSON.stringify(removed.details), /human-zone-full-contour-containment-v1/);
+  assert.equal(restored.category, "FILTER_ACTION");
+  assert.equal(restored.operatorAction, "FILTER_RESTORED");
+  assert.match(JSON.stringify(restored.details), /ACTIVE_REINTRODUCED/);
 });
 
 function request(body: unknown): NextApiRequest {

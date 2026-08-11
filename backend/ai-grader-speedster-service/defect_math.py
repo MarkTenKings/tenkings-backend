@@ -136,6 +136,33 @@ def _normalized_contours(mask: np.ndarray) -> List[List[Dict[str, float]]]:
     ]
 
 
+def _finding_instrumentation_provenance(primary: dict, source_members: List[dict]):
+    if not all(member.get("instrumentationProposalId") for member in source_members):
+        return None
+    return {
+        "version": "speedster-finding-provenance-v1",
+        "primaryProposalId": primary["instrumentationProposalId"],
+        "contributors": [
+            {
+                "proposalId": member["instrumentationProposalId"],
+                "origin": member.get("origin", "DETECTOR"),
+                "sourceViewId": member["sourceViewId"],
+                "defectType": member["defectType"],
+                "confidence": float(member["confidence"]),
+                "rankingConfidence": float(
+                    member.get("rankingConfidence", member["confidence"])
+                ),
+                **(
+                    {"memoryProposal": member["memoryProposal"]}
+                    if member.get("memoryProposal") is not None
+                    else {}
+                ),
+            }
+            for member in source_members
+        ],
+    }
+
+
 def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
     """Fuse canonical detector proposals and return one measurement per occupied zone."""
 
@@ -242,6 +269,9 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                     )
 
             for source_mask, primary, source_members in measurement_sources:
+                finding_provenance = _finding_instrumentation_provenance(
+                    primary, source_members
+                )
                 view_ids = list(
                     dict.fromkeys(
                         view_id
@@ -272,6 +302,11 @@ def measure_defects(proposals: List[dict], corner_shape: str) -> List[dict]:
                             "canonicalContours": _normalized_contours(measured),
                             "sourceViewId": primary["sourceViewId"],
                             "supportingViewIds": supporting_views,
+                            **(
+                                {"findingProvenance": finding_provenance}
+                                if finding_provenance is not None
+                                else {}
+                            ),
                             "defectType": defect_type,
                             "confidence": float(primary["confidence"]),
                             "featureFingerprint": primary.get("featureFingerprint"),

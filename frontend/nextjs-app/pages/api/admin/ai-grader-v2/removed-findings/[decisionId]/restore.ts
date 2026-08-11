@@ -19,6 +19,10 @@ import {
 } from "../../../../../../lib/server/aiGraderV2MapFilterRestore";
 import { HttpError } from "../../../../../../lib/server/adminSessionAuthority";
 import { presignReadUrl } from "../../../../../../lib/server/storage";
+import {
+  insertSpeedsterInstrumentationEvents,
+  speedsterFilterRestoredEvent,
+} from "../../../../../../lib/server/aiGraderV2Instrumentation";
 
 const DECISION_ID = /^[a-z0-9-]{20,40}$/i;
 
@@ -44,6 +48,12 @@ type Dependencies = {
     created: boolean;
     immutableEvidence: SpeedsterCompletedRestoreEvidence;
   }>;
+  recordInstrumentation?: (input: {
+    decision: SpeedsterMapFilterRestoreDecision;
+    restoredByAdminId: string;
+    outcome: "ACTIVE_REINTRODUCED" | "COMPLETED_CALIBRATION_ONLY";
+    sessionLifecycleState: string;
+  }) => Promise<unknown>;
 };
 
 function serviceHeaders() {
@@ -237,6 +247,23 @@ const dependencies: Dependencies = {
       immutableEvidence: immutableEvidence(after),
     };
   }, { isolationLevel: "Serializable" }),
+  recordInstrumentation: (input) => {
+    const [finding] = parseSpeedsterReviewFindings([input.decision.findingSnapshot]);
+    return insertSpeedsterInstrumentationEvents(prisma, [speedsterFilterRestoredEvent({
+      sessionId: input.decision.sessionId,
+      createdByUserId: input.restoredByAdminId,
+      decisionId: input.decision.id,
+      finding,
+      mapId: input.decision.mapId,
+      mapRevisionId: input.decision.mapRevisionId,
+      zoneId: input.decision.zoneId,
+      zoneType: input.decision.zoneType,
+      filterPolicyVersion: input.decision.filterPolicyVersion,
+      ruleId: input.decision.ruleId,
+      outcome: input.outcome,
+      sessionLifecycleState: input.sessionLifecycleState,
+    })]);
+  },
 };
 
 function decisionIdFrom(req: NextApiRequest) {
