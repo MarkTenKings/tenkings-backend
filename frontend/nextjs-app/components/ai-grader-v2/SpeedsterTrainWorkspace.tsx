@@ -187,9 +187,7 @@ function exactMapName(identity: SpeedsterSessionIdentity) {
 }
 
 function likelyCardSpecificPoint(point: SpeedsterPoint) {
-  return point.y <= 0.16
-    || point.y >= 0.86
-    || (point.x >= 0.15 && point.x <= 0.85 && point.y >= 0.17 && point.y <= 0.7);
+  return point.y >= 0.2 && point.y <= 0.58 && point.x >= 0.18 && point.x <= 0.82;
 }
 
 function anchorQuadrant(point: SpeedsterPoint) {
@@ -288,10 +286,11 @@ export function SpeedsterTrainWorkspace({
   const activeMapName = map.name ?? (activeScope === "FAMILY"
     ? familyMapName(source.identity)
     : exactMapName(source.identity));
-  const safetyWarnings = useMemo(
-    () => activeScope === "FAMILY" ? familySafetyWarnings(frontEditor, backEditor) : [],
-    [activeScope, backEditor, frontEditor],
-  );
+  const safetyWarnings = useMemo(() => (
+    activeScope === "FAMILY" || map.status === "LOADED"
+      ? familySafetyWarnings(frontEditor, backEditor)
+      : []
+  ), [activeScope, backEditor, frontEditor, map.status]);
 
   const editorFor = (candidate: SpeedsterCardSide) => candidate === "FRONT" ? frontEditor : backEditor;
   const setEditor = (
@@ -709,8 +708,8 @@ export function SpeedsterTrainWorkspace({
 
       {safetyWarnings.length ? (
         <aside className={styles.familyWarning} role="status">
-          <strong>CHECK FAMILY LANDMARKS</strong>
-          <p>{safetyWarnings.join(" · ")} may rely on card-specific content. Move family anchors and zones away from artwork, player/card name, HP, and card number. Use shared frame/layout landmarks, one per quadrant. This warning does not block saving.</p>
+          <strong>{activeScope === "FAMILY" ? "CHECK FAMILY LANDMARKS" : "BEFORE PROMOTION · CHECK FAMILY LANDMARKS"}</strong>
+          <p>{activeScope === "EXACT" ? "Before promotion, " : ""}location caution: {safetyWarnings.join(" · ")} may overlap artwork or other card-specific content. Player/card name, HP, and card number are also unsafe. Shared frame/layout landmarks remain safe, including at the top or bottom, with one anchor per quadrant. This warning does not block saving or promotion.</p>
         </aside>
       ) : null}
 

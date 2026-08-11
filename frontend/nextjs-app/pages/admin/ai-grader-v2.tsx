@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
 import {
   CaptureWorkspace,
+  SpeedsterAppliedMapBadge,
   type SpeedsterCaptureBundle,
   type SpeedsterCaptureInstrumentationEvent,
 } from "../../components/ai-grader-v2/CaptureWorkspace";
@@ -693,6 +694,15 @@ export default function AiGraderV2AdminPage() {
               ? `r${mapState.revision?.version} · ${mapState.revision?.revisionHash.slice(0, 12)} · This selected map will register to the card's physical geometry.`
               : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
           </section>
+        ) : null}
+
+        {capture && mapState ? (
+          <SpeedsterAppliedMapBadge
+            capture={capture}
+            selectedRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
+            scope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
+            name={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
+          />
         ) : null}
 
         {draft && !capture && mapState ? (

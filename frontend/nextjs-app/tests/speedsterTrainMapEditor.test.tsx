@@ -324,7 +324,19 @@ test("one boundary handle and stable registration anchors drag independently, un
 });
 
 test("family authoring is explicit, warns without blocking, and saves FAMILY scope", async () => {
-  const map = { ...loadedMap(), scope: "FAMILY" as const, name: "2021 Panini Obsidian Orange" };
+  const base = loadedMap();
+  const map: SpeedsterTrainMapState = {
+    ...base,
+    scope: "FAMILY",
+    name: "2021 Panini Obsidian Orange",
+    editable: base.editable ? {
+      ...base.editable,
+      front: {
+        ...base.editable.front,
+        zones: base.editable.front.zones.map((zone) => ({ ...zone, semanticType: "PRINT_ARTWORK" as const })),
+      },
+    } : null,
+  };
   const harness = await mount(map, "FAMILY");
   try {
     const copy = harness.container.textContent ?? "";
@@ -332,8 +344,10 @@ test("family authoring is explicit, warns without blocking, and saves FAMILY sco
     assert.match(copy, /APPLIES TO ALL MATCHING CARDS/);
     assert.match(copy, /2021 Panini Obsidian Orange/);
     assert.match(copy, /CHECK FAMILY LANDMARKS/);
-    assert.match(copy, /one per quadrant/);
-    assert.match(copy, /artwork, player\/card name, HP, and card number/);
+    assert.match(copy, /one anchor per quadrant/);
+    assert.match(copy, /location caution/);
+    assert.match(copy, /Player\/card name, HP, and card number are also unsafe/);
+    assert.match(copy, /Shared frame\/layout landmarks remain safe, including at the top or bottom/);
     const save = buttonByText(harness.container, "Save + activate new revision");
     assert.ok(save);
     assert.equal(save.disabled, false, "Family warning must remain nonblocking");
@@ -359,6 +373,45 @@ test("loaded exact map offers deliberate whole-map promotion while retaining its
       revisionId: "card-map-revision-1234567890",
     });
     assert.match(harness.container.textContent ?? "", /Exact source imagery and provenance are retained/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("unsafe loaded exact map shows family guidance before nonblocking promotion", async () => {
+  const base = loadedMap();
+  const unsafe: SpeedsterTrainMapState = {
+    ...base,
+    scope: "EXACT",
+    name: "Nick Bosa #12",
+    editable: base.editable ? {
+      ...base.editable,
+      front: {
+        ...base.editable.front,
+        anchors: base.editable.front.anchors.map((anchor, index) => index === 0
+          ? { ...anchor, point: { x: 0.5, y: 0.35 } }
+          : anchor),
+      },
+    } : null,
+  };
+  const harness = await mount(unsafe, "EXACT");
+  try {
+    assert.match(harness.container.textContent ?? "", /BEFORE PROMOTION · CHECK FAMILY LANDMARKS/);
+    assert.match(harness.container.textContent ?? "", /Before promotion, location caution/);
+    const promote = buttonByText(harness.container, "Promote exact map to family");
+    assert.ok(promote);
+    assert.equal(promote.disabled, false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("shared top and bottom frame anchors do not trigger a card-specific location warning", async () => {
+  const map = { ...loadedMap(), scope: "FAMILY" as const, name: "2021 Panini Obsidian Orange" };
+  const harness = await mount(map, "FAMILY");
+  try {
+    assert.doesNotMatch(harness.container.textContent ?? "", /CHECK FAMILY LANDMARKS/);
+    assert.match(harness.container.textContent ?? "", /shared frame or layout landmark in each quadrant/i);
   } finally {
     await harness.cleanup();
   }
