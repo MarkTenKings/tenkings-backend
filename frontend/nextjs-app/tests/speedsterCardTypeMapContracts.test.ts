@@ -5,6 +5,8 @@ import {
   canonicalSpeedsterMapKeyJson,
   normalizeSpeedsterMapKeyText,
   speedsterCardTypeMapKey,
+  speedsterFamilyCardTypeMapKey,
+  speedsterMapScopeForKey,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 
 test("builds exact category-aware Sports keys including existing card identity", () => {
@@ -74,4 +76,51 @@ test("subject and card number prevent unsafe shorter-key collisions", () => {
     cardNumber: "8",
   });
   assert.notEqual(canonicalSpeedsterMapKeyJson(malik), canonicalSpeedsterMapKeyJson(mccarthy));
+});
+
+test("Pokemon family keys omit card name and number while exact keys remain distinct", () => {
+  const snorlax = {
+    cardName: "Snorlax",
+    year: "2022 Pokemon",
+    productSet: "Lost Origin",
+    parallel: "Holo",
+    cardNumber: "143/196",
+  } as const;
+  const mewtwo = {
+    ...snorlax,
+    cardName: "Mewtwo",
+    cardNumber: "056/196",
+  } as const;
+
+  assert.deepEqual(
+    speedsterFamilyCardTypeMapKey("POKEMON", snorlax),
+    speedsterFamilyCardTypeMapKey("POKEMON", mewtwo),
+  );
+  assert.notDeepEqual(
+    speedsterCardTypeMapKey("POKEMON", snorlax),
+    speedsterCardTypeMapKey("POKEMON", mewtwo),
+  );
+  assert.equal(speedsterMapScopeForKey(speedsterFamilyCardTypeMapKey("POKEMON", snorlax)), "FAMILY");
+  assert.equal(speedsterMapScopeForKey(speedsterCardTypeMapKey("POKEMON", snorlax)), "EXACT");
+});
+
+test("Sports family keys omit player name and card number", () => {
+  const base = {
+    playerName: "Malik Nabers",
+    year: "2025",
+    manufacturer: "Panini",
+    productSet: "Phoenix",
+    insert: "Paragon",
+    parallel: "Silver",
+    cardNumber: "5",
+  } as const;
+  assert.deepEqual(speedsterFamilyCardTypeMapKey("SPORTS", base), {
+    scope: "FAMILY",
+    category: "SPORTS",
+    year: "2025",
+    manufacturer: "panini",
+    productSet: "phoenix",
+    insert: "paragon",
+    parallel: "silver",
+  });
 });

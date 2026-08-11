@@ -6,6 +6,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 import type { SpeedsterMeasuredDefect } from "../lib/ai-grader-v2/contracts";
 import {
+  speedsterCardMapApplicationEvent,
   speedsterFilterRemovedEvents,
   speedsterFilterRestoredEvent,
   speedsterFindingActionEvents,
@@ -142,10 +143,11 @@ test("filter telemetry keeps immutable map rationale distinct from human review 
       zoneId: "front-artwork",
       zoneType: "PRINT_ARTWORK",
       zoneOverlap: {
-        method: "candidate-contour-vertex-coverage-v1",
+        method: "candidate-contour-segment-containment-v1",
         coveredVertices: 3,
         totalVertices: 3,
         ratio: 1,
+        fullyContained: true,
       },
       filterPolicyVersion: "speedster-map-filter-containment-v1",
       ruleId: "human-zone-full-contour-containment-v1",
@@ -177,6 +179,47 @@ test("filter telemetry keeps immutable map rationale distinct from human review 
   assert.equal(restored.category, "FILTER_ACTION");
   assert.equal(restored.operatorAction, "FILTER_RESTORED");
   assert.match(JSON.stringify(restored.details), /ACTIVE_REINTRODUCED/);
+});
+
+test("card-map telemetry records trusted family scope, key, revision, and provenance without image evidence", () => {
+  const applied = {
+    appliedScope: "FAMILY",
+    appliedMapName: "2022 Pokemon · Lost Origin · Holo",
+    revision: {
+      mapId: "map-12345678901234567890",
+      revisionId: "revision-123456789012345",
+      matchKeyHash: "a".repeat(64),
+      matchKey: {
+        scope: "FAMILY",
+        category: "POKEMON",
+        year: "2022",
+        productSet: "lost origin",
+        parallel: "holo",
+      },
+    },
+    sourceProvenance: {
+      sourceSessionId: "source-session-1234567890",
+      sourceIdentity: {
+        cardName: "Snorlax",
+        year: "2022",
+        productSet: "Lost Origin",
+        parallel: "Holo",
+        cardNumber: "143/196",
+      },
+    },
+  } as never;
+  const event = speedsterCardMapApplicationEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    applied,
+    selected: applied,
+  });
+
+  assert.equal(event.category, "MAP_APPLICATION");
+  assert.equal(event.eventType, "CARD_MAP_APPLIED");
+  assert.match(JSON.stringify(event.details), /"appliedScope":"FAMILY"/);
+  assert.match(JSON.stringify(event.details), /"cardName":"Snorlax"/);
+  assert.doesNotMatch(JSON.stringify(event.details), /storageKey|imageUrl|imageBase64/);
 });
 
 function request(body: unknown): NextApiRequest {
@@ -222,6 +265,98 @@ test("client timing endpoint authenticates ownership and accepts bounded cycle d
   assert.equal(result.state.status, 201);
   assert.equal(events[0].durationMs, 45_000);
   assert.equal(events[0].category, "CLIENT_TIMING");
+});
+
+test("geometry timing records map-assisted scope and revision for before-vs-after reporting", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7ef",
+    eventType: "GEOMETRY_CONFIRMED",
+    clientStartedAt: "2026-08-09T12:00:00.000Z",
+    clientEndedAt: "2026-08-09T12:00:12.000Z",
+    details: {
+      side: "FRONT",
+      mapAppliedScope: "FAMILY",
+      mapName: "2022 Pokemon · Lost Origin · Holo",
+      mapRevisionId: "revision-123456789012345",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.equal(events[0].durationMs, 12_000);
+  assert.deepEqual(events[0].details, {
+    side: "FRONT",
+    mapAppliedScope: "FAMILY",
+    mapName: "2022 Pokemon · Lost Origin · Holo",
+    mapRevisionId: "revision-123456789012345",
+  });
+});
+
+test("geometry timing retains a maximum-length valid exact map display name", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+  const mapName = "x".repeat(864);
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f1",
+    eventType: "GEOMETRY_CONFIRMED",
+    clientStartedAt: "2026-08-09T12:00:00.000Z",
+    clientEndedAt: "2026-08-09T12:00:12.000Z",
+    details: {
+      side: "FRONT",
+      mapAppliedScope: "EXACT",
+      mapName,
+      mapRevisionId: "revision-123456789012345",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.equal((events[0].details as { mapName: string }).mapName, mapName);
+});
+
+test("geometry timing records a map registration failure as manual without private error text", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f0",
+    eventType: "GEOMETRY_CONFIRMED",
+    clientStartedAt: "2026-08-09T12:00:00.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: {
+      side: "FRONT",
+      mapAppliedScope: "NONE",
+      mapFailureCode: "REGISTRATION_FAILED",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.equal(events[0].durationMs, 18_000);
+  assert.deepEqual(events[0].details, {
+    side: "FRONT",
+    mapAppliedScope: "NONE",
+    mapFailureCode: "REGISTRATION_FAILED",
+  });
 });
 
 test("client timing endpoint rejects secret-shaped payload fields", async () => {

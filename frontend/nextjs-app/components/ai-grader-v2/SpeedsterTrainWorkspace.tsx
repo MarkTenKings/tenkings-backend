@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type {
   SpeedsterMapDesignBoundary,
+  SpeedsterMapScope,
   SpeedsterMapZone,
   SpeedsterMapZoneSemanticType,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
@@ -37,6 +38,8 @@ type EditableSide = Readonly<{
 
 export type SpeedsterTrainMapState = Readonly<{
   status: "MISSING" | "LOADED";
+  scope?: SpeedsterMapScope | null;
+  name?: string;
   revision: Readonly<{
     mapId: string;
     revisionId: string;
@@ -46,6 +49,10 @@ export type SpeedsterTrainMapState = Readonly<{
     mapSchemaVersion: string;
     filterPolicyVersion: string;
     createdAt: string;
+    sourceProvenance?: Readonly<{
+      sourceSessionId: string;
+      sourceIdentity: SpeedsterSessionIdentity;
+    }>;
   }> | null;
   revisions: readonly Readonly<{
     revisionId: string;
@@ -164,6 +171,45 @@ function identityTitle(identity: SpeedsterSessionIdentity) {
   return "playerName" in identity ? identity.playerName : identity.cardName;
 }
 
+function familyMapName(identity: SpeedsterSessionIdentity) {
+  return [
+    identity.year,
+    "manufacturer" in identity ? identity.manufacturer : null,
+    identity.productSet,
+    "insert" in identity ? identity.insert : null,
+    identity.parallel,
+  ].filter(Boolean).join(" ");
+}
+
+function exactMapName(identity: SpeedsterSessionIdentity) {
+  return [identityTitle(identity), identity.cardNumber ? `#${identity.cardNumber}` : null]
+    .filter(Boolean).join(" ");
+}
+
+function likelyCardSpecificPoint(point: SpeedsterPoint) {
+  return point.y >= 0.2 && point.y <= 0.58 && point.x >= 0.18 && point.x <= 0.82;
+}
+
+function anchorQuadrant(point: SpeedsterPoint) {
+  return `${point.y < 0.5 ? "TOP" : "BOTTOM"}-${point.x < 0.5 ? "LEFT" : "RIGHT"}`;
+}
+
+function familySafetyWarnings(front: SideEditorState, back: SideEditorState) {
+  const warnings: string[] = [];
+  const anchors = [...front.map.anchors, ...back.map.anchors];
+  const unsafeAnchors = anchors.filter((anchor) => likelyCardSpecificPoint(anchor.point)).length;
+  const unsafeZones = [...front.map.zones, ...back.map.zones].filter((zone) => (
+    zone.semanticType === "PRINT_ARTWORK" || zone.polygon.some(likelyCardSpecificPoint)
+  )).length;
+  const missingQuadrantSides = [front, back].filter((editor) => (
+    new Set(editor.map.anchors.map((anchor) => anchorQuadrant(anchor.point))).size < 4
+  )).length;
+  if (unsafeAnchors) warnings.push(`${unsafeAnchors} anchor${unsafeAnchors === 1 ? "" : "s"}`);
+  if (unsafeZones) warnings.push(`${unsafeZones} zone${unsafeZones === 1 ? "" : "s"}`);
+  if (missingQuadrantSides) warnings.push(`${missingQuadrantSides} side${missingQuadrantSides === 1 ? "" : "s"} without one anchor per quadrant`);
+  return warnings;
+}
+
 function polygonPoints(points: readonly SpeedsterPoint[]) {
   return points.map((point) => `${point.x * 1000},${point.y * 1400}`).join(" ");
 }
@@ -198,13 +244,17 @@ export function SpeedsterTrainWorkspace({
   token,
   source,
   initialMap,
+  scope,
   onSaved,
+  onPromoted,
   onCancel,
 }: Readonly<{
   token: string;
   source: SpeedsterTrainSource;
   initialMap: SpeedsterTrainMapState;
+  scope?: SpeedsterMapScope;
   onSaved: (map: SpeedsterTrainMapState) => void;
+  onPromoted?: (map: SpeedsterTrainMapState) => void;
   onCancel?: () => void;
 }>) {
   const [map, setMap] = useState(initialMap);
@@ -217,9 +267,9 @@ export function SpeedsterTrainWorkspace({
   const [message, setMessage] = useState(
     map.status === "LOADED"
       ? map.editable
-        ? `Loaded exact card map revision ${map.revision?.version}. Editing saves and activates a new immutable revision.`
-        : `Loaded exact card map revision ${map.revision?.version}. Edit this current copy to save a coordinate-safe new revision.`
-      : "No exact card map exists. Saving creates and immediately activates revision 1.",
+        ? `Loaded card map revision ${map.revision?.version}. Editing saves and activates a new immutable revision.`
+        : `Loaded card map revision ${map.revision?.version}. Edit this current copy to save a coordinate-safe new revision.`
+      : "No card map exists at this scope. Saving creates and immediately activates revision 1.",
   );
   const activeHandle = useRef<DragTarget | null>(null);
   const gradientMaps = useRef<Partial<Record<SpeedsterCardSide, SpeedsterGradientMap | null>>>({});
@@ -232,6 +282,15 @@ export function SpeedsterTrainWorkspace({
     BACK: sideReadiness(backEditor),
   }), [backEditor, frontEditor]);
   const ready = readiness.FRONT.ready && readiness.BACK.ready;
+  const activeScope = map.scope ?? scope ?? "EXACT";
+  const activeMapName = map.name ?? (activeScope === "FAMILY"
+    ? familyMapName(source.identity)
+    : exactMapName(source.identity));
+  const safetyWarnings = useMemo(() => (
+    activeScope === "FAMILY" || map.status === "LOADED"
+      ? familySafetyWarnings(frontEditor, backEditor)
+      : []
+  ), [activeScope, backEditor, frontEditor, map.status]);
 
   const editorFor = (candidate: SpeedsterCardSide) => candidate === "FRONT" ? frontEditor : backEditor;
   const setEditor = (
@@ -467,12 +526,17 @@ export function SpeedsterTrainWorkspace({
       const response = await fetch("/api/admin/ai-grader-v2/maps/save", {
         method: "POST",
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ sessionId: source.sessionId, front: frontEditor.map, back: backEditor.map }),
+        body: JSON.stringify({
+          sessionId: source.sessionId,
+          scope: activeScope,
+          front: frontEditor.map,
+          back: backEditor.map,
+        }),
       });
       const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
       if (!response.ok || !payload.map) throw new Error(payload.message ?? "Card map could not be saved.");
       setMap(payload.map);
-      setMessage(`Revision ${payload.map.revision?.version} is active now for this exact card identity.`);
+      setMessage(`Revision ${payload.map.revision?.version} is active now for ${activeScope === "FAMILY" ? "all matching cards" : "this exact card only"}.`);
       onSaved(payload.map);
     } catch (error) {
       setMessage(toCardMapOperatorMessage(error instanceof Error ? error.message : "Card map could not be saved."));
@@ -489,7 +553,7 @@ export function SpeedsterTrainWorkspace({
       const response = await fetch("/api/admin/ai-grader-v2/maps/restore", {
         method: "POST",
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ sessionId: source.sessionId, revisionId }),
+        body: JSON.stringify({ sessionId: source.sessionId, revisionId, scope: activeScope }),
       });
       const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
       if (!response.ok || !payload.map) throw new Error(payload.message ?? "Card map version could not be restored.");
@@ -504,6 +568,30 @@ export function SpeedsterTrainWorkspace({
     } catch (error) {
       setMessage(toCardMapOperatorMessage(
         error instanceof Error ? error.message : "Card map version could not be restored.",
+      ));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const promote = async () => {
+    if (working || activeScope !== "EXACT" || !map.revision) return;
+    setWorking(true);
+    setMessage("Promoting this exact map to the matching card family.");
+    try {
+      const response = await fetch("/api/admin/ai-grader-v2/maps/promote", {
+        method: "POST",
+        headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ sessionId: source.sessionId, revisionId: map.revision.revisionId }),
+      });
+      const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
+      if (!response.ok || !payload.map) throw new Error(payload.message ?? "Exact card map could not be promoted.");
+      setMap(payload.map);
+      setMessage(`Promoted to FAMILY revision ${payload.map.revision?.version}. Exact source imagery and provenance are retained.`);
+      onPromoted?.(payload.map);
+    } catch (error) {
+      setMessage(toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "Exact card map could not be promoted.",
       ));
     } finally {
       setWorking(false);
@@ -599,15 +687,31 @@ export function SpeedsterTrainWorkspace({
     <section className={styles.workspace} aria-label="Speedster card map workspace">
       <header className={styles.header}>
         <div>
-          <span>CARD MAP · EXACT CARD TYPE</span>
+          <span>CARD MAP · {activeScope}</span>
           <h2>{identityTitle(source.identity)}</h2>
           <p>{message}</p>
         </div>
         <div className={styles.mapIdentity}>
-          <strong>{map.status === "LOADED" ? `MAP r${map.revision?.version}` : "NO EXACT MAP"}</strong>
+          <strong>{map.status === "LOADED" ? `${activeScope} MAP r${map.revision?.version}` : `NO ${activeScope} MAP`}</strong>
+          <small>{activeMapName}</small>
           <code>{map.revision?.revisionHash.slice(0, 12) ?? "new revision"}</code>
         </div>
       </header>
+
+      <section className={styles.applicability} aria-label="Card map applicability">
+        <strong>{activeScope === "FAMILY" ? "APPLIES TO ALL MATCHING CARDS" : "APPLIES TO THIS EXACT CARD ONLY"}</strong>
+        <span>{activeMapName}</span>
+        {activeScope === "FAMILY" ? (
+          <p>Use one shared frame or layout landmark in each quadrant. Artwork, player/card name, HP, and card number are unsafe registration anchors because they change between cards.</p>
+        ) : null}
+      </section>
+
+      {safetyWarnings.length ? (
+        <aside className={styles.familyWarning} role="status">
+          <strong>{activeScope === "FAMILY" ? "CHECK FAMILY LANDMARKS" : "BEFORE PROMOTION · CHECK FAMILY LANDMARKS"}</strong>
+          <p>{activeScope === "EXACT" ? "Before promotion, " : ""}location caution: {safetyWarnings.join(" · ")} may overlap artwork or other card-specific content. Player/card name, HP, and card number are also unsafe. Shared frame/layout landmarks remain safe, including at the top or bottom, with one anchor per quadrant. This warning does not block saving or promotion.</p>
+        </aside>
+      ) : null}
 
       <div className={styles.sideTabs}>
         {(["FRONT", "BACK"] as const).map((candidate) => (
@@ -795,6 +899,11 @@ export function SpeedsterTrainWorkspace({
           ))}
         </div>
         {onCancel ? <button type="button" onClick={onCancel} disabled={working}>Close Card Map</button> : null}
+        {activeScope === "EXACT" && map.status === "LOADED" ? (
+          <button type="button" onClick={() => void promote()} disabled={working}>
+            Promote exact map to family
+          </button>
+        ) : null}
         <button type="button" onClick={() => void save()} disabled={!ready || working}>
           {working ? "Saving…" : map.status === "LOADED" ? "Save + activate new revision" : "Save + activate card map"}
         </button>

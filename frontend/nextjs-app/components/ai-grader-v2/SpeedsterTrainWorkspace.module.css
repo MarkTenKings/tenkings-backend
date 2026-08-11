@@ -50,6 +50,47 @@
 }
 
 .mapIdentity code { color: #d9f8ff; }
+.mapIdentity small {
+  max-width: 300px;
+  color: #aab7c2;
+  text-align: right;
+}
+
+.applicability,
+.familyWarning {
+  display: grid;
+  gap: 5px;
+  padding: 14px 16px;
+  border-radius: 14px;
+}
+
+.applicability {
+  border: 1px solid rgba(100, 245, 176, 0.22);
+  background: rgba(26, 80, 57, 0.16);
+}
+
+.applicability strong {
+  color: #64f5b0;
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+}
+
+.applicability span { color: #f4fbff; font-weight: 800; }
+
+.applicability p,
+.familyWarning p {
+  margin: 0;
+  color: #b9c7d0;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.familyWarning {
+  border: 1px solid rgba(255, 199, 107, 0.44);
+  background: rgba(98, 57, 8, 0.24);
+}
+
+.familyWarning strong { color: #ffc76b; font-size: 0.74rem; letter-spacing: 0.12em; }
 
 .sideTabs,
 .toolTabs {
@@ -390,6 +431,7 @@
   }
 
   .mapIdentity { justify-items: start; }
+  .mapIdentity small { text-align: left; }
   .preview header p { text-align: left; }
 }
 

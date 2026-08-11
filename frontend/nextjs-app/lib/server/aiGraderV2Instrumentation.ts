@@ -8,6 +8,7 @@ import type {
 } from "../ai-grader-v2/contracts";
 import type { SpeedsterFilterDecisionEvidence } from "../ai-grader-v2/card-type-map-contracts";
 import { speedsterFindingRegions } from "../ai-grader-v2/review-findings";
+import type { SpeedsterAppliedMapRevision } from "./speedsterCardTypeMaps";
 
 export type SpeedsterOperatorInstrumentationAction =
   | "KEPT"
@@ -21,7 +22,7 @@ export type SpeedsterInstrumentationEvent = Readonly<{
   eventKey: string;
   sessionId: string;
   createdByUserId: string;
-  category: "CLIENT_TIMING" | "SERVER_TIMING" | "FINDING_PROVENANCE" | "FINDING_ACTION" | "FILTER_ACTION";
+  category: "CLIENT_TIMING" | "SERVER_TIMING" | "FINDING_PROVENANCE" | "FINDING_ACTION" | "FILTER_ACTION" | "MAP_APPLICATION";
   eventType: string;
   findingId?: string | null;
   origin?: SpeedsterDefectOrigin | null;
@@ -37,6 +38,38 @@ export type SpeedsterInstrumentationEvent = Readonly<{
 export type SpeedsterInstrumentationWriter = {
   $executeRaw: (query: Prisma.Sql) => Promise<number>;
 };
+
+export function speedsterCardMapApplicationEvent(input: {
+  sessionId: string;
+  createdByUserId: string;
+  applied: SpeedsterAppliedMapRevision | null;
+  selected: SpeedsterAppliedMapRevision | null;
+  failureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+}): SpeedsterInstrumentationEvent {
+  const map = input.applied ?? input.selected;
+  return {
+    eventKey: `${input.sessionId}:card-map:${input.applied ? "applied" : "normal-review"}:${map?.revision.revisionId ?? "none"}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    category: "MAP_APPLICATION",
+    eventType: input.applied ? "CARD_MAP_APPLIED" : "CARD_MAP_NOT_APPLIED",
+    details: {
+      outcome: input.applied ? "APPLIED" : "NORMAL_HUMAN_REVIEW",
+      appliedScope: input.applied?.appliedScope ?? "NONE",
+      ...(input.failureCode ? { failureCode: input.failureCode } : {}),
+      ...(map ? {
+        selectedScope: map.appliedScope,
+        mapName: map.appliedMapName,
+        mapId: map.revision.mapId,
+        mapRevisionId: map.revision.revisionId,
+        matchKeyHash: map.revision.matchKeyHash,
+        matchKey: map.revision.matchKey,
+        sourceSessionId: map.sourceProvenance.sourceSessionId,
+        sourceIdentity: map.sourceProvenance.sourceIdentity,
+      } : {}),
+    },
+  };
+}
 
 type InstrumentedFinding = SpeedsterReviewFinding & {
   findingProvenance?: {

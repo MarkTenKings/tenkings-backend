@@ -22,8 +22,6 @@ import {
   validateSpeedsterPinnedMapFilterInput,
 } from "../ai-grader-v2/map-filter";
 import {
-  canonicalSpeedsterMapKeyJson,
-  speedsterCardTypeMapKey,
   type SpeedsterFilterDecisionEvidence,
 } from "../ai-grader-v2/card-type-map-contracts";
 import {
@@ -56,6 +54,7 @@ import {
   type SpeedsterOperatorInstrumentationAction,
 } from "./aiGraderV2Instrumentation";
 import { HttpError } from "./adminSessionAuthority";
+import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
 
 type PersistedCaptureSide = {
   inspectionStorageKey: string;
@@ -679,10 +678,10 @@ export async function applySpeedsterReviewAction(
           throw new Error("The pinned session card profile is invalid.");
         }
         pinnedCardIdentity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
-        const sessionMapKey = speedsterCardTypeMapKey(session.cardProfile, pinnedCardIdentity);
-        if (canonicalSpeedsterMapKeyJson(sessionMapKey) !== canonicalSpeedsterMapKeyJson(pinnedMap.revision.matchKey)) {
-          throw new Error("The pinned map exact card-type key does not match the session identity.");
-        }
+        assertSpeedsterMapRevisionAppliesToIdentity(pinnedMap.revision, {
+          cardProfile: session.cardProfile,
+          identity: pinnedCardIdentity,
+        });
       } catch (error) {
         const reason = error instanceof Error ? error.message : "unknown map-integrity error";
         throw new HttpError(409, `Speedster map initialization failed: ${reason}`);

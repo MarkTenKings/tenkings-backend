@@ -12,6 +12,12 @@ export const SPEEDSTER_MAP_FILTER_POLICY_VERSION = "speedster-map-filter-contain
 export const SPEEDSTER_MAP_FILTER_RULE_ID = "human-zone-full-contour-containment-v1" as const;
 export const SPEEDSTER_MAP_ZONE_OVERLAP_METHOD = "candidate-contour-segment-containment-v1" as const;
 
+export type SpeedsterMapScope = "EXACT" | "FAMILY";
+
+/**
+ * Legacy exact-card key. Its shape and serialization are intentionally frozen
+ * so every existing map hash and immutable revision remains valid.
+ */
 export type SpeedsterCardTypeMapKey = Readonly<{
   category: "SPORTS";
   year: string;
@@ -29,6 +35,24 @@ export type SpeedsterCardTypeMapKey = Readonly<{
   cardName: string;
   cardNumber: string | null;
 }>;
+
+export type SpeedsterFamilyCardTypeMapKey = Readonly<{
+  scope: "FAMILY";
+  category: "SPORTS";
+  year: string;
+  manufacturer: string;
+  productSet: string;
+  insert: string | null;
+  parallel: string | null;
+}> | Readonly<{
+  scope: "FAMILY";
+  category: "POKEMON";
+  year: string;
+  productSet: string;
+  parallel: string | null;
+}>;
+
+export type SpeedsterMapMatchKey = SpeedsterCardTypeMapKey | SpeedsterFamilyCardTypeMapKey;
 
 export type SpeedsterMapZoneSemanticType =
   | "PRINT_TEXT"
@@ -268,6 +292,42 @@ export function speedsterCardTypeMapKey(
   };
 }
 
-export function canonicalSpeedsterMapKeyJson(key: SpeedsterCardTypeMapKey): string {
+export function speedsterFamilyCardTypeMapKey(
+  category: "SPORTS" | "POKEMON",
+  identity: SpeedsterSessionIdentity,
+): SpeedsterFamilyCardTypeMapKey {
+  const required = (value: string | null | undefined, field: string) => {
+    const normalized = normalizeSpeedsterMapKeyText(value);
+    if (!normalized) throw new Error(`Speedster family map key is missing ${field}.`);
+    return normalized;
+  };
+  const optional = (value: string | null | undefined) => normalizeSpeedsterMapKeyText(value);
+  if (category === "SPORTS") {
+    if (!("playerName" in identity)) throw new Error("Sports family map identity is category-incompatible.");
+    return {
+      scope: "FAMILY",
+      category,
+      year: required(identity.year, "year"),
+      manufacturer: required(identity.manufacturer, "manufacturer"),
+      productSet: required(identity.productSet, "productSet"),
+      insert: optional(identity.insert),
+      parallel: optional(identity.parallel),
+    };
+  }
+  if (!("cardName" in identity)) throw new Error("Pokemon family map identity is category-incompatible.");
+  return {
+    scope: "FAMILY",
+    category,
+    year: required(identity.year, "year"),
+    productSet: required(identity.productSet, "productSet"),
+    parallel: optional(identity.parallel),
+  };
+}
+
+export function speedsterMapScopeForKey(key: SpeedsterMapMatchKey): SpeedsterMapScope {
+  return "scope" in key && key.scope === "FAMILY" ? "FAMILY" : "EXACT";
+}
+
+export function canonicalSpeedsterMapKeyJson(key: SpeedsterMapMatchKey): string {
   return JSON.stringify(key);
 }

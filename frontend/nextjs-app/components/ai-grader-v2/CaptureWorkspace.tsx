@@ -5,7 +5,10 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
-import type { SpeedsterMapRegistration } from "../../lib/ai-grader-v2/card-type-map-contracts";
+import type {
+  SpeedsterMapRegistration,
+  SpeedsterMapScope,
+} from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
@@ -50,11 +53,39 @@ export type SpeedsterCaptureBundle = {
   back: SpeedsterPreparedSide;
 };
 
+export function SpeedsterAppliedMapBadge({
+  capture,
+  selectedRevisionId,
+  scope,
+  name,
+}: Readonly<{
+  capture: SpeedsterCaptureBundle;
+  selectedRevisionId: string | null;
+  scope: SpeedsterMapScope | null;
+  name: string | null;
+}>) {
+  const frontRevisionId = capture.front.mapRegistration?.mapRevisionId;
+  const backRevisionId = capture.back.mapRegistration?.mapRevisionId;
+  const applied = Boolean(
+    selectedRevisionId
+    && frontRevisionId === selectedRevisionId
+    && backRevisionId === selectedRevisionId,
+  );
+  return (
+    <p className={applied ? styles.appliedMap : styles.mapFallback} aria-label="Applied Card Map">
+      {applied ? `${scope ?? "EXACT"} · ${name ?? "Card map"}` : "NO CARD MAP · MANUAL"}
+    </p>
+  );
+}
+
 type CaptureWorkspaceProps = {
   token: string;
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
   activeMapRevisionId?: string | null;
+  activeMapScope?: SpeedsterMapScope | null;
+  activeMapName?: string | null;
+  mapLookupFailed?: boolean;
   onReady: (bundle: SpeedsterCaptureBundle) => void;
   onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void;
 };
@@ -67,6 +98,10 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
     side?: SpeedsterCardSide;
     automaticGeometryCount?: number;
     photoSource?: "IPHONE" | "LOCAL" | "MIXED";
+    mapAppliedScope?: SpeedsterMapScope | "NONE";
+    mapName?: string;
+    mapRevisionId?: string;
+    mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
   }>;
 }>;
 
@@ -113,6 +148,9 @@ export function CaptureWorkspace({
   sessionId,
   cardProfile,
   activeMapRevisionId = null,
+  activeMapScope = null,
+  activeMapName = null,
+  mapLookupFailed = false,
   onReady,
   onInstrumentationEvent,
 }: CaptureWorkspaceProps) {
@@ -126,11 +164,14 @@ export function CaptureWorkspace({
   const [cornerShape, setCornerShape] = useState<SpeedsterCornerShape>("ROUNDED_3_18_MM");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Add one original image of each side.");
+  const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const geometryAttempt = useRef(0);
   const photosStartedAt = useRef(Date.now());
   const photosReadyRecorded = useRef(false);
   const stageStartedAt = useRef(Date.now());
+  const frontGeometryTiming = useRef<{ startedAtMs: number; endedAtMs: number } | null>(null);
+  const mapRegistrationFailed = useRef(false);
 
   useEffect(() => {
     iphoneVersion.current = 0;
@@ -138,6 +179,9 @@ export function CaptureWorkspace({
     photosStartedAt.current = Date.now();
     photosReadyRecorded.current = false;
     stageStartedAt.current = Date.now();
+    frontGeometryTiming.current = null;
+    mapRegistrationFailed.current = false;
+    setMapRegistrationNotice(null);
     setWorkflowError(null);
   }, [sessionId]);
 
@@ -304,26 +348,6 @@ export function CaptureWorkspace({
     try {
       const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
       const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners, outputPlan);
-      const mapRegistration = activeMapRevisionId
-        ? await speedsterImageService.registerMap(token, {
-            sessionId,
-            side,
-            currentPhysicalQuad: current.corners,
-          })
-        : undefined;
-      if (mapRegistration && mapRegistration.mapRevisionId !== activeMapRevisionId) {
-        throw new Error("The exact active CARD MAP changed while current-copy geometry was being registered.");
-      }
-      const mappedCentering = mapRegistration?.projectedDesignBoundary.kind === "QUAD"
-        ? mapRegistration.projectedDesignBoundary.points
-        : mapRegistration?.projectedDesignBoundary.kind === "FULL_BLEED"
-          ? [
-              { x: 0, y: 0 },
-              { x: 1, y: 0 },
-              { x: 1, y: 1 },
-              { x: 0, y: 1 },
-            ] as const
-          : prepared.borders;
       const next: SideState = {
         ...current,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
@@ -332,13 +356,9 @@ export function CaptureWorkspace({
         inspectionStorageKey: outputPlan.INSPECTION.storageKey,
         inspectionFrame: prepared.inspectionFrame,
         transform: prepared.transform,
-        proposedCentering: mappedCentering,
-        detectedBorders: mapRegistration
-          ? mapRegistration.projectedDesignBoundary.kind === "QUAD"
-            ? ["top", "right", "bottom", "left"]
-            : []
-          : prepared.detectedBorders,
-        mapRegistration,
+        proposedCentering: prepared.borders,
+        detectedBorders: prepared.detectedBorders,
+        mapRegistration: undefined,
         views: {
           NORMALIZED: outputPlan.NORMALIZED.readUrl,
           MICRO_DEFECT: outputPlan.MICRO_DEFECT.readUrl,
@@ -350,22 +370,99 @@ export function CaptureWorkspace({
           DIRECTIONAL: outputPlan.DIRECTIONAL.storageKey,
         },
       };
+      const preparedAtMs = Date.now();
       if (side === "FRONT") {
         setFront(next);
         setStage("BACK_GEOMETRY");
-      } else {
-        setBack(next);
-        setStage("FRONT_CENTERING");
+        frontGeometryTiming.current = { startedAtMs: stageStartedAt.current, endedAtMs: preparedAtMs };
+        stageStartedAt.current = preparedAtMs;
+        setMessage("Confirm the back geometry.");
+        return;
+      }
+
+      if (!front?.rectifiedUrl || !front.proposedCentering) {
+        throw new Error("Front geometry must be prepared before Back geometry.");
+      }
+      let finalFront: SideState = { ...front, mapRegistration: undefined };
+      let finalBack: SideState = next;
+      let frontRegistration: SpeedsterMapRegistration | undefined;
+      let backRegistration: SpeedsterMapRegistration | undefined;
+      if (activeMapRevisionId) {
+        try {
+          [frontRegistration, backRegistration] = await Promise.all([
+            speedsterImageService.registerMap(token, {
+              sessionId,
+              side: "FRONT",
+              currentPhysicalQuad: front.corners,
+            }),
+            speedsterImageService.registerMap(token, {
+              sessionId,
+              side: "BACK",
+              currentPhysicalQuad: current.corners,
+            }),
+          ]);
+          if (
+            frontRegistration.mapRevisionId !== activeMapRevisionId
+            || backRegistration.mapRevisionId !== activeMapRevisionId
+          ) throw new Error("The selected CARD MAP changed while geometry was being registered.");
+          const applyRegistration = (value: SideState, registration: SpeedsterMapRegistration): SideState => ({
+            ...value,
+            proposedCentering: registration.projectedDesignBoundary.kind === "QUAD"
+              ? registration.projectedDesignBoundary.points
+              : [
+                  { x: 0, y: 0 },
+                  { x: 1, y: 0 },
+                  { x: 1, y: 1 },
+                  { x: 0, y: 1 },
+                ],
+            detectedBorders: registration.projectedDesignBoundary.kind === "QUAD"
+              ? ["top", "right", "bottom", "left"]
+              : [],
+            mapRegistration: registration,
+          });
+          finalFront = applyRegistration(finalFront, frontRegistration);
+          finalBack = applyRegistration(finalBack, backRegistration);
+          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back.`);
+        } catch {
+          frontRegistration = undefined;
+          backRegistration = undefined;
+          mapRegistrationFailed.current = true;
+          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} could not register safely on both sides. No map will be applied; continuing with normal human review.`);
+        }
       }
       const endedAtMs = Date.now();
+      setFront(finalFront);
+      setBack(finalBack);
+      setStage("FRONT_CENTERING");
+      const frontTiming = frontGeometryTiming.current ?? { startedAtMs: stageStartedAt.current, endedAtMs };
+      const registrationFailure = mapRegistrationFailed.current;
+      const detailsFor = (
+        candidate: SpeedsterCardSide,
+        registration?: SpeedsterMapRegistration,
+      ): NonNullable<SpeedsterCaptureInstrumentationEvent["details"]> => ({
+        side: candidate,
+        mapAppliedScope: registration ? (activeMapScope ?? "EXACT") : "NONE",
+        ...(registration && activeMapName ? { mapName: activeMapName } : {}),
+        ...(registration ? { mapRevisionId: registration.mapRevisionId } : {}),
+        ...(registrationFailure
+          ? { mapFailureCode: "REGISTRATION_FAILED" as const }
+          : mapLookupFailed
+            ? { mapFailureCode: "LOOKUP_FAILED" as const }
+            : {}),
+      });
+      onInstrumentationEvent?.({
+        eventType: "GEOMETRY_CONFIRMED",
+        ...frontTiming,
+        details: detailsFor("FRONT", frontRegistration),
+      });
       onInstrumentationEvent?.({
         eventType: "GEOMETRY_CONFIRMED",
         startedAtMs: stageStartedAt.current,
         endedAtMs,
-        details: { side },
+        details: detailsFor("BACK", backRegistration),
       });
       stageStartedAt.current = endedAtMs;
-      setMessage(side === "FRONT" ? "Confirm the back geometry." : "Confirm the printed-border geometry.");
+      setMessage("Confirm the printed-border geometry.");
     } catch (error) {
       setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
     } finally {
@@ -375,11 +472,29 @@ export function CaptureWorkspace({
 
   const confirmCentering = (result: CenteringAssistResult) => {
     const endedAtMs = Date.now();
+    const frontRegistration = front?.mapRegistration;
+    const backRegistration = back?.mapRegistration;
+    const mapApplied = Boolean(
+      activeMapRevisionId
+      && frontRegistration?.mapRevisionId === activeMapRevisionId
+      && backRegistration?.mapRevisionId === activeMapRevisionId,
+    );
+    const registration = result.side === "FRONT" ? frontRegistration : backRegistration;
     onInstrumentationEvent?.({
       eventType: "CENTERING_CONFIRMED",
       startedAtMs: stageStartedAt.current,
       endedAtMs,
-      details: { side: result.side },
+      details: {
+        side: result.side,
+        mapAppliedScope: mapApplied ? (activeMapScope ?? "EXACT") : "NONE",
+        ...(mapApplied && activeMapName ? { mapName: activeMapName } : {}),
+        ...(mapApplied && registration ? { mapRevisionId: registration.mapRevisionId } : {}),
+        ...(mapRegistrationFailed.current
+          ? { mapFailureCode: "REGISTRATION_FAILED" as const }
+          : mapLookupFailed
+            ? { mapFailureCode: "LOOKUP_FAILED" as const }
+            : {}),
+      },
     });
     stageStartedAt.current = endedAtMs;
     if (result.side === "FRONT") {
@@ -429,6 +544,12 @@ export function CaptureWorkspace({
         <span>02 · CAPTURE + GEOMETRY</span>
         <p role="status">{working ? "RACING · " : ""}{message}</p>
       </header>
+
+      {mapRegistrationNotice ? (
+        <p className={mapRegistrationFailed.current ? styles.mapFallback : styles.appliedMap}>
+          {mapRegistrationNotice}
+        </p>
+      ) : null}
 
       {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
 

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { Prisma as PrismaRuntime } from "@prisma/client";
 import {
   prisma,
   type Prisma,
@@ -11,12 +12,15 @@ import {
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
   speedsterCardTypeMapKey,
-  type SpeedsterCardTypeMapKey,
+  speedsterFamilyCardTypeMapKey,
+  speedsterMapScopeForKey,
   type SpeedsterCardTypeMapSide,
   type SpeedsterMapAnchor,
   type SpeedsterMapDesignBoundary,
+  type SpeedsterMapMatchKey,
   type SpeedsterMapReferenceEvidence,
   type SpeedsterMapRegistration,
+  type SpeedsterMapScope,
   type SpeedsterMapZone,
 } from "../ai-grader-v2/card-type-map-contracts";
 import type {
@@ -88,9 +92,9 @@ export type SpeedsterMapRevisionHashPayload = Readonly<{
   mapId: string;
   version: number;
   matchKeyHash: string;
-  matchKey: SpeedsterCardTypeMapKey;
+  matchKey: SpeedsterMapMatchKey;
   displayIdentity: SpeedsterSessionIdentity;
-  normalizedIdentity: SpeedsterCardTypeMapKey;
+  normalizedIdentity: SpeedsterMapMatchKey;
   sourceSessionId: string;
   authorAdminId: string;
   frontMap: SpeedsterCardTypeMapSide;
@@ -114,6 +118,16 @@ export type SpeedsterMapRevisionSummary = Readonly<{
   sourceSessionId: string;
   authorAdminId: string;
   current: boolean;
+}>;
+
+export type SpeedsterAppliedMapRevision = Readonly<{
+  revision: SpeedsterLoadedMapRevision;
+  appliedScope: SpeedsterMapScope;
+  appliedMapName: string;
+  sourceProvenance: Readonly<{
+    sourceSessionId: string;
+    sourceIdentity: SpeedsterSessionIdentity;
+  }>;
 }>;
 
 type MapRevisionRecord = Readonly<{
@@ -144,6 +158,7 @@ type ActiveMapRecord = Readonly<{
 
 export type SpeedsterMapLookupDependencies = Readonly<{
   findActiveMap: (matchKeyHash: string) => Promise<ActiveMapRecord | null>;
+  findActiveMaps?: (matchKeyHashes: readonly string[]) => Promise<readonly ActiveMapRecord[]>;
   findPinnedRevision: (mapRevisionId: string) => Promise<MapRevisionRecord | null>;
 }>;
 
@@ -169,6 +184,15 @@ const mapRevisionSelect = {
 const defaultLookupDependencies: SpeedsterMapLookupDependencies = {
   findActiveMap: (matchKeyHash) => prisma.aiGraderV2CardTypeMap.findUnique({
     where: { matchKeyHash },
+    select: {
+      id: true,
+      matchKeyHash: true,
+      currentRevisionId: true,
+      currentRevision: { select: mapRevisionSelect },
+    },
+  }),
+  findActiveMaps: (matchKeyHashes) => prisma.aiGraderV2CardTypeMap.findMany({
+    where: { matchKeyHash: { in: [...matchKeyHashes] } },
     select: {
       id: true,
       matchKeyHash: true,
@@ -405,9 +429,38 @@ export function parseSpeedsterMapRegistration(
   };
 }
 
-function parseMapKey(value: unknown, label: string): SpeedsterCardTypeMapKey {
+function parseMapKey(value: unknown, label: string): SpeedsterMapMatchKey {
   if (!isRecord(value) || (value.category !== "SPORTS" && value.category !== "POKEMON")) {
     throw new SpeedsterMapIntegrityError(`${label} is malformed.`);
+  }
+  if (value.scope === "FAMILY") {
+    const familyIdentity = value.category === "SPORTS"
+      ? {
+          playerName: "family-source-provenance",
+          year: value.year,
+          manufacturer: value.manufacturer,
+          productSet: value.productSet,
+          insert: value.insert,
+          parallel: value.parallel,
+          cardNumber: null,
+        }
+      : {
+          cardName: "family-source-provenance",
+          year: value.year,
+          productSet: value.productSet,
+          parallel: value.parallel,
+          cardNumber: null,
+        };
+    let parsed: SpeedsterMapMatchKey;
+    try {
+      parsed = speedsterFamilyCardTypeMapKey(value.category, familyIdentity as SpeedsterSessionIdentity);
+    } catch {
+      throw new SpeedsterMapIntegrityError(`${label} contains an invalid category-aware family identity.`);
+    }
+    if (canonicalJson(parsed) !== canonicalJson(value)) {
+      throw new SpeedsterMapIntegrityError(`${label} is not normalized by the family-key contract.`);
+    }
+    return parsed;
   }
   const displayCandidate = value.category === "SPORTS"
     ? {
@@ -486,7 +539,7 @@ export function speedsterMapRevisionHash(payload: SpeedsterMapRevisionHashPayloa
   return createHash("sha256").update(canonicalSpeedsterMapRevisionPayload(payload)).digest("hex");
 }
 
-export function speedsterMapMatchKeyHash(key: SpeedsterCardTypeMapKey): string {
+export function speedsterMapMatchKeyHash(key: SpeedsterMapMatchKey): string {
   return createHash("sha256").update(canonicalSpeedsterMapKeyJson(key)).digest("hex");
 }
 
@@ -527,10 +580,10 @@ function loadedPayload(record: MapRevisionRecord): SpeedsterLoadedMapRevision {
     throw new SpeedsterMapIntegrityError("Map revision filter-policy version is unsupported.");
   }
   if (speedsterMapMatchKeyHash(rawKey) !== record.matchKeyHash) {
-    throw new SpeedsterMapIntegrityError("Map revision exact key hash does not match its key.");
+    throw new SpeedsterMapIntegrityError("Map revision key hash does not match its key.");
   }
   if (canonicalSpeedsterMapKeyJson(rawKey) !== canonicalSpeedsterMapKeyJson(normalizedIdentity)) {
-    throw new SpeedsterMapIntegrityError("Map normalized identity does not match its exact key.");
+    throw new SpeedsterMapIntegrityError("Map normalized identity does not match its key.");
   }
   if (speedsterMapRevisionHash(payload) !== record.revisionHash) {
     throw new SpeedsterMapIntegrityError("Map revision hash verification failed.");
@@ -551,26 +604,123 @@ export function validateSpeedsterLoadedMapRevision(
     throw new SpeedsterMapIntegrityError("Loaded map revision does not match the pinned revision.");
   }
   if (expected.matchKeyHash && record.matchKeyHash !== expected.matchKeyHash) {
-    throw new SpeedsterMapIntegrityError("Loaded map revision does not match the exact card-type key.");
+    throw new SpeedsterMapIntegrityError("Loaded map revision does not match the card-type key.");
   }
   return loadedPayload(record);
+}
+
+function speedsterMapKeyForScope(
+  scope: SpeedsterMapScope,
+  cardProfile: SpeedsterCardProfile,
+  identity: SpeedsterSessionIdentity,
+) {
+  return scope === "FAMILY"
+    ? speedsterFamilyCardTypeMapKey(cardProfile, identity)
+    : speedsterCardTypeMapKey(cardProfile, identity);
+}
+
+export function speedsterMapDisplayName(
+  scope: SpeedsterMapScope,
+  cardProfile: SpeedsterCardProfile,
+  identity: SpeedsterSessionIdentity,
+) {
+  const canonical = canonicalizeSpeedsterSessionIdentity(cardProfile, identity);
+  if (cardProfile === "SPORTS" && "playerName" in canonical) {
+    const family = [canonical.year, canonical.manufacturer, canonical.productSet, canonical.insert, canonical.parallel]
+      .filter((value): value is string => Boolean(value));
+    return scope === "FAMILY"
+      ? family.join(" · ")
+      : [...family, canonical.playerName, canonical.cardNumber ? `#${canonical.cardNumber}` : null]
+          .filter((value): value is string => Boolean(value))
+          .join(" · ");
+  }
+  if (cardProfile === "POKEMON" && "cardName" in canonical) {
+    const family = [canonical.year, canonical.productSet, canonical.parallel]
+      .filter((value): value is string => Boolean(value));
+    return scope === "FAMILY"
+      ? family.join(" · ")
+      : [...family, canonical.cardName, canonical.cardNumber ? `#${canonical.cardNumber}` : null]
+          .filter((value): value is string => Boolean(value))
+          .join(" · ");
+  }
+  throw new SpeedsterMapIntegrityError("Map display identity is category-incompatible.");
+}
+
+function validateActiveMap(
+  map: ActiveMapRecord,
+  matchKeyHash: string,
+  label: "Exact" | "Family",
+) {
+  if (map.matchKeyHash !== matchKeyHash || !map.currentRevisionId || !map.currentRevision) {
+    throw new SpeedsterMapIntegrityError(`${label} card-type map has no coherent active revision.`);
+  }
+  if (map.currentRevisionId !== map.currentRevision.id || map.id !== map.currentRevision.mapId) {
+    throw new SpeedsterMapIntegrityError(`${label} card-type map active-revision relationship is invalid.`);
+  }
+  return validateSpeedsterLoadedMapRevision(map.currentRevision, { matchKeyHash });
+}
+
+export async function loadScopedActiveSpeedsterMapRevision(
+  input: Readonly<{
+    cardProfile: SpeedsterCardProfile;
+    identity: SpeedsterSessionIdentity;
+    scope: SpeedsterMapScope;
+  }>,
+  deps: SpeedsterMapLookupDependencies = defaultLookupDependencies,
+): Promise<SpeedsterLoadedMapRevision | null> {
+  const matchKeyHash = speedsterMapMatchKeyHash(
+    speedsterMapKeyForScope(input.scope, input.cardProfile, input.identity),
+  );
+  const map = await deps.findActiveMap(matchKeyHash);
+  return map ? validateActiveMap(map, matchKeyHash, input.scope === "EXACT" ? "Exact" : "Family") : null;
 }
 
 export async function loadExactActiveSpeedsterMapRevision(
   input: Readonly<{ cardProfile: SpeedsterCardProfile; identity: SpeedsterSessionIdentity }>,
   deps: SpeedsterMapLookupDependencies = defaultLookupDependencies,
 ): Promise<SpeedsterLoadedMapRevision | null> {
-  const key = speedsterCardTypeMapKey(input.cardProfile, input.identity);
-  const matchKeyHash = speedsterMapMatchKeyHash(key);
-  const map = await deps.findActiveMap(matchKeyHash);
-  if (!map) return null;
-  if (map.matchKeyHash !== matchKeyHash || !map.currentRevisionId || !map.currentRevision) {
-    throw new SpeedsterMapIntegrityError("Exact card-type map has no coherent active revision.");
+  return loadScopedActiveSpeedsterMapRevision({ ...input, scope: "EXACT" }, deps);
+}
+
+export async function loadEffectiveActiveSpeedsterMapRevision(
+  input: Readonly<{ cardProfile: SpeedsterCardProfile; identity: SpeedsterSessionIdentity }>,
+  deps: SpeedsterMapLookupDependencies = defaultLookupDependencies,
+): Promise<SpeedsterAppliedMapRevision | null> {
+  const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.cardProfile, input.identity));
+  const familyHash = speedsterMapMatchKeyHash(speedsterFamilyCardTypeMapKey(input.cardProfile, input.identity));
+  const maps = deps.findActiveMaps
+    ? await deps.findActiveMaps([exactHash, familyHash])
+    : (await Promise.all([deps.findActiveMap(exactHash), deps.findActiveMap(familyHash)]))
+        .filter((map): map is ActiveMapRecord => Boolean(map));
+  const exact = maps.find((map) => map.matchKeyHash === exactHash);
+  const family = maps.find((map) => map.matchKeyHash === familyHash);
+  const scope: SpeedsterMapScope | null = exact ? "EXACT" : family ? "FAMILY" : null;
+  const selected = exact ?? family;
+  if (!scope || !selected) return null;
+  const revision = validateActiveMap(selected, scope === "EXACT" ? exactHash : familyHash, scope === "EXACT" ? "Exact" : "Family");
+  return {
+    revision,
+    appliedScope: scope,
+    appliedMapName: speedsterMapDisplayName(scope, input.cardProfile, revision.displayIdentity),
+    sourceProvenance: {
+      sourceSessionId: revision.sourceSessionId,
+      sourceIdentity: revision.displayIdentity,
+    },
+  };
+}
+
+export function assertSpeedsterMapRevisionAppliesToIdentity(
+  revision: SpeedsterLoadedMapRevision,
+  input: Readonly<{ cardProfile: SpeedsterCardProfile; identity: SpeedsterSessionIdentity }>,
+) {
+  const scope = speedsterMapScopeForKey(revision.matchKey);
+  if (revision.matchKey.category !== input.cardProfile) {
+    throw new SpeedsterMapIntegrityError("Pinned map category does not match the session identity.");
   }
-  if (map.currentRevisionId !== map.currentRevision.id || map.id !== map.currentRevision.mapId) {
-    throw new SpeedsterMapIntegrityError("Exact card-type map active-revision relationship is invalid.");
+  const expected = speedsterMapKeyForScope(scope, input.cardProfile, input.identity);
+  if (canonicalSpeedsterMapKeyJson(expected) !== canonicalSpeedsterMapKeyJson(revision.matchKey)) {
+    throw new SpeedsterMapIntegrityError("Pinned map does not apply to the session card type.");
   }
-  return validateSpeedsterLoadedMapRevision(map.currentRevision, { matchKeyHash });
 }
 
 export async function loadPinnedSpeedsterMapRevision(
@@ -781,7 +931,7 @@ async function assertCapturedTrainSourceIsUninitialized(
   tx: SpeedsterMapWriteTransaction,
   source: SpeedsterMapSourceSession,
 ) {
-  if (source.workflowState !== "CAPTURED") return;
+  if (source.workflowState !== "CAPTURED") return null;
   await tx.$queryRaw`
     SELECT "id"
     FROM "AiGraderV2Session"
@@ -794,6 +944,7 @@ async function assertCapturedTrainSourceIsUninitialized(
       workflowState: true,
       reviewedDefects: true,
       gradeReport: true,
+      mapRevisionId: true,
       mapFilterDecisions: { take: 1, select: { id: true } },
     },
   });
@@ -809,6 +960,51 @@ async function assertCapturedTrainSourceIsUninitialized(
     throw new SpeedsterMapIntegrityError(
       "Captured-card TRAIN can change its pinned map only before detector review is initialized.",
     );
+  }
+  return current;
+}
+
+async function capturedExactOverrideRevisionId(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  scope: SpeedsterMapScope,
+) {
+  if (scope !== "FAMILY" || source.workflowState !== "CAPTURED") return null;
+  const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey(source.cardProfile, source.identity));
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${exactHash}`}, 0))`;
+  const exact = await tx.aiGraderV2CardTypeMap.findUnique({
+    where: { matchKeyHash: exactHash },
+    select: { currentRevisionId: true },
+  });
+  return exact?.currentRevisionId ?? null;
+}
+
+async function clearCapturedFamilyBindingIfStale(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  currentMapRevisionId: string | null | undefined,
+  exactOverrideRevisionId: string | null,
+) {
+  if (
+    source.workflowState !== "CAPTURED"
+    || !exactOverrideRevisionId
+    || !currentMapRevisionId
+    || currentMapRevisionId === exactOverrideRevisionId
+  ) return;
+  const cleared = await tx.aiGraderV2Session.updateMany({
+    where: {
+      id: source.id,
+      createdByUserId: source.createdByUserId,
+      workflowState: "CAPTURED",
+    },
+    data: {
+      mapRevisionId: null,
+      mapFilterPolicyVersion: null,
+      mapRegistration: PrismaRuntime.DbNull,
+    },
+  });
+  if (cleared.count !== 1) {
+    throw new SpeedsterMapIntegrityError("Captured source could not return safely to manual map review.");
   }
 }
 
@@ -879,12 +1075,14 @@ const registerCapturedRestore: SpeedsterCapturedRestoreRegistration = async (sou
 export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   source: SpeedsterMapSourceSession;
   authorAdminId: string;
+  scope?: SpeedsterMapScope;
   front: SpeedsterMapTrainingSideInput;
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   transaction?: SpeedsterMapTransactionRunner;
 }>): Promise<SpeedsterMapSaveResult> {
-  const key = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const scope = input.scope ?? "EXACT";
+  const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
   const matchKeyHash = speedsterMapMatchKeyHash(key);
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
   const [frontEvidenceHash, backEvidenceHash] = await Promise.all([
@@ -903,7 +1101,8 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
@@ -916,7 +1115,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       });
     }
     if (map.cardProfile !== input.source.cardProfile) {
-      throw new SpeedsterMapIntegrityError("Exact map category does not match its stored category.");
+      throw new SpeedsterMapIntegrityError("Map category does not match its stored category.");
     }
     const version = (map.currentRevision?.version ?? 0) + 1;
     const payload: SpeedsterMapRevisionHashPayload = {
@@ -957,7 +1156,13 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       where: { id: map.id },
       data: { currentRevisionId: revision.id },
     });
-    if (input.source.workflowState === "CAPTURED") {
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (input.source.workflowState === "CAPTURED" && !exactOverrideRevisionId) {
       const frontRegistration = speedsterIdentityMapRegistration(frontMap, input.source.front, revision.id);
       const backRegistration = speedsterIdentityMapRegistration(backMap, input.source.back, revision.id);
       const bound = await tx.aiGraderV2Session.updateMany({
@@ -988,19 +1193,27 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
   source: SpeedsterMapSourceSession;
   targetRevisionId: string;
   authorAdminId: string;
+  scope?: SpeedsterMapScope;
   transaction?: SpeedsterMapTransactionRunner;
   registerCapturedRestore?: SpeedsterCapturedRestoreRegistration;
+  findActiveMap?: SpeedsterMapLookupDependencies["findActiveMap"];
   findTargetRevision?: SpeedsterMapLookupDependencies["findPinnedRevision"];
 }>): Promise<SpeedsterMapSaveResult> {
-  const key = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const scope = input.scope ?? "EXACT";
+  const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
   const matchKeyHash = speedsterMapMatchKeyHash(key);
   const revisionId = randomUUID();
   const target = await (input.findTargetRevision ?? defaultLookupDependencies.findPinnedRevision)(input.targetRevisionId);
   if (!target || target.matchKeyHash !== matchKeyHash) {
-    throw new SpeedsterMapIntegrityError("Restore target is not a revision of this exact card-type map.");
+    throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
   }
   const validated = validateSpeedsterLoadedMapRevision(target, { matchKeyHash });
-  const registration = input.source.workflowState === "CAPTURED"
+  const exactOverrideWasActive = scope === "FAMILY" && input.source.workflowState === "CAPTURED"
+    ? Boolean((await (input.findActiveMap ?? defaultLookupDependencies.findActiveMap)(
+        speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity)),
+      ))?.currentRevisionId)
+    : false;
+  const registration = input.source.workflowState === "CAPTURED" && !exactOverrideWasActive
     ? await (input.registerCapturedRestore ?? registerCapturedRestore)(input.source, {
         revisionId,
         mapId: validated.mapId,
@@ -1012,15 +1225,16 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     const map = await tx.aiGraderV2CardTypeMap.findUnique({
       where: { matchKeyHash },
       include: { currentRevision: { select: { id: true, version: true } } },
     });
-    if (!map?.currentRevision) throw new SpeedsterMapIntegrityError("Exact card-type map has no revision to restore.");
+    if (!map?.currentRevision) throw new SpeedsterMapIntegrityError("Scoped card-type map has no revision to restore.");
     if (validated.mapId !== map.id) {
-      throw new SpeedsterMapIntegrityError("Restore target is not a revision of this exact card-type map.");
+      throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
     }
     const payload: SpeedsterMapRevisionHashPayload = {
       mapId: map.id,
@@ -1058,7 +1272,13 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
       select: mapRevisionSelect,
     });
     await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
-    if (registration) {
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (registration && !exactOverrideRevisionId) {
       const bound = await tx.aiGraderV2Session.updateMany({
         where: {
           id: input.source.id,
@@ -1073,6 +1293,125 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
       });
       if (bound.count !== 1) {
         throw new SpeedsterMapIntegrityError("Restored TRAIN revision could not bind atomically to its captured source.");
+      }
+    }
+    return revision;
+  });
+  return { mapId: created.mapId, revision: validateSpeedsterLoadedMapRevision(created) };
+}
+
+export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
+  source: SpeedsterMapSourceSession;
+  targetRevisionId: string;
+  authorAdminId: string;
+  transaction?: SpeedsterMapTransactionRunner;
+  registerCapturedPromotion?: SpeedsterCapturedRestoreRegistration;
+  findActiveMap?: SpeedsterMapLookupDependencies["findActiveMap"];
+  findTargetRevision?: SpeedsterMapLookupDependencies["findPinnedRevision"];
+}>): Promise<SpeedsterMapSaveResult> {
+  const target = await (input.findTargetRevision ?? defaultLookupDependencies.findPinnedRevision)(input.targetRevisionId);
+  if (!target) throw new SpeedsterMapIntegrityError("Exact map revision to promote was not found.");
+  const validated = validateSpeedsterLoadedMapRevision(target, { mapRevisionId: input.targetRevisionId });
+  if (speedsterMapScopeForKey(validated.matchKey) !== "EXACT") {
+    throw new SpeedsterMapIntegrityError("Only an exact map revision can be promoted to family scope.");
+  }
+  assertSpeedsterMapRevisionAppliesToIdentity(validated, {
+    cardProfile: input.source.cardProfile,
+    identity: input.source.identity,
+  });
+  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const matchKeyHash = speedsterMapMatchKeyHash(familyKey);
+  const revisionId = randomUUID();
+  const exactOverrideWasActive = input.source.workflowState === "CAPTURED"
+    ? Boolean((await (input.findActiveMap ?? defaultLookupDependencies.findActiveMap)(
+        speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity)),
+      ))?.currentRevisionId)
+    : false;
+  const registration = input.source.workflowState === "CAPTURED" && !exactOverrideWasActive
+    ? await (input.registerCapturedPromotion ?? registerCapturedRestore)(input.source, {
+        revisionId,
+        mapId: validated.mapId,
+        frontMap: validated.frontMap,
+        backMap: validated.backMap,
+      })
+    : null;
+  const transaction: SpeedsterMapTransactionRunner = input.transaction ?? ((operation) => (
+    prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
+  ));
+  const created = await transaction(async (tx) => {
+    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, "FAMILY");
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
+    let map = await tx.aiGraderV2CardTypeMap.findUnique({
+      where: { matchKeyHash },
+      include: { currentRevision: { select: { id: true, version: true } } },
+    });
+    if (!map) {
+      map = await tx.aiGraderV2CardTypeMap.create({
+        data: { matchKeyHash, cardProfile: input.source.cardProfile },
+        include: { currentRevision: { select: { id: true, version: true } } },
+      });
+    }
+    if (map.cardProfile !== input.source.cardProfile) {
+      throw new SpeedsterMapIntegrityError("Family map category does not match its stored category.");
+    }
+    const payload: SpeedsterMapRevisionHashPayload = {
+      mapId: map.id,
+      version: (map.currentRevision?.version ?? 0) + 1,
+      matchKeyHash,
+      matchKey: familyKey,
+      displayIdentity: validated.displayIdentity,
+      normalizedIdentity: familyKey,
+      sourceSessionId: validated.sourceSessionId,
+      authorAdminId: input.authorAdminId,
+      frontMap: validated.frontMap,
+      backMap: validated.backMap,
+      mapSchemaVersion: validated.mapSchemaVersion,
+      filterPolicyVersion: validated.filterPolicyVersion,
+      supersedesRevisionId: map.currentRevision?.id ?? null,
+    };
+    const revision = await tx.aiGraderV2CardTypeMapRevision.create({
+      data: {
+        id: revisionId,
+        mapId: payload.mapId,
+        version: payload.version,
+        matchKeyHash: payload.matchKeyHash,
+        matchKey: payload.matchKey as Prisma.InputJsonValue,
+        displayIdentity: payload.displayIdentity as Prisma.InputJsonValue,
+        normalizedIdentity: payload.normalizedIdentity as Prisma.InputJsonValue,
+        sourceSessionId: payload.sourceSessionId,
+        authorAdminId: payload.authorAdminId,
+        frontMap: payload.frontMap as unknown as Prisma.InputJsonValue,
+        backMap: payload.backMap as unknown as Prisma.InputJsonValue,
+        mapSchemaVersion: payload.mapSchemaVersion,
+        filterPolicyVersion: payload.filterPolicyVersion,
+        revisionHash: speedsterMapRevisionHash(payload),
+        supersedesRevisionId: payload.supersedesRevisionId,
+      },
+      select: mapRevisionSelect,
+    });
+    await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
+    await clearCapturedFamilyBindingIfStale(
+      tx,
+      input.source,
+      capturedState?.mapRevisionId,
+      exactOverrideRevisionId,
+    );
+    if (registration && !exactOverrideRevisionId) {
+      const bound = await tx.aiGraderV2Session.updateMany({
+        where: {
+          id: input.source.id,
+          createdByUserId: input.source.createdByUserId,
+          workflowState: "CAPTURED",
+        },
+        data: {
+          mapRevisionId: revision.id,
+          mapFilterPolicyVersion: validated.filterPolicyVersion,
+          mapRegistration: registration as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (bound.count !== 1) {
+        throw new SpeedsterMapIntegrityError("Promoted family revision could not bind atomically to its captured source.");
       }
     }
     return revision;

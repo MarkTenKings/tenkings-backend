@@ -118,7 +118,7 @@ type Harness = {
   cleanup: () => Promise<void>;
 };
 
-async function mount(initialMap: SpeedsterTrainMapState): Promise<Harness> {
+async function mount(initialMap: SpeedsterTrainMapState, scope?: "FAMILY" | "EXACT"): Promise<Harness> {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://collect.tenkings.co/admin/ai-grader-v2",
     pretendToBeVisual: true,
@@ -169,6 +169,9 @@ async function mount(initialMap: SpeedsterTrainMapState): Promise<Harness> {
     const url = String(request);
     requests.push({ url, init });
     if (url === "/api/admin/ai-grader-v2/maps/save") return jsonResponse({ map: loadedMap() }, 201);
+    if (url === "/api/admin/ai-grader-v2/maps/promote") return jsonResponse({
+      map: { ...loadedMap(), scope: "FAMILY", name: "2021 Panini Obsidian Orange" },
+    }, 201);
     throw new Error(`Unexpected card map editor request: ${url}`);
   };
   const savedMaps: SpeedsterTrainMapState[] = [];
@@ -180,6 +183,7 @@ async function mount(initialMap: SpeedsterTrainMapState): Promise<Harness> {
         token="admin-token"
         source={source}
         initialMap={initialMap}
+        scope={scope}
         onSaved={(map) => savedMaps.push(map)}
       />,
     );
@@ -240,10 +244,11 @@ async function waitFor(condition: () => boolean, message: string, timeoutMs = 10
   }
 }
 
-test("CARD MAP terminology, inherited centering boundary, and composed Front/Back previews are explicit", async () => {
+test("legacy responses remain exact while boundary and composed Front/Back previews stay explicit", async () => {
   const harness = await mount(missingMap);
   try {
-    assert.match(harness.container.textContent ?? "", /CARD MAP · EXACT CARD TYPE/);
+    assert.match(harness.container.textContent ?? "", /CARD MAP · EXACT/);
+    assert.match(harness.container.textContent ?? "", /APPLIES TO THIS EXACT CARD ONLY/);
     assert.ok(buttonByText(harness.container, "Printed Boundary"));
     assert.ok(buttonByText(harness.container, "Registration Anchors"));
     assert.ok(buttonByText(harness.container, "Printed-Content Zones"));
@@ -300,7 +305,8 @@ test("one boundary handle and stable registration anchors drag independently, un
     assert.equal(harness.requests.length, 1);
     assert.equal(harness.requests[0].url, "/api/admin/ai-grader-v2/maps/save");
     const body = JSON.parse(String(harness.requests[0].init?.body)) as Record<string, any>;
-    assert.deepEqual(Object.keys(body).sort(), ["back", "front", "sessionId"]);
+    assert.deepEqual(Object.keys(body).sort(), ["back", "front", "scope", "sessionId"]);
+    assert.equal(body.scope, "EXACT");
     assert.deepEqual(Object.keys(body.front).sort(), ["anchors", "designBoundary", "zones"]);
     assert.equal(body.sessionId, source.sessionId);
     assert.deepEqual(body.front.anchors.map((anchor: { id: string }) => anchor.id), [
@@ -312,6 +318,100 @@ test("one boundary handle and stable registration anchors drag independently, un
     assert.deepEqual(body.front.anchors[0].point, { x: 0.25, y: 0.25 });
     assert.equal("selectedZoneId" in body.front, false);
     assert.equal("zoneDraft" in body.front, false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("family authoring is explicit, warns without blocking, and saves FAMILY scope", async () => {
+  const base = loadedMap();
+  const map: SpeedsterTrainMapState = {
+    ...base,
+    scope: "FAMILY",
+    name: "2021 Panini Obsidian Orange",
+    editable: base.editable ? {
+      ...base.editable,
+      front: {
+        ...base.editable.front,
+        zones: base.editable.front.zones.map((zone) => ({ ...zone, semanticType: "PRINT_ARTWORK" as const })),
+      },
+    } : null,
+  };
+  const harness = await mount(map, "FAMILY");
+  try {
+    const copy = harness.container.textContent ?? "";
+    assert.match(copy, /CARD MAP · FAMILY/);
+    assert.match(copy, /APPLIES TO ALL MATCHING CARDS/);
+    assert.match(copy, /2021 Panini Obsidian Orange/);
+    assert.match(copy, /CHECK FAMILY LANDMARKS/);
+    assert.match(copy, /one anchor per quadrant/);
+    assert.match(copy, /location caution/);
+    assert.match(copy, /Player\/card name, HP, and card number are also unsafe/);
+    assert.match(copy, /Shared frame\/layout landmarks remain safe, including at the top or bottom/);
+    const save = buttonByText(harness.container, "Save + activate new revision");
+    assert.ok(save);
+    assert.equal(save.disabled, false, "Family warning must remain nonblocking");
+    await act(async () => fire(save, "click"));
+    await waitFor(() => harness.savedMaps.length === 1, "Family map save did not settle");
+    const body = JSON.parse(String(harness.requests[0].init?.body));
+    assert.equal(body.scope, "FAMILY");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("loaded exact map offers deliberate whole-map promotion while retaining its source", async () => {
+  const harness = await mount({ ...loadedMap(), scope: "EXACT", name: "Nick Bosa #12" }, "EXACT");
+  try {
+    const promote = buttonByText(harness.container, "Promote exact map to family");
+    assert.ok(promote);
+    await act(async () => fire(promote, "click"));
+    await waitFor(() => harness.requests.some((request) => request.url.endsWith("/maps/promote")), "Promotion request did not settle");
+    const request = harness.requests.find((candidate) => candidate.url.endsWith("/maps/promote"));
+    assert.deepEqual(JSON.parse(String(request?.init?.body)), {
+      sessionId: source.sessionId,
+      revisionId: "card-map-revision-1234567890",
+    });
+    assert.match(harness.container.textContent ?? "", /Exact source imagery and provenance are retained/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("unsafe loaded exact map shows family guidance before nonblocking promotion", async () => {
+  const base = loadedMap();
+  const unsafe: SpeedsterTrainMapState = {
+    ...base,
+    scope: "EXACT",
+    name: "Nick Bosa #12",
+    editable: base.editable ? {
+      ...base.editable,
+      front: {
+        ...base.editable.front,
+        anchors: base.editable.front.anchors.map((anchor, index) => index === 0
+          ? { ...anchor, point: { x: 0.5, y: 0.35 } }
+          : anchor),
+      },
+    } : null,
+  };
+  const harness = await mount(unsafe, "EXACT");
+  try {
+    assert.match(harness.container.textContent ?? "", /BEFORE PROMOTION · CHECK FAMILY LANDMARKS/);
+    assert.match(harness.container.textContent ?? "", /Before promotion, location caution/);
+    const promote = buttonByText(harness.container, "Promote exact map to family");
+    assert.ok(promote);
+    assert.equal(promote.disabled, false);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("shared top and bottom frame anchors do not trigger a card-specific location warning", async () => {
+  const map = { ...loadedMap(), scope: "FAMILY" as const, name: "2021 Panini Obsidian Orange" };
+  const harness = await mount(map, "FAMILY");
+  try {
+    assert.doesNotMatch(harness.container.textContent ?? "", /CHECK FAMILY LANDMARKS/);
+    assert.match(harness.container.textContent ?? "", /shared frame or layout landmark in each quadrant/i);
   } finally {
     await harness.cleanup();
   }
@@ -348,7 +448,10 @@ test("selected zones edit and drag individually, remove without clearing sibling
     const input = harness.container.querySelector<HTMLInputElement>('input[maxlength="80"]');
     assert.ok(input);
     await act(async () => {
-      Simulate.change(input, { target: { value: "Updated printed text" } } as unknown as Event);
+      Simulate.change(
+        input,
+        { target: { value: "Updated printed text" } } as unknown as Parameters<typeof Simulate.change>[1],
+      );
     });
     assert.ok(buttonByText(harness.container, "Updated printed text"));
 

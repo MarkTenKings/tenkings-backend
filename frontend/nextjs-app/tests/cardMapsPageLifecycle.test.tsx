@@ -238,6 +238,9 @@ test("blank new-card identity shows exact field errors without making a request"
     fetchImpl: async (request) => { requests.push(String(request)); throw new Error("unexpected fetch"); },
   });
   try {
+    assert.match(page.container.textContent ?? "", /FAMILYall cards matching this Year, Set, and Parallel/);
+    assert.match(page.container.textContent ?? "", /EXACT OVERRIDEthis exact card only/);
+    assert.equal(page.container.querySelector<HTMLInputElement>('input[value="FAMILY"]')?.checked, true);
     const heroCta = buttonByText(page.container, "CREATE CARD MAP");
     assert.ok(heroCta);
     await act(async () => heroCta.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
@@ -256,10 +259,12 @@ test("blank new-card identity shows exact field errors without making a request"
   }
 });
 
-test("valid new-card identity creates one session, loads its exact map, saves capture, and opens the workspace", async () => {
+test("default family scope uses dynamic applicability copy and explicit FAMILY API lookup", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const loadedMap = {
     status: "LOADED",
+    scope: "FAMILY",
+    name: "1997 Upper Deck SPx",
     revision: { revisionId: "revision-7", version: 7, revisionHash: "abcdef1234567890" },
     revisions: [],
     editable: null,
@@ -271,7 +276,7 @@ test("valid new-card identity creates one session, loads its exact map, saves ca
       if (url === "/api/admin/ai-grader-v2/sessions") {
         return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
       }
-      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session") {
+      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=FAMILY") {
         return jsonResponse({ map: loadedMap });
       }
       if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session") return jsonResponse({});
@@ -283,6 +288,7 @@ test("valid new-card identity creates one session, loads its exact map, saves ca
     await changeInput(page.container, "year", "1997");
     await changeInput(page.container, "manufacturer", "Upper Deck");
     await changeInput(page.container, "productSet", "SPx");
+    assert.match(page.container.textContent ?? "", /all 1997 Upper Deck SPx cards/);
     const submit = buttonByText(page.container, "CONTINUE TO FRONT + BACK");
     assert.ok(submit);
     await act(async () => submit.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
@@ -310,7 +316,42 @@ test("valid new-card identity creates one session, loads its exact map, saves ca
   }
 });
 
-test("completed mode makes one exact source request and opens the shared workspace directly", async () => {
+test("exact override selection stays separate and sends explicit EXACT scope", async () => {
+  const requests: string[] = [];
+  const page = await mountPage({
+    fetchImpl: async (request) => {
+      const url = String(request);
+      requests.push(url);
+      if (url === "/api/admin/ai-grader-v2/sessions") {
+        return jsonResponse({ session: { id: "exact-map-session", cardProfile: "SPORTS" } }, 201);
+      }
+      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=exact-map-session&scope=EXACT") {
+        return jsonResponse({ map: { status: "MISSING", scope: "EXACT", name: "Ken Griffey Jr.", revision: null, revisions: [], editable: null } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+  try {
+    const exact = page.container.querySelector<HTMLInputElement>('input[value="EXACT"]');
+    assert.ok(exact);
+    await act(async () => exact.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    assert.equal(exact.checked, true);
+    await changeInput(page.container, "playerName", "Ken Griffey Jr.");
+    await changeInput(page.container, "year", "1997");
+    await changeInput(page.container, "manufacturer", "Upper Deck");
+    await changeInput(page.container, "productSet", "SPx");
+    assert.match(page.container.textContent ?? "", /this exact card only — Ken Griffey Jr\./);
+    const submit = buttonByText(page.container, "CONTINUE TO FRONT + BACK");
+    assert.ok(submit);
+    await act(async () => submit.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")), "Exact capture workspace did not open");
+    assert.equal(requests[1], "/api/admin/ai-grader-v2/maps/current?sessionId=exact-map-session&scope=EXACT");
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("completed mode defaults to one explicit FAMILY source request and opens the shared workspace directly", async () => {
   const urls: string[] = [];
   const exactSessionId = "completed/session 42";
   const page = await mountPage({
@@ -325,14 +366,14 @@ test("completed mode makes one exact source request and opens the shared workspa
           front: { rectifiedUrl: "front", centeringQuad: quad },
           back: { rectifiedUrl: "back", centeringQuad: quad },
         },
-        map: { status: "MISSING", revision: null, revisions: [], editable: null },
+        map: { status: "MISSING", scope: "FAMILY", name: "2024 Topps Set", revision: null, revisions: [], editable: null },
       });
     },
   });
   try {
     await waitFor(() => Boolean(page.container.querySelector('[data-testid="card-map-workspace"]')), "Completed CARD MAP workspace did not open");
     assert.deepEqual(urls, [
-      `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(exactSessionId)}`,
+      `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(exactSessionId)}&scope=FAMILY`,
     ]);
     assert.match(page.container.textContent ?? "", /CREATE CARD MAP/);
   } finally {

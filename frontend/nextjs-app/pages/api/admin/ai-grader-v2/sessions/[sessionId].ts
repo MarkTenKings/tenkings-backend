@@ -10,11 +10,17 @@ import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../../../../lib/ai-grade
 import {
   SpeedsterMapIntegrityError,
   hashSpeedsterMapStorageEvidence,
-  loadExactActiveSpeedsterMapRevision,
+  loadEffectiveActiveSpeedsterMapRevision,
   parseSpeedsterMapSourceSession,
   parseSpeedsterMapRegistration,
   speedsterPhysicalQuadHash,
+  type SpeedsterAppliedMapRevision,
 } from "../../../../../lib/server/speedsterCardTypeMaps";
+import {
+  insertSpeedsterInstrumentationEvents,
+  speedsterCardMapApplicationEvent,
+  type SpeedsterInstrumentationEvent,
+} from "../../../../../lib/server/aiGraderV2Instrumentation";
 
 const jsonObject = z.record(z.string(), z.unknown());
 const patchSchema = z
@@ -46,13 +52,22 @@ type UpdateSessionData = {
 
 export type MapBindingInput = NonNullable<z.output<typeof patchSchema>["mapBinding"]>;
 
+type MapBindingValidationResult = Pick<
+  UpdateSessionData,
+  "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration"
+> & Readonly<{
+  appliedMap?: SpeedsterAppliedMapRevision | null;
+  selectedMap?: SpeedsterAppliedMapRevision | null;
+  mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+}>;
+
 type MapBindingValidationDependencies = Readonly<{
-  loadActiveMap: typeof loadExactActiveSpeedsterMapRevision;
+  loadActiveMap: typeof loadEffectiveActiveSpeedsterMapRevision;
   hashEvidence: typeof hashSpeedsterMapStorageEvidence;
 }>;
 
 const mapBindingValidationDependencies: MapBindingValidationDependencies = {
-  loadActiveMap: loadExactActiveSpeedsterMapRevision,
+  loadActiveMap: loadEffectiveActiveSpeedsterMapRevision,
   hashEvidence: hashSpeedsterMapStorageEvidence,
 };
 
@@ -61,7 +76,7 @@ export async function validateSpeedsterSubmittedMapBinding(
   binding: MapBindingInput | undefined,
   capture: Record<string, unknown>,
   deps: MapBindingValidationDependencies = mapBindingValidationDependencies,
-): Promise<Pick<UpdateSessionData, "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration">> {
+): Promise<MapBindingValidationResult> {
   if (
     typeof session.id !== "string" ||
     typeof session.createdByUserId !== "string" ||
@@ -79,15 +94,33 @@ export async function validateSpeedsterSubmittedMapBinding(
     identity: session.identity,
     capture,
   });
-  const revision = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
-  if (!revision) {
-    if (binding) {
-      throw new SpeedsterMapIntegrityError("Speedster map binding was submitted without an exact active revision.");
-    }
-    return {};
+  let selectedMap: SpeedsterAppliedMapRevision | null;
+  try {
+    selectedMap = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
+  } catch (error) {
+    if (binding) throw error;
+    return {
+      appliedMap: null,
+      selectedMap: null,
+      mapFailureCode: "MAP_LOOKUP_INTEGRITY_FAILED",
+    };
   }
-  if (!binding || revision.revisionId !== binding.revisionId) {
-    throw new SpeedsterMapIntegrityError("Speedster map binding does not match the exact active revision.");
+  if (!selectedMap) {
+    if (binding) {
+      throw new SpeedsterMapIntegrityError("Speedster map binding was submitted without an active revision.");
+    }
+    return { appliedMap: null, selectedMap: null };
+  }
+  if (!binding) {
+    return {
+      appliedMap: null,
+      selectedMap,
+      mapFailureCode: "MAP_REGISTRATION_NOT_APPLIED",
+    };
+  }
+  const revision = selectedMap.revision;
+  if (revision.revisionId !== binding.revisionId) {
+    throw new SpeedsterMapIntegrityError("Speedster map binding does not match the active revision.");
   }
   const front = parseSpeedsterMapRegistration(binding.registration.front, {
     side: "FRONT",
@@ -117,6 +150,9 @@ export async function validateSpeedsterSubmittedMapBinding(
     mapRevisionId: revision.revisionId,
     mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
     mapRegistration: { front, back } as unknown as Prisma.InputJsonValue,
+    appliedMap: selectedMap,
+    selectedMap,
+    mapFailureCode: null,
   };
 }
 
@@ -127,13 +163,18 @@ type Dependencies = {
   validateMapBinding?: (session: PersistedSession, binding: MapBindingInput | undefined, capture: Record<string, unknown>) => Promise<Pick<
     UpdateSessionData,
     "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration"
-  >>;
+  > & Readonly<{
+    appliedMap?: SpeedsterAppliedMapRevision | null;
+    selectedMap?: SpeedsterAppliedMapRevision | null;
+    mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+  }>>;
+  recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
 };
 
 const dependencies: Dependencies = {
   requireAdminSession,
   findSession: (id, createdByUserId) => prisma.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
-  updateSession: (id, createdByUserId, data) => prisma.$transaction(async (tx) => {
+  updateSession: (id, createdByUserId, data) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updated = await tx.aiGraderV2Session.updateMany({
       where: { id, createdByUserId, workflowState: "DRAFT" },
       data,
@@ -142,6 +183,7 @@ const dependencies: Dependencies = {
     return tx.aiGraderV2Session.findFirst({ where: { id, createdByUserId } });
   }),
   validateMapBinding: validateSpeedsterSubmittedMapBinding,
+  recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
 };
 
 const sessionIdFrom = (req: NextApiRequest) => {
@@ -185,10 +227,16 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       if (existing.workflowState !== "DRAFT") {
         return res.status(409).json({ message: "Only a DRAFT Speedster session can save its capture" });
       }
-      const mapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
-      if (!mapBinding) {
+      const validatedMapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
+      if (!validatedMapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
       }
+      const {
+        appliedMap = null,
+        selectedMap = appliedMap,
+        mapFailureCode = null,
+        ...mapBinding
+      } = validatedMapBinding;
       const session = await deps.updateSession(sessionId, admin.user.id, {
         workflowState: "CAPTURED",
         capture: parsed.data.capture as Prisma.InputJsonValue,
@@ -196,6 +244,17 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       });
       if (!session) {
         return res.status(409).json({ message: "Speedster capture state changed before it could be saved" });
+      }
+      try {
+        await deps.recordInstrumentation?.([speedsterCardMapApplicationEvent({
+          sessionId,
+          createdByUserId: admin.user.id,
+          applied: appliedMap,
+          selected: selectedMap,
+          failureCode: mapFailureCode,
+        })]);
+      } catch (error) {
+        console.error(`[Speedster] Card-map instrumentation failed for ${sessionId}:`, error);
       }
       return res.status(200).json({ session: safeSessionResponse(session) });
     } catch (error) {

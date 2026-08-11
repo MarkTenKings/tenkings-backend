@@ -19,7 +19,7 @@ test("CARD MAPS has one literal admin-only route whose hero CTA focuses NEW CARD
   assert.match(cardMapsPage, /<h2 id="new-card-map-heading">NEW CARD MAP<\/h2>/);
   assert.match(cardMapsPage, /const focusNewCard = useCallback/);
   assert.match(cardMapsPage, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
-  assert.match(cardMapsPage, /querySelector<HTMLInputElement>\("input"\)/);
+  assert.match(cardMapsPage, /querySelector<HTMLInputElement>\('input:not\(\[type="radio"\]\)'\)/);
   assert.match(cardMapsPage, /className=\{styles\.cardMapsCta\}[\s\S]*?onClick=\{focusNewCard\}>CREATE CARD MAP<\/button>/);
   assert.doesNotMatch(cardMapsPage, /createDraft\(null/);
 });
@@ -52,7 +52,10 @@ test("all existing entry points converge on the sole CARD MAPS route", () => {
   assert.match(adminHome, /label: "Card Maps",[\s\S]*?href: "\/card-maps"/);
   assert.match(graderPage, /<Link href="\/card-maps">Card Maps<\/Link>/);
   assert.match(graderPage, /onSubmit=\{\(event\) => void createDraft\(event\)\}/);
-  assert.match(graderPage, /maps\/current\?sessionId=/);
+  assert.match(graderPage, /maps\/current\?sessionId=[^\n]+&scope=EFFECTIVE/);
+  assert.match(graderPage, /activeMapScope=\{mapState\.status === "LOADED"/);
+  assert.match(graderPage, /activeMapName=\{mapState\.status === "LOADED"/);
+  assert.match(graderPage, /mapLookupFailed=\{mapLookupFailed\}/);
   assert.match(graderPage, /await initializeReview\(\)/);
   assert.doesNotMatch(graderPage, /id="card-maps"|cardMapsPanel|CREATE CARD MAP|<SpeedsterTrainWorkspace|trainRequested|trainOpen/);
 

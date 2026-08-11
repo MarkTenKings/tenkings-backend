@@ -8,6 +8,7 @@ import {
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_SCHEMA_VERSION,
   speedsterCardTypeMapKey,
+  speedsterFamilyCardTypeMapKey,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "../lib/ai-grader-v2/learning-calibration-v2";
 import {
@@ -529,9 +530,47 @@ test("a pinned revision for a different exact card key fails visibly before dete
     async learningBankForDetect() { return {}; },
     async detect() { detected = true; throw new Error("must not detect"); },
     async measure() { throw new Error("must not measure"); },
-  }), /exact card-type key does not match the session identity/i);
+  }), /map initialization failed/i);
   assert.equal(detected, false);
   assert.equal(persisted, false);
+});
+
+test("a pinned family revision applies across card names within the same Card Type", async () => {
+  const initial = initializeSession(true);
+  const sourceIdentity = { ...identity, cardName: "Snorlax", cardNumber: "143/196" };
+  const familyKey = speedsterFamilyCardTypeMapKey("POKEMON", sourceIdentity);
+  const familyMap: SpeedsterPinnedMapFilterInput = {
+    ...map,
+    revision: {
+      ...map.revision,
+      matchKey: familyKey,
+      normalizedIdentity: familyKey,
+      displayIdentity: sourceIdentity,
+    },
+  };
+  let persisted = false;
+
+  const result = await applySpeedsterReviewAction({
+    sessionId,
+    createdByUserId: "admin-1",
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async loadPinnedMapFilter() { return familyMap; },
+    async persistReviewIfRevision() { persisted = true; },
+    async presignRead(key) { return `https://local.invalid/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect() {
+      return {
+        detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+        defects: [],
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  });
+
+  assert.equal(persisted, true);
+  assert.deepEqual(result.reviewedDefects, []);
 });
 
 test("filter decisions cannot masquerade as human-negative Memory lessons", () => {

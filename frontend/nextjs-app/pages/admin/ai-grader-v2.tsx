@@ -5,6 +5,7 @@ import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
 import {
   CaptureWorkspace,
+  SpeedsterAppliedMapBadge,
   type SpeedsterCaptureBundle,
   type SpeedsterCaptureInstrumentationEvent,
 } from "../../components/ai-grader-v2/CaptureWorkspace";
@@ -78,6 +79,10 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   lowerBound?: boolean;
   automaticGeometryCount?: number;
   photoSource?: "IPHONE" | "LOCAL" | "MIXED";
+  mapAppliedScope?: "EXACT" | "FAMILY" | "NONE";
+  mapName?: string;
+  mapRevisionId?: string;
+  mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
   findingCount?: number;
   filteredCount?: number;
   outcome?: "SUCCEEDED" | "FAILED";
@@ -90,7 +95,7 @@ export default function AiGraderV2AdminPage() {
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
-  const [mapIntegrityError, setMapIntegrityError] = useState<string | null>(null);
+  const [mapLookupFailed, setMapLookupFailed] = useState(false);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
   const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
@@ -317,7 +322,7 @@ export default function AiGraderV2AdminPage() {
         details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" },
       });
       const mapResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}`,
+        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}&scope=EFFECTIVE`,
         { headers: buildAdminHeaders(session.token), cache: "no-store" },
       );
       const mapPayload = (await mapResponse.json().catch(() => ({}))) as {
@@ -325,15 +330,24 @@ export default function AiGraderV2AdminPage() {
         message?: string;
       };
       if (!mapResponse.ok || !mapPayload.map) {
-        const failure = toCardMapOperatorMessage(mapPayload.message ?? "Exact CARD MAP lookup failed.");
-        setMapIntegrityError(failure);
-        throw new Error(failure);
+        const failure = toCardMapOperatorMessage(mapPayload.message ?? "CARD MAP lookup failed.");
+        setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+        setMapLookupFailed(true);
+        recordInstrumentation({
+          sessionId: payload.session.id,
+          eventType: "WORKFLOW_ERROR",
+          startedAtMs: endedAtMs,
+          endedAtMs: Date.now(),
+          details: { errorCode: "CARD_MAP_LOOKUP_FAILED", mapAppliedScope: "NONE" },
+        });
+        setMessage(`${failure} Continuing with normal human review; no map will be applied.`);
+        return;
       }
       setMapState(mapPayload.map);
-      setMapIntegrityError(null);
+      setMapLookupFailed(false);
       setMessage(mapPayload.map.status === "LOADED"
-        ? `Exact CARD MAP revision ${mapPayload.map.revision?.version} loaded. Add Front and Back.`
-        : "No exact CARD MAP exists. The unchanged Speedster review path will apply.");
+        ? `${mapPayload.map.scope ?? "EXACT"} CARD MAP · ${mapPayload.map.name ?? "Card map"} · revision ${mapPayload.map.revision?.version} loaded.`
+        : "No applicable CARD MAP exists. Normal human review will apply; nothing will be guessed.");
     } catch (error) {
       const failure = error instanceof Error ? error.message : "Speedster card could not be created.";
       setMessage(failure);
@@ -672,30 +686,34 @@ export default function AiGraderV2AdminPage() {
 
         {draft && mapState && !capture ? (
           <section className={styles.statusPanel}>
-            <span>EXACT CARD MAP</span>
+            <span>{mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP` : "NO CARD MAP · MANUAL"}</span>
             <h2>{mapState.status === "LOADED"
-              ? `Loaded revision ${mapState.revision?.version}`
-              : "No exact map"}</h2>
+              ? mapState.name || `Loaded revision ${mapState.revision?.version}`
+              : "Normal human review"}</h2>
             <p>{mapState.status === "LOADED"
-              ? `${mapState.revision?.revisionHash.slice(0, 12)} · The active map will register to this copy's physical geometry.`
+              ? `r${mapState.revision?.version} · ${mapState.revision?.revisionHash.slice(0, 12)} · This selected map will register to the card's physical geometry.`
               : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
           </section>
         ) : null}
 
-        {mapIntegrityError ? (
-          <section className={styles.statusPanel} role="alert">
-            <span>CARD MAP INTEGRITY ERROR</span>
-            <h2>Card initialization stopped.</h2>
-            <p>{mapIntegrityError}</p>
-          </section>
+        {capture && mapState ? (
+          <SpeedsterAppliedMapBadge
+            capture={capture}
+            selectedRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
+            scope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
+            name={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
+          />
         ) : null}
 
-        {draft && !capture && mapState && !mapIntegrityError ? (
+        {draft && !capture && mapState ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
-            activeMapRevisionId={mapState.revision?.revisionId ?? null}
+            activeMapRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
+            activeMapScope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
+            activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
+            mapLookupFailed={mapLookupFailed}
             onReady={(bundle) => void saveCapture(bundle)}
             onInstrumentationEvent={recordCaptureInstrumentation}
           />
