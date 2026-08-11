@@ -42,7 +42,7 @@ export default function CompletedSpeedsterCardsPage() {
         if (!response.ok || !payload.cards) throw new Error(payload.message ?? "Completed cards could not be loaded.");
         if (active) {
           setCards(payload.cards);
-          setMessage(payload.cards.length ? `${payload.cards.length} completed card${payload.cards.length === 1 ? "" : "s"}.` : "No completed Speedster cards yet.");
+          setMessage(`Showing all ${payload.cards.length} non-void completed card${payload.cards.length === 1 ? "" : "s"}, newest first. Scroll to view the full list.`);
         }
       })
       .catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "Completed cards could not be loaded."); });
@@ -61,10 +61,12 @@ export default function CompletedSpeedsterCardsPage() {
           <div><span>TEN KINGS · POST GRADING</span><h1>Completed cards.</h1><p>{message}</p></div>
           <nav>
             <Link href="/admin/ai-grader-v2/removed-findings">Removed defects</Link>
+            <Link href="/card-maps">Card Maps</Link>
             <Link href="/admin/ai-grader-v2">New card</Link>
             <Link href="/admin/human-grade">Label pages</Link>
           </nav>
         </header>
+        <p className={styles.listSummary}>{message}</p>
         <section className={styles.cardList} aria-label="Completed Speedster cards">
           {cards.map((card) => (
             <Link className={styles.cardRow} href={`/admin/ai-grader-v2/completed/${card.id}`} key={card.id}>
