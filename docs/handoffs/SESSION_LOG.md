@@ -31531,3 +31531,9 @@ By enabling Rip It Live, I confirm:
 
 - The first loopback start command exited immediately with code `1` before opening a listener because the filtered pnpm script forwarded its `--` separator to Next, which misread `-H` as a project directory. No application server or external service was started.
 - Planned corrective action: invoke this worktree's already-built Next binary directly with explicit host `127.0.0.1` and port `3108`, perform the same read-only authenticated-if-available visual check, and stop only that exact process afterward. All previously logged containment remains unchanged.
+
+## 2026-08-10 - Speedster local visual-QA server stopped; authenticated screenshots blocked
+
+- The direct built Next server reached Ready on loopback-only `127.0.0.1:3108`. Read-only DOM and rendered checks opened both `/admin/ai-grader-v2` and `/admin/ai-grader-v2/removed-findings` in the in-app browser and Chrome. Neither browser had a local authenticated Speedster session, so both correctly stopped at `Sign in to Speedster`; no credential, SMS code, cookie/local-storage inspection or modification, auth bypass, API mutation, map save, restore, grade, or provider request occurred.
+- Captured the visible local authentication boundary at `/Users/markthomas/.codex/visualizations/2026/08/11/019fee8b-2535-79b2-a0b1-70db303e0a99/speedster-chrome-auth-boundary.png`. Authenticated TRAIN/editor/filter-audit screenshots remain blocked and must not be represented as completed UI evidence; mounted component behavior remains covered by the executable frontend tests.
+- Finalized the local QA tabs, stopped only the exact loopback Next process, and verified no listener remains on TCP port `3108`. No hosted service was restarted, and no deploy, push, merge, Production/database/provider/RunPod/PhotoRoom/camera/NFC/Dell mutation or scope expansion occurred. Defect filter verification: PENDING.
