@@ -22,6 +22,8 @@ import {
   speedsterLearningBankForDetectRequest,
   type SpeedsterLearningDetectClient,
 } from "../../../../../../lib/server/aiGraderV2LearningBank";
+import { loadPinnedSpeedsterMapRevision } from "../../../../../../lib/server/speedsterCardTypeMaps";
+import { insertSpeedsterInstrumentationEvents } from "../../../../../../lib/server/aiGraderV2Instrumentation";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const FINDING_ID = z.string().trim().min(1).max(180);
@@ -119,13 +121,27 @@ const dependencies: HandlerDependencies = {
     select: {
       id: true,
       createdByUserId: true,
+      cardProfile: true,
       workflowState: true,
+      identity: true,
       capture: true,
       reviewedDefects: true,
       gradeReport: true,
+      mapRevisionId: true,
+      mapFilterPolicyVersion: true,
+      mapRegistration: true,
       updatedAt: true,
     },
   }),
+  async loadPinnedMapFilter(session) {
+    return {
+      revision: await loadPinnedSpeedsterMapRevision({
+        sessionId: session.id,
+        mapRevisionId: session.mapRevisionId,
+      }),
+      registration: session.mapRegistration,
+    };
+  },
   learningBankForDetect: () => speedsterLearningBankForDetectRequest(
     prisma as unknown as SpeedsterLearningDetectClient,
     (error) => console.error("[Speedster] SAM Memory catch-up failed before server detect:", error),
@@ -164,19 +180,35 @@ const dependencies: HandlerDependencies = {
     }
     return payload as { defects: unknown };
   },
+  recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
   persistReviewIfRevision: (identity, expectedUpdatedAt, data) => prisma.$transaction(async (tx) => {
     await tx.$queryRaw(
       Prisma.sql`SELECT "id" FROM "AiGraderV2Session" WHERE "id" = ${identity.sessionId} AND "createdByUserId" = ${identity.createdByUserId} FOR UPDATE`,
     );
     const current = await tx.aiGraderV2Session.findFirst({
       where: { id: identity.sessionId, createdByUserId: identity.createdByUserId },
-      select: { workflowState: true, updatedAt: true },
+      select: {
+        workflowState: true,
+        updatedAt: true,
+        mapRevisionId: true,
+        mapFilterPolicyVersion: true,
+      },
     });
     if (
       !current || current.workflowState !== "CAPTURED" ||
       current.updatedAt.getTime() !== expectedUpdatedAt.getTime()
     ) {
       throw new HttpError(409, "Speedster review state changed before it could be saved");
+    }
+    if (data.filterDecisions) {
+      if (
+        !current.mapRevisionId
+        || data.filterDecisions.some((decision) =>
+          decision.mapRevisionId !== current.mapRevisionId
+          || decision.filterPolicyVersion !== current.mapFilterPolicyVersion)
+      ) {
+        throw new HttpError(409, "Speedster pinned map state changed before filter decisions could be saved");
+      }
     }
     const updated = await tx.aiGraderV2Session.updateMany({
       where: {
@@ -192,6 +224,35 @@ const dependencies: HandlerDependencies = {
     });
     if (updated.count !== 1) {
       throw new HttpError(409, "Speedster review state changed before it could be saved");
+    }
+    if (data.filterDecisions?.length) {
+      await tx.aiGraderV2MapFilterDecision.createMany({
+        data: data.filterDecisions.map((decision) => ({
+          sessionId: identity.sessionId,
+          findingId: decision.finding.id,
+          side: decision.finding.side,
+          originalOrigin: decision.ruleInputs.findingOrigin,
+          proposedDefectType: decision.finding.defectType,
+          confidence: decision.finding.confidence,
+          similarity: decision.finding.memoryProposal?.similarity ?? null,
+          generatingExemplar: decision.finding.memoryProposal
+            ? decision.finding.memoryProposal as Prisma.InputJsonValue
+            : Prisma.JsonNull,
+          sourceViewId: decision.finding.sourceViewId,
+          supportingViewIds: decision.finding.supportingViewIds as Prisma.InputJsonValue,
+          cardIdentity: decision.cardIdentity as Prisma.InputJsonValue,
+          findingSnapshot: decision.finding as Prisma.InputJsonValue,
+          mapId: decision.mapId,
+          mapRevisionId: decision.mapRevisionId,
+          zoneId: decision.zoneId,
+          zoneType: decision.zoneType,
+          zoneOverlap: decision.zoneOverlap as Prisma.InputJsonValue,
+          filterPolicyVersion: decision.filterPolicyVersion,
+          ruleId: decision.ruleId,
+          ruleInputs: decision.ruleInputs as Prisma.InputJsonValue,
+          detectorVersion: decision.detectorVersion,
+        })),
+      });
     }
   }, { isolationLevel: "Serializable" }),
 };

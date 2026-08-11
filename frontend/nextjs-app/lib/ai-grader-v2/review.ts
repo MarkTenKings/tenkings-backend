@@ -89,17 +89,26 @@ export async function scanSpeedsterCapture(input: {
   onSide?: (side: SpeedsterCardSide) => void;
 }) {
   input.onSide?.("FRONT");
-  const front = await input.detect({
-    side: "FRONT",
-    cornerShape: input.capture.cornerShape,
-    views: speedsterDetectorViews(input.capture.front),
-  });
   input.onSide?.("BACK");
-  const back = await input.detect({
-    side: "BACK",
-    cornerShape: input.capture.cornerShape,
-    views: speedsterDetectorViews(input.capture.back),
-  });
+  const [frontResult, backResult] = await Promise.allSettled([
+    input.detect({
+      side: "FRONT",
+      cornerShape: input.capture.cornerShape,
+      views: speedsterDetectorViews(input.capture.front),
+    }),
+    input.detect({
+      side: "BACK",
+      cornerShape: input.capture.cornerShape,
+      views: speedsterDetectorViews(input.capture.back),
+    }),
+  ]);
+  if (frontResult.status === "rejected") throw frontResult.reason;
+  if (backResult.status === "rejected") throw backResult.reason;
+  const front = frontResult.value;
+  const back = backResult.value;
+  if (front.detectorVersion !== back.detectorVersion) {
+    throw new Error("Front and Back Speedster detector versions do not match.");
+  }
   return {
     detectorVersion: front.detectorVersion,
     defects: [

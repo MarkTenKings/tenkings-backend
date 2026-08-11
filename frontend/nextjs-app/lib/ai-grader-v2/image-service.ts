@@ -6,8 +6,9 @@ import type {
 import type { SpeedsterInspectionFrame } from "./inspection-frame";
 import type { SpeedsterTraceBitmapWireV1 } from "./trace-bitmap-wire";
 import type { SpeedsterCanonicalPixel } from "./trace-editor";
+import type { SpeedsterMapRegistration } from "./card-type-map-contracts";
 
-type ImageAction = "geometry" | "prepare" | "trace-proposal";
+type ImageAction = "geometry" | "prepare" | "trace-proposal" | "map-registration";
 export type SpeedsterGeometryResponse = {
   width: number;
   height: number;
@@ -82,6 +83,20 @@ export const speedsterImageService = {
     },
   ) {
     return postImageAction<{ traceWire: SpeedsterTraceBitmapWireV1 }>(token, "trace-proposal", input);
+  },
+  registerMap(
+    token: string,
+    input: {
+      sessionId: string;
+      side: SpeedsterCardSide;
+      currentPhysicalQuad: SpeedsterQuad;
+    },
+  ) {
+    return postImageAction<SpeedsterMapRegistration>(
+      token,
+      "map-registration",
+      input,
+    );
   },
 };
 

@@ -1,6 +1,8 @@
 import base64
+import json
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -20,6 +22,7 @@ from card_geometry import (
     detect_card_quad,
     detector_material_mask,
     printed_border_quad,
+    register_map_design,
     warp_to_card_map,
     warp_to_inspection_map,
 )
@@ -82,6 +85,24 @@ class PrepareResponse(BaseModel):
     borders: List[Point]
     detectedBorders: List[str]
     inspectionFrame: dict
+
+
+class MapRegistrationAnchor(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    point: Point
+
+
+class MapRegistrationRequest(BaseModel):
+    referenceImage: ImageInput
+    currentImage: ImageInput
+    mapId: str = Field(min_length=1, max_length=80)
+    mapRevisionId: str = Field(min_length=1, max_length=80)
+    side: str
+    currentPhysicalQuadSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    currentInspectionSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    anchors: List[MapRegistrationAnchor]
+    designBoundary: dict
+    zones: List[dict]
 
 
 class CanonicalView(ImageInput):
@@ -329,14 +350,65 @@ def prepare_image(request: PrepareRequest):
     }
 
 
+@app.post("/map-registration")
+def map_registration(request: MapRegistrationRequest):
+    if request.side not in ("FRONT", "BACK"):
+        raise HTTPException(status_code=400, detail="Map registration side is invalid")
+    try:
+        reference = load_image(
+            request.referenceImage.imageUrl,
+            request.referenceImage.imageBase64,
+        )
+        current = load_image(
+            request.currentImage.imageUrl,
+            request.currentImage.imageBase64,
+        )
+        registered = register_map_design(
+            reference,
+            current,
+            [anchor.model_dump() for anchor in request.anchors],
+            request.designBoundary,
+            request.zones,
+        )
+        return {
+            "version": "opencv-human-anchor-registration-v1",
+            "side": request.side,
+            "mapRevisionId": request.mapRevisionId,
+            "currentPhysicalQuadSha256": request.currentPhysicalQuadSha256,
+            "currentInspectionSha256": request.currentInspectionSha256,
+            **registered,
+        }
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(error).__name__}: {error}",
+        ) from error
+
+
 @app.post("/detect")
 def detect(request: DetectRequest):
+    request_started = time.perf_counter()
     try:
-        views = [
-            (view.id, load_image(view.imageUrl, view.imageBase64))
-            for view in request.views
-        ]
-        return detect_views(
+        views = []
+        image_loads = []
+        for view in request.views:
+            load_started = time.perf_counter()
+            image = load_image(view.imageUrl, view.imageBase64)
+            image_loads.append(
+                {
+                    "viewId": view.id,
+                    "durationMs": round(
+                        (time.perf_counter() - load_started) * 1000, 3
+                    ),
+                    "width": int(image.shape[1]),
+                    "height": int(image.shape[0]),
+                }
+            )
+            views.append((view.id, image))
+        detection_started = time.perf_counter()
+        result = detect_views(
             views,
             request.side,
             request.cornerShape,
@@ -344,9 +416,38 @@ def detect(request: DetectRequest):
             session_id=request.sessionId,
             trace_id=request.requestTraceId,
         )
+        detector_duration_ms = round(
+            (time.perf_counter() - detection_started) * 1000, 3
+        )
+        instrumentation = {
+            **result.get("instrumentation", {}),
+            "version": "speedster-service-timing-v1",
+            "side": request.side,
+            "requestTraceId": request.requestTraceId,
+            "imageLoads": image_loads,
+            "imageLoadTotalMs": round(
+                sum(item["durationMs"] for item in image_loads), 3
+            ),
+            "detectorDurationMs": detector_duration_ms,
+            "serviceTotalMs": round(
+                (time.perf_counter() - request_started) * 1000, 3
+            ),
+        }
+        result["instrumentation"] = instrumentation
+        LOGGER.info(
+            "speedster_detect_timing %s",
+            json.dumps(instrumentation, separators=(",", ":"), sort_keys=True),
+        )
+        return result
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:
+        LOGGER.exception(
+            "speedster_detect_timing_failed side=%s requestTraceId=%s durationMs=%.3f",
+            request.side,
+            request.requestTraceId,
+            (time.perf_counter() - request_started) * 1000,
+        )
         raise HTTPException(
             status_code=500,
             detail=f"{type(error).__name__}: {error}",

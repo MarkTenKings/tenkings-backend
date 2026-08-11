@@ -18,8 +18,15 @@ import {
   parseSpeedsterTraceRleV1,
 } from "../../../../../lib/ai-grader-v2/trace-codec";
 import { SPEEDSTER_REVIEW_VIEW_TYPES } from "../../../../../lib/ai-grader-v2/review-image-urls";
+import {
+  hashSpeedsterMapStorageEvidence,
+  loadExactActiveSpeedsterMapRevision,
+  parseSpeedsterMapRegistration,
+  speedsterPhysicalQuadHash,
+} from "../../../../../lib/server/speedsterCardTypeMaps";
+import { canonicalizeSpeedsterSessionIdentity } from "../../../../../lib/ai-grader-v2/identity";
 
-const ACTIONS = new Set(["geometry", "prepare", "trace-proposal"]);
+const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
 
 export function speedsterServiceHeaders() {
   const apiKey = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
@@ -35,6 +42,18 @@ type TraceEvidenceDependencies = {
     createdByUserId: string,
   ) => Promise<{ capture: unknown; reviewedDefects?: unknown } | null>;
   presignRead: (storageKey: string, expiresInSeconds: number) => Promise<string>;
+  findOwnedMapSession?: (
+    sessionId: string,
+    createdByUserId: string,
+  ) => Promise<{
+    id: string;
+    createdByUserId: string;
+    cardProfile: string;
+    workflowState: string;
+    identity: unknown;
+  } | null>;
+  loadActiveMap?: typeof loadExactActiveSpeedsterMapRevision;
+  hashMapEvidence?: typeof hashSpeedsterMapStorageEvidence;
 };
 
 const traceEvidenceDependencies: TraceEvidenceDependencies = {
@@ -43,6 +62,18 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
     select: { capture: true, reviewedDefects: true },
   }),
   presignRead: presignReadUrl,
+  findOwnedMapSession: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
+    where: { id: sessionId, createdByUserId },
+    select: {
+      id: true,
+      createdByUserId: true,
+      cardProfile: true,
+      workflowState: true,
+      identity: true,
+    },
+  }),
+  loadActiveMap: loadExactActiveSpeedsterMapRevision,
+  hashMapEvidence: hashSpeedsterMapStorageEvidence,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -93,6 +124,57 @@ export async function speedsterServiceBody(
   evidenceDeps: TraceEvidenceDependencies = traceEvidenceDependencies,
   requestTraceId?: string,
 ) {
+  if (action === "map-registration" && createdByUserId) {
+    const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+    const side = body.side === "FRONT" || body.side === "BACK" ? body.side : null;
+    const rawQuad = body.currentPhysicalQuad;
+    const currentPhysicalQuad = sanitizeSpeedsterUnitQuad(rawQuad);
+    if (!sessionId || !side || !currentPhysicalQuad || JSON.stringify(currentPhysicalQuad) !== JSON.stringify(rawQuad)) {
+      throw new Error("Speedster map registration request is invalid.");
+    }
+    const findOwnedMapSession = evidenceDeps.findOwnedMapSession ?? traceEvidenceDependencies.findOwnedMapSession;
+    const loadActiveMap = evidenceDeps.loadActiveMap ?? traceEvidenceDependencies.loadActiveMap;
+    const hashMapEvidence = evidenceDeps.hashMapEvidence ?? traceEvidenceDependencies.hashMapEvidence;
+    if (!findOwnedMapSession || !loadActiveMap || !hashMapEvidence) {
+      throw new Error("Speedster map registration dependencies are unavailable.");
+    }
+    const session = await findOwnedMapSession(sessionId, createdByUserId);
+    if (!session || (session.workflowState !== "DRAFT" && session.workflowState !== "CAPTURED")) {
+      throw new Error("Speedster map registration session was not found.");
+    }
+    if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+      throw new Error("Speedster map registration category is unsupported.");
+    }
+    const identity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
+    const revision = await loadActiveMap({ cardProfile: session.cardProfile, identity });
+    if (!revision) throw new Error("No exact active TRAIN map exists for this card identity.");
+    const mapSide = side === "FRONT" ? revision.frontMap : revision.backMap;
+    if (mapSide.side !== side) throw new Error("Active TRAIN map side is incoherent.");
+    const currentStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}/inspection.webp`;
+    const [referenceSha256, currentInspectionSha256] = await Promise.all([
+      hashMapEvidence(mapSide.referenceInspection.storageKey),
+      hashMapEvidence(currentStorageKey),
+    ]);
+    if (referenceSha256 !== mapSide.referenceInspection.sha256) {
+      throw new Error("Active TRAIN map reference evidence failed hash verification.");
+    }
+    return {
+      referenceImage: {
+        imageUrl: await evidenceDeps.presignRead(mapSide.referenceInspection.storageKey, 60 * 10),
+      },
+      currentImage: {
+        imageUrl: await evidenceDeps.presignRead(currentStorageKey, 60 * 10),
+      },
+      mapId: revision.mapId,
+      mapRevisionId: revision.revisionId,
+      side,
+      currentPhysicalQuadSha256: speedsterPhysicalQuadHash(currentPhysicalQuad),
+      currentInspectionSha256,
+      anchors: mapSide.anchors.map(({ id, point }) => ({ id, point })),
+      designBoundary: mapSide.designBoundary,
+      zones: mapSide.zones,
+    };
+  }
   if (action === "trace-proposal" && createdByUserId) {
     const { sessionId, currentTraceWire, ...proposal } = body;
     if (typeof sessionId !== "string" || !sessionId.trim()) {
@@ -191,16 +273,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new Error("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
 
+    const serviceRequestBody = await speedsterServiceBody(
+      action,
+      req.body ?? {},
+      admin.user.id,
+      traceEvidenceDependencies,
+      action === "trace-proposal" ? requestTraceId : undefined,
+    ) as Record<string, unknown>;
     const response = await fetch(`${serviceUrl}/${action}`, {
       method: "POST",
       headers: speedsterServiceHeaders(),
-      body: JSON.stringify(await speedsterServiceBody(
-        action,
-        req.body ?? {},
-        admin.user.id,
-        traceEvidenceDependencies,
-        action === "trace-proposal" ? requestTraceId : undefined,
-      )),
+      body: JSON.stringify(serviceRequestBody),
     });
     const payload = await response.json().catch(() => ({}));
     if (action === "trace-proposal" && !response.ok) {
@@ -223,6 +306,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ),
             };
           })()
+        : action === "map-registration" && response.ok
+          ? parseSpeedsterMapRegistration(payload, {
+              side: serviceRequestBody.side as "FRONT" | "BACK",
+              mapRevisionId: serviceRequestBody.mapRevisionId as string,
+            })
         : payload;
     return res.status(response.status).json(safePayload);
   } catch (error) {

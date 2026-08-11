@@ -375,6 +375,137 @@ def printed_border_quad(
     return quad, detected, offsets
 
 
+def _canonical_registration_image(image: np.ndarray) -> np.ndarray:
+    """Return only the physical card grid from a canonical or inspection image."""
+
+    height, width = image.shape[:2]
+    if (width, height) == (GRID_WIDTH, GRID_HEIGHT):
+        return image
+    if (width, height) == (INSPECTION_WIDTH, INSPECTION_HEIGHT):
+        margin = INSPECTION_MARGIN_PX
+        return image[margin : margin + GRID_HEIGHT, margin : margin + GRID_WIDTH]
+    raise ValueError("Map registration image is not a canonical Speedster card view")
+
+
+def _unit_points(points: list[dict]) -> np.ndarray:
+    parsed = np.array(
+        [
+            [float(point["x"]) * (GRID_WIDTH - 1), float(point["y"]) * (GRID_HEIGHT - 1)]
+            for point in points
+        ],
+        dtype=np.float32,
+    )
+    if parsed.shape != (4, 2) or not np.isfinite(parsed).all():
+        raise ValueError("Map registration requires exactly four finite human anchors")
+    if (parsed < 0).any() or (parsed[:, 0] > GRID_WIDTH - 1).any() or (parsed[:, 1] > GRID_HEIGHT - 1).any():
+        raise ValueError("Map registration anchors must use the normalized card grid")
+    return parsed
+
+
+def _project_unit_points(points: list[dict], homography: np.ndarray) -> list[dict]:
+    pixels = np.array(
+        [[float(point["x"]) * (GRID_WIDTH - 1), float(point["y"]) * (GRID_HEIGHT - 1)] for point in points],
+        dtype=np.float32,
+    ).reshape(-1, 1, 2)
+    projected = cv2.perspectiveTransform(pixels, homography).reshape(-1, 2)
+    if not np.isfinite(projected).all():
+        raise ValueError("Map registration projected non-finite design geometry")
+    return [
+        {
+            "x": float(x / (GRID_WIDTH - 1)),
+            "y": float(y / (GRID_HEIGHT - 1)),
+        }
+        for x, y in projected
+    ]
+
+
+def register_map_design(
+    reference_image: np.ndarray,
+    current_image: np.ndarray,
+    anchors: list[dict],
+    design_boundary: dict,
+    zones: list[dict],
+) -> dict:
+    """Locate four human anchors and transform only the mapped printed design."""
+
+    if len(anchors) != 4 or len({anchor.get("id") for anchor in anchors}) != 4:
+        raise ValueError("Map registration requires four unique human anchors")
+    reference = _canonical_registration_image(reference_image)
+    current = _canonical_registration_image(current_image)
+    reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
+    current_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY)
+    expected = _unit_points([anchor["point"] for anchor in anchors])
+    located, status, error = cv2.calcOpticalFlowPyrLK(
+        reference_gray,
+        current_gray,
+        expected.reshape(-1, 1, 2),
+        None,
+        winSize=(81, 81),
+        maxLevel=4,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 0.001),
+        flags=0,
+        minEigThreshold=1e-6,
+    )
+    if located is None or status is None or error is None or not np.all(status.reshape(-1) == 1):
+        raise ValueError("One or more human map anchors could not be located on the current copy")
+    located = located.reshape(-1, 2)
+    if not np.isfinite(located).all() or (located[:, 0] < 0).any() or (located[:, 1] < 0).any() or (located[:, 0] > GRID_WIDTH - 1).any() or (located[:, 1] > GRID_HEIGHT - 1).any():
+        raise ValueError("Located map anchors fall outside the current physical card")
+    homography = cv2.getPerspectiveTransform(expected.astype(np.float32), located.astype(np.float32))
+    if not np.isfinite(homography).all() or abs(float(np.linalg.det(homography))) < 1e-12:
+        raise ValueError("Human map anchors do not define a coherent design transform")
+
+    kind = design_boundary.get("kind")
+    if kind == "FULL_BLEED":
+        projected_boundary = {"kind": "FULL_BLEED"}
+    elif kind == "QUAD":
+        projected_boundary = {
+            "kind": "QUAD",
+            "points": _project_unit_points(design_boundary.get("points", []), homography),
+        }
+    else:
+        raise ValueError("Map design boundary is invalid")
+
+    projected_zones = []
+    for zone in zones:
+        polygon = zone.get("polygon")
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            raise ValueError("Map zone polygon is invalid")
+        projected_zones.append(
+            {
+                "id": zone["id"],
+                "label": zone["label"],
+                "semanticType": zone["semanticType"],
+                "polygon": _project_unit_points(polygon, homography),
+            }
+        )
+
+    scale = np.array(
+        [[GRID_WIDTH - 1, 0, 0], [0, GRID_HEIGHT - 1, 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
+    unit_homography = np.linalg.inv(scale) @ homography @ scale
+    unit_homography /= unit_homography[2, 2]
+    errors = error.reshape(-1)
+    return {
+        "homography": unit_homography.reshape(-1).tolist(),
+        "anchors": [
+            {
+                "anchorId": anchor["id"],
+                "expectedPoint": anchor["point"],
+                "locatedPoint": {
+                    "x": float(located[index][0] / (GRID_WIDTH - 1)),
+                    "y": float(located[index][1] / (GRID_HEIGHT - 1)),
+                },
+                "score": float(1.0 / (1.0 + max(0.0, errors[index]))),
+            }
+            for index, anchor in enumerate(anchors)
+        ],
+        "projectedDesignBoundary": projected_boundary,
+        "projectedZones": projected_zones,
+    }
+
+
 def _candidate_type(
     view_id: str,
     box: tuple[int, int, int, int],

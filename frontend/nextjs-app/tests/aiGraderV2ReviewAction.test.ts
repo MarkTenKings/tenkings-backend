@@ -124,6 +124,36 @@ test("one server-owned REMOVE measures once, persists grade+findings atomically,
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
 });
 
+test("instrumentation failure is fail-open only after authoritative review persistence", async () => {
+  const events: string[] = [];
+  const originalError = console.error;
+  console.error = () => undefined;
+  try {
+    const result = await applySpeedsterReviewAction({
+      sessionId: session().id,
+      createdByUserId: "admin-1",
+      action: { type: "REMOVE", defectIds: [defect.id] },
+    }, {
+      async loadOwnedSession() { return session(); },
+      async persistReviewIfRevision() { events.push("authority:committed"); },
+      async presignRead() { return "https://fresh.example/front.webp"; },
+      async learningBankForDetect() { return {}; },
+      async detect() { throw new Error("must not detect"); },
+      async measure() { return { defects: [] }; },
+      async recordInstrumentation(instrumentation) {
+        assert.equal(events.at(-1), "authority:committed");
+        assert.equal(instrumentation.some(({ operatorAction }) => operatorAction === "REMOVED"), true);
+        events.push("telemetry:attempted");
+        throw new Error("telemetry unavailable");
+      },
+    });
+    assert.equal(result.reviewedDefects[0].reviewResult, "REMOVED");
+    assert.deepEqual(events, ["authority:committed", "telemetry:attempted"]);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("one server-owned batch REMOVE persists every removal atomically and batch UNDO restores all", async () => {
   const second = {
     ...defect,
@@ -233,6 +263,62 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
   const initializedPersisted = persisted as unknown as { gradeReport: { detectorVersion?: string } };
   assert.equal(initializedPersisted.gradeReport.detectorVersion, "sam3-server-owned");
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
+});
+
+test("INITIALIZE records detector fusion provenance without changing authoritative grading payloads", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const instrumented = {
+    ...defect,
+    reviewResult: "UNREVIEWED" as const,
+    findingProvenance: {
+      version: "speedster-finding-provenance-v1" as const,
+      primaryProposalId: "FRONT:0",
+      contributors: [{
+        proposalId: "FRONT:0",
+        origin: "DETECTOR" as const,
+        sourceViewId: "FRONT:ORIGINAL",
+        defectType: defect.defectType,
+        confidence: defect.confidence,
+        rankingConfidence: defect.confidence,
+      }],
+    },
+  };
+  let persisted: readonly Record<string, unknown>[] = [];
+  let instrumentation: readonly { eventType: string; details?: unknown }[] = [];
+  const result = await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision(_identity, _revision, data) {
+      persisted = data.reviewedDefects as readonly Record<string, unknown>[];
+    },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect(body) {
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: body.side === "FRONT" ? [instrumented] : [],
+        instrumentation: {
+          version: "speedster-service-timing-v1",
+          side: body.side,
+          requestTraceId: body.requestTraceId,
+          serviceTotalMs: 12,
+          measurementMs: 3,
+        },
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { instrumentation = events; },
+  });
+
+  assert.equal("findingProvenance" in persisted[0], false);
+  assert.equal(JSON.stringify(result).includes("findingProvenance"), false);
+  const proposal = instrumentation.find(({ eventType }) => eventType === "FINDING_PROPOSED");
+  assert.match(JSON.stringify(proposal?.details), /FRONT:0/);
+  assert.equal(instrumentation.filter(({ eventType }) => eventType === "SAM_MEMORY_SIDE_COMPLETED").length, 2);
 });
 
 test("exact INITIALIZE retry returns the coherently initialized state without a second detector pass", async () => {

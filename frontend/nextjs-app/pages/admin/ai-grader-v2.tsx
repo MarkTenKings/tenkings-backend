@@ -3,8 +3,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
-import { CaptureWorkspace, type SpeedsterCaptureBundle } from "../../components/ai-grader-v2/CaptureWorkspace";
+import {
+  CaptureWorkspace,
+  type SpeedsterCaptureBundle,
+  type SpeedsterCaptureInstrumentationEvent,
+} from "../../components/ai-grader-v2/CaptureWorkspace";
 import { ReviewWorkspace } from "../../components/ai-grader-v2/ReviewWorkspace";
+import {
+  SpeedsterTrainWorkspace,
+  type SpeedsterTrainMapState,
+  type SpeedsterTrainSource,
+} from "../../components/ai-grader-v2/SpeedsterTrainWorkspace";
 import type {
   SpeedsterInMemoryTraceSave,
   SpeedsterTraceProposalInput,
@@ -22,6 +31,7 @@ import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
+import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
@@ -63,11 +73,30 @@ type SpeedsterCompletion = {
     harvest: { admittedLessons: number; skippedLessons: number };
   };
 };
+type SpeedsterClientInstrumentationDetails = Readonly<{
+  side?: "FRONT" | "BACK";
+  findingIds?: readonly string[];
+  actionType?: "REMOVE" | "UNDO" | "TRACE_SAVE" | "CHANGE_TYPE";
+  startBasis?: "FIRST_SPEEDSTER_INTERACTION";
+  lowerBound?: boolean;
+  automaticGeometryCount?: number;
+  photoSource?: "IPHONE" | "LOCAL" | "MIXED";
+  findingCount?: number;
+  filteredCount?: number;
+  outcome?: "SUCCEEDED" | "FAILED";
+  postCycleWork?: "PHOTOROOM" | "COMPS" | "NFC";
+  errorCode?: string;
+}>;
 
 export default function AiGraderV2AdminPage() {
   const { session, loading, ensureSession } = useSession();
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
+  const [draftIdentity, setDraftIdentity] = useState<ReturnType<typeof canonicalizeSpeedsterSessionIdentity> | null>(null);
+  const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
+  const [mapIntegrityError, setMapIntegrityError] = useState<string | null>(null);
+  const [trainRequested, setTrainRequested] = useState(false);
+  const [trainOpen, setTrainOpen] = useState(false);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
   const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
@@ -99,6 +128,60 @@ export default function AiGraderV2AdminPage() {
   }, [capture, reviewImageUrls]);
   const reviewActive = Boolean(capture && review && defects !== null && !completion);
   const imageErrorRetryUsed = useRef(false);
+  const cycleStartedAt = useRef<number | null>(null);
+  const nextReadyRecorded = useRef(false);
+  const reviewRenderedRecorded = useRef(false);
+
+  const beginCycle = useCallback(() => {
+    if (cycleStartedAt.current === null) cycleStartedAt.current = Date.now();
+    return cycleStartedAt.current;
+  }, []);
+
+  const recordInstrumentation = useCallback((input: {
+    sessionId: string;
+    eventType:
+      | "FIRST_SPEEDSTER_INTERACTION"
+      | "DRAFT_CREATED"
+      | "PHOTOS_READY"
+      | "GEOMETRY_PROPOSED"
+      | "GEOMETRY_CONFIRMED"
+      | "CENTERING_CONFIRMED"
+      | "CAPTURE_SAVED"
+      | "SAM_MEMORY_COMPLETED"
+      | "REVIEW_RENDERED"
+      | "REVIEW_ACTION_COMPLETED"
+      | "GRADE_COMPLETION_REQUESTED"
+      | "GRADE_COMPLETION_RESPONSE"
+      | "NEXT_READY_RENDERED"
+      | "NEXT_CARD_SELECTED"
+      | "POST_CYCLE_WORK_STARTED"
+      | "WORKFLOW_ERROR";
+    startedAtMs: number;
+    endedAtMs: number;
+    details?: SpeedsterClientInstrumentationDetails;
+  }) => {
+    if (!session?.token) return;
+    void fetch(
+      `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(input.sessionId)}/instrumentation`,
+      {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          eventId: crypto.randomUUID(),
+          eventType: input.eventType,
+          clientStartedAt: new Date(input.startedAtMs).toISOString(),
+          clientEndedAt: new Date(input.endedAtMs).toISOString(),
+          ...(input.details ? { details: input.details } : {}),
+        }),
+        keepalive: true,
+      },
+    ).catch(() => undefined);
+  }, [session?.token]);
+
+  const recordCaptureInstrumentation = useCallback((event: SpeedsterCaptureInstrumentationEvent) => {
+    if (!draft) return;
+    recordInstrumentation({ sessionId: draft.id, ...event });
+  }, [draft, recordInstrumentation]);
   const refreshReviewImages = useMemo(() => {
     if (!session?.token || !draft?.id) return null;
     return createCoalescedReviewImageRefresh(async () => {
@@ -122,7 +205,38 @@ export default function AiGraderV2AdminPage() {
   useEffect(() => {
     setReviewImageUrls(null);
     imageErrorRetryUsed.current = false;
+    reviewRenderedRecorded.current = false;
   }, [draft?.id]);
+
+  useEffect(() => {
+    if (!reviewActive || !draft || !defects || reviewRenderedRecorded.current) return;
+    reviewRenderedRecorded.current = true;
+    const atMs = Date.now();
+    recordInstrumentation({
+      sessionId: draft.id,
+      eventType: "REVIEW_RENDERED",
+      startedAtMs: atMs,
+      endedAtMs: atMs,
+      details: { findingCount: defects.length },
+    });
+  }, [defects, draft, recordInstrumentation, reviewActive]);
+
+  useEffect(() => {
+    if (!completion || !draft || nextReadyRecorded.current) return;
+    nextReadyRecorded.current = true;
+    const endedAtMs = Date.now();
+    recordInstrumentation({
+      sessionId: draft.id,
+      eventType: "NEXT_READY_RENDERED",
+      startedAtMs: cycleStartedAt.current ?? endedAtMs,
+      endedAtMs,
+      details: {
+        startBasis: "FIRST_SPEEDSTER_INTERACTION",
+        lowerBound: true,
+        outcome: "SUCCEEDED",
+      },
+    });
+  }, [completion, draft, recordInstrumentation]);
 
   useEffect(() => {
     if (!reviewActive || !refreshReviewImages) return;
@@ -142,6 +256,7 @@ export default function AiGraderV2AdminPage() {
   }, [refreshReviewImages, reviewActive, silentlyRefreshReviewImages]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
+    beginCycle();
     setIdentity((current) => field === "cardType"
       ? {
           ...current,
@@ -154,9 +269,10 @@ export default function AiGraderV2AdminPage() {
       : { ...current, [field]: value });
   };
 
-  const createDraft = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const createDraft = async (event: FormEvent<HTMLFormElement> | null, train = false) => {
+    event?.preventDefault();
     if (!session?.token || working) return;
+    const startedAtMs = beginCycle();
     setWorking(true);
     setMessage("Creating the Speedster card.");
     try {
@@ -191,9 +307,46 @@ export default function AiGraderV2AdminPage() {
       };
       if (!response.ok || !payload.session) throw new Error(payload.message ?? "Speedster card could not be created.");
       setDraft(payload.session);
-      setMessage("Add one original Front and one original Back image.");
+      const endedAtMs = Date.now();
+      recordInstrumentation({
+        sessionId: payload.session.id,
+        eventType: "FIRST_SPEEDSTER_INTERACTION",
+        startedAtMs,
+        endedAtMs: startedAtMs,
+        details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true },
+      });
+      recordInstrumentation({
+        sessionId: payload.session.id,
+        eventType: "DRAFT_CREATED",
+        startedAtMs,
+        endedAtMs,
+        details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" },
+      });
+      setDraftIdentity(printedIdentity);
+      setTrainRequested(train);
+      const mapResponse = await fetch(
+        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}`,
+        { headers: buildAdminHeaders(session.token), cache: "no-store" },
+      );
+      const mapPayload = (await mapResponse.json().catch(() => ({}))) as {
+        map?: SpeedsterTrainMapState;
+        message?: string;
+      };
+      if (!mapResponse.ok || !mapPayload.map) {
+        const failure = mapPayload.message ?? "Exact TRAIN map lookup failed.";
+        setMapIntegrityError(failure);
+        throw new Error(failure);
+      }
+      setMapState(mapPayload.map);
+      setMapIntegrityError(null);
+      setMessage(train
+        ? "TRAIN selected. Add Front and Back, then set the current card geometry."
+        : mapPayload.map.status === "LOADED"
+          ? `Exact TRAIN map revision ${mapPayload.map.revision?.version} loaded. Add Front and Back.`
+          : "No exact TRAIN map exists. The unchanged Speedster review path will apply.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Speedster card could not be created.");
+      const failure = error instanceof Error ? error.message : "Speedster card could not be created.";
+      setMessage(failure);
     } finally {
       setWorking(false);
     }
@@ -201,6 +354,7 @@ export default function AiGraderV2AdminPage() {
 
   const initializeReview = useCallback(async () => {
     if (!session?.token || !draft) throw new Error("Speedster detector state cannot initialize without its draft.");
+    const startedAtMs = Date.now();
     setInitializeFailed(false);
     setMessage("SAM 3 is scanning the server-owned Front and Back card views.");
     const initializeResponse = await fetch(
@@ -219,11 +373,20 @@ export default function AiGraderV2AdminPage() {
       throw new Error(initialized.message ?? "Speedster detector state could not be initialized.");
     }
     setDefects(initialized.reviewedDefects);
+    const endedAtMs = Date.now();
+    recordInstrumentation({
+      sessionId: draft.id,
+      eventType: "SAM_MEMORY_COMPLETED",
+      startedAtMs,
+      endedAtMs,
+      details: { findingCount: initialized.reviewedDefects.length, outcome: "SUCCEEDED" },
+    });
     setMessage("SAM 3 scan complete. Review the measured card map.");
-  }, [draft, session?.token]);
+  }, [draft, recordInstrumentation, session?.token]);
 
   const saveCapture = async (bundle: SpeedsterCaptureBundle) => {
     if (!session?.token || !draft) return;
+    const startedAtMs = Date.now();
     setWorking(true);
     setMessage("Saving the locked card geometry.");
     const compactSide = (side: SpeedsterCaptureBundle["front"]) => ({
@@ -248,12 +411,34 @@ export default function AiGraderV2AdminPage() {
             front: compactSide(bundle.front),
             back: compactSide(bundle.back),
           },
+          ...(bundle.front.mapRegistration && bundle.back.mapRegistration ? {
+            mapBinding: {
+              revisionId: bundle.front.mapRegistration.mapRevisionId,
+              filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+              registration: {
+                front: bundle.front.mapRegistration,
+                back: bundle.back.mapRegistration,
+              },
+            },
+          } : {}),
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "Card geometry could not be saved.");
       setCapture(bundle);
-      await initializeReview();
+      recordInstrumentation({
+        sessionId: draft.id,
+        eventType: "CAPTURE_SAVED",
+        startedAtMs,
+        endedAtMs: Date.now(),
+        details: { outcome: "SUCCEEDED" },
+      });
+      if (trainRequested) {
+        setTrainOpen(true);
+        setMessage("Draw the human Front and Back map. Saving activates the revision immediately.");
+      } else {
+        await initializeReview();
+      }
     } catch (error) {
       setInitializeFailed(true);
       setMessage(error instanceof Error ? error.message : "Card geometry could not be saved.");
@@ -271,6 +456,7 @@ export default function AiGraderV2AdminPage() {
     if (!session?.token || !draft || !capture || !defects || working) {
       return { applied: false, message: fallbackErrorMessage };
     }
+    const startedAtMs = Date.now();
     setWorking(true);
     setMessage(pendingMessage);
     try {
@@ -305,6 +491,18 @@ export default function AiGraderV2AdminPage() {
         throw new Error(payload.message ?? "Measured review changes could not be saved to the draft.");
       }
       setDefects(payload.reviewedDefects);
+      const findingIds = action.type === "REMOVE" || action.type === "UNDO"
+        ? action.defectIds
+        : action.type === "CHANGE_TYPE"
+          ? [action.defectId]
+          : [action.findingId === null ? action.trace.id : action.findingId];
+      recordInstrumentation({
+        sessionId: draft.id,
+        eventType: "REVIEW_ACTION_COMPLETED",
+        startedAtMs,
+        endedAtMs: Date.now(),
+        details: { actionType: action.type, findingIds, outcome: "SUCCEEDED" },
+      });
       setMessage(successMessage);
       return { applied: true };
     } catch (error) {
@@ -401,7 +599,14 @@ export default function AiGraderV2AdminPage() {
 
   const completeGrade = async () => {
     if (!session?.token || !draft || !review || working) return;
+    const startedAtMs = Date.now();
     setWorking(true);
+    recordInstrumentation({
+      sessionId: draft.id,
+      eventType: "GRADE_COMPLETION_REQUESTED",
+      startedAtMs,
+      endedAtMs: startedAtMs,
+    });
     setMessage("Completing the grade and adding its label to the print queue.");
     try {
       const response = await fetch(
@@ -416,6 +621,29 @@ export default function AiGraderV2AdminPage() {
       if (!response.ok || !payload.label || !payload.publicReportSlug) {
         throw new Error(payload.message ?? "Speedster grade could not be completed.");
       }
+      recordInstrumentation({
+        sessionId: draft.id,
+        eventType: "GRADE_COMPLETION_RESPONSE",
+        startedAtMs,
+        endedAtMs: Date.now(),
+        details: { outcome: "SUCCEEDED" },
+      });
+      const postCycleStartedAt = Date.now();
+      recordInstrumentation({
+        sessionId: draft.id,
+        eventType: "POST_CYCLE_WORK_STARTED",
+        startedAtMs: postCycleStartedAt,
+        endedAtMs: postCycleStartedAt,
+        details: { postCycleWork: "PHOTOROOM" },
+      });
+      void fetch(
+        `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/presentation`,
+        {
+          method: "POST",
+          headers: buildAdminHeaders(session.token),
+          keepalive: true,
+        },
+      ).catch(() => undefined);
       setDefects(completeSpeedsterReview(defects ?? []));
       setCompletion(payload);
       setMessage("Grade complete. The public evidence report and label are ready.");
@@ -432,6 +660,14 @@ export default function AiGraderV2AdminPage() {
   }
   if (!isAdmin) return <AppShell background="black"><div className={styles.center}>Admin access required.</div></AppShell>;
 
+  const trainSource: SpeedsterTrainSource | null = draft && draftIdentity && capture ? {
+    sessionId: draft.id,
+    cardProfile: draft.cardProfile,
+    identity: draftIdentity,
+    front: { rectifiedUrl: capture.front.rectifiedUrl, centeringQuad: capture.front.centeringQuad },
+    back: { rectifiedUrl: capture.back.rectifiedUrl, centeringQuad: capture.back.centeringQuad },
+  } : null;
+
   return (
     <AppShell background="black" hideFooter>
       <Head><title>AI Grader V2 Speedster | Ten Kings</title><meta name="robots" content="noindex,nofollow" /></Head>
@@ -442,26 +678,74 @@ export default function AiGraderV2AdminPage() {
         </header>
 
         {!draft ? (
-          <SharedLabelEditor
-            mode="SPEEDSTER"
-            value={identity}
-            onChange={updateIdentity}
-            onSubmit={createDraft}
-            saving={working}
-            certificateNumber="TKS-DRAFT"
-          />
+          <>
+            <SharedLabelEditor
+              mode="SPEEDSTER"
+              value={identity}
+              onChange={updateIdentity}
+              onSubmit={(event) => void createDraft(event, false)}
+              onFirstInteraction={beginCycle}
+              saving={working}
+              certificateNumber="TKS-DRAFT"
+            />
+            <section className={styles.statusPanel}>
+              <span>TRAIN · NEW CARD</span>
+              <h2>Build or correct this exact card-type map.</h2>
+              <p>TRAIN uses the same identity, physical geometry, centering, and capture path.</p>
+              <button type="button" disabled={working} onClick={() => void createDraft(null, true)}>TRAIN</button>
+            </section>
+          </>
         ) : null}
 
-        {draft && !capture ? (
+        {draft && mapState && !capture ? (
+          <section className={styles.statusPanel}>
+            <span>EXACT TRAIN MAP</span>
+            <h2>{mapState.status === "LOADED"
+              ? `Loaded revision ${mapState.revision?.version}`
+              : "No exact map"}</h2>
+            <p>{mapState.status === "LOADED"
+              ? `${mapState.revision?.revisionHash.slice(0, 12)} · The active map will register to this copy's physical geometry.`
+              : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
+            <button type="button" onClick={() => setTrainRequested(true)}>
+              {mapState.status === "LOADED" ? "TRAIN / Edit map" : "TRAIN this card type"}
+            </button>
+          </section>
+        ) : null}
+
+        {mapIntegrityError ? (
+          <section className={styles.statusPanel} role="alert">
+            <span>TRAIN MAP INTEGRITY ERROR</span>
+            <h2>Card initialization stopped.</h2>
+            <p>{mapIntegrityError}</p>
+          </section>
+        ) : null}
+
+        {draft && !capture && mapState && !mapIntegrityError ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
+            activeMapRevisionId={mapState.revision?.revisionId ?? null}
             onReady={(bundle) => void saveCapture(bundle)}
+            onInstrumentationEvent={recordCaptureInstrumentation}
           />
         ) : null}
 
-        {capture && defects === null ? (
+        {trainOpen && trainSource && mapState ? (
+          <SpeedsterTrainWorkspace
+            token={session.token}
+            source={trainSource}
+            initialMap={mapState}
+            onSaved={(nextMap) => {
+              setMapState(nextMap);
+              setTrainOpen(false);
+              setTrainRequested(false);
+              void initializeReview();
+            }}
+          />
+        ) : null}
+
+        {capture && defects === null && !trainOpen ? (
           <section className={styles.statusPanel}>
             <span>03 · SAM 3</span>
             <h2>Scanning card views.</h2>
@@ -549,6 +833,15 @@ export default function AiGraderV2AdminPage() {
             <Link href="/admin/ai-grader-v2/completed">Open completed cards →</Link>
             <Link href="/admin/ai-grader-v2" onClick={(event) => {
               event.preventDefault();
+              const atMs = Date.now();
+              if (draft) {
+                recordInstrumentation({
+                  sessionId: draft.id,
+                  eventType: "NEXT_CARD_SELECTED",
+                  startedAtMs: atMs,
+                  endedAtMs: atMs,
+                });
+              }
               window.location.assign("/admin/ai-grader-v2");
             }}>Next card →</Link>
           </section>

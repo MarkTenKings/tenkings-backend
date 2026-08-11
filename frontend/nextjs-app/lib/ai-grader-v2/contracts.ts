@@ -63,6 +63,22 @@ export type SpeedsterMemoryProposal = {
   similarity: number;
 };
 
+export type SpeedsterFindingProvenanceContributor = {
+  proposalId: string;
+  origin: SpeedsterDefectOrigin;
+  sourceViewId: string;
+  defectType: SpeedsterDefectType;
+  confidence: number;
+  rankingConfidence: number;
+  memoryProposal?: SpeedsterMemoryProposal;
+};
+
+export type SpeedsterFindingProvenance = {
+  version: "speedster-finding-provenance-v1";
+  primaryProposalId: string;
+  contributors: readonly SpeedsterFindingProvenanceContributor[];
+};
+
 export type SpeedsterTraceProvenance = Readonly<{
   version: "speedster-trace-provenance-v1";
   sourceViewId: string;
@@ -88,6 +104,7 @@ export type SpeedsterDefect = {
   featureFingerprintTraceSha256?: string;
   smartMarkLearning?: SpeedsterSmartMarkLearning;
   memoryProposal?: SpeedsterMemoryProposal;
+  findingProvenance?: SpeedsterFindingProvenance;
   learningAdjustment?: number;
   confidence: number;
   canonicalContour: readonly SpeedsterPoint[];

@@ -54,6 +54,33 @@ const memoryRemoved = {
 };
 const { reviewResultBeforeRemoval: _removedState, ...detectorFinding } = detectorRemoved;
 const accepted = { ...detectorFinding, id: "FRONT:kept-1:SURFACE", reviewResult: "ACCEPTED" };
+const filterDecision = {
+  id: "decision-123456789012345678",
+  findingId: accepted.id,
+  findingSnapshot: { ...accepted, reviewResult: "UNREVIEWED" },
+  originalOrigin: "DETECTOR",
+  proposedDefectType: accepted.defectType,
+  confidence: accepted.confidence,
+  similarity: null,
+  generatingExemplar: null,
+  sourceViewId: accepted.sourceViewId,
+  supportingViewIds: accepted.supportingViewIds,
+  mapId: "map-12345678901234567890",
+  mapRevisionId: "map-revision-1234567890123",
+  zoneId: "FRONT-print-zone",
+  zoneType: "PRINT_ARTWORK",
+  zoneOverlap: { coveredVertices: 3, totalVertices: 3, ratio: 1 },
+  filterPolicyVersion: "speedster-map-filter-containment-v1",
+  ruleId: "human-zone-full-contour-containment-v1",
+  ruleInputs: { findingOrigin: "DETECTOR", requiredCoverageRatio: 1 },
+  detectorVersion: "sam3-local-box-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+  filteredAt: new Date("2026-08-05T12:01:00.000Z"),
+  restoreEvent: null,
+  mapRevision: {
+    frontMap: { zones: [{ id: "FRONT-print-zone", label: "Printed artwork" }] },
+    backMap: { zones: [] },
+  },
+};
 
 function expectedKeys(side: "FRONT" | "BACK") {
   const prefix = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}`;
@@ -76,11 +103,13 @@ const completed = {
   id: sessionId,
   createdByUserId,
   cardProfile: "POKEMON",
+  workflowState: "COMPLETED",
   identity: { cardName: "Cubone", year: "1999", productSet: "Jungle", cardNumber: "50/64" },
   capture: { cornerShape: "SQUARE", front: expectedKeys("FRONT"), back: expectedKeys("BACK") },
   reviewedDefects: [detectorRemoved, memoryRemoved, accepted],
   publicReportSlug: `speedster-${sessionId}`,
   collectibleCardV2: { lifecycleState: "GRADED" },
+  mapFilterDecisions: [filterDecision],
   createdAt: new Date("2026-08-05T12:00:00.000Z"),
 };
 const unreadable = {
@@ -90,6 +119,7 @@ const unreadable = {
   capture: {},
   identity: { cardName: "Historical card" },
   collectibleCardV2: null,
+  mapFilterDecisions: [],
 };
 
 function request(query: Record<string, string> = {}, method = "GET") {
@@ -141,7 +171,7 @@ test("private audit counts every completed session and never silently drops unre
   assert.equal(payload.summary.completedSessionsInspected, 2);
   assert.equal(payload.summary.sessionsWithRemovedFindings, 1);
   assert.equal(payload.summary.unreadableSessions, 1);
-  assert.equal(payload.summary.totalRemovedFindings, 2);
+  assert.equal(payload.summary.totalRemovedFindings, 3);
   assert.deepEqual(payload.summary.removedByOrigin, { DETECTOR: 1, MEMORY: 1, SMART_MARK: 0 });
   assert.equal(payload.cards.find(({ id }) => id === sessionId)?.certificateNumber, "TKH-000641");
   assert.equal(payload.cards.find(({ id }) => id === unreadable.id)?.dataStatus, "UNREADABLE");
@@ -157,8 +187,9 @@ test("card detail exposes only saved removals with Memory provenance and signed 
     removedFindings: Array<Record<string, unknown>>;
     evidence: { status: string; sides: Record<string, { masterImageUrl: string }> };
   };
-  assert.equal(payload.removedFindings.length, 2);
-  assert.equal(payload.removedFindings.some(({ id }) => id === accepted.id), false);
+  assert.equal(payload.removedFindings.length, 3);
+  assert.equal(payload.removedFindings.some(({ id, removalClass }) =>
+    id === accepted.id && removalClass === "HUMAN_REMOVED"), false);
   const memory = payload.removedFindings.find(({ origin }) => origin === "MEMORY") as {
     memoryProposal: { similarity: number; lessonSessionId: string };
     detectedDefectType: string;
@@ -174,9 +205,19 @@ test("card detail exposes only saved removals with Memory provenance and signed 
   assert.equal(payload.evidence.status, "AVAILABLE");
   assert.match(payload.evidence.sides.FRONT.masterImageUrl, /prepared\/front\/inspection\.webp$/);
   assert.match(payload.evidence.sides.BACK.masterImageUrl, /prepared\/back\/inspection\.webp$/);
+  const filtered = payload.removedFindings.find(({ removalClass }) => removalClass === "FILTER_REMOVED") as {
+    decisionId: string;
+    mapRevisionId: string;
+    zoneLabel: string;
+    restore: { restored: boolean };
+  };
+  assert.equal(filtered.decisionId, filterDecision.id);
+  assert.equal(filtered.mapRevisionId, filterDecision.mapRevisionId);
+  assert.equal(filtered.zoneLabel, "Printed artwork");
+  assert.equal(filtered.restore.restored, false);
 });
 
-test("removed-findings route and screen are admin-only, GET-only, and contain no write seam", async () => {
+test("removed-findings inventory remains admin-only and GET-only while the screen exposes the separate restore route", async () => {
   let listed = 0;
   const deps = dependencies();
   const handler = createRemovedFindingsAuditHandler({
@@ -192,11 +233,49 @@ test("removed-findings route and screen are admin-only, GET-only, and contain no
   const root = fileURLToPath(new URL("..", import.meta.url));
   const api = readFileSync(`${root}/pages/api/admin/ai-grader-v2/removed-findings.ts`, "utf8");
   const page = readFileSync(`${root}/pages/admin/ai-grader-v2/removed-findings.tsx`, "utf8");
+  const reviewApi = readFileSync(`${root}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action.ts`, "utf8");
+  const restoreApi = readFileSync(`${root}/pages/api/admin/ai-grader-v2/removed-findings/[decisionId]/restore.ts`, "utf8");
+  const reviewWorkspace = readFileSync(`${root}/components/ai-grader-v2/ReviewWorkspace.tsx`, "utf8");
+  const normalReviewPage = readFileSync(`${root}/pages/admin/ai-grader-v2.tsx`, "utf8");
+  const normalReviewInvocation = normalReviewPage.slice(
+    normalReviewPage.indexOf("<ReviewWorkspace"),
+    normalReviewPage.indexOf("/>", normalReviewPage.indexOf("<ReviewWorkspace")) + 2,
+  );
   assert.match(api, /requireAdminSession/);
   assert.match(api, /reviewResult === "REMOVED"/);
   assert.doesNotMatch(api, /prisma\.[a-zA-Z]+\.(create|update|updateMany|delete|deleteMany|upsert)\(/);
-  assert.doesNotMatch(page, /method:\s*"(POST|PATCH|PUT|DELETE)"/);
-  assert.match(page, /PRIVATE READ-ONLY AUDIT/);
+  assert.match(page, /method:\s*"POST"/);
+  assert.match(page, /PRIVATE FILTER AUDIT/);
   assert.match(page, /lessonProposalOrder/);
   assert.match(page, /lessonSourceViewId/);
+  for (const visibleField of [
+    "removalClass", "mapId", "mapRevisionId", "zoneId", "cardProfile", "side",
+    "sourceViewId", "origin", "defectType", "restored",
+  ]) assert.match(page, new RegExp(visibleField));
+  assert.match(page, /Session \{detail\.card\.id\}/);
+  assert.match(page, /Confidence \{finding\.confidence/);
+  assert.match(page, /supportingViewIds/);
+  assert.match(page, /workflowState === "COMPLETED"/);
+  assert.match(page, /Active Speedster session/);
+  assert.match(page, /DefectEvidenceViewer/);
+  assert.match(page, /zoneOverlap/);
+  assert.match(page, /filterPolicyVersion/);
+  assert.match(reviewApi, /prisma\.\$transaction/);
+  assert.match(reviewApi, /loadPinnedSpeedsterMapRevision/);
+  assert.match(reviewApi, /aiGraderV2Session\.updateMany/);
+  assert.match(reviewApi, /aiGraderV2MapFilterDecision\.createMany/);
+  assert.match(restoreApi, /assertSpeedsterCompletedRestoreSnapshotUnchanged\(before, after\)/);
+  assert.match(restoreApi, /aiGraderV2MapFilterRestoreEvent\.create/);
+  assert.doesNotMatch(restoreApi, /aiGraderV2CardTypeMap(?:Revision)?\.(?:update|updateMany|create|upsert|delete)/);
+  assert.doesNotMatch(restoreApi, /LearningBank|learningBank/);
+  for (const forbiddenNormalReviewSurface of [
+    /FILTER_REMOVED/,
+    /filteredCount/,
+    /mapFilter/,
+    /mapRevisionId/,
+    /filterTray/,
+  ]) {
+    assert.doesNotMatch(reviewWorkspace, forbiddenNormalReviewSurface);
+    assert.doesNotMatch(normalReviewInvocation, forbiddenNormalReviewSurface);
+  }
 });

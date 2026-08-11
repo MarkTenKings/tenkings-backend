@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import time
 from contextlib import nullcontext
 from threading import Lock
 from typing import Optional, Protocol
@@ -1118,6 +1119,7 @@ def _trace_source_record(
             "origin",
             "detectedDefectType",
             "memoryProposal",
+            "findingProvenance",
             "finalTrace",
             "traceProvenance",
         ):
@@ -1221,6 +1223,13 @@ def _to_speedster_defects(
                     if result.get("memoryProposal") is not None
                     else {}
                 ),
+                **(
+                    {
+                        "findingProvenance": result["findingProvenance"],
+                    }
+                    if result.get("findingProvenance") is not None
+                    else {}
+                ),
                 "canonicalContour": contour,
                 "sourceViewId": result["sourceViewId"],
                 "supportingViewIds": result["supportingViewIds"],
@@ -1257,9 +1266,12 @@ def detect_views(
     session_id: Optional[str] = None,
     trace_id: Optional[str] = None,
 ) -> dict:
+    detect_started = time.perf_counter()
     active_processor = processor or get_processor()
     prepared_views = []
+    view_diagnostics = []
     for view_id, image in views:
+        localization_started = time.perf_counter()
         if image.shape[:2] == (INSPECTION_HEIGHT, INSPECTION_WIDTH):
             detector_image = image
         else:
@@ -1271,6 +1283,15 @@ def detect_views(
         localized_candidates = defect_candidates(
             detector_image, corner_shape, view_id
         )
+        view_diagnostics.append(
+            {
+                "viewId": view_id,
+                "candidateCount": len(localized_candidates),
+                "localizationMs": round(
+                    (time.perf_counter() - localization_started) * 1000, 3
+                ),
+            }
+        )
         prepared_views.append(
             {
                 "sourceViewId": view_id,
@@ -1280,6 +1301,7 @@ def detect_views(
             }
         )
 
+    scan_started = time.perf_counter()
     if hasattr(active_processor, "scan_side"):
         scanned_candidates = active_processor.scan_side(
             prepared_views,
@@ -1302,11 +1324,14 @@ def detect_views(
                 scanned_candidates.append(
                     {**candidate, "sourceViewId": view["sourceViewId"]}
                 )
+    scan_duration_ms = round((time.perf_counter() - scan_started) * 1000, 3)
 
     proposals = []
-    for candidate in _cap_memory_candidates_per_side(scanned_candidates):
+    capped_candidates = _cap_memory_candidates_per_side(scanned_candidates)
+    for proposal_index, candidate in enumerate(capped_candidates):
         proposals.append(
             {
+                "instrumentationProposalId": f"{side}:{proposal_index}",
                 "canonicalMask": np.asarray(candidate["mask"]).copy(),
                 "sourceViewId": candidate["sourceViewId"],
                 "defectType": candidate["defectType"],
@@ -1327,10 +1352,28 @@ def detect_views(
             }
         )
 
+    measurement_started = time.perf_counter()
     measured = measure_defects(proposals, corner_shape)
+    measurement_duration_ms = round(
+        (time.perf_counter() - measurement_started) * 1000, 3
+    )
     return {
         "detectorVersion": DETECTOR_VERSION,
         "defects": _to_speedster_defects(measured, side, "UNREVIEWED"),
+        "instrumentation": {
+            "views": view_diagnostics,
+            "localizedCandidateCount": sum(
+                view["candidateCount"] for view in view_diagnostics
+            ),
+            "scannedCandidateCount": len(scanned_candidates),
+            "cappedCandidateCount": len(capped_candidates),
+            "measuredRegionCount": len(measured),
+            "samMemoryMs": scan_duration_ms,
+            "measurementMs": measurement_duration_ms,
+            "detectViewsTotalMs": round(
+                (time.perf_counter() - detect_started) * 1000, 3
+            ),
+        },
     }
 
 

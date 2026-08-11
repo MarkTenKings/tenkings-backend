@@ -18,6 +18,7 @@ type SharedLabelEditorProps = {
   primaryActionLabel?: string;
   subgradeAriaLabel?: string;
   lockCardType?: boolean;
+  onFirstInteraction?: () => void;
 };
 
 const SUBGRADE_FIELDS = [
@@ -41,6 +42,7 @@ export default function SharedLabelEditor({
   primaryActionLabel,
   subgradeAriaLabel = "Calculated grade and human subgrades",
   lockCardType = false,
+  onFirstInteraction,
 }: SharedLabelEditorProps) {
   const isHuman = mode === "HUMAN";
   const primaryLabel = primaryActionLabel ?? (
@@ -48,7 +50,11 @@ export default function SharedLabelEditor({
   );
 
   return (
-    <section className={`${styles.root} composer-card`}>
+    <section
+      className={`${styles.root} composer-card`}
+      onPointerDownCapture={onFirstInteraction}
+      onKeyDownCapture={onFirstInteraction}
+    >
       <div className="composer-heading">
         <div>
           <p className="eyebrow">{

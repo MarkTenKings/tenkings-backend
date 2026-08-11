@@ -9,6 +9,7 @@ import {
   createAiGraderV2CompleteLabelHandler,
   speedsterReportSlug,
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/complete-label";
+import { createSpeedsterPresentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/presentation";
 
 const sessionId = "clabelsession1234567890";
 const completionOrder = 207;
@@ -99,7 +100,6 @@ test("completion rejects client-owned findings and grade authority", async () =>
   const handler = createAiGraderV2CompleteLabelHandler({
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
     async completeSession() { completed = true; throw new Error("must not run"); },
-    async completePresentation() { return undefined; },
   });
   const rejected = response();
 
@@ -173,10 +173,6 @@ test("completion retry returns the original label without consuming another slot
       };
       return { outcome: "CREATED" as const, ...saved, learning: readyLearning };
     },
-    async completePresentation(input) {
-      assert.equal(input.sessionId, sessionId);
-      assert.equal(input.createdByUserId, "admin-1");
-    },
   });
   const first = response();
   const retry = response();
@@ -220,7 +216,6 @@ test("a learning catch-up failure is exposed as not ready without blocking the d
         learning,
       };
     },
-    async completePresentation() { return undefined; },
   });
   const completed = response();
 
@@ -230,13 +225,13 @@ test("a learning catch-up failure is exposed as not ready without blocking the d
   assert.deepEqual((completed.state.body as { learning: unknown }).learning, learning);
 });
 
-test("PhotoRoom starts only after durable completion and can fail without rolling the grade back", async () => {
+test("PhotoRoom is a separate post-cycle request and cannot gate the durable completion response", async () => {
   let completed = false;
   const events: string[] = [];
   const originalConsoleError = console.error;
   console.error = () => undefined;
   try {
-    const handler = createAiGraderV2CompleteLabelHandler({
+    const completionHandler = createAiGraderV2CompleteLabelHandler({
       async requireAdminSession() { return { user: { id: "admin-1" } }; },
       async completeSession() {
         events.push("grade-complete");
@@ -255,22 +250,38 @@ test("PhotoRoom starts only after durable completion and can fail without rollin
           learning: readyLearning,
         };
       },
+    });
+    const completionResponse = response();
+    await completionHandler(request(), completionResponse.res);
+
+    assert.deepEqual(events, ["grade-complete"]);
+    assert.equal(completionResponse.state.status, 201);
+    assert.equal(completed, true);
+
+    const presentationHandler = createSpeedsterPresentationHandler({
+      async requireAdminSession() { return { user: { id: "admin-1" } }; },
       async completePresentation() {
         assert.equal(completed, true);
         events.push("photoroom");
         throw new Error("PhotoRoom unavailable");
       },
+      async insertEvents(instrumentation) {
+        assert.equal(instrumentation[0].eventType, "PHOTOROOM_POST_CYCLE");
+        assert.match(JSON.stringify(instrumentation[0].details), /POST_CYCLE/);
+        return 1;
+      },
     });
-    const failed = response();
+    const presentationResponse = response();
 
-    await handler(request(), failed.res);
+    await presentationHandler(request(), presentationResponse.res);
 
     assert.deepEqual(events, ["grade-complete", "photoroom"]);
-    assert.equal(failed.state.status, 502);
+    assert.equal(presentationResponse.state.status, 502);
     assert.match(
-      (failed.state.body as { message: string }).message,
-      /grade and label are safely complete/i,
+      (presentationResponse.state.body as { message: string }).message,
+      /post-cycle Speedster presentation images failed/i,
     );
+    assert.equal(completionResponse.state.status, 201);
     assert.equal(completed, true);
   } finally {
     console.error = originalConsoleError;

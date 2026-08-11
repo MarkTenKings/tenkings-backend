@@ -48,6 +48,30 @@ const capture = {
   back: { centeringBorders: { leftMm: 3, rightMm: 3, topMm: 3, bottomMm: 3 } },
 };
 
+const detectorCapture = {
+  cornerShape: "ROUNDED_3_18_MM" as const,
+  front: {
+    side: "FRONT" as const,
+    rectifiedUrl: "https://images.test/front-original",
+    inspectionUrl: "https://images.test/front-inspection",
+    views: {
+      NORMALIZED: "https://images.test/front-normalized",
+      MICRO_DEFECT: "https://images.test/front-micro",
+      DIRECTIONAL: "https://images.test/front-directional",
+    },
+  },
+  back: {
+    side: "BACK" as const,
+    rectifiedUrl: "https://images.test/back-original",
+    inspectionUrl: "https://images.test/back-inspection",
+    views: {
+      NORMALIZED: "https://images.test/back-normalized",
+      MICRO_DEFECT: "https://images.test/back-micro",
+      DIRECTIONAL: "https://images.test/back-directional",
+    },
+  },
+};
+
 const defect: SpeedsterMeasuredDefect = {
   id: "front-1",
   side: "FRONT",
@@ -648,32 +672,10 @@ test("completion preserves removed decisions without accepting them", () => {
   assert.equal(prepared.body.gradeReport.overall.displayGrade, 10);
 });
 
-test("the production orchestration scans Front then Back and produces a completable report payload", async () => {
+test("the production orchestration dispatches Front then Back and produces a completable report payload", async () => {
   const scanOrder: string[] = [];
   const scanned = await scanSpeedsterCapture({
-    capture: {
-      cornerShape: "ROUNDED_3_18_MM",
-      front: {
-        side: "FRONT",
-        rectifiedUrl: "https://images.test/front-original",
-        inspectionUrl: "https://images.test/front-inspection",
-        views: {
-          NORMALIZED: "https://images.test/front-normalized",
-          MICRO_DEFECT: "https://images.test/front-micro",
-          DIRECTIONAL: "https://images.test/front-directional",
-        },
-      },
-      back: {
-        side: "BACK",
-        rectifiedUrl: "https://images.test/back-original",
-        inspectionUrl: "https://images.test/back-inspection",
-        views: {
-          NORMALIZED: "https://images.test/back-normalized",
-          MICRO_DEFECT: "https://images.test/back-micro",
-          DIRECTIONAL: "https://images.test/back-directional",
-        },
-      },
-    },
+    capture: detectorCapture,
     async detect(request) {
       scanOrder.push(request.side);
       assert.deepEqual(request.views.map(({ id }) => id), [
@@ -760,3 +762,198 @@ test("the production orchestration scans Front then Back and produces a completa
   assert.equal(label.gradingFormulaVersion, "EQUAL_25");
   assert.equal(speedsterReportSlug("speedster-session-123456789"), "speedster-speedster-session-123456789");
 });
+
+test("Front and Back start together with identical side payload shapes", async () => {
+  const started: string[] = [];
+  let resolveFront!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
+  let resolveBack!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
+  const frontResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
+    (resolve) => { resolveFront = resolve; },
+  );
+  const backResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
+    (resolve) => { resolveBack = resolve; },
+  );
+
+  let finished = false;
+  const scan = scanSpeedsterCapture({
+    capture: detectorCapture,
+    detect(request) {
+      started.push(request.side);
+      assert.deepEqual(request, {
+        side: request.side,
+        cornerShape: detectorCapture.cornerShape,
+        views: [
+          { id: `${request.side}:ORIGINAL`, imageUrl: `https://images.test/${request.side.toLowerCase()}-inspection` },
+          { id: `${request.side}:NORMALIZED`, imageUrl: `https://images.test/${request.side.toLowerCase()}-normalized` },
+          { id: `${request.side}:MICRO_DEFECT`, imageUrl: `https://images.test/${request.side.toLowerCase()}-micro` },
+          { id: `${request.side}:DIRECTIONAL`, imageUrl: `https://images.test/${request.side.toLowerCase()}-directional` },
+        ],
+      });
+      return request.side === "FRONT" ? frontResponse : backResponse;
+    },
+  });
+  scan.then(
+    () => { finished = true; },
+    () => { finished = true; },
+  );
+
+  await Promise.resolve();
+  assert.deepEqual(started, ["FRONT", "BACK"]);
+
+  resolveBack({ detectorVersion: "same-release", defects: [] });
+  await Promise.resolve();
+  assert.equal(finished, false);
+  resolveFront({ detectorVersion: "same-release", defects: [] });
+
+  assert.deepEqual(await scan, { detectorVersion: "same-release", defects: [] });
+});
+
+test("concurrent completion order preserves the exact sequential output and calculated grade", async () => {
+  const frontFinding: SpeedsterMeasuredDefect = {
+    ...defect,
+    id: "detector-front",
+    side: "FRONT",
+    origin: "DETECTOR",
+    featureFingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    learningAdjustment: -0.02,
+    sourceViewId: "DIRECTIONAL",
+    supportingViewIds: ["MICRO_DEFECT", "ORIGINAL"],
+    measurement: { ...defect.measurement, areaMm2: 2, zonePercent: 4, weightedAreaMm2: 2 },
+  };
+  const backFinding: SpeedsterMeasuredDefect = {
+    ...defect,
+    id: "memory-back",
+    side: "BACK",
+    defectType: "VISIBLE_WHITENING",
+    origin: "MEMORY",
+    featureFingerprint: [0, 1, ...Array.from({ length: 30 }, () => 0)],
+    sourceViewId: "ORIGINAL",
+    supportingViewIds: ["NORMALIZED"],
+    memoryProposal: {
+      lessonSessionId: "source-session",
+      lessonCompletionOrder: 706,
+      lessonProposalOrder: 9,
+      lessonOrder: 2,
+      lessonSourceViewId: "ORIGINAL",
+      similarity: 0.93,
+    },
+    measurement: { ...defect.measurement, areaMm2: 3, zonePercent: 6, weightedAreaMm2: 3 },
+  };
+  const responses = {
+    FRONT: { detectorVersion: "sam3-fixed-release", defects: [frontFinding] },
+    BACK: { detectorVersion: "sam3-fixed-release", defects: [backFinding] },
+  } as const;
+  const canonicalize = (
+    side: "FRONT" | "BACK",
+    findings: readonly SpeedsterMeasuredDefect[],
+  ): SpeedsterMeasuredDefect[] => findings.map((finding) => ({
+    ...finding,
+    id: `${side}:${finding.id}:${finding.zone}`,
+    side,
+    origin: finding.origin === "MEMORY" ? "MEMORY" : "DETECTOR",
+    detectedDefectType: finding.detectedDefectType ?? finding.defectType,
+    sourceViewId: `${side}:${finding.sourceViewId}`,
+    supportingViewIds: finding.supportingViewIds.map((id) => `${side}:${id}`),
+    reviewResult: "UNREVIEWED",
+  }));
+  const sequential = {
+    detectorVersion: responses.FRONT.detectorVersion,
+    defects: [
+      ...canonicalize("FRONT", responses.FRONT.defects),
+      ...canonicalize("BACK", responses.BACK.defects),
+    ],
+  };
+
+  const concurrent = await scanSpeedsterCapture({
+    capture: detectorCapture,
+    async detect(request) {
+      if (request.side === "FRONT") await new Promise((resolve) => setTimeout(resolve, 5));
+      return responses[request.side];
+    },
+  });
+
+  assert.deepEqual(concurrent, sequential);
+  assert.deepEqual(
+    calculateSpeedsterReview(capture, concurrent.defects).grade,
+    calculateSpeedsterReview(capture, sequential.defects).grade,
+  );
+  assert.deepEqual(concurrent.defects.map(({ id }) => id), [
+    "FRONT:detector-front:SURFACE",
+    "BACK:memory-back:SURFACE",
+  ]);
+});
+
+test("a detector-version mismatch rejects the whole pair", async () => {
+  await assert.rejects(() => scanSpeedsterCapture({
+    capture: detectorCapture,
+    async detect(request) {
+      return {
+        detectorVersion: request.side === "FRONT" ? "release-front" : "release-back",
+        defects: [],
+      };
+    },
+  }), /versions do not match/i);
+});
+
+test("when both detectors fail the Front error wins deterministically", async () => {
+  const frontFailure = new Error("Front failed");
+  const backFailure = new Error("Back failed");
+  await assert.rejects(scanSpeedsterCapture({
+    capture: detectorCapture,
+    detect(request) {
+      return Promise.reject(request.side === "FRONT" ? frontFailure : backFailure);
+    },
+  }), frontFailure);
+});
+
+for (const failedSide of ["FRONT", "BACK"] as const) {
+  test(`${failedSide} failure waits for the sibling and retries only after the pair is quiescent`, async () => {
+    const failure = new Error(`${failedSide} failed`);
+    const firstCalls: string[] = [];
+    let persisted = 0;
+    let pairSettled = false;
+    let siblingInFlight = false;
+    let resolveSibling!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
+    const siblingResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
+      (resolve) => { resolveSibling = resolve; },
+    );
+    const first = scanSpeedsterCapture({
+      capture: detectorCapture,
+      detect(request) {
+        firstCalls.push(request.side);
+        if (request.side === failedSide) return Promise.reject(failure);
+        siblingInFlight = true;
+        return siblingResponse.finally(() => { siblingInFlight = false; });
+      },
+    });
+    first.then(
+      () => { pairSettled = true; },
+      () => { pairSettled = true; },
+    );
+
+    await Promise.resolve();
+    assert.deepEqual(firstCalls, ["FRONT", "BACK"]);
+    assert.equal(pairSettled, false);
+    assert.equal(siblingInFlight, true);
+    assert.equal(persisted, 0);
+    resolveSibling({ detectorVersion: "same-release", defects: [] });
+    await assert.rejects(first, failure);
+    assert.equal(pairSettled, true);
+    assert.equal(siblingInFlight, false);
+    assert.equal(persisted, 0);
+
+    const retryCalls: string[] = [];
+    const retry = await scanSpeedsterCapture({
+      capture: detectorCapture,
+      async detect(request) {
+        assert.equal(siblingInFlight, false);
+        retryCalls.push(request.side);
+        return { detectorVersion: "same-release", defects: [] };
+      },
+    });
+    persisted += 1;
+    assert.deepEqual(retryCalls, ["FRONT", "BACK"]);
+    assert.deepEqual(retry, { detectorVersion: "same-release", defects: [] });
+    assert.equal(persisted, 1);
+  });
+}

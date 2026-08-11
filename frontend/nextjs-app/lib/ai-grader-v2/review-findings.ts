@@ -26,6 +26,8 @@ const DEFECT_TYPES = new Set<SpeedsterDefectType>([
 const REVIEW_RESULTS = new Set<SpeedsterReviewResult>([
   "UNREVIEWED", "ACCEPTED", "REMOVED", "SMART_MARKED", "TYPE_CORRECTED",
 ]);
+const ORIGINS = new Set(["DETECTOR", "MEMORY", "SMART_MARK"]);
+const INSTRUMENTATION_PROPOSAL_ID = /^(FRONT|BACK):\d+$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -86,6 +88,53 @@ function parseCommon(value: Record<string, unknown>) {
   ) {
     throw new Error("Speedster private removal state is malformed.");
   }
+  if (value.findingProvenance !== undefined) {
+    const provenance = value.findingProvenance;
+    if (
+      !isRecord(provenance) || provenance.version !== "speedster-finding-provenance-v1" ||
+      typeof provenance.primaryProposalId !== "string" ||
+      !INSTRUMENTATION_PROPOSAL_ID.test(provenance.primaryProposalId) ||
+      !Array.isArray(provenance.contributors) || provenance.contributors.length === 0 ||
+      provenance.contributors.length > 64
+    ) {
+      throw new Error("Speedster finding instrumentation provenance is malformed.");
+    }
+    const contributorIds = new Set<string>();
+    for (const contributor of provenance.contributors) {
+      if (
+        !isRecord(contributor) || typeof contributor.proposalId !== "string" ||
+        !INSTRUMENTATION_PROPOSAL_ID.test(contributor.proposalId) ||
+        typeof contributor.origin !== "string" || !ORIGINS.has(contributor.origin) ||
+        typeof contributor.sourceViewId !== "string" || !contributor.sourceViewId ||
+        typeof contributor.defectType !== "string" || !DEFECT_TYPES.has(contributor.defectType as SpeedsterDefectType) ||
+        !finiteNonnegative(contributor.confidence) || !finiteNonnegative(contributor.rankingConfidence)
+      ) {
+        throw new Error("Speedster finding instrumentation contributor is malformed.");
+      }
+      const memory = contributor.memoryProposal;
+      if (contributor.origin === "MEMORY") {
+        if (
+          !isRecord(memory) || typeof memory.lessonSessionId !== "string" || !memory.lessonSessionId ||
+          !Number.isSafeInteger(memory.lessonCompletionOrder) || Number(memory.lessonCompletionOrder) < 1 ||
+          !Number.isSafeInteger(memory.lessonProposalOrder) || Number(memory.lessonProposalOrder) < 0 ||
+          !Number.isSafeInteger(memory.lessonOrder) || Number(memory.lessonOrder) < 0 ||
+          typeof memory.lessonSourceViewId !== "string" || !memory.lessonSourceViewId ||
+          !finiteNonnegative(memory.similarity)
+        ) {
+          throw new Error("Speedster finding instrumentation Memory contributor is malformed.");
+        }
+      } else if (memory !== undefined) {
+        throw new Error("Only a Memory contributor can own Memory proposal provenance.");
+      }
+      contributorIds.add(contributor.proposalId);
+    }
+    if (contributorIds.size !== provenance.contributors.length) {
+      throw new Error("Speedster finding instrumentation contributors are duplicated.");
+    }
+    if (!contributorIds.has(provenance.primaryProposalId)) {
+      throw new Error("Speedster finding instrumentation primary contributor is missing.");
+    }
+  }
   return value as unknown as SpeedsterReviewFinding;
 }
 
@@ -141,9 +190,20 @@ export function speedsterFindingRegions(finding: SpeedsterReviewFinding) {
 }
 
 export function stripSpeedsterFindingPrivateFields(finding: SpeedsterReviewFinding): SpeedsterReviewFinding {
-  const { reviewResultBeforeRemoval: _prior, traceSha256: _hydrationHash, ...safe } =
-    finding as SpeedsterReviewFinding & { reviewResultBeforeRemoval?: unknown };
+  const {
+    reviewResultBeforeRemoval: _prior,
+    traceSha256: _hydrationHash,
+    findingProvenance: _instrumentation,
+    ...safe
+  } = finding as SpeedsterReviewFinding & { reviewResultBeforeRemoval?: unknown };
   return safe as SpeedsterReviewFinding;
+}
+
+export function stripSpeedsterFindingInstrumentation(
+  finding: SpeedsterReviewFinding,
+): SpeedsterReviewFinding {
+  const { findingProvenance: _instrumentation, ...persisted } = finding;
+  return persisted as SpeedsterReviewFinding;
 }
 
 export function stripSpeedsterTraceBodies(
