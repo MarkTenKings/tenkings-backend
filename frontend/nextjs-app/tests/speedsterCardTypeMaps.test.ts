@@ -320,12 +320,25 @@ test("revision hashing is deterministic, canonical, and rejects any immutable-fi
 });
 
 test("legacy exact map key serialization and hash remain byte-for-byte compatible", () => {
-  const key = speedsterCardTypeMapKey("SPORTS", identity);
+  const sportsKey = speedsterCardTypeMapKey("SPORTS", identity);
   assert.equal(
-    JSON.stringify(key),
+    JSON.stringify(sportsKey),
     '{"category":"SPORTS","year":"2021","manufacturer":"panini","productSet":"obsidian","insert":null,"parallel":"orange","playerName":"nick bosa","cardNumber":"12"}',
   );
-  assert.equal(speedsterMapMatchKeyHash(key), "416907b9c72bf6e81ff4236a15cb8c645e2020bdd4e900d7fc8e0d7f595ebdb7");
+  assert.equal(speedsterMapMatchKeyHash(sportsKey), "416907b9c72bf6e81ff4236a15cb8c645e2020bdd4e900d7fc8e0d7f595ebdb7");
+
+  const pokemonKey = speedsterCardTypeMapKey("POKEMON", {
+    cardName: "cubone",
+    year: "1999 pokemon",
+    productSet: "jungle",
+    parallel: null,
+    cardNumber: "50/64",
+  });
+  assert.equal(
+    JSON.stringify(pokemonKey),
+    '{"category":"POKEMON","year":"1999 pokemon","productSet":"jungle","parallel":null,"cardName":"cubone","cardNumber":"50/64"}',
+  );
+  assert.equal(speedsterMapMatchKeyHash(pokemonKey), "271543b80a268722b81e819daa1a97caccf0bbb8c954746a9fd04b94a06302ff");
 });
 
 test("map parsing rejects collapsed boundaries, singular anchors, and invalid zone polygons", () => {
