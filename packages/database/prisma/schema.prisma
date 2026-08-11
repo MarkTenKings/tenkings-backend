@@ -3583,9 +3583,17 @@ model AiGraderV2Session {
   nfcDone          Boolean  @default(false)
   compsDone        Boolean  @default(false)
   inventoryDone    Boolean  @default(false)
+  mapRevisionId    String?
+  mapRevision      AiGraderV2CardTypeMapRevision? @relation("SessionMapRevision", fields: [mapRevisionId], references: [id], onDelete: Restrict)
+  mapFilterPolicyVersion String?
+  mapRegistration  Json?    @db.JsonB
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
   collectibleCardV2 CollectibleCardV2?
+  mapSourceRevisions AiGraderV2CardTypeMapRevision[] @relation("MapRevisionSourceSession")
+  mapFilterDecisions AiGraderV2MapFilterDecision[]
+
+  @@index([mapRevisionId])
 }
 
 model AiGraderV2CaptureDevice {
@@ -3667,4 +3675,95 @@ model AiGraderV2LearningBank {
   id        String   @id
   state     Json     @db.JsonB
   updatedAt DateTime @updatedAt
+}
+
+model AiGraderV2CardTypeMap {
+  id                String   @id @default(cuid())
+  matchKeyHash      String   @unique
+  cardProfile       HumanGradeCardType
+  currentRevisionId String?  @unique
+  currentRevision   AiGraderV2CardTypeMapRevision? @relation("CurrentCardTypeMapRevision", fields: [currentRevisionId], references: [id], onDelete: Restrict)
+  revisions         AiGraderV2CardTypeMapRevision[] @relation("CardTypeMapRevisions")
+  filterDecisions   AiGraderV2MapFilterDecision[]
+  createdAt         DateTime @default(now())
+
+  @@index([cardProfile, createdAt])
+}
+
+model AiGraderV2CardTypeMapRevision {
+  id                  String   @id @default(cuid())
+  mapId               String
+  map                  AiGraderV2CardTypeMap @relation("CardTypeMapRevisions", fields: [mapId], references: [id], onDelete: Restrict)
+  version              Int
+  matchKeyHash         String
+  matchKey             Json     @db.JsonB
+  displayIdentity      Json     @db.JsonB
+  normalizedIdentity   Json     @db.JsonB
+  sourceSessionId      String
+  sourceSession        AiGraderV2Session @relation("MapRevisionSourceSession", fields: [sourceSessionId], references: [id], onDelete: Restrict)
+  authorAdminId        String
+  frontMap             Json     @db.JsonB
+  backMap              Json     @db.JsonB
+  mapSchemaVersion     String
+  filterPolicyVersion  String
+  revisionHash         String   @unique
+  supersedesRevisionId String?  @unique
+  supersedesRevision   AiGraderV2CardTypeMapRevision? @relation("MapRevisionSupersession", fields: [supersedesRevisionId], references: [id], onDelete: Restrict)
+  supersededBy         AiGraderV2CardTypeMapRevision? @relation("MapRevisionSupersession")
+  currentForMap        AiGraderV2CardTypeMap? @relation("CurrentCardTypeMapRevision")
+  processedSessions    AiGraderV2Session[] @relation("SessionMapRevision")
+  filterDecisions      AiGraderV2MapFilterDecision[]
+  createdAt            DateTime @default(now())
+
+  @@unique([mapId, version])
+  @@index([matchKeyHash, createdAt])
+  @@index([sourceSessionId, createdAt])
+}
+
+model AiGraderV2MapFilterDecision {
+  id                    String   @id @default(cuid())
+  sessionId             String
+  session               AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  findingId             String
+  side                  String
+  originalOrigin        String
+  proposedDefectType    String
+  confidence            Float
+  similarity            Float?
+  generatingExemplar    Json?    @db.JsonB
+  sourceViewId          String
+  supportingViewIds     Json     @db.JsonB
+  cardIdentity          Json     @db.JsonB
+  findingSnapshot       Json     @db.JsonB
+  mapId                 String
+  map                    AiGraderV2CardTypeMap @relation(fields: [mapId], references: [id], onDelete: Restrict)
+  mapRevisionId         String
+  mapRevision           AiGraderV2CardTypeMapRevision @relation(fields: [mapRevisionId], references: [id], onDelete: Restrict)
+  zoneId                String
+  zoneType              String
+  zoneOverlap           Json     @db.JsonB
+  filterPolicyVersion   String
+  ruleId                String
+  ruleInputs            Json     @db.JsonB
+  detectorVersion       String
+  filteredAt            DateTime @default(now())
+  restoreEvent          AiGraderV2MapFilterRestoreEvent?
+
+  @@unique([sessionId, findingId])
+  @@index([mapRevisionId, filteredAt])
+  @@index([zoneId, filteredAt])
+  @@index([originalOrigin, proposedDefectType, side])
+}
+
+model AiGraderV2MapFilterRestoreEvent {
+  id                    String   @id @default(cuid())
+  decisionId            String   @unique
+  decision              AiGraderV2MapFilterDecision @relation(fields: [decisionId], references: [id], onDelete: Restrict)
+  restoredByAdminId     String
+  sessionLifecycleState String
+  outcome               String
+  calibrationMistake    Json     @db.JsonB
+  restoredAt            DateTime @default(now())
+
+  @@index([restoredAt])
 }
