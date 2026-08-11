@@ -31703,3 +31703,8 @@ By enabling Rip It Live, I confirm:
 - Independent adversarial review found that scoped FAMILY save, FAMILY restore, or exact-to-family promotion from a still-uninitialized CAPTURED source could rebind that source to the family revision despite an active exact override. Commit `dc16e009` now locks and rechecks the exact key before the family key for all three writes. An active exact pin is preserved; a stale family pin is atomically cleared to unpinned/manual review; no family registration is selected, merged, or guessed over exact authority.
 - Added a direct malformed-exact plus valid-family regression proving the effective loader fails closed without family fallthrough, plus CAPTURED regressions for FAMILY save, restore, and promotion. Focused contract/persistence coverage passes `29/29`; owned-file ESLint, targeted TypeScript filtering, and `git diff --check` pass.
 - No schema, migration, database, Production, provider, storage, model, image, threshold, detector, grade, label, report, or Memory mutation occurred.
+
+## 2026-08-11 - Pokémon legacy exact-map hash frozen locally
+
+- Independent review found the legacy exact-map static hash regression covered Sports only. Commit `345047ee` adds the historical Pokémon key ordering and fixed SHA-256 for TKH-000231's canonical Cubone identity alongside the existing Sports fixture, so both category shapes are protected byte-for-byte while family keys evolve separately.
+- Focused persistence tests pass `23/23`; `git diff --check` passes. No runtime, schema, migration, database, Production, provider, model, image, threshold, detector, grade, or Memory change occurred.
