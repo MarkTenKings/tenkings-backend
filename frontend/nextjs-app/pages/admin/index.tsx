@@ -33,6 +33,13 @@ const ADMIN_SECTIONS: AdminSection[] = [
         priority: true,
       },
       {
+        label: "Card Maps",
+        href: "/card-maps",
+        posterSrc: "/admin/launch/ai-ops-poster.jpg",
+        videoSrc: "/admin/launch/ai-ops.mp4",
+        priority: true,
+      },
+      {
         label: "Add Cards",
         href: "/admin/uploads",
         posterSrc: "/admin/launch/add-cards-poster.jpg",
