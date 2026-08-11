@@ -80,8 +80,11 @@ All verification used Node `20.20.1` where applicable.
 | Exact changed-file ESLint | clean |
 | Production build with `RUN_DB_MIGRATIONS=false` | passed; `76/76` pages |
 | Disposable PostgreSQL migration chain | all `86` migrations passed twice; second deploy no-op |
+| Whole database package baseline audit | `174/187` passed; `13` unrelated baseline contract-fixture failures |
 
 The disposable validator also passed the retained NFC, Mathematical V1, Card Platform V2, publication, Label V1, comps, inventory, rollback, locking, identity/concurrency, and append-only lifecycle checks. It destroyed its isolated PostgreSQL container and storage; no validation container remained.
+
+An additional whole-package `@tenkings/database` test run built successfully and then reported `174/187` tests passing. The one advisory-lock inventory failure and twelve Mathematical V1 fixture/contract failures are not caused by this branch: `packages/database/src`, `packages/database/tests`, `packages/shared`, and `frontend/nextjs-app/lib/server/aiGraderProductionApi.ts` are byte-identical to base `f44ff89b`. The first stale assertion expects five production API advisory locks although the base already has seven; the other twelve use stale Mathematical V1 contour fixtures. These unrelated baseline failures were recorded rather than repaired outside the approved Speedster scope.
 
 The deterministic local simulated-detector benchmark used two warmups and 20 measured pairs per strategy. Sequential pair p95 was `45.735 ms`; concurrent pair p95 was `25.439 ms`, with zero failures and exact finding/order/provenance/measurement and grade equivalence. This is local implementation evidence, not a live RunPod performance claim.
 
