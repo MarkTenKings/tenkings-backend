@@ -31697,3 +31697,9 @@ By enabling Rip It Live, I confirm:
 
 - Independent integration review found that a valid category-aware exact map display name can exceed the client timing endpoint's prior 180-character bound, which would reject otherwise valid `GEOMETRY_CONFIRMED` telemetry. Commit `96f78efc` raises only that bounded display-name field to 1,024 characters, above the exact identity contract's maximum composed name, while every other strict instrumentation field remains unchanged.
 - Added endpoint coverage with an 864-character valid exact-map display name. Focused instrumentation tests pass `10/10`; changed-file ESLint and `git diff --check` pass. No schema, migration, database, Production, provider, model, image, threshold, grade, or Memory change occurred.
+
+## 2026-08-11 - Captured-session exact precedence corrected locally
+
+- Independent adversarial review found that scoped FAMILY save, FAMILY restore, or exact-to-family promotion from a still-uninitialized CAPTURED source could rebind that source to the family revision despite an active exact override. Commit `dc16e009` now locks and rechecks the exact key before the family key for all three writes. An active exact pin is preserved; a stale family pin is atomically cleared to unpinned/manual review; no family registration is selected, merged, or guessed over exact authority.
+- Added a direct malformed-exact plus valid-family regression proving the effective loader fails closed without family fallthrough, plus CAPTURED regressions for FAMILY save, restore, and promotion. Focused contract/persistence coverage passes `29/29`; owned-file ESLint, targeted TypeScript filtering, and `git diff --check` pass.
+- No schema, migration, database, Production, provider, storage, model, image, threshold, detector, grade, label, report, or Memory mutation occurred.
