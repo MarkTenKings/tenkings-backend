@@ -247,7 +247,8 @@ test("CARD MAP terminology, inherited centering boundary, and composed Front/Bac
     assert.ok(buttonByText(harness.container, "Printed Boundary"));
     assert.ok(buttonByText(harness.container, "Registration Anchors"));
     assert.ok(buttonByText(harness.container, "Printed-Content Zones"));
-    assert.match(harness.container.textContent ?? "", /saved\/proposed printed-border centering correction/);
+    assert.match(harness.container.textContent ?? "", /saved Card Map boundary/);
+    assert.match(harness.container.textContent ?? "", /proposed printed-border centering correction for a new map/);
     assert.match(harness.container.textContent ?? "", /not a defect box/);
     assert.ok(harness.container.querySelector('[aria-label="FRONT composed card map preview"]'));
     assert.ok(harness.container.querySelector('[aria-label="BACK composed card map preview"]'));

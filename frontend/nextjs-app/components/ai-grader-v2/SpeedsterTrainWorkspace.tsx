@@ -122,7 +122,7 @@ function cloneBoundary(boundary: SpeedsterMapDesignBoundary): SpeedsterMapDesign
     : { kind: "QUAD", points: clonePoints(boundary.points) as unknown as SpeedsterQuad };
 }
 
-function cloneSide(side: SideDraft): SideDraft {
+function cloneSide(side: EditableSide | SideDraft): SideDraft {
   return {
     designBoundary: cloneBoundary(side.designBoundary),
     anchors: side.anchors.map((anchor) => ({ ...anchor, point: { ...anchor.point } })),
@@ -621,7 +621,7 @@ export function SpeedsterTrainWorkspace({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={sourceSide.rectifiedUrl}
-            alt={`${SIDE_LABEL[side]} TRAIN reference`}
+            alt={`${SIDE_LABEL[side]} card map reference`}
             crossOrigin="anonymous"
             draggable={false}
             onLoad={(event) => {
@@ -657,7 +657,7 @@ export function SpeedsterTrainWorkspace({
           {tool === "BOUNDARY" ? (
             <div className={styles.controlBlock}>
               <strong>{active.map.designBoundary.kind === "FULL_BLEED" ? "Full bleed" : "Four-point printed boundary"}</strong>
-              <p>The gold quad starts from the saved/proposed printed-border centering correction. It is not a defect box. Drag TL, TR, BR, or BL to adjust only that corner.</p>
+              <p>The gold quad is the saved Card Map boundary, or starts from the proposed printed-border centering correction for a new map. It is not a defect box. Drag TL, TR, BR, or BL to adjust only that corner.</p>
               <button
                 type="button"
                 className={styles.secondaryButton}
