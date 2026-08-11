@@ -17,6 +17,7 @@ import SharedLabelEditor from "../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 import { useSession } from "../hooks/useSession";
 import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../lib/ai-grader-v2/card-type-map-contracts";
+import { toCardMapOperatorMessage } from "../lib/ai-grader-v2/card-map-copy";
 import {
   SpeedsterIdentityValidationError,
   canonicalizeSpeedsterSessionIdentity,
@@ -120,7 +121,9 @@ export default function CardMapsPage() {
       })
       .catch((error) => {
         if (!active) return;
-        const failure = error instanceof Error ? error.message : "Completed-card CARD MAP source could not be loaded.";
+        const failure = toCardMapOperatorMessage(
+          error instanceof Error ? error.message : "Completed-card CARD MAP source could not be loaded.",
+        );
         setWorkflowError(failure);
         setMessage(failure);
       });
@@ -188,7 +191,9 @@ export default function CardMapsPage() {
       setMessage(`${mapAction(mapPayload.map)} · Add exact Front and Back source images.`);
     } catch (error) {
       if (error instanceof SpeedsterIdentityValidationError) setFieldErrors(error.fields);
-      const failure = error instanceof Error ? error.message : "CARD MAP source could not be created.";
+      const failure = toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "CARD MAP source could not be created.",
+      );
       setWorkflowError(failure);
       setMessage(failure);
     } finally {
@@ -246,7 +251,9 @@ export default function CardMapsPage() {
       });
       setMessage(`${map ? mapAction(map) : "CREATE CARD MAP"} · Exact Front and Back source saved.`);
     } catch (error) {
-      const failure = error instanceof Error ? error.message : "CARD MAP source could not be saved.";
+      const failure = toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "CARD MAP source could not be saved.",
+      );
       setWorkflowError(failure);
       setMessage(failure);
     } finally {

@@ -312,7 +312,7 @@ export function CaptureWorkspace({
           })
         : undefined;
       if (mapRegistration && mapRegistration.mapRevisionId !== activeMapRevisionId) {
-        throw new Error("The exact active TRAIN map changed while current-copy geometry was being registered.");
+        throw new Error("The exact active CARD MAP changed while current-copy geometry was being registered.");
       }
       const mappedCentering = mapRegistration?.projectedDesignBoundary.kind === "QUAD"
         ? mapRegistration.projectedDesignBoundary.points
