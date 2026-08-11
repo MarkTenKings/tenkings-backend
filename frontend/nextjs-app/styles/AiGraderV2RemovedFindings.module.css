@@ -27,15 +27,25 @@
 .cardHeaderActions { justify-content: flex-end; }
 .cardHeaderActions .activeSide { color: #090a08; border-color: #e3bc68; background: #e3bc68; }
 .evidenceUnavailable, .empty { display: grid; min-height: 260px; place-items: center; padding: 28px; color: #b0aca3; border: 1px dashed #4a402b; border-radius: 18px; text-align: center; }
+.filters { display: grid; grid-template-columns: repeat(3, minmax(150px, 1fr)); gap: 10px; margin-top: 22px; padding: 16px; border: 1px solid #312a1b; border-radius: 18px; }
+.filters label { display: grid; gap: 6px; }
+.filters label > span { color: #d8aa4f; font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.filters select { min-width: 0; padding: 10px; color: #f7f5ef; border: 1px solid #4a402b; border-radius: 10px; background: #11120f; }
 .findingList { margin-top: 22px; border: 1px solid #312a1b; border-radius: 18px; }
 .findingList > header { display: flex; align-items: center; justify-content: space-between; padding: 15px 18px; border-bottom: 1px solid #312a1b; }
 .findingList > p { padding: 18px; color: #92958f; }
-.findingList > button { display: grid; width: 100%; gap: 5px; padding: 15px 18px; color: #f7f5ef; border: 0; border-bottom: 1px solid #312a1b; background: transparent; text-align: left; cursor: pointer; }
-.findingList > button:last-child { border-bottom: 0; }
-.findingList > button:hover, .findingList .selectedFinding { background: #17150f; }
-.findingList > button span { color: #d8aa4f; font-size: 10px; font-weight: 800; letter-spacing: .16em; }
-.findingList > button strong { font-size: 17px; text-transform: capitalize; }
-.findingList > button small { color: #9f9b92; overflow-wrap: anywhere; }
+.findingGroup > h3 { margin: 0; padding: 11px 18px; color: #d8aa4f; border-bottom: 1px solid #312a1b; background: #11120f; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+.findingGroup > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; border-bottom: 1px solid #312a1b; }
+.findingGroup:last-child > div:last-child { border-bottom: 0; }
+.findingGroup > div:hover, .findingList .selectedFinding { background: #17150f; }
+.findingGroup > div > button:first-child { display: grid; min-width: 0; gap: 5px; padding: 15px 18px; color: #f7f5ef; border: 0; background: transparent; text-align: left; cursor: pointer; }
+.findingGroup button strong { font-size: 17px; text-transform: capitalize; }
+.findingGroup button small { color: #9f9b92; overflow-wrap: anywhere; }
+.filterBadge, .humanBadge { width: fit-content; padding: 4px 7px; border-radius: 6px; font-size: 10px; font-weight: 900; letter-spacing: .12em; }
+.filterBadge { color: #090a08; background: #f08b42; }
+.humanBadge { color: #0b1517; background: #79d7e5; }
+.restoreButton { align-self: center; margin: 14px 18px 14px 8px; padding: 10px 16px; color: #090a08; border: 0; border-radius: 999px; background: #e3bc68; font-weight: 900; cursor: pointer; }
+.restoreButton:disabled { cursor: wait; opacity: .55; }
 .center { min-height: 70vh; display: grid; place-items: center; color: #d8aa4f; }
 .center button { padding: 12px 18px; border: 1px solid #d8aa4f; border-radius: 999px; background: #11120f; color: #f7f5ef; }
 @media (max-width: 1120px) {
@@ -43,9 +53,11 @@
   .auditGrid { grid-template-columns: 1fr; }
   .cardRail { position: static; }
   .cardButtons { max-height: 360px; }
+  .filters { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
 }
 @media (max-width: 760px) {
   .page { padding: 28px 14px 70px; }
   .hero, .cardHeader { align-items: flex-start; flex-direction: column; }
   .summary { grid-template-columns: repeat(2, 1fr); }
+  .filters { grid-template-columns: 1fr; }
 }

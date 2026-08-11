@@ -42,12 +42,44 @@ type AuditSession = {
   id: string;
   createdByUserId: string;
   cardProfile: string;
+  workflowState: string;
   identity: Prisma.JsonValue;
   capture: Prisma.JsonValue;
   reviewedDefects: Prisma.JsonValue;
   publicReportSlug: string | null;
   collectibleCardV2: { lifecycleState: string } | null;
+  mapFilterDecisions: AuditFilterDecision[];
   createdAt: Date;
+};
+
+type AuditFilterDecision = {
+  id: string;
+  findingId: string;
+  findingSnapshot: Prisma.JsonValue;
+  originalOrigin: string;
+  proposedDefectType: string;
+  confidence: number;
+  similarity: number | null;
+  generatingExemplar: Prisma.JsonValue | null;
+  sourceViewId: string;
+  supportingViewIds: Prisma.JsonValue;
+  mapId: string;
+  mapRevisionId: string;
+  zoneId: string;
+  zoneType: string;
+  zoneOverlap: Prisma.JsonValue;
+  filterPolicyVersion: string;
+  ruleId: string;
+  ruleInputs: Prisma.JsonValue;
+  detectorVersion: string;
+  filteredAt: Date;
+  restoreEvent: {
+    restoredByAdminId: string;
+    sessionLifecycleState: string;
+    outcome: string;
+    restoredAt: Date;
+  } | null;
+  mapRevision: { frontMap: Prisma.JsonValue; backMap: Prisma.JsonValue };
 };
 
 type AuditLabel = {
@@ -66,32 +98,53 @@ type Dependencies = {
 const dependencies: Dependencies = {
   requireAdminSession,
   listSessions: () => prisma.aiGraderV2Session.findMany({
-    where: { workflowState: "COMPLETED" },
+    where: {
+      OR: [
+        { workflowState: "COMPLETED" },
+        { mapFilterDecisions: { some: {} } },
+      ],
+    },
     orderBy: { createdAt: "desc" },
     take: SESSION_LIMIT + 1,
     select: {
       id: true,
       createdByUserId: true,
       cardProfile: true,
+      workflowState: true,
       identity: true,
       capture: true,
       reviewedDefects: true,
       publicReportSlug: true,
       collectibleCardV2: { select: { lifecycleState: true } },
+      mapFilterDecisions: {
+        orderBy: { filteredAt: "asc" },
+        include: {
+          restoreEvent: true,
+          mapRevision: { select: { frontMap: true, backMap: true } },
+        },
+      },
       createdAt: true,
     },
   }),
   findSession: (sessionId) => prisma.aiGraderV2Session.findFirst({
-    where: { id: sessionId, workflowState: "COMPLETED" },
+    where: { id: sessionId },
     select: {
       id: true,
       createdByUserId: true,
       cardProfile: true,
+      workflowState: true,
       identity: true,
       capture: true,
       reviewedDefects: true,
       publicReportSlug: true,
       collectibleCardV2: { select: { lifecycleState: true } },
+      mapFilterDecisions: {
+        orderBy: { filteredAt: "asc" },
+        include: {
+          restoreEvent: true,
+          mapRevision: { select: { frontMap: true, backMap: true } },
+        },
+      },
       createdAt: true,
     },
   }),
@@ -123,7 +176,7 @@ function cardIdentity(session: AuditSession) {
   return { title, details };
 }
 
-function savedRemovedFindings(reviewedDefects: Prisma.JsonValue) {
+function savedHumanRemovedFindings(reviewedDefects: Prisma.JsonValue) {
   try {
     return {
       dataStatus: "AVAILABLE" as const,
@@ -169,7 +222,9 @@ function originCounts(findings: readonly SpeedsterReviewFinding[]) {
 }
 
 function cardProjection(session: AuditSession, label?: AuditLabel) {
-  const removed = savedRemovedFindings(session.reviewedDefects);
+  const removed = savedHumanRemovedFindings(session.reviewedDefects);
+  const decisions = session.mapFilterDecisions ?? [];
+  const filterRemovedCount = decisions.length;
   return {
     id: session.id,
     cardProfile: session.cardProfile,
@@ -178,8 +233,12 @@ function cardProjection(session: AuditSession, label?: AuditLabel) {
     createdAt: session.createdAt.toISOString(),
     lifecycleState: session.collectibleCardV2?.lifecycleState ?? null,
     publicReportSlug: session.publicReportSlug,
+    workflowState: session.workflowState ?? "COMPLETED",
     dataStatus: removed.dataStatus,
-    removedCount: removed.findings.length,
+    removedCount: removed.findings.length + filterRemovedCount,
+    humanRemovedCount: removed.findings.length,
+    filterRemovedCount,
+    restoredFilterCount: decisions.filter(({ restoreEvent }) => Boolean(restoreEvent)).length,
     removedByOrigin: originCounts(removed.findings),
   };
 }
@@ -196,6 +255,7 @@ function removedFindingProjection(finding: SpeedsterReviewFinding) {
     ? finding.detectedDefectType
     : undefined;
   const common = {
+    removalClass: "HUMAN_REMOVED" as const,
     id: finding.id,
     side: finding.side,
     origin: normalizedOrigin(finding),
@@ -215,6 +275,85 @@ function removedFindingProjection(finding: SpeedsterReviewFinding) {
     zone: regions[0].zone,
     canonicalContour: regions[0].canonicalContour,
     measurement: regions[0].measurement,
+  };
+}
+
+function zoneLabel(decision: AuditFilterDecision, side: SpeedsterCardSide) {
+  const body = side === "FRONT" ? decision.mapRevision.frontMap : decision.mapRevision.backMap;
+  if (!isRecord(body) || !Array.isArray(body.zones)) return decision.zoneId;
+  const match = body.zones.find((entry) => isRecord(entry) && entry.id === decision.zoneId);
+  return isRecord(match) && typeof match.label === "string" && match.label.trim()
+    ? match.label.trim()
+    : decision.zoneId;
+}
+
+function filterFindingProjection(decision: AuditFilterDecision) {
+  let finding: SpeedsterReviewFinding;
+  try {
+    [finding] = parseSpeedsterReviewFindings([decision.findingSnapshot]);
+  } catch {
+    const side = decision.sourceViewId.startsWith("BACK:") ? "BACK" as const : "FRONT" as const;
+    return {
+      removalClass: "FILTER_REMOVED" as const,
+      decisionId: decision.id,
+      id: decision.findingId,
+      dataStatus: "UNREADABLE" as const,
+      side,
+      origin: decision.originalOrigin,
+      defectType: decision.proposedDefectType,
+      confidence: decision.confidence,
+      similarity: decision.similarity,
+      generatingExemplar: safeMemoryProposal(decision.generatingExemplar),
+      sourceViewId: decision.sourceViewId,
+      supportingViewIds: Array.isArray(decision.supportingViewIds) ? decision.supportingViewIds : [],
+      zones: [decision.zoneId],
+      totalAreaMm2: 0,
+      mapId: decision.mapId,
+      mapRevisionId: decision.mapRevisionId,
+      zoneId: decision.zoneId,
+      zoneLabel: zoneLabel(decision, side),
+      zoneType: decision.zoneType,
+      zoneOverlap: decision.zoneOverlap,
+      filterPolicyVersion: decision.filterPolicyVersion,
+      ruleId: decision.ruleId,
+      ruleInputs: decision.ruleInputs,
+      detectorVersion: decision.detectorVersion,
+      filteredAt: decision.filteredAt.toISOString(),
+      restore: decision.restoreEvent ? {
+        restored: true,
+        ...decision.restoreEvent,
+        restoredAt: decision.restoreEvent.restoredAt.toISOString(),
+      } : { restored: false },
+    };
+  }
+  const projected = removedFindingProjection({ ...finding, reviewResult: "REMOVED" });
+  return {
+    ...projected,
+    removalClass: "FILTER_REMOVED" as const,
+    decisionId: decision.id,
+    id: decision.findingId,
+    dataStatus: "AVAILABLE" as const,
+    origin: decision.originalOrigin,
+    defectType: decision.proposedDefectType,
+    confidence: decision.confidence,
+    similarity: decision.similarity,
+    generatingExemplar: safeMemoryProposal(decision.generatingExemplar),
+    mapId: decision.mapId,
+    mapRevisionId: decision.mapRevisionId,
+    zoneId: decision.zoneId,
+    zoneLabel: zoneLabel(decision, finding.side),
+    zoneType: decision.zoneType,
+    zoneOverlap: decision.zoneOverlap,
+    filterPolicyVersion: decision.filterPolicyVersion,
+    ruleId: decision.ruleId,
+    ruleInputs: decision.ruleInputs,
+    detectorVersion: decision.detectorVersion,
+    filteredAt: decision.filteredAt.toISOString(),
+    restore: decision.restoreEvent ? {
+      restored: true,
+      ...decision.restoreEvent,
+      restoredAt: decision.restoreEvent.restoredAt.toISOString(),
+    } : { restored: false },
   };
 }
 
@@ -298,12 +437,15 @@ export function createRemovedFindingsAuditHandler(deps: Dependencies = dependenc
       }
       if (requestedSessionId) {
         const session = await deps.findSession(requestedSessionId);
-        if (!session) return res.status(404).json({ message: "Completed Speedster session not found" });
+        if (!session) return res.status(404).json({ message: "Speedster session not found" });
         const [label] = await deps.listLabels([session.id]);
-        const removed = savedRemovedFindings(session.reviewedDefects);
+        const removed = savedHumanRemovedFindings(session.reviewedDefects);
         return res.status(200).json({
           card: cardProjection(session, label),
-          removedFindings: removed.findings.map(removedFindingProjection),
+          removedFindings: [
+            ...removed.findings.map(removedFindingProjection),
+            ...(session.mapFilterDecisions ?? []).map(filterFindingProjection),
+          ],
           evidence: await signedEvidence(session, deps.presignRead),
         });
       }
@@ -315,6 +457,8 @@ export function createRemovedFindingsAuditHandler(deps: Dependencies = dependenc
         label.sourceSessionId ? [[label.sourceSessionId, label] as const] : []));
       const cards = sessions.map((session) => cardProjection(session, labelsBySession.get(session.id)));
       const totalRemoved = cards.reduce((total, card) => total + card.removedCount, 0);
+      const totalHumanRemoved = cards.reduce((total, card) => total + card.humanRemovedCount, 0);
+      const totalFilterRemoved = cards.reduce((total, card) => total + card.filterRemovedCount, 0);
       const totalByOrigin = cards.reduce(
         (total, card) => ({
           DETECTOR: total.DETECTOR + card.removedByOrigin.DETECTOR,
@@ -324,10 +468,14 @@ export function createRemovedFindingsAuditHandler(deps: Dependencies = dependenc
         { DETECTOR: 0, MEMORY: 0, SMART_MARK: 0 },
       );
       const summary = {
-        completedSessionsInspected: cards.length,
+        sessionsInspected: cards.length,
+        completedSessionsInspected: cards.filter(({ workflowState }) => workflowState === "COMPLETED").length,
         sessionsWithRemovedFindings: cards.filter(({ removedCount }) => removedCount > 0).length,
         unreadableSessions: cards.filter(({ dataStatus }) => dataStatus === "UNREADABLE").length,
         totalRemovedFindings: totalRemoved,
+        totalHumanRemovedFindings: totalHumanRemoved,
+        totalFilterRemovedFindings: totalFilterRemoved,
+        restoredFilterFindings: cards.reduce((total, card) => total + card.restoredFilterCount, 0),
         removedByOrigin: totalByOrigin,
         truncated,
       };

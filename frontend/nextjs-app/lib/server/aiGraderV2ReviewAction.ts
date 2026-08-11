@@ -11,6 +11,21 @@ import type {
 import { isSpeedsterSourceMeasuredDefect } from "../ai-grader-v2/contracts";
 import type { SpeedsterInspectionFrame } from "../ai-grader-v2/inspection-frame";
 import {
+  canonicalizeSpeedsterSessionIdentity,
+  type SpeedsterSessionIdentity,
+} from "../ai-grader-v2/identity";
+import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "../ai-grader-v2/learning-calibration-v2";
+import {
+  splitSpeedsterMapFilteredCandidates,
+  type SpeedsterPinnedMapFilterInput,
+  validateSpeedsterPinnedMapFilterInput,
+} from "../ai-grader-v2/map-filter";
+import {
+  canonicalSpeedsterMapKeyJson,
+  speedsterCardTypeMapKey,
+  type SpeedsterFilterDecisionEvidence,
+} from "../ai-grader-v2/card-type-map-contracts";
+import {
   parseSpeedsterReviewFindings,
   speedsterFindingRegions,
   speedsterTraceHashes,
@@ -48,10 +63,15 @@ type PersistedCapture = {
 export type SpeedsterReviewActionSession = {
   id: string;
   createdByUserId: string;
+  cardProfile?: string;
   workflowState: string;
+  identity?: unknown;
   capture: unknown;
   reviewedDefects: unknown;
   gradeReport: unknown;
+  mapRevisionId?: string | null;
+  mapFilterPolicyVersion?: string | null;
+  mapRegistration?: unknown;
   updatedAt: Date;
 };
 
@@ -107,8 +127,15 @@ export type SpeedsterReviewActionDependencies = {
   persistReviewIfRevision: (
     identity: { sessionId: string; createdByUserId: string },
     expectedUpdatedAt: Date,
-    data: { reviewedDefects: readonly unknown[]; gradeReport: unknown },
+    data: {
+      reviewedDefects: readonly unknown[];
+      gradeReport: unknown;
+      filterDecisions?: readonly SpeedsterFilterDecisionEvidence[];
+    },
   ) => Promise<void>;
+  loadPinnedMapFilter?: (
+    session: SpeedsterReviewActionSession & { mapRevisionId: string },
+  ) => Promise<SpeedsterPinnedMapFilterInput>;
   presignRead: (storageKey: string, expiresInSeconds: number) => Promise<string>;
   learningBankForDetect: () => Promise<unknown>;
   detect: (body: DetectBody) => Promise<unknown>;
@@ -437,6 +464,73 @@ function resultPayload(
   };
 }
 
+export async function remeasureSpeedsterFilteredFindingRestore(input: {
+  session: SpeedsterReviewActionSession;
+  findingSnapshot: unknown;
+  detectorVersion: string;
+}, deps: Pick<SpeedsterReviewActionDependencies, "presignRead" | "measure">) {
+  if (input.session.workflowState !== "CAPTURED") {
+    throw new HttpError(409, "Only an active Speedster session can reintroduce a filtered finding.");
+  }
+  const capture = captureAuthority(
+    input.session.capture,
+    input.session.id,
+    input.session.createdByUserId,
+  );
+  const before = parseSpeedsterReviewFindings(input.session.reviewedDefects);
+  const [filteredFinding] = parseSpeedsterReviewFindings([input.findingSnapshot]);
+  if (
+    !filteredFinding
+    || filteredFinding.reviewResult !== "UNREVIEWED"
+    || (filteredFinding.origin !== "DETECTOR" && filteredFinding.origin !== "MEMORY")
+  ) {
+    throw new HttpError(409, "The saved filter decision does not contain an original detector candidate.");
+  }
+  if (before.some(({ id }) => id === filteredFinding.id)) {
+    throw new HttpError(409, "The filtered finding is already present in active review.");
+  }
+  const version = detectorVersion(input.session.gradeReport);
+  if (version !== input.detectorVersion) {
+    throw new HttpError(409, "The filtered finding detector version does not match active review.");
+  }
+  const syntheticRemoved = {
+    ...filteredFinding,
+    reviewResult: "REMOVED" as const,
+    reviewResultBeforeRemoval: filteredFinding.reviewResult,
+  };
+  const measuredDefects = await remeasureSpeedsterReviewAction({
+    defects: [...before, syntheticRemoved],
+    action: { type: "UNDO", defectIds: [filteredFinding.id] },
+    measure: async ({ side, findings, marks }) => {
+      const captureSide = side === "FRONT" ? capture.front : capture.back;
+      const result = await deps.measure({
+        side,
+        cornerShape: capture.cornerShape,
+        evidenceView: {
+          id: `${side}:ORIGINAL`,
+          imageUrl: await deps.presignRead(captureSide.inspectionStorageKey, 60 * 10),
+          inspectionFrame: captureSide.inspectionFrame,
+        },
+        findings: findings.map(stripSpeedsterFindingPrivateFields),
+        marks,
+      });
+      return {
+        defects: reconcileMeasurementResponse({
+          side,
+          activeInputs: findings,
+          rawDefects: result.defects,
+          newTrace: null,
+        }),
+      };
+    },
+  });
+  const review = calculateSpeedsterReview(capture, measuredDefects);
+  return {
+    reviewedDefects: review.defects,
+    gradeReport: { ...review.grade, detectorVersion: version },
+  };
+}
+
 export async function applySpeedsterReviewAction(
   input: SpeedsterReviewActionInput,
   deps: SpeedsterReviewActionDependencies,
@@ -457,12 +551,40 @@ export async function applySpeedsterReviewAction(
   const before = parseSpeedsterReviewFindings(session.reviewedDefects);
 
   if (input.action.type === "INITIALIZE") {
+    let pinnedMap: SpeedsterPinnedMapFilterInput | null = null;
+    let pinnedCardIdentity: SpeedsterSessionIdentity | null = null;
+    if (session.mapRevisionId) {
+      if (!deps.loadPinnedMapFilter) {
+        throw new HttpError(409, "Speedster map initialization is unavailable for this pinned session.");
+      }
+      try {
+        pinnedMap = await deps.loadPinnedMapFilter({ ...session, mapRevisionId: session.mapRevisionId });
+        validateSpeedsterPinnedMapFilterInput(pinnedMap);
+        if (session.mapFilterPolicyVersion !== pinnedMap.revision.filterPolicyVersion) {
+          throw new Error("The session filter policy does not match its pinned map revision.");
+        }
+        if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
+          throw new Error("The pinned session card profile is invalid.");
+        }
+        pinnedCardIdentity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
+        const sessionMapKey = speedsterCardTypeMapKey(session.cardProfile, pinnedCardIdentity);
+        if (canonicalSpeedsterMapKeyJson(sessionMapKey) !== canonicalSpeedsterMapKeyJson(pinnedMap.revision.matchKey)) {
+          throw new Error("The pinned map exact card-type key does not match the session identity.");
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "unknown map-integrity error";
+        throw new HttpError(409, `Speedster map initialization failed: ${reason}`);
+      }
+    }
     const hasGradeReport = isRecord(session.gradeReport) && Object.keys(session.gradeReport).length !== 0;
     if (before.length !== 0 || hasGradeReport) {
       if (!hasGradeReport || before.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
         throw new HttpError(409, "Speedster detector review state is not coherently initialized.");
       }
       const version = detectorVersion(session.gradeReport);
+      if (pinnedMap && version !== SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION) {
+        throw new HttpError(409, "Speedster map initialization has an incompatible detector version.");
+      }
       const review = calculateSpeedsterReview(capture, before);
       const gradeReport = { ...review.grade, detectorVersion: version };
       if (!isDeepStrictEqual(session.gradeReport, gradeReport)) {
@@ -471,11 +593,30 @@ export async function applySpeedsterReviewAction(
       return resultPayload(before, review.defects, gradeReport);
     }
     const detected = await serverOwnedInitialization(input, capture, deps);
-    const review = calculateSpeedsterReview(capture, detected.initialized);
+    let activeFindings = detected.initialized;
+    let filterDecisions: readonly SpeedsterFilterDecisionEvidence[] | undefined;
+    if (pinnedMap) {
+      try {
+        if (!pinnedCardIdentity) throw new Error("The pinned session card identity is invalid.");
+        const split = splitSpeedsterMapFilteredCandidates({
+          findings: detected.initialized,
+          cardIdentity: pinnedCardIdentity,
+          detectorVersion: detected.detectorVersion,
+          map: pinnedMap,
+        });
+        activeFindings = [...split.activeFindings];
+        filterDecisions = split.filteredDecisions;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "unknown map-integrity error";
+        throw new HttpError(409, `Speedster map initialization failed: ${reason}`);
+      }
+    }
+    const review = calculateSpeedsterReview(capture, activeFindings);
     const gradeReport = { ...review.grade, detectorVersion: detected.detectorVersion };
     await deps.persistReviewIfRevision(identity, session.updatedAt, {
       reviewedDefects: review.defects,
       gradeReport,
+      ...(filterDecisions ? { filterDecisions } : {}),
     });
     return resultPayload(before, review.defects, gradeReport);
   }
