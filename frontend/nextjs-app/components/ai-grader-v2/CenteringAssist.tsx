@@ -9,11 +9,8 @@ import type {
   SpeedsterQuad,
 } from "../../lib/ai-grader-v2/contracts";
 import {
-  SPEEDSTER_CARD_HEIGHT_MM,
-  SPEEDSTER_CARD_WIDTH_MM,
-} from "../../lib/ai-grader-v2/geometry";
-import {
   calculateCenteringBalance,
+  measureSpeedsterCenteringBorders,
   type SpeedsterCenteringBorders,
 } from "../../lib/ai-grader-v2/scoring";
 import {
@@ -56,16 +53,6 @@ function overlayPoint(point: SpeedsterPoint): string {
   return `${point.x * OVERLAY_WIDTH},${point.y * OVERLAY_HEIGHT}`;
 }
 
-function measureBorders(quad: SpeedsterQuad): SpeedsterCenteringBorders {
-  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
-  return {
-    leftMm: ((topLeft.x + bottomLeft.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
-    rightMm: (1 - (topRight.x + bottomRight.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
-    topMm: ((topLeft.y + topRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
-    bottomMm: (1 - (bottomLeft.y + bottomRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
-  };
-}
-
 function millimeters(value: number): string {
   return `${value.toFixed(2)} mm`;
 }
@@ -85,7 +72,7 @@ export function CenteringAssist({
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
   const gradientMap = useRef<SpeedsterGradientMap | null>(null);
   const measurements = useMemo(() => {
-    const borders = measureBorders(innerQuad);
+    const borders = measureSpeedsterCenteringBorders(innerQuad);
     return {
       borders,
       horizontal: calculateCenteringBalance(borders.leftMm, borders.rightMm),

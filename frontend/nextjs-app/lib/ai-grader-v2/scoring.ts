@@ -1,8 +1,10 @@
 import type {
   SpeedsterCardSide,
   SpeedsterDefectType,
+  SpeedsterQuad,
   SpeedsterSubgrades,
 } from "./contracts";
+import { SPEEDSTER_CARD_HEIGHT_MM, SPEEDSTER_CARD_WIDTH_MM } from "./geometry";
 
 export type SpeedsterCenteringBorders = {
   leftMm: number;
@@ -10,6 +12,16 @@ export type SpeedsterCenteringBorders = {
   topMm: number;
   bottomMm: number;
 };
+
+export function measureSpeedsterCenteringBorders(quad: SpeedsterQuad): SpeedsterCenteringBorders {
+  const [topLeft, topRight, bottomRight, bottomLeft] = quad;
+  return {
+    leftMm: ((topLeft.x + bottomLeft.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
+    rightMm: (1 - (topRight.x + bottomRight.x) / 2) * SPEEDSTER_CARD_WIDTH_MM,
+    topMm: ((topLeft.y + topRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
+    bottomMm: (1 - (bottomLeft.y + bottomRight.y) / 2) * SPEEDSTER_CARD_HEIGHT_MM,
+  };
+}
 
 export type SpeedsterDefectArea = {
   areaMm2: number;

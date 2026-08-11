@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+// @ts-expect-error The existing lifecycle harness uses jsdom without a workspace declaration package.
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const cssExtensions = require.extensions as Record<string, (module: NodeModule) => void>;
+const cssExtensions = require.extensions as unknown as Record<string, (module: NodeModule) => void>;
 cssExtensions[".css"] = (module) => {
   module.exports = new Proxy({}, {
     get: (_target, property) => property === "__esModule" ? false : String(property),
@@ -20,6 +21,9 @@ QRCode.toCanvas = async () => {};
 const { CaptureWorkspace } = require(
   "../components/ai-grader-v2/CaptureWorkspace",
 ) as typeof import("../components/ai-grader-v2/CaptureWorkspace");
+const { SpeedsterTrainWorkspace } = require(
+  "../components/ai-grader-v2/SpeedsterTrainWorkspace",
+) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
 const { speedsterImageService } = require(
   "../lib/ai-grader-v2/image-service",
 ) as typeof import("../lib/ai-grader-v2/image-service");
@@ -375,5 +379,82 @@ test("same-version iPhone polling cannot erase a visible geometry error", async 
   } finally {
     await harness.cleanup();
     console.info = originalConsoleInfo;
+  }
+});
+
+test("TRAIN boundary tool resets and requires exactly four human points before save", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+  });
+  const identity = {
+    playerName: "Nick Bosa",
+    year: "2021",
+    manufacturer: "Panini",
+    productSet: "Obsidian",
+    parallel: "Orange",
+    insert: null,
+    cardNumber: "12",
+  } as const;
+  const anchors = [1, 2, 3, 4].map((number) => ({
+    id: `anchor-${number}`,
+    label: `Anchor ${number}`,
+    point: validQuad[number - 1],
+  }));
+  const zones = [{
+    id: "zone-1",
+    label: "Printed text",
+    semanticType: "PRINT_TEXT" as const,
+    polygon: validQuad,
+  }];
+  const editableSide = { designBoundary: { kind: "QUAD" as const, points: validQuad }, anchors, zones };
+  try {
+    await act(async () => {
+      harness.root.render(
+        <SpeedsterTrainWorkspace
+          token="admin-token"
+          source={{
+            sessionId: "speedster-session-lifecycle-test",
+            cardProfile: "SPORTS",
+            identity,
+            front: { rectifiedUrl: "https://images.example.test/front.webp", centeringQuad: validQuad },
+            back: { rectifiedUrl: "https://images.example.test/back.webp", centeringQuad: validQuad },
+          }}
+          initialMap={{
+            status: "LOADED",
+            revision: {
+              mapId: "map-1",
+              revisionId: "revision-1",
+              version: 1,
+              revisionHash: "a".repeat(64),
+              displayIdentity: identity,
+              mapSchemaVersion: "speedster-card-type-map-v1",
+              filterPolicyVersion: "speedster-map-filter-containment-v1",
+              createdAt: "2026-08-10T20:00:00.000Z",
+            },
+            revisions: [],
+            editable: { front: editableSide, back: editableSide },
+          }}
+          onSaved={() => {}}
+        />,
+      );
+    });
+    const save = buttonByText(harness.container, "Save + activate new revision");
+    const reset = buttonByText(harness.container, "Reset Front boundary");
+    const stage = harness.container.querySelector<HTMLImageElement>('img[alt="Front TRAIN reference"]')?.parentElement;
+    assert.ok(save && reset && stage);
+    assert.equal(save.disabled, false);
+    Object.defineProperty(stage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 100, bottom: 100, width: 100, height: 100 }),
+    });
+    await act(async () => fire(reset, "click"));
+    assert.equal(save.disabled, true);
+    for (const [clientX, clientY] of [[10, 10], [90, 10], [90, 90], [10, 90]]) {
+      await act(async () => fire(stage, "pointerdown", { clientX, clientY }));
+    }
+    assert.match(harness.container.textContent ?? "", /Front boundary 4\/4/);
+    assert.equal(save.disabled, false);
+  } finally {
+    await harness.cleanup();
   }
 });

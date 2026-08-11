@@ -5,6 +5,11 @@ import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../../../components/AppShell";
 import SharedLabelEditor from "../../../../components/human-grade/SharedLabelEditor";
+import {
+  SpeedsterTrainWorkspace,
+  type SpeedsterTrainMapState,
+  type SpeedsterTrainSource,
+} from "../../../../components/ai-grader-v2/SpeedsterTrainWorkspace";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin";
 import { useSession } from "../../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../../lib/adminHeaders";
@@ -85,6 +90,10 @@ export default function CompletedSpeedsterCardPage() {
   const [identityErrors, setIdentityErrors] = useState<Record<string, string>>({});
   const [labelPreviewUrl, setLabelPreviewUrl] = useState<string | null>(null);
   const [labelPreviewLoading, setLabelPreviewLoading] = useState(false);
+  const [trainSource, setTrainSource] = useState<SpeedsterTrainSource | null>(null);
+  const [trainMap, setTrainMap] = useState<SpeedsterTrainMapState | null>(null);
+  const [trainOpen, setTrainOpen] = useState(false);
+  const [trainLoading, setTrainLoading] = useState(false);
   const inputRefs = {
     FRONT: useRef<HTMLInputElement>(null),
     BACK: useRef<HTMLInputElement>(null),
@@ -103,7 +112,21 @@ export default function CompletedSpeedsterCardPage() {
     const payload = await response.json().catch(() => ({})) as { card?: CardWorkspace; message?: string };
     if (!response.ok || !payload.card) throw new Error(payload.message ?? "Completed card could not be loaded.");
     setCard(payload.card);
-    setMessage("Post-grading tools stay separate from the grading engine.");
+    const mapResponse = await fetch(
+      `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(sessionId)}`,
+      { headers: buildAdminHeaders(session.token), cache: "no-store" },
+    );
+    const mapPayload = await mapResponse.json().catch(() => ({})) as {
+      map?: SpeedsterTrainMapState;
+      message?: string;
+    };
+    if (!mapResponse.ok || !mapPayload.map) {
+      throw new Error(mapPayload.message ?? "Exact TRAIN map identity could not be loaded.");
+    }
+    setTrainMap(mapPayload.map);
+    setMessage(mapPayload.map.status === "LOADED"
+      ? `Exact TRAIN map revision ${mapPayload.map.revision?.version} loaded. Post-grading tools stay separate from grade authority.`
+      : "No exact TRAIN map exists. Post-grading tools stay separate from grade authority.");
   }, [isAdmin, session?.token, sessionId]);
 
   useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Completed card could not be loaded.")); }, [load]);
@@ -211,6 +234,34 @@ export default function CompletedSpeedsterCardPage() {
     setMessage("Editing the authoritative Speedster session identity.");
   };
 
+  const openTrain = async () => {
+    if (!session?.token || !sessionId || trainLoading) return;
+    setTrainLoading(true);
+    setMessage("Loading immutable completed-card evidence for retro-training.");
+    try {
+      const response = await fetch(
+        `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(sessionId)}`,
+        { headers: buildAdminHeaders(session.token), cache: "no-store" },
+      );
+      const payload = await response.json().catch(() => ({})) as {
+        source?: SpeedsterTrainSource;
+        map?: SpeedsterTrainMapState;
+        message?: string;
+      };
+      if (!response.ok || !payload.source || !payload.map) {
+        throw new Error(payload.message ?? "Completed-card TRAIN evidence could not be loaded.");
+      }
+      setTrainSource(payload.source);
+      setTrainMap(payload.map);
+      setTrainOpen(true);
+      setMessage("Retro-training writes only a new immutable map revision; the completed card remains unchanged.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Completed-card TRAIN evidence could not be loaded.");
+    } finally {
+      setTrainLoading(false);
+    }
+  };
+
   const saveIdentity = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!card || !session?.token || !sessionId || acting) return;
@@ -309,6 +360,12 @@ export default function CompletedSpeedsterCardPage() {
                 >
                   Edit authoritative identity
                 </button>
+                <button type="button" disabled={trainLoading} onClick={() => void openTrain()}>
+                  {trainLoading ? "Loading TRAIN…" : trainMap?.status === "LOADED" ? "TRAIN / Edit map" : "TRAIN this card type"}
+                </button>
+                <span>{trainMap?.status === "LOADED"
+                  ? `Loaded exact map r${trainMap.revision?.version} · ${trainMap.revision?.revisionHash.slice(0, 12)}`
+                  : "No exact map is loaded; no fallback map will be guessed."}</span>
                 {!card.labelPreviewPath ? (
                   <span>No exact linked Speedster label. Editing is unavailable; none will be created or repaired here.</span>
                 ) : null}
@@ -348,6 +405,20 @@ export default function CompletedSpeedsterCardPage() {
                 primaryActionLabel="Save Authoritative Identity"
               />
             </div>
+          ) : null}
+
+          {trainOpen && trainSource && trainMap ? (
+            <SpeedsterTrainWorkspace
+              token={session.token}
+              source={trainSource}
+              initialMap={trainMap}
+              onCancel={() => setTrainOpen(false)}
+              onSaved={(nextMap) => {
+                setTrainMap(nextMap);
+                setTrainOpen(false);
+                setMessage(`TRAIN map revision ${nextMap.revision?.version} is active. Completed session, grade, report, label, card, and Memory authority were not updated.`);
+              }}
+            />
           ) : null}
 
           <section className={styles.toolGrid}>

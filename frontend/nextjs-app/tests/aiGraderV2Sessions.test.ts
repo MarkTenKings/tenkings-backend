@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -7,7 +8,14 @@ import { SPEEDSTER_RULE_VERSION } from "../lib/ai-grader-v2/contracts";
 import { SPEEDSTER_TRACE_PIXEL_COUNT, encodeSpeedsterTraceRleV1 } from "../lib/ai-grader-v2/trace-codec";
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
-import { createAiGraderV2SessionHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
+import {
+  createAiGraderV2SessionHandler,
+  validateSpeedsterSubmittedMapBinding,
+} from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
+import {
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+} from "../lib/ai-grader-v2/card-type-map-contracts";
+import { speedsterPhysicalQuadHash } from "../lib/server/speedsterCardTypeMaps";
 import {
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
@@ -44,6 +52,83 @@ function response() {
 }
 
 const admin = async () => ({ user: { id: "admin-1" } });
+
+const mapBindingSha = (value: string) => createHash("sha256").update(value).digest("hex");
+const mapBindingQuad = [
+  { x: 0.1, y: 0.1 },
+  { x: 0.9, y: 0.1 },
+  { x: 0.9, y: 0.9 },
+  { x: 0.1, y: 0.9 },
+] as const;
+
+function mapBindingFixture() {
+  const sessionId = "speedster-map-binding-0001";
+  const side = (name: "front" | "back") => {
+    const prefix = `ai-grader-v2/admin-1/${sessionId}/prepared/${name}`;
+    return {
+      originalStorageKey: `ai-grader-v2/admin-1/${sessionId}/original/${name}.jpg`,
+      rectifiedStorageKey: `${prefix}/rectified.webp`,
+      inspectionStorageKey: `${prefix}/inspection.webp`,
+      sourceCorners: mapBindingQuad,
+      centeringQuad: mapBindingQuad,
+      centeringBorders: { leftMm: 6, rightMm: 6, topMm: 8, bottomMm: 8 },
+      inspectionFrame: { width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
+      transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      viewStorageKeys: {
+        NORMALIZED: `${prefix}/normalized.webp`,
+        MICRO_DEFECT: `${prefix}/micro_defect.webp`,
+        DIRECTIONAL: `${prefix}/directional.webp`,
+      },
+    };
+  };
+  const capture = { cornerShape: "ROUNDED_3_18_MM", front: side("front"), back: side("back") };
+  const session = {
+    id: sessionId,
+    createdByUserId: "admin-1",
+    cardProfile: "SPORTS",
+    workflowState: "DRAFT",
+    identity: {
+      playerName: "Nick Bosa",
+      year: "2021",
+      manufacturer: "Panini",
+      productSet: "Obsidian",
+      parallel: "Orange",
+      insert: null,
+      cardNumber: "12",
+    },
+  };
+  const registration = (name: "front" | "back") => ({
+    version: "opencv-human-anchor-registration-v1",
+    side: name === "front" ? "FRONT" : "BACK",
+    mapRevisionId: "map-revision-1",
+    currentPhysicalQuadSha256: speedsterPhysicalQuadHash(mapBindingQuad),
+    currentInspectionSha256: mapBindingSha(capture[name].inspectionStorageKey),
+    homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    anchors: [1, 2, 3, 4].map((number) => ({
+      anchorId: `anchor-${number}`,
+      expectedPoint: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
+      locatedPoint: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
+      score: 1,
+    })),
+    projectedDesignBoundary: { kind: "QUAD", points: mapBindingQuad },
+    projectedZones: [{
+      id: "zone-1",
+      label: "Printed text",
+      semanticType: "PRINT_TEXT",
+      polygon: mapBindingQuad,
+    }],
+  });
+  return {
+    sessionId,
+    session,
+    capture,
+    binding: {
+      revisionId: "map-revision-1",
+      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      registration: { front: registration("front"), back: registration("back") },
+    },
+  };
+}
 
 test("geometry proxy clamps automatic handles to the reachable image boundary", () => {
   assert.deepEqual(sanitizeSpeedsterGeometryPayload({
@@ -323,6 +408,110 @@ test("generic PATCH permits only the DRAFT to CAPTURED transition with required 
     await handler(request("PATCH", body, "speedster-1"), result.res);
     assert.equal(result.state.status, 400, JSON.stringify(body));
     assert.equal(updateCalls, 0, JSON.stringify(body));
+  }
+});
+
+test("capture PATCH accepts an exact active-map registration bound to submitted quads and server-hashed inspections", async () => {
+  const fixture = mapBindingFixture();
+  const hashedKeys: string[] = [];
+  const saves: Record<string, unknown>[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, binding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, {
+        async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+        async hashEvidence(storageKey) {
+          hashedKeys.push(storageKey);
+          return mapBindingSha(storageKey);
+        },
+      });
+    },
+    async updateSession(_id, _createdByUserId, data) {
+      saves.push(data as unknown as Record<string, unknown>);
+      return { ...fixture.session, ...data };
+    },
+  });
+  const result = response();
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+    mapBinding: fixture.binding,
+  }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 200);
+  assert.deepEqual(hashedKeys.sort(), [
+    fixture.capture.front.inspectionStorageKey,
+    fixture.capture.back.inspectionStorageKey,
+  ].sort());
+  assert.equal(saves[0]?.mapRevisionId, fixture.binding.revisionId);
+  assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
+  assert.deepEqual(saves[0]?.capture, fixture.capture);
+});
+
+test("capture PATCH rejects either side when registration physical geometry is from another submitted capture", async () => {
+  for (const side of ["front", "back"] as const) {
+    const fixture = mapBindingFixture();
+    const capture = {
+      ...fixture.capture,
+      [side]: {
+        ...fixture.capture[side],
+        sourceCorners: [
+          { x: 0.15, y: 0.1 },
+          ...fixture.capture[side].sourceCorners.slice(1),
+        ],
+      },
+    };
+    let updateCalls = 0;
+    const handler = createAiGraderV2SessionHandler({
+      requireAdminSession: admin,
+      async findSession() { return fixture.session; },
+      async validateMapBinding(session, binding, submittedCapture) {
+        return validateSpeedsterSubmittedMapBinding(session, binding, submittedCapture, {
+          async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+          async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+        });
+      },
+      async updateSession() { updateCalls += 1; return fixture.session; },
+    });
+    const result = response();
+    await handler(request("PATCH", {
+      workflowState: "CAPTURED",
+      capture,
+      mapBinding: fixture.binding,
+    }, fixture.sessionId), result.res);
+    assert.equal(result.state.status, 409, side);
+    assert.equal(updateCalls, 0, side);
+    assert.match(JSON.stringify(result.state.body), /does not match the submitted physical geometry/);
+  }
+});
+
+test("capture PATCH rejects either side when server-hashed current inspection differs from registration evidence", async () => {
+  for (const side of ["front", "back"] as const) {
+    const fixture = mapBindingFixture();
+    let updateCalls = 0;
+    const mismatchedKey = fixture.capture[side].inspectionStorageKey;
+    const handler = createAiGraderV2SessionHandler({
+      requireAdminSession: admin,
+      async findSession() { return fixture.session; },
+      async validateMapBinding(session, binding, submittedCapture) {
+        return validateSpeedsterSubmittedMapBinding(session, binding, submittedCapture, {
+          async loadActiveMap() { return { revisionId: fixture.binding.revisionId } as never; },
+          async hashEvidence(storageKey) {
+            return mapBindingSha(storageKey === mismatchedKey ? `different:${storageKey}` : storageKey);
+          },
+        });
+      },
+      async updateSession() { updateCalls += 1; return fixture.session; },
+    });
+    const result = response();
+    await handler(request("PATCH", {
+      workflowState: "CAPTURED",
+      capture: fixture.capture,
+      mapBinding: fixture.binding,
+    }, fixture.sessionId), result.res);
+    assert.equal(result.state.status, 409, side);
+    assert.equal(updateCalls, 0, side);
+    assert.match(JSON.stringify(result.state.body), /does not match the submitted inspection evidence/);
   }
 });
 

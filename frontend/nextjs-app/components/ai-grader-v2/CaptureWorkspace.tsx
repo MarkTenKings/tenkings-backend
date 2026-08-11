@@ -5,6 +5,7 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
+import type { SpeedsterMapRegistration } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
@@ -38,6 +39,7 @@ export type SpeedsterPreparedSide = {
   viewStorageKeys: Readonly<Record<"NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL", string>>;
   centeringQuad: SpeedsterQuad;
   centeringBorders: SpeedsterCenteringBorders;
+  mapRegistration?: SpeedsterMapRegistration;
 };
 
 export type SpeedsterCaptureBundle = {
@@ -52,6 +54,7 @@ type CaptureWorkspaceProps = {
   token: string;
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
+  activeMapRevisionId?: string | null;
   onReady: (bundle: SpeedsterCaptureBundle) => void;
 };
 
@@ -72,6 +75,7 @@ type SideState = {
   proposedCentering?: SpeedsterQuad;
   detectedBorders?: readonly ("top" | "right" | "bottom" | "left")[];
   centering?: CenteringAssistResult;
+  mapRegistration?: SpeedsterMapRegistration;
 };
 
 const CARD_ASPECT = 63.5 / 88.9;
@@ -92,7 +96,13 @@ function manualStartQuad(width: number, height: number): SpeedsterQuad {
   ];
 }
 
-export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: CaptureWorkspaceProps) {
+export function CaptureWorkspace({
+  token,
+  sessionId,
+  cardProfile,
+  activeMapRevisionId = null,
+  onReady,
+}: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [iphonePairingUrl, setIphonePairingUrl] = useState<string>();
@@ -253,6 +263,26 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
     try {
       const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
       const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners, outputPlan);
+      const mapRegistration = activeMapRevisionId
+        ? await speedsterImageService.registerMap(token, {
+            sessionId,
+            side,
+            currentPhysicalQuad: current.corners,
+          })
+        : undefined;
+      if (mapRegistration && mapRegistration.mapRevisionId !== activeMapRevisionId) {
+        throw new Error("The exact active TRAIN map changed while current-copy geometry was being registered.");
+      }
+      const mappedCentering = mapRegistration?.projectedDesignBoundary.kind === "QUAD"
+        ? mapRegistration.projectedDesignBoundary.points
+        : mapRegistration?.projectedDesignBoundary.kind === "FULL_BLEED"
+          ? [
+              { x: 0, y: 0 },
+              { x: 1, y: 0 },
+              { x: 1, y: 1 },
+              { x: 0, y: 1 },
+            ] as const
+          : prepared.borders;
       const next: SideState = {
         ...current,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
@@ -261,8 +291,13 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
         inspectionStorageKey: outputPlan.INSPECTION.storageKey,
         inspectionFrame: prepared.inspectionFrame,
         transform: prepared.transform,
-        proposedCentering: prepared.borders,
-        detectedBorders: prepared.detectedBorders,
+        proposedCentering: mappedCentering,
+        detectedBorders: mapRegistration
+          ? mapRegistration.projectedDesignBoundary.kind === "QUAD"
+            ? ["top", "right", "bottom", "left"]
+            : []
+          : prepared.detectedBorders,
+        mapRegistration,
         views: {
           NORMALIZED: outputPlan.NORMALIZED.readUrl,
           MICRO_DEFECT: outputPlan.MICRO_DEFECT.readUrl,
@@ -313,6 +348,7 @@ export function CaptureWorkspace({ token, sessionId, cardProfile, onReady }: Cap
       viewStorageKeys: value.viewStorageKeys!,
       centeringQuad: value.centering!.innerQuad,
       centeringBorders: value.centering!.borders,
+      ...(value.mapRegistration ? { mapRegistration: value.mapRegistration } : {}),
     });
     const bundle = {
       sessionId,

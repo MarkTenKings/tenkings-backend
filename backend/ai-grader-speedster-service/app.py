@@ -20,6 +20,7 @@ from card_geometry import (
     detect_card_quad,
     detector_material_mask,
     printed_border_quad,
+    register_map_design,
     warp_to_card_map,
     warp_to_inspection_map,
 )
@@ -82,6 +83,24 @@ class PrepareResponse(BaseModel):
     borders: List[Point]
     detectedBorders: List[str]
     inspectionFrame: dict
+
+
+class MapRegistrationAnchor(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    point: Point
+
+
+class MapRegistrationRequest(BaseModel):
+    referenceImage: ImageInput
+    currentImage: ImageInput
+    mapId: str = Field(min_length=1, max_length=80)
+    mapRevisionId: str = Field(min_length=1, max_length=80)
+    side: str
+    currentPhysicalQuadSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    currentInspectionSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    anchors: List[MapRegistrationAnchor]
+    designBoundary: dict
+    zones: List[dict]
 
 
 class CanonicalView(ImageInput):
@@ -327,6 +346,43 @@ def prepare_image(request: PrepareRequest):
         "detectedBorders": detected_borders,
         "inspectionFrame": frame,
     }
+
+
+@app.post("/map-registration")
+def map_registration(request: MapRegistrationRequest):
+    if request.side not in ("FRONT", "BACK"):
+        raise HTTPException(status_code=400, detail="Map registration side is invalid")
+    try:
+        reference = load_image(
+            request.referenceImage.imageUrl,
+            request.referenceImage.imageBase64,
+        )
+        current = load_image(
+            request.currentImage.imageUrl,
+            request.currentImage.imageBase64,
+        )
+        registered = register_map_design(
+            reference,
+            current,
+            [anchor.model_dump() for anchor in request.anchors],
+            request.designBoundary,
+            request.zones,
+        )
+        return {
+            "version": "opencv-human-anchor-registration-v1",
+            "side": request.side,
+            "mapRevisionId": request.mapRevisionId,
+            "currentPhysicalQuadSha256": request.currentPhysicalQuadSha256,
+            "currentInspectionSha256": request.currentInspectionSha256,
+            **registered,
+        }
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"{type(error).__name__}: {error}",
+        ) from error
 
 
 @app.post("/detect")
