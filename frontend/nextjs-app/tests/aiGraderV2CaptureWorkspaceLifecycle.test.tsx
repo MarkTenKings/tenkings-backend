@@ -21,6 +21,9 @@ QRCode.toCanvas = async () => {};
 const { CaptureWorkspace } = require(
   "../components/ai-grader-v2/CaptureWorkspace",
 ) as typeof import("../components/ai-grader-v2/CaptureWorkspace");
+type SpeedsterCaptureInstrumentationEvent = import(
+  "../components/ai-grader-v2/CaptureWorkspace"
+).SpeedsterCaptureInstrumentationEvent;
 const { SpeedsterTrainWorkspace } = require(
   "../components/ai-grader-v2/SpeedsterTrainWorkspace",
 ) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
@@ -62,12 +65,17 @@ type Harness = {
   container: HTMLElement;
   root: Root;
   getPollCount: () => number;
+  getRegistrationCount: () => number;
+  events: SpeedsterCaptureInstrumentationEvent[];
   cleanup: () => Promise<void>;
 };
 
 async function mountWorkspace(input: {
   proposeGeometry: typeof speedsterImageService.proposeGeometry;
   refreshedUrls?: boolean;
+  activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
+  registrationFails?: boolean;
+  mapLookupFailed?: boolean;
 }): Promise<Harness> {
   QRCode.toCanvas = async () => {};
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -114,6 +122,7 @@ async function mountWorkspace(input: {
   });
 
   let pollCount = 0;
+  let registrationCount = 0;
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     if (url === "/api/admin/ai-grader-v2/iphone-capture" && init?.method === "POST") {
@@ -128,6 +137,39 @@ async function mountWorkspace(input: {
         back: { storageKey: "back.jpg", readUrl: `https://images.example.test/back-${suffix}.jpg` },
       });
     }
+    if (url === "/api/admin/ai-grader-v2/upload-plan") {
+      const outputs = Object.fromEntries(["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"].map((kind) => [
+        kind,
+        { storageKey: `${kind}.webp`, uploadUrl: `https://upload.example.test/${kind}`, readUrl: `https://read.example.test/${kind}` },
+      ]));
+      return jsonResponse({ outputs });
+    }
+    if (url === "/api/admin/ai-grader-v2/image/prepare") {
+      return jsonResponse({
+        width: 1270,
+        height: 1778,
+        transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        borders: validQuad,
+        detectedBorders: ["top", "right", "bottom", "left"],
+        inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
+      });
+    }
+    if (url === "/api/admin/ai-grader-v2/image/map-registration") {
+      registrationCount += 1;
+      if (input.registrationFails) return jsonResponse({ message: "Registration unsafe" }, 409);
+      const body = JSON.parse(String(init?.body)) as { side: "FRONT" | "BACK" };
+      return jsonResponse({
+        version: "opencv-human-anchor-registration-v1",
+        side: body.side,
+        mapRevisionId: input.activeMap?.revisionId,
+        currentPhysicalQuadSha256: "a".repeat(64),
+        currentInspectionSha256: "b".repeat(64),
+        homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+        anchors: [],
+        projectedDesignBoundary: { kind: "QUAD", points: validQuad },
+        projectedZones: [],
+      });
+    }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
   };
 
@@ -135,13 +177,19 @@ async function mountWorkspace(input: {
   speedsterImageService.proposeGeometry = input.proposeGeometry;
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
+  const events: SpeedsterCaptureInstrumentationEvent[] = [];
   await act(async () => {
     root.render(
       <CaptureWorkspace
         token="admin-token"
         sessionId="speedster-session-lifecycle-test"
         cardProfile="POKEMON"
+        activeMapRevisionId={input.activeMap?.revisionId}
+        activeMapScope={input.activeMap?.scope}
+        activeMapName={input.activeMap?.name}
+        mapLookupFailed={input.mapLookupFailed}
         onReady={() => {}}
+        onInstrumentationEvent={(event) => events.push(event)}
       />,
     );
   });
@@ -154,6 +202,8 @@ async function mountWorkspace(input: {
     container,
     root,
     getPollCount: () => pollCount,
+    getRegistrationCount: () => registrationCount,
+    events,
     cleanup: async () => {
       await act(async () => root.unmount());
       speedsterImageService.proposeGeometry = originalProposeGeometry;
@@ -379,6 +429,83 @@ test("same-version iPhone polling cannot erase a visible geometry error", async 
   } finally {
     await harness.cleanup();
     console.info = originalConsoleInfo;
+  }
+});
+
+test("resolved FAMILY map is shown subtly and recorded on the geometry step", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-7", scope: "FAMILY", name: "2022 Lost Origin Holo" },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => (harness.container.textContent ?? "").includes("FAMILY · 2022 Lost Origin Holo applied to Front"), "Applied family badge did not render");
+    const event = harness.events.find((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED");
+    assert.deepEqual(event?.details, {
+      side: "FRONT",
+      mapAppliedScope: "FAMILY",
+      mapName: "2022 Lost Origin Holo",
+      mapRevisionId: "family-revision-7",
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("registration failure applies no map, never retries, and continues normal human review", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-9", scope: "EXACT", name: "Snorlax #TG10" },
+    registrationFails: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => (harness.container.textContent ?? "").includes("No map will be applied; continuing with normal human review"), "Safe manual fallback did not render");
+    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+    assert.equal(harness.getRegistrationCount(), 1);
+    const frontEvent = harness.events.find((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED");
+    assert.deepEqual(frontEvent?.details, {
+      side: "FRONT",
+      mapAppliedScope: "NONE",
+      mapFailureCode: "REGISTRATION_FAILED",
+    });
+
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED").length === 2, "Back geometry did not continue");
+    assert.equal(harness.getRegistrationCount(), 1, "A failed registration must not retry on the other side");
+    assert.deepEqual(harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED")[1]?.details, {
+      side: "BACK",
+      mapAppliedScope: "NONE",
+      mapFailureCode: "REGISTRATION_FAILED",
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("failed effective lookup records NONE while ordinary geometry stays available", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    mapLookupFailed: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.events.some((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED"), "Manual geometry event did not record");
+    assert.equal(harness.getRegistrationCount(), 0);
+    assert.deepEqual(harness.events.find((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED")?.details, {
+      side: "FRONT",
+      mapAppliedScope: "NONE",
+      mapFailureCode: "LOOKUP_FAILED",
+    });
+  } finally {
+    await harness.cleanup();
   }
 });
 

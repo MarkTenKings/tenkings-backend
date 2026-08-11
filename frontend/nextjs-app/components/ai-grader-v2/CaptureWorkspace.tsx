@@ -5,7 +5,10 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
-import type { SpeedsterMapRegistration } from "../../lib/ai-grader-v2/card-type-map-contracts";
+import type {
+  SpeedsterMapRegistration,
+  SpeedsterMapScope,
+} from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
@@ -55,6 +58,9 @@ type CaptureWorkspaceProps = {
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
   activeMapRevisionId?: string | null;
+  activeMapScope?: SpeedsterMapScope | null;
+  activeMapName?: string | null;
+  mapLookupFailed?: boolean;
   onReady: (bundle: SpeedsterCaptureBundle) => void;
   onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void;
 };
@@ -67,6 +73,10 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
     side?: SpeedsterCardSide;
     automaticGeometryCount?: number;
     photoSource?: "IPHONE" | "LOCAL" | "MIXED";
+    mapAppliedScope?: SpeedsterMapScope | "NONE";
+    mapName?: string;
+    mapRevisionId?: string;
+    mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
   }>;
 }>;
 
@@ -113,6 +123,9 @@ export function CaptureWorkspace({
   sessionId,
   cardProfile,
   activeMapRevisionId = null,
+  activeMapScope = null,
+  activeMapName = null,
+  mapLookupFailed = false,
   onReady,
   onInstrumentationEvent,
 }: CaptureWorkspaceProps) {
@@ -126,11 +139,13 @@ export function CaptureWorkspace({
   const [cornerShape, setCornerShape] = useState<SpeedsterCornerShape>("ROUNDED_3_18_MM");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Add one original image of each side.");
+  const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const geometryAttempt = useRef(0);
   const photosStartedAt = useRef(Date.now());
   const photosReadyRecorded = useRef(false);
   const stageStartedAt = useRef(Date.now());
+  const mapRegistrationFailed = useRef(false);
 
   useEffect(() => {
     iphoneVersion.current = 0;
@@ -138,6 +153,8 @@ export function CaptureWorkspace({
     photosStartedAt.current = Date.now();
     photosReadyRecorded.current = false;
     stageStartedAt.current = Date.now();
+    mapRegistrationFailed.current = false;
+    setMapRegistrationNotice(null);
     setWorkflowError(null);
   }, [sessionId]);
 
@@ -304,15 +321,23 @@ export function CaptureWorkspace({
     try {
       const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
       const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners, outputPlan);
-      const mapRegistration = activeMapRevisionId
-        ? await speedsterImageService.registerMap(token, {
+      let mapRegistration: SpeedsterMapRegistration | undefined;
+      if (activeMapRevisionId && !mapRegistrationFailed.current) {
+        try {
+          const registered = await speedsterImageService.registerMap(token, {
             sessionId,
             side,
             currentPhysicalQuad: current.corners,
-          })
-        : undefined;
-      if (mapRegistration && mapRegistration.mapRevisionId !== activeMapRevisionId) {
-        throw new Error("The exact active CARD MAP changed while current-copy geometry was being registered.");
+          });
+          if (registered.mapRevisionId !== activeMapRevisionId) {
+            throw new Error("The selected CARD MAP changed while geometry was being registered.");
+          }
+          mapRegistration = registered;
+          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to ${side === "FRONT" ? "Front" : "Back"}.`);
+        } catch {
+          mapRegistrationFailed.current = true;
+          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} could not register safely. No map will be applied; continuing with normal human review.`);
+        }
       }
       const mappedCentering = mapRegistration?.projectedDesignBoundary.kind === "QUAD"
         ? mapRegistration.projectedDesignBoundary.points
@@ -362,7 +387,17 @@ export function CaptureWorkspace({
         eventType: "GEOMETRY_CONFIRMED",
         startedAtMs: stageStartedAt.current,
         endedAtMs,
-        details: { side },
+        details: {
+          side,
+          mapAppliedScope: mapRegistration ? activeMapScope ?? "EXACT" : "NONE",
+          ...(mapRegistration && activeMapName ? { mapName: activeMapName } : {}),
+          ...(mapRegistration ? { mapRevisionId: mapRegistration.mapRevisionId } : {}),
+          ...(mapRegistrationFailed.current
+            ? { mapFailureCode: "REGISTRATION_FAILED" as const }
+            : mapLookupFailed
+              ? { mapFailureCode: "LOOKUP_FAILED" as const }
+              : {}),
+        },
       });
       stageStartedAt.current = endedAtMs;
       setMessage(side === "FRONT" ? "Confirm the back geometry." : "Confirm the printed-border geometry.");
@@ -429,6 +464,12 @@ export function CaptureWorkspace({
         <span>02 · CAPTURE + GEOMETRY</span>
         <p role="status">{working ? "RACING · " : ""}{message}</p>
       </header>
+
+      {mapRegistrationNotice ? (
+        <p className={mapRegistrationFailed.current ? styles.mapFallback : styles.appliedMap}>
+          {mapRegistrationNotice}
+        </p>
+      ) : null}
 
       {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
 

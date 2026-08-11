@@ -16,7 +16,10 @@ import {
 import SharedLabelEditor from "../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 import { useSession } from "../hooks/useSession";
-import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../lib/ai-grader-v2/card-type-map-contracts";
+import {
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  type SpeedsterMapScope,
+} from "../lib/ai-grader-v2/card-type-map-contracts";
 import { toCardMapOperatorMessage } from "../lib/ai-grader-v2/card-map-copy";
 import {
   SpeedsterIdentityValidationError,
@@ -59,17 +62,76 @@ function mapAction(map: SpeedsterTrainMapState) {
   return map.status === "LOADED" ? "EDIT CARD MAP" : "CREATE CARD MAP";
 }
 
+function familyApplicability(identity: Pick<HumanGradeLabelEditorValue,
+  "cardType" | "year" | "manufacturer" | "productSet" | "insert" | "parallel">) {
+  const parts = [
+    identity.year,
+    identity.cardType === "SPORTS" ? identity.manufacturer : null,
+    identity.productSet,
+    identity.cardType === "SPORTS" ? identity.insert : null,
+    identity.parallel,
+  ].filter(Boolean);
+  return parts.length ? `all ${parts.join(" ")} cards` : "all cards matching this Year, Set, and Parallel";
+}
+
+function exactApplicability(identity: Pick<HumanGradeLabelEditorValue,
+  "cardType" | "playerName" | "cardName" | "cardNumber">) {
+  const name = identity.cardType === "SPORTS" ? identity.playerName : identity.cardName;
+  const exact = [name, identity.cardNumber ? `#${identity.cardNumber}` : null].filter(Boolean).join(" ");
+  return exact ? `this exact card only — ${exact}` : "this exact card only";
+}
+
+function ScopeSelector({
+  scope,
+  identity,
+  disabled,
+  onChange,
+}: Readonly<{
+  scope: SpeedsterMapScope;
+  identity: HumanGradeLabelEditorValue;
+  disabled?: boolean;
+  onChange: (scope: SpeedsterMapScope) => void;
+}>) {
+  return (
+    <fieldset className={styles.scopeSelector} disabled={disabled}>
+      <legend>Who should use this Card Map?</legend>
+      <label data-selected={scope === "FAMILY"}>
+        <input
+          type="radio"
+          name="card-map-scope"
+          value="FAMILY"
+          checked={scope === "FAMILY"}
+          onChange={() => onChange("FAMILY")}
+        />
+        <span><strong>FAMILY</strong>{familyApplicability(identity)}</span>
+      </label>
+      <label data-selected={scope === "EXACT"}>
+        <input
+          type="radio"
+          name="card-map-scope"
+          value="EXACT"
+          checked={scope === "EXACT"}
+          onChange={() => onChange("EXACT")}
+        />
+        <span><strong>EXACT OVERRIDE</strong>{exactApplicability(identity)}</span>
+      </label>
+      <p>Family is the primary map for every matching card. An exact override replaces the family map for only this card; the two maps never merge.</p>
+    </fieldset>
+  );
+}
+
 export default function CardMapsPage() {
   const router = useRouter();
   const { session, loading, ensureSession } = useSession();
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
+  const [mapScope, setMapScope] = useState<SpeedsterMapScope>("FAMILY");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<SpeedsterSessionIdentity | null>(null);
   const [map, setMap] = useState<SpeedsterTrainMapState | null>(null);
   const [source, setSource] = useState<SpeedsterTrainSource | null>(null);
   const [working, setWorking] = useState(false);
-  const [message, setMessage] = useState("Create a new exact CARD MAP or open one from a completed card.");
+  const [message, setMessage] = useState("Create a FAMILY CARD MAP or choose an exact-card override.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const identitySectionRef = useRef<HTMLElement>(null);
   const sessionId = typeof router.query.sessionId === "string" ? router.query.sessionId : null;
@@ -77,6 +139,14 @@ export default function CardMapsPage() {
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
   );
+  const selectMapScope = (nextScope: SpeedsterMapScope) => {
+    if (nextScope === mapScope) return;
+    setMapScope(nextScope);
+    if (sessionId) {
+      setSource(null);
+      setMap(null);
+    }
+  };
 
   const focusNewCard = useCallback(() => {
     if (sessionId) {
@@ -84,7 +154,7 @@ export default function CardMapsPage() {
       return;
     }
     identitySectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    const input = identitySectionRef.current?.querySelector<HTMLInputElement>("input");
+    const input = identitySectionRef.current?.querySelector<HTMLInputElement>('input:not([type="radio"])');
     (input ?? identitySectionRef.current)?.focus();
   }, [router, sessionId]);
 
@@ -100,9 +170,9 @@ export default function CardMapsPage() {
     setSource(null);
     setMap(null);
     setWorkflowError(null);
-    setMessage("Loading the exact completed-card CARD MAP source.");
+    setMessage(`Loading the ${mapScope} completed-card CARD MAP source.`);
     void fetch(
-      `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(sessionId)}`,
+      `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(sessionId)}&scope=${mapScope}`,
       { headers: buildAdminHeaders(session.token), cache: "no-store" },
     )
       .then(async (response) => {
@@ -128,7 +198,7 @@ export default function CardMapsPage() {
         setMessage(failure);
       });
     return () => { active = false; };
-  }, [isAdmin, session?.token, sessionId]);
+  }, [isAdmin, mapScope, session?.token, sessionId]);
 
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
     setIdentity((current) => field === "cardType"
@@ -157,7 +227,7 @@ export default function CardMapsPage() {
     setWorking(true);
     setFieldErrors({});
     setWorkflowError(null);
-    setMessage("Creating the exact CARD MAP source.");
+    setMessage(`Creating the ${mapScope} CARD MAP source.`);
     try {
       const exactIdentity = printedIdentity(identity);
       const response = await fetch("/api/admin/ai-grader-v2/sessions", {
@@ -175,7 +245,7 @@ export default function CardMapsPage() {
         throw new Error(payload.message ?? "CARD MAP source could not be created.");
       }
       const mapResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}`,
+        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}&scope=${mapScope}`,
         { headers: buildAdminHeaders(session.token), cache: "no-store" },
       );
       const mapPayload = await mapResponse.json().catch(() => ({})) as {
@@ -183,12 +253,12 @@ export default function CardMapsPage() {
         message?: string;
       };
       if (!mapResponse.ok || !mapPayload.map) {
-        throw new Error(mapPayload.message ?? "Exact CARD MAP state could not be loaded.");
+        throw new Error(mapPayload.message ?? `${mapScope} CARD MAP state could not be loaded.`);
       }
       setDraft(payload.session);
       setDraftIdentity(exactIdentity);
       setMap(mapPayload.map);
-      setMessage(`${mapAction(mapPayload.map)} · Add exact Front and Back source images.`);
+      setMessage(`${mapAction(mapPayload.map)} · Add this card's exact Front and Back source images.`);
     } catch (error) {
       if (error instanceof SpeedsterIdentityValidationError) setFieldErrors(error.fields);
       const failure = toCardMapOperatorMessage(
@@ -205,7 +275,7 @@ export default function CardMapsPage() {
     if (!session?.token || !draft || !draftIdentity || working) return;
     setWorking(true);
     setWorkflowError(null);
-    setMessage("Saving the exact Front and Back CARD MAP source.");
+    setMessage("Saving this card's exact Front and Back source imagery and provenance.");
     const compactSide = (side: SpeedsterCaptureBundle["front"]) => ({
       originalStorageKey: side.originalStorageKey,
       rectifiedStorageKey: side.rectifiedStorageKey,
@@ -249,7 +319,7 @@ export default function CardMapsPage() {
         front: { rectifiedUrl: bundle.front.rectifiedUrl, centeringQuad: bundle.front.centeringQuad },
         back: { rectifiedUrl: bundle.back.rectifiedUrl, centeringQuad: bundle.back.centeringQuad },
       });
-      setMessage(`${map ? mapAction(map) : "CREATE CARD MAP"} · Exact Front and Back source saved.`);
+      setMessage(`${map ? mapAction(map) : "CREATE CARD MAP"} · Exact Front and Back source evidence saved.`);
     } catch (error) {
       const failure = toCardMapOperatorMessage(
         error instanceof Error ? error.message : "CARD MAP source could not be saved.",
@@ -294,9 +364,9 @@ export default function CardMapsPage() {
             <span className={styles.mapSignal} />
           </div>
           <div className={styles.cardMapsContent}>
-            <span>EXACT CARD IDENTITY CONTROL</span>
+            <span>FAMILY + EXACT CARD IDENTITY CONTROL</span>
             <h1 id="card-maps-heading">CARD MAPS</h1>
-            <p>Create or edit the exact Front and Back CARD MAP for one exact card identity.</p>
+            <p>Create one shared map for every matching card type, with an exact-card override only when needed.</p>
             <p className={styles.cardMapsStatus} role="status" aria-live="polite">{message}</p>
             <button className={styles.cardMapsCta} type="button" onClick={focusNewCard}>CREATE CARD MAP</button>
           </div>
@@ -304,9 +374,25 @@ export default function CardMapsPage() {
 
         {sessionId ? (
           <section className={styles.workflowPanel} aria-labelledby="existing-card-map-heading">
-            <span>COMPLETED CARD · EXACT SESSION</span>
+            <span>COMPLETED CARD · SOURCE PROVENANCE</span>
             <h2 id="existing-card-map-heading">{map ? mapAction(map) : "CARD MAP"}</h2>
             <p>{sessionId}</p>
+            <ScopeSelector
+              scope={mapScope}
+              identity={source ? {
+                ...EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
+                cardType: source.cardProfile,
+                ...source.identity,
+                playerName: "playerName" in source.identity ? source.identity.playerName : "",
+                cardName: "cardName" in source.identity ? source.identity.cardName : "",
+                manufacturer: "manufacturer" in source.identity ? source.identity.manufacturer : "",
+                insert: "insert" in source.identity ? source.identity.insert ?? "" : "",
+                parallel: source.identity.parallel ?? "",
+                cardNumber: source.identity.cardNumber ?? "",
+              } : identity}
+              disabled={working}
+              onChange={selectMapScope}
+            />
             {workflowError ? (
               <div className={styles.localError} role="alert">
                 <p>{workflowError}</p>
@@ -323,10 +409,16 @@ export default function CardMapsPage() {
             tabIndex={-1}
           >
             <header>
-              <span>EXACT CARD IDENTITY</span>
+              <span>SOURCE CARD IDENTITY + MAP SCOPE</span>
               <h2 id="new-card-map-heading">NEW CARD MAP</h2>
-              <p>Enter the printed identity, then continue to the exact Front and Back source.</p>
+              <p>Choose who this map applies to, then enter the exact source card printed identity.</p>
             </header>
+            <ScopeSelector
+              scope={mapScope}
+              identity={identity}
+              disabled={Boolean(draft) || working}
+              onChange={selectMapScope}
+            />
             {!draft ? (
               <>
                 <SharedLabelEditor
@@ -344,7 +436,9 @@ export default function CardMapsPage() {
             ) : map ? (
               <div className={styles.mapState} role="status">
                 <strong>{mapAction(map)}</strong>
-                <span>{map.status === "LOADED" ? `Exact revision ${map.revision?.version} loaded.` : "No exact CARD MAP exists yet."}</span>
+                <span>{map.status === "LOADED"
+                  ? `${map.scope ?? mapScope} revision ${map.revision?.version} loaded.`
+                  : `No ${mapScope} CARD MAP exists yet.`}</span>
               </div>
             ) : null}
           </section>
@@ -356,19 +450,27 @@ export default function CardMapsPage() {
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
             activeMapRevisionId={map.revision?.revisionId ?? null}
+            activeMapScope={map.status === "LOADED" ? map.scope ?? mapScope : null}
+            activeMapName={map.status === "LOADED" ? map.name ?? null : null}
             onReady={(bundle) => void saveCapture(bundle)}
           />
         ) : null}
 
         {source && map ? (
           <SpeedsterTrainWorkspace
-            key={source.sessionId}
+            key={`${source.sessionId}:${mapScope}`}
             token={session.token}
             source={source}
             initialMap={map}
+            scope={mapScope}
             onSaved={(nextMap) => {
               setMap(nextMap);
               setMessage(`${mapAction(nextMap)} · Revision ${nextMap.revision?.version} is active.`);
+            }}
+            onPromoted={(familyMap) => {
+              setMapScope("FAMILY");
+              setMap(familyMap);
+              setMessage(`FAMILY CARD MAP · Revision ${familyMap.revision?.version} is active.`);
             }}
           />
         ) : null}
