@@ -765,6 +765,7 @@ test("the production orchestration dispatches Front then Back and produces a com
 
 test("Front and Back start together with identical side payload shapes", async () => {
   const started: string[] = [];
+  const callbacks: string[] = [];
   let resolveFront!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
   let resolveBack!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
   const frontResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
@@ -777,7 +778,11 @@ test("Front and Back start together with identical side payload shapes", async (
   let finished = false;
   const scan = scanSpeedsterCapture({
     capture: detectorCapture,
+    onSide(side) {
+      callbacks.push(`dispatch:${side}`);
+    },
     detect(request) {
+      callbacks.push(`detect:${request.side}`);
       started.push(request.side);
       assert.deepEqual(request, {
         side: request.side,
@@ -799,6 +804,12 @@ test("Front and Back start together with identical side payload shapes", async (
 
   await Promise.resolve();
   assert.deepEqual(started, ["FRONT", "BACK"]);
+  assert.deepEqual(callbacks, [
+    "dispatch:FRONT",
+    "detect:FRONT",
+    "dispatch:BACK",
+    "detect:BACK",
+  ]);
 
   resolveBack({ detectorVersion: "same-release", defects: [] });
   await Promise.resolve();
@@ -839,10 +850,13 @@ test("concurrent completion order preserves the exact sequential output and calc
     },
     measurement: { ...defect.measurement, areaMm2: 3, zonePercent: 6, weightedAreaMm2: 3 },
   };
-  const responses = {
+  const responses: Record<"FRONT" | "BACK", {
+    detectorVersion: string;
+    defects: SpeedsterMeasuredDefect[];
+  }> = {
     FRONT: { detectorVersion: "sam3-fixed-release", defects: [frontFinding] },
     BACK: { detectorVersion: "sam3-fixed-release", defects: [backFinding] },
-  } as const;
+  };
   const canonicalize = (
     side: "FRONT" | "BACK",
     findings: readonly SpeedsterMeasuredDefect[],
@@ -864,13 +878,24 @@ test("concurrent completion order preserves the exact sequential output and calc
     ],
   };
 
-  const concurrent = await scanSpeedsterCapture({
+  const started: Array<"FRONT" | "BACK"> = [];
+  let resolveFront!: (value: typeof responses.FRONT) => void;
+  let resolveBack!: (value: typeof responses.BACK) => void;
+  const frontResponse = new Promise<typeof responses.FRONT>((resolve) => { resolveFront = resolve; });
+  const backResponse = new Promise<typeof responses.BACK>((resolve) => { resolveBack = resolve; });
+  const concurrentPromise = scanSpeedsterCapture({
     capture: detectorCapture,
-    async detect(request) {
-      if (request.side === "FRONT") await new Promise((resolve) => setTimeout(resolve, 5));
-      return responses[request.side];
+    detect(request) {
+      started.push(request.side);
+      return request.side === "FRONT" ? frontResponse : backResponse;
     },
   });
+  await Promise.resolve();
+  assert.deepEqual(started, ["FRONT", "BACK"]);
+  resolveBack(responses.BACK);
+  await Promise.resolve();
+  resolveFront(responses.FRONT);
+  const concurrent = await concurrentPromise;
 
   assert.deepEqual(concurrent, sequential);
   assert.deepEqual(

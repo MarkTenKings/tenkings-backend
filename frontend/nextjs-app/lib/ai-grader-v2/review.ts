@@ -88,19 +88,17 @@ export async function scanSpeedsterCapture(input: {
   detect: (request: DetectRequest) => Promise<DetectResponse>;
   onSide?: (side: SpeedsterCardSide) => void;
 }) {
-  input.onSide?.("FRONT");
-  input.onSide?.("BACK");
+  const detectSide = async (side: SpeedsterCardSide, captureSide: DetectorSide) => {
+    input.onSide?.(side);
+    return input.detect({
+      side,
+      cornerShape: input.capture.cornerShape,
+      views: speedsterDetectorViews(captureSide),
+    });
+  };
   const [frontResult, backResult] = await Promise.allSettled([
-    input.detect({
-      side: "FRONT",
-      cornerShape: input.capture.cornerShape,
-      views: speedsterDetectorViews(input.capture.front),
-    }),
-    input.detect({
-      side: "BACK",
-      cornerShape: input.capture.cornerShape,
-      views: speedsterDetectorViews(input.capture.back),
-    }),
+    detectSide("FRONT", input.capture.front),
+    detectSide("BACK", input.capture.back),
   ]);
   if (frontResult.status === "rejected") throw frontResult.reason;
   if (backResult.status === "rejected") throw backResult.reason;

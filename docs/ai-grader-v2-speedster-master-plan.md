@@ -342,9 +342,22 @@ The primary agent reviews and integrates each bounded lane and owns schema order
 
 ## 16. Production Runtime
 
-The original launch described below completed successfully. Production now uses
-the load-balanced SAM endpoint with two warm RTX 4090 workers and flex capacity
-up to four; the superseded normal Pod is stopped.
+The original launch described below completed successfully. Production uses the
+load-balanced SAM endpoint and the superseded normal Pod is stopped. A read-only
+runtime audit on 2026-08-11 found endpoint `we730z8vl8o3tm` on Release 15 with
+Active 2 / Max 4, zero queued or in-progress jobs, and four release-homogeneous
+workers. The two active workers were heterogeneous (one RTX 4090 and one A40),
+with two idle RTX 4090 workers. This supersedes the earlier runtime claim that
+both warm workers were RTX 4090s; the required architecture below is unchanged,
+but its homogeneous-GPU timing condition is not currently proven. The live
+release used image tag
+`ghcr.io/marktenkings/tenkings-backend/ai-grader-speedster-service:a67ae0fa3e3e8ab3c199ed2be18ddbe775fba1c4`.
+The service pins SAM package commit `96914d2425f90a64f45ca977c2b5165418099543`,
+but the runtime downloads `sam3.pt` without a pinned repository revision or a
+recorded checkpoint digest, so exact live checkpoint bytes cannot be claimed
+from the available evidence. No detector request was sent during this audit.
+Consequently, Front/Back worker overlap and warm homogeneous-RTX-4090 p95 remain
+timing-blocked pending an approved equivalent benchmark.
 
 ### Required services
 

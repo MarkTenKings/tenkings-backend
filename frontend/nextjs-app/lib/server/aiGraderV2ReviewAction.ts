@@ -483,7 +483,6 @@ async function serverOwnedInitialization(
     })),
   ]);
   const learningBank = learning.bank;
-  let exactDetectorVersion: string | null = null;
   const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
   const scanned = await scanSpeedsterCapture({
     capture: { cornerShape: capture.cornerShape, front, back },
@@ -500,20 +499,31 @@ async function serverOwnedInitialization(
       ) {
         throw new HttpError(502, "Speedster detector response is missing its version.");
       }
-      if (rawResult.defects.some((finding) => !isRecord(finding) || finding.side !== request.side)) {
+      let defects: SpeedsterReviewFinding[];
+      try {
+        defects = parseSpeedsterReviewFindings(rawResult.defects);
+      } catch {
+        throw new HttpError(502, `Speedster ${request.side} detector response is malformed.`);
+      }
+      if (defects.some((finding) => finding.side !== request.side)) {
         throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
       }
-      const result = rawResult as { detectorVersion: string; defects: SpeedsterMeasuredDefect[] };
+      if (new Set(defects.map(({ id }) => id)).size !== defects.length) {
+        throw new HttpError(502, `Speedster ${request.side} detector response contains a duplicate finding ID.`);
+      }
+      if (defects.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
+        throw new HttpError(502, `Speedster ${request.side} detector response contains reviewed trace authority.`);
+      }
+      const result = {
+        detectorVersion: rawResult.detectorVersion,
+        defects: defects as SpeedsterMeasuredDefect[],
+      };
       const timing = safeDetectorTiming(rawResult.instrumentation);
       if (timing) detectorTimings[request.side] = timing;
-      if (exactDetectorVersion !== null && exactDetectorVersion !== result.detectorVersion) {
-        throw new HttpError(502, "Front and Back Speedster detector versions do not match.");
-      }
-      exactDetectorVersion = result.detectorVersion;
       return result;
     },
   });
-  if (!exactDetectorVersion || scanned.detectorVersion !== exactDetectorVersion) {
+  if (!scanned.detectorVersion.trim()) {
     throw new HttpError(502, "Speedster detector version could not be established.");
   }
   let initialized: SpeedsterReviewFinding[];
@@ -549,7 +559,7 @@ async function serverOwnedInitialization(
       })];
     }),
   ];
-  return { initialized, detectorVersion: exactDetectorVersion, instrumentationEvents };
+  return { initialized, detectorVersion: scanned.detectorVersion, instrumentationEvents };
 }
 
 function resultPayload(
