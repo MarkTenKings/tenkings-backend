@@ -19,6 +19,7 @@ The client does not choose a creation scope. Both revisions receive the same ini
 - Compute both revision hashes on the server from the exact immutable content that will be persisted.
 - Verify the exact persisted content against those hashes before moving either current-revision pointer.
 - Move both current pointers only after both revisions exist and verify.
+- When the exact source is still an uninitialized captured session, bind its map revision/registration to the newly created EXACT revision, because exact wins for that source card. Never bind that source to the simultaneously created FAMILY revision.
 - Any failure rolls back both revisions, both map creations, and both pointer changes.
 - Preserve every legacy exact/family map and hash. Do not rewrite existing rows.
 - Restore remains append-only and creates new immutable revisions.
