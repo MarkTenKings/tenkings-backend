@@ -122,9 +122,21 @@ const captureBundle = {
 };
 
 stubModule("../components/ai-grader-v2/CaptureWorkspace", {
-  CaptureWorkspace: ({ onReady }: { onReady: (bundle: typeof captureBundle) => void }) => (
-    <button type="button" onClick={() => onReady(captureBundle)}>COMPLETE FRONT + BACK</button>
-  ),
+  CaptureWorkspace: ({ onReady }: {
+    onReady: (bundle: typeof captureBundle) => Promise<{ saved: boolean; message?: string }> | { saved: boolean; message?: string };
+  }) => {
+    const [failed, setFailed] = React.useState(false);
+    const [saving, setSaving] = React.useState(false);
+    return (
+      <button type="button" disabled={saving} onClick={() => {
+        if (saving) return;
+        setSaving(true);
+        void Promise.resolve(onReady(captureBundle))
+          .then((result) => setFailed(!result.saved))
+          .finally(() => setSaving(false));
+      }}>{saving ? "SAVING CAPTURE" : failed ? "RETRY CAPTURE SAVE" : "COMPLETE FRONT + BACK"}</button>
+    );
+  },
 });
 stubModule("../components/ai-grader-v2/SpeedsterTrainWorkspace", {
   SpeedsterTrainWorkspace: ({ source, initialMap }: {
@@ -326,6 +338,65 @@ test("new authoring shows both dynamic identities and uses one effective baselin
     assert.equal(body.mapBinding.registration.back.mapRevisionId, "revision-7");
     assert.equal(body.capture.front.originalStorageKey, "front-original");
     assert.equal(body.capture.back.originalStorageKey, "back-original");
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("new Card Map capture save failure retains the exact bundle and retries once", async () => {
+  const patchBodies: string[] = [];
+  let patchCalls = 0;
+  const page = await mountPage({
+    fetchImpl: async (request, init) => {
+      const url = String(request);
+      if (url === "/api/admin/ai-grader-v2/sessions") {
+        return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
+      }
+      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
+        return jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } });
+      }
+      if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session") {
+        patchCalls += 1;
+        patchBodies.push(String(init?.body));
+        return patchCalls === 1
+          ? jsonResponse({ message: "Transient CARD MAP capture failure" }, 503)
+          : jsonResponse({});
+      }
+      if (url === "/api/admin/ai-grader-v2/maps/source?sessionId=new-card-map-session&scope=EXACT") {
+        return jsonResponse({
+          source: {
+            sessionId: "new-card-map-session",
+            cardProfile: "SPORTS",
+            identity: { playerName: "Ken Griffey Jr.", year: "1997", manufacturer: "Upper Deck", productSet: "SPx" },
+            front: { rectifiedUrl: "front", centeringQuad: quad },
+            back: { rectifiedUrl: "back", centeringQuad: quad },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+  try {
+    await changeInput(page.container, "playerName", "Ken Griffey Jr.");
+    await changeInput(page.container, "year", "1997");
+    await changeInput(page.container, "manufacturer", "Upper Deck");
+    await changeInput(page.container, "productSet", "SPx");
+    await act(async () => buttonByText(page.container, "CONTINUE TO FRONT + BACK")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")), "Capture workspace did not open");
+
+    await act(async () => buttonByText(page.container, "COMPLETE FRONT + BACK")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(page.container, "RETRY CAPTURE SAVE")), "Failed Card Map capture did not expose Retry");
+    assert.match(page.container.textContent ?? "", /Transient CARD MAP capture failure/);
+
+    const retry = buttonByText(page.container, "RETRY CAPTURE SAVE");
+    assert.ok(retry);
+    await act(async () => {
+      retry.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      retry.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+    await waitFor(() => Boolean(page.container.querySelector('[data-testid="card-map-workspace"]')), "Retry did not open Card Map authoring");
+    assert.equal(patchCalls, 2, "Retry must dispatch only one new capture PATCH");
+    assert.equal(patchBodies[1], patchBodies[0], "Retry must submit the byte-identical Front/Back capture payload");
   } finally {
     await page.cleanup();
   }

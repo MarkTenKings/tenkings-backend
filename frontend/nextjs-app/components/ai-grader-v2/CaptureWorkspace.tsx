@@ -86,9 +86,15 @@ type CaptureWorkspaceProps = {
   activeMapScope?: SpeedsterMapScope | null;
   activeMapName?: string | null;
   mapLookupFailed?: boolean;
-  onReady: (bundle: SpeedsterCaptureBundle) => void;
+  onReady: (bundle: SpeedsterCaptureBundle) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
   onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void;
+  imageRequestTimeoutMs?: number;
 };
+
+export type SpeedsterCaptureSaveResult = Readonly<{
+  saved: boolean;
+  message?: string;
+}>;
 
 export type SpeedsterCaptureInstrumentationEvent = Readonly<{
   eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED";
@@ -153,6 +159,7 @@ export function CaptureWorkspace({
   mapLookupFailed = false,
   onReady,
   onInstrumentationEvent,
+  imageRequestTimeoutMs,
 }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -166,24 +173,41 @@ export function CaptureWorkspace({
   const [message, setMessage] = useState("Add one original image of each side.");
   const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
   const geometryAttempt = useRef(0);
+  const activeImageRequest = useRef<AbortController | null>(null);
   const photosStartedAt = useRef(Date.now());
   const photosReadyRecorded = useRef(false);
   const stageStartedAt = useRef(Date.now());
   const frontGeometryTiming = useRef<{ startedAtMs: number; endedAtMs: number } | null>(null);
   const mapRegistrationFailed = useRef(false);
+  const readyDispatched = useRef(false);
 
   useEffect(() => {
+    activeImageRequest.current?.abort();
+    activeImageRequest.current = null;
     iphoneVersion.current = 0;
-    geometryAttempt.current = 0;
     photosStartedAt.current = Date.now();
     photosReadyRecorded.current = false;
     stageStartedAt.current = Date.now();
     frontGeometryTiming.current = null;
     mapRegistrationFailed.current = false;
+    readyDispatched.current = false;
+    setFrontPhoto(null);
+    setBackPhoto(null);
+    setFront(null);
+    setBack(null);
+    setStage("PHOTOS");
+    setWorking(false);
     setMapRegistrationNotice(null);
     setWorkflowError(null);
+    setCaptureSaveFailed(false);
   }, [sessionId]);
+
+  useEffect(() => () => {
+    activeImageRequest.current?.abort();
+    activeImageRequest.current = null;
+  }, []);
 
   useEffect(() => {
     if (!frontPhoto || !backPhoto || photosReadyRecorded.current) return;
@@ -267,17 +291,21 @@ export function CaptureWorkspace({
     const attemptId = geometryAttempt.current + 1;
     const startedAtMs = Date.now();
     geometryAttempt.current = attemptId;
+    activeImageRequest.current?.abort();
+    const controller = new AbortController();
+    activeImageRequest.current = controller;
     setWorking(true);
     setWorkflowError(null);
     setMessage("Uploading originals and locking onto the card geometry.");
     try {
       const uploadedFront = frontPhoto.kind === "IPHONE"
         ? frontPhoto
-        : await uploadSpeedsterOriginal({ token, sessionId, side: "FRONT", file: frontPhoto.file });
+        : await uploadSpeedsterOriginal({ token, sessionId, side: "FRONT", file: frontPhoto.file, signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
       const requestGeometry = async (side: SpeedsterCardSide, imageUrl: string) => {
         const startedAt = Date.now();
         try {
-          const geometry = await speedsterImageService.proposeGeometry(token, imageUrl);
+          const geometry = await speedsterImageService.proposeGeometry(token, imageUrl, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+          if (activeImageRequest.current !== controller) throw new Error("A newer Set geometry attempt replaced this request.");
           const corners = sanitizeSpeedsterUnitQuad(geometry.corners);
           return {
             geometry,
@@ -298,14 +326,16 @@ export function CaptureWorkspace({
             durationMs: Date.now() - startedAt,
             corners: "unavailable",
           }, "not-rendered");
-          throw error;
+          const detail = error instanceof Error ? error.message : "Speedster geometry failed.";
+          throw new Error(`${side === "FRONT" ? "Front" : "Back"} geometry failed: ${detail}`);
         }
       };
       const frontResult = await requestGeometry("FRONT", uploadedFront.readUrl);
       const uploadedBack = backPhoto.kind === "IPHONE"
         ? backPhoto
-        : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file });
+        : await uploadSpeedsterOriginal({ token, sessionId, side: "BACK", file: backPhoto.file, signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
       const backResult = await requestGeometry("BACK", uploadedBack.readUrl);
+      if (activeImageRequest.current !== controller) return;
       setFront({
         originalStorageKey: uploadedFront.storageKey,
         sourceUrl: uploadedFront.readUrl,
@@ -333,21 +363,42 @@ export function CaptureWorkspace({
         ? "Both physical cards found. Move only points that need correction."
         : `${automaticCount}/2 physical cards found. Set the visible manual start points where needed.`);
     } catch (error) {
-      setWorkflowError(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
+      if (activeImageRequest.current === controller) {
+        setWorkflowError(error instanceof Error ? error.message : "Speedster could not prepare these photos.");
+        setMessage("Set geometry did not finish. Both original photos are preserved; retry when ready.");
+      }
     } finally {
-      setWorking(false);
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
     }
   };
 
   const confirmGeometry = async (side: SpeedsterCardSide) => {
     const current = side === "FRONT" ? front : back;
     if (!current || working) return;
+    activeImageRequest.current?.abort();
+    const controller = new AbortController();
+    activeImageRequest.current = controller;
     setWorking(true);
     setWorkflowError(null);
     setMessage(`Preparing the ${side.toLowerCase()} card map.`);
     try {
-      const outputPlan = await planSpeedsterPreparedOutputs({ token, sessionId, side });
-      const prepared = await speedsterImageService.prepare(token, current.sourceUrl, current.corners, outputPlan);
+      const outputPlan = await planSpeedsterPreparedOutputs({
+        token,
+        sessionId,
+        side,
+        signal: controller.signal,
+        timeoutMs: imageRequestTimeoutMs,
+      });
+      const prepared = await speedsterImageService.prepare(
+        token,
+        current.sourceUrl,
+        current.corners,
+        outputPlan,
+      );
+      if (activeImageRequest.current !== controller) return;
       const next: SideState = {
         ...current,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
@@ -394,13 +445,14 @@ export function CaptureWorkspace({
               sessionId,
               side: "FRONT",
               currentPhysicalQuad: front.corners,
-            }),
+            }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }),
             speedsterImageService.registerMap(token, {
               sessionId,
               side: "BACK",
               currentPhysicalQuad: current.corners,
-            }),
+            }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }),
           ]);
+          if (activeImageRequest.current !== controller) return;
           if (
             frontRegistration.mapRevisionId !== activeMapRevisionId
             || backRegistration.mapRevisionId !== activeMapRevisionId
@@ -424,6 +476,7 @@ export function CaptureWorkspace({
           finalBack = applyRegistration(finalBack, backRegistration);
           setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back.`);
         } catch {
+          if (activeImageRequest.current !== controller) return;
           frontRegistration = undefined;
           backRegistration = undefined;
           mapRegistrationFailed.current = true;
@@ -464,13 +517,20 @@ export function CaptureWorkspace({
       stageStartedAt.current = endedAtMs;
       setMessage("Confirm the printed-border geometry.");
     } catch (error) {
-      setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
+      if (activeImageRequest.current === controller) {
+        setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
+        setMessage(`${side === "FRONT" ? "Front" : "Back"} preparation did not finish. Your original photos and geometry are preserved; retry when ready.`);
+      }
     } finally {
-      setWorking(false);
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
     }
   };
 
-  const confirmCentering = (result: CenteringAssistResult) => {
+  const confirmCentering = async (result: CenteringAssistResult) => {
+    if (readyDispatched.current) return;
     const endedAtMs = Date.now();
     const frontRegistration = front?.mapRegistration;
     const backRegistration = back?.mapRegistration;
@@ -529,9 +589,20 @@ export function CaptureWorkspace({
       front: toPreparedSide("FRONT", front),
       back: toPreparedSide("BACK", finalBack),
     };
+    readyDispatched.current = true;
+    setCaptureSaveFailed(false);
     setStage("READY");
+    setMessage("Saving the locked Front + Back geometry.");
+    const saveResult = await onReady(bundle);
+    if (saveResult && !saveResult.saved) {
+      readyDispatched.current = false;
+      setCaptureSaveFailed(true);
+      setStage("BACK_CENTERING");
+      setWorkflowError(saveResult.message ?? "Card geometry could not be saved. Retry without redrawing.");
+      setMessage("Save did not finish. Front + Back photos and geometry are preserved; retry when ready.");
+      return;
+    }
     setMessage("Geometry locked. The card is ready for defect detection.");
-    onReady(bundle);
   };
 
   const activeGeometry = stage === "FRONT_GEOMETRY" ? front : stage === "BACK_GEOMETRY" ? back : null;
@@ -578,9 +649,16 @@ export function CaptureWorkspace({
               setFrontPhoto(backPhoto);
               setBackPhoto(frontPhoto);
             }}
+            disabled={working}
           />
           <button type="button" onClick={() => void beginGeometry()} disabled={!frontPhoto || !backPhoto || working}>
-            {working ? "Preparing…" : frontPhoto && backPhoto ? "Set geometry →" : "Add both photos to continue"}
+            {working
+              ? "Preparing…"
+              : frontPhoto && backPhoto
+                ? workflowError
+                  ? "Retry set geometry →"
+                  : "Set geometry →"
+                : "Add both photos to continue"}
           </button>
         </div>
       ) : null}
@@ -600,6 +678,7 @@ export function CaptureWorkspace({
           onCornerShapeChange={setCornerShape}
           onContinue={() => void confirmGeometry(activeSide)}
           onImageError={setWorkflowError}
+          disabled={working}
         />
       ) : null}
 
@@ -608,9 +687,11 @@ export function CaptureWorkspace({
           key={activeSide}
           imageUrl={activeCentering.rectifiedUrl}
           side={activeSide}
-          initialInnerQuad={activeCentering.proposedCentering}
+          initialInnerQuad={activeCentering.centering?.innerQuad ?? activeCentering.proposedCentering}
           detectedBorders={activeCentering.detectedBorders ?? []}
-          onContinue={confirmCentering}
+          onContinue={(result) => void confirmCentering(result)}
+          disabled={readyDispatched.current}
+          continueLabel={captureSaveFailed && activeSide === "BACK" ? "Retry save" : "Continue"}
         />
       ) : null}
 

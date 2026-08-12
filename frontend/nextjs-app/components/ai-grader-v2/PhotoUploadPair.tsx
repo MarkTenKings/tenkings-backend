@@ -19,16 +19,19 @@ type PhotoUploadPairProps = {
   onChange: (side: SpeedsterCardSide, file: File) => void;
   onRetake: () => void;
   onSwap: () => void;
+  disabled?: boolean;
 };
 
 function PhotoSlot({
   side,
   photo,
   onChange,
+  disabled,
 }: {
   side: SpeedsterCardSide;
   photo: SpeedsterOriginalPhoto | null;
   onChange: PhotoUploadPairProps["onChange"];
+  disabled: boolean;
 }) {
   const [preview, setPreview] = useState<string | null>(null);
 
@@ -52,6 +55,7 @@ function PhotoSlot({
         className={styles.input}
         type="file"
         accept="image/jpeg,image/png,image/webp"
+        disabled={disabled}
         onChange={(event) => {
           const next = event.target.files?.[0];
           if (next) onChange(side, next);
@@ -105,6 +109,7 @@ export default function PhotoUploadPair({
   onChange,
   onRetake,
   onSwap,
+  disabled = false,
 }: PhotoUploadPairProps) {
   const readyCount = Number(Boolean(front)) + Number(Boolean(back));
   const iphonePairReady = front?.kind === "IPHONE" && back?.kind === "IPHONE";
@@ -118,8 +123,8 @@ export default function PhotoUploadPair({
         </div>
         <div className={styles.headingActions}>
           <p aria-live="polite"><strong>{readyCount}/2</strong> photos ready</p>
-          {iphonePairReady ? <button type="button" onClick={onRetake}>Retake</button> : null}
-          {readyCount === 2 ? <button type="button" onClick={onSwap}>Swap front / back</button> : null}
+          {iphonePairReady ? <button type="button" onClick={onRetake} disabled={disabled}>Retake</button> : null}
+          {readyCount === 2 ? <button type="button" onClick={onSwap} disabled={disabled}>Swap front / back</button> : null}
         </div>
       </div>
       {pairingUrl ? (
@@ -132,8 +137,8 @@ export default function PhotoUploadPair({
         </div>
       ) : null}
       <div className={styles.pair}>
-        <PhotoSlot side="FRONT" photo={front} onChange={onChange} />
-        <PhotoSlot side="BACK" photo={back} onChange={onChange} />
+        <PhotoSlot side="FRONT" photo={front} onChange={onChange} disabled={disabled} />
+        <PhotoSlot side="BACK" photo={back} onChange={onChange} disabled={disabled} />
       </div>
     </section>
   );

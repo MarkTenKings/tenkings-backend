@@ -29,6 +29,7 @@ type GeometryAssistProps = {
   onCornerShapeChange: (shape: SpeedsterCornerShape) => void;
   onContinue: () => void;
   onImageError: (message: string) => void;
+  disabled?: boolean;
 };
 
 export type SpeedsterGeometryAttemptDiagnostic = {
@@ -129,6 +130,7 @@ export function GeometryAssist({
   onCornerShapeChange,
   onContinue,
   onImageError,
+  disabled = false,
 }: GeometryAssistProps) {
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
   const gradientMap = useRef<SpeedsterGradientMap | null>(null);
@@ -289,8 +291,8 @@ export function GeometryAssist({
             </div>
           </div>
 
-          <button type="button" className={styles.continueButton} onClick={onContinue}>
-            Continue <span aria-hidden="true">→</span>
+          <button type="button" className={styles.continueButton} onClick={onContinue} disabled={disabled}>
+            {disabled ? "Preparing…" : "Continue"} {!disabled ? <span aria-hidden="true">→</span> : null}
           </button>
         </aside>
       </div>

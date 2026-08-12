@@ -22,8 +22,11 @@ import {
   speedsterPhysicalQuadHash,
 } from "../lib/server/speedsterCardTypeMaps";
 import {
+  fetchSpeedsterImageUpstream,
+  sanitizeSpeedsterImageFailure,
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
+  SpeedsterImageUpstreamTimeoutError,
   speedsterServiceBody,
   speedsterServiceHeaders,
 } from "../pages/api/admin/ai-grader-v2/image/[action]";
@@ -180,6 +183,44 @@ test("geometry proxy clamps automatic handles to the reachable image boundary", 
       { x: 0.9, y: 0.9 },
       { x: 0, y: 1 },
     ],
+  });
+});
+
+test("image proxy deadline rejects a non-cooperative late response body", async () => {
+  let aborted = false;
+  const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => ({
+    ok: true,
+    status: 200,
+    json: () => new Promise((resolve) => {
+      init?.signal?.addEventListener("abort", () => {
+        aborted = true;
+      }, { once: true });
+      setTimeout(() => resolve({ corners: [] }), 25);
+    }),
+  } as Response)) as typeof fetch;
+
+  await assert.rejects(
+    fetchSpeedsterImageUpstream({
+      url: "https://speedster.example.test/geometry",
+      action: "geometry",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+      timeoutMs: 10,
+      fetchImpl,
+    }),
+    (error: unknown) => error instanceof SpeedsterImageUpstreamTimeoutError
+      && error.action === "geometry"
+      && error.timeoutMs === 10,
+  );
+  assert.equal(aborted, true);
+});
+
+test("non-trace upstream failures redact private URLs and credentials", () => {
+  assert.deepEqual(sanitizeSpeedsterImageFailure({
+    detail: "requests failed for https://signed.example/object?token=secret Bearer sk-secret12345678",
+  }, "geometry", "geometry-request-123"), {
+    message: "Speedster geometry failed: requests failed for [redacted-url] Bearer [redacted-credential] (request geometry-request-123).",
+    requestId: "geometry-request-123",
   });
 });
 

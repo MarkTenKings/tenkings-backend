@@ -8,6 +8,7 @@ import {
   SpeedsterAppliedMapBadge,
   type SpeedsterCaptureBundle,
   type SpeedsterCaptureInstrumentationEvent,
+  type SpeedsterCaptureSaveResult,
 } from "../../components/ai-grader-v2/CaptureWorkspace";
 import { ReviewWorkspace } from "../../components/ai-grader-v2/ReviewWorkspace";
 import type { SpeedsterTrainMapState } from "../../components/ai-grader-v2/SpeedsterTrainWorkspace";
@@ -129,6 +130,7 @@ export default function AiGraderV2AdminPage() {
   const cycleStartedAt = useRef<number | null>(null);
   const nextReadyRecorded = useRef(false);
   const reviewRenderedRecorded = useRef(false);
+  const captureSaveInFlight = useRef(false);
 
   const beginCycle = useCallback(() => {
     if (cycleStartedAt.current === null) cycleStartedAt.current = Date.now();
@@ -387,8 +389,10 @@ export default function AiGraderV2AdminPage() {
     setMessage("SAM 3 scan complete. Review the measured card map.");
   }, [draft, recordInstrumentation, session?.token]);
 
-  const saveCapture = async (bundle: SpeedsterCaptureBundle) => {
-    if (!session?.token || !draft) return;
+  const saveCapture = async (bundle: SpeedsterCaptureBundle): Promise<SpeedsterCaptureSaveResult> => {
+    if (!session?.token || !draft) return { saved: false, message: "Card geometry cannot save without its active draft." };
+    if (captureSaveInFlight.current) return { saved: false, message: "Card geometry save is already in progress." };
+    captureSaveInFlight.current = true;
     const startedAtMs = Date.now();
     setWorking(true);
     setMessage("Saving the locked card geometry.");
@@ -438,11 +442,19 @@ export default function AiGraderV2AdminPage() {
         endedAtMs: Date.now(),
         details: { outcome: "SUCCEEDED" },
       });
-      await initializeReview();
+      try {
+        await initializeReview();
+      } catch (error) {
+        setInitializeFailed(true);
+        setMessage(error instanceof Error ? error.message : "Speedster detector state could not be initialized.");
+      }
+      return { saved: true };
     } catch (error) {
-      setInitializeFailed(true);
-      setMessage(error instanceof Error ? error.message : "Card geometry could not be saved.");
+      const failure = error instanceof Error ? error.message : "Card geometry could not be saved.";
+      setMessage(failure);
+      return { saved: false, message: failure };
     } finally {
+      captureSaveInFlight.current = false;
       setWorking(false);
     }
   };
@@ -715,7 +727,7 @@ export default function AiGraderV2AdminPage() {
             activeMapScope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
             activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
             mapLookupFailed={mapLookupFailed}
-            onReady={(bundle) => void saveCapture(bundle)}
+            onReady={saveCapture}
             onInstrumentationEvent={recordCaptureInstrumentation}
           />
         ) : null}

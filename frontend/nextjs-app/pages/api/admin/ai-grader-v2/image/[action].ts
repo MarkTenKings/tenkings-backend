@@ -27,6 +27,62 @@ import {
 import { canonicalizeSpeedsterSessionIdentity } from "../../../../../lib/ai-grader-v2/identity";
 
 const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
+export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
+
+export class SpeedsterImageUpstreamTimeoutError extends Error {
+  constructor(readonly action: string, readonly timeoutMs: number) {
+    super(`Speedster ${action} upstream timed out after ${timeoutMs}ms.`);
+    this.name = "SpeedsterImageUpstreamTimeoutError";
+  }
+}
+
+export async function fetchSpeedsterImageUpstream(input: Readonly<{
+  url: string;
+  action: string;
+  headers: Record<string, string>;
+  body: string;
+  timeoutMs?: number;
+  fetchImpl?: typeof fetch;
+}>): Promise<{ response: Response; payload: unknown }> {
+  const timeoutMs = input.timeoutMs ?? SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS;
+  const controller = new AbortController();
+  let timedOut = false;
+  let rejectDeadline: ((reason: Error) => void) | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    rejectDeadline?.(new SpeedsterImageUpstreamTimeoutError(input.action, timeoutMs));
+  }, timeoutMs);
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await (input.fetchImpl ?? fetch)(input.url, {
+          method: "POST",
+          headers: input.headers,
+          body: input.body,
+          signal: controller.signal,
+        });
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          payload = {};
+        }
+        return { response, payload };
+      })(),
+      deadline,
+    ]);
+  } catch (error) {
+    if (timedOut) throw new SpeedsterImageUpstreamTimeoutError(input.action, timeoutMs);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export function speedsterServiceHeaders() {
   const apiKey = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
@@ -113,6 +169,23 @@ export function sanitizeSpeedsterTraceProposalFailure(
   )?.replace(/[.]+$/, "");
   return {
     message: `SAM proposal failed: ${upstream ?? "upstream service error"} (request ${requestId}).`,
+    requestId,
+  };
+}
+
+export function sanitizeSpeedsterImageFailure(
+  payload: unknown,
+  action: string,
+  requestId: string,
+) {
+  const fields = isRecord(payload) ? payload : {};
+  const detail = isRecord(fields.detail) ? fields.detail : null;
+  const upstream = sanitizedUpstreamText(
+    detail?.message ?? fields.detail ?? fields.message,
+    300,
+  )?.replace(/[.]+$/, "");
+  return {
+    message: `Speedster ${action} failed: ${upstream ?? "upstream service error"} (request ${requestId}).`,
     requestId,
   };
 }
@@ -264,6 +337,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const requestTraceId = randomUUID();
+  res.setHeader("X-Request-ID", requestTraceId);
   try {
     const admin = await requireAdminSession(req);
     const action = Array.isArray(req.query.action) ? req.query.action[0] : req.query.action;
@@ -281,16 +355,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       traceEvidenceDependencies,
       action === "trace-proposal" ? requestTraceId : undefined,
     ) as Record<string, unknown>;
-    const response = await fetch(`${serviceUrl}/${action}`, {
-      method: "POST",
+    const upstreamInput = {
+      url: `${serviceUrl}/${action}`,
       headers: speedsterServiceHeaders(),
       body: JSON.stringify(serviceRequestBody),
-    });
-    const payload = await response.json().catch(() => ({}));
+    };
+    const { response, payload } = action === "geometry"
+      ? await fetchSpeedsterImageUpstream({ ...upstreamInput, action })
+      : await (async () => {
+          const response = await fetch(upstreamInput.url, {
+            method: "POST",
+            headers: upstreamInput.headers,
+            body: upstreamInput.body,
+          });
+          return { response, payload: await response.json().catch(() => ({})) };
+        })();
     if (action === "trace-proposal" && !response.ok) {
-      res.setHeader("X-Request-ID", requestTraceId);
       return res.status(response.status).json(
         sanitizeSpeedsterTraceProposalFailure(payload, requestTraceId),
+      );
+    }
+    if (!response.ok) {
+      return res.status(response.status).json(
+        sanitizeSpeedsterImageFailure(payload, action, requestTraceId),
       );
     }
     const safePayload = action === "geometry" && response.ok
@@ -316,7 +403,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         : payload;
     return res.status(response.status).json(safePayload);
   } catch (error) {
+    if (error instanceof SpeedsterImageUpstreamTimeoutError) {
+      console.warn(JSON.stringify({
+        event: "SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT",
+        action: error.action,
+        timeoutMs: error.timeoutMs,
+        requestId: requestTraceId,
+      }));
+      return res.status(504).json({
+        message: `Speedster ${error.action} service did not respond in time. Your photos and current geometry are preserved; retry this step.`,
+        requestId: requestTraceId,
+      });
+    }
     const mapped = toErrorResponse(error);
-    return res.status(mapped.status).json({ message: mapped.message });
+    return res.status(mapped.status).json({ message: mapped.message, requestId: requestTraceId });
   }
 }
