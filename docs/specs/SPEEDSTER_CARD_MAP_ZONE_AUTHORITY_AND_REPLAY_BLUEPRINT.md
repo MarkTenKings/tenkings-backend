@@ -1,6 +1,6 @@
 # Speedster Card Map zone authority and calibration replay blueprint
 
-Status: v2 contract implemented behind a fail-closed calibration gate; activation pending compatible replay evidence
+Status: v2 contract implemented; Production activation owner-authorized on 2026-08-12 under an explicit replay-gate waiver; compatible replay verification remains pending
 
 Date: 2026-08-11
 
@@ -75,7 +75,7 @@ Draft export/import must round-trip proposal metadata as well as every existing 
 
 ## Required 50-card calibration replay
 
-No new per-zone filter-authority policy may activate in Production until the known 50-card corpus has sufficient immutable truth to answer whether any proposed or tightly drawn zone would have hidden a real defect.
+The intended release gate is a known 50-card corpus with sufficient immutable truth to answer whether any proposed or tightly drawn zone would have hidden a real defect. On 2026-08-12 the owner explicitly waived this gate for the current v2 activation, accepting sole-grader review and the removed-findings audit as the Production safety net. This exception is recorded as `OWNER_WAIVER_2026_08_12`; it does not turn an inconclusive replay into a pass or remove the need for later compatible replay evidence.
 
 For every replay card and side, the corpus must bind:
 
@@ -102,7 +102,7 @@ Replay must report, by map kind, side, zone type, zone ID, finding origin, and d
 
 The replay is read-only and deterministic. Two runs over identical corpus bytes, map revisions, code version, and policy version must produce byte-identical canonical results. It must fail inconclusive rather than pass when truth labels, exact evidence hashes, map scope, registration evidence, or raw candidates are missing.
 
-The activation gate requires human review of every would-hide-real-defect result, an explicit owner decision, retained replay artifacts and hashes, and a separately versioned release. Passing ordinary unit tests does not substitute for this replay.
+Absent an explicit owner exception, the activation gate requires human review of every would-hide-real-defect result, an explicit owner decision, retained replay artifacts and hashes, and a separately versioned release. Passing ordinary unit tests does not substitute for this replay. The 2026-08-12 waiver is activation authority only; verification remains `PENDING`.
 
 ### 2026-08-11 observed gate result
 
@@ -113,7 +113,7 @@ The zero-write audit of frozen corpus SHA-256 `255e3b81adf97562920e1b9da766c568d
 - `0` cards bind the proposed FAMILY/EXACT revisions or compatible registration evidence;
 - exact inspection-evidence hashes are absent from all 50 frozen manifest records.
 
-Therefore `activationAllowed=false`. This is not a safety pass and does not justify applying the Squirtle geometry to unrelated corpus cards. The v2 authoring API remains fail-closed; active v1 revisions and their decisions are unchanged. A conclusive run requires compatible MEW-family copies with exact evidence hashes, raw candidates, registration, and owner-reviewed truth.
+The replay result itself remains `activationAllowed=false`. This is not a safety pass and does not justify applying Squirtle geometry to unrelated family keys. On 2026-08-12 the owner separately authorized v2 activation under waiver `OWNER_WAIVER_2026_08_12`; the API records that authority rather than claiming the replay passed. Existing v1 revisions and their decisions remain unchanged and restorable. A conclusive verification run still requires compatible MEW-family copies with exact evidence hashes, raw candidates, registration, and owner-reviewed truth.
 
 ## Acceptance coverage
 
@@ -125,4 +125,4 @@ Therefore `activationAllowed=false`. This is not a safety pass and does not just
 - Legacy revisions keep historical behavior and hashes.
 - Auto-Build and Copy Zones cannot activate without the overall atomic save.
 - Export/import retains every authority and proposal field.
-- The 50-card replay deterministically proves zero hidden real defects or blocks activation as inconclusive/failed.
+- The 50-card replay deterministically proves zero hidden real defects or reports activation as inconclusive/failed; any owner exception is separately recorded and never represented as a replay pass.
