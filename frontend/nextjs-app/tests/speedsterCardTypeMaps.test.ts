@@ -464,6 +464,26 @@ test("revision hashing is deterministic, canonical, and rejects any immutable-fi
   const normalized = normalizedSpeedsterMapRevisionPayload(negativeZero);
   assert.equal(Object.is(normalized.frontMap.anchors[0].point.x, -0), false);
   assert.equal(speedsterMapRevisionHash(negativeZero), speedsterMapRevisionHash(normalized));
+
+  // Production Prisma JSON transport rounded this recovered anchor from
+  // 0.11073133680555555 to 0.1107313368055556 during revision persistence.
+  // New revisions quantize before both hashing and insertion so read-back is
+  // deterministic while the legacy hash algorithm itself stays unchanged.
+  const productionPrecision = payload({
+    backMap: {
+      ...first.backMap,
+      anchors: first.backMap.anchors.map((anchor, index) => index === 3
+        ? { ...anchor, point: { x: 0.11073133680555555, y: anchor.point.y } }
+        : anchor),
+    },
+  });
+  const persistenceNormalized = normalizedSpeedsterMapRevisionPayload(productionPrecision);
+  assert.equal(persistenceNormalized.backMap.anchors[3].point.x, 0.110731336806);
+  assert.notEqual(speedsterMapRevisionHash(productionPrecision), speedsterMapRevisionHash(persistenceNormalized));
+  assert.equal(
+    validateSpeedsterLoadedMapRevision(record(persistenceNormalized)).revisionHash,
+    speedsterMapRevisionHash(persistenceNormalized),
+  );
 });
 
 test("legacy exact map key serialization and hash remain byte-for-byte compatible", () => {
