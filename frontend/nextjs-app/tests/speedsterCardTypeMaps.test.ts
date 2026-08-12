@@ -715,6 +715,8 @@ test("one authoring operation atomically creates independently verified FAMILY a
 test("dual authoring rolls back both maps when either revision create or persisted hash verification fails", async () => {
   const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
   for (const harness of [
+    dualMapTransaction({ failScope: "FAMILY" }),
+    dualMapTransaction({ corruptScope: "FAMILY" }),
     dualMapTransaction({ failScope: "EXACT" }),
     dualMapTransaction({ corruptScope: "EXACT" }),
   ]) {
