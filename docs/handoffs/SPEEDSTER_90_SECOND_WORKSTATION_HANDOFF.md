@@ -1,6 +1,6 @@
 # Speedster TRAIN, Full-Auto Filter, and 90-Second Workstation Handoff
 
-**Status:** local implementation complete; release and physical acceptance not authorized
+**Status:** historical 2026-08-10 foundation handoff; the 2026-08-11 Card Map correction below supersedes its exact-only creation language
 
 **Prepared:** 2026-08-10 PDT
 
@@ -11,6 +11,15 @@
 **Integration worktree:** `/Users/markthomas/tenkings/.codex-worktrees/speedster-train-full-auto-integration-20260810`
 
 This is the self-contained implementation and evidence handoff for the owner-approved Speedster TRAIN/map foundation, full-auto map filter/audit/restore/replay system, simultaneous Front/Back SAM lane, and cycle instrumentation. It does not authorize a push, merge, deploy, migration, Production mutation, provider change, hardware change, or scope expansion.
+
+## 2026-08-11 Card Map correction (superseding creation contract)
+
+- A single human-authored save now creates both a complete FAMILY revision and a complete EXACT source revision atomically. There is no FAMILY-versus-EXACT creation choice. The exact-only key discussion later in this historical handoff describes the original foundation and does not override this correction.
+- FAMILY keys omit subject/card name and card number: Pokémon uses Category + Year + Product/Set + Parallel; Sports uses Category + Year + Manufacturer + Product/Set + Insert + Parallel. EXACT keys retain the legacy category-aware full identity.
+- EXACT wins over FAMILY and is a full replacement, never a merge. Missing EXACT falls through to FAMILY. Missing both, failed registration, or malformed/hash-invalid evidence remains in normal human review without guessing.
+- Both revisions retain the complete source imagery, evidence hashes, Front/Back geometry, identity, and provenance. Server-normalized persisted bytes are independently hashed and read-back verified before either pointer moves in one transaction.
+- Failed saves preserve the editor state and provide Retry plus Draft Export. Import validates and restores the complete source-bound Front/Back draft without saving automatically.
+- The approved content-zone/filter-authority split remains a blueprint only. The known 50-card deterministic calibration replay is a mandatory zero-write gate with zero hidden real defects before filter-safety acceptance.
 
 ## 1. Locked target and timing boundary
 
