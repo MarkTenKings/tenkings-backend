@@ -19,6 +19,7 @@ This is the self-contained implementation and evidence handoff for the owner-app
 - EXACT wins over FAMILY and is a full replacement, never a merge. Missing EXACT falls through to FAMILY. Missing both, failed registration, or malformed/hash-invalid evidence remains in normal human review without guessing.
 - Both revisions retain the complete source imagery, evidence hashes, Front/Back geometry, identity, and provenance. Server-normalized persisted bytes are independently hashed and read-back verified before either pointer moves in one transaction.
 - Failed saves preserve the editor state and provide Retry plus Draft Export. Import validates and restores the complete source-bound Front/Back draft without saving automatically.
+- The correction is now live and recovered Mark's original Production draft without redraw. FAMILY v5 `cmspjh5h50003lddtgtdl9o5q` and EXACT v1 `cmspjh5sc0005lddthf23tvt6` independently verify; the Squirtle source and both side registrations pin EXACT, while a different matching identity selects FAMILY as one complete replacement. Invalid FAMILY v1-v4 remain append-only evidence.
 - The approved content-zone/filter-authority split remains a blueprint only. The known 50-card deterministic calibration replay is a mandatory zero-write gate with zero hidden real defects before filter-safety acceptance.
 
 ## 1. Locked target and timing boundary
@@ -105,7 +106,7 @@ The deterministic local simulated-detector benchmark used two warmups and 20 mea
 
 The optimized production build passed Prisma generation, required workspace builds, Next lint/type validation, compilation, all `76/76` static pages, the new TRAIN/filter/audit/restore/instrumentation/presentation routes, and the Sharp trace verifier. Standalone TypeScript reported only known unrelated workspace/test-fixture baseline errors and no changed Speedster-path error.
 
-Local read-only browser QA reached both `/admin/ai-grader-v2` and `/admin/ai-grader-v2/removed-findings`, but neither local browser had an authenticated Speedster session. Both correctly stopped at `Sign in to Speedster`. No credential, cookie/storage manipulation, authentication bypass, map save, restore, grade, provider call, or other mutation occurred. Mounted component behavior is covered by the executable frontend suite, but authenticated visual acceptance remains outstanding.
+The original foundation session's local browser had no authentication. The later Card Map correction completed signed-in Production visual acceptance as Mark: `/card-maps` loaded EXACT r1, Front `4/4` anchors and `10` zones READY, Back `4/4` anchors and `2` zones READY, dual-save applicability/no-merge copy, and Export/Import controls. This does not constitute removed-findings or full workstation acceptance.
 
 A fresh independent read-only critic re-reviewed exact implementation commit `35df8e494b09a79c2b3f9d71574bca9b4edc1e69` after the root corrections and returned GO with no actionable findings. Its independent evidence passed the complete relevant frontend suite `284/284`, complete backend suite `93/93`, focused regression subset `54/54`, registration subset `4/4`, changed-file ESLint, diff checks, and additional geometry/multiple-contour probes. The GO is for owner handoff only; it does not authorize deploy, push, merge, migration, or Production mutation.
 
@@ -134,4 +135,4 @@ Therefore the current program conclusion is **NOT YET PROVEN** as a 90-second wo
 3. After filter acceptance, separately authorize a release and any database migration through the deployment runbook.
 4. After release, predeclare the physical acceptance-set size/pass criterion and measure every consecutive run from physical handling through durable grade and truthful Next-ready. Do not exclude slow, failed, or retried cycles.
 
-No deploy, push, merge, Production mutation, provider/RunPod change, camera/NFC/Dell action, ambient database access, Memory cleanup, destructive operation, or scope expansion was performed for this implementation.
+The historical 2026-08-10 foundation session performed no deploy or Production mutation. The superseding 2026-08-11 Card Map correction above was later merged, deployed, and used only for the explicitly authorized recovered dual-map save; it did not change provider/RunPod, camera/NFC/Dell, models, thresholds, grading, Memory, or unrelated Production data.
