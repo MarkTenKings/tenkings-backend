@@ -41,6 +41,11 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_MAP_LABEL_LENGTH = 80;
+// Prisma's JSON transport can round the final IEEE-754 digit before PostgreSQL
+// stores JSONB (for example, 0.11073133680555555 -> 0.1107313368055556).
+// Twelve decimal places are far below one source-image pixel in the normalized
+// unit grid and provide one deterministic server-owned persistence format.
+const SPEEDSTER_MAP_PERSISTED_DECIMAL_PLACES = 12;
 
 export class SpeedsterMapIntegrityError extends Error {
   readonly code: "CARD_MAP_INTEGRITY_FAILURE";
@@ -525,8 +530,51 @@ function normalizedJsonValue(value: unknown): unknown {
   throw new SpeedsterMapIntegrityError("Map hash payload contains a non-JSON value.");
 }
 
+function persistenceNormalizedJsonValue(value: unknown): unknown {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new SpeedsterMapIntegrityError("Map hash payload contains a non-finite number.");
+    if (Object.is(value, -0)) return 0;
+    if (Number.isSafeInteger(value)) return value;
+    const normalized = Number(value.toFixed(SPEEDSTER_MAP_PERSISTED_DECIMAL_PLACES));
+    return Object.is(normalized, -0) ? 0 : normalized;
+  }
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map(persistenceNormalizedJsonValue);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, persistenceNormalizedJsonValue(value[key])]),
+    );
+  }
+  throw new SpeedsterMapIntegrityError("Map hash payload contains a non-JSON value.");
+}
+
 function canonicalJson(value: unknown): string {
   return JSON.stringify(normalizedJsonValue(value));
+}
+
+function firstJsonDifference(
+  expected: unknown,
+  actual: unknown,
+  path = "$",
+): Readonly<{ path: string; expected: unknown; actual: unknown }> | null {
+  if (Object.is(expected, actual)) return null;
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    if (expected.length !== actual.length) return { path: `${path}.length`, expected: expected.length, actual: actual.length };
+    for (let index = 0; index < expected.length; index += 1) {
+      const difference = firstJsonDifference(expected[index], actual[index], `${path}[${index}]`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  if (isRecord(expected) && isRecord(actual)) {
+    const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+    for (const key of keys) {
+      const difference = firstJsonDifference(expected[key], actual[key], `${path}.${key}`);
+      if (difference) return difference;
+    }
+    return null;
+  }
+  return { path, expected, actual };
 }
 
 export function canonicalSpeedsterMapRevisionPayload(payload: SpeedsterMapRevisionHashPayload): string {
@@ -550,7 +598,7 @@ export function canonicalSpeedsterMapRevisionPayload(payload: SpeedsterMapRevisi
 export function normalizedSpeedsterMapRevisionPayload(
   payload: SpeedsterMapRevisionHashPayload,
 ): SpeedsterMapRevisionHashPayload {
-  return JSON.parse(canonicalSpeedsterMapRevisionPayload(payload)) as SpeedsterMapRevisionHashPayload;
+  return persistenceNormalizedJsonValue(payload) as SpeedsterMapRevisionHashPayload;
 }
 
 export function speedsterMapRevisionHash(payload: SpeedsterMapRevisionHashPayload): string {
@@ -1025,10 +1073,26 @@ async function createVerifiedRevision(
     });
   } catch (error) {
     if (error instanceof SpeedsterMapIntegrityError) {
+      const persistedHashPayload = {
+        mapId: persisted.mapId,
+        version: persisted.version,
+        matchKeyHash: persisted.matchKeyHash,
+        matchKey: persisted.matchKey,
+        displayIdentity: persisted.displayIdentity,
+        normalizedIdentity: persisted.normalizedIdentity,
+        sourceSessionId: persisted.sourceSessionId,
+        authorAdminId: persisted.authorAdminId,
+        frontMap: persisted.frontMap,
+        backMap: persisted.backMap,
+        mapSchemaVersion: persisted.mapSchemaVersion,
+        filterPolicyVersion: persisted.filterPolicyVersion,
+        supersedesRevisionId: persisted.supersedesRevisionId,
+      } as unknown as SpeedsterMapRevisionHashPayload;
+      const firstDifference = firstJsonDifference(persistedPayload, persistedHashPayload);
       throw new SpeedsterMapIntegrityError("Persisted Card Map content failed deterministic hash verification.", {
         stage: "PERSISTED_HASH_VERIFICATION",
         scope,
-        field: "revisionHash",
+        field: firstDifference?.path ?? "revisionHash",
       });
     }
     throw error;
