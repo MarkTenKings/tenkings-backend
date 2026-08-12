@@ -27,7 +27,7 @@ type SpeedsterCaptureInstrumentationEvent = import(
 const { SpeedsterTrainWorkspace } = require(
   "../components/ai-grader-v2/SpeedsterTrainWorkspace",
 ) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
-const { speedsterImageService } = require(
+const { speedsterImageService, runSpeedsterImageRequest } = require(
   "../lib/ai-grader-v2/image-service",
 ) as typeof import("../lib/ai-grader-v2/image-service");
 
@@ -68,6 +68,7 @@ type Harness = {
   getRegistrationCount: () => number;
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
+  rerenderSession: (sessionId: string) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
@@ -77,8 +78,13 @@ async function mountWorkspace(input: {
   activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
+  registrationNeverSettlesOnSide?: "FRONT" | "BACK";
   onRegistrationRequest?: (side: "FRONT" | "BACK") => void | Promise<void>;
   mapLookupFailed?: boolean;
+  imageRequestTimeoutMs?: number;
+  onSave?: (
+    bundle: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle,
+  ) => import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult | Promise<import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult>;
 }): Promise<Harness> {
   QRCode.toCanvas = async () => {};
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
@@ -161,6 +167,9 @@ async function mountWorkspace(input: {
       registrationCount += 1;
       const body = JSON.parse(String(init?.body)) as { side: "FRONT" | "BACK" };
       await input.onRegistrationRequest?.(body.side);
+      if (input.registrationNeverSettlesOnSide === body.side) {
+        return new Promise<Response>(() => {});
+      }
       if (input.registrationFails || input.registrationFailsOnSide === body.side) {
         return jsonResponse({ message: "Registration unsafe" }, 409);
       }
@@ -185,20 +194,25 @@ async function mountWorkspace(input: {
   const root = createRoot(container);
   const events: SpeedsterCaptureInstrumentationEvent[] = [];
   const bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[] = [];
+  const renderSession = (sessionId: string) => (
+    <CaptureWorkspace
+      token="admin-token"
+      sessionId={sessionId}
+      cardProfile="POKEMON"
+      activeMapRevisionId={input.activeMap?.revisionId}
+      activeMapScope={input.activeMap?.scope}
+      activeMapName={input.activeMap?.name}
+      mapLookupFailed={input.mapLookupFailed}
+      imageRequestTimeoutMs={input.imageRequestTimeoutMs}
+      onReady={(bundle) => {
+        bundles.push(bundle);
+        return input.onSave?.(bundle) ?? { saved: true };
+      }}
+      onInstrumentationEvent={(event) => events.push(event)}
+    />
+  );
   await act(async () => {
-    root.render(
-      <CaptureWorkspace
-        token="admin-token"
-        sessionId="speedster-session-lifecycle-test"
-        cardProfile="POKEMON"
-        activeMapRevisionId={input.activeMap?.revisionId}
-        activeMapScope={input.activeMap?.scope}
-        activeMapName={input.activeMap?.name}
-        mapLookupFailed={input.mapLookupFailed}
-        onReady={(bundle) => bundles.push(bundle)}
-        onInstrumentationEvent={(event) => events.push(event)}
-      />,
-    );
+    root.render(renderSession("speedster-session-lifecycle-test"));
   });
   await waitFor(
     () => Boolean(buttonByText(container, "Set geometry")),
@@ -212,6 +226,13 @@ async function mountWorkspace(input: {
     getRegistrationCount: () => registrationCount,
     events,
     bundles,
+    rerenderSession: async (nextSessionId) => {
+      await act(async () => root.render(renderSession(nextSessionId)));
+      await waitFor(
+        () => Boolean(buttonByText(container, "Set geometry")),
+        "The replacement session capture pair did not become ready",
+      );
+    },
     cleanup: async () => {
       await act(async () => root.unmount());
       speedsterImageService.proposeGeometry = originalProposeGeometry;
@@ -224,6 +245,67 @@ async function mountWorkspace(input: {
     },
   };
 }
+
+test("bounded image requests reject a non-cooperative late success with recoverable copy", async () => {
+  let aborted = false;
+  await assert.rejects(
+    runSpeedsterImageRequest("geometry", { timeoutMs: 10 }, (signal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => {
+        aborted = true;
+      }, { once: true });
+      setTimeout(() => resolve("late success"), 25);
+    })),
+    /geometry timed out.*photos and current geometry are preserved.*retry/i,
+  );
+  assert.equal(aborted, true);
+});
+
+test("late geometry completion from an old session cannot alter the replacement session", async () => {
+  let resolveOld: ((value: GeometryResponse) => void) | undefined;
+  let calls = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => {
+      calls += 1;
+      if (calls === 1) return new Promise<GeometryResponse>((resolve) => { resolveOld = resolve; });
+      return { width: 1200, height: 1600, corners: validQuad };
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(resolveOld), "Old-session Front geometry did not begin");
+    await harness.rerenderSession("speedster-session-replacement-test");
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Replacement session did not reach editable geometry",
+    );
+    await act(async () => {
+      resolveOld?.({ width: 1200, height: 1600, corners: null });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.ok(harness.container.querySelector('[aria-label="front card geometry"]'));
+    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+    assert.doesNotMatch(harness.container.textContent ?? "", /newer Set geometry attempt replaced/i);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("image-service failures retain the safe server request ID for support", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse({
+    message: "Speedster geometry service did not respond in time. Your photos and current geometry are preserved; retry this step.",
+    requestId: "12345678-1234-1234-1234-123456789abc",
+  }, 504);
+  try {
+    await assert.rejects(
+      speedsterImageService.proposeGeometry("admin-token", "https://images.example.test/front.jpg"),
+      /request 12345678-1234-1234-1234-123456789abc/,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function fire(element: Element, type: string, init: MouseEventInit & { pointerId?: number } = {}) {
   const event = new window.MouseEvent(type, { bubbles: true, ...init });
@@ -440,6 +522,72 @@ test("same-version iPhone polling cannot erase a visible geometry error", async 
   }
 });
 
+test("geometry timeout preserves both iPhone originals and Retry completes the same attempt", async () => {
+  let call = 0;
+  const harness = await mountWorkspace({
+    imageRequestTimeoutMs: 10,
+    proposeGeometry: async (_token, _imageUrl, options) => {
+      call += 1;
+      if (call === 1) {
+        return new Promise<GeometryResponse>((_resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(
+            "Speedster geometry timed out. Your photos and current geometry are preserved; retry this step.",
+          )), options?.timeoutMs ?? 10);
+          options?.signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        });
+      }
+      return { width: 1200, height: 1600, corners: validQuad };
+    },
+  });
+  try {
+    const originalFront = harness.container.querySelector<HTMLImageElement>('img[alt="front card preview"]')?.src;
+    const originalBack = harness.container.querySelector<HTMLImageElement>('img[alt="back card preview"]')?.src;
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(buttonByText(harness.container, "Retry set geometry")),
+      "Timed-out geometry did not offer Retry",
+    );
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /timed out/i);
+    assert.match(harness.container.textContent ?? "", /2\/2 photos ready/);
+    assert.equal(harness.container.querySelector<HTMLImageElement>('img[alt="front card preview"]')?.src, originalFront);
+    assert.equal(harness.container.querySelector<HTMLImageElement>('img[alt="back card preview"]')?.src, originalBack);
+
+    await act(async () => fire(buttonByText(harness.container, "Retry set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Retry did not advance to editable Front geometry",
+    );
+    assert.equal(call, 3, "Retry must obtain fresh Front and Back geometry");
+    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Back geometry failure is identified without discarding either original", async () => {
+  let call = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => {
+      call += 1;
+      if (call === 2) throw new Error("Speedster geometry timed out. Your photos and current geometry are preserved; retry this step.");
+      return { width: 1200, height: 1600, corners: validQuad };
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry set geometry")), "Back failure did not offer Retry");
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /^Back geometry failed:/);
+    assert.match(harness.container.textContent ?? "", /2\/2 photos ready/);
+    assert.ok(harness.container.querySelector('img[alt="front card preview"]'));
+    assert.ok(harness.container.querySelector('img[alt="back card preview"]'));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("resolved FAMILY map applies only after both sides succeed and remains visible post-capture", async () => {
   let now = 10_000;
   const originalDateNow = Date.now;
@@ -485,7 +633,12 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    const finalContinue = buttonByText(harness.container, "Continue");
+    assert.ok(finalContinue);
+    await act(async () => {
+      fire(finalContinue, "click");
+      fire(finalContinue, "click");
+    });
     assert.equal(harness.bundles.length, 1);
     const centeringEvents = harness.events.filter((candidate) => candidate.eventType === "CENTERING_CONFIRMED");
     assert.deepEqual(centeringEvents.map((event) => event.details), [
@@ -571,6 +724,101 @@ test("Front registration success plus Back failure rolls both sides back to manu
       { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
       { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
     ]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("one non-cooperative registration timeout applies neither side and continues manual review", async () => {
+  const harness = await mountWorkspace({
+    imageRequestTimeoutMs: 10,
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-timeout", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationNeverSettlesOnSide: "BACK",
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(
+      () => (harness.container.textContent ?? "").includes("No map will be applied; continuing with normal human review"),
+      "Registration timeout did not safely continue in manual review",
+    );
+    assert.equal(harness.getRegistrationCount(), 2);
+    assert.deepEqual(
+      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details),
+      [
+        { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+        { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+      ],
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("failed final capture save exposes Retry and resubmits one byte-identical bundle", async () => {
+  const submitted: string[] = [];
+  let saveCalls = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    onSave: async (bundle) => {
+      saveCalls += 1;
+      submitted.push(JSON.stringify(bundle));
+      await Promise.resolve();
+      return saveCalls === 1
+        ? { saved: false, message: "Transient capture save failure" }
+        : { saved: true };
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    const backOverlay = harness.container.querySelector<SVGSVGElement>('[aria-label="Adjustable printed-border geometry"]');
+    const backTopLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
+    assert.ok(backOverlay && backTopLeft);
+    Object.defineProperty(backOverlay, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 635, bottom: 889, width: 635, height: 889 }),
+    });
+    await act(async () => {
+      fire(backTopLeft, "pointerdown", { pointerId: 13, clientX: 63.5, clientY: 88.9 });
+      fire(backOverlay, "pointermove", { pointerId: 13, clientX: 127, clientY: 266.7 });
+      fire(backOverlay, "pointerup", { pointerId: 13, clientX: 127, clientY: 266.7 });
+    });
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry save")), "Failed save did not expose Retry save");
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /Transient capture save failure/);
+    assert.equal(
+      harness.container.querySelector<SVGGElement>('[aria-label="Top left"]')?.querySelector("circle")?.getAttribute("cx"),
+      "127",
+      "Retry must remount the human-adjusted Back centering point",
+    );
+
+    const retry = buttonByText(harness.container, "Retry save");
+    assert.ok(retry);
+    await act(async () => {
+      fire(retry, "click");
+      fire(retry, "click");
+    });
+    await waitFor(() => saveCalls === 2, "Retry did not make exactly one new save attempt");
+    assert.equal(submitted.length, 2);
+    assert.equal(submitted[1], submitted[0], "Retry must preserve every Front/Back capture byte");
+    assert.deepEqual(
+      (JSON.parse(submitted[0]) as { back: { centeringQuad: readonly { x: number; y: number }[] } }).back.centeringQuad[0],
+      { x: 0.2, y: 0.3 },
+      "The byte-identity assertion must cover a materially human-adjusted Back point",
+    );
+    assert.equal(harness.bundles.length, 2);
+    assert.equal(buttonByText(harness.container, "Retry save"), undefined);
   } finally {
     await harness.cleanup();
   }

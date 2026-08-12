@@ -33,6 +33,8 @@ type CenteringAssistProps = {
   initialInnerQuad: SpeedsterQuad;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   onContinue: (result: CenteringAssistResult) => void;
+  disabled?: boolean;
+  continueLabel?: string;
 };
 
 const HANDLE_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
@@ -67,6 +69,8 @@ export function CenteringAssist({
   initialInnerQuad,
   detectedBorders,
   onContinue,
+  disabled = false,
+  continueLabel = "Continue",
 }: CenteringAssistProps) {
   const [innerQuad, setInnerQuad] = useState<SpeedsterQuad>(initialInnerQuad);
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
@@ -215,9 +219,10 @@ export function CenteringAssist({
           <button
             type="button"
             className={styles.continueButton}
+            disabled={disabled}
             onClick={() => onContinue({ side, innerQuad, borders: measurements.borders })}
           >
-            Continue <span aria-hidden="true">→</span>
+            {disabled ? "Saving…" : continueLabel} {!disabled ? <span aria-hidden="true">→</span> : null}
           </button>
         </aside>
       </div>

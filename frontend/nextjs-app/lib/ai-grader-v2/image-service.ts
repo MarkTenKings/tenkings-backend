@@ -29,32 +29,126 @@ type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFEC
 type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
 
+export const SPEEDSTER_IMAGE_REQUEST_TIMEOUT_MS = 65_000;
+
+export type SpeedsterImageRequestOptions = Readonly<{
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}>;
+
+export async function runSpeedsterImageRequest<T>(
+  action: string,
+  options: SpeedsterImageRequestOptions = {},
+  request: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = options.timeoutMs ?? SPEEDSTER_IMAGE_REQUEST_TIMEOUT_MS;
+  let timedOut = false;
+  let rejectDeadline: ((reason: Error) => void) | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+  const abortFromCaller = () => {
+    controller.abort(options.signal?.reason);
+    rejectDeadline?.(new Error(`Speedster ${action} was interrupted. Your photos and current geometry are preserved; retry this step.`));
+  };
+  options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    rejectDeadline?.(new Error(`Speedster ${action} request deadline expired.`));
+  }, timeoutMs);
+  try {
+    if (options.signal?.aborted) abortFromCaller();
+    return await Promise.race([request(controller.signal), deadline]);
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`Speedster ${action} timed out. Your photos and current geometry are preserved; retry this step.`);
+    }
+    if (controller.signal.aborted) {
+      throw new Error(`Speedster ${action} was interrupted. Your photos and current geometry are preserved; retry this step.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+async function fetchSpeedsterImageResponse(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  action: string,
+  options: SpeedsterImageRequestOptions = {},
+) {
+  return runSpeedsterImageRequest(action, options, (signal) => fetch(input, { ...init, signal }));
+}
+
+async function fetchSpeedsterImageJson<T>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+  action: string,
+  options: SpeedsterImageRequestOptions = {},
+): Promise<{ response: Response; payload: T }> {
+  return runSpeedsterImageRequest(action, options, async (signal) => {
+    const response = await fetch(input, { ...init, signal });
+    let payload: T;
+    try {
+      payload = await response.json() as T;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      payload = {} as T;
+    }
+    return { response, payload };
+  });
+}
+
+async function fetchSpeedsterImageJsonWithoutDeadline<T>(
+  input: RequestInfo | URL,
+  init: RequestInit,
+): Promise<{ response: Response; payload: T }> {
+  const response = await fetch(input, init);
+  const payload = (await response.json().catch(() => ({}))) as T;
+  return { response, payload };
+}
+
 async function postImageAction<T>(
   token: string,
   action: ImageAction,
   body: Record<string, unknown>,
+  options?: SpeedsterImageRequestOptions,
 ): Promise<T> {
-  const response = await fetch(`/api/admin/ai-grader-v2/image/${action}`, {
+  const input = `/api/admin/ai-grader-v2/image/${action}`;
+  const init = {
     method: "POST",
     headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
     body: JSON.stringify(body),
-  });
-  const payload = (await response.json().catch(() => ({}))) as T & { message?: string; detail?: string };
+  };
+  const { response, payload } = options
+    ? await fetchSpeedsterImageJson<T & { message?: string; detail?: string; requestId?: string }>(input, init, action, options)
+    : await fetchSpeedsterImageJsonWithoutDeadline<T & { message?: string; detail?: string; requestId?: string }>(input, init);
   if (!response.ok) {
-    throw new Error(toCardMapOperatorMessage(payload.message ?? payload.detail ?? `Speedster ${action} failed.`));
+    const operatorMessage = toCardMapOperatorMessage(payload.message ?? payload.detail ?? `Speedster ${action} failed.`);
+    const requestId = typeof payload.requestId === "string" && /^[A-Za-z0-9-]{8,80}$/.test(payload.requestId)
+      ? payload.requestId
+      : null;
+    throw new Error(requestId && !operatorMessage.includes(requestId)
+      ? `${operatorMessage} (request ${requestId})`
+      : operatorMessage);
   }
   return payload;
 }
 
 export const speedsterImageService = {
-  proposeGeometry(token: string, imageUrl: string) {
-    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { imageUrl });
+  proposeGeometry(token: string, imageUrl: string, options: SpeedsterImageRequestOptions = {}) {
+    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { imageUrl }, options);
   },
   prepare(
     token: string,
     imageUrl: string,
     corners: SpeedsterQuad,
     outputPlan: SpeedsterPreparedOutputPlan,
+    options?: SpeedsterImageRequestOptions,
   ) {
     return postImageAction<SpeedsterPrepareResponse>(token, "prepare", {
       imageUrl,
@@ -66,7 +160,7 @@ export const speedsterImageService = {
         microDefect: outputPlan.MICRO_DEFECT.uploadUrl,
         directional: outputPlan.DIRECTIONAL.uploadUrl,
       },
-    });
+    }, options);
   },
   traceProposal(
     token: string,
@@ -82,8 +176,9 @@ export const speedsterImageService = {
       };
       currentTraceWire: SpeedsterTraceBitmapWireV1 | null;
     },
+    options?: SpeedsterImageRequestOptions,
   ) {
-    return postImageAction<{ traceWire: SpeedsterTraceBitmapWireV1 }>(token, "trace-proposal", input);
+    return postImageAction<{ traceWire: SpeedsterTraceBitmapWireV1 }>(token, "trace-proposal", input, options);
   },
   registerMap(
     token: string,
@@ -92,11 +187,13 @@ export const speedsterImageService = {
       side: SpeedsterCardSide;
       currentPhysicalQuad: SpeedsterQuad;
     },
+    options: SpeedsterImageRequestOptions = {},
   ) {
     return postImageAction<SpeedsterMapRegistration>(
       token,
       "map-registration",
       input,
+      options,
     );
   },
 };
@@ -106,8 +203,15 @@ export async function uploadSpeedsterOriginal(input: {
   sessionId: string;
   side: SpeedsterCardSide;
   file: File;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ storageKey: string; readUrl: string }> {
-  const planResponse = await fetch("/api/admin/ai-grader-v2/upload-plan", {
+  const { response: planResponse, payload: plan } = await fetchSpeedsterImageJson<{
+    storageKey?: string;
+    uploadUrl?: string;
+    readUrl?: string;
+    message?: string;
+  }>("/api/admin/ai-grader-v2/upload-plan", {
     method: "POST",
     headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
     body: JSON.stringify({
@@ -116,24 +220,18 @@ export async function uploadSpeedsterOriginal(input: {
       kind: "ORIGINAL",
       contentType: input.file.type,
     }),
-  });
-  const plan = (await planResponse.json().catch(() => ({}))) as {
-    storageKey?: string;
-    uploadUrl?: string;
-    readUrl?: string;
-    message?: string;
-  };
+  }, `${input.side.toLowerCase()} upload planning`, input);
   if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl || !plan.readUrl) {
     throw new Error(toCardMapOperatorMessage(plan.message ?? "Speedster upload could not be prepared."));
   }
 
-  const uploadResponse = await fetch(plan.uploadUrl, {
+  const uploadResponse = await fetchSpeedsterImageResponse(plan.uploadUrl, {
     method: "PUT",
     mode: "cors",
     credentials: "omit",
     headers: { "Content-Type": input.file.type },
     body: input.file,
-  });
+  }, `${input.side.toLowerCase()} original upload`, input);
   if (!uploadResponse.ok) throw new Error(`Speedster upload failed (HTTP ${uploadResponse.status}).`);
   return { storageKey: plan.storageKey, readUrl: plan.readUrl };
 }
@@ -142,16 +240,17 @@ export async function planSpeedsterPreparedOutputs(input: {
   token: string;
   sessionId: string;
   side: SpeedsterCardSide;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<SpeedsterPreparedOutputPlan> {
-  const response = await fetch("/api/admin/ai-grader-v2/upload-plan", {
+  const { response, payload } = await fetchSpeedsterImageJson<{
+    outputs?: SpeedsterPreparedOutputPlan;
+    message?: string;
+  }>("/api/admin/ai-grader-v2/upload-plan", {
     method: "POST",
     headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
     body: JSON.stringify({ sessionId: input.sessionId, side: input.side, kind: "PREPARED" }),
-  });
-  const payload = (await response.json().catch(() => ({}))) as {
-    outputs?: SpeedsterPreparedOutputPlan;
-    message?: string;
-  };
+  }, `${input.side.toLowerCase()} output planning`, input);
   if (!response.ok || !payload.outputs) {
     throw new Error(toCardMapOperatorMessage(payload.message ?? "Speedster output storage could not be prepared."));
   }

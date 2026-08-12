@@ -7,6 +7,7 @@ import AppShell from "../components/AppShell";
 import {
   CaptureWorkspace,
   type SpeedsterCaptureBundle,
+  type SpeedsterCaptureSaveResult,
 } from "../components/ai-grader-v2/CaptureWorkspace";
 import {
   SpeedsterTrainWorkspace,
@@ -107,6 +108,7 @@ export default function CardMapsPage() {
   const [message, setMessage] = useState("One completed authoring save creates both the Family and Exact Source maps.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const identitySectionRef = useRef<HTMLElement>(null);
+  const captureSaveInFlight = useRef(false);
   const sessionId = typeof router.query.sessionId === "string" ? router.query.sessionId : null;
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -242,8 +244,14 @@ export default function CardMapsPage() {
     }
   };
 
-  const saveCapture = async (bundle: SpeedsterCaptureBundle) => {
-    if (!session?.token || !draft || !draftIdentity || working) return;
+  const saveCapture = async (bundle: SpeedsterCaptureBundle): Promise<SpeedsterCaptureSaveResult> => {
+    if (!session?.token || !draft || !draftIdentity) {
+      return { saved: false, message: "CARD MAP source cannot save without its active draft identity." };
+    }
+    if (captureSaveInFlight.current) {
+      return { saved: false, message: "CARD MAP source save is already in progress." };
+    }
+    captureSaveInFlight.current = true;
     setWorking(true);
     setWorkflowError(null);
     setMessage("Saving this card's exact Front and Back source imagery and provenance.");
@@ -302,25 +310,33 @@ export default function CardMapsPage() {
           inspectionStorageKey: bundle.back.inspectionStorageKey,
         },
       };
-      const sourceResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(draft.id)}&scope=EXACT`,
-        { headers: buildAdminHeaders(session.token), cache: "no-store" },
-      );
-      const sourcePayload = await sourceResponse.json().catch(() => ({})) as {
-        source?: SpeedsterTrainSource;
-        message?: string;
-      };
-      setSource(sourceResponse.ok && sourcePayload.source ? sourcePayload.source : localSource);
-      setMessage(sourceResponse.ok && sourcePayload.source
-        ? `${map ? mapAction(map) : "CREATE CARD MAP"} · Exact Front and Back source evidence and hashes are ready for dual authoring.`
-        : `${map ? mapAction(map) : "CREATE CARD MAP"} · Source capture is preserved. Stable image keys are exportable; evidence hashes will be verified by the server on save.`);
+      try {
+        const sourceResponse = await fetch(
+          `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(draft.id)}&scope=EXACT`,
+          { headers: buildAdminHeaders(session.token), cache: "no-store" },
+        );
+        const sourcePayload = await sourceResponse.json().catch(() => ({})) as {
+          source?: SpeedsterTrainSource;
+          message?: string;
+        };
+        setSource(sourceResponse.ok && sourcePayload.source ? sourcePayload.source : localSource);
+        setMessage(sourceResponse.ok && sourcePayload.source
+          ? `${map ? mapAction(map) : "CREATE CARD MAP"} · Exact Front and Back source evidence and hashes are ready for dual authoring.`
+          : `${map ? mapAction(map) : "CREATE CARD MAP"} · Source capture is preserved. Stable image keys are exportable; evidence hashes will be verified by the server on save.`);
+      } catch {
+        setSource(localSource);
+        setMessage(`${map ? mapAction(map) : "CREATE CARD MAP"} · Source capture is preserved. Stable image keys are exportable; evidence hashes will be verified by the server on save.`);
+      }
+      return { saved: true };
     } catch (error) {
       const failure = toCardMapOperatorMessage(
         error instanceof Error ? error.message : "CARD MAP source could not be saved.",
       );
       setWorkflowError(failure);
       setMessage(failure);
+      return { saved: false, message: failure };
     } finally {
+      captureSaveInFlight.current = false;
       setWorking(false);
     }
   };
@@ -438,7 +454,7 @@ export default function CardMapsPage() {
             activeMapRevisionId={map.revision?.revisionId ?? null}
             activeMapScope={map.status === "LOADED" ? map.scope ?? null : null}
             activeMapName={map.status === "LOADED" ? map.name ?? null : null}
-            onReady={(bundle) => void saveCapture(bundle)}
+            onReady={saveCapture}
           />
         ) : null}
 
