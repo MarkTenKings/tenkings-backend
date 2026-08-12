@@ -16,7 +16,7 @@ import {
   isSpeedsterMapZoneV2,
   type SpeedsterMapRegistration,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
-import { speedsterMapZoneOverlap } from "../../lib/ai-grader-v2/map-filter";
+import { speedsterBestAuthorizedMapZoneDiagnostic } from "../../lib/ai-grader-v2/map-filter";
 import {
   SPEEDSTER_CANONICAL_FRAME,
   canonicalContourToInspection,
@@ -271,11 +271,7 @@ export function DefectEvidenceViewer({
   const active = visibleDefects.find(({ id }) => id === activeId);
   const activeMapDiagnostic = useMemo(() => {
     if (!active || !mapRegistration || mapRegistration.side !== side) return null;
-    const candidates = mapRegistration.projectedZones
-      .filter((zone) => !isSpeedsterMapZoneV2(zone) || zone.filterAuthority)
-      .map((zone) => ({ zone, overlap: speedsterMapZoneOverlap(active, zone) }))
-      .sort((left, right) => right.overlap.ratio - left.overlap.ratio);
-    return candidates[0] ?? null;
+    return speedsterBestAuthorizedMapZoneDiagnostic(active, mapRegistration.projectedZones);
   }, [active, mapRegistration, side]);
   const activeTrace = active?.finalTrace ?? (
     active && hydratedTrace?.findingId === active.id && hydratedTrace.trace.sha256 === active.traceSha256

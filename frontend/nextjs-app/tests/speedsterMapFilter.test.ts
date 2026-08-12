@@ -15,6 +15,7 @@ import {
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "../lib/ai-grader-v2/learning-calibration-v2";
 import {
+  speedsterBestAuthorizedMapZoneDiagnostic,
   splitSpeedsterMapFilteredCandidates,
   type SpeedsterPinnedMapFilterInput,
 } from "../lib/ai-grader-v2/map-filter";
@@ -394,6 +395,25 @@ test("full-contour containment rejects an edge that exits a valid concave zone w
   assert.deepEqual(result.activeFindings.map(({ id }) => id), [crossing.id]);
   assert.deepEqual(result.filteredDecisions.map(({ finding }) => finding.id), [boundaryContact.id]);
   assert.equal(result.filteredDecisions[0].zoneOverlap.fullyContained, true);
+
+  const fullyContainedZone = {
+    ...concaveZone,
+    id: "FRONT-full-zone",
+    label: "Full print",
+    polygon: [
+      { x: 0.1, y: 0.1 },
+      { x: 0.9, y: 0.1 },
+      { x: 0.9, y: 0.9 },
+      { x: 0.1, y: 0.9 },
+    ],
+  };
+  const diagnostic = speedsterBestAuthorizedMapZoneDiagnostic(
+    crossing,
+    [concaveZone, fullyContainedZone],
+  );
+  assert.equal(diagnostic?.overlap.ratio, 1, "both candidate zones have all contour vertices inside");
+  assert.equal(diagnostic?.overlap.fullyContained, true);
+  assert.equal(diagnostic?.zone.id, fullyContainedZone.id);
 });
 
 const capture = {

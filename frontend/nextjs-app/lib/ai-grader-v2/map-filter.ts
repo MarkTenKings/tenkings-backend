@@ -424,6 +424,20 @@ export function speedsterMapZoneOverlap(
   } as const;
 }
 
+export function speedsterBestAuthorizedMapZoneDiagnostic(
+  finding: SpeedsterReviewFinding,
+  zones: readonly SpeedsterMapZone[],
+) {
+  return zones
+    .filter((zone) => !isSpeedsterMapZoneV2(zone) || zone.filterAuthority)
+    .map((zone) => ({ zone, overlap: speedsterMapZoneOverlap(finding, zone) }))
+    .sort((left, right) => (
+      Number(right.overlap.fullyContained) - Number(left.overlap.fullyContained)
+      || right.overlap.ratio - left.overlap.ratio
+      || left.zone.id.localeCompare(right.zone.id)
+    ))[0] ?? null;
+}
+
 export function splitSpeedsterMapFilteredCandidates(input: {
   findings: readonly SpeedsterReviewFinding[];
   cardIdentity: SpeedsterSessionIdentity;
