@@ -57,7 +57,8 @@
 }
 
 .applicability,
-.familyWarning {
+.familyWarning,
+.recoveryPanel {
   display: grid;
   gap: 5px;
   padding: 14px 16px;
@@ -91,6 +92,28 @@
 }
 
 .familyWarning strong { color: #ffc76b; font-size: 0.74rem; letter-spacing: 0.12em; }
+
+.recoveryPanel {
+  grid-template-columns: minmax(240px, 1fr) auto auto;
+  align-items: center;
+  border: 1px solid rgba(86, 229, 255, 0.3);
+  background: rgba(8, 31, 39, 0.54);
+}
+
+.recoveryPanel div { display: grid; gap: 4px; }
+.recoveryPanel strong { color: #56e5ff; font-size: 0.74rem; letter-spacing: 0.12em; }
+.recoveryPanel p { margin: 0; color: #b9c7d0; font-size: 0.82rem; line-height: 1.45; }
+.recoveryPanel button {
+  border: 1px solid rgba(145, 231, 255, 0.3);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #101820;
+  color: #d8f8ff;
+  font-weight: 750;
+  cursor: pointer;
+}
+.fileInput { display: none; }
+.recoveryError { grid-column: 1 / -1; color: #ffd4cf !important; }
 
 .sideTabs,
 .toolTabs {
@@ -385,6 +408,46 @@
   padding-top: 18px;
 }
 
+.saveSummary,
+.saveFailure,
+.saveSuccess {
+  display: grid;
+  flex-basis: 100%;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  font-size: 0.82rem;
+}
+
+.saveSummary {
+  border: 1px solid rgba(145, 231, 255, 0.16);
+  background: rgba(8, 15, 21, 0.72);
+}
+
+.saveSummary strong { color: #56e5ff; letter-spacing: 0.12em; }
+.saveSummary span { color: #c6d2d9; }
+
+.saveFailure {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  border: 1px solid rgba(239, 106, 91, 0.52);
+  background: rgba(48, 16, 13, 0.72);
+}
+
+.saveFailure strong,
+.saveFailure p { grid-column: 1 / -1; }
+.saveFailure strong { color: #ff9e93; }
+.saveFailure p { margin: 0; color: #ffd4cf; }
+
+.saveSuccess {
+  border: 1px solid rgba(100, 245, 176, 0.34);
+  background: rgba(26, 80, 57, 0.2);
+}
+
+.saveSuccess strong { color: #64f5b0; letter-spacing: 0.1em; }
+.saveSuccess span { overflow-wrap: anywhere; color: #e2fff0; }
+.saveSuccess p { margin: 3px 0 0; color: #b9c7d0; }
+
 .readiness {
   display: grid;
   gap: 6px;
@@ -433,6 +496,8 @@
   .mapIdentity { justify-items: start; }
   .mapIdentity small { text-align: left; }
   .preview header p { text-align: left; }
+  .recoveryPanel { grid-template-columns: 1fr; }
+  .recoveryPanel button { width: 100%; }
 }
 
 @media (max-width: 560px) {

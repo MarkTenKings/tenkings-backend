@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 // @ts-expect-error The existing mounted UI tests use jsdom without a workspace declaration package.
 import { JSDOM } from "jsdom";
@@ -20,6 +22,13 @@ const { SpeedsterTrainWorkspace } = require(
 ) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
 type SpeedsterTrainMapState = import("../components/ai-grader-v2/SpeedsterTrainWorkspace").SpeedsterTrainMapState;
 type SpeedsterTrainSource = import("../components/ai-grader-v2/SpeedsterTrainWorkspace").SpeedsterTrainSource;
+type SpeedsterDualMapSaveResult = import("../components/ai-grader-v2/SpeedsterTrainWorkspace").SpeedsterDualMapSaveResult;
+const {
+  cardMapDraftEditableSide,
+  createCardMapDraft,
+  parseCardMapDraft,
+  serializeCardMapDraft,
+} = require("../lib/ai-grader-v2/card-map-draft") as typeof import("../lib/ai-grader-v2/card-map-draft");
 
 const frontCentering = [
   { x: 0.08, y: 0.09 },
@@ -52,8 +61,26 @@ const source: SpeedsterTrainSource = {
   sessionId: "speedster-card-map-editor-session-12345",
   cardProfile: "SPORTS",
   identity,
-  front: { rectifiedUrl: "https://images.example.test/front.webp", centeringQuad: frontCentering },
-  back: { rectifiedUrl: "https://images.example.test/back.webp", centeringQuad: backCentering },
+  front: {
+    rectifiedUrl: "https://images.example.test/front.webp",
+    centeringQuad: frontCentering,
+    sourceEvidence: {
+      originalStorageKey: "cards/source/front-original.webp",
+      rectifiedStorageKey: "cards/source/front-rectified.webp",
+      inspectionStorageKey: "cards/source/front-inspection.webp",
+      inspectionSha256: "1".repeat(64),
+    },
+  },
+  back: {
+    rectifiedUrl: "https://images.example.test/back.webp",
+    centeringQuad: backCentering,
+    sourceEvidence: {
+      originalStorageKey: "cards/source/back-original.webp",
+      rectifiedStorageKey: "cards/source/back-rectified.webp",
+      inspectionStorageKey: "cards/source/back-inspection.webp",
+      inspectionSha256: "2".repeat(64),
+    },
+  },
 };
 
 function sideFixture(side: "front" | "back") {
@@ -103,6 +130,20 @@ const missingMap: SpeedsterTrainMapState = {
   editable: null,
 };
 
+function dualSaveResult(): SpeedsterDualMapSaveResult {
+  const receipt = (scope: "FAMILY" | "EXACT", number: number) => ({
+    scope,
+    applicability: scope === "FAMILY" ? "all matching cards" : "this exact source card",
+    mapId: `${scope.toLowerCase()}-map-12345678901234567890`,
+    revisionId: `${scope.toLowerCase()}-revision-1234567890`,
+    version: number,
+    revisionHash: (scope === "FAMILY" ? "b" : "c").repeat(64),
+    matchKeyHash: (scope === "FAMILY" ? "d" : "e").repeat(64),
+    sourceSessionId: source.sessionId,
+  });
+  return { family: receipt("FAMILY", 3), exact: receipt("EXACT", 5) };
+}
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -114,11 +155,15 @@ type Harness = {
   container: HTMLElement;
   root: Root;
   requests: Array<{ url: string; init?: RequestInit }>;
-  savedMaps: SpeedsterTrainMapState[];
+  savedMaps: SpeedsterDualMapSaveResult[];
   cleanup: () => Promise<void>;
 };
 
-async function mount(initialMap: SpeedsterTrainMapState, scope?: "FAMILY" | "EXACT"): Promise<Harness> {
+async function mount(
+  initialMap: SpeedsterTrainMapState,
+  saveResponse: { body: unknown; status: number } = { body: { maps: dualSaveResult() }, status: 201 },
+  sourceInput: SpeedsterTrainSource = source,
+): Promise<Harness> {
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     url: "https://collect.tenkings.co/admin/ai-grader-v2",
     pretendToBeVisual: true,
@@ -168,22 +213,18 @@ async function mount(initialMap: SpeedsterTrainMapState, scope?: "FAMILY" | "EXA
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     requests.push({ url, init });
-    if (url === "/api/admin/ai-grader-v2/maps/save") return jsonResponse({ map: loadedMap() }, 201);
-    if (url === "/api/admin/ai-grader-v2/maps/promote") return jsonResponse({
-      map: { ...loadedMap(), scope: "FAMILY", name: "2021 Panini Obsidian Orange" },
-    }, 201);
+    if (url === "/api/admin/ai-grader-v2/maps/save") return jsonResponse(saveResponse.body, saveResponse.status);
     throw new Error(`Unexpected card map editor request: ${url}`);
   };
-  const savedMaps: SpeedsterTrainMapState[] = [];
+  const savedMaps: SpeedsterDualMapSaveResult[] = [];
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   await act(async () => {
     root.render(
       <SpeedsterTrainWorkspace
         token="admin-token"
-        source={source}
+        source={sourceInput}
         initialMap={initialMap}
-        scope={scope}
         onSaved={(map) => savedMaps.push(map)}
       />,
     );
@@ -244,11 +285,13 @@ async function waitFor(condition: () => boolean, message: string, timeoutMs = 10
   }
 }
 
-test("legacy responses remain exact while boundary and composed Front/Back previews stay explicit", async () => {
+test("missing-map creation state is neutral while boundary and composed Front/Back previews stay explicit", async () => {
   const harness = await mount(missingMap);
   try {
-    assert.match(harness.container.textContent ?? "", /CARD MAP · EXACT/);
-    assert.match(harness.container.textContent ?? "", /APPLIES TO THIS EXACT CARD ONLY/);
+    assert.match(harness.container.textContent ?? "", /CARD MAP · FAMILY \+ EXACT/);
+    assert.match(harness.container.textContent ?? "", /FIRST FAMILY \+ EXACT CREATION/);
+    assert.match(harness.container.textContent ?? "", /Saving creates both complete maps atomically/);
+    assert.doesNotMatch(harness.container.textContent ?? "", /NO FAMILY MAP/);
     assert.ok(buttonByText(harness.container, "Printed Boundary"));
     assert.ok(buttonByText(harness.container, "Registration Anchors"));
     assert.ok(buttonByText(harness.container, "Printed-Content Zones"));
@@ -261,7 +304,32 @@ test("legacy responses remain exact while boundary and composed Front/Back previ
     const backPreview = harness.container.querySelector<SVGSVGElement>('[aria-label="BACK composed card map preview"]');
     assert.equal(frontPreview?.querySelector("polygon")?.getAttribute("points"), "80,126 920,126 920,1274 80,1274");
     assert.equal(backPreview?.querySelector("polygon")?.getAttribute("points"), "70,112 930,112 930,1288 70,1288");
-    assert.equal(buttonByText(harness.container, "Save + activate card map")?.disabled, true);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, true);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("hash-invalid prior map stays out of the editing baseline while draft recovery remains available", async () => {
+  const harness = await mount({
+    status: "INTEGRITY_ERROR",
+    scope: "FAMILY",
+    name: "2021 Sports Panini Obsidian Orange",
+    revision: null,
+    revisions: [],
+    editable: null,
+    integrity: {
+      code: "CARD_MAP_INTEGRITY_FAILURE",
+      message: "Map revision hash verification failed.",
+    },
+  });
+  try {
+    const copy = harness.container.textContent ?? "";
+    assert.match(copy, /PRIOR MAP INTEGRITY ERROR · SAFE REPAIR MODE/);
+    assert.match(copy, /was not loaded/i);
+    assert.match(copy, /will not be rewritten/i);
+    assert.ok(buttonByText(harness.container, "Import Card Map Draft"));
+    assert.doesNotMatch(copy, /EDITING BASELINE/);
   } finally {
     await harness.cleanup();
   }
@@ -275,10 +343,10 @@ test("one boundary handle and stable registration anchors drag independently, un
     assert.ok(overlay && boundary);
 
     await drag(overlay, boundary, 900, 1260);
-    assert.equal(buttonByText(harness.container, "Save + activate new revision")?.disabled, true);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, true);
     assert.match(harness.container.textContent ?? "", /Front boundary 4\/4 invalid/);
     await act(async () => fire(buttonByText(harness.container, "Undo last Front edit")!, "click"));
-    assert.equal(buttonByText(harness.container, "Save + activate new revision")?.disabled, false);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, false);
 
     const restoredBoundary = harness.container.querySelector<SVGGElement>('[aria-label="Front Printed Boundary TL"]');
     assert.ok(restoredBoundary);
@@ -295,18 +363,18 @@ test("one boundary handle and stable registration anchors drag independently, un
     const anchorTwo = harness.container.querySelector<SVGGElement>('[aria-label="Front Registration Anchor A2"]');
     assert.ok(anchorTwo);
     await drag(overlay, anchorTwo, 250, 350, 10);
-    assert.equal(buttonByText(harness.container, "Save + activate new revision")?.disabled, true);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, true);
     assert.match(harness.container.textContent ?? "", /anchors 4\/4 ·/);
     await act(async () => fire(buttonByText(harness.container, "Undo last Front edit")!, "click"));
-    assert.equal(buttonByText(harness.container, "Save + activate new revision")?.disabled, false);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, false);
 
-    await act(async () => fire(buttonByText(harness.container, "Save + activate new revision")!, "click"));
+    await act(async () => fire(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")!, "click"));
     await waitFor(() => harness.savedMaps.length === 1, "Card map save did not settle");
     assert.equal(harness.requests.length, 1);
     assert.equal(harness.requests[0].url, "/api/admin/ai-grader-v2/maps/save");
     const body = JSON.parse(String(harness.requests[0].init?.body)) as Record<string, any>;
-    assert.deepEqual(Object.keys(body).sort(), ["back", "front", "scope", "sessionId"]);
-    assert.equal(body.scope, "EXACT");
+    assert.deepEqual(Object.keys(body).sort(), ["back", "front", "sessionId"]);
+    assert.equal("scope" in body, false);
     assert.deepEqual(Object.keys(body.front).sort(), ["anchors", "designBoundary", "zones"]);
     assert.equal(body.sessionId, source.sessionId);
     assert.deepEqual(body.front.anchors.map((anchor: { id: string }) => anchor.id), [
@@ -318,12 +386,15 @@ test("one boundary handle and stable registration anchors drag independently, un
     assert.deepEqual(body.front.anchors[0].point, { x: 0.25, y: 0.25 });
     assert.equal("selectedZoneId" in body.front, false);
     assert.equal("zoneDraft" in body.front, false);
+    assert.match(harness.container.textContent ?? "", /FAMILY \+ EXACT MAPS SAVED ATOMICALLY/);
+    assert.match(harness.container.textContent ?? "", /Family r3/);
+    assert.match(harness.container.textContent ?? "", /Exact r5/);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("family authoring is explicit, warns without blocking, and saves FAMILY scope", async () => {
+test("one save creates both complete maps and family guidance remains nonblocking", async () => {
   const base = loadedMap();
   const map: SpeedsterTrainMapState = {
     ...base,
@@ -337,48 +408,44 @@ test("family authoring is explicit, warns without blocking, and saves FAMILY sco
       },
     } : null,
   };
-  const harness = await mount(map, "FAMILY");
+  const harness = await mount(map);
   try {
     const copy = harness.container.textContent ?? "";
-    assert.match(copy, /CARD MAP · FAMILY/);
-    assert.match(copy, /APPLIES TO ALL MATCHING CARDS/);
-    assert.match(copy, /2021 Panini Obsidian Orange/);
+    assert.match(copy, /CARD MAP · FAMILY \+ EXACT/);
+    assert.match(copy, /Family Card Map/);
+    assert.match(copy, /Exact Source Map/);
+    assert.match(copy, /2021 Sports Panini Obsidian Orange/);
     assert.match(copy, /CHECK FAMILY LANDMARKS/);
     assert.match(copy, /one anchor per quadrant/);
-    assert.match(copy, /location caution/);
+    assert.match(copy, /Location caution/);
     assert.match(copy, /Player\/card name, HP, and card number are also unsafe/);
     assert.match(copy, /Shared frame\/layout landmarks remain safe, including at the top or bottom/);
-    const save = buttonByText(harness.container, "Save + activate new revision");
+    const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
     assert.ok(save);
-    assert.equal(save.disabled, false, "Family warning must remain nonblocking");
+    assert.equal(save.disabled, false, "Family guidance must remain nonblocking");
     await act(async () => fire(save, "click"));
-    await waitFor(() => harness.savedMaps.length === 1, "Family map save did not settle");
+    await waitFor(() => harness.savedMaps.length === 1, "Dual map save did not settle");
     const body = JSON.parse(String(harness.requests[0].init?.body));
-    assert.equal(body.scope, "FAMILY");
+    assert.equal("scope" in body, false);
+    assert.equal(harness.savedMaps[0].family.scope, "FAMILY");
+    assert.equal(harness.savedMaps[0].exact.scope, "EXACT");
   } finally {
     await harness.cleanup();
   }
 });
 
-test("loaded exact map offers deliberate whole-map promotion while retaining its source", async () => {
-  const harness = await mount({ ...loadedMap(), scope: "EXACT", name: "Nick Bosa #12" }, "EXACT");
+test("loaded exact map is only an editing baseline and has no creation-time promotion choice", async () => {
+  const harness = await mount({ ...loadedMap(), scope: "EXACT", name: "Nick Bosa #12" });
   try {
-    const promote = buttonByText(harness.container, "Promote exact map to family");
-    assert.ok(promote);
-    await act(async () => fire(promote, "click"));
-    await waitFor(() => harness.requests.some((request) => request.url.endsWith("/maps/promote")), "Promotion request did not settle");
-    const request = harness.requests.find((candidate) => candidate.url.endsWith("/maps/promote"));
-    assert.deepEqual(JSON.parse(String(request?.init?.body)), {
-      sessionId: source.sessionId,
-      revisionId: "card-map-revision-1234567890",
-    });
-    assert.match(harness.container.textContent ?? "", /Exact source imagery and provenance are retained/);
+    assert.match(harness.container.textContent ?? "", /EXACT r2 EDITING BASELINE/);
+    assert.equal(buttonByText(harness.container, "Promote exact map to family"), undefined);
+    assert.match(harness.container.textContent ?? "", /One save creates new Family and Exact revisions/);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("unsafe loaded exact map shows family guidance before nonblocking promotion", async () => {
+test("unsafe loaded exact baseline shows nonblocking family guidance before dual save", async () => {
   const base = loadedMap();
   const unsafe: SpeedsterTrainMapState = {
     ...base,
@@ -394,13 +461,11 @@ test("unsafe loaded exact map shows family guidance before nonblocking promotion
       },
     } : null,
   };
-  const harness = await mount(unsafe, "EXACT");
+  const harness = await mount(unsafe);
   try {
-    assert.match(harness.container.textContent ?? "", /BEFORE PROMOTION · CHECK FAMILY LANDMARKS/);
-    assert.match(harness.container.textContent ?? "", /Before promotion, location caution/);
-    const promote = buttonByText(harness.container, "Promote exact map to family");
-    assert.ok(promote);
-    assert.equal(promote.disabled, false);
+    assert.match(harness.container.textContent ?? "", /CHECK FAMILY LANDMARKS/);
+    assert.match(harness.container.textContent ?? "", /Location caution/);
+    assert.equal(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")?.disabled, false);
   } finally {
     await harness.cleanup();
   }
@@ -408,7 +473,7 @@ test("unsafe loaded exact map shows family guidance before nonblocking promotion
 
 test("shared top and bottom frame anchors do not trigger a card-specific location warning", async () => {
   const map = { ...loadedMap(), scope: "FAMILY" as const, name: "2021 Panini Obsidian Orange" };
-  const harness = await mount(map, "FAMILY");
+  const harness = await mount(map);
   try {
     assert.doesNotMatch(harness.container.textContent ?? "", /CHECK FAMILY LANDMARKS/);
     assert.match(harness.container.textContent ?? "", /shared frame or layout landmark in each quadrant/i);
@@ -476,4 +541,188 @@ test("selected zones edit and drag individually, remove without clearing sibling
   } finally {
     await harness.cleanup();
   }
+});
+
+test("save failure preserves every editor point and exposes bounded Retry plus Export Draft", async () => {
+  const harness = await mount(loadedMap(), {
+    status: 409,
+    body: {
+      message: "Persisted map content did not verify.",
+      code: "CARD_MAP_INTEGRITY_FAILURE",
+      diagnostics: { stage: "PERSISTED_HASH_VERIFICATION", scope: "FAMILY", field: "frontMap" },
+    },
+  });
+  try {
+    const frontBefore = harness.container
+      .querySelector<SVGSVGElement>('[aria-label="FRONT composed card map preview"]')
+      ?.querySelectorAll("polygon").length;
+    const backBefore = harness.container
+      .querySelector<SVGSVGElement>('[aria-label="BACK composed card map preview"]')
+      ?.querySelectorAll("polygon").length;
+    await act(async () => fire(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry")), "Retry was not shown after save failure");
+    assert.match(harness.container.textContent ?? "", /SAVE FAILED — YOUR FULL DRAFT IS STILL HERE/);
+    assert.match(harness.container.textContent ?? "", /CARD_MAP_INTEGRITY_FAILURE/);
+    assert.match(harness.container.textContent ?? "", /PERSISTED_HASH_VERIFICATION/);
+    assert.ok(buttonByText(harness.container, "Export Draft"));
+    assert.equal(
+      harness.container.querySelector<SVGSVGElement>('[aria-label="FRONT composed card map preview"]')?.querySelectorAll("polygon").length,
+      frontBefore,
+    );
+    assert.equal(
+      harness.container.querySelector<SVGSVGElement>('[aria-label="BACK composed card map preview"]')?.querySelectorAll("polygon").length,
+      backBefore,
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("recovered Squirtle legacy draft imports every ordered point and round-trips canonically", () => {
+  const fixturePath = new URL(
+    "../../../docs/handoffs/artifacts/2026-08-11-squirtle-card-map-draft.recovered.json",
+    import.meta.url,
+  );
+  const recoveredText = readFileSync(fixturePath, "utf8");
+  assert.equal(
+    createHash("sha256").update(recoveredText).digest("hex"),
+    "2b26e12bad7ac5d7098fdce22c2624ba808466639236e82b2c654d6960c954b7",
+    "The reviewed recovery artifact must remain byte-identical to the captured browser draft",
+  );
+  const raw = JSON.parse(recoveredText);
+  const squirtleSource = {
+    sessionId: raw.source.sourceSessionPathId,
+    cardProfile: "POKEMON" as const,
+    identity: {
+      cardName: "SQUIRTLE",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: "007/165",
+    },
+    front: {
+      rectifiedStorageKey: raw.source.sourceEvidence.frontImageKey.replace(/^tenkings-cards\//, ""),
+      sourceEvidence: {
+        originalStorageKey: "ai-grader-v2/sessions/squirtle/source/front-original.webp",
+        rectifiedStorageKey: raw.source.sourceEvidence.frontImageKey.replace(/^tenkings-cards\//, ""),
+        inspectionStorageKey: "ai-grader-v2/sessions/squirtle/source/front-inspection.webp",
+        inspectionSha256: "a".repeat(64),
+      },
+    },
+    back: {
+      rectifiedStorageKey: raw.source.sourceEvidence.backImageKey.replace(/^tenkings-cards\//, ""),
+      sourceEvidence: {
+        originalStorageKey: "ai-grader-v2/sessions/squirtle/source/back-original.webp",
+        rectifiedStorageKey: raw.source.sourceEvidence.backImageKey.replace(/^tenkings-cards\//, ""),
+        inspectionStorageKey: "ai-grader-v2/sessions/squirtle/source/back-inspection.webp",
+        inspectionSha256: "b".repeat(64),
+      },
+    },
+  };
+  const imported = parseCardMapDraft(recoveredText, squirtleSource);
+  assert.equal(imported.sides.front.zones.length, 10);
+  assert.equal(imported.sides.back.zones.length, 2);
+  assert.deepEqual(imported.source.scopes, ["FAMILY", "EXACT"]);
+  assert.deepEqual(imported.source.identity, squirtleSource.identity);
+  assert.equal(imported.source.provenance.front.rectifiedStorageKey.startsWith("ai-grader-v2/"), true);
+  assert.equal(imported.source.provenance.front.originalStorageKey, squirtleSource.front.sourceEvidence.originalStorageKey);
+  assert.equal(imported.source.provenance.front.inspectionStorageKey, squirtleSource.front.sourceEvidence.inspectionStorageKey);
+  assert.equal(imported.source.provenance.front.evidenceSha256, "a".repeat(64));
+  assert.equal(imported.source.provenance.back.evidenceSha256, "b".repeat(64));
+  assert.deepEqual(imported.sides.front.anchors.map((anchor) => anchor.id), [
+    "front-anchor-1", "front-anchor-2", "front-anchor-3", "front-anchor-4",
+  ]);
+  assert.deepEqual(imported.sides.back.zones.map((zone) => zone.id), ["back-zone-1", "back-zone-2"]);
+  assert.deepEqual(imported.sides.front.designBoundary, {
+    kind: "QUAD",
+    points: raw.sides.front.printedBoundary,
+  });
+  assert.deepEqual(imported.sides.front.anchors.map((anchor) => anchor.point), raw.sides.front.registrationAnchors.map(({ x, y }: any) => ({ x, y })));
+  assert.deepEqual(imported.sides.front.zones[3].polygon, raw.sides.front.zones[3].points);
+  assert.deepEqual(imported.sides.back.zones[1].polygon, raw.sides.back.zones[1].points);
+  assert.equal(imported.sides.front.zones.every((zone) => zone.filterAuthority), true);
+  const reimported = parseCardMapDraft(serializeCardMapDraft(imported), squirtleSource);
+  assert.deepEqual(reimported, imported);
+  assert.deepEqual(cardMapDraftEditableSide(imported.sides.front).zones[0], {
+    id: "front-zone-1",
+    label: "Card Name",
+    semanticType: "PRINT_TEXT",
+    polygon: raw.sides.front.zones[0].points,
+  });
+});
+
+test("recovered Squirtle file imports into the mounted editor without saving or redrawing", async () => {
+  const fixturePath = new URL(
+    "../../../docs/handoffs/artifacts/2026-08-11-squirtle-card-map-draft.recovered.json",
+    import.meta.url,
+  );
+  const recoveredText = readFileSync(fixturePath, "utf8");
+  const raw = JSON.parse(recoveredText);
+  const squirtleSource: SpeedsterTrainSource = {
+    sessionId: raw.source.sourceSessionPathId,
+    cardProfile: "POKEMON",
+    identity: {
+      cardName: "SQUIRTLE",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: "007/165",
+    },
+    front: {
+      rectifiedUrl: "https://images.example.test/squirtle-front.webp",
+      rectifiedStorageKey: raw.source.sourceEvidence.frontImageKey.replace(/^tenkings-cards\//, ""),
+      centeringQuad: frontCentering,
+      sourceEvidence: {
+        originalStorageKey: "ai-grader-v2/sessions/squirtle/source/front-original.webp",
+        rectifiedStorageKey: raw.source.sourceEvidence.frontImageKey.replace(/^tenkings-cards\//, ""),
+        inspectionStorageKey: "ai-grader-v2/sessions/squirtle/source/front-inspection.webp",
+        inspectionSha256: "a".repeat(64),
+      },
+    },
+    back: {
+      rectifiedUrl: "https://images.example.test/squirtle-back.webp",
+      rectifiedStorageKey: raw.source.sourceEvidence.backImageKey.replace(/^tenkings-cards\//, ""),
+      centeringQuad: backCentering,
+      sourceEvidence: {
+        originalStorageKey: "ai-grader-v2/sessions/squirtle/source/back-original.webp",
+        rectifiedStorageKey: raw.source.sourceEvidence.backImageKey.replace(/^tenkings-cards\//, ""),
+        inspectionStorageKey: "ai-grader-v2/sessions/squirtle/source/back-inspection.webp",
+        inspectionSha256: "b".repeat(64),
+      },
+    },
+  };
+  const harness = await mount(missingMap, undefined, squirtleSource);
+  try {
+    const input = harness.container.querySelector<HTMLInputElement>('[aria-label="Choose Card Map draft file"]');
+    assert.ok(input);
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: [{ size: Buffer.byteLength(recoveredText), text: async () => recoveredText }],
+    });
+    await act(async () => input.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await waitFor(
+      () => (harness.container.textContent ?? "").includes("Draft imported without saving: Front 10 zones · Back 2 zones."),
+      "Recovered Squirtle draft did not hydrate the editor",
+    );
+    assert.equal(harness.requests.length, 0, "Import must never save automatically");
+    assert.match(harness.container.textContent ?? "", /Front · READY · 10 zones/);
+    assert.match(harness.container.textContent ?? "", /Back · READY · 2 zones/);
+    assert.match(harness.container.textContent ?? "", /CURRENT DRAFT RECOVERABLE/);
+    const frontPreview = harness.container.querySelector<SVGSVGElement>('[aria-label="FRONT composed card map preview"]');
+    assert.equal(frontPreview?.querySelectorAll("polygon").length, 11, "Front boundary plus all ten zones must render");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("draft validation rejects another source before replacing editor state", () => {
+  const draft = createCardMapDraft({
+    source,
+    front: { ...sideFixture("front"), zones: sideFixture("front").zones.map((zone) => ({ ...zone, filterAuthority: true as const })) },
+    back: { ...sideFixture("back"), zones: sideFixture("back").zones.map((zone) => ({ ...zone, filterAuthority: true as const })) },
+  });
+  assert.throws(
+    () => parseCardMapDraft(serializeCardMapDraft(draft), { ...source, sessionId: "different-source-session-12345" }),
+    /different source card session/,
+  );
 });

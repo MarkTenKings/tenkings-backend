@@ -26,7 +26,18 @@ import {
 } from "../../lib/ai-grader-v2/gradient-snap";
 import type { SpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
-import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
+import {
+  cardMapDraftEditableSide,
+  cardMapDraftFileName,
+  createCardMapDraft,
+  parseCardMapDraft,
+  serializeCardMapDraft,
+  type CardMapDraftSide,
+} from "../../lib/ai-grader-v2/card-map-draft";
+import {
+  toCardMapOperatorMessage,
+  toCardMapSaveFailure,
+} from "../../lib/ai-grader-v2/card-map-copy";
 import styles from "./SpeedsterTrainWorkspace.module.css";
 
 type EditableAnchor = Readonly<{ id: string; label: string; point: SpeedsterPoint }>;
@@ -37,9 +48,13 @@ type EditableSide = Readonly<{
 }>;
 
 export type SpeedsterTrainMapState = Readonly<{
-  status: "MISSING" | "LOADED";
+  status: "MISSING" | "LOADED" | "INTEGRITY_ERROR";
   scope?: SpeedsterMapScope | null;
   name?: string;
+  integrity?: Readonly<{
+    code: "CARD_MAP_INTEGRITY_FAILURE";
+    message: string;
+  }> | null;
   revision: Readonly<{
     mapId: string;
     revisionId: string;
@@ -70,8 +85,50 @@ export type SpeedsterTrainSource = Readonly<{
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
   identity: SpeedsterSessionIdentity;
-  front: Readonly<{ rectifiedUrl: string; centeringQuad: SpeedsterQuad }>;
-  back: Readonly<{ rectifiedUrl: string; centeringQuad: SpeedsterQuad }>;
+  front: Readonly<{
+    rectifiedUrl: string;
+    centeringQuad: SpeedsterQuad;
+    originalStorageKey?: string;
+    rectifiedStorageKey?: string;
+    inspectionStorageKey?: string;
+    evidenceSha256?: string | null;
+    sourceEvidence?: Readonly<{
+      originalStorageKey: string;
+      rectifiedStorageKey: string;
+      inspectionStorageKey: string;
+      inspectionSha256: string;
+    }>;
+  }>;
+  back: Readonly<{
+    rectifiedUrl: string;
+    centeringQuad: SpeedsterQuad;
+    originalStorageKey?: string;
+    rectifiedStorageKey?: string;
+    inspectionStorageKey?: string;
+    evidenceSha256?: string | null;
+    sourceEvidence?: Readonly<{
+      originalStorageKey: string;
+      rectifiedStorageKey: string;
+      inspectionStorageKey: string;
+      inspectionSha256: string;
+    }>;
+  }>;
+}>;
+
+export type SpeedsterDualMapRevisionReceipt = Readonly<{
+  scope: "FAMILY" | "EXACT";
+  applicability: string;
+  mapId: string;
+  revisionId: string;
+  version: number;
+  revisionHash: string;
+  matchKeyHash: string;
+  sourceSessionId: string;
+}>;
+
+export type SpeedsterDualMapSaveResult = Readonly<{
+  family: SpeedsterDualMapRevisionReceipt;
+  exact: SpeedsterDualMapRevisionReceipt;
 }>;
 
 type SideDraft = {
@@ -167,6 +224,30 @@ function initialEditor(side: SpeedsterCardSide, source: SpeedsterTrainSource, ma
   };
 }
 
+function editorFromDraft(side: CardMapDraftSide): SideEditorState {
+  const map = cardMapDraftEditableSide(side);
+  return {
+    map: cloneSide(map),
+    boundaryPoints: map.designBoundary.kind === "QUAD" ? clonePoints(map.designBoundary.points) : [],
+    selectedZoneId: map.zones[0]?.id ?? null,
+    zoneDraft: { active: false, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+  };
+}
+
+function recoverySide(side: SideDraft): CardMapDraftSide {
+  return {
+    designBoundary: cloneBoundary(side.designBoundary),
+    anchors: side.anchors.map((anchor) => ({ ...anchor, point: { ...anchor.point } })),
+    zones: side.zones.map((zone) => ({
+      id: zone.id,
+      label: zone.label,
+      semanticType: zone.semanticType,
+      filterAuthority: true,
+      polygon: clonePoints(zone.polygon),
+    })),
+  };
+}
+
 function identityTitle(identity: SpeedsterSessionIdentity) {
   return "playerName" in identity ? identity.playerName : identity.cardName;
 }
@@ -174,6 +255,7 @@ function identityTitle(identity: SpeedsterSessionIdentity) {
 function familyMapName(identity: SpeedsterSessionIdentity) {
   return [
     identity.year,
+    "manufacturer" in identity ? "Sports" : "Pokémon",
     "manufacturer" in identity ? identity.manufacturer : null,
     identity.productSet,
     "insert" in identity ? identity.insert : null,
@@ -244,17 +326,13 @@ export function SpeedsterTrainWorkspace({
   token,
   source,
   initialMap,
-  scope,
   onSaved,
-  onPromoted,
   onCancel,
 }: Readonly<{
   token: string;
   source: SpeedsterTrainSource;
   initialMap: SpeedsterTrainMapState;
-  scope?: SpeedsterMapScope;
-  onSaved: (map: SpeedsterTrainMapState) => void;
-  onPromoted?: (map: SpeedsterTrainMapState) => void;
+  onSaved: (maps: SpeedsterDualMapSaveResult) => void;
   onCancel?: () => void;
 }>) {
   const [map, setMap] = useState(initialMap);
@@ -264,16 +342,23 @@ export function SpeedsterTrainWorkspace({
   const [undoBySide, setUndoBySide] = useState<Record<SpeedsterCardSide, SideEditorState[]>>({ FRONT: [], BACK: [] });
   const [tool, setTool] = useState<Tool>("BOUNDARY");
   const [working, setWorking] = useState(false);
+  const [saveFailure, setSaveFailure] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState<SpeedsterDualMapSaveResult | null>(null);
+  const [recoverableSnapshot, setRecoverableSnapshot] = useState<string | null>(null);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const [message, setMessage] = useState(
     map.status === "LOADED"
       ? map.editable
-        ? `Loaded card map revision ${map.revision?.version}. Editing saves and activates a new immutable revision.`
-        : `Loaded card map revision ${map.revision?.version}. Edit this current copy to save a coordinate-safe new revision.`
-      : "No card map exists at this scope. Saving creates and immediately activates revision 1.",
+        ? `Loaded ${map.scope ?? "existing"} revision ${map.revision?.version} as the editing baseline. One save creates new Family and Exact revisions.`
+        : `Loaded ${map.scope ?? "existing"} revision ${map.revision?.version}. Edit this source copy to create new Family and Exact revisions.`
+      : map.status === "INTEGRITY_ERROR"
+        ? "The prior map failed integrity verification and was not loaded. Source imagery is preserved for draft recovery and a new atomic Family + Exact save."
+        : "Ready to create the first Family and Exact Source maps from this draft.",
   );
   const activeHandle = useRef<DragTarget | null>(null);
   const gradientMaps = useRef<Partial<Record<SpeedsterCardSide, SpeedsterGradientMap | null>>>({});
   const textEditKey = useRef<string | null>(null);
+  const importInput = useRef<HTMLInputElement | null>(null);
   const active = side === "FRONT" ? frontEditor : backEditor;
   const sourceSide = side === "FRONT" ? source.front : source.back;
   const selectedZone = active.map.zones.find((zone) => zone.id === active.selectedZoneId) ?? null;
@@ -282,21 +367,37 @@ export function SpeedsterTrainWorkspace({
     BACK: sideReadiness(backEditor),
   }), [backEditor, frontEditor]);
   const ready = readiness.FRONT.ready && readiness.BACK.ready;
-  const activeScope = map.scope ?? scope ?? "EXACT";
-  const activeMapName = map.name ?? (activeScope === "FAMILY"
-    ? familyMapName(source.identity)
-    : exactMapName(source.identity));
+  const baselineScope = map.scope ?? null;
+  const familyName = familyMapName(source.identity);
+  const exactName = exactMapName(source.identity);
   const safetyWarnings = useMemo(() => (
-    activeScope === "FAMILY" || map.status === "LOADED"
-      ? familySafetyWarnings(frontEditor, backEditor)
-      : []
-  ), [activeScope, backEditor, frontEditor, map.status]);
+    familySafetyWarnings(frontEditor, backEditor)
+  ), [backEditor, frontEditor]);
+  const recovery = useMemo(() => {
+    try {
+      const draft = createCardMapDraft({
+        source,
+        front: recoverySide(frontEditor.map),
+        back: recoverySide(backEditor.map),
+      });
+      return { draft, serialized: serializeCardMapDraft(draft), error: null };
+    } catch (error) {
+      return {
+        draft: null,
+        serialized: null,
+        error: error instanceof Error ? error.message : "Card Map draft could not be prepared for recovery.",
+      };
+    }
+  }, [backEditor.map, frontEditor.map, source]);
+  const recoveryCurrent = Boolean(recovery.serialized && recovery.serialized === recoverableSnapshot);
 
   const editorFor = (candidate: SpeedsterCardSide) => candidate === "FRONT" ? frontEditor : backEditor;
   const setEditor = (
     candidate: SpeedsterCardSide,
     next: SideEditorState | ((current: SideEditorState) => SideEditorState),
   ) => {
+    setSaveSuccess(null);
+    setRecoveryError(null);
     const setter = candidate === "FRONT" ? setFrontEditor : setBackEditor;
     setter(next);
   };
@@ -521,25 +622,42 @@ export function SpeedsterTrainWorkspace({
   const save = async () => {
     if (!ready || working) return;
     setWorking(true);
-    setMessage("Saving and immediately activating the immutable card map revision.");
+    setSaveFailure(null);
+    setSaveSuccess(null);
+    setMessage("Saving both immutable Card Map revisions in one transaction.");
     try {
       const response = await fetch("/api/admin/ai-grader-v2/maps/save", {
         method: "POST",
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           sessionId: source.sessionId,
-          scope: activeScope,
           front: frontEditor.map,
           back: backEditor.map,
         }),
       });
-      const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
-      if (!response.ok || !payload.map) throw new Error(payload.message ?? "Card map could not be saved.");
-      setMap(payload.map);
-      setMessage(`Revision ${payload.map.revision?.version} is active now for ${activeScope === "FAMILY" ? "all matching cards" : "this exact card only"}.`);
-      onSaved(payload.map);
+      const payload = await response.json().catch(() => ({})) as {
+        maps?: SpeedsterDualMapSaveResult;
+        message?: string;
+        code?: string;
+        diagnostics?: unknown;
+      };
+      if (!response.ok || !payload.maps?.family || !payload.maps.exact) {
+        const failure = toCardMapSaveFailure(payload, "Family + Exact Card Maps could not be saved.");
+        setSaveFailure(failure);
+        setMessage(failure);
+        return;
+      }
+      setSaveSuccess(payload.maps);
+      setMessage(
+        `Saved Family r${payload.maps.family.version} and Exact r${payload.maps.exact.version}. Both are active and complete; they never merge.`,
+      );
+      onSaved(payload.maps);
     } catch (error) {
-      setMessage(toCardMapOperatorMessage(error instanceof Error ? error.message : "Card map could not be saved."));
+      const failure = toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "Family + Exact Card Maps could not be saved.",
+      ).slice(0, 360);
+      setSaveFailure(failure);
+      setMessage(failure);
     } finally {
       setWorking(false);
     }
@@ -553,7 +671,7 @@ export function SpeedsterTrainWorkspace({
       const response = await fetch("/api/admin/ai-grader-v2/maps/restore", {
         method: "POST",
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ sessionId: source.sessionId, revisionId, scope: activeScope }),
+        body: JSON.stringify({ sessionId: source.sessionId, revisionId, scope: baselineScope ?? "EXACT" }),
       });
       const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
       if (!response.ok || !payload.map) throw new Error(payload.message ?? "Card map version could not be restored.");
@@ -564,7 +682,6 @@ export function SpeedsterTrainWorkspace({
         setUndoBySide({ FRONT: [], BACK: [] });
       }
       setMessage(`Restored content is active as new revision ${payload.map.revision?.version}.`);
-      onSaved(payload.map);
     } catch (error) {
       setMessage(toCardMapOperatorMessage(
         error instanceof Error ? error.message : "Card map version could not be restored.",
@@ -574,27 +691,45 @@ export function SpeedsterTrainWorkspace({
     }
   };
 
-  const promote = async () => {
-    if (working || activeScope !== "EXACT" || !map.revision) return;
-    setWorking(true);
-    setMessage("Promoting this exact map to the matching card family.");
+  const exportDraft = () => {
+    setRecoveryError(null);
+    if (!recovery.draft || !recovery.serialized) {
+      setRecoveryError(recovery.error ?? "Card Map draft could not be prepared for export.");
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([recovery.serialized], { type: "application/json" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = cardMapDraftFileName(recovery.draft);
+    link.click();
+    URL.revokeObjectURL(url);
+    setRecoverableSnapshot(recovery.serialized);
+    setMessage("Current Family + Exact Card Map draft exported. Continue editing or save when ready.");
+  };
+
+  const importDraft = async (file: File | undefined) => {
+    if (!file || working) return;
+    setRecoveryError(null);
     try {
-      const response = await fetch("/api/admin/ai-grader-v2/maps/promote", {
-        method: "POST",
-        headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ sessionId: source.sessionId, revisionId: map.revision.revisionId }),
-      });
-      const payload = await response.json().catch(() => ({})) as { map?: SpeedsterTrainMapState; message?: string };
-      if (!response.ok || !payload.map) throw new Error(payload.message ?? "Exact card map could not be promoted.");
-      setMap(payload.map);
-      setMessage(`Promoted to FAMILY revision ${payload.map.revision?.version}. Exact source imagery and provenance are retained.`);
-      onPromoted?.(payload.map);
+      if (file.size > 2_000_000) throw new Error("Card Map draft file exceeds the 2 MB recovery limit.");
+      const imported = parseCardMapDraft(await file.text(), source);
+      setFrontEditor(editorFromDraft(imported.sides.front));
+      setBackEditor(editorFromDraft(imported.sides.back));
+      setUndoBySide({ FRONT: [], BACK: [] });
+      setSide("FRONT");
+      setSaveFailure(null);
+      setSaveSuccess(null);
+      const serialized = serializeCardMapDraft(imported);
+      setRecoverableSnapshot(serialized);
+      setMessage(
+        `Draft imported without saving: Front ${imported.sides.front.zones.length} zones · Back ${imported.sides.back.zones.length} zones.`,
+      );
     } catch (error) {
-      setMessage(toCardMapOperatorMessage(
-        error instanceof Error ? error.message : "Exact card map could not be promoted.",
-      ));
+      setRecoveryError(toCardMapOperatorMessage(
+        error instanceof Error ? error.message : "Card Map draft could not be imported.",
+      ).slice(0, 360));
     } finally {
-      setWorking(false);
+      if (importInput.current) importInput.current.value = "";
     }
   };
 
@@ -687,31 +822,59 @@ export function SpeedsterTrainWorkspace({
     <section className={styles.workspace} aria-label="Speedster card map workspace">
       <header className={styles.header}>
         <div>
-          <span>CARD MAP · {activeScope}</span>
+          <span>CARD MAP · FAMILY + EXACT</span>
           <h2>{identityTitle(source.identity)}</h2>
           <p>{message}</p>
         </div>
         <div className={styles.mapIdentity}>
-          <strong>{map.status === "LOADED" ? `${activeScope} MAP r${map.revision?.version}` : `NO ${activeScope} MAP`}</strong>
-          <small>{activeMapName}</small>
-          <code>{map.revision?.revisionHash.slice(0, 12) ?? "new revision"}</code>
+          <strong>{map.status === "LOADED"
+            ? `${baselineScope ?? "EXISTING"} r${map.revision?.version} EDITING BASELINE`
+            : "FIRST FAMILY + EXACT CREATION"}</strong>
+          <small>{exactName}</small>
+          <code>{map.revision?.revisionHash.slice(0, 12) ?? "new dual revision"}</code>
         </div>
       </header>
 
       <section className={styles.applicability} aria-label="Card map applicability">
-        <strong>{activeScope === "FAMILY" ? "APPLIES TO ALL MATCHING CARDS" : "APPLIES TO THIS EXACT CARD ONLY"}</strong>
-        <span>{activeMapName}</span>
-        {activeScope === "FAMILY" ? (
-          <p>Use one shared frame or layout landmark in each quadrant. Artwork, player/card name, HP, and card number are unsafe registration anchors because they change between cards.</p>
-        ) : null}
+        <strong>Saving creates both complete maps atomically</strong>
+        <span>Family Card Map — {familyName} — applies to all matching cards.</span>
+        <span>Exact Source Map — {exactName} — applies only to this exact source card.</span>
+        <p>The same human-authored Front/Back geometry starts both maps. Exact replaces Family when it applies; maps never merge. Use one shared frame or layout landmark in each quadrant so the Family map registers matching sibling cards safely.</p>
       </section>
+
+      {map.status === "INTEGRITY_ERROR" ? (
+        <aside className={styles.familyWarning} role="alert">
+          <strong>PRIOR MAP INTEGRITY ERROR · SAFE REPAIR MODE</strong>
+          <p>{toCardMapOperatorMessage(map.integrity?.message ?? "The prior Card Map failed integrity verification.")} It is not an editing baseline and will not be rewritten. Import or review the retained draft, then save new immutable Family + Exact revisions atomically.</p>
+        </aside>
+      ) : null}
 
       {safetyWarnings.length ? (
         <aside className={styles.familyWarning} role="status">
-          <strong>{activeScope === "FAMILY" ? "CHECK FAMILY LANDMARKS" : "BEFORE PROMOTION · CHECK FAMILY LANDMARKS"}</strong>
-          <p>{activeScope === "EXACT" ? "Before promotion, " : ""}location caution: {safetyWarnings.join(" · ")} may overlap artwork or other card-specific content. Player/card name, HP, and card number are also unsafe. Shared frame/layout landmarks remain safe, including at the top or bottom, with one anchor per quadrant. This warning does not block saving or promotion.</p>
+          <strong>CHECK FAMILY LANDMARKS</strong>
+          <p>Location caution: {safetyWarnings.join(" · ")} may overlap artwork or other card-specific content. Player/card name, HP, and card number are also unsafe. Shared frame/layout landmarks remain safe, including at the top or bottom, with one anchor per quadrant. This warning does not block saving.</p>
         </aside>
       ) : null}
+
+      <section className={styles.recoveryPanel} aria-label="Card Map draft recovery">
+        <div>
+          <strong>{recoveryCurrent ? "CURRENT DRAFT RECOVERABLE" : "EXPORT CURRENT DRAFT"}</strong>
+          <p>{recoveryCurrent
+            ? "This exact normalized draft is already present in an exported or imported recovery file."
+            : "Export before saving or whenever you want a durable recovery point. A failed save never clears this editor."}</p>
+        </div>
+        <button type="button" onClick={exportDraft} disabled={!recovery.draft}>Export Card Map Draft</button>
+        <button type="button" onClick={() => importInput.current?.click()} disabled={working}>Import Card Map Draft</button>
+        <input
+          ref={importInput}
+          className={styles.fileInput}
+          type="file"
+          accept="application/json,.json"
+          aria-label="Choose Card Map draft file"
+          onChange={(event) => void importDraft(event.target.files?.[0])}
+        />
+        {recoveryError ? <p className={styles.recoveryError} role="alert">{recoveryError}</p> : null}
+      </section>
 
       <div className={styles.sideTabs}>
         {(["FRONT", "BACK"] as const).map((candidate) => (
@@ -897,21 +1060,43 @@ export function SpeedsterTrainWorkspace({
               {readinessText(candidate)}
             </strong>
           ))}
+          <strong className={recoveryCurrent ? styles.readyStatus : styles.pendingStatus}>
+            Recovery · {recoveryCurrent ? "CURRENT DRAFT EXPORTED / IMPORTED" : "EXPORT RECOMMENDED"}
+          </strong>
         </div>
-        {onCancel ? <button type="button" onClick={onCancel} disabled={working}>Close Card Map</button> : null}
-        {activeScope === "EXACT" && map.status === "LOADED" ? (
-          <button type="button" onClick={() => void promote()} disabled={working}>
-            Promote exact map to family
-          </button>
+        <section className={styles.saveSummary} aria-label="Card Map save summary">
+          <strong>ONE ATOMIC SAVE</strong>
+          <span>Family identity · {familyName}</span>
+          <span>Exact source · {exactName}</span>
+          <span>Front · {readiness.FRONT.ready ? "READY" : "NEEDS WORK"} · {frontEditor.map.zones.length} zones</span>
+          <span>Back · {readiness.BACK.ready ? "READY" : "NEEDS WORK"} · {backEditor.map.zones.length} zones</span>
+          <span>Recovery · {recoveryCurrent ? "current draft exported/imported" : "current draft not yet exported"}</span>
+        </section>
+        {saveFailure ? (
+          <section className={styles.saveFailure} role="alert">
+            <strong>SAVE FAILED — YOUR FULL DRAFT IS STILL HERE</strong>
+            <p>{saveFailure}</p>
+            <button type="button" onClick={() => void save()} disabled={working}>Retry</button>
+            <button type="button" onClick={exportDraft} disabled={!recovery.draft}>Export Draft</button>
+          </section>
         ) : null}
+        {saveSuccess ? (
+          <section className={styles.saveSuccess} role="status" aria-label="Created Card Map revisions">
+            <strong>FAMILY + EXACT MAPS SAVED ATOMICALLY</strong>
+            <span>Family r{saveSuccess.family.version} · {saveSuccess.family.revisionId} · {saveSuccess.family.revisionHash.slice(0, 12)} · {saveSuccess.family.applicability}</span>
+            <span>Exact r{saveSuccess.exact.version} · {saveSuccess.exact.revisionId} · {saveSuccess.exact.revisionHash.slice(0, 12)} · {saveSuccess.exact.applicability}</span>
+            <p>Exact applies only to this source card and replaces Family completely. Family applies to matching sibling cards. They never merge.</p>
+          </section>
+        ) : null}
+        {onCancel ? <button type="button" onClick={onCancel} disabled={working}>Close Card Map</button> : null}
         <button type="button" onClick={() => void save()} disabled={!ready || working}>
-          {working ? "Saving…" : map.status === "LOADED" ? "Save + activate new revision" : "Save + activate card map"}
+          {working ? "SAVING FAMILY + EXACT MAPS…" : "SAVE FAMILY + EXACT MAPS"}
         </button>
       </footer>
 
       {map.revisions.length ? (
         <section className={styles.history}>
-          <h3>Immutable revision history</h3>
+          <h3>{baselineScope ?? "Existing"} immutable revision history</h3>
           {map.revisions.map((revision) => (
             <div key={revision.revisionId}>
               <span>r{revision.version} · {revision.revisionHash.slice(0, 12)}</span>

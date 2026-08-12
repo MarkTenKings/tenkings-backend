@@ -19,7 +19,7 @@ test("CARD MAPS has one literal admin-only route whose hero CTA focuses NEW CARD
   assert.match(cardMapsPage, /<h2 id="new-card-map-heading">NEW CARD MAP<\/h2>/);
   assert.match(cardMapsPage, /const focusNewCard = useCallback/);
   assert.match(cardMapsPage, /scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
-  assert.match(cardMapsPage, /querySelector<HTMLInputElement>\('input:not\(\[type="radio"\]\)'\)/);
+  assert.match(cardMapsPage, /querySelector<HTMLInputElement>\("input"\)/);
   assert.match(cardMapsPage, /className=\{styles\.cardMapsCta\}[\s\S]*?onClick=\{focusNewCard\}>CREATE CARD MAP<\/button>/);
   assert.doesNotMatch(cardMapsPage, /createDraft\(null/);
 });
@@ -36,12 +36,16 @@ test("new CARD MAP creation reuses the exact session, map, capture, and immutabl
   assert.match(cardMapsPage, /<CaptureWorkspace/);
   assert.match(cardMapsPage, /<SpeedsterTrainWorkspace/);
   assert.match(cardMapsPage, /map\.status === "LOADED" \? "EDIT CARD MAP" : "CREATE CARD MAP"/);
+  assert.match(cardMapsPage, /Saving creates both:/);
+  assert.doesNotMatch(cardMapsPage, /type="radio"|card-map-scope|ScopeSelector|EXACT OVERRIDE/);
   assert.doesNotMatch(cardMapsPage, /initializeReview|review-action|SAM 3/);
   assert.doesNotMatch(cardMapsPage, /"[^"\n]*TRAIN[^"\n]*"/);
 });
 
-test("completed CARD MAP mode uses one exact source request and a local identity-correction link", () => {
-  assert.equal(cardMapsPage.match(/maps\/source\?sessionId=/g)?.length, 1);
+test("completed CARD MAP mode prefers exact then family baseline and keeps a local identity-correction link", () => {
+  assert.equal(cardMapsPage.match(/maps\/source\?sessionId=/g)?.length, 2);
+  assert.match(cardMapsPage, /loadSource\("EXACT"\)/);
+  assert.match(cardMapsPage, /loadSource\("FAMILY"\)/);
   assert.match(cardMapsPage, /encodeURIComponent\(sessionId\)/);
   assert.match(cardMapsPage, /Completed-card CARD MAP source could not be loaded/);
   assert.match(cardMapsPage, /href=\{`\/admin\/ai-grader-v2\/completed\/\$\{encodeURIComponent\(sessionId\)\}`\}>FIX CARD IDENTITY<\/Link>/);
