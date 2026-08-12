@@ -10,20 +10,29 @@ import type {
 } from "./card-type-map-contracts";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+  SPEEDSTER_MAP_FILTER_RULE_ID_V2,
   SPEEDSTER_MAP_FILTER_RULE_ID,
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
+  isSpeedsterMapZoneV2,
   isSpeedsterNondegenerateAnchorSet,
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
 } from "./card-type-map-contracts";
+import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "./detector-version";
 import type { SpeedsterSessionIdentity } from "./identity";
-import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "./learning-calibration-v2";
 import { speedsterFindingRegions } from "./review-findings";
 import type { SpeedsterLoadedMapRevision } from "../server/speedsterCardTypeMaps";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const REGISTRATION_PROJECTION_TOLERANCE = 1e-6;
+const PHYSICAL_CARD_WIDTH_MM = 63.5;
+const PHYSICAL_CARD_HEIGHT_MM = 88.9;
+const BUFFER_CONTAINMENT_EPSILON_MM = 1e-9;
+// Ambiguous sub-segments fail closed after this deterministic bound. That may
+// retain a borderline fake; it can never hide a borderline real defect.
+const BUFFER_CONTAINMENT_MAX_DEPTH = 10;
 const ZONE_TYPES = new Set([
   "PRINT_TEXT",
   "PRINT_LOGO",
@@ -135,9 +144,9 @@ function registrationSide(
   if (expectedAnchorJson.join("\u0001") !== registeredAnchorJson.join("\u0001")) {
     throw new Error(`The pinned ${side} Speedster map registration does not match its immutable anchors.`);
   }
-  const registration = value as unknown as SpeedsterMapRegistration;
+  const rawRegistration = value as unknown as SpeedsterMapRegistration;
   const project = (source: SpeedsterPoint) => {
-    const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = registration.homography;
+    const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = rawRegistration.homography;
     const divisor = h6 * source.x + h7 * source.y + h8;
     if (!Number.isFinite(divisor) || Math.abs(divisor) <= 1e-12) {
       throw new Error(`The pinned ${side} Speedster map registration has a singular projection.`);
@@ -155,12 +164,12 @@ function registrationSide(
     Math.abs(left.x - right.x) <= REGISTRATION_PROJECTION_TOLERANCE
     && Math.abs(left.y - right.y) <= REGISTRATION_PROJECTION_TOLERANCE;
   expectedAnchors.forEach((expectedAnchor, index) => {
-    if (!samePoint(project(expectedAnchor.point), registration.anchors[index].locatedPoint)) {
+    if (!samePoint(project(expectedAnchor.point), rawRegistration.anchors[index].locatedPoint)) {
       throw new Error(`The pinned ${side} Speedster map registration anchor projection is incoherent.`);
     }
   });
   expectedZones.forEach((expectedZone, zoneIndex) => {
-    const projectedZone = registration.projectedZones[zoneIndex];
+    const projectedZone = rawRegistration.projectedZones[zoneIndex];
     if (
       projectedZone.polygon.length !== expectedZone.polygon.length
       || expectedZone.polygon.some((source, pointIndex) =>
@@ -170,19 +179,35 @@ function registrationSide(
     }
   });
   if (expectedBoundary.kind === "FULL_BLEED") {
-    if (registration.projectedDesignBoundary.kind !== "FULL_BLEED") {
+    if (rawRegistration.projectedDesignBoundary.kind !== "FULL_BLEED") {
       throw new Error(`The pinned ${side} Speedster map registration design boundary is incoherent.`);
     }
   } else if (
-    registration.projectedDesignBoundary.kind !== "QUAD"
+    rawRegistration.projectedDesignBoundary.kind !== "QUAD"
     || expectedBoundary.points.some((source, pointIndex) =>
-      !samePoint(project(source), registration.projectedDesignBoundary.kind === "QUAD"
-        ? registration.projectedDesignBoundary.points[pointIndex]
+      !samePoint(project(source), rawRegistration.projectedDesignBoundary.kind === "QUAD"
+        ? rawRegistration.projectedDesignBoundary.points[pointIndex]
         : source))
   ) {
     throw new Error(`The pinned ${side} Speedster map registration design boundary is incoherent.`);
   }
-  return registration;
+  return {
+    ...rawRegistration,
+    projectedZones: rawRegistration.projectedZones.map((projectedZone, index) => {
+      const expectedZone = expectedZones[index];
+      return isSpeedsterMapZoneV2(expectedZone)
+        ? {
+            ...projectedZone,
+            contentType: expectedZone.contentType,
+            filterAuthority: expectedZone.filterAuthority,
+            filterAuthoritySource: expectedZone.filterAuthoritySource,
+            filterPaddingMm: expectedZone.filterPaddingMm,
+            proposalSource: expectedZone.proposalSource,
+            proposalConfidence: expectedZone.proposalConfidence,
+          }
+        : projectedZone;
+    }),
+  };
 }
 
 function coherentMap(input: SpeedsterPinnedMapFilterInput) {
@@ -306,21 +331,111 @@ function contourInsidePolygon(
     ));
 }
 
-function overlap(
+function physicalPoint(pointValue: SpeedsterPoint): SpeedsterPoint {
+  return { x: pointValue.x * PHYSICAL_CARD_WIDTH_MM, y: pointValue.y * PHYSICAL_CARD_HEIGHT_MM };
+}
+
+function pointToSegmentDistance(
+  pointValue: SpeedsterPoint,
+  start: SpeedsterPoint,
+  end: SpeedsterPoint,
+) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const squaredLength = dx * dx + dy * dy;
+  if (squaredLength <= BUFFER_CONTAINMENT_EPSILON_MM) {
+    return Math.hypot(pointValue.x - start.x, pointValue.y - start.y);
+  }
+  const parameter = Math.max(0, Math.min(1, (
+    (pointValue.x - start.x) * dx + (pointValue.y - start.y) * dy
+  ) / squaredLength));
+  return Math.hypot(
+    pointValue.x - (start.x + parameter * dx),
+    pointValue.y - (start.y + parameter * dy),
+  );
+}
+
+function pointDistanceMmToPolygon(
+  pointValue: SpeedsterPoint,
+  polygonValue: readonly SpeedsterPoint[],
+) {
+  if (pointInPolygon(pointValue, polygonValue)) return 0;
+  return polygonValue.reduce((minimum, start, index) => Math.min(
+    minimum,
+    pointToSegmentDistance(pointValue, start, polygonValue[(index + 1) % polygonValue.length]),
+  ), Number.POSITIVE_INFINITY);
+}
+
+function segmentInsidePaddedPolygon(
+  start: SpeedsterPoint,
+  end: SpeedsterPoint,
+  polygonValue: readonly SpeedsterPoint[],
+  paddingMm: number,
+  depth = 0,
+): boolean {
+  const middle = { x: (start.x + end.x) / 2, y: (start.y + end.y) / 2 };
+  const distances = [start, middle, end].map((pointValue) => pointDistanceMmToPolygon(pointValue, polygonValue));
+  if (distances.some((distance) => distance > paddingMm + BUFFER_CONTAINMENT_EPSILON_MM)) return false;
+  const quarterLength = Math.hypot(end.x - start.x, end.y - start.y) / 4;
+  if (Math.max(...distances) + quarterLength <= paddingMm + BUFFER_CONTAINMENT_EPSILON_MM) return true;
+  if (depth >= BUFFER_CONTAINMENT_MAX_DEPTH) return false;
+  return segmentInsidePaddedPolygon(start, middle, polygonValue, paddingMm, depth + 1)
+    && segmentInsidePaddedPolygon(middle, end, polygonValue, paddingMm, depth + 1);
+}
+
+function contourInsidePaddedPolygon(
+  contour: readonly SpeedsterPoint[],
+  polygonValue: readonly SpeedsterPoint[],
+  paddingMm: number,
+) {
+  const physicalContour = contour.map(physicalPoint);
+  const physicalPolygon = polygonValue.map(physicalPoint);
+  return physicalContour.length >= 3
+    && physicalContour.every((entry) => (
+      pointDistanceMmToPolygon(entry, physicalPolygon) <= paddingMm + BUFFER_CONTAINMENT_EPSILON_MM
+    ))
+    && physicalContour.every((entry, index) => segmentInsidePaddedPolygon(
+      entry,
+      physicalContour[(index + 1) % physicalContour.length],
+      physicalPolygon,
+      paddingMm,
+    ));
+}
+
+export function speedsterMapZoneOverlap(
   finding: SpeedsterReviewFinding,
   candidateZone: SpeedsterMapZone,
 ) {
   const contours = speedsterFindingRegions(finding).map(({ canonicalContour }) => canonicalContour);
   const vertices = contours.flat();
-  const coveredVertices = vertices.filter((entry) => pointInPolygon(entry, candidateZone.polygon)).length;
+  const paddingMm = isSpeedsterMapZoneV2(candidateZone) ? candidateZone.filterPaddingMm : 0;
+  const physicalPolygon = paddingMm > 0 ? candidateZone.polygon.map(physicalPoint) : null;
+  const coveredVertices = vertices.filter((entry) => paddingMm > 0 && physicalPolygon
+    ? pointDistanceMmToPolygon(physicalPoint(entry), physicalPolygon) <= paddingMm + BUFFER_CONTAINMENT_EPSILON_MM
+    : pointInPolygon(entry, candidateZone.polygon)).length;
   return {
     method: SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
     coveredVertices,
     totalVertices: vertices.length,
     ratio: vertices.length === 0 ? 0 : coveredVertices / vertices.length,
-    fullyContained: contours.length > 0
-      && contours.every((contour) => contourInsidePolygon(contour, candidateZone.polygon)),
+    fullyContained: contours.length > 0 && contours.every((contour) => paddingMm > 0
+      ? contourInsidePaddedPolygon(contour, candidateZone.polygon, paddingMm)
+      : contourInsidePolygon(contour, candidateZone.polygon)),
   } as const;
+}
+
+export function speedsterBestAuthorizedMapZoneDiagnostic(
+  finding: SpeedsterReviewFinding,
+  zones: readonly SpeedsterMapZone[],
+) {
+  return zones
+    .filter((zone) => !isSpeedsterMapZoneV2(zone) || zone.filterAuthority)
+    .map((zone) => ({ zone, overlap: speedsterMapZoneOverlap(finding, zone) }))
+    .sort((left, right) => (
+      Number(right.overlap.fullyContained) - Number(left.overlap.fullyContained)
+      || right.overlap.ratio - left.overlap.ratio
+      || left.zone.id.localeCompare(right.zone.id)
+    ))[0] ?? null;
 }
 
 export function splitSpeedsterMapFilteredCandidates(input: {
@@ -333,6 +448,11 @@ export function splitSpeedsterMapFilteredCandidates(input: {
     throw new Error("The pinned Speedster map cannot run with an incompatible detector version.");
   }
   const registrations = coherentMap(input.map);
+  const v2Policy = input.map.revision.filterPolicyVersion === SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2;
+  if (
+    !v2Policy
+    && input.map.revision.filterPolicyVersion !== SPEEDSTER_MAP_FILTER_POLICY_VERSION
+  ) throw new Error("The pinned Speedster map filter policy is unsupported.");
   const activeFindings: SpeedsterReviewFinding[] = [];
   const filteredDecisions: SpeedsterFilterDecisionEvidence[] = [];
 
@@ -345,7 +465,17 @@ export function splitSpeedsterMapFilteredCandidates(input: {
       throw new Error("A map-filter candidate is missing exact Detector or Memory provenance.");
     }
     const matching = registrations[finding.side].projectedZones
-      .map((candidateZone) => ({ candidateZone, zoneOverlap: overlap(finding, candidateZone) }))
+      .filter((candidateZone) => {
+        if (!v2Policy) return true;
+        if (!isSpeedsterMapZoneV2(candidateZone)) {
+          throw new Error("The pinned Speedster v2 map zone is missing explicit filter authority.");
+        }
+        return candidateZone.filterAuthority;
+      })
+      .map((candidateZone) => ({
+        candidateZone,
+        zoneOverlap: speedsterMapZoneOverlap(finding, candidateZone),
+      }))
       .find(({ zoneOverlap }) => zoneOverlap.fullyContained);
     if (!matching) {
       activeFindings.push(finding);
@@ -359,11 +489,17 @@ export function splitSpeedsterMapFilteredCandidates(input: {
       zoneId: matching.candidateZone.id,
       zoneType: matching.candidateZone.semanticType,
       zoneOverlap: matching.zoneOverlap,
-      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
-      ruleId: SPEEDSTER_MAP_FILTER_RULE_ID,
+      filterPolicyVersion: v2Policy
+        ? SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2
+        : SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      ruleId: v2Policy ? SPEEDSTER_MAP_FILTER_RULE_ID_V2 : SPEEDSTER_MAP_FILTER_RULE_ID,
       ruleInputs: {
         findingOrigin: finding.origin,
         requiredCoverageRatio: 1,
+        ...(v2Policy && isSpeedsterMapZoneV2(matching.candidateZone) ? {
+          filterAuthority: true as const,
+          filterPaddingMm: matching.candidateZone.filterPaddingMm,
+        } : {}),
       },
       detectorVersion: input.detectorVersion,
     });

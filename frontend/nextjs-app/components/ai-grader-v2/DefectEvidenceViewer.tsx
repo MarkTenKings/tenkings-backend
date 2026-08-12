@@ -13,6 +13,11 @@ import {
 } from "../../lib/ai-grader-v2/contracts";
 import { speedsterFindingRegions } from "../../lib/ai-grader-v2/review-findings";
 import {
+  isSpeedsterMapZoneV2,
+  type SpeedsterMapRegistration,
+} from "../../lib/ai-grader-v2/card-type-map-contracts";
+import { speedsterBestAuthorizedMapZoneDiagnostic } from "../../lib/ai-grader-v2/map-filter";
+import {
   SPEEDSTER_CANONICAL_FRAME,
   canonicalContourToInspection,
   canonicalPointToInspection,
@@ -79,6 +84,7 @@ type DefectEvidenceViewerProps = {
   cornerShape?: SpeedsterTraceCornerShape;
   side: SpeedsterCardSide;
   defects: readonly SpeedsterReviewFinding[];
+  mapRegistration?: SpeedsterMapRegistration;
   readOnly: boolean;
   selectedDefectId?: string | null;
   onSelectedDefectChange?: (defectId: string) => void;
@@ -209,6 +215,7 @@ export function DefectEvidenceViewer({
   cornerShape = "SQUARE",
   side,
   defects,
+  mapRegistration,
   readOnly,
   selectedDefectId,
   onSelectedDefectChange,
@@ -230,6 +237,7 @@ export function DefectEvidenceViewer({
   const [selectionStart, setSelectionStart] = useState<SpeedsterPoint | null>(null);
   const [selectionCurrent, setSelectionCurrent] = useState<SpeedsterPoint | null>(null);
   const [batchRemovePending, setBatchRemovePending] = useState(false);
+  const [showMapZones, setShowMapZones] = useState(Boolean(mapRegistration));
   const [readyMasterKey, setReadyMasterKey] = useState<string | null>(null);
   const [failedMasterKey, setFailedMasterKey] = useState<string | null>(null);
   const [hydratedTrace, setHydratedTrace] = useState<{
@@ -261,6 +269,10 @@ export function DefectEvidenceViewer({
       : selectedDefectId;
   const activeId = readOnly && hoveredId && visibleIds.has(hoveredId) ? hoveredId : selectedId;
   const active = visibleDefects.find(({ id }) => id === activeId);
+  const activeMapDiagnostic = useMemo(() => {
+    if (!active || !mapRegistration || mapRegistration.side !== side) return null;
+    return speedsterBestAuthorizedMapZoneDiagnostic(active, mapRegistration.projectedZones);
+  }, [active, mapRegistration, side]);
   const activeTrace = active?.finalTrace ?? (
     active && hydratedTrace?.findingId === active.id && hydratedTrace.trace.sha256 === active.traceSha256
       ? hydratedTrace.trace
@@ -464,6 +476,13 @@ export function DefectEvidenceViewer({
                 }}
               >Smart-Mark</button>
             ) : null}
+            {mapRegistration ? (
+              <button
+                type="button"
+                className={showMapZones ? styles.toolActive : undefined}
+                onClick={() => setShowMapZones((current) => !current)}
+              >Map zones</button>
+            ) : null}
             <b>{visibleDefects.length.toString().padStart(2, "0")}</b>
           </div>
         </header>
@@ -557,6 +576,21 @@ export function DefectEvidenceViewer({
             viewBox="0 0 1000 1000"
             preserveAspectRatio="none"
           >
+            {showMapZones && mapRegistration?.side === side ? (
+              <g className={styles.mapZones} aria-label="Applied Card Map zones">
+                {mapRegistration.projectedZones.map((zone) => {
+                  const inspectionPolygon = zone.polygon.map((point) => (
+                    canonicalPointToInspection(point, inspectionFrame)
+                  ));
+                  const authorized = !isSpeedsterMapZoneV2(zone) || zone.filterAuthority;
+                  return <polygon
+                    key={`map-zone:${zone.id}`}
+                    className={authorized ? styles.authorizedMapZone : styles.contentOnlyMapZone}
+                    points={points(inspectionPolygon, 1000)}
+                  />;
+                })}
+              </g>
+            ) : null}
             {visibleDefects.map((defect, index) => {
               const inspectionContours = speedsterFindingRegions(defect).map((region) =>
                 canonicalContourToInspection(region.canonicalContour, inspectionFrame));
@@ -769,6 +803,24 @@ export function DefectEvidenceViewer({
           </div>
         )}
         {masterReady && traceError ? <p className={styles.traceError}>{traceError}</p> : null}
+        {masterReady && active && mapRegistration ? (
+          <section className={styles.mapDiagnostic} aria-label="Card Map containment diagnostic">
+            <span>APPLIED MAP DIAGNOSTIC</span>
+            {activeMapDiagnostic ? (
+              <>
+                <strong>{activeMapDiagnostic.zone.label}</strong>
+                <p>{active.origin === "SMART_MARK"
+                  ? `Retained: Smart Marks always remain, including inside this zone (${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside).`
+                  : activeMapDiagnostic.overlap.fullyContained
+                  ? `Filtered: ${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside; every contour segment stayed inside.`
+                  : `Retained: ${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside; ${activeMapDiagnostic.overlap.totalVertices - activeMapDiagnostic.overlap.coveredVertices} outside or a contour segment crossed outside.`}</p>
+                <small>{isSpeedsterMapZoneV2(activeMapDiagnostic.zone)
+                  ? `v2 · filter ${activeMapDiagnostic.zone.filterAuthority ? "ON" : "OFF"} · ${activeMapDiagnostic.zone.filterPaddingMm} mm padding`
+                  : "v1 · strict full-contour containment · no padding"}</small>
+              </>
+            ) : <p>No filter-authorized zone applies on this side.</p>}
+          </section>
+        ) : null}
       </aside>
     </section>
   );

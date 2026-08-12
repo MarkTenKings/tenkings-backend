@@ -28,7 +28,6 @@ import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
-import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
 import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
@@ -418,7 +417,9 @@ export default function AiGraderV2AdminPage() {
           ...(bundle.front.mapRegistration && bundle.back.mapRegistration ? {
             mapBinding: {
               revisionId: bundle.front.mapRegistration.mapRevisionId,
-              filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+              filterPolicyVersion: mapState?.status === "LOADED"
+                ? mapState.revision?.filterPolicyVersion ?? "speedster-map-filter-containment-v1"
+                : "speedster-map-filter-containment-v1",
               registration: {
                 front: bundle.front.mapRegistration,
                 back: bundle.back.mapRegistration,
@@ -749,6 +750,10 @@ export default function AiGraderV2AdminPage() {
             inspectionFrames={{ FRONT: capture.front.inspectionFrame, BACK: capture.back.inspectionFrame }}
             sourceImageUrls={sourceImageUrls}
             defects={review.defects.filter((defect) => defect.reviewResult !== "REMOVED")}
+            mapRegistrations={capture.front.mapRegistration && capture.back.mapRegistration
+              && capture.front.mapRegistration.mapRevisionId === capture.back.mapRegistration.mapRevisionId
+              ? { FRONT: capture.front.mapRegistration, BACK: capture.back.mapRegistration }
+              : undefined}
             grade={review.grade}
             canUndo={lastRemovedDefectIds.length > 0}
             onRemoveDefects={async (defectIds) => {

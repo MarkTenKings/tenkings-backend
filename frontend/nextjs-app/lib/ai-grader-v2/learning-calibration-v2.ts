@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { SpeedsterViewType } from "./contracts";
+import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "./detector-version";
 import {
   deriveSpeedsterLearningBankFromHistoryV2,
   harvestSpeedsterLearningSessionV2,
@@ -23,8 +24,7 @@ export const SPEEDSTER_LEARNING_ARTICUNO_ATTESTED_COHORT = [
   { sessionId: "cmscq0ght000011tyoq07u2gc", completionOrder: 226 },
   { sessionId: "cmsdelcbq0000hgh9qmd5xyfl", completionOrder: 227 },
 ] as const;
-export const SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION =
-  "sam3-local-box-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543" as const;
+export { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION };
 export const SPEEDSTER_LEARNING_CALIBRATION_SCHEMA =
   "ten-kings-speedster-sam-memory-v2-calibration-replay-v3" as const;
 

@@ -6,7 +6,11 @@ import {
   parseSpeedsterReviewFindings,
   stripSpeedsterTraceBodies,
 } from "../../../../../lib/ai-grader-v2/review-findings";
-import { SPEEDSTER_MAP_FILTER_POLICY_VERSION } from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
+import {
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+  type SpeedsterMapFilterPolicyVersion,
+} from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
 import {
   SpeedsterMapIntegrityError,
   hashSpeedsterMapStorageEvidence,
@@ -29,7 +33,10 @@ const patchSchema = z
     capture: jsonObject.refine((value) => Object.keys(value).length > 0),
     mapBinding: z.object({
       revisionId: z.string().trim().min(1).max(80),
-      filterPolicyVersion: z.literal(SPEEDSTER_MAP_FILTER_POLICY_VERSION),
+      filterPolicyVersion: z.union([
+        z.literal(SPEEDSTER_MAP_FILTER_POLICY_VERSION),
+        z.literal(SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2),
+      ]),
       registration: z.object({ front: jsonObject, back: jsonObject }).strict(),
     }).strict().optional(),
   })
@@ -46,7 +53,7 @@ type UpdateSessionData = {
   workflowState: "CAPTURED";
   capture: Prisma.InputJsonValue;
   mapRevisionId?: string;
-  mapFilterPolicyVersion?: typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION;
+  mapFilterPolicyVersion?: SpeedsterMapFilterPolicyVersion;
   mapRegistration?: Prisma.InputJsonValue;
 };
 
@@ -122,13 +129,26 @@ export async function validateSpeedsterSubmittedMapBinding(
   if (revision.revisionId !== binding.revisionId) {
     throw new SpeedsterMapIntegrityError("Speedster map binding does not match the active revision.");
   }
+  // The loader has always supplied this field, but retaining the v1 default
+  // here keeps legacy/test callers from becoming a new capture blocker.
+  const revisionFilterPolicyVersion = revision.filterPolicyVersion
+    ?? SPEEDSTER_MAP_FILTER_POLICY_VERSION;
+  if (revisionFilterPolicyVersion !== binding.filterPolicyVersion) {
+    throw new SpeedsterMapIntegrityError("Speedster map binding does not match the active filter policy.");
+  }
+  if (revisionFilterPolicyVersion === SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2
+    && (!revision.frontMap?.zones || !revision.backMap?.zones)) {
+    throw new SpeedsterMapIntegrityError("Speedster v2 map binding is missing immutable zone authority.");
+  }
   const front = parseSpeedsterMapRegistration(binding.registration.front, {
     side: "FRONT",
     mapRevisionId: revision.revisionId,
+    zones: revision.frontMap?.zones,
   });
   const back = parseSpeedsterMapRegistration(binding.registration.back, {
     side: "BACK",
     mapRevisionId: revision.revisionId,
+    zones: revision.backMap?.zones,
   });
   if (
     front.currentPhysicalQuadSha256 !== speedsterPhysicalQuadHash(source.front.sourceCorners) ||
@@ -148,7 +168,7 @@ export async function validateSpeedsterSubmittedMapBinding(
   }
   return {
     mapRevisionId: revision.revisionId,
-    mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+    mapFilterPolicyVersion: revisionFilterPolicyVersion,
     mapRegistration: { front, back } as unknown as Prisma.InputJsonValue,
     appliedMap: selectedMap,
     selectedMap,

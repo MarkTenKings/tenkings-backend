@@ -4,7 +4,9 @@ import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
   SPEEDSTER_MAP_SCHEMA_VERSION,
+  SPEEDSTER_MAP_SCHEMA_VERSION_V2,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
   type SpeedsterCardTypeMapSide,
@@ -310,6 +312,18 @@ const trainingSide = {
   designBoundary: { kind: "QUAD" as const, points: quad },
   anchors,
   zones,
+};
+const v2TrainingSide = {
+  ...trainingSide,
+  zones: zones.map((zone) => ({
+    ...zone,
+    contentType: "HEADER" as const,
+    filterAuthority: true,
+    filterAuthoritySource: "TYPE_DEFAULT" as const,
+    filterPaddingMm: 0.6 as const,
+    proposalSource: "HUMAN" as const,
+    proposalConfidence: null,
+  })),
 };
 
 function dualMapTransaction(options: Readonly<{
@@ -726,6 +740,40 @@ test("one authoring operation atomically creates independently verified FAMILY a
   assert.deepEqual(saved.exact.revision.displayIdentity, identity);
   assert.equal(saved.family.revision.sourceSessionId, SESSION_ID);
   assert.equal(saved.exact.revision.sourceSessionId, SESSION_ID);
+  for (const result of [saved.family, saved.exact]) {
+    const { revisionId: _revisionId, revisionHash, createdAt: _createdAt, ...hashPayload } = result.revision;
+    assert.equal(revisionHash, speedsterMapRevisionHash(hashPayload));
+  }
+});
+
+test("v2 authoring is calibration-gated, then hashes both explicit authority revisions independently", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    front: v2TrainingSide,
+    back: v2TrainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: dualMapTransaction().transaction,
+  }), /50-card replay lacks compatible map registration evidence/);
+
+  const harness = dualMapTransaction();
+  const saved = await saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    front: v2TrainingSide,
+    back: v2TrainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+    v2CalibrationGate() {},
+  });
+  assert.equal(saved.family.revision.mapSchemaVersion, SPEEDSTER_MAP_SCHEMA_VERSION_V2);
+  assert.equal(saved.exact.revision.filterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2);
+  assert.notEqual(saved.family.revision.revisionHash, saved.exact.revision.revisionHash);
+  assert.deepEqual(saved.family.revision.frontMap.zones, v2TrainingSide.zones.map((zone) => ({
+    ...zone,
+    polygon: zone.polygon.map((point) => ({ ...point })),
+  })));
   for (const result of [saved.family, saved.exact]) {
     const { revisionId: _revisionId, revisionHash, createdAt: _createdAt, ...hashPayload } = result.revision;
     assert.equal(revisionHash, speedsterMapRevisionHash(hashPayload));

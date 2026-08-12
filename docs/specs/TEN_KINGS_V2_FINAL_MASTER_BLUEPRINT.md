@@ -420,6 +420,8 @@ The existing durable Speedster completion transaction already owns:
 
 New Speedster sessions cross one strict category-aware identity boundary before persistence. Sports identity carries `playerName` and its Sports-only fields but never `cardName`; Pokémon identity carries `cardName` and never `playerName`, `manufacturer`, or `insert`. The boundary rejects unknown fields, trims surrounding whitespace, preserves operator-entered letter case, and does not add a global normalization, fallback, gate, table, or duplicate state.
 
+Card Map filtering has a separate immutable, versioned contract. Legacy v1 revisions continue to use their exact saved polygons. Proposed v2 revisions separate content labels from explicit filter authority, default text/logo/border authority on and artwork/foil authority off, and apply a deterministic 0.6 mm physical-card padding while retaining the full-contour rule. V2 save and activation remain fail-closed until a compatible, truth-complete 50-card calibration replay binds the exact FAMILY and EXACT revision identities and passes the approved zero-hidden-real-defect gate. This gate does not alter completed grades, reports, labels, images, identity, or existing map revisions.
+
 Inside that same database transaction, call:
 
 `cardPlatformV2.createCardFromSpeedster(tx, sessionId, humanGradeLabelId)`

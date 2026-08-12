@@ -20,7 +20,7 @@ This is the self-contained implementation and evidence handoff for the owner-app
 - Both revisions retain the complete source imagery, evidence hashes, Front/Back geometry, identity, and provenance. Server-normalized persisted bytes are independently hashed and read-back verified before either pointer moves in one transaction.
 - Failed saves preserve the editor state and provide Retry plus Draft Export. Import validates and restores the complete source-bound Front/Back draft without saving automatically.
 - The correction is now live and recovered Mark's original Production draft without redraw. FAMILY v5 `cmspjh5h50003lddtgtdl9o5q` and EXACT v1 `cmspjh5sc0005lddthf23tvt6` independently verify; the Squirtle source and both side registrations pin EXACT, while a different matching identity selects FAMILY as one complete replacement. Invalid FAMILY v1-v4 remain append-only evidence.
-- The approved content-zone/filter-authority split remains a blueprint only. The known 50-card deterministic calibration replay is a mandatory zero-write gate with zero hidden real defects before filter-safety acceptance.
+- The v2 content-zone/filter-authority split, strict `0.6 mm` physical-card dilation, draft round-trip, and applied-map containment diagnostic are implemented behind a fail-closed gate. Historical v1 revisions remain unchanged. The frozen 50-card audit is `INCONCLUSIVE` (2,292 outcomes but no compatible MEW-family card, registration/revision binding, or exact evidence hashes), so v2 save/activation remains blocked and no filter-safety claim is approved.
 
 ## 1. Locked target and timing boundary
 
@@ -114,7 +114,7 @@ A fresh independent read-only critic re-reviewed exact implementation commit `35
 
 **defect filter verification: PENDING**
 
-No trained map set or owner-reviewed 50-card truth/replay input currently exists. The frozen corpus manifest identifies the 50 cards, but it does not contain map revision IDs or ground-truth finding labels. No replay result, false-finding reduction percentage, real-finding retention rate, or filter acceptance claim was fabricated.
+The frozen 50-card manifest does contain human outcomes for all 2,292 reviewed findings (`REMOVED` versus retained/corrected/Smart-Mark outcomes), correcting the earlier claim that it lacked all truth labels. It still cannot certify the MEW-family v2 policy: it contains zero compatible cards, zero compatible map registrations/revision bindings, and no exact inspection-evidence hashes. The deterministic gate therefore reports `INCONCLUSIVE`; no false-reduction, real-retention, or activation claim is inferred by transplanting Squirtle geometry onto unrelated cards.
 
 The following also remain unproven:
 

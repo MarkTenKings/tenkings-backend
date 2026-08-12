@@ -6,12 +6,17 @@ import type {
   SpeedsterMapDesignBoundary,
   SpeedsterMapScope,
   SpeedsterMapZone,
+  SpeedsterMapZoneContentType,
   SpeedsterMapZoneSemanticType,
+  SpeedsterMapZoneV2,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import {
+  SPEEDSTER_MAP_FILTER_PADDING_MM,
   isSpeedsterNondegenerateAnchorSet,
+  isSpeedsterMapZoneV2,
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
+  speedsterDefaultFilterAuthority,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import type {
   SpeedsterCardProfile,
@@ -134,7 +139,7 @@ export type SpeedsterDualMapSaveResult = Readonly<{
 type SideDraft = {
   designBoundary: SpeedsterMapDesignBoundary;
   anchors: EditableAnchor[];
-  zones: SpeedsterMapZone[];
+  zones: SpeedsterMapZoneV2[];
 };
 
 type SideEditorState = {
@@ -145,6 +150,9 @@ type SideEditorState = {
     active: boolean;
     points: SpeedsterPoint[];
     semanticType: SpeedsterMapZoneSemanticType;
+    contentType: SpeedsterMapZoneContentType;
+    filterAuthority: boolean;
+    filterAuthoritySource: "TYPE_DEFAULT" | "HUMAN_OVERRIDE";
     label: string;
   };
 };
@@ -167,6 +175,18 @@ const ZONE_TYPES: readonly Readonly<{ value: SpeedsterMapZoneSemanticType; label
   { value: "OTHER_PRINT_CONTEXT", label: "Other print context" },
 ];
 
+const CONTENT_TYPES: readonly Readonly<{ value: SpeedsterMapZoneContentType; label: string }>[] = [
+  { value: "HEADER", label: "Header" },
+  { value: "ARTWORK", label: "Artwork" },
+  { value: "SPECIES_STRIP", label: "Species strip" },
+  { value: "ATTACK", label: "Attack / rules" },
+  { value: "STATS_BAR", label: "Stats bar" },
+  { value: "ARTIST_AND_CARD_ID", label: "Artist + set/card ID" },
+  { value: "FLAVOR_TEXT", label: "Flavor text" },
+  { value: "COPYRIGHT", label: "Copyright" },
+  { value: "OTHER", label: "Other content" },
+];
+
 const SIDE_LABEL: Record<SpeedsterCardSide, string> = { FRONT: "Front", BACK: "Back" };
 const BOUNDARY_LABELS = ["TL", "TR", "BR", "BL"] as const;
 const BOUNDARY_DIRECTIONS = [
@@ -187,11 +207,38 @@ function cloneBoundary(boundary: SpeedsterMapDesignBoundary): SpeedsterMapDesign
     : { kind: "QUAD", points: clonePoints(boundary.points) as unknown as SpeedsterQuad };
 }
 
+function inferredContentType(zone: SpeedsterMapZone): SpeedsterMapZoneContentType {
+  if (isSpeedsterMapZoneV2(zone)) return zone.contentType;
+  const label = zone.label.toLowerCase();
+  if (zone.semanticType === "PRINT_ARTWORK") return "ARTWORK";
+  if (/copyright|nintendo|game freak/.test(label)) return "COPYRIGHT";
+  if (/artist|card id|set\/card|card number/.test(label)) return "ARTIST_AND_CARD_ID";
+  if (/species|description/.test(label)) return "SPECIES_STRIP";
+  if (/attack|rules|damage|text/.test(label)) return "ATTACK";
+  if (/stats|weakness|resistance|retreat/.test(label)) return "STATS_BAR";
+  if (/name|hp|type|header/.test(label)) return "HEADER";
+  return "OTHER";
+}
+
+function upgradeZone(zone: SpeedsterMapZone): SpeedsterMapZoneV2 {
+  if (isSpeedsterMapZoneV2(zone)) return { ...zone, polygon: clonePoints(zone.polygon) };
+  return {
+    ...zone,
+    polygon: clonePoints(zone.polygon),
+    contentType: inferredContentType(zone),
+    filterAuthority: speedsterDefaultFilterAuthority(zone.semanticType),
+    filterAuthoritySource: "TYPE_DEFAULT",
+    filterPaddingMm: SPEEDSTER_MAP_FILTER_PADDING_MM,
+    proposalSource: "HUMAN",
+    proposalConfidence: null,
+  };
+}
+
 function cloneSide(side: EditableSide | SideDraft): SideDraft {
   return {
     designBoundary: cloneBoundary(side.designBoundary),
     anchors: side.anchors.map((anchor) => ({ ...anchor, point: { ...anchor.point } })),
-    zones: side.zones.map((zone) => ({ ...zone, polygon: clonePoints(zone.polygon) })),
+    zones: side.zones.map(upgradeZone),
   };
 }
 
@@ -220,7 +267,15 @@ function initialEditor(side: SpeedsterCardSide, source: SpeedsterTrainSource, ma
     map: initial,
     boundaryPoints: initial.designBoundary.kind === "QUAD" ? clonePoints(initial.designBoundary.points) : [],
     selectedZoneId: initial.zones[0]?.id ?? null,
-    zoneDraft: { active: false, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+    zoneDraft: {
+      active: false,
+      points: [],
+      semanticType: "PRINT_TEXT",
+      contentType: "OTHER",
+      filterAuthority: true,
+      filterAuthoritySource: "TYPE_DEFAULT",
+      label: "Print zone",
+    },
   };
 }
 
@@ -230,7 +285,15 @@ function editorFromDraft(side: CardMapDraftSide): SideEditorState {
     map: cloneSide(map),
     boundaryPoints: map.designBoundary.kind === "QUAD" ? clonePoints(map.designBoundary.points) : [],
     selectedZoneId: map.zones[0]?.id ?? null,
-    zoneDraft: { active: false, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+    zoneDraft: {
+      active: false,
+      points: [],
+      semanticType: "PRINT_TEXT",
+      contentType: "OTHER",
+      filterAuthority: true,
+      filterAuthoritySource: "TYPE_DEFAULT",
+      label: "Print zone",
+    },
   };
 }
 
@@ -242,7 +305,12 @@ function recoverySide(side: SideDraft): CardMapDraftSide {
       id: zone.id,
       label: zone.label,
       semanticType: zone.semanticType,
-      filterAuthority: true,
+      contentType: zone.contentType,
+      filterAuthority: zone.filterAuthority,
+      filterAuthoritySource: zone.filterAuthoritySource,
+      filterPaddingMm: zone.filterPaddingMm,
+      proposalSource: zone.proposalSource,
+      proposalConfidence: zone.proposalConfidence,
       polygon: clonePoints(zone.polygon),
     })),
   };
@@ -314,7 +382,7 @@ function sideReadiness(editor: SideEditorState) {
   return { ready: boundary && anchors && zones, boundary, anchors, zones };
 }
 
-function nextZoneId(side: SpeedsterCardSide, zones: readonly SpeedsterMapZone[]) {
+function nextZoneId(side: SpeedsterCardSide, zones: readonly SpeedsterMapZoneV2[]) {
   const prefix = `${side.toLowerCase()}-zone-`;
   const existing = new Set(zones.map((zone) => zone.id));
   let number = 1;
@@ -562,11 +630,56 @@ export function SpeedsterTrainWorkspace({
       ...current,
       map: {
         ...current.map,
-        zones: current.map.zones.map((zone) => zone.id === current.selectedZoneId ? { ...zone, semanticType } : zone),
+        zones: current.map.zones.map((zone) => zone.id === current.selectedZoneId ? {
+          ...zone,
+          semanticType,
+          filterAuthority: speedsterDefaultFilterAuthority(semanticType),
+          filterAuthoritySource: "TYPE_DEFAULT" as const,
+        } : zone),
       },
     } : {
       ...current,
-      zoneDraft: { ...current.zoneDraft, semanticType },
+      zoneDraft: {
+        ...current.zoneDraft,
+        semanticType,
+        filterAuthority: speedsterDefaultFilterAuthority(semanticType),
+        filterAuthoritySource: "TYPE_DEFAULT",
+      },
+    });
+  };
+
+  const updateContentType = (contentType: SpeedsterMapZoneContentType) => {
+    pushUndo(side);
+    setEditor(side, (current) => current.selectedZoneId ? {
+      ...current,
+      map: {
+        ...current.map,
+        zones: current.map.zones.map((zone) => zone.id === current.selectedZoneId
+          ? { ...zone, contentType }
+          : zone),
+      },
+    } : { ...current, zoneDraft: { ...current.zoneDraft, contentType } });
+  };
+
+  const updateFilterAuthority = (filterAuthority: boolean) => {
+    pushUndo(side);
+    setEditor(side, (current) => current.selectedZoneId ? {
+      ...current,
+      map: {
+        ...current.map,
+        zones: current.map.zones.map((zone) => zone.id === current.selectedZoneId ? {
+          ...zone,
+          filterAuthority,
+          filterAuthoritySource: "HUMAN_OVERRIDE" as const,
+        } : zone),
+      },
+    } : {
+      ...current,
+      zoneDraft: {
+        ...current.zoneDraft,
+        filterAuthority,
+        filterAuthoritySource: "HUMAN_OVERRIDE",
+      },
     });
   };
 
@@ -576,7 +689,15 @@ export function SpeedsterTrainWorkspace({
     setEditor(side, (current) => ({
       ...current,
       selectedZoneId: null,
-      zoneDraft: { active: true, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+      zoneDraft: {
+        active: true,
+        points: [],
+        semanticType: "PRINT_TEXT",
+        contentType: "OTHER",
+        filterAuthority: true,
+        filterAuthoritySource: "TYPE_DEFAULT",
+        label: "Print zone",
+      },
     }));
   };
 
@@ -592,11 +713,25 @@ export function SpeedsterTrainWorkspace({
           id,
           label: current.zoneDraft.label.trim() || "Print zone",
           semanticType: current.zoneDraft.semanticType,
+          contentType: current.zoneDraft.contentType,
+          filterAuthority: current.zoneDraft.filterAuthority,
+          filterAuthoritySource: current.zoneDraft.filterAuthoritySource,
+          filterPaddingMm: SPEEDSTER_MAP_FILTER_PADDING_MM,
+          proposalSource: "HUMAN",
+          proposalConfidence: null,
           polygon: clonePoints(current.zoneDraft.points),
         }],
       },
       selectedZoneId: id,
-      zoneDraft: { active: false, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+      zoneDraft: {
+        active: false,
+        points: [],
+        semanticType: "PRINT_TEXT",
+        contentType: "OTHER",
+        filterAuthority: true,
+        filterAuthoritySource: "TYPE_DEFAULT",
+        label: "Print zone",
+      },
     }));
   };
 
@@ -606,7 +741,15 @@ export function SpeedsterTrainWorkspace({
     setEditor(side, (current) => ({
       ...current,
       selectedZoneId: current.map.zones[0]?.id ?? null,
-      zoneDraft: { active: false, points: [], semanticType: "PRINT_TEXT", label: "Print zone" },
+      zoneDraft: {
+        active: false,
+        points: [],
+        semanticType: "PRINT_TEXT",
+        contentType: "OTHER",
+        filterAuthority: true,
+        filterAuthoritySource: "TYPE_DEFAULT",
+        label: "Print zone",
+      },
     }));
   };
 
@@ -842,6 +985,11 @@ export function SpeedsterTrainWorkspace({
         <p>The same human-authored Front/Back geometry starts both maps. Exact replaces Family when it applies; maps never merge. Use one shared frame or layout landmark in each quadrant so the Family map registers matching sibling cards safely.</p>
       </section>
 
+      <aside className={styles.familyWarning} role="status">
+        <strong>NEW FILTER POLICY · CALIBRATION PENDING</strong>
+        <p>Content zones are now separate from filter authority, and the proposed filter area uses a 0.6 mm physical-card padding while retaining strict full-contour containment. Saving this v2 policy is blocked until the known 50-card replay includes compatible registered map evidence and proves zero hidden real defects. Export remains available; the active v1 maps are unchanged.</p>
+      </aside>
+
       {map.status === "INTEGRITY_ERROR" ? (
         <aside className={styles.familyWarning} role="alert">
           <strong>PRIOR MAP INTEGRITY ERROR · SAFE REPAIR MODE</strong>
@@ -970,7 +1118,7 @@ export function SpeedsterTrainWorkspace({
             </div>
           ) : (
             <div className={styles.controlBlock}>
-              <p>Fully contained Detector or Memory findings inside these printed-content zones are filtered. Partial overlap remains in review, and Smart Marks always remain.</p>
+              <p>Content type describes layout only. Filter authority is separate. When authority is On, a Detector or Memory contour fully inside the 0.6 mm padded filter area is removed from normal review and grading. Partial overlap and every Smart Mark remain.</p>
               <div className={styles.zoneHeader}>
                 <strong>{active.map.zones.length} saved zone{active.map.zones.length === 1 ? "" : "s"}</strong>
                 <button type="button" disabled={active.zoneDraft.active} onClick={beginZone}>New Zone</button>
@@ -988,7 +1136,7 @@ export function SpeedsterTrainWorkspace({
                         zoneDraft: { ...current.zoneDraft, active: false, points: [] },
                       }))}
                     >
-                      <span>{zone.label}</span><small>{ZONE_TYPES.find((type) => type.value === zone.semanticType)?.label}</small>
+                      <span>{zone.label}</span><small>{CONTENT_TYPES.find((type) => type.value === zone.contentType)?.label} · filter {zone.filterAuthority ? "ON" : "OFF"}</small>
                     </button>
                   ))}
                 </div>
@@ -1001,6 +1149,23 @@ export function SpeedsterTrainWorkspace({
                   >
                     {ZONE_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
                   </select></label>
+                  <label>Content type<select
+                    value={selectedZone?.contentType ?? active.zoneDraft.contentType}
+                    onChange={(event) => updateContentType(event.target.value as SpeedsterMapZoneContentType)}
+                  >
+                    {CONTENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+                  </select></label>
+                  <label className={styles.fullBleedToggle}>
+                    <input
+                      type="checkbox"
+                      checked={selectedZone?.filterAuthority ?? active.zoneDraft.filterAuthority}
+                      onChange={(event) => updateFilterAuthority(event.target.checked)}
+                    />
+                    Filter authority
+                  </label>
+                  <p>{(selectedZone?.filterAuthority ?? active.zoneDraft.filterAuthority)
+                    ? "ON — a fully contained Detector or Memory finding may be removed from normal review and grading. Partial overlap and Smart Marks remain."
+                    : "OFF — this is a descriptive content zone only and never filters a finding."}</p>
                   <label>Zone name<input
                     value={selectedZone?.label ?? active.zoneDraft.label}
                     maxLength={80}
@@ -1031,7 +1196,7 @@ export function SpeedsterTrainWorkspace({
       <section className={styles.preview} aria-label="Composed card map preview">
         <header>
           <div><span>COMPOSED MAP PREVIEW</span><h3>Front + Back</h3></div>
-          <p><b>Gold</b> printed boundary · <b>Cyan</b> registration anchors · <b>Magenta</b> printed-content zones</p>
+          <p><b>Gold</b> printed boundary · <b>Cyan</b> registration anchors · <b>Magenta</b> content zones · filter authority is explicit per zone</p>
         </header>
         <div className={styles.previewGrid}>
           {(["FRONT", "BACK"] as const).map((candidate) => {

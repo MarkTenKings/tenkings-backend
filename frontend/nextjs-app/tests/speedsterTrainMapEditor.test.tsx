@@ -505,9 +505,8 @@ test("selected zones edit and drag individually, remove without clearing sibling
   const harness = await mount(map);
   try {
     await act(async () => fire(buttonByText(harness.container, "Printed-Content Zones")!, "click"));
-    assert.match(harness.container.textContent ?? "", /Fully contained Detector or Memory findings/);
-    assert.match(harness.container.textContent ?? "", /Partial overlap remains in review/);
-    assert.match(harness.container.textContent ?? "", /Smart Marks always remain/);
+    assert.match(harness.container.textContent ?? "", /Content type describes layout only/);
+    assert.match(harness.container.textContent ?? "", /Partial overlap and every Smart Mark remain/);
     assert.ok(buttonByText(harness.container, "New Zone"));
 
     const input = harness.container.querySelector<HTMLInputElement>('input[maxlength="80"]');
@@ -538,6 +537,23 @@ test("selected zones edit and drag individually, remove without clearing sibling
 
     const restoredVertex = harness.container.querySelector<SVGGElement>('[aria-label="Front Printed-Content Zone Updated printed text vertex 1"]');
     assert.equal(restoredVertex?.querySelector("circle")?.getAttribute("cx"), "250");
+
+    const filterAuthority = Array.from(harness.container.querySelectorAll("label"))
+      .find((label) => label.textContent?.includes("Filter authority"))
+      ?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    assert.ok(filterAuthority);
+    await act(async () => {
+      Simulate.change(
+        filterAuthority,
+        { target: { checked: false } } as unknown as Parameters<typeof Simulate.change>[1],
+      );
+    });
+    await act(async () => fire(buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS")!, "click"));
+    await waitFor(() => harness.requests.length === 1, "Filter-authority save did not settle");
+    const body = JSON.parse(String(harness.requests[0].init?.body));
+    const overridden = body.front.zones.find((zone: { id: string }) => zone.id === "front-zone-1");
+    assert.equal(overridden.filterAuthority, false);
+    assert.equal(overridden.filterAuthoritySource, "HUMAN_OVERRIDE");
   } finally {
     await harness.cleanup();
   }
@@ -647,6 +663,12 @@ test("recovered Squirtle legacy draft imports every ordered point and round-trip
     id: "front-zone-1",
     label: "Card Name",
     semanticType: "PRINT_TEXT",
+    contentType: "HEADER",
+    filterAuthority: true,
+    filterAuthoritySource: "TYPE_DEFAULT",
+    filterPaddingMm: 0.6,
+    proposalSource: "HUMAN",
+    proposalConfidence: null,
     polygon: raw.sides.front.zones[0].points,
   });
 });
@@ -716,10 +738,19 @@ test("recovered Squirtle file imports into the mounted editor without saving or 
 });
 
 test("draft validation rejects another source before replacing editor state", () => {
+  const upgrade = (zone: ReturnType<typeof sideFixture>["zones"][number]) => ({
+    ...zone,
+    contentType: "OTHER" as const,
+    filterAuthority: true,
+    filterAuthoritySource: "TYPE_DEFAULT" as const,
+    filterPaddingMm: 0.6 as const,
+    proposalSource: "HUMAN" as const,
+    proposalConfidence: null,
+  });
   const draft = createCardMapDraft({
     source,
-    front: { ...sideFixture("front"), zones: sideFixture("front").zones.map((zone) => ({ ...zone, filterAuthority: true as const })) },
-    back: { ...sideFixture("back"), zones: sideFixture("back").zones.map((zone) => ({ ...zone, filterAuthority: true as const })) },
+    front: { ...sideFixture("front"), zones: sideFixture("front").zones.map(upgrade) },
+    back: { ...sideFixture("back"), zones: sideFixture("back").zones.map(upgrade) },
   });
   assert.throws(
     () => parseCardMapDraft(serializeCardMapDraft(draft), { ...source, sessionId: "different-source-session-12345" }),

@@ -6,9 +6,12 @@ import {
 } from "@tenkings/database";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
   SPEEDSTER_MAP_SCHEMA_VERSION,
+  SPEEDSTER_MAP_SCHEMA_VERSION_V2,
   canonicalSpeedsterMapKeyJson,
   isSpeedsterNondegenerateAnchorSet,
+  isSpeedsterMapZoneV2,
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
   speedsterCardTypeMapKey,
@@ -18,10 +21,14 @@ import {
   type SpeedsterMapAnchor,
   type SpeedsterMapDesignBoundary,
   type SpeedsterMapMatchKey,
+  type SpeedsterMapFilterPolicyVersion,
   type SpeedsterMapReferenceEvidence,
   type SpeedsterMapRegistration,
   type SpeedsterMapScope,
+  type SpeedsterMapSchemaVersion,
   type SpeedsterMapZone,
+  type SpeedsterMapZoneContentType,
+  type SpeedsterMapZoneProposalSource,
 } from "../ai-grader-v2/card-type-map-contracts";
 import type {
   SpeedsterCardProfile,
@@ -116,8 +123,8 @@ export type SpeedsterMapRevisionHashPayload = Readonly<{
   authorAdminId: string;
   frontMap: SpeedsterCardTypeMapSide;
   backMap: SpeedsterCardTypeMapSide;
-  mapSchemaVersion: typeof SPEEDSTER_MAP_SCHEMA_VERSION;
-  filterPolicyVersion: typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION;
+  mapSchemaVersion: SpeedsterMapSchemaVersion;
+  filterPolicyVersion: SpeedsterMapFilterPolicyVersion;
   supersedesRevisionId: string | null;
 }>;
 
@@ -300,9 +307,45 @@ const ZONE_TYPES = new Set([
   "OTHER_PRINT_CONTEXT",
 ]);
 
-function mapZone(value: unknown, label: string): SpeedsterMapZone {
+const CONTENT_TYPES = new Set<SpeedsterMapZoneContentType>([
+  "HEADER",
+  "ARTWORK",
+  "SPECIES_STRIP",
+  "ATTACK",
+  "STATS_BAR",
+  "ARTIST_AND_CARD_ID",
+  "FLAVOR_TEXT",
+  "COPYRIGHT",
+  "OTHER",
+]);
+
+const PROPOSAL_SOURCES = new Set<SpeedsterMapZoneProposalSource>([
+  "HUMAN",
+  "POKEMON_STANDARD_TEMPLATE",
+  "VISUAL_SNAP",
+  "COPIED_COMPATIBLE_MAP",
+]);
+
+function mapZone(
+  value: unknown,
+  label: string,
+  schemaVersion: SpeedsterMapSchemaVersion = SPEEDSTER_MAP_SCHEMA_VERSION,
+): SpeedsterMapZone {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError(`${label} is malformed.`);
-  exactObjectKeys(value, ["id", "label", "semanticType", "polygon"], label);
+  exactObjectKeys(value, schemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2
+    ? [
+        "id",
+        "label",
+        "semanticType",
+        "polygon",
+        "contentType",
+        "filterAuthority",
+        "filterAuthoritySource",
+        "filterPaddingMm",
+        "proposalSource",
+        "proposalConfidence",
+      ]
+    : ["id", "label", "semanticType", "polygon"], label);
   const id = nonEmptyText(value.id, `${label}.id`);
   const zoneLabel = nonEmptyText(value.label, `${label}.label`);
   if (typeof value.semanticType !== "string" || !ZONE_TYPES.has(value.semanticType)) {
@@ -315,11 +358,42 @@ function mapZone(value: unknown, label: string): SpeedsterMapZone {
   if (!isSpeedsterSimplePolygon(polygon)) {
     throw new SpeedsterMapIntegrityError(`${label}.polygon must be a non-collapsed simple polygon in perimeter order.`);
   }
-  return {
+  const base = {
     id,
     label: zoneLabel,
     semanticType: value.semanticType as SpeedsterMapZone["semanticType"],
     polygon,
+  };
+  if (schemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION) return base;
+  if (typeof value.contentType !== "string" || !CONTENT_TYPES.has(value.contentType as SpeedsterMapZoneContentType)) {
+    throw new SpeedsterMapIntegrityError(`${label}.contentType is invalid.`);
+  }
+  if (typeof value.filterAuthority !== "boolean") {
+    throw new SpeedsterMapIntegrityError(`${label}.filterAuthority is invalid.`);
+  }
+  if (value.filterAuthoritySource !== "TYPE_DEFAULT" && value.filterAuthoritySource !== "HUMAN_OVERRIDE") {
+    throw new SpeedsterMapIntegrityError(`${label}.filterAuthoritySource is invalid.`);
+  }
+  if (value.filterPaddingMm !== 0.6) {
+    throw new SpeedsterMapIntegrityError(`${label}.filterPaddingMm is invalid for this immutable policy.`);
+  }
+  if (typeof value.proposalSource !== "string" || !PROPOSAL_SOURCES.has(value.proposalSource as SpeedsterMapZoneProposalSource)) {
+    throw new SpeedsterMapIntegrityError(`${label}.proposalSource is invalid.`);
+  }
+  if (value.proposalConfidence !== null && (
+    typeof value.proposalConfidence !== "number"
+    || !Number.isFinite(value.proposalConfidence)
+    || value.proposalConfidence < 0
+    || value.proposalConfidence > 1
+  )) throw new SpeedsterMapIntegrityError(`${label}.proposalConfidence is invalid.`);
+  return {
+    ...base,
+    contentType: value.contentType as SpeedsterMapZoneContentType,
+    filterAuthority: value.filterAuthority,
+    filterAuthoritySource: value.filterAuthoritySource,
+    filterPaddingMm: 0.6,
+    proposalSource: value.proposalSource as SpeedsterMapZoneProposalSource,
+    proposalConfidence: value.proposalConfidence as number | null,
   };
 }
 
@@ -334,7 +408,11 @@ function mapAnchor(value: unknown, label: string): SpeedsterMapAnchor {
   };
 }
 
-export function parseSpeedsterMapSide(value: unknown, expectedSide: SpeedsterCardSide): SpeedsterCardTypeMapSide {
+export function parseSpeedsterMapSide(
+  value: unknown,
+  expectedSide: SpeedsterCardSide,
+  schemaVersion: SpeedsterMapSchemaVersion = SPEEDSTER_MAP_SCHEMA_VERSION,
+): SpeedsterCardTypeMapSide {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError(`${expectedSide} map is malformed.`);
   exactObjectKeys(value, [
     "side",
@@ -360,7 +438,9 @@ export function parseSpeedsterMapSide(value: unknown, expectedSide: SpeedsterCar
     throw new SpeedsterMapIntegrityError(`${expectedSide} map requires 1-100 human zones.`);
   }
   const anchors = value.anchors.map((candidate, index) => mapAnchor(candidate, `${expectedSide}.anchors[${index}]`));
-  const zones = value.zones.map((candidate, index) => mapZone(candidate, `${expectedSide}.zones[${index}]`));
+  const zones = value.zones.map((candidate, index) => (
+    mapZone(candidate, `${expectedSide}.zones[${index}]`, schemaVersion)
+  ));
   if (new Set(anchors.map((anchor) => anchor.id)).size !== anchors.length) {
     throw new SpeedsterMapIntegrityError(`${expectedSide} map anchor IDs must be unique.`);
   }
@@ -382,7 +462,11 @@ export function parseSpeedsterMapSide(value: unknown, expectedSide: SpeedsterCar
 
 export function parseSpeedsterMapRegistration(
   value: unknown,
-  expected: Readonly<{ side: SpeedsterCardSide; mapRevisionId: string }>,
+  expected: Readonly<{
+    side: SpeedsterCardSide;
+    mapRevisionId: string;
+    zones?: readonly SpeedsterMapZone[];
+  }>,
 ): SpeedsterMapRegistration {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError("Current-copy map registration is malformed.");
   exactObjectKeys(value, [
@@ -433,6 +517,15 @@ export function parseSpeedsterMapRegistration(
   if (!Array.isArray(value.projectedZones) || value.projectedZones.length < 1 || value.projectedZones.length > 100) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration zones are invalid.");
   }
+  const projectedZones = value.projectedZones.map((zone, index) => (
+    mapZone(zone, `Projected zone[${index}]`)
+  ));
+  if (expected.zones && (
+    expected.zones.length !== projectedZones.length
+    || expected.zones.some((zone, index) => (
+      zone.id !== projectedZones[index].id || zone.semanticType !== projectedZones[index].semanticType
+    ))
+  )) throw new SpeedsterMapIntegrityError("Current-copy map registration zones do not match the immutable revision.");
   return {
     version: "opencv-human-anchor-registration-v1",
     side: expected.side,
@@ -442,7 +535,19 @@ export function parseSpeedsterMapRegistration(
     homography: homography as unknown as SpeedsterMapRegistration["homography"],
     anchors,
     projectedDesignBoundary: designBoundary(value.projectedDesignBoundary, "Projected design boundary"),
-    projectedZones: value.projectedZones.map((zone, index) => mapZone(zone, `Projected zone[${index}]`)),
+    projectedZones: projectedZones.map((zone, index) => {
+      const immutable = expected.zones?.[index];
+      return immutable && isSpeedsterMapZoneV2(immutable) ? {
+        ...zone,
+        label: immutable.label,
+        contentType: immutable.contentType,
+        filterAuthority: immutable.filterAuthority,
+        filterAuthoritySource: immutable.filterAuthoritySource,
+        filterPaddingMm: immutable.filterPaddingMm,
+        proposalSource: immutable.proposalSource,
+        proposalConfidence: immutable.proposalConfidence,
+      } : zone;
+    }),
   };
 }
 
@@ -624,6 +729,15 @@ function loadedPayload(record: MapRevisionRecord): SpeedsterLoadedMapRevision {
   const cardProfile = rawKey.category;
   const normalizedIdentity = parseMapKey(record.normalizedIdentity, "Map normalized identity");
   const displayIdentity = parseDisplayIdentity(cardProfile, record.displayIdentity);
+  const mapSchemaVersion = record.mapSchemaVersion as SpeedsterMapSchemaVersion;
+  const filterPolicyVersion = record.filterPolicyVersion as SpeedsterMapFilterPolicyVersion;
+  const supportedLegacy = mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION
+    && filterPolicyVersion === SPEEDSTER_MAP_FILTER_POLICY_VERSION;
+  const supportedV2 = mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2
+    && filterPolicyVersion === SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2;
+  if (!supportedLegacy && !supportedV2) {
+    throw new SpeedsterMapIntegrityError("Map revision schema/filter-policy version pair is unsupported.");
+  }
   const payload: SpeedsterMapRevisionHashPayload = {
     mapId: record.mapId,
     version: record.version,
@@ -633,18 +747,12 @@ function loadedPayload(record: MapRevisionRecord): SpeedsterLoadedMapRevision {
     normalizedIdentity,
     sourceSessionId: record.sourceSessionId,
     authorAdminId: record.authorAdminId,
-    frontMap: parseSpeedsterMapSide(record.frontMap, "FRONT"),
-    backMap: parseSpeedsterMapSide(record.backMap, "BACK"),
-    mapSchemaVersion: record.mapSchemaVersion as typeof SPEEDSTER_MAP_SCHEMA_VERSION,
-    filterPolicyVersion: record.filterPolicyVersion as typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+    frontMap: parseSpeedsterMapSide(record.frontMap, "FRONT", mapSchemaVersion),
+    backMap: parseSpeedsterMapSide(record.backMap, "BACK", mapSchemaVersion),
+    mapSchemaVersion,
+    filterPolicyVersion,
     supersedesRevisionId: record.supersedesRevisionId,
   };
-  if (payload.mapSchemaVersion !== SPEEDSTER_MAP_SCHEMA_VERSION) {
-    throw new SpeedsterMapIntegrityError("Map revision schema version is unsupported.");
-  }
-  if (payload.filterPolicyVersion !== SPEEDSTER_MAP_FILTER_POLICY_VERSION) {
-    throw new SpeedsterMapIntegrityError("Map revision filter-policy version is unsupported.");
-  }
   if (speedsterMapMatchKeyHash(rawKey) !== record.matchKeyHash) {
     throw new SpeedsterMapIntegrityError("Map revision key hash does not match its key.");
   }
@@ -943,6 +1051,7 @@ function trainingInputSide(
   value: SpeedsterMapTrainingSideInput,
   source: SpeedsterMapSourceSide,
   reference: SpeedsterMapReferenceEvidence,
+  schemaVersion: SpeedsterMapSchemaVersion = SPEEDSTER_MAP_SCHEMA_VERSION,
 ): SpeedsterCardTypeMapSide {
   const raw: SpeedsterCardTypeMapSide = {
     side: source.side,
@@ -952,7 +1061,16 @@ function trainingInputSide(
     anchors: value.anchors.map((anchor) => ({ ...anchor, referencePatch: reference })),
     zones: value.zones,
   };
-  return parseSpeedsterMapSide(raw, source.side);
+  return parseSpeedsterMapSide(raw, source.side, schemaVersion);
+}
+
+function registrationZone(zone: SpeedsterMapZone) {
+  return {
+    id: zone.id,
+    label: zone.label,
+    semanticType: zone.semanticType,
+    polygon: zone.polygon,
+  };
 }
 
 export function speedsterIdentityMapRegistration(
@@ -975,8 +1093,8 @@ export function speedsterIdentityMapRegistration(
       score: 1,
     })),
     projectedDesignBoundary: sideMap.designBoundary,
-    projectedZones: sideMap.zones,
-  }, { side: source.side, mapRevisionId });
+    projectedZones: sideMap.zones.map(registrationZone),
+  }, { side: source.side, mapRevisionId, zones: sideMap.zones });
 }
 
 export type SpeedsterMapSaveResult = Readonly<{
@@ -988,6 +1106,34 @@ export type SpeedsterMapDualSaveResult = Readonly<{
   family: SpeedsterMapSaveResult;
   exact: SpeedsterMapSaveResult;
 }>;
+
+export const SPEEDSTER_MAP_FILTER_V2_VERIFICATION_STATUS = "defect filter verification: PENDING" as const;
+
+export function requireSpeedsterMapFilterV2Calibration(): never {
+  throw new SpeedsterMapIntegrityError(
+    "The new content/filter-zone policy is not active: the 50-card replay lacks compatible map registration evidence. Export the draft; existing maps and review remain unchanged.",
+    { stage: "VALIDATION" },
+  );
+}
+
+type SpeedsterMapFilterV2CalibrationGate = () => void;
+
+function requestedMapContract(front: SpeedsterMapTrainingSideInput, back: SpeedsterMapTrainingSideInput) {
+  const zones = [...front.zones, ...back.zones];
+  const v2Zones = zones.filter(isSpeedsterMapZoneV2).length;
+  if (v2Zones !== 0 && v2Zones !== zones.length) {
+    throw new SpeedsterMapIntegrityError("A Card Map cannot mix legacy and v2 zone-policy fields.");
+  }
+  return zones.length > 0 && v2Zones === zones.length
+    ? {
+        mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION_V2,
+        filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+      } as const
+    : {
+        mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION,
+        filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      } as const;
+}
 
 type SpeedsterMapWriteTransaction = Pick<
   Prisma.TransactionClient,
@@ -1234,14 +1380,18 @@ async function registerRestoredMapSide(
       currentInspectionSha256,
       anchors: sideMap.anchors.map(({ id, point }) => ({ id, point })),
       designBoundary: sideMap.designBoundary,
-      zones: sideMap.zones,
+      zones: sideMap.zones.map(registrationZone),
     }),
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new SpeedsterMapIntegrityError(`Restored ${source.side} TRAIN map could not register to the current copy.`);
   }
-  return parseSpeedsterMapRegistration(payload, { side: source.side, mapRevisionId: revisionId });
+  return parseSpeedsterMapRegistration(payload, {
+    side: source.side,
+    mapRevisionId: revisionId,
+    zones: sideMap.zones,
+  });
 }
 
 const registerCapturedRestore: SpeedsterCapturedRestoreRegistration = async (source, revision) => {
@@ -1260,11 +1410,16 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   transaction?: SpeedsterMapTransactionRunner;
+  v2CalibrationGate?: SpeedsterMapFilterV2CalibrationGate;
 }>): Promise<SpeedsterMapSaveResult> {
   const scope = input.scope ?? "EXACT";
   const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
   const matchKeyHash = speedsterMapMatchKeyHash(key);
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
+  const contract = requestedMapContract(input.front, input.back);
+  if (contract.mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2) {
+    (input.v2CalibrationGate ?? requireSpeedsterMapFilterV2Calibration)();
+  }
   let frontEvidenceHash: string;
   let backEvidenceHash: string;
   try {
@@ -1280,11 +1435,11 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   const frontMap = trainingInputSide(input.front, input.source.front, {
     storageKey: input.source.front.inspectionStorageKey,
     sha256: frontEvidenceHash,
-  });
+  }, contract.mapSchemaVersion);
   const backMap = trainingInputSide(input.back, input.source.back, {
     storageKey: input.source.back.inspectionStorageKey,
     sha256: backEvidenceHash,
-  });
+  }, contract.mapSchemaVersion);
   const transaction: SpeedsterMapTransactionRunner = input.transaction ?? ((operation) => (
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
@@ -1317,8 +1472,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       authorAdminId: input.authorAdminId,
       frontMap,
       backMap,
-      mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION,
-      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      ...contract,
       supersedesRevisionId: map.currentRevision?.id ?? null,
     };
     const revision = await createVerifiedRevision(tx, payload, scope);
@@ -1343,7 +1497,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
         },
         data: {
           mapRevisionId: revision.revisionId,
-          mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+          mapFilterPolicyVersion: contract.filterPolicyVersion,
           mapRegistration: {
             front: frontRegistration,
             back: backRegistration,
@@ -1371,12 +1525,17 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   transaction?: SpeedsterMapTransactionRunner;
+  v2CalibrationGate?: SpeedsterMapFilterV2CalibrationGate;
 }>): Promise<SpeedsterMapDualSaveResult> {
   const exactKey = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
   const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
   const exactMatchKeyHash = speedsterMapMatchKeyHash(exactKey);
   const familyMatchKeyHash = speedsterMapMatchKeyHash(familyKey);
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
+  const contract = requestedMapContract(input.front, input.back);
+  if (contract.mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2) {
+    (input.v2CalibrationGate ?? requireSpeedsterMapFilterV2Calibration)();
+  }
   let frontEvidenceHash: string;
   let backEvidenceHash: string;
   try {
@@ -1392,11 +1551,11 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   const frontMap = trainingInputSide(input.front, input.source.front, {
     storageKey: input.source.front.inspectionStorageKey,
     sha256: frontEvidenceHash,
-  });
+  }, contract.mapSchemaVersion);
   const backMap = trainingInputSide(input.back, input.source.back, {
     storageKey: input.source.back.inspectionStorageKey,
     sha256: backEvidenceHash,
-  });
+  }, contract.mapSchemaVersion);
   const transaction: SpeedsterMapTransactionRunner = input.transaction ?? ((operation) => (
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
@@ -1417,8 +1576,7 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
       authorAdminId: input.authorAdminId,
       frontMap,
       backMap,
-      mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION,
-      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      ...contract,
     } as const;
     const familyPayload: SpeedsterMapRevisionHashPayload = {
       mapId: familyMap.id,
@@ -1465,7 +1623,7 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
         },
         data: {
           mapRevisionId: exactRevision.revisionId,
-          mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+          mapFilterPolicyVersion: contract.filterPolicyVersion,
           mapRegistration: {
             front: frontRegistration,
             back: backRegistration,

@@ -8,6 +8,7 @@ import type {
 } from "../../lib/ai-grader-v2/contracts";
 import type { calculateSpeedsterGrade } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
+import type { SpeedsterMapRegistration } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import type { SpeedsterTraceRleV1 } from "../../lib/ai-grader-v2/trace-codec";
 import {
   DefectEvidenceViewer,
@@ -27,6 +28,7 @@ type ReviewWorkspaceProps = {
   sourceImageUrls: Readonly<Record<string, string>>;
   cornerShape: SpeedsterTraceCornerShape;
   defects: readonly SpeedsterReviewFinding[];
+  mapRegistrations?: Readonly<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
   grade: ReturnType<typeof calculateSpeedsterGrade>;
   canUndo: boolean;
   onRemoveDefects: (defectIds: readonly string[]) => boolean | Promise<boolean>;
@@ -49,6 +51,7 @@ export function ReviewWorkspace({
   sourceImageUrls,
   cornerShape,
   defects,
+  mapRegistrations,
   grade,
   canUndo,
   onRemoveDefects,
@@ -88,6 +91,7 @@ export function ReviewWorkspace({
         cornerShape={cornerShape}
         side={side}
         defects={defects}
+        mapRegistration={mapRegistrations?.[side]}
         readOnly={false}
         onRemoveDefects={onRemoveDefects}
         onDefectTypeChange={onDefectTypeChange}
