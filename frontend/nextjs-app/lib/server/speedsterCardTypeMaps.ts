@@ -43,9 +43,21 @@ const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_MAP_LABEL_LENGTH = 80;
 
 export class SpeedsterMapIntegrityError extends Error {
-  constructor(message: string) {
+  readonly code: "CARD_MAP_INTEGRITY_FAILURE";
+  readonly diagnostics?: Readonly<{
+    stage: "VALIDATION" | "SOURCE" | "EVIDENCE" | "TRANSACTION" | "PERSISTED_HASH_VERIFICATION";
+    scope?: SpeedsterMapScope;
+    field?: string;
+  }>;
+
+  constructor(
+    message: string,
+    diagnostics?: SpeedsterMapIntegrityError["diagnostics"],
+  ) {
     super(message);
     this.name = "SpeedsterMapIntegrityError";
+    this.code = "CARD_MAP_INTEGRITY_FAILURE";
+    this.diagnostics = diagnostics;
   }
 }
 
@@ -535,6 +547,12 @@ export function canonicalSpeedsterMapRevisionPayload(payload: SpeedsterMapRevisi
   });
 }
 
+export function normalizedSpeedsterMapRevisionPayload(
+  payload: SpeedsterMapRevisionHashPayload,
+): SpeedsterMapRevisionHashPayload {
+  return JSON.parse(canonicalSpeedsterMapRevisionPayload(payload)) as SpeedsterMapRevisionHashPayload;
+}
+
 export function speedsterMapRevisionHash(payload: SpeedsterMapRevisionHashPayload): string {
   return createHash("sha256").update(canonicalSpeedsterMapRevisionPayload(payload)).digest("hex");
 }
@@ -918,6 +936,11 @@ export type SpeedsterMapSaveResult = Readonly<{
   revision: SpeedsterLoadedMapRevision;
 }>;
 
+export type SpeedsterMapDualSaveResult = Readonly<{
+  family: SpeedsterMapSaveResult;
+  exact: SpeedsterMapSaveResult;
+}>;
+
 type SpeedsterMapWriteTransaction = Pick<
   Prisma.TransactionClient,
   "$executeRaw" | "$queryRaw" | "aiGraderV2CardTypeMap" | "aiGraderV2CardTypeMapRevision" | "aiGraderV2Session"
@@ -926,6 +949,99 @@ type SpeedsterMapWriteTransaction = Pick<
 export type SpeedsterMapTransactionRunner = <Result>(
   operation: (tx: SpeedsterMapWriteTransaction) => Promise<Result>,
 ) => Promise<Result>;
+
+async function createOrLoadLockedMap(
+  tx: SpeedsterMapWriteTransaction,
+  input: Readonly<{
+    cardProfile: SpeedsterCardProfile;
+    matchKeyHash: string;
+  }>,
+) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${input.matchKeyHash}`}, 0))`;
+  let map = await tx.aiGraderV2CardTypeMap.findUnique({
+    where: { matchKeyHash: input.matchKeyHash },
+    include: { currentRevision: { select: { id: true, version: true } } },
+  });
+  if (!map) {
+    map = await tx.aiGraderV2CardTypeMap.create({
+      data: { matchKeyHash: input.matchKeyHash, cardProfile: input.cardProfile },
+      include: { currentRevision: { select: { id: true, version: true } } },
+    });
+  }
+  if (map.cardProfile !== input.cardProfile) {
+    throw new SpeedsterMapIntegrityError("Map category does not match its stored category.", {
+      stage: "TRANSACTION",
+    });
+  }
+  return map;
+}
+
+async function createVerifiedRevision(
+  tx: SpeedsterMapWriteTransaction,
+  payload: SpeedsterMapRevisionHashPayload,
+  scope: SpeedsterMapScope,
+  revisionId?: string,
+) {
+  // Persist the exact same normalized JSON values that own the hash. This
+  // removes Prisma/PostgreSQL representation differences (including -0) from
+  // revision authority without changing the legacy hash algorithm.
+  const persistedPayload = normalizedSpeedsterMapRevisionPayload(payload);
+  const revisionHash = speedsterMapRevisionHash(persistedPayload);
+  const created = await tx.aiGraderV2CardTypeMapRevision.create({
+    data: {
+      ...(revisionId ? { id: revisionId } : {}),
+      mapId: persistedPayload.mapId,
+      version: persistedPayload.version,
+      matchKeyHash: persistedPayload.matchKeyHash,
+      matchKey: persistedPayload.matchKey as Prisma.InputJsonValue,
+      displayIdentity: persistedPayload.displayIdentity as Prisma.InputJsonValue,
+      normalizedIdentity: persistedPayload.normalizedIdentity as Prisma.InputJsonValue,
+      sourceSessionId: persistedPayload.sourceSessionId,
+      authorAdminId: persistedPayload.authorAdminId,
+      frontMap: persistedPayload.frontMap as unknown as Prisma.InputJsonValue,
+      backMap: persistedPayload.backMap as unknown as Prisma.InputJsonValue,
+      mapSchemaVersion: persistedPayload.mapSchemaVersion,
+      filterPolicyVersion: persistedPayload.filterPolicyVersion,
+      revisionHash,
+      supersedesRevisionId: persistedPayload.supersedesRevisionId,
+    },
+    select: { id: true },
+  });
+  const persisted = await tx.aiGraderV2CardTypeMapRevision.findUnique({
+    where: { id: created.id },
+    select: mapRevisionSelect,
+  });
+  if (!persisted) {
+    throw new SpeedsterMapIntegrityError("Card Map revision could not be read back for integrity verification.", {
+      stage: "PERSISTED_HASH_VERIFICATION",
+      scope,
+    });
+  }
+  let loaded: SpeedsterLoadedMapRevision;
+  try {
+    loaded = validateSpeedsterLoadedMapRevision(persisted, {
+      matchKeyHash: payload.matchKeyHash,
+      mapRevisionId: created.id,
+    });
+  } catch (error) {
+    if (error instanceof SpeedsterMapIntegrityError) {
+      throw new SpeedsterMapIntegrityError("Persisted Card Map content failed deterministic hash verification.", {
+        stage: "PERSISTED_HASH_VERIFICATION",
+        scope,
+        field: "revisionHash",
+      });
+    }
+    throw error;
+  }
+  if (loaded.revisionHash !== revisionHash) {
+    throw new SpeedsterMapIntegrityError("Persisted Card Map revision hash changed during verification.", {
+      stage: "PERSISTED_HASH_VERIFICATION",
+      scope,
+      field: "revisionHash",
+    });
+  }
+  return loaded;
+}
 
 async function assertCapturedTrainSourceIsUninitialized(
   tx: SpeedsterMapWriteTransaction,
@@ -1085,10 +1201,18 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
   const matchKeyHash = speedsterMapMatchKeyHash(key);
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
-  const [frontEvidenceHash, backEvidenceHash] = await Promise.all([
-    hashEvidence(input.source.front.inspectionStorageKey),
-    hashEvidence(input.source.back.inspectionStorageKey),
-  ]);
+  let frontEvidenceHash: string;
+  let backEvidenceHash: string;
+  try {
+    [frontEvidenceHash, backEvidenceHash] = await Promise.all([
+      hashEvidence(input.source.front.inspectionStorageKey),
+      hashEvidence(input.source.back.inspectionStorageKey),
+    ]);
+  } catch {
+    throw new SpeedsterMapIntegrityError("Card Map source evidence could not be verified.", {
+      stage: "EVIDENCE",
+    });
+  }
   const frontMap = trainingInputSide(input.front, input.source.front, {
     storageKey: input.source.front.inspectionStorageKey,
     sha256: frontEvidenceHash,
@@ -1133,28 +1257,10 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
       supersedesRevisionId: map.currentRevision?.id ?? null,
     };
-    const revision = await tx.aiGraderV2CardTypeMapRevision.create({
-      data: {
-        mapId: payload.mapId,
-        version: payload.version,
-        matchKeyHash: payload.matchKeyHash,
-        matchKey: payload.matchKey as Prisma.InputJsonValue,
-        displayIdentity: payload.displayIdentity as Prisma.InputJsonValue,
-        normalizedIdentity: payload.normalizedIdentity as Prisma.InputJsonValue,
-        sourceSessionId: payload.sourceSessionId,
-        authorAdminId: payload.authorAdminId,
-        frontMap: payload.frontMap as unknown as Prisma.InputJsonValue,
-        backMap: payload.backMap as unknown as Prisma.InputJsonValue,
-        mapSchemaVersion: payload.mapSchemaVersion,
-        filterPolicyVersion: payload.filterPolicyVersion,
-        revisionHash: speedsterMapRevisionHash(payload),
-        supersedesRevisionId: payload.supersedesRevisionId,
-      },
-      select: mapRevisionSelect,
-    });
+    const revision = await createVerifiedRevision(tx, payload, scope);
     await tx.aiGraderV2CardTypeMap.update({
       where: { id: map.id },
-      data: { currentRevisionId: revision.id },
+      data: { currentRevisionId: revision.revisionId },
     });
     await clearCapturedFamilyBindingIfStale(
       tx,
@@ -1163,8 +1269,8 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
       exactOverrideRevisionId,
     );
     if (input.source.workflowState === "CAPTURED" && !exactOverrideRevisionId) {
-      const frontRegistration = speedsterIdentityMapRegistration(frontMap, input.source.front, revision.id);
-      const backRegistration = speedsterIdentityMapRegistration(backMap, input.source.back, revision.id);
+      const frontRegistration = speedsterIdentityMapRegistration(frontMap, input.source.front, revision.revisionId);
+      const backRegistration = speedsterIdentityMapRegistration(backMap, input.source.back, revision.revisionId);
       const bound = await tx.aiGraderV2Session.updateMany({
         where: {
           id: input.source.id,
@@ -1172,7 +1278,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
           workflowState: "CAPTURED",
         },
         data: {
-          mapRevisionId: revision.id,
+          mapRevisionId: revision.revisionId,
           mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
           mapRegistration: {
             front: frontRegistration,
@@ -1186,7 +1292,134 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
     }
     return revision;
   });
-  return { mapId: created.mapId, revision: validateSpeedsterLoadedMapRevision(created) };
+  return { mapId: created.mapId, revision: created };
+}
+
+/**
+ * The only new-authoring write path. One human-authored geometry body creates
+ * complete FAMILY and legacy EXACT revisions. Both persisted revisions are
+ * read back and hash-verified before either current pointer is advanced.
+ */
+export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
+  source: SpeedsterMapSourceSession;
+  authorAdminId: string;
+  front: SpeedsterMapTrainingSideInput;
+  back: SpeedsterMapTrainingSideInput;
+  hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  transaction?: SpeedsterMapTransactionRunner;
+}>): Promise<SpeedsterMapDualSaveResult> {
+  const exactKey = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const exactMatchKeyHash = speedsterMapMatchKeyHash(exactKey);
+  const familyMatchKeyHash = speedsterMapMatchKeyHash(familyKey);
+  const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
+  let frontEvidenceHash: string;
+  let backEvidenceHash: string;
+  try {
+    [frontEvidenceHash, backEvidenceHash] = await Promise.all([
+      hashEvidence(input.source.front.inspectionStorageKey),
+      hashEvidence(input.source.back.inspectionStorageKey),
+    ]);
+  } catch {
+    throw new SpeedsterMapIntegrityError("Card Map source evidence could not be verified.", {
+      stage: "EVIDENCE",
+    });
+  }
+  const frontMap = trainingInputSide(input.front, input.source.front, {
+    storageKey: input.source.front.inspectionStorageKey,
+    sha256: frontEvidenceHash,
+  });
+  const backMap = trainingInputSide(input.back, input.source.back, {
+    storageKey: input.source.back.inspectionStorageKey,
+    sha256: backEvidenceHash,
+  });
+  const transaction: SpeedsterMapTransactionRunner = input.transaction ?? ((operation) => (
+    prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
+  ));
+
+  return transaction(async (tx) => {
+    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const familyMap = await createOrLoadLockedMap(tx, {
+      cardProfile: input.source.cardProfile,
+      matchKeyHash: familyMatchKeyHash,
+    });
+    const exactMap = await createOrLoadLockedMap(tx, {
+      cardProfile: input.source.cardProfile,
+      matchKeyHash: exactMatchKeyHash,
+    });
+    const common = {
+      displayIdentity: input.source.identity,
+      sourceSessionId: input.source.id,
+      authorAdminId: input.authorAdminId,
+      frontMap,
+      backMap,
+      mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION,
+      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+    } as const;
+    const familyPayload: SpeedsterMapRevisionHashPayload = {
+      mapId: familyMap.id,
+      version: (familyMap.currentRevision?.version ?? 0) + 1,
+      matchKeyHash: familyMatchKeyHash,
+      matchKey: familyKey,
+      normalizedIdentity: familyKey,
+      supersedesRevisionId: familyMap.currentRevision?.id ?? null,
+      ...common,
+    };
+    const exactPayload: SpeedsterMapRevisionHashPayload = {
+      mapId: exactMap.id,
+      version: (exactMap.currentRevision?.version ?? 0) + 1,
+      matchKeyHash: exactMatchKeyHash,
+      matchKey: exactKey,
+      normalizedIdentity: exactKey,
+      supersedesRevisionId: exactMap.currentRevision?.id ?? null,
+      ...common,
+    };
+
+    // Persist and independently verify both immutable bodies before publishing
+    // either revision through its current pointer.
+    const familyRevision = await createVerifiedRevision(tx, familyPayload, "FAMILY");
+    const exactRevision = await createVerifiedRevision(tx, exactPayload, "EXACT");
+    await tx.aiGraderV2CardTypeMap.update({
+      where: { id: familyMap.id },
+      data: { currentRevisionId: familyRevision.revisionId },
+    });
+    await tx.aiGraderV2CardTypeMap.update({
+      where: { id: exactMap.id },
+      data: { currentRevisionId: exactRevision.revisionId },
+    });
+
+    // The source card is itself an exact match. When it is still safe to bind,
+    // exact therefore wins over the simultaneously authored family revision.
+    if (input.source.workflowState === "CAPTURED") {
+      const frontRegistration = speedsterIdentityMapRegistration(frontMap, input.source.front, exactRevision.revisionId);
+      const backRegistration = speedsterIdentityMapRegistration(backMap, input.source.back, exactRevision.revisionId);
+      const bound = await tx.aiGraderV2Session.updateMany({
+        where: {
+          id: input.source.id,
+          createdByUserId: input.source.createdByUserId,
+          workflowState: "CAPTURED",
+        },
+        data: {
+          mapRevisionId: exactRevision.revisionId,
+          mapFilterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+          mapRegistration: {
+            front: frontRegistration,
+            back: backRegistration,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+      if (bound.count !== 1) {
+        throw new SpeedsterMapIntegrityError("New Card Map revisions could not bind atomically to their captured source.", {
+          stage: "TRANSACTION",
+          scope: "EXACT",
+        });
+      }
+    }
+    return {
+      family: { mapId: familyMap.id, revision: familyRevision },
+      exact: { mapId: exactMap.id, revision: exactRevision },
+    };
+  });
 }
 
 export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
@@ -1251,27 +1484,15 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
       filterPolicyVersion: validated.filterPolicyVersion,
       supersedesRevisionId: map.currentRevision.id,
     };
-    const revision = await tx.aiGraderV2CardTypeMapRevision.create({
-      data: {
-        id: revisionId,
-        mapId: payload.mapId,
-        version: payload.version,
-        matchKeyHash: payload.matchKeyHash,
-        matchKey: payload.matchKey as Prisma.InputJsonValue,
-        displayIdentity: payload.displayIdentity as Prisma.InputJsonValue,
-        normalizedIdentity: payload.normalizedIdentity as Prisma.InputJsonValue,
-        sourceSessionId: payload.sourceSessionId,
-        authorAdminId: payload.authorAdminId,
-        frontMap: payload.frontMap as unknown as Prisma.InputJsonValue,
-        backMap: payload.backMap as unknown as Prisma.InputJsonValue,
-        mapSchemaVersion: payload.mapSchemaVersion,
-        filterPolicyVersion: payload.filterPolicyVersion,
-        revisionHash: speedsterMapRevisionHash(payload),
-        supersedesRevisionId: payload.supersedesRevisionId,
-      },
-      select: mapRevisionSelect,
-    });
-    await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
+    const revision = await createVerifiedRevision(tx, payload, scope, revisionId);
+    if (revision.revisionId !== revisionId) {
+      throw new SpeedsterMapIntegrityError("Restored Card Map revision identity changed during persistence.", {
+        stage: "PERSISTED_HASH_VERIFICATION",
+        scope,
+        field: "revisionId",
+      });
+    }
+    await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.revisionId } });
     await clearCapturedFamilyBindingIfStale(
       tx,
       input.source,
@@ -1286,7 +1507,7 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
           workflowState: "CAPTURED",
         },
         data: {
-          mapRevisionId: revision.id,
+          mapRevisionId: revision.revisionId,
           mapFilterPolicyVersion: validated.filterPolicyVersion,
           mapRegistration: registration as unknown as Prisma.InputJsonValue,
         },
@@ -1297,7 +1518,7 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     }
     return revision;
   });
-  return { mapId: created.mapId, revision: validateSpeedsterLoadedMapRevision(created) };
+  return { mapId: created.mapId, revision: created };
 }
 
 export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
@@ -1370,27 +1591,8 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
       filterPolicyVersion: validated.filterPolicyVersion,
       supersedesRevisionId: map.currentRevision?.id ?? null,
     };
-    const revision = await tx.aiGraderV2CardTypeMapRevision.create({
-      data: {
-        id: revisionId,
-        mapId: payload.mapId,
-        version: payload.version,
-        matchKeyHash: payload.matchKeyHash,
-        matchKey: payload.matchKey as Prisma.InputJsonValue,
-        displayIdentity: payload.displayIdentity as Prisma.InputJsonValue,
-        normalizedIdentity: payload.normalizedIdentity as Prisma.InputJsonValue,
-        sourceSessionId: payload.sourceSessionId,
-        authorAdminId: payload.authorAdminId,
-        frontMap: payload.frontMap as unknown as Prisma.InputJsonValue,
-        backMap: payload.backMap as unknown as Prisma.InputJsonValue,
-        mapSchemaVersion: payload.mapSchemaVersion,
-        filterPolicyVersion: payload.filterPolicyVersion,
-        revisionHash: speedsterMapRevisionHash(payload),
-        supersedesRevisionId: payload.supersedesRevisionId,
-      },
-      select: mapRevisionSelect,
-    });
-    await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.id } });
+    const revision = await createVerifiedRevision(tx, payload, "FAMILY", revisionId);
+    await tx.aiGraderV2CardTypeMap.update({ where: { id: map.id }, data: { currentRevisionId: revision.revisionId } });
     await clearCapturedFamilyBindingIfStale(
       tx,
       input.source,
@@ -1405,7 +1607,7 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
           workflowState: "CAPTURED",
         },
         data: {
-          mapRevisionId: revision.id,
+          mapRevisionId: revision.revisionId,
           mapFilterPolicyVersion: validated.filterPolicyVersion,
           mapRegistration: registration as unknown as Prisma.InputJsonValue,
         },
@@ -1416,7 +1618,7 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
     }
     return revision;
   });
-  return { mapId: created.mapId, revision: validateSpeedsterLoadedMapRevision(created) };
+  return { mapId: created.mapId, revision: created };
 }
 
 export async function listSpeedsterMapRevisionSummaries(mapId: string, currentRevisionId: string) {
@@ -1443,17 +1645,36 @@ export async function listSpeedsterMapRevisionSummaries(mapId: string, currentRe
   }));
 }
 
-export async function speedsterMapSourceClientState(source: SpeedsterMapSourceSession) {
-  const [frontRectifiedUrl, backRectifiedUrl] = await Promise.all([
+export async function speedsterMapSourceClientState(
+  source: SpeedsterMapSourceSession,
+  hashEvidence: typeof hashSpeedsterMapStorageEvidence = hashSpeedsterMapStorageEvidence,
+) {
+  const [frontRectifiedUrl, backRectifiedUrl, frontInspectionSha256, backInspectionSha256] = await Promise.all([
     presignReadUrl(source.front.rectifiedStorageKey),
     presignReadUrl(source.back.rectifiedStorageKey),
+    hashEvidence(source.front.inspectionStorageKey),
+    hashEvidence(source.back.inspectionStorageKey),
   ]);
+  const side = (
+    value: SpeedsterMapSourceSide,
+    rectifiedUrl: string,
+    inspectionSha256: string,
+  ) => ({
+    ...value,
+    rectifiedUrl,
+    sourceEvidence: {
+      originalStorageKey: value.originalStorageKey,
+      rectifiedStorageKey: value.rectifiedStorageKey,
+      inspectionStorageKey: value.inspectionStorageKey,
+      inspectionSha256,
+    },
+  });
   return {
     sessionId: source.id,
     cardProfile: source.cardProfile,
     identity: source.identity,
     cornerShape: source.cornerShape,
-    front: { ...source.front, rectifiedUrl: frontRectifiedUrl },
-    back: { ...source.back, rectifiedUrl: backRectifiedUrl },
+    front: side(source.front, frontRectifiedUrl, frontInspectionSha256),
+    back: side(source.back, backRectifiedUrl, backInspectionSha256),
   };
 }

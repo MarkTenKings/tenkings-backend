@@ -4,6 +4,16 @@ Date: 2026-08-02
 Status: Core workflow, native-iPhone capture, completed-card workspace, multi-admin isolation, V1 reviewed-defect memory, two-worker SAM 3 capacity, aligned Worker source, and post-grade PhotoRoom report presentation are live. Multiple complete user-run Production grading tests, including PhotoRoom Front/Back output, passed on 2026-08-02. The 2 mm inspection frame is built and under release validation; the approved SAM Memory V2 follows it.
 Purpose: Source of truth for the smallest production-ready Speedster architecture
 
+## 2026-08-11 Card Map authority supplement
+
+- One reviewed authoring action creates both FAMILY and EXACT immutable Card Map revisions in one database transaction; the UI must not ask the human to choose a creation scope.
+- Pokémon FAMILY keys are Category + Year + Product/Set + Parallel. Sports FAMILY keys are Category + Year + Manufacturer + Product/Set + Insert + Parallel. Subject/card name and card number belong only to exact identity and source provenance.
+- The runtime order is EXACT, then FAMILY, then normal human review. A selected map is complete and never merges with another. Malformed/hash-invalid maps or registration failure never guess or transplant the source card's physical quad.
+- The current copy always uses its own physical-card geometry. Human registration anchors transform the saved design boundary and zones onto that copy.
+- Both revisions retain exact source imagery and provenance. One deterministic server-owned persisted-content payload controls hashing; both read-back verifications and current-pointer moves are atomic and revision history remains append-only.
+- Failed saves retain the full draft and offer Retry and Export; Import restores the source-bound draft without saving automatically.
+- Content zones and filter authority will be separated only in a later approved phase. Text/logo/border defaults On; artwork/foil-holo defaults Off; each remains adjustable. Before acceptance, the deterministic zero-write 50-card calibration replay must prove that no real defect would have been hidden.
+
 ## 1. Mission
 
 Build a premium, extremely fast Ten Kings grader that turns one front image and one back image into a transparent, measurable grade with minimal human work.

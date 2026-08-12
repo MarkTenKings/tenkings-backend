@@ -318,67 +318,38 @@
   color: #92958f;
 }
 
-.scopeSelector {
+.dualCreation {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 8px;
   margin: 20px 0 28px;
-  padding: 0;
-  border: 0;
-}
-
-.scopeSelector legend {
-  grid-column: 1 / -1;
-  margin-bottom: 2px;
-  color: #f7f5ef;
-  font-size: 15px;
-  font-weight: 850;
-}
-
-.scopeSelector label {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  min-height: 88px;
   padding: 16px;
-  cursor: pointer;
-  border: 1px solid #d8aa4f38;
+  border: 1px solid #76e7aa52;
   border-radius: 14px;
-  background: #0b0d0a;
-}
-
-.scopeSelector label[data-selected="true"] {
-  border-color: #76e7aa;
   background: #0c2115;
-  box-shadow: inset 0 0 0 1px #76e7aa2e;
+  box-shadow: inset 0 0 0 1px #76e7aa17;
 }
 
-.scopeSelector label > span {
-  display: grid;
-  gap: 5px;
+.dualCreation > strong {
+  color: #76e7aa;
+  font-size: 12px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.dualCreation > span {
   color: #d8c998;
   font-size: 14px;
   line-height: 1.35;
 }
 
-.scopeSelector label strong {
-  color: #76e7aa;
-  font-size: 11px;
-  letter-spacing: .12em;
-}
+.dualCreation b { color: #f7f5ef; }
 
-.scopeSelector input { margin-top: 3px; accent-color: #68e8a4; }
-
-.scopeSelector > p {
-  grid-column: 1 / -1;
+.dualCreation > p {
   margin: 0;
   color: #92958f;
   font-size: 13px;
   line-height: 1.5;
 }
-
-.scopeSelector:disabled { opacity: .68; }
-.scopeSelector:disabled label { cursor: default; }
 
 .mapState {
   display: flex;
@@ -408,10 +379,6 @@
 
 .localError p { margin: 0; }
 .localError a { color: #090a08; background: #d8aa4f; }
-
-@media (max-width: 700px) {
-  .scopeSelector { grid-template-columns: 1fr; }
-}
 
 @keyframes mapSweep {
   0%, 22% { transform: translateX(-100%); }

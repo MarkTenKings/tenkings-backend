@@ -1,7 +1,7 @@
 # Ten Kings Master Product Context
 
-last_verified_at: 2026-08-06
-verified_by: Codex from protected-main evidence, the Mathematical Calibration V1 implementation/offline validation branch, protected PRs #106-#107 one-road Rapid/OCR and launcher corrections through d75998837f5e9d6fb994f5efa09decc5ef03035d, the reviewed incident-bound product-owner operational-acceptance contract through f25a197d55f45f2a44c8bca1d303da437e717910, and Mark's 2026-07-23 public-report presentation decision
+last_verified_at: 2026-08-11
+verified_by: Codex from current code, Production runtime/API/database evidence, and the owner-approved atomic FAMILY + EXACT Card Map correction, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
 v2_blueprint_approved_at: 2026-08-06
 v2_blueprint_approved_by: Mark Thomas
 repo_root_workstation: C:\TenKings\repos\tenkings-rip-it-live
@@ -60,6 +60,15 @@ Media/Live:
 - Kiosk helper drives stage/OBS behavior
 
 ## AI Grader Production Architecture (Current Reality)
+
+### Speedster Card Map creation and lookup
+
+- One completed Card Map authoring operation creates two complete immutable revisions atomically: a FAMILY map for the category-aware family key and an EXACT map for the source card. The operator is never asked to choose FAMILY versus EXACT during creation. Either both revisions and current pointers commit after independent persisted-content hash verification, or neither commits.
+- Pokémon FAMILY identity is Category + Year + Product/Set + Parallel. Sports FAMILY identity is Category + Year + Manufacturer + Product/Set + Insert + Parallel. Card/Player Name and Card Number remain exact-source identity and provenance only.
+- Both revisions begin with the same reviewed Front/Back boundary, anchors, and zones. Each retains the source imagery, evidence hashes, identity, and provenance. At runtime EXACT replaces FAMILY completely; otherwise FAMILY applies to matching siblings; if neither is usable, normal human review continues. Maps never merge and an invalid EXACT map never causes a guess or lower-scope fallthrough.
+- Revision hashes are server-owned over one deterministic normalized persisted-content payload. New revision rows are read back and verified inside the same transaction before current pointers or captured-source bindings move. Existing revision history is append-only; restore creates a new immutable revision.
+- Draft Export/Import is the durable operator recovery path. A failed save keeps all local geometry available for Retry and Export and must not refresh, navigate, or reset the editor.
+- Content-zone versus filter-authority semantics are not yet released. The approved next-phase blueprint defaults text/logo/border filter authority On and artwork/foil-holo Off, adjustable per zone, but requires a deterministic zero-write replay over the known 50-card corpus with zero hidden real defects before any filter-safety claim.
 
 - The current Dell workflow is one operator sequence: **Start New Card**, **Capture Front**, flip and **Capture Back**, then one **Approve & Publish** authority.
 - `/ai-grader/station` uses Basler/Leimac through the loopback-only token-gated bridge, exact frame identity, direct browser-to-storage asset upload, and atomic durable publication.

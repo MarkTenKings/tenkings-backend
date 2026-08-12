@@ -655,7 +655,7 @@ test("CARD MAP boundary tool resets and requires exactly four human points befor
         />,
       );
     });
-    const save = buttonByText(harness.container, "Save + activate new revision");
+    const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
     const reset = buttonByText(harness.container, "Reset Front boundary");
     const stage = harness.container.querySelector<HTMLImageElement>('img[alt="Front card map reference"]')?.parentElement;
     assert.ok(save && reset && stage);
