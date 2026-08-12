@@ -420,6 +420,10 @@ test("one save creates both complete maps and family guidance remains nonblockin
     assert.match(copy, /Location caution/);
     assert.match(copy, /Player\/card name, HP, and card number are also unsafe/);
     assert.match(copy, /Shared frame\/layout landmarks remain safe, including at the top or bottom/);
+    assert.match(copy, /V2 PADDED FILTERING · OWNER-AUTHORIZED/);
+    assert.match(copy, /50-card replay remains inconclusive—not passed/);
+    assert.match(copy, /Prior v1 revisions remain unchanged and restorable/);
+    assert.doesNotMatch(copy, /Saving this v2 policy is blocked/);
     const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
     assert.ok(save);
     assert.equal(save.disabled, false, "Family guidance must remain nonblocking");

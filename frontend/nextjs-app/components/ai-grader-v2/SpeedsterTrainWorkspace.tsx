@@ -986,8 +986,8 @@ export function SpeedsterTrainWorkspace({
       </section>
 
       <aside className={styles.familyWarning} role="status">
-        <strong>NEW FILTER POLICY · CALIBRATION PENDING</strong>
-        <p>Content zones are now separate from filter authority, and the proposed filter area uses a 0.6 mm physical-card padding while retaining strict full-contour containment. Saving this v2 policy is blocked until the known 50-card replay includes compatible registered map evidence and proves zero hidden real defects. Export remains available; the active v1 maps are unchanged.</p>
+        <strong>V2 PADDED FILTERING · OWNER-AUTHORIZED</strong>
+        <p>Saving creates new immutable Family and Exact v2 revisions with explicit per-zone filter authority and fixed 0.6 mm physical-card padding while retaining strict full-contour containment. The 50-card replay remains inconclusive—not passed—and activation is proceeding under the owner&apos;s 2026-08-12 waiver with sole-grader review and the removed-findings audit as the safety net. Prior v1 revisions remain unchanged and restorable.</p>
       </aside>
 
       {map.status === "INTEGRITY_ERROR" ? (

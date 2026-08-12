@@ -20,7 +20,7 @@ This is the self-contained implementation and evidence handoff for the owner-app
 - Both revisions retain the complete source imagery, evidence hashes, Front/Back geometry, identity, and provenance. Server-normalized persisted bytes are independently hashed and read-back verified before either pointer moves in one transaction.
 - Failed saves preserve the editor state and provide Retry plus Draft Export. Import validates and restores the complete source-bound Front/Back draft without saving automatically.
 - The correction is now live and recovered Mark's original Production draft without redraw. FAMILY v5 `cmspjh5h50003lddtgtdl9o5q` and EXACT v1 `cmspjh5sc0005lddthf23tvt6` independently verify; the Squirtle source and both side registrations pin EXACT, while a different matching identity selects FAMILY as one complete replacement. Invalid FAMILY v1-v4 remain append-only evidence.
-- The v2 content-zone/filter-authority split, strict `0.6 mm` physical-card dilation, draft round-trip, and applied-map containment diagnostic are implemented behind a fail-closed gate. Historical v1 revisions remain unchanged. The frozen 50-card audit is `INCONCLUSIVE` (2,292 outcomes but no compatible MEW-family card, registration/revision binding, or exact evidence hashes), so v2 save/activation remains blocked and no filter-safety claim is approved.
+- The v2 content-zone/filter-authority split, strict `0.6 mm` physical-card dilation, draft round-trip, and applied-map containment diagnostic are implemented. Historical v1 revisions remain unchanged and restorable. The frozen 50-card audit is still `INCONCLUSIVE` (2,292 outcomes but no compatible MEW-family card, registration/revision binding, or exact evidence hashes), so no replay-derived filter-safety claim is approved. On 2026-08-12 Mark explicitly waived the replay gate for Production activation under sole-grader review and the removed-findings audit; the recorded authority is `OWNER_WAIVER_2026_08_12`, while verification remains `PENDING` rather than passed.
 
 ## 1. Locked target and timing boundary
 
@@ -131,7 +131,7 @@ Therefore the current program conclusion is **NOT YET PROVEN** as a 90-second wo
 ## 6. Smallest safe next owner decisions
 
 1. Decide whether to authorize a local or separately controlled authenticated TRAIN session to create the initial maps and collect visual evidence. This would mutate the explicitly selected non-Production environment and is not authorized by this handoff.
-2. Provide or approve the exact 50-card map-revision and truth labels needed for zero-write replay. Until the replay passes the owner's retention and contamination criteria, keep `defect filter verification: PENDING`.
+2. Provide or approve the exact compatible map-revision/evidence bindings needed for a conclusive zero-write replay. Keep `defect filter verification: PENDING` until that replay actually passes; the 2026-08-12 owner waiver authorizes activation but is not verification evidence.
 3. After filter acceptance, separately authorize a release and any database migration through the deployment runbook.
 4. After release, predeclare the physical acceptance-set size/pass criterion and measure every consecutive run from physical handling through durable grade and truthful Next-ready. Do not exclude slow, failed, or retried cycles.
 
