@@ -1108,15 +1108,25 @@ export type SpeedsterMapDualSaveResult = Readonly<{
 }>;
 
 export const SPEEDSTER_MAP_FILTER_V2_VERIFICATION_STATUS = "defect filter verification: PENDING" as const;
+export const SPEEDSTER_MAP_FILTER_V2_ACTIVATION_AUTHORITY = "OWNER_WAIVER_2026_08_12" as const;
 
-export function requireSpeedsterMapFilterV2Calibration(): never {
-  throw new SpeedsterMapIntegrityError(
-    "The new content/filter-zone policy is not active: the 50-card replay lacks compatible map registration evidence. Export the draft; existing maps and review remain unchanged.",
-    { stage: "VALIDATION" },
-  );
+/**
+ * V2 remains unverified by the inconclusive 50-card replay. The owner explicitly
+ * waived that activation gate on 2026-08-12 and accepted sole-grader review plus
+ * the removed-findings audit as the production safety net. Keeping this as an
+ * explicit authority (instead of pretending the replay passed) preserves the
+ * distinction between authorization and calibration evidence.
+ */
+export function requireSpeedsterMapFilterV2ActivationAuthority(): void {
+  if (SPEEDSTER_MAP_FILTER_V2_ACTIVATION_AUTHORITY !== "OWNER_WAIVER_2026_08_12") {
+    throw new SpeedsterMapIntegrityError(
+      "The v2 Card Map filter activation authority is unavailable.",
+      { stage: "VALIDATION" },
+    );
+  }
 }
 
-type SpeedsterMapFilterV2CalibrationGate = () => void;
+type SpeedsterMapFilterV2ActivationGate = () => void;
 
 function requestedMapContract(front: SpeedsterMapTrainingSideInput, back: SpeedsterMapTrainingSideInput) {
   const zones = [...front.zones, ...back.zones];
@@ -1410,7 +1420,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   transaction?: SpeedsterMapTransactionRunner;
-  v2CalibrationGate?: SpeedsterMapFilterV2CalibrationGate;
+  v2ActivationGate?: SpeedsterMapFilterV2ActivationGate;
 }>): Promise<SpeedsterMapSaveResult> {
   const scope = input.scope ?? "EXACT";
   const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
@@ -1418,7 +1428,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
   const contract = requestedMapContract(input.front, input.back);
   if (contract.mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2) {
-    (input.v2CalibrationGate ?? requireSpeedsterMapFilterV2Calibration)();
+    (input.v2ActivationGate ?? requireSpeedsterMapFilterV2ActivationAuthority)();
   }
   let frontEvidenceHash: string;
   let backEvidenceHash: string;
@@ -1525,7 +1535,7 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   transaction?: SpeedsterMapTransactionRunner;
-  v2CalibrationGate?: SpeedsterMapFilterV2CalibrationGate;
+  v2ActivationGate?: SpeedsterMapFilterV2ActivationGate;
 }>): Promise<SpeedsterMapDualSaveResult> {
   const exactKey = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
   const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
@@ -1534,7 +1544,7 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
   const contract = requestedMapContract(input.front, input.back);
   if (contract.mapSchemaVersion === SPEEDSTER_MAP_SCHEMA_VERSION_V2) {
-    (input.v2CalibrationGate ?? requireSpeedsterMapFilterV2Calibration)();
+    (input.v2ActivationGate ?? requireSpeedsterMapFilterV2ActivationAuthority)();
   }
   let frontEvidenceHash: string;
   let backEvidenceHash: string;

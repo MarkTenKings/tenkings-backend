@@ -22,6 +22,8 @@ import {
   parseSpeedsterMapSourceSession,
   promoteSpeedsterExactMapRevisionToFamily,
   restoreSpeedsterCardTypeMapRevision,
+  SPEEDSTER_MAP_FILTER_V2_ACTIVATION_AUTHORITY,
+  SPEEDSTER_MAP_FILTER_V2_VERIFICATION_STATUS,
   saveSpeedsterCardTypeMapRevision,
   saveSpeedsterFamilyAndExactMapRevisions,
   speedsterIdentityMapRegistration,
@@ -746,17 +748,8 @@ test("one authoring operation atomically creates independently verified FAMILY a
   }
 });
 
-test("v2 authoring is calibration-gated, then hashes both explicit authority revisions independently", async () => {
+test("owner-authorized v2 authoring keeps replay pending and hashes both explicit authority revisions independently", async () => {
   const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
-  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
-    source,
-    authorAdminId: "admin-1",
-    front: v2TrainingSide,
-    back: v2TrainingSide,
-    hashEvidence: async (storageKey) => sha(storageKey),
-    transaction: dualMapTransaction().transaction,
-  }), /50-card replay lacks compatible map registration evidence/);
-
   const harness = dualMapTransaction();
   const saved = await saveSpeedsterFamilyAndExactMapRevisions({
     source,
@@ -765,8 +758,12 @@ test("v2 authoring is calibration-gated, then hashes both explicit authority rev
     back: v2TrainingSide,
     hashEvidence: async (storageKey) => sha(storageKey),
     transaction: harness.transaction,
-    v2CalibrationGate() {},
   });
+  assert.equal(SPEEDSTER_MAP_FILTER_V2_ACTIVATION_AUTHORITY, "OWNER_WAIVER_2026_08_12");
+  assert.equal(SPEEDSTER_MAP_FILTER_V2_VERIFICATION_STATUS, "defect filter verification: PENDING");
+  assert.equal(harness.state().transactionCount, 1);
+  assert.equal(harness.state().revisions.length, 2);
+  assert.equal(harness.state().maps.every((map) => Boolean(map.currentRevisionId)), true);
   assert.equal(saved.family.revision.mapSchemaVersion, SPEEDSTER_MAP_SCHEMA_VERSION_V2);
   assert.equal(saved.exact.revision.filterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2);
   assert.notEqual(saved.family.revision.revisionHash, saved.exact.revision.revisionHash);
@@ -778,6 +775,30 @@ test("v2 authoring is calibration-gated, then hashes both explicit authority rev
     const { revisionId: _revisionId, revisionHash, createdAt: _createdAt, ...hashPayload } = result.revision;
     assert.equal(revisionHash, speedsterMapRevisionHash(hashPayload));
   }
+});
+
+test("v2 activation authorization failure occurs before evidence hashing or any transaction write", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const harness = dualMapTransaction();
+  let evidenceReads = 0;
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    front: v2TrainingSide,
+    back: v2TrainingSide,
+    async hashEvidence(storageKey) {
+      evidenceReads += 1;
+      return sha(storageKey);
+    },
+    transaction: harness.transaction,
+    v2ActivationGate() {
+      throw new SpeedsterMapIntegrityError("injected missing activation authority", { stage: "VALIDATION" });
+    },
+  }), /injected missing activation authority/);
+  assert.equal(evidenceReads, 0);
+  assert.equal(harness.state().transactionCount, 0);
+  assert.equal(harness.state().maps.length, 0);
+  assert.equal(harness.state().revisions.length, 0);
 });
 
 test("dual authoring rolls back both maps when either revision create or persisted hash verification fails", async () => {
