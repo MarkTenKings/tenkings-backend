@@ -19,12 +19,13 @@ import {
   parseSpeedsterMapSourceSession,
   promoteSpeedsterExactMapRevisionToFamily,
   restoreSpeedsterCardTypeMapRevision,
-  saveSpeedsterCardTypeMapRevision,
+  saveSpeedsterFamilyAndExactMapRevisions,
   speedsterPhysicalQuadHash,
   speedsterMapSourceClientState,
   speedsterMapDisplayName,
   type SpeedsterLoadedMapRevision,
   type SpeedsterAppliedMapRevision,
+  type SpeedsterMapDualSaveResult,
   type SpeedsterMapSaveResult,
   type SpeedsterMapSourceSession,
   type SpeedsterMapTrainingSideInput,
@@ -69,7 +70,6 @@ const sideSchema = z.object({
 }).strict();
 const saveSchema = z.object({
   sessionId: sessionIdSchema,
-  scope: z.enum(["EXACT", "FAMILY"]).default("EXACT"),
   front: sideSchema,
   back: sideSchema,
 }).strict();
@@ -108,13 +108,12 @@ type Dependencies = Readonly<{
     identity: SpeedsterSessionIdentity;
   }>) => Promise<SpeedsterAppliedMapRevision | null>;
   listRevisions: (mapId: string, currentRevisionId: string) => Promise<Awaited<ReturnType<typeof listSpeedsterMapRevisionSummaries>>>;
-  saveRevision: (input: Readonly<{
+  saveDualRevisions: (input: Readonly<{
     source: SpeedsterMapSourceSession;
     authorAdminId: string;
-    scope: SpeedsterMapScope;
     front: SpeedsterMapTrainingSideInput;
     back: SpeedsterMapTrainingSideInput;
-  }>) => Promise<SpeedsterMapSaveResult>;
+  }>) => Promise<SpeedsterMapDualSaveResult>;
   restoreRevision: (input: Readonly<{
     source: SpeedsterMapSourceSession;
     targetRevisionId: string;
@@ -154,7 +153,7 @@ const dependencies: Dependencies = {
   loadActiveMap: loadScopedActiveSpeedsterMapRevision,
   loadEffectiveMap: loadEffectiveActiveSpeedsterMapRevision,
   listRevisions: listSpeedsterMapRevisionSummaries,
-  saveRevision: saveSpeedsterCardTypeMapRevision,
+  saveDualRevisions: saveSpeedsterFamilyAndExactMapRevisions,
   restoreRevision: restoreSpeedsterCardTypeMapRevision,
   promoteRevision: promoteSpeedsterExactMapRevisionToFamily,
   sourceClientState: speedsterMapSourceClientState,
@@ -261,15 +260,64 @@ async function sourceFor(
   return source;
 }
 
+function dualSaveSummary(
+  scope: SpeedsterMapScope,
+  saved: SpeedsterMapSaveResult,
+  source: SpeedsterMapSourceSession,
+) {
+  const name = speedsterMapDisplayName(scope, source.cardProfile, source.identity);
+  return {
+    scope,
+    applicability: scope === "FAMILY" ? `All ${name} cards` : `This exact source card — ${name}`,
+    mapId: saved.mapId,
+    revisionId: saved.revision.revisionId,
+    version: saved.revision.version,
+    revisionHash: saved.revision.revisionHash,
+    matchKeyHash: saved.revision.matchKeyHash,
+    sourceSessionId: saved.revision.sourceSessionId,
+  };
+}
+
+function integrityFailureBody(error: SpeedsterMapIntegrityError) {
+  return {
+    message: error.message,
+    code: error.code,
+    ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}),
+  };
+}
+
+function repairableAuthoringMapState(
+  error: SpeedsterMapIntegrityError,
+  requested: Readonly<{
+    scope: SpeedsterMapScope;
+    cardProfile: SpeedsterCardProfile;
+    identity: SpeedsterSessionIdentity;
+  }>,
+) {
+  return {
+    status: "INTEGRITY_ERROR" as const,
+    scope: requested.scope,
+    name: speedsterMapDisplayName(requested.scope, requested.cardProfile, requested.identity),
+    revision: null,
+    revisions: [],
+    editable: null,
+    integrity: {
+      code: error.code,
+      message: error.message,
+    },
+  };
+}
+
 export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependencies) {
   return async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== "GET" && req.method !== "POST") {
       res.setHeader("Allow", "GET, POST");
       return res.status(405).json({ message: "Method not allowed" });
     }
+    const requestedAction = actionFrom(req);
     try {
       const admin = await deps.requireAdminSession(req);
-      const action = actionFrom(req);
+      const action = requestedAction;
       if (req.method === "GET" && (action === "current" || action === "source")) {
         const sessionId = sessionIdFrom(req);
         if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
@@ -292,9 +340,19 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         if (scope === "EFFECTIVE" && !deps.loadEffectiveMap) {
           throw new SpeedsterMapIntegrityError("Effective card map lookup is unavailable.");
         }
-        const revision = scope === "EFFECTIVE"
-          ? (await deps.loadEffectiveMap!({ cardProfile: record.cardProfile, identity }))?.revision ?? null
-          : await deps.loadActiveMap({ cardProfile: record.cardProfile, identity, scope });
+        let revision: SpeedsterLoadedMapRevision | null = null;
+        let authoringIntegrityError: SpeedsterMapIntegrityError | null = null;
+        try {
+          revision = scope === "EFFECTIVE"
+            ? (await deps.loadEffectiveMap!({ cardProfile: record.cardProfile, identity }))?.revision ?? null
+            : await deps.loadActiveMap({ cardProfile: record.cardProfile, identity, scope });
+        } catch (error) {
+          if (action === "source" && scope !== "EFFECTIVE" && error instanceof SpeedsterMapIntegrityError) {
+            authoringIntegrityError = error;
+          } else {
+            throw error;
+          }
+        }
         const requestedMap = {
           scope: scope === "EFFECTIVE" ? null : scope,
           cardProfile: record.cardProfile,
@@ -311,7 +369,13 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         res.setHeader("Cache-Control", "no-store");
         return res.status(200).json({
           source: await deps.sourceClientState(source),
-          map: await mapState(revision, deps, source, requestedMap),
+          map: authoringIntegrityError
+            ? repairableAuthoringMapState(authoringIntegrityError, {
+                scope: scope as SpeedsterMapScope,
+                cardProfile: record.cardProfile,
+                identity,
+              })
+            : await mapState(revision, deps, source, requestedMap),
         });
       }
 
@@ -320,17 +384,29 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
       }
       if (action === "save") {
         const parsed = saveSchema.safeParse(req.body ?? {});
-        if (!parsed.success) return res.status(400).json({ message: "Invalid TRAIN map revision" });
+        if (!parsed.success) return res.status(400).json({
+          message: "Invalid Card Map authoring request.",
+          code: "CARD_MAP_INVALID_REQUEST",
+          diagnostics: { stage: "VALIDATION" },
+        });
         const source = await sourceFor(parsed.data.sessionId, admin.user.id, deps);
-        if (!source) return res.status(404).json({ message: "Speedster TRAIN source not found" });
-        const saved = await deps.saveRevision({
+        if (!source) return res.status(404).json({
+          message: "Card Map source was not found.",
+          code: "CARD_MAP_SOURCE_NOT_FOUND",
+          diagnostics: { stage: "SOURCE" },
+        });
+        const saved = await deps.saveDualRevisions({
           source,
           authorAdminId: admin.user.id,
-          scope: parsed.data.scope,
           front: parsed.data.front as SpeedsterMapTrainingSideInput,
           back: parsed.data.back as SpeedsterMapTrainingSideInput,
         });
-        return res.status(201).json({ map: await mapState(saved.revision, deps, source) });
+        return res.status(201).json({
+          maps: {
+            family: dualSaveSummary("FAMILY", saved.family, source),
+            exact: dualSaveSummary("EXACT", saved.exact, source),
+          },
+        });
       }
 
       if (action === "promote") {
@@ -360,10 +436,22 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
       return res.status(201).json({ map: await mapState(restored.revision, deps, source) });
     } catch (error) {
       if (error instanceof SpeedsterMapIntegrityError) {
-        return res.status(409).json({ message: error.message });
+        return res.status(409).json(
+          requestedAction === "save" ? integrityFailureBody(error) : { message: error.message },
+        );
       }
       const response = toErrorResponse(error);
-      return res.status(response.status).json({ message: response.message });
+      if (requestedAction !== "save") {
+        return res.status(response.status).json({ message: response.message });
+      }
+      if (response.status === 401 || response.status === 403) {
+        return res.status(response.status).json({ message: response.message });
+      }
+      return res.status(response.status).json({
+        message: response.message,
+        code: "CARD_MAP_DUAL_CREATE_FAILED",
+        diagnostics: { stage: "TRANSACTION" },
+      });
     }
   };
 }
