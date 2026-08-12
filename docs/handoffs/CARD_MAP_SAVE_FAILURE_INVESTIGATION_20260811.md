@@ -475,5 +475,19 @@ Before claiming recovery complete, the lead must independently prove in Preview 
 6. exact and family maps do not merge;
 7. the invalid v1-v4 records remain immutable historical evidence;
 8. source session is repinned to valid EXACT v1 and remains CAPTURED unless the separately authorized workflow advances it;
-9. the 51 completed sessions, 1202 labels, 43 permanent cards, images, identities, grades, reports, Detector/Memory evidence, and Smart Marks remain unchanged;
+9. the 51 completed sessions, 43 permanent cards, source-linked label/card counts, images, identities, grades, reports, Detector/Memory evidence, and Smart Marks remain unchanged; any concurrent global label creation must be identified rather than attributed to Card Maps;
 10. geometry instrumentation records applied map kind and real durations; the missing historical duration is reported as unavailable rather than fabricated.
+
+## Final Production recovery result
+
+- Implementation PR `#319` merged as `cc657278cd37389cfa4bc7ce860686616e081cfe`; numeric persistence follow-up PR `#320` merged normally after all checks as `a1813ea282c1e9e539e3b36b02d9716c975d0c24`.
+- Exact follow-up Production deployment: GitHub `5862690397`, Vercel `dpl_7rDoFu6hCrngrSiWx1EkEFVikNbn`, Ready and aliased to `collect.tenkings.co`; `RUN_DB_MIGRATIONS=false` and no migration ran.
+- Recovered artifact SHA-256 remained `2b26e12bad7ac5d7098fdce22c2624ba808466639236e82b2c654d6960c954b7`; the original live draft tab was never refreshed or navigated.
+- FAMILY v5: map `cmspfhq1g0004d4lgjejxgxgn`, revision `cmspjh5h50003lddtgtdl9o5q`, hash `b51a0a1f8c9e7d424a7e21830c1ff86e46dd6227ecdcf893bdc2c289566296fb`.
+- EXACT v1: map `cmspjh56h0001lddtr005tay9`, revision `cmspjh5sc0005lddthf23tvt6`, hash `fa6ab9eae469952fb11a29adf491638df2985490292d50b98905b26f09bf5c47`.
+- Both stored hashes independently recompute exactly. FAMILY and EXACT contain the same complete reviewed Front/Back geometry (Front 10 zones, Back 2 zones) but have distinct map/key/revision/hash identities. The source and both registrations pin EXACT v1.
+- A read-only live-database lookup for Squirtle resolves EXACT v1; a synthetic Mewtwo `150/165` identity with the same family fields resolves FAMILY v5; a different set resolves null/manual review. No different-name matching sibling session existed, so no Production card row was fabricated. Each lookup returns one complete revision and never merges maps.
+- Invalid FAMILY v1-v4 IDs, stored hashes, recomputations, supersession chain, and creation times remained unchanged. Production totals became two maps and six revisions exactly.
+- The source remains CAPTURED with unchanged identity, zero reviewed defects, empty grade report, no public report/slab/NFC/comps/inventory completion, zero filter decisions, zero source label, and zero permanent card. Completed sessions remained `51` and permanent cards `43`. Global label creation continued concurrently (`1214` immediately before save and `1215` immediately after); the new row was unrelated, had no source-session binding, and the recovered source remained at zero labels.
+- Signed-in Production UI loaded EXACT r1 with both sides READY, Front `4/4` anchors and `10` zones, Back `4/4` anchors and `2` zones, the one-save/two-map and no-merge explanation, `SAVE FAMILY + EXACT MAPS`, Export, and Import controls.
+- Historical geometry evidence remains `CARD_MAP_NOT_APPLIED` with no duration. No real post-save matching sibling grading cycle naturally occurred, so a truthful geometry before/after timing comparison remains pending rather than mutating or fabricating a card. Save transaction duration was `3887.71 ms`, which is persistence timing and is not represented as geometry-step timing.
