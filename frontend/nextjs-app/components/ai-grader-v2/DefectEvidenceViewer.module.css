@@ -112,6 +112,23 @@
   height: 100%;
 }
 
+.mapZones { pointer-events: none; }
+.authorizedMapZone,
+.contentOnlyMapZone {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 2;
+  stroke-dasharray: 8 5;
+  pointer-events: none;
+}
+.authorizedMapZone {
+  fill: #ff2fa51f;
+  stroke: #ff65bf;
+}
+.contentOnlyMapZone {
+  fill: #57d9ff14;
+  stroke: #57d9ff;
+}
+
 .traceOverlay {
   position: absolute;
   z-index: 1;
@@ -201,6 +218,27 @@
   background: #0c0e0c;
   border-left: 1px solid var(--line);
 }
+
+.mapDiagnostic {
+  display: grid;
+  gap: 7px;
+  margin-top: 20px;
+  padding: 14px;
+  color: #d8d8cf;
+  background: #080a08;
+  border: 1px solid #d8aa4f47;
+  border-radius: 12px;
+}
+.mapDiagnostic span {
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+}
+.mapDiagnostic strong { color: var(--bright); }
+.mapDiagnostic p,
+.mapDiagnostic small { margin: 0; line-height: 1.45; }
+.mapDiagnostic small { color: var(--muted); }
 
 .closeUp {
   position: relative;

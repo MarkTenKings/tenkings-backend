@@ -260,6 +260,7 @@ test("removed-findings inventory remains admin-only and GET-only while the scree
   assert.match(page, /DefectEvidenceViewer/);
   assert.match(page, /zoneOverlap/);
   assert.match(page, /filterPolicyVersion/);
+  assert.match(normalReviewInvocation, /mapRegistrations=/);
   assert.match(reviewApi, /prisma\.\$transaction/);
   assert.match(reviewApi, /loadPinnedSpeedsterMapRevision/);
   assert.match(reviewApi, /aiGraderV2Session\.updateMany/);
@@ -272,7 +273,6 @@ test("removed-findings inventory remains admin-only and GET-only while the scree
     /FILTER_REMOVED/,
     /filteredCount/,
     /mapFilter/,
-    /mapRevisionId/,
     /filterTray/,
   ]) {
     assert.doesNotMatch(reviewWorkspace, forbiddenNormalReviewSurface);

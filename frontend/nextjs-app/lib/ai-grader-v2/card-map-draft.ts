@@ -2,13 +2,18 @@ import {
   isSpeedsterNondegenerateAnchorSet,
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
+  speedsterDefaultFilterAuthority,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
+  SPEEDSTER_MAP_FILTER_PADDING_MM,
   type SpeedsterCardTypeMapKey,
   type SpeedsterFamilyCardTypeMapKey,
   type SpeedsterMapDesignBoundary,
   type SpeedsterMapZone,
+  type SpeedsterMapZoneContentType,
+  type SpeedsterMapZoneProposalSource,
   type SpeedsterMapZoneSemanticType,
+  type SpeedsterMapZoneV2,
 } from "./card-type-map-contracts";
 import type { SpeedsterCardProfile, SpeedsterPoint, SpeedsterQuad } from "./contracts";
 import {
@@ -17,7 +22,7 @@ import {
 } from "./identity";
 
 export const CARD_MAP_DRAFT_FORMAT = "ten-kings-card-map-draft" as const;
-export const CARD_MAP_DRAFT_VERSION = 1 as const;
+export const CARD_MAP_DRAFT_VERSION = 2 as const;
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const ZONE_TYPES = new Set<SpeedsterMapZoneSemanticType>([
@@ -33,7 +38,7 @@ type DraftAnchor = Readonly<{ id: string; label: string; point: SpeedsterPoint }
 export type CardMapDraftSide = Readonly<{
   designBoundary: SpeedsterMapDesignBoundary;
   anchors: readonly DraftAnchor[];
-  zones: readonly Readonly<SpeedsterMapZone & { filterAuthority: true }>[];
+  zones: readonly SpeedsterMapZoneV2[];
 }>;
 
 type DraftEvidenceSide = Readonly<{
@@ -43,9 +48,9 @@ type DraftEvidenceSide = Readonly<{
   evidenceSha256: string | null;
 }>;
 
-export type CardMapDraftV1 = Readonly<{
+export type CardMapDraftV2 = Readonly<{
   format: typeof CARD_MAP_DRAFT_FORMAT;
-  version: typeof CARD_MAP_DRAFT_VERSION;
+  version: 2;
   source: Readonly<{
     sessionId: string;
     cardProfile: SpeedsterCardProfile;
@@ -178,7 +183,38 @@ function boundary(value: unknown, label: string): SpeedsterMapDesignBoundary {
   return { kind: "QUAD", points: parsed };
 }
 
-function draftSide(value: unknown, side: "front" | "back"): CardMapDraftSide {
+const CONTENT_TYPES = new Set<SpeedsterMapZoneContentType>([
+  "HEADER",
+  "ARTWORK",
+  "SPECIES_STRIP",
+  "ATTACK",
+  "STATS_BAR",
+  "ARTIST_AND_CARD_ID",
+  "FLAVOR_TEXT",
+  "COPYRIGHT",
+  "OTHER",
+]);
+const PROPOSAL_SOURCES = new Set<SpeedsterMapZoneProposalSource>([
+  "HUMAN",
+  "POKEMON_STANDARD_TEMPLATE",
+  "VISUAL_SNAP",
+  "COPIED_COMPATIBLE_MAP",
+]);
+
+function inferredContentType(label: string, semanticType: SpeedsterMapZoneSemanticType): SpeedsterMapZoneContentType {
+  const normalized = label.toLowerCase();
+  if (semanticType === "PRINT_ARTWORK") return "ARTWORK";
+  if (/copyright|nintendo|game freak/.test(normalized)) return "COPYRIGHT";
+  if (/artist|card id|set\/card|card number/.test(normalized)) return "ARTIST_AND_CARD_ID";
+  if (/species|description/.test(normalized)) return "SPECIES_STRIP";
+  if (/attack|rules|damage|text/.test(normalized)) return "ATTACK";
+  if (/stats|weakness|resistance|retreat/.test(normalized)) return "STATS_BAR";
+  if (/name|hp|type|header/.test(normalized)) return "HEADER";
+  if (/flavor/.test(normalized)) return "FLAVOR_TEXT";
+  return "OTHER";
+}
+
+function draftSide(value: unknown, side: "front" | "back", draftVersion: 1 | 2): CardMapDraftSide {
   if (!isRecord(value)) throw new CardMapDraftValidationError(`${side} geometry is missing.`);
   const designBoundary = boundary(value.designBoundary ?? value.printedBoundary, `${side} printed boundary`);
   const rawAnchors = value.anchors ?? value.registrationAnchors;
@@ -206,20 +242,51 @@ function draftSide(value: unknown, side: "front" | "back"): CardMapDraftSide {
     if (typeof semanticType !== "string" || !ZONE_TYPES.has(semanticType as SpeedsterMapZoneSemanticType)) {
       throw new CardMapDraftValidationError(`${side} zone ${index + 1} has an unsupported semantic type.`);
     }
-    if (candidate.filterAuthority !== undefined && candidate.filterAuthority !== true) {
-      throw new CardMapDraftValidationError(
-        `${side} zone ${index + 1} disables filter authority, which this Card Map version does not support.`,
-      );
-    }
     const polygon = points(candidate.polygon ?? candidate.points, `${side} zone ${index + 1} polygon`, 3, 64);
     if (!isSpeedsterSimplePolygon(polygon)) {
       throw new CardMapDraftValidationError(`${side} zone ${index + 1} polygon is collapsed or self-intersecting.`);
     }
+    const label = text(candidate.label ?? candidate.name, `${side} zone ${index + 1} label`, 80);
+    const contentType = draftVersion === 2 ? candidate.contentType : inferredContentType(label, semanticType as SpeedsterMapZoneSemanticType);
+    if (typeof contentType !== "string" || !CONTENT_TYPES.has(contentType as SpeedsterMapZoneContentType)) {
+      throw new CardMapDraftValidationError(`${side} zone ${index + 1} has an unsupported content type.`);
+    }
+    const filterAuthority = draftVersion === 2
+      ? candidate.filterAuthority
+      : speedsterDefaultFilterAuthority(semanticType as SpeedsterMapZoneSemanticType);
+    if (typeof filterAuthority !== "boolean") {
+      throw new CardMapDraftValidationError(`${side} zone ${index + 1} has invalid filter authority.`);
+    }
+    const filterAuthoritySource: "TYPE_DEFAULT" | "HUMAN_OVERRIDE" = draftVersion === 2
+      ? candidate.filterAuthoritySource as "TYPE_DEFAULT" | "HUMAN_OVERRIDE"
+      : "TYPE_DEFAULT";
+    if (filterAuthoritySource !== "TYPE_DEFAULT" && filterAuthoritySource !== "HUMAN_OVERRIDE") {
+      throw new CardMapDraftValidationError(`${side} zone ${index + 1} has invalid filter-authority provenance.`);
+    }
+    const proposalSource = draftVersion === 2 ? candidate.proposalSource : "HUMAN";
+    if (typeof proposalSource !== "string" || !PROPOSAL_SOURCES.has(proposalSource as SpeedsterMapZoneProposalSource)) {
+      throw new CardMapDraftValidationError(`${side} zone ${index + 1} has invalid proposal provenance.`);
+    }
+    const proposalConfidence = draftVersion === 2 ? candidate.proposalConfidence : null;
+    if (proposalConfidence !== null && (
+      typeof proposalConfidence !== "number"
+      || !Number.isFinite(proposalConfidence)
+      || proposalConfidence < 0
+      || proposalConfidence > 1
+    )) throw new CardMapDraftValidationError(`${side} zone ${index + 1} has invalid proposal confidence.`);
+    if (draftVersion === 2 && candidate.filterPaddingMm !== SPEEDSTER_MAP_FILTER_PADDING_MM) {
+      throw new CardMapDraftValidationError(`${side} zone ${index + 1} uses an unsupported filter padding.`);
+    }
     return {
       id: nullableText(candidate.id, `${side} zone ${index + 1} id`, 80) ?? `${side}-zone-${index + 1}`,
-      label: text(candidate.label ?? candidate.name, `${side} zone ${index + 1} label`, 80),
+      label,
       semanticType: semanticType as SpeedsterMapZoneSemanticType,
-      filterAuthority: true as const,
+      contentType: contentType as SpeedsterMapZoneContentType,
+      filterAuthority,
+      filterAuthoritySource,
+      filterPaddingMm: SPEEDSTER_MAP_FILTER_PADDING_MM,
+      proposalSource: proposalSource as SpeedsterMapZoneProposalSource,
+      proposalConfidence: proposalConfidence as number | null,
       polygon,
     };
   });
@@ -348,7 +415,12 @@ function cloneDraftSide(side: CardMapDraftSide): CardMapDraftSide {
       id: zone.id,
       label: zone.label,
       semanticType: zone.semanticType,
-      filterAuthority: true,
+      contentType: zone.contentType,
+      filterAuthority: zone.filterAuthority,
+      filterAuthoritySource: zone.filterAuthoritySource,
+      filterPaddingMm: zone.filterPaddingMm,
+      proposalSource: zone.proposalSource,
+      proposalConfidence: zone.proposalConfidence,
       polygon: zone.polygon.map((point) => ({ ...point })),
     })),
   };
@@ -385,7 +457,7 @@ export function createCardMapDraft(input: Readonly<{
   source: CardMapDraftSource;
   front: CardMapDraftSide;
   back: CardMapDraftSide;
-}>): CardMapDraftV1 {
+}>): CardMapDraftV2 {
   const identity = canonicalizeSpeedsterSessionIdentity(input.source.cardProfile, input.source.identity);
   return {
     format: CARD_MAP_DRAFT_FORMAT,
@@ -414,14 +486,14 @@ export function createCardMapDraft(input: Readonly<{
   };
 }
 
-export function parseCardMapDraft(textValue: string, expectedSource: CardMapDraftSource): CardMapDraftV1 {
+export function parseCardMapDraft(textValue: string, expectedSource: CardMapDraftSource): CardMapDraftV2 {
   let value: unknown;
   try {
     value = JSON.parse(textValue);
   } catch {
     throw new CardMapDraftValidationError("Card Map draft is not valid JSON.");
   }
-  if (!isRecord(value) || value.format !== CARD_MAP_DRAFT_FORMAT || value.version !== CARD_MAP_DRAFT_VERSION) {
+  if (!isRecord(value) || value.format !== CARD_MAP_DRAFT_FORMAT || (value.version !== 1 && value.version !== 2)) {
     throw new CardMapDraftValidationError("Card Map draft format or version is unsupported.");
   }
   if (!isRecord(value.source) || !isRecord(value.sides)) {
@@ -431,12 +503,12 @@ export function parseCardMapDraft(textValue: string, expectedSource: CardMapDraf
   const trustedSource = compatibleSource(source, expectedSource);
   return createCardMapDraft({
     source: trustedSource,
-    front: draftSide(value.sides.front, "front"),
-    back: draftSide(value.sides.back, "back"),
+    front: draftSide(value.sides.front, "front", value.version),
+    back: draftSide(value.sides.back, "back", value.version),
   });
 }
 
-export function serializeCardMapDraft(draft: CardMapDraftV1) {
+export function serializeCardMapDraft(draft: CardMapDraftV2) {
   return `${JSON.stringify(draft, null, 2)}\n`;
 }
 
@@ -444,11 +516,11 @@ export function cardMapDraftEditableSide(side: CardMapDraftSide) {
   return {
     designBoundary: side.designBoundary,
     anchors: side.anchors,
-    zones: side.zones.map(({ filterAuthority: _filterAuthority, ...zone }) => zone),
+    zones: side.zones.map((zone) => ({ ...zone })),
   };
 }
 
-export function cardMapDraftFileName(draft: CardMapDraftV1) {
+export function cardMapDraftFileName(draft: CardMapDraftV2) {
   const name = "playerName" in draft.source.identity
     ? draft.source.identity.playerName
     : draft.source.identity.cardName;

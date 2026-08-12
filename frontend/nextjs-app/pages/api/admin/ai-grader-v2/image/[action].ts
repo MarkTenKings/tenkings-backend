@@ -311,6 +311,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           ? parseSpeedsterMapRegistration(payload, {
               side: serviceRequestBody.side as "FRONT" | "BACK",
               mapRevisionId: serviceRequestBody.mapRevisionId as string,
+              zones: serviceRequestBody.zones as Parameters<typeof parseSpeedsterMapRegistration>[1]["zones"],
             })
         : payload;
     return res.status(response.status).json(safePayload);

@@ -12,7 +12,7 @@ Purpose: Source of truth for the smallest production-ready Speedster architectur
 - The current copy always uses its own physical-card geometry. Human registration anchors transform the saved design boundary and zones onto that copy.
 - Both revisions retain exact source imagery and provenance. One deterministic server-owned persisted-content payload controls hashing; both read-back verifications and current-pointer moves are atomic and revision history remains append-only.
 - Failed saves retain the full draft and offer Retry and Export; Import restores the source-bound draft without saving automatically.
-- Content zones and filter authority will be separated only in a later approved phase. Text/logo/border defaults On; artwork/foil-holo defaults Off; each remains adjustable. Before acceptance, the deterministic zero-write 50-card calibration replay must prove that no real defect would have been hidden.
+- The v2 content/filter split and deterministic `0.6 mm` physical-card dilation are implemented behind a fail-closed calibration gate. Text/logo/border defaults On; artwork/foil/other defaults Off; each remains adjustable. Historical v1 revisions remain byte-compatible. The known 50-card audit is `INCONCLUSIVE`, not a pass: 2,292 human outcomes exist, but there are zero compatible MEW-family cards, zero compatible registrations/revision bindings, and no exact evidence hashes. V2 activation/save remains blocked until a compatible zero-write replay proves zero hidden real defects.
 
 ## 1. Mission
 

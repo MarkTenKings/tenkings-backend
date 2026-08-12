@@ -1,4 +1,5 @@
 import type { SpeedsterReviewFinding } from "./contracts";
+import { createHash } from "node:crypto";
 import type { SpeedsterSessionIdentity } from "./identity";
 import {
   splitSpeedsterMapFilteredCandidates,
@@ -7,6 +8,67 @@ import {
 import { calculateSpeedsterReview } from "./review";
 
 export const SPEEDSTER_MAP_FILTER_VERIFICATION_STATUS = "defect filter verification: PENDING" as const;
+export const SPEEDSTER_MAP_FILTER_CALIBRATION_GATE_VERSION = "speedster-map-filter-calibration-gate-v2" as const;
+
+export type SpeedsterMapFilterCalibrationGateInput = Readonly<{
+  corpusSha256: string;
+  corpusCards: number;
+  reviewedFindings: number;
+  truthCompleteFindings: number;
+  rawEvidenceCompleteCards: number;
+  compatibleCards: number;
+  registeredCompatibleCards: number;
+  hiddenRealDefects: number;
+  mapRevisionIds: readonly string[];
+  filterPolicyVersion: string;
+}>;
+
+function canonicalGateJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalGateJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalGateJson((value as Record<string, unknown>)[key])}`
+    )).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function evaluateSpeedsterMapFilterCalibrationGate(input: SpeedsterMapFilterCalibrationGateInput) {
+  const blockers: string[] = [];
+  if (input.corpusCards !== 50) blockers.push(`Expected exactly 50 corpus cards; received ${input.corpusCards}.`);
+  if (input.reviewedFindings < 1 || input.truthCompleteFindings !== input.reviewedFindings) {
+    blockers.push("Every reviewed finding requires one immutable human truth label.");
+  }
+  if (input.rawEvidenceCompleteCards !== input.corpusCards) {
+    blockers.push("Every corpus card requires exact raw contours and evidence hashes.");
+  }
+  if (input.compatibleCards < 1) {
+    blockers.push("The corpus contains no card compatible with the proposed family map.");
+  }
+  if (input.registeredCompatibleCards !== input.compatibleCards) {
+    blockers.push("Every compatible card requires a successful registration bound to the proposed map revision.");
+  }
+  if (input.mapRevisionIds.length < 2) {
+    blockers.push("The replay must bind the proposed FAMILY and EXACT immutable revision identities.");
+  }
+  const status = input.hiddenRealDefects > 0
+    ? "FAIL"
+    : blockers.length > 0 ? "INCONCLUSIVE" : "PASS";
+  const report = {
+    version: SPEEDSTER_MAP_FILTER_CALIBRATION_GATE_VERSION,
+    zeroWrite: true as const,
+    status,
+    input: { ...input, mapRevisionIds: [...input.mapRevisionIds].sort() },
+    blockers,
+    activationAllowed: status === "PASS" && input.hiddenRealDefects === 0,
+  };
+  const canonicalReport = canonicalGateJson(report);
+  return {
+    ...report,
+    canonicalReport,
+    reportSha256: createHash("sha256").update(canonicalReport).digest("hex"),
+  } as const;
+}
 
 export type SpeedsterReplayFinding = Readonly<{
   finding: SpeedsterReviewFinding;

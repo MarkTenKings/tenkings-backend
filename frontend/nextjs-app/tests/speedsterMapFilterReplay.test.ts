@@ -13,6 +13,7 @@ import {
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "../lib/ai-grader-v2/learning-calibration-v2";
 import type { SpeedsterPinnedMapFilterInput } from "../lib/ai-grader-v2/map-filter";
 import {
+  evaluateSpeedsterMapFilterCalibrationGate,
   replaySpeedsterMapFilter,
   SPEEDSTER_MAP_FILTER_VERIFICATION_STATUS,
   type SpeedsterMapFilterReplayCard,
@@ -203,4 +204,49 @@ test("the replay CLI is an explicit local JSON reader with no database, provider
   assert.match(source, /readFile/);
   assert.match(source, /process\.stdout\.write/);
   assert.doesNotMatch(source, /@tenkings\/database|Prisma|fetch\(|writeFile|appendFile|createWriteStream/);
+});
+
+test("the v2 gate audit is zero-write and cannot inspect or mutate Production", () => {
+  const appRoot = fileURLToPath(new URL("..", import.meta.url));
+  const source = readFileSync(`${appRoot}/../../scripts/ai-grader/audit-speedster-card-map-v2-gate.ts`, "utf8");
+
+  assert.match(source, /readFile/);
+  assert.match(source, /evaluateSpeedsterMapFilterCalibrationGate/);
+  assert.match(source, /process\.stdout\.write/);
+  assert.doesNotMatch(source, /@tenkings\/database|Prisma|fetch\(|writeFile|appendFile|createWriteStream|DATABASE_URL/);
+});
+
+test("the v2 activation gate is deterministic and fails closed on hidden reals or inconclusive evidence", () => {
+  const complete = {
+    corpusSha256: "b".repeat(64),
+    corpusCards: 50,
+    reviewedFindings: 2292,
+    truthCompleteFindings: 2292,
+    rawEvidenceCompleteCards: 50,
+    compatibleCards: 2,
+    registeredCompatibleCards: 2,
+    hiddenRealDefects: 0,
+    mapRevisionIds: ["family-revision", "exact-revision"],
+    filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+  } as const;
+  const pass = evaluateSpeedsterMapFilterCalibrationGate(complete);
+  assert.equal(pass.status, "PASS");
+  assert.equal(pass.activationAllowed, true);
+  assert.equal(evaluateSpeedsterMapFilterCalibrationGate(complete).reportSha256, pass.reportSha256);
+
+  const failed = evaluateSpeedsterMapFilterCalibrationGate({ ...complete, hiddenRealDefects: 1 });
+  assert.equal(failed.status, "FAIL");
+  assert.equal(failed.activationAllowed, false);
+
+  const inconclusive = evaluateSpeedsterMapFilterCalibrationGate({
+    ...complete,
+    compatibleCards: 0,
+    registeredCompatibleCards: 0,
+    rawEvidenceCompleteCards: 0,
+    mapRevisionIds: [],
+  });
+  assert.equal(inconclusive.status, "INCONCLUSIVE");
+  assert.equal(inconclusive.activationAllowed, false);
+  assert.match(inconclusive.blockers.join(" "), /no card compatible/);
+  assert.match(inconclusive.blockers.join(" "), /exact raw contours and evidence hashes/);
 });

@@ -7,10 +7,24 @@ import type {
 import type { SpeedsterSessionIdentity } from "./identity";
 
 export const SPEEDSTER_MAP_SCHEMA_VERSION = "speedster-card-type-map-v1" as const;
+export const SPEEDSTER_MAP_SCHEMA_VERSION_V2 = "speedster-card-type-map-v2" as const;
 export const SPEEDSTER_MAP_REGISTRATION_VERSION = "opencv-human-anchor-registration-v1" as const;
 export const SPEEDSTER_MAP_FILTER_POLICY_VERSION = "speedster-map-filter-containment-v1" as const;
+export const SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2 = "speedster-map-filter-authority-padding-v2" as const;
 export const SPEEDSTER_MAP_FILTER_RULE_ID = "human-zone-full-contour-containment-v1" as const;
+export const SPEEDSTER_MAP_FILTER_RULE_ID_V2 = "human-authorized-padded-zone-full-contour-v2" as const;
 export const SPEEDSTER_MAP_ZONE_OVERLAP_METHOD = "candidate-contour-segment-containment-v1" as const;
+export const SPEEDSTER_MAP_FILTER_PADDING_MM = 0.6 as const;
+
+export type SpeedsterMapSchemaVersion =
+  | typeof SPEEDSTER_MAP_SCHEMA_VERSION
+  | typeof SPEEDSTER_MAP_SCHEMA_VERSION_V2;
+export type SpeedsterMapFilterPolicyVersion =
+  | typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION
+  | typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2;
+export type SpeedsterMapFilterRuleId =
+  | typeof SPEEDSTER_MAP_FILTER_RULE_ID
+  | typeof SPEEDSTER_MAP_FILTER_RULE_ID_V2;
 
 export type SpeedsterMapScope = "EXACT" | "FAMILY";
 
@@ -62,6 +76,23 @@ export type SpeedsterMapZoneSemanticType =
   | "PRINT_FOIL"
   | "OTHER_PRINT_CONTEXT";
 
+export type SpeedsterMapZoneContentType =
+  | "HEADER"
+  | "ARTWORK"
+  | "SPECIES_STRIP"
+  | "ATTACK"
+  | "STATS_BAR"
+  | "ARTIST_AND_CARD_ID"
+  | "FLAVOR_TEXT"
+  | "COPYRIGHT"
+  | "OTHER";
+
+export type SpeedsterMapZoneProposalSource =
+  | "HUMAN"
+  | "POKEMON_STANDARD_TEMPLATE"
+  | "VISUAL_SNAP"
+  | "COPIED_COMPATIBLE_MAP";
+
 export type SpeedsterMapReferenceEvidence = Readonly<{
   storageKey: string;
   sha256: string;
@@ -78,12 +109,33 @@ export type SpeedsterMapDesignBoundary =
   | Readonly<{ kind: "QUAD"; points: SpeedsterQuad }>
   | Readonly<{ kind: "FULL_BLEED" }>;
 
-export type SpeedsterMapZone = Readonly<{
+type SpeedsterMapZoneBase = Readonly<{
   id: string;
   label: string;
   semanticType: SpeedsterMapZoneSemanticType;
   polygon: readonly SpeedsterPoint[];
 }>;
+
+export type SpeedsterLegacyMapZone = SpeedsterMapZoneBase;
+
+export type SpeedsterMapZoneV2 = SpeedsterMapZoneBase & Readonly<{
+  contentType: SpeedsterMapZoneContentType;
+  filterAuthority: boolean;
+  filterAuthoritySource: "TYPE_DEFAULT" | "HUMAN_OVERRIDE";
+  filterPaddingMm: typeof SPEEDSTER_MAP_FILTER_PADDING_MM;
+  proposalSource: SpeedsterMapZoneProposalSource;
+  proposalConfidence: number | null;
+}>;
+
+export type SpeedsterMapZone = SpeedsterLegacyMapZone | SpeedsterMapZoneV2;
+
+export function isSpeedsterMapZoneV2(zone: SpeedsterMapZone): zone is SpeedsterMapZoneV2 {
+  return "filterAuthority" in zone;
+}
+
+export function speedsterDefaultFilterAuthority(type: SpeedsterMapZoneSemanticType): boolean {
+  return type === "PRINT_TEXT" || type === "PRINT_LOGO" || type === "PRINT_BORDER";
+}
 
 export type SpeedsterCardTypeMapSide = Readonly<{
   side: SpeedsterCardSide;
@@ -95,7 +147,7 @@ export type SpeedsterCardTypeMapSide = Readonly<{
 }>;
 
 export type SpeedsterCardTypeMapBody = Readonly<{
-  schemaVersion: typeof SPEEDSTER_MAP_SCHEMA_VERSION;
+  schemaVersion: SpeedsterMapSchemaVersion;
   front: SpeedsterCardTypeMapSide;
   back: SpeedsterCardTypeMapSide;
 }>;
@@ -133,11 +185,13 @@ export type SpeedsterFilterDecisionEvidence = Readonly<{
   zoneId: string;
   zoneType: SpeedsterMapZoneSemanticType;
   zoneOverlap: SpeedsterMapZoneOverlap;
-  filterPolicyVersion: typeof SPEEDSTER_MAP_FILTER_POLICY_VERSION;
-  ruleId: typeof SPEEDSTER_MAP_FILTER_RULE_ID;
+  filterPolicyVersion: SpeedsterMapFilterPolicyVersion;
+  ruleId: SpeedsterMapFilterRuleId;
   ruleInputs: Readonly<{
     findingOrigin: "DETECTOR" | "MEMORY";
     requiredCoverageRatio: 1;
+    filterAuthority?: true;
+    filterPaddingMm?: typeof SPEEDSTER_MAP_FILTER_PADDING_MM;
   }>;
   detectorVersion: string;
 }>;

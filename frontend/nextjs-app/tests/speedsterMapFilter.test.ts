@@ -4,9 +4,12 @@ import test from "node:test";
 import type { SpeedsterMeasuredDefect, SpeedsterReviewFinding } from "../lib/ai-grader-v2/contracts";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+  SPEEDSTER_MAP_FILTER_RULE_ID_V2,
   SPEEDSTER_MAP_FILTER_RULE_ID,
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_SCHEMA_VERSION,
+  SPEEDSTER_MAP_SCHEMA_VERSION_V2,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
@@ -171,6 +174,80 @@ test("the frozen full-contour rule splits Detector/Memory candidates and Smart-M
   assert.equal(JSON.stringify(decision).includes("canonicalContour"), true);
   assert.equal(result.filteredDecisions[1].finding.origin, "MEMORY");
   assert.equal(result.filteredDecisions[1].ruleInputs.findingOrigin, "MEMORY");
+});
+
+test("v2 separates content from filter authority and applies physical padding without weakening full-contour safety", () => {
+  const v2Side = (side: "FRONT" | "BACK") => ({
+    ...mapSide(side),
+    zones: [{
+      ...mapSide(side).zones[0],
+      semanticType: "PRINT_TEXT" as const,
+      contentType: "ATTACK" as const,
+      filterAuthority: side === "FRONT",
+      filterAuthoritySource: "HUMAN_OVERRIDE" as const,
+      filterPaddingMm: 0.6 as const,
+      proposalSource: "HUMAN" as const,
+      proposalConfidence: null,
+    }],
+  });
+  const v2Map: SpeedsterPinnedMapFilterInput = {
+    ...map,
+    revision: {
+      ...map.revision,
+      mapSchemaVersion: SPEEDSTER_MAP_SCHEMA_VERSION_V2,
+      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+      frontMap: v2Side("FRONT"),
+      backMap: v2Side("BACK"),
+    },
+    registration: {
+      front: {
+        ...registrationSide("FRONT"),
+        projectedZones: v2Side("FRONT").zones.map(({ id, label, semanticType, polygon }) => ({
+          id, label, semanticType, polygon,
+        })),
+      },
+      back: {
+        ...registrationSide("BACK"),
+        projectedZones: v2Side("BACK").zones.map(({ id, label, semanticType, polygon }) => ({
+          id, label, semanticType, polygon,
+        })),
+      },
+    },
+  };
+  const insidePadding = {
+    ...inside,
+    id: "FRONT:padded:SURFACE",
+    canonicalContour: [
+      { x: 0.505, y: 0.2 },
+      { x: 0.506, y: 0.2 },
+      { x: 0.505, y: 0.21 },
+    ],
+  };
+  const beyondPadding = {
+    ...insidePadding,
+    id: "FRONT:beyond-padding:SURFACE",
+    canonicalContour: [
+      { x: 0.511, y: 0.2 },
+      { x: 0.512, y: 0.2 },
+      { x: 0.511, y: 0.21 },
+    ],
+  };
+  const result = splitSpeedsterMapFilteredCandidates({
+    findings: [insidePadding, beyondPadding, memoryInside, smartMark],
+    cardIdentity: identity,
+    detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    map: v2Map,
+  });
+  assert.deepEqual(result.filteredDecisions.map(({ finding }) => finding.id), [insidePadding.id]);
+  assert.deepEqual(result.activeFindings.map(({ id }) => id), [beyondPadding.id, memoryInside.id, smartMark.id]);
+  assert.equal(result.filteredDecisions[0].filterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2);
+  assert.equal(result.filteredDecisions[0].ruleId, SPEEDSTER_MAP_FILTER_RULE_ID_V2);
+  assert.deepEqual(result.filteredDecisions[0].ruleInputs, {
+    findingOrigin: "DETECTOR",
+    requiredCoverageRatio: 1,
+    filterAuthority: true,
+    filterPaddingMm: 0.6,
+  });
 });
 
 test("partial containment stays in active review and invalid registration fails without deleting evidence", () => {

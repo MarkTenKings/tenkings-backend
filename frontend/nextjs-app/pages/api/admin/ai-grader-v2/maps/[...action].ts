@@ -50,7 +50,7 @@ const anchorSchema = z.object({
   label: z.string().trim().min(1).max(80),
   point: pointSchema,
 }).strict();
-const zoneSchema = z.object({
+const zoneBase = {
   id: z.string().trim().min(1).max(80),
   label: z.string().trim().min(1).max(80),
   semanticType: z.enum([
@@ -62,7 +62,34 @@ const zoneSchema = z.object({
     "OTHER_PRINT_CONTEXT",
   ]),
   polygon: z.array(pointSchema).min(3).max(64),
-}).strict();
+} as const;
+const zoneSchema = z.union([
+  z.object(zoneBase).strict(),
+  z.object({
+    ...zoneBase,
+    contentType: z.enum([
+      "HEADER",
+      "ARTWORK",
+      "SPECIES_STRIP",
+      "ATTACK",
+      "STATS_BAR",
+      "ARTIST_AND_CARD_ID",
+      "FLAVOR_TEXT",
+      "COPYRIGHT",
+      "OTHER",
+    ]),
+    filterAuthority: z.boolean(),
+    filterAuthoritySource: z.enum(["TYPE_DEFAULT", "HUMAN_OVERRIDE"]),
+    filterPaddingMm: z.literal(0.6),
+    proposalSource: z.enum([
+      "HUMAN",
+      "POKEMON_STANDARD_TEMPLATE",
+      "VISUAL_SNAP",
+      "COPIED_COMPATIBLE_MAP",
+    ]),
+    proposalConfidence: z.number().finite().min(0).max(1).nullable(),
+  }).strict(),
+]);
 const sideSchema = z.object({
   designBoundary: boundarySchema,
   anchors: z.array(anchorSchema).length(4),

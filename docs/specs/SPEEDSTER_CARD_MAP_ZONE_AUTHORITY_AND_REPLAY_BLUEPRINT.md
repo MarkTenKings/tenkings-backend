@@ -1,6 +1,6 @@
 # Speedster Card Map zone authority and calibration replay blueprint
 
-Status: approved product direction; sequenced after the dual FAMILY + EXACT save correction
+Status: v2 contract implemented behind a fail-closed calibration gate; activation pending compatible replay evidence
 
 Date: 2026-08-11
 
@@ -40,6 +40,8 @@ The initial authority default is derived from semantic type, remains visible, an
 
 The editor must explain the consequence beside the control: when On, a fully contained Detector or Memory finding is removed from normal review and grading; partial overlap and every Smart Mark remain. When Off, the zone is descriptive only.
 
+The owner-approved tight-polygon remedy preserves the human polygon as the content boundary and defines the filter area as its deterministic `0.6 mm` physical-card dilation. Containment remains strict over every contour vertex and segment; the policy does not switch to centroid, bounding-box, partial-overlap, or percentage containment. Ambiguous numerical subdivision fails closed by retaining the finding. The review overlay shows the applied content zone and reports the best zone's exact covered/total contour vertices plus any outside/crossing condition.
+
 ## Versioning and compatibility
 
 - Introduce a new explicit map/filter schema version for saved per-zone authority. Do not reinterpret historical `speedster-map-filter-containment-v1` bytes or destructively rewrite existing immutable revisions.
@@ -47,6 +49,7 @@ The editor must explain the consequence beside the control: when On, a fully con
 - A legacy revision edited or restored into the new policy creates a new immutable revision with an explicit authority value for every zone and a clear operator preview before activation.
 - Revision hashes cover semantic type, filter authority, polygon vertex order, label, side, and all existing immutable map/provenance fields through the single canonical server-owned payload.
 - FAMILY and EXACT revisions created together initially receive the same reviewed zone geometry and per-zone authority, but each revision retains its own distinct map key and hash.
+- The explicit v2 fields are `contentType`, `filterAuthority`, `filterAuthoritySource`, `filterPaddingMm`, `proposalSource`, and `proposalConfidence`. The immutable version pair is `speedster-card-type-map-v2` / `speedster-map-filter-authority-padding-v2`; historical v1 bytes remain parsed and hashed only under their v1 pair.
 
 ## Auto-Build Zones
 
@@ -100,6 +103,17 @@ Replay must report, by map kind, side, zone type, zone ID, finding origin, and d
 The replay is read-only and deterministic. Two runs over identical corpus bytes, map revisions, code version, and policy version must produce byte-identical canonical results. It must fail inconclusive rather than pass when truth labels, exact evidence hashes, map scope, registration evidence, or raw candidates are missing.
 
 The activation gate requires human review of every would-hide-real-defect result, an explicit owner decision, retained replay artifacts and hashes, and a separately versioned release. Passing ordinary unit tests does not substitute for this replay.
+
+### 2026-08-11 observed gate result
+
+The zero-write audit of frozen corpus SHA-256 `255e3b81adf97562920e1b9da766c568d156aea210aeda21f9920261df125ad5` is `INCONCLUSIVE`, canonical report SHA-256 `71806fabd3ff336cc822d9f6e536167d1daa0d12966a57bfd3c181ba74f8c7d7`:
+
+- exactly `50` cards and `2,292/2,292` human review outcomes are present;
+- `0` cards match 2023 Pokémon + MEW EN + Reverse Holo;
+- `0` cards bind the proposed FAMILY/EXACT revisions or compatible registration evidence;
+- exact inspection-evidence hashes are absent from all 50 frozen manifest records.
+
+Therefore `activationAllowed=false`. This is not a safety pass and does not justify applying the Squirtle geometry to unrelated corpus cards. The v2 authoring API remains fail-closed; active v1 revisions and their decisions are unchanged. A conclusive run requires compatible MEW-family copies with exact evidence hashes, raw candidates, registration, and owner-reviewed truth.
 
 ## Acceptance coverage
 
