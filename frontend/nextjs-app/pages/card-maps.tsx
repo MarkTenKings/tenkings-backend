@@ -35,6 +35,35 @@ import styles from "../styles/CardMaps.module.css";
 
 type SpeedsterDraft = Readonly<{ id: string; cardProfile: "POKEMON" | "SPORTS" }>;
 
+type MappedCardRevision = Readonly<{
+  scope: "FAMILY" | "EXACT";
+  mapId: string;
+  revisionId: string;
+  version: number;
+  revisionHash: string;
+  mapSchemaVersion: string;
+  filterPolicyVersion: string;
+  createdAt: string;
+}>;
+
+type MappedSourceCard = Readonly<{
+  sourceSessionId: string;
+  cardProfile: "POKEMON" | "SPORTS";
+  workflowState: "CAPTURED" | "COMPLETED";
+  identity: SpeedsterSessionIdentity;
+  lastMappedAt: string;
+  revisions: readonly MappedCardRevision[];
+}>;
+
+type MappedCardLibraryState = Readonly<{
+  ownerAuthKey: string | null;
+  cards: readonly MappedSourceCard[];
+  loading: boolean;
+  error: string | null;
+}>;
+
+const EMPTY_MAPPED_SOURCE_CARDS: readonly MappedSourceCard[] = [];
+
 function printedIdentity(value: HumanGradeLabelEditorValue) {
   return canonicalizeSpeedsterSessionIdentity(
     value.cardType,
@@ -60,6 +89,31 @@ function printedIdentity(value: HumanGradeLabelEditorValue) {
 
 function mapAction(map: SpeedsterTrainMapState) {
   return map.status === "LOADED" ? "EDIT CARD MAP" : "CREATE CARD MAP";
+}
+
+function mappedCardName(card: MappedSourceCard) {
+  return card.cardProfile === "SPORTS" && "playerName" in card.identity
+    ? card.identity.playerName
+    : card.cardProfile === "POKEMON" && "cardName" in card.identity
+      ? card.identity.cardName
+      : "Mapped source card";
+}
+
+function mappedCardIdentity(card: MappedSourceCard) {
+  const identity = card.identity;
+  return card.cardProfile === "SPORTS" && "playerName" in identity
+    ? [identity.year, identity.manufacturer, identity.productSet, identity.insert, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]
+        .filter(Boolean).join(" · ")
+    : card.cardProfile === "POKEMON" && "cardName" in identity
+      ? [identity.year, "Pokémon", identity.productSet, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]
+          .filter(Boolean).join(" · ")
+      : "Identity unavailable";
+}
+
+function mappedCardSearchText(card: MappedSourceCard) {
+  return [card.cardProfile, mappedCardName(card), mappedCardIdentity(card)]
+    .join(" ")
+    .toLocaleLowerCase("en-US");
 }
 
 function familyApplicability(identity: Pick<HumanGradeLabelEditorValue,
@@ -104,16 +158,87 @@ export default function CardMapsPage() {
   const [draftIdentity, setDraftIdentity] = useState<SpeedsterSessionIdentity | null>(null);
   const [map, setMap] = useState<SpeedsterTrainMapState | null>(null);
   const [source, setSource] = useState<SpeedsterTrainSource | null>(null);
+  const [mappedCardLibrary, setMappedCardLibrary] = useState<MappedCardLibraryState>({
+    ownerAuthKey: null,
+    cards: [],
+    loading: false,
+    error: null,
+  });
+  const [mappedCardQuery, setMappedCardQuery] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("One completed authoring save creates both the Family and Exact Source maps.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const identitySectionRef = useRef<HTMLElement>(null);
   const captureSaveInFlight = useRef(false);
+  const mappedCardsRequestGeneration = useRef(0);
+  const mappedCardsAbortController = useRef<AbortController | null>(null);
   const sessionId = typeof router.query.sessionId === "string" ? router.query.sessionId : null;
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
   );
+  const mappedCardsAuthKey = isAdmin && session?.token && !sessionId
+    ? `${session.user.id}\u0000${session.token}`
+    : null;
+  const mappedCards = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
+    ? mappedCardLibrary.cards
+    : EMPTY_MAPPED_SOURCE_CARDS;
+  const mappedCardsLoading = Boolean(mappedCardsAuthKey) && (
+    mappedCardLibrary.ownerAuthKey !== mappedCardsAuthKey || mappedCardLibrary.loading
+  );
+  const mappedCardsError = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
+    ? mappedCardLibrary.error
+    : null;
+  const visibleMappedCards = useMemo(() => {
+    const query = mappedCardQuery.normalize("NFKC").trim().toLocaleLowerCase("en-US");
+    return query ? mappedCards.filter((card) => mappedCardSearchText(card).includes(query)) : mappedCards;
+  }, [mappedCardQuery, mappedCards]);
+  const loadMappedCards = useCallback(async () => {
+    const requestGeneration = mappedCardsRequestGeneration.current + 1;
+    mappedCardsRequestGeneration.current = requestGeneration;
+    mappedCardsAbortController.current?.abort();
+    mappedCardsAbortController.current = null;
+    const token = session?.token;
+    const ownerAuthKey = isAdmin && token && !sessionId ? `${session.user.id}\u0000${token}` : null;
+    if (!token || !ownerAuthKey) {
+      setMappedCardLibrary({ ownerAuthKey: null, cards: [], loading: false, error: null });
+      return;
+    }
+    const controller = new AbortController();
+    mappedCardsAbortController.current = controller;
+    setMappedCardLibrary({ ownerAuthKey, cards: [], loading: true, error: null });
+    try {
+      const response = await fetch("/api/admin/ai-grader-v2/maps/list", {
+        headers: buildAdminHeaders(token),
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      const payload = await response.json().catch(() => ({})) as {
+        cards?: readonly MappedSourceCard[];
+        message?: string;
+      };
+      if (!response.ok || !Array.isArray(payload.cards)) {
+        throw new Error(payload.message ?? "Existing Card Maps could not be loaded.");
+      }
+      if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
+      setMappedCardLibrary({ ownerAuthKey, cards: payload.cards, loading: false, error: null });
+    } catch (error) {
+      if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
+      setMappedCardLibrary({
+        ownerAuthKey,
+        cards: [],
+        loading: false,
+        error: toCardMapOperatorMessage(
+          error instanceof Error ? error.message : "Existing Card Maps could not be loaded.",
+        ),
+      });
+    } finally {
+      if (requestGeneration === mappedCardsRequestGeneration.current
+        && mappedCardsAbortController.current === controller) {
+        mappedCardsAbortController.current = null;
+      }
+    }
+  }, [isAdmin, session?.token, session?.user.id, sessionId]);
   const focusNewCard = useCallback(() => {
     if (sessionId) {
       void router.push("/card-maps#new-card-map");
@@ -129,6 +254,15 @@ export default function CardMapsPage() {
     const frame = window.requestAnimationFrame(focusNewCard);
     return () => window.cancelAnimationFrame(frame);
   }, [focusNewCard, sessionId]);
+
+  useEffect(() => {
+    void loadMappedCards();
+    return () => {
+      mappedCardsRequestGeneration.current += 1;
+      mappedCardsAbortController.current?.abort();
+      mappedCardsAbortController.current = null;
+    };
+  }, [loadMappedCards]);
 
   useEffect(() => {
     if (!session?.token || !sessionId || !isAdmin) return;
@@ -378,9 +512,90 @@ export default function CardMapsPage() {
             <h1 id="card-maps-heading">CARD MAPS</h1>
             <p>Author Front and Back once. Saving atomically creates a Family Card Map for matching cards and an Exact Source Map for this card.</p>
             <p className={styles.cardMapsStatus} role="status" aria-live="polite">{message}</p>
-            <button className={styles.cardMapsCta} type="button" onClick={focusNewCard}>CREATE CARD MAP</button>
+            <div className={styles.cardMapsActions}>
+              <button className={styles.cardMapsCta} type="button" onClick={focusNewCard}>CREATE CARD MAP</button>
+              {!sessionId ? <a href="#existing-card-maps">VIEW EXISTING MAPS</a> : null}
+            </div>
           </div>
         </section>
+
+        {!sessionId ? (
+          <section id="existing-card-maps" className={styles.libraryPanel} aria-labelledby="existing-card-maps-heading">
+            <header className={styles.libraryHeader}>
+              <div>
+                <span>SAVED MAP SOURCES · CARD MAPS ONLY</span>
+                <h2 id="existing-card-maps-heading">EXISTING CARD MAPS</h2>
+                <p>Only source cards with a saved active Card Map appear here. Open one to create its next immutable Family + Exact revisions.</p>
+              </div>
+              <label className={styles.librarySearch}>
+                <span>Search existing Card Maps</span>
+                <input
+                  aria-label="Search existing Card Maps"
+                  type="search"
+                  value={mappedCardQuery}
+                  onInput={(event) => setMappedCardQuery(event.currentTarget.value)}
+                  onChange={() => undefined}
+                  placeholder="Name, set, parallel, or card number"
+                />
+              </label>
+            </header>
+
+            <p className={styles.libraryStatus} role="status" aria-live="polite">
+              {mappedCardsLoading
+                ? "Loading saved Card Maps…"
+                : `${visibleMappedCards.length} of ${mappedCards.length} mapped source ${mappedCards.length === 1 ? "card" : "cards"}`}
+            </p>
+
+            {mappedCardsError ? (
+              <div className={styles.libraryError} role="alert">
+                <p>{mappedCardsError}</p>
+                <button type="button" onClick={() => void loadMappedCards()}>RETRY</button>
+              </div>
+            ) : null}
+
+            {!mappedCardsLoading && !mappedCardsError && visibleMappedCards.length === 0 ? (
+              <div className={styles.libraryEmpty}>
+                <strong>{mappedCards.length ? "NO MATCHING CARD MAPS" : "NO CARD MAPS YET"}</strong>
+                <span>{mappedCards.length
+                  ? "Try a different card name, set, parallel, or card number."
+                  : "Create and save a Card Map; its exact source card will appear here."}</span>
+              </div>
+            ) : null}
+
+            {!mappedCardsError && visibleMappedCards.length ? (
+              <div className={styles.libraryGrid}>
+                {visibleMappedCards.map((card) => (
+                  <article className={styles.libraryCard} key={card.sourceSessionId}>
+                    <div className={styles.libraryCardTopline}>
+                      <span>{card.cardProfile === "POKEMON" ? "POKÉMON" : "SPORTS"}</span>
+                      <span>{card.workflowState === "COMPLETED" ? "COMPLETED SOURCE" : "MAP SOURCE"}</span>
+                    </div>
+                    <h3>{mappedCardName(card)}</h3>
+                    <p>{mappedCardIdentity(card)}</p>
+                    <div className={styles.libraryRevisions} aria-label="Current Card Map revisions">
+                      {(["FAMILY", "EXACT"] as const).map((scope) => {
+                        const revision = card.revisions.find((candidate) => candidate.scope === scope);
+                        return (
+                          <span key={scope}>
+                            {revision ? `${scope} r${revision.version}` : `${scope} · NOT CURRENT FROM THIS SOURCE`}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    <div className={styles.libraryCardFooter}>
+                      <time dateTime={card.lastMappedAt}>
+                        Updated {new Date(card.lastMappedAt).toLocaleDateString()}
+                      </time>
+                      <Link href={`/card-maps?sessionId=${encodeURIComponent(card.sourceSessionId)}`}>
+                        EDIT CARD MAP
+                      </Link>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {sessionId ? (
           <section className={styles.workflowPanel} aria-labelledby="existing-card-map-heading">
@@ -468,6 +683,7 @@ export default function CardMapsPage() {
               setMessage(
                 `Family r${maps.family.version} and Exact r${maps.exact.version} saved atomically. Exact applies only to this source; Family applies to matching siblings.`,
               );
+              void loadMappedCards();
             }}
           />
         ) : null}

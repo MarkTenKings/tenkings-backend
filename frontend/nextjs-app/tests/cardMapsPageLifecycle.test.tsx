@@ -8,7 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 const require = createRequire(import.meta.url);
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
-process.env.NEXT_PUBLIC_ADMIN_USER_IDS = "card-maps-admin";
+process.env.NEXT_PUBLIC_ADMIN_USER_IDS = "card-maps-admin,card-maps-admin-2";
 
 const extensions = require.extensions as unknown as Record<string, (module: NodeModule) => void>;
 extensions[".css"] = (module) => {
@@ -167,18 +167,22 @@ async function waitFor(condition: () => boolean, message: string, timeoutMs = 15
 type MountedPage = {
   container: HTMLElement;
   root: Root;
+  updateSession: (input: Readonly<{ token: string; userId: string }> | null) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
 async function mountPage(input: {
   query?: Record<string, string | string[] | undefined>;
   userId?: string;
+  token?: string;
+  mappedCards?: readonly unknown[];
+  mappedCardsFetchImpl?: typeof fetch;
   fetchImpl: typeof fetch;
 }): Promise<MountedPage> {
   routerQuery = input.query ?? {};
   routerPushes.length = 0;
   sessionState = {
-    session: { token: "admin-token", user: { id: input.userId ?? "card-maps-admin", phone: null } },
+    session: { token: input.token ?? "admin-token", user: { id: input.userId ?? "card-maps-admin", phone: null } },
     loading: false,
     async ensureSession() {},
   };
@@ -204,7 +208,13 @@ async function mountPage(input: {
     HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement },
     Event: { configurable: true, value: dom.window.Event },
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
-    fetch: { configurable: true, value: input.fetchImpl },
+    fetch: {
+      configurable: true,
+      value: (request: RequestInfo | URL, init?: RequestInit) => String(request) === "/api/admin/ai-grader-v2/maps/list"
+        ? input.mappedCardsFetchImpl?.(request, init)
+          ?? Promise.resolve(jsonResponse({ cards: input.mappedCards ?? [] }))
+        : input.fetchImpl(request, init),
+    },
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -221,6 +231,16 @@ async function mountPage(input: {
   return {
     container,
     root,
+    updateSession: async (nextSession) => {
+      sessionState = {
+        session: nextSession
+          ? { token: nextSession.token, user: { id: nextSession.userId, phone: null } }
+          : null,
+        loading: false,
+        async ensureSession() {},
+      };
+      await act(async () => { root.render(<CardMapsPage />); });
+    },
     cleanup: async () => {
       await act(async () => root.unmount());
       dom.window.close();
@@ -230,6 +250,29 @@ async function mountPage(input: {
       delete (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
     },
   };
+}
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  const promise = new Promise<Response>((resolver) => { resolve = resolver; });
+  return { promise, resolve } as const;
+}
+
+function mappedPokemonCard(sourceSessionId: string, cardName: string) {
+  return {
+    sourceSessionId,
+    cardProfile: "POKEMON",
+    workflowState: "CAPTURED",
+    identity: {
+      cardName,
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: cardName === "SQUIRTLE" ? "007/165" : "001/165",
+    },
+    lastMappedAt: "2026-08-12T19:40:31.391Z",
+    revisions: [],
+  } as const;
 }
 
 function buttonByText(container: HTMLElement, text: string) {
@@ -246,6 +289,125 @@ async function changeInput(container: HTMLElement, label: string, value: string)
     input.dispatchEvent(new window.Event("input", { bubbles: true }));
   });
 }
+
+test("Card Maps owns a searchable list containing only saved mapped source cards", async () => {
+  const sourceSessionId = "mapped-source-session-0001";
+  const page = await mountPage({
+    mappedCards: [{
+      sourceSessionId,
+      cardProfile: "POKEMON",
+      workflowState: "CAPTURED",
+      identity: {
+        cardName: "SQUIRTLE",
+        year: "2023",
+        productSet: "MEW EN",
+        parallel: "REVERSE HOLO",
+        cardNumber: "007/165",
+      },
+      lastMappedAt: "2026-08-12T19:40:31.391Z",
+      revisions: [
+        {
+          scope: "EXACT",
+          mapId: "exact-map",
+          revisionId: "exact-r3",
+          version: 3,
+          revisionHash: "a".repeat(64),
+          mapSchemaVersion: "speedster-card-type-map-v2",
+          filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          createdAt: "2026-08-12T19:40:31.391Z",
+        },
+        {
+          scope: "FAMILY",
+          mapId: "family-map",
+          revisionId: "family-r7",
+          version: 7,
+          revisionHash: "b".repeat(64),
+          mapSchemaVersion: "speedster-card-type-map-v2",
+          filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          createdAt: "2026-08-12T19:40:31.343Z",
+        },
+      ],
+    }],
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("SQUIRTLE") ?? false, "Mapped source card list did not load");
+    assert.match(page.container.textContent ?? "", /EXISTING CARD MAPS/);
+    assert.match(page.container.textContent ?? "", /1 of 1 mapped source card/);
+    assert.match(page.container.textContent ?? "", /2023 · Pokémon · MEW EN · REVERSE HOLO · #007\/165/);
+    assert.match(page.container.textContent ?? "", /EXACT r3/);
+    assert.match(page.container.textContent ?? "", /FAMILY r7/);
+    const edit = Array.from(page.container.querySelectorAll("a")).find((link) => link.textContent === "EDIT CARD MAP");
+    assert.equal(edit?.getAttribute("href"), `/card-maps?sessionId=${encodeURIComponent(sourceSessionId)}`);
+
+    await changeInput(page.container, "Search existing Card Maps", "Mewtwo");
+    assert.match(page.container.textContent ?? "", /NO MATCHING CARD MAPS/);
+    assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
+
+    await changeInput(page.container, "Search existing Card Maps", "reverse holo");
+    assert.match(page.container.textContent ?? "", /SQUIRTLE/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("switching admins immediately clears the prior creator's mapped rows while the new list is pending", async () => {
+  const adminB = deferredResponse();
+  let calls = 0;
+  const page = await mountPage({
+    userId: "card-maps-admin",
+    token: "admin-a-token",
+    mappedCardsFetchImpl: async () => {
+      calls += 1;
+      return calls === 1
+        ? jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")] })
+        : adminB.promise;
+    },
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("SQUIRTLE") ?? false, "Admin A list did not load");
+    await page.updateSession({ token: "admin-b-token", userId: "card-maps-admin-2" });
+    assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
+    assert.match(page.container.textContent ?? "", /Loading saved Card Maps/);
+
+    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")] }));
+    await waitFor(() => page.container.textContent?.includes("BULBASAUR") ?? false, "Admin B list did not load");
+    assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("a late prior-admin mapped-list response cannot overwrite the current admin", async () => {
+  const adminA = deferredResponse();
+  const adminB = deferredResponse();
+  let calls = 0;
+  const page = await mountPage({
+    userId: "card-maps-admin",
+    token: "admin-a-token",
+    mappedCardsFetchImpl: async () => {
+      calls += 1;
+      return calls === 1 ? adminA.promise : adminB.promise;
+    },
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => calls === 1, "Admin A request did not start");
+    await page.updateSession({ token: "admin-b-token", userId: "card-maps-admin-2" });
+    await waitFor(() => calls === 2, "Admin B request did not start");
+
+    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")] }));
+    await waitFor(() => page.container.textContent?.includes("BULBASAUR") ?? false, "Admin B list did not load");
+
+    adminA.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")] }));
+    await act(async () => { await adminA.promise; await Promise.resolve(); });
+    assert.match(page.container.textContent ?? "", /BULBASAUR/);
+    assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
+  } finally {
+    await page.cleanup();
+  }
+});
 
 test("blank new-card identity shows exact field errors without making a request", async () => {
   const requests: string[] = [];

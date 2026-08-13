@@ -24,6 +24,19 @@ test("CARD MAPS has one literal admin-only route whose hero CTA focuses NEW CARD
   assert.doesNotMatch(cardMapsPage, /createDraft\(null/);
 });
 
+test("CARD MAPS owns a searchable mapped-source library with direct edit links", () => {
+  assert.match(cardMapsPage, /id="existing-card-maps"/);
+  assert.match(cardMapsPage, /EXISTING CARD MAPS/);
+  assert.match(cardMapsPage, /\/api\/admin\/ai-grader-v2\/maps\/list/);
+  assert.match(cardMapsPage, /Search existing Card Maps/);
+  assert.match(cardMapsPage, /Only source cards with a saved active Card Map appear here/);
+  assert.match(cardMapsPage, /\["FAMILY", "EXACT"\]/);
+  assert.match(cardMapsPage, /NOT CURRENT FROM THIS SOURCE/);
+  assert.match(cardMapsPage, /EDIT CARD MAP/);
+  assert.match(cardMapsPage, /`\/card-maps\?sessionId=\$\{encodeURIComponent\(card\.sourceSessionId\)\}`/);
+  assert.doesNotMatch(cardMapsPage, /fetch\(`\/api\/admin\/ai-grader-v2\/completed/);
+});
+
 test("new CARD MAP creation reuses the exact session, map, capture, and immutable workspace contracts", () => {
   assert.match(cardMapsPage, /fieldErrors=\{fieldErrors\}/);
   assert.match(cardMapsPage, /error instanceof SpeedsterIdentityValidationError/);
