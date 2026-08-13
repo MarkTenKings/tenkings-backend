@@ -22,6 +22,8 @@ from card_geometry import (
     detect_card_quad,
     detector_material_mask,
     printed_border_quad,
+    MapRegistrationFailure,
+    MAP_REGISTRATION_ALGORITHM_VERSION,
     register_map_design,
     warp_to_card_map,
     warp_to_inspection_map,
@@ -92,6 +94,14 @@ class MapRegistrationAnchor(BaseModel):
     point: Point
 
 
+class MapRegistrationLessonCandidate(BaseModel):
+    candidateId: str = Field(min_length=1, max_length=80)
+    referenceInspectionSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    referenceImage: ImageInput
+    anchors: List[MapRegistrationAnchor]
+    sourceHomography: List[float] = Field(min_length=9, max_length=9)
+
+
 class MapRegistrationRequest(BaseModel):
     referenceImage: ImageInput
     currentImage: ImageInput
@@ -100,9 +110,13 @@ class MapRegistrationRequest(BaseModel):
     side: str
     currentPhysicalQuadSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     currentInspectionSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    referenceInspectionSha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     anchors: List[MapRegistrationAnchor]
     designBoundary: dict
     zones: List[dict]
+    lessonCandidates: List[MapRegistrationLessonCandidate] = Field(default_factory=list, max_length=3)
+    correctedAnchors: Optional[List[MapRegistrationAnchor]] = None
+    automaticFailure: Optional[dict] = None
 
 
 class CanonicalView(ImageInput):
@@ -354,6 +368,25 @@ def prepare_image(request: PrepareRequest):
 def map_registration(request: MapRegistrationRequest):
     if request.side not in ("FRONT", "BACK"):
         raise HTTPException(status_code=400, detail="Map registration side is invalid")
+    binding = {
+        "side": request.side,
+        "mapRevisionId": request.mapRevisionId,
+        "currentInspectionSha256": request.currentInspectionSha256,
+        "currentPhysicalQuadSha256": request.currentPhysicalQuadSha256,
+        "candidates": [
+            {
+                "candidateId": "original-reference",
+                "referenceInspectionSha256": request.referenceInspectionSha256,
+            },
+            *[
+                {
+                    "candidateId": candidate.candidateId,
+                    "referenceInspectionSha256": candidate.referenceInspectionSha256,
+                }
+                for candidate in request.lessonCandidates
+            ],
+        ],
+    }
     try:
         reference = load_image(
             request.referenceImage.imageUrl,
@@ -363,21 +396,52 @@ def map_registration(request: MapRegistrationRequest):
             request.currentImage.imageUrl,
             request.currentImage.imageBase64,
         )
+        if request.correctedAnchors is not None and request.automaticFailure is None:
+            raise ValueError("Map registration rescue requires the original automatic diagnostics")
         registered = register_map_design(
             reference,
             current,
             [anchor.model_dump() for anchor in request.anchors],
             request.designBoundary,
             request.zones,
+            lesson_candidates=[
+                {
+                    "candidateId": candidate.candidateId,
+                    "referenceImage": load_image(
+                        candidate.referenceImage.imageUrl,
+                        candidate.referenceImage.imageBase64,
+                    ),
+                    "anchors": [anchor.model_dump() for anchor in candidate.anchors],
+                    "sourceHomography": candidate.sourceHomography,
+                }
+                for candidate in request.lessonCandidates
+            ],
+            corrected_anchors=(
+                [anchor.model_dump() for anchor in request.correctedAnchors]
+                if request.correctedAnchors is not None
+                else None
+            ),
         )
+        if "automaticFailure" in registered:
+            registered["automaticFailure"] = {
+                **registered["automaticFailure"],
+                "binding": binding,
+            }
+        if request.correctedAnchors is not None and registered.get("automaticFailure") != request.automaticFailure:
+            raise ValueError("Map registration rescue diagnostics do not match the server recomputation")
         return {
-            "version": "opencv-human-anchor-registration-v1",
+            "version": MAP_REGISTRATION_ALGORITHM_VERSION,
             "side": request.side,
             "mapRevisionId": request.mapRevisionId,
             "currentPhysicalQuadSha256": request.currentPhysicalQuadSha256,
             "currentInspectionSha256": request.currentInspectionSha256,
             **registered,
         }
+    except MapRegistrationFailure as error:
+        raise HTTPException(
+            status_code=422,
+            detail={**error.diagnostics, "binding": binding},
+        ) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except Exception as error:

@@ -18,6 +18,7 @@ const TARGET_MIGRATIONS = [
   "20260716230000_ai_grader_nfc_feiju_f8215_gototags_two_click",
   "20260718150000_ai_grader_design_reference_v1",
   "20260721183000_ai_grader_calibration_activation_registry",
+  "20260813120000_speedster_map_registration_lessons",
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
@@ -34,6 +35,10 @@ const mathematicalCalibrationSnapshotSql = resolve(
 const calibrationActivationRegistrySql = resolve(
   scriptDir,
   "validateAiGraderCalibrationActivationRegistry.sql",
+);
+const speedsterMapRegistrationLessonSql = resolve(
+  scriptDir,
+  "validateSpeedsterMapRegistrationLesson.sql",
 );
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
@@ -62,6 +67,7 @@ for (const requiredPath of [
   appliedSql,
   mathematicalCalibrationSnapshotSql,
   calibrationActivationRegistrySql,
+  speedsterMapRegistrationLessonSql,
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
@@ -306,6 +312,13 @@ try {
   if (!calibrationActivationResult.includes("AI_GRADER_CALIBRATION_ACTIVATION_REGISTRY_VALIDATION_PASS")) {
     fail("The Mathematical Calibration activation registry SQL validation did not reach its PASS marker.");
   }
+  const speedsterMapRegistrationLessonResult = runSqlFile(
+    speedsterMapRegistrationLessonSql,
+    "verifying Speedster registration-lesson constraints, append-only behavior, and fixture rollback",
+  );
+  if (!speedsterMapRegistrationLessonResult.includes("SPEEDSTER_MAP_REGISTRATION_LESSON_VALIDATION_PASS")) {
+    fail("The Speedster registration-lesson SQL validation did not reach its PASS marker.");
+  }
   const readyRuntimeResult = run(
     process.execPath,
     [readinessValidationScript, "--expect=ready"],
@@ -395,6 +408,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1 and Card Platform V2 catalog, constraint, lifecycle, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, and Card Platform V2 catalog, constraint, lifecycle, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

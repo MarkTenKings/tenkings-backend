@@ -10,6 +10,8 @@ Three separately reviewable releases are authorized, in this order:
 
 Each release must start from the then-current protected `origin/main`, pass focused and relevant full validation, use the normal PR/check/merge/Vercel Production path, and receive signed-in Production verification before the next release is deployed. Memory lesson location-binding and Auto-Build Zones remain blueprint-only and must not be implemented in these releases.
 
+Release 2 changes `backend/ai-grader-speedster-service`, so Vercel alone cannot activate it. Build one immutable Linux/amd64 service image from the exact reviewed PR head, record its registry digest, and update only RunPod load-balanced endpoint `we730z8vl8o3tm` after the compatible web and additive schema are live and the endpoint has zero queued/in-progress jobs. Preserve endpoint identity, model/checkpoint, secrets, ports, storage, capacity/scaling policy, and every Detector/Memory threshold. Require Latest healthy workers plus `/ping` and `/health` evidence; retain the prior immutable image for rollback.
+
 No release may change SAM models or images, Detector thresholds, Memory thresholds, grading formulas, PhotoRoom, identity authority, existing completed evidence, or unrelated workflows.
 
 ## Detection-resilience contract

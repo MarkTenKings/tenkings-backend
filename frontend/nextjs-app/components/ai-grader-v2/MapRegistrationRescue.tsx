@@ -1,0 +1,135 @@
+"use client";
+
+import { useMemo, useRef, useState } from "react";
+import type { SpeedsterCardSide, SpeedsterPoint } from "../../lib/ai-grader-v2/contracts";
+import type { SpeedsterMapRegistrationFailure } from "../../lib/ai-grader-v2/card-type-map-contracts";
+import styles from "./MapRegistrationRescue.module.css";
+
+type CorrectedAnchor = Readonly<{ anchorId: string; point: SpeedsterPoint }>;
+
+const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
+
+export function MapRegistrationRescue({
+  side,
+  imageUrl,
+  failure,
+  disabled,
+  onConfirm,
+  onContinueManual,
+}: Readonly<{
+  side: SpeedsterCardSide;
+  imageUrl: string;
+  failure: SpeedsterMapRegistrationFailure;
+  disabled: boolean;
+  onConfirm: (anchors: readonly CorrectedAnchor[]) => Promise<void>;
+  onContinueManual: () => void;
+}>) {
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [anchors, setAnchors] = useState<readonly CorrectedAnchor[]>(() => (
+    failure.bestCandidate.anchors.map((anchor) => ({
+      anchorId: anchor.anchorId,
+      point: {
+        // Failed/off-card proposals remain unmodified in diagnostics; only the
+        // interactive handle is clamped to the visible physical card.
+        x: clampUnit(anchor.trackedPoint?.x ?? anchor.expectedPoint.x),
+        y: clampUnit(anchor.trackedPoint?.y ?? anchor.expectedPoint.y),
+      },
+    }))
+  ));
+  const diagnostics = useMemo(() => new Map(
+    failure.bestCandidate.anchors.map((anchor) => [anchor.anchorId, anchor]),
+  ), [failure]);
+  const allAnchorsIndividuallyCredible = failure.bestCandidate.anchors.every(
+    (anchor) => anchor.status === "TRACKED",
+  );
+
+  const move = (clientX: number, clientY: number) => {
+    if (!dragging || disabled || !imageRef.current) return;
+    const bounds = imageRef.current.getBoundingClientRect();
+    const point = {
+      x: clampUnit((clientX - bounds.left) / bounds.width),
+      y: clampUnit((clientY - bounds.top) / bounds.height),
+    };
+    setAnchors((current) => current.map((anchor) => (
+      anchor.anchorId === dragging ? { ...anchor, point } : anchor
+    )));
+  };
+
+  return (
+    <section className={styles.rescue} aria-label={`${side} Card Map anchor rescue`}>
+      <header>
+        <span>CARD MAP · HUMAN ANCHOR RESCUE</span>
+        <h2>{side === "FRONT" ? "Front" : "Back"} registration needs correction.</h2>
+        <p>Drag each numbered handle onto the same printed landmark shown by its expected marker. Nothing applies until the server validates both sides.</p>
+      </header>
+      <div className={styles.globalFailure} role="status">
+        <strong>{failure.failureCode.replaceAll("_", " ")}</strong>
+        <span>{failure.message}</span>
+        {allAnchorsIndividuallyCredible ? (
+          <span>All four proposals look individually credible, but the global registration gate failed. Confirm all four positions; movement is not required.</span>
+        ) : null}
+      </div>
+      <div
+        className={styles.canvas}
+        onPointerMove={(event) => move(event.clientX, event.clientY)}
+        onPointerUp={() => setDragging(null)}
+        onPointerCancel={() => setDragging(null)}
+      >
+        {/* Exact signed evidence dimensions must remain browser-native here. */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img ref={imageRef} src={imageUrl} alt={`${side.toLowerCase()} current card`} draggable={false} />
+        {failure.bestCandidate.anchors.map((anchor, index) => (
+          <span
+            key={`expected:${anchor.anchorId}`}
+            className={styles.expected}
+            style={{ left: `${anchor.expectedPoint.x * 100}%`, top: `${anchor.expectedPoint.y * 100}%` }}
+            title={`Expected ${anchor.anchorId}`}
+          >{index + 1}</span>
+        ))}
+        {anchors.map((anchor, index) => {
+          const diagnostic = diagnostics.get(anchor.anchorId)!;
+          return (
+            <button
+              type="button"
+              key={anchor.anchorId}
+              className={`${styles.handle} ${diagnostic.status === "TRACKED" ? styles.tracked : styles.failed}`}
+              style={{ left: `${anchor.point.x * 100}%`, top: `${anchor.point.y * 100}%` }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setDragging(anchor.anchorId);
+              }}
+              disabled={disabled}
+              aria-label={`Move anchor ${index + 1}, ${diagnostic.status.toLowerCase()}`}
+            >{index + 1}</button>
+          );
+        })}
+      </div>
+      <div className={styles.diagnostics}>
+        {failure.bestCandidate.anchors.map((anchor, index) => (
+          <span key={anchor.anchorId} data-status={anchor.status}>
+            {index + 1} · {anchor.status.replaceAll("_", " ")} · {Math.round(anchor.score * 100)}%
+          </span>
+        ))}
+      </div>
+      {error ? <p role="alert" className={styles.error}>{error}</p> : null}
+      <div className={styles.actions}>
+        <button type="button" className={styles.manual} onClick={onContinueManual} disabled={disabled}>
+          Continue with normal human review
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            void onConfirm(anchors).catch((reason) => {
+              setError(reason instanceof Error ? reason.message : "Anchor correction could not be saved. Your corrections are preserved.");
+            });
+          }}
+          disabled={disabled}
+        >{disabled ? "Validating…" : "Confirm corrected anchors"}</button>
+      </div>
+    </section>
+  );
+}

@@ -60,6 +60,10 @@ export interface UploadBufferOptions {
   cacheControl?: string;
 }
 
+export interface PrivateChecksumUploadBufferOptions extends UploadBufferOptions {
+  checksumSha256: string;
+}
+
 export interface PresignUploadOptions {
   /** Lowercase or uppercase 64-character SHA-256 hex digest of the exact PUT body. */
   checksumSha256?: string;
@@ -525,6 +529,37 @@ export async function readStorageBuffer(storageKey: string) {
   return fs.readFile(filePath);
 }
 
+export async function readStorageBufferBounded(
+  storageKey: string,
+  maxBytes = AI_GRADER_STORAGE_MAX_OBJECT_BYTES,
+  dependencies: Readonly<{ openRead?: typeof openStorageObjectRead }> = {},
+) {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+    throw new Error("Bounded storage read limit is invalid.");
+  }
+  const read = await (dependencies.openRead ?? openStorageObjectRead)(storageKey);
+  if (!Number.isSafeInteger(read.byteSize) || (read.byteSize ?? 0) < 1 || (read.byteSize ?? 0) > maxBytes) {
+    read.body.destroy?.();
+    throw new Error("Storage object has an invalid bounded byte size.");
+  }
+  const chunks: Buffer[] = [];
+  let received = 0;
+  for await (const rawChunk of read.body) {
+    if (!(rawChunk instanceof Uint8Array)) {
+      read.body.destroy?.();
+      throw new Error("Storage object returned an invalid stream chunk.");
+    }
+    received += rawChunk.byteLength;
+    if (received > maxBytes || received > (read.byteSize as number)) {
+      read.body.destroy?.();
+      throw new Error("Storage object exceeded its bounded byte size.");
+    }
+    chunks.push(Buffer.from(rawChunk));
+  }
+  if (received !== read.byteSize) throw new Error("Storage object ended before its declared byte size.");
+  return Buffer.concat(chunks, received);
+}
+
 export async function openStorageObjectRead(storageKey: string): Promise<StorageObjectRead> {
   const mode = getStorageMode();
   if (mode === "s3") {
@@ -751,6 +786,74 @@ export async function uploadBuffer(
 
   await writeLocalFile(storageKey, buffer);
   return publicUrlFor(storageKey);
+}
+
+export function privateChecksumPutObjectCommand(input: Readonly<{
+  bucket: string;
+  storageKey: string;
+  buffer: Buffer;
+  contentType: string;
+  cacheControl?: string;
+  checksumSha256: string;
+}>) {
+  return new PutObjectCommand({
+    Bucket: input.bucket,
+    Key: input.storageKey,
+    Body: input.buffer,
+    ContentType: input.contentType,
+    CacheControl: input.cacheControl,
+    ACL: "private",
+    ChecksumSHA256: sha256HexToBase64(input.checksumSha256),
+  });
+}
+
+/** Provider-compatible private PUT for content-addressed immutable evidence. */
+export async function uploadPrivateChecksumBuffer(
+  storageKey: string,
+  buffer: Buffer,
+  contentType: string,
+  options: PrivateChecksumUploadBufferOptions,
+  dependencies: Readonly<{
+    storageMode?: StorageMode;
+    sendS3?: (command: PutObjectCommand) => Promise<unknown>;
+    writeLocal?: typeof writeLocalFile;
+  }> = {},
+) {
+  const normalizedKey = normalizeStorageKeyCandidate(storageKey);
+  if (!normalizedKey || normalizedKey !== storageKey) {
+    throw new Error("Immutable storage object key is invalid.");
+  }
+  if (!SHA256_HEX_PATTERN.test(options.checksumSha256)) {
+    throw new Error("Immutable storage object checksum is invalid.");
+  }
+  if (buffer.byteLength < 1 || buffer.byteLength > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+    throw new Error("Immutable storage object exceeds the configured upload-size limit.");
+  }
+  if (createHash("sha256").update(buffer).digest("hex") !== options.checksumSha256) {
+    throw new Error("Immutable storage object checksum does not match its exact bytes.");
+  }
+  if ((dependencies.storageMode ?? getStorageMode()) === "s3") {
+    const command = privateChecksumPutObjectCommand({
+      bucket: s3Bucket,
+      storageKey,
+      buffer,
+      contentType,
+      cacheControl: options.cacheControl,
+      checksumSha256: options.checksumSha256,
+    });
+    await (dependencies.sendS3 ?? ((request) => getS3Client().send(request)))(command);
+    return { storageKey };
+  }
+  await (dependencies.writeLocal ?? writeLocalFile)(storageKey, buffer);
+  return { storageKey };
+}
+
+export function isStorageObjectNotFoundError(error: unknown) {
+  const fields = error as { code?: unknown; name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return fields?.code === "ENOENT"
+    || fields?.name === "NoSuchKey"
+    || fields?.name === "NotFound"
+    || fields?.$metadata?.httpStatusCode === 404;
 }
 
 export function buildThumbnailKey(storageKey: string) {

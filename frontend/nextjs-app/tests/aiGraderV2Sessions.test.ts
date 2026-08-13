@@ -16,16 +16,26 @@ import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
+  type SpeedsterMapRegistration,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 import {
   SpeedsterMapIntegrityError,
+  parseSpeedsterMapRegistration,
   speedsterPhysicalQuadHash,
 } from "../lib/server/speedsterCardTypeMaps";
+import {
+  issueSpeedsterMapRegistrationReceipt,
+  SPEEDSTER_MAP_REGISTRATION_RECEIPT_MAX_AGE_MS,
+  verifySpeedsterMapRegistrationReceipt,
+} from "../lib/server/speedsterMapRegistrationAuthority";
 import {
   fetchSpeedsterImageUpstream,
   sanitizeSpeedsterImageFailure,
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
+  parseSpeedsterRegistrationFailure,
+  assertSpeedsterRegistrationCandidateAuthority,
+  selectSpeedsterRegistrationLessonCandidates,
   SpeedsterImageUpstreamTimeoutError,
   speedsterServiceBody,
   speedsterServiceHeaders,
@@ -68,6 +78,12 @@ const mapBindingQuad = [
   { x: 0.9, y: 0.9 },
   { x: 0.1, y: 0.9 },
 ] as const;
+const registrationReceiptEnv = {
+  SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY: "test_speedster_registration_authority_secret_0123456789",
+  SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID: "test-speedster-registration-key-v1",
+} as unknown as NodeJS.ProcessEnv;
+process.env.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY = registrationReceiptEnv.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY;
+process.env.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID = registrationReceiptEnv.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID;
 
 function mapBindingFixture() {
   const sessionId = "speedster-map-binding-0001";
@@ -106,25 +122,36 @@ function mapBindingFixture() {
     },
   };
   const registration = (name: "front" | "back") => ({
-    version: "opencv-human-anchor-registration-v1",
-    side: name === "front" ? "FRONT" : "BACK",
+    version: "opencv-human-anchor-registration-v1" as const,
+    side: (name === "front" ? "FRONT" : "BACK") as "FRONT" | "BACK",
     mapRevisionId: "map-revision-1",
     currentPhysicalQuadSha256: speedsterPhysicalQuadHash(mapBindingQuad),
     currentInspectionSha256: mapBindingSha(capture[name].inspectionStorageKey),
-    homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    homography: [1, 0, 0, 0, 1, 0, 0, 0, 1] as const,
     anchors: [1, 2, 3, 4].map((number) => ({
       anchorId: `anchor-${number}`,
       expectedPoint: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
       locatedPoint: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
       score: 1,
     })),
-    projectedDesignBoundary: { kind: "QUAD", points: mapBindingQuad },
+    projectedDesignBoundary: { kind: "QUAD" as const, points: mapBindingQuad },
     projectedZones: [{
       id: "zone-1",
       label: "Printed text",
-      semanticType: "PRINT_TEXT",
+      semanticType: "PRINT_TEXT" as const,
       polygon: mapBindingQuad,
     }],
+  });
+  const frontRegistration = registration("front");
+  const backRegistration = registration("back");
+  const authorize = (candidate: ReturnType<typeof registration>) => ({
+    ...candidate,
+    serverReceipt: issueSpeedsterMapRegistrationReceipt({
+      operatorAdminId: "admin-1",
+      sessionId,
+      registration: candidate as SpeedsterMapRegistration,
+      env: registrationReceiptEnv,
+    }),
   });
   return {
     sessionId,
@@ -133,7 +160,7 @@ function mapBindingFixture() {
     binding: {
       revisionId: "map-revision-1",
       filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
-      registration: { front: registration("front"), back: registration("back") },
+      registration: { front: authorize(frontRegistration), back: authorize(backRegistration) },
     },
   };
 }
@@ -146,6 +173,20 @@ function appliedMapFixture(
   const matchKey = appliedScope === "EXACT"
     ? speedsterCardTypeMapKey("SPORTS", identity)
     : speedsterFamilyCardTypeMapKey("SPORTS", identity);
+  const mapSide = (side: "FRONT" | "BACK") => ({
+    side,
+    designBoundary: { kind: "QUAD", points: mapBindingQuad },
+    anchors: [1, 2, 3, 4].map((number) => ({
+      id: `anchor-${number}`,
+      point: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
+    })),
+    zones: [{
+      id: "zone-1",
+      label: "Printed text",
+      semanticType: "PRINT_TEXT",
+      polygon: mapBindingQuad,
+    }],
+  });
   return {
     appliedScope,
     appliedMapName: appliedScope === "EXACT"
@@ -156,6 +197,8 @@ function appliedMapFixture(
       revisionId: fixture.binding.revisionId,
       matchKeyHash: mapBindingSha(JSON.stringify(matchKey)),
       matchKey,
+      frontMap: mapSide("FRONT"),
+      backMap: mapSide("BACK"),
     },
     sourceProvenance: {
       sourceSessionId: "source-session-1234567890",
@@ -163,6 +206,78 @@ function appliedMapFixture(
     },
   } as never;
 }
+
+function v2Registration(
+  legacy: ReturnType<typeof mapBindingFixture>["binding"]["registration"]["front"],
+  provenance: Readonly<{
+    candidateId: string;
+    source: "ORIGINAL_REFERENCE" | "REGISTRATION_LESSON" | "HUMAN_CORRECTION";
+    lessonId?: string;
+  }> = { candidateId: "original-reference", source: "ORIGINAL_REFERENCE" },
+): SpeedsterMapRegistration {
+  const human = provenance.source === "HUMAN_CORRECTION";
+  const { serverReceipt: _legacyReceipt, ...unsignedLegacy } = legacy;
+  return {
+    ...unsignedLegacy,
+    version: "opencv-redundant-ransac-registration-v2" as const,
+    candidateProvenance: provenance,
+    acceptance: human ? {
+      policyVersion: "speedster-map-registration-acceptance-v2" as const,
+      mode: "HUMAN_CONFIRMED" as const,
+      featureCount: 4,
+      usableFeatureCount: 4,
+      inlierCount: 4,
+      inlierFraction: 1,
+      perAnchorFeatureCounts: [1, 1, 1, 1] as const,
+      perAnchorInlierCounts: [1, 1, 1, 1] as const,
+      medianReprojectionErrorPx: 0,
+      maxReprojectionErrorPx: 0,
+    } : {
+      policyVersion: "speedster-map-registration-acceptance-v2" as const,
+      mode: "AUTOMATIC_RANSAC" as const,
+      featureCount: 16,
+      usableFeatureCount: 12,
+      inlierCount: 10,
+      inlierFraction: 10 / 12,
+      perAnchorFeatureCounts: [3, 3, 3, 3] as const,
+      perAnchorInlierCounts: [2, 2, 3, 3] as const,
+      medianReprojectionErrorPx: 0.8,
+      maxReprojectionErrorPx: 2.4,
+    },
+  } as SpeedsterMapRegistration;
+}
+
+function authorizedV2Binding(
+  fixture: ReturnType<typeof mapBindingFixture>,
+  provenance?: Parameters<typeof v2Registration>[1],
+  now = 10_000,
+) {
+  const front = v2Registration(fixture.binding.registration.front, provenance);
+  const back = v2Registration(fixture.binding.registration.back, provenance);
+  return {
+    ...fixture.binding,
+    registration: {
+      front: {
+        ...front,
+        serverReceipt: issueSpeedsterMapRegistrationReceipt({
+          operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+          registration: front, now, env: registrationReceiptEnv,
+        }),
+      },
+      back: {
+        ...back,
+        serverReceipt: issueSpeedsterMapRegistrationReceipt({
+          operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+          registration: back, now, env: registrationReceiptEnv,
+        }),
+      },
+    },
+  };
+}
+
+const receiptVerifierAt = (now: number) => (
+  input: Parameters<typeof verifySpeedsterMapRegistrationReceipt>[0]
+) => verifySpeedsterMapRegistrationReceipt({ ...input, now, env: registrationReceiptEnv });
 
 test("geometry proxy clamps automatic handles to the reachable image boundary", () => {
   assert.deepEqual(sanitizeSpeedsterGeometryPayload({
@@ -213,6 +328,34 @@ test("image proxy deadline rejects a non-cooperative late response body", async 
       && error.timeoutMs === 10,
   );
   assert.equal(aborted, true);
+});
+
+test("map-registration uses the same server deadline and late completion cannot reach lesson persistence", async () => {
+  let lateBodyCompleted = false;
+  let completeLateBody!: () => void;
+  const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => ({
+    ok: true,
+    status: 200,
+    json: () => new Promise((resolve) => {
+      init?.signal?.addEventListener("abort", () => undefined, { once: true });
+      completeLateBody = () => { lateBodyCompleted = true; resolve({ accepted: true }); };
+    }),
+  } as Response)) as typeof fetch;
+  await assert.rejects(fetchSpeedsterImageUpstream({
+    url: "https://speedster.example.test/map-registration",
+    action: "map-registration",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+    timeoutMs: 10,
+    fetchImpl,
+  }), (error: unknown) => error instanceof SpeedsterImageUpstreamTimeoutError
+    && error.action === "map-registration");
+  completeLateBody();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(lateBodyCompleted, true, "the test upstream deliberately ignores abort and completes late");
+  const source = readFileSync(fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/image/[action].ts", import.meta.url)), "utf8");
+  assert.match(source, /action === "geometry" \|\| action === "map-registration"/);
+  assert.ok(source.indexOf("fetchSpeedsterImageUpstream") < source.indexOf("persistSpeedsterRegistrationLesson({"));
 });
 
 test("non-trace upstream failures redact private URLs and credentials", () => {
@@ -485,6 +628,12 @@ test("generic PATCH permits only the DRAFT to CAPTURED transition with required 
 
 test("capture PATCH accepts an exact active-map registration bound to submitted quads and server-hashed inspections", async () => {
   const fixture = mapBindingFixture();
+  const submittedCapture = {
+    ...fixture.capture,
+    serverReceipt: "browser-injected-capture-field",
+    unknownBrowserField: { accepted: true },
+    front: { ...fixture.capture.front, serverReceipt: "browser-injected-side-field" },
+  };
   const hashedKeys: string[] = [];
   const saves: Record<string, unknown>[] = [];
   let events: readonly { eventType: string; details?: unknown }[] = [];
@@ -509,7 +658,7 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   const result = response();
   await handler(request("PATCH", {
     workflowState: "CAPTURED",
-    capture: fixture.capture,
+    capture: submittedCapture,
     mapBinding: fixture.binding,
   }, fixture.sessionId), result.res);
   assert.equal(result.state.status, 200);
@@ -519,9 +668,230 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   ].sort());
   assert.equal(saves[0]?.mapRevisionId, fixture.binding.revisionId);
   assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
-  assert.deepEqual(saves[0]?.capture, fixture.capture);
+  assert.deepEqual(saves[0]?.capture, fixture.capture, "capture persistence is rebuilt from validated canonical fields");
+  assert.equal(JSON.stringify(saves[0]).includes("serverReceipt"), false, "opaque authority is never persisted");
   assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
   assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"EXACT"/);
+});
+
+test("v2 capture accepts exact server receipts and rejects browser-fabricated or altered automatic authority", async () => {
+  const fixture = mapBindingFixture();
+  const now = 20_000;
+  const binding = authorizedV2Binding(fixture, undefined, now);
+  const dependencies = {
+    async loadActiveMap() { return appliedMapFixture(fixture); },
+    async hashEvidence(storageKey: string) { return mapBindingSha(storageKey); },
+    verifyReceipt: receiptVerifierAt(now + 1),
+    async verifyHumanLesson() { throw new Error("automatic registration must not consult human lessons"); },
+  };
+  const accepted = await validateSpeedsterSubmittedMapBinding(
+    fixture.session, binding, fixture.capture, dependencies,
+  );
+  assert.equal(accepted?.mapRevisionId, fixture.binding.revisionId);
+
+  const missing = structuredClone(binding);
+  delete (missing.registration.front as { serverReceipt?: string }).serverReceipt;
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, missing, fixture.capture, dependencies,
+  ), /lacks server authority/);
+
+  const forged = structuredClone(binding);
+  forged.registration.front.serverReceipt = "browser-authored.not-a-signature";
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, forged, fixture.capture, dependencies,
+  ), /server authority is invalid/);
+
+  const altered = structuredClone(binding);
+  (altered.registration.front.anchors[0] as { score: number }).score = 0.9;
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, altered, fixture.capture, dependencies,
+  ), /server authority is invalid/);
+});
+
+test("v2 human capture requires receipt plus exact side-bound immutable lesson authority", async () => {
+  const fixture = mapBindingFixture();
+  const now = 30_000;
+  const signedHuman = (side: "front" | "back", lessonId: string) => {
+    const registration = v2Registration(fixture.binding.registration[side], {
+      candidateId: lessonId,
+      source: "HUMAN_CORRECTION",
+      lessonId,
+    });
+    return {
+      ...registration,
+      serverReceipt: issueSpeedsterMapRegistrationReceipt({
+        operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+        registration, now, env: registrationReceiptEnv,
+      }),
+    };
+  };
+  const binding = {
+    ...fixture.binding,
+    registration: {
+      front: signedHuman("front", "lesson-front"),
+      back: signedHuman("back", "lesson-back"),
+    },
+  };
+  const verified: string[] = [];
+  const dependencies = {
+    async loadActiveMap() { return appliedMapFixture(fixture); },
+    async hashEvidence(storageKey: string) { return mapBindingSha(storageKey); },
+    verifyReceipt: receiptVerifierAt(now + 1),
+    async verifyHumanLesson(input: { lessonId: string; side: string; registration: { candidateProvenance?: { lessonId?: string } } }) {
+      assert.equal(input.lessonId, input.side === "FRONT" ? "lesson-front" : "lesson-back");
+      assert.equal(input.registration.candidateProvenance?.lessonId, input.lessonId);
+      verified.push(`${input.side}:${input.lessonId}`);
+    },
+  };
+  await validateSpeedsterSubmittedMapBinding(fixture.session, binding, fixture.capture, dependencies as any);
+  assert.deepEqual(verified, ["FRONT:lesson-front", "BACK:lesson-back"]);
+
+  const fabricated = structuredClone(binding);
+  delete (fabricated.registration.front.candidateProvenance as { lessonId?: string }).lessonId;
+  const unsignedFront = { ...fabricated.registration.front };
+  delete (unsignedFront as { serverReceipt?: string }).serverReceipt;
+  fabricated.registration.front.serverReceipt = issueSpeedsterMapRegistrationReceipt({
+    operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+    registration: unsignedFront as any, now, env: registrationReceiptEnv,
+  });
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, fabricated, fixture.capture, dependencies as any,
+  ), /lacks immutable lesson authority/);
+
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, binding, fixture.capture, {
+      ...dependencies,
+      async verifyHumanLesson() { throw new Error("lesson evidence hash changed"); },
+    } as any,
+  ), /immutable lesson authority is invalid/);
+});
+
+test("registration receipts bind exact authority and remain valid for the operator-safe 24-hour window", () => {
+  const fixture = mapBindingFixture();
+  const registration = v2Registration(fixture.binding.registration.front);
+  const issuedAt = 40_000;
+  const receipt = issueSpeedsterMapRegistrationReceipt({
+    operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+    registration, now: issuedAt, env: registrationReceiptEnv,
+  });
+  verifySpeedsterMapRegistrationReceipt({
+    receipt, operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+    registration, now: issuedAt + SPEEDSTER_MAP_REGISTRATION_RECEIPT_MAX_AGE_MS,
+    env: registrationReceiptEnv,
+  });
+  assert.throws(() => verifySpeedsterMapRegistrationReceipt({
+    receipt, operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+    registration, now: issuedAt + SPEEDSTER_MAP_REGISTRATION_RECEIPT_MAX_AGE_MS + 1,
+    env: registrationReceiptEnv,
+  }), /does not match/);
+  assert.throws(() => verifySpeedsterMapRegistrationReceipt({
+    receipt, operatorAdminId: "other-admin", sessionId: fixture.sessionId,
+    registration, now: issuedAt + 1, env: registrationReceiptEnv,
+  }), /does not match/);
+  assert.throws(() => verifySpeedsterMapRegistrationReceipt({
+    receipt, operatorAdminId: "admin-1", sessionId: "other-session",
+    registration, now: issuedAt + 1, env: registrationReceiptEnv,
+  }), /does not match/);
+  const tinyMutation = {
+    ...registration,
+    homography: registration.homography.map((value, index) => index === 1 ? 4e-13 : value),
+  } as unknown as typeof registration;
+  assert.throws(() => verifySpeedsterMapRegistrationReceipt({
+    receipt, operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+    registration: tinyMutation, now: issuedAt + 1, env: registrationReceiptEnv,
+  }), /does not match/, "sub-1e-12 numeric mutations must never collide with exact receipt authority");
+  for (const env of [
+    {},
+    { SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY: "weak", SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID: "key" },
+    { SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY: "not valid spaces despite being sufficiently long 0123456789", SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID: "key" },
+  ] as unknown as NodeJS.ProcessEnv[]) {
+    assert.throws(() => issueSpeedsterMapRegistrationReceipt({
+      operatorAdminId: "admin-1", sessionId: fixture.sessionId,
+      registration, now: issuedAt, env,
+    }), /authority is unavailable/);
+  }
+});
+
+test("new capture rejects unsigned v1 downgrade while signed v1 remains valid during rolling service cutover", async () => {
+  const fixture = mapBindingFixture();
+  const unsigned = structuredClone(fixture.binding);
+  delete (unsigned.registration.front as { serverReceipt?: string }).serverReceipt;
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, unsigned, fixture.capture, {
+      async loadActiveMap() { return appliedMapFixture(fixture); },
+      async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+      verifyReceipt: receiptVerifierAt(Date.now()),
+    },
+  ), /lacks server authority/);
+  const signed = await validateSpeedsterSubmittedMapBinding(
+    fixture.session, fixture.binding, fixture.capture, {
+      async loadActiveMap() { return appliedMapFixture(fixture); },
+      async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+      verifyReceipt: receiptVerifierAt(Date.now()),
+    },
+  );
+  assert.equal(signed?.mapRevisionId, fixture.binding.revisionId);
+});
+
+test("automatic lesson result must be in the exact verified request roster before receipt issuance", () => {
+  const fixture = mapBindingFixture();
+  const { serverReceipt: _receipt, ...legacy } = fixture.binding.registration.front;
+  const registration = v2Registration(legacy as any, {
+    candidateId: "lesson-1", source: "REGISTRATION_LESSON", lessonId: "lesson-1",
+  });
+  assert.doesNotThrow(() => assertSpeedsterRegistrationCandidateAuthority(registration as any, {
+    lessonCandidates: [{ candidateId: "lesson-1", referenceInspectionSha256: "a".repeat(64) }],
+  }, false));
+  assert.throws(() => assertSpeedsterRegistrationCandidateAuthority(registration as any, {
+    lessonCandidates: [{ candidateId: "different-lesson", referenceInspectionSha256: "b".repeat(64) }],
+  }, false), /outside the exact server-verified candidate roster/);
+  assert.throws(() => assertSpeedsterRegistrationCandidateAuthority({
+    ...registration,
+    candidateProvenance: { candidateId: "lesson-1", source: "REGISTRATION_LESSON", lessonId: "lesson-2" },
+  } as any, {
+    lessonCandidates: [{ candidateId: "lesson-1", referenceInspectionSha256: "a".repeat(64) }],
+  }, false), /outside the exact server-verified candidate roster/);
+});
+
+test("automatic lesson capture reloads exact immutable lesson authority before accepting its receipt", async () => {
+  const fixture = mapBindingFixture();
+  const now = 50_000;
+  const provenance = { candidateId: "lesson-1", source: "REGISTRATION_LESSON" as const, lessonId: "lesson-1" };
+  const binding = authorizedV2Binding(fixture, provenance, now);
+  const verified: string[] = [];
+  const dependencies = {
+    async loadActiveMap() { return appliedMapFixture(fixture); },
+    async hashEvidence(storageKey: string) { return mapBindingSha(storageKey); },
+    verifyReceipt: receiptVerifierAt(now + 1),
+    async verifyReferenceLesson(input: { lessonId: string; side: string; expectedAnchors: unknown[] }) {
+      assert.equal(input.lessonId, "lesson-1");
+      assert.equal(input.expectedAnchors.length, 4);
+      verified.push(input.side);
+    },
+  };
+  await validateSpeedsterSubmittedMapBinding(fixture.session, binding, fixture.capture, dependencies as any);
+  assert.deepEqual(verified, ["FRONT", "BACK"]);
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session, binding, fixture.capture, {
+      ...dependencies,
+      async verifyReferenceLesson() { throw new Error("lesson source evidence changed"); },
+    } as any,
+  ), /immutable authority is invalid/);
+});
+
+test("capture PATCH rejects browser-tampered projected map geometry before persistence", async () => {
+  const fixture = mapBindingFixture();
+  const tampered = structuredClone(fixture.binding);
+  (tampered.registration.front.projectedZones[0].polygon as unknown as { x: number; y: number }[])[0] = { x: 0.11, y: 0.1 };
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    fixture.session,
+    tampered,
+    fixture.capture,
+    {
+      async loadActiveMap() { return appliedMapFixture(fixture); },
+      async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+    },
+  ), /zone projection is incoherent/);
 });
 
 test("capture PATCH pins a family registration for a matching Card Type", async () => {
@@ -955,11 +1325,249 @@ test("map registration uses the effective family revision for projected boundary
         ? referenceSha256
         : mapBindingSha(storageKey);
     },
+    async loadRegistrationLessons() {
+      return [{
+        lessonId: "lesson-1",
+        currentInspectionKey: "private/card-maps/lesson/back.webp",
+        currentInspectionSha256: mapBindingSha("lesson"),
+        anchors: [1, 2, 3, 4].map((number) => ({
+          id: `anchor-${number}`,
+          point: { x: number % 2 ? 0.21 : 0.81, y: number < 3 ? 0.21 : 0.81 },
+        })),
+        sourceHomography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      }];
+    },
   }) as Record<string, unknown>;
 
   assert.equal(body.mapRevisionId, fixture.binding.revisionId);
   assert.deepEqual(body.designBoundary, { kind: "QUAD", points: mapBindingQuad });
   assert.equal((body.anchors as unknown[]).length, 4);
+  assert.deepEqual(body.lessonCandidates, [{
+    candidateId: "lesson-1",
+    referenceInspectionSha256: mapBindingSha("lesson"),
+    referenceImage: { imageUrl: "https://signed.invalid/private/card-maps/lesson/back.webp" },
+    anchors: [1, 2, 3, 4].map((number) => ({
+      id: `anchor-${number}`,
+      point: { x: number % 2 ? 0.21 : 0.81, y: number < 3 ? 0.21 : 0.81 },
+    })),
+    sourceHomography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  }]);
+});
+
+test("rescue rejects active-revision drift before snapshot or upstream authority can be prepared", async () => {
+  const fixture = mapBindingFixture();
+  const selected = appliedMapFixture(fixture, "FAMILY") as any;
+  const referenceSha256 = mapBindingSha("family-reference-front");
+  const expectedAnchors = [1, 2, 3, 4].map((number) => ({
+    id: `anchor-${number}`,
+    point: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
+  }));
+  selected.revision = {
+    ...selected.revision,
+    frontMap: {
+      side: "FRONT",
+      referenceInspection: { storageKey: "private/card-maps/family/front.webp", sha256: referenceSha256 },
+      designBoundary: { kind: "QUAD", points: mapBindingQuad },
+      anchors: expectedAnchors,
+      zones: [],
+    },
+  };
+  const currentKey = `ai-grader-v2/admin-1/${fixture.sessionId}/prepared/front/inspection.webp`;
+  let snapshots = 0;
+  const failure = {
+    algorithmVersion: "opencv-redundant-ransac-registration-v2",
+    policyVersion: "speedster-map-registration-acceptance-v2",
+    accepted: false,
+    failureCode: "LOW_RANSAC_INLIER_FRACTION",
+    message: "Registration inlier fraction is below policy.",
+    candidateCount: 1,
+    candidateIds: ["original-reference"],
+    binding: {
+      side: "FRONT",
+      mapRevisionId: "stale-revision",
+      currentInspectionSha256: mapBindingSha(currentKey),
+      currentPhysicalQuadSha256: speedsterPhysicalQuadHash(mapBindingQuad),
+      candidates: [{ candidateId: "original-reference", referenceInspectionSha256: referenceSha256 }],
+    },
+    bestCandidate: {
+      candidateId: "original-reference", provenance: "ORIGINAL_REFERENCE", accepted: false,
+      failureCode: "LOW_RANSAC_INLIER_FRACTION", message: "Registration inlier fraction is below policy.",
+      anchors: expectedAnchors.map(({ id, point }) => ({
+        anchorId: id, expectedPoint: point, trackedPoint: point, locatedPoint: point,
+        score: 0.9, status: "TRACKED",
+      })),
+      featureCount: 40, usableFeatureCount: 30, inlierCount: 15, inlierFraction: 0.5,
+      perAnchorFeatureCounts: [7, 7, 8, 8], perAnchorInlierCounts: [4, 4, 4, 3],
+      medianReprojectionErrorPx: 0.8, maxReprojectionErrorPx: 2.1,
+    },
+  };
+  await assert.rejects(() => speedsterServiceBody("map-registration", {
+    sessionId: fixture.sessionId,
+    side: "FRONT",
+    currentPhysicalQuad: mapBindingQuad,
+    rescue: true,
+    rescueAttemptId: "rescue-drift-1",
+    automaticFailure: failure,
+    correctedAnchors: expectedAnchors.map(({ id, point }) => ({ anchorId: id, point })),
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async presignRead() { return "https://signed.invalid/not-reached"; },
+    async findOwnedMapSession() { return fixture.session; },
+    async loadActiveMap() { return selected; },
+    async hashMapEvidence(key) { return key === "private/card-maps/family/front.webp" ? referenceSha256 : mapBindingSha(key); },
+    async loadRegistrationLessons() { return []; },
+    async snapshotRegistrationEvidence() { snapshots += 1; throw new Error("not reached"); },
+  }), /no longer matches the active map revision/);
+  assert.equal(snapshots, 0);
+});
+
+test("map registration failure diagnostics preserve off-card proposals but reject malformed/unbounded evidence", () => {
+  const failure = parseSpeedsterRegistrationFailure({
+    algorithmVersion: "opencv-redundant-ransac-registration-v2",
+    policyVersion: "speedster-map-registration-acceptance-v2",
+    accepted: false,
+    failureCode: "LOW_ANCHOR_CONFIDENCE",
+    message: "low confidence",
+    candidateCount: 1,
+    candidateIds: ["original-reference"],
+    binding: {
+      side: "FRONT",
+      mapRevisionId: "map-revision-1",
+      currentInspectionSha256: "a".repeat(64),
+      currentPhysicalQuadSha256: "b".repeat(64),
+      candidates: [{ candidateId: "original-reference", referenceInspectionSha256: "c".repeat(64) }],
+    },
+    bestCandidate: {
+      candidateId: "original-reference",
+      provenance: "ORIGINAL_REFERENCE",
+      accepted: false,
+      failureCode: "LOW_ANCHOR_CONFIDENCE",
+      message: "low confidence",
+      anchors: [1, 2, 3, 4].map((number) => ({
+        anchorId: `a${number}`,
+        expectedPoint: { x: number % 2 ? 0.1 : 0.9, y: number < 3 ? 0.1 : 0.9 },
+        trackedPoint: number === 1 ? { x: -0.131, y: 0.06 } : { x: 0.5, y: 0.5 },
+        locatedPoint: number === 1 ? { x: -0.131, y: 0.06 } : { x: 0.5, y: 0.5 },
+        score: number === 1 ? 0 : 0.9,
+        status: number === 1 ? "OUT_OF_CARD" : "TRACKED",
+      })),
+      featureCount: 40,
+      usableFeatureCount: 30,
+      inlierCount: 20,
+      inlierFraction: 2 / 3,
+      perAnchorFeatureCounts: [4, 8, 9, 9],
+      perAnchorInlierCounts: [1, 6, 7, 6],
+      medianReprojectionErrorPx: 0.8,
+      maxReprojectionErrorPx: 2.1,
+    },
+  });
+  assert.equal(failure.bestCandidate.anchors[0].trackedPoint?.x, -0.131);
+  const lesson = {
+    lessonId: "lesson-1",
+    currentInspectionKey: "lesson.webp",
+    currentInspectionSha256: "a".repeat(64),
+    anchors: [],
+    sourceHomography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  };
+  assert.deepEqual(
+    selectSpeedsterRegistrationLessonCandidates([lesson], failure),
+    [],
+    "A retry must not add a lesson that was absent from the original failed candidate set",
+  );
+  assert.deepEqual(
+    selectSpeedsterRegistrationLessonCandidates([lesson], {
+      ...failure,
+      candidateCount: 2,
+      candidateIds: ["original-reference", "lesson-1"],
+      binding: {
+        ...failure.binding,
+        candidates: [
+          ...failure.binding.candidates,
+          { candidateId: "lesson-1", referenceInspectionSha256: lesson.currentInspectionSha256 },
+        ],
+      },
+    }),
+    [lesson],
+    "A retry must reconstruct the exact original lesson candidate set and order",
+  );
+  assert.throws(() => parseSpeedsterRegistrationFailure({
+    ...failure,
+    bestCandidate: { ...failure.bestCandidate, featureCount: 1000 },
+  }), /malformed/);
+});
+
+test("server parser accepts validated v2 automatic and human registrations while legacy v1 stays compatible", () => {
+  const fixture = mapBindingFixture();
+  const { serverReceipt: _receipt, ...legacy } = fixture.binding.registration.front;
+  assert.equal(parseSpeedsterMapRegistration(legacy, {
+    side: "FRONT", mapRevisionId: "map-revision-1",
+  }).version, "opencv-human-anchor-registration-v1");
+  const v2 = {
+    ...legacy,
+    version: "opencv-redundant-ransac-registration-v2",
+    candidateProvenance: { candidateId: "lesson-1", source: "HUMAN_CORRECTION", lessonId: "lesson-1" },
+    acceptance: {
+      policyVersion: "speedster-map-registration-acceptance-v2",
+      mode: "HUMAN_CONFIRMED",
+      featureCount: 4,
+      usableFeatureCount: 4,
+      inlierCount: 4,
+      inlierFraction: 1,
+      perAnchorFeatureCounts: [1, 1, 1, 1],
+      perAnchorInlierCounts: [1, 1, 1, 1],
+      medianReprojectionErrorPx: 0,
+      maxReprojectionErrorPx: 0,
+    },
+  };
+  const parsed = parseSpeedsterMapRegistration(v2, { side: "FRONT", mapRevisionId: "map-revision-1" });
+  assert.equal(parsed.version, "opencv-redundant-ransac-registration-v2");
+  assert.equal(parsed.acceptance?.mode, "HUMAN_CONFIRMED");
+  assert.equal(parsed.candidateProvenance?.lessonId, "lesson-1");
+  const automatic = {
+    ...v2,
+    candidateProvenance: { candidateId: "original-reference", source: "ORIGINAL_REFERENCE" },
+    acceptance: {
+      ...v2.acceptance,
+      mode: "AUTOMATIC_RANSAC",
+      featureCount: 16,
+      usableFeatureCount: 12,
+      inlierCount: 10,
+      inlierFraction: 10 / 12,
+      perAnchorFeatureCounts: [3, 3, 3, 3],
+      perAnchorInlierCounts: [2, 2, 3, 3],
+      medianReprojectionErrorPx: 0.8,
+      maxReprojectionErrorPx: 2.4,
+    },
+  };
+  assert.equal(parseSpeedsterMapRegistration(
+    automatic, { side: "FRONT", mapRevisionId: "map-revision-1" },
+  ).acceptance?.mode, "AUTOMATIC_RANSAC");
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...automatic,
+    acceptance: {
+      ...automatic.acceptance,
+      inlierCount: 9,
+      perAnchorInlierCounts: [2, 2, 2, 3],
+    },
+  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /does not satisfy/);
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...v2,
+    acceptance: { ...v2.acceptance, policyVersion: "client-policy" },
+  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /acceptance policy identity/);
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...automatic,
+    anchors: automatic.anchors.map((anchor, index) => (
+      index === 0 ? { ...anchor, score: 0.249 } : anchor
+    )),
+  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /score is invalid/);
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...automatic,
+    homography: [-1, 0, 1, 0, 1, 0, 0, 0, 1],
+    anchors: automatic.anchors.map((anchor) => ({
+      ...anchor,
+      locatedPoint: { x: 1 - anchor.expectedPoint.x, y: anchor.expectedPoint.y },
+    })),
+  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /reverses or folds orientation/);
 });
 
 test("map registration never retries another scope after the selected revision fails", async () => {

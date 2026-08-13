@@ -14,9 +14,14 @@ owner: Mark
 - If `VERCEL_ENV=production` and `RUN_DB_MIGRATIONS` is not `true`, the build logs that migrations are skipped and continues.
 - To intentionally apply migrations through Vercel, set `RUN_DB_MIGRATIONS=true` for the approved deploy, verify migration readiness first, then remove or reset the flag after the deploy.
 
+## Speedster Map Registration Receipt Gate
+- Any release that requires server-authoritative Card Map registration receipts must provision dedicated, server-only `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY` and `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID` values in the Vercel Production environment before activation.
+- The receipt key must be a new random secret used only for registration receipts; never reuse the Card Format Authority key or expose this key to a browser, local capture helper, RunPod worker, log, or committed file.
+- Record only the key ID and successful presence/format check in `docs/handoffs/SESSION_LOG.md`; never print or record the secret. Missing or invalid authority fails registration closed.
+
 ## Workstation Deploy Flow
 ```bash
-cd /Users/markthomas/tenkings/ten-kings-speedster-v2
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
 git status -sb
 git branch --show-current
 git fetch --all --prune

@@ -7,9 +7,23 @@ import type {
 import type { SpeedsterInspectionFrame } from "./inspection-frame";
 import type { SpeedsterTraceBitmapWireV1 } from "./trace-bitmap-wire";
 import type { SpeedsterCanonicalPixel } from "./trace-editor";
-import type { SpeedsterMapRegistration } from "./card-type-map-contracts";
+import type {
+  SpeedsterMapRegistration,
+  SpeedsterMapRegistrationFailure,
+} from "./card-type-map-contracts";
 
 type ImageAction = "geometry" | "prepare" | "trace-proposal" | "map-registration";
+
+export class SpeedsterMapRegistrationError extends Error {
+  constructor(
+    message: string,
+    readonly failure: SpeedsterMapRegistrationFailure,
+    readonly requestId: string | null,
+  ) {
+    super(message);
+    this.name = "SpeedsterMapRegistrationError";
+  }
+}
 export type SpeedsterGeometryResponse = {
   width: number;
   height: number;
@@ -132,9 +146,23 @@ async function postImageAction<T>(
     const requestId = typeof payload.requestId === "string" && /^[A-Za-z0-9-]{8,80}$/.test(payload.requestId)
       ? payload.requestId
       : null;
-    throw new Error(requestId && !operatorMessage.includes(requestId)
+    const message = requestId && !operatorMessage.includes(requestId)
       ? `${operatorMessage} (request ${requestId})`
-      : operatorMessage);
+      : operatorMessage;
+    if (
+      action === "map-registration"
+      && response.status === 422
+      && payload
+      && typeof payload === "object"
+      && "registrationFailure" in payload
+    ) {
+      throw new SpeedsterMapRegistrationError(
+        message,
+        (payload as { registrationFailure: SpeedsterMapRegistrationFailure }).registrationFailure,
+        requestId,
+      );
+    }
+    throw new Error(message);
   }
   return payload;
 }
@@ -193,6 +221,25 @@ export const speedsterImageService = {
       token,
       "map-registration",
       input,
+      options,
+    );
+  },
+  rescueMapRegistration(
+    token: string,
+    input: {
+      sessionId: string;
+      side: SpeedsterCardSide;
+      currentPhysicalQuad: SpeedsterQuad;
+      rescueAttemptId: string;
+      automaticFailure: SpeedsterMapRegistrationFailure;
+      correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[];
+    },
+    options: SpeedsterImageRequestOptions = {},
+  ) {
+    return postImageAction<SpeedsterMapRegistration>(
+      token,
+      "map-registration",
+      { ...input, rescue: true },
       options,
     );
   },
