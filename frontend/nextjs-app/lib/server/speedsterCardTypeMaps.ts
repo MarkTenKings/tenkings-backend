@@ -1586,28 +1586,90 @@ export type SpeedsterCapturedRestoreRegistration = (
   }>,
 ) => Promise<Readonly<{ front: SpeedsterMapRegistration; back: SpeedsterMapRegistration }>>;
 
-async function registerRestoredMapSide(
+type SpeedsterRestoredMapRegistrationDependencies = Readonly<{
+  hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  presignRead?: typeof presignReadUrl;
+  fetchImpl?: typeof fetch;
+  serviceUrl?: string;
+  apiKey?: string;
+  timeoutMs?: number;
+}>;
+
+export const SPEEDSTER_CAPTURED_RESTORE_REGISTRATION_TIMEOUT_MS = 55_000;
+
+async function fetchRestoredMapRegistration(input: Readonly<{
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  side: SpeedsterCardSide;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+}>) {
+  if (!Number.isSafeInteger(input.timeoutMs) || input.timeoutMs < 1
+    || input.timeoutMs > SPEEDSTER_CAPTURED_RESTORE_REGISTRATION_TIMEOUT_MS) {
+    throw new SpeedsterMapIntegrityError("Restored TRAIN map registration deadline is invalid.");
+  }
+  const controller = new AbortController();
+  let timedOut = false;
+  let rejectDeadline: ((reason: Error) => void) | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    rejectDeadline?.(new SpeedsterMapIntegrityError(
+      `Restored ${input.side} TRAIN map registration timed out; no map revision was changed.`,
+    ));
+    controller.abort();
+  }, input.timeoutMs);
+  try {
+    return await Promise.race([
+      (async () => {
+        const response = await input.fetchImpl(input.url, {
+          method: "POST",
+          headers: input.headers,
+          body: input.body,
+          signal: controller.signal,
+        });
+        return { response, payload: await response.json().catch(() => null) };
+      })(),
+      deadline,
+    ]);
+  } catch (error) {
+    if (timedOut) {
+      throw new SpeedsterMapIntegrityError(
+        `Restored ${input.side} TRAIN map registration timed out; no map revision was changed.`,
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function registerRestoredMapSide(
   source: SpeedsterMapSourceSide,
   mapId: string,
   revisionId: string,
   sideMap: SpeedsterCardTypeMapSide,
+  dependencies: SpeedsterRestoredMapRegistrationDependencies = {},
 ) {
+  const hashEvidence = dependencies.hashEvidence ?? hashSpeedsterMapStorageEvidence;
   const [referenceSha256, currentInspectionSha256] = await Promise.all([
-    hashSpeedsterMapStorageEvidence(sideMap.referenceInspection.storageKey),
-    hashSpeedsterMapStorageEvidence(source.inspectionStorageKey),
+    hashEvidence(sideMap.referenceInspection.storageKey),
+    hashEvidence(source.inspectionStorageKey),
   ]);
   if (referenceSha256 !== sideMap.referenceInspection.sha256) {
     throw new SpeedsterMapIntegrityError("Restored TRAIN map reference evidence failed hash verification.");
   }
-  const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
+  const serviceUrl = (dependencies.serviceUrl ?? process.env.AI_GRADER_SPEEDSTER_SERVICE_URL)?.replace(/\/$/, "");
   if (!serviceUrl) throw new SpeedsterMapIntegrityError("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured.");
-  const apiKey = process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
+  const apiKey = dependencies.apiKey ?? process.env.AI_GRADER_SPEEDSTER_SERVICE_API_KEY?.trim();
+  const presignRead = dependencies.presignRead ?? presignReadUrl;
   const [referenceUrl, currentUrl] = await Promise.all([
-    presignReadUrl(sideMap.referenceInspection.storageKey, 60 * 10),
-    presignReadUrl(source.inspectionStorageKey, 60 * 10),
+    presignRead(sideMap.referenceInspection.storageKey, 60 * 10),
+    presignRead(source.inspectionStorageKey, 60 * 10),
   ]);
-  const response = await fetch(`${serviceUrl}/map-registration`, {
-    method: "POST",
+  const { response, payload } = await fetchRestoredMapRegistration({
+    url: `${serviceUrl}/map-registration`,
     headers: {
       "Content-Type": "application/json",
       ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -1620,12 +1682,15 @@ async function registerRestoredMapSide(
       side: source.side,
       currentPhysicalQuadSha256: speedsterPhysicalQuadHash(source.sourceCorners),
       currentInspectionSha256,
+      referenceInspectionSha256: referenceSha256,
       anchors: sideMap.anchors.map(({ id, point }) => ({ id, point })),
       designBoundary: sideMap.designBoundary,
       zones: sideMap.zones.map(registrationZone),
     }),
+    side: source.side,
+    timeoutMs: dependencies.timeoutMs ?? SPEEDSTER_CAPTURED_RESTORE_REGISTRATION_TIMEOUT_MS,
+    fetchImpl: dependencies.fetchImpl ?? fetch,
   });
-  const payload = await response.json().catch(() => null);
   if (!response.ok) {
     throw new SpeedsterMapIntegrityError(`Restored ${source.side} TRAIN map could not register to the current copy.`);
   }

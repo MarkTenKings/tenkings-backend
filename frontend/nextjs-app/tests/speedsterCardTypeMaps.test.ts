@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
@@ -21,6 +23,7 @@ import {
   normalizedSpeedsterMapRevisionPayload,
   parseSpeedsterMapSourceSession,
   promoteSpeedsterExactMapRevisionToFamily,
+  registerRestoredMapSide,
   restoreSpeedsterCardTypeMapRevision,
   SPEEDSTER_MAP_FILTER_V2_ACTIVATION_AUTHORITY,
   SPEEDSTER_MAP_FILTER_V2_VERIFICATION_STATUS,
@@ -1218,6 +1221,176 @@ test("captured-card version restore registers and pins the exact restored revisi
   assert.equal(sessionData.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
   assert.equal(sessionData.mapRegistration.front.mapRevisionId, restored.revision.revisionId);
   assert.equal(sessionData.mapRegistration.back.mapRevisionId, restored.revision.revisionId);
+});
+
+test("default captured restore wire binds the exact reference hash required by v2 and accepts legacy v1 responses", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED")).front;
+  const referenceSha256 = sha("restore-reference-front");
+  const currentInspectionSha256 = sha("restore-current-front");
+  const referenceInspection = {
+    storageKey: "private/card-maps/restored/front.webp",
+    sha256: referenceSha256,
+  };
+  const sideMap: SpeedsterCardTypeMapSide = {
+    ...mapSide("FRONT"),
+    referenceInspection,
+    anchors: anchors.map((anchor) => ({ ...anchor, referencePatch: referenceInspection })),
+  };
+  const requests: Record<string, unknown>[] = [];
+  let presignCalls = 0;
+  let responseVersion: "opencv-redundant-ransac-registration-v2" | "opencv-human-anchor-registration-v1"
+    = "opencv-redundant-ransac-registration-v2";
+  const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, any>;
+    requests.push(body);
+    const responseBody = {
+      version: responseVersion,
+      side: body.side,
+      mapRevisionId: body.mapRevisionId,
+      currentPhysicalQuadSha256: body.currentPhysicalQuadSha256,
+      currentInspectionSha256: body.currentInspectionSha256,
+      homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+      anchors: body.anchors.map((anchor: { id: string; point: { x: number; y: number } }) => ({
+        anchorId: anchor.id,
+        expectedPoint: anchor.point,
+        locatedPoint: anchor.point,
+        score: 1,
+      })),
+      projectedDesignBoundary: body.designBoundary,
+      projectedZones: body.zones,
+      ...(responseVersion === "opencv-redundant-ransac-registration-v2" ? {
+        candidateProvenance: { candidateId: "original-reference", source: "ORIGINAL_REFERENCE" },
+        acceptance: {
+          policyVersion: "speedster-map-registration-acceptance-v2",
+          mode: "AUTOMATIC_RANSAC",
+          featureCount: 16,
+          usableFeatureCount: 12,
+          inlierCount: 10,
+          inlierFraction: 10 / 12,
+          perAnchorFeatureCounts: [3, 3, 3, 3],
+          perAnchorInlierCounts: [2, 2, 3, 3],
+          medianReprojectionErrorPx: 0.8,
+          maxReprojectionErrorPx: 2.4,
+        },
+      } : {}),
+    };
+    return new Response(JSON.stringify(responseBody), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+  const dependencies = {
+    serviceUrl: "https://speedster.example.test",
+    apiKey: "test-key",
+    fetchImpl,
+    async hashEvidence(storageKey: string) {
+      if (storageKey === referenceInspection.storageKey) return referenceSha256;
+      if (storageKey === source.inspectionStorageKey) return currentInspectionSha256;
+      throw new Error(`unexpected storage key: ${storageKey}`);
+    },
+    async presignRead(storageKey: string) {
+      presignCalls += 1;
+      return `https://signed.example.test/${storageKey}`;
+    },
+  };
+
+  const v2 = await registerRestoredMapSide(source, "map-restored", "revision-restored", sideMap, dependencies);
+  assert.equal(v2.version, "opencv-redundant-ransac-registration-v2");
+  const wire = requests[0];
+  assert.equal(wire.referenceInspectionSha256, referenceSha256);
+  assert.equal(wire.currentInspectionSha256, currentInspectionSha256);
+  assert.equal(wire.currentPhysicalQuadSha256, speedsterPhysicalQuadHash(source.sourceCorners));
+  assert.deepEqual(Object.keys(wire).sort(), [
+    "anchors", "currentImage", "currentInspectionSha256", "currentPhysicalQuadSha256",
+    "designBoundary", "mapId", "mapRevisionId", "referenceImage",
+    "referenceInspectionSha256", "side", "zones",
+  ].sort());
+
+  const backendSource = readFileSync(fileURLToPath(new URL(
+    "../../../backend/ai-grader-speedster-service/app.py",
+    import.meta.url,
+  )), "utf8");
+  const schema = backendSource.slice(
+    backendSource.indexOf("class MapRegistrationRequest(BaseModel):"),
+    backendSource.indexOf("class CanonicalView", backendSource.indexOf("class MapRegistrationRequest(BaseModel):")),
+  );
+  const requiredSchemaFields = [...schema.matchAll(/^    ([A-Za-z][A-Za-z0-9_]*): ([^\n]+)$/gm)]
+    .filter(([, , declaration]) => !declaration.includes("Optional[") && !declaration.includes("Field(default"))
+    .map(([, field]) => field)
+    .sort();
+  assert.deepEqual(Object.keys(wire).sort(), requiredSchemaFields,
+    "the restore request must provide every field required by the current Python v2 schema");
+
+  responseVersion = "opencv-human-anchor-registration-v1";
+  const legacy = await registerRestoredMapSide(
+    source, "map-restored", "revision-restored", sideMap, dependencies,
+  );
+  assert.equal(legacy.version, "opencv-human-anchor-registration-v1");
+  assert.equal(requests[1].referenceInspectionSha256, referenceSha256,
+    "the additive v2 field remains safe for rolling compatibility with a legacy response");
+
+  await assert.rejects(() => registerRestoredMapSide(
+    source, "map-restored", "revision-restored", sideMap, {
+      ...dependencies,
+      async hashEvidence(storageKey: string) {
+        return storageKey === referenceInspection.storageKey
+          ? sha("changed-reference-bytes")
+          : currentInspectionSha256;
+      },
+    },
+  ), /reference evidence failed hash verification/);
+  assert.equal(presignCalls, 4, "reference drift must fail before either URL is signed");
+  assert.equal(requests.length, 2, "reference drift must fail before URL signing or service dispatch");
+});
+
+test("captured restore deadline discards a non-cooperative late body before any transaction mutation", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
+  const target = record();
+  let transactionCalls = 0;
+  let aborted = false;
+  let lateBodyCompleted = false;
+  let completeLateBody!: () => void;
+  const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => ({
+    ok: true,
+    status: 200,
+    json: () => new Promise((resolve) => {
+      init?.signal?.addEventListener("abort", () => { aborted = true; }, { once: true });
+      completeLateBody = () => { lateBodyCompleted = true; resolve({ accepted: true }); };
+    }),
+  } as Response)) as typeof fetch;
+
+  await assert.rejects(() => restoreSpeedsterCardTypeMapRevision({
+    source,
+    targetRevisionId: target.id,
+    authorAdminId: "admin-1",
+    async findTargetRevision() { return target; },
+    transaction: async () => {
+      transactionCalls += 1;
+      throw new Error("transaction must not open after registration timeout");
+    },
+    async registerCapturedRestore(currentSource, revision) {
+      await registerRestoredMapSide(
+        currentSource.front,
+        revision.mapId,
+        revision.revisionId,
+        revision.frontMap,
+        {
+          serviceUrl: "https://speedster.example.test",
+          timeoutMs: 10,
+          fetchImpl,
+          async hashEvidence() { return revision.frontMap.referenceInspection.sha256; },
+          async presignRead(storageKey: string) { return `https://signed.example.test/${storageKey}`; },
+        },
+      );
+      throw new Error("late response must never become registration authority");
+    },
+  }), /timed out; no map revision was changed/);
+  assert.equal(aborted, true);
+  assert.equal(transactionCalls, 0, "timeout occurs before revision, pointer, or session writes can begin");
+  completeLateBody();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(lateBodyCompleted, true, "the deliberately non-cooperative response completed only after rejection");
+  assert.equal(transactionCalls, 0, "late success cannot open or mutate the restore transaction");
 });
 
 test("restore and promotion verify persisted immutable content before publishing a new current pointer", async () => {
