@@ -55,6 +55,15 @@ type MappedSourceCard = Readonly<{
   revisions: readonly MappedCardRevision[];
 }>;
 
+type MappedCardLibraryState = Readonly<{
+  ownerAuthKey: string | null;
+  cards: readonly MappedSourceCard[];
+  loading: boolean;
+  error: string | null;
+}>;
+
+const EMPTY_MAPPED_SOURCE_CARDS: readonly MappedSourceCard[] = [];
+
 function printedIdentity(value: HumanGradeLabelEditorValue) {
   return canonicalizeSpeedsterSessionIdentity(
     value.cardType,
@@ -149,32 +158,60 @@ export default function CardMapsPage() {
   const [draftIdentity, setDraftIdentity] = useState<SpeedsterSessionIdentity | null>(null);
   const [map, setMap] = useState<SpeedsterTrainMapState | null>(null);
   const [source, setSource] = useState<SpeedsterTrainSource | null>(null);
-  const [mappedCards, setMappedCards] = useState<readonly MappedSourceCard[]>([]);
-  const [mappedCardsLoading, setMappedCardsLoading] = useState(false);
-  const [mappedCardsError, setMappedCardsError] = useState<string | null>(null);
+  const [mappedCardLibrary, setMappedCardLibrary] = useState<MappedCardLibraryState>({
+    ownerAuthKey: null,
+    cards: [],
+    loading: false,
+    error: null,
+  });
   const [mappedCardQuery, setMappedCardQuery] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("One completed authoring save creates both the Family and Exact Source maps.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const identitySectionRef = useRef<HTMLElement>(null);
   const captureSaveInFlight = useRef(false);
+  const mappedCardsRequestGeneration = useRef(0);
+  const mappedCardsAbortController = useRef<AbortController | null>(null);
   const sessionId = typeof router.query.sessionId === "string" ? router.query.sessionId : null;
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
   );
+  const mappedCardsAuthKey = isAdmin && session?.token && !sessionId
+    ? `${session.user.id}\u0000${session.token}`
+    : null;
+  const mappedCards = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
+    ? mappedCardLibrary.cards
+    : EMPTY_MAPPED_SOURCE_CARDS;
+  const mappedCardsLoading = Boolean(mappedCardsAuthKey) && (
+    mappedCardLibrary.ownerAuthKey !== mappedCardsAuthKey || mappedCardLibrary.loading
+  );
+  const mappedCardsError = mappedCardLibrary.ownerAuthKey === mappedCardsAuthKey
+    ? mappedCardLibrary.error
+    : null;
   const visibleMappedCards = useMemo(() => {
     const query = mappedCardQuery.normalize("NFKC").trim().toLocaleLowerCase("en-US");
     return query ? mappedCards.filter((card) => mappedCardSearchText(card).includes(query)) : mappedCards;
   }, [mappedCardQuery, mappedCards]);
   const loadMappedCards = useCallback(async () => {
-    if (!session?.token || !isAdmin || sessionId) return;
-    setMappedCardsLoading(true);
-    setMappedCardsError(null);
+    const requestGeneration = mappedCardsRequestGeneration.current + 1;
+    mappedCardsRequestGeneration.current = requestGeneration;
+    mappedCardsAbortController.current?.abort();
+    mappedCardsAbortController.current = null;
+    const token = session?.token;
+    const ownerAuthKey = isAdmin && token && !sessionId ? `${session.user.id}\u0000${token}` : null;
+    if (!token || !ownerAuthKey) {
+      setMappedCardLibrary({ ownerAuthKey: null, cards: [], loading: false, error: null });
+      return;
+    }
+    const controller = new AbortController();
+    mappedCardsAbortController.current = controller;
+    setMappedCardLibrary({ ownerAuthKey, cards: [], loading: true, error: null });
     try {
       const response = await fetch("/api/admin/ai-grader-v2/maps/list", {
-        headers: buildAdminHeaders(session.token),
+        headers: buildAdminHeaders(token),
         cache: "no-store",
+        signal: controller.signal,
       });
       const payload = await response.json().catch(() => ({})) as {
         cards?: readonly MappedSourceCard[];
@@ -183,15 +220,25 @@ export default function CardMapsPage() {
       if (!response.ok || !Array.isArray(payload.cards)) {
         throw new Error(payload.message ?? "Existing Card Maps could not be loaded.");
       }
-      setMappedCards(payload.cards);
+      if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
+      setMappedCardLibrary({ ownerAuthKey, cards: payload.cards, loading: false, error: null });
     } catch (error) {
-      setMappedCardsError(toCardMapOperatorMessage(
-        error instanceof Error ? error.message : "Existing Card Maps could not be loaded.",
-      ));
+      if (requestGeneration !== mappedCardsRequestGeneration.current || controller.signal.aborted) return;
+      setMappedCardLibrary({
+        ownerAuthKey,
+        cards: [],
+        loading: false,
+        error: toCardMapOperatorMessage(
+          error instanceof Error ? error.message : "Existing Card Maps could not be loaded.",
+        ),
+      });
     } finally {
-      setMappedCardsLoading(false);
+      if (requestGeneration === mappedCardsRequestGeneration.current
+        && mappedCardsAbortController.current === controller) {
+        mappedCardsAbortController.current = null;
+      }
     }
-  }, [isAdmin, session?.token, sessionId]);
+  }, [isAdmin, session?.token, session?.user.id, sessionId]);
   const focusNewCard = useCallback(() => {
     if (sessionId) {
       void router.push("/card-maps#new-card-map");
@@ -210,6 +257,11 @@ export default function CardMapsPage() {
 
   useEffect(() => {
     void loadMappedCards();
+    return () => {
+      mappedCardsRequestGeneration.current += 1;
+      mappedCardsAbortController.current?.abort();
+      mappedCardsAbortController.current = null;
+    };
   }, [loadMappedCards]);
 
   useEffect(() => {
