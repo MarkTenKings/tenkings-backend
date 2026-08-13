@@ -10,6 +10,12 @@ import {
   type SpeedsterReviewActionDependencies,
 } from "../../../../../../lib/server/aiGraderV2ReviewAction";
 import {
+  boundedDuration,
+  boundedWorkerIdentity,
+  SPEEDSTER_DETECT_TRANSPORT_FIELD,
+  SpeedsterDetectUpstreamError,
+} from "../../../../../../lib/server/aiGraderV2DetectTransport";
+import {
   findSpeedsterPersistedTrace,
   parseSpeedsterReviewFindings,
 } from "../../../../../../lib/ai-grader-v2/review-findings";
@@ -109,6 +115,75 @@ function serviceHeaders() {
   };
 }
 
+type SpeedsterDetectBody = Parameters<SpeedsterReviewActionDependencies["detect"]>[0];
+type SpeedsterDetectFetch = (
+  input: string,
+  init: RequestInit,
+) => Promise<Pick<Response, "ok" | "status" | "headers" | "json">>;
+
+function suppliedWorkerIdentity(
+  headers: Pick<Headers, "get">,
+  payload: unknown,
+) {
+  const headerIdentity = [
+    "x-runpod-worker-id",
+    "runpod-worker-id",
+    "x-worker-id",
+  ].map((name) => headers.get(name)).find((value) => value?.trim());
+  if (headerIdentity) return boundedWorkerIdentity(headerIdentity);
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return boundedWorkerIdentity(null);
+  }
+  const record = payload as Record<string, unknown>;
+  const instrumentation = record.instrumentation;
+  const supplied = record.workerId
+    ?? record.worker_id
+    ?? (instrumentation && typeof instrumentation === "object" && !Array.isArray(instrumentation)
+      ? (instrumentation as Record<string, unknown>).workerId
+        ?? (instrumentation as Record<string, unknown>).worker_id
+      : null);
+  return boundedWorkerIdentity(supplied);
+}
+
+export async function fetchSpeedsterDetectUpstream(
+  body: SpeedsterDetectBody,
+  options: {
+    serviceUrl: string;
+    headers: Record<string, string>;
+    fetchImpl?: SpeedsterDetectFetch;
+    now?: () => number;
+  },
+) {
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  const response = await (options.fetchImpl ?? fetch)(`${options.serviceUrl.replace(/\/$/, "")}/detect`, {
+    method: "POST",
+    headers: options.headers,
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json().catch(() => ({}));
+  const upstreamDurationMs = boundedDuration(now() - startedAt);
+  const workerIdentity = suppliedWorkerIdentity(response.headers, payload);
+  if (!response.ok) {
+    throw new SpeedsterDetectUpstreamError({
+      side: body.side,
+      requestTraceId: body.requestTraceId,
+      upstreamStatus: response.status,
+      workerIdentity,
+      upstreamDurationMs,
+    });
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+  return {
+    ...payload,
+    [SPEEDSTER_DETECT_TRANSPORT_FIELD]: {
+      upstreamStatus: response.status,
+      workerIdentity,
+      upstreamDurationMs,
+    },
+  };
+}
+
 const dependencies: HandlerDependencies = {
   requireAdminSession,
   findOwnedTraces: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
@@ -149,19 +224,10 @@ const dependencies: HandlerDependencies = {
   async detect(body) {
     const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new HttpError(503, "AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
-    const response = await fetch(`${serviceUrl}/detect`, {
-      method: "POST",
+    return fetchSpeedsterDetectUpstream(body, {
+      serviceUrl,
       headers: serviceHeaders(),
-      body: JSON.stringify(body),
     });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const message = payload && typeof payload === "object" && "detail" in payload
-        ? JSON.stringify(payload.detail)
-        : "Speedster detector service failed.";
-      throw new HttpError(response.status >= 500 ? 502 : 400, message);
-    }
-    return payload as Awaited<ReturnType<SpeedsterReviewActionDependencies["detect"]>>;
   },
   async measure(body) {
     const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");

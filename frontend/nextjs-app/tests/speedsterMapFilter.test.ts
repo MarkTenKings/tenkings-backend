@@ -459,7 +459,7 @@ function initializeSession(withMap: boolean): SpeedsterReviewActionSession {
   };
 }
 
-test("INITIALIZE shares one Memory object across simultaneous detectors, then atomically persists the filtered split", async () => {
+test("INITIALIZE shares one Memory object across sequential detectors, then atomically persists the filtered split", async () => {
   const initial = initializeSession(true);
   const instrumentedInside = {
     ...inside,
@@ -531,7 +531,7 @@ test("INITIALIZE shares one Memory object across simultaneous detectors, then at
   assert.equal(learningBankCalls, 1);
   assert.equal(detectorLearningBanks.length, 2);
   assert.ok(detectorLearningBanks.every((candidate) => candidate === sharedLearningBank));
-  assert.equal(backStartedWhileFrontPending, true);
+  assert.equal(backStartedWhileFrontPending, false);
   assert.equal(detectorReturns, 2);
   assert.equal(persistedAfterDetectorPair, true);
   assert.deepEqual(saved.reviewedDefects.map(({ id }) => id), [outside.id]);
@@ -578,7 +578,13 @@ test("no map leaves the existing result/persist shape unchanged and does not inv
   });
   assert.equal(mapLoads, 0);
   assert.deepEqual(Object.keys(persisted ?? {}).sort(), ["gradeReport", "reviewedDefects"]);
-  assert.deepEqual(Object.keys(result).sort(), ["gradeReport", "measurementDeltas", "reviewedDefects", "traceHashes"]);
+  assert.deepEqual(Object.keys(result).sort(), [
+    "detectorAttempts",
+    "gradeReport",
+    "measurementDeltas",
+    "reviewedDefects",
+    "traceHashes",
+  ]);
 });
 
 test("invalid pinned map is a controlled initialization failure with no persistence", async () => {

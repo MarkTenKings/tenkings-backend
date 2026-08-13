@@ -9,8 +9,15 @@ import {
 } from "../lib/ai-grader-v2/trace-codec";
 import {
   applySpeedsterReviewAction,
+  type SpeedsterReviewActionDependencies,
   type SpeedsterReviewActionSession,
 } from "../lib/server/aiGraderV2ReviewAction";
+import {
+  SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
+  speedsterDetectTransportEvidence,
+  SpeedsterDetectUpstreamError,
+} from "../lib/server/aiGraderV2DetectTransport";
+import { fetchSpeedsterDetectUpstream } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action";
 
 const measurement = {
   widthMm: 1,
@@ -282,7 +289,7 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
   assert.equal(learningCalls, 1);
   assert.equal(persistenceCalls, 1);
   assert.deepEqual(learningBank, { version: "bank" });
-  assert.deepEqual(detectorBodies, (["FRONT", "BACK"] as const).map((side) => ({
+  assert.deepEqual(detectorBodies.map(({ requestTraceId: _requestTraceId, ...body }) => body), (["FRONT", "BACK"] as const).map((side) => ({
     side,
     cornerShape: "SQUARE",
     views: [
@@ -292,9 +299,11 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
       { id: `${side}:DIRECTIONAL`, imageUrl: `https://fresh.example/${side === "FRONT" ? capture.front.viewStorageKeys.DIRECTIONAL : capture.back.viewStorageKeys.DIRECTIONAL}` },
     ],
     sessionId: initial.id,
-    requestTraceId: `${initial.id}:${side}:detect`,
     learningBank,
   })));
+  for (const body of detectorBodies) {
+    assert.match(body.requestTraceId, new RegExp(`^${initial.id}:${body.side}:detect:[a-f0-9]{12}:a1$`));
+  }
   const initializedPersisted = persisted as unknown as { gradeReport: { detectorVersion?: string } };
   assert.equal(initializedPersisted.gradeReport.detectorVersion, "sam3-server-owned");
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
@@ -321,16 +330,8 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
   };
   let persisted: readonly Record<string, unknown>[] = [];
   let instrumentation: readonly { eventType: string; durationMs?: number | null; details?: unknown }[] = [];
-  let resolveFront!: (value: unknown) => void;
-  let resolveBack!: (value: unknown) => void;
-  const detectorResponses = {
-    FRONT: new Promise<unknown>((resolve) => { resolveFront = resolve; }),
-    BACK: new Promise<unknown>((resolve) => { resolveBack = resolve; }),
-  };
   const started: string[] = [];
-  let markBothStarted!: () => void;
-  const bothStarted = new Promise<void>((resolve) => { markBothStarted = resolve; });
-  const action = applySpeedsterReviewAction({
+  const result = await applySpeedsterReviewAction({
     sessionId: initial.id,
     createdByUserId: initial.createdByUserId,
     action: { type: "INITIALIZE" },
@@ -343,38 +344,32 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
     async learningBankForDetect() { return {}; },
     async detect(body) {
       started.push(body.side);
-      if (started.length === 2) markBothStarted();
-      return detectorResponses[body.side];
+      return body.side === "FRONT" ? {
+        detectorVersion: "sam3-server-owned",
+        defects: [instrumented],
+        instrumentation: {
+          version: "speedster-service-timing-v1",
+          side: "FRONT",
+          requestTraceId: body.requestTraceId,
+          serviceTotalMs: 13,
+          measurementMs: 3,
+        },
+      } : {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        instrumentation: {
+          version: "speedster-service-timing-v1",
+          side: "BACK",
+          requestTraceId: body.requestTraceId,
+          serviceTotalMs: 27,
+          measurementMs: 5,
+        },
+      };
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
   });
-  await bothStarted;
   assert.deepEqual(started, ["FRONT", "BACK"]);
-  resolveBack({
-    detectorVersion: "sam3-server-owned",
-    defects: [],
-    instrumentation: {
-      version: "speedster-service-timing-v1",
-      side: "BACK",
-      requestTraceId: `${initial.id}:BACK:detect`,
-      serviceTotalMs: 27,
-      measurementMs: 5,
-    },
-  });
-  await Promise.resolve();
-  resolveFront({
-    detectorVersion: "sam3-server-owned",
-    defects: [instrumented],
-    instrumentation: {
-      version: "speedster-service-timing-v1",
-      side: "FRONT",
-      requestTraceId: `${initial.id}:FRONT:detect`,
-      serviceTotalMs: 13,
-      measurementMs: 3,
-    },
-  });
-  const result = await action;
 
   assert.equal("findingProvenance" in persisted[0], false);
   assert.equal(JSON.stringify(result).includes("findingProvenance"), false);
@@ -384,10 +379,10 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
   assert.equal(sideCompletions.length, 2);
   assert.deepEqual(sideCompletions.map(({ durationMs, details }) => {
     const timing = details as { side: string; requestTraceId: string };
-    return [timing.side, timing.requestTraceId, durationMs];
+    return [timing.side, timing.requestTraceId.replace(/:[a-f0-9]{12}:a1$/, ":TRACE:a1"), durationMs];
   }), [
-    ["FRONT", `${initial.id}:FRONT:detect`, 13],
-    ["BACK", `${initial.id}:BACK:detect`, 27],
+    ["FRONT", `${initial.id}:FRONT:detect:TRACE:a1`, 13],
+    ["BACK", `${initial.id}:BACK:detect:TRACE:a1`, 27],
   ]);
 });
 
@@ -583,12 +578,12 @@ test("a completion revision win makes the review CAS fail once without remeasuri
   assert.equal(casCalls, 1);
 });
 
-test("an INITIALIZE CAS conflict does not trigger another detector pass or instrumentation write", async () => {
+test("an INITIALIZE CAS conflict does not trigger another detector pass and records only attempt evidence", async () => {
   const initial = session([]);
   initial.gradeReport = {};
   let detectCalls = 0;
   let casCalls = 0;
-  let instrumentationCalls = 0;
+  let instrumentation: readonly { eventType: string }[] = [];
   await assert.rejects(() => applySpeedsterReviewAction({
     sessionId: initial.id,
     createdByUserId: initial.createdByUserId,
@@ -606,11 +601,14 @@ test("an INITIALIZE CAS conflict does not trigger another detector pass or instr
       return { detectorVersion: "sam3-server-owned", defects: [] };
     },
     async measure() { throw new Error("must not measure"); },
-    async recordInstrumentation() { instrumentationCalls += 1; },
+    async recordInstrumentation(events) { instrumentation = events; },
   }), /state changed/i);
   assert.equal(detectCalls, 2);
   assert.equal(casCalls, 1);
-  assert.equal(instrumentationCalls, 0);
+  assert.deepEqual(instrumentation.map(({ eventType }) => eventType), [
+    "DETECTOR_SIDE_ATTEMPT",
+    "DETECTOR_SIDE_ATTEMPT",
+  ]);
 });
 
 for (const failedSide of ["FRONT", "BACK"] as const) {
@@ -634,11 +632,227 @@ for (const failedSide of ["FRONT", "BACK"] as const) {
         return { detectorVersion: "sam3-server-owned", defects: [] };
       },
       async measure() { throw new Error("must not measure"); },
-    }), new RegExp(`${failedSide} detector failed`, "i"));
-    assert.equal(detectCalls, 2);
+    }), new RegExp(`${failedSide}.*request ID`, "i"));
+    assert.equal(detectCalls, failedSide === "FRONT" ? 1 : 2);
     assert.equal(persistCalls, 0);
   });
 }
+
+function upstreamFailure(
+  body: { side: "FRONT" | "BACK"; requestTraceId: string },
+  upstreamStatus: number,
+  workerIdentity: string | null = null,
+) {
+  return new SpeedsterDetectUpstreamError({
+    side: body.side,
+    requestTraceId: body.requestTraceId,
+    upstreamStatus,
+    workerIdentity,
+    upstreamDurationMs: 7,
+  });
+}
+
+test("an exact RunPod HTTP 502 retries only the failed Back side once with byte-identical inputs", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const bodies: Array<Parameters<SpeedsterReviewActionDependencies["detect"]>[0]> = [];
+  let persisted = 0;
+  let instrumentation: readonly { eventType: string; details?: unknown }[] = [];
+  const result = await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { persisted += 1; },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return Object.freeze({ version: "same-bank" }); },
+    async detect(body) {
+      bodies.push(body);
+      if (body.side === "BACK" && bodies.filter(({ side }) => side === "BACK").length === 1) {
+        throw upstreamFailure(body, 502, "worker-back-1");
+      }
+      return { detectorVersion: "same-release", defects: [] };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { instrumentation = events; },
+  });
+
+  assert.deepEqual(bodies.map(({ side }) => side), ["FRONT", "BACK", "BACK"]);
+  const [backFirst, backRetry] = bodies.filter(({ side }) => side === "BACK");
+  const withoutTrace = ({ requestTraceId: _requestTraceId, ...body }: typeof backFirst) => body;
+  assert.deepEqual(withoutTrace(backRetry), withoutTrace(backFirst));
+  assert.notEqual(backRetry.requestTraceId, backFirst.requestTraceId);
+  assert.match(backFirst.requestTraceId, /:BACK:detect:[a-f0-9]{12}:a1$/);
+  assert.match(backRetry.requestTraceId, /:BACK:detect:[a-f0-9]{12}:a2$/);
+  assert.equal(persisted, 1);
+  const detectorAttempts = result.detectorAttempts;
+  assert.ok(detectorAttempts);
+  assert.equal(detectorAttempts.length, 3);
+  assert.deepEqual(detectorAttempts.map(({ side, attemptNumber, outcome, upstreamStatus }) => [
+    side,
+    attemptNumber,
+    outcome,
+    upstreamStatus,
+  ]), [
+    ["FRONT", 1, "SUCCEEDED", 200],
+    ["BACK", 1, "FAILED", 502],
+    ["BACK", 2, "SUCCEEDED", 200],
+  ]);
+  assert.equal(
+    instrumentation.filter(({ eventType }) => eventType === "DETECTOR_SIDE_ATTEMPT").length,
+    3,
+  );
+});
+
+test("two exact RunPod HTTP 502 responses stop after one retry with side/request evidence and zero persistence", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const bodies: Array<{ side: "FRONT" | "BACK"; requestTraceId: string }> = [];
+  let persisted = 0;
+  let recorded: readonly { eventType: string; details?: unknown }[] = [];
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { persisted += 1; },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect(body) {
+      bodies.push(body);
+      if (body.side === "BACK") throw upstreamFailure(body, 502);
+      return { detectorVersion: "same-release", defects: [] };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { recorded = events; },
+  }), /BACK scan failed after its one-time RunPod HTTP 502 retry.*request ID .*:a2/i);
+  assert.deepEqual(bodies.map(({ side }) => side), ["FRONT", "BACK", "BACK"]);
+  assert.equal(persisted, 0);
+  assert.equal(recorded.filter(({ eventType }) => eventType === "DETECTOR_SIDE_ATTEMPT").length, 3);
+});
+
+for (const status of [500, 503, 504] as const) {
+  test(`RunPod HTTP ${status} is never retried`, async () => {
+    const initial = session([]);
+    initial.gradeReport = {};
+    let detectCalls = 0;
+    let persisted = 0;
+    await assert.rejects(() => applySpeedsterReviewAction({
+      sessionId: initial.id,
+      createdByUserId: initial.createdByUserId,
+      action: { type: "INITIALIZE" },
+    }, {
+      async loadOwnedSession() { return initial; },
+      async persistReviewIfRevision() { persisted += 1; },
+      async presignRead(key) { return `https://fresh.example/${key}`; },
+      async learningBankForDetect() { return {}; },
+      async detect(body) {
+        detectCalls += 1;
+        throw upstreamFailure(body, status);
+      },
+      async measure() { throw new Error("must not measure"); },
+    }), new RegExp(`FRONT scan failed.*HTTP ${status}.*request ID`, "i"));
+    assert.equal(detectCalls, 1);
+    assert.equal(persisted, 0);
+  });
+}
+
+test("a detector network failure is never retried and exposes no raw private error", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let detectCalls = 0;
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { throw new Error("must not persist"); },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect() {
+      detectCalls += 1;
+      throw new Error("private https://signed-storage.example/secret?token=abc");
+    },
+    async measure() { throw new Error("must not measure"); },
+  }), (error: unknown) => {
+    assert.match(String((error as Error).message), /FRONT.*without an upstream HTTP status.*request ID/i);
+    assert.doesNotMatch(String((error as Error).message), /signed-storage|token=abc/);
+    return true;
+  });
+  assert.equal(detectCalls, 1);
+});
+
+test("detect transport preserves the exact request body and exposes real upstream 502 evidence", async () => {
+  const body: Parameters<SpeedsterReviewActionDependencies["detect"]>[0] = {
+    side: "BACK",
+    cornerShape: "SQUARE",
+    views: [{ id: "BACK:ORIGINAL", imageUrl: "https://signed.invalid/back" }],
+    sessionId: "session-12345678901234567890",
+    requestTraceId: "session-12345678901234567890:BACK:detect:abcdef123456:a1",
+    learningBank: { version: "memory-v1", lessons: [{ immutable: true }] },
+  };
+  let postedBody = "";
+  await assert.rejects(() => fetchSpeedsterDetectUpstream(body, {
+    serviceUrl: "https://runpod.invalid/",
+    headers: { "Content-Type": "application/json" },
+    now: (() => {
+      const values = [1_000, 1_027];
+      return () => values.shift() ?? 1_027;
+    })(),
+    async fetchImpl(input, init) {
+      assert.equal(input, "https://runpod.invalid/detect");
+      postedBody = String(init.body);
+      return new Response(JSON.stringify({ detail: "private worker detail" }), {
+        status: 502,
+        headers: { "content-type": "application/json", "x-runpod-worker-id": "worker-safe-17" },
+      });
+    },
+  }), (error: unknown) => {
+    assert.equal(error instanceof SpeedsterDetectUpstreamError, true);
+    const failure = error as SpeedsterDetectUpstreamError;
+    assert.equal(failure.side, "BACK");
+    assert.equal(failure.requestTraceId, body.requestTraceId);
+    assert.equal(failure.upstreamStatus, 502);
+    assert.equal(failure.workerIdentity, "worker-safe-17");
+    assert.equal(failure.upstreamDurationMs, 27);
+    assert.doesNotMatch(failure.message, /private worker detail/);
+    return true;
+  });
+  assert.deepEqual(JSON.parse(postedBody), body);
+});
+
+test("detect transport records successful status and an explicit unavailable worker identity", async () => {
+  const body: Parameters<SpeedsterReviewActionDependencies["detect"]>[0] = {
+    side: "FRONT",
+    cornerShape: "ROUNDED_3_18_MM",
+    views: [{ id: "FRONT:ORIGINAL", imageUrl: "https://signed.invalid/front" }],
+    sessionId: "session-12345678901234567890",
+    requestTraceId: "session-12345678901234567890:FRONT:detect:abcdef123456:a1",
+    learningBank: { version: "memory-v1" },
+  };
+  const result = await fetchSpeedsterDetectUpstream(body, {
+    serviceUrl: "https://runpod.invalid",
+    headers: { "Content-Type": "application/json" },
+    now: (() => {
+      const values = [2_000, 2_041];
+      return () => values.shift() ?? 2_041;
+    })(),
+    async fetchImpl() {
+      return new Response(JSON.stringify({ detectorVersion: "same-release", defects: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  assert.deepEqual(speedsterDetectTransportEvidence(result), {
+    upstreamStatus: 200,
+    workerIdentity: SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
+    upstreamDurationMs: 41,
+  });
+});
 
 test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicate outputs with zero persistence", async () => {
   const detectorFinding = { ...defect, reviewResult: "UNREVIEWED" as const };
@@ -721,6 +935,7 @@ test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicat
     const initial = session([]);
     initial.gradeReport = {};
     let persisted = false;
+    let detectCalls = 0;
     await assert.rejects(() => applySpeedsterReviewAction({
       sessionId: initial.id,
       createdByUserId: initial.createdByUserId,
@@ -730,9 +945,17 @@ test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicat
       async persistReviewIfRevision() { persisted = true; },
       async presignRead(key: string) { return `https://fresh.example/${key}`; },
       async learningBankForDetect() { return {}; },
-      detect: variant.detect,
+      async detect(body) {
+        detectCalls += 1;
+        return variant.detect(body);
+      },
       async measure() { throw new Error("must not measure"); },
     }), /detector|side|version|duplicate/i, variant.name);
+    assert.equal(
+      detectCalls,
+      variant.name.includes("Back") || variant.name === "version mismatch" ? 2 : 1,
+      `${variant.name} must fail validation without retrying or advancing past the invalid side`,
+    );
     assert.equal(persisted, false, variant.name);
   }
 });

@@ -763,16 +763,12 @@ test("the production orchestration dispatches Front then Back and produces a com
   assert.equal(speedsterReportSlug("speedster-session-123456789"), "speedster-speedster-session-123456789");
 });
 
-test("Front and Back start together with identical side payload shapes", async () => {
+test("Front completes before Back starts and both use identical side payload shapes", async () => {
   const started: string[] = [];
   const callbacks: string[] = [];
   let resolveFront!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
-  let resolveBack!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
   const frontResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
     (resolve) => { resolveFront = resolve; },
-  );
-  const backResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
-    (resolve) => { resolveBack = resolve; },
   );
 
   let finished = false;
@@ -794,7 +790,9 @@ test("Front and Back start together with identical side payload shapes", async (
           { id: `${request.side}:DIRECTIONAL`, imageUrl: `https://images.test/${request.side.toLowerCase()}-directional` },
         ],
       });
-      return request.side === "FRONT" ? frontResponse : backResponse;
+      return request.side === "FRONT"
+        ? frontResponse
+        : Promise.resolve({ detectorVersion: "same-release", defects: [] });
     },
   });
   scan.then(
@@ -803,6 +801,14 @@ test("Front and Back start together with identical side payload shapes", async (
   );
 
   await Promise.resolve();
+  assert.deepEqual(started, ["FRONT"]);
+  assert.deepEqual(callbacks, [
+    "dispatch:FRONT",
+    "detect:FRONT",
+  ]);
+  assert.equal(finished, false);
+  resolveFront({ detectorVersion: "same-release", defects: [] });
+  assert.deepEqual(await scan, { detectorVersion: "same-release", defects: [] });
   assert.deepEqual(started, ["FRONT", "BACK"]);
   assert.deepEqual(callbacks, [
     "dispatch:FRONT",
@@ -810,16 +816,9 @@ test("Front and Back start together with identical side payload shapes", async (
     "dispatch:BACK",
     "detect:BACK",
   ]);
-
-  resolveBack({ detectorVersion: "same-release", defects: [] });
-  await Promise.resolve();
-  assert.equal(finished, false);
-  resolveFront({ detectorVersion: "same-release", defects: [] });
-
-  assert.deepEqual(await scan, { detectorVersion: "same-release", defects: [] });
 });
 
-test("concurrent completion order preserves the exact sequential output and calculated grade", async () => {
+test("sequential completion preserves canonical output order and calculated grade", async () => {
   const frontFinding: SpeedsterMeasuredDefect = {
     ...defect,
     id: "detector-front",
@@ -879,30 +878,20 @@ test("concurrent completion order preserves the exact sequential output and calc
   };
 
   const started: Array<"FRONT" | "BACK"> = [];
-  let resolveFront!: (value: typeof responses.FRONT) => void;
-  let resolveBack!: (value: typeof responses.BACK) => void;
-  const frontResponse = new Promise<typeof responses.FRONT>((resolve) => { resolveFront = resolve; });
-  const backResponse = new Promise<typeof responses.BACK>((resolve) => { resolveBack = resolve; });
-  const concurrentPromise = scanSpeedsterCapture({
+  const scanned = await scanSpeedsterCapture({
     capture: detectorCapture,
-    detect(request) {
+    async detect(request) {
       started.push(request.side);
-      return request.side === "FRONT" ? frontResponse : backResponse;
+      return responses[request.side];
     },
   });
-  await Promise.resolve();
   assert.deepEqual(started, ["FRONT", "BACK"]);
-  resolveBack(responses.BACK);
-  await Promise.resolve();
-  resolveFront(responses.FRONT);
-  const concurrent = await concurrentPromise;
-
-  assert.deepEqual(concurrent, sequential);
+  assert.deepEqual(scanned, sequential);
   assert.deepEqual(
-    calculateSpeedsterReview(capture, concurrent.defects).grade,
+    calculateSpeedsterReview(capture, scanned.defects).grade,
     calculateSpeedsterReview(capture, sequential.defects).grade,
   );
-  assert.deepEqual(concurrent.defects.map(({ id }) => id), [
+  assert.deepEqual(scanned.defects.map(({ id }) => id), [
     "FRONT:detector-front:SURFACE",
     "BACK:memory-back:SURFACE",
   ]);
@@ -932,53 +921,17 @@ test("when both detectors fail the Front error wins deterministically", async ()
 });
 
 for (const failedSide of ["FRONT", "BACK"] as const) {
-  test(`${failedSide} failure waits for the sibling and retries only after the pair is quiescent`, async () => {
+  test(`${failedSide} failure stops sequential dispatch without partial output`, async () => {
     const failure = new Error(`${failedSide} failed`);
     const firstCalls: string[] = [];
-    let persisted = 0;
-    let pairSettled = false;
-    let siblingInFlight = false;
-    let resolveSibling!: (value: { detectorVersion: string; defects: SpeedsterMeasuredDefect[] }) => void;
-    const siblingResponse = new Promise<{ detectorVersion: string; defects: SpeedsterMeasuredDefect[] }>(
-      (resolve) => { resolveSibling = resolve; },
-    );
-    const first = scanSpeedsterCapture({
-      capture: detectorCapture,
-      detect(request) {
-        firstCalls.push(request.side);
-        if (request.side === failedSide) return Promise.reject(failure);
-        siblingInFlight = true;
-        return siblingResponse.finally(() => { siblingInFlight = false; });
-      },
-    });
-    first.then(
-      () => { pairSettled = true; },
-      () => { pairSettled = true; },
-    );
-
-    await Promise.resolve();
-    assert.deepEqual(firstCalls, ["FRONT", "BACK"]);
-    assert.equal(pairSettled, false);
-    assert.equal(siblingInFlight, true);
-    assert.equal(persisted, 0);
-    resolveSibling({ detectorVersion: "same-release", defects: [] });
-    await assert.rejects(first, failure);
-    assert.equal(pairSettled, true);
-    assert.equal(siblingInFlight, false);
-    assert.equal(persisted, 0);
-
-    const retryCalls: string[] = [];
-    const retry = await scanSpeedsterCapture({
+    await assert.rejects(scanSpeedsterCapture({
       capture: detectorCapture,
       async detect(request) {
-        assert.equal(siblingInFlight, false);
-        retryCalls.push(request.side);
+        firstCalls.push(request.side);
+        if (request.side === failedSide) throw failure;
         return { detectorVersion: "same-release", defects: [] };
       },
-    });
-    persisted += 1;
-    assert.deepEqual(retryCalls, ["FRONT", "BACK"]);
-    assert.deepEqual(retry, { detectorVersion: "same-release", defects: [] });
-    assert.equal(persisted, 1);
+    }), failure);
+    assert.deepEqual(firstCalls, failedSide === "FRONT" ? ["FRONT"] : ["FRONT", "BACK"]);
   });
 }

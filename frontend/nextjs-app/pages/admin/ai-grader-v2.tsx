@@ -85,6 +85,9 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
   findingCount?: number;
   filteredCount?: number;
+  retryCount?: number;
+  retrySide?: "FRONT" | "BACK";
+  retryRequestId?: string;
   outcome?: "SUCCEEDED" | "FAILED";
   postCycleWork?: "PHOTOROOM" | "COMPS" | "NFC";
   errorCode?: string;
@@ -361,7 +364,7 @@ export default function AiGraderV2AdminPage() {
     if (!session?.token || !draft) throw new Error("Speedster detector state cannot initialize without its draft.");
     const startedAtMs = Date.now();
     setInitializeFailed(false);
-    setMessage("SAM 3 is scanning the server-owned Front and Back card views.");
+    setMessage("SAM 3 is scanning FRONT, then BACK, using the server-owned card views.");
     const initializeResponse = await fetch(
       `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}/review-action`,
       {
@@ -372,6 +375,12 @@ export default function AiGraderV2AdminPage() {
     );
     const initialized = (await initializeResponse.json().catch(() => ({}))) as {
       reviewedDefects?: SpeedsterReviewFinding[];
+      detectorAttempts?: readonly {
+        side: "FRONT" | "BACK";
+        requestTraceId: string;
+        attemptNumber: 1 | 2;
+        retryReason: "RUNPOD_HTTP_502" | null;
+      }[];
       message?: string;
     };
     if (!initializeResponse.ok || !initialized.reviewedDefects) {
@@ -379,14 +388,25 @@ export default function AiGraderV2AdminPage() {
     }
     setDefects(initialized.reviewedDefects);
     const endedAtMs = Date.now();
+    const retryAttempt = initialized.detectorAttempts?.find(({ attemptNumber }) => attemptNumber === 2);
     recordInstrumentation({
       sessionId: draft.id,
       eventType: "SAM_MEMORY_COMPLETED",
       startedAtMs,
       endedAtMs,
-      details: { findingCount: initialized.reviewedDefects.length, outcome: "SUCCEEDED" },
+      details: {
+        findingCount: initialized.reviewedDefects.length,
+        outcome: "SUCCEEDED",
+        retryCount: retryAttempt ? 1 : 0,
+        ...(retryAttempt ? {
+          retrySide: retryAttempt.side,
+          retryRequestId: retryAttempt.requestTraceId,
+        } : {}),
+      },
     });
-    setMessage("SAM 3 scan complete. Review the measured card map.");
+    setMessage(retryAttempt
+      ? `SAM 3 scan complete after one automatic RunPod HTTP 502 retry on ${retryAttempt.side} (request ID ${retryAttempt.requestTraceId}). Review the measured card map.`
+      : "SAM 3 sequential FRONT and BACK scan complete. Review the measured card map.");
   }, [draft, recordInstrumentation, session?.token]);
 
   const saveCapture = async (bundle: SpeedsterCaptureBundle): Promise<SpeedsterCaptureSaveResult> => {
@@ -735,8 +755,8 @@ export default function AiGraderV2AdminPage() {
         {capture && defects === null ? (
           <section className={styles.statusPanel}>
             <span>03 · SAM 3</span>
-            <h2>Scanning card views.</h2>
-            <p>Every finding lands on one measured card map.</p>
+            <h2>Scanning FRONT, then BACK.</h2>
+            <p>A successful side is retained while the next side runs. Every finding lands on one measured card map.</p>
             {initializeFailed ? (
               <button type="button" disabled={working} onClick={() => {
                 if (working) return;

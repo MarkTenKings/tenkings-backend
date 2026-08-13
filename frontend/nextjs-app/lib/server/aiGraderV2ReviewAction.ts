@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 
@@ -36,6 +36,7 @@ import {
   calculateSpeedsterReview,
   remeasureSpeedsterReviewAction,
   scanSpeedsterCapture,
+  speedsterCanonicalDetectorFindingId,
   type SpeedsterReviewMeasurementAction,
 } from "../ai-grader-v2/review";
 import type { SpeedsterCenteringBorders } from "../ai-grader-v2/scoring";
@@ -53,6 +54,13 @@ import {
   type SpeedsterInstrumentationEvent,
   type SpeedsterOperatorInstrumentationAction,
 } from "./aiGraderV2Instrumentation";
+import {
+  boundedDuration,
+  SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
+  speedsterDetectTransportEvidence,
+  SpeedsterDetectUpstreamError,
+  type SpeedsterDetectWorkerIdentity,
+} from "./aiGraderV2DetectTransport";
 import { HttpError } from "./adminSessionAuthority";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
 
@@ -128,6 +136,19 @@ type DetectBody = {
   requestTraceId: string;
   learningBank: unknown;
 };
+
+export type SpeedsterDetectorAttemptEvidence = Readonly<{
+  side: SpeedsterCardSide;
+  requestTraceId: string;
+  attemptNumber: 1 | 2;
+  retryReason: "RUNPOD_HTTP_502" | null;
+  outcome: "SUCCEEDED" | "FAILED";
+  upstreamStatus: number | null;
+  workerIdentity: SpeedsterDetectWorkerIdentity;
+  clientDurationMs: number;
+  serverDurationMs: number;
+  serviceDurationMs: number | null;
+}>;
 
 export type SpeedsterReviewActionDependencies = {
   loadOwnedSession: (
@@ -483,61 +504,170 @@ async function serverOwnedInitialization(
   ]);
   const learningBank = learning.bank;
   const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
-  const scanned = await scanSpeedsterCapture({
-    capture: { cornerShape: capture.cornerShape, front, back },
-    detect: async (request) => {
-      const rawResult = await deps.detect({
-        ...request,
-        sessionId: input.sessionId,
-        requestTraceId: `${input.sessionId}:${request.side}:detect`,
-        learningBank,
-      });
-      if (
-        !isRecord(rawResult) || typeof rawResult.detectorVersion !== "string" ||
-        !rawResult.detectorVersion.trim() || !Array.isArray(rawResult.defects)
-      ) {
-        throw new HttpError(502, "Speedster detector response is missing its version.");
-      }
-      let defects: SpeedsterReviewFinding[];
-      try {
-        defects = parseSpeedsterReviewFindings(rawResult.defects);
-      } catch {
-        throw new HttpError(502, `Speedster ${request.side} detector response is malformed.`);
-      }
-      if (defects.some((finding) => finding.side !== request.side)) {
-        throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
-      }
-      if (new Set(defects.map(({ id }) => id)).size !== defects.length) {
-        throw new HttpError(502, `Speedster ${request.side} detector response contains a duplicate finding ID.`);
-      }
-      if (defects.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
-        throw new HttpError(502, `Speedster ${request.side} detector response contains reviewed trace authority.`);
-      }
-      const result = {
-        detectorVersion: rawResult.detectorVersion,
-        defects: defects as SpeedsterMeasuredDefect[],
-      };
-      const timing = safeDetectorTiming(rawResult.instrumentation);
-      if (timing) detectorTimings[request.side] = timing;
-      return result;
-    },
-  });
-  if (!scanned.detectorVersion.trim()) {
-    throw new HttpError(502, "Speedster detector version could not be established.");
-  }
+  const operationId = randomUUID().replaceAll("-", "").slice(0, 12);
+  const attemptEvidence: SpeedsterDetectorAttemptEvidence[] = [];
+  const attemptEvents = () => attemptEvidence.map((attempt) => speedsterServerTimingEvent({
+    eventKey: `${input.sessionId}:server:detect-attempt:${operationId}:${attempt.side}:${attempt.attemptNumber}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    eventType: "DETECTOR_SIDE_ATTEMPT",
+    durationMs: attempt.serverDurationMs,
+    details: attempt as unknown as Prisma.InputJsonValue,
+  }));
+
+  const terminalFailure = (
+    side: SpeedsterCardSide,
+    requestTraceId: string,
+    attemptNumber: 1 | 2,
+    error: unknown,
+  ) => {
+    if (error instanceof SpeedsterDetectUpstreamError) {
+      const priorRetry = attemptNumber === 2 ? " after its one-time RunPod HTTP 502 retry" : "";
+      return new HttpError(
+        error.upstreamStatus >= 500 ? 502 : 400,
+        `Speedster ${side} scan failed${priorRetry}: RunPod returned HTTP ${error.upstreamStatus} (request ID ${requestTraceId}).`,
+      );
+    }
+    if (error instanceof HttpError) {
+      return new HttpError(
+        error.statusCode,
+        `Speedster ${side} scan failed (request ID ${requestTraceId}): ${error.message}`,
+      );
+    }
+    const priorRetry = attemptNumber === 2 ? " after its one-time RunPod HTTP 502 retry" : "";
+    return new HttpError(
+      502,
+      `Speedster ${side} detector request failed${priorRetry} without an upstream HTTP status (request ID ${requestTraceId}); no further automatic retry is permitted.`,
+    );
+  };
+
+  let scanned: Awaited<ReturnType<typeof scanSpeedsterCapture>>;
   let initialized: SpeedsterReviewFinding[];
   try {
-    initialized = parseSpeedsterReviewFindings(scanned.defects);
-  } catch {
-    throw new HttpError(502, "Speedster detector response is malformed.");
+    scanned = await scanSpeedsterCapture({
+      capture: { cornerShape: capture.cornerShape, front, back },
+      detect: async (request) => {
+        const baseBody = {
+          ...request,
+          sessionId: input.sessionId,
+          learningBank,
+        };
+        for (const attemptNumber of [1, 2] as const) {
+          const requestTraceId = `${input.sessionId}:${request.side}:detect:${operationId}:a${attemptNumber}`;
+          const attemptStartedAt = Date.now();
+          let rawResult: unknown;
+          let rawResolved = false;
+          try {
+            rawResult = await deps.detect({ ...baseBody, requestTraceId });
+            rawResolved = true;
+            if (
+              !isRecord(rawResult) || typeof rawResult.detectorVersion !== "string" ||
+              !rawResult.detectorVersion.trim() || !Array.isArray(rawResult.defects)
+            ) {
+              throw new HttpError(502, "Speedster detector response is missing its version.");
+            }
+            let defects: SpeedsterReviewFinding[];
+            try {
+              defects = parseSpeedsterReviewFindings(rawResult.defects);
+            } catch {
+              throw new HttpError(502, `Speedster ${request.side} detector response is malformed.`);
+            }
+            if (defects.some((finding) => finding.side !== request.side)) {
+              throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
+            }
+            if (defects.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
+              throw new HttpError(502, `Speedster ${request.side} detector response contains reviewed trace authority.`);
+            }
+            const measuredDefects = defects as SpeedsterMeasuredDefect[];
+            if (
+              new Set(measuredDefects.map((finding) =>
+                speedsterCanonicalDetectorFindingId(request.side, finding))).size !== measuredDefects.length
+            ) {
+              throw new HttpError(502, `Speedster ${request.side} detector response contains a duplicate finding ID.`);
+            }
+            const timing = safeDetectorTiming(rawResult.instrumentation);
+            const transport = speedsterDetectTransportEvidence(rawResult);
+            const serverDurationMs = boundedDuration(Date.now() - attemptStartedAt);
+            attemptEvidence.push({
+              side: request.side,
+              requestTraceId,
+              attemptNumber,
+              retryReason: attemptNumber === 2 ? "RUNPOD_HTTP_502" : null,
+              outcome: "SUCCEEDED",
+              upstreamStatus: transport?.upstreamStatus ?? 200,
+              workerIdentity: transport?.workerIdentity ?? SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
+              clientDurationMs: transport?.upstreamDurationMs ?? serverDurationMs,
+              serverDurationMs,
+              serviceDurationMs: typeof timing?.serviceTotalMs === "number"
+                ? timing.serviceTotalMs
+                : null,
+            });
+            if (timing) detectorTimings[request.side] = timing;
+            return {
+              detectorVersion: rawResult.detectorVersion,
+              defects: measuredDefects,
+            };
+          } catch (error) {
+            const serverDurationMs = boundedDuration(Date.now() - attemptStartedAt);
+            const transport = rawResolved ? speedsterDetectTransportEvidence(rawResult) : null;
+            const upstreamFailure = error instanceof SpeedsterDetectUpstreamError ? error : null;
+            const timing = rawResolved && isRecord(rawResult)
+              ? safeDetectorTiming(rawResult.instrumentation)
+              : null;
+            attemptEvidence.push({
+              side: request.side,
+              requestTraceId,
+              attemptNumber,
+              retryReason: attemptNumber === 2 ? "RUNPOD_HTTP_502" : null,
+              outcome: "FAILED",
+              upstreamStatus: upstreamFailure?.upstreamStatus
+                ?? transport?.upstreamStatus
+                ?? (rawResolved ? 200 : null),
+              workerIdentity: upstreamFailure?.workerIdentity
+                ?? transport?.workerIdentity
+                ?? SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
+              clientDurationMs: upstreamFailure?.upstreamDurationMs
+                ?? transport?.upstreamDurationMs
+                ?? serverDurationMs,
+              serverDurationMs,
+              serviceDurationMs: typeof timing?.serviceTotalMs === "number"
+                ? timing.serviceTotalMs
+                : null,
+            });
+            if (
+              attemptNumber === 1
+              && error instanceof SpeedsterDetectUpstreamError
+              && error.upstreamStatus === 502
+            ) {
+              continue;
+            }
+            throw terminalFailure(request.side, requestTraceId, attemptNumber, error);
+          }
+        }
+        throw new Error("Speedster detector retry boundary was exhausted.");
+      },
+    });
+    if (!scanned.detectorVersion.trim()) {
+      throw new HttpError(502, "Speedster detector version could not be established.");
+    }
+    try {
+      initialized = parseSpeedsterReviewFindings(scanned.defects);
+    } catch {
+      throw new HttpError(502, "Speedster detector response is malformed.");
+    }
+    if (new Set(initialized.map(({ id }) => id)).size !== initialized.length) {
+      throw new HttpError(502, "Speedster detector response contains a duplicate finding ID.");
+    }
+    if (initialized.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
+      throw new HttpError(502, "Initial Speedster detector state contains reviewed trace authority.");
+    }
+  } catch (error) {
+    await recordInstrumentationFailOpen(deps, input.sessionId, attemptEvents());
+    throw error;
   }
-  if (new Set(initialized.map(({ id }) => id)).size !== initialized.length) {
-    throw new HttpError(502, "Speedster detector response contains a duplicate finding ID.");
-  }
-  if (initialized.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
-    throw new HttpError(502, "Initial Speedster detector state contains reviewed trace authority.");
-  }
+
   const instrumentationEvents: SpeedsterInstrumentationEvent[] = [
+    ...attemptEvents(),
     speedsterServerTimingEvent({
       eventKey: `${input.sessionId}:server:memory-bank-loaded`,
       sessionId: input.sessionId,
@@ -558,19 +688,26 @@ async function serverOwnedInitialization(
       })];
     }),
   ];
-  return { initialized, detectorVersion: scanned.detectorVersion, instrumentationEvents };
+  return {
+    initialized,
+    detectorVersion: scanned.detectorVersion,
+    instrumentationEvents,
+    attemptEvidence,
+  };
 }
 
 function resultPayload(
   before: readonly SpeedsterReviewFinding[],
   after: readonly SpeedsterReviewFinding[],
   gradeReport: Record<string, unknown>,
+  detectorAttempts: readonly SpeedsterDetectorAttemptEvidence[] = [],
 ) {
   return {
     reviewedDefects: stripSpeedsterTraceBodies(after),
     gradeReport,
     measurementDeltas: measurementDeltas(before, after),
     traceHashes: speedsterTraceHashes(after),
+    ...(detectorAttempts.length > 0 ? { detectorAttempts } : {}),
   };
 }
 
@@ -704,75 +841,83 @@ export async function applySpeedsterReviewAction(
       return resultPayload(before, review.defects, gradeReport);
     }
     const detected = await serverOwnedInitialization(input, capture, deps);
-    let activeFindings = detected.initialized;
-    let filterDecisions: readonly SpeedsterFilterDecisionEvidence[] | undefined;
-    if (pinnedMap) {
-      try {
-        if (!pinnedCardIdentity) throw new Error("The pinned session card identity is invalid.");
-        const split = splitSpeedsterMapFilteredCandidates({
-          findings: detected.initialized,
-          cardIdentity: pinnedCardIdentity,
-          detectorVersion: detected.detectorVersion,
-          map: pinnedMap,
-        });
-        activeFindings = [...split.activeFindings];
-        filterDecisions = split.filteredDecisions;
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : "unknown map-integrity error";
-        throw new HttpError(409, `Speedster map initialization failed: ${reason}`);
+    const detectorAttemptEvents = detected.instrumentationEvents.filter(
+      ({ eventType }) => eventType === "DETECTOR_SIDE_ATTEMPT",
+    );
+    try {
+      let activeFindings = detected.initialized;
+      let filterDecisions: readonly SpeedsterFilterDecisionEvidence[] | undefined;
+      if (pinnedMap) {
+        try {
+          if (!pinnedCardIdentity) throw new Error("The pinned session card identity is invalid.");
+          const split = splitSpeedsterMapFilteredCandidates({
+            findings: detected.initialized,
+            cardIdentity: pinnedCardIdentity,
+            detectorVersion: detected.detectorVersion,
+            map: pinnedMap,
+          });
+          activeFindings = [...split.activeFindings];
+          filterDecisions = split.filteredDecisions;
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "unknown map-integrity error";
+          throw new HttpError(409, `Speedster map initialization failed: ${reason}`);
+        }
       }
+      const gradeStartedAt = Date.now();
+      const review = calculateSpeedsterReview(capture, activeFindings);
+      const gradeDurationMs = Date.now() - gradeStartedAt;
+      const gradeReport = { ...review.grade, detectorVersion: detected.detectorVersion };
+      const actionEndedAt = new Date();
+      const instrumentationEvents = [
+        ...detected.instrumentationEvents,
+        ...speedsterFindingProposalEvents({
+          sessionId: session.id,
+          createdByUserId: session.createdByUserId,
+          findings: detected.initialized,
+          startedAt: actionStartedAt,
+          endedAt: actionEndedAt,
+        }),
+        ...speedsterFilterRemovedEvents({
+          sessionId: session.id,
+          createdByUserId: session.createdByUserId,
+          decisions: filterDecisions ?? [],
+          startedAt: actionStartedAt,
+          endedAt: actionEndedAt,
+        }),
+        speedsterServerTimingEvent({
+          eventKey: `${session.id}:server:initial-grade-calculated`,
+          sessionId: session.id,
+          createdByUserId: session.createdByUserId,
+          eventType: "GRADE_CALCULATED",
+          durationMs: gradeDurationMs,
+          details: {
+            activeFindingCount: review.defects.length,
+            filteredFindingCount: filterDecisions?.length ?? 0,
+          },
+        }),
+        speedsterServerTimingEvent({
+          eventKey: `${session.id}:server:initial-review-ready`,
+          sessionId: session.id,
+          createdByUserId: session.createdByUserId,
+          eventType: "INITIAL_REVIEW_READY",
+          durationMs: actionEndedAt.getTime() - actionStartedAt.getTime(),
+          details: {
+            activeFindingCount: review.defects.length,
+            filteredFindingCount: filterDecisions?.length ?? 0,
+          },
+        }),
+      ];
+      await deps.persistReviewIfRevision(identity, session.updatedAt, {
+        reviewedDefects: review.defects.map(stripSpeedsterFindingInstrumentation),
+        gradeReport,
+        ...(filterDecisions ? { filterDecisions } : {}),
+      });
+      await recordInstrumentationFailOpen(deps, session.id, instrumentationEvents);
+      return resultPayload(before, review.defects, gradeReport, detected.attemptEvidence);
+    } catch (error) {
+      await recordInstrumentationFailOpen(deps, session.id, detectorAttemptEvents);
+      throw error;
     }
-    const gradeStartedAt = Date.now();
-    const review = calculateSpeedsterReview(capture, activeFindings);
-    const gradeDurationMs = Date.now() - gradeStartedAt;
-    const gradeReport = { ...review.grade, detectorVersion: detected.detectorVersion };
-    const actionEndedAt = new Date();
-    const instrumentationEvents = [
-      ...detected.instrumentationEvents,
-      ...speedsterFindingProposalEvents({
-        sessionId: session.id,
-        createdByUserId: session.createdByUserId,
-        findings: detected.initialized,
-        startedAt: actionStartedAt,
-        endedAt: actionEndedAt,
-      }),
-      ...speedsterFilterRemovedEvents({
-        sessionId: session.id,
-        createdByUserId: session.createdByUserId,
-        decisions: filterDecisions ?? [],
-        startedAt: actionStartedAt,
-        endedAt: actionEndedAt,
-      }),
-      speedsterServerTimingEvent({
-        eventKey: `${session.id}:server:initial-grade-calculated`,
-        sessionId: session.id,
-        createdByUserId: session.createdByUserId,
-        eventType: "GRADE_CALCULATED",
-        durationMs: gradeDurationMs,
-        details: {
-          activeFindingCount: review.defects.length,
-          filteredFindingCount: filterDecisions?.length ?? 0,
-        },
-      }),
-      speedsterServerTimingEvent({
-        eventKey: `${session.id}:server:initial-review-ready`,
-        sessionId: session.id,
-        createdByUserId: session.createdByUserId,
-        eventType: "INITIAL_REVIEW_READY",
-        durationMs: actionEndedAt.getTime() - actionStartedAt.getTime(),
-        details: {
-          activeFindingCount: review.defects.length,
-          filteredFindingCount: filterDecisions?.length ?? 0,
-        },
-      }),
-    ];
-    await deps.persistReviewIfRevision(identity, session.updatedAt, {
-      reviewedDefects: review.defects.map(stripSpeedsterFindingInstrumentation),
-      gradeReport,
-      ...(filterDecisions ? { filterDecisions } : {}),
-    });
-    await recordInstrumentationFailOpen(deps, session.id, instrumentationEvents);
-    return resultPayload(before, review.defects, gradeReport);
   }
 
   validateTransition(before, input.action);

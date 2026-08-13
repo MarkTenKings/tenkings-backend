@@ -95,7 +95,8 @@ test("SAM Memory decisions reuse deterministic session and side diagnostics", ()
   );
 
   assert.match(service, /sessionId:\s*input\.sessionId/);
-  assert.match(service, /requestTraceId:\s*`\$\{input\.sessionId\}:\$\{request\.side\}:detect`/);
+  assert.match(service, /operationId\s*=\s*randomUUID\(\)/);
+  assert.match(service, /requestTraceId\s*=\s*`\$\{input\.sessionId\}:\$\{request\.side\}:detect:\$\{operationId\}:a\$\{attemptNumber\}`/);
   assert.match(service, /learningBank,/);
   assert.match(route, /speedsterLearningBankForDetectRequest/);
 });
