@@ -832,6 +832,9 @@ test("review changes use the one owned review-action route and never call client
   assert.doesNotMatch(action, /finalTrace:\s*undefined/);
   assert.match(action, /const \{ finalTrace, \.\.\.trace \} = action\.trace/);
   assert.match(action, /traceWire: encodeSpeedsterTraceBitmapWireV1/);
+  assert.match(page, /Scanning FRONT, then BACK/);
+  assert.match(page, /one automatic RunPod HTTP 502 retry/);
+  assert.match(page, /retryRequestId/);
 
   const loaderStart = page.indexOf("const loadTrace", start);
   const loaderEnd = page.indexOf("const traceProposal", loaderStart);

@@ -88,7 +88,8 @@ test("one global bank is injected into every detect request and updated in compl
   assert.doesNotMatch(migration, /\bUPDATE\b|\bDELETE\b/i);
   assert.match(reviewAction, /speedsterLearningBankForDetectRequest/);
   assert.match(reviewAction, /learningBankForDetect:/);
-  assert.match(reviewAction, /fetch\(`\$\{serviceUrl\}\/detect`/);
+  assert.match(reviewAction, /return fetchSpeedsterDetectUpstream\(body/);
+  assert.match(reviewAction, /options\.serviceUrl\.replace[\s\S]+\/detect/);
   assert.match(completion, /dispatchSpeedsterLearningBank/);
   assert.match(completion, /updateSpeedsterLearningBank\(learningBank\.bank, completedReview\.reviewedDefects\)/);
 });

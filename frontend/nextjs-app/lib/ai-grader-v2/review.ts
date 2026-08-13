@@ -53,6 +53,14 @@ const isIncluded = (defect: SpeedsterReviewFinding) => defect.reviewResult !== "
 const canonicalViewId = (side: SpeedsterCardSide, viewId: string) =>
   viewId.startsWith(`${side}:`) ? viewId : `${side}:${viewId}`;
 
+export function speedsterCanonicalDetectorFindingId(
+  side: SpeedsterCardSide,
+  defect: Pick<SpeedsterMeasuredDefect, "id" | "zone">,
+) {
+  const rawId = canonicalViewId(side, defect.id);
+  return rawId.endsWith(`:${defect.zone}`) ? rawId : `${rawId}:${defect.zone}`;
+}
+
 export function speedsterDetectorViews(side: DetectorSide) {
   return [
     { id: `${side.side}:ORIGINAL`, imageUrl: side.inspectionUrl ?? side.rectifiedUrl },
@@ -68,11 +76,10 @@ function canonicalDefects(
   reviewResult: SpeedsterMeasuredDefect["reviewResult"],
 ) {
   return defects.map((defect) => {
-    const rawId = canonicalViewId(side, defect.id);
     const origin = defect.origin === "MEMORY" ? "MEMORY" as const : "DETECTOR" as const;
     return {
       ...defect,
-      id: rawId.endsWith(`:${defect.zone}`) ? rawId : `${rawId}:${defect.zone}`,
+      id: speedsterCanonicalDetectorFindingId(side, defect),
       side,
       origin,
       detectedDefectType: defect.detectedDefectType ?? defect.defectType,
@@ -96,14 +103,8 @@ export async function scanSpeedsterCapture(input: {
       views: speedsterDetectorViews(captureSide),
     });
   };
-  const [frontResult, backResult] = await Promise.allSettled([
-    detectSide("FRONT", input.capture.front),
-    detectSide("BACK", input.capture.back),
-  ]);
-  if (frontResult.status === "rejected") throw frontResult.reason;
-  if (backResult.status === "rejected") throw backResult.reason;
-  const front = frontResult.value;
-  const back = backResult.value;
+  const front = await detectSide("FRONT", input.capture.front);
+  const back = await detectSide("BACK", input.capture.back);
   if (front.detectorVersion !== back.detectorVersion) {
     throw new Error("Front and Back Speedster detector versions do not match.");
   }
