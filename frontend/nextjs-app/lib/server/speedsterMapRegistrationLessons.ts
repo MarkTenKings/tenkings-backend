@@ -9,7 +9,11 @@ import {
   type SpeedsterMapRegistrationFailure,
 } from "../ai-grader-v2/card-type-map-contracts";
 import { hashSpeedsterMapStorageEvidence, speedsterPhysicalQuadHash } from "./speedsterCardTypeMaps";
-import { readStorageBuffer, uploadBufferIfAbsent } from "./storage";
+import {
+  isStorageObjectNotFoundError,
+  readStorageBufferBounded,
+  uploadPrivateChecksumBuffer,
+} from "./storage";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const TENANT_ID = () => process.env.AI_GRADER_PRODUCTION_TENANT_ID?.trim() || "ten-kings";
@@ -18,13 +22,13 @@ const SAFE_STORAGE_SEGMENT = /^[A-Za-z0-9_-]{1,120}$/;
 
 type RegistrationAnchor = Readonly<{ id: string; point: SpeedsterPoint }>;
 type CorrectedAnchor = Readonly<{ anchorId: string; point: SpeedsterPoint }>;
-type LessonTransaction = Pick<Prisma.TransactionClient, "aiGraderV2MapRegistrationLesson">;
+type LessonTransaction = Pick<Prisma.TransactionClient, "aiGraderV2MapRegistrationLesson" | "$queryRaw">;
 export type SpeedsterRegistrationLessonTransactionRunner = <T>(
   operation: (tx: LessonTransaction) => Promise<T>,
   options: { isolationLevel: Prisma.TransactionIsolationLevel },
 ) => Promise<T>;
 
-type RegistrationLessonRow = Readonly<{
+export type RegistrationLessonRow = Readonly<{
   id: string;
   tenantId: string;
   operatorAdminId: string;
@@ -161,9 +165,9 @@ export type SpeedsterRegistrationLessonEvidenceSnapshot = Readonly<{
 }>;
 
 /**
- * Freezes the current prepared image under a rescue-attempt-specific key before
- * the rescue can become lesson authority. An unattached object is quarantined
- * by that deterministic attempt key and can only be reused after hash equality.
+ * Freezes exact verified bytes under a content-addressed private key. DigitalOcean
+ * Spaces does not need conditional PUT: concurrent writers for one key can only
+ * have the same SHA-256/bytes, and every read and write is post-hash verified.
  */
 export async function ensureSpeedsterRegistrationLessonEvidenceSnapshot(input: Readonly<{
   operatorAdminId: string;
@@ -174,8 +178,8 @@ export async function ensureSpeedsterRegistrationLessonEvidenceSnapshot(input: R
   sourceStorageKey: string;
   expectedSha256: string;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
-  readEvidence?: typeof readStorageBuffer;
-  writeIfAbsent?: typeof uploadBufferIfAbsent;
+  readEvidence?: typeof readStorageBufferBounded;
+  writeEvidence?: typeof uploadPrivateChecksumBuffer;
 }>): Promise<SpeedsterRegistrationLessonEvidenceSnapshot> {
   const segments = [input.operatorAdminId, input.evidenceSessionId, input.mapRevisionId, input.rescueAttemptId];
   if (segments.some((segment) => !SAFE_STORAGE_SEGMENT.test(segment)) || !SHA256.test(input.expectedSha256)) {
@@ -189,7 +193,7 @@ export async function ensureSpeedsterRegistrationLessonEvidenceSnapshot(input: R
     input.mapRevisionId,
     input.side.toLowerCase(),
     input.rescueAttemptId,
-    "inspection.webp",
+    `inspection-${input.expectedSha256}.webp`,
   ].join("/");
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
   try {
@@ -198,15 +202,15 @@ export async function ensureSpeedsterRegistrationLessonEvidenceSnapshot(input: R
     }
     throw new Error("Registration rescue immutable evidence conflicts with this attempt ID.");
   } catch (error) {
-    if (error instanceof Error && error.message.includes("conflicts with this attempt ID")) throw error;
+    if (!isStorageObjectNotFoundError(error)) throw error;
   }
 
-  const buffer = await (input.readEvidence ?? readStorageBuffer)(input.sourceStorageKey);
+  const buffer = await (input.readEvidence ?? readStorageBufferBounded)(input.sourceStorageKey);
   const sourceSha256 = createHash("sha256").update(buffer).digest("hex");
   if (sourceSha256 !== input.expectedSha256) {
     throw new Error("Registration rescue source evidence changed before it could be frozen.");
   }
-  const written = await (input.writeIfAbsent ?? uploadBufferIfAbsent)(
+  await (input.writeEvidence ?? uploadPrivateChecksumBuffer)(
     storageKey,
     buffer,
     "image/webp",
@@ -215,7 +219,7 @@ export async function ensureSpeedsterRegistrationLessonEvidenceSnapshot(input: R
   if (await hashEvidence(storageKey) !== input.expectedSha256) {
     throw new Error("Registration rescue immutable evidence failed hash verification.");
   }
-  return { storageKey, sha256: input.expectedSha256, created: written.created };
+  return { storageKey, sha256: input.expectedSha256, created: true };
 }
 
 export async function loadVerifiedSpeedsterRegistrationLessonCandidates(input: Readonly<{
@@ -310,8 +314,73 @@ export async function loadVerifiedSpeedsterRegistrationLessonCandidates(input: R
   return candidates;
 }
 
+export async function verifySpeedsterRegistrationLessonCaptureAuthority(input: Readonly<{
+  lessonId: string;
+  mapRevisionId: string;
+  side: SpeedsterCardSide;
+  currentInspectionSha256: string;
+  currentPhysicalQuadSha256: string;
+  registration: SpeedsterMapRegistration;
+  hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  findLesson?: () => Promise<RegistrationLessonRow | null>;
+}>) {
+  const row = input.findLesson
+    ? await input.findLesson()
+    : await prisma.aiGraderV2MapRegistrationLesson.findUnique({ where: { id: input.lessonId } }) as RegistrationLessonRow | null;
+  if (!row || row.id !== input.lessonId || row.tenantId !== TENANT_ID()
+    || row.mapRevisionId !== input.mapRevisionId || row.side !== input.side
+    || row.currentInspectionSha256 !== input.currentInspectionSha256
+    || row.currentPhysicalQuadSha256 !== input.currentPhysicalQuadSha256
+    || speedsterRegistrationLessonHash(row) !== row.lessonHash) {
+    throw new Error("Human registration lesson authority does not match the exact capture binding.");
+  }
+  const evidenceHash = await (input.hashEvidence ?? hashSpeedsterMapStorageEvidence)(row.currentInspectionKey);
+  if (evidenceHash !== row.currentInspectionSha256) {
+    throw new Error("Human registration lesson immutable evidence failed hash verification.");
+  }
+  const canonicalClaim = {
+    ...input.registration,
+    candidateProvenance: { candidateId: "human-confirmed", source: "HUMAN_CORRECTION" },
+  };
+  if (canonicalJson(canonicalClaim) !== canonicalJson(row.validatedRegistration)) {
+    throw new Error("Human registration lesson result does not match the exact server-validated transform.");
+  }
+}
+
+export async function verifySpeedsterRegistrationLessonReferenceAuthority(input: Readonly<{
+  lessonId: string;
+  mapRevisionId: string;
+  side: SpeedsterCardSide;
+  expectedAnchors: readonly RegistrationAnchor[];
+  hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  findLesson?: () => Promise<RegistrationLessonRow | null>;
+}>) {
+  const row = input.findLesson
+    ? await input.findLesson()
+    : await prisma.aiGraderV2MapRegistrationLesson.findUnique({ where: { id: input.lessonId } }) as RegistrationLessonRow | null;
+  if (!row || row.id !== input.lessonId || row.tenantId !== TENANT_ID()
+    || row.mapRevisionId !== input.mapRevisionId || row.side !== input.side) {
+    throw new Error("Registration lesson reference does not match the exact capture revision and side.");
+  }
+  const verified = await loadVerifiedSpeedsterRegistrationLessonCandidates({
+    mapRevisionId: input.mapRevisionId,
+    side: input.side,
+    expectedAnchors: input.expectedAnchors,
+    hashEvidence: input.hashEvidence,
+    findLessons: async () => [row],
+  });
+  if (verified.length !== 1 || verified[0].lessonId !== input.lessonId) {
+    throw new Error("Registration lesson reference failed immutable hash and transform verification.");
+  }
+  return verified[0];
+}
+
 export async function persistSpeedsterRegistrationLesson(input: Readonly<{
   operatorAdminId: string;
+  expectedMapId: string;
+  expectedMatchKeyHash: string;
+  expectedScope: "EXACT" | "FAMILY";
+  expectedExactMatchKeyHash: string;
   mapRevisionId: string;
   side: SpeedsterCardSide;
   evidenceSessionId: string;
@@ -327,6 +396,13 @@ export async function persistSpeedsterRegistrationLesson(input: Readonly<{
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
 }>): Promise<{ lessonId: string; lessonHash: string; registration: SpeedsterMapRegistration }> {
   if (!/^[A-Za-z0-9_-]{8,100}$/.test(input.rescueAttemptId)) throw new Error("Registration rescue attempt ID is invalid.");
+  if (!SAFE_STORAGE_SEGMENT.test(input.expectedMapId) || !SHA256.test(input.expectedMatchKeyHash)
+    || !SHA256.test(input.expectedExactMatchKeyHash)
+    || (input.expectedScope !== "EXACT" && input.expectedScope !== "FAMILY")
+    || (input.expectedScope === "EXACT" && input.expectedMatchKeyHash !== input.expectedExactMatchKeyHash)
+    || (input.expectedScope === "FAMILY" && input.expectedMatchKeyHash === input.expectedExactMatchKeyHash)) {
+    throw new Error("Registration rescue active map identity is invalid.");
+  }
   if (input.validatedRegistration.version !== SPEEDSTER_MAP_REGISTRATION_VERSION_V2
     || input.validatedRegistration.acceptance?.mode !== "HUMAN_CONFIRMED"
     || input.validatedRegistration.acceptance.policyVersion !== SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION
@@ -396,6 +472,36 @@ export async function persistSpeedsterRegistrationLesson(input: Readonly<{
   const lessonHash = speedsterRegistrationLessonHash(payload);
   const runTransaction = input.transaction ?? (prisma.$transaction.bind(prisma) as SpeedsterRegistrationLessonTransactionRunner);
   const execute = () => runTransaction(async (tx) => {
+    const lockedMaps = await tx.$queryRaw<Array<{
+      id: string;
+      matchKeyHash: string;
+      currentRevisionId: string | null;
+    }>>`
+      SELECT "id", "matchKeyHash", "currentRevisionId"
+      FROM "AiGraderV2CardTypeMap"
+      WHERE "id" = ${input.expectedMapId}
+      FOR UPDATE
+    `;
+    if (lockedMaps.length !== 1
+      || lockedMaps[0].matchKeyHash !== input.expectedMatchKeyHash
+      || lockedMaps[0].currentRevisionId !== input.mapRevisionId) {
+      throw new Error("Registration rescue active map revision changed before lesson persistence; no lesson was saved.");
+    }
+    if (input.expectedScope === "FAMILY") {
+      const exactMaps = await tx.$queryRaw<Array<{
+        id: string;
+        matchKeyHash: string;
+        currentRevisionId: string | null;
+      }>>`
+        SELECT "id", "matchKeyHash", "currentRevisionId"
+        FROM "AiGraderV2CardTypeMap"
+        WHERE "matchKeyHash" = ${input.expectedExactMatchKeyHash}
+        FOR UPDATE
+      `;
+      if (exactMaps.some((map) => map.currentRevisionId !== null)) {
+        throw new Error("Registration rescue applicable map changed before lesson persistence; no lesson was saved.");
+      }
+    }
     const existing = await tx.aiGraderV2MapRegistrationLesson.findUnique({
       where: { rescueAttemptId: input.rescueAttemptId },
     });

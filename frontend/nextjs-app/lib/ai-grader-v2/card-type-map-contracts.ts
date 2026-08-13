@@ -186,6 +186,8 @@ export type SpeedsterMapRegistration = Readonly<{
     medianReprojectionErrorPx: number;
     maxReprojectionErrorPx: number;
   }>;
+  /** Opaque server authority; required for every newly submitted capture binding. */
+  serverReceipt?: string;
 }>;
 
 export type SpeedsterMapRegistrationAnchorDiagnostic = Readonly<{

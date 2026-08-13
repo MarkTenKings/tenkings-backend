@@ -22,6 +22,7 @@ import {
   hashSpeedsterMapStorageEvidence,
   loadEffectiveActiveSpeedsterMapRevision,
   parseSpeedsterMapRegistration,
+  speedsterMapMatchKeyHash,
   speedsterPhysicalQuadHash,
 } from "../../../../../lib/server/speedsterCardTypeMaps";
 import { canonicalizeSpeedsterSessionIdentity } from "../../../../../lib/ai-grader-v2/identity";
@@ -31,9 +32,11 @@ import {
   persistSpeedsterRegistrationLesson,
   type SpeedsterRegistrationLessonCandidate,
 } from "../../../../../lib/server/speedsterMapRegistrationLessons";
-import type {
-  SpeedsterMapRegistrationFailure,
+import {
+  speedsterCardTypeMapKey,
+  type SpeedsterMapRegistrationFailure,
 } from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
+import { issueSpeedsterMapRegistrationReceipt } from "../../../../../lib/server/speedsterMapRegistrationAuthority";
 
 const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
 export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
@@ -355,6 +358,41 @@ export function selectSpeedsterRegistrationLessonCandidates(
   return selected as readonly SpeedsterRegistrationLessonCandidate[];
 }
 
+export function assertSpeedsterRegistrationCandidateAuthority(
+  registration: ReturnType<typeof parseSpeedsterMapRegistration>,
+  serviceRequestBody: Record<string, unknown>,
+  rescue: boolean,
+) {
+  if (registration.version !== "opencv-redundant-ransac-registration-v2") return;
+  const provenance = registration.candidateProvenance;
+  if (!provenance) throw new Error("Registration result lacks candidate provenance.");
+  if (provenance.source === "ORIGINAL_REFERENCE") {
+    if (rescue || provenance.candidateId !== "original-reference" || provenance.lessonId !== undefined) {
+      throw new Error("Registration result does not match the exact original-reference authority.");
+    }
+    return;
+  }
+  if (provenance.source === "REGISTRATION_LESSON") {
+    const roster = Array.isArray(serviceRequestBody.lessonCandidates)
+      ? serviceRequestBody.lessonCandidates
+      : [];
+    const authorized = provenance.lessonId === provenance.candidateId && roster.some((candidate) => (
+      isRecord(candidate)
+      && candidate.candidateId === provenance.candidateId
+      && typeof candidate.referenceInspectionSha256 === "string"
+      && /^[a-f0-9]{64}$/.test(candidate.referenceInspectionSha256)
+    ));
+    if (rescue || !authorized) {
+      throw new Error("Registration result selected a lesson outside the exact server-verified candidate roster.");
+    }
+    return;
+  }
+  if (!rescue || provenance.source !== "HUMAN_CORRECTION"
+    || !provenance.lessonId || provenance.candidateId !== provenance.lessonId) {
+    throw new Error("Human registration result lacks the exact persisted lesson authority.");
+  }
+}
+
 export async function speedsterServiceBody(
   action: string,
   body: Record<string, unknown>,
@@ -505,6 +543,11 @@ export async function speedsterServiceBody(
       ...(correctedAnchors ? { correctedAnchors } : {}),
       ...(automaticFailure ? { automaticFailure } : {}),
       ...(lessonEvidenceStorageKey ? { lessonEvidenceStorageKey } : {}),
+      ...(automaticFailure ? { lessonMapMatchKeyHash: revision.matchKeyHash } : {}),
+      ...(automaticFailure ? { lessonMapScope: selectedMap.appliedScope } : {}),
+      ...(automaticFailure ? {
+        lessonExactMatchKeyHash: speedsterMapMatchKeyHash(speedsterCardTypeMapKey(session.cardProfile, identity)),
+      } : {}),
     };
   }
   if (action === "trace-proposal" && createdByUserId) {
@@ -616,7 +659,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const lessonEvidenceStorageKey = typeof serviceRequestBody.lessonEvidenceStorageKey === "string"
       ? serviceRequestBody.lessonEvidenceStorageKey
       : undefined;
-    const { lessonEvidenceStorageKey: _privateLessonEvidenceStorageKey, ...upstreamServiceRequestBody } = serviceRequestBody;
+    const lessonMapMatchKeyHash = typeof serviceRequestBody.lessonMapMatchKeyHash === "string"
+      ? serviceRequestBody.lessonMapMatchKeyHash
+      : undefined;
+    const lessonMapScope = serviceRequestBody.lessonMapScope === "EXACT" || serviceRequestBody.lessonMapScope === "FAMILY"
+      ? serviceRequestBody.lessonMapScope
+      : undefined;
+    const lessonExactMatchKeyHash = typeof serviceRequestBody.lessonExactMatchKeyHash === "string"
+      ? serviceRequestBody.lessonExactMatchKeyHash
+      : undefined;
+    const {
+      lessonEvidenceStorageKey: _privateLessonEvidenceStorageKey,
+      lessonMapMatchKeyHash: _privateLessonMapMatchKeyHash,
+      lessonMapScope: _privateLessonMapScope,
+      lessonExactMatchKeyHash: _privateLessonExactMatchKeyHash,
+      ...upstreamServiceRequestBody
+    } = serviceRequestBody;
     const upstreamInput = {
       url: `${serviceUrl}/${action}`,
       headers: speedsterServiceHeaders(),
@@ -704,11 +762,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const currentPhysicalQuad = sanitizeSpeedsterUnitQuad(req.body.currentPhysicalQuad);
       const sessionId = typeof req.body.sessionId === "string" ? req.body.sessionId.trim() : "";
       const rescueAttemptId = typeof req.body.rescueAttemptId === "string" ? req.body.rescueAttemptId.trim() : "";
-      if (!currentPhysicalQuad || !sessionId || !lessonEvidenceStorageKey) {
+      if (!currentPhysicalQuad || !sessionId || !lessonEvidenceStorageKey || !lessonMapMatchKeyHash
+        || !lessonMapScope || !lessonExactMatchKeyHash) {
         throw new Error("Registration rescue immutable evidence identity is malformed.");
       }
       const lesson = await persistSpeedsterRegistrationLesson({
         operatorAdminId: admin.user.id,
+        expectedMapId: serviceRequestBody.mapId as string,
+        expectedMatchKeyHash: lessonMapMatchKeyHash,
+        expectedScope: lessonMapScope,
+        expectedExactMatchKeyHash: lessonExactMatchKeyHash,
         mapRevisionId: registration.mapRevisionId,
         side: registration.side,
         evidenceSessionId: sessionId,
@@ -728,6 +791,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           candidateId: lesson.lessonId,
           lessonId: lesson.lessonId,
         },
+      };
+    }
+    if (action === "map-registration" && response.ok) {
+      const registration = safePayload as ReturnType<typeof parseSpeedsterMapRegistration>;
+      const sessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
+      if (!sessionId) throw new Error("Speedster registration receipt session identity is unavailable.");
+      assertSpeedsterRegistrationCandidateAuthority(registration, serviceRequestBody, req.body?.rescue === true);
+      safePayload = {
+        ...registration,
+        serverReceipt: issueSpeedsterMapRegistrationReceipt({
+          operatorAdminId: admin.user.id,
+          sessionId,
+          registration,
+        }),
       };
     }
     return res.status(response.status).json(safePayload);

@@ -463,6 +463,75 @@ export function parseSpeedsterMapSide(
   };
 }
 
+function validateSpeedsterRegistrationOrientation(
+  homography: readonly number[],
+  anchors: readonly Readonly<{ expectedPoint: SpeedsterPoint; locatedPoint: SpeedsterPoint }>[],
+) {
+  const epsilon = 1e-10;
+  const signedCross = (a: SpeedsterPoint, b: SpeedsterPoint, c: SpeedsterPoint) => (
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  );
+  const project = (source: SpeedsterPoint) => {
+    const divisor = homography[6] * source.x + homography[7] * source.y + homography[8];
+    if (!Number.isFinite(divisor) || Math.abs(divisor) <= epsilon) {
+      throw new SpeedsterMapIntegrityError("Current-copy map registration has a projective pole on the card.");
+    }
+    const projected = {
+      x: (homography[0] * source.x + homography[1] * source.y + homography[2]) / divisor,
+      y: (homography[3] * source.x + homography[4] * source.y + homography[5]) / divisor,
+    };
+    if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) {
+      throw new SpeedsterMapIntegrityError("Current-copy map registration projection is non-finite.");
+    }
+    return { point: projected, divisor };
+  };
+  const requireMatchingOrientation = (
+    source: readonly SpeedsterPoint[],
+    target: readonly SpeedsterPoint[],
+    label: string,
+  ) => {
+    for (let first = 0; first < source.length - 2; first += 1) {
+      for (let second = first + 1; second < source.length - 1; second += 1) {
+        for (let third = second + 1; third < source.length; third += 1) {
+          const sourceCross = signedCross(source[first], source[second], source[third]);
+          const targetCross = signedCross(target[first], target[second], target[third]);
+          if (Math.abs(sourceCross) <= epsilon || Math.abs(targetCross) <= epsilon
+            || Math.sign(sourceCross) !== Math.sign(targetCross)) {
+            throw new SpeedsterMapIntegrityError(`Current-copy map registration ${label} reverses or folds orientation.`);
+          }
+        }
+      }
+    }
+  };
+
+  const expected = anchors.map((anchor) => anchor.expectedPoint);
+  const located = anchors.map((anchor) => anchor.locatedPoint);
+  const projectedAnchors = expected.map((entry) => project(entry).point);
+  if (projectedAnchors.some((entry, index) => (
+    Math.abs(entry.x - located[index].x) > 1e-6 || Math.abs(entry.y - located[index].y) > 1e-6
+  ))) {
+    throw new SpeedsterMapIntegrityError("Current-copy map registration anchor projection is incoherent.");
+  }
+  requireMatchingOrientation(expected, located, "anchors");
+
+  const sourceCorners: readonly SpeedsterPoint[] = [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ];
+  const projectedCorners = sourceCorners.map(project);
+  const firstDivisorSign = Math.sign(projectedCorners[0].divisor);
+  if (firstDivisorSign === 0 || projectedCorners.some(({ divisor }) => Math.sign(divisor) !== firstDivisorSign)) {
+    throw new SpeedsterMapIntegrityError("Current-copy map registration has a projective pole across the card.");
+  }
+  requireMatchingOrientation(
+    sourceCorners,
+    projectedCorners.map(({ point: projected }) => projected),
+    "card domain",
+  );
+}
+
 export function parseSpeedsterMapRegistration(
   value: unknown,
   expected: Readonly<{
@@ -512,7 +581,9 @@ export function parseSpeedsterMapRegistration(
     if (!isRecord(entry)) throw new SpeedsterMapIntegrityError(`Registration anchor[${index}] is malformed.`);
     exactObjectKeys(entry, ["anchorId", "expectedPoint", "locatedPoint", "score"], `Registration anchor[${index}]`);
     const score = parseFiniteNumber(entry.score, `Registration anchor[${index}].score`);
-    if (score < 0 || score > 1) throw new SpeedsterMapIntegrityError(`Registration anchor[${index}].score is invalid.`);
+    if (score < 0 || score > 1 || (v2 && score < 0.25)) {
+      throw new SpeedsterMapIntegrityError(`Registration anchor[${index}].score is invalid.`);
+    }
     return {
       anchorId: nonEmptyText(entry.anchorId, `Registration anchor[${index}].anchorId`),
       expectedPoint: point(entry.expectedPoint, `Registration anchor[${index}].expectedPoint`),
@@ -523,6 +594,7 @@ export function parseSpeedsterMapRegistration(
   if (!isSpeedsterNondegenerateAnchorSet(anchors.map((entry) => entry.locatedPoint))) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration located anchors are degenerate.");
   }
+  validateSpeedsterRegistrationOrientation(homography, anchors);
   if (expected.anchors && (
     expected.anchors.length !== anchors.length
     || expected.anchors.some((anchor, index) => (

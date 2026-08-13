@@ -19,12 +19,18 @@ import {
   parseSpeedsterMapRegistration,
   speedsterPhysicalQuadHash,
   type SpeedsterAppliedMapRevision,
+  type SpeedsterMapSourceSession,
 } from "../../../../../lib/server/speedsterCardTypeMaps";
 import {
   insertSpeedsterInstrumentationEvents,
   speedsterCardMapApplicationEvent,
   type SpeedsterInstrumentationEvent,
 } from "../../../../../lib/server/aiGraderV2Instrumentation";
+import { verifySpeedsterMapRegistrationReceipt } from "../../../../../lib/server/speedsterMapRegistrationAuthority";
+import {
+  verifySpeedsterRegistrationLessonCaptureAuthority,
+  verifySpeedsterRegistrationLessonReferenceAuthority,
+} from "../../../../../lib/server/speedsterMapRegistrationLessons";
 
 const jsonObject = z.record(z.string(), z.unknown());
 const patchSchema = z
@@ -71,11 +77,17 @@ type MapBindingValidationResult = Pick<
 type MapBindingValidationDependencies = Readonly<{
   loadActiveMap: typeof loadEffectiveActiveSpeedsterMapRevision;
   hashEvidence: typeof hashSpeedsterMapStorageEvidence;
+  verifyReceipt?: typeof verifySpeedsterMapRegistrationReceipt;
+  verifyHumanLesson?: typeof verifySpeedsterRegistrationLessonCaptureAuthority;
+  verifyReferenceLesson?: typeof verifySpeedsterRegistrationLessonReferenceAuthority;
 }>;
 
 const mapBindingValidationDependencies: MapBindingValidationDependencies = {
   loadActiveMap: loadEffectiveActiveSpeedsterMapRevision,
   hashEvidence: hashSpeedsterMapStorageEvidence,
+  verifyReceipt: verifySpeedsterMapRegistrationReceipt,
+  verifyHumanLesson: verifySpeedsterRegistrationLessonCaptureAuthority,
+  verifyReferenceLesson: verifySpeedsterRegistrationLessonReferenceAuthority,
 };
 
 export async function validateSpeedsterSubmittedMapBinding(
@@ -140,20 +152,76 @@ export async function validateSpeedsterSubmittedMapBinding(
     && (!revision.frontMap?.zones || !revision.backMap?.zones)) {
     throw new SpeedsterMapIntegrityError("Speedster v2 map binding is missing immutable zone authority.");
   }
-  const front = parseSpeedsterMapRegistration(binding.registration.front, {
-    side: "FRONT",
-    mapRevisionId: revision.revisionId,
-    zones: revision.frontMap?.zones,
-    anchors: revision.frontMap?.anchors,
-    designBoundary: revision.frontMap?.designBoundary,
-  });
-  const back = parseSpeedsterMapRegistration(binding.registration.back, {
-    side: "BACK",
-    mapRevisionId: revision.revisionId,
-    zones: revision.backMap?.zones,
-    anchors: revision.backMap?.anchors,
-    designBoundary: revision.backMap?.designBoundary,
-  });
+  const parseAuthorized = async (raw: Record<string, unknown>, side: "FRONT" | "BACK") => {
+    const receipt = typeof raw.serverReceipt === "string" ? raw.serverReceipt : "";
+    const { serverReceipt: _serverReceipt, ...unsigned } = raw;
+    const mapSide = side === "FRONT" ? revision.frontMap : revision.backMap;
+    const parsed = parseSpeedsterMapRegistration(unsigned, {
+      side,
+      mapRevisionId: revision.revisionId,
+      zones: mapSide?.zones,
+      anchors: mapSide?.anchors,
+      designBoundary: mapSide?.designBoundary,
+    });
+    const verifyReceipt = deps.verifyReceipt ?? mapBindingValidationDependencies.verifyReceipt;
+    const verifyHumanLesson = deps.verifyHumanLesson ?? mapBindingValidationDependencies.verifyHumanLesson;
+    const verifyReferenceLesson = deps.verifyReferenceLesson ?? mapBindingValidationDependencies.verifyReferenceLesson;
+    if (!receipt || !verifyReceipt) {
+      throw new SpeedsterMapIntegrityError("Submitted map registration lacks server authority.");
+    }
+    try {
+      verifyReceipt({
+        receipt,
+        operatorAdminId: session.createdByUserId as string,
+        sessionId: session.id as string,
+        registration: parsed,
+      });
+    } catch {
+      throw new SpeedsterMapIntegrityError("Submitted map registration server authority is invalid.");
+    }
+    if (parsed.version === "opencv-redundant-ransac-registration-v2") {
+      if (parsed.candidateProvenance?.source === "HUMAN_CORRECTION") {
+        const lessonId = parsed.candidateProvenance.lessonId;
+        if (!lessonId || lessonId !== parsed.candidateProvenance.candidateId || !verifyHumanLesson) {
+          throw new SpeedsterMapIntegrityError("Human registration lacks immutable lesson authority.");
+        }
+        try {
+          await verifyHumanLesson({
+            lessonId,
+            mapRevisionId: revision.revisionId,
+            side,
+            currentInspectionSha256: parsed.currentInspectionSha256,
+            currentPhysicalQuadSha256: parsed.currentPhysicalQuadSha256,
+            registration: parsed,
+            hashEvidence: deps.hashEvidence,
+          });
+        } catch {
+          throw new SpeedsterMapIntegrityError("Human registration immutable lesson authority is invalid.");
+        }
+      }
+      if (parsed.candidateProvenance?.source === "REGISTRATION_LESSON") {
+        const lessonId = parsed.candidateProvenance.lessonId;
+        if (!lessonId || lessonId !== parsed.candidateProvenance.candidateId
+          || !mapSide?.anchors || !verifyReferenceLesson) {
+          throw new SpeedsterMapIntegrityError("Automatic lesson registration lacks immutable lesson authority.");
+        }
+        try {
+          await verifyReferenceLesson({
+            lessonId,
+            mapRevisionId: revision.revisionId,
+            side,
+            expectedAnchors: mapSide.anchors.map(({ id, point }) => ({ id, point })),
+            hashEvidence: deps.hashEvidence,
+          });
+        } catch {
+          throw new SpeedsterMapIntegrityError("Automatic lesson registration immutable authority is invalid.");
+        }
+      }
+    }
+    return parsed;
+  };
+  const front = await parseAuthorized(binding.registration.front, "FRONT");
+  const back = await parseAuthorized(binding.registration.back, "BACK");
   if (
     front.currentPhysicalQuadSha256 !== speedsterPhysicalQuadHash(source.front.sourceCorners) ||
     back.currentPhysicalQuadSha256 !== speedsterPhysicalQuadHash(source.back.sourceCorners)
@@ -225,6 +293,25 @@ function safeSessionResponse(session: PersistedSession): PersistedSession {
   };
 }
 
+function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.InputJsonValue {
+  const side = (value: SpeedsterMapSourceSession["front"]) => ({
+    originalStorageKey: value.originalStorageKey,
+    rectifiedStorageKey: value.rectifiedStorageKey,
+    inspectionStorageKey: value.inspectionStorageKey,
+    sourceCorners: value.sourceCorners,
+    centeringQuad: value.centeringQuad,
+    centeringBorders: value.centeringBorders,
+    inspectionFrame: value.inspectionFrame,
+    transform: value.transform,
+    viewStorageKeys: value.viewStorageKeys,
+  });
+  return {
+    cornerShape: source.cornerShape,
+    front: side(source.front),
+    back: side(source.back),
+  } as Prisma.InputJsonValue;
+}
+
 export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies) {
   return async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== "GET" && req.method !== "PATCH") {
@@ -251,6 +338,14 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       if (existing.workflowState !== "DRAFT") {
         return res.status(409).json({ message: "Only a DRAFT Speedster session can save its capture" });
       }
+      const canonicalSource = parseSpeedsterMapSourceSession({
+        id: existing.id as string,
+        createdByUserId: existing.createdByUserId as string,
+        workflowState: existing.workflowState,
+        cardProfile: existing.cardProfile as string,
+        identity: existing.identity,
+        capture: parsed.data.capture,
+      });
       const validatedMapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
       if (!validatedMapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
@@ -263,7 +358,7 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       } = validatedMapBinding;
       const session = await deps.updateSession(sessionId, admin.user.id, {
         workflowState: "CAPTURED",
-        capture: parsed.data.capture as Prisma.InputJsonValue,
+        capture: canonicalSpeedsterCapture(canonicalSource),
         ...mapBinding,
       });
       if (!session) {
