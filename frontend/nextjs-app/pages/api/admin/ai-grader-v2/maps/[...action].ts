@@ -346,13 +346,15 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
       return res.status(405).json({ message: "Method not allowed" });
     }
     const requestedAction = actionFrom(req);
+    if (req.method === "GET" && requestedAction === "list") {
+      res.setHeader("Cache-Control", "no-store");
+    }
     try {
       const admin = await deps.requireAdminSession(req);
       const action = requestedAction;
       if (req.method === "GET" && action === "list") {
         if (!deps.listMappedCards) throw new SpeedsterMapIntegrityError("Card Map library is unavailable.");
         const cards = await deps.listMappedCards(admin.user.id);
-        res.setHeader("Cache-Control", "no-store");
         return res.status(200).json({ cards });
       }
       if (req.method === "GET" && (action === "current" || action === "source")) {

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { Prisma as PrismaRuntime } from "@prisma/client";
 import {
   prisma,
@@ -1167,6 +1168,13 @@ export async function listSpeedsterMappedSourceCards(
       identity = canonicalizeSpeedsterSessionIdentity(source.cardProfile, source.identity);
     } catch {
       throw new SpeedsterMapIntegrityError("Card Map library source identity is malformed.");
+    }
+    assertSpeedsterMapRevisionAppliesToIdentity(revision, {
+      cardProfile: source.cardProfile,
+      identity,
+    });
+    if (!isDeepStrictEqual(revision.displayIdentity, identity)) {
+      throw new SpeedsterMapIntegrityError("Card Map library source identity does not match immutable revision provenance.");
     }
     const createdAt = revision.createdAt.toISOString();
     const existing = cards.get(source.id) ?? {

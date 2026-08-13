@@ -30,6 +30,8 @@ test("CARD MAPS owns a searchable mapped-source library with direct edit links",
   assert.match(cardMapsPage, /\/api\/admin\/ai-grader-v2\/maps\/list/);
   assert.match(cardMapsPage, /Search existing Card Maps/);
   assert.match(cardMapsPage, /Only source cards with a saved active Card Map appear here/);
+  assert.match(cardMapsPage, /\["FAMILY", "EXACT"\]/);
+  assert.match(cardMapsPage, /NOT CURRENT FROM THIS SOURCE/);
   assert.match(cardMapsPage, /EDIT CARD MAP/);
   assert.match(cardMapsPage, /`\/card-maps\?sessionId=\$\{encodeURIComponent\(card\.sourceSessionId\)\}`/);
   assert.doesNotMatch(cardMapsPage, /fetch\(`\/api\/admin\/ai-grader-v2\/completed/);

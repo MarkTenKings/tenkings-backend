@@ -521,11 +521,14 @@ export default function CardMapsPage() {
                     <h3>{mappedCardName(card)}</h3>
                     <p>{mappedCardIdentity(card)}</p>
                     <div className={styles.libraryRevisions} aria-label="Current Card Map revisions">
-                      {card.revisions.map((revision) => (
-                        <span key={revision.mapId}>
-                          {revision.scope} r{revision.version}
-                        </span>
-                      ))}
+                      {(["FAMILY", "EXACT"] as const).map((scope) => {
+                        const revision = card.revisions.find((candidate) => candidate.scope === scope);
+                        return (
+                          <span key={scope}>
+                            {revision ? `${scope} r${revision.version}` : `${scope} · NOT CURRENT FROM THIS SOURCE`}
+                          </span>
+                        );
+                      })}
                     </div>
                     <div className={styles.libraryCardFooter}>
                       <time dateTime={card.lastMappedAt}>
