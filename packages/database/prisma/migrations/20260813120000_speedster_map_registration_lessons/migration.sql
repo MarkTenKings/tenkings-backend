@@ -1,3 +1,8 @@
+-- PostgreSQL DDL is transactional, but Prisma does not add a transaction to
+-- every provider migration. Keep this complete additive unit all-or-nothing:
+-- table, indexes, foreign keys, function, and trigger commit together.
+BEGIN;
+
 CREATE TABLE "AiGraderV2MapRegistrationLesson" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
@@ -59,3 +64,5 @@ CREATE TRIGGER "AiGraderV2MapRegistrationLesson_append_only"
 BEFORE UPDATE OR DELETE ON "AiGraderV2MapRegistrationLesson"
 FOR EACH ROW
 EXECUTE FUNCTION "reject_ai_grader_v2_map_registration_lesson_mutation"();
+
+COMMIT;
