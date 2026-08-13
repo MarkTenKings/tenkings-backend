@@ -173,6 +173,7 @@ type MountedPage = {
 async function mountPage(input: {
   query?: Record<string, string | string[] | undefined>;
   userId?: string;
+  mappedCards?: readonly unknown[];
   fetchImpl: typeof fetch;
 }): Promise<MountedPage> {
   routerQuery = input.query ?? {};
@@ -204,7 +205,12 @@ async function mountPage(input: {
     HTMLInputElement: { configurable: true, value: dom.window.HTMLInputElement },
     Event: { configurable: true, value: dom.window.Event },
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
-    fetch: { configurable: true, value: input.fetchImpl },
+    fetch: {
+      configurable: true,
+      value: (request: RequestInfo | URL, init?: RequestInit) => String(request) === "/api/admin/ai-grader-v2/maps/list"
+        ? Promise.resolve(jsonResponse({ cards: input.mappedCards ?? [] }))
+        : input.fetchImpl(request, init),
+    },
   });
   Object.defineProperty(dom.window.HTMLElement.prototype, "scrollIntoView", {
     configurable: true,
@@ -246,6 +252,67 @@ async function changeInput(container: HTMLElement, label: string, value: string)
     input.dispatchEvent(new window.Event("input", { bubbles: true }));
   });
 }
+
+test("Card Maps owns a searchable list containing only saved mapped source cards", async () => {
+  const sourceSessionId = "mapped-source-session-0001";
+  const page = await mountPage({
+    mappedCards: [{
+      sourceSessionId,
+      cardProfile: "POKEMON",
+      workflowState: "CAPTURED",
+      identity: {
+        cardName: "SQUIRTLE",
+        year: "2023",
+        productSet: "MEW EN",
+        parallel: "REVERSE HOLO",
+        cardNumber: "007/165",
+      },
+      lastMappedAt: "2026-08-12T19:40:31.391Z",
+      revisions: [
+        {
+          scope: "EXACT",
+          mapId: "exact-map",
+          revisionId: "exact-r3",
+          version: 3,
+          revisionHash: "a".repeat(64),
+          mapSchemaVersion: "speedster-card-type-map-v2",
+          filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          createdAt: "2026-08-12T19:40:31.391Z",
+        },
+        {
+          scope: "FAMILY",
+          mapId: "family-map",
+          revisionId: "family-r7",
+          version: 7,
+          revisionHash: "b".repeat(64),
+          mapSchemaVersion: "speedster-card-type-map-v2",
+          filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          createdAt: "2026-08-12T19:40:31.343Z",
+        },
+      ],
+    }],
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("SQUIRTLE") ?? false, "Mapped source card list did not load");
+    assert.match(page.container.textContent ?? "", /EXISTING CARD MAPS/);
+    assert.match(page.container.textContent ?? "", /1 of 1 mapped source card/);
+    assert.match(page.container.textContent ?? "", /2023 · Pokémon · MEW EN · REVERSE HOLO · #007\/165/);
+    assert.match(page.container.textContent ?? "", /EXACT r3/);
+    assert.match(page.container.textContent ?? "", /FAMILY r7/);
+    const edit = Array.from(page.container.querySelectorAll("a")).find((link) => link.textContent === "EDIT CARD MAP");
+    assert.equal(edit?.getAttribute("href"), `/card-maps?sessionId=${encodeURIComponent(sourceSessionId)}`);
+
+    await changeInput(page.container, "Search existing Card Maps", "Mewtwo");
+    assert.match(page.container.textContent ?? "", /NO MATCHING CARD MAPS/);
+    assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
+
+    await changeInput(page.container, "Search existing Card Maps", "reverse holo");
+    assert.match(page.container.textContent ?? "", /SQUIRTLE/);
+  } finally {
+    await page.cleanup();
+  }
+});
 
 test("blank new-card identity shows exact field errors without making a request", async () => {
   const requests: string[] = [];

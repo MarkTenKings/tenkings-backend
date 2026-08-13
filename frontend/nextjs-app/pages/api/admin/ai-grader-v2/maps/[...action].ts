@@ -13,6 +13,7 @@ import {
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import {
   SpeedsterMapIntegrityError,
+  listSpeedsterMappedSourceCards,
   listSpeedsterMapRevisionSummaries,
   loadEffectiveActiveSpeedsterMapRevision,
   loadScopedActiveSpeedsterMapRevision,
@@ -26,6 +27,7 @@ import {
   type SpeedsterLoadedMapRevision,
   type SpeedsterAppliedMapRevision,
   type SpeedsterMapDualSaveResult,
+  type SpeedsterMappedSourceCard,
   type SpeedsterMapSaveResult,
   type SpeedsterMapSourceSession,
   type SpeedsterMapTrainingSideInput,
@@ -135,6 +137,7 @@ type Dependencies = Readonly<{
     identity: SpeedsterSessionIdentity;
   }>) => Promise<SpeedsterAppliedMapRevision | null>;
   listRevisions: (mapId: string, currentRevisionId: string) => Promise<Awaited<ReturnType<typeof listSpeedsterMapRevisionSummaries>>>;
+  listMappedCards?: (adminId: string) => Promise<readonly SpeedsterMappedSourceCard[]>;
   saveDualRevisions: (input: Readonly<{
     source: SpeedsterMapSourceSession;
     authorAdminId: string;
@@ -180,6 +183,7 @@ const dependencies: Dependencies = {
   loadActiveMap: loadScopedActiveSpeedsterMapRevision,
   loadEffectiveMap: loadEffectiveActiveSpeedsterMapRevision,
   listRevisions: listSpeedsterMapRevisionSummaries,
+  listMappedCards: listSpeedsterMappedSourceCards,
   saveDualRevisions: saveSpeedsterFamilyAndExactMapRevisions,
   restoreRevision: restoreSpeedsterCardTypeMapRevision,
   promoteRevision: promoteSpeedsterExactMapRevisionToFamily,
@@ -345,6 +349,12 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
     try {
       const admin = await deps.requireAdminSession(req);
       const action = requestedAction;
+      if (req.method === "GET" && action === "list") {
+        if (!deps.listMappedCards) throw new SpeedsterMapIntegrityError("Card Map library is unavailable.");
+        const cards = await deps.listMappedCards(admin.user.id);
+        res.setHeader("Cache-Control", "no-store");
+        return res.status(200).json({ cards });
+      }
       if (req.method === "GET" && (action === "current" || action === "source")) {
         const sessionId = sessionIdFrom(req);
         if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });

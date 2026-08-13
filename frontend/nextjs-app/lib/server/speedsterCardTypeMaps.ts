@@ -183,6 +183,47 @@ type ActiveMapRecord = Readonly<{
   currentRevision: MapRevisionRecord | null;
 }>;
 
+type MappedSourceSessionRecord = Readonly<{
+  id: string;
+  createdByUserId: string;
+  cardProfile: string;
+  workflowState: string;
+  identity: unknown;
+}>;
+
+type CurrentMappedCardRecord = Readonly<{
+  id: string;
+  matchKeyHash: string;
+  currentRevisionId: string | null;
+  currentRevision: (MapRevisionRecord & Readonly<{
+    sourceSession: MappedSourceSessionRecord;
+  }>) | null;
+}>;
+
+export type SpeedsterMappedCardRevisionSummary = Readonly<{
+  scope: SpeedsterMapScope;
+  mapId: string;
+  revisionId: string;
+  version: number;
+  revisionHash: string;
+  mapSchemaVersion: string;
+  filterPolicyVersion: string;
+  createdAt: string;
+}>;
+
+export type SpeedsterMappedSourceCard = Readonly<{
+  sourceSessionId: string;
+  cardProfile: SpeedsterCardProfile;
+  workflowState: "CAPTURED" | "COMPLETED";
+  identity: SpeedsterSessionIdentity;
+  lastMappedAt: string;
+  revisions: readonly SpeedsterMappedCardRevisionSummary[];
+}>;
+
+export type SpeedsterMappedSourceCardListDependencies = Readonly<{
+  findCurrentMaps: () => Promise<readonly CurrentMappedCardRecord[]>;
+}>;
+
 export type SpeedsterMapLookupDependencies = Readonly<{
   findActiveMap: (matchKeyHash: string) => Promise<ActiveMapRecord | null>;
   findActiveMaps?: (matchKeyHashes: readonly string[]) => Promise<readonly ActiveMapRecord[]>;
@@ -230,6 +271,31 @@ const defaultLookupDependencies: SpeedsterMapLookupDependencies = {
   findPinnedRevision: (id) => prisma.aiGraderV2CardTypeMapRevision.findUnique({
     where: { id },
     select: mapRevisionSelect,
+  }),
+};
+
+const defaultMappedSourceCardListDependencies: SpeedsterMappedSourceCardListDependencies = {
+  findCurrentMaps: () => prisma.aiGraderV2CardTypeMap.findMany({
+    where: { currentRevisionId: { not: null } },
+    select: {
+      id: true,
+      matchKeyHash: true,
+      currentRevisionId: true,
+      currentRevision: {
+        select: {
+          ...mapRevisionSelect,
+          sourceSession: {
+            select: {
+              id: true,
+              createdByUserId: true,
+              cardProfile: true,
+              workflowState: true,
+              identity: true,
+            },
+          },
+        },
+      },
+    },
   }),
 };
 
@@ -1058,6 +1124,81 @@ function validateActiveMap(
     throw new SpeedsterMapIntegrityError(`${label} card-type map active-revision relationship is invalid.`);
   }
   return validateSpeedsterLoadedMapRevision(map.currentRevision, { matchKeyHash });
+}
+
+export async function listSpeedsterMappedSourceCards(
+  adminId: string,
+  deps: SpeedsterMappedSourceCardListDependencies = defaultMappedSourceCardListDependencies,
+): Promise<readonly SpeedsterMappedSourceCard[]> {
+  const maps = await deps.findCurrentMaps();
+  const cards = new Map<string, {
+    sourceSessionId: string;
+    cardProfile: SpeedsterCardProfile;
+    workflowState: "CAPTURED" | "COMPLETED";
+    identity: SpeedsterSessionIdentity;
+    lastMappedAt: string;
+    revisions: SpeedsterMappedCardRevisionSummary[];
+  }>();
+
+  for (const map of maps) {
+    if (!map.currentRevisionId || !map.currentRevision) {
+      throw new SpeedsterMapIntegrityError("Card Map library encountered a missing current revision.");
+    }
+    const source = map.currentRevision.sourceSession;
+    if (source.createdByUserId !== adminId && source.workflowState !== "COMPLETED") continue;
+    if (source.cardProfile !== "SPORTS" && source.cardProfile !== "POKEMON") {
+      throw new SpeedsterMapIntegrityError("Card Map library source category is unsupported.");
+    }
+    if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
+      throw new SpeedsterMapIntegrityError("Card Map library source is not editable.");
+    }
+    if (map.currentRevisionId !== map.currentRevision.id || map.id !== map.currentRevision.mapId) {
+      throw new SpeedsterMapIntegrityError("Card Map library encountered an invalid current-revision relationship.");
+    }
+    const revision = validateSpeedsterLoadedMapRevision(map.currentRevision, {
+      matchKeyHash: map.matchKeyHash,
+      mapRevisionId: map.currentRevisionId,
+    });
+    if (revision.sourceSessionId !== source.id || revision.matchKey.category !== source.cardProfile) {
+      throw new SpeedsterMapIntegrityError("Card Map library revision provenance is inconsistent.");
+    }
+    let identity: SpeedsterSessionIdentity;
+    try {
+      identity = canonicalizeSpeedsterSessionIdentity(source.cardProfile, source.identity);
+    } catch {
+      throw new SpeedsterMapIntegrityError("Card Map library source identity is malformed.");
+    }
+    const createdAt = revision.createdAt.toISOString();
+    const existing = cards.get(source.id) ?? {
+      sourceSessionId: source.id,
+      cardProfile: source.cardProfile,
+      workflowState: source.workflowState,
+      identity,
+      lastMappedAt: createdAt,
+      revisions: [],
+    };
+    existing.lastMappedAt = existing.lastMappedAt > createdAt ? existing.lastMappedAt : createdAt;
+    existing.revisions.push({
+      scope: speedsterMapScopeForKey(revision.matchKey),
+      mapId: revision.mapId,
+      revisionId: revision.revisionId,
+      version: revision.version,
+      revisionHash: revision.revisionHash,
+      mapSchemaVersion: revision.mapSchemaVersion,
+      filterPolicyVersion: revision.filterPolicyVersion,
+      createdAt,
+    });
+    cards.set(source.id, existing);
+  }
+
+  return [...cards.values()]
+    .map((card) => ({
+      ...card,
+      revisions: card.revisions.sort((left, right) => (
+        left.scope.localeCompare(right.scope) || right.version - left.version
+      )),
+    }))
+    .sort((left, right) => right.lastMappedAt.localeCompare(left.lastMappedAt));
 }
 
 export async function loadScopedActiveSpeedsterMapRevision(

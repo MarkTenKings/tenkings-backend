@@ -20,6 +20,7 @@ import {
   loadEffectiveActiveSpeedsterMapRevision,
   loadExactActiveSpeedsterMapRevision,
   loadPinnedSpeedsterMapRevision,
+  listSpeedsterMappedSourceCards,
   normalizedSpeedsterMapRevisionPayload,
   parseSpeedsterMapSourceSession,
   promoteSpeedsterExactMapRevisionToFamily,
@@ -1487,6 +1488,87 @@ test("captured TRAIN save and restore reject initialized review state before any
   assert.equal(restoreHarness.writes.revisionCreate, 0);
   assert.equal(restoreHarness.writes.currentPointer, 0);
   assert.equal(restoreHarness.writes.session, 0);
+});
+
+test("mapped-source library groups current Family and Exact maps without consulting completed-card rows", async () => {
+  const exactRevision = { ...record(), id: "exact-current" };
+  const familyRevision = { ...record(familyPayload()), id: "family-current" };
+  const sourceSession = {
+    id: SESSION_ID,
+    createdByUserId: "admin-1",
+    cardProfile: "SPORTS",
+    workflowState: "CAPTURED",
+    identity,
+  };
+  const currentMaps = [
+    {
+      id: exactRevision.mapId,
+      matchKeyHash: exactRevision.matchKeyHash,
+      currentRevisionId: exactRevision.id,
+      currentRevision: { ...exactRevision, sourceSession },
+    },
+    {
+      id: familyRevision.mapId,
+      matchKeyHash: familyRevision.matchKeyHash,
+      currentRevisionId: familyRevision.id,
+      currentRevision: { ...familyRevision, sourceSession },
+    },
+  ];
+  const owned = await listSpeedsterMappedSourceCards("admin-1", {
+    async findCurrentMaps() { return currentMaps; },
+  });
+  assert.equal(owned.length, 1);
+  assert.equal(owned[0].sourceSessionId, SESSION_ID);
+  assert.deepEqual(owned[0].identity, identity);
+  assert.deepEqual(owned[0].revisions.map(({ scope }) => scope), ["EXACT", "FAMILY"]);
+  assert.equal(owned[0].revisions[0].revisionHash, exactRevision.revisionHash);
+  assert.equal(owned[0].revisions[1].revisionHash, familyRevision.revisionHash);
+
+  const hidden = await listSpeedsterMappedSourceCards("admin-2", {
+    async findCurrentMaps() { return currentMaps; },
+  });
+  assert.deepEqual(hidden, []);
+
+  const shared = await listSpeedsterMappedSourceCards("admin-2", {
+    async findCurrentMaps() {
+      return currentMaps.map((map) => ({
+        ...map,
+        currentRevision: {
+          ...map.currentRevision,
+          sourceSession: { ...sourceSession, workflowState: "COMPLETED" },
+        },
+      }));
+    },
+  });
+  assert.equal(shared.length, 1);
+});
+
+test("map API exposes the admin-only mapped-source library with no-store caching", async () => {
+  let listedFor = "";
+  const cards = [{
+    sourceSessionId: SESSION_ID,
+    cardProfile: "SPORTS" as const,
+    workflowState: "CAPTURED" as const,
+    identity,
+    lastMappedAt: "2026-08-12T19:40:31.391Z",
+    revisions: [],
+  }];
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() { throw new Error("completed-card/session listing must not run"); },
+    async loadActiveMap() { throw new Error("not used"); },
+    async listMappedCards(adminId) { listedFor = adminId; return cards; },
+    async listRevisions() { throw new Error("not used"); },
+    async saveDualRevisions() { throw new Error("not used"); },
+    async restoreRevision() { throw new Error("not used"); },
+    async sourceClientState() { throw new Error("not used"); },
+  });
+  const result = response();
+  await handler(request("GET", "list"), result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal(result.state.headers["Cache-Control"], "no-store");
+  assert.equal(listedFor, "admin-1");
+  assert.deepEqual(result.state.body, { cards });
 });
 
 test("map API rejects cross-admin active sources but permits shared completed-card retro-training", async () => {
