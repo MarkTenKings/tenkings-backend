@@ -9,6 +9,8 @@ import type { SpeedsterSessionIdentity } from "./identity";
 export const SPEEDSTER_MAP_SCHEMA_VERSION = "speedster-card-type-map-v1" as const;
 export const SPEEDSTER_MAP_SCHEMA_VERSION_V2 = "speedster-card-type-map-v2" as const;
 export const SPEEDSTER_MAP_REGISTRATION_VERSION = "opencv-human-anchor-registration-v1" as const;
+export const SPEEDSTER_MAP_REGISTRATION_VERSION_V2 = "opencv-redundant-ransac-registration-v2" as const;
+export const SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION = "speedster-map-registration-acceptance-v2" as const;
 export const SPEEDSTER_MAP_FILTER_POLICY_VERSION = "speedster-map-filter-containment-v1" as const;
 export const SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2 = "speedster-map-filter-authority-padding-v2" as const;
 export const SPEEDSTER_MAP_FILTER_RULE_ID = "human-zone-full-contour-containment-v1" as const;
@@ -153,7 +155,7 @@ export type SpeedsterCardTypeMapBody = Readonly<{
 }>;
 
 export type SpeedsterMapRegistration = Readonly<{
-  version: typeof SPEEDSTER_MAP_REGISTRATION_VERSION;
+  version: typeof SPEEDSTER_MAP_REGISTRATION_VERSION | typeof SPEEDSTER_MAP_REGISTRATION_VERSION_V2;
   side: SpeedsterCardSide;
   mapRevisionId: string;
   currentPhysicalQuadSha256: string;
@@ -167,6 +169,68 @@ export type SpeedsterMapRegistration = Readonly<{
   }>[];
   projectedDesignBoundary: SpeedsterMapDesignBoundary;
   projectedZones: readonly SpeedsterMapZone[];
+  candidateProvenance?: Readonly<{
+    candidateId: string;
+    source: "ORIGINAL_REFERENCE" | "REGISTRATION_LESSON" | "HUMAN_CORRECTION";
+    lessonId?: string;
+  }>;
+  acceptance?: Readonly<{
+    policyVersion: typeof SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION;
+    mode: "AUTOMATIC_RANSAC" | "HUMAN_CONFIRMED";
+    featureCount: number;
+    usableFeatureCount: number;
+    inlierCount: number;
+    inlierFraction: number;
+    perAnchorFeatureCounts: readonly [number, number, number, number];
+    perAnchorInlierCounts: readonly [number, number, number, number];
+    medianReprojectionErrorPx: number;
+    maxReprojectionErrorPx: number;
+  }>;
+}>;
+
+export type SpeedsterMapRegistrationAnchorDiagnostic = Readonly<{
+  anchorId: string;
+  expectedPoint: SpeedsterPoint;
+  trackedPoint: SpeedsterPoint | null;
+  locatedPoint: SpeedsterPoint | null;
+  score: number;
+  status: "TRACKED" | "LOW_CONFIDENCE" | "FAILED" | "OUT_OF_CARD";
+}>;
+
+export type SpeedsterMapRegistrationFailure = Readonly<{
+  algorithmVersion: typeof SPEEDSTER_MAP_REGISTRATION_VERSION_V2;
+  policyVersion: typeof SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION;
+  accepted: false;
+  failureCode: string;
+  message: string;
+  candidateCount: number;
+  candidateIds: readonly string[];
+  binding: Readonly<{
+    side: SpeedsterCardSide;
+    mapRevisionId: string;
+    currentInspectionSha256: string;
+    currentPhysicalQuadSha256: string;
+    candidates: readonly Readonly<{
+      candidateId: string;
+      referenceInspectionSha256: string;
+    }>[];
+  }>;
+  bestCandidate: Readonly<{
+    candidateId: string;
+    provenance: "ORIGINAL_REFERENCE" | "REGISTRATION_LESSON";
+    accepted: false;
+    failureCode: string;
+    message: string;
+    anchors: readonly SpeedsterMapRegistrationAnchorDiagnostic[];
+    featureCount: number;
+    usableFeatureCount: number;
+    inlierCount: number;
+    inlierFraction: number;
+    perAnchorFeatureCounts: readonly [number, number, number, number];
+    perAnchorInlierCounts: readonly [number, number, number, number];
+    medianReprojectionErrorPx: number | null;
+    maxReprojectionErrorPx: number | null;
+  }>;
 }>;
 
 export type SpeedsterMapZoneOverlap = Readonly<{

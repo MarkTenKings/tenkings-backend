@@ -14,6 +14,7 @@ import {
   SPEEDSTER_MAP_FILTER_RULE_ID_V2,
   SPEEDSTER_MAP_FILTER_RULE_ID,
   SPEEDSTER_MAP_REGISTRATION_VERSION,
+  SPEEDSTER_MAP_REGISTRATION_VERSION_V2,
   SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
   isSpeedsterMapZoneV2,
   isSpeedsterNondegenerateAnchorSet,
@@ -102,7 +103,8 @@ function registrationSide(
 ): SpeedsterMapRegistration {
   if (
     !isRecord(value)
-    || value.version !== SPEEDSTER_MAP_REGISTRATION_VERSION
+    || (value.version !== SPEEDSTER_MAP_REGISTRATION_VERSION
+      && value.version !== SPEEDSTER_MAP_REGISTRATION_VERSION_V2)
     || value.side !== side
     || value.mapRevisionId !== revisionId
     || typeof value.currentPhysicalQuadSha256 !== "string"

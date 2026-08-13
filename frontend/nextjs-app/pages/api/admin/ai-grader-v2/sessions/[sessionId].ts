@@ -144,11 +144,15 @@ export async function validateSpeedsterSubmittedMapBinding(
     side: "FRONT",
     mapRevisionId: revision.revisionId,
     zones: revision.frontMap?.zones,
+    anchors: revision.frontMap?.anchors,
+    designBoundary: revision.frontMap?.designBoundary,
   });
   const back = parseSpeedsterMapRegistration(binding.registration.back, {
     side: "BACK",
     mapRevisionId: revision.revisionId,
     zones: revision.backMap?.zones,
+    anchors: revision.backMap?.anchors,
+    designBoundary: revision.backMap?.designBoundary,
   });
   if (
     front.currentPhysicalQuadSha256 !== speedsterPhysicalQuadHash(source.front.sourceCorners) ||

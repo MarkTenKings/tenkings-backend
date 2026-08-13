@@ -66,6 +66,7 @@ type Harness = {
   root: Root;
   getPollCount: () => number;
   getRegistrationCount: () => number;
+  getRescueAttemptIds: () => readonly string[];
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
   rerenderSession: (sessionId: string) => Promise<void>;
@@ -78,6 +79,9 @@ async function mountWorkspace(input: {
   activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
+  registrationNeedsRescueOnSide?: "FRONT" | "BACK";
+  registrationGlobalGateFailure?: boolean;
+  rescueFailures?: number;
   registrationNeverSettlesOnSide?: "FRONT" | "BACK";
   onRegistrationRequest?: (side: "FRONT" | "BACK") => void | Promise<void>;
   mapLookupFailed?: boolean;
@@ -129,9 +133,16 @@ async function mountWorkspace(input: {
     releasePointerCapture: { configurable: true, value() {} },
     hasPointerCapture: { configurable: true, value: () => true },
   });
+  Object.defineProperties(dom.window.HTMLElement.prototype, {
+    setPointerCapture: { configurable: true, value() {} },
+    releasePointerCapture: { configurable: true, value() {} },
+    hasPointerCapture: { configurable: true, value: () => true },
+  });
 
   let pollCount = 0;
   let registrationCount = 0;
+  const rescueAttemptIds: string[] = [];
+  let remainingRescueFailures = input.rescueFailures ?? 0;
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     if (url === "/api/admin/ai-grader-v2/iphone-capture" && init?.method === "POST") {
@@ -165,7 +176,12 @@ async function mountWorkspace(input: {
     }
     if (url === "/api/admin/ai-grader-v2/image/map-registration") {
       registrationCount += 1;
-      const body = JSON.parse(String(init?.body)) as { side: "FRONT" | "BACK" };
+      const body = JSON.parse(String(init?.body)) as {
+        side: "FRONT" | "BACK";
+        rescue?: boolean;
+        rescueAttemptId?: string;
+      };
+      if (body.rescue && body.rescueAttemptId) rescueAttemptIds.push(body.rescueAttemptId);
       await input.onRegistrationRequest?.(body.side);
       if (input.registrationNeverSettlesOnSide === body.side) {
         return new Promise<Response>(() => {});
@@ -173,16 +189,76 @@ async function mountWorkspace(input: {
       if (input.registrationFails || input.registrationFailsOnSide === body.side) {
         return jsonResponse({ message: "Registration unsafe" }, 409);
       }
+      if (!body.rescue && input.registrationNeedsRescueOnSide === body.side) {
+        return jsonResponse({
+          message: "CARD MAP registration needs human anchor correction.",
+          requestId: "registration-request-1",
+          registrationFailure: {
+            algorithmVersion: "opencv-redundant-ransac-registration-v2",
+            policyVersion: "speedster-map-registration-acceptance-v2",
+            accepted: false,
+            failureCode: input.registrationGlobalGateFailure ? "LOW_RANSAC_INLIER_FRACTION" : "LOW_ANCHOR_CONFIDENCE",
+            message: input.registrationGlobalGateFailure ? "Registration inlier fraction is below policy." : "One anchor is low confidence.",
+            candidateCount: 1,
+            candidateIds: ["original-reference"],
+            binding: {
+              side: body.side,
+              mapRevisionId: input.activeMap?.revisionId ?? "map-revision-test",
+              currentInspectionSha256: "b".repeat(64),
+              currentPhysicalQuadSha256: "a".repeat(64),
+              candidates: [{ candidateId: "original-reference", referenceInspectionSha256: "c".repeat(64) }],
+            },
+            bestCandidate: {
+              candidateId: "original-reference",
+              provenance: "ORIGINAL_REFERENCE",
+              accepted: false,
+              failureCode: input.registrationGlobalGateFailure ? "LOW_RANSAC_INLIER_FRACTION" : "LOW_ANCHOR_CONFIDENCE",
+              message: input.registrationGlobalGateFailure ? "Registration inlier fraction is below policy." : "One anchor is low confidence.",
+              anchors: validQuad.map((point, index) => ({
+                anchorId: `a${index + 1}`,
+                expectedPoint: point,
+                trackedPoint: !input.registrationGlobalGateFailure && index === 0 ? { x: -0.13, y: 0.06 } : point,
+                locatedPoint: !input.registrationGlobalGateFailure && index === 0 ? { x: -0.13, y: 0.06 } : point,
+                score: !input.registrationGlobalGateFailure && index === 0 ? 0 : 0.9,
+                status: !input.registrationGlobalGateFailure && index === 0 ? "OUT_OF_CARD" : "TRACKED",
+              })),
+              featureCount: 40,
+              usableFeatureCount: 30,
+              inlierCount: 20,
+              inlierFraction: 2 / 3,
+              perAnchorFeatureCounts: [4, 8, 9, 9],
+              perAnchorInlierCounts: [1, 6, 7, 6],
+              medianReprojectionErrorPx: 0.8,
+              maxReprojectionErrorPx: 2.1,
+            },
+          },
+        }, 422);
+      }
+      if (body.rescue && remainingRescueFailures > 0) {
+        remainingRescueFailures -= 1;
+        return jsonResponse({ message: "Registration lesson hash verification failed; no rescue was applied." }, 500);
+      }
       return jsonResponse({
-        version: "opencv-human-anchor-registration-v1",
+        version: body.rescue ? "opencv-redundant-ransac-registration-v2" : "opencv-human-anchor-registration-v1",
         side: body.side,
         mapRevisionId: input.activeMap?.revisionId,
         currentPhysicalQuadSha256: "a".repeat(64),
         currentInspectionSha256: "b".repeat(64),
         homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-        anchors: [],
+        anchors: body.rescue ? validQuad.map((point, index) => ({
+          anchorId: `a${index + 1}`, expectedPoint: point, locatedPoint: point, score: 1,
+        })) : [],
         projectedDesignBoundary: { kind: "QUAD", points: validQuad },
         projectedZones: [],
+        ...(body.rescue ? {
+          candidateProvenance: { candidateId: "lesson-1", source: "HUMAN_CORRECTION", lessonId: "lesson-1" },
+          acceptance: {
+            policyVersion: "speedster-map-registration-acceptance-v2", mode: "HUMAN_CONFIRMED",
+            featureCount: 4, usableFeatureCount: 4, inlierCount: 4, inlierFraction: 1,
+            perAnchorFeatureCounts: [1, 1, 1, 1], perAnchorInlierCounts: [1, 1, 1, 1],
+            medianReprojectionErrorPx: 0, maxReprojectionErrorPx: 0,
+          },
+        } : {}),
       });
     }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
@@ -224,6 +300,7 @@ async function mountWorkspace(input: {
     root,
     getPollCount: () => pollCount,
     getRegistrationCount: () => registrationCount,
+    getRescueAttemptIds: () => rescueAttemptIds,
     events,
     bundles,
     rerenderSession: async (nextSessionId) => {
@@ -724,6 +801,95 @@ test("Front registration success plus Back failure rolls both sides back to manu
       { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
       { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
     ]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Back registration rescue keeps Front provisional, preserves failed-save handles, and applies only after atomic retry", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-rescue", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationNeedsRescueOnSide: "BACK",
+    rescueFailures: 1,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Back rescue did not open");
+    assert.match(harness.container.textContent ?? "", /neither side is applied yet/i);
+    assert.match(harness.container.textContent ?? "", /LOW ANCHOR CONFIDENCE/i);
+    assert.match(harness.container.textContent ?? "", /One anchor is low confidence/i);
+    const failedHandle = harness.container.querySelector('[aria-label="Move anchor 1, out_of_card"]') as HTMLButtonElement | null;
+    assert.ok(failedHandle, "Failed anchor must be draggable and visibly identified");
+    const rescueImage = harness.container.querySelector('img[alt="back current card"]') as HTMLImageElement | null;
+    assert.ok(rescueImage?.parentElement);
+    Object.defineProperty(rescueImage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 }),
+    });
+    await act(async () => fire(failedHandle, "pointerdown", { pointerId: 7, clientX: 0, clientY: 60 }));
+    await act(async () => {
+      fire(rescueImage.parentElement!, "pointermove", { pointerId: 7, clientX: 400, clientY: 300 });
+      fire(rescueImage.parentElement!, "pointerup", { pointerId: 7, clientX: 400, clientY: 300 });
+    });
+    assert.equal(failedHandle.style.left, "40%", "Dragged anchor x is retained in the rescue overlay");
+    assert.equal(failedHandle.style.top, "30%", "Dragged anchor y is retained in the rescue overlay");
+
+    await act(async () => fire(buttonByText(harness.container, "Confirm corrected anchors")!, "click"));
+    await waitFor(() => (harness.container.textContent ?? "").includes("hash verification failed"), "Atomic persistence failure was not visible");
+    assert.ok(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]'), "Failed persistence must retain rescue UI");
+    assert.equal((harness.container.querySelector('[aria-label="Move anchor 1, out_of_card"]') as HTMLButtonElement).style.left, "40%", "Failed persistence must preserve corrected anchor positions");
+    assert.equal(harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").length, 0, "Provisional Front must not be applied or recorded");
+
+    await act(async () => fire(buttonByText(harness.container, "Confirm corrected anchors")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Validated rescue did not continue to centering");
+    assert.match(harness.container.textContent ?? "", /human-corrected, server-validated/i);
+    assert.deepEqual(
+      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details?.mapAppliedScope),
+      ["FAMILY", "FAMILY"],
+    );
+    assert.equal(harness.getRegistrationCount(), 4, "Two automatic calls plus one failed and one successful rescue are expected");
+    assert.equal(harness.getRescueAttemptIds().length, 2);
+    assert.equal(
+      harness.getRescueAttemptIds()[0],
+      harness.getRescueAttemptIds()[1],
+      "A lost-response retry must reuse the exact rescue attempt identity",
+    );
+
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    assert.equal(harness.bundles.length, 1);
+    assert.equal(harness.bundles[0].front.mapRegistration?.mapRevisionId, "family-revision-rescue");
+    assert.equal(harness.bundles[0].back.mapRegistration?.mapRevisionId, "family-revision-rescue");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("global registration failure explains four-anchor confirmation and accepts unchanged credible proposals", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-global-gate", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationNeedsRescueOnSide: "BACK",
+    registrationGlobalGateFailure: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Back rescue did not open");
+    assert.match(harness.container.textContent ?? "", /LOW RANSAC INLIER FRACTION/i);
+    assert.match(harness.container.textContent ?? "", /All four proposals look individually credible/i);
+    assert.equal(harness.container.querySelectorAll('[aria-label*="tracked"]').length, 4);
+    await act(async () => fire(buttonByText(harness.container, "Confirm corrected anchors")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Unchanged human confirmation did not continue");
   } finally {
     await harness.cleanup();
   }

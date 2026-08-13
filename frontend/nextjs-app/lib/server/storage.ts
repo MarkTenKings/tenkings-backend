@@ -60,6 +60,10 @@ export interface UploadBufferOptions {
   cacheControl?: string;
 }
 
+export interface ImmutableUploadBufferOptions extends UploadBufferOptions {
+  checksumSha256: string;
+}
+
 export interface PresignUploadOptions {
   /** Lowercase or uppercase 64-character SHA-256 hex digest of the exact PUT body. */
   checksumSha256?: string;
@@ -751,6 +755,63 @@ export async function uploadBuffer(
 
   await writeLocalFile(storageKey, buffer);
   return publicUrlFor(storageKey);
+}
+
+/**
+ * Writes an evidence object exactly once. A concurrent/existing destination is
+ * never overwritten; callers must hash-verify that object before trusting it.
+ */
+export async function uploadBufferIfAbsent(
+  storageKey: string,
+  buffer: Buffer,
+  contentType: string,
+  options: ImmutableUploadBufferOptions,
+) {
+  const normalizedKey = normalizeStorageKeyCandidate(storageKey);
+  if (!normalizedKey || normalizedKey !== storageKey) {
+    throw new Error("Immutable storage object key is invalid.");
+  }
+  if (!SHA256_HEX_PATTERN.test(options.checksumSha256)) {
+    throw new Error("Immutable storage object checksum is invalid.");
+  }
+  if (buffer.byteLength > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+    throw new Error("Immutable storage object exceeds the configured upload-size limit.");
+  }
+  const storageMode = getStorageMode();
+  if (storageMode === "s3") {
+    try {
+      await getS3Client().send(new PutObjectCommand({
+        Bucket: s3Bucket,
+        Key: storageKey,
+        Body: buffer,
+        ContentType: contentType,
+        CacheControl: options.cacheControl,
+        ACL: "private",
+        ChecksumSHA256: sha256HexToBase64(options.checksumSha256),
+        IfNoneMatch: "*",
+      }));
+      return { storageKey, created: true as const };
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      const name = String((error as { name?: unknown })?.name ?? "");
+      if (status === 412 || name === "PreconditionFailed") {
+        return { storageKey, created: false as const };
+      }
+      throw error;
+    }
+  }
+
+  const filePath = getLocalFilePath(storageKey);
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  try {
+    await fs.writeFile(filePath, buffer, { flag: "wx" });
+    return { storageKey, created: true as const };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "EEXIST") {
+      return { storageKey, created: false as const };
+    }
+    throw error;
+  }
 }
 
 export function buildThumbnailKey(storageKey: string) {

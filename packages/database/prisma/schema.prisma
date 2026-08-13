@@ -3593,6 +3593,7 @@ model AiGraderV2Session {
   mapSourceRevisions AiGraderV2CardTypeMapRevision[] @relation("MapRevisionSourceSession")
   mapFilterDecisions AiGraderV2MapFilterDecision[]
   instrumentationEvents AiGraderV2InstrumentationEvent[]
+  mapRegistrationLessons AiGraderV2MapRegistrationLesson[] @relation("MapRegistrationLessonEvidenceSession")
 
   @@index([mapRevisionId])
 }
@@ -3740,11 +3741,38 @@ model AiGraderV2CardTypeMapRevision {
   currentForMap        AiGraderV2CardTypeMap? @relation("CurrentCardTypeMapRevision")
   processedSessions    AiGraderV2Session[] @relation("SessionMapRevision")
   filterDecisions      AiGraderV2MapFilterDecision[]
+  registrationLessons  AiGraderV2MapRegistrationLesson[]
   createdAt            DateTime @default(now())
 
   @@unique([mapId, version])
   @@index([matchKeyHash, createdAt])
   @@index([sourceSessionId, createdAt])
+}
+
+model AiGraderV2MapRegistrationLesson {
+  id                        String   @id @default(cuid())
+  tenantId                  String
+  operatorAdminId           String
+  mapRevisionId             String
+  mapRevision               AiGraderV2CardTypeMapRevision @relation(fields: [mapRevisionId], references: [id], onDelete: Restrict)
+  side                      String
+  evidenceSessionId         String
+  evidenceSession           AiGraderV2Session @relation("MapRegistrationLessonEvidenceSession", fields: [evidenceSessionId], references: [id], onDelete: Restrict)
+  currentInspectionKey      String
+  currentInspectionSha256   String
+  currentPhysicalQuadSha256 String
+  originalExpectedAnchors   Json     @db.JsonB
+  automaticDiagnostics      Json     @db.JsonB
+  humanCorrectedAnchors     Json     @db.JsonB
+  validatedRegistration     Json     @db.JsonB
+  algorithmVersion          String
+  policyVersion             String
+  rescueAttemptId           String   @unique
+  lessonHash                String   @unique
+  createdAt                 DateTime @default(now())
+
+  @@index([tenantId, mapRevisionId, side, createdAt])
+  @@index([evidenceSessionId, createdAt])
 }
 
 model AiGraderV2MapFilterDecision {

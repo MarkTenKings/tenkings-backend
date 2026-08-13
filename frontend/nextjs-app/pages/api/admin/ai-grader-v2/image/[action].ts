@@ -25,6 +25,15 @@ import {
   speedsterPhysicalQuadHash,
 } from "../../../../../lib/server/speedsterCardTypeMaps";
 import { canonicalizeSpeedsterSessionIdentity } from "../../../../../lib/ai-grader-v2/identity";
+import {
+  ensureSpeedsterRegistrationLessonEvidenceSnapshot,
+  loadVerifiedSpeedsterRegistrationLessonCandidates,
+  persistSpeedsterRegistrationLesson,
+  type SpeedsterRegistrationLessonCandidate,
+} from "../../../../../lib/server/speedsterMapRegistrationLessons";
+import type {
+  SpeedsterMapRegistrationFailure,
+} from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
 
 const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
 export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
@@ -110,6 +119,8 @@ type TraceEvidenceDependencies = {
   } | null>;
   loadActiveMap?: typeof loadEffectiveActiveSpeedsterMapRevision;
   hashMapEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  loadRegistrationLessons?: typeof loadVerifiedSpeedsterRegistrationLessonCandidates;
+  snapshotRegistrationEvidence?: typeof ensureSpeedsterRegistrationLessonEvidenceSnapshot;
 };
 
 const traceEvidenceDependencies: TraceEvidenceDependencies = {
@@ -130,10 +141,13 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
   }),
   loadActiveMap: loadEffectiveActiveSpeedsterMapRevision,
   hashMapEvidence: hashSpeedsterMapStorageEvidence,
+  loadRegistrationLessons: loadVerifiedSpeedsterRegistrationLessonCandidates,
+  snapshotRegistrationEvidence: ensureSpeedsterRegistrationLessonEvidenceSnapshot,
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const SHA256_HEX = /^[a-f0-9]{64}$/;
 
 export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
   if (!isRecord(payload)) return payload;
@@ -190,6 +204,157 @@ export function sanitizeSpeedsterImageFailure(
   };
 }
 
+const finiteDiagnosticPoint = (value: unknown) => {
+  if (!isRecord(value) || typeof value.x !== "number" || typeof value.y !== "number"
+    || !Number.isFinite(value.x) || !Number.isFinite(value.y)) return null;
+  return { x: value.x, y: value.y };
+};
+
+export function parseSpeedsterRegistrationFailure(value: unknown): SpeedsterMapRegistrationFailure {
+  const failure = isRecord(value) ? value : null;
+  const best = failure && isRecord(failure.bestCandidate) ? failure.bestCandidate : null;
+  const binding = failure && isRecord(failure.binding) ? failure.binding : null;
+  if (
+    !failure || !best || !binding
+    || failure.algorithmVersion !== "opencv-redundant-ransac-registration-v2"
+    || failure.policyVersion !== "speedster-map-registration-acceptance-v2"
+    || failure.accepted !== false
+    || typeof failure.failureCode !== "string"
+    || typeof failure.message !== "string"
+    || !Number.isSafeInteger(failure.candidateCount)
+    || (failure.candidateCount as number) < 1 || (failure.candidateCount as number) > 4
+    || !Array.isArray(failure.candidateIds)
+    || failure.candidateIds.length !== failure.candidateCount
+    || failure.candidateIds.some((entry) => typeof entry !== "string" || !entry || entry.length > 80)
+    || failure.candidateIds[0] !== "original-reference"
+    || new Set(failure.candidateIds).size !== failure.candidateIds.length
+    || (binding.side !== "FRONT" && binding.side !== "BACK")
+    || typeof binding.mapRevisionId !== "string" || !binding.mapRevisionId || binding.mapRevisionId.length > 100
+    || typeof binding.currentInspectionSha256 !== "string" || !SHA256_HEX.test(binding.currentInspectionSha256)
+    || typeof binding.currentPhysicalQuadSha256 !== "string" || !SHA256_HEX.test(binding.currentPhysicalQuadSha256)
+    || !Array.isArray(binding.candidates) || binding.candidates.length !== failure.candidateCount
+    || typeof best.candidateId !== "string"
+    || !failure.candidateIds.includes(best.candidateId)
+    || (best.provenance !== "ORIGINAL_REFERENCE" && best.provenance !== "REGISTRATION_LESSON")
+    || best.accepted !== false
+    || typeof best.failureCode !== "string"
+    || typeof best.message !== "string"
+    || !Array.isArray(best.anchors) || best.anchors.length !== 4
+  ) throw new Error("Map registration failure diagnostics were malformed.");
+  const bindingCandidates = binding.candidates.map((entry) => {
+    if (!isRecord(entry)
+      || typeof entry.candidateId !== "string" || !entry.candidateId || entry.candidateId.length > 80
+      || typeof entry.referenceInspectionSha256 !== "string"
+      || !SHA256_HEX.test(entry.referenceInspectionSha256)) {
+      throw new Error("Map registration failure binding was malformed.");
+    }
+    return {
+      candidateId: entry.candidateId,
+      referenceInspectionSha256: entry.referenceInspectionSha256,
+    };
+  });
+  if (bindingCandidates.map(({ candidateId }) => candidateId).join("\0")
+    !== failure.candidateIds.join("\0")) {
+    throw new Error("Map registration failure binding was malformed.");
+  }
+  const integer = (entry: unknown, maximum = 100) => (
+    Number.isSafeInteger(entry) && (entry as number) >= 0 && (entry as number) <= maximum
+      ? entry as number
+      : (() => { throw new Error("Map registration failure diagnostics were malformed."); })()
+  );
+  const fraction = (entry: unknown) => (
+    typeof entry === "number" && Number.isFinite(entry) && entry >= 0 && entry <= 1
+      ? entry
+      : (() => { throw new Error("Map registration failure diagnostics were malformed."); })()
+  );
+  const nullableError = (entry: unknown) => entry === null
+    ? null
+    : typeof entry === "number" && Number.isFinite(entry) && entry >= 0 && entry <= 10_000
+      ? entry
+      : (() => { throw new Error("Map registration failure diagnostics were malformed."); })();
+  const countVector = (entry: unknown) => {
+    if (!Array.isArray(entry) || entry.length !== 4) throw new Error("Map registration failure diagnostics were malformed.");
+    return entry.map((count) => integer(count)) as [number, number, number, number];
+  };
+  const anchors = best.anchors.map((entry) => {
+    if (!isRecord(entry) || typeof entry.anchorId !== "string"
+      || !entry.anchorId || entry.anchorId.length > 80
+      || !isRecord(entry.expectedPoint)
+      || typeof entry.expectedPoint.x !== "number" || typeof entry.expectedPoint.y !== "number"
+      || !Number.isFinite(entry.expectedPoint.x) || !Number.isFinite(entry.expectedPoint.y)
+      || entry.expectedPoint.x < 0 || entry.expectedPoint.x > 1
+      || entry.expectedPoint.y < 0 || entry.expectedPoint.y > 1
+      || !["TRACKED", "LOW_CONFIDENCE", "FAILED", "OUT_OF_CARD"].includes(String(entry.status))) {
+      throw new Error("Map registration failure anchor diagnostics were malformed.");
+    }
+    const trackedPoint = entry.trackedPoint === null ? null : finiteDiagnosticPoint(entry.trackedPoint);
+    const locatedPoint = entry.locatedPoint === null ? null : finiteDiagnosticPoint(entry.locatedPoint);
+    if ((entry.trackedPoint !== null && !trackedPoint) || (entry.locatedPoint !== null && !locatedPoint)) {
+      throw new Error("Map registration failure anchor diagnostics were malformed.");
+    }
+    return {
+      anchorId: entry.anchorId.slice(0, 80),
+      expectedPoint: { x: entry.expectedPoint.x, y: entry.expectedPoint.y },
+      trackedPoint,
+      locatedPoint,
+      score: fraction(entry.score),
+      status: entry.status as "TRACKED" | "LOW_CONFIDENCE" | "FAILED" | "OUT_OF_CARD",
+    };
+  });
+  if (new Set(anchors.map(({ anchorId }) => anchorId)).size !== 4) {
+    throw new Error("Map registration failure anchor diagnostics were malformed.");
+  }
+  return {
+    algorithmVersion: "opencv-redundant-ransac-registration-v2",
+    policyVersion: "speedster-map-registration-acceptance-v2",
+    accepted: false,
+    failureCode: failure.failureCode.slice(0, 100),
+    message: sanitizedUpstreamText(failure.message, 240) ?? "Registration did not pass acceptance policy.",
+    candidateCount: integer(failure.candidateCount, 4),
+    candidateIds: failure.candidateIds as string[],
+    binding: {
+      side: binding.side,
+      mapRevisionId: binding.mapRevisionId,
+      currentInspectionSha256: binding.currentInspectionSha256,
+      currentPhysicalQuadSha256: binding.currentPhysicalQuadSha256,
+      candidates: bindingCandidates,
+    },
+    bestCandidate: {
+      candidateId: best.candidateId.slice(0, 80),
+      provenance: best.provenance,
+      accepted: false,
+      failureCode: best.failureCode.slice(0, 100),
+      message: sanitizedUpstreamText(best.message, 240) ?? "Registration candidate failed.",
+      anchors,
+      featureCount: integer(best.featureCount),
+      usableFeatureCount: integer(best.usableFeatureCount),
+      inlierCount: integer(best.inlierCount),
+      inlierFraction: fraction(best.inlierFraction),
+      perAnchorFeatureCounts: countVector(best.perAnchorFeatureCounts),
+      perAnchorInlierCounts: countVector(best.perAnchorInlierCounts),
+      medianReprojectionErrorPx: nullableError(best.medianReprojectionErrorPx),
+      maxReprojectionErrorPx: nullableError(best.maxReprojectionErrorPx),
+    },
+  };
+}
+
+export function selectSpeedsterRegistrationLessonCandidates(
+  available: readonly SpeedsterRegistrationLessonCandidate[],
+  automaticFailure?: SpeedsterMapRegistrationFailure,
+) {
+  if (!automaticFailure) return available;
+  const candidateIds = automaticFailure.candidateIds;
+  if (candidateIds[0] !== "original-reference" || new Set(candidateIds).size !== candidateIds.length) {
+    throw new Error("Registration rescue candidate provenance is invalid.");
+  }
+  const availableById = new Map(available.map((candidate) => [candidate.lessonId, candidate]));
+  const selected = candidateIds.slice(1).map((candidateId) => availableById.get(candidateId));
+  if (selected.some((candidate) => !candidate)) {
+    throw new Error("Registration rescue candidate evidence is no longer available.");
+  }
+  return selected as readonly SpeedsterRegistrationLessonCandidate[];
+}
+
 export async function speedsterServiceBody(
   action: string,
   body: Record<string, unknown>,
@@ -208,7 +373,15 @@ export async function speedsterServiceBody(
     const findOwnedMapSession = evidenceDeps.findOwnedMapSession ?? traceEvidenceDependencies.findOwnedMapSession;
     const loadActiveMap = evidenceDeps.loadActiveMap ?? traceEvidenceDependencies.loadActiveMap;
     const hashMapEvidence = evidenceDeps.hashMapEvidence ?? traceEvidenceDependencies.hashMapEvidence;
-    if (!findOwnedMapSession || !loadActiveMap || !hashMapEvidence) {
+    const loadRegistrationLessons = evidenceDeps.loadRegistrationLessons
+      ?? (evidenceDeps === traceEvidenceDependencies
+        ? traceEvidenceDependencies.loadRegistrationLessons
+        : async () => []);
+    const snapshotRegistrationEvidence = evidenceDeps.snapshotRegistrationEvidence
+      ?? (evidenceDeps === traceEvidenceDependencies
+        ? traceEvidenceDependencies.snapshotRegistrationEvidence
+        : undefined);
+    if (!findOwnedMapSession || !loadActiveMap || !hashMapEvidence || !loadRegistrationLessons) {
       throw new Error("Speedster map registration dependencies are unavailable.");
     }
     const session = await findOwnedMapSession(sessionId, createdByUserId);
@@ -224,14 +397,94 @@ export async function speedsterServiceBody(
     const revision = selectedMap.revision;
     const mapSide = side === "FRONT" ? revision.frontMap : revision.backMap;
     if (mapSide.side !== side) throw new Error("Active TRAIN map side is incoherent.");
-    const currentStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}/inspection.webp`;
+    const preparedCurrentStorageKey = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}/inspection.webp`;
     const [referenceSha256, currentInspectionSha256] = await Promise.all([
       hashMapEvidence(mapSide.referenceInspection.storageKey),
-      hashMapEvidence(currentStorageKey),
+      hashMapEvidence(preparedCurrentStorageKey),
     ]);
     if (referenceSha256 !== mapSide.referenceInspection.sha256) {
       throw new Error("Active TRAIN map reference evidence failed hash verification.");
     }
+    const rescue = body.rescue === true;
+    let correctedAnchors: Array<{ id: string; point: { x: number; y: number } }> | undefined;
+    let automaticFailure: SpeedsterMapRegistrationFailure | undefined;
+    let rescueAttemptId: string | undefined;
+    if (rescue) {
+      automaticFailure = parseSpeedsterRegistrationFailure(body.automaticFailure);
+      rescueAttemptId = typeof body.rescueAttemptId === "string" ? body.rescueAttemptId.trim() : "";
+      const currentPhysicalQuadSha256 = speedsterPhysicalQuadHash(currentPhysicalQuad);
+      if (!/^[A-Za-z0-9_-]{8,100}$/.test(rescueAttemptId)
+        || automaticFailure.binding.side !== side
+        || automaticFailure.binding.mapRevisionId !== revision.revisionId
+        || automaticFailure.binding.currentInspectionSha256 !== currentInspectionSha256
+        || automaticFailure.binding.currentPhysicalQuadSha256 !== currentPhysicalQuadSha256
+        || automaticFailure.binding.candidates[0]?.candidateId !== "original-reference"
+        || automaticFailure.binding.candidates[0]?.referenceInspectionSha256 !== referenceSha256) {
+        throw new Error("Registration rescue no longer matches the active map revision and exact evidence. Run registration again; no lesson was saved.");
+      }
+      if (!Array.isArray(body.correctedAnchors) || body.correctedAnchors.length !== 4) {
+        throw new Error("Speedster map registration rescue requires four corrected anchors.");
+      }
+      correctedAnchors = body.correctedAnchors.map((entry, index) => {
+        if (!isRecord(entry) || typeof entry.anchorId !== "string" || !isRecord(entry.point)
+          || typeof entry.point.x !== "number" || typeof entry.point.y !== "number"
+          || !Number.isFinite(entry.point.x) || !Number.isFinite(entry.point.y)
+          || entry.point.x < 0 || entry.point.x > 1 || entry.point.y < 0 || entry.point.y > 1) {
+          throw new Error(`Corrected registration anchor ${index + 1} must be inside the current physical card.`);
+        }
+        return { id: entry.anchorId, point: { x: entry.point.x, y: entry.point.y } };
+      });
+      if (correctedAnchors.map(({ id }) => id).join("\0") !== mapSide.anchors.map(({ id }) => id).join("\0")) {
+        throw new Error("Corrected registration anchor identities do not match the immutable map.");
+      }
+    }
+    const availableLessonCandidates = await loadRegistrationLessons({
+      mapRevisionId: revision.revisionId,
+      side,
+      expectedAnchors: mapSide.anchors.map(({ id, point }) => ({ id, point })),
+      hashEvidence: hashMapEvidence,
+    });
+    const lessonCandidates = selectSpeedsterRegistrationLessonCandidates(
+      availableLessonCandidates,
+      automaticFailure,
+    );
+    const expectedBindingCandidates = [
+      { candidateId: "original-reference", referenceInspectionSha256: referenceSha256 },
+      ...lessonCandidates.map((candidate) => ({
+        candidateId: candidate.lessonId,
+        referenceInspectionSha256: candidate.currentInspectionSha256,
+      })),
+    ];
+    if (automaticFailure
+      && JSON.stringify(automaticFailure.binding.candidates) !== JSON.stringify(expectedBindingCandidates)) {
+      throw new Error("Registration rescue candidate evidence no longer matches the original failure. Run registration again; no lesson was saved.");
+    }
+    let currentStorageKey = preparedCurrentStorageKey;
+    let lessonEvidenceStorageKey: string | undefined;
+    if (automaticFailure) {
+      if (!snapshotRegistrationEvidence || !rescueAttemptId) {
+        throw new Error("Registration rescue immutable evidence storage is unavailable.");
+      }
+      const snapshot = await snapshotRegistrationEvidence({
+        operatorAdminId: createdByUserId,
+        evidenceSessionId: sessionId,
+        mapRevisionId: revision.revisionId,
+        side,
+        rescueAttemptId,
+        sourceStorageKey: preparedCurrentStorageKey,
+        expectedSha256: currentInspectionSha256,
+        hashEvidence: hashMapEvidence,
+      });
+      currentStorageKey = snapshot.storageKey;
+      lessonEvidenceStorageKey = snapshot.storageKey;
+    }
+    const lessonRequests = await Promise.all(lessonCandidates.map(async (candidate) => ({
+      candidateId: candidate.lessonId,
+      referenceInspectionSha256: candidate.currentInspectionSha256,
+      referenceImage: { imageUrl: await evidenceDeps.presignRead(candidate.currentInspectionKey, 60 * 10) },
+      anchors: candidate.anchors,
+      sourceHomography: candidate.sourceHomography,
+    })));
     return {
       referenceImage: {
         imageUrl: await evidenceDeps.presignRead(mapSide.referenceInspection.storageKey, 60 * 10),
@@ -244,9 +497,14 @@ export async function speedsterServiceBody(
       side,
       currentPhysicalQuadSha256: speedsterPhysicalQuadHash(currentPhysicalQuad),
       currentInspectionSha256,
+      referenceInspectionSha256: referenceSha256,
       anchors: mapSide.anchors.map(({ id, point }) => ({ id, point })),
       designBoundary: mapSide.designBoundary,
       zones: mapSide.zones,
+      lessonCandidates: lessonRequests,
+      ...(correctedAnchors ? { correctedAnchors } : {}),
+      ...(automaticFailure ? { automaticFailure } : {}),
+      ...(lessonEvidenceStorageKey ? { lessonEvidenceStorageKey } : {}),
     };
   }
   if (action === "trace-proposal" && createdByUserId) {
@@ -355,12 +613,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       traceEvidenceDependencies,
       action === "trace-proposal" ? requestTraceId : undefined,
     ) as Record<string, unknown>;
+    const lessonEvidenceStorageKey = typeof serviceRequestBody.lessonEvidenceStorageKey === "string"
+      ? serviceRequestBody.lessonEvidenceStorageKey
+      : undefined;
+    const { lessonEvidenceStorageKey: _privateLessonEvidenceStorageKey, ...upstreamServiceRequestBody } = serviceRequestBody;
     const upstreamInput = {
       url: `${serviceUrl}/${action}`,
       headers: speedsterServiceHeaders(),
-      body: JSON.stringify(serviceRequestBody),
+      body: JSON.stringify(upstreamServiceRequestBody),
     };
-    const { response, payload } = action === "geometry"
+    const { response, payload } = action === "geometry" || action === "map-registration"
       ? await fetchSpeedsterImageUpstream({ ...upstreamInput, action })
       : await (async () => {
           const response = await fetch(upstreamInput.url, {
@@ -375,12 +637,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         sanitizeSpeedsterTraceProposalFailure(payload, requestTraceId),
       );
     }
+    if (action === "map-registration" && response.status === 422) {
+      try {
+        const detail = isRecord(payload) ? payload.detail : null;
+        const registrationFailure = parseSpeedsterRegistrationFailure(detail);
+        return res.status(422).json({
+          message: `CARD MAP registration needs human anchor correction on ${registrationFailure.bestCandidate.anchors.filter((anchor) => anchor.status !== "TRACKED").length || "one or more"} anchors (request ${requestTraceId}).`,
+          requestId: requestTraceId,
+          registrationFailure,
+        });
+      } catch {
+        return res.status(502).json({
+          message: `CARD MAP registration returned invalid failure diagnostics (request ${requestTraceId}). No map was applied.`,
+          requestId: requestTraceId,
+        });
+      }
+    }
     if (!response.ok) {
       return res.status(response.status).json(
         sanitizeSpeedsterImageFailure(payload, action, requestTraceId),
       );
     }
-    const safePayload = action === "geometry" && response.ok
+    let safePayload = action === "geometry" && response.ok
       ? sanitizeSpeedsterGeometryPayload(payload)
       : action === "trace-proposal" && response.ok
         ? (() => {
@@ -399,8 +677,59 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               side: serviceRequestBody.side as "FRONT" | "BACK",
               mapRevisionId: serviceRequestBody.mapRevisionId as string,
               zones: serviceRequestBody.zones as Parameters<typeof parseSpeedsterMapRegistration>[1]["zones"],
+              anchors: serviceRequestBody.anchors as Parameters<typeof parseSpeedsterMapRegistration>[1]["anchors"],
+              designBoundary: serviceRequestBody.designBoundary as Parameters<typeof parseSpeedsterMapRegistration>[1]["designBoundary"],
             })
         : payload;
+    if (action === "map-registration" && response.ok && req.body?.rescue === true) {
+      const registration = safePayload as ReturnType<typeof parseSpeedsterMapRegistration>;
+      const automaticFailure = parseSpeedsterRegistrationFailure(
+        isRecord(payload) ? payload.automaticFailure : null,
+      );
+      const submittedFailure = parseSpeedsterRegistrationFailure(req.body.automaticFailure);
+      if (JSON.stringify(submittedFailure) !== JSON.stringify(automaticFailure)) {
+        throw new Error("Registration rescue diagnostics changed during server validation; no lesson was saved.");
+      }
+      const corrected = Array.isArray(req.body.correctedAnchors)
+        ? req.body.correctedAnchors.map((entry: unknown) => {
+            if (!isRecord(entry) || typeof entry.anchorId !== "string") {
+              throw new Error("Registration rescue corrected anchors are malformed.");
+            }
+            return { anchorId: entry.anchorId, point: finiteDiagnosticPoint(entry.point) };
+          })
+        : [];
+      if (corrected.length !== 4 || corrected.some((entry: { point: unknown }) => !entry.point)) {
+        throw new Error("Registration rescue corrected anchors are malformed.");
+      }
+      const currentPhysicalQuad = sanitizeSpeedsterUnitQuad(req.body.currentPhysicalQuad);
+      const sessionId = typeof req.body.sessionId === "string" ? req.body.sessionId.trim() : "";
+      const rescueAttemptId = typeof req.body.rescueAttemptId === "string" ? req.body.rescueAttemptId.trim() : "";
+      if (!currentPhysicalQuad || !sessionId || !lessonEvidenceStorageKey) {
+        throw new Error("Registration rescue immutable evidence identity is malformed.");
+      }
+      const lesson = await persistSpeedsterRegistrationLesson({
+        operatorAdminId: admin.user.id,
+        mapRevisionId: registration.mapRevisionId,
+        side: registration.side,
+        evidenceSessionId: sessionId,
+        currentInspectionKey: lessonEvidenceStorageKey,
+        currentInspectionSha256: registration.currentInspectionSha256,
+        currentPhysicalQuad,
+        originalExpectedAnchors: (serviceRequestBody.anchors as Array<{ id: string; point: { x: number; y: number } }>),
+        automaticDiagnostics: automaticFailure,
+        humanCorrectedAnchors: corrected as Array<{ anchorId: string; point: { x: number; y: number } }>,
+        validatedRegistration: registration,
+        rescueAttemptId,
+      });
+      safePayload = {
+        ...lesson.registration,
+        candidateProvenance: {
+          ...lesson.registration.candidateProvenance,
+          candidateId: lesson.lessonId,
+          lessonId: lesson.lessonId,
+        },
+      };
+    }
     return res.status(response.status).json(safePayload);
   } catch (error) {
     if (error instanceof SpeedsterImageUpstreamTimeoutError) {

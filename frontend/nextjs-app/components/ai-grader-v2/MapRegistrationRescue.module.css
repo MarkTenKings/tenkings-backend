@@ -1,0 +1,25 @@
+.rescue { display: grid; gap: 16px; }
+.rescue header { display: grid; gap: 7px; }
+.rescue header span { color: #d8af55; font-size: 11px; font-weight: 850; letter-spacing: .18em; }
+.rescue h2, .rescue p { margin: 0; }
+.rescue p { color: #b5b8b1; line-height: 1.45; }
+.globalFailure { display: grid; gap: 5px; padding: 12px 15px; border: 1px solid #d86a5666; border-radius: 10px; background: #2a1511; }
+.globalFailure strong { color: #ffb1a9; font-size: 12px; letter-spacing: .08em; }
+.globalFailure span { color: #ddd; line-height: 1.4; }
+.canvas { position: relative; width: min(100%, 660px); margin: 0 auto; touch-action: none; user-select: none; }
+.canvas img { display: block; width: 100%; border: 1px solid #d8af5544; border-radius: 15px; }
+.expected, .handle { position: absolute; translate: -50% -50%; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; }
+.expected { border: 2px dashed #55d9ed; color: #55d9ed; background: #061117cc; pointer-events: none; }
+.handle { border: 3px solid #fff; color: #080806; cursor: grab; box-shadow: 0 0 0 4px #050505aa; }
+.handle:active { cursor: grabbing; }
+.tracked { background: #79e3a7; }
+.failed { background: #ff7b6e; }
+.diagnostics { display: flex; flex-wrap: wrap; gap: 8px; }
+.diagnostics span { padding: 6px 9px; border: 1px solid #ffffff22; border-radius: 999px; color: #ddd; font-size: 11px; }
+.diagnostics span[data-status="FAILED"], .diagnostics span[data-status="OUT_OF_CARD"], .diagnostics span[data-status="LOW_CONFIDENCE"] { color: #ffb1a9; border-color: #ff7b6e66; }
+.actions { display: flex; justify-content: space-between; gap: 12px; }
+.actions button { min-height: 48px; padding: 0 18px; border: 1px solid #d8af55; border-radius: 999px; background: #d8af55; color: #080806; font: inherit; font-weight: 850; cursor: pointer; }
+.actions button:disabled { opacity: .45; cursor: default; }
+.actions .manual { color: #d8af55; background: transparent; }
+.error { padding: 12px 15px; border: 1px solid #d86a56; border-radius: 10px; color: #fff4d6 !important; background: #4a160f; }
+@media (max-width: 720px) { .actions { flex-direction: column-reverse; } }

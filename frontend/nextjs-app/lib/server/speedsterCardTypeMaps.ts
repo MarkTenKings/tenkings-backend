@@ -9,6 +9,9 @@ import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
   SPEEDSTER_MAP_SCHEMA_VERSION,
   SPEEDSTER_MAP_SCHEMA_VERSION_V2,
+  SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION,
+  SPEEDSTER_MAP_REGISTRATION_VERSION,
+  SPEEDSTER_MAP_REGISTRATION_VERSION_V2,
   canonicalSpeedsterMapKeyJson,
   isSpeedsterNondegenerateAnchorSet,
   isSpeedsterMapZoneV2,
@@ -466,9 +469,13 @@ export function parseSpeedsterMapRegistration(
     side: SpeedsterCardSide;
     mapRevisionId: string;
     zones?: readonly SpeedsterMapZone[];
+    anchors?: readonly SpeedsterMapAnchor[];
+    designBoundary?: SpeedsterMapDesignBoundary;
   }>,
 ): SpeedsterMapRegistration {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError("Current-copy map registration is malformed.");
+  const version = value.version;
+  const v2 = version === SPEEDSTER_MAP_REGISTRATION_VERSION_V2;
   exactObjectKeys(value, [
     "version",
     "side",
@@ -479,9 +486,11 @@ export function parseSpeedsterMapRegistration(
     "anchors",
     "projectedDesignBoundary",
     "projectedZones",
+    ...(v2 ? ["candidateProvenance", "acceptance"] : []),
+    ...(v2 && "automaticFailure" in value ? ["automaticFailure"] : []),
   ], "Current-copy map registration");
   if (
-    value.version !== "opencv-human-anchor-registration-v1" ||
+    (version !== SPEEDSTER_MAP_REGISTRATION_VERSION && !v2) ||
     value.side !== expected.side ||
     value.mapRevisionId !== expected.mapRevisionId
   ) {
@@ -514,6 +523,14 @@ export function parseSpeedsterMapRegistration(
   if (!isSpeedsterNondegenerateAnchorSet(anchors.map((entry) => entry.locatedPoint))) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration located anchors are degenerate.");
   }
+  if (expected.anchors && (
+    expected.anchors.length !== anchors.length
+    || expected.anchors.some((anchor, index) => (
+      anchor.id !== anchors[index].anchorId
+      || Math.abs(anchor.point.x - anchors[index].expectedPoint.x) > 1e-12
+      || Math.abs(anchor.point.y - anchors[index].expectedPoint.y) > 1e-12
+    ))
+  )) throw new SpeedsterMapIntegrityError("Current-copy map registration anchors do not match the immutable revision.");
   if (!Array.isArray(value.projectedZones) || value.projectedZones.length < 1 || value.projectedZones.length > 100) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration zones are invalid.");
   }
@@ -526,15 +543,150 @@ export function parseSpeedsterMapRegistration(
       zone.id !== projectedZones[index].id || zone.semanticType !== projectedZones[index].semanticType
     ))
   )) throw new SpeedsterMapIntegrityError("Current-copy map registration zones do not match the immutable revision.");
+  const projectedDesignBoundary = designBoundary(value.projectedDesignBoundary, "Projected design boundary");
+  if (expected.anchors || expected.zones || expected.designBoundary) {
+    const project = (source: SpeedsterPoint) => {
+      const [h0, h1, h2, h3, h4, h5, h6, h7, h8] = homography;
+      const divisor = h6 * source.x + h7 * source.y + h8;
+      if (!Number.isFinite(divisor) || Math.abs(divisor) <= 1e-12) {
+        throw new SpeedsterMapIntegrityError("Current-copy map registration projection is singular.");
+      }
+      const projected = {
+        x: (h0 * source.x + h1 * source.y + h2) / divisor,
+        y: (h3 * source.x + h4 * source.y + h5) / divisor,
+      };
+      if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)
+        || projected.x < 0 || projected.x > 1 || projected.y < 0 || projected.y > 1) {
+        throw new SpeedsterMapIntegrityError("Current-copy map registration projects outside the physical card.");
+      }
+      return projected;
+    };
+    const samePoint = (left: SpeedsterPoint, right: SpeedsterPoint) => (
+      Math.abs(left.x - right.x) <= 1e-6 && Math.abs(left.y - right.y) <= 1e-6
+    );
+    if (expected.anchors?.some((anchor, index) => !samePoint(project(anchor.point), anchors[index].locatedPoint))) {
+      throw new SpeedsterMapIntegrityError("Current-copy map registration anchor projection is incoherent.");
+    }
+    if (expected.zones?.some((zone, zoneIndex) => (
+      zone.polygon.length !== projectedZones[zoneIndex].polygon.length
+      || zone.polygon.some((source, pointIndex) => (
+        !samePoint(project(source), projectedZones[zoneIndex].polygon[pointIndex])
+      ))
+    ))) throw new SpeedsterMapIntegrityError("Current-copy map registration zone projection is incoherent.");
+    if (expected.designBoundary?.kind === "FULL_BLEED") {
+      if (projectedDesignBoundary.kind !== "FULL_BLEED") {
+        throw new SpeedsterMapIntegrityError("Current-copy map registration boundary is incoherent.");
+      }
+    } else if (expected.designBoundary?.kind === "QUAD" && (
+      projectedDesignBoundary.kind !== "QUAD"
+      || expected.designBoundary.points.some((source, pointIndex) => (
+        !samePoint(project(source), projectedDesignBoundary.kind === "QUAD"
+          ? projectedDesignBoundary.points[pointIndex]
+          : source)
+      ))
+    )) throw new SpeedsterMapIntegrityError("Current-copy map registration boundary projection is incoherent.");
+  }
+  let candidateProvenance: SpeedsterMapRegistration["candidateProvenance"];
+  let acceptance: SpeedsterMapRegistration["acceptance"];
+  if (v2) {
+    if (!isRecord(value.candidateProvenance)) throw new SpeedsterMapIntegrityError("Registration candidate provenance is invalid.");
+    exactObjectKeys(value.candidateProvenance, [
+      "candidateId", "source", ...("lessonId" in value.candidateProvenance ? ["lessonId"] : []),
+    ], "Registration candidate provenance");
+    if (!["ORIGINAL_REFERENCE", "REGISTRATION_LESSON", "HUMAN_CORRECTION"].includes(String(value.candidateProvenance.source))) {
+      throw new SpeedsterMapIntegrityError("Registration candidate provenance source is invalid.");
+    }
+    candidateProvenance = {
+      candidateId: nonEmptyText(value.candidateProvenance.candidateId, "Registration candidate ID", 80),
+      source: value.candidateProvenance.source as NonNullable<SpeedsterMapRegistration["candidateProvenance"]>["source"],
+      ...("lessonId" in value.candidateProvenance
+        ? { lessonId: nonEmptyText(value.candidateProvenance.lessonId, "Registration lesson ID", 80) }
+        : {}),
+    };
+    if (!isRecord(value.acceptance)) throw new SpeedsterMapIntegrityError("Registration acceptance evidence is invalid.");
+    exactObjectKeys(value.acceptance, [
+      "policyVersion", "mode", "featureCount", "usableFeatureCount", "inlierCount", "inlierFraction",
+      "perAnchorFeatureCounts", "perAnchorInlierCounts", "medianReprojectionErrorPx", "maxReprojectionErrorPx",
+    ], "Registration acceptance evidence");
+    const integer = (entry: unknown, label: string) => {
+      const parsed = parseFiniteNumber(entry, label);
+      if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed > 100) throw new SpeedsterMapIntegrityError(`${label} is invalid.`);
+      return parsed;
+    };
+    const counts = (entry: unknown, label: string) => {
+      if (!Array.isArray(entry) || entry.length !== 4) throw new SpeedsterMapIntegrityError(`${label} is invalid.`);
+      return entry.map((count, index) => integer(count, `${label}[${index}]`)) as [number, number, number, number];
+    };
+    const inlierFraction = parseFiniteNumber(value.acceptance.inlierFraction, "Registration inlier fraction");
+    const medianError = parseFiniteNumber(value.acceptance.medianReprojectionErrorPx, "Registration median reprojection error");
+    const maxError = parseFiniteNumber(value.acceptance.maxReprojectionErrorPx, "Registration max reprojection error");
+    if (
+      value.acceptance.policyVersion !== SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION
+      || (value.acceptance.mode !== "AUTOMATIC_RANSAC" && value.acceptance.mode !== "HUMAN_CONFIRMED")
+      || inlierFraction < 0 || inlierFraction > 1 || medianError < 0 || maxError < medianError
+    ) throw new SpeedsterMapIntegrityError("Registration acceptance policy identity is invalid.");
+    const parsedAcceptance = {
+      policyVersion: SPEEDSTER_MAP_REGISTRATION_POLICY_VERSION,
+      mode: value.acceptance.mode,
+      featureCount: integer(value.acceptance.featureCount, "Registration feature count"),
+      usableFeatureCount: integer(value.acceptance.usableFeatureCount, "Registration usable feature count"),
+      inlierCount: integer(value.acceptance.inlierCount, "Registration inlier count"),
+      inlierFraction,
+      perAnchorFeatureCounts: counts(value.acceptance.perAnchorFeatureCounts, "Registration per-anchor feature counts"),
+      perAnchorInlierCounts: counts(value.acceptance.perAnchorInlierCounts, "Registration per-anchor inlier counts"),
+      medianReprojectionErrorPx: medianError,
+      maxReprojectionErrorPx: maxError,
+    } as const;
+    const featureSum = parsedAcceptance.perAnchorFeatureCounts.reduce((sum, count) => sum + count, 0);
+    const inlierSum = parsedAcceptance.perAnchorInlierCounts.reduce((sum, count) => sum + count, 0);
+    const automatic = parsedAcceptance.mode === "AUTOMATIC_RANSAC";
+    if (
+      parsedAcceptance.usableFeatureCount > parsedAcceptance.featureCount
+      || parsedAcceptance.inlierCount > parsedAcceptance.usableFeatureCount
+      || parsedAcceptance.usableFeatureCount === 0
+      || Math.abs(
+        parsedAcceptance.inlierFraction
+          - parsedAcceptance.inlierCount / parsedAcceptance.usableFeatureCount,
+      ) > 1e-12
+      || featureSum !== parsedAcceptance.usableFeatureCount
+      || inlierSum !== parsedAcceptance.inlierCount
+      || parsedAcceptance.medianReprojectionErrorPx > 2
+      || parsedAcceptance.maxReprojectionErrorPx > 5
+      || (automatic && (
+        parsedAcceptance.featureCount <= 4
+        || parsedAcceptance.inlierCount < 10
+        || parsedAcceptance.inlierFraction < 0.65
+        || parsedAcceptance.perAnchorFeatureCounts.some((count) => count < 3)
+        || parsedAcceptance.perAnchorInlierCounts.some((count) => count < 2)
+        || candidateProvenance.source === "HUMAN_CORRECTION"
+      ))
+      || (!automatic && (
+        parsedAcceptance.featureCount !== 4
+        || parsedAcceptance.usableFeatureCount !== 4
+        || parsedAcceptance.inlierCount !== 4
+        || parsedAcceptance.inlierFraction !== 1
+        || parsedAcceptance.perAnchorFeatureCounts.some((count) => count !== 1)
+        || parsedAcceptance.perAnchorInlierCounts.some((count) => count !== 1)
+        || candidateProvenance.source !== "HUMAN_CORRECTION"
+      ))
+      || (candidateProvenance.source === "ORIGINAL_REFERENCE" && (
+        candidateProvenance.candidateId !== "original-reference" || candidateProvenance.lessonId !== undefined
+      ))
+      || (candidateProvenance.source === "REGISTRATION_LESSON" && (
+        candidateProvenance.lessonId !== candidateProvenance.candidateId
+      ))
+    ) throw new SpeedsterMapIntegrityError("Registration acceptance evidence does not satisfy the versioned policy.");
+    acceptance = parsedAcceptance;
+  }
   return {
-    version: "opencv-human-anchor-registration-v1",
+    version: version as SpeedsterMapRegistration["version"],
     side: expected.side,
     mapRevisionId: expected.mapRevisionId,
     currentPhysicalQuadSha256,
     currentInspectionSha256,
     homography: homography as unknown as SpeedsterMapRegistration["homography"],
     anchors,
-    projectedDesignBoundary: designBoundary(value.projectedDesignBoundary, "Projected design boundary"),
+    projectedDesignBoundary,
     projectedZones: projectedZones.map((zone, index) => {
       const immutable = expected.zones?.[index];
       return immutable && isSpeedsterMapZoneV2(immutable) ? {
@@ -548,6 +700,8 @@ export function parseSpeedsterMapRegistration(
         proposalConfidence: immutable.proposalConfidence,
       } : zone;
     }),
+    ...(candidateProvenance ? { candidateProvenance } : {}),
+    ...(acceptance ? { acceptance } : {}),
   };
 }
 
@@ -1094,7 +1248,13 @@ export function speedsterIdentityMapRegistration(
     })),
     projectedDesignBoundary: sideMap.designBoundary,
     projectedZones: sideMap.zones.map(registrationZone),
-  }, { side: source.side, mapRevisionId, zones: sideMap.zones });
+  }, {
+    side: source.side,
+    mapRevisionId,
+    zones: sideMap.zones,
+    anchors: sideMap.anchors,
+    designBoundary: sideMap.designBoundary,
+  });
 }
 
 export type SpeedsterMapSaveResult = Readonly<{
@@ -1401,6 +1561,8 @@ async function registerRestoredMapSide(
     side: source.side,
     mapRevisionId: revisionId,
     zones: sideMap.zones,
+    anchors: sideMap.anchors,
+    designBoundary: sideMap.designBoundary,
   });
 }
 

@@ -7,11 +7,13 @@ import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
 import type { SpeedsterInspectionFrame } from "../../lib/ai-grader-v2/inspection-frame";
 import type {
   SpeedsterMapRegistration,
+  SpeedsterMapRegistrationFailure,
   SpeedsterMapScope,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   speedsterImageService,
+  SpeedsterMapRegistrationError,
   planSpeedsterPreparedOutputs,
   uploadSpeedsterOriginal,
 } from "../../lib/ai-grader-v2/image-service";
@@ -23,9 +25,10 @@ import {
   type SpeedsterGeometryAttemptDiagnostic,
 } from "./GeometryAssist";
 import PhotoUploadPair, { type SpeedsterOriginalPhoto } from "./PhotoUploadPair";
+import { MapRegistrationRescue } from "./MapRegistrationRescue";
 import styles from "./CaptureWorkspace.module.css";
 
-type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
+type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "MAP_REGISTRATION_RESCUE" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
 
 export type SpeedsterPreparedSide = {
   side: SpeedsterCardSide;
@@ -131,6 +134,12 @@ type SideState = {
   mapRegistration?: SpeedsterMapRegistration;
 };
 
+type RegistrationRescueState = Readonly<{
+  failures: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistrationFailure>>;
+  provisional: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
+  attemptIds: Partial<Record<SpeedsterCardSide, string>>;
+}>;
+
 const CARD_ASPECT = 63.5 / 88.9;
 
 function manualStartQuad(width: number, height: number): SpeedsterQuad {
@@ -147,6 +156,24 @@ function manualStartQuad(width: number, height: number): SpeedsterQuad {
     { x: right, y: bottom },
     { x: left, y: bottom },
   ];
+}
+
+function withMapRegistration(value: SideState, registration: SpeedsterMapRegistration): SideState {
+  return {
+    ...value,
+    proposedCentering: registration.projectedDesignBoundary.kind === "QUAD"
+      ? registration.projectedDesignBoundary.points
+      : [
+          { x: 0, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ],
+    detectedBorders: registration.projectedDesignBoundary.kind === "QUAD"
+      ? ["top", "right", "bottom", "left"]
+      : [],
+    mapRegistration: registration,
+  };
 }
 
 export function CaptureWorkspace({
@@ -174,6 +201,7 @@ export function CaptureWorkspace({
   const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
+  const [registrationRescue, setRegistrationRescue] = useState<RegistrationRescueState | null>(null);
   const geometryAttempt = useRef(0);
   const activeImageRequest = useRef<AbortController | null>(null);
   const photosStartedAt = useRef(Date.now());
@@ -202,6 +230,7 @@ export function CaptureWorkspace({
     setMapRegistrationNotice(null);
     setWorkflowError(null);
     setCaptureSaveFailed(false);
+    setRegistrationRescue(null);
   }, [sessionId]);
 
   useEffect(() => () => {
@@ -435,12 +464,11 @@ export function CaptureWorkspace({
         throw new Error("Front geometry must be prepared before Back geometry.");
       }
       let finalFront: SideState = { ...front, mapRegistration: undefined };
-      let finalBack: SideState = next;
+      let finalBack: SideState = { ...next, mapRegistration: undefined };
       let frontRegistration: SpeedsterMapRegistration | undefined;
       let backRegistration: SpeedsterMapRegistration | undefined;
       if (activeMapRevisionId) {
-        try {
-          [frontRegistration, backRegistration] = await Promise.all([
+        const results = await Promise.allSettled([
             speedsterImageService.registerMap(token, {
               sessionId,
               side: "FRONT",
@@ -453,32 +481,52 @@ export function CaptureWorkspace({
             }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }),
           ]);
           if (activeImageRequest.current !== controller) return;
+        const frontResult = results[0];
+        const backResult = results[1];
+        if (frontResult.status === "fulfilled" && backResult.status === "fulfilled") {
+          frontRegistration = frontResult.value;
+          backRegistration = backResult.value;
           if (
             frontRegistration.mapRevisionId !== activeMapRevisionId
             || backRegistration.mapRevisionId !== activeMapRevisionId
           ) throw new Error("The selected CARD MAP changed while geometry was being registered.");
-          const applyRegistration = (value: SideState, registration: SpeedsterMapRegistration): SideState => ({
-            ...value,
-            proposedCentering: registration.projectedDesignBoundary.kind === "QUAD"
-              ? registration.projectedDesignBoundary.points
-              : [
-                  { x: 0, y: 0 },
-                  { x: 1, y: 0 },
-                  { x: 1, y: 1 },
-                  { x: 0, y: 1 },
-                ],
-            detectedBorders: registration.projectedDesignBoundary.kind === "QUAD"
-              ? ["top", "right", "bottom", "left"]
-              : [],
-            mapRegistration: registration,
-          });
-          finalFront = applyRegistration(finalFront, frontRegistration);
-          finalBack = applyRegistration(finalBack, backRegistration);
+          finalFront = withMapRegistration(finalFront, frontRegistration);
+          finalBack = withMapRegistration(finalBack, backRegistration);
           setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back.`);
-        } catch {
-          if (activeImageRequest.current !== controller) return;
-          frontRegistration = undefined;
-          backRegistration = undefined;
+        } else {
+          const failures: RegistrationRescueState["failures"] = {
+            ...(frontResult.status === "rejected" && frontResult.reason instanceof SpeedsterMapRegistrationError
+              ? { FRONT: frontResult.reason.failure }
+              : {}),
+            ...(backResult.status === "rejected" && backResult.reason instanceof SpeedsterMapRegistrationError
+              ? { BACK: backResult.reason.failure }
+              : {}),
+          };
+          const provisional: RegistrationRescueState["provisional"] = {
+            ...(frontResult.status === "fulfilled" ? { FRONT: frontResult.value } : {}),
+            ...(backResult.status === "fulfilled" ? { BACK: backResult.value } : {}),
+          };
+          const hasUnrescuableFailure = (
+            frontResult.status === "rejected" && !(frontResult.reason instanceof SpeedsterMapRegistrationError)
+          ) || (
+            backResult.status === "rejected" && !(backResult.reason instanceof SpeedsterMapRegistrationError)
+          );
+          if (!hasUnrescuableFailure && (failures.FRONT || failures.BACK)) {
+            setFront(finalFront);
+            setBack(finalBack);
+            setRegistrationRescue({
+              failures,
+              provisional,
+              attemptIds: {
+                ...(failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
+                ...(failures.BACK ? { BACK: crypto.randomUUID() } : {}),
+              },
+            });
+            setStage("MAP_REGISTRATION_RESCUE");
+            setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} is provisional. Correct the marked anchor${failures.FRONT && failures.BACK ? "s on each side" : ""}; neither side is applied yet.`);
+            setMessage("Correct the Card Map registration anchors. Your photos and geometry are preserved.");
+            return;
+          }
           mapRegistrationFailed.current = true;
           setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} could not register safely on both sides. No map will be applied; continuing with normal human review.`);
         }
@@ -521,6 +569,87 @@ export function CaptureWorkspace({
         setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
         setMessage(`${side === "FRONT" ? "Front" : "Back"} preparation did not finish. Your original photos and geometry are preserved; retry when ready.`);
       }
+    } finally {
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
+    }
+  };
+
+  const finishRegistrationRescue = (
+    provisional: RegistrationRescueState["provisional"],
+    failed: boolean,
+  ) => {
+    if (!front || !back) return;
+    const frontRegistration = failed ? undefined : provisional.FRONT;
+    const backRegistration = failed ? undefined : provisional.BACK;
+    if (!failed && (!frontRegistration || !backRegistration
+      || frontRegistration.mapRevisionId !== activeMapRevisionId
+      || backRegistration.mapRevisionId !== activeMapRevisionId)) {
+      throw new Error("Both rescued sides must validate against the same immutable CARD MAP revision.");
+    }
+    const endedAtMs = Date.now();
+    const finalFront = frontRegistration ? withMapRegistration(front, frontRegistration) : { ...front, mapRegistration: undefined };
+    const finalBack = backRegistration ? withMapRegistration(back, backRegistration) : { ...back, mapRegistration: undefined };
+    setFront(finalFront);
+    setBack(finalBack);
+    setRegistrationRescue(null);
+    setStage("FRONT_CENTERING");
+    stageStartedAt.current = endedAtMs;
+    mapRegistrationFailed.current = failed;
+    setMapRegistrationNotice(failed
+      ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied. Continuing with normal human review.`
+      : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`);
+    const detail = (side: SpeedsterCardSide, registration?: SpeedsterMapRegistration) => ({
+      side,
+      mapAppliedScope: registration ? (activeMapScope ?? "EXACT") : "NONE" as SpeedsterMapScope | "NONE",
+      ...(registration && activeMapName ? { mapName: activeMapName } : {}),
+      ...(registration ? { mapRevisionId: registration.mapRevisionId } : {}),
+      ...(failed ? { mapFailureCode: "REGISTRATION_FAILED" as const } : {}),
+    });
+    const frontTiming = frontGeometryTiming.current ?? { startedAtMs: stageStartedAt.current, endedAtMs };
+    onInstrumentationEvent?.({ eventType: "GEOMETRY_CONFIRMED", ...frontTiming, details: detail("FRONT", frontRegistration) });
+    onInstrumentationEvent?.({ eventType: "GEOMETRY_CONFIRMED", startedAtMs: frontTiming.endedAtMs, endedAtMs, details: detail("BACK", backRegistration) });
+    setMessage("Confirm the printed-border geometry.");
+  };
+
+  const confirmRegistrationRescue = async (
+    side: SpeedsterCardSide,
+    correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[],
+  ) => {
+    if (!registrationRescue || working || !front || !back) return;
+    const failure = registrationRescue.failures[side];
+    if (!failure) return;
+    const controller = new AbortController();
+    activeImageRequest.current?.abort();
+    activeImageRequest.current = controller;
+    setWorking(true);
+    setWorkflowError(null);
+    setMessage(`Validating and saving the corrected ${side.toLowerCase()} anchors.`);
+    try {
+      const registration = await speedsterImageService.rescueMapRegistration(token, {
+        sessionId,
+        side,
+        currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
+        rescueAttemptId: registrationRescue.attemptIds[side]!,
+        automaticFailure: failure,
+        correctedAnchors,
+      }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+      if (activeImageRequest.current !== controller) return;
+      const failures = { ...registrationRescue.failures };
+      delete failures[side];
+      const provisional = { ...registrationRescue.provisional, [side]: registration };
+      if (failures.FRONT || failures.BACK) {
+        setRegistrationRescue({ failures, provisional, attemptIds: registrationRescue.attemptIds });
+        setMessage("That side is saved. Correct the remaining side; neither map side is applied yet.");
+      } else {
+        finishRegistrationRescue(provisional, false);
+      }
+    } catch (error) {
+      if (activeImageRequest.current !== controller) return;
+      setMessage(`The corrected ${side.toLowerCase()} anchors were not saved. Your positions are preserved; retry.`);
+      throw error;
     } finally {
       if (activeImageRequest.current === controller) {
         activeImageRequest.current = null;
@@ -606,6 +735,9 @@ export function CaptureWorkspace({
   };
 
   const activeGeometry = stage === "FRONT_GEOMETRY" ? front : stage === "BACK_GEOMETRY" ? back : null;
+  const rescueSide = registrationRescue?.failures.FRONT ? "FRONT"
+    : registrationRescue?.failures.BACK ? "BACK"
+      : null;
   const activeSide = stage.startsWith("FRONT") ? "FRONT" : "BACK";
   const activeCentering = stage === "FRONT_CENTERING" ? front : stage === "BACK_CENTERING" ? back : null;
 
@@ -679,6 +811,18 @@ export function CaptureWorkspace({
           onContinue={() => void confirmGeometry(activeSide)}
           onImageError={setWorkflowError}
           disabled={working}
+        />
+      ) : null}
+
+      {stage === "MAP_REGISTRATION_RESCUE" && rescueSide && registrationRescue?.failures[rescueSide] ? (
+        <MapRegistrationRescue
+          key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
+          side={rescueSide}
+          imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
+          failure={registrationRescue.failures[rescueSide]!}
+          disabled={working}
+          onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
+          onContinueManual={() => finishRegistrationRescue(registrationRescue.provisional, true)}
         />
       ) : null}
 

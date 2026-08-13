@@ -1,5 +1,6 @@
 """Lean deterministic geometry and localized defect proposals for Speedster."""
 
+from dataclasses import dataclass
 from typing import Optional
 
 import cv2
@@ -33,6 +34,46 @@ MAX_CANDIDATE_BOX_AREA_MM2 = 20.0
 MAX_CANDIDATE_DIMENSION_MM = 10.0
 ANOMALY_KERNEL_SIZE = 15
 EXPECTED_BOUNDARY_RESPONSE_PX = ANOMALY_KERNEL_SIZE // 2
+
+MAP_REGISTRATION_ALGORITHM_VERSION = "opencv-redundant-ransac-registration-v2"
+MAP_REGISTRATION_POLICY_VERSION = "speedster-map-registration-acceptance-v2"
+MAP_REGISTRATION_PATCH_RADIUS_PX = 52
+MAP_REGISTRATION_MAX_FEATURES_PER_ANCHOR = 18
+MAP_REGISTRATION_MIN_FEATURES_PER_ANCHOR = 3
+MAP_REGISTRATION_MIN_INLIERS_PER_ANCHOR = 2
+MAP_REGISTRATION_MIN_FEATURE_SCORE = 0.20
+MAP_REGISTRATION_MIN_ANCHOR_SCORE = 0.25
+MAP_REGISTRATION_MIN_INLIERS = 10
+MAP_REGISTRATION_MIN_INLIER_FRACTION = 0.65
+MAP_REGISTRATION_MAX_MEDIAN_REPROJECTION_ERROR_PX = 2.0
+MAP_REGISTRATION_MAX_REPROJECTION_ERROR_PX = 5.0
+MAP_REGISTRATION_RANSAC_THRESHOLD_PX = 3.0
+MAP_REGISTRATION_MAX_CANDIDATES = 4
+MAP_REGISTRATION_MAX_DIAGNOSTIC_FEATURES = 72
+MAP_REGISTRATION_GEOMETRY_EPSILON = 1e-6
+
+
+class MapRegistrationFailure(ValueError):
+    """Bounded, operator-safe registration failure with no applicable transform."""
+
+    def __init__(self, message: str, diagnostics: dict):
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
+
+class _AcceptanceGateFailure(ValueError):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+@dataclass(frozen=True)
+class _RegistrationCandidate:
+    candidate_id: str
+    provenance: str
+    reference: np.ndarray
+    anchors: list[dict]
+    source_homography: np.ndarray
 
 
 def order_corners(points: np.ndarray) -> np.ndarray:
@@ -402,7 +443,9 @@ def _unit_points(points: list[dict]) -> np.ndarray:
     return parsed
 
 
-def _project_unit_points(points: list[dict], homography: np.ndarray) -> list[dict]:
+def _project_unit_points(
+    points: list[dict], homography: np.ndarray, *, require_in_card: bool = True
+) -> list[dict]:
     pixels = np.array(
         [[float(point["x"]) * (GRID_WIDTH - 1), float(point["y"]) * (GRID_HEIGHT - 1)] for point in points],
         dtype=np.float32,
@@ -410,6 +453,13 @@ def _project_unit_points(points: list[dict], homography: np.ndarray) -> list[dic
     projected = cv2.perspectiveTransform(pixels, homography).reshape(-1, 2)
     if not np.isfinite(projected).all():
         raise ValueError("Map registration projected non-finite design geometry")
+    if require_in_card and (
+        (projected[:, 0] < -MAP_REGISTRATION_GEOMETRY_EPSILON).any()
+        or (projected[:, 1] < -MAP_REGISTRATION_GEOMETRY_EPSILON).any()
+        or (projected[:, 0] > GRID_WIDTH - 1 + MAP_REGISTRATION_GEOMETRY_EPSILON).any()
+        or (projected[:, 1] > GRID_HEIGHT - 1 + MAP_REGISTRATION_GEOMETRY_EPSILON).any()
+    ):
+        raise ValueError("Map registration projected design geometry outside the current physical card")
     return [
         {
             "x": float(x / (GRID_WIDTH - 1)),
@@ -419,50 +469,48 @@ def _project_unit_points(points: list[dict], homography: np.ndarray) -> list[dic
     ]
 
 
-def register_map_design(
-    reference_image: np.ndarray,
-    current_image: np.ndarray,
-    anchors: list[dict],
-    design_boundary: dict,
-    zones: list[dict],
-) -> dict:
-    """Locate four human anchors and transform only the mapped printed design."""
+def _normalized_diagnostic_point(point: np.ndarray) -> Optional[dict]:
+    if point.shape != (2,) or not np.isfinite(point).all():
+        return None
+    return {
+        "x": float(point[0] / (GRID_WIDTH - 1)),
+        "y": float(point[1] / (GRID_HEIGHT - 1)),
+    }
 
-    if len(anchors) != 4 or len({anchor.get("id") for anchor in anchors}) != 4:
-        raise ValueError("Map registration requires four unique human anchors")
-    reference = _canonical_registration_image(reference_image)
-    current = _canonical_registration_image(current_image)
-    reference_gray = cv2.cvtColor(reference, cv2.COLOR_BGR2GRAY)
-    current_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY)
-    expected = _unit_points([anchor["point"] for anchor in anchors])
-    located, status, error = cv2.calcOpticalFlowPyrLK(
-        reference_gray,
-        current_gray,
-        expected.reshape(-1, 1, 2),
-        None,
-        winSize=(81, 81),
-        maxLevel=4,
-        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 0.001),
-        flags=0,
-        minEigThreshold=1e-6,
-    )
-    if located is None or status is None or error is None or not np.all(status.reshape(-1) == 1):
-        raise ValueError("One or more human map anchors could not be located on the current copy")
-    located = located.reshape(-1, 2)
-    if not np.isfinite(located).all() or (located[:, 0] < 0).any() or (located[:, 1] < 0).any() or (located[:, 0] > GRID_WIDTH - 1).any() or (located[:, 1] > GRID_HEIGHT - 1).any():
-        raise ValueError("Located map anchors fall outside the current physical card")
-    homography = cv2.getPerspectiveTransform(expected.astype(np.float32), located.astype(np.float32))
-    if not np.isfinite(homography).all() or abs(float(np.linalg.det(homography))) < 1e-12:
-        raise ValueError("Human map anchors do not define a coherent design transform")
 
+def _polygon_area(points: list[dict]) -> float:
+    return abs(
+        sum(
+            points[index]["x"] * points[(index + 1) % len(points)]["y"]
+            - points[(index + 1) % len(points)]["x"] * points[index]["y"]
+            for index in range(len(points))
+        )
+    ) / 2.0
+
+
+def _validate_projected_polygon(original: list[dict], projected: list[dict], label: str):
+    if len(original) != len(projected) or len(projected) < 3:
+        raise ValueError(f"{label} is malformed")
+    original_area = _polygon_area(original)
+    projected_area = _polygon_area(projected)
+    if original_area <= MAP_REGISTRATION_GEOMETRY_EPSILON or projected_area <= MAP_REGISTRATION_GEOMETRY_EPSILON:
+        raise ValueError(f"{label} is degenerate")
+    area_ratio = projected_area / original_area
+    if not 0.50 <= area_ratio <= 1.50:
+        raise ValueError(f"{label} changes area incoherently")
+
+
+def _project_design_geometry(
+    design_boundary: dict, zones: list[dict], homography: np.ndarray
+) -> tuple[dict, list[dict]]:
     kind = design_boundary.get("kind")
     if kind == "FULL_BLEED":
         projected_boundary = {"kind": "FULL_BLEED"}
     elif kind == "QUAD":
-        projected_boundary = {
-            "kind": "QUAD",
-            "points": _project_unit_points(design_boundary.get("points", []), homography),
-        }
+        boundary_points = design_boundary.get("points", [])
+        projected_points = _project_unit_points(boundary_points, homography)
+        _validate_projected_polygon(boundary_points, projected_points, "Projected design boundary")
+        projected_boundary = {"kind": "QUAD", "points": projected_points}
     else:
         raise ValueError("Map design boundary is invalid")
 
@@ -471,39 +519,554 @@ def register_map_design(
         polygon = zone.get("polygon")
         if not isinstance(polygon, list) or len(polygon) < 3:
             raise ValueError("Map zone polygon is invalid")
+        projected_polygon = _project_unit_points(polygon, homography)
+        _validate_projected_polygon(polygon, projected_polygon, f"Projected map zone {zone.get('id', '')}")
         projected_zones.append(
             {
                 "id": zone["id"],
                 "label": zone["label"],
                 "semanticType": zone["semanticType"],
-                "polygon": _project_unit_points(polygon, homography),
+                "polygon": projected_polygon,
             }
         )
+    return projected_boundary, projected_zones
 
+
+def _unit_homography(homography: np.ndarray) -> list[float]:
     scale = np.array(
         [[GRID_WIDTH - 1, 0, 0], [0, GRID_HEIGHT - 1, 0], [0, 0, 1]],
         dtype=np.float64,
     )
-    unit_homography = np.linalg.inv(scale) @ homography @ scale
-    unit_homography /= unit_homography[2, 2]
-    errors = error.reshape(-1)
+    unit = np.linalg.inv(scale) @ homography @ scale
+    if not np.isfinite(unit).all() or abs(float(unit[2, 2])) < 1e-12:
+        raise ValueError("Map registration transform is non-finite or singular")
+    unit /= unit[2, 2]
+    return unit.reshape(-1).tolist()
+
+
+def _transform_is_coherent(homography: np.ndarray):
+    if homography.shape != (3, 3) or not np.isfinite(homography).all():
+        raise ValueError("Map registration transform is non-finite")
+    normalized = homography / homography[2, 2] if abs(float(homography[2, 2])) >= 1e-12 else homography
+    determinant = abs(float(np.linalg.det(normalized)))
+    condition = float(np.linalg.cond(normalized))
+    if determinant < 1e-8 or not np.isfinite(condition) or condition > 1e7:
+        raise ValueError("Map registration transform is degenerate")
+
+
+def _validate_registration_result(
+    *,
+    mode: str,
+    homography: np.ndarray,
+    feature_count: int,
+    usable_count: int,
+    inlier_count: int,
+    inlier_fraction: float,
+    per_anchor_feature_counts: list[int],
+    per_anchor_inlier_counts: list[int],
+    per_anchor_scores: list[float],
+    median_reprojection_error: float,
+    max_reprojection_error: float,
+    registration_anchors: list[dict],
+    design_boundary: dict,
+    zones: list[dict],
+) -> tuple[dict, list[dict], dict]:
+    """One server-owned acceptance validator for automatic, lesson, and human paths."""
+
+    if mode == "AUTOMATIC_RANSAC":
+        if any(count < MAP_REGISTRATION_MIN_FEATURES_PER_ANCHOR for count in per_anchor_feature_counts):
+            raise _AcceptanceGateFailure("INSUFFICIENT_REDUNDANT_CORRESPONDENCES", "One or more anchors lack enough independently tracked image features.")
+        if inlier_count < MAP_REGISTRATION_MIN_INLIERS:
+            raise _AcceptanceGateFailure("INSUFFICIENT_RANSAC_INLIERS", "Registration did not retain enough RANSAC inliers.")
+        if inlier_fraction < MAP_REGISTRATION_MIN_INLIER_FRACTION:
+            raise _AcceptanceGateFailure("LOW_RANSAC_INLIER_FRACTION", "Registration inlier fraction is below policy.")
+        if any(count < MAP_REGISTRATION_MIN_INLIERS_PER_ANCHOR for count in per_anchor_inlier_counts):
+            raise _AcceptanceGateFailure("ANCHOR_REGION_NOT_SUPPORTED", "One or more anchor regions lack independent inlier support.")
+        if any(score < MAP_REGISTRATION_MIN_ANCHOR_SCORE for score in per_anchor_scores):
+            raise _AcceptanceGateFailure("LOW_ANCHOR_CONFIDENCE", "One or more anchor regions are below the registration confidence policy.")
+    elif mode == "HUMAN_CONFIRMED":
+        if feature_count != 4 or usable_count != 4 or inlier_count != 4 or per_anchor_inlier_counts != [1, 1, 1, 1]:
+            raise _AcceptanceGateFailure("HUMAN_ANCHOR_SET_INVALID", "Human rescue requires four independently confirmed anchors.")
+    else:
+        raise _AcceptanceGateFailure("ACCEPTANCE_MODE_INVALID", "Registration acceptance mode is invalid.")
+    if (
+        not np.isfinite(inlier_fraction)
+        or not np.isfinite(median_reprojection_error)
+        or not np.isfinite(max_reprojection_error)
+        or median_reprojection_error < 0
+        or max_reprojection_error < median_reprojection_error
+        or median_reprojection_error > MAP_REGISTRATION_MAX_MEDIAN_REPROJECTION_ERROR_PX
+        or max_reprojection_error > MAP_REGISTRATION_MAX_REPROJECTION_ERROR_PX
+    ):
+        raise _AcceptanceGateFailure("REPROJECTION_ERROR_EXCEEDED", "Registration reprojection error exceeds policy.")
+    try:
+        _transform_is_coherent(homography)
+        _project_unit_points(
+            [anchor["point"] for anchor in registration_anchors],
+            homography,
+        )
+        projected_boundary, projected_zones = _project_design_geometry(design_boundary, zones, homography)
+    except ValueError as error:
+        raise _AcceptanceGateFailure("PROJECTED_GEOMETRY_REJECTED", str(error)) from error
+    return projected_boundary, projected_zones, {
+        "policyVersion": MAP_REGISTRATION_POLICY_VERSION,
+        "mode": mode,
+        "featureCount": feature_count,
+        "usableFeatureCount": usable_count,
+        "inlierCount": inlier_count,
+        "inlierFraction": inlier_fraction,
+        "perAnchorFeatureCounts": per_anchor_feature_counts,
+        "perAnchorInlierCounts": per_anchor_inlier_counts,
+        "medianReprojectionErrorPx": median_reprojection_error,
+        "maxReprojectionErrorPx": max_reprojection_error,
+    }
+
+
+def _track_points(reference_gray: np.ndarray, current_gray: np.ndarray, points: np.ndarray):
+    located, forward_status, forward_error = cv2.calcOpticalFlowPyrLK(
+        reference_gray,
+        current_gray,
+        points.reshape(-1, 1, 2).astype(np.float32),
+        None,
+        winSize=(81, 81),
+        maxLevel=4,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 0.001),
+        flags=0,
+        minEigThreshold=1e-6,
+    )
+    if located is None or forward_status is None or forward_error is None:
+        count = len(points)
+        return np.zeros((count, 2), dtype=np.float32), np.zeros(count, dtype=bool), np.full(count, np.inf), np.full(count, np.inf), np.zeros(count)
+    located = located.reshape(-1, 2)
+    backtracked, backward_status, _ = cv2.calcOpticalFlowPyrLK(
+        current_gray,
+        reference_gray,
+        located.reshape(-1, 1, 2).astype(np.float32),
+        None,
+        winSize=(81, 81),
+        maxLevel=4,
+        criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 0.001),
+        flags=0,
+        minEigThreshold=1e-6,
+    )
+    if backtracked is None or backward_status is None:
+        backtracked = np.full_like(located, np.nan)
+        backward_status = np.zeros((len(points), 1), dtype=np.uint8)
+    backtracked = backtracked.reshape(-1, 2)
+    forward_error = np.maximum(0.0, forward_error.reshape(-1).astype(np.float64))
+    backward_error = np.linalg.norm(backtracked - points, axis=1)
+    finite = np.isfinite(located).all(axis=1) & np.isfinite(backtracked).all(axis=1)
+    in_card = (
+        (located[:, 0] >= 0)
+        & (located[:, 1] >= 0)
+        & (located[:, 0] <= GRID_WIDTH - 1)
+        & (located[:, 1] <= GRID_HEIGHT - 1)
+    )
+    tracked = (
+        (forward_status.reshape(-1) == 1)
+        & (backward_status.reshape(-1) == 1)
+        & finite
+        & in_card
+    )
+    scores = np.exp(-forward_error / 25.0) * np.exp(-backward_error / 2.0)
+    scores[~np.isfinite(scores)] = 0.0
+    scores[~tracked] = 0.0
+    return located, tracked, forward_error, backward_error, scores
+
+
+def _anchor_features(gray: np.ndarray, anchors: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    points: list[np.ndarray] = []
+    groups: list[int] = []
+    for anchor_index, anchor in enumerate(anchors):
+        mask = np.zeros(gray.shape, dtype=np.uint8)
+        cv2.circle(
+            mask,
+            (int(round(anchor[0])), int(round(anchor[1]))),
+            MAP_REGISTRATION_PATCH_RADIUS_PX,
+            255,
+            -1,
+        )
+        features = cv2.goodFeaturesToTrack(
+            gray,
+            maxCorners=MAP_REGISTRATION_MAX_FEATURES_PER_ANCHOR,
+            qualityLevel=0.01,
+            minDistance=7,
+            mask=mask,
+            blockSize=5,
+            useHarrisDetector=False,
+        )
+        if features is None:
+            continue
+        for feature in features.reshape(-1, 2):
+            if any(float(np.linalg.norm(feature - existing)) < 3.0 for existing in points):
+                continue
+            points.append(feature.astype(np.float32))
+            groups.append(anchor_index)
+    return (
+        np.array(points, dtype=np.float32).reshape(-1, 2),
+        np.array(groups, dtype=np.int32),
+    )
+
+
+def _anchor_diagnostics(
+    anchors: list[dict],
+    expected: np.ndarray,
+    direct_located: np.ndarray,
+    direct_tracked: np.ndarray,
+    direct_scores: np.ndarray,
+    per_anchor_scores: list[float],
+    per_anchor_feature_counts: list[int],
+    per_anchor_inlier_counts: list[int],
+    ransac_completed: bool,
+    accepted_homography: Optional[np.ndarray] = None,
+) -> list[dict]:
+    located_from_transform = None
+    if accepted_homography is not None:
+        located_from_transform = cv2.perspectiveTransform(
+            expected.reshape(-1, 1, 2).astype(np.float32), accepted_homography
+        ).reshape(-1, 2)
+    output = []
+    for index, anchor in enumerate(anchors):
+        tracked_point = direct_located[index] if index < len(direct_located) else np.array([np.nan, np.nan])
+        score = per_anchor_scores[index] if index < len(per_anchor_scores) else float(direct_scores[index])
+        in_card = (
+            np.isfinite(tracked_point).all()
+            and 0 <= tracked_point[0] <= GRID_WIDTH - 1
+            and 0 <= tracked_point[1] <= GRID_HEIGHT - 1
+        )
+        status = "TRACKED"
+        if not bool(direct_tracked[index]):
+            status = "OUT_OF_CARD" if np.isfinite(tracked_point).all() and not in_card else "FAILED"
+        elif (
+            score < MAP_REGISTRATION_MIN_ANCHOR_SCORE
+            or per_anchor_feature_counts[index] < MAP_REGISTRATION_MIN_FEATURES_PER_ANCHOR
+            or (ransac_completed and per_anchor_inlier_counts[index] < MAP_REGISTRATION_MIN_INLIERS_PER_ANCHOR)
+        ):
+            status = "LOW_CONFIDENCE"
+        located_point = (
+            _normalized_diagnostic_point(located_from_transform[index])
+            if located_from_transform is not None
+            else _normalized_diagnostic_point(tracked_point)
+        )
+        output.append({
+            "anchorId": anchor["id"],
+            "expectedPoint": anchor["point"],
+            "trackedPoint": _normalized_diagnostic_point(tracked_point),
+            "locatedPoint": located_point,
+            "score": float(np.clip(score, 0.0, 1.0)),
+            "status": status,
+        })
+    return output
+
+
+def _automatic_registration_candidate(
+    candidate: _RegistrationCandidate,
+    current: np.ndarray,
+    original_anchors: list[dict],
+    design_boundary: dict,
+    zones: list[dict],
+) -> tuple[Optional[dict], dict]:
+    reference_gray = cv2.cvtColor(candidate.reference, cv2.COLOR_BGR2GRAY)
+    current_gray = cv2.cvtColor(current, cv2.COLOR_BGR2GRAY)
+    candidate_expected = _unit_points([anchor["point"] for anchor in candidate.anchors])
+    original_expected = _unit_points([anchor["point"] for anchor in original_anchors])
+    direct_located, direct_tracked, _, _, direct_scores = _track_points(
+        reference_gray, current_gray, candidate_expected
+    )
+    feature_points, feature_groups = _anchor_features(reference_gray, candidate_expected)
+    feature_count = len(feature_points)
+    if feature_count:
+        feature_located, feature_tracked, forward_error, backward_error, feature_scores = _track_points(
+            reference_gray, current_gray, feature_points
+        )
+    else:
+        feature_located = np.empty((0, 2), dtype=np.float32)
+        feature_tracked = np.empty(0, dtype=bool)
+        forward_error = np.empty(0)
+        backward_error = np.empty(0)
+        feature_scores = np.empty(0)
+    usable = feature_tracked & (feature_scores >= MAP_REGISTRATION_MIN_FEATURE_SCORE)
+    per_anchor_usable = [int(np.sum(usable & (feature_groups == index))) for index in range(4)]
+    failure_code = None
+    failure_message = None
+    if feature_count > MAP_REGISTRATION_MAX_DIAGNOSTIC_FEATURES:
+        failure_code = "FEATURE_LIMIT_EXCEEDED"
+        failure_message = "Registration generated too many feature correspondences."
+    elif any(count < MAP_REGISTRATION_MIN_FEATURES_PER_ANCHOR for count in per_anchor_usable):
+        failure_code = "INSUFFICIENT_REDUNDANT_CORRESPONDENCES"
+        failure_message = "One or more anchors lack enough independently tracked image features."
+
+    homography = None
+    ransac_completed = False
+    inlier_mask = np.zeros(feature_count, dtype=bool)
+    reprojection_errors = np.empty(0)
+    if failure_code is None:
+        usable_indexes = np.flatnonzero(usable)
+        cv2.setRNGSeed(0)
+        homography, raw_mask = cv2.findHomography(
+            feature_points[usable_indexes],
+            feature_located[usable_indexes],
+            method=cv2.RANSAC,
+            ransacReprojThreshold=MAP_REGISTRATION_RANSAC_THRESHOLD_PX,
+            maxIters=2000,
+            confidence=0.995,
+        )
+        if homography is None or raw_mask is None:
+            failure_code = "RANSAC_TRANSFORM_UNAVAILABLE"
+            failure_message = "Redundant correspondences did not define a transform."
+        else:
+            ransac_completed = True
+            inlier_mask[usable_indexes] = raw_mask.reshape(-1).astype(bool)
+            projected_features = cv2.perspectiveTransform(
+                feature_points.reshape(-1, 1, 2), homography
+            ).reshape(-1, 2)
+            reprojection_errors = np.linalg.norm(projected_features[inlier_mask] - feature_located[inlier_mask], axis=1)
+
+    inlier_count = int(np.sum(inlier_mask))
+    usable_count = int(np.sum(usable))
+    inlier_fraction = float(inlier_count / usable_count) if usable_count else 0.0
+    per_anchor_inliers = [int(np.sum(inlier_mask & (feature_groups == index))) for index in range(4)]
+    per_anchor_scores = [
+        float(np.median(feature_scores[inlier_mask & (feature_groups == index)]))
+        if np.any(inlier_mask & (feature_groups == index))
+        else float(direct_scores[index])
+        for index in range(4)
+    ]
+    median_reprojection = float(np.median(reprojection_errors)) if len(reprojection_errors) else None
+    max_reprojection = float(np.max(reprojection_errors)) if len(reprojection_errors) else None
+    composed = None
+    projected_boundary = None
+    projected_zones = None
+    acceptance = None
+    if failure_code is None and homography is not None:
+        try:
+            _transform_is_coherent(homography)
+            composed = homography @ candidate.source_homography
+            projected_boundary, projected_zones, acceptance = _validate_registration_result(
+                mode="AUTOMATIC_RANSAC",
+                homography=composed,
+                feature_count=feature_count,
+                usable_count=usable_count,
+                inlier_count=inlier_count,
+                inlier_fraction=inlier_fraction,
+                per_anchor_feature_counts=per_anchor_usable,
+                per_anchor_inlier_counts=per_anchor_inliers,
+                per_anchor_scores=per_anchor_scores,
+                median_reprojection_error=median_reprojection if median_reprojection is not None else np.inf,
+                max_reprojection_error=max_reprojection if max_reprojection is not None else np.inf,
+                registration_anchors=original_anchors,
+                design_boundary=design_boundary,
+                zones=zones,
+            )
+        except _AcceptanceGateFailure as error:
+            failure_code = error.code
+            failure_message = str(error)
+
+    anchor_diagnostics = _anchor_diagnostics(
+        original_anchors,
+        original_expected,
+        direct_located,
+        direct_tracked,
+        direct_scores,
+        per_anchor_scores,
+        per_anchor_usable,
+        per_anchor_inliers,
+        ransac_completed,
+        composed if failure_code is None else None,
+    )
+    diagnostic = {
+        "candidateId": candidate.candidate_id,
+        "provenance": candidate.provenance,
+        "accepted": failure_code is None,
+        "failureCode": failure_code,
+        "message": failure_message,
+        "anchors": anchor_diagnostics,
+        "featureCount": feature_count,
+        "usableFeatureCount": usable_count,
+        "inlierCount": inlier_count,
+        "inlierFraction": inlier_fraction,
+        "perAnchorFeatureCounts": per_anchor_usable,
+        "perAnchorInlierCounts": per_anchor_inliers,
+        "medianReprojectionErrorPx": median_reprojection,
+        "maxReprojectionErrorPx": max_reprojection,
+    }
+    if failure_code is not None or composed is None or projected_boundary is None or projected_zones is None or acceptance is None:
+        return None, diagnostic
     return {
-        "homography": unit_homography.reshape(-1).tolist(),
+        "homography": _unit_homography(composed),
+        "anchors": [
+            {
+                "anchorId": anchor["anchorId"],
+                "expectedPoint": anchor["expectedPoint"],
+                "locatedPoint": anchor["locatedPoint"],
+                "score": anchor["score"],
+            }
+            for anchor in anchor_diagnostics
+        ],
+        "projectedDesignBoundary": projected_boundary,
+        "projectedZones": projected_zones,
+        "candidateProvenance": {
+            "candidateId": candidate.candidate_id,
+            "source": candidate.provenance,
+            **({"lessonId": candidate.candidate_id} if candidate.provenance == "REGISTRATION_LESSON" else {}),
+        },
+        "acceptance": acceptance,
+    }, diagnostic
+
+
+def _human_registration(
+    original_anchors: list[dict],
+    corrected_anchors: list[dict],
+    design_boundary: dict,
+    zones: list[dict],
+) -> dict:
+    if len(corrected_anchors) != 4:
+        raise ValueError("Human rescue requires exactly four corrected anchors")
+    expected_ids = [anchor["id"] for anchor in original_anchors]
+    corrected_by_id = {anchor.get("id"): anchor for anchor in corrected_anchors}
+    if len(corrected_by_id) != 4 or set(corrected_by_id) != set(expected_ids):
+        raise ValueError("Human rescue anchor identities do not match the immutable map")
+    expected = _unit_points([anchor["point"] for anchor in original_anchors])
+    corrected = _unit_points([corrected_by_id[anchor_id]["point"] for anchor_id in expected_ids])
+    homography = cv2.getPerspectiveTransform(expected.astype(np.float32), corrected.astype(np.float32))
+    projected_expected = cv2.perspectiveTransform(expected.reshape(-1, 1, 2), homography).reshape(-1, 2)
+    residuals = np.linalg.norm(projected_expected - corrected, axis=1)
+    projected_boundary, projected_zones, acceptance = _validate_registration_result(
+        mode="HUMAN_CONFIRMED",
+        homography=homography,
+        feature_count=4,
+        usable_count=4,
+        inlier_count=4,
+        inlier_fraction=1.0,
+        per_anchor_feature_counts=[1, 1, 1, 1],
+        per_anchor_inlier_counts=[1, 1, 1, 1],
+        per_anchor_scores=[1.0, 1.0, 1.0, 1.0],
+        median_reprojection_error=float(np.median(residuals)),
+        max_reprojection_error=float(np.max(residuals)),
+        registration_anchors=original_anchors,
+        design_boundary=design_boundary,
+        zones=zones,
+    )
+    return {
+        "homography": _unit_homography(homography),
         "anchors": [
             {
                 "anchorId": anchor["id"],
                 "expectedPoint": anchor["point"],
-                "locatedPoint": {
-                    "x": float(located[index][0] / (GRID_WIDTH - 1)),
-                    "y": float(located[index][1] / (GRID_HEIGHT - 1)),
-                },
-                "score": float(1.0 / (1.0 + max(0.0, errors[index]))),
+                "locatedPoint": corrected_by_id[anchor["id"]]["point"],
+                "score": 1.0,
             }
-            for index, anchor in enumerate(anchors)
+            for anchor in original_anchors
         ],
         "projectedDesignBoundary": projected_boundary,
         "projectedZones": projected_zones,
+        "candidateProvenance": {"candidateId": "human-confirmed", "source": "HUMAN_CORRECTION"},
+        "acceptance": acceptance,
     }
+
+
+def register_map_design(
+    reference_image: np.ndarray,
+    current_image: np.ndarray,
+    anchors: list[dict],
+    design_boundary: dict,
+    zones: list[dict],
+    *,
+    lesson_candidates: Optional[list[dict]] = None,
+    corrected_anchors: Optional[list[dict]] = None,
+) -> dict:
+    """Register a map from redundant image features or validate human rescue."""
+
+    if len(anchors) != 4 or len({anchor.get("id") for anchor in anchors}) != 4:
+        raise ValueError("Map registration requires four unique human anchors")
+    _unit_points([anchor["point"] for anchor in anchors])
+    current = _canonical_registration_image(current_image)
+    candidates = [
+        _RegistrationCandidate(
+            candidate_id="original-reference",
+            provenance="ORIGINAL_REFERENCE",
+            reference=_canonical_registration_image(reference_image),
+            anchors=anchors,
+            source_homography=np.eye(3, dtype=np.float64),
+        )
+    ]
+    candidate_ids = {"original-reference"}
+    for raw in lesson_candidates or []:
+        if len(candidates) >= MAP_REGISTRATION_MAX_CANDIDATES:
+            break
+        candidate_id = str(raw.get("candidateId", ""))[:80]
+        if not candidate_id or candidate_id in candidate_ids:
+            raise ValueError("Registration lesson candidate identity is invalid or duplicated")
+        source_unit_homography = np.asarray(raw.get("sourceHomography"), dtype=np.float64).reshape(3, 3)
+        _transform_is_coherent(source_unit_homography)
+        scale = np.array(
+            [[GRID_WIDTH - 1, 0, 0], [0, GRID_HEIGHT - 1, 0], [0, 0, 1]],
+            dtype=np.float64,
+        )
+        source_homography = scale @ source_unit_homography @ np.linalg.inv(scale)
+        candidate_anchors = raw.get("anchors")
+        if not isinstance(candidate_anchors, list) or len(candidate_anchors) != 4:
+            raise ValueError("Registration lesson candidate anchors are malformed")
+        if [anchor.get("id") for anchor in candidate_anchors] != [anchor.get("id") for anchor in anchors]:
+            raise ValueError("Registration lesson candidate anchors do not match the immutable map")
+        candidate_anchor_pixels = _unit_points([anchor["point"] for anchor in candidate_anchors])
+        projected_source_anchors = cv2.perspectiveTransform(
+            _unit_points([anchor["point"] for anchor in anchors]).reshape(-1, 1, 2),
+            source_homography,
+        ).reshape(-1, 2)
+        if (
+            not np.isfinite(projected_source_anchors).all()
+            or float(np.max(np.linalg.norm(projected_source_anchors - candidate_anchor_pixels, axis=1))) > 1e-3
+        ):
+            raise ValueError("Registration lesson candidate transform is incoherent with its anchors")
+        candidate_ids.add(candidate_id)
+        candidates.append(_RegistrationCandidate(
+            candidate_id=candidate_id,
+            provenance="REGISTRATION_LESSON",
+            reference=_canonical_registration_image(raw["referenceImage"]),
+            anchors=candidate_anchors,
+            source_homography=source_homography,
+        ))
+
+    accepted: list[tuple[dict, dict, int]] = []
+    diagnostics = []
+    for index, candidate in enumerate(candidates):
+        registration, diagnostic = _automatic_registration_candidate(
+            candidate, current, anchors, design_boundary, zones
+        )
+        diagnostics.append(diagnostic)
+        if registration is not None:
+            accepted.append((registration, diagnostic, index))
+    if accepted:
+        selected = sorted(
+            accepted,
+            key=lambda item: (
+                -item[1]["inlierCount"],
+                item[1]["medianReprojectionErrorPx"],
+                item[2],
+            ),
+        )[0]
+        return selected[0]
+
+    best_diagnostic = sorted(
+        enumerate(diagnostics),
+        key=lambda item: (-item[1]["inlierCount"], -item[1]["usableFeatureCount"], item[0]),
+    )[0][1]
+    failure = {
+        "algorithmVersion": MAP_REGISTRATION_ALGORITHM_VERSION,
+        "policyVersion": MAP_REGISTRATION_POLICY_VERSION,
+        "accepted": False,
+        "failureCode": best_diagnostic["failureCode"] or "REGISTRATION_REJECTED",
+        "message": best_diagnostic["message"] or "Registration did not pass acceptance policy.",
+        "candidateCount": len(candidates),
+        "candidateIds": [candidate.candidate_id for candidate in candidates],
+        "bestCandidate": best_diagnostic,
+    }
+    if corrected_anchors is None:
+        raise MapRegistrationFailure(failure["message"], failure)
+    rescued = _human_registration(anchors, corrected_anchors, design_boundary, zones)
+    rescued["automaticFailure"] = failure
+    return rescued
 
 
 def _candidate_type(
