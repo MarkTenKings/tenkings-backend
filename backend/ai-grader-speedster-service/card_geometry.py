@@ -1,6 +1,7 @@
 """Lean deterministic geometry and localized defect proposals for Speedster."""
 
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Optional
 
 import cv2
@@ -554,6 +555,99 @@ def _transform_is_coherent(homography: np.ndarray):
         raise ValueError("Map registration transform is degenerate")
 
 
+def _signed_triangle_area_twice(points: np.ndarray, indexes: tuple[int, int, int]) -> float:
+    first, second, third = (points[index] for index in indexes)
+    first_edge = second - first
+    second_edge = third - first
+    return float(first_edge[0] * second_edge[1] - first_edge[1] * second_edge[0])
+
+
+def _require_matching_triangle_orientations(
+    source: np.ndarray,
+    projected: np.ndarray,
+    *,
+    label: str,
+):
+    if source.shape != projected.shape or source.ndim != 2 or source.shape[1] != 2:
+        raise ValueError(f"Map registration {label} geometry is malformed")
+    if len(source) < 3 or not np.isfinite(source).all() or not np.isfinite(projected).all():
+        raise ValueError(f"Map registration {label} geometry is non-finite")
+
+    source_span = np.ptp(source, axis=0)
+    projected_span = np.ptp(projected, axis=0)
+    source_epsilon = max(
+        MAP_REGISTRATION_GEOMETRY_EPSILON,
+        MAP_REGISTRATION_GEOMETRY_EPSILON * float(source_span[0] * source_span[1]),
+    )
+    projected_epsilon = max(
+        MAP_REGISTRATION_GEOMETRY_EPSILON,
+        MAP_REGISTRATION_GEOMETRY_EPSILON * float(projected_span[0] * projected_span[1]),
+    )
+    for indexes in combinations(range(len(source)), 3):
+        source_orientation = _signed_triangle_area_twice(source, indexes)
+        projected_orientation = _signed_triangle_area_twice(projected, indexes)
+        if abs(source_orientation) <= source_epsilon:
+            raise ValueError(f"Map registration source {label} triple is degenerate")
+        if abs(projected_orientation) <= projected_epsilon:
+            raise ValueError(f"Map registration projected {label} triple is degenerate")
+        if np.signbit(source_orientation) != np.signbit(projected_orientation):
+            raise ValueError(f"Map registration reverses {label} orientation")
+
+
+def _project_without_card_bounds(points: np.ndarray, homography: np.ndarray) -> np.ndarray:
+    homogeneous = np.column_stack((points, np.ones(len(points), dtype=np.float64)))
+    transformed = (homography @ homogeneous.T).T
+    denominators = transformed[:, 2]
+    if not np.isfinite(transformed).all():
+        raise ValueError("Map registration projected non-finite physical-card geometry")
+    denominator_epsilon = max(
+        1e-12,
+        1e-10 * float(np.max(np.abs(denominators))),
+    )
+    if np.any(np.abs(denominators) <= denominator_epsilon):
+        raise ValueError("Map registration projective pole touches the physical card")
+    if not (np.all(denominators > 0) or np.all(denominators < 0)):
+        raise ValueError("Map registration projective pole crosses the physical card")
+    projected = transformed[:, :2] / denominators[:, np.newaxis]
+    if not np.isfinite(projected).all():
+        raise ValueError("Map registration projected non-finite physical-card geometry")
+    return projected
+
+
+def _validate_transform_orientation(
+    homography: np.ndarray,
+    source_anchor_points: np.ndarray,
+) -> np.ndarray:
+    """Reject reflections, crossed anchors, and projective folds over the card."""
+
+    _transform_is_coherent(homography)
+    card_corners = np.array(
+        [
+            [0.0, 0.0],
+            [GRID_WIDTH - 1.0, 0.0],
+            [GRID_WIDTH - 1.0, GRID_HEIGHT - 1.0],
+            [0.0, GRID_HEIGHT - 1.0],
+        ],
+        dtype=np.float64,
+    )
+    projected_corners = _project_without_card_bounds(card_corners, homography)
+    _require_matching_triangle_orientations(
+        card_corners,
+        projected_corners,
+        label="physical-card corner",
+    )
+    projected_anchors = _project_without_card_bounds(
+        np.asarray(source_anchor_points, dtype=np.float64),
+        homography,
+    )
+    _require_matching_triangle_orientations(
+        np.asarray(source_anchor_points, dtype=np.float64),
+        projected_anchors,
+        label="anchor",
+    )
+    return projected_anchors
+
+
 def _validate_registration_result(
     *,
     mode: str,
@@ -600,7 +694,10 @@ def _validate_registration_result(
     ):
         raise _AcceptanceGateFailure("REPROJECTION_ERROR_EXCEEDED", "Registration reprojection error exceeds policy.")
     try:
-        _transform_is_coherent(homography)
+        source_anchor_points = _unit_points(
+            [anchor["point"] for anchor in registration_anchors]
+        )
+        _validate_transform_orientation(homography, source_anchor_points)
         _project_unit_points(
             [anchor["point"] for anchor in registration_anchors],
             homography,
@@ -1009,11 +1106,12 @@ def register_map_design(
             raise ValueError("Registration lesson candidate anchors are malformed")
         if [anchor.get("id") for anchor in candidate_anchors] != [anchor.get("id") for anchor in anchors]:
             raise ValueError("Registration lesson candidate anchors do not match the immutable map")
+        source_anchor_pixels = _unit_points([anchor["point"] for anchor in anchors])
         candidate_anchor_pixels = _unit_points([anchor["point"] for anchor in candidate_anchors])
-        projected_source_anchors = cv2.perspectiveTransform(
-            _unit_points([anchor["point"] for anchor in anchors]).reshape(-1, 1, 2),
+        projected_source_anchors = _validate_transform_orientation(
             source_homography,
-        ).reshape(-1, 2)
+            source_anchor_pixels,
+        )
         if (
             not np.isfinite(projected_source_anchors).all()
             or float(np.max(np.linalg.norm(projected_source_anchors - candidate_anchor_pixels, axis=1))) > 1e-3
