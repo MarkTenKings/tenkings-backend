@@ -12,21 +12,37 @@ const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
 export function MapRegistrationRescue({
   side,
   imageUrl,
+  imageRevision = 0,
+  imageRefreshError = null,
+  imageRefreshing = false,
   failure,
   disabled,
   onConfirm,
   onContinueManual,
+  onImageError,
+  onImageReady,
+  onRetryImage,
 }: Readonly<{
   side: SpeedsterCardSide;
   imageUrl: string;
+  imageRevision?: number;
+  imageRefreshError?: string | null;
+  imageRefreshing?: boolean;
   failure: SpeedsterMapRegistrationFailure;
   disabled: boolean;
   onConfirm: (anchors: readonly CorrectedAnchor[]) => Promise<void>;
   onContinueManual: () => void;
+  onImageError?: () => void;
+  onImageReady?: () => void;
+  onRetryImage?: () => void;
 }>) {
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const failedImageIdentity = useRef<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadedImageIdentity, setLoadedImageIdentity] = useState<string | null>(null);
+  const imageIdentity = `${imageRevision}:${imageUrl}`;
+  const imageReady = loadedImageIdentity === imageIdentity && !imageRefreshError;
   const [anchors, setAnchors] = useState<readonly CorrectedAnchor[]>(() => (
     failure.bestCandidate.anchors.map((anchor) => ({
       anchorId: anchor.anchorId,
@@ -79,16 +95,39 @@ export function MapRegistrationRescue({
       >
         {/* Exact signed evidence dimensions must remain browser-native here. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img ref={imageRef} src={imageUrl} alt={`${side.toLowerCase()} current card`} draggable={false} />
-        {failure.bestCandidate.anchors.map((anchor, index) => (
+        <img
+          key={imageIdentity}
+          ref={imageRef}
+          src={imageUrl}
+          alt={`${side.toLowerCase()} current card`}
+          draggable={false}
+          onLoad={(event) => {
+            if (event.currentTarget.naturalWidth <= 0 || event.currentTarget.naturalHeight <= 0) {
+              failedImageIdentity.current = imageIdentity;
+              setLoadedImageIdentity(null);
+              onImageError?.();
+              return;
+            }
+            failedImageIdentity.current = null;
+            setLoadedImageIdentity(imageIdentity);
+            onImageReady?.();
+          }}
+          onError={() => {
+            setLoadedImageIdentity(null);
+            if (failedImageIdentity.current === imageIdentity) return;
+            failedImageIdentity.current = imageIdentity;
+            onImageError?.();
+          }}
+        />
+        {imageReady ? failure.bestCandidate.anchors.map((anchor, index) => (
           <span
             key={`expected:${anchor.anchorId}`}
             className={styles.expected}
             style={{ left: `${anchor.expectedPoint.x * 100}%`, top: `${anchor.expectedPoint.y * 100}%` }}
             title={`Expected ${anchor.anchorId}`}
           >{index + 1}</span>
-        ))}
-        {anchors.map((anchor, index) => {
+        )) : null}
+        {imageReady ? anchors.map((anchor, index) => {
           const diagnostic = diagnostics.get(anchor.anchorId)!;
           return (
             <button
@@ -105,7 +144,16 @@ export function MapRegistrationRescue({
               aria-label={`Move anchor ${index + 1}, ${diagnostic.status.toLowerCase()}`}
             >{index + 1}</button>
           );
-        })}
+        }) : null}
+        {!imageReady ? (
+          <div className={styles.imageStatus} role={imageRefreshError ? "alert" : "status"}>
+            <strong>{imageRefreshError ? "Card image unavailable" : imageRefreshing ? "Refreshing card image…" : "Loading card image…"}</strong>
+            {imageRefreshError ? <span>{imageRefreshError}</span> : null}
+            {imageRefreshError && onRetryImage ? (
+              <button type="button" onClick={onRetryImage} disabled={imageRefreshing}>Retry image</button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <div className={styles.diagnostics}>
         {failure.bestCandidate.anchors.map((anchor, index) => (
@@ -116,7 +164,7 @@ export function MapRegistrationRescue({
       </div>
       {error ? <p role="alert" className={styles.error}>{error}</p> : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.manual} onClick={onContinueManual} disabled={disabled}>
+        <button type="button" className={styles.manual} onClick={onContinueManual} disabled={disabled || !imageReady}>
           Continue with normal human review
         </button>
         <button
@@ -127,8 +175,8 @@ export function MapRegistrationRescue({
               setError(reason instanceof Error ? reason.message : "Anchor correction could not be saved. Your corrections are preserved.");
             });
           }}
-          disabled={disabled}
-        >{disabled ? "Validating…" : "Confirm corrected anchors"}</button>
+          disabled={disabled || !imageReady}
+        >{disabled ? "Validating…" : !imageReady ? "Image required" : "Confirm corrected anchors"}</button>
       </div>
     </section>
   );

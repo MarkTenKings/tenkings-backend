@@ -8,6 +8,9 @@
 .globalFailure span { color: #ddd; line-height: 1.4; }
 .canvas { position: relative; width: min(100%, 660px); margin: 0 auto; touch-action: none; user-select: none; }
 .canvas img { display: block; width: 100%; border: 1px solid #d8af5544; border-radius: 15px; }
+.imageStatus { position: absolute; inset: 0; display: grid; place-content: center; gap: 10px; padding: 24px; border-radius: 15px; color: #fff4d6; text-align: center; background: #050605f2; }
+.imageStatus span { max-width: 430px; color: #ffb1a9; line-height: 1.4; }
+.imageStatus button { justify-self: center; min-height: 40px; padding: 0 16px; border: 1px solid #d8af55; border-radius: 999px; color: #080806; background: #d8af55; font: inherit; font-weight: 850; cursor: pointer; }
 .expected, .handle { position: absolute; translate: -50% -50%; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 900; }
 .expected { border: 2px dashed #55d9ed; color: #55d9ed; background: #061117cc; pointer-events: none; }
 .handle { border: 3px solid #fff; color: #080806; cursor: grab; box-shadow: 0 0 0 4px #050505aa; }

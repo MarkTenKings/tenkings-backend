@@ -29,12 +29,18 @@ export type CenteringAssistResult = {
 
 type CenteringAssistProps = {
   imageUrl: string;
+  imageRevision?: number;
+  imageRefreshError?: string | null;
+  imageRefreshing?: boolean;
   side: SpeedsterCardSide;
   initialInnerQuad: SpeedsterQuad;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   onContinue: (result: CenteringAssistResult) => void;
   disabled?: boolean;
   continueLabel?: string;
+  onImageError?: () => void;
+  onImageReady?: () => void;
+  onRetryImage?: () => void;
 };
 
 const HANDLE_LABELS = ["Top left", "Top right", "Bottom right", "Bottom left"] as const;
@@ -65,16 +71,26 @@ function balance(value: readonly [number, number]): string {
 
 export function CenteringAssist({
   imageUrl,
+  imageRevision = 0,
+  imageRefreshError = null,
+  imageRefreshing = false,
   side,
   initialInnerQuad,
   detectedBorders,
   onContinue,
   disabled = false,
   continueLabel = "Continue",
+  onImageError,
+  onImageReady,
+  onRetryImage,
 }: CenteringAssistProps) {
   const [innerQuad, setInnerQuad] = useState<SpeedsterQuad>(initialInnerQuad);
+  const [loadedImageIdentity, setLoadedImageIdentity] = useState<string | null>(null);
+  const failedImageIdentity = useRef<string | null>(null);
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
   const gradientMap = useRef<SpeedsterGradientMap | null>(null);
+  const imageIdentity = `${imageRevision}:${imageUrl}`;
+  const imageReady = loadedImageIdentity === imageIdentity && !imageRefreshError;
   const measurements = useMemo(() => {
     const borders = measureSpeedsterCenteringBorders(innerQuad);
     return {
@@ -132,16 +148,34 @@ export function CenteringAssist({
           <div className={styles.imageFrame}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              key={imageIdentity}
               className={styles.image}
               src={imageUrl}
               crossOrigin="anonymous"
               alt={`${side.toLowerCase()} rectified trading card`}
               draggable={false}
               onLoad={(event) => {
+                if (event.currentTarget.naturalWidth <= 0 || event.currentTarget.naturalHeight <= 0) {
+                  failedImageIdentity.current = imageIdentity;
+                  setLoadedImageIdentity(null);
+                  gradientMap.current = null;
+                  onImageError?.();
+                  return;
+                }
+                failedImageIdentity.current = null;
+                setLoadedImageIdentity(imageIdentity);
                 gradientMap.current = gradientMapFromImage(event.currentTarget);
+                onImageReady?.();
+              }}
+              onError={() => {
+                setLoadedImageIdentity(null);
+                gradientMap.current = null;
+                if (failedImageIdentity.current === imageIdentity) return;
+                failedImageIdentity.current = imageIdentity;
+                onImageError?.();
               }}
             />
-            <svg
+            {imageReady ? <svg
               className={styles.overlay}
               viewBox={`0 0 ${OVERLAY_WIDTH} ${OVERLAY_HEIGHT}`}
               preserveAspectRatio="none"
@@ -177,9 +211,9 @@ export function CenteringAssist({
                   </g>
                 );
               })}
-            </svg>
+            </svg> : null}
 
-            <span className={`${styles.imageMetric} ${styles.topMetric}`}>
+            {imageReady ? <><span className={`${styles.imageMetric} ${styles.topMetric}`}>
               T {millimeters(measurements.borders.topMm)}
             </span>
             <span className={`${styles.imageMetric} ${styles.rightMetric}`}>
@@ -190,7 +224,16 @@ export function CenteringAssist({
             </span>
             <span className={`${styles.imageMetric} ${styles.leftMetric}`}>
               L {millimeters(measurements.borders.leftMm)}
-            </span>
+            </span></> : null}
+            {!imageReady ? (
+              <div className={styles.imageStatus} role={imageRefreshError ? "alert" : "status"}>
+                <strong>{imageRefreshError ? "Card image unavailable" : imageRefreshing ? "Refreshing card image…" : "Loading card image…"}</strong>
+                {imageRefreshError ? <span>{imageRefreshError}</span> : null}
+                {imageRefreshError && onRetryImage ? (
+                  <button type="button" onClick={onRetryImage} disabled={imageRefreshing}>Retry image</button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -219,10 +262,10 @@ export function CenteringAssist({
           <button
             type="button"
             className={styles.continueButton}
-            disabled={disabled}
+            disabled={disabled || !imageReady}
             onClick={() => onContinue({ side, innerQuad, borders: measurements.borders })}
           >
-            {disabled ? "Saving…" : continueLabel} {!disabled ? <span aria-hidden="true">→</span> : null}
+            {disabled ? "Saving…" : !imageReady ? "Image required" : continueLabel} {imageReady && !disabled ? <span aria-hidden="true">→</span> : null}
           </button>
         </aside>
       </div>

@@ -67,6 +67,7 @@ type Harness = {
   getPollCount: () => number;
   getRegistrationCount: () => number;
   getRescueAttemptIds: () => readonly string[];
+  getPreparedImageRefreshCount: (side: "FRONT" | "BACK") => number;
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
   rerenderSession: (sessionId: string) => Promise<void>;
@@ -82,6 +83,8 @@ async function mountWorkspace(input: {
   registrationNeedsRescueOnSide?: "FRONT" | "BACK";
   registrationGlobalGateFailure?: boolean;
   rescueFailures?: number;
+  preparedImageRefreshFails?: boolean;
+  preparedImageRefreshFailures?: number;
   registrationNeverSettlesOnSide?: "FRONT" | "BACK";
   onRegistrationRequest?: (side: "FRONT" | "BACK") => void | Promise<void>;
   mapLookupFailed?: boolean;
@@ -141,8 +144,10 @@ async function mountWorkspace(input: {
 
   let pollCount = 0;
   let registrationCount = 0;
+  const preparedImageRefreshCount = { FRONT: 0, BACK: 0 };
   const rescueAttemptIds: string[] = [];
   let remainingRescueFailures = input.rescueFailures ?? 0;
+  let remainingPreparedImageRefreshFailures = input.preparedImageRefreshFailures ?? 0;
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     if (url === "/api/admin/ai-grader-v2/iphone-capture" && init?.method === "POST") {
@@ -163,6 +168,18 @@ async function mountWorkspace(input: {
         { storageKey: `${kind}.webp`, uploadUrl: `https://upload.example.test/${kind}`, readUrl: `https://read.example.test/${kind}` },
       ]));
       return jsonResponse({ outputs });
+    }
+    if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/prepared-image?side=")) {
+      const side = url.endsWith("side=FRONT") ? "FRONT" : "BACK";
+      preparedImageRefreshCount[side] += 1;
+      if (input.preparedImageRefreshFails || remainingPreparedImageRefreshFailures > 0) {
+        remainingPreparedImageRefreshFailures = Math.max(0, remainingPreparedImageRefreshFailures - 1);
+        return jsonResponse({ message: `The ${side.toLowerCase()} prepared card image is not ready.` }, 409);
+      }
+      return jsonResponse({
+        side,
+        imageUrl: `https://read.example.test/${side.toLowerCase()}-rectified-refresh-${preparedImageRefreshCount[side]}`,
+      });
     }
     if (url === "/api/admin/ai-grader-v2/image/prepare") {
       return jsonResponse({
@@ -301,6 +318,7 @@ async function mountWorkspace(input: {
     getPollCount: () => pollCount,
     getRegistrationCount: () => registrationCount,
     getRescueAttemptIds: () => rescueAttemptIds,
+    getPreparedImageRefreshCount: (side) => preparedImageRefreshCount[side],
     events,
     bundles,
     rerenderSession: async (nextSessionId) => {
@@ -405,6 +423,19 @@ function giveImageRenderedArea(image: HTMLImageElement) {
     configurable: true,
     value: () => bounds,
   });
+}
+
+async function loadPreparedImage(container: HTMLElement, alt: string) {
+  const image = container.querySelector<HTMLImageElement>(`img[alt="${alt}"]`);
+  assert.ok(image, `${alt} did not render`);
+  Object.defineProperties(image, {
+    complete: { configurable: true, value: true },
+    naturalWidth: { configurable: true, value: 1270 },
+    naturalHeight: { configurable: true, value: 1778 },
+  });
+  giveImageRenderedArea(image);
+  await act(async () => fire(image, "load"));
+  return image;
 }
 
 test("normal mounted grading flow reaches draggable Set Geometry after a simulated five-second response", async () => {
@@ -708,8 +739,12 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
     assert.equal(geometryEvents[1]?.endedAtMs, 10_075, "Back timing includes concurrent registration latency");
 
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") >= 1, "Front image did not refresh proactively");
+    await loadPreparedImage(harness.container, "front rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back image did not refresh proactively");
+    await loadPreparedImage(harness.container, "back rectified trading card");
     const finalContinue = buttonByText(harness.container, "Continue");
     assert.ok(finalContinue);
     await act(async () => {
@@ -790,8 +825,10 @@ test("Front registration success plus Back failure rolls both sides back to manu
     });
 
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Manual Front centering did not open");
+    await loadPreparedImage(harness.container, "front rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Manual Back centering did not open");
+    await loadPreparedImage(harness.container, "back rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     assert.equal(harness.bundles.length, 1);
     assert.equal(harness.bundles[0].front.mapRegistration, undefined);
@@ -801,6 +838,67 @@ test("Front registration success plus Back failure rolls both sides back to manu
       { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
       { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
     ]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Front and Back centering fail closed while unloaded and a failed proactive refresh is manually retryable", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    preparedImageRefreshFailures: 1,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry image")), "Failed proactive refresh did not expose Retry image");
+    assert.ok(buttonByText(harness.container, "Image required")?.disabled, "Front Continue must remain disabled after refresh failure");
+    assert.equal(harness.container.querySelector('[aria-label="Adjustable printed-border geometry"]'), null, "Blind border editing must not render");
+
+    await act(async () => fire(buttonByText(harness.container, "Retry image")!, "click"));
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") === 2, "Manual Front image retry did not request one fresh URL");
+    const frontImage = await loadPreparedImage(harness.container, "front rectified trading card");
+    assert.equal(buttonByText(harness.container, "Continue")?.disabled, false);
+
+    const frontOverlay = harness.container.querySelector<SVGSVGElement>('[aria-label="Adjustable printed-border geometry"]');
+    const frontTopLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
+    assert.ok(frontOverlay && frontTopLeft);
+    Object.defineProperty(frontOverlay, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 635, bottom: 889, width: 635, height: 889 }),
+    });
+    await act(async () => {
+      fire(frontTopLeft, "pointerdown", { pointerId: 31, clientX: 63.5, clientY: 88.9 });
+      fire(frontOverlay, "pointermove", { pointerId: 31, clientX: 127, clientY: 266.7 });
+      fire(frontOverlay, "pointerup", { pointerId: 31, clientX: 127, clientY: 266.7 });
+    });
+
+    await act(async () => fire(frontImage, "error"));
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") === 3, "Front image error did not trigger one automatic retry");
+    const automaticallyRetriedImage = harness.container.querySelector<HTMLImageElement>('img[alt="front rectified trading card"]');
+    assert.ok(automaticallyRetriedImage);
+    await act(async () => fire(automaticallyRetriedImage, "error"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry image")), "Second image error did not expose manual Retry image");
+    assert.equal(harness.getPreparedImageRefreshCount("FRONT"), 3, "One failure chain must make at most one automatic retry");
+    await act(async () => fire(buttonByText(harness.container, "Retry image")!, "click"));
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") === 4, "Manual retry after the bounded automatic retry did not refresh");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    assert.equal(
+      harness.container.querySelector<SVGGElement>('[aria-label="Top left"]')?.querySelector("circle")?.getAttribute("cx"),
+      "127",
+      "A repeated image failure and manual retry must preserve the corrected Front geometry",
+    );
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    assert.ok(buttonByText(harness.container, "Image required")?.disabled, "Back Continue must remain disabled until its own image loads");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") === 1, "Back image did not refresh independently");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    assert.equal(harness.bundles.length, 1);
   } finally {
     await harness.cleanup();
   }
@@ -820,6 +918,11 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Back rescue did not open");
+    const blockedConfirm = buttonByText(harness.container, "Image required");
+    assert.ok(blockedConfirm?.disabled, "Rescue confirmation must fail closed until the image visibly loads");
+    assert.equal(harness.container.querySelectorAll('[aria-label^="Move anchor"]').length, 0, "Blind anchor editing must not render");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back rescue image did not refresh proactively");
+    await loadPreparedImage(harness.container, "back current card");
     assert.match(harness.container.textContent ?? "", /neither side is applied yet/i);
     assert.match(harness.container.textContent ?? "", /LOW ANCHOR CONFIDENCE/i);
     assert.match(harness.container.textContent ?? "", /One anchor is low confidence/i);
@@ -838,6 +941,18 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
     });
     assert.equal(failedHandle.style.left, "40%", "Dragged anchor x is retained in the rescue overlay");
     assert.equal(failedHandle.style.top, "30%", "Dragged anchor y is retained in the rescue overlay");
+
+    const refreshCountBeforeError = harness.getPreparedImageRefreshCount("BACK");
+    await act(async () => fire(rescueImage, "error"));
+    await waitFor(
+      () => harness.getPreparedImageRefreshCount("BACK") === refreshCountBeforeError + 1,
+      "A failed rescue image did not trigger exactly one fresh read URL",
+    );
+    assert.ok(buttonByText(harness.container, "Image required")?.disabled, "Rescue must remain blocked during the image retry");
+    await loadPreparedImage(harness.container, "back current card");
+    const restoredHandle = harness.container.querySelector('[aria-label="Move anchor 1, out_of_card"]') as HTMLButtonElement | null;
+    assert.equal(restoredHandle?.style.left, "40%", "A fresh image URL must preserve the corrected anchor x");
+    assert.equal(restoredHandle?.style.top, "30%", "A fresh image URL must preserve the corrected anchor y");
 
     await act(async () => fire(buttonByText(harness.container, "Confirm corrected anchors")!, "click"));
     await waitFor(() => (harness.container.textContent ?? "").includes("hash verification failed"), "Atomic persistence failure was not visible");
@@ -860,8 +975,10 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
       "A lost-response retry must reuse the exact rescue attempt identity",
     );
 
+    await loadPreparedImage(harness.container, "front rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await loadPreparedImage(harness.container, "back rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     assert.equal(harness.bundles.length, 1);
     assert.equal(harness.bundles[0].front.mapRegistration?.mapRevisionId, "family-revision-rescue");
@@ -885,6 +1002,7 @@ test("global registration failure explains four-anchor confirmation and accepts 
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Back rescue did not open");
+    await loadPreparedImage(harness.container, "back current card");
     assert.match(harness.container.textContent ?? "", /LOW RANSAC INLIER FRACTION/i);
     assert.match(harness.container.textContent ?? "", /All four proposals look individually credible/i);
     assert.equal(harness.container.querySelectorAll('[aria-label*="tracked"]').length, 4);
@@ -946,8 +1064,12 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") >= 1, "Front image did not refresh proactively");
+    await loadPreparedImage(harness.container, "front rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back image did not refresh proactively");
+    await loadPreparedImage(harness.container, "back rectified trading card");
     const backOverlay = harness.container.querySelector<SVGSVGElement>('[aria-label="Adjustable printed-border geometry"]');
     const backTopLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
     assert.ok(backOverlay && backTopLeft);
@@ -961,6 +1083,11 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
       fire(backOverlay, "pointerup", { pointerId: 13, clientX: 127, clientY: 266.7 });
     });
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(
+      () => /Transient capture save failure/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
+      "Failed save did not return to preserved Back centering",
+    );
+    await loadPreparedImage(harness.container, "back rectified trading card");
     await waitFor(() => Boolean(buttonByText(harness.container, "Retry save")), "Failed save did not expose Retry save");
     assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /Transient capture save failure/);
     assert.equal(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import type { SpeedsterCardProfile, SpeedsterCardSide, SpeedsterQuad } from "../../lib/ai-grader-v2/contracts";
 import type { SpeedsterCenteringBorders } from "../../lib/ai-grader-v2/scoring";
@@ -11,6 +11,10 @@ import type {
   SpeedsterMapScope,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
+import {
+  fetchSpeedsterPreparedRectifiedImageUrl,
+  SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
+} from "../../lib/ai-grader-v2/prepared-image-urls";
 import {
   speedsterImageService,
   SpeedsterMapRegistrationError,
@@ -121,6 +125,7 @@ type SideState = {
   automaticGeometry: boolean;
   geometryDiagnostic: SpeedsterGeometryAttemptDiagnostic;
   rectifiedUrl?: string;
+  rectifiedImageRevision?: number;
   rectifiedStorageKey?: string;
   inspectionUrl?: string;
   inspectionStorageKey?: string;
@@ -139,6 +144,16 @@ type RegistrationRescueState = Readonly<{
   provisional: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
   attemptIds: Partial<Record<SpeedsterCardSide, string>>;
 }>;
+
+type PreparedImageRefreshState = Readonly<{
+  refreshing: boolean;
+  error: string | null;
+}>;
+
+const EMPTY_PREPARED_IMAGE_REFRESH: Readonly<Record<SpeedsterCardSide, PreparedImageRefreshState>> = {
+  FRONT: { refreshing: false, error: null },
+  BACK: { refreshing: false, error: null },
+};
 
 const CARD_ASPECT = 63.5 / 88.9;
 
@@ -202,6 +217,7 @@ export function CaptureWorkspace({
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
   const [registrationRescue, setRegistrationRescue] = useState<RegistrationRescueState | null>(null);
+  const [preparedImageRefresh, setPreparedImageRefresh] = useState(EMPTY_PREPARED_IMAGE_REFRESH);
   const geometryAttempt = useRef(0);
   const activeImageRequest = useRef<AbortController | null>(null);
   const photosStartedAt = useRef(Date.now());
@@ -210,6 +226,11 @@ export function CaptureWorkspace({
   const frontGeometryTiming = useRef<{ startedAtMs: number; endedAtMs: number } | null>(null);
   const mapRegistrationFailed = useRef(false);
   const readyDispatched = useRef(false);
+  const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Promise<string>>>>({});
+  const preparedImageAutomaticRetryUsed = useRef<Partial<Record<SpeedsterCardSide, boolean>>>({});
+  const currentSessionId = useRef(sessionId);
+
+  currentSessionId.current = sessionId;
 
   useEffect(() => {
     activeImageRequest.current?.abort();
@@ -231,11 +252,87 @@ export function CaptureWorkspace({
     setWorkflowError(null);
     setCaptureSaveFailed(false);
     setRegistrationRescue(null);
+    setPreparedImageRefresh(EMPTY_PREPARED_IMAGE_REFRESH);
+    preparedImageRefreshInFlight.current = {};
+    preparedImageAutomaticRetryUsed.current = {};
   }, [sessionId]);
 
   useEffect(() => () => {
     activeImageRequest.current?.abort();
     activeImageRequest.current = null;
+  }, []);
+
+  const refreshPreparedImage = useCallback((side: SpeedsterCardSide) => {
+    const existing = preparedImageRefreshInFlight.current[side];
+    if (existing) return existing;
+    const requestSessionId = sessionId;
+    setPreparedImageRefresh((current) => ({
+      ...current,
+      [side]: { ...current[side], refreshing: true, error: null },
+    }));
+    const request = fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side })
+      .then((imageUrl) => {
+        if (currentSessionId.current !== requestSessionId) return imageUrl;
+        const install = (current: SideState | null) => current ? {
+          ...current,
+          rectifiedUrl: imageUrl,
+          rectifiedImageRevision: (current.rectifiedImageRevision ?? 0) + 1,
+        } : current;
+        side === "FRONT" ? setFront(install) : setBack(install);
+        setPreparedImageRefresh((current) => ({
+          ...current,
+          [side]: { refreshing: false, error: null },
+        }));
+        return imageUrl;
+      })
+      .catch((error) => {
+        if (currentSessionId.current === requestSessionId) {
+          const detail = error instanceof Error ? error.message : `The ${side.toLowerCase()} card image could not be refreshed.`;
+          setPreparedImageRefresh((current) => ({
+            ...current,
+            [side]: {
+              refreshing: false,
+              error: `${detail} Your geometry and anchor corrections are preserved.`,
+            },
+          }));
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (preparedImageRefreshInFlight.current[side] === request) {
+          delete preparedImageRefreshInFlight.current[side];
+        }
+      });
+    preparedImageRefreshInFlight.current[side] = request;
+    return request;
+  }, [sessionId, token]);
+
+  const handlePreparedImageError = useCallback((side: SpeedsterCardSide) => {
+    if (preparedImageAutomaticRetryUsed.current[side]) {
+      setPreparedImageRefresh((current) => ({
+        ...current,
+        [side]: {
+          refreshing: false,
+          error: `The refreshed ${side.toLowerCase()} card image still did not load. Your geometry and anchor corrections are preserved.`,
+        },
+      }));
+      return;
+    }
+    preparedImageAutomaticRetryUsed.current[side] = true;
+    void refreshPreparedImage(side).catch(() => undefined);
+  }, [refreshPreparedImage]);
+
+  const retryPreparedImage = useCallback((side: SpeedsterCardSide) => {
+    preparedImageAutomaticRetryUsed.current[side] = false;
+    void refreshPreparedImage(side).catch(() => undefined);
+  }, [refreshPreparedImage]);
+
+  const markPreparedImageReady = useCallback((side: SpeedsterCardSide) => {
+    preparedImageAutomaticRetryUsed.current[side] = false;
+    setPreparedImageRefresh((current) => current[side].error ? ({
+      ...current,
+      [side]: { refreshing: false, error: null },
+    }) : current);
   }, []);
 
   useEffect(() => {
@@ -431,6 +528,7 @@ export function CaptureWorkspace({
       const next: SideState = {
         ...current,
         rectifiedUrl: outputPlan.RECTIFIED.readUrl,
+        rectifiedImageRevision: 0,
         rectifiedStorageKey: outputPlan.RECTIFIED.storageKey,
         inspectionUrl: outputPlan.INSPECTION.readUrl,
         inspectionStorageKey: outputPlan.INSPECTION.storageKey,
@@ -740,6 +838,26 @@ export function CaptureWorkspace({
       : null;
   const activeSide = stage.startsWith("FRONT") ? "FRONT" : "BACK";
   const activeCentering = stage === "FRONT_CENTERING" ? front : stage === "BACK_CENTERING" ? back : null;
+  const activePreparedImageSide = rescueSide ?? (activeCentering ? activeSide : null);
+
+  useEffect(() => {
+    if (!activePreparedImageSide || captureSaveFailed) return;
+    void refreshPreparedImage(activePreparedImageSide).catch(() => undefined);
+    const timer = window.setInterval(
+      () => void refreshPreparedImage(activePreparedImageSide).catch(() => undefined),
+      SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
+    );
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshPreparedImage(activePreparedImageSide).catch(() => undefined);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activePreparedImageSide, captureSaveFailed, refreshPreparedImage]);
 
   return (
     <section className={styles.workspace}>
@@ -819,10 +937,16 @@ export function CaptureWorkspace({
           key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
           side={rescueSide}
           imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
+          imageRevision={(rescueSide === "FRONT" ? front : back)?.rectifiedImageRevision ?? 0}
+          imageRefreshError={preparedImageRefresh[rescueSide].error}
+          imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
           failure={registrationRescue.failures[rescueSide]!}
           disabled={working}
           onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
           onContinueManual={() => finishRegistrationRescue(registrationRescue.provisional, true)}
+          onImageError={() => handlePreparedImageError(rescueSide)}
+          onImageReady={() => markPreparedImageReady(rescueSide)}
+          onRetryImage={() => retryPreparedImage(rescueSide)}
         />
       ) : null}
 
@@ -830,12 +954,18 @@ export function CaptureWorkspace({
         <CenteringAssist
           key={activeSide}
           imageUrl={activeCentering.rectifiedUrl}
+          imageRevision={activeCentering.rectifiedImageRevision ?? 0}
+          imageRefreshError={preparedImageRefresh[activeSide].error}
+          imageRefreshing={preparedImageRefresh[activeSide].refreshing}
           side={activeSide}
           initialInnerQuad={activeCentering.centering?.innerQuad ?? activeCentering.proposedCentering}
           detectedBorders={activeCentering.detectedBorders ?? []}
           onContinue={(result) => void confirmCentering(result)}
           disabled={readyDispatched.current}
           continueLabel={captureSaveFailed && activeSide === "BACK" ? "Retry save" : "Continue"}
+          onImageError={() => handlePreparedImageError(activeSide)}
+          onImageReady={() => markPreparedImageReady(activeSide)}
+          onRetryImage={() => retryPreparedImage(activeSide)}
         />
       ) : null}
 
