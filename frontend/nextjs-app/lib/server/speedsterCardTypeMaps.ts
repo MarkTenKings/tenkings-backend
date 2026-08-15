@@ -396,6 +396,15 @@ const PROPOSAL_SOURCES = new Set<SpeedsterMapZoneProposalSource>([
   "COPIED_COMPATIBLE_MAP",
 ]);
 
+const V2_ZONE_METADATA_FIELDS = [
+  "contentType",
+  "filterAuthority",
+  "filterAuthoritySource",
+  "filterPaddingMm",
+  "proposalSource",
+  "proposalConfidence",
+] as const;
+
 function mapZone(
   value: unknown,
   label: string,
@@ -673,8 +682,21 @@ export function parseSpeedsterMapRegistration(
   if (!Array.isArray(value.projectedZones) || value.projectedZones.length < 1 || value.projectedZones.length > 100) {
     throw new SpeedsterMapIntegrityError("Current-copy map registration zones are invalid.");
   }
+  const submittedV2ZoneMetadata = value.projectedZones.some((zone) => (
+    isRecord(zone) && V2_ZONE_METADATA_FIELDS.some((field) => field in zone)
+  ));
+  if (submittedV2ZoneMetadata && (
+    !expected.zones
+    || expected.zones.some((zone) => !isSpeedsterMapZoneV2(zone))
+  )) {
+    throw new SpeedsterMapIntegrityError("Current-copy map registration V2 zone metadata has no immutable V2 authority.");
+  }
   const projectedZones = value.projectedZones.map((zone, index) => (
-    mapZone(zone, `Projected zone[${index}]`)
+    mapZone(
+      zone,
+      `Projected zone[${index}]`,
+      submittedV2ZoneMetadata ? SPEEDSTER_MAP_SCHEMA_VERSION_V2 : SPEEDSTER_MAP_SCHEMA_VERSION,
+    )
   ));
   if (expected.zones && (
     expected.zones.length !== projectedZones.length
@@ -682,6 +704,22 @@ export function parseSpeedsterMapRegistration(
       zone.id !== projectedZones[index].id || zone.semanticType !== projectedZones[index].semanticType
     ))
   )) throw new SpeedsterMapIntegrityError("Current-copy map registration zones do not match the immutable revision.");
+  if (submittedV2ZoneMetadata && expected.zones?.some((immutable, index) => {
+    const submitted = projectedZones[index];
+    return !isSpeedsterMapZoneV2(immutable)
+      || !isSpeedsterMapZoneV2(submitted)
+      || submitted.id !== immutable.id
+      || submitted.label !== immutable.label
+      || submitted.semanticType !== immutable.semanticType
+      || submitted.contentType !== immutable.contentType
+      || submitted.filterAuthority !== immutable.filterAuthority
+      || submitted.filterAuthoritySource !== immutable.filterAuthoritySource
+      || submitted.filterPaddingMm !== immutable.filterPaddingMm
+      || submitted.proposalSource !== immutable.proposalSource
+      || submitted.proposalConfidence !== immutable.proposalConfidence;
+  })) {
+    throw new SpeedsterMapIntegrityError("Current-copy map registration V2 zone metadata does not match the immutable revision.");
+  }
   const projectedDesignBoundary = designBoundary(value.projectedDesignBoundary, "Projected design boundary");
   if (expected.anchors || expected.zones || expected.designBoundary) {
     const project = (source: SpeedsterPoint) => {

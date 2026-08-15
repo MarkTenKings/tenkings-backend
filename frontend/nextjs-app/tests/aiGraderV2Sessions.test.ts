@@ -14,6 +14,9 @@ import {
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+  SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+  SPEEDSTER_MAP_SCHEMA_VERSION,
+  SPEEDSTER_MAP_SCHEMA_VERSION_V2,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
   type SpeedsterMapRegistration,
@@ -78,6 +81,18 @@ const mapBindingQuad = [
   { x: 0.9, y: 0.9 },
   { x: 0.1, y: 0.9 },
 ] as const;
+const mapBindingV2Zone = {
+  id: "zone-1",
+  label: "Printed text",
+  semanticType: "PRINT_TEXT" as const,
+  polygon: mapBindingQuad,
+  contentType: "ATTACK" as const,
+  filterAuthority: true,
+  filterAuthoritySource: "HUMAN_OVERRIDE" as const,
+  filterPaddingMm: 0.6 as const,
+  proposalSource: "HUMAN" as const,
+  proposalConfidence: null,
+};
 const registrationReceiptEnv = {
   SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY: "test_speedster_registration_authority_secret_0123456789",
   SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID: "test-speedster-registration-key-v1",
@@ -168,6 +183,7 @@ function mapBindingFixture() {
 function appliedMapFixture(
   fixture: ReturnType<typeof mapBindingFixture>,
   appliedScope: "EXACT" | "FAMILY" = "EXACT",
+  schemaVersion: "V1" | "V2" = "V1",
 ) {
   const identity = fixture.session.identity;
   const matchKey = appliedScope === "EXACT"
@@ -180,7 +196,7 @@ function appliedMapFixture(
       id: `anchor-${number}`,
       point: { x: number % 2 ? 0.2 : 0.8, y: number < 3 ? 0.2 : 0.8 },
     })),
-    zones: [{
+    zones: schemaVersion === "V2" ? [mapBindingV2Zone] : [{
       id: "zone-1",
       label: "Printed text",
       semanticType: "PRINT_TEXT",
@@ -197,6 +213,12 @@ function appliedMapFixture(
       revisionId: fixture.binding.revisionId,
       matchKeyHash: mapBindingSha(JSON.stringify(matchKey)),
       matchKey,
+      mapSchemaVersion: schemaVersion === "V2"
+        ? SPEEDSTER_MAP_SCHEMA_VERSION_V2
+        : SPEEDSTER_MAP_SCHEMA_VERSION,
+      filterPolicyVersion: schemaVersion === "V2"
+        ? SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2
+        : SPEEDSTER_MAP_FILTER_POLICY_VERSION,
       frontMap: mapSide("FRONT"),
       backMap: mapSide("BACK"),
     },
@@ -271,6 +293,40 @@ function authorizedV2Binding(
           registration: back, now, env: registrationReceiptEnv,
         }),
       },
+    },
+  };
+}
+
+function authorizedEnrichedV2HumanBinding(
+  fixture: ReturnType<typeof mapBindingFixture>,
+  now = 60_000,
+) {
+  const signedSide = (side: "front" | "back", lessonId: string) => {
+    const registration = parseSpeedsterMapRegistration(v2Registration(
+      fixture.binding.registration[side],
+      { candidateId: lessonId, source: "HUMAN_CORRECTION", lessonId },
+    ), {
+      side: side === "front" ? "FRONT" : "BACK",
+      mapRevisionId: fixture.binding.revisionId,
+      zones: [mapBindingV2Zone],
+    });
+    return {
+      ...registration,
+      serverReceipt: issueSpeedsterMapRegistrationReceipt({
+        operatorAdminId: "admin-1",
+        sessionId: fixture.sessionId,
+        registration,
+        now,
+        env: registrationReceiptEnv,
+      }),
+    };
+  };
+  return {
+    revisionId: fixture.binding.revisionId,
+    filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
+    registration: {
+      front: signedSide("front", "lesson-front-v2"),
+      back: signedSide("back", "lesson-back-v2"),
     },
   };
 }
@@ -925,6 +981,52 @@ test("capture PATCH pins a family registration for a matching Card Type", async 
   assert.match(JSON.stringify(events[0]?.details), /"scope":"FAMILY"/);
 });
 
+test("capture PATCH accepts a rescue-style signed enriched V2 FAMILY registration through final binding", async () => {
+  const fixture = mapBindingFixture();
+  const now = 60_000;
+  const binding = authorizedEnrichedV2HumanBinding(fixture, now);
+  const saves: Record<string, unknown>[] = [];
+  const verifiedLessons: string[] = [];
+  let events: readonly { eventType: string; details?: unknown }[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding(session, submittedBinding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, submittedBinding, capture, {
+        async loadActiveMap() { return appliedMapFixture(fixture, "FAMILY", "V2"); },
+        async hashEvidence(storageKey) { return mapBindingSha(storageKey); },
+        verifyReceipt: receiptVerifierAt(now + 1),
+        async verifyHumanLesson(input) { verifiedLessons.push(`${input.side}:${input.lessonId}`); },
+      });
+    },
+    async updateSession(_id, _createdByUserId, data) {
+      saves.push(data as unknown as Record<string, unknown>);
+      return { ...fixture.session, ...data };
+    },
+    async recordInstrumentation(input) { events = input; },
+  });
+  const result = response();
+
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+    mapBinding: binding,
+  }, fixture.sessionId), result.res);
+
+  assert.equal(result.state.status, 200);
+  assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2);
+  const persistedRegistration = saves[0]?.mapRegistration as {
+    front: { projectedZones: unknown[] };
+    back: { projectedZones: unknown[] };
+  };
+  assert.deepEqual(persistedRegistration.front.projectedZones, [mapBindingV2Zone]);
+  assert.deepEqual(persistedRegistration.back.projectedZones, [mapBindingV2Zone]);
+  assert.equal(JSON.stringify(persistedRegistration).includes("serverReceipt"), false);
+  assert.deepEqual(verifiedLessons, ["FRONT:lesson-front-v2", "BACK:lesson-back-v2"]);
+  assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
+  assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"FAMILY"/);
+});
+
 test("capture PATCH safely uses normal human review when selected-map registration is omitted", async () => {
   const fixture = mapBindingFixture();
   const saves: Record<string, unknown>[] = [];
@@ -1568,6 +1670,80 @@ test("server parser accepts validated v2 automatic and human registrations while
       locatedPoint: { x: 1 - anchor.expectedPoint.x, y: anchor.expectedPoint.y },
     })),
   }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /reverses or folds orientation/);
+});
+
+test("server parser accepts only exact legacy or immutable-matching complete V2 projected-zone shapes", () => {
+  const fixture = mapBindingFixture();
+  const { serverReceipt: _receipt, ...legacy } = fixture.binding.registration.front;
+  const rawV2 = v2Registration(legacy as typeof fixture.binding.registration.front);
+  const expected = {
+    side: "FRONT" as const,
+    mapRevisionId: fixture.binding.revisionId,
+    zones: [mapBindingV2Zone],
+  };
+
+  const geometryOnly = parseSpeedsterMapRegistration(rawV2, expected);
+  assert.deepEqual(geometryOnly.projectedZones, [mapBindingV2Zone]);
+
+  const complete = {
+    ...rawV2,
+    projectedZones: [mapBindingV2Zone],
+  };
+  assert.deepEqual(parseSpeedsterMapRegistration(complete, expected).projectedZones, [mapBindingV2Zone]);
+
+  for (const [field, value] of [
+    ["label", "Altered label"],
+    ["contentType", "HEADER"],
+    ["filterAuthority", false],
+    ["filterAuthoritySource", "TYPE_DEFAULT"],
+    ["filterPaddingMm", 0.7],
+    ["proposalSource", "VISUAL_SNAP"],
+    ["proposalConfidence", 0.9],
+  ] as const) {
+    assert.throws(() => parseSpeedsterMapRegistration({
+      ...complete,
+      projectedZones: [{ ...mapBindingV2Zone, [field]: value }],
+    }, expected), /does not match the immutable revision|invalid for this immutable policy/);
+  }
+
+  const partial = structuredClone(complete);
+  delete (partial.projectedZones[0] as { proposalConfidence?: unknown }).proposalConfidence;
+  assert.throws(() => parseSpeedsterMapRegistration(partial, expected), /unsupported fields/);
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...complete,
+    projectedZones: [{ ...mapBindingV2Zone, unsupportedMetadata: "browser-authored" }],
+  }, expected), /unsupported fields/);
+
+  const secondV2Zone = { ...mapBindingV2Zone, id: "zone-2", label: "Second printed text" };
+  assert.throws(() => parseSpeedsterMapRegistration({
+    ...complete,
+    projectedZones: [
+      mapBindingV2Zone,
+      {
+        id: secondV2Zone.id,
+        label: secondV2Zone.label,
+        semanticType: secondV2Zone.semanticType,
+        polygon: secondV2Zone.polygon,
+      },
+    ],
+  }, { ...expected, zones: [mapBindingV2Zone, secondV2Zone] }), /unsupported fields/);
+
+  const expectedLegacyZone = {
+    id: mapBindingV2Zone.id,
+    label: mapBindingV2Zone.label,
+    semanticType: mapBindingV2Zone.semanticType,
+    polygon: mapBindingV2Zone.polygon,
+  };
+  assert.deepEqual(parseSpeedsterMapRegistration(legacy, {
+    side: "FRONT",
+    mapRevisionId: fixture.binding.revisionId,
+    zones: [expectedLegacyZone],
+  }).projectedZones, [expectedLegacyZone]);
+  assert.throws(() => parseSpeedsterMapRegistration(complete, {
+    side: "FRONT",
+    mapRevisionId: fixture.binding.revisionId,
+    zones: [expectedLegacyZone],
+  }), /has no immutable V2 authority/);
 });
 
 test("map registration never retries another scope after the selected revision fails", async () => {
