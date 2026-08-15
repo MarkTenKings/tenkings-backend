@@ -84,6 +84,38 @@
   user-select: none;
 }
 
+.imageStatus {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #fff4d6;
+  text-align: center;
+  background: rgba(4, 5, 4, 0.94);
+}
+
+.imageStatus span {
+  color: #ffb1a9;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.imageStatus button {
+  justify-self: center;
+  min-height: 38px;
+  padding: 0 16px;
+  color: #090a08;
+  background: var(--gold);
+  border: 1px solid var(--gold);
+  border-radius: 999px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .overlay {
   z-index: 1;
   overflow: visible;
@@ -253,6 +285,11 @@
 
 .continueButton span {
   font-size: 20px;
+}
+
+.continueButton:disabled {
+  cursor: default;
+  opacity: 0.45;
 }
 
 @media (max-width: 820px) {
