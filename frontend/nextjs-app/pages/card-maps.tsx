@@ -7,6 +7,7 @@ import AppShell from "../components/AppShell";
 import {
   CaptureWorkspace,
   type SpeedsterCaptureBundle,
+  type SpeedsterCaptureInstrumentationEvent,
   type SpeedsterCaptureSaveResult,
 } from "../components/ai-grader-v2/CaptureWorkspace";
 import {
@@ -475,6 +476,27 @@ export default function CardMapsPage() {
     }
   };
 
+  const reportCaptureInstrumentation = useCallback((event: SpeedsterCaptureInstrumentationEvent) => {
+    const token = session?.token;
+    const sourceSessionId = draft?.id;
+    if (!token || !sourceSessionId) return false;
+    return fetch(
+      `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sourceSessionId)}/instrumentation`,
+      {
+        method: "POST",
+        headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          eventId: event.eventId ?? crypto.randomUUID(),
+          eventType: event.eventType,
+          clientStartedAt: new Date(event.startedAtMs).toISOString(),
+          clientEndedAt: new Date(event.endedAtMs).toISOString(),
+          ...(event.details ? { details: event.details } : {}),
+        }),
+        keepalive: true,
+      },
+    ).then((response) => response.ok).catch(() => false);
+  }, [draft?.id, session?.token]);
+
   if (loading) return <AppShell background="black"><div className={styles.center}>Loading CARD MAPS…</div></AppShell>;
   if (!session) {
     return <AppShell background="black"><div className={styles.center}><button type="button" onClick={() => void ensureSession()}>Sign in to CARD MAPS</button></div></AppShell>;
@@ -670,6 +692,7 @@ export default function CardMapsPage() {
             activeMapScope={map.status === "LOADED" ? map.scope ?? null : null}
             activeMapName={map.status === "LOADED" ? map.name ?? null : null}
             onReady={saveCapture}
+            onInstrumentationEvent={reportCaptureInstrumentation}
           />
         ) : null}
 

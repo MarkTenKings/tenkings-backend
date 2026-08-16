@@ -39,6 +39,10 @@ export type SpeedsterInstrumentationWriter = {
   $executeRaw: (query: Prisma.Sql) => Promise<number>;
 };
 
+export type SpeedsterConflictDetectingInstrumentationWriter = SpeedsterInstrumentationWriter & {
+  $queryRaw: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+};
+
 export function speedsterCardMapApplicationEvent(input: {
   sessionId: string;
   createdByUserId: string;
@@ -346,6 +350,153 @@ export function speedsterServerTimingEvent(input: {
     durationMs: Math.max(0, Math.round(input.durationMs)),
     details: input.details ?? {},
   };
+}
+
+export type SpeedsterMapRegistrationAttemptOutcome =
+  | Readonly<{
+      outcome: "SUCCEEDED";
+      mapRevisionId: string;
+    }>
+  | Readonly<{
+      outcome: "HUMAN_CORRECTION_REQUIRED" | "FAILED";
+      source: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API";
+      code: string;
+      httpStatus: number | null;
+      retryEligible: boolean;
+    }>;
+
+export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
+  sessionId: string;
+  createdByUserId: string;
+  requestId: string;
+  operationId: string;
+  attemptNumber: number;
+  trigger: "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE";
+  orchestrationMetadataSource: "CLIENT_REPORTED" | "SERVER_STALE_CLIENT_COMPATIBILITY";
+  mapRevisionId: string;
+  currentInspectionSha256: string;
+  currentPhysicalQuadSha256: string;
+  successfulSiblingPreservedAtAttemptStart: boolean;
+  side: "FRONT" | "BACK";
+  mode: "AUTOMATIC" | "HUMAN_RESCUE";
+  durationMs: number;
+  result: SpeedsterMapRegistrationAttemptOutcome;
+}>): SpeedsterInstrumentationEvent {
+  return speedsterServerTimingEvent({
+    eventKey: `${input.sessionId}:map-registration:${input.operationId}:${input.side.toLowerCase()}:${input.attemptNumber}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    eventType: "MAP_REGISTRATION_ATTEMPT",
+    durationMs: input.durationMs,
+    details: {
+      side: input.side,
+      mode: input.mode,
+      ...(input.orchestrationMetadataSource === "CLIENT_REPORTED" ? {
+        clientReportedOrchestration: {
+          operationId: input.operationId,
+          attemptNumber: input.attemptNumber,
+          trigger: input.trigger,
+          successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
+        },
+      } : {
+        serverStaleClientCompatibilityOrchestration: {
+          operationId: input.operationId,
+          attemptNumber: input.attemptNumber,
+          trigger: input.trigger,
+          successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
+        },
+      }),
+      requestId: input.requestId,
+      mapRevisionId: input.mapRevisionId,
+      currentInspectionSha256: input.currentInspectionSha256,
+      currentPhysicalQuadSha256: input.currentPhysicalQuadSha256,
+      outcome: input.result.outcome,
+      ...(input.result.outcome === "SUCCEEDED"
+        ? { observedMapRevisionId: input.result.mapRevisionId }
+        : {
+            errorSource: input.result.source,
+            errorCode: input.result.code,
+            httpStatus: input.result.httpStatus,
+            retryEligible: input.result.retryEligible,
+          }),
+    },
+  });
+}
+
+export class SpeedsterInstrumentationConflictError extends Error {
+  constructor(
+    readonly eventKey: string,
+    readonly reason: "CONFLICTING_PAYLOAD" | "MISSING_AFTER_CONFLICT",
+  ) {
+    super(`Immutable Speedster instrumentation conflict (${reason}) for event ${eventKey}.`);
+    this.name = "SpeedsterInstrumentationConflictError";
+  }
+}
+
+/**
+ * Registration attempts and decisions use a conflict-detecting append-only insert.
+ * The first statement never updates an existing row. After an insert conflict, a
+ * separate READ COMMITTED statement verifies an exact duplicate without mutation.
+ */
+export async function insertSpeedsterInstrumentationEventWithConflictDetection(
+  writer: SpeedsterConflictDetectingInstrumentationWriter,
+  event: SpeedsterInstrumentationEvent,
+) {
+  const generatingExemplar = event.generatingExemplar === null || event.generatingExemplar === undefined
+    ? null
+    : JSON.stringify(event.generatingExemplar);
+  const details = event.details === null || event.details === undefined
+    ? null
+    : JSON.stringify(event.details);
+  const inserted = await writer.$executeRaw(Prisma.sql`
+    INSERT INTO "AiGraderV2InstrumentationEvent" (
+      "id", "eventKey", "sessionId", "cycleId", "createdByUserId", "category", "eventType",
+      "findingId", "origin", "similarity", "generatingExemplar", "operatorAction",
+      "clientStartedAt", "clientEndedAt", "durationMs", "details"
+    ) VALUES (
+      ${randomUUID()}, ${event.eventKey}, ${event.sessionId}, ${event.sessionId},
+      ${event.createdByUserId}, ${event.category}, ${event.eventType},
+      ${event.findingId ?? null}, ${event.origin ?? null}, ${event.similarity ?? null},
+      ${generatingExemplar}::jsonb, ${event.operatorAction ?? null},
+      ${event.clientStartedAt ?? null}, ${event.clientEndedAt ?? null}, ${event.durationMs ?? null},
+      ${details}::jsonb
+    )
+    ON CONFLICT ("eventKey") DO NOTHING
+  `);
+  if (inserted === 1) return 1;
+  if (inserted !== 0) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "CONFLICTING_PAYLOAD");
+  }
+
+  const existing = await writer.$queryRaw<Array<{ exactMatch: boolean }>>(Prisma.sql`
+    SELECT (
+      "eventKey" IS NOT DISTINCT FROM ${event.eventKey}
+      AND "sessionId" IS NOT DISTINCT FROM ${event.sessionId}
+      AND "cycleId" IS NOT DISTINCT FROM ${event.sessionId}
+      AND "createdByUserId" IS NOT DISTINCT FROM ${event.createdByUserId}
+      AND "category" IS NOT DISTINCT FROM ${event.category}
+      AND "eventType" IS NOT DISTINCT FROM ${event.eventType}
+      AND "findingId" IS NOT DISTINCT FROM ${event.findingId ?? null}
+      AND "origin" IS NOT DISTINCT FROM ${event.origin ?? null}
+      AND "similarity" IS NOT DISTINCT FROM ${event.similarity ?? null}
+      AND "generatingExemplar" IS NOT DISTINCT FROM ${generatingExemplar}::jsonb
+      AND "operatorAction" IS NOT DISTINCT FROM ${event.operatorAction ?? null}
+      AND "clientStartedAt" IS NOT DISTINCT FROM ${event.clientStartedAt ?? null}
+      AND "clientEndedAt" IS NOT DISTINCT FROM ${event.clientEndedAt ?? null}
+      AND "durationMs" IS NOT DISTINCT FROM ${event.durationMs ?? null}
+      AND "details" IS NOT DISTINCT FROM ${details}::jsonb
+    ) AS "exactMatch"
+    FROM "AiGraderV2InstrumentationEvent"
+    WHERE "eventKey" = ${event.eventKey}
+    LIMIT 1
+  `);
+  if (existing.length === 0) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "MISSING_AFTER_CONFLICT");
+  }
+  if (existing.length !== 1 || existing[0].exactMatch !== true) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "CONFLICTING_PAYLOAD");
+  }
+  return 0;
 }
 
 export async function insertSpeedsterInstrumentationEvents(

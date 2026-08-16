@@ -47,6 +47,9 @@ test("new CARD MAP creation reuses the exact session, map, capture, and immutabl
   assert.match(cardMapsPage, /revisionId: bundle\.front\.mapRegistration\.mapRevisionId/);
   assert.match(cardMapsPage, /filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION/);
   assert.match(cardMapsPage, /<CaptureWorkspace/);
+  assert.match(cardMapsPage, /const reportCaptureInstrumentation = useCallback/);
+  assert.match(cardMapsPage, /sessions\/\$\{encodeURIComponent\(sourceSessionId\)\}\/instrumentation/);
+  assert.match(cardMapsPage, /onInstrumentationEvent=\{reportCaptureInstrumentation\}/);
   assert.match(cardMapsPage, /<SpeedsterTrainWorkspace/);
   assert.match(cardMapsPage, /map\.status === "LOADED" \? "EDIT CARD MAP" : "CREATE CARD MAP"/);
   assert.match(cardMapsPage, /Saving creates both:/);

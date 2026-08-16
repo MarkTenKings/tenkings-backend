@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import type { Prisma } from "@prisma/client";
 import type { NextApiRequest, NextApiResponse } from "next";
 
 import type { SpeedsterMeasuredDefect } from "../lib/ai-grader-v2/contracts";
@@ -12,6 +13,9 @@ import {
   speedsterFindingActionEvents,
   speedsterFindingFinalEvents,
   speedsterFindingProposalEvents,
+  speedsterMapRegistrationAttemptEvent,
+  insertSpeedsterInstrumentationEventWithConflictDetection,
+  SpeedsterInstrumentationConflictError,
   type SpeedsterInstrumentationEvent,
 } from "../lib/server/aiGraderV2Instrumentation";
 import { createSpeedsterInstrumentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation";
@@ -222,6 +226,170 @@ test("card-map telemetry records trusted family scope, key, revision, and proven
   assert.doesNotMatch(JSON.stringify(event.details), /storageKey|imageUrl|imageBase64/);
 });
 
+test("server-authored registration attempt telemetry keeps successful and failed sides truthful", () => {
+  const succeeded = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    side: "FRONT",
+    mode: "AUTOMATIC",
+    durationMs: 451.4,
+    result: { outcome: "SUCCEEDED", mapRevisionId: "revision-123456789012345" },
+  });
+  const failed = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "d".repeat(64),
+    currentPhysicalQuadSha256: "e".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    side: "BACK",
+    mode: "AUTOMATIC",
+    durationMs: 1334.2,
+    result: {
+      outcome: "FAILED",
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      httpStatus: 402,
+      retryEligible: false,
+    },
+  });
+
+  assert.equal(succeeded.eventKey, "session-12345678901234567890:map-registration:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:front:1");
+  assert.equal(failed.eventKey, "session-12345678901234567890:map-registration:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:back:1");
+  assert.deepEqual(succeeded.details, {
+    side: "FRONT",
+    mode: "AUTOMATIC",
+    clientReportedOrchestration: {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
+    requestId: "11111111-1111-4111-8111-111111111111",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    outcome: "SUCCEEDED",
+    observedMapRevisionId: "revision-123456789012345",
+  });
+  assert.doesNotMatch(JSON.stringify(succeeded.details), /FAILED|errorCode|REGISTRATION_FAILED/);
+  assert.deepEqual(failed.details, {
+    side: "BACK",
+    mode: "AUTOMATIC",
+    clientReportedOrchestration: {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
+    requestId: "22222222-2222-4222-8222-222222222222",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "d".repeat(64),
+    currentPhysicalQuadSha256: "e".repeat(64),
+    outcome: "FAILED",
+    errorSource: "PROVIDER",
+    errorCode: "PROVIDER_HTTP_402",
+    httpStatus: 402,
+    retryEligible: false,
+  });
+});
+
+test("strict attempt insert uses zero-update insert-or-read conflict detection", async () => {
+  let insertSql = "";
+  let readCount = 0;
+  const event = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 2,
+    trigger: "MANUAL_RETRY",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: true,
+    side: "BACK",
+    mode: "AUTOMATIC",
+    durationMs: 451,
+    result: { outcome: "SUCCEEDED", mapRevisionId: "revision-123456789012345" },
+  });
+  const inserted = await insertSpeedsterInstrumentationEventWithConflictDetection({
+    async $executeRaw(query) {
+      insertSql = query.sql;
+      return 1;
+    },
+    async $queryRaw<T>() {
+      readCount += 1;
+      return [] as unknown as T;
+    },
+  }, event);
+  assert.equal(inserted, 1);
+  assert.equal(readCount, 0, "a successful insert needs no duplicate read");
+  assert.match(insertSql, /ON CONFLICT \("eventKey"\) DO NOTHING/);
+  assert.doesNotMatch(insertSql, /\bDO UPDATE\b|\bUPDATE\b|\bDELETE\b/i);
+
+  let selectSql = "";
+  const duplicate = await insertSpeedsterInstrumentationEventWithConflictDetection({
+    async $executeRaw() { return 0; },
+    async $queryRaw<T>(query: Prisma.Sql) {
+      selectSql = query.sql;
+      return [{ exactMatch: true }] as unknown as T;
+    },
+  }, event);
+  assert.equal(duplicate, 0);
+  assert.match(selectSql, /FROM "AiGraderV2InstrumentationEvent"[\s\S]*WHERE "eventKey" =/);
+  assert.doesNotMatch(selectSql, /\bINSERT\b|\bUPDATE\b|\bDELETE\b/i);
+  for (const column of [
+    "eventKey", "sessionId", "cycleId", "createdByUserId", "category", "eventType", "findingId", "origin",
+    "similarity", "generatingExemplar", "operatorAction", "clientStartedAt", "clientEndedAt", "durationMs", "details",
+  ]) assert.match(selectSql, new RegExp(`"${column}" IS NOT DISTINCT FROM`));
+
+  await assert.rejects(
+    insertSpeedsterInstrumentationEventWithConflictDetection({
+      async $executeRaw() { return 0; },
+      async $queryRaw<T>() { return [{ exactMatch: false }] as unknown as T; },
+    }, event),
+    (error) => error instanceof SpeedsterInstrumentationConflictError
+      && error.reason === "CONFLICTING_PAYLOAD",
+  );
+  await assert.rejects(
+    insertSpeedsterInstrumentationEventWithConflictDetection({
+      async $executeRaw() { return 0; },
+      async $queryRaw<T>() { return [] as unknown as T; },
+    }, event),
+    (error) => error instanceof SpeedsterInstrumentationConflictError
+      && error.reason === "MISSING_AFTER_CONFLICT",
+  );
+
+  const appRoot = fileURLToPath(new URL("..", import.meta.url));
+  const endpointSource = readFileSync(
+    `${appRoot}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation.ts`,
+    "utf8",
+  );
+  assert.match(endpointSource, /MAP_REGISTRATION_OPERATOR_DECISION[\s\S]*insertSpeedsterInstrumentationEventWithConflictDetection/);
+  const liveValidatorSource = readFileSync(
+    `${appRoot}/scripts/validate-speedster-instrumentation-conflicts-postgres.ts`,
+    "utf8",
+  );
+  assert.match(liveValidatorSource, /ctid::text[\s\S]*xmin::text[\s\S]*rowHash/);
+  assert.match(liveValidatorSource, /Promise\.all[\s\S]*sort\(\), \[0, 1\]/);
+});
+
 function request(body: unknown): NextApiRequest {
   return {
     method: "POST",
@@ -357,6 +525,115 @@ test("geometry timing records a map registration failure as manual without priva
     mapAppliedScope: "NONE",
     mapFailureCode: "REGISTRATION_FAILED",
   });
+});
+
+test("client timing endpoint accepts only sanitized explicit registration decisions", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  let insertResult = 1;
+  let insertFailure: Error | null = null;
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) {
+      if (insertFailure) throw insertFailure;
+      events = input;
+      return insertResult;
+    },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: {
+      side: "BACK",
+      registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+      registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+      registrationFailedSides: ["BACK"],
+      registrationFailures: [{
+        side: "BACK",
+        source: "PROVIDER",
+        code: "PROVIDER_HTTP_402",
+        httpStatus: 402,
+        requestId: "registration-request-402",
+      }],
+      registrationErrorSource: "PROVIDER",
+      registrationErrorCode: "PROVIDER_HTTP_402",
+      registrationHttpStatus: 402,
+      registrationRequestId: "registration-request-402",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.deepEqual(result.state.body, { ok: true, duplicate: false });
+  assert.deepEqual(events[0].details, {
+    side: "BACK",
+    registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+    registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    registrationFailedSides: ["BACK"],
+    registrationFailures: [{
+      side: "BACK",
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      httpStatus: 402,
+      requestId: "registration-request-402",
+    }],
+    registrationErrorSource: "PROVIDER",
+    registrationErrorCode: "PROVIDER_HTTP_402",
+    registrationHttpStatus: 402,
+    registrationRequestId: "registration-request-402",
+  });
+
+  insertResult = 0;
+  const duplicate = response();
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: events[0].details,
+  }), duplicate.res);
+  assert.equal(duplicate.state.status, 200);
+  assert.deepEqual(duplicate.state.body, { ok: true, duplicate: true });
+
+  insertFailure = new SpeedsterInstrumentationConflictError(
+    "session-12345678901234567890:client:1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    "CONFLICTING_PAYLOAD",
+  );
+  const conflict = response();
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: events[0].details,
+  }), conflict.res);
+  assert.equal(conflict.state.status, 500);
+  assert.match(
+    String((conflict.state.body as { message?: string }).message),
+    /Immutable Speedster instrumentation conflict \(CONFLICTING_PAYLOAD\)/,
+  );
+
+  const mismatched = response();
+  await handler(request({
+    eventId: "2c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: {
+      registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+      registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+      registrationFailedSides: ["BACK"],
+      registrationFailures: [{ side: "BACK", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409 }],
+    },
+  }), mismatched.res);
+  assert.equal(mismatched.state.status, 400, "a retransmission cannot change the stable decision event identity");
 });
 
 test("client timing endpoint rejects secret-shaped payload fields", async () => {

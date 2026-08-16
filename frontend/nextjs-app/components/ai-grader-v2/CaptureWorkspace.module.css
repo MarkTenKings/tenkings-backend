@@ -55,6 +55,62 @@
   line-height: 1.45;
 }
 
+.registrationInterruption {
+  display: grid;
+  gap: 14px;
+  padding: 20px;
+  border: 1px solid #d8af5566;
+  border-radius: 16px;
+  background: #241a0d;
+  color: #f7ead0;
+}
+
+.registrationInterruption header,
+.registrationInterruption p {
+  margin: 0;
+}
+
+.registrationInterruption header span,
+.interruptionEvidence {
+  color: #d8af55;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.registrationInterruption h2 {
+  margin: 6px 0 0;
+}
+
+.interruptionEvidence,
+.interruptionActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+}
+
+.interruptionActions button {
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid #d8af55;
+  border-radius: 999px;
+  background: #d8af55;
+  color: #080806;
+  font: inherit;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.interruptionActions button:first-child {
+  background: transparent;
+  color: #ffd99a;
+}
+
+.interruptionActions button:disabled {
+  cursor: default;
+  opacity: .45;
+}
+
 .photos {
   display: grid;
   gap: 18px;

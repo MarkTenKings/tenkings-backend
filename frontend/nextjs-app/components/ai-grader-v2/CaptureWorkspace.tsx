@@ -18,6 +18,11 @@ import {
 import {
   speedsterImageService,
   SpeedsterMapRegistrationError,
+  SpeedsterMapRegistrationRequestError,
+  speedsterMapRegistrationAuditWarningFor,
+  type SpeedsterMapRegistrationAuditWarning,
+  type SpeedsterMapRegistrationRequestFailure,
+  type SpeedsterMapRegistrationOrchestration,
   planSpeedsterPreparedOutputs,
   uploadSpeedsterOriginal,
 } from "../../lib/ai-grader-v2/image-service";
@@ -32,7 +37,7 @@ import PhotoUploadPair, { type SpeedsterOriginalPhoto } from "./PhotoUploadPair"
 import { MapRegistrationRescue } from "./MapRegistrationRescue";
 import styles from "./CaptureWorkspace.module.css";
 
-type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "MAP_REGISTRATION_RESCUE" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
+type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "MAP_REGISTRATION_INTERRUPTED" | "MAP_REGISTRATION_RESCUE" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
 
 export type SpeedsterPreparedSide = {
   side: SpeedsterCardSide;
@@ -94,8 +99,9 @@ type CaptureWorkspaceProps = {
   activeMapName?: string | null;
   mapLookupFailed?: boolean;
   onReady: (bundle: SpeedsterCaptureBundle) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
-  onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void;
+  onInstrumentationEvent: (event: SpeedsterCaptureInstrumentationEvent) => void | boolean | Promise<void | boolean>;
   imageRequestTimeoutMs?: number;
+  decisionAuditConfirmationTimeoutMs?: number;
 };
 
 export type SpeedsterCaptureSaveResult = Readonly<{
@@ -104,7 +110,8 @@ export type SpeedsterCaptureSaveResult = Readonly<{
 }>;
 
 export type SpeedsterCaptureInstrumentationEvent = Readonly<{
-  eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED";
+  eventId?: string;
+  eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED" | "MAP_REGISTRATION_OPERATOR_DECISION";
   startedAtMs: number;
   endedAtMs: number;
   details?: Readonly<{
@@ -115,6 +122,21 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
     mapName?: string;
     mapRevisionId?: string;
     mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
+    registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
+    registrationErrorSource?: SpeedsterMapRegistrationRequestFailure["source"] | "HUMAN_CORRECTION";
+    registrationErrorCode?: string;
+    registrationHttpStatus?: number;
+    registrationRequestId?: string;
+    registrationFailedSides?: readonly SpeedsterCardSide[];
+    registrationOperationId?: string;
+    registrationDecisionId?: string;
+    registrationFailures?: readonly Readonly<{
+      side: SpeedsterCardSide;
+      source: SpeedsterMapRegistrationRequestFailure["source"] | "HUMAN_CORRECTION";
+      code: string;
+      httpStatus: number | null;
+      requestId?: string;
+    }>[];
   }>;
 }>;
 
@@ -141,9 +163,38 @@ type SideState = {
 
 type RegistrationRescueState = Readonly<{
   failures: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistrationFailure>>;
+  failureRequestIds: Partial<Record<SpeedsterCardSide, string>>;
   provisional: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
   attemptIds: Partial<Record<SpeedsterCardSide, string>>;
+  operationId: string;
+  attemptNumbers: Partial<Record<SpeedsterCardSide, number>>;
+  continueDecisionId: string;
 }>;
+
+type RegistrationInterruption = Readonly<{
+  message: string;
+  failure: SpeedsterMapRegistrationRequestFailure;
+}>;
+
+type RegistrationInterruptionState = Readonly<{
+  interruptions: Partial<Record<SpeedsterCardSide, RegistrationInterruption>>;
+  failures: RegistrationRescueState["failures"];
+  failureRequestIds: RegistrationRescueState["failureRequestIds"];
+  provisional: RegistrationRescueState["provisional"];
+  operationId: string;
+  attemptNumbers: Partial<Record<SpeedsterCardSide, number>>;
+  decisionIds: Readonly<{
+    continue: string;
+    retry: Partial<Record<SpeedsterCardSide, string>>;
+  }>;
+}>;
+
+function registrationAuditWarningFrom(value: unknown): SpeedsterMapRegistrationAuditWarning | null {
+  if (value instanceof SpeedsterMapRegistrationError || value instanceof SpeedsterMapRegistrationRequestError) {
+    return value.auditWarning;
+  }
+  return speedsterMapRegistrationAuditWarningFor(value);
+}
 
 type PreparedImageRefreshState = Readonly<{
   refreshing: boolean;
@@ -154,6 +205,76 @@ const EMPTY_PREPARED_IMAGE_REFRESH: Readonly<Record<SpeedsterCardSide, PreparedI
   FRONT: { refreshing: false, error: null },
   BACK: { refreshing: false, error: null },
 };
+
+// Confirmation only: operator work proceeds immediately; two seconds bounds silent audit uncertainty.
+export const SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS = 2_000;
+
+export async function settleSpeedsterRegistrationDecisionAuditConfirmation(
+  reporterResult: void | boolean | Promise<void | boolean>,
+  waitMs = SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS,
+): Promise<"CONFIRMED" | "WRITE_FAILED" | "TIMED_OUT"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const tracked = Promise.resolve(reporterResult).then(
+    (saved) => saved === false ? "WRITE_FAILED" as const : "CONFIRMED" as const,
+    () => "WRITE_FAILED" as const,
+  );
+  const deadline = new Promise<"TIMED_OUT">((resolve) => {
+    timer = setTimeout(() => resolve("TIMED_OUT"), Math.max(0, waitMs));
+  });
+  const result = await Promise.race([tracked, deadline]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
+export function isCurrentSpeedsterRegistrationDecisionAudit(input: Readonly<{
+  currentSessionId: string;
+  currentOperationId: string | null;
+  originatingSessionId: string;
+  originatingOperationId: string;
+}>) {
+  return input.currentSessionId === input.originatingSessionId
+    && input.currentOperationId === input.originatingOperationId;
+}
+
+type RegistrationFailureEvidence = NonNullable<
+  NonNullable<SpeedsterCaptureInstrumentationEvent["details"]>["registrationFailures"]
+>[number];
+
+type AuditReconciliationNotice = Readonly<{
+  noticeId: string;
+  message: string;
+}>;
+
+function registrationFailureEvidence(
+  interruptions: RegistrationInterruptionState["interruptions"],
+  failures: RegistrationRescueState["failures"],
+  failureRequestIds: RegistrationRescueState["failureRequestIds"],
+  onlySides: readonly SpeedsterCardSide[] = ["FRONT", "BACK"],
+): readonly RegistrationFailureEvidence[] {
+  const evidence: RegistrationFailureEvidence[] = [];
+  for (const side of onlySides) {
+    const interruption = interruptions[side];
+    if (interruption) {
+      evidence.push({
+        side,
+        source: interruption.failure.source,
+        code: interruption.failure.code,
+        httpStatus: interruption.failure.httpStatus,
+        ...(interruption.failure.requestId ? { requestId: interruption.failure.requestId } : {}),
+      });
+      continue;
+    }
+    const failure = failures[side];
+    if (failure) evidence.push({
+      side,
+      source: "HUMAN_CORRECTION",
+      code: failure.failureCode,
+      httpStatus: 422,
+      ...(failureRequestIds[side] ? { requestId: failureRequestIds[side] } : {}),
+    });
+  }
+  return evidence;
+}
 
 const CARD_ASPECT = 63.5 / 88.9;
 
@@ -191,6 +312,49 @@ function withMapRegistration(value: SideState, registration: SpeedsterMapRegistr
   };
 }
 
+function registrationInterruptionFrom(error: unknown): RegistrationInterruption {
+  if (error instanceof SpeedsterMapRegistrationRequestError) {
+    return { message: error.message, failure: error.failure };
+  }
+  return {
+    message: error instanceof Error ? error.message : "CARD MAP registration did not finish.",
+    failure: {
+      version: "speedster-map-registration-error-v1",
+      source: "CLIENT_PROTOCOL",
+      code: "UNCLASSIFIED_REGISTRATION_FAILURE",
+      httpStatus: null,
+      retryable: false,
+      requestId: null,
+    },
+  };
+}
+
+export function isAutomaticSpeedsterMapRegistrationRetryEligible(error: unknown) {
+  if (!(error instanceof SpeedsterMapRegistrationRequestError) || !error.failure.retryable) return false;
+  const { source, code, httpStatus } = error.failure;
+  return (
+    source === "PROVIDER_GATEWAY"
+    && (code === "PROVIDER_GATEWAY_HTTP_502" || code === "PROVIDER_GATEWAY_HTTP_503")
+    && (httpStatus === 502 || httpStatus === 503)
+  ) || (
+    (source === "PROVIDER_NETWORK" || source === "CLIENT_NETWORK")
+    && code === "NETWORK_NO_HTTP_RESPONSE"
+    && (httpStatus === 502 || httpStatus === null)
+  );
+}
+
+function registrationDecisionIds(
+  interruptions: RegistrationInterruptionState["interruptions"],
+): RegistrationInterruptionState["decisionIds"] {
+  return {
+    continue: crypto.randomUUID(),
+    retry: {
+      ...(interruptions.FRONT ? { FRONT: crypto.randomUUID() } : {}),
+      ...(interruptions.BACK ? { BACK: crypto.randomUUID() } : {}),
+    },
+  };
+}
+
 export function CaptureWorkspace({
   token,
   sessionId,
@@ -202,6 +366,7 @@ export function CaptureWorkspace({
   onReady,
   onInstrumentationEvent,
   imageRequestTimeoutMs,
+  decisionAuditConfirmationTimeoutMs = SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS,
 }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -215,8 +380,10 @@ export function CaptureWorkspace({
   const [message, setMessage] = useState("Add one original image of each side.");
   const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [auditReconciliationNotices, setAuditReconciliationNotices] = useState<readonly AuditReconciliationNotice[]>([]);
   const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
   const [registrationRescue, setRegistrationRescue] = useState<RegistrationRescueState | null>(null);
+  const [registrationInterruption, setRegistrationInterruption] = useState<RegistrationInterruptionState | null>(null);
   const [preparedImageRefresh, setPreparedImageRefresh] = useState(EMPTY_PREPARED_IMAGE_REFRESH);
   const geometryAttempt = useRef(0);
   const activeImageRequest = useRef<AbortController | null>(null);
@@ -225,6 +392,10 @@ export function CaptureWorkspace({
   const stageStartedAt = useRef(Date.now());
   const frontGeometryTiming = useRef<{ startedAtMs: number; endedAtMs: number } | null>(null);
   const mapRegistrationFailed = useRef(false);
+  const registrationFailureSides = useRef<Partial<Record<SpeedsterCardSide, true>>>({});
+  const captureActionInFlight = useRef(false);
+  const registrationActionInFlight = useRef(false);
+  const currentRegistrationOperationId = useRef<string | null>(null);
   const readyDispatched = useRef(false);
   const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Promise<string>>>>({});
   const preparedImageAutomaticRetryUsed = useRef<Partial<Record<SpeedsterCardSide, boolean>>>({});
@@ -241,6 +412,10 @@ export function CaptureWorkspace({
     stageStartedAt.current = Date.now();
     frontGeometryTiming.current = null;
     mapRegistrationFailed.current = false;
+    registrationFailureSides.current = {};
+    captureActionInFlight.current = false;
+    registrationActionInFlight.current = false;
+    currentRegistrationOperationId.current = null;
     readyDispatched.current = false;
     setFrontPhoto(null);
     setBackPhoto(null);
@@ -250,8 +425,10 @@ export function CaptureWorkspace({
     setWorking(false);
     setMapRegistrationNotice(null);
     setWorkflowError(null);
+    setAuditReconciliationNotices([]);
     setCaptureSaveFailed(false);
     setRegistrationRescue(null);
+    setRegistrationInterruption(null);
     setPreparedImageRefresh(EMPTY_PREPARED_IMAGE_REFRESH);
     preparedImageRefreshInFlight.current = {};
     preparedImageAutomaticRetryUsed.current = {};
@@ -260,6 +437,7 @@ export function CaptureWorkspace({
   useEffect(() => () => {
     activeImageRequest.current?.abort();
     activeImageRequest.current = null;
+    currentRegistrationOperationId.current = null;
   }, []);
 
   const refreshPreparedImage = useCallback((side: SpeedsterCardSide) => {
@@ -413,7 +591,8 @@ export function CaptureWorkspace({
   }, [sessionId, stage, token, working]);
 
   const beginGeometry = async () => {
-    if (!frontPhoto || !backPhoto || working) return;
+    if (!frontPhoto || !backPhoto || working || captureActionInFlight.current) return;
+    captureActionInFlight.current = true;
     const attemptId = geometryAttempt.current + 1;
     const startedAtMs = Date.now();
     geometryAttempt.current = attemptId;
@@ -498,12 +677,106 @@ export function CaptureWorkspace({
         activeImageRequest.current = null;
         setWorking(false);
       }
+      captureActionInFlight.current = false;
     }
+  };
+
+  const finishMapRegistrationFlow = (input: Readonly<{
+    frontState: SideState;
+    backState: SideState;
+    provisional: RegistrationRescueState["provisional"];
+    failureSides?: Partial<Record<SpeedsterCardSide, true>>;
+    notice?: string | null;
+  }>) => {
+    const failureSides = input.failureSides ?? {};
+    const hasFailure = Boolean(failureSides.FRONT || failureSides.BACK);
+    const hasBothRegistrations = Boolean(input.provisional.FRONT && input.provisional.BACK);
+    if (hasBothRegistrations && (
+      input.provisional.FRONT!.mapRevisionId !== activeMapRevisionId
+      || input.provisional.BACK!.mapRevisionId !== activeMapRevisionId
+    )) {
+      throw new Error("Both registered sides must validate against the same immutable CARD MAP revision.");
+    }
+    if (!hasFailure && activeMapRevisionId && !hasBothRegistrations) {
+      throw new Error("A selected CARD MAP requires validated Front + Back registration before application.");
+    }
+    const frontRegistration = hasBothRegistrations ? input.provisional.FRONT : undefined;
+    const backRegistration = hasBothRegistrations ? input.provisional.BACK : undefined;
+    const finalFront = frontRegistration
+      ? withMapRegistration(input.frontState, frontRegistration)
+      : { ...input.frontState, mapRegistration: undefined };
+    const finalBack = backRegistration
+      ? withMapRegistration(input.backState, backRegistration)
+      : { ...input.backState, mapRegistration: undefined };
+    const endedAtMs = Date.now();
+    setFront(finalFront);
+    setBack(finalBack);
+    setRegistrationInterruption(null);
+    setRegistrationRescue(null);
+    setStage("FRONT_CENTERING");
+    stageStartedAt.current = endedAtMs;
+    registrationFailureSides.current = failureSides;
+    mapRegistrationFailed.current = hasFailure;
+    if (input.notice !== undefined) setMapRegistrationNotice(input.notice);
+    const detail = (
+      side: SpeedsterCardSide,
+      registration?: SpeedsterMapRegistration,
+    ): NonNullable<SpeedsterCaptureInstrumentationEvent["details"]> => ({
+      side,
+      mapAppliedScope: hasBothRegistrations ? (activeMapScope ?? "EXACT") : "NONE",
+      ...(hasBothRegistrations && activeMapName ? { mapName: activeMapName } : {}),
+      ...(registration ? { mapRevisionId: registration.mapRevisionId } : {}),
+      ...(failureSides[side]
+        ? { mapFailureCode: "REGISTRATION_FAILED" as const }
+        : mapLookupFailed
+          ? { mapFailureCode: "LOOKUP_FAILED" as const }
+          : {}),
+    });
+    const frontTiming = frontGeometryTiming.current ?? { startedAtMs: stageStartedAt.current, endedAtMs };
+    onInstrumentationEvent?.({
+      eventType: "GEOMETRY_CONFIRMED",
+      ...frontTiming,
+      details: detail("FRONT", frontRegistration),
+    });
+    onInstrumentationEvent?.({
+      eventType: "GEOMETRY_CONFIRMED",
+      startedAtMs: frontTiming.endedAtMs,
+      endedAtMs,
+      details: detail("BACK", backRegistration),
+    });
+    setMessage("Confirm the printed-border geometry.");
+  };
+
+  const appendAuditReconciliationNotice = (notice: AuditReconciliationNotice) => {
+    setAuditReconciliationNotices((current) => (
+      current.some(({ noticeId }) => noticeId === notice.noticeId)
+        ? current
+        : [...current, notice]
+    ));
+  };
+
+  const surfaceRegistrationAuditWarning = (operationId: string, values: readonly unknown[]) => {
+    const originatingSessionId = sessionId;
+    const requestIds = Array.from(new Set(values.flatMap((value) => {
+      const warning = registrationAuditWarningFrom(value);
+      return warning ? [warning.requestId] : [];
+    }))).sort();
+    if (requestIds.length === 0 || !isCurrentSpeedsterRegistrationDecisionAudit({
+      currentSessionId: currentSessionId.current,
+      currentOperationId: currentRegistrationOperationId.current,
+      originatingSessionId,
+      originatingOperationId: operationId,
+    })) return;
+    requestIds.forEach((requestId) => appendAuditReconciliationNotice({
+      noticeId: `attempt:${operationId}:${requestId}`,
+      message: `CARD MAP attempt audit write failed for request ${requestId}. The registration result and all operator work are preserved; retain operation ${operationId} for reconciliation.`,
+    }));
   };
 
   const confirmGeometry = async (side: SpeedsterCardSide) => {
     const current = side === "FRONT" ? front : back;
-    if (!current || working) return;
+    if (!current || working || captureActionInFlight.current) return;
+    captureActionInFlight.current = true;
     activeImageRequest.current?.abort();
     const controller = new AbortController();
     activeImageRequest.current = controller;
@@ -566,19 +839,74 @@ export function CaptureWorkspace({
       let frontRegistration: SpeedsterMapRegistration | undefined;
       let backRegistration: SpeedsterMapRegistration | undefined;
       if (activeMapRevisionId) {
-        const results = await Promise.allSettled([
-            speedsterImageService.registerMap(token, {
-              sessionId,
-              side: "FRONT",
-              currentPhysicalQuad: front.corners,
-            }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }),
-            speedsterImageService.registerMap(token, {
-              sessionId,
-              side: "BACK",
-              currentPhysicalQuad: current.corners,
-            }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }),
-          ]);
-          if (activeImageRequest.current !== controller) return;
+        const operationId = crypto.randomUUID();
+        currentRegistrationOperationId.current = operationId;
+        const attemptNumbers: Partial<Record<SpeedsterCardSide, number>> = { FRONT: 1, BACK: 1 };
+        const registerSide = (
+          candidate: SpeedsterCardSide,
+          currentPhysicalQuad: SpeedsterQuad,
+          orchestration: SpeedsterMapRegistrationOrchestration,
+        ) => speedsterImageService.registerMap(token, {
+          sessionId,
+          side: candidate,
+          currentPhysicalQuad,
+          orchestration,
+        }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+        const initialResults = await Promise.allSettled([
+          registerSide("FRONT", front.corners, {
+            operationId,
+            attemptNumber: 1,
+            trigger: "INITIAL",
+            successfulSiblingPreservedAtAttemptStart: false,
+          }),
+          registerSide("BACK", current.corners, {
+            operationId,
+            attemptNumber: 1,
+            trigger: "INITIAL",
+            successfulSiblingPreservedAtAttemptStart: false,
+          }),
+        ]);
+        if (activeImageRequest.current !== controller) return;
+        const retrySides = (["FRONT", "BACK"] as const).filter((candidate) => {
+          const result = initialResults[candidate === "FRONT" ? 0 : 1];
+          return result.status === "rejected"
+            && isAutomaticSpeedsterMapRegistrationRetryEligible(result.reason);
+        });
+        let results: [typeof initialResults[0], typeof initialResults[1]] = [...initialResults];
+        const auditResults: Array<(typeof initialResults)[number]> = [...initialResults];
+        if (retrySides.length > 0) {
+          const requestIds = retrySides.flatMap((candidate) => {
+            const result = initialResults[candidate === "FRONT" ? 0 : 1];
+            return result.status === "rejected"
+              && result.reason instanceof SpeedsterMapRegistrationRequestError
+              && result.reason.failure.requestId
+              ? [result.reason.failure.requestId]
+              : [];
+          });
+          setMapRegistrationNotice(
+            `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} registration was interrupted on ${retrySides.join(" + ")}. Retrying only ${retrySides.length === 1 ? "that side" : "those sides"} once${requestIds.length ? ` after request ${requestIds.join(" + ")}` : ""}; completed sibling work is preserved.`,
+          );
+          setMessage(`Visible automatic retry 1/1 for ${retrySides.join(" + ").toLowerCase()} Card Map registration.`);
+          const retried = await Promise.allSettled(retrySides.map((candidate) => {
+            attemptNumbers[candidate] = 2;
+            const sibling = candidate === "FRONT" ? initialResults[1] : initialResults[0];
+            return registerSide(candidate, candidate === "FRONT" ? front.corners : current.corners, {
+              operationId,
+              attemptNumber: 2,
+              trigger: "AUTOMATIC_RETRY",
+              successfulSiblingPreservedAtAttemptStart: sibling.status === "fulfilled",
+            });
+          }));
+          auditResults.push(...retried);
+          retrySides.forEach((candidate, index) => {
+            results[candidate === "FRONT" ? 0 : 1] = retried[index];
+          });
+        }
+        if (activeImageRequest.current !== controller) return;
+        surfaceRegistrationAuditWarning(
+          operationId,
+          auditResults.map((result) => result.status === "fulfilled" ? result.value : result.reason),
+        );
         const frontResult = results[0];
         const backResult = results[1];
         if (frontResult.status === "fulfilled" && backResult.status === "fulfilled") {
@@ -590,7 +918,6 @@ export function CaptureWorkspace({
           ) throw new Error("The selected CARD MAP changed while geometry was being registered.");
           finalFront = withMapRegistration(finalFront, frontRegistration);
           finalBack = withMapRegistration(finalBack, backRegistration);
-          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back.`);
         } else {
           const failures: RegistrationRescueState["failures"] = {
             ...(frontResult.status === "rejected" && frontResult.reason instanceof SpeedsterMapRegistrationError
@@ -600,68 +927,80 @@ export function CaptureWorkspace({
               ? { BACK: backResult.reason.failure }
               : {}),
           };
+          const failureRequestIds: RegistrationRescueState["failureRequestIds"] = {
+            ...(frontResult.status === "rejected"
+              && frontResult.reason instanceof SpeedsterMapRegistrationError
+              && frontResult.reason.requestId
+              ? { FRONT: frontResult.reason.requestId }
+              : {}),
+            ...(backResult.status === "rejected"
+              && backResult.reason instanceof SpeedsterMapRegistrationError
+              && backResult.reason.requestId
+              ? { BACK: backResult.reason.requestId }
+              : {}),
+          };
           const provisional: RegistrationRescueState["provisional"] = {
             ...(frontResult.status === "fulfilled" ? { FRONT: frontResult.value } : {}),
             ...(backResult.status === "fulfilled" ? { BACK: backResult.value } : {}),
           };
-          const hasUnrescuableFailure = (
-            frontResult.status === "rejected" && !(frontResult.reason instanceof SpeedsterMapRegistrationError)
-          ) || (
-            backResult.status === "rejected" && !(backResult.reason instanceof SpeedsterMapRegistrationError)
-          );
-          if (!hasUnrescuableFailure && (failures.FRONT || failures.BACK)) {
+          const interruptions: RegistrationInterruptionState["interruptions"] = {
+            ...(frontResult.status === "rejected" && !(frontResult.reason instanceof SpeedsterMapRegistrationError)
+              ? { FRONT: registrationInterruptionFrom(frontResult.reason) }
+              : {}),
+            ...(backResult.status === "rejected" && !(backResult.reason instanceof SpeedsterMapRegistrationError)
+              ? { BACK: registrationInterruptionFrom(backResult.reason) }
+              : {}),
+          };
+          if (interruptions.FRONT || interruptions.BACK) {
+            setFront(finalFront);
+            setBack(finalBack);
+            setRegistrationInterruption({
+              interruptions,
+              failures,
+              failureRequestIds,
+              provisional,
+              operationId,
+              attemptNumbers,
+              decisionIds: registrationDecisionIds(interruptions),
+            });
+            setStage("MAP_REGISTRATION_INTERRUPTED");
+            setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} registration is interrupted. Completed side work and valid anchor diagnostics are retained provisionally; no map is applied.`);
+            setMessage("Choose Retry failed side or Continue without Card Map. Nothing happens silently.");
+            return;
+          }
+          if (failures.FRONT || failures.BACK) {
             setFront(finalFront);
             setBack(finalBack);
             setRegistrationRescue({
               failures,
+              failureRequestIds,
               provisional,
               attemptIds: {
                 ...(failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
                 ...(failures.BACK ? { BACK: crypto.randomUUID() } : {}),
               },
+              operationId,
+              attemptNumbers,
+              continueDecisionId: crypto.randomUUID(),
             });
             setStage("MAP_REGISTRATION_RESCUE");
             setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} is provisional. Correct the marked anchor${failures.FRONT && failures.BACK ? "s on each side" : ""}; neither side is applied yet.`);
             setMessage("Correct the Card Map registration anchors. Your photos and geometry are preserved.");
             return;
           }
-          mapRegistrationFailed.current = true;
-          setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} could not register safely on both sides. No map will be applied; continuing with normal human review.`);
         }
       }
-      const endedAtMs = Date.now();
-      setFront(finalFront);
-      setBack(finalBack);
-      setStage("FRONT_CENTERING");
-      const frontTiming = frontGeometryTiming.current ?? { startedAtMs: stageStartedAt.current, endedAtMs };
-      const registrationFailure = mapRegistrationFailed.current;
-      const detailsFor = (
-        candidate: SpeedsterCardSide,
-        registration?: SpeedsterMapRegistration,
-      ): NonNullable<SpeedsterCaptureInstrumentationEvent["details"]> => ({
-        side: candidate,
-        mapAppliedScope: registration ? (activeMapScope ?? "EXACT") : "NONE",
-        ...(registration && activeMapName ? { mapName: activeMapName } : {}),
-        ...(registration ? { mapRevisionId: registration.mapRevisionId } : {}),
-        ...(registrationFailure
-          ? { mapFailureCode: "REGISTRATION_FAILED" as const }
-          : mapLookupFailed
-            ? { mapFailureCode: "LOOKUP_FAILED" as const }
-            : {}),
+      finishMapRegistrationFlow({
+        frontState: finalFront,
+        backState: finalBack,
+        provisional: {
+          ...(frontRegistration ? { FRONT: frontRegistration } : {}),
+          ...(backRegistration ? { BACK: backRegistration } : {}),
+        },
+        notice: activeMapRevisionId
+          ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back.`
+          : undefined,
       });
-      onInstrumentationEvent?.({
-        eventType: "GEOMETRY_CONFIRMED",
-        ...frontTiming,
-        details: detailsFor("FRONT", frontRegistration),
-      });
-      onInstrumentationEvent?.({
-        eventType: "GEOMETRY_CONFIRMED",
-        startedAtMs: stageStartedAt.current,
-        endedAtMs,
-        details: detailsFor("BACK", backRegistration),
-      });
-      stageStartedAt.current = endedAtMs;
-      setMessage("Confirm the printed-border geometry.");
     } catch (error) {
       if (activeImageRequest.current === controller) {
         setWorkflowError(error instanceof Error ? error.message : "Speedster image preparation failed.");
@@ -672,6 +1011,7 @@ export function CaptureWorkspace({
         activeImageRequest.current = null;
         setWorking(false);
       }
+      captureActionInFlight.current = false;
     }
   };
 
@@ -680,45 +1020,257 @@ export function CaptureWorkspace({
     failed: boolean,
   ) => {
     if (!front || !back) return;
-    const frontRegistration = failed ? undefined : provisional.FRONT;
-    const backRegistration = failed ? undefined : provisional.BACK;
-    if (!failed && (!frontRegistration || !backRegistration
-      || frontRegistration.mapRevisionId !== activeMapRevisionId
-      || backRegistration.mapRevisionId !== activeMapRevisionId)) {
-      throw new Error("Both rescued sides must validate against the same immutable CARD MAP revision.");
-    }
-    const endedAtMs = Date.now();
-    const finalFront = frontRegistration ? withMapRegistration(front, frontRegistration) : { ...front, mapRegistration: undefined };
-    const finalBack = backRegistration ? withMapRegistration(back, backRegistration) : { ...back, mapRegistration: undefined };
-    setFront(finalFront);
-    setBack(finalBack);
-    setRegistrationRescue(null);
-    setStage("FRONT_CENTERING");
-    stageStartedAt.current = endedAtMs;
-    mapRegistrationFailed.current = failed;
-    setMapRegistrationNotice(failed
-      ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied. Continuing with normal human review.`
-      : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`);
-    const detail = (side: SpeedsterCardSide, registration?: SpeedsterMapRegistration) => ({
-      side,
-      mapAppliedScope: registration ? (activeMapScope ?? "EXACT") : "NONE" as SpeedsterMapScope | "NONE",
-      ...(registration && activeMapName ? { mapName: activeMapName } : {}),
-      ...(registration ? { mapRevisionId: registration.mapRevisionId } : {}),
-      ...(failed ? { mapFailureCode: "REGISTRATION_FAILED" as const } : {}),
+    const failedSides: Partial<Record<SpeedsterCardSide, true>> = failed ? {
+      ...(registrationRescue?.failures.FRONT ? { FRONT: true as const } : {}),
+      ...(registrationRescue?.failures.BACK ? { BACK: true as const } : {}),
+    } : {};
+    const abandonedSides = (["FRONT", "BACK"] as const).filter((side) => failedSides[side]);
+    finishMapRegistrationFlow({
+      frontState: front,
+      backState: back,
+      provisional: failed ? {} : provisional,
+      failureSides: failedSides,
+      notice: failed
+        ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${abandonedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`
+        : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`,
     });
-    const frontTiming = frontGeometryTiming.current ?? { startedAtMs: stageStartedAt.current, endedAtMs };
-    onInstrumentationEvent?.({ eventType: "GEOMETRY_CONFIRMED", ...frontTiming, details: detail("FRONT", frontRegistration) });
-    onInstrumentationEvent?.({ eventType: "GEOMETRY_CONFIRMED", startedAtMs: frontTiming.endedAtMs, endedAtMs, details: detail("BACK", backRegistration) });
-    setMessage("Confirm the printed-border geometry.");
+  };
+
+  const recordRegistrationDecision = (
+    decisionId: string,
+    operationId: string,
+    decision: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP",
+    failureEvidence: readonly RegistrationFailureEvidence[],
+  ) => {
+    const originatingSessionId = sessionId;
+    const failedSides = failureEvidence.map(({ side }) => side);
+    const atMs = Date.now();
+    const surfaceDecisionAuditWarning = (message: string) => {
+      if (!isCurrentSpeedsterRegistrationDecisionAudit({
+        currentSessionId: currentSessionId.current,
+        currentOperationId: currentRegistrationOperationId.current,
+        originatingSessionId,
+        originatingOperationId: operationId,
+      })) return;
+      appendAuditReconciliationNotice({
+        noticeId: `decision:${operationId}:${decisionId}`,
+        message,
+      });
+    };
+    if (!onInstrumentationEvent) {
+      surfaceDecisionAuditWarning(`Operator-decision audit reporter is unavailable for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+      return;
+    }
+    let result: void | boolean | Promise<void | boolean>;
+    try {
+      result = onInstrumentationEvent({
+        eventId: decisionId,
+        eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+        startedAtMs: atMs,
+        endedAtMs: atMs,
+        details: {
+          registrationDecision: decision,
+          registrationOperationId: operationId,
+          registrationDecisionId: decisionId,
+          registrationFailedSides: failedSides,
+          registrationFailures: failureEvidence,
+          ...(failedSides.length === 1 ? { side: failedSides[0] } : {}),
+          ...(failureEvidence[0] ? {
+            registrationErrorSource: failureEvidence[0].source,
+            registrationErrorCode: failureEvidence[0].code,
+            ...(failureEvidence[0].httpStatus !== null
+              ? { registrationHttpStatus: failureEvidence[0].httpStatus }
+              : {}),
+            ...(failureEvidence[0].requestId
+              ? { registrationRequestId: failureEvidence[0].requestId }
+              : {}),
+          } : {}),
+        },
+      });
+    } catch {
+      surfaceDecisionAuditWarning(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+      return;
+    }
+    void settleSpeedsterRegistrationDecisionAuditConfirmation(
+      result,
+      decisionAuditConfirmationTimeoutMs,
+    ).then((outcome) => {
+      if (outcome === "CONFIRMED") return;
+      surfaceDecisionAuditWarning(outcome === "TIMED_OUT"
+        ? `Operator-decision audit write was not confirmed within ${decisionAuditConfirmationTimeoutMs} ms for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`
+        : `Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+    });
+  };
+
+  const retryInterruptedRegistration = async (side: SpeedsterCardSide) => {
+    if (!registrationInterruption || !front || !back || working || registrationActionInFlight.current) return;
+    if (!registrationInterruption.interruptions[side]) return;
+    const priorInterruption = registrationInterruption.interruptions[side]!;
+    const decisionId = registrationInterruption.decisionIds.retry[side]!;
+    const attemptNumber = (registrationInterruption.attemptNumbers[side] ?? 0) + 1;
+    const attemptNumbers = { ...registrationInterruption.attemptNumbers, [side]: attemptNumber };
+    registrationActionInFlight.current = true;
+    recordRegistrationDecision(
+      decisionId,
+      registrationInterruption.operationId,
+      "RETRY_FAILED_SIDE",
+      registrationFailureEvidence(
+        registrationInterruption.interruptions,
+        registrationInterruption.failures,
+        registrationInterruption.failureRequestIds,
+        [side],
+      ),
+    );
+    const controller = new AbortController();
+    activeImageRequest.current?.abort();
+    activeImageRequest.current = controller;
+    setWorking(true);
+    setWorkflowError(null);
+    setMessage(`Retrying only the failed ${side.toLowerCase()} Card Map registration. Completed sibling work remains provisional.`);
+    try {
+      const registration = await speedsterImageService.registerMap(token, {
+        sessionId,
+        side,
+        currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
+        orchestration: {
+          operationId: registrationInterruption.operationId,
+          attemptNumber,
+          trigger: "MANUAL_RETRY",
+          successfulSiblingPreservedAtAttemptStart: Boolean(registrationInterruption.provisional[side === "FRONT" ? "BACK" : "FRONT"]),
+        },
+      }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+      if (activeImageRequest.current !== controller) return;
+      surfaceRegistrationAuditWarning(registrationInterruption.operationId, [registration]);
+      const interruptions = { ...registrationInterruption.interruptions };
+      delete interruptions[side];
+      const provisional = { ...registrationInterruption.provisional, [side]: registration };
+      const nextState: RegistrationInterruptionState = {
+        interruptions,
+        failures: registrationInterruption.failures,
+        failureRequestIds: registrationInterruption.failureRequestIds,
+        provisional,
+        operationId: registrationInterruption.operationId,
+        attemptNumbers,
+        decisionIds: registrationDecisionIds(interruptions),
+      };
+      if (interruptions.FRONT || interruptions.BACK) {
+        setRegistrationInterruption(nextState);
+        setMessage("That side registered successfully and remains provisional. Resolve the remaining failed side.");
+      } else if (nextState.failures.FRONT || nextState.failures.BACK) {
+        setRegistrationInterruption(null);
+        setRegistrationRescue({
+          failures: nextState.failures,
+          failureRequestIds: nextState.failureRequestIds,
+          provisional,
+          attemptIds: {
+            ...(nextState.failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
+            ...(nextState.failures.BACK ? { BACK: crypto.randomUUID() } : {}),
+          },
+          operationId: nextState.operationId,
+          attemptNumbers,
+          continueDecisionId: crypto.randomUUID(),
+        });
+        setStage("MAP_REGISTRATION_RESCUE");
+        setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} is provisional. Correct the retained anchor diagnostics; neither side is applied yet.`);
+        setMessage("The infrastructure interruption is resolved. Correct the Card Map registration anchors.");
+      } else {
+        finishMapRegistrationFlow({
+          frontState: front,
+          backState: back,
+          provisional,
+          notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back after the operator retry.`,
+        });
+      }
+    } catch (error) {
+      if (activeImageRequest.current !== controller) return;
+      surfaceRegistrationAuditWarning(registrationInterruption.operationId, [error]);
+      const interruptions = { ...registrationInterruption.interruptions };
+      const failures = { ...registrationInterruption.failures };
+      const failureRequestIds = { ...registrationInterruption.failureRequestIds };
+      if (error instanceof SpeedsterMapRegistrationError) {
+        delete interruptions[side];
+        failures[side] = error.failure;
+        if (error.requestId) failureRequestIds[side] = error.requestId;
+        else delete failureRequestIds[side];
+      } else {
+        interruptions[side] = registrationInterruptionFrom(error);
+      }
+      const nextState: RegistrationInterruptionState = {
+        interruptions,
+        failures,
+        failureRequestIds,
+        provisional: registrationInterruption.provisional,
+        operationId: registrationInterruption.operationId,
+        attemptNumbers,
+        decisionIds: registrationDecisionIds(interruptions),
+      };
+      if (interruptions.FRONT || interruptions.BACK) {
+        setRegistrationInterruption(nextState);
+        setMessage("The failed side is still interrupted. Retry it again manually or Continue without Card Map.");
+      } else {
+        setRegistrationInterruption(null);
+        setRegistrationRescue({
+          failures,
+          failureRequestIds,
+          provisional: registrationInterruption.provisional,
+          attemptIds: {
+            ...(failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
+            ...(failures.BACK ? { BACK: crypto.randomUUID() } : {}),
+          },
+          operationId: registrationInterruption.operationId,
+          attemptNumbers,
+          continueDecisionId: crypto.randomUUID(),
+        });
+        setStage("MAP_REGISTRATION_RESCUE");
+        setMapRegistrationNotice(`${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} is provisional. The retry returned valid anchor diagnostics; neither side is applied yet.`);
+        setMessage("Correct the Card Map registration anchors. Your photos and geometry are preserved.");
+      }
+    } finally {
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
+      registrationActionInFlight.current = false;
+    }
+  };
+
+  const continueWithoutCardMap = () => {
+    if (!registrationInterruption || !front || !back || registrationActionInFlight.current) return;
+    registrationActionInFlight.current = true;
+    const failedSides = (["FRONT", "BACK"] as const).filter((side) => (
+      registrationInterruption.interruptions[side] || registrationInterruption.failures[side]
+    ));
+    const evidence = registrationFailureEvidence(
+      registrationInterruption.interruptions,
+      registrationInterruption.failures,
+      registrationInterruption.failureRequestIds,
+      failedSides,
+    );
+    recordRegistrationDecision(
+      registrationInterruption.decisionIds.continue,
+      registrationInterruption.operationId,
+      "CONTINUE_WITHOUT_CARD_MAP",
+      evidence,
+    );
+    finishMapRegistrationFlow({
+      frontState: front,
+      backState: back,
+      provisional: {},
+      failureSides: Object.fromEntries(failedSides.map((side) => [side, true])) as Partial<Record<SpeedsterCardSide, true>>,
+      notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${failedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`,
+    });
   };
 
   const confirmRegistrationRescue = async (
     side: SpeedsterCardSide,
     correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[],
   ) => {
-    if (!registrationRescue || working || !front || !back) return;
+    if (!registrationRescue || working || !front || !back || registrationActionInFlight.current) return;
     const failure = registrationRescue.failures[side];
     if (!failure) return;
+    const attemptNumber = (registrationRescue.attemptNumbers[side] ?? 0) + 1;
+    const attemptNumbers = { ...registrationRescue.attemptNumbers, [side]: attemptNumber };
+    registrationActionInFlight.current = true;
     const controller = new AbortController();
     activeImageRequest.current?.abort();
     activeImageRequest.current = controller;
@@ -733,19 +1285,38 @@ export function CaptureWorkspace({
         rescueAttemptId: registrationRescue.attemptIds[side]!,
         automaticFailure: failure,
         correctedAnchors,
+        orchestration: {
+          operationId: registrationRescue.operationId,
+          attemptNumber,
+          trigger: "HUMAN_RESCUE",
+          successfulSiblingPreservedAtAttemptStart: Boolean(registrationRescue.provisional[side === "FRONT" ? "BACK" : "FRONT"]),
+        },
       }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
       if (activeImageRequest.current !== controller) return;
+      surfaceRegistrationAuditWarning(registrationRescue.operationId, [registration]);
       const failures = { ...registrationRescue.failures };
+      const failureRequestIds = { ...registrationRescue.failureRequestIds };
       delete failures[side];
+      delete failureRequestIds[side];
       const provisional = { ...registrationRescue.provisional, [side]: registration };
       if (failures.FRONT || failures.BACK) {
-        setRegistrationRescue({ failures, provisional, attemptIds: registrationRescue.attemptIds });
+        setRegistrationRescue({
+          failures,
+          failureRequestIds,
+          provisional,
+          attemptIds: registrationRescue.attemptIds,
+          operationId: registrationRescue.operationId,
+          attemptNumbers,
+          continueDecisionId: registrationRescue.continueDecisionId,
+        });
         setMessage("That side is saved. Correct the remaining side; neither map side is applied yet.");
       } else {
         finishRegistrationRescue(provisional, false);
       }
     } catch (error) {
       if (activeImageRequest.current !== controller) return;
+      surfaceRegistrationAuditWarning(registrationRescue.operationId, [error]);
+      setRegistrationRescue({ ...registrationRescue, attemptNumbers });
       setMessage(`The corrected ${side.toLowerCase()} anchors were not saved. Your positions are preserved; retry.`);
       throw error;
     } finally {
@@ -753,6 +1324,7 @@ export function CaptureWorkspace({
         activeImageRequest.current = null;
         setWorking(false);
       }
+      registrationActionInFlight.current = false;
     }
   };
 
@@ -776,7 +1348,7 @@ export function CaptureWorkspace({
         mapAppliedScope: mapApplied ? (activeMapScope ?? "EXACT") : "NONE",
         ...(mapApplied && activeMapName ? { mapName: activeMapName } : {}),
         ...(mapApplied && registration ? { mapRevisionId: registration.mapRevisionId } : {}),
-        ...(mapRegistrationFailed.current
+        ...(registrationFailureSides.current[result.side]
           ? { mapFailureCode: "REGISTRATION_FAILED" as const }
           : mapLookupFailed
             ? { mapFailureCode: "LOOKUP_FAILED" as const }
@@ -836,9 +1408,22 @@ export function CaptureWorkspace({
   const rescueSide = registrationRescue?.failures.FRONT ? "FRONT"
     : registrationRescue?.failures.BACK ? "BACK"
       : null;
+  const interruptionSide = registrationInterruption?.interruptions.FRONT ? "FRONT"
+    : registrationInterruption?.interruptions.BACK ? "BACK"
+      : null;
+  const interruptionFailureEvidence = registrationInterruption
+    ? registrationFailureEvidence(
+        registrationInterruption.interruptions,
+        registrationInterruption.failures,
+        registrationInterruption.failureRequestIds,
+      )
+    : [];
+  const rescueFailureEvidence = registrationRescue
+    ? registrationFailureEvidence({}, registrationRescue.failures, registrationRescue.failureRequestIds)
+    : [];
   const activeSide = stage.startsWith("FRONT") ? "FRONT" : "BACK";
   const activeCentering = stage === "FRONT_CENTERING" ? front : stage === "BACK_CENTERING" ? back : null;
-  const activePreparedImageSide = rescueSide ?? (activeCentering ? activeSide : null);
+  const activePreparedImageSide = interruptionSide ?? rescueSide ?? (activeCentering ? activeSide : null);
 
   useEffect(() => {
     if (!activePreparedImageSide || captureSaveFailed) return;
@@ -867,12 +1452,23 @@ export function CaptureWorkspace({
       </header>
 
       {mapRegistrationNotice ? (
-        <p className={mapRegistrationFailed.current ? styles.mapFallback : styles.appliedMap}>
+        <p className={mapRegistrationFailed.current || stage === "MAP_REGISTRATION_INTERRUPTED" ? styles.mapFallback : styles.appliedMap}>
           {mapRegistrationNotice}
         </p>
       ) : null}
 
       {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
+
+      {auditReconciliationNotices.map((notice) => (
+        <p
+          key={notice.noticeId}
+          role="alert"
+          data-audit-reconciliation-notice={notice.noticeId}
+          className={styles.errorBanner}
+        >
+          {notice.message}
+        </p>
+      ))}
 
       {stage === "PHOTOS" ? (
         <div className={styles.photos}>
@@ -932,22 +1528,90 @@ export function CaptureWorkspace({
         />
       ) : null}
 
+      {stage === "MAP_REGISTRATION_INTERRUPTED" && registrationInterruption && interruptionFailureEvidence.length ? (
+        <section className={styles.registrationInterruption} aria-label="Card Map registration interruption">
+          <header>
+            <span>CARD MAP · ACTION REQUIRED</span>
+            <h2>{interruptionFailureEvidence.map(({ side }) => side).join(" + ")} registration is unresolved.</h2>
+          </header>
+          <p role="alert">Resolve each listed side, or explicitly continue without any Card Map.</p>
+          <p>
+            Any completed sibling registration and valid anchor diagnostics are retained provisionally.
+            No Card Map side is authoritative until Front + Back both validate.
+          </p>
+          {interruptionFailureEvidence.map((evidence) => (
+            <div className={styles.interruptionEvidence} key={evidence.side}>
+              <strong>{evidence.side}</strong>
+              <span>{evidence.code}</span>
+              <span>{evidence.httpStatus === null ? "No HTTP status" : `HTTP ${evidence.httpStatus}`}</span>
+              <span>{evidence.requestId ? `Request ${evidence.requestId}` : "No HTTP request ID was returned."}</span>
+              {registrationInterruption.interruptions[evidence.side] ? (
+                <span>{registrationInterruption.interruptions[evidence.side]!.message}</span>
+              ) : null}
+              {registrationInterruption.interruptions[evidence.side] ? (
+                <button
+                  type="button"
+                  onClick={() => void retryInterruptedRegistration(evidence.side)}
+                  disabled={working}
+                >
+                  {working ? `Retrying ${evidence.side}…` : `${evidence.side}: Retry failed side`}
+                </button>
+              ) : (
+                <span>Human anchor diagnostics retained; correct this side after infrastructure interruptions resolve.</span>
+              )}
+            </div>
+          ))}
+          <p>
+            Continue without Card Map abandons all unresolved sides: {interruptionFailureEvidence.map(({ side }) => side).join(" + ")}.
+          </p>
+          <div className={styles.interruptionActions}>
+            <button type="button" onClick={continueWithoutCardMap} disabled={working}>
+              Continue without Card Map
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {stage === "MAP_REGISTRATION_RESCUE" && rescueSide && registrationRescue?.failures[rescueSide] ? (
-        <MapRegistrationRescue
-          key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
-          side={rescueSide}
-          imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
-          imageRevision={(rescueSide === "FRONT" ? front : back)?.rectifiedImageRevision ?? 0}
-          imageRefreshError={preparedImageRefresh[rescueSide].error}
-          imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
-          failure={registrationRescue.failures[rescueSide]!}
-          disabled={working}
-          onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
-          onContinueManual={() => finishRegistrationRescue(registrationRescue.provisional, true)}
-          onImageError={() => handlePreparedImageError(rescueSide)}
-          onImageReady={() => markPreparedImageReady(rescueSide)}
-          onRetryImage={() => retryPreparedImage(rescueSide)}
-        />
+        <>
+          <section className={styles.registrationInterruption} aria-label="Card Map correction summary">
+            <strong>Unresolved human-correction sides</strong>
+            {rescueFailureEvidence.map((evidence) => (
+              <div className={styles.interruptionEvidence} key={evidence.side}>
+                <strong>{evidence.side}</strong>
+                <span>{evidence.code}</span>
+                <span>HTTP 422</span>
+                <span>{evidence.requestId ? `Request ${evidence.requestId}` : "No HTTP request ID was returned."}</span>
+              </div>
+            ))}
+            <p>Continue without Card Map abandons all unresolved sides: {rescueFailureEvidence.map(({ side }) => side).join(" + ")}.</p>
+          </section>
+          <MapRegistrationRescue
+            key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
+            side={rescueSide}
+            imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
+            imageRevision={(rescueSide === "FRONT" ? front : back)?.rectifiedImageRevision ?? 0}
+            imageRefreshError={preparedImageRefresh[rescueSide].error}
+            imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
+            failure={registrationRescue.failures[rescueSide]!}
+            disabled={working}
+            onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
+            onContinueManual={() => {
+              if (registrationActionInFlight.current) return;
+              registrationActionInFlight.current = true;
+              recordRegistrationDecision(
+                registrationRescue.continueDecisionId,
+                registrationRescue.operationId,
+                "CONTINUE_WITHOUT_CARD_MAP",
+                rescueFailureEvidence,
+              );
+              finishRegistrationRescue(registrationRescue.provisional, true);
+            }}
+            onImageError={() => handlePreparedImageError(rescueSide)}
+            onImageReady={() => markPreparedImageReady(rescueSide)}
+            onRetryImage={() => retryPreparedImage(rescueSide)}
+          />
+        </>
       ) : null}
 
       {activeCentering?.rectifiedUrl && activeCentering.proposedCentering ? (

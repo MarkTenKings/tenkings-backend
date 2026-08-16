@@ -42,6 +42,13 @@ import {
   SpeedsterImageUpstreamTimeoutError,
   speedsterServiceBody,
   speedsterServiceHeaders,
+  speedsterMapRegistrationErrorEnvelope,
+  classifySpeedsterMapRegistrationUpstreamFailure,
+  parseSpeedsterMapRegistrationOrchestration,
+  speedsterMapRegistrationAuditFailureSignal,
+  speedsterMapRegistrationTimeoutEnvelope,
+  settleSpeedsterMapRegistrationAuditWrite,
+  resolveSpeedsterMapRegistrationOrchestration,
 } from "../pages/api/admin/ai-grader-v2/image/[action]";
 
 function request(method: string, body?: unknown, sessionId?: string): NextApiRequest {
@@ -421,6 +428,153 @@ test("non-trace upstream failures redact private URLs and credentials", () => {
     message: "Speedster geometry failed: requests failed for [redacted-url] Bearer [redacted-credential] (request geometry-request-123).",
     requestId: "geometry-request-123",
   });
+});
+
+test("registration error envelope exposes only bounded retry classification and request evidence", () => {
+  assert.deepEqual(speedsterMapRegistrationErrorEnvelope({
+    source: "PROVIDER_GATEWAY",
+    code: "PROVIDER_GATEWAY_HTTP_503",
+    httpStatus: 503,
+    retryable: true,
+    requestId: "registration-request-503",
+  }), {
+    version: "speedster-map-registration-error-v1",
+    source: "PROVIDER_GATEWAY",
+    code: "PROVIDER_GATEWAY_HTTP_503",
+    httpStatus: 503,
+    retryable: true,
+    requestId: "registration-request-503",
+  });
+});
+
+test("server registration upstream classification is factual and retries only automatic 502/503", () => {
+  const requestId = "registration-request-402";
+  const paymentRequired = classifySpeedsterMapRegistrationUpstreamFailure({
+    status: 402,
+    mode: "AUTOMATIC",
+    requestId,
+  });
+  assert.deepEqual(paymentRequired, {
+    source: "PROVIDER",
+    code: "PROVIDER_HTTP_402",
+    retryable: false,
+    message: "CARD MAP provider rejected the request (HTTP 402) (request registration-request-402). No map was applied.",
+    registrationError: {
+      version: "speedster-map-registration-error-v1",
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      httpStatus: 402,
+      retryable: false,
+      requestId,
+    },
+  });
+  assert.doesNotMatch(paymentRequired.message, /fund|balance|credit/i);
+
+  for (const status of [502, 503]) {
+    const gateway = classifySpeedsterMapRegistrationUpstreamFailure({ status, mode: "AUTOMATIC", requestId });
+    assert.equal(gateway.source, "PROVIDER_GATEWAY");
+    assert.equal(gateway.code, `PROVIDER_GATEWAY_HTTP_${status}`);
+    assert.equal(gateway.retryable, true);
+    assert.equal(gateway.registrationError.retryable, true);
+  }
+  assert.equal(classifySpeedsterMapRegistrationUpstreamFailure({
+    status: 503,
+    mode: "HUMAN_RESCUE",
+    requestId,
+  }).retryable, false, "human rescue is never automatically retried");
+  for (const status of [408, 409, 429, 500, 504]) {
+    const nonGateway = classifySpeedsterMapRegistrationUpstreamFailure({ status, mode: "AUTOMATIC", requestId });
+    assert.equal(nonGateway.source, "PROVIDER");
+    assert.equal(nonGateway.retryable, false);
+  }
+  assert.deepEqual(speedsterMapRegistrationTimeoutEnvelope(requestId), {
+    version: "speedster-map-registration-error-v1",
+    source: "PROVIDER",
+    code: "PROVIDER_TIMEOUT",
+    httpStatus: 504,
+    retryable: false,
+    requestId,
+  });
+});
+
+test("server audit failure signal is sanitized, visible to the client, and non-gating", () => {
+  assert.deepEqual(speedsterMapRegistrationAuditFailureSignal("registration-request-audit-1"), {
+    headerValue: "write-failed",
+    responseFields: {
+      registrationAuditWarning: {
+        status: "WRITE_FAILED",
+        requestId: "registration-request-audit-1",
+      },
+    },
+  });
+});
+
+test("registration orchestration accepts only bounded exact metadata", () => {
+  const valid = {
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    successfulSiblingPreservedAtAttemptStart: false,
+  } as const;
+  assert.deepEqual(parseSpeedsterMapRegistrationOrchestration(valid), valid);
+  for (const invalid of [
+    { ...valid, operationId: "not-a-uuid" },
+    { ...valid, attemptNumber: 0 },
+    { ...valid, attemptNumber: 51 },
+    { ...valid, trigger: "SILENT_FALLBACK" },
+    { ...valid, successfulSiblingPreservedAtAttemptStart: "false" },
+    { ...valid, extra: true },
+    (({ trigger: _trigger, ...missing }) => missing)(valid),
+  ]) {
+    assert.throws(() => parseSpeedsterMapRegistrationOrchestration(invalid), /orchestration metadata is invalid/);
+  }
+});
+
+test("registration attempt audit deadline is fail-open for a never-settling writer and handles late rejection", async () => {
+  assert.equal(await settleSpeedsterMapRegistrationAuditWrite(
+    () => new Promise(() => {}),
+    5,
+  ), "TIMED_OUT");
+
+  let rejectLate: ((reason: Error) => void) | undefined;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    assert.equal(await settleSpeedsterMapRegistrationAuditWrite(
+      () => new Promise((_resolve, reject) => { rejectLate = reject; }),
+      5,
+    ), "TIMED_OUT");
+    rejectLate?.(new Error("late audit failure"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
+test("missing stale-client orchestration remains provider-compatible and is never mislabeled client-reported", () => {
+  assert.deepEqual(resolveSpeedsterMapRegistrationOrchestration(
+    undefined,
+    "AUTOMATIC",
+    "11111111-1111-4111-8111-111111111111",
+  ), {
+    operationId: "11111111-1111-4111-8111-111111111111",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    successfulSiblingPreservedAtAttemptStart: false,
+    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY",
+  });
+  assert.equal(resolveSpeedsterMapRegistrationOrchestration(
+    {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
+    "AUTOMATIC",
+    "11111111-1111-4111-8111-111111111111",
+  ).orchestrationMetadataSource, "CLIENT_REPORTED");
 });
 
 test("POST creates one compact draft with server-owned rule and creator identity", async () => {
