@@ -91,6 +91,13 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   registrationFailedSides?: readonly ("FRONT" | "BACK")[];
   registrationOperationId?: string;
   registrationDecisionId?: string;
+  registrationFailures?: readonly Readonly<{
+    side: "FRONT" | "BACK";
+    source: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API" | "CLIENT_NETWORK" | "CLIENT_PROTOCOL" | "HUMAN_CORRECTION";
+    code: string;
+    httpStatus: number | null;
+    requestId?: string;
+  }>[];
   findingCount?: number;
   filteredCount?: number;
   retryCount?: number;

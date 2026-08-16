@@ -47,6 +47,8 @@ import {
   parseSpeedsterMapRegistrationOrchestration,
   speedsterMapRegistrationAuditFailureSignal,
   speedsterMapRegistrationTimeoutEnvelope,
+  settleSpeedsterMapRegistrationAuditWrite,
+  resolveSpeedsterMapRegistrationOrchestration,
 } from "../pages/api/admin/ai-grader-v2/image/[action]";
 
 function request(method: string, body?: unknown, sessionId?: string): NextApiRequest {
@@ -526,6 +528,53 @@ test("registration orchestration accepts only bounded exact metadata", () => {
   ]) {
     assert.throws(() => parseSpeedsterMapRegistrationOrchestration(invalid), /orchestration metadata is invalid/);
   }
+});
+
+test("registration attempt audit deadline is fail-open for a never-settling writer and handles late rejection", async () => {
+  assert.equal(await settleSpeedsterMapRegistrationAuditWrite(
+    () => new Promise(() => {}),
+    5,
+  ), "TIMED_OUT");
+
+  let rejectLate: ((reason: Error) => void) | undefined;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => unhandled.push(reason);
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    assert.equal(await settleSpeedsterMapRegistrationAuditWrite(
+      () => new Promise((_resolve, reject) => { rejectLate = reject; }),
+      5,
+    ), "TIMED_OUT");
+    rejectLate?.(new Error("late audit failure"));
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+});
+
+test("missing stale-client orchestration remains provider-compatible and is never mislabeled client-reported", () => {
+  assert.deepEqual(resolveSpeedsterMapRegistrationOrchestration(
+    undefined,
+    "AUTOMATIC",
+    "11111111-1111-4111-8111-111111111111",
+  ), {
+    operationId: "11111111-1111-4111-8111-111111111111",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    successfulSiblingPreservedAtAttemptStart: false,
+    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY",
+  });
+  assert.equal(resolveSpeedsterMapRegistrationOrchestration(
+    {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
+    "AUTOMATIC",
+    "11111111-1111-4111-8111-111111111111",
+  ).orchestrationMetadataSource, "CLIENT_REPORTED");
 });
 
 test("POST creates one compact draft with server-owned rule and creator identity", async () => {

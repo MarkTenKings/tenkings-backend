@@ -99,7 +99,7 @@ type CaptureWorkspaceProps = {
   activeMapName?: string | null;
   mapLookupFailed?: boolean;
   onReady: (bundle: SpeedsterCaptureBundle) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
-  onInstrumentationEvent?: (event: SpeedsterCaptureInstrumentationEvent) => void | boolean | Promise<void | boolean>;
+  onInstrumentationEvent: (event: SpeedsterCaptureInstrumentationEvent) => void | boolean | Promise<void | boolean>;
   imageRequestTimeoutMs?: number;
 };
 
@@ -129,6 +129,13 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
     registrationFailedSides?: readonly SpeedsterCardSide[];
     registrationOperationId?: string;
     registrationDecisionId?: string;
+    registrationFailures?: readonly Readonly<{
+      side: SpeedsterCardSide;
+      source: SpeedsterMapRegistrationRequestFailure["source"] | "HUMAN_CORRECTION";
+      code: string;
+      httpStatus: number | null;
+      requestId?: string;
+    }>[];
   }>;
 }>;
 
@@ -155,6 +162,7 @@ type SideState = {
 
 type RegistrationRescueState = Readonly<{
   failures: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistrationFailure>>;
+  failureRequestIds: Partial<Record<SpeedsterCardSide, string>>;
   provisional: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistration>>;
   attemptIds: Partial<Record<SpeedsterCardSide, string>>;
   operationId: string;
@@ -170,6 +178,7 @@ type RegistrationInterruption = Readonly<{
 type RegistrationInterruptionState = Readonly<{
   interruptions: Partial<Record<SpeedsterCardSide, RegistrationInterruption>>;
   failures: RegistrationRescueState["failures"];
+  failureRequestIds: RegistrationRescueState["failureRequestIds"];
   provisional: RegistrationRescueState["provisional"];
   operationId: string;
   attemptNumbers: Partial<Record<SpeedsterCardSide, number>>;
@@ -195,6 +204,41 @@ const EMPTY_PREPARED_IMAGE_REFRESH: Readonly<Record<SpeedsterCardSide, PreparedI
   FRONT: { refreshing: false, error: null },
   BACK: { refreshing: false, error: null },
 };
+
+type RegistrationFailureEvidence = NonNullable<
+  NonNullable<SpeedsterCaptureInstrumentationEvent["details"]>["registrationFailures"]
+>[number];
+
+function registrationFailureEvidence(
+  interruptions: RegistrationInterruptionState["interruptions"],
+  failures: RegistrationRescueState["failures"],
+  failureRequestIds: RegistrationRescueState["failureRequestIds"],
+  onlySides: readonly SpeedsterCardSide[] = ["FRONT", "BACK"],
+): readonly RegistrationFailureEvidence[] {
+  const evidence: RegistrationFailureEvidence[] = [];
+  for (const side of onlySides) {
+    const interruption = interruptions[side];
+    if (interruption) {
+      evidence.push({
+        side,
+        source: interruption.failure.source,
+        code: interruption.failure.code,
+        httpStatus: interruption.failure.httpStatus,
+        ...(interruption.failure.requestId ? { requestId: interruption.failure.requestId } : {}),
+      });
+      continue;
+    }
+    const failure = failures[side];
+    if (failure) evidence.push({
+      side,
+      source: "HUMAN_CORRECTION",
+      code: failure.failureCode,
+      httpStatus: 422,
+      ...(failureRequestIds[side] ? { requestId: failureRequestIds[side] } : {}),
+    });
+  }
+  return evidence;
+}
 
 const CARD_ASPECT = 63.5 / 88.9;
 
@@ -313,6 +357,7 @@ export function CaptureWorkspace({
   const registrationFailureSides = useRef<Partial<Record<SpeedsterCardSide, true>>>({});
   const captureActionInFlight = useRef(false);
   const registrationActionInFlight = useRef(false);
+  const currentRegistrationOperationId = useRef<string | null>(null);
   const readyDispatched = useRef(false);
   const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Promise<string>>>>({});
   const preparedImageAutomaticRetryUsed = useRef<Partial<Record<SpeedsterCardSide, boolean>>>({});
@@ -332,6 +377,7 @@ export function CaptureWorkspace({
     registrationFailureSides.current = {};
     captureActionInFlight.current = false;
     registrationActionInFlight.current = false;
+    currentRegistrationOperationId.current = null;
     readyDispatched.current = false;
     setFrontPhoto(null);
     setBackPhoto(null);
@@ -738,6 +784,7 @@ export function CaptureWorkspace({
       let backRegistration: SpeedsterMapRegistration | undefined;
       if (activeMapRevisionId) {
         const operationId = crypto.randomUUID();
+        currentRegistrationOperationId.current = operationId;
         const attemptNumbers: Partial<Record<SpeedsterCardSide, number>> = { FRONT: 1, BACK: 1 };
         const registerSide = (
           candidate: SpeedsterCardSide,
@@ -824,6 +871,18 @@ export function CaptureWorkspace({
               ? { BACK: backResult.reason.failure }
               : {}),
           };
+          const failureRequestIds: RegistrationRescueState["failureRequestIds"] = {
+            ...(frontResult.status === "rejected"
+              && frontResult.reason instanceof SpeedsterMapRegistrationError
+              && frontResult.reason.requestId
+              ? { FRONT: frontResult.reason.requestId }
+              : {}),
+            ...(backResult.status === "rejected"
+              && backResult.reason instanceof SpeedsterMapRegistrationError
+              && backResult.reason.requestId
+              ? { BACK: backResult.reason.requestId }
+              : {}),
+          };
           const provisional: RegistrationRescueState["provisional"] = {
             ...(frontResult.status === "fulfilled" ? { FRONT: frontResult.value } : {}),
             ...(backResult.status === "fulfilled" ? { BACK: backResult.value } : {}),
@@ -842,6 +901,7 @@ export function CaptureWorkspace({
             setRegistrationInterruption({
               interruptions,
               failures,
+              failureRequestIds,
               provisional,
               operationId,
               attemptNumbers,
@@ -857,6 +917,7 @@ export function CaptureWorkspace({
             setBack(finalBack);
             setRegistrationRescue({
               failures,
+              failureRequestIds,
               provisional,
               attemptIds: {
                 ...(failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
@@ -907,13 +968,14 @@ export function CaptureWorkspace({
       ...(registrationRescue?.failures.FRONT ? { FRONT: true as const } : {}),
       ...(registrationRescue?.failures.BACK ? { BACK: true as const } : {}),
     } : {};
+    const abandonedSides = (["FRONT", "BACK"] as const).filter((side) => failedSides[side]);
     finishMapRegistrationFlow({
       frontState: front,
       backState: back,
       provisional: failed ? {} : provisional,
       failureSides: failedSides,
       notice: failed
-        ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. Continuing with normal human review.`
+        ? `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${abandonedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`
         : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`,
     });
   };
@@ -922,10 +984,15 @@ export function CaptureWorkspace({
     decisionId: string,
     operationId: string,
     decision: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP",
-    failedSides: readonly SpeedsterCardSide[],
-    interruption?: RegistrationInterruption,
+    failureEvidence: readonly RegistrationFailureEvidence[],
   ) => {
+    const originatingSessionId = sessionId;
+    const failedSides = failureEvidence.map(({ side }) => side);
     const atMs = Date.now();
+    if (!onInstrumentationEvent) {
+      setWorkflowError(`Operator-decision audit reporter is unavailable for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+      return;
+    }
     const result = onInstrumentationEvent?.({
       eventId: decisionId,
       eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
@@ -936,34 +1003,37 @@ export function CaptureWorkspace({
         registrationOperationId: operationId,
         registrationDecisionId: decisionId,
         registrationFailedSides: failedSides,
+        registrationFailures: failureEvidence,
         ...(failedSides.length === 1 ? { side: failedSides[0] } : {}),
-        ...(interruption ? {
-          registrationErrorSource: interruption.failure.source,
-          registrationErrorCode: interruption.failure.code,
-          ...(interruption.failure.httpStatus !== null
-            ? { registrationHttpStatus: interruption.failure.httpStatus }
+        ...(failureEvidence[0] ? {
+          registrationErrorSource: failureEvidence[0].source,
+          registrationErrorCode: failureEvidence[0].code,
+          ...(failureEvidence[0].httpStatus !== null
+            ? { registrationHttpStatus: failureEvidence[0].httpStatus }
             : {}),
-          ...(interruption.failure.requestId
-            ? { registrationRequestId: interruption.failure.requestId }
+          ...(failureEvidence[0].requestId
+            ? { registrationRequestId: failureEvidence[0].requestId }
             : {}),
         } : {}),
       },
     });
     void Promise.resolve(result).then((saved) => {
-      if (saved === false) {
+      if (saved === false
+        && currentSessionId.current === originatingSessionId
+        && currentRegistrationOperationId.current === operationId) {
+        setWorkflowError(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+      }
+    }, () => {
+      if (currentSessionId.current === originatingSessionId
+        && currentRegistrationOperationId.current === operationId) {
         setWorkflowError(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
       }
     });
   };
 
-  const retryInterruptedRegistration = async () => {
+  const retryInterruptedRegistration = async (side: SpeedsterCardSide) => {
     if (!registrationInterruption || !front || !back || working || registrationActionInFlight.current) return;
-    const side: SpeedsterCardSide | null = registrationInterruption.interruptions.FRONT
-      ? "FRONT"
-      : registrationInterruption.interruptions.BACK
-        ? "BACK"
-        : null;
-    if (!side) return;
+    if (!registrationInterruption.interruptions[side]) return;
     const priorInterruption = registrationInterruption.interruptions[side]!;
     const decisionId = registrationInterruption.decisionIds.retry[side]!;
     const attemptNumber = (registrationInterruption.attemptNumbers[side] ?? 0) + 1;
@@ -973,8 +1043,12 @@ export function CaptureWorkspace({
       decisionId,
       registrationInterruption.operationId,
       "RETRY_FAILED_SIDE",
-      [side],
-      priorInterruption,
+      registrationFailureEvidence(
+        registrationInterruption.interruptions,
+        registrationInterruption.failures,
+        registrationInterruption.failureRequestIds,
+        [side],
+      ),
     );
     const controller = new AbortController();
     activeImageRequest.current?.abort();
@@ -1002,6 +1076,7 @@ export function CaptureWorkspace({
       const nextState: RegistrationInterruptionState = {
         interruptions,
         failures: registrationInterruption.failures,
+        failureRequestIds: registrationInterruption.failureRequestIds,
         provisional,
         operationId: registrationInterruption.operationId,
         attemptNumbers,
@@ -1014,6 +1089,7 @@ export function CaptureWorkspace({
         setRegistrationInterruption(null);
         setRegistrationRescue({
           failures: nextState.failures,
+          failureRequestIds: nextState.failureRequestIds,
           provisional,
           attemptIds: {
             ...(nextState.failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
@@ -1039,15 +1115,19 @@ export function CaptureWorkspace({
       surfaceRegistrationAuditWarning(registrationInterruption.operationId, [error]);
       const interruptions = { ...registrationInterruption.interruptions };
       const failures = { ...registrationInterruption.failures };
+      const failureRequestIds = { ...registrationInterruption.failureRequestIds };
       if (error instanceof SpeedsterMapRegistrationError) {
         delete interruptions[side];
         failures[side] = error.failure;
+        if (error.requestId) failureRequestIds[side] = error.requestId;
+        else delete failureRequestIds[side];
       } else {
         interruptions[side] = registrationInterruptionFrom(error);
       }
       const nextState: RegistrationInterruptionState = {
         interruptions,
         failures,
+        failureRequestIds,
         provisional: registrationInterruption.provisional,
         operationId: registrationInterruption.operationId,
         attemptNumbers,
@@ -1060,6 +1140,7 @@ export function CaptureWorkspace({
         setRegistrationInterruption(null);
         setRegistrationRescue({
           failures,
+          failureRequestIds,
           provisional: registrationInterruption.provisional,
           attemptIds: {
             ...(failures.FRONT ? { FRONT: crypto.randomUUID() } : {}),
@@ -1088,21 +1169,24 @@ export function CaptureWorkspace({
     const failedSides = (["FRONT", "BACK"] as const).filter((side) => (
       registrationInterruption.interruptions[side] || registrationInterruption.failures[side]
     ));
-    const primarySide = failedSides[0];
-    const primary = primarySide ? registrationInterruption.interruptions[primarySide] : undefined;
+    const evidence = registrationFailureEvidence(
+      registrationInterruption.interruptions,
+      registrationInterruption.failures,
+      registrationInterruption.failureRequestIds,
+      failedSides,
+    );
     recordRegistrationDecision(
       registrationInterruption.decisionIds.continue,
       registrationInterruption.operationId,
       "CONTINUE_WITHOUT_CARD_MAP",
-      failedSides,
-      primary,
+      evidence,
     );
     finishMapRegistrationFlow({
       frontState: front,
       backState: back,
       provisional: {},
       failureSides: Object.fromEntries(failedSides.map((side) => [side, true])) as Partial<Record<SpeedsterCardSide, true>>,
-      notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. Continuing with normal human review.`,
+      notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${failedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`,
     });
   };
 
@@ -1140,11 +1224,14 @@ export function CaptureWorkspace({
       if (activeImageRequest.current !== controller) return;
       surfaceRegistrationAuditWarning(registrationRescue.operationId, [registration]);
       const failures = { ...registrationRescue.failures };
+      const failureRequestIds = { ...registrationRescue.failureRequestIds };
       delete failures[side];
+      delete failureRequestIds[side];
       const provisional = { ...registrationRescue.provisional, [side]: registration };
       if (failures.FRONT || failures.BACK) {
         setRegistrationRescue({
           failures,
+          failureRequestIds,
           provisional,
           attemptIds: registrationRescue.attemptIds,
           operationId: registrationRescue.operationId,
@@ -1253,6 +1340,16 @@ export function CaptureWorkspace({
   const interruptionSide = registrationInterruption?.interruptions.FRONT ? "FRONT"
     : registrationInterruption?.interruptions.BACK ? "BACK"
       : null;
+  const interruptionFailureEvidence = registrationInterruption
+    ? registrationFailureEvidence(
+        registrationInterruption.interruptions,
+        registrationInterruption.failures,
+        registrationInterruption.failureRequestIds,
+      )
+    : [];
+  const rescueFailureEvidence = registrationRescue
+    ? registrationFailureEvidence({}, registrationRescue.failures, registrationRescue.failureRequestIds)
+    : [];
   const activeSide = stage.startsWith("FRONT") ? "FRONT" : "BACK";
   const activeCentering = stage === "FRONT_CENTERING" ? front : stage === "BACK_CENTERING" ? back : null;
   const activePreparedImageSide = interruptionSide ?? rescueSide ?? (activeCentering ? activeSide : null);
@@ -1349,63 +1446,90 @@ export function CaptureWorkspace({
         />
       ) : null}
 
-      {stage === "MAP_REGISTRATION_INTERRUPTED" && interruptionSide && registrationInterruption?.interruptions[interruptionSide] ? (
+      {stage === "MAP_REGISTRATION_INTERRUPTED" && registrationInterruption && interruptionFailureEvidence.length ? (
         <section className={styles.registrationInterruption} aria-label="Card Map registration interruption">
           <header>
             <span>CARD MAP · ACTION REQUIRED</span>
-            <h2>{interruptionSide === "FRONT" ? "Front" : "Back"} registration is interrupted.</h2>
+            <h2>{interruptionFailureEvidence.map(({ side }) => side).join(" + ")} registration is unresolved.</h2>
           </header>
-          <p role="alert">{registrationInterruption.interruptions[interruptionSide]!.message}</p>
+          <p role="alert">Resolve each listed side, or explicitly continue without any Card Map.</p>
           <p>
             Any completed sibling registration and valid anchor diagnostics are retained provisionally.
             No Card Map side is authoritative until Front + Back both validate.
           </p>
-          <div className={styles.interruptionEvidence}>
-            <span>{registrationInterruption.interruptions[interruptionSide]!.failure.code}</span>
-            {registrationInterruption.interruptions[interruptionSide]!.failure.requestId ? (
-              <span>Request {registrationInterruption.interruptions[interruptionSide]!.failure.requestId}</span>
-            ) : (
-              <span>No HTTP request ID was returned.</span>
-            )}
-          </div>
+          {interruptionFailureEvidence.map((evidence) => (
+            <div className={styles.interruptionEvidence} key={evidence.side}>
+              <strong>{evidence.side}</strong>
+              <span>{evidence.code}</span>
+              <span>{evidence.httpStatus === null ? "No HTTP status" : `HTTP ${evidence.httpStatus}`}</span>
+              <span>{evidence.requestId ? `Request ${evidence.requestId}` : "No HTTP request ID was returned."}</span>
+              {registrationInterruption.interruptions[evidence.side] ? (
+                <span>{registrationInterruption.interruptions[evidence.side]!.message}</span>
+              ) : null}
+              {registrationInterruption.interruptions[evidence.side] ? (
+                <button
+                  type="button"
+                  onClick={() => void retryInterruptedRegistration(evidence.side)}
+                  disabled={working}
+                >
+                  {working ? `Retrying ${evidence.side}…` : `${evidence.side}: Retry failed side`}
+                </button>
+              ) : (
+                <span>Human anchor diagnostics retained; correct this side after infrastructure interruptions resolve.</span>
+              )}
+            </div>
+          ))}
+          <p>
+            Continue without Card Map abandons all unresolved sides: {interruptionFailureEvidence.map(({ side }) => side).join(" + ")}.
+          </p>
           <div className={styles.interruptionActions}>
             <button type="button" onClick={continueWithoutCardMap} disabled={working}>
               Continue without Card Map
-            </button>
-            <button type="button" onClick={() => void retryInterruptedRegistration()} disabled={working}>
-              {working ? "Retrying failed side…" : "Retry failed side"}
             </button>
           </div>
         </section>
       ) : null}
 
       {stage === "MAP_REGISTRATION_RESCUE" && rescueSide && registrationRescue?.failures[rescueSide] ? (
-        <MapRegistrationRescue
-          key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
-          side={rescueSide}
-          imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
-          imageRevision={(rescueSide === "FRONT" ? front : back)?.rectifiedImageRevision ?? 0}
-          imageRefreshError={preparedImageRefresh[rescueSide].error}
-          imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
-          failure={registrationRescue.failures[rescueSide]!}
-          disabled={working}
-          onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
-          onContinueManual={() => {
-            if (registrationActionInFlight.current) return;
-            registrationActionInFlight.current = true;
-            const failedSides = (["FRONT", "BACK"] as const).filter((candidate) => registrationRescue.failures[candidate]);
-            recordRegistrationDecision(
-              registrationRescue.continueDecisionId,
-              registrationRescue.operationId,
-              "CONTINUE_WITHOUT_CARD_MAP",
-              failedSides,
-            );
-            finishRegistrationRescue(registrationRescue.provisional, true);
-          }}
-          onImageError={() => handlePreparedImageError(rescueSide)}
-          onImageReady={() => markPreparedImageReady(rescueSide)}
-          onRetryImage={() => retryPreparedImage(rescueSide)}
-        />
+        <>
+          <section className={styles.registrationInterruption} aria-label="Card Map correction summary">
+            <strong>Unresolved human-correction sides</strong>
+            {rescueFailureEvidence.map((evidence) => (
+              <div className={styles.interruptionEvidence} key={evidence.side}>
+                <strong>{evidence.side}</strong>
+                <span>{evidence.code}</span>
+                <span>HTTP 422</span>
+                <span>{evidence.requestId ? `Request ${evidence.requestId}` : "No HTTP request ID was returned."}</span>
+              </div>
+            ))}
+            <p>Continue without Card Map abandons all unresolved sides: {rescueFailureEvidence.map(({ side }) => side).join(" + ")}.</p>
+          </section>
+          <MapRegistrationRescue
+            key={`${rescueSide}:${registrationRescue.failures[rescueSide]?.failureCode}`}
+            side={rescueSide}
+            imageUrl={(rescueSide === "FRONT" ? front : back)?.rectifiedUrl ?? ""}
+            imageRevision={(rescueSide === "FRONT" ? front : back)?.rectifiedImageRevision ?? 0}
+            imageRefreshError={preparedImageRefresh[rescueSide].error}
+            imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
+            failure={registrationRescue.failures[rescueSide]!}
+            disabled={working}
+            onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
+            onContinueManual={() => {
+              if (registrationActionInFlight.current) return;
+              registrationActionInFlight.current = true;
+              recordRegistrationDecision(
+                registrationRescue.continueDecisionId,
+                registrationRescue.operationId,
+                "CONTINUE_WITHOUT_CARD_MAP",
+                rescueFailureEvidence,
+              );
+              finishRegistrationRescue(registrationRescue.provisional, true);
+            }}
+            onImageError={() => handlePreparedImageError(rescueSide)}
+            onImageReady={() => markPreparedImageReady(rescueSide)}
+            onRetryImage={() => retryPreparedImage(rescueSide)}
+          />
+        </>
       ) : null}
 
       {activeCentering?.rectifiedUrl && activeCentering.proposedCentering ? (

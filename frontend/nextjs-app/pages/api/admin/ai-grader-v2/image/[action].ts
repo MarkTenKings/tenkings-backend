@@ -38,7 +38,7 @@ import {
 } from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
 import { issueSpeedsterMapRegistrationReceipt } from "../../../../../lib/server/speedsterMapRegistrationAuthority";
 import {
-  insertSpeedsterInstrumentationEvents,
+  insertSpeedsterInstrumentationEventWithConflictDetection,
   speedsterMapRegistrationAttemptEvent,
   type SpeedsterMapRegistrationAttemptOutcome,
 } from "../../../../../lib/server/aiGraderV2Instrumentation";
@@ -47,6 +47,7 @@ const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registrat
 export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
 export const SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION = "speedster-map-registration-error-v1" as const;
 export const SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER = "X-Speedster-Map-Registration-Audit" as const;
+export const SPEEDSTER_MAP_REGISTRATION_AUDIT_WAIT_MS = 250;
 
 type SpeedsterMapRegistrationErrorSource =
   | "PROVIDER_GATEWAY"
@@ -117,6 +118,23 @@ export function speedsterMapRegistrationTimeoutEnvelope(requestId: string) {
     retryable: false,
     requestId,
   });
+}
+
+export async function settleSpeedsterMapRegistrationAuditWrite(
+  write: () => Promise<unknown>,
+  waitMs = SPEEDSTER_MAP_REGISTRATION_AUDIT_WAIT_MS,
+): Promise<"RECORDED" | "WRITE_FAILED" | "TIMED_OUT"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const tracked = Promise.resolve().then(write).then(
+    () => "RECORDED" as const,
+    () => "WRITE_FAILED" as const,
+  );
+  const deadline = new Promise<"TIMED_OUT">((resolve) => {
+    timer = setTimeout(() => resolve("TIMED_OUT"), waitMs);
+  });
+  const result = await Promise.race([tracked, deadline]);
+  if (timer) clearTimeout(timer);
+  return result;
 }
 
 export class SpeedsterImageUpstreamTimeoutError extends Error {
@@ -251,6 +269,30 @@ export function parseSpeedsterMapRegistrationOrchestration(value: unknown) {
     trigger: value.trigger as "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE",
     successfulSiblingPreservedAtAttemptStart: value.successfulSiblingPreservedAtAttemptStart,
   };
+}
+
+export function resolveSpeedsterMapRegistrationOrchestration(
+  value: unknown,
+  mode: "AUTOMATIC" | "HUMAN_RESCUE",
+  requestId: string,
+) {
+  if (value === undefined) return {
+    operationId: requestId,
+    attemptNumber: mode === "HUMAN_RESCUE" ? 2 : 1,
+    trigger: mode === "HUMAN_RESCUE" ? "HUMAN_RESCUE" as const : "INITIAL" as const,
+    successfulSiblingPreservedAtAttemptStart: false,
+    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY" as const,
+  };
+  const orchestration = parseSpeedsterMapRegistrationOrchestration(value);
+  if ((mode === "HUMAN_RESCUE") !== (orchestration.trigger === "HUMAN_RESCUE")
+    || (orchestration.trigger === "INITIAL" && (
+      orchestration.attemptNumber !== 1
+      || orchestration.successfulSiblingPreservedAtAttemptStart
+    ))
+    || (orchestration.trigger !== "INITIAL" && orchestration.attemptNumber < 2)) {
+    throw new Error("Speedster map registration orchestration sequence is invalid.");
+  }
+  return { ...orchestration, orchestrationMetadataSource: "CLIENT_REPORTED" as const };
 }
 
 export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
@@ -752,6 +794,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     operationId: string;
     attemptNumber: number;
     trigger: "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE";
+    orchestrationMetadataSource: "CLIENT_REPORTED" | "SERVER_STALE_CLIENT_COMPATIBILITY";
     mapRevisionId: string;
     currentInspectionSha256: string;
     currentPhysicalQuadSha256: string;
@@ -768,15 +811,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     : {};
   const recordRegistrationAttempt = async (result: SpeedsterMapRegistrationAttemptOutcome) => {
     if (!registrationContext) return;
-    try {
-      await insertSpeedsterInstrumentationEvents(prisma, [speedsterMapRegistrationAttemptEvent({
+    const attemptEvent = speedsterMapRegistrationAttemptEvent({
         ...registrationContext,
         requestId: requestTraceId,
         durationMs: Date.now() - requestStartedAtMs,
         result,
-      })]);
+      });
+    const auditResult = await settleSpeedsterMapRegistrationAuditWrite(
+      () => insertSpeedsterInstrumentationEventWithConflictDetection(prisma, attemptEvent),
+    );
+    if (auditResult === "RECORDED") {
       res.setHeader(SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER, "recorded");
-    } catch {
+    } else {
       const signal = speedsterMapRegistrationAuditFailureSignal(requestTraceId);
       registrationAuditWarning = signal.responseFields.registrationAuditWarning;
       res.setHeader(SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER, signal.headerValue);
@@ -786,6 +832,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         side: registrationContext.side,
         operationId: registrationContext.operationId,
         attemptNumber: registrationContext.attemptNumber,
+        auditResult,
         outcome: result.outcome,
         ...(result.outcome === "SUCCEEDED"
           ? { mapRevisionId: result.mapRevisionId }
@@ -809,15 +856,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       action === "trace-proposal" ? requestTraceId : undefined,
     ) as Record<string, unknown>;
     if (action === "map-registration" && requestedSide && requestedSessionId) {
-      const orchestration = parseSpeedsterMapRegistrationOrchestration(req.body?.orchestration);
-      if ((requestedMode === "HUMAN_RESCUE") !== (orchestration.trigger === "HUMAN_RESCUE")
-        || (orchestration.trigger === "INITIAL" && (
-          orchestration.attemptNumber !== 1
-          || orchestration.successfulSiblingPreservedAtAttemptStart
-        ))
-        || (orchestration.trigger !== "INITIAL" && orchestration.attemptNumber < 2)) {
-        throw new Error("Speedster map registration orchestration sequence is invalid.");
-      }
+      const orchestration = resolveSpeedsterMapRegistrationOrchestration(
+        req.body?.orchestration,
+        requestedMode,
+        requestTraceId,
+      );
       const mapRevisionId = typeof serviceRequestBody.mapRevisionId === "string" ? serviceRequestBody.mapRevisionId : "";
       const currentInspectionSha256 = typeof serviceRequestBody.currentInspectionSha256 === "string"
         ? serviceRequestBody.currentInspectionSha256

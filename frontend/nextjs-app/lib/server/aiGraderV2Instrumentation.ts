@@ -368,6 +368,7 @@ export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
   operationId: string;
   attemptNumber: number;
   trigger: "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE";
+  orchestrationMetadataSource: "CLIENT_REPORTED" | "SERVER_STALE_CLIENT_COMPATIBILITY";
   mapRevisionId: string;
   currentInspectionSha256: string;
   currentPhysicalQuadSha256: string;
@@ -386,14 +387,25 @@ export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
     details: {
       side: input.side,
       mode: input.mode,
-      operationId: input.operationId,
-      attemptNumber: input.attemptNumber,
-      trigger: input.trigger,
+      ...(input.orchestrationMetadataSource === "CLIENT_REPORTED" ? {
+        clientReportedOrchestration: {
+          operationId: input.operationId,
+          attemptNumber: input.attemptNumber,
+          trigger: input.trigger,
+          successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
+        },
+      } : {
+        serverStaleClientCompatibilityOrchestration: {
+          operationId: input.operationId,
+          attemptNumber: input.attemptNumber,
+          trigger: input.trigger,
+          successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
+        },
+      }),
       requestId: input.requestId,
       mapRevisionId: input.mapRevisionId,
       currentInspectionSha256: input.currentInspectionSha256,
       currentPhysicalQuadSha256: input.currentPhysicalQuadSha256,
-      successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
       outcome: input.result.outcome,
       ...(input.result.outcome === "SUCCEEDED"
         ? { observedMapRevisionId: input.result.mapRevisionId }
@@ -405,6 +417,56 @@ export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
           }),
     },
   });
+}
+
+/**
+ * Registration attempts and decisions use a conflict-detecting variant of the append-only insert.
+ * An exact duplicate performs a no-op update. A different payload for the same key
+ * deliberately violates the existing non-negative duration check and rolls back.
+ */
+export async function insertSpeedsterInstrumentationEventWithConflictDetection(
+  writer: SpeedsterInstrumentationWriter,
+  event: SpeedsterInstrumentationEvent,
+) {
+  const generatingExemplar = event.generatingExemplar === null || event.generatingExemplar === undefined
+    ? null
+    : JSON.stringify(event.generatingExemplar);
+  const details = event.details === null || event.details === undefined
+    ? null
+    : JSON.stringify(event.details);
+  return writer.$executeRaw(Prisma.sql`
+    INSERT INTO "AiGraderV2InstrumentationEvent" AS "existing" (
+      "id", "eventKey", "sessionId", "cycleId", "createdByUserId", "category", "eventType",
+      "findingId", "origin", "similarity", "generatingExemplar", "operatorAction",
+      "clientStartedAt", "clientEndedAt", "durationMs", "details"
+    ) VALUES (
+      ${randomUUID()}, ${event.eventKey}, ${event.sessionId}, ${event.sessionId},
+      ${event.createdByUserId}, ${event.category}, ${event.eventType},
+      ${event.findingId ?? null}, ${event.origin ?? null}, ${event.similarity ?? null},
+      ${generatingExemplar}::jsonb, ${event.operatorAction ?? null},
+      ${event.clientStartedAt ?? null}, ${event.clientEndedAt ?? null}, ${event.durationMs ?? null},
+      ${details}::jsonb
+    )
+    ON CONFLICT ("eventKey") DO UPDATE SET
+      "durationMs" = CASE WHEN
+        "existing"."sessionId" IS NOT DISTINCT FROM EXCLUDED."sessionId"
+        AND "existing"."cycleId" IS NOT DISTINCT FROM EXCLUDED."cycleId"
+        AND "existing"."createdByUserId" IS NOT DISTINCT FROM EXCLUDED."createdByUserId"
+        AND "existing"."category" IS NOT DISTINCT FROM EXCLUDED."category"
+        AND "existing"."eventType" IS NOT DISTINCT FROM EXCLUDED."eventType"
+        AND "existing"."findingId" IS NOT DISTINCT FROM EXCLUDED."findingId"
+        AND "existing"."origin" IS NOT DISTINCT FROM EXCLUDED."origin"
+        AND "existing"."similarity" IS NOT DISTINCT FROM EXCLUDED."similarity"
+        AND "existing"."generatingExemplar" IS NOT DISTINCT FROM EXCLUDED."generatingExemplar"
+        AND "existing"."operatorAction" IS NOT DISTINCT FROM EXCLUDED."operatorAction"
+        AND "existing"."clientStartedAt" IS NOT DISTINCT FROM EXCLUDED."clientStartedAt"
+        AND "existing"."clientEndedAt" IS NOT DISTINCT FROM EXCLUDED."clientEndedAt"
+        AND "existing"."durationMs" IS NOT DISTINCT FROM EXCLUDED."durationMs"
+        AND "existing"."details" IS NOT DISTINCT FROM EXCLUDED."details"
+      THEN "existing"."durationMs"
+      ELSE -1
+      END
+  `);
 }
 
 export async function insertSpeedsterInstrumentationEvents(

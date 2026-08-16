@@ -13,6 +13,7 @@ import {
   speedsterFindingFinalEvents,
   speedsterFindingProposalEvents,
   speedsterMapRegistrationAttemptEvent,
+  insertSpeedsterInstrumentationEventWithConflictDetection,
   type SpeedsterInstrumentationEvent,
 } from "../lib/server/aiGraderV2Instrumentation";
 import { createSpeedsterInstrumentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation";
@@ -231,6 +232,7 @@ test("server-authored registration attempt telemetry keeps successful and failed
     operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     attemptNumber: 1,
     trigger: "INITIAL",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
     mapRevisionId: "revision-123456789012345",
     currentInspectionSha256: "b".repeat(64),
     currentPhysicalQuadSha256: "c".repeat(64),
@@ -247,6 +249,7 @@ test("server-authored registration attempt telemetry keeps successful and failed
     operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     attemptNumber: 1,
     trigger: "INITIAL",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
     mapRevisionId: "revision-123456789012345",
     currentInspectionSha256: "d".repeat(64),
     currentPhysicalQuadSha256: "e".repeat(64),
@@ -268,14 +271,16 @@ test("server-authored registration attempt telemetry keeps successful and failed
   assert.deepEqual(succeeded.details, {
     side: "FRONT",
     mode: "AUTOMATIC",
-    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    attemptNumber: 1,
-    trigger: "INITIAL",
+    clientReportedOrchestration: {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
     requestId: "11111111-1111-4111-8111-111111111111",
     mapRevisionId: "revision-123456789012345",
     currentInspectionSha256: "b".repeat(64),
     currentPhysicalQuadSha256: "c".repeat(64),
-    successfulSiblingPreservedAtAttemptStart: false,
     outcome: "SUCCEEDED",
     observedMapRevisionId: "revision-123456789012345",
   });
@@ -283,20 +288,68 @@ test("server-authored registration attempt telemetry keeps successful and failed
   assert.deepEqual(failed.details, {
     side: "BACK",
     mode: "AUTOMATIC",
-    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-    attemptNumber: 1,
-    trigger: "INITIAL",
+    clientReportedOrchestration: {
+      operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      attemptNumber: 1,
+      trigger: "INITIAL",
+      successfulSiblingPreservedAtAttemptStart: false,
+    },
     requestId: "22222222-2222-4222-8222-222222222222",
     mapRevisionId: "revision-123456789012345",
     currentInspectionSha256: "d".repeat(64),
     currentPhysicalQuadSha256: "e".repeat(64),
-    successfulSiblingPreservedAtAttemptStart: false,
     outcome: "FAILED",
     errorSource: "PROVIDER",
     errorCode: "PROVIDER_HTTP_402",
     httpStatus: 402,
     retryEligible: false,
   });
+});
+
+test("strict attempt insert preserves exact duplicates and rejects conflicting payloads through the existing duration constraint", async () => {
+  let sql = "";
+  const event = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 2,
+    trigger: "MANUAL_RETRY",
+    orchestrationMetadataSource: "CLIENT_REPORTED",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: true,
+    side: "BACK",
+    mode: "AUTOMATIC",
+    durationMs: 451,
+    result: { outcome: "SUCCEEDED", mapRevisionId: "revision-123456789012345" },
+  });
+  await insertSpeedsterInstrumentationEventWithConflictDetection({
+    async $executeRaw(query) {
+      sql = query.sql;
+      return 1;
+    },
+  }, event);
+  assert.match(sql, /ON CONFLICT \("eventKey"\) DO UPDATE/);
+  assert.match(sql, /THEN "existing"\."durationMs"\s+ELSE -1/);
+  for (const column of [
+    "sessionId", "cycleId", "createdByUserId", "category", "eventType", "findingId", "origin",
+    "similarity", "generatingExemplar", "operatorAction", "clientStartedAt", "clientEndedAt", "durationMs", "details",
+  ]) assert.match(sql, new RegExp(`"existing"\\."${column}" IS NOT DISTINCT FROM EXCLUDED\\."${column}"`));
+
+  const appRoot = fileURLToPath(new URL("..", import.meta.url));
+  const migration = readFileSync(
+    `${appRoot}/../../packages/database/prisma/migrations/20260810210000_speedster_instrumentation_events/migration.sql`,
+    "utf8",
+  );
+  assert.match(migration, /durationMs_check[\s\S]*"durationMs" >= 0/);
+  assert.match(sql, /ELSE -1/, "a conflicting duplicate must violate the deployed non-negative duration constraint");
+  const endpointSource = readFileSync(
+    `${appRoot}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation.ts`,
+    "utf8",
+  );
+  assert.match(endpointSource, /MAP_REGISTRATION_OPERATOR_DECISION[\s\S]*insertSpeedsterInstrumentationEventWithConflictDetection/);
 });
 
 function request(body: unknown): NextApiRequest {
@@ -457,6 +510,13 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
       registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
       registrationFailedSides: ["BACK"],
+      registrationFailures: [{
+        side: "BACK",
+        source: "PROVIDER",
+        code: "PROVIDER_HTTP_402",
+        httpStatus: 402,
+        requestId: "registration-request-402",
+      }],
       registrationErrorSource: "PROVIDER",
       registrationErrorCode: "PROVIDER_HTTP_402",
       registrationHttpStatus: 402,
@@ -471,6 +531,13 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
     registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
     registrationFailedSides: ["BACK"],
+    registrationFailures: [{
+      side: "BACK",
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      httpStatus: 402,
+      requestId: "registration-request-402",
+    }],
     registrationErrorSource: "PROVIDER",
     registrationErrorCode: "PROVIDER_HTTP_402",
     registrationHttpStatus: 402,
@@ -488,6 +555,7 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
       registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
       registrationFailedSides: ["BACK"],
+      registrationFailures: [{ side: "BACK", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409 }],
     },
   }), mismatched.res);
   assert.equal(mismatched.state.status, 400, "a retransmission cannot change the stable decision event identity");

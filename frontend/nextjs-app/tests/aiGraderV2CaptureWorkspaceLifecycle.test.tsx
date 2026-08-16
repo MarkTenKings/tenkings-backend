@@ -27,7 +27,13 @@ type SpeedsterCaptureInstrumentationEvent = import(
 const { SpeedsterTrainWorkspace } = require(
   "../components/ai-grader-v2/SpeedsterTrainWorkspace",
 ) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
-const { speedsterImageService, runSpeedsterImageRequest, SpeedsterMapRegistrationRequestError } = require(
+const {
+  speedsterImageService,
+  runSpeedsterImageRequest,
+  SpeedsterMapRegistrationRequestError,
+  parseSpeedsterMapRegistrationRequestFailure,
+  parseSpeedsterMapRegistrationFailurePayload,
+} = require(
   "../lib/ai-grader-v2/image-service",
 ) as typeof import("../lib/ai-grader-v2/image-service");
 
@@ -87,6 +93,7 @@ async function mountWorkspace(input: {
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
   registrationNeedsRescueOnSide?: "FRONT" | "BACK";
+  registrationMalformed422OnSide?: "FRONT" | "BACK";
   registrationGlobalGateFailure?: boolean;
   rescueFailures?: number;
   preparedImageRefreshFails?: boolean;
@@ -100,10 +107,16 @@ async function mountWorkspace(input: {
     code: string;
     retryable: boolean;
     message: string;
+    envelopeStatus?: number;
+    envelopeSource?: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API";
+    envelopeCode?: string;
+    envelopeRetryable?: boolean;
   }>;
   registrationNetworkFailure?: Readonly<{ side: "FRONT" | "BACK"; count: number }>;
   registrationAuditFailsOnSide?: "FRONT" | "BACK";
   instrumentationFails?: boolean;
+  decisionInstrumentationResult?: Promise<boolean>;
+  omitInstrumentationReporter?: boolean;
   onRegistrationRequest?: (side: "FRONT" | "BACK", sideAttempt: number) => void | Promise<void>;
   mapLookupFailed?: boolean;
   imageRequestTimeoutMs?: number;
@@ -266,14 +279,21 @@ async function mountWorkspace(input: {
           requestId: `registration-request-${failure.status}`,
           registrationError: {
             version: "speedster-map-registration-error-v1",
-            source: failure.source,
-            code: failure.code,
-            httpStatus: failure.status,
-            retryable: failure.retryable,
+            source: failure.envelopeSource ?? failure.source,
+            code: failure.envelopeCode ?? failure.code,
+            httpStatus: failure.envelopeStatus ?? failure.status,
+            retryable: failure.envelopeRetryable ?? failure.retryable,
             requestId: `registration-request-${failure.status}`,
           },
           ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
         }, failure.status);
+      }
+      if (!body.rescue && input.registrationMalformed422OnSide === body.side) {
+        return jsonResponse({
+          message: "CARD MAP registration needs human anchor correction.",
+          requestId: "registration-request-malformed-422",
+          registrationFailure: {},
+        }, 422);
       }
       if (!body.rescue && input.registrationNeedsRescueOnSide === body.side) {
         return jsonResponse({
@@ -323,7 +343,18 @@ async function mountWorkspace(input: {
       }
       if (body.rescue && remainingRescueFailures > 0) {
         remainingRescueFailures -= 1;
-        return jsonResponse({ message: "Registration lesson hash verification failed; no rescue was applied." }, 500);
+        return jsonResponse({
+          message: "Registration lesson hash verification failed; no rescue was applied.",
+          requestId: "registration-rescue-failure-500",
+          registrationError: {
+            version: "speedster-map-registration-error-v1",
+            source: "TEN_KINGS_API",
+            code: "TEN_KINGS_REGISTRATION_VALIDATION_FAILED",
+            httpStatus: 500,
+            retryable: false,
+            requestId: "registration-rescue-failure-500",
+          },
+        }, 500);
       }
       return jsonResponse({
         version: body.rescue ? "opencv-redundant-ransac-registration-v2" : "opencv-human-anchor-registration-v1",
@@ -372,8 +403,11 @@ async function mountWorkspace(input: {
         bundles.push(bundle);
         return input.onSave?.(bundle) ?? { saved: true };
       }}
-      onInstrumentationEvent={(event) => {
+      onInstrumentationEvent={input.omitInstrumentationReporter ? undefined as never : (event) => {
         events.push(event);
+        if (event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION" && input.decisionInstrumentationResult) {
+          return input.decisionInstrumentationResult;
+        }
         return input.instrumentationFails ? false : true;
       }}
     />
@@ -512,6 +546,55 @@ test("automatic registration retry allowlist excludes every ambiguous HTTP and l
     retryable: true,
     requestId: null,
   })), false);
+});
+
+test("typed registration errors require exact actual-status and retry coherence", () => {
+  const requestId = "registration-request-402";
+  const factual402 = {
+    version: "speedster-map-registration-error-v1",
+    source: "PROVIDER",
+    code: "PROVIDER_HTTP_402",
+    httpStatus: 402,
+    retryable: false,
+    requestId,
+  };
+  assert.deepEqual(parseSpeedsterMapRegistrationRequestFailure(factual402, 402, true, requestId), factual402);
+  assert.equal(parseSpeedsterMapRegistrationRequestFailure({
+    ...factual402,
+    source: "PROVIDER_GATEWAY",
+    code: "PROVIDER_GATEWAY_HTTP_503",
+    httpStatus: 503,
+    retryable: true,
+  }, 402, true, requestId), null, "actual HTTP 402 cannot claim retryable 503 evidence");
+  assert.equal(parseSpeedsterMapRegistrationRequestFailure({
+    ...factual402,
+    source: "PROVIDER_GATEWAY",
+    code: "PROVIDER_GATEWAY_HTTP_503",
+    httpStatus: 503,
+    retryable: false,
+  }, 503, true, requestId), null, "automatic gateway classification must carry the exact retry truth");
+  assert.ok(parseSpeedsterMapRegistrationRequestFailure({
+    ...factual402,
+    source: "PROVIDER_GATEWAY",
+    code: "PROVIDER_GATEWAY_HTTP_503",
+    httpStatus: 503,
+    retryable: false,
+  }, 503, false, requestId), "human rescue 503 remains visible but non-retryable");
+});
+
+test("malformed HTTP 422 diagnostics are rejected before rescue state construction", () => {
+  assert.equal(parseSpeedsterMapRegistrationFailurePayload({}, "BACK"), null);
+  assert.equal(parseSpeedsterMapRegistrationFailurePayload({
+    algorithmVersion: "opencv-redundant-ransac-registration-v2",
+    policyVersion: "speedster-map-registration-acceptance-v2",
+    accepted: false,
+    failureCode: "LOW_ANCHOR_CONFIDENCE",
+    message: "Malformed nested evidence",
+    candidateCount: 1,
+    candidateIds: ["original-reference"],
+    binding: { side: "BACK" },
+    bestCandidate: { anchors: [{}] },
+  }, "BACK"), null);
 });
 
 function fire(element: Element, type: string, init: MouseEventInit & { pointerId?: number } = {}) {
@@ -966,6 +1049,81 @@ test("Front success plus Back failure preserves truth until explicit Continue wi
   }
 });
 
+test("two unresolved sides disclose complete evidence, expose side-specific retries, and audit full abandonment", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-two-failures", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationFails: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Two-side interruption did not render");
+    const text = harness.container.textContent ?? "";
+    assert.match(text, /FRONT \+ BACK registration is unresolved/);
+    assert.match(text, /FRONTPROVIDER_HTTP_409HTTP 409Request registration-request-409/);
+    assert.match(text, /BACKPROVIDER_HTTP_409HTTP 409Request registration-request-409/);
+    assert.ok(buttonByText(harness.container, "FRONT: Retry failed side"));
+    assert.ok(buttonByText(harness.container, "BACK: Retry failed side"));
+    assert.match(text, /abandons all unresolved sides: FRONT \+ BACK/);
+
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Explicit two-side abandonment did not proceed");
+    assert.match(harness.container.textContent ?? "", /FRONT \+ BACK unresolved Card Map work was explicitly abandoned/);
+    const decision = harness.events.find((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
+    assert.deepEqual(decision?.details?.registrationFailedSides, ["FRONT", "BACK"]);
+    assert.deepEqual(decision?.details?.registrationFailures, [
+      { side: "FRONT", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409, requestId: "registration-request-409" },
+      { side: "BACK", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409, requestId: "registration-request-409" },
+    ]);
+    assert.deepEqual(
+      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details?.mapFailureCode),
+      ["REGISTRATION_FAILED", "REGISTRATION_FAILED"],
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("infrastructure retry preserves the other side's valid 422 diagnostics", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-mixed-failures", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationHttpFailure: {
+      side: "FRONT",
+      status: 409,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_409",
+      retryable: false,
+      message: "Front registration state was rejected.",
+    },
+    registrationNeedsRescueOnSide: "BACK",
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Mixed failure summary did not render");
+    assert.match(harness.container.textContent ?? "", /FRONTPROVIDER_HTTP_409HTTP 409Request registration-request-409/);
+    assert.match(harness.container.textContent ?? "", /BACKLOW_ANCHOR_CONFIDENCEHTTP 422Request registration-request-1/);
+    assert.ok(buttonByText(harness.container, "FRONT: Retry failed side"));
+    assert.equal(buttonByText(harness.container, "BACK: Retry failed side"), undefined, "422 diagnostics require correction, not blind retry");
+
+    await act(async () => fire(buttonByText(harness.container, "FRONT: Retry failed side")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Retained Back diagnostics did not transition to rescue");
+    assert.match(harness.container.textContent ?? "", /BACKLOW_ANCHOR_CONFIDENCEHTTP 422Request registration-request-1/);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "Back diagnostics must not be discarded or rerun");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("HTTP 402 stays factual, retains request evidence, and never automatically retries", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
@@ -995,6 +1153,60 @@ test("HTTP 402 stays factual, retains request evidence, and never automatically 
     assert.match(harness.container.textContent ?? "", /Request registration-request-402/);
     assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "402 must never auto-retry");
     assert.equal(harness.getRegistrationCount(), 2, "Synchronous guard must block duplicate Back confirmation");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("actual HTTP 402 with claimed retryable 503 evidence fails visibly as CLIENT_PROTOCOL", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-contradiction", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 402,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      retryable: false,
+      message: "misleading upstream envelope",
+      envelopeStatus: 503,
+      envelopeSource: "PROVIDER_GATEWAY",
+      envelopeCode: "PROVIDER_GATEWAY_HTTP_503",
+      envelopeRetryable: true,
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Protocol contradiction was not visible");
+    assert.match(harness.container.textContent ?? "", /contradictory or malformed error evidence \(HTTP 402\)/i);
+    assert.match(harness.container.textContent ?? "", /CLIENT_PROTOCOL|CONTRADICTORY_OR_MALFORMED_ERROR_ENVELOPE/);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "contradictory retry evidence must never trigger automatic retry");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("malformed HTTP 422 diagnostics stop visibly without rendering rescue", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-malformed-422", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationMalformed422OnSide: "BACK",
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Malformed 422 did not stop visibly");
+    assert.match(harness.container.textContent ?? "", /malformed human-correction diagnostics/i);
+    assert.match(harness.container.textContent ?? "", /MALFORMED_REGISTRATION_FAILURE_DIAGNOSTICS/);
+    assert.equal(harness.container.querySelector('[aria-label="BACK Card Map anchor rescue"]'), null);
   } finally {
     await harness.cleanup();
   }
@@ -1156,6 +1368,56 @@ test("operator-decision audit failure remains visible while Continue without Car
     const decision = harness.events.find((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
     assert.equal(decision?.eventId, decision?.details?.registrationDecisionId);
     assert.equal(decision?.details?.registrationOperationId, harness.getRegistrationOrchestrations()[0].orchestration.operationId);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("missing decision reporter is visible and never blocks the selected action", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-no-reporter", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    omitInstrumentationReporter: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Missing reporter incorrectly blocked the choice");
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /audit reporter is unavailable/i);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("late decision-audit failure cannot write a warning into a replacement session", async () => {
+  let resolveDecision: ((saved: boolean) => void) | undefined;
+  const decisionResult = new Promise<boolean>((resolve) => { resolveDecision = resolve; });
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-late-audit", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    decisionInstrumentationResult: decisionResult,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    await harness.rerenderSession("speedster-session-replacement-audit");
+    await act(async () => {
+      resolveDecision?.(false);
+      await Promise.resolve();
+    });
+    assert.doesNotMatch(harness.container.textContent ?? "", /Operator-decision audit write failed/);
   } finally {
     await harness.cleanup();
   }
