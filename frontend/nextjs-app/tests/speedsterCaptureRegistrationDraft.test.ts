@@ -4,6 +4,7 @@ import {
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_MAX_BYTES,
   SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS,
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+  SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
   parseSpeedsterCaptureRegistrationDraft,
   readSpeedsterCaptureRegistrationDraft,
   readSpeedsterCaptureRegistrationDraftForCommittedSession,
@@ -13,6 +14,8 @@ import {
   speedsterCaptureRegistrationDraftStorageKey,
   writeSpeedsterCaptureRegistrationDraft,
   type SpeedsterCaptureRegistrationDraft,
+  type SpeedsterCaptureRegistrationDraftV1,
+  type SpeedsterCaptureRegistrationDraftV2,
 } from "../lib/ai-grader-v2/capture-registration-draft";
 import type { SpeedsterCardSide } from "../lib/ai-grader-v2/contracts";
 import type { SpeedsterMapRegistration } from "../lib/ai-grader-v2/card-type-map-contracts";
@@ -205,6 +208,76 @@ function draft(sessionId = "session-a", createdAtMs = 1_000): SpeedsterCaptureRe
   };
 }
 
+function colorProposal(mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", matColor: "BLACK" | "WHITE") {
+  return {
+    version: "speedster-color-geometry-proposal-v1" as const,
+    engineVersion: "speedster-color-geometry-v1" as const,
+    authority: "PROPOSER_ONLY" as const,
+    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+    mode,
+    outcome: "ACCEPTED" as const,
+    matColor,
+    proposal: quad,
+    contrastFloorDeltaE: mode === "PHYSICAL_OUTER" ? 18 : 12,
+    minimumSideSupport: mode === "PHYSICAL_OUTER" ? 0.7 : 0.55,
+    sideEvidence: Object.fromEntries(["top", "right", "bottom", "left"].map((side) => [side, {
+      medianContrastDeltaE: 40,
+      medianLightnessContrast: 40,
+      supportFraction: 1,
+      sampleCount: 40,
+      candidateCount: 1,
+      ambiguous: false,
+    }])) as Record<"top" | "right" | "bottom" | "left", {
+      medianContrastDeltaE: number;
+      medianLightnessContrast: number;
+      supportFraction: number;
+      sampleCount: number;
+      candidateCount: number;
+      ambiguous: boolean;
+    }>,
+    ambiguity: { candidateCount: 1, runnerUpScoreRatio: null, ambiguous: false },
+    advisory: null,
+  };
+}
+
+function v2Draft(): SpeedsterCaptureRegistrationDraftV2 {
+  const legacy = draft() as SpeedsterCaptureRegistrationDraftV1;
+  const upgrade = (side: "FRONT" | "BACK", matColor: "BLACK" | "WHITE") => ({
+    ...(side === "FRONT" ? legacy.front : legacy.back),
+    matColor,
+    physicalColorGeometry: colorProposal("PHYSICAL_OUTER", matColor),
+    physicalColorGeometryReceipt: `physical-${side.toLowerCase()}-${"a".repeat(40)}`,
+    printedColorGeometry: colorProposal("PRINTED_FRAME", matColor),
+    printedColorGeometryReceipt: `printed-${side.toLowerCase()}-${"b".repeat(40)}`,
+  });
+  return {
+    ...legacy,
+    version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
+    front: upgrade("FRONT", "BLACK"),
+    back: upgrade("BACK", "WHITE"),
+  };
+}
+
+const recaptureGeneration = "recapture-00000000-0000-4000-8000-000000000007";
+
+function bindRecaptureGeneration(
+  input: Mutable<SpeedsterCaptureRegistrationDraftV2>,
+  side: SpeedsterCardSide,
+) {
+  const target = side === "FRONT" ? input.front : input.back;
+  const slug = side.toLowerCase();
+  const originalPrefix = `ai-grader-v2/user/${input.sessionId}/original/${recaptureGeneration}`;
+  const preparedPrefix = `ai-grader-v2/user/${input.sessionId}/prepared/${slug}/${recaptureGeneration}`;
+  target.originalStorageKey = `${originalPrefix}/${slug}.jpg`;
+  target.rectifiedStorageKey = `${preparedPrefix}/rectified.webp`;
+  target.inspectionStorageKey = `${preparedPrefix}/inspection.webp`;
+  target.viewStorageKeys = {
+    NORMALIZED: `${preparedPrefix}/normalized.webp`,
+    MICRO_DEFECT: `${preparedPrefix}/micro_defect.webp`,
+    DIRECTIONAL: `${preparedPrefix}/directional.webp`,
+  };
+}
+
 const binding = (sessionId = "session-a") => ({
   surface: "AI_GRADER" as const,
   sessionId,
@@ -228,6 +301,106 @@ test("sanitized capture draft round-trips exact authority without URLs, tokens, 
   assert.equal(parsed?.provisional.FRONT?.serverReceipt, input.provisional.FRONT?.serverReceipt);
   assert.equal(parsed?.front.mapRegistration?.candidateProvenance?.source, "ORIGINAL_REFERENCE");
   assert.equal(parsed?.front.mapRegistration?.projectedDesignBoundary.kind, "FULL_BLEED");
+});
+
+test("draft schema keeps v1 byte-strict while v2 requires exact Color evidence and receipts", () => {
+  const legacy = mutableClone(draft());
+  (legacy.front as Mutable<typeof legacy.front> & { matColor?: string }).matColor = "BLACK";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(legacy), binding()), null, "v1 must never silently accept strict v2 fields");
+
+  const current = v2Draft();
+  const parsed = parseSpeedsterCaptureRegistrationDraft(JSON.stringify(current), binding());
+  assert.equal(parsed?.version, SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2);
+  if (parsed?.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2) {
+    assert.equal(parsed.front.physicalColorGeometryReceipt, current.front.physicalColorGeometryReceipt);
+    assert.equal(parsed.back.printedColorGeometry.matColor, "WHITE");
+  }
+
+  const missingReceipt = mutableClone(current);
+  delete (missingReceipt.front as Partial<typeof missingReceipt.front>).printedColorGeometryReceipt;
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(missingReceipt), binding()), null);
+
+  const changedMat = mutableClone(current);
+  changedMat.back.matColor = "BLACK";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(changedMat), binding()), null, "proposal/mat binding must remain exact");
+});
+
+test("v2 targeted recapture drafts bind exact generation and retain every explicit expiry-recovery state", () => {
+  const targetOnly = mutableClone(v2Draft());
+  targetOnly.recaptureSide = "BACK";
+  bindRecaptureGeneration(targetOnly, "BACK");
+  const parsedTargetOnly = parseSpeedsterCaptureRegistrationDraft(JSON.stringify(targetOnly), binding());
+  assert.equal(parsedTargetOnly?.version, SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2);
+  assert.equal(parsedTargetOnly?.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2
+    ? parsedTargetOnly.recaptureSide
+    : undefined, "BACK");
+
+  const bothUnresolved = mutableClone(targetOnly);
+  delete bothUnresolved.front.mapRegistration;
+  delete bothUnresolved.provisional.FRONT;
+  delete bothUnresolved.registrationRecordedAtMs.FRONT;
+  bothUnresolved.interruptions.FRONT = {
+    message: "The retained Front registration receipt expired and requires an explicit retry.",
+    failure: {
+      version: "speedster-map-registration-error-v1",
+      source: "CLIENT_PROTOCOL",
+      code: "DRAFT_REGISTRATION_RECEIPT_EXPIRED",
+      httpStatus: null,
+      retryable: false,
+      requestId: "request-front-expired",
+    },
+  };
+  bothUnresolved.decisionIds.retry.FRONT = "00000000-0000-4000-8000-000000000008";
+  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(bothUnresolved), binding()));
+
+  const targetRecoveredSiblingUnresolved = mutableClone(bothUnresolved);
+  const backRegistration = registration("BACK", targetRecoveredSiblingUnresolved.activeMapRevisionId!);
+  delete targetRecoveredSiblingUnresolved.interruptions.BACK;
+  delete targetRecoveredSiblingUnresolved.decisionIds.retry.BACK;
+  targetRecoveredSiblingUnresolved.back.mapRegistration = mutableClone(backRegistration);
+  targetRecoveredSiblingUnresolved.provisional.BACK = mutableClone(backRegistration);
+  targetRecoveredSiblingUnresolved.registrationRecordedAtMs.BACK = targetRecoveredSiblingUnresolved.updatedAtMs - 1;
+  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(targetRecoveredSiblingUnresolved), binding()));
+
+  const swappedTarget = mutableClone(targetOnly);
+  swappedTarget.recaptureSide = "FRONT";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(swappedTarget), binding()), null);
+
+  const neitherRegisteredNorUnresolved = mutableClone(targetOnly);
+  delete neitherRegisteredNorUnresolved.front.mapRegistration;
+  delete neitherRegisteredNorUnresolved.provisional.FRONT;
+  delete neitherRegisteredNorUnresolved.registrationRecordedAtMs.FRONT;
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(neitherRegisteredNorUnresolved), binding()), null);
+
+  const bothRegisteredAndUnresolved = mutableClone(targetOnly);
+  const targetRegistration = registration("BACK", bothRegisteredAndUnresolved.activeMapRevisionId!);
+  bothRegisteredAndUnresolved.back.mapRegistration = mutableClone(targetRegistration);
+  bothRegisteredAndUnresolved.provisional.BACK = mutableClone(targetRegistration);
+  bothRegisteredAndUnresolved.registrationRecordedAtMs.BACK = bothRegisteredAndUnresolved.updatedAtMs - 1;
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(bothRegisteredAndUnresolved), binding()), null);
+});
+
+test("v2 targeted recapture draft rejects every mixed target prepared artifact and v1 recapture metadata", () => {
+  const input = mutableClone(v2Draft());
+  input.recaptureSide = "BACK";
+  bindRecaptureGeneration(input, "BACK");
+  const mutations = [
+    (candidate: typeof input) => { candidate.back.originalStorageKey = candidate.back.originalStorageKey.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+    (candidate: typeof input) => { candidate.back.rectifiedStorageKey = candidate.back.rectifiedStorageKey.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+    (candidate: typeof input) => { candidate.back.inspectionStorageKey = candidate.back.inspectionStorageKey.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+    (candidate: typeof input) => { candidate.back.viewStorageKeys.NORMALIZED = candidate.back.viewStorageKeys.NORMALIZED.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+    (candidate: typeof input) => { candidate.back.viewStorageKeys.MICRO_DEFECT = candidate.back.viewStorageKeys.MICRO_DEFECT.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+    (candidate: typeof input) => { candidate.back.viewStorageKeys.DIRECTIONAL = candidate.back.viewStorageKeys.DIRECTIONAL.replace(recaptureGeneration, `${recaptureGeneration.slice(0, -1)}8`); },
+  ];
+  for (const mutate of mutations) {
+    const candidate = mutableClone(input);
+    mutate(candidate);
+    assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(candidate), binding()), null);
+  }
+
+  const legacy = mutableClone(draft()) as Mutable<SpeedsterCaptureRegistrationDraftV1> & { recaptureSide?: string };
+  legacy.recaptureSide = "BACK";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(legacy), binding()), null);
 });
 
 test("capture draft parsing fails closed on binding drift, extra fields, URLs, missing receipts, and malformed V2 zone metadata", () => {
@@ -334,7 +507,7 @@ test("committed-capture reconciliation requires exact Front, Back, and map-bindi
 });
 
 test("receipt age is side-specific, future timestamps fail closed, and oversized drafts are rejected", () => {
-  const input = draft("session-a", 10_000);
+  const input = draft("session-a", 10_000) as SpeedsterCaptureRegistrationDraftV1;
   assert.deepEqual(
     speedsterCaptureDraftExpiredRegistrationSides(input, 9_990 + SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS),
     [],

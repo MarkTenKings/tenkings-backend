@@ -5,6 +5,7 @@ import {
   type SpeedsterReviewImageUrls,
 } from "../../../../../../lib/ai-grader-v2/review-image-urls";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
+import { isAuthorizedSpeedsterPreparedStorageKeys } from "../../../../../../lib/server/aiGraderV2IphoneCapture";
 import { presignReadUrl } from "../../../../../../lib/server/storage";
 
 type Dependencies = {
@@ -30,15 +31,7 @@ const sessionIdFrom = (req: NextApiRequest) => {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 };
 
-function expectedStorageKeys(createdByUserId: string, sessionId: string, side: "FRONT" | "BACK") {
-  const prefix = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}`;
-  return {
-    ORIGINAL: `${prefix}/inspection.webp`,
-    NORMALIZED: `${prefix}/normalized.webp`,
-    MICRO_DEFECT: `${prefix}/micro_defect.webp`,
-    DIRECTIONAL: `${prefix}/directional.webp`,
-  } as const;
-}
+type ReviewStorageKeys = Readonly<Record<typeof SPEEDSTER_REVIEW_VIEW_TYPES[number], string>>;
 
 function sideStorageKeys(input: {
   capture: Record<string, unknown>;
@@ -48,19 +41,33 @@ function sideStorageKeys(input: {
 }) {
   const persisted = input.capture[input.side.toLowerCase()];
   if (!isRecord(persisted) || !isRecord(persisted.viewStorageKeys)) return null;
-  const expected = expectedStorageKeys(input.createdByUserId, input.sessionId, input.side);
-  const persistedKeys = {
-    ORIGINAL: persisted.inspectionStorageKey,
+  if (typeof persisted.rectifiedStorageKey !== "string"
+    || typeof persisted.inspectionStorageKey !== "string"
+    || typeof persisted.viewStorageKeys.NORMALIZED !== "string"
+    || typeof persisted.viewStorageKeys.MICRO_DEFECT !== "string"
+    || typeof persisted.viewStorageKeys.DIRECTIONAL !== "string") return null;
+  const viewStorageKeys = {
     NORMALIZED: persisted.viewStorageKeys.NORMALIZED,
     MICRO_DEFECT: persisted.viewStorageKeys.MICRO_DEFECT,
     DIRECTIONAL: persisted.viewStorageKeys.DIRECTIONAL,
   };
-  if (SPEEDSTER_REVIEW_VIEW_TYPES.some((view) => persistedKeys[view] !== expected[view])) return null;
-  return expected;
+  if (!isAuthorizedSpeedsterPreparedStorageKeys({
+    userId: input.createdByUserId,
+    sessionId: input.sessionId,
+    side: input.side,
+    rectifiedStorageKey: persisted.rectifiedStorageKey,
+    inspectionStorageKey: persisted.inspectionStorageKey,
+    viewStorageKeys,
+  })) return null;
+  const persistedKeys = {
+    ORIGINAL: persisted.inspectionStorageKey,
+    ...viewStorageKeys,
+  } satisfies ReviewStorageKeys;
+  return persistedKeys;
 }
 
 async function signSideUrls(
-  storageKeys: ReturnType<typeof expectedStorageKeys>,
+  storageKeys: ReviewStorageKeys,
   presignRead: Dependencies["presignRead"],
 ) {
   const signed = await Promise.all(SPEEDSTER_REVIEW_VIEW_TYPES.map((view) => presignRead(storageKeys[view])));

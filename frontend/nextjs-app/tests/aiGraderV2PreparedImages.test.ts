@@ -10,10 +10,15 @@ import { createSpeedsterPreparedImageHandler } from "../pages/api/admin/ai-grade
 
 const SESSION_ID = "speedster-session-123456789";
 
-function request(method: string, side: string = "FRONT", sessionId: string = SESSION_ID): NextApiRequest {
+function request(
+  method: string,
+  side: string = "FRONT",
+  sessionId: string = SESSION_ID,
+  storageKey = `ai-grader-v2/admin-1/${sessionId}/prepared/${side.toLowerCase()}/rectified.webp`,
+): NextApiRequest {
   return {
     method,
-    query: { sessionId, side },
+    query: { sessionId, side, storageKey },
     headers: {},
   } as unknown as NextApiRequest;
 }
@@ -77,7 +82,7 @@ test("prepared image refresh signs only the owned already-written Front rectifie
   });
 });
 
-test("prepared image refresh supports Back independently and never accepts a caller storage key", async () => {
+test("prepared image refresh supports an exact versioned Back key and rejects a caller key outside its owned side", async () => {
   let signedKey = "";
   const handler = createSpeedsterPreparedImageHandler({
     async requireAdminSession() { return { user: { id: "admin-2" } }; },
@@ -88,14 +93,28 @@ test("prepared image refresh supports Back independently and never accepts a cal
       return "https://fresh.example/back";
     },
   });
-  const req = request("GET", "BACK") as NextApiRequest & { query: Record<string, string> };
-  req.query.storageKey = "ai-grader-v2/another-admin/private.webp";
+  const versionedKey = `ai-grader-v2/admin-2/${SESSION_ID}/prepared/back/recapture-00000000-0000-4000-8000-000000000007/rectified.webp`;
   const { state, res } = response();
 
-  await handler(req, res);
+  await handler(request("GET", "BACK", SESSION_ID, versionedKey), res);
 
   assert.equal(state.status, 200);
-  assert.equal(signedKey, `ai-grader-v2/admin-2/${SESSION_ID}/prepared/back/rectified.webp`);
+  assert.equal(signedKey, versionedKey);
+
+  const rejected = response();
+  await handler(request("GET", "BACK", SESSION_ID, "ai-grader-v2/another-admin/private.webp"), rejected.res);
+  assert.equal(rejected.state.status, 400);
+  assert.equal(signedKey, versionedKey);
+
+  for (const unauthorizedKey of [
+    `ai-grader-v2/admin-2/${SESSION_ID}/prepared/front/recapture-00000000-0000-4000-8000-000000000007/rectified.webp`,
+    "ai-grader-v2/admin-2/speedster-session-999999999/prepared/back/recapture-00000000-0000-4000-8000-000000000007/rectified.webp",
+  ]) {
+    const unauthorized = response();
+    await handler(request("GET", "BACK", SESSION_ID, unauthorizedKey), unauthorized.res);
+    assert.equal(unauthorized.state.status, 400);
+    assert.equal(signedKey, versionedKey);
+  }
 });
 
 test("prepared image refresh rejects missing ownership and missing artifacts before signing", async () => {
@@ -117,7 +136,10 @@ test("prepared image refresh rejects missing ownership and missing artifacts bef
   const missingArtifact = createSpeedsterPreparedImageHandler({
     ...dependencies,
     async findOwnedSession(sessionId) { return { id: sessionId }; },
-    async headPreparedObject() { heads += 1; throw new Error("NoSuchKey"); },
+    async headPreparedObject() {
+      heads += 1;
+      throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    },
   });
   const second = response();
   await missingArtifact(request("GET"), second.res);
@@ -125,6 +147,18 @@ test("prepared image refresh rejects missing ownership and missing artifacts bef
   assert.equal(heads, 1);
   assert.equal(signs, 0);
   assert.doesNotMatch(JSON.stringify(second.state.body), /NoSuchKey|storage|credential/i);
+
+  const providerFailure = createSpeedsterPreparedImageHandler({
+    ...dependencies,
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async headPreparedObject() {
+      throw Object.assign(new Error("provider rejected exact HEAD"), { $metadata: { httpStatusCode: 503 } });
+    },
+  });
+  const third = response();
+  await providerFailure(request("GET"), third.res);
+  assert.equal(third.state.status, 500);
+  assert.doesNotMatch(JSON.stringify(third.state.body), /prepared card image is not ready/i);
 });
 
 test("prepared image refresh is authenticated, GET-only, and validates session and side", async () => {
@@ -163,10 +197,12 @@ test("prepared image refresh is authenticated, GET-only, and validates session a
 test("prepared image browser client renews Front and Back with no-store before the ten-minute URL lifetime", async () => {
   const requests: Array<{ input: string; init: RequestInit }> = [];
   for (const side of ["FRONT", "BACK"] as const) {
+    const storageKey = `ai-grader-v2/admin-1/${SESSION_ID}/prepared/${side.toLowerCase()}/recapture-00000000-0000-4000-8000-000000000007/rectified.webp`;
     const result = await fetchSpeedsterPreparedRectifiedImageUrl({
       token: "admin-token",
       sessionId: SESSION_ID,
       side,
+      storageKey,
       async fetcher(input, init) {
         requests.push({ input, init });
         return { ok: true, async json() { return { side, imageUrl: `https://fresh.example/${side}` }; } };
@@ -176,8 +212,8 @@ test("prepared image browser client renews Front and Back with no-store before t
   }
 
   assert.deepEqual(requests.map(({ input }) => input), [
-    `/api/admin/ai-grader-v2/sessions/${SESSION_ID}/prepared-image?side=FRONT`,
-    `/api/admin/ai-grader-v2/sessions/${SESSION_ID}/prepared-image?side=BACK`,
+    `/api/admin/ai-grader-v2/sessions/${SESSION_ID}/prepared-image?side=FRONT&storageKey=${encodeURIComponent(`ai-grader-v2/admin-1/${SESSION_ID}/prepared/front/recapture-00000000-0000-4000-8000-000000000007/rectified.webp`)}`,
+    `/api/admin/ai-grader-v2/sessions/${SESSION_ID}/prepared-image?side=BACK&storageKey=${encodeURIComponent(`ai-grader-v2/admin-1/${SESSION_ID}/prepared/back/recapture-00000000-0000-4000-8000-000000000007/rectified.webp`)}`,
   ]);
   assert.ok(requests.every(({ init }) => init.method === "GET" && init.cache === "no-store"));
   assert.ok(requests.every(({ init }) => (init.headers as Record<string, string>).Authorization === "Bearer admin-token"));

@@ -28,6 +28,12 @@ from card_geometry import (
     warp_to_card_map,
     warp_to_inspection_map,
 )
+from color_geometry import (
+    engine_error_result,
+    propose_physical_outer,
+    propose_printed_frame,
+    serialize_proposal,
+)
 from defect_math import GRID_HEIGHT, GRID_WIDTH
 from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
 from trace_rle import decode_trace_rle, encode_trace_rle
@@ -53,6 +59,12 @@ class ImageInput(BaseModel):
     imageBase64: Optional[str] = None
 
 
+class GeometryRequest(ImageInput):
+    # Optional only for a backend-first rolling release. The authenticated web
+    # path requires it before color authority is issued.
+    matColor: Optional[str] = None
+
+
 class Point(BaseModel):
     x: float
     y: float
@@ -62,6 +74,19 @@ class GeometryResponse(BaseModel):
     width: int
     height: int
     corners: Optional[List[Point]]
+    colorGeometry: Optional[dict] = None
+
+
+class ColorGeometryRequest(ImageInput):
+    mode: str
+    matColor: str
+    corners: Optional[List[Point]] = None
+
+
+class ColorGeometryResponse(BaseModel):
+    width: int
+    height: int
+    colorGeometry: dict
 
 
 class RectifyRequest(ImageInput):
@@ -78,6 +103,8 @@ class PreparedUploads(BaseModel):
 
 class PrepareRequest(RectifyRequest):
     outputUploads: PreparedUploads
+    # Optional only for compatibility with the previously deployed web client.
+    matColor: Optional[str] = None
 
 
 class PrepareResponse(BaseModel):
@@ -87,6 +114,7 @@ class PrepareResponse(BaseModel):
     borders: List[Point]
     detectedBorders: List[str]
     inspectionFrame: dict
+    colorGeometry: Optional[dict] = None
 
 
 class MapRegistrationAnchor(BaseModel):
@@ -285,18 +313,72 @@ def ping():
 
 
 @app.post("/geometry", response_model=GeometryResponse)
-def geometry(request: ImageInput):
+def geometry(request: GeometryRequest):
     try:
         image = load_image(request.imageUrl, request.imageBase64)
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     height, width = image.shape[:2]
-    corners = detect_card_quad(image)
+    color_geometry = None
+    if request.matColor is not None:
+        try:
+            color_geometry = propose_physical_outer(image, request.matColor)
+        except Exception as error:
+            LOGGER.warning(
+                "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
+                type(error).__name__,
+            )
+            color_geometry = engine_error_result("PHYSICAL_OUTER", request.matColor)
+    corners = (
+        color_geometry["proposal"]
+        if color_geometry and color_geometry["outcome"] == "ACCEPTED"
+        else detect_card_quad(image)
+    )
     return {
         "width": width,
         "height": height,
         "corners": normalized_points(corners, width, height) if corners is not None else None,
+        "colorGeometry": serialize_proposal(color_geometry, width, height) if color_geometry else None,
+    }
+
+
+@app.post("/color-geometry", response_model=ColorGeometryResponse)
+def color_geometry(request: ColorGeometryRequest):
+    try:
+        image = load_image(request.imageUrl, request.imageBase64)
+        if request.mode == "PHYSICAL_OUTER":
+            analysis = image
+            try:
+                result = propose_physical_outer(analysis, request.matColor)
+            except Exception as error:
+                LOGGER.warning(
+                    "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
+                    type(error).__name__,
+                )
+                result = engine_error_result("PHYSICAL_OUTER", request.matColor)
+        elif request.mode == "PRINTED_FRAME":
+            if request.corners is None or len(request.corners) != 4:
+                raise ValueError("PRINTED_FRAME color recovery requires exactly four physical corners")
+            analysis, _transform = rectify(image, request.corners)
+            try:
+                result = propose_printed_frame(analysis, request.matColor)
+            except Exception as error:
+                LOGGER.warning(
+                    "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
+                    type(error).__name__,
+                )
+                result = engine_error_result("PRINTED_FRAME", request.matColor)
+        else:
+            raise ValueError("Color geometry recovery mode is invalid")
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    height, width = analysis.shape[:2]
+    return {
+        "width": width,
+        "height": height,
+        "colorGeometry": serialize_proposal(result, width, height),
     }
 
 
@@ -307,7 +389,23 @@ def prepare_image(request: PrepareRequest):
     try:
         image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
-        borders, detected_borders, _ = printed_border_quad(rectified)
+        color_geometry = None
+        if request.matColor is not None:
+            try:
+                color_geometry = propose_printed_frame(rectified, request.matColor)
+            except Exception as error:
+                LOGGER.warning(
+                    "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
+                    type(error).__name__,
+                )
+                color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
+        if color_geometry and color_geometry["outcome"] == "ACCEPTED":
+            borders = color_geometry["proposal"]
+            detected_borders = ["top", "right", "bottom", "left"]
+        else:
+            # Deliberately preserve today's default/manual proposal on every
+            # non-accepted color outcome.
+            borders, detected_borders, _ = printed_border_quad(rectified)
         if request.outputUploads.inspection:
             height, width = image.shape[:2]
             source = np.array(
@@ -361,6 +459,7 @@ def prepare_image(request: PrepareRequest):
         "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
         "detectedBorders": detected_borders,
         "inspectionFrame": frame,
+        "colorGeometry": serialize_proposal(color_geometry, TARGET_WIDTH, TARGET_HEIGHT) if color_geometry else None,
     }
 
 

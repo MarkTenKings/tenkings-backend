@@ -1,0 +1,37 @@
+{
+  "label": "OFFLINE ESTIMATE — NOT LIVE CALIBRATED",
+  "engineVersion": "speedster-color-geometry-v1",
+  "policyProvenance": "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+  "mode": "PRINTED_FRAME",
+  "inputs": {
+    "squirtleSourceFront": {
+      "sha256": "3024466a5fbc35a894f95428c13b8dd4302b8224e9ccd4aaa1cc1f44e50eeff9",
+      "preservedDimensionsPx": [1350, 1858],
+      "canonicalCrop": { "x": 40, "y": 40, "width": 1270, "height": 1778 }
+    },
+    "bulbasaurCurrentFrontInspection": {
+      "sha256": "b31170161f476d98245de08eb93e408939e306f4c03a182d8af1d9a72ba5f6d5",
+      "preservedDimensionsPx": [1350, 1858],
+      "canonicalCrop": { "x": 40, "y": 40, "width": 1270, "height": 1778 }
+    }
+  },
+  "results": {
+    "squirtleSourceFront": {
+      "outcome": "ACCEPTED",
+      "proposalCanonicalPxTLTRBRBL": [[50, 51], [1219, 51], [1219, 1731], [50, 1731]],
+      "sideSupport": { "top": 0.8738, "right": 1.0, "bottom": 0.8738, "left": 1.0 },
+      "sideMedianDeltaE": { "top": 28.8, "right": 24.926, "bottom": 37.081, "left": 39.772 },
+      "maximumCornerDistanceFromPriorRobustOfflineDetectorPx": 7.4501
+    },
+    "bulbasaurCurrentFrontInspection": {
+      "outcome": "ACCEPTED",
+      "proposalCanonicalPxTLTRBRBL": [[50, 59], [1211, 59], [1211, 1725], [50, 1725]],
+      "sideSupport": { "top": 1.0, "right": 0.9533, "bottom": 1.0, "left": 1.0 },
+      "sideMedianDeltaE": { "top": 68.046, "right": 67.236, "bottom": 69.171, "left": 67.996 },
+      "maximumCornerDistanceFromPriorRobustOfflineDetectorPx": 11.7139
+    }
+  },
+  "interpretation": "Both preserved bordered Fronts produce four-side-supported proposer drafts inside the fixed outer 1-6 mm print-field band. These axis-aligned drafts are not human acceptance and do not establish live accuracy/calibration. Mandatory CenteringAssist confirmation/correction remains required.",
+  "mapRegistrationUse": "FORBIDDEN",
+  "productionMutation": false
+}

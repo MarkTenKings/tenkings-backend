@@ -206,11 +206,11 @@ def _portraitize(corners: np.ndarray) -> np.ndarray:
     return corners
 
 
-def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
-    """Return the physical card quad or None; never substitute the photo frame."""
+def ranked_card_quads(image: np.ndarray, limit: int = 4) -> list[tuple[float, np.ndarray]]:
+    """Return distinct physical-card candidates in deterministic score order."""
     working, scale = _working_image(image)
     frame_area = working.shape[0] * working.shape[1]
-    best = None
+    candidates: list[tuple[float, np.ndarray]] = []
     for contour in _candidate_contours(working):
         x, y, width, height = cv2.boundingRect(contour)
         if (
@@ -241,12 +241,31 @@ def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
             * (1.0 - aspect_error / MAX_ASPECT_ERROR)
             * min(1.0, fill / 0.93)
         )
-        if best is None or score > best[0]:
-            best = (score, contour, rectangle)
-    if best is None:
-        return None
-    corners = _portraitize(_side_line_corners(best[1], best[2]))
-    return corners / scale if scale < 1.0 else corners
+        corners = _portraitize(_side_line_corners(contour, rectangle))
+        corners = corners / scale if scale < 1.0 else corners
+        diagonal = float(np.linalg.norm(corners[2] - corners[0]))
+        if diagonal <= 0:
+            continue
+        candidates.append((float(score), corners))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    distinct: list[tuple[float, np.ndarray]] = []
+    for score, corners in candidates:
+        diagonal = float(np.linalg.norm(corners[2] - corners[0]))
+        duplicate = any(
+            float(np.mean(np.linalg.norm(corners - existing, axis=1))) / diagonal < 0.012
+            for _, existing in distinct
+        )
+        if not duplicate:
+            distinct.append((score, corners))
+        if len(distinct) >= max(1, limit):
+            break
+    return distinct
+
+
+def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
+    """Return the physical card quad or None; never substitute the photo frame."""
+    candidates = ranked_card_quads(image, limit=1)
+    return candidates[0][1] if candidates else None
 
 
 def warp_to_card_map(

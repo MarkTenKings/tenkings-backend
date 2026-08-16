@@ -532,6 +532,14 @@ export default function CardMapsPage() {
     setWorking(true);
     setWorkflowError(null);
     setMessage("Saving this card's exact Front and Back source imagery and provenance.");
+    if (!bundle.front.colorGeometryEvidence || !bundle.back.colorGeometryEvidence) {
+      captureSaveInFlight.current = false;
+      setWorking(false);
+      return {
+        saved: false,
+        message: "Color Geometry evidence is incomplete. Existing photos and confirmed geometry remain preserved; explicitly recover the missing side and mode before save.",
+      };
+    }
     const compactSide = (side: SpeedsterCaptureBundle["front"]) => ({
       originalStorageKey: side.originalStorageKey,
       rectifiedStorageKey: side.rectifiedStorageKey,
@@ -542,6 +550,7 @@ export default function CardMapsPage() {
       transform: side.transform,
       centeringQuad: side.centeringQuad,
       centeringBorders: side.centeringBorders,
+      colorGeometryEvidence: side.colorGeometryEvidence!,
     });
     try {
       const frontRegistration = bundle.front.mapRegistration;
@@ -575,8 +584,28 @@ export default function CardMapsPage() {
           } : {}),
         }),
       });
-      const payload = await response.json().catch(() => ({})) as { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "CARD MAP source could not be saved.");
+      const payload = await response.json().catch(() => ({})) as {
+        message?: string;
+        colorGeometryReceiptExpired?: {
+          side?: unknown;
+          mode?: unknown;
+        };
+      };
+      if (!response.ok) {
+        const expired = payload.colorGeometryReceiptExpired;
+        if ((expired?.side === "FRONT" || expired?.side === "BACK")
+          && (expired.mode === "PHYSICAL_OUTER" || expired.mode === "PRINTED_FRAME")) {
+          return {
+            saved: false,
+            message: payload.message ?? "Color Geometry receipt expired.",
+            colorGeometryReceiptExpired: {
+              side: expired.side,
+              mode: expired.mode,
+            },
+          };
+        }
+        throw new Error(payload.message ?? "CARD MAP source could not be saved.");
+      }
       clearPreservedBrowserDraft();
       void router.replace({ pathname: "/card-maps", hash: "new-card-map" }, undefined, { shallow: true });
       const localSource: SpeedsterTrainSource = {

@@ -16,6 +16,7 @@ owner: Mark
 
 ## Speedster Map Registration Receipt Gate
 - Any release that requires server-authoritative Card Map registration receipts must provision dedicated, server-only `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY` and `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID` values in the Vercel Production environment before activation.
+- Any future release that explicitly activates the owner-directed, currently undeployed Color Geometry proposer must first provision dedicated, server-only `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY` and `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY_ID` values. Never reuse the Card Map receipt key. Its thresholds/results remain not-live-calibrated offline estimates, and this repository change does not authorize deployment, migration, or Production activation without separate explicit Phase 2 deploy approval.
 - The receipt key must be a new random secret used only for registration receipts; never reuse the Card Format Authority key or expose this key to a browser, local capture helper, RunPod worker, log, or committed file.
 - Record only the key ID and successful presence/format check in `docs/handoffs/SESSION_LOG.md`; never print or record the secret. Missing or invalid authority fails registration closed.
 

@@ -2,11 +2,12 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
+  legacySpeedsterOriginalStorageKey,
   speedsterIphonePairingUrl,
   speedsterIphoneStorageKey,
 } from "../../../../lib/server/aiGraderV2IphoneCapture";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { presignReadUrl } from "../../../../lib/server/storage";
+import { headStorageObject, presignReadUrl } from "../../../../lib/server/storage";
 
 const sessionIdSchema = z.string().min(20).max(80);
 const activateSchema = z.object({ sessionId: sessionIdSchema }).strict();
@@ -31,8 +32,17 @@ type Dependencies = {
   findDevice: (userId: string) => Promise<DeviceRecord | null>;
   createDevice: (userId: string, sessionId: string) => Promise<DeviceRecord>;
   activateDevice: (id: string, sessionId: string) => Promise<DeviceRecord>;
+  storageObjectExists: (storageKey: string) => Promise<boolean>;
   presignReadUrl: (storageKey: string) => Promise<string>;
 };
+
+function storageObjectNotFound(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.$metadata?.httpStatusCode === 404
+    || candidate.name === "NotFound"
+    || candidate.name === "NoSuchKey";
+}
 
 const dependencies: Dependencies = {
   requireAdminSession,
@@ -50,8 +60,77 @@ const dependencies: Dependencies = {
     where: { id },
     data: { activeSessionId, uploadVersion: 0, readyVersion: 0 },
   }),
+  storageObjectExists: async (storageKey) => {
+    try {
+      await headStorageObject(storageKey);
+      return true;
+    } catch (error) {
+      if (storageObjectNotFound(error)) return false;
+      throw error;
+    }
+  },
   presignReadUrl,
 };
+
+export async function resolveSpeedsterIphoneReadyPair(input: Readonly<{
+  userId: string;
+  sessionId: string;
+  readyVersion: number;
+  acceptedLegacyReadyVersion?: number;
+  storageObjectExists: (storageKey: string) => Promise<boolean>;
+}>) {
+  const versioned = {
+    front: speedsterIphoneStorageKey(input.userId, input.sessionId, "FRONT", input.readyVersion),
+    back: speedsterIphoneStorageKey(input.userId, input.sessionId, "BACK", input.readyVersion),
+  };
+  const versionedExists = await Promise.all([
+    input.storageObjectExists(versioned.front),
+    input.storageObjectExists(versioned.back),
+  ]);
+  if (versionedExists.every(Boolean)) return { ...versioned, storageGeneration: "VERSIONED" as const };
+  if (versionedExists.some(Boolean)) {
+    throw Object.assign(new Error("The versioned iPhone capture pair is incomplete. No photo was selected."), {
+      statusCode: 409,
+    });
+  }
+  const legacy = {
+    front: legacySpeedsterOriginalStorageKey(input.userId, input.sessionId, "FRONT"),
+    back: legacySpeedsterOriginalStorageKey(input.userId, input.sessionId, "BACK"),
+  };
+  const legacyExists = await Promise.all([
+    input.storageObjectExists(legacy.front),
+    input.storageObjectExists(legacy.back),
+  ]);
+  if (!legacyExists.every(Boolean)) {
+    throw Object.assign(new Error("The iPhone capture pair is incomplete. No photo was selected."), {
+      statusCode: 409,
+    });
+  }
+  if (input.acceptedLegacyReadyVersion !== input.readyVersion) {
+    throw new SpeedsterLegacyIphonePairRequiresChoiceError(input.readyVersion);
+  }
+  return { ...legacy, storageGeneration: "LEGACY" as const };
+}
+
+export class SpeedsterLegacyIphonePairRequiresChoiceError extends Error {
+  readonly statusCode = 409;
+  readonly legacyPairAvailable = true;
+
+  constructor(readonly readyVersion: number) {
+    super(`A complete legacy iPhone pair exists for ready version ${readyVersion}. Explicit operator confirmation is required before it can be selected.`);
+    this.name = "SpeedsterLegacyIphonePairRequiresChoiceError";
+  }
+}
+
+function acceptedLegacyReadyVersion(req: NextApiRequest): number | undefined | null {
+  const raw = Array.isArray(req.query.acceptLegacyReadyVersion)
+    ? req.query.acceptLegacyReadyVersion[0]
+    : req.query.acceptLegacyReadyVersion;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
+}
 
 function validDraft(session: SessionRecord | null, userId: string) {
   return session?.createdByUserId === userId && session.workflowState === "DRAFT";
@@ -98,18 +177,38 @@ export function createAiGraderV2AdminIphoneCaptureHandler(deps: Dependencies = d
       if (!device || device.activeSessionId !== activeSessionId || device.readyVersion < 1) {
         return res.status(200).json({ readyVersion: 0 });
       }
-      const frontStorageKey = speedsterIphoneStorageKey(admin.user.id, activeSessionId, "FRONT");
-      const backStorageKey = speedsterIphoneStorageKey(admin.user.id, activeSessionId, "BACK");
+      const acceptedLegacyVersion = acceptedLegacyReadyVersion(req);
+      if (acceptedLegacyVersion === null) {
+        return res.status(400).json({ message: "Invalid accepted legacy iPhone ready version" });
+      }
+      const readyPair = await resolveSpeedsterIphoneReadyPair({
+        userId: admin.user.id,
+        sessionId: activeSessionId,
+        readyVersion: device.readyVersion,
+        ...(acceptedLegacyVersion === undefined ? {} : { acceptedLegacyReadyVersion: acceptedLegacyVersion }),
+        storageObjectExists: deps.storageObjectExists,
+      });
+      const frontStorageKey = readyPair.front;
+      const backStorageKey = readyPair.back;
       const [frontReadUrl, backReadUrl] = await Promise.all([
         deps.presignReadUrl(frontStorageKey),
         deps.presignReadUrl(backStorageKey),
       ]);
       return res.status(200).json({
         readyVersion: device.readyVersion,
+        storageGeneration: readyPair.storageGeneration,
         front: { storageKey: frontStorageKey, readUrl: frontReadUrl },
         back: { storageKey: backStorageKey, readUrl: backReadUrl },
       });
     } catch (error) {
+      if (error instanceof SpeedsterLegacyIphonePairRequiresChoiceError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          readyVersion: error.readyVersion,
+          legacyPairAvailable: error.legacyPairAvailable,
+          storageGeneration: "LEGACY",
+        });
+      }
       const mapped = toErrorResponse(error);
       return res.status(mapped.status).json({ message: mapped.message });
     }

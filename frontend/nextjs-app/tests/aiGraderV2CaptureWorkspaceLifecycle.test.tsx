@@ -58,10 +58,84 @@ const validQuad = [
   { x: 0.1, y: 0.9 },
 ] as const;
 
+const colorProposal = (mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", proposal: typeof validQuad | null = validQuad) => ({
+  version: "speedster-color-geometry-proposal-v1" as const,
+  engineVersion: "speedster-color-geometry-v1" as const,
+  authority: "PROPOSER_ONLY" as const,
+  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+  mode,
+  outcome: proposal ? "ACCEPTED" as const : "INSUFFICIENT_EVIDENCE" as const,
+  matColor: "BLACK" as const,
+  proposal,
+  contrastFloorDeltaE: mode === "PHYSICAL_OUTER" ? 18 : 12,
+  minimumSideSupport: mode === "PHYSICAL_OUTER" ? 0.7 : 0.55,
+  sideEvidence: Object.fromEntries(["top", "right", "bottom", "left"].map((side) => [side, {
+    medianContrastDeltaE: proposal ? 40 : 0,
+    medianLightnessContrast: proposal ? 40 : 0,
+    supportFraction: proposal ? 1 : 0,
+    sampleCount: 33,
+    candidateCount: proposal ? 1 : 0,
+    ambiguous: false,
+  }])) as GeometryResponse["colorGeometry"]["sideEvidence"],
+  ambiguity: { candidateCount: proposal ? 1 : 0, runnerUpScoreRatio: null, ambiguous: false },
+  advisory: proposal ? null : { code: "SWITCH_MAT", recommendedMat: "WHITE" as const, message: "Switch mats." },
+});
+
+const geometryResponse = (corners: typeof validQuad | null = validQuad): GeometryResponse => ({
+  width: 1200,
+  height: 1600,
+  corners,
+  colorGeometry: colorProposal("PHYSICAL_OUTER", corners),
+  colorGeometryReceipt: "test-physical-receipt",
+});
+
+const advisoryGeometryResponse = (
+  matColor: "BLACK" | "WHITE",
+  recommendedMat: "WHITE" | "MAGENTA",
+): GeometryResponse => {
+  const fallback = geometryResponse(null);
+  return {
+    ...fallback,
+    colorGeometry: {
+      ...fallback.colorGeometry,
+      matColor,
+      advisory: { code: "SWITCH_MAT", recommendedMat, message: `Switch to ${recommendedMat}.` },
+    },
+  };
+};
+
+const colorScore = (rate: number) => ({
+  version: "speedster-color-geometry-score-v1" as const,
+  totalResults: 4,
+  acceptedResults: 4,
+  acceptedUnchanged: Math.round(rate * 4),
+  correctedAccepted: 4 - Math.round(rate * 4),
+  manualFallbacks: 0,
+  proposalAgreementRate: rate,
+  firstDraftYieldRate: rate,
+  proposalCoverageRate: 1,
+  outcomes: { ACCEPTED: 4, INSUFFICIENT_EVIDENCE: 0, NOT_APPLICABLE: 0, ABSTAIN: 0 },
+  breakdown: [],
+  recentCards: [],
+});
+
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
+  });
+}
+
+function preparedResponse(matColor: "BLACK" | "WHITE" | "MAGENTA" = "BLACK") {
+  return jsonResponse({
+    width: 1270,
+    height: 1778,
+    transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    borders: validQuad,
+    detectedBorders: ["top", "right", "bottom", "left"],
+    inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
+    colorGeometry: { ...colorProposal("PRINTED_FRAME"), matColor },
+    colorGeometryReceipt: `test-printed-${matColor.toLowerCase()}-receipt`,
   });
 }
 
@@ -83,8 +157,19 @@ type Harness = {
   container: HTMLElement;
   root: Root;
   getPollCount: () => number;
+  getIphoneActivationCount: () => number;
+  getOriginalUploadPlanCount: (side: "FRONT" | "BACK") => number;
+  getPreparedUploadPlanCount: (side: "FRONT" | "BACK") => number;
+  getPrepareCount: (side: "FRONT" | "BACK") => number;
+  getColorRecoveryRequests: () => readonly Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+    matColor: "BLACK" | "WHITE" | "MAGENTA";
+    corners: unknown;
+  }>[];
   getRegistrationCount: () => number;
   getRegistrationCountForSide: (side: "FRONT" | "BACK") => number;
+  getRegistrationResultsForSide: (side: "FRONT" | "BACK") => readonly Record<string, unknown>[];
   getRescueAttemptIds: () => readonly string[];
   getRegistrationOrchestrations: () => readonly Readonly<{
     side: "FRONT" | "BACK";
@@ -98,6 +183,7 @@ type Harness = {
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
   rerenderSession: (sessionId: string) => Promise<void>;
   rerenderActiveMap: (activeMap: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string }) => Promise<void>;
+  rerenderAuthority: (sessionId: string, token: string) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
@@ -117,6 +203,11 @@ async function mountWorkspace(input: {
   preparedImageRefreshFails?: boolean;
   preparedImageRefreshFailures?: number;
   preparedImageRequestBarrier?: (side: "FRONT" | "BACK") => Promise<void>;
+  preparedImageFetch?: (input: Readonly<{
+    side: "FRONT" | "BACK";
+    storageKey: string;
+    requestNumber: number;
+  }>) => Response | undefined | Promise<Response | undefined>;
   captureDraftSerialized?: string;
   localStorageGetFails?: boolean;
   localStorageSetFails?: boolean;
@@ -150,6 +241,19 @@ async function mountWorkspace(input: {
   mapLookupFailed?: boolean;
   imageRequestTimeoutMs?: number;
   decisionAuditConfirmationTimeoutMs?: number;
+  autoConfirmMats?: boolean;
+  iphonePollFetch?: (pollCount: number, url: string) => Response | undefined | Promise<Response | undefined>;
+  iphoneStorageGeneration?: "VERSIONED" | "LEGACY";
+  scoreFetch?: (request: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  prepareFetch?: (input: Readonly<{
+    side: "FRONT" | "BACK";
+    matColor: "BLACK" | "WHITE" | "MAGENTA";
+    signal: AbortSignal | null | undefined;
+  }>) => Promise<Response>;
+  colorRecoveryFailure?: Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+  }>;
   onSave?: (
     bundle: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle,
   ) => import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult | Promise<import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult>;
@@ -224,8 +328,19 @@ async function mountWorkspace(input: {
   });
 
   let pollCount = 0;
+  let iphoneActivationCount = 0;
+  const originalUploadPlanCount = { FRONT: 0, BACK: 0 };
+  const preparedUploadPlanCount = { FRONT: 0, BACK: 0 };
+  const prepareCount = { FRONT: 0, BACK: 0 };
+  const colorRecoveryRequests: Array<Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+    matColor: "BLACK" | "WHITE" | "MAGENTA";
+    corners: unknown;
+  }>> = [];
   let registrationCount = 0;
   const registrationCountBySide = { FRONT: 0, BACK: 0 };
+  const registrationResultsBySide: Record<"FRONT" | "BACK", Record<string, unknown>[]> = { FRONT: [], BACK: [] };
   const preparedImageRefreshCount = { FRONT: 0, BACK: 0 };
   const rescueAttemptIds: string[] = [];
   const registrationOrchestrations: Array<Readonly<{
@@ -239,28 +354,76 @@ async function mountWorkspace(input: {
   let remainingRegistrationNetworkFailures = input.registrationNetworkFailure?.count ?? 0;
   globalThis.fetch = async (request, init) => {
     const url = String(request);
+    if (url === "/api/admin/ai-grader-v2/color-geometry-score") {
+      return input.scoreFetch?.(request, init) ?? jsonResponse({});
+    }
     if (url === "/api/admin/ai-grader-v2/iphone-capture" && init?.method === "POST") {
+      iphoneActivationCount += 1;
       return jsonResponse({ pairingUrl: "https://pair.example.test/speedster" });
     }
     if (url.startsWith("/api/admin/ai-grader-v2/iphone-capture?")) {
       pollCount += 1;
+      const customResponse = await input.iphonePollFetch?.(pollCount, url);
+      if (customResponse) return customResponse;
       const suffix = input.refreshedUrls && pollCount > 1 ? "refreshed" : "original";
       return jsonResponse({
         readyVersion: 1,
-        front: { storageKey: "front.jpg", readUrl: `https://images.example.test/front-${suffix}.jpg` },
-        back: { storageKey: "back.jpg", readUrl: `https://images.example.test/back-${suffix}.jpg` },
+        storageGeneration: input.iphoneStorageGeneration ?? "VERSIONED",
+        front: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg",
+          readUrl: `https://images.example.test/front-${suffix}.jpg`,
+        },
+        back: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg",
+          readUrl: `https://images.example.test/back-${suffix}.jpg`,
+        },
       });
     }
     if (url === "/api/admin/ai-grader-v2/upload-plan") {
+      const body = JSON.parse(String(init?.body)) as {
+        side: "FRONT" | "BACK";
+        kind: "ORIGINAL" | "PREPARED";
+        targetedRecapture?: boolean;
+        sourceImageStorageKey?: string;
+      };
+      if (body.kind === "ORIGINAL") {
+        originalUploadPlanCount[body.side] += 1;
+        const storageKey = body.targetedRecapture
+          ? `ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/${body.side.toLowerCase()}.jpg`
+          : `ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/${body.side.toLowerCase()}.jpg`;
+        return jsonResponse({
+          storageKey,
+          uploadUrl: `https://upload.example.test/${encodeURIComponent(storageKey)}`,
+          readUrl: `https://read.example.test/${encodeURIComponent(storageKey)}`,
+        });
+      }
+      preparedUploadPlanCount[body.side] += 1;
+      const generation = /\/original\/(iphone-v[1-9][0-9]*|recapture-[a-f0-9-]+)\//i
+        .exec(body.sourceImageStorageKey ?? "")?.[1]?.toLowerCase();
+      const preparedPrefix = `ai-grader-v2/admin-1/speedster-session-lifecycle-test/prepared/${body.side.toLowerCase()}${generation ? `/${generation}` : ""}`;
       const outputs = Object.fromEntries(["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"].map((kind) => [
         kind,
-        { storageKey: `${kind}.webp`, uploadUrl: `https://upload.example.test/${kind}`, readUrl: `https://read.example.test/${kind}` },
+        {
+          storageKey: `${preparedPrefix}/${kind.toLowerCase()}.webp`,
+          readUrl: `https://read.example.test/${encodeURIComponent(`${preparedPrefix}/${kind.toLowerCase()}.webp`)}`,
+        },
       ]));
       return jsonResponse({ outputs });
     }
+    if (url.startsWith("https://upload.example.test/") && init?.method === "PUT") {
+      return new Response(null, { status: 200 });
+    }
     if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/prepared-image?side=")) {
-      const side = url.endsWith("side=FRONT") ? "FRONT" : "BACK";
+      const parsedUrl = new URL(url, "https://collect.tenkings.co");
+      const side = parsedUrl.searchParams.get("side") === "FRONT" ? "FRONT" : "BACK";
+      const storageKey = parsedUrl.searchParams.get("storageKey") ?? "";
       preparedImageRefreshCount[side] += 1;
+      const customResponse = await input.preparedImageFetch?.({
+        side,
+        storageKey,
+        requestNumber: preparedImageRefreshCount[side],
+      });
+      if (customResponse) return customResponse;
       await input.preparedImageRequestBarrier?.(side);
       if (input.preparedImageRefreshFails || remainingPreparedImageRefreshFailures > 0) {
         remainingPreparedImageRefreshFailures = Math.max(0, remainingPreparedImageRefreshFailures - 1);
@@ -271,15 +434,36 @@ async function mountWorkspace(input: {
         imageUrl: `https://read.example.test/${side.toLowerCase()}-rectified-refresh-${preparedImageRefreshCount[side]}`,
       });
     }
-    if (url === "/api/admin/ai-grader-v2/image/prepare") {
+    if (url === "/api/admin/ai-grader-v2/image/color-geometry") {
+      const body = JSON.parse(String(init?.body)) as {
+        side: "FRONT" | "BACK";
+        mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+        matColor: "BLACK" | "WHITE" | "MAGENTA";
+        corners: unknown;
+      };
+      colorRecoveryRequests.push(body);
+      if (input.colorRecoveryFailure?.side === body.side
+        && input.colorRecoveryFailure.mode === body.mode) {
+        return jsonResponse({ message: `Targeted ${body.side} ${body.mode} recovery failed.` }, 503);
+      }
       return jsonResponse({
-        width: 1270,
-        height: 1778,
-        transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-        borders: validQuad,
-        detectedBorders: ["top", "right", "bottom", "left"],
-        inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
+        width: body.mode === "PHYSICAL_OUTER" ? 1200 : 1270,
+        height: body.mode === "PHYSICAL_OUTER" ? 1600 : 1778,
+        colorGeometry: { ...colorProposal(body.mode), matColor: body.matColor },
+        colorGeometryReceipt: `recovered-${body.side.toLowerCase()}-${body.mode.toLowerCase()}-${colorRecoveryRequests.length}`,
       });
+    }
+    if (url === "/api/admin/ai-grader-v2/image/prepare") {
+      const body = JSON.parse(String(init?.body)) as {
+        side: "FRONT" | "BACK";
+        matColor: "BLACK" | "WHITE" | "MAGENTA";
+      };
+      prepareCount[body.side] += 1;
+      return input.prepareFetch?.({
+        side: body.side,
+        matColor: body.matColor,
+        signal: init?.signal,
+      }) ?? preparedResponse(body.matColor);
     }
     if (url === "/api/admin/ai-grader-v2/image/map-registration") {
       registrationCount += 1;
@@ -411,7 +595,7 @@ async function mountWorkspace(input: {
           },
         }, 500);
       }
-      return jsonResponse({
+      const registrationResult = {
         version: body.rescue ? "opencv-redundant-ransac-registration-v2" : "opencv-human-anchor-registration-v1",
         side: body.side,
         mapRevisionId: input.activeMap?.revisionId,
@@ -434,22 +618,31 @@ async function mountWorkspace(input: {
           },
         } : {}),
         ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
-      });
+      };
+      registrationResultsBySide[body.side].push(registrationResult);
+      return jsonResponse(registrationResult);
     }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
   };
 
   const originalProposeGeometry = speedsterImageService.proposeGeometry;
-  speedsterImageService.proposeGeometry = input.proposeGeometry;
+  speedsterImageService.proposeGeometry = async (...args) => {
+    const response = await input.proposeGeometry(...args);
+    const requestedMat = args[1].matColor;
+    return response.colorGeometry.matColor === requestedMat ? response : {
+      ...response,
+      colorGeometry: { ...response.colorGeometry, matColor: requestedMat },
+    };
+  };
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   const events: SpeedsterCaptureInstrumentationEvent[] = [];
   const bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[] = [];
   const draftCleanupFailures: string[] = [];
   let activeMap = input.activeMap;
-  const renderSession = (sessionId: string) => (
+  const renderSession = (sessionId: string, renderToken = "admin-token") => (
     <CaptureWorkspace
-      token="admin-token"
+      token={renderToken}
       sessionId={sessionId}
       cardProfile="POKEMON"
       draftSurface={input.draftSurface}
@@ -484,23 +677,51 @@ async function mountWorkspace(input: {
   await act(async () => {
     root.render(renderSession("speedster-session-lifecycle-test"));
   });
-  await waitFor(
-    () => input.captureDraftSerialized || input.localStorageGetFails
-      ? Boolean(container.querySelector('[aria-label="Preserved capture draft"]')
-        || container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]')
-        || buttonByText(container, "Discard invalid preserved draft"))
-      : Boolean(buttonByText(container, "Set geometry")),
-    input.captureDraftSerialized || input.localStorageGetFails
-      ? "The preserved capture draft failure did not become explicit"
-      : "The capture pair did not become ready",
-  );
+  const awaitPhotoReadiness = async () => {
+    if (input.captureDraftSerialized || input.localStorageGetFails) {
+      await waitFor(
+        () => Boolean(container.querySelector('[aria-label="Preserved capture draft"]')
+          || container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]')
+          || buttonByText(container, "Discard invalid preserved draft")),
+        "The preserved capture draft failure did not become explicit",
+      );
+      return;
+    }
+    if (input.autoConfirmMats === false) {
+      await waitFor(
+        () => Boolean(buttonByText(container, "Confirm both mats to continue")
+          || container.querySelector('[aria-label="Legacy iPhone pair explicit choice"]')),
+        "The unconfirmed capture pair or explicit legacy choice did not become ready",
+      );
+      return;
+    }
+    await waitFor(
+      () => Boolean(buttonByText(container, "Confirm Front BLACK mat") && buttonByText(container, "Confirm Back WHITE mat")),
+      "The mat confirmation actions did not become ready",
+    );
+    await act(async () => {
+      fire(buttonByText(container, "Confirm Front BLACK mat")!, "click");
+      fire(buttonByText(container, "Confirm Back WHITE mat")!, "click");
+    });
+    await waitFor(
+      () => Boolean(buttonByText(container, "Set geometry")),
+      "The confirmed capture pair did not become ready",
+    );
+  };
+  await awaitPhotoReadiness();
 
   return {
     container,
     root,
     getPollCount: () => pollCount,
+    getIphoneActivationCount: () => iphoneActivationCount,
+    getOriginalUploadPlanCount: (side) => originalUploadPlanCount[side],
+    getPreparedUploadPlanCount: (side) => preparedUploadPlanCount[side],
+    getPrepareCount: (side) => prepareCount[side],
+    getColorRecoveryRequests: () => colorRecoveryRequests,
     getRegistrationCount: () => registrationCount,
     getRegistrationCountForSide: (side) => registrationCountBySide[side],
+    getRegistrationResultsForSide: (side) => registrationResultsBySide[side],
     getRescueAttemptIds: () => rescueAttemptIds,
     getRegistrationOrchestrations: () => registrationOrchestrations,
     getPreparedImageRefreshCount: (side) => preparedImageRefreshCount[side],
@@ -512,10 +733,10 @@ async function mountWorkspace(input: {
     bundles,
     rerenderSession: async (nextSessionId) => {
       await act(async () => root.render(renderSession(nextSessionId)));
-      await waitFor(
-        () => Boolean(buttonByText(container, "Set geometry")),
-        "The replacement session capture pair did not become ready",
-      );
+      await awaitPhotoReadiness();
+    },
+    rerenderAuthority: async (nextSessionId, nextToken) => {
+      await act(async () => root.render(renderSession(nextSessionId, nextToken)));
     },
     rerenderActiveMap: async (nextActiveMap) => {
       activeMap = nextActiveMap;
@@ -566,7 +787,7 @@ test("late geometry completion from an old session cannot alter the replacement 
     proposeGeometry: async () => {
       calls += 1;
       if (calls === 1) return new Promise<GeometryResponse>((resolve) => { resolveOld = resolve; });
-      return { width: 1200, height: 1600, corners: validQuad };
+      return geometryResponse();
     },
   });
   try {
@@ -579,7 +800,7 @@ test("late geometry completion from an old session cannot alter the replacement 
       "Replacement session did not reach editable geometry",
     );
     await act(async () => {
-      resolveOld?.({ width: 1200, height: 1600, corners: null });
+      resolveOld?.(geometryResponse(null));
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
     assert.ok(harness.container.querySelector('[aria-label="front card geometry"]'));
@@ -598,7 +819,13 @@ test("image-service failures retain the safe server request ID for support", asy
   }, 504);
   try {
     await assert.rejects(
-      speedsterImageService.proposeGeometry("admin-token", "https://images.example.test/front.jpg"),
+      speedsterImageService.proposeGeometry("admin-token", {
+        sessionId: "speedster-session-lifecycle-test",
+        side: "FRONT",
+        imageUrl: "https://images.example.test/front.jpg",
+        sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+        matColor: "BLACK",
+      }),
       /request 12345678-1234-1234-1234-123456789abc/,
     );
   } finally {
@@ -727,6 +954,126 @@ async function loadPreparedImage(container: HTMLElement, alt: string) {
   return image;
 }
 
+async function prepareBothSidesAndReachFrontCentering(harness: Harness) {
+  await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+  await waitFor(
+    () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+    "Front geometry did not open",
+  );
+  await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+  await waitFor(
+    () => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')),
+    "Back geometry did not open",
+  );
+  await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+  await waitFor(
+    () => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
+    "Front centering did not open",
+  );
+}
+
+test("legacy iPhone pair requires an exact mounted operator choice and a later polling failure cannot erase it", async () => {
+  const harness = await mountWorkspace({
+    autoConfirmMats: false,
+    iphonePollFetch: (pollCount, url) => {
+      const accepted = new URL(url, "https://collect.tenkings.co").searchParams.get("acceptLegacyReadyVersion");
+      if (accepted !== "4") return jsonResponse({
+        message: "A complete legacy iPhone pair exists for ready version 4. Explicit operator confirmation is required before it can be selected.",
+        readyVersion: 4,
+        legacyPairAvailable: true,
+        storageGeneration: "LEGACY",
+      }, 409);
+      if (pollCount > 2) {
+        return jsonResponse({ message: "The versioned iPhone capture pair is incomplete. No photo was selected." }, 409);
+      }
+      return jsonResponse({
+        readyVersion: 4,
+        storageGeneration: "LEGACY",
+        front: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+          readUrl: "https://images.example.test/front-legacy.jpg",
+        },
+        back: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/back.jpg",
+          readUrl: "https://images.example.test/back-legacy.jpg",
+        },
+      });
+    },
+    proposeGeometry: async () => geometryResponse(),
+  });
+  try {
+    assert.match(harness.container.textContent ?? "", /Nothing has been selected/i);
+    assert.equal(harness.container.querySelector('img[alt="front card preview"]'), null);
+    assert.equal(harness.container.querySelector('img[alt="back card preview"]'), null);
+    const choose = buttonByText(harness.container, "Use legacy pair for ready version 4");
+    assert.ok(choose);
+    await act(async () => fire(choose, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('img[alt="front card preview"]')),
+      "Explicitly accepted legacy Front was not installed");
+    assert.match(harness.container.textContent ?? "", /Legacy iPhone front \+ back pair received and disclosed/i);
+    assert.ok(harness.container.querySelector('img[alt="front card preview"]'));
+    assert.ok(harness.container.querySelector('img[alt="back card preview"]'));
+    await waitFor(
+      () => /versioned iPhone capture pair is incomplete/i.test(harness.container.textContent ?? ""),
+      "The failed iPhone pair poll did not become visible",
+      3_000,
+    );
+    assert.match(harness.container.textContent ?? "", /Existing photos and operator work are preserved; the status check will retry/i);
+    assert.ok(harness.container.querySelector('img[alt="front card preview"]'));
+    assert.ok(harness.container.querySelector('img[alt="back card preview"]'));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("unsolicited HTTP 200 legacy pair is not installed without matching local exact-version acceptance", async () => {
+  const harness = await mountWorkspace({
+    autoConfirmMats: false,
+    iphonePollFetch: () => jsonResponse({
+      readyVersion: 9,
+      storageGeneration: "LEGACY",
+      front: {
+        storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+        readUrl: "https://images.example.test/unsolicited-front.jpg",
+      },
+      back: {
+        storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/back.jpg",
+        readUrl: "https://images.example.test/unsolicited-back.jpg",
+      },
+    }),
+    proposeGeometry: async () => geometryResponse(),
+  });
+  try {
+    assert.equal(harness.container.querySelector('img[alt="front card preview"]'), null);
+    assert.equal(harness.container.querySelector('img[alt="back card preview"]'), null);
+    assert.ok(buttonByText(harness.container, "Use legacy pair for ready version 9"));
+    assert.match(harness.container.textContent ?? "", /this client has not explicitly accepted that exact version.*Nothing was selected/i);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("BLACK/WHITE begin as disclosed suggestions and require explicit per-side operator confirmation", async () => {
+  const harness = await mountWorkspace({
+    autoConfirmMats: false,
+    proposeGeometry: async () => geometryResponse(),
+  });
+  try {
+    assert.match(harness.container.textContent ?? "", /FRONT MAT · SUGGESTED DEFAULT · CONFIRM/);
+    assert.match(harness.container.textContent ?? "", /BACK MAT · SUGGESTED DEFAULT · CONFIRM/);
+    assert.doesNotMatch(harness.container.textContent ?? "", /operator selected/i);
+    assert.equal(buttonByText(harness.container, "Confirm both mats to continue")?.disabled, true);
+    await act(async () => fire(buttonByText(harness.container, "Confirm Front BLACK mat")!, "click"));
+    assert.equal(buttonByText(harness.container, "Confirm both mats to continue")?.disabled, true);
+    await act(async () => fire(buttonByText(harness.container, "Confirm Back WHITE mat")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Explicit mat confirmations did not unlock geometry");
+    assert.match(harness.container.textContent ?? "", /FRONT BLACK mat · operator confirmed/);
+    assert.match(harness.container.textContent ?? "", /BACK WHITE mat · operator confirmed/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("normal mounted grading flow reaches draggable Set Geometry after a simulated five-second response", async () => {
   const pending: Array<(value: GeometryResponse) => void> = [];
   let now = 10_000;
@@ -747,10 +1094,10 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
     await waitFor(() => pending.length === 1, "Front geometry request did not start");
 
     now += 5_000;
-    await act(async () => pending[0]({ width: 1200, height: 1600, corners: validQuad }));
+    await act(async () => pending[0](geometryResponse()));
     await waitFor(() => pending.length === 2, "Back geometry request did not start");
     now += 125;
-    await act(async () => pending[1]({ width: 1200, height: 1600, corners: validQuad }));
+    await act(async () => pending[1](geometryResponse()));
     await waitFor(
       () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
       "Normal geometry did not reach the mounted Set Geometry screen",
@@ -796,7 +1143,7 @@ test("loaded image with no rendered area stays non-blocking and visibly diagnose
   const diagnostics: string[] = [];
   console.info = (line) => diagnostics.push(String(line));
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
   });
   try {
     const setGeometry = buttonByText(harness.container, "Set geometry");
@@ -835,7 +1182,7 @@ test("null corners mount manual draggable geometry instead of trapping the card 
   const harness = await mountWorkspace({
     proposeGeometry: async () => {
       call += 1;
-      return { width: 1200, height: 1600, corners: call === 1 ? null : validQuad };
+      return geometryResponse(call === 1 ? null : validQuad);
     },
   });
   try {
@@ -855,12 +1202,762 @@ test("null corners mount manual draggable geometry instead of trapping the card 
   }
 });
 
+test("Front targeted mat recapture preserves the complete Back side through the final bundle", async () => {
+  const geometryInputs: Array<Parameters<typeof speedsterImageService.proposeGeometry>[1]> = [];
+  let frontGeometryCalls = 0;
+  let backGeometryCalls = 0;
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/front-white-recapture",
+  });
+  const harness = await mountWorkspace({
+    activeMap: { revisionId: "map-must-not-register", scope: "FAMILY", name: "No premature map" },
+    proposeGeometry: async (_token, input) => {
+      geometryInputs.push(input);
+      if (input.side === "FRONT") {
+        frontGeometryCalls += 1;
+        if (frontGeometryCalls === 1) return advisoryGeometryResponse("BLACK", "WHITE");
+      } else {
+        backGeometryCalls += 1;
+      }
+      const accepted = geometryResponse();
+      return {
+        ...accepted,
+        colorGeometry: { ...accepted.colorGeometry, matColor: input.matColor },
+        colorGeometryReceipt: `${input.side.toLowerCase()}-${input.matColor.toLowerCase()}-attempt-${input.side === "FRONT" ? frontGeometryCalls : backGeometryCalls}`,
+      };
+    },
+  });
+  try {
+    await prepareBothSidesAndReachFrontCentering(harness);
+    await waitFor(
+      () => Boolean(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")),
+      "Front change-mat action did not render",
+    );
+    const retainedBackRegistration = structuredClone(harness.getRegistrationResultsForSide("BACK")[0]);
+    const iphoneActivationBeforeRecapture = harness.getIphoneActivationCount();
+    const iphonePollsBeforeRecapture = harness.getPollCount();
+    const backRefreshesBeforeRecapture = harness.getPreparedImageRefreshCount("BACK");
+    await act(async () => fire(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+
+    assert.equal(harness.container.querySelector('img[alt="front card preview"]'), null);
+    assert.ok(harness.container.querySelector('img[alt="back card preview"]'), "The successful Back original must remain visible");
+    assert.equal(
+      harness.container.querySelector<HTMLInputElement>('input[name="front-mat-color"][value="WHITE"]')?.checked,
+      true,
+    );
+    assert.equal(
+      harness.container.querySelector<HTMLInputElement>('input[name="back-mat-color"][value="WHITE"]')?.checked,
+      true,
+      "The non-advised mat selection must remain unchanged",
+    );
+    assert.equal(buttonByText(harness.container, "Add replacement Front photo to continue")?.disabled, true);
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 1);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1);
+    assert.equal(harness.bundles.length, 0);
+    assert.match(harness.container.textContent ?? "", /completed sibling side is retained/i);
+    assert.match(harness.container.textContent ?? "", /Targeted mat recapture uses only the unlocked local file slot/i);
+    assert.equal(harness.container.querySelector('[aria-label="Pair iPhone QR code"]'), null);
+
+    const [frontInput, backInput] = Array.from(harness.container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    assert.ok(frontInput && backInput);
+    assert.equal(frontInput.disabled, false);
+    assert.equal(backInput.disabled, true, "The retained Back original cannot be replaced during a Front-only rerun");
+    Object.defineProperty(frontInput, "files", {
+      configurable: true,
+      value: [{ name: "front-white.jpg", type: "image/jpeg" } as File],
+    });
+    await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set Front geometry")), "Fresh Front did not restore readiness");
+
+    await act(async () => fire(buttonByText(harness.container, "Set Front geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Replacement Front did not rerun physical geometry",
+    );
+    assert.deepEqual(
+      geometryInputs.map(({ sessionId, side, sourceImageStorageKey, matColor }) => ({
+        sessionId, side, sourceImageStorageKey, matColor,
+      })),
+      [
+        { sessionId: "speedster-session-lifecycle-test", side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg", matColor: "BLACK" },
+        { sessionId: "speedster-session-lifecycle-test", side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg", matColor: "WHITE" },
+        { sessionId: "speedster-session-lifecycle-test", side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg", matColor: "WHITE" },
+      ],
+      "The rerun must bind only the replacement Front and preserve the successful Back",
+    );
+
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Only Front centering did not reopen");
+    assert.equal(harness.container.querySelector('[aria-label="back card geometry"]'), null, "The retained Back geometry must not reopen");
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") >= 1, "Front prepared image did not refresh");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back prepared image did not refresh");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.bundles.length === 1, "Recaptured pair was not assembled");
+
+    assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg");
+    assert.equal(harness.bundles[0].back.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].matColor, "WHITE");
+    assert.equal(
+      harness.bundles[0].front.colorGeometryEvidence![0].serverReceipt,
+      "front-white-attempt-2",
+      "The final capture must use the newly returned signed color receipt, never the pre-recapture receipt",
+    );
+    assert.equal(
+      harness.bundles[0].back.colorGeometryEvidence![0].serverReceipt,
+      "back-white-attempt-1",
+      "The successful sibling receipt must remain byte-for-byte unchanged",
+    );
+    assert.equal(
+      harness.bundles[0].back.colorGeometryEvidence![1].serverReceipt,
+      "test-printed-white-receipt",
+      "The retained Back printed receipt must remain byte-for-byte unchanged",
+    );
+    assert.deepEqual(harness.bundles[0].back.mapRegistration, retainedBackRegistration);
+    assert.deepEqual({
+      originalUploadPlans: {
+        FRONT: harness.getOriginalUploadPlanCount("FRONT"),
+        BACK: harness.getOriginalUploadPlanCount("BACK"),
+      },
+      preparedUploadPlans: {
+        FRONT: harness.getPreparedUploadPlanCount("FRONT"),
+        BACK: harness.getPreparedUploadPlanCount("BACK"),
+      },
+      prepares: {
+        FRONT: harness.getPrepareCount("FRONT"),
+        BACK: harness.getPrepareCount("BACK"),
+      },
+      registrations: {
+        FRONT: harness.getRegistrationCountForSide("FRONT"),
+        BACK: harness.getRegistrationCountForSide("BACK"),
+      },
+    }, {
+      originalUploadPlans: { FRONT: 1, BACK: 0 },
+      preparedUploadPlans: { FRONT: 2, BACK: 1 },
+      prepares: { FRONT: 2, BACK: 1 },
+      registrations: { FRONT: 2, BACK: 1 },
+    });
+    assert.equal(harness.getIphoneActivationCount(), iphoneActivationBeforeRecapture);
+    assert.equal(harness.getPollCount(), iphonePollsBeforeRecapture);
+    assert.equal(harness.getPreparedImageRefreshCount("BACK"), backRefreshesBeforeRecapture + 1,
+      "Back receives only its first ordinary centering refresh; no sibling refresh occurs during Front rerun");
+  } finally {
+    await harness.cleanup();
+    if (createObjectUrlDescriptor) {
+      Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    } else {
+      Reflect.deleteProperty(URL, "createObjectURL");
+    }
+  }
+});
+
+test("Front targeted recapture exposes repeated registration interruption and manual retry preserves Back", async () => {
+  let frontGeometryCalls = 0;
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/front-targeted-registration-retry",
+  });
+  const harness = await mountWorkspace({
+    activeMap: { revisionId: "map-targeted-retry", scope: "FAMILY", name: "Targeted retry map" },
+    proposeGeometry: async (_token, input) => {
+      if (input.side === "FRONT") {
+        frontGeometryCalls += 1;
+        if (frontGeometryCalls === 1) return advisoryGeometryResponse("BLACK", "WHITE");
+      }
+      const accepted = geometryResponse();
+      return {
+        ...accepted,
+        colorGeometry: { ...accepted.colorGeometry, matColor: input.matColor },
+        colorGeometryReceipt: `${input.side.toLowerCase()}-${input.matColor.toLowerCase()}-${frontGeometryCalls}`,
+      };
+    },
+    onRegistrationRequest: (side, sideAttempt) => {
+      if (side === "FRONT" && (sideAttempt === 2 || sideAttempt === 3)) {
+        throw new TypeError("fetch failed");
+      }
+    },
+  });
+  try {
+    await prepareBothSidesAndReachFrontCentering(harness);
+    await waitFor(
+      () => Boolean(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")),
+      "Front targeted recapture action did not render",
+    );
+    const retainedBackRegistration = structuredClone(harness.getRegistrationResultsForSide("BACK")[0]);
+    await act(async () => fire(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+
+    const [frontInput, backInput] = Array.from(harness.container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    assert.ok(frontInput && backInput);
+    assert.equal(frontInput.disabled, false);
+    assert.equal(backInput.disabled, true);
+    Object.defineProperty(frontInput, "files", {
+      configurable: true,
+      value: [{ name: "front-white-retry.jpg", type: "image/jpeg" } as File],
+    });
+    await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set Front geometry")), "Replacement Front did not become ready");
+    await act(async () => fire(buttonByText(harness.container, "Set Front geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Replacement Front geometry did not open",
+    );
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+
+    await waitFor(
+      () => Boolean(buttonByText(harness.container, "FRONT: Retry failed side")),
+      "Repeated target registration interruption did not require an explicit choice",
+    );
+    assert.match(harness.container.textContent ?? "", /registration is interrupted only on replacement FRONT/i);
+    assert.match(harness.container.textContent ?? "", /Back registration remains retained and is not rerun/i);
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 3, "Target gets one initial and one visible automatic retry after its original registration");
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "The retained sibling must not be registered again");
+    assert.deepEqual(harness.getRegistrationResultsForSide("BACK"), [retainedBackRegistration]);
+    assert.equal(harness.bundles.length, 0);
+    await waitFor(() => {
+      const value = harness.getCaptureDraftSerialized();
+      return Boolean(value && JSON.parse(value).recaptureSide === "FRONT");
+    }, "Targeted interruption draft was not durably written");
+    const interruptedDraft = JSON.parse(harness.getCaptureDraftSerialized()!);
+    assert.equal(interruptedDraft.registrationRecordedAtMs.FRONT, undefined,
+      "The replaced Front's old successful timestamp must be cleared before its retry succeeds");
+    assert.equal(typeof interruptedDraft.registrationRecordedAtMs.BACK, "number",
+      "The retained Back registration timestamp must remain exact");
+    const geometryEventCountBeforeRetry = harness.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED").length;
+
+    await act(async () => fire(buttonByText(harness.container, "FRONT: Retry failed side")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
+      "Successful manual target retry did not resume only Front centering",
+    );
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 4);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1);
+    await waitFor(() => {
+      const value = harness.getCaptureDraftSerialized();
+      return Boolean(value && typeof JSON.parse(value).registrationRecordedAtMs.FRONT === "number");
+    }, "Successful replacement Front registration timestamp was not durably restamped");
+    const geometryAfterRetry = harness.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED");
+    assert.equal(geometryAfterRetry.length, geometryEventCountBeforeRetry + 1);
+    assert.deepEqual(geometryAfterRetry.at(-1)?.details, {
+      side: "FRONT",
+      mapAppliedScope: "FAMILY",
+      mapName: "Targeted retry map",
+      mapRevisionId: "map-targeted-retry",
+    }, "Only the freshly registered Front may be instrumented; retained Back must never be relabeled failed");
+    assert.deepEqual(
+      harness.getRegistrationOrchestrations().filter(({ side }) => side === "FRONT").map(({ orchestration }) => ({
+        attemptNumber: orchestration.attemptNumber,
+        trigger: orchestration.trigger,
+        successfulSiblingPreservedAtAttemptStart: orchestration.successfulSiblingPreservedAtAttemptStart,
+      })),
+      [
+        { attemptNumber: 1, trigger: "INITIAL", successfulSiblingPreservedAtAttemptStart: false },
+        { attemptNumber: 1, trigger: "INITIAL", successfulSiblingPreservedAtAttemptStart: true },
+        { attemptNumber: 2, trigger: "AUTOMATIC_RETRY", successfulSiblingPreservedAtAttemptStart: true },
+        { attemptNumber: 3, trigger: "MANUAL_RETRY", successfulSiblingPreservedAtAttemptStart: true },
+      ],
+    );
+
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not remain available");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.bundles.length === 1, "Targeted retry flow did not assemble its final bundle");
+    assert.deepEqual(harness.bundles[0].back.mapRegistration, retainedBackRegistration);
+    assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg");
+  } finally {
+    await harness.cleanup();
+    if (createObjectUrlDescriptor) {
+      Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    } else {
+      Reflect.deleteProperty(URL, "createObjectURL");
+    }
+  }
+});
+
+test("late prepared-image success or failure for an old key cannot replace or poison the recaptured key", async () => {
+  for (const staleOutcome of ["SUCCESS", "FAILURE"] as const) {
+    const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => `blob:https://collect.tenkings.co/front-refresh-race-${staleOutcome.toLowerCase()}`,
+    });
+    const pending: Array<{
+      storageKey: string;
+      resolve: (response: Response) => void;
+    }> = [];
+    let frontGeometryCalls = 0;
+    const harness = await mountWorkspace({
+      activeMap: { revisionId: `map-refresh-race-${staleOutcome.toLowerCase()}`, scope: "FAMILY", name: "Refresh race map" },
+      proposeGeometry: async (_token, input) => {
+        if (input.side === "FRONT") {
+          frontGeometryCalls += 1;
+          if (frontGeometryCalls === 1) return advisoryGeometryResponse("BLACK", "WHITE");
+        }
+        return geometryResponse();
+      },
+      preparedImageFetch: async ({ side, storageKey }) => {
+        if (side === "BACK") return jsonResponse({ side, imageUrl: "https://read.example.test/back-race.webp" });
+        return new Promise<Response>((resolve) => pending.push({ storageKey, resolve }));
+      },
+    });
+    try {
+      await prepareBothSidesAndReachFrontCentering(harness);
+      await waitFor(() => pending.length === 1, "Old Front prepared-key refresh did not start");
+      const oldKey = pending[0].storageKey;
+      await act(async () => fire(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+      const frontInput = harness.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+      assert.ok(frontInput);
+      Object.defineProperty(frontInput, "files", {
+        configurable: true,
+        value: [{ name: "front-refresh-race.jpg", type: "image/jpeg" } as File],
+      });
+      await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
+      await act(async () => fire(buttonByText(harness.container, "Set Front geometry")!, "click"));
+      await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Replacement Front geometry did not open");
+      await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+      await waitFor(() => pending.length === 2, "Replacement Front prepared-key refresh did not start");
+      const newKey = pending[1].storageKey;
+      assert.notEqual(newKey, oldKey);
+      assert.match(newKey, /\/recapture-00000000-0000-4000-8000-000000000007\/rectified\.webp$/);
+
+      await act(async () => pending[1].resolve(jsonResponse({
+        side: "FRONT",
+        imageUrl: "https://read.example.test/front-current-key.webp",
+      })));
+      await waitFor(() => harness.container.querySelector<HTMLImageElement>('img[alt="front rectified trading card"]')?.src
+        === "https://read.example.test/front-current-key.webp", "Current Front key did not install");
+
+      await act(async () => pending[0].resolve(staleOutcome === "SUCCESS"
+        ? jsonResponse({ side: "FRONT", imageUrl: "https://read.example.test/front-stale-key.webp" })
+        : jsonResponse({ message: "Old prepared key failed after recapture." }, 503)));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(
+        harness.container.querySelector<HTMLImageElement>('img[alt="front rectified trading card"]')?.src,
+        "https://read.example.test/front-current-key.webp",
+      );
+      assert.doesNotMatch(harness.container.textContent ?? "", /Old prepared key failed|anchor corrections are preserved/i);
+    } finally {
+      await harness.cleanup();
+      if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+      else Reflect.deleteProperty(URL, "createObjectURL");
+    }
+  }
+});
+
+test("targeted recapture remains available with no map but stays locked after an explicit loaded-map abandonment", async () => {
+  const noMap = await mountWorkspace({
+    proposeGeometry: async (_token, input) => input.side === "FRONT"
+      ? advisoryGeometryResponse("BLACK", "WHITE")
+      : geometryResponse(),
+  });
+  try {
+    await prepareBothSidesAndReachFrontCentering(noMap);
+    await waitFor(() => Boolean(buttonByText(noMap.container, "Change Front mat / recapture Front — WHITE")),
+      "No-map target recapture should remain explicitly available");
+    await act(async () => fire(buttonByText(noMap.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+    assert.ok(buttonByText(noMap.container, "Add replacement Front photo to continue"));
+    assert.match(noMap.container.textContent ?? "", /completed sibling side is retained/i);
+  } finally {
+    await noMap.cleanup();
+  }
+
+  const abandoned = await mountWorkspace({
+    activeMap: { revisionId: "map-explicitly-abandoned", scope: "FAMILY", name: "Abandoned map" },
+    registrationFailsOnSide: "BACK",
+    proposeGeometry: async (_token, input) => input.side === "FRONT"
+      ? advisoryGeometryResponse("BLACK", "WHITE")
+      : geometryResponse(),
+  });
+  try {
+    await act(async () => fire(buttonByText(abandoned.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(abandoned.container, "Continue without Card Map")), "Explicit abandon choice did not render");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front centering geometry"]')), "Manual Front centering did not open");
+    assert.equal(buttonByText(abandoned.container, "Change Front mat / recapture Front — WHITE"), undefined);
+    assert.match(abandoned.container.textContent ?? "", /One-side mat recapture is locked because the loaded Card Map was explicitly left unapplied/i);
+    assert.equal(abandoned.getOriginalUploadPlanCount("FRONT"), 0);
+    assert.equal(abandoned.getOriginalUploadPlanCount("BACK"), 0);
+  } finally {
+    await abandoned.cleanup();
+  }
+});
+
+test("Front and Back crashes after replacement PUT preserve the last complete draft without overwriting evidence", async () => {
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/crash-after-put",
+  });
+  try {
+    for (const target of ["FRONT", "BACK"] as const) {
+      let targetGeometryCalls = 0;
+      let replacementGeometryStarted = false;
+      const map = { revisionId: `map-put-crash-${target.toLowerCase()}`, scope: "FAMILY" as const, name: `${target} PUT crash map` };
+      const seed = await mountWorkspace({
+        activeMap: map,
+        proposeGeometry: async (_token, input) => {
+          if (input.side !== target) return geometryResponse();
+          targetGeometryCalls += 1;
+          if (targetGeometryCalls === 1) return advisoryGeometryResponse(
+            target === "FRONT" ? "BLACK" : "WHITE",
+            target === "FRONT" ? "WHITE" : "MAGENTA",
+          );
+          replacementGeometryStarted = true;
+          return new Promise<GeometryResponse>(() => {});
+        },
+      });
+      let preservedBeforeRecapture: string;
+      try {
+        await prepareBothSidesAndReachFrontCentering(seed);
+        if (target === "BACK") {
+          await loadPreparedImage(seed.container, "front rectified trading card");
+          await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+          await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+        }
+        await waitFor(() => {
+          const serialized = seed.getCaptureDraftSerialized();
+          return Boolean(serialized && JSON.parse(serialized).stage === `${target}_CENTERING`);
+        }, `Last complete ${target} draft was not written`);
+        preservedBeforeRecapture = seed.getCaptureDraftSerialized()!;
+        const change = buttonByText(seed.container, target === "FRONT"
+          ? "Change Front mat / recapture Front — WHITE"
+          : "Change Back mat / recapture Back — MAGENTA");
+        assert.ok(change);
+        await act(async () => fire(change, "click"));
+        const unlocked = seed.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+        assert.ok(unlocked);
+        Object.defineProperty(unlocked, "files", {
+          configurable: true,
+          value: [{ name: `${target.toLowerCase()}-put-crash.jpg`, type: "image/jpeg" } as File],
+        });
+        await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
+        await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
+        await waitFor(() => replacementGeometryStarted, `${target} replacement geometry did not start after its successful upload PUT`);
+        assert.equal(seed.getOriginalUploadPlanCount(target), 1);
+        assert.equal(seed.getCaptureDraftSerialized(), preservedBeforeRecapture,
+          "A crash after PUT must leave the last complete draft byte-for-byte intact; the versioned replacement object is not silently adopted");
+      } finally {
+        await seed.cleanup();
+      }
+
+      const resumed = await mountWorkspace({
+        activeMap: map,
+        captureDraftSerialized: preservedBeforeRecapture!,
+        proposeGeometry: async () => geometryResponse(),
+      });
+      try {
+        assert.ok(resumed.container.querySelector('[aria-label="Preserved capture draft"]'));
+        assert.doesNotMatch(resumed.getCaptureDraftSerialized()!, /recapture-00000000-0000-4000-8000-000000000007/);
+        await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+        await waitFor(() => Boolean(resumed.container.querySelector(`[aria-label="${target.toLowerCase()} centering geometry"]`)),
+          `${target} last complete draft did not resume after a crash boundary`);
+        assert.equal(resumed.getOriginalUploadPlanCount("FRONT") + resumed.getOriginalUploadPlanCount("BACK"), 0);
+        assert.equal(resumed.getPrepareCount("FRONT") + resumed.getPrepareCount("BACK"), 0);
+      } finally {
+        await resumed.cleanup();
+      }
+    }
+  } finally {
+    if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+  }
+});
+
+test("Front and Back replacement registration interruptions reload with exact target and retained sibling authority", async () => {
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/crash-after-registration",
+  });
+  try {
+    for (const target of ["FRONT", "BACK"] as const) {
+      let targetGeometryCalls = 0;
+      const map = { revisionId: `map-registration-crash-${target.toLowerCase()}`, scope: "FAMILY" as const, name: `${target} registration crash map` };
+      const seed = await mountWorkspace({
+        activeMap: map,
+        proposeGeometry: async (_token, input) => {
+          if (input.side === target) {
+            targetGeometryCalls += 1;
+            if (targetGeometryCalls === 1) return advisoryGeometryResponse(
+              target === "FRONT" ? "BLACK" : "WHITE",
+              target === "FRONT" ? "WHITE" : "MAGENTA",
+            );
+          }
+          return geometryResponse();
+        },
+        onRegistrationRequest: (side, sideAttempt) => {
+          if (side === target && (sideAttempt === 2 || sideAttempt === 3)) throw new TypeError("fetch failed");
+        },
+      });
+      let interruptedSerialized: string;
+      try {
+        await prepareBothSidesAndReachFrontCentering(seed);
+        if (target === "BACK") {
+          await loadPreparedImage(seed.container, "front rectified trading card");
+          await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+          await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+        }
+        const change = buttonByText(seed.container, target === "FRONT"
+          ? "Change Front mat / recapture Front — WHITE"
+          : "Change Back mat / recapture Back — MAGENTA");
+        assert.ok(change);
+        await act(async () => fire(change, "click"));
+        const unlocked = seed.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+        assert.ok(unlocked);
+        Object.defineProperty(unlocked, "files", {
+          configurable: true,
+          value: [{ name: `${target.toLowerCase()}-registration-crash.jpg`, type: "image/jpeg" } as File],
+        });
+        await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
+        await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
+        await waitFor(() => Boolean(seed.container.querySelector(`[aria-label="${target.toLowerCase()} card geometry"]`)), "Replacement geometry did not open");
+        await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+        await waitFor(() => Boolean(buttonByText(seed.container, `${target}: Retry failed side`)), "Target interruption did not become explicit");
+        await waitFor(() => {
+          const serialized = seed.getCaptureDraftSerialized();
+          return Boolean(serialized && JSON.parse(serialized).recaptureSide === target);
+        }, "Exact targeted recovery draft was not written");
+        interruptedSerialized = seed.getCaptureDraftSerialized()!;
+        const interrupted = JSON.parse(interruptedSerialized);
+        assert.match(interrupted[target.toLowerCase()].originalStorageKey, new RegExp(`/recapture-00000000-0000-4000-8000-000000000007/${target.toLowerCase()}\\.jpg$`));
+        assert.equal(interrupted.registrationRecordedAtMs[target], undefined);
+        const sibling = target === "FRONT" ? "BACK" : "FRONT";
+        assert.equal(typeof interrupted.registrationRecordedAtMs[sibling], "number");
+      } finally {
+        await seed.cleanup();
+      }
+
+      const resumed = await mountWorkspace({
+        activeMap: map,
+        captureDraftSerialized: interruptedSerialized!,
+        proposeGeometry: async () => geometryResponse(),
+      });
+      try {
+        await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+        await waitFor(() => Boolean(buttonByText(resumed.container, `${target}: Retry failed side`)),
+          `${target} targeted interruption did not survive reload`);
+        assert.equal(resumed.getRegistrationCount(), 0, "Reload must not silently retry either side");
+        assert.equal(resumed.getOriginalUploadPlanCount("FRONT") + resumed.getOriginalUploadPlanCount("BACK"), 0);
+        await act(async () => fire(buttonByText(resumed.container, `${target}: Retry failed side`)!, "click"));
+        await waitFor(() => Boolean(resumed.container.querySelector(`[aria-label="${target.toLowerCase()} centering geometry"]`)),
+          `${target} explicit retry did not return to exact target centering`);
+        assert.equal(resumed.getRegistrationCountForSide(target), 1);
+        assert.equal(resumed.getRegistrationCountForSide(target === "FRONT" ? "BACK" : "FRONT"), 0);
+        assert.deepEqual(
+          resumed.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED").map(({ details }) => details?.side),
+          [target],
+          "Only freshly touched registration sides may be instrumented after reload",
+        );
+      } finally {
+        await resumed.cleanup();
+      }
+    }
+  } finally {
+    if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+  }
+});
+
+test("in-flight prepare exposes no mat-reset action and a stale response cannot cross a session reset", async () => {
+  let resolvePrepare: ((response: Response) => void) | undefined;
+  let prepareSignal: AbortSignal | null | undefined;
+  const harness = await mountWorkspace({
+    activeMap: { revisionId: "map-must-not-register", scope: "FAMILY", name: "No stale prepare" },
+    proposeGeometry: async (_token, input) => input.side === "FRONT"
+      ? advisoryGeometryResponse("BLACK", "WHITE")
+      : geometryResponse(),
+    prepareFetch: async (input) => {
+      prepareSignal = input.signal;
+      return new Promise<Response>((resolve) => { resolvePrepare = resolve; });
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Front geometry did not render",
+    );
+    assert.equal(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE"), undefined,
+      "Mat recapture is offered only after both sides are prepared and registered");
+    assert.match(harness.container.textContent ?? "", /One-side mat recapture unlocks after both sides are prepared and registered/i);
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(resolvePrepare), "Front prepare request did not start");
+    assert.equal(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE"), undefined,
+      "Mat reset must not race an active prepare request");
+
+    await harness.rerenderSession("speedster-session-after-prepare-reset");
+    assert.equal(prepareSignal?.aborted, true, "Session reset must abort the exact prepare transport");
+    await act(async () => {
+      resolvePrepare?.(preparedResponse("BLACK"));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    assert.ok(buttonByText(harness.container, "Set geometry"), "Replacement draft must remain at fresh Photos");
+    assert.equal(harness.container.querySelector('[aria-label="back card geometry"]'), null);
+    assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.equal(harness.getRegistrationCount(), 0);
+    assert.equal(harness.bundles.length, 0, "Late prepare authority must not enter the replacement capture");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Back targeted mat recapture preserves the complete Front side through the final bundle", async () => {
+  const geometryInputs: Array<Parameters<typeof speedsterImageService.proposeGeometry>[1]> = [];
+  let frontGeometryCalls = 0;
+  let backGeometryCalls = 0;
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/back-magenta-recapture",
+  });
+  const harness = await mountWorkspace({
+    activeMap: { revisionId: "map-must-not-register", scope: "FAMILY", name: "No premature map" },
+    proposeGeometry: async (_token, input) => {
+      geometryInputs.push(input);
+      if (input.side === "BACK") {
+        backGeometryCalls += 1;
+        if (backGeometryCalls === 1) return advisoryGeometryResponse("WHITE", "MAGENTA");
+      } else {
+        frontGeometryCalls += 1;
+      }
+      const accepted = geometryResponse();
+      return {
+        ...accepted,
+        colorGeometry: { ...accepted.colorGeometry, matColor: input.matColor },
+        colorGeometryReceipt: `${input.side.toLowerCase()}-${input.matColor.toLowerCase()}-attempt-${input.side === "FRONT" ? frontGeometryCalls : backGeometryCalls}`,
+      };
+    },
+  });
+  try {
+    await prepareBothSidesAndReachFrontCentering(harness);
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") >= 1, "Front prepared image did not refresh");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(
+      () => Boolean(buttonByText(harness.container, "Change Back mat / recapture Back — MAGENTA")),
+      "Back change-mat action did not render",
+    );
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back prepared image did not refresh");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    const retainedFrontRegistration = structuredClone(harness.getRegistrationResultsForSide("FRONT")[0]);
+    const iphoneActivationBeforeRecapture = harness.getIphoneActivationCount();
+    const iphonePollsBeforeRecapture = harness.getPollCount();
+    const frontRefreshesBeforeRecapture = harness.getPreparedImageRefreshCount("FRONT");
+    await act(async () => fire(buttonByText(harness.container, "Change Back mat / recapture Back — MAGENTA")!, "click"));
+
+    assert.ok(harness.container.querySelector('img[alt="front card preview"]'), "The completed Front original must remain visible");
+    assert.equal(harness.container.querySelector('img[alt="back card preview"]'), null);
+    assert.equal(
+      harness.container.querySelector<HTMLInputElement>('input[name="front-mat-color"][value="BLACK"]')?.checked,
+      true,
+      "The non-advised mat selection must remain unchanged",
+    );
+    assert.equal(
+      harness.container.querySelector<HTMLInputElement>('input[name="back-mat-color"][value="MAGENTA"]')?.checked,
+      true,
+    );
+    const [frontInput, backInput] = Array.from(harness.container.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+    assert.ok(frontInput && backInput);
+    assert.equal(frontInput.disabled, true, "The retained Front original cannot be replaced during a Back-only rerun");
+    assert.equal(backInput.disabled, false);
+    assert.equal(buttonByText(harness.container, "Add replacement Back photo to continue")?.disabled, true);
+    assert.match(harness.container.textContent ?? "", /completed sibling side is retained/i);
+    assert.match(harness.container.textContent ?? "", /Targeted mat recapture uses only the unlocked local file slot/i);
+    assert.equal(harness.container.querySelector('[aria-label="Pair iPhone QR code"]'), null);
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 1);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1);
+    assert.equal(harness.bundles.length, 0);
+
+    Object.defineProperty(backInput, "files", {
+      configurable: true,
+      value: [{ name: "back-magenta.jpg", type: "image/jpeg" } as File],
+    });
+    await act(async () => backInput.dispatchEvent(new window.Event("change", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set Back geometry")), "Fresh Back did not restore readiness");
+    await act(async () => fire(buttonByText(harness.container, "Set Back geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')),
+      "Replacement Back did not rerun physical geometry",
+    );
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Only Back centering did not reopen");
+    assert.equal(harness.container.querySelector('[aria-label="front card geometry"]'), null, "The retained Front geometry must not reopen");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.bundles.length === 1, "Back-recaptured pair was not assembled");
+
+    assert.deepEqual(
+      geometryInputs.map(({ side, sourceImageStorageKey, matColor }) => ({ side, sourceImageStorageKey, matColor })),
+      [
+        { side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg", matColor: "BLACK" },
+        { side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg", matColor: "WHITE" },
+        { side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/back.jpg", matColor: "MAGENTA" },
+      ],
+    );
+    assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg");
+    assert.equal(harness.bundles[0].back.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/back.jpg");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].serverReceipt, "front-black-attempt-1");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![1].serverReceipt, "test-printed-black-receipt");
+    assert.equal(harness.bundles[0].back.colorGeometryEvidence![0].serverReceipt, "back-magenta-attempt-2");
+    assert.equal(harness.bundles[0].back.colorGeometryEvidence![1].serverReceipt, "test-printed-magenta-receipt");
+    assert.deepEqual(harness.bundles[0].front.mapRegistration, retainedFrontRegistration);
+    assert.deepEqual(harness.bundles[0].front.centeringQuad, validQuad,
+      "The confirmed Front centering must remain byte-for-byte unchanged");
+    assert.deepEqual({
+      originalUploadPlans: {
+        FRONT: harness.getOriginalUploadPlanCount("FRONT"),
+        BACK: harness.getOriginalUploadPlanCount("BACK"),
+      },
+      preparedUploadPlans: {
+        FRONT: harness.getPreparedUploadPlanCount("FRONT"),
+        BACK: harness.getPreparedUploadPlanCount("BACK"),
+      },
+      prepares: {
+        FRONT: harness.getPrepareCount("FRONT"),
+        BACK: harness.getPrepareCount("BACK"),
+      },
+      registrations: {
+        FRONT: harness.getRegistrationCountForSide("FRONT"),
+        BACK: harness.getRegistrationCountForSide("BACK"),
+      },
+    }, {
+      originalUploadPlans: { FRONT: 0, BACK: 1 },
+      preparedUploadPlans: { FRONT: 1, BACK: 2 },
+      prepares: { FRONT: 1, BACK: 2 },
+      registrations: { FRONT: 1, BACK: 2 },
+    });
+    assert.equal(harness.getPreparedImageRefreshCount("FRONT"), frontRefreshesBeforeRecapture,
+      "Targeted Back rerun must not call the retained Front prepared-image API");
+    assert.equal(harness.getIphoneActivationCount(), iphoneActivationBeforeRecapture);
+    assert.equal(harness.getPollCount(), iphonePollsBeforeRecapture);
+  } finally {
+    await harness.cleanup();
+    if (createObjectUrlDescriptor) {
+      Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    } else {
+      Reflect.deleteProperty(URL, "createObjectURL");
+    }
+  }
+});
+
 test("image load failure stays visible while geometry and every control remain active", async () => {
   const originalConsoleInfo = console.info;
   const diagnostics: string[] = [];
   console.info = (line) => diagnostics.push(String(line));
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
   });
   try {
     const setGeometry = buttonByText(harness.container, "Set geometry");
@@ -936,7 +2033,7 @@ test("geometry timeout preserves both iPhone originals and Retry completes the s
           }, { once: true });
         });
       }
-      return { width: 1200, height: 1600, corners: validQuad };
+      return geometryResponse();
     },
   });
   try {
@@ -970,7 +2067,7 @@ test("Back geometry failure is identified without discarding either original", a
     proposeGeometry: async () => {
       call += 1;
       if (call === 2) throw new Error("Speedster geometry timed out. Your photos and current geometry are preserved; retry this step.");
-      return { width: 1200, height: 1600, corners: validQuad };
+      return geometryResponse();
     },
   });
   try {
@@ -990,7 +2087,7 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
   const originalDateNow = Date.now;
   Date.now = () => now;
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-7", scope: "FAMILY", name: "2022 Lost Origin Holo" },
     onRegistrationRequest: async (side) => {
       if (side === "BACK") {
@@ -1087,7 +2184,7 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
 
 test("Front success plus Back failure preserves truth until explicit Continue without Card Map", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-9", scope: "EXACT", name: "Snorlax #TG10" },
     registrationFailsOnSide: "BACK",
   });
@@ -1145,7 +2242,7 @@ test("Front success plus Back failure preserves truth until explicit Continue wi
 
 test("two unresolved sides disclose complete evidence, expose side-specific retries, and audit full abandonment", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-two-failures", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationFails: true,
   });
@@ -1184,7 +2281,7 @@ test("two unresolved sides disclose complete evidence, expose side-specific retr
 
 test("infrastructure retry preserves the other side's valid 422 diagnostics", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-mixed-failures", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "FRONT",
@@ -1220,7 +2317,7 @@ test("infrastructure retry preserves the other side's valid 422 diagnostics", as
 
 test("HTTP 402 stays factual, retains request evidence, and never automatically retries", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-402", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1254,7 +2351,7 @@ test("HTTP 402 stays factual, retains request evidence, and never automatically 
 
 test("reload offers explicit Resume, refreshes URLs, preserves Front success, and clears only after successful save", async () => {
   const first = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1282,7 +2379,7 @@ test("reload offers explicit Resume, refreshes URLs, preserves Front success, an
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: serialized,
   });
@@ -1317,10 +2414,112 @@ test("reload offers explicit Resume, refreshes URLs, preserves Front success, an
   }
 });
 
+test("legacy v1 draft recovery requires explicit mats, preserves all prior work, and upgrades only after four receipts succeed", async () => {
+  const activeMap = { revisionId: "family-revision-legacy-color", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 402,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      retryable: false,
+      message: "CARD MAP provider rejected the request (HTTP 402). No map was applied.",
+    },
+  });
+  let legacySerialized: string;
+  let preservedRegistration: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Seed capture draft was not preserved");
+    const legacy = JSON.parse(seed.getCaptureDraftSerialized()!) as Record<string, any>;
+    legacy.version = "speedster-capture-registration-draft-v1";
+    for (const side of [legacy.front, legacy.back]) {
+      delete side.matColor;
+      delete side.physicalColorGeometry;
+      delete side.physicalColorGeometryReceipt;
+      delete side.printedColorGeometry;
+      delete side.printedColorGeometryReceipt;
+    }
+    preservedRegistration = JSON.stringify(legacy.front.mapRegistration);
+    legacySerialized = JSON.stringify(legacy);
+  } finally {
+    await seed.cleanup();
+  }
+
+  const failedRecovery = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    captureDraftSerialized: legacySerialized,
+    colorRecoveryFailure: { side: "FRONT", mode: "PRINTED_FRAME" },
+  });
+  try {
+    const frontMat = failedRecovery.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Front BLACK mat"]');
+    const backMat = failedRecovery.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Back WHITE mat"]');
+    assert.ok(frontMat && backMat);
+    await act(async () => {
+      frontMat.click();
+      backMat.click();
+    });
+    await act(async () => fire(buttonByText(failedRecovery.container, "Recover Color evidence and reconfirm all four preserved quads")!, "click"));
+    await waitFor(() => /original v1 draft.*remain unchanged/i.test(failedRecovery.container.textContent ?? ""), "Partial legacy recovery failure was not explicit");
+    assert.equal(failedRecovery.getCaptureDraftSerialized(), legacySerialized, "partial recovery must not upgrade or rewrite the v1 draft");
+    assert.equal(buttonByText(failedRecovery.container, "Resume preserved draft"), undefined);
+  } finally {
+    await failedRecovery.cleanup();
+  }
+
+  const recovered = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    captureDraftSerialized: legacySerialized,
+  });
+  try {
+    assert.equal(buttonByText(recovered.container, "Resume preserved draft"), undefined, "v1 cannot silently resume without Color receipts");
+    const recoverButton = buttonByText(recovered.container, "Recover Color evidence and reconfirm all four preserved quads") as HTMLButtonElement | undefined;
+    assert.ok(recoverButton?.disabled, "recovery must stay blocked before both explicit mat confirmations");
+    const frontMat = recovered.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Front BLACK mat"]');
+    const backMat = recovered.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Back WHITE mat"]');
+    assert.ok(frontMat && backMat);
+    await act(async () => {
+      frontMat.click();
+      backMat.click();
+    });
+    assert.equal(recoverButton.disabled, false);
+    await act(async () => recoverButton.click());
+    await waitFor(() => Boolean(buttonByText(recovered.container, "Resume preserved draft")), "Atomic v2 upgrade did not expose Resume");
+    assert.deepEqual(recovered.getColorRecoveryRequests().map(({ side, mode, matColor }) => ({ side, mode, matColor })), [
+      { side: "FRONT", mode: "PHYSICAL_OUTER", matColor: "BLACK" },
+      { side: "FRONT", mode: "PRINTED_FRAME", matColor: "BLACK" },
+      { side: "BACK", mode: "PHYSICAL_OUTER", matColor: "WHITE" },
+      { side: "BACK", mode: "PRINTED_FRAME", matColor: "WHITE" },
+    ]);
+    assert.equal(recovered.getPrepareCount("FRONT") + recovered.getPrepareCount("BACK"), 0, "legacy Color recovery must not rewrite prepared artifacts");
+    assert.equal(recovered.getRegistrationCount(), 0, "legacy Color recovery must not alter registration authority");
+    const upgraded = JSON.parse(recovered.getCaptureDraftSerialized()!) as Record<string, any>;
+    assert.equal(upgraded.version, "speedster-capture-registration-draft-v2");
+    assert.equal(JSON.stringify(upgraded.front.mapRegistration), preservedRegistration);
+    assert.deepEqual(upgraded.front.corners, JSON.parse(legacySerialized).front.corners);
+    assert.deepEqual(upgraded.back.proposedCentering, JSON.parse(legacySerialized).back.proposedCentering);
+
+    await act(async () => fire(buttonByText(recovered.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(recovered.container.querySelector('[aria-label="Card Map registration interruption"]')), "Recovered draft did not resume its exact prior stage");
+    assert.match(recovered.container.textContent ?? "", /provider rejected the request \(HTTP 402\)/);
+  } finally {
+    await recovered.cleanup();
+  }
+});
+
 test("mounted expiry invalidates only the old side and preserves the fresh sibling receipt", async () => {
   const activeMap = { revisionId: "family-revision-mixed-age", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
   });
   let serialized: string;
@@ -1343,7 +2542,7 @@ test("mounted expiry invalidates only the old side and preserves the fresh sibli
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     captureDraftSerialized: serialized,
   });
@@ -1364,7 +2563,7 @@ test("mounted expiry invalidates only the old side and preserves the fresh sibli
 test("Card Maps new-source centering persists and resumes with an explicit NO_MAP binding", async () => {
   const first = await mountWorkspace({
     draftSurface: "CARD_MAPS",
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
   });
   let serialized: string;
   try {
@@ -1387,7 +2586,7 @@ test("Card Maps new-source centering persists and resumes with an explicit NO_MA
 
   const resumed = await mountWorkspace({
     draftSurface: "CARD_MAPS",
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     captureDraftSerialized: serialized,
   });
   try {
@@ -1405,7 +2604,7 @@ test("Card Maps new-source centering persists and resumes with an explicit NO_MA
 
 test("explicit Discard removes only the current preserved draft and starts no work before selection", async () => {
   const seedSource = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationFailsOnSide: "BACK",
   });
@@ -1423,7 +2622,7 @@ test("explicit Discard removes only the current preserved draft and starts no wo
   }
 
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: serialized,
   });
@@ -1433,6 +2632,11 @@ test("explicit Discard removes only the current preserved draft and starts no wo
     await act(async () => fire(buttonByText(harness.container, "Discard preserved draft")!, "click"));
     assert.equal(harness.getCaptureDraftSerialized(), null);
     assert.equal(harness.container.querySelector('[aria-label="Preserved capture draft"]'), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Confirm Front BLACK mat") && buttonByText(harness.container, "Confirm Back WHITE mat")), "Fresh mat confirmations did not become available after explicit discard");
+    await act(async () => {
+      fire(buttonByText(harness.container, "Confirm Front BLACK mat")!, "click");
+      fire(buttonByText(harness.container, "Confirm Back WHITE mat")!, "click");
+    });
     await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh photo flow did not become available after explicit discard");
   } finally {
     await harness.cleanup();
@@ -1442,7 +2646,7 @@ test("explicit Discard removes only the current preserved draft and starts no wo
 test("invalid preserved draft blocks fresh work and cannot be overwritten before explicit Discard", async () => {
   const invalidSerialized = JSON.stringify({ version: "tampered-draft", adminToken: "must-remain-auditable" });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-invalid", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: invalidSerialized,
   });
@@ -1454,6 +2658,11 @@ test("invalid preserved draft blocks fresh work and cannot be overwritten before
 
     await act(async () => fire(buttonByText(harness.container, "Discard invalid preserved draft")!, "click"));
     assert.equal(harness.getCaptureDraftSerialized(), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Confirm Front BLACK mat") && buttonByText(harness.container, "Confirm Back WHITE mat")), "Fresh mat confirmations did not become available after invalid-draft discard");
+    await act(async () => {
+      fire(buttonByText(harness.container, "Confirm Front BLACK mat")!, "click");
+      fire(buttonByText(harness.container, "Confirm Back WHITE mat")!, "click");
+    });
     await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh flow did not start after explicit invalid-draft discard");
   } finally {
     await harness.cleanup();
@@ -1462,7 +2671,7 @@ test("invalid preserved draft blocks fresh work and cannot be overwritten before
 
 test("localStorage get, set, and post-save remove failures stay explicit without losing in-memory work", async () => {
   const getFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageGetFails: true,
   });
   try {
@@ -1474,7 +2683,7 @@ test("localStorage get, set, and post-save remove failures stay explicit without
   }
 
   const setFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageSetFails: true,
   });
   try {
@@ -1491,7 +2700,7 @@ test("localStorage get, set, and post-save remove failures stay explicit without
   }
 
   const removeFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageRemoveFails: true,
   });
   try {
@@ -1522,7 +2731,7 @@ test("raw preserved draft remains visible and blocks fresh capture while map bin
     activeMapRevisionId: "temporarily-unavailable-revision",
   });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     captureDraftSerialized: opaqueSerialized,
   });
   try {
@@ -1539,7 +2748,7 @@ test("raw preserved draft remains visible and blocks fresh capture while map bin
 
 test("late Resume URL refresh cannot install a draft after its immutable map binding changes", async () => {
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
     registrationFailsOnSide: "BACK",
   });
@@ -1559,7 +2768,7 @@ test("late Resume URL refresh cannot install a draft after its immutable map bin
   let started = 0;
   const releases: Array<() => void> = [];
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
     captureDraftSerialized: serialized,
     preparedImageRequestBarrier: async () => {
@@ -1604,7 +2813,7 @@ test("late Resume URL refresh cannot install a draft after its immutable map bin
 
 test("explicit geometry-only recovery round-trips across every current map binding status", async () => {
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-status-old", scope: "FAMILY", name: "Old map" },
     registrationFailsOnSide: "BACK",
   });
@@ -1640,7 +2849,7 @@ test("explicit geometry-only recovery round-trips across every current map bindi
   ];
   for (const candidate of cases) {
     const harness = await mountWorkspace({
-      proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+      proposeGeometry: async () => geometryResponse(),
       activeMap: candidate.activeMap,
       mapBindingStatus: candidate.mapBindingStatus,
       mapLookupFailed: candidate.mapBindingStatus === "LOOKUP_FAILED",
@@ -1702,7 +2911,7 @@ test("explicit geometry-only recovery round-trips across every current map bindi
 
       if (candidate.name === "loaded-new-revision-success") {
         const later = await mountWorkspace({
-          proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+          proposeGeometry: async () => geometryResponse(),
           activeMap: { revisionId: "family-revision-status-later", scope: "FAMILY", name: "Later map" },
           captureDraftSerialized: harness.getCaptureDraftSerialized()!,
         });
@@ -1725,7 +2934,7 @@ test("explicit geometry-only recovery round-trips across every current map bindi
 
 test("actual HTTP 402 with claimed retryable 503 evidence fails visibly as CLIENT_PROTOCOL", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-contradiction", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1758,7 +2967,7 @@ test("actual HTTP 402 with claimed retryable 503 evidence fails visibly as CLIEN
 
 test("malformed HTTP 422 diagnostics stop visibly without rendering rescue", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-malformed-422", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationMalformed422OnSide: "BACK",
   });
@@ -1781,7 +2990,7 @@ test("one provider-gateway 503 visibly retries only the failed side and retains 
   let releaseRetry: (() => void) | undefined;
   const retryHeld = new Promise<void>((resolve) => { releaseRetry = resolve; });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-503", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1833,7 +3042,7 @@ test("one provider-gateway 503 visibly retries only the failed side and retains 
 
 test("attempt-audit write failure is visible without converting a successful registration into failure", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-audit-warning", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationAuditFailsOnSide: "BACK",
   });
@@ -1863,7 +3072,7 @@ test("attempt-audit write failure is visible without converting a successful reg
 
 test("operator Retry failed side makes one manual request and applies only after both sides validate", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-manual-retry", scope: "EXACT", name: "Squirtle #007" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1927,7 +3136,7 @@ function auditReconciliationNotices(container: HTMLElement) {
 
 test("Retry preserves a synchronous decision-audit throw as a visible reconciliation notice", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-retry-audit-throw", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationThrows: true,
@@ -1951,7 +3160,7 @@ test("Retry preserves a synchronous decision-audit throw as a visible reconcilia
 
 test("Retry preserves a missing decision reporter as a visible reconciliation notice", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-retry-no-reporter", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     omitInstrumentationReporter: true,
@@ -1971,7 +3180,7 @@ test("Retry preserves a missing decision reporter as a visible reconciliation no
 
 test("newer attempt-audit evidence coexists with the later decision-audit timeout", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-coexisting-audit", scope: "EXACT", name: "Squirtle #007" },
     registrationHttpFailure: {
       side: "BACK",
@@ -2013,7 +3222,7 @@ test("newer attempt-audit evidence coexists with the later decision-audit timeou
 
 test("repeated receipt of the same attempt-audit warning does not create duplicate notice spam", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-deduped-audit", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     registrationAuditFailsOnSide: "BACK",
@@ -2067,7 +3276,7 @@ test("decision-audit confirmation classifies timely results and rejects stale se
 
 test("never-settling decision reporter times out visibly without delaying Continue", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-audit-timeout", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationResult: new Promise<boolean>(() => undefined),
@@ -2096,7 +3305,7 @@ test("late decision rejection is handled and cannot replace the timeout warning"
   const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
   process.on("unhandledRejection", onUnhandled);
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-late-audit-reject", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationResult: decisionResult,
@@ -2126,7 +3335,7 @@ test("timely rejected decision reporter is visible without delaying Continue", a
   let rejectDecision: ((reason?: unknown) => void) | undefined;
   const decisionResult = new Promise<boolean>((_resolve, reject) => { rejectDecision = reject; });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-audit-reject", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationResult: decisionResult,
@@ -2152,7 +3361,7 @@ test("timely rejected decision reporter is visible without delaying Continue", a
 
 test("operator-decision audit failure remains visible while Continue without Card Map proceeds", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-decision-audit", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     instrumentationFails: true,
@@ -2178,7 +3387,7 @@ test("operator-decision audit failure remains visible while Continue without Car
 
 test("missing decision reporter is visible and never blocks the selected action", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-no-reporter", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     omitInstrumentationReporter: true,
@@ -2202,7 +3411,7 @@ test("decision-audit deadline and late failure cannot warn a replacement session
   let resolveDecision: ((saved: boolean) => void) | undefined;
   const decisionResult = new Promise<boolean>((resolve) => { resolveDecision = resolve; });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-late-audit", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationResult: decisionResult,
@@ -2225,7 +3434,7 @@ test("decision-audit deadline and late failure cannot warn a replacement session
 
 test("Front and Back centering fail closed while unloaded and a failed proactive refresh is manually retryable", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     preparedImageRefreshFailures: 1,
   });
   try {
@@ -2286,7 +3495,7 @@ test("Front and Back centering fail closed while unloaded and a failed proactive
 
 test("Back registration rescue keeps Front provisional, preserves failed-save handles, and applies only after atomic retry", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-rescue", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationNeedsRescueOnSide: "BACK",
     rescueFailures: 1,
@@ -2381,7 +3590,7 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
 test("first of two rescues serializes, parses, reloads the remaining side, and preserves explicit abandon", async () => {
   const activeMap = { revisionId: "family-revision-two-rescues", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const first = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     registrationNeedsRescueOnBoth: true,
   });
@@ -2426,7 +3635,7 @@ test("first of two rescues serializes, parses, reloads the remaining side, and p
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     captureDraftSerialized: serialized,
   });
@@ -2459,7 +3668,7 @@ test("first of two rescues serializes, parses, reloads the remaining side, and p
 
 test("global registration failure explains four-anchor confirmation and accepts unchanged credible proposals", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-global-gate", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationNeedsRescueOnSide: "BACK",
     registrationGlobalGateFailure: true,
@@ -2485,7 +3694,7 @@ test("global registration failure explains four-anchor confirmation and accepts 
 test("one non-cooperative registration timeout stops for explicit choice without automatic retry", async () => {
   const harness = await mountWorkspace({
     imageRequestTimeoutMs: 10,
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-timeout", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationNeverSettlesOnSide: "BACK",
   });
@@ -2523,9 +3732,9 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
   let saveCalls = 0;
   const activeMap = { revisionId: "family-revision-final-save-retry", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
-    onSave: (bundle) => {
+    onSave: async (bundle) => {
       saveCalls += 1;
       submitted.push(JSON.stringify(bundle));
       if (saveCalls === 1) draftAtFirstSaveStart = window.localStorage.getItem(
@@ -2645,9 +3854,62 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
   }
 });
 
+test("expired Color receipt recovery reruns only the exact side and mode while every sibling byte stays retained", async () => {
+  let saveCalls = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap: { revisionId: "family-revision-color-expiry", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    onSave: async () => {
+      saveCalls += 1;
+      return saveCalls === 1 ? {
+        saved: false,
+        message: "FRONT PRINTED_FRAME color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only FRONT PRINTED_FRAME.",
+        colorGeometryReceiptExpired: { side: "FRONT", mode: "PRINTED_FRAME" },
+      } : { saved: true };
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Expired Color Geometry receipt recovery"]')), "Exact receipt recovery did not render");
+    assert.equal(saveCalls, 1);
+    assert.match(harness.container.textContent ?? "", /FRONT · PRINTED FRAME/);
+    const before = structuredClone(harness.bundles[0]);
+    const exactButton = buttonByText(harness.container, "Rerun and reconfirm only FRONT PRINTED_FRAME");
+    assert.ok(exactButton);
+    await act(async () => fire(exactButton, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Exact recovery did not return to Back centering");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry save")), "Exact recovery did not return to retryable save");
+    assert.deepEqual(harness.getColorRecoveryRequests().map(({ side, mode }) => ({ side, mode })), [
+      { side: "FRONT", mode: "PRINTED_FRAME" },
+    ]);
+    await act(async () => fire(buttonByText(harness.container, "Retry save")!, "click"));
+    await waitFor(() => saveCalls === 2, "Recovered capture did not retry save");
+    const after = harness.bundles[1];
+    assert.deepEqual(after.front.sourceCorners, before.front.sourceCorners);
+    assert.deepEqual(after.front.centeringQuad, before.front.centeringQuad);
+    assert.deepEqual(after.back, before.back, "completed Back side and both of its receipts must remain byte-identical");
+    assert.deepEqual(after.front.colorGeometryEvidence?.[0], before.front.colorGeometryEvidence?.[0], "nonexpired Front physical receipt must remain byte-identical");
+    assert.notEqual(after.front.colorGeometryEvidence?.[1].serverReceipt, before.front.colorGeometryEvidence?.[1].serverReceipt);
+    assert.deepEqual(after.front.colorGeometryEvidence?.[1].confirmedQuad, before.front.colorGeometryEvidence?.[1].confirmedQuad);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("failed effective lookup records NONE while ordinary geometry stays available", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     mapLookupFailed: true,
   });
   try {
@@ -2670,7 +3932,7 @@ test("failed effective lookup records NONE while ordinary geometry stays availab
 
 test("CARD MAP boundary tool resets and requires exactly four human points before save", async () => {
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
   });
   const identity = {
     playerName: "Nick Bosa",

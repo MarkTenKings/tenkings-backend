@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 import type { SpeedsterCardSide } from "../../lib/ai-grader-v2/contracts";
+import type { SpeedsterMatColor } from "../../lib/ai-grader-v2/color-geometry";
 import styles from "./PhotoUploadPair.module.css";
 
 export type SpeedsterOriginalPhoto =
@@ -19,6 +20,12 @@ type PhotoUploadPairProps = {
   onChange: (side: SpeedsterCardSide, file: File) => void;
   onRetake: () => void;
   onSwap: () => void;
+  matColors: Readonly<Record<SpeedsterCardSide, SpeedsterMatColor>>;
+  matConfirmations: Readonly<Record<SpeedsterCardSide, boolean>>;
+  onMatColorChange: (side: SpeedsterCardSide, matColor: SpeedsterMatColor) => void;
+  onMatConfirm: (side: SpeedsterCardSide) => void;
+  lockedSide?: SpeedsterCardSide | null;
+  allowSwap?: boolean;
   disabled?: boolean;
 };
 
@@ -27,11 +34,13 @@ function PhotoSlot({
   photo,
   onChange,
   disabled,
+  locked,
 }: {
   side: SpeedsterCardSide;
   photo: SpeedsterOriginalPhoto | null;
   onChange: PhotoUploadPairProps["onChange"];
   disabled: boolean;
+  locked: boolean;
 }) {
   const [preview, setPreview] = useState<string | null>(null);
 
@@ -50,12 +59,12 @@ function PhotoSlot({
   }, [photo]);
 
   return (
-    <label className={styles.slot}>
+    <label className={`${styles.slot} ${locked ? styles.slotLocked : ""}`}>
       <input
         className={styles.input}
         type="file"
         accept="image/jpeg,image/png,image/webp"
-        disabled={disabled}
+        disabled={disabled || locked}
         onChange={(event) => {
           const next = event.target.files?.[0];
           if (next) onChange(side, next);
@@ -79,7 +88,7 @@ function PhotoSlot({
         </span>
       ) : (
         <span className={styles.photoAction}>
-          <strong>Replace photo</strong>
+          <strong>{locked ? "Retained sibling" : "Replace photo"}</strong>
           <small>{photo?.kind === "LOCAL" ? photo.file.name : "iPhone capture"}</small>
         </span>
       )}
@@ -109,6 +118,12 @@ export default function PhotoUploadPair({
   onChange,
   onRetake,
   onSwap,
+  matColors,
+  matConfirmations,
+  onMatColorChange,
+  onMatConfirm,
+  lockedSide = null,
+  allowSwap = true,
   disabled = false,
 }: PhotoUploadPairProps) {
   const readyCount = Number(Boolean(front)) + Number(Boolean(back));
@@ -124,7 +139,7 @@ export default function PhotoUploadPair({
         <div className={styles.headingActions}>
           <p aria-live="polite"><strong>{readyCount}/2</strong> photos ready</p>
           {iphonePairReady ? <button type="button" onClick={onRetake} disabled={disabled}>Retake</button> : null}
-          {readyCount === 2 ? <button type="button" onClick={onSwap} disabled={disabled}>Swap front / back</button> : null}
+          {readyCount === 2 && allowSwap ? <button type="button" onClick={onSwap} disabled={disabled}>Swap front / back</button> : null}
         </div>
       </div>
       {pairingUrl ? (
@@ -137,8 +152,47 @@ export default function PhotoUploadPair({
         </div>
       ) : null}
       <div className={styles.pair}>
-        <PhotoSlot side="FRONT" photo={front} onChange={onChange} disabled={disabled} />
-        <PhotoSlot side="BACK" photo={back} onChange={onChange} disabled={disabled} />
+        {(["FRONT", "BACK"] as const).map((side) => (
+          <div className={styles.pairColumn} key={side}>
+            <PhotoSlot
+              side={side}
+              photo={side === "FRONT" ? front : back}
+              onChange={onChange}
+              disabled={disabled}
+              locked={lockedSide === side}
+            />
+            <div className={styles.matControls}>
+              <fieldset className={styles.matSelector} disabled={disabled || lockedSide === side}>
+                <legend>{side} MAT · {matConfirmations[side] ? "OPERATOR CONFIRMED" : "SUGGESTED DEFAULT · CONFIRM"}</legend>
+                {(["BLACK", "WHITE", "MAGENTA"] as const).map((matColor) => (
+                  <label key={matColor}>
+                    <input
+                      type="radio"
+                      name={`${side.toLowerCase()}-mat-color`}
+                      value={matColor}
+                      checked={matColors[side] === matColor}
+                      onChange={() => onMatColorChange(side, matColor)}
+                    />
+                    <span className={styles[`mat${matColor}`]} aria-hidden="true" />
+                    {matColor}
+                  </label>
+                ))}
+              </fieldset>
+              {matConfirmations[side] ? (
+                <p className={styles.matConfirmation}>{side} {matColors[side]} mat · operator confirmed</p>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.matConfirm}
+                  disabled={disabled || lockedSide === side}
+                  onClick={() => onMatConfirm(side)}
+                >
+                  Confirm {side === "FRONT" ? "Front" : "Back"} {matColors[side]} mat
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );

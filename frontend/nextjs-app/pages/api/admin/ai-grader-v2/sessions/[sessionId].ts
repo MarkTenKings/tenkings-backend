@@ -31,6 +31,16 @@ import {
   verifySpeedsterRegistrationLessonCaptureAuthority,
   verifySpeedsterRegistrationLessonReferenceAuthority,
 } from "../../../../../lib/server/speedsterMapRegistrationLessons";
+import {
+  parseSpeedsterColorGeometryProposal,
+  speedsterQuadsDiffer,
+  type SpeedsterColorGeometryMode,
+} from "../../../../../lib/ai-grader-v2/color-geometry";
+import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
+import {
+  SpeedsterColorGeometryReceiptExpiredError,
+  verifySpeedsterColorGeometryReceipt,
+} from "../../../../../lib/server/speedsterColorGeometryAuthority";
 
 const jsonObject = z.record(z.string(), z.unknown());
 const patchSchema = z
@@ -62,6 +72,35 @@ type UpdateSessionData = {
   mapFilterPolicyVersion?: SpeedsterMapFilterPolicyVersion;
   mapRegistration?: Prisma.InputJsonValue;
 };
+
+type ColorGeometryEvidenceRow = Readonly<{
+  sessionId: string;
+  createdByUserId: string;
+  side: "FRONT" | "BACK";
+  mode: SpeedsterColorGeometryMode;
+  matColor: "BLACK" | "WHITE" | "MAGENTA";
+  outcome: "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
+  engineVersion: "speedster-color-geometry-v1";
+  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  sourceImageStorageKey: string;
+  sourceImageSha256: string;
+  proposal?: Prisma.InputJsonValue;
+  confirmedQuad: Prisma.InputJsonValue;
+  diagnostics: Prisma.InputJsonValue;
+  proposalChanged: boolean | null;
+}>;
+
+export class SpeedsterColorGeometryCaptureReceiptExpiredError extends SpeedsterMapIntegrityError {
+  constructor(
+    readonly side: "FRONT" | "BACK",
+    readonly mode: SpeedsterColorGeometryMode,
+  ) {
+    super(
+      `${side} ${mode} color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only ${side} ${mode}.`,
+    );
+    this.name = "SpeedsterColorGeometryCaptureReceiptExpiredError";
+  }
+}
 
 export type MapBindingInput = NonNullable<z.output<typeof patchSchema>["mapBinding"]>;
 
@@ -251,7 +290,14 @@ export async function validateSpeedsterSubmittedMapBinding(
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
   findSession: (id: string, createdByUserId: string) => Promise<PersistedSession | null>;
-  updateSession: (id: string, createdByUserId: string, data: UpdateSessionData) => Promise<PersistedSession | null>;
+  updateSession: (
+    id: string,
+    createdByUserId: string,
+    data: UpdateSessionData,
+    colorGeometryEvidence: readonly ColorGeometryEvidenceRow[],
+  ) => Promise<PersistedSession | null>;
+  hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
+  verifyColorGeometryReceipt?: typeof verifySpeedsterColorGeometryReceipt;
   validateMapBinding?: (session: PersistedSession, binding: MapBindingInput | undefined, capture: Record<string, unknown>) => Promise<Pick<
     UpdateSessionData,
     "mapRevisionId" | "mapFilterPolicyVersion" | "mapRegistration"
@@ -266,14 +312,17 @@ type Dependencies = {
 const dependencies: Dependencies = {
   requireAdminSession,
   findSession: (id, createdByUserId) => prisma.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
-  updateSession: (id, createdByUserId, data) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  updateSession: (id, createdByUserId, data, colorGeometryEvidence) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const updated = await tx.aiGraderV2Session.updateMany({
       where: { id, createdByUserId, workflowState: "DRAFT" },
       data,
     });
     if (updated.count !== 1) return null;
+    await tx.aiGraderV2ColorGeometryEvidence.createMany({ data: [...colorGeometryEvidence] });
     return tx.aiGraderV2Session.findFirst({ where: { id, createdByUserId } });
   }),
+  hashEvidence: hashSpeedsterMapStorageEvidence,
+  verifyColorGeometryReceipt: verifySpeedsterColorGeometryReceipt,
   validateMapBinding: validateSpeedsterSubmittedMapBinding,
   recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
 };
@@ -312,6 +361,118 @@ function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.In
   } as Prisma.InputJsonValue;
 }
 
+function exactSubmittedQuad(value: unknown, expected: unknown, label: string) {
+  const quad = sanitizeSpeedsterUnitQuad(value);
+  const expectedQuad = sanitizeSpeedsterUnitQuad(expected);
+  if (!quad || !expectedQuad || JSON.stringify(quad) !== JSON.stringify(value)
+    || JSON.stringify(quad) !== JSON.stringify(expectedQuad)) {
+    throw new SpeedsterMapIntegrityError(`${label} does not match the exact human-confirmed capture geometry.`);
+  }
+  return quad;
+}
+
+export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
+  sessionId: string;
+  createdByUserId: string;
+  rawCapture: Record<string, unknown>;
+  source: SpeedsterMapSourceSession;
+  hashEvidence: typeof hashSpeedsterMapStorageEvidence;
+  verifyReceipt: typeof verifySpeedsterColorGeometryReceipt;
+}>): Promise<readonly ColorGeometryEvidenceRow[]> {
+  const rows: ColorGeometryEvidenceRow[] = [];
+  for (const side of ["FRONT", "BACK"] as const) {
+    const sourceSide = side === "FRONT" ? input.source.front : input.source.back;
+    const rawSide = input.rawCapture[side.toLowerCase()];
+    if (!rawSide || typeof rawSide !== "object" || Array.isArray(rawSide)) {
+      throw new SpeedsterMapIntegrityError(`${side} color geometry evidence is missing.`);
+    }
+    const evidence = (rawSide as Record<string, unknown>).colorGeometryEvidence;
+    if (!Array.isArray(evidence) || evidence.length !== 2) {
+      throw new SpeedsterMapIntegrityError(`${side} must preserve both color geometry outcomes.`);
+    }
+    const sourceImageSha256 = await input.hashEvidence(sourceSide.originalStorageKey);
+    for (const mode of ["PHYSICAL_OUTER", "PRINTED_FRAME"] as const) {
+      const matching = evidence.filter((entry) => (
+        entry && typeof entry === "object" && !Array.isArray(entry)
+        && (entry as Record<string, unknown>).mode === mode
+      ));
+      if (matching.length !== 1) {
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} evidence must occur exactly once.`);
+      }
+      const submitted = matching[0] as Record<string, unknown>;
+      if (submitted.side !== side
+        || submitted.sourceImageStorageKey !== sourceSide.originalStorageKey
+        || !["BLACK", "WHITE", "MAGENTA"].includes(String(submitted.matColor))) {
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} source-image/mat binding is invalid.`);
+      }
+      let result: ReturnType<typeof parseSpeedsterColorGeometryProposal>;
+      try {
+        result = parseSpeedsterColorGeometryProposal(submitted.result, {
+          mode,
+          matColor: submitted.matColor as "BLACK" | "WHITE" | "MAGENTA",
+        });
+      } catch {
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} server proposal authority is invalid.`);
+      }
+      const serverReceipt = typeof submitted.serverReceipt === "string" ? submitted.serverReceipt : "";
+      if (!serverReceipt) {
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} lacks server proposal authority.`);
+      }
+      try {
+        input.verifyReceipt(serverReceipt, {
+          operatorAdminId: input.createdByUserId,
+          sessionId: input.sessionId,
+          side,
+          mode,
+          sourceImageStorageKey: sourceSide.originalStorageKey,
+          sourceImageSha256,
+          matColor: result.matColor,
+          physicalQuadSha256: mode === "PRINTED_FRAME"
+            ? speedsterPhysicalQuadHash(sourceSide.sourceCorners)
+            : null,
+          result,
+        });
+      } catch (error) {
+        if (error instanceof SpeedsterColorGeometryReceiptExpiredError) {
+          throw new SpeedsterColorGeometryCaptureReceiptExpiredError(side, mode);
+        }
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} server proposal authority is invalid.`);
+      }
+      const expectedConfirmed = mode === "PHYSICAL_OUTER"
+        ? sourceSide.sourceCorners
+        : sourceSide.centeringQuad;
+      const confirmedQuad = exactSubmittedQuad(
+        submitted.confirmedQuad,
+        expectedConfirmed,
+        `${side} ${mode}`,
+      );
+      rows.push({
+        sessionId: input.sessionId,
+        createdByUserId: input.createdByUserId,
+        side,
+        mode,
+        matColor: result.matColor,
+        outcome: result.outcome,
+        engineVersion: result.engineVersion,
+        policyProvenance: result.policyProvenance,
+        sourceImageStorageKey: sourceSide.originalStorageKey,
+        sourceImageSha256,
+        ...(result.proposal ? { proposal: result.proposal as unknown as Prisma.InputJsonValue } : {}),
+        confirmedQuad: confirmedQuad as unknown as Prisma.InputJsonValue,
+        diagnostics: {
+          contrastFloorDeltaE: result.contrastFloorDeltaE,
+          minimumSideSupport: result.minimumSideSupport,
+          sideEvidence: result.sideEvidence,
+          ambiguity: result.ambiguity,
+          advisory: result.advisory,
+        } as unknown as Prisma.InputJsonValue,
+        proposalChanged: result.proposal ? speedsterQuadsDiffer(result.proposal, confirmedQuad) : null,
+      });
+    }
+  }
+  return rows;
+}
+
 export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies) {
   return async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== "GET" && req.method !== "PATCH") {
@@ -346,6 +507,16 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         identity: existing.identity,
         capture: parsed.data.capture,
       });
+      const hashEvidence = deps.hashEvidence ?? hashSpeedsterMapStorageEvidence;
+      const verifyColorGeometryReceipt = deps.verifyColorGeometryReceipt ?? verifySpeedsterColorGeometryReceipt;
+      const colorGeometryEvidence = await parseSpeedsterColorGeometryCaptureRows({
+        sessionId,
+        createdByUserId: admin.user.id,
+        rawCapture: parsed.data.capture,
+        source: canonicalSource,
+        hashEvidence,
+        verifyReceipt: verifyColorGeometryReceipt,
+      });
       const validatedMapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
       if (!validatedMapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
@@ -360,7 +531,7 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         workflowState: "CAPTURED",
         capture: canonicalSpeedsterCapture(canonicalSource),
         ...mapBinding,
-      });
+      }, colorGeometryEvidence);
       if (!session) {
         return res.status(409).json({ message: "Speedster capture state changed before it could be saved" });
       }
@@ -377,6 +548,15 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       }
       return res.status(200).json({ session: safeSessionResponse(session) });
     } catch (error) {
+      if (error instanceof SpeedsterColorGeometryCaptureReceiptExpiredError) {
+        return res.status(409).json({
+          message: error.message,
+          colorGeometryReceiptExpired: {
+            side: error.side,
+            mode: error.mode,
+          },
+        });
+      }
       if (error instanceof SpeedsterMapIntegrityError) {
         return res.status(409).json({ message: error.message });
       }

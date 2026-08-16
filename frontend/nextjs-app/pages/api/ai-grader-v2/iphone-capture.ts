@@ -95,8 +95,8 @@ export function createAiGraderV2IphoneCaptureHandler(deps: Dependencies = depend
 
       const pair = await deps.beginUpload(parsed.data.deviceId);
       if (!pair) return res.status(404).json({ message: "Pair this iPhone with Speedster" });
-      const frontStorageKey = speedsterIphoneStorageKey(pair.userId, pair.sessionId, "FRONT");
-      const backStorageKey = speedsterIphoneStorageKey(pair.userId, pair.sessionId, "BACK");
+      const frontStorageKey = speedsterIphoneStorageKey(pair.userId, pair.sessionId, "FRONT", pair.uploadVersion);
+      const backStorageKey = speedsterIphoneStorageKey(pair.userId, pair.sessionId, "BACK", pair.uploadVersion);
       const [frontUploadUrl, backUploadUrl] = await Promise.all([
         deps.presignUploadUrl(frontStorageKey, SPEEDSTER_IPHONE_CONTENT_TYPE),
         deps.presignUploadUrl(backStorageKey, SPEEDSTER_IPHONE_CONTENT_TYPE),

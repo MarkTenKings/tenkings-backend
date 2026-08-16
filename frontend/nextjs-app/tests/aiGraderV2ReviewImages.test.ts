@@ -40,6 +40,24 @@ function preparedCapture(userId = "admin-1", sessionId = "speedster-session-1234
   const side = (value: "front" | "back") => {
     const prefix = `ai-grader-v2/${userId}/${sessionId}/prepared/${value}`;
     return {
+      rectifiedStorageKey: `${prefix}/rectified.webp`,
+      inspectionStorageKey: `${prefix}/inspection.webp`,
+      viewStorageKeys: {
+        NORMALIZED: `${prefix}/normalized.webp`,
+        MICRO_DEFECT: `${prefix}/micro_defect.webp`,
+        DIRECTIONAL: `${prefix}/directional.webp`,
+      },
+    };
+  };
+  return { front: side("front"), back: side("back") };
+}
+
+function versionedPreparedCapture(userId = "admin-1", sessionId = "speedster-session-123456789") {
+  const generation = "recapture-00000000-0000-4000-8000-000000000007";
+  const side = (value: "front" | "back") => {
+    const prefix = `ai-grader-v2/${userId}/${sessionId}/prepared/${value}/${generation}`;
+    return {
+      rectifiedStorageKey: `${prefix}/rectified.webp`,
       inspectionStorageKey: `${prefix}/inspection.webp`,
       viewStorageKeys: {
         NORMALIZED: `${prefix}/normalized.webp`,
@@ -104,6 +122,37 @@ test("review image refresh rejects missing ownership before signing", async () =
   await handler(request("GET"), res);
 
   assert.equal(state.status, 404);
+  assert.equal(signCalls, 0);
+});
+
+test("review image refresh signs the exact persisted versioned bundle without synthesizing fixed keys", async () => {
+  const signed: string[] = [];
+  const handler = createSpeedsterReviewImagesHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedCapture(id, userId) { return { capture: versionedPreparedCapture(userId, id) }; },
+    async presignRead(key) { signed.push(key); return `read:${key}`; },
+  });
+  const { state, res } = response();
+  await handler(request("GET"), res);
+
+  assert.equal(state.status, 200);
+  assert.equal(signed.length, 8);
+  assert.ok(signed.every((key) => key.includes("/recapture-00000000-0000-4000-8000-000000000007/")));
+  assert.match(JSON.stringify(state.body), /recapture-00000000-0000-4000-8000-000000000007/);
+});
+
+test("review image refresh rejects a mixed same-session generation before signing", async () => {
+  const capture = versionedPreparedCapture();
+  capture.front.viewStorageKeys.DIRECTIONAL = `ai-grader-v2/admin-1/speedster-session-123456789/prepared/front/directional.webp`;
+  let signCalls = 0;
+  const handler = createSpeedsterReviewImagesHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedCapture() { return { capture }; },
+    async presignRead() { signCalls += 1; return "unexpected"; },
+  });
+  const { state, res } = response();
+  await handler(request("GET"), res);
+  assert.equal(state.status, 409);
   assert.equal(signCalls, 0);
 });
 

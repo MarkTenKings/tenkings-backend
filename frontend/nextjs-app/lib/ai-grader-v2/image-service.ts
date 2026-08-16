@@ -11,8 +11,9 @@ import type {
   SpeedsterMapRegistration,
   SpeedsterMapRegistrationFailure,
 } from "./card-type-map-contracts";
+import type { SpeedsterColorGeometryProposal, SpeedsterMatColor } from "./color-geometry";
 
-type ImageAction = "geometry" | "prepare" | "trace-proposal" | "map-registration";
+type ImageAction = "geometry" | "prepare" | "color-geometry" | "trace-proposal" | "map-registration";
 
 export const SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION = "speedster-map-registration-error-v1" as const;
 
@@ -290,6 +291,8 @@ export type SpeedsterGeometryResponse = {
   width: number;
   height: number;
   corners: SpeedsterQuad | null;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
 };
 
 export type SpeedsterPrepareResponse = {
@@ -299,10 +302,19 @@ export type SpeedsterPrepareResponse = {
   borders: SpeedsterQuad;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   inspectionFrame: SpeedsterInspectionFrame;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
+};
+
+export type SpeedsterColorGeometryResponse = {
+  width: number;
+  height: number;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
 };
 
 type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
-type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
+type ArtifactPlan = { storageKey: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
 
 export const SPEEDSTER_IMAGE_REQUEST_TIMEOUT_MS = 65_000;
@@ -509,27 +521,51 @@ async function postImageAction<T>(
 }
 
 export const speedsterImageService = {
-  proposeGeometry(token: string, imageUrl: string, options: SpeedsterImageRequestOptions = {}) {
-    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { imageUrl }, options);
+  proposeGeometry(
+    token: string,
+    input: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      imageUrl: string;
+      sourceImageStorageKey: string;
+      matColor: SpeedsterMatColor;
+    }>,
+    options: SpeedsterImageRequestOptions = {},
+  ) {
+    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { ...input }, options);
   },
   prepare(
     token: string,
     imageUrl: string,
+    binding: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      sourceImageStorageKey: string;
+    }>,
     corners: SpeedsterQuad,
-    outputPlan: SpeedsterPreparedOutputPlan,
+    matColor: SpeedsterMatColor,
     options?: SpeedsterImageRequestOptions,
   ) {
     return postImageAction<SpeedsterPrepareResponse>(token, "prepare", {
       imageUrl,
+      ...binding,
       corners,
-      outputUploads: {
-        rectified: outputPlan.RECTIFIED.uploadUrl,
-        inspection: outputPlan.INSPECTION.uploadUrl,
-        normalized: outputPlan.NORMALIZED.uploadUrl,
-        microDefect: outputPlan.MICRO_DEFECT.uploadUrl,
-        directional: outputPlan.DIRECTIONAL.uploadUrl,
-      },
+      matColor,
     }, options);
+  },
+  recoverColorGeometry(
+    token: string,
+    input: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      sourceImageStorageKey: string;
+      mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+      matColor: SpeedsterMatColor;
+      corners: SpeedsterQuad;
+    }>,
+    options: SpeedsterImageRequestOptions = {},
+  ) {
+    return postImageAction<SpeedsterColorGeometryResponse>(token, "color-geometry", input, options);
   },
   traceProposal(
     token: string,
@@ -555,6 +591,8 @@ export const speedsterImageService = {
       sessionId: string;
       side: SpeedsterCardSide;
       currentPhysicalQuad: SpeedsterQuad;
+      currentOriginalStorageKey: string;
+      currentInspectionStorageKey: string;
       orchestration: SpeedsterMapRegistrationOrchestration;
     },
     options: SpeedsterImageRequestOptions = {},
@@ -572,6 +610,8 @@ export const speedsterImageService = {
       sessionId: string;
       side: SpeedsterCardSide;
       currentPhysicalQuad: SpeedsterQuad;
+      currentOriginalStorageKey: string;
+      currentInspectionStorageKey: string;
       rescueAttemptId: string;
       automaticFailure: SpeedsterMapRegistrationFailure;
       correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[];
@@ -593,6 +633,7 @@ export async function uploadSpeedsterOriginal(input: {
   sessionId: string;
   side: SpeedsterCardSide;
   file: File;
+  targetedRecapture?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ storageKey: string; readUrl: string }> {
@@ -609,6 +650,7 @@ export async function uploadSpeedsterOriginal(input: {
       side: input.side,
       kind: "ORIGINAL",
       contentType: input.file.type,
+      ...(input.targetedRecapture ? { targetedRecapture: true } : {}),
     }),
   }, `${input.side.toLowerCase()} upload planning`, input);
   if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl || !plan.readUrl) {
@@ -630,6 +672,7 @@ export async function planSpeedsterPreparedOutputs(input: {
   token: string;
   sessionId: string;
   side: SpeedsterCardSide;
+  sourceImageStorageKey: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SpeedsterPreparedOutputPlan> {
@@ -639,7 +682,12 @@ export async function planSpeedsterPreparedOutputs(input: {
   }>("/api/admin/ai-grader-v2/upload-plan", {
     method: "POST",
     headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ sessionId: input.sessionId, side: input.side, kind: "PREPARED" }),
+    body: JSON.stringify({
+      sessionId: input.sessionId,
+      side: input.side,
+      kind: "PREPARED",
+      sourceImageStorageKey: input.sourceImageStorageKey,
+    }),
   }, `${input.side.toLowerCase()} output planning`, input);
   if (!response.ok || !payload.outputs) {
     throw new Error(toCardMapOperatorMessage(payload.message ?? "Speedster output storage could not be prepared."));
