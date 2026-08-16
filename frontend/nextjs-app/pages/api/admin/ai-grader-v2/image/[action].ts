@@ -53,7 +53,7 @@ import {
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
 import { isAuthorizedSpeedsterOriginalStorageKey } from "../../../../../lib/server/aiGraderV2IphoneCapture";
 
-const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
+const ACTIONS = new Set(["geometry", "prepare", "color-geometry", "trace-proposal", "map-registration"]);
 export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
 export const SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION = "speedster-map-registration-error-v1" as const;
 export const SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER = "X-Speedster-Map-Registration-Audit" as const;
@@ -346,6 +346,17 @@ export function sanitizeSpeedsterPreparePayload(
   };
 }
 
+export function sanitizeSpeedsterColorGeometryPayload(
+  payload: unknown,
+  expected: Readonly<{ mode: SpeedsterColorGeometryMode; matColor: SpeedsterMatColor }>,
+): unknown {
+  if (!isRecord(payload)) return payload;
+  return {
+    ...payload,
+    colorGeometry: parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected),
+  };
+}
+
 function sanitizedUpstreamText(value: unknown, maximumLength: number) {
   if (typeof value !== "string") return undefined;
   const sanitized = value
@@ -586,7 +597,7 @@ export async function speedsterServiceBody(
   evidenceDeps: TraceEvidenceDependencies = traceEvidenceDependencies,
   requestTraceId?: string,
 ) {
-  if ((action === "geometry" || action === "prepare") && createdByUserId) {
+  if ((action === "geometry" || action === "prepare" || action === "color-geometry") && createdByUserId) {
     const sessionId = typeof body.sessionId === "string" ? body.sessionId.trim() : "";
     const side = body.side === "FRONT" || body.side === "BACK" ? body.side : null;
     const matColor = body.matColor === "BLACK" || body.matColor === "WHITE" || body.matColor === "MAGENTA"
@@ -634,9 +645,46 @@ export async function speedsterServiceBody(
       };
     }
     const corners = sanitizeSpeedsterUnitQuad(body.corners);
-    if (!corners || JSON.stringify(corners) !== JSON.stringify(body.corners)
-      || !isRecord(body.outputUploads)) {
+    if (!corners || JSON.stringify(corners) !== JSON.stringify(body.corners)) {
       throw new Error("Speedster printed-frame rectification input is invalid.");
+    }
+    if (action === "color-geometry") {
+      const mode = body.mode === "PHYSICAL_OUTER" || body.mode === "PRINTED_FRAME"
+        ? body.mode
+        : null;
+      if (!mode) throw new Error("Speedster color geometry recovery mode is invalid.");
+      if (mode === "PHYSICAL_OUTER") {
+        return {
+          ...base,
+          mode,
+          colorGeometryAuthorityBinding: {
+            sessionId,
+            side,
+            mode,
+            sourceImageStorageKey,
+            sourceImageSha256,
+            matColor,
+            physicalQuadSha256: null,
+          },
+        };
+      }
+      return {
+        ...base,
+        mode,
+        corners,
+        colorGeometryAuthorityBinding: {
+          sessionId,
+          side,
+          mode,
+          sourceImageStorageKey,
+          sourceImageSha256,
+          matColor,
+          physicalQuadSha256: speedsterPhysicalQuadHash(corners),
+        },
+      };
+    }
+    if (!isRecord(body.outputUploads)) {
+      throw new Error("Speedster printed-frame output plan is invalid.");
     }
     return {
       ...base,
@@ -1025,7 +1073,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       body: JSON.stringify(upstreamServiceRequestBody),
     };
     if (action === "map-registration") registrationUpstreamStarted = true;
-    const upstreamResult = action === "geometry" || action === "map-registration"
+    const upstreamResult = action === "geometry" || action === "color-geometry" || action === "map-registration"
       ? await fetchSpeedsterImageUpstream({ ...upstreamInput, action })
       : await (async () => {
           const response = await fetch(upstreamInput.url, {
@@ -1121,6 +1169,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (!requestedMat) throw new Error("Speedster prepare mat selection is invalid.");
             return sanitizeSpeedsterPreparePayload(payload, { matColor: requestedMat });
           })()
+      : action === "color-geometry" && response.ok
+        ? (() => {
+            if (!requestedMat) throw new Error("Speedster color geometry recovery mat selection is invalid.");
+            const mode = req.body?.mode === "PHYSICAL_OUTER" || req.body?.mode === "PRINTED_FRAME"
+              ? req.body.mode as SpeedsterColorGeometryMode
+              : null;
+            if (!mode) throw new Error("Speedster color geometry recovery mode is invalid.");
+            return sanitizeSpeedsterColorGeometryPayload(payload, { mode, matColor: requestedMat });
+          })()
       : action === "trace-proposal" && response.ok
         ? (() => {
             const trace = parseSpeedsterTraceRleV1(
@@ -1142,7 +1199,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               designBoundary: serviceRequestBody.designBoundary as Parameters<typeof parseSpeedsterMapRegistration>[1]["designBoundary"],
             })
         : payload;
-    if ((action === "geometry" || action === "prepare") && response.ok) {
+    if ((action === "geometry" || action === "prepare" || action === "color-geometry") && response.ok) {
       if (!colorGeometryAuthorityBinding) {
         throw new Error("Speedster color geometry result lacks exact source authority.");
       }

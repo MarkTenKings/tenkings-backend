@@ -13,7 +13,7 @@ import type {
 } from "./card-type-map-contracts";
 import type { SpeedsterColorGeometryProposal, SpeedsterMatColor } from "./color-geometry";
 
-type ImageAction = "geometry" | "prepare" | "trace-proposal" | "map-registration";
+type ImageAction = "geometry" | "prepare" | "color-geometry" | "trace-proposal" | "map-registration";
 
 export const SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION = "speedster-map-registration-error-v1" as const;
 
@@ -306,6 +306,13 @@ export type SpeedsterPrepareResponse = {
   colorGeometryReceipt: string;
 };
 
+export type SpeedsterColorGeometryResponse = {
+  width: number;
+  height: number;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
+};
+
 type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
 type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
@@ -553,6 +560,20 @@ export const speedsterImageService = {
         directional: outputPlan.DIRECTIONAL.uploadUrl,
       },
     }, options);
+  },
+  recoverColorGeometry(
+    token: string,
+    input: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      sourceImageStorageKey: string;
+      mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+      matColor: SpeedsterMatColor;
+      corners: SpeedsterQuad;
+    }>,
+    options: SpeedsterImageRequestOptions = {},
+  ) {
+    return postImageAction<SpeedsterColorGeometryResponse>(token, "color-geometry", input, options);
   },
   traceProposal(
     token: string,

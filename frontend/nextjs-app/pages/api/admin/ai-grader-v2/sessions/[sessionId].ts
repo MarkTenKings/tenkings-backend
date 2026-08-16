@@ -90,6 +90,18 @@ type ColorGeometryEvidenceRow = Readonly<{
   proposalChanged: boolean | null;
 }>;
 
+export class SpeedsterColorGeometryCaptureReceiptExpiredError extends SpeedsterMapIntegrityError {
+  constructor(
+    readonly side: "FRONT" | "BACK",
+    readonly mode: SpeedsterColorGeometryMode,
+  ) {
+    super(
+      `${side} ${mode} color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only ${side} ${mode}.`,
+    );
+    this.name = "SpeedsterColorGeometryCaptureReceiptExpiredError";
+  }
+}
+
 export type MapBindingInput = NonNullable<z.output<typeof patchSchema>["mapBinding"]>;
 
 type MapBindingValidationResult = Pick<
@@ -422,9 +434,7 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
         });
       } catch (error) {
         if (error instanceof SpeedsterColorGeometryReceiptExpiredError) {
-          throw new SpeedsterMapIntegrityError(
-            `${side} ${mode} color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only ${side} ${mode}.`,
-          );
+          throw new SpeedsterColorGeometryCaptureReceiptExpiredError(side, mode);
         }
         throw new SpeedsterMapIntegrityError(`${side} ${mode} server proposal authority is invalid.`);
       }
@@ -538,6 +548,15 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       }
       return res.status(200).json({ session: safeSessionResponse(session) });
     } catch (error) {
+      if (error instanceof SpeedsterColorGeometryCaptureReceiptExpiredError) {
+        return res.status(409).json({
+          message: error.message,
+          colorGeometryReceiptExpired: {
+            side: error.side,
+            mode: error.mode,
+          },
+        });
+      }
       if (error instanceof SpeedsterMapIntegrityError) {
         return res.status(409).json({ message: error.message });
       }

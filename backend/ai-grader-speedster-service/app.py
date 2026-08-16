@@ -77,6 +77,18 @@ class GeometryResponse(BaseModel):
     colorGeometry: Optional[dict] = None
 
 
+class ColorGeometryRequest(ImageInput):
+    mode: str
+    matColor: str
+    corners: Optional[List[Point]] = None
+
+
+class ColorGeometryResponse(BaseModel):
+    width: int
+    height: int
+    colorGeometry: dict
+
+
 class RectifyRequest(ImageInput):
     corners: List[Point]
 
@@ -328,6 +340,45 @@ def geometry(request: GeometryRequest):
         "height": height,
         "corners": normalized_points(corners, width, height) if corners is not None else None,
         "colorGeometry": serialize_proposal(color_geometry, width, height) if color_geometry else None,
+    }
+
+
+@app.post("/color-geometry", response_model=ColorGeometryResponse)
+def color_geometry(request: ColorGeometryRequest):
+    try:
+        image = load_image(request.imageUrl, request.imageBase64)
+        if request.mode == "PHYSICAL_OUTER":
+            analysis = image
+            try:
+                result = propose_physical_outer(analysis, request.matColor)
+            except Exception as error:
+                LOGGER.warning(
+                    "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
+                    type(error).__name__,
+                )
+                result = engine_error_result("PHYSICAL_OUTER", request.matColor)
+        elif request.mode == "PRINTED_FRAME":
+            if request.corners is None or len(request.corners) != 4:
+                raise ValueError("PRINTED_FRAME color recovery requires exactly four physical corners")
+            analysis, _transform = rectify(image, request.corners)
+            try:
+                result = propose_printed_frame(analysis, request.matColor)
+            except Exception as error:
+                LOGGER.warning(
+                    "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
+                    type(error).__name__,
+                )
+                result = engine_error_result("PRINTED_FRAME", request.matColor)
+        else:
+            raise ValueError("Color geometry recovery mode is invalid")
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    height, width = analysis.shape[:2]
+    return {
+        "width": width,
+        "height": height,
+        "colorGeometry": serialize_proposal(result, width, height),
     }
 
 

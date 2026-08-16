@@ -166,6 +166,10 @@ type CaptureWorkspaceProps = {
 export type SpeedsterCaptureSaveResult = Readonly<{
   saved: boolean;
   message?: string;
+  colorGeometryReceiptExpired?: Readonly<{
+    side: SpeedsterCardSide;
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+  }>;
 }>;
 
 export type SpeedsterCaptureInstrumentationEvent = Readonly<{
@@ -245,6 +249,11 @@ type RegistrationRescueState = Readonly<{
 type RegistrationInterruption = Readonly<{
   message: string;
   failure: SpeedsterMapRegistrationRequestFailure;
+}>;
+
+type ColorGeometryRecoveryTarget = Readonly<{
+  side: SpeedsterCardSide;
+  mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
 }>;
 
 type RegistrationInterruptionState = Readonly<{
@@ -520,6 +529,7 @@ export function CaptureWorkspace({
   const [captureDraftHydratedSessionId, setCaptureDraftHydratedSessionId] = useState<string | null>(null);
   const [invalidCaptureDraftPresent, setInvalidCaptureDraftPresent] = useState(false);
   const [captureDraftError, setCaptureDraftError] = useState<string | null>(null);
+  const [colorGeometryRecoveryTarget, setColorGeometryRecoveryTarget] = useState<ColorGeometryRecoveryTarget | null>(null);
   const [preparedImageRefresh, setPreparedImageRefresh] = useState(EMPTY_PREPARED_IMAGE_REFRESH);
   const [colorScore, setColorScore] = useState<SpeedsterColorGeometryScore | null>(null);
   const colorScoreGeneration = useRef(0);
@@ -594,6 +604,7 @@ export function CaptureWorkspace({
     setCaptureDraftHydratedSessionId(null);
     setInvalidCaptureDraftPresent(false);
     setCaptureDraftError(null);
+    setColorGeometryRecoveryTarget(null);
     setPreparedImageRefresh(EMPTY_PREPARED_IMAGE_REFRESH);
     preparedImageRefreshInFlight.current = {};
     preparedImageAutomaticRetryUsed.current = {};
@@ -810,6 +821,133 @@ export function CaptureWorkspace({
       setCaptureDraftError("The preserved capture draft could not be discarded. It remains stored; no work was resumed or changed.");
     }
   }, [sessionId]);
+
+  const recoverLegacyColorGeometry = useCallback(async (
+    draft: SpeedsterCaptureRegistrationDraft,
+    source: "MATCHED" | "MAP_MISMATCHED",
+  ) => {
+    if (draft.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION || working) return;
+    if (!matConfirmations.FRONT || !matConfirmations.BACK) {
+      setCaptureDraftError("Confirm the actual Front and Back mat colors before recovering Color Geometry evidence. No preserved work was changed.");
+      return;
+    }
+    const originatingSessionId = sessionId;
+    activeImageRequest.current?.abort();
+    const controller = new AbortController();
+    activeImageRequest.current = controller;
+    setWorking(true);
+    setCaptureDraftError(null);
+    setMessage("Explicitly rerunning Color Geometry against the preserved originals. No photo, handle, prepared artifact, or Card Map evidence is being replaced.");
+    try {
+      const recover = (
+        side: SpeedsterCardSide,
+        mode: "PHYSICAL_OUTER" | "PRINTED_FRAME",
+      ) => {
+        const preserved = side === "FRONT" ? draft.front : draft.back;
+        return speedsterImageService.recoverColorGeometry(token, {
+          sessionId,
+          side,
+          sourceImageStorageKey: preserved.originalStorageKey,
+          mode,
+          matColor: matColors[side],
+          corners: preserved.corners,
+        }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+      };
+      const [frontPhysical, frontPrinted, backPhysical, backPrinted] = await Promise.all([
+        recover("FRONT", "PHYSICAL_OUTER"),
+        recover("FRONT", "PRINTED_FRAME"),
+        recover("BACK", "PHYSICAL_OUTER"),
+        recover("BACK", "PRINTED_FRAME"),
+      ]);
+      if (activeImageRequest.current !== controller
+        || !captureWorkspaceMounted.current
+        || currentSessionId.current !== originatingSessionId) return;
+      const upgradeSide = (
+        side: SpeedsterCardSide,
+        physical: Awaited<ReturnType<typeof recover>>,
+        printed: Awaited<ReturnType<typeof recover>>,
+      ): SpeedsterCaptureDraftSideV2 => ({
+        ...(side === "FRONT" ? draft.front : draft.back),
+        matColor: matColors[side],
+        physicalColorGeometry: physical.colorGeometry,
+        physicalColorGeometryReceipt: physical.colorGeometryReceipt,
+        printedColorGeometry: printed.colorGeometry,
+        printedColorGeometryReceipt: printed.colorGeometryReceipt,
+      });
+      const upgraded: SpeedsterCaptureRegistrationDraft = {
+        ...draft,
+        version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_CURRENT_VERSION,
+        updatedAtMs: Date.now(),
+        front: upgradeSide("FRONT", frontPhysical, frontPrinted),
+        back: upgradeSide("BACK", backPhysical, backPrinted),
+      };
+      if (typeof window === "undefined") throw new Error("Browser draft storage is unavailable.");
+      writeSpeedsterCaptureRegistrationDraft(window.localStorage, upgraded);
+      captureDraftCreatedAtMs.current = upgraded.createdAtMs;
+      if (source === "MATCHED") setPendingCaptureDraft(upgraded);
+      else setMapMismatchedCaptureDraft(upgraded);
+      setMessage("Color Geometry evidence recovered. All four preserved physical/printed handle quads were explicitly reconfirmed unchanged; choose the visible Resume action to continue.");
+    } catch (error) {
+      if (activeImageRequest.current === controller) {
+        setCaptureDraftError(`${error instanceof Error ? error.message : "Color Geometry recovery did not finish."} The original v1 draft, photos, handles, prepared artifacts, and map evidence remain unchanged.`);
+        setMessage("Legacy Color Geometry recovery did not finish; the preserved v1 draft is still intact.");
+      }
+    } finally {
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
+    }
+  }, [imageRequestTimeoutMs, matColors, matConfirmations, sessionId, token, working]);
+
+  const recoverExpiredColorGeometry = useCallback(async () => {
+    const target = colorGeometryRecoveryTarget;
+    const current = target?.side === "FRONT" ? front : target?.side === "BACK" ? back : null;
+    if (!target || !current || !front || !back || working) return;
+    activeImageRequest.current?.abort();
+    const controller = new AbortController();
+    activeImageRequest.current = controller;
+    setWorking(true);
+    setWorkflowError(null);
+    setMessage(`Rerunning only ${target.side} ${target.mode}. The sibling side, other three receipts, and all confirmed quads remain retained.`);
+    try {
+      const recovered = await speedsterImageService.recoverColorGeometry(token, {
+        sessionId,
+        side: target.side,
+        sourceImageStorageKey: current.originalStorageKey,
+        mode: target.mode,
+        matColor: current.matColor,
+        corners: current.corners,
+      }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+      if (activeImageRequest.current !== controller) return;
+      const recoveredSide: SideState = target.mode === "PHYSICAL_OUTER"
+        ? {
+            ...current,
+            physicalColorGeometry: recovered.colorGeometry,
+            physicalColorGeometryReceipt: recovered.colorGeometryReceipt,
+          }
+        : {
+            ...current,
+            printedColorGeometry: recovered.colorGeometry,
+            printedColorGeometryReceipt: recovered.colorGeometryReceipt,
+          };
+      target.side === "FRONT" ? setFront(recoveredSide) : setBack(recoveredSide);
+      readyDispatched.current = false;
+      setCaptureSaveFailed(true);
+      setStage("BACK_CENTERING");
+      setColorGeometryRecoveryTarget(null);
+      setMessage(`${target.side} ${target.mode} was rerun and its preserved confirmed quad was explicitly reconfirmed unchanged. The other three receipts/evidence were not replaced; choose Retry save.`);
+    } catch (error) {
+      if (activeImageRequest.current === controller) {
+        setWorkflowError(`${error instanceof Error ? error.message : "Targeted Color Geometry recovery did not finish."} No completed sibling, nonexpired mode, or confirmed quad was changed.`);
+      }
+    } finally {
+      if (activeImageRequest.current === controller) {
+        activeImageRequest.current = null;
+        setWorking(false);
+      }
+    }
+  }, [back, colorGeometryRecoveryTarget, front, imageRequestTimeoutMs, sessionId, token, working]);
 
   const resumeGeometryWithoutObsoleteMap = useCallback(async () => {
     const draft = mapMismatchedCaptureDraft;
@@ -2326,10 +2464,14 @@ export function CaptureWorkspace({
       readyDispatched.current = false;
       setCaptureSaveFailed(true);
       setStage("BACK_CENTERING");
+      setColorGeometryRecoveryTarget(saveResult.colorGeometryReceiptExpired ?? null);
       setWorkflowError(saveResult.message ?? "Card geometry could not be saved. Retry without redrawing.");
-      setMessage("Save did not finish. Front + Back photos and geometry are preserved; retry when ready.");
+      setMessage(saveResult.colorGeometryReceiptExpired
+        ? `Save stopped on expired ${saveResult.colorGeometryReceiptExpired.side} ${saveResult.colorGeometryReceiptExpired.mode} authority. Use the visible exact-mode recovery; all other work remains preserved.`
+        : "Save did not finish. Front + Back photos and geometry are preserved; retry when ready.");
       return;
     }
+    setColorGeometryRecoveryTarget(null);
     if (!browserDraftCleanupAttempted) clearPreservedBrowserDraft();
     refreshColorScore();
     setMessage("Geometry locked. The card is ready for defect detection.");
@@ -2413,10 +2555,25 @@ export function CaptureWorkspace({
             The old revision, receipts, projected zones, and registration decisions will be stripped only if you choose geometry recovery.
             Front + Back storage evidence, corners, transforms, and completed centering remain preserved.
           </p>
+          {mapMismatchedCaptureDraft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
+            <LegacyColorRecoveryControls
+              matColors={matColors}
+              matConfirmations={matConfirmations}
+              disabled={working}
+              onMatColorChange={(side, matColor) => {
+                setMatColors((current) => ({ ...current, [side]: matColor }));
+                setMatConfirmations((current) => ({ ...current, [side]: false }));
+              }}
+              onMatConfirm={(side, confirmed) => setMatConfirmations((current) => ({ ...current, [side]: confirmed }))}
+              onRecover={() => void recoverLegacyColorGeometry(mapMismatchedCaptureDraft, "MAP_MISMATCHED")}
+            />
+          ) : null}
           <div className={styles.interruptionActions}>
-            <button type="button" onClick={() => void resumeGeometryWithoutObsoleteMap()} disabled={working}>
-              {working ? "Refreshing prepared images…" : "Resume geometry without old Card Map"}
-            </button>
+            {mapMismatchedCaptureDraft.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
+              <button type="button" onClick={() => void resumeGeometryWithoutObsoleteMap()} disabled={working}>
+                {working ? "Refreshing prepared images…" : "Resume geometry without old Card Map"}
+              </button>
+            ) : null}
             <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
               Discard preserved draft
             </button>
@@ -2432,10 +2589,25 @@ export function CaptureWorkspace({
             Saved {new Date(pendingCaptureDraft.updatedAtMs).toLocaleString()} for {captureDraftBindingLabel(pendingCaptureDraft)}.
             {" "}Nothing has been applied, retried, or discarded.
           </p>
+          {pendingCaptureDraft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
+            <LegacyColorRecoveryControls
+              matColors={matColors}
+              matConfirmations={matConfirmations}
+              disabled={working}
+              onMatColorChange={(side, matColor) => {
+                setMatColors((current) => ({ ...current, [side]: matColor }));
+                setMatConfirmations((current) => ({ ...current, [side]: false }));
+              }}
+              onMatConfirm={(side, confirmed) => setMatConfirmations((current) => ({ ...current, [side]: confirmed }))}
+              onRecover={() => void recoverLegacyColorGeometry(pendingCaptureDraft, "MATCHED")}
+            />
+          ) : null}
           <div className={styles.interruptionActions}>
-            <button type="button" onClick={() => void resumePreservedCaptureDraft()} disabled={working}>
-              {working ? "Refreshing prepared images…" : "Resume preserved draft"}
-            </button>
+            {pendingCaptureDraft.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION ? (
+              <button type="button" onClick={() => void resumePreservedCaptureDraft()} disabled={working}>
+                {working ? "Refreshing prepared images…" : "Resume preserved draft"}
+              </button>
+            ) : null}
             <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
               Discard preserved draft
             </button>
@@ -2631,6 +2803,24 @@ export function CaptureWorkspace({
         </>
       ) : null}
 
+      {colorGeometryRecoveryTarget ? (
+        <section className={styles.registrationInterruption} aria-label="Expired Color Geometry receipt recovery">
+          <header>
+            <span>COLOR GEOMETRY · EXACT MODE RECOVERY</span>
+            <h2>{colorGeometryRecoveryTarget.side} · {colorGeometryRecoveryTarget.mode.replace("_", " ")}</h2>
+          </header>
+          <p role="alert">
+            Only this expired receipt will be rerun. Its currently confirmed quad will be explicitly reconfirmed unchanged.
+            The sibling side, other three receipts/evidence, original photos, prepared artifacts, registrations, and handle positions remain retained.
+          </p>
+          <button type="button" onClick={() => void recoverExpiredColorGeometry()} disabled={working}>
+            {working
+              ? `Recovering ${colorGeometryRecoveryTarget.side} ${colorGeometryRecoveryTarget.mode}…`
+              : `Rerun and reconfirm only ${colorGeometryRecoveryTarget.side} ${colorGeometryRecoveryTarget.mode}`}
+          </button>
+        </section>
+      ) : null}
+
       {activeCentering?.rectifiedUrl && activeCentering.proposedCentering ? (
         <>
         <ColorGeometryStatus
@@ -2650,7 +2840,7 @@ export function CaptureWorkspace({
           initialInnerQuad={activeCentering.centering?.innerQuad ?? activeCentering.proposedCentering}
           detectedBorders={activeCentering.detectedBorders ?? []}
           onContinue={(result) => void confirmCentering(result)}
-          disabled={readyDispatched.current}
+          disabled={readyDispatched.current || Boolean(colorGeometryRecoveryTarget)}
           continueLabel={captureSaveFailed && activeSide === "BACK" ? "Retry save" : "Continue"}
           onImageError={() => handlePreparedImageError(activeSide)}
           onImageReady={() => markPreparedImageReady(activeSide)}
@@ -2665,6 +2855,64 @@ export function CaptureWorkspace({
 }
 
 export type { CaptureWorkspaceProps };
+
+function LegacyColorRecoveryControls({
+  matColors,
+  matConfirmations,
+  disabled,
+  onMatColorChange,
+  onMatConfirm,
+  onRecover,
+}: Readonly<{
+  matColors: Readonly<Record<SpeedsterCardSide, SpeedsterMatColor>>;
+  matConfirmations: Readonly<Record<SpeedsterCardSide, boolean>>;
+  disabled: boolean;
+  onMatColorChange: (side: SpeedsterCardSide, matColor: SpeedsterMatColor) => void;
+  onMatConfirm: (side: SpeedsterCardSide, confirmed: boolean) => void;
+  onRecover: () => void;
+}>) {
+  return (
+    <fieldset disabled={disabled}>
+      <legend>Legacy draft Color Geometry recovery</legend>
+      <p>
+        This v1 draft predates Color Geometry receipts. Choose and explicitly confirm each actual mat.
+        Recovery reads the existing original images only; it does not upload, recapture, rewrite prepared artifacts, move handles, or apply Card Map authority.
+      </p>
+      {(["FRONT", "BACK"] as const).map((side) => (
+        <div key={side}>
+          <label>
+            {side === "FRONT" ? "Front" : "Back"} mat
+            <select
+              aria-label={`${side === "FRONT" ? "Front" : "Back"} preserved draft mat`}
+              value={matColors[side]}
+              onChange={(event) => onMatColorChange(side, event.target.value as SpeedsterMatColor)}
+            >
+              <option value="BLACK">Black</option>
+              <option value="WHITE">White</option>
+              <option value="MAGENTA">Magenta</option>
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              aria-label={`Confirm preserved ${side === "FRONT" ? "Front" : "Back"} ${matColors[side]} mat`}
+              checked={matConfirmations[side]}
+              onChange={(event) => onMatConfirm(side, event.target.checked)}
+            />
+            Confirm the preserved {side === "FRONT" ? "Front" : "Back"} photo used this {matColors[side].toLowerCase()} mat
+          </label>
+        </div>
+      ))}
+      <button
+        type="button"
+        disabled={disabled || !matConfirmations.FRONT || !matConfirmations.BACK}
+        onClick={onRecover}
+      >
+        {disabled ? "Recovering Color evidence…" : "Recover Color evidence and reconfirm all four preserved quads"}
+      </button>
+    </fieldset>
+  );
+}
 
 function ColorGeometryStatus({
   proposal,

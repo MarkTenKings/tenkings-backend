@@ -27,9 +27,11 @@ import {
 } from "../../lib/humanGrade";
 import { canonicalizeNewSpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
 import {
+  SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
   readSpeedsterCaptureRegistrationDraftForCommittedSession,
   removeSpeedsterCaptureRegistrationDraft,
   speedsterCaptureDraftMatchesCommittedSession,
+  type SpeedsterCaptureDraftSideV2,
   type SpeedsterCaptureRegistrationDraft,
 } from "../../lib/ai-grader-v2/capture-registration-draft";
 import type {
@@ -564,6 +566,9 @@ export default function AiGraderV2AdminPage() {
         const preserved = side === "FRONT"
           ? committedCaptureRecovery.browserDraft.front
           : committedCaptureRecovery.browserDraft.back;
+        const preservedColor = committedCaptureRecovery.browserDraft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2
+          ? preserved as SpeedsterCaptureDraftSideV2
+          : null;
         if (!preserved.centering) throw new Error(`The preserved ${side} centering result is unavailable.`);
         return {
           side,
@@ -584,24 +589,24 @@ export default function AiGraderV2AdminPage() {
           viewStorageKeys: preserved.viewStorageKeys,
           centeringQuad: preserved.centering.innerQuad,
           centeringBorders: preserved.centering.borders,
-          ...("matColor" in preserved ? {
+          ...(preservedColor ? {
             colorGeometryEvidence: [
               {
                 side,
                 sourceImageStorageKey: preserved.originalStorageKey,
                 mode: "PHYSICAL_OUTER" as const,
-                matColor: preserved.matColor,
-                result: preserved.physicalColorGeometry,
-                serverReceipt: preserved.physicalColorGeometryReceipt,
+                matColor: preservedColor.matColor,
+                result: preservedColor.physicalColorGeometry,
+                serverReceipt: preservedColor.physicalColorGeometryReceipt,
                 confirmedQuad: preserved.corners,
               },
               {
                 side,
                 sourceImageStorageKey: preserved.originalStorageKey,
                 mode: "PRINTED_FRAME" as const,
-                matColor: preserved.matColor,
-                result: preserved.printedColorGeometry,
-                serverReceipt: preserved.printedColorGeometryReceipt,
+                matColor: preservedColor.matColor,
+                result: preservedColor.printedColorGeometry,
+                serverReceipt: preservedColor.printedColorGeometryReceipt,
                 confirmedQuad: preserved.centering.innerQuad,
               },
             ] as const,
@@ -706,8 +711,28 @@ export default function AiGraderV2AdminPage() {
           } : {}),
         }),
       });
-      const payload = (await response.json().catch(() => ({}))) as { message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "Card geometry could not be saved.");
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        colorGeometryReceiptExpired?: {
+          side?: unknown;
+          mode?: unknown;
+        };
+      };
+      if (!response.ok) {
+        const expired = payload.colorGeometryReceiptExpired;
+        if ((expired?.side === "FRONT" || expired?.side === "BACK")
+          && (expired.mode === "PHYSICAL_OUTER" || expired.mode === "PRINTED_FRAME")) {
+          return {
+            saved: false,
+            message: payload.message ?? "Color Geometry receipt expired.",
+            colorGeometryReceiptExpired: {
+              side: expired.side,
+              mode: expired.mode,
+            },
+          };
+        }
+        throw new Error(payload.message ?? "Card geometry could not be saved.");
+      }
       clearPreservedBrowserDraft();
       void router.replace("/admin/ai-grader-v2", undefined, { shallow: true });
       setCapture(bundle);

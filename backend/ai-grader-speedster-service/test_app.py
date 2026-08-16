@@ -7,12 +7,14 @@ import cv2
 import numpy as np
 
 from app import (
+    ColorGeometryRequest,
     GeometryRequest,
     PrepareRequest,
     PreparedUploads,
     Point,
     TARGET_HEIGHT,
     TARGET_WIDTH,
+    color_geometry,
     geometry,
     prepare_image,
     rectify,
@@ -312,6 +314,55 @@ class SpeedsterGeometryTest(unittest.TestCase):
             [(x / 700, y / 900) for x, y in legacy],
         )
         legacy_detector.assert_called_once_with(image)
+
+    def test_targeted_color_recovery_reads_only_and_never_uploads_prepared_artifacts(self):
+        image = np.full((900, 700, 3), 30, dtype=np.uint8)
+        corners = [
+            Point(x=0.1, y=0.1),
+            Point(x=0.9, y=0.1),
+            Point(x=0.9, y=0.9),
+            Point(x=0.1, y=0.9),
+        ]
+        with patch("app.load_image", return_value=image), patch("app.upload_webp") as upload:
+            physical = color_geometry(ColorGeometryRequest(
+                imageBase64="fixture",
+                mode="PHYSICAL_OUTER",
+                matColor="BLACK",
+                corners=corners,
+            ))
+        self.assertEqual(physical["width"], 700)
+        self.assertEqual(physical["height"], 900)
+        self.assertEqual(physical["colorGeometry"]["mode"], "PHYSICAL_OUTER")
+        upload.assert_not_called()
+
+        rectified = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 180, dtype=np.uint8)
+        with patch("app.load_image", return_value=image), patch(
+            "app.rectify", return_value=(rectified, np.eye(3, dtype=np.float32))
+        ) as rectify_call, patch("app.upload_webp") as upload:
+            printed = color_geometry(ColorGeometryRequest(
+                imageBase64="fixture",
+                mode="PRINTED_FRAME",
+                matColor="WHITE",
+                corners=corners,
+            ))
+        self.assertEqual(printed["width"], TARGET_WIDTH)
+        self.assertEqual(printed["height"], TARGET_HEIGHT)
+        self.assertEqual(printed["colorGeometry"]["mode"], "PRINTED_FRAME")
+        rectify_call.assert_called_once()
+        upload.assert_not_called()
+
+        with patch("app.load_image", return_value=image), patch(
+            "app.propose_physical_outer", side_effect=RuntimeError("targeted color-only fault")
+        ), patch("app.upload_webp") as upload:
+            abstained = color_geometry(ColorGeometryRequest(
+                imageBase64="fixture",
+                mode="PHYSICAL_OUTER",
+                matColor="MAGENTA",
+                corners=corners,
+            ))
+        self.assertEqual(abstained["colorGeometry"]["outcome"], "ABSTAIN")
+        self.assertEqual(abstained["colorGeometry"]["advisory"]["code"], "COLOR_ENGINE_ERROR")
+        upload.assert_not_called()
 
     def test_nonaccepted_color_frame_preserves_the_legacy_centering_proposal(self):
         image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 150, dtype=np.uint8)

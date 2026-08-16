@@ -4,6 +4,7 @@ import {
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_MAX_BYTES,
   SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS,
   SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+  SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
   parseSpeedsterCaptureRegistrationDraft,
   readSpeedsterCaptureRegistrationDraft,
   readSpeedsterCaptureRegistrationDraftForCommittedSession,
@@ -13,6 +14,8 @@ import {
   speedsterCaptureRegistrationDraftStorageKey,
   writeSpeedsterCaptureRegistrationDraft,
   type SpeedsterCaptureRegistrationDraft,
+  type SpeedsterCaptureRegistrationDraftV1,
+  type SpeedsterCaptureRegistrationDraftV2,
 } from "../lib/ai-grader-v2/capture-registration-draft";
 import type { SpeedsterCardSide } from "../lib/ai-grader-v2/contracts";
 import type { SpeedsterMapRegistration } from "../lib/ai-grader-v2/card-type-map-contracts";
@@ -205,6 +208,56 @@ function draft(sessionId = "session-a", createdAtMs = 1_000): SpeedsterCaptureRe
   };
 }
 
+function colorProposal(mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", matColor: "BLACK" | "WHITE") {
+  return {
+    version: "speedster-color-geometry-proposal-v1" as const,
+    engineVersion: "speedster-color-geometry-v1" as const,
+    authority: "PROPOSER_ONLY" as const,
+    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+    mode,
+    outcome: "ACCEPTED" as const,
+    matColor,
+    proposal: quad,
+    contrastFloorDeltaE: mode === "PHYSICAL_OUTER" ? 18 : 12,
+    minimumSideSupport: mode === "PHYSICAL_OUTER" ? 0.7 : 0.55,
+    sideEvidence: Object.fromEntries(["top", "right", "bottom", "left"].map((side) => [side, {
+      medianContrastDeltaE: 40,
+      medianLightnessContrast: 40,
+      supportFraction: 1,
+      sampleCount: 40,
+      candidateCount: 1,
+      ambiguous: false,
+    }])) as Record<"top" | "right" | "bottom" | "left", {
+      medianContrastDeltaE: number;
+      medianLightnessContrast: number;
+      supportFraction: number;
+      sampleCount: number;
+      candidateCount: number;
+      ambiguous: boolean;
+    }>,
+    ambiguity: { candidateCount: 1, runnerUpScoreRatio: null, ambiguous: false },
+    advisory: null,
+  };
+}
+
+function v2Draft(): SpeedsterCaptureRegistrationDraftV2 {
+  const legacy = draft() as SpeedsterCaptureRegistrationDraftV1;
+  const upgrade = (side: "FRONT" | "BACK", matColor: "BLACK" | "WHITE") => ({
+    ...(side === "FRONT" ? legacy.front : legacy.back),
+    matColor,
+    physicalColorGeometry: colorProposal("PHYSICAL_OUTER", matColor),
+    physicalColorGeometryReceipt: `physical-${side.toLowerCase()}-${"a".repeat(40)}`,
+    printedColorGeometry: colorProposal("PRINTED_FRAME", matColor),
+    printedColorGeometryReceipt: `printed-${side.toLowerCase()}-${"b".repeat(40)}`,
+  });
+  return {
+    ...legacy,
+    version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
+    front: upgrade("FRONT", "BLACK"),
+    back: upgrade("BACK", "WHITE"),
+  };
+}
+
 const binding = (sessionId = "session-a") => ({
   surface: "AI_GRADER" as const,
   sessionId,
@@ -228,6 +281,28 @@ test("sanitized capture draft round-trips exact authority without URLs, tokens, 
   assert.equal(parsed?.provisional.FRONT?.serverReceipt, input.provisional.FRONT?.serverReceipt);
   assert.equal(parsed?.front.mapRegistration?.candidateProvenance?.source, "ORIGINAL_REFERENCE");
   assert.equal(parsed?.front.mapRegistration?.projectedDesignBoundary.kind, "FULL_BLEED");
+});
+
+test("draft schema keeps v1 byte-strict while v2 requires exact Color evidence and receipts", () => {
+  const legacy = mutableClone(draft());
+  (legacy.front as Mutable<typeof legacy.front> & { matColor?: string }).matColor = "BLACK";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(legacy), binding()), null, "v1 must never silently accept strict v2 fields");
+
+  const current = v2Draft();
+  const parsed = parseSpeedsterCaptureRegistrationDraft(JSON.stringify(current), binding());
+  assert.equal(parsed?.version, SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2);
+  if (parsed?.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2) {
+    assert.equal(parsed.front.physicalColorGeometryReceipt, current.front.physicalColorGeometryReceipt);
+    assert.equal(parsed.back.printedColorGeometry.matColor, "WHITE");
+  }
+
+  const missingReceipt = mutableClone(current);
+  delete (missingReceipt.front as Partial<typeof missingReceipt.front>).printedColorGeometryReceipt;
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(missingReceipt), binding()), null);
+
+  const changedMat = mutableClone(current);
+  changedMat.back.matColor = "BLACK";
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(changedMat), binding()), null, "proposal/mat binding must remain exact");
 });
 
 test("capture draft parsing fails closed on binding drift, extra fields, URLs, missing receipts, and malformed V2 zone metadata", () => {
@@ -334,7 +409,7 @@ test("committed-capture reconciliation requires exact Front, Back, and map-bindi
 });
 
 test("receipt age is side-specific, future timestamps fail closed, and oversized drafts are rejected", () => {
-  const input = draft("session-a", 10_000);
+  const input = draft("session-a", 10_000) as SpeedsterCaptureRegistrationDraftV1;
   assert.deepEqual(
     speedsterCaptureDraftExpiredRegistrationSides(input, 9_990 + SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS),
     [],

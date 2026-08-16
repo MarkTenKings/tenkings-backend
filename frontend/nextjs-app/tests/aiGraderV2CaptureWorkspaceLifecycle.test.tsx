@@ -161,6 +161,12 @@ type Harness = {
   getOriginalUploadPlanCount: (side: "FRONT" | "BACK") => number;
   getPreparedUploadPlanCount: (side: "FRONT" | "BACK") => number;
   getPrepareCount: (side: "FRONT" | "BACK") => number;
+  getColorRecoveryRequests: () => readonly Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+    matColor: "BLACK" | "WHITE" | "MAGENTA";
+    corners: unknown;
+  }>[];
   getRegistrationCount: () => number;
   getRegistrationCountForSide: (side: "FRONT" | "BACK") => number;
   getRegistrationResultsForSide: (side: "FRONT" | "BACK") => readonly Record<string, unknown>[];
@@ -239,6 +245,10 @@ async function mountWorkspace(input: {
     matColor: "BLACK" | "WHITE" | "MAGENTA";
     signal: AbortSignal | null | undefined;
   }>) => Promise<Response>;
+  colorRecoveryFailure?: Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+  }>;
   onSave?: (
     bundle: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle,
   ) => import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult | Promise<import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult>;
@@ -317,6 +327,12 @@ async function mountWorkspace(input: {
   const originalUploadPlanCount = { FRONT: 0, BACK: 0 };
   const preparedUploadPlanCount = { FRONT: 0, BACK: 0 };
   const prepareCount = { FRONT: 0, BACK: 0 };
+  const colorRecoveryRequests: Array<Readonly<{
+    side: "FRONT" | "BACK";
+    mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+    matColor: "BLACK" | "WHITE" | "MAGENTA";
+    corners: unknown;
+  }>> = [];
   let registrationCount = 0;
   const registrationCountBySide = { FRONT: 0, BACK: 0 };
   const registrationResultsBySide: Record<"FRONT" | "BACK", Record<string, unknown>[]> = { FRONT: [], BACK: [] };
@@ -392,6 +408,25 @@ async function mountWorkspace(input: {
       return jsonResponse({
         side,
         imageUrl: `https://read.example.test/${side.toLowerCase()}-rectified-refresh-${preparedImageRefreshCount[side]}`,
+      });
+    }
+    if (url === "/api/admin/ai-grader-v2/image/color-geometry") {
+      const body = JSON.parse(String(init?.body)) as {
+        side: "FRONT" | "BACK";
+        mode: "PHYSICAL_OUTER" | "PRINTED_FRAME";
+        matColor: "BLACK" | "WHITE" | "MAGENTA";
+        corners: unknown;
+      };
+      colorRecoveryRequests.push(body);
+      if (input.colorRecoveryFailure?.side === body.side
+        && input.colorRecoveryFailure.mode === body.mode) {
+        return jsonResponse({ message: `Targeted ${body.side} ${body.mode} recovery failed.` }, 503);
+      }
+      return jsonResponse({
+        width: body.mode === "PHYSICAL_OUTER" ? 1200 : 1270,
+        height: body.mode === "PHYSICAL_OUTER" ? 1600 : 1778,
+        colorGeometry: { ...colorProposal(body.mode), matColor: body.matColor },
+        colorGeometryReceipt: `recovered-${body.side.toLowerCase()}-${body.mode.toLowerCase()}-${colorRecoveryRequests.length}`,
       });
     }
     if (url === "/api/admin/ai-grader-v2/image/prepare") {
@@ -567,7 +602,14 @@ async function mountWorkspace(input: {
   };
 
   const originalProposeGeometry = speedsterImageService.proposeGeometry;
-  speedsterImageService.proposeGeometry = input.proposeGeometry;
+  speedsterImageService.proposeGeometry = async (...args) => {
+    const response = await input.proposeGeometry(...args);
+    const requestedMat = args[1].matColor;
+    return response.colorGeometry.matColor === requestedMat ? response : {
+      ...response,
+      colorGeometry: { ...response.colorGeometry, matColor: requestedMat },
+    };
+  };
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
   const events: SpeedsterCaptureInstrumentationEvent[] = [];
@@ -651,6 +693,7 @@ async function mountWorkspace(input: {
     getOriginalUploadPlanCount: (side) => originalUploadPlanCount[side],
     getPreparedUploadPlanCount: (side) => preparedUploadPlanCount[side],
     getPrepareCount: (side) => prepareCount[side],
+    getColorRecoveryRequests: () => colorRecoveryRequests,
     getRegistrationCount: () => registrationCount,
     getRegistrationCountForSide: (side) => registrationCountBySide[side],
     getRegistrationResultsForSide: (side) => registrationResultsBySide[side],
@@ -1179,19 +1222,19 @@ test("Front targeted mat recapture preserves the complete Back side through the 
 
     assert.equal(harness.bundles[0].front.originalStorageKey, "front-recaptured.jpg");
     assert.equal(harness.bundles[0].back.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg");
-    assert.equal(harness.bundles[0].front.colorGeometryEvidence[0].matColor, "WHITE");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].matColor, "WHITE");
     assert.equal(
-      harness.bundles[0].front.colorGeometryEvidence[0].serverReceipt,
+      harness.bundles[0].front.colorGeometryEvidence![0].serverReceipt,
       "front-white-attempt-2",
       "The final capture must use the newly returned signed color receipt, never the pre-recapture receipt",
     );
     assert.equal(
-      harness.bundles[0].back.colorGeometryEvidence[0].serverReceipt,
+      harness.bundles[0].back.colorGeometryEvidence![0].serverReceipt,
       "back-white-attempt-1",
       "The successful sibling receipt must remain byte-for-byte unchanged",
     );
     assert.equal(
-      harness.bundles[0].back.colorGeometryEvidence[1].serverReceipt,
+      harness.bundles[0].back.colorGeometryEvidence![1].serverReceipt,
       "test-printed-white-receipt",
       "The retained Back printed receipt must remain byte-for-byte unchanged",
     );
@@ -1475,10 +1518,10 @@ test("Back targeted mat recapture preserves the complete Front side through the 
     );
     assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg");
     assert.equal(harness.bundles[0].back.originalStorageKey, "back-recaptured.jpg");
-    assert.equal(harness.bundles[0].front.colorGeometryEvidence[0].serverReceipt, "front-black-attempt-1");
-    assert.equal(harness.bundles[0].front.colorGeometryEvidence[1].serverReceipt, "test-printed-black-receipt");
-    assert.equal(harness.bundles[0].back.colorGeometryEvidence[0].serverReceipt, "back-magenta-attempt-2");
-    assert.equal(harness.bundles[0].back.colorGeometryEvidence[1].serverReceipt, "test-printed-magenta-receipt");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].serverReceipt, "front-black-attempt-1");
+    assert.equal(harness.bundles[0].front.colorGeometryEvidence![1].serverReceipt, "test-printed-black-receipt");
+    assert.equal(harness.bundles[0].back.colorGeometryEvidence![0].serverReceipt, "back-magenta-attempt-2");
+    assert.equal(harness.bundles[0].back.colorGeometryEvidence![1].serverReceipt, "test-printed-magenta-receipt");
     assert.deepEqual(harness.bundles[0].front.mapRegistration, retainedFrontRegistration);
     assert.deepEqual(harness.bundles[0].front.centeringQuad, validQuad,
       "The confirmed Front centering must remain byte-for-byte unchanged");
@@ -1918,7 +1961,7 @@ test("HTTP 402 stays factual, retains request evidence, and never automatically 
 
 test("reload offers explicit Resume, refreshes URLs, preserves Front success, and clears only after successful save", async () => {
   const first = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationHttpFailure: {
       side: "BACK",
@@ -1946,7 +1989,7 @@ test("reload offers explicit Resume, refreshes URLs, preserves Front success, an
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: serialized,
   });
@@ -1981,10 +2024,112 @@ test("reload offers explicit Resume, refreshes URLs, preserves Front success, an
   }
 });
 
+test("legacy v1 draft recovery requires explicit mats, preserves all prior work, and upgrades only after four receipts succeed", async () => {
+  const activeMap = { revisionId: "family-revision-legacy-color", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 402,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      retryable: false,
+      message: "CARD MAP provider rejected the request (HTTP 402). No map was applied.",
+    },
+  });
+  let legacySerialized: string;
+  let preservedRegistration: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Seed capture draft was not preserved");
+    const legacy = JSON.parse(seed.getCaptureDraftSerialized()!) as Record<string, any>;
+    legacy.version = "speedster-capture-registration-draft-v1";
+    for (const side of [legacy.front, legacy.back]) {
+      delete side.matColor;
+      delete side.physicalColorGeometry;
+      delete side.physicalColorGeometryReceipt;
+      delete side.printedColorGeometry;
+      delete side.printedColorGeometryReceipt;
+    }
+    preservedRegistration = JSON.stringify(legacy.front.mapRegistration);
+    legacySerialized = JSON.stringify(legacy);
+  } finally {
+    await seed.cleanup();
+  }
+
+  const failedRecovery = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    captureDraftSerialized: legacySerialized,
+    colorRecoveryFailure: { side: "FRONT", mode: "PRINTED_FRAME" },
+  });
+  try {
+    const frontMat = failedRecovery.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Front BLACK mat"]');
+    const backMat = failedRecovery.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Back WHITE mat"]');
+    assert.ok(frontMat && backMat);
+    await act(async () => {
+      frontMat.click();
+      backMat.click();
+    });
+    await act(async () => fire(buttonByText(failedRecovery.container, "Recover Color evidence and reconfirm all four preserved quads")!, "click"));
+    await waitFor(() => /original v1 draft.*remain unchanged/i.test(failedRecovery.container.textContent ?? ""), "Partial legacy recovery failure was not explicit");
+    assert.equal(failedRecovery.getCaptureDraftSerialized(), legacySerialized, "partial recovery must not upgrade or rewrite the v1 draft");
+    assert.equal(buttonByText(failedRecovery.container, "Resume preserved draft"), undefined);
+  } finally {
+    await failedRecovery.cleanup();
+  }
+
+  const recovered = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    captureDraftSerialized: legacySerialized,
+  });
+  try {
+    assert.equal(buttonByText(recovered.container, "Resume preserved draft"), undefined, "v1 cannot silently resume without Color receipts");
+    const recoverButton = buttonByText(recovered.container, "Recover Color evidence and reconfirm all four preserved quads") as HTMLButtonElement | undefined;
+    assert.ok(recoverButton?.disabled, "recovery must stay blocked before both explicit mat confirmations");
+    const frontMat = recovered.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Front BLACK mat"]');
+    const backMat = recovered.container.querySelector<HTMLInputElement>('[aria-label="Confirm preserved Back WHITE mat"]');
+    assert.ok(frontMat && backMat);
+    await act(async () => {
+      frontMat.click();
+      backMat.click();
+    });
+    assert.equal(recoverButton.disabled, false);
+    await act(async () => recoverButton.click());
+    await waitFor(() => Boolean(buttonByText(recovered.container, "Resume preserved draft")), "Atomic v2 upgrade did not expose Resume");
+    assert.deepEqual(recovered.getColorRecoveryRequests().map(({ side, mode, matColor }) => ({ side, mode, matColor })), [
+      { side: "FRONT", mode: "PHYSICAL_OUTER", matColor: "BLACK" },
+      { side: "FRONT", mode: "PRINTED_FRAME", matColor: "BLACK" },
+      { side: "BACK", mode: "PHYSICAL_OUTER", matColor: "WHITE" },
+      { side: "BACK", mode: "PRINTED_FRAME", matColor: "WHITE" },
+    ]);
+    assert.equal(recovered.getPrepareCount("FRONT") + recovered.getPrepareCount("BACK"), 0, "legacy Color recovery must not rewrite prepared artifacts");
+    assert.equal(recovered.getRegistrationCount(), 0, "legacy Color recovery must not alter registration authority");
+    const upgraded = JSON.parse(recovered.getCaptureDraftSerialized()!) as Record<string, any>;
+    assert.equal(upgraded.version, "speedster-capture-registration-draft-v2");
+    assert.equal(JSON.stringify(upgraded.front.mapRegistration), preservedRegistration);
+    assert.deepEqual(upgraded.front.corners, JSON.parse(legacySerialized).front.corners);
+    assert.deepEqual(upgraded.back.proposedCentering, JSON.parse(legacySerialized).back.proposedCentering);
+
+    await act(async () => fire(buttonByText(recovered.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(recovered.container.querySelector('[aria-label="Card Map registration interruption"]')), "Recovered draft did not resume its exact prior stage");
+    assert.match(recovered.container.textContent ?? "", /provider rejected the request \(HTTP 402\)/);
+  } finally {
+    await recovered.cleanup();
+  }
+});
+
 test("mounted expiry invalidates only the old side and preserves the fresh sibling receipt", async () => {
   const activeMap = { revisionId: "family-revision-mixed-age", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
   });
   let serialized: string;
@@ -2007,7 +2152,7 @@ test("mounted expiry invalidates only the old side and preserves the fresh sibli
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     captureDraftSerialized: serialized,
   });
@@ -2028,7 +2173,7 @@ test("mounted expiry invalidates only the old side and preserves the fresh sibli
 test("Card Maps new-source centering persists and resumes with an explicit NO_MAP binding", async () => {
   const first = await mountWorkspace({
     draftSurface: "CARD_MAPS",
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
   });
   let serialized: string;
   try {
@@ -2051,7 +2196,7 @@ test("Card Maps new-source centering persists and resumes with an explicit NO_MA
 
   const resumed = await mountWorkspace({
     draftSurface: "CARD_MAPS",
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     captureDraftSerialized: serialized,
   });
   try {
@@ -2069,7 +2214,7 @@ test("Card Maps new-source centering persists and resumes with an explicit NO_MA
 
 test("explicit Discard removes only the current preserved draft and starts no work before selection", async () => {
   const seedSource = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     registrationFailsOnSide: "BACK",
   });
@@ -2087,7 +2232,7 @@ test("explicit Discard removes only the current preserved draft and starts no wo
   }
 
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: serialized,
   });
@@ -2097,6 +2242,11 @@ test("explicit Discard removes only the current preserved draft and starts no wo
     await act(async () => fire(buttonByText(harness.container, "Discard preserved draft")!, "click"));
     assert.equal(harness.getCaptureDraftSerialized(), null);
     assert.equal(harness.container.querySelector('[aria-label="Preserved capture draft"]'), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Confirm Front BLACK mat") && buttonByText(harness.container, "Confirm Back WHITE mat")), "Fresh mat confirmations did not become available after explicit discard");
+    await act(async () => {
+      fire(buttonByText(harness.container, "Confirm Front BLACK mat")!, "click");
+      fire(buttonByText(harness.container, "Confirm Back WHITE mat")!, "click");
+    });
     await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh photo flow did not become available after explicit discard");
   } finally {
     await harness.cleanup();
@@ -2106,7 +2256,7 @@ test("explicit Discard removes only the current preserved draft and starts no wo
 test("invalid preserved draft blocks fresh work and cannot be overwritten before explicit Discard", async () => {
   const invalidSerialized = JSON.stringify({ version: "tampered-draft", adminToken: "must-remain-auditable" });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-invalid", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
     captureDraftSerialized: invalidSerialized,
   });
@@ -2118,6 +2268,11 @@ test("invalid preserved draft blocks fresh work and cannot be overwritten before
 
     await act(async () => fire(buttonByText(harness.container, "Discard invalid preserved draft")!, "click"));
     assert.equal(harness.getCaptureDraftSerialized(), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Confirm Front BLACK mat") && buttonByText(harness.container, "Confirm Back WHITE mat")), "Fresh mat confirmations did not become available after invalid-draft discard");
+    await act(async () => {
+      fire(buttonByText(harness.container, "Confirm Front BLACK mat")!, "click");
+      fire(buttonByText(harness.container, "Confirm Back WHITE mat")!, "click");
+    });
     await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh flow did not start after explicit invalid-draft discard");
   } finally {
     await harness.cleanup();
@@ -2126,7 +2281,7 @@ test("invalid preserved draft blocks fresh work and cannot be overwritten before
 
 test("localStorage get, set, and post-save remove failures stay explicit without losing in-memory work", async () => {
   const getFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageGetFails: true,
   });
   try {
@@ -2138,7 +2293,7 @@ test("localStorage get, set, and post-save remove failures stay explicit without
   }
 
   const setFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageSetFails: true,
   });
   try {
@@ -2155,7 +2310,7 @@ test("localStorage get, set, and post-save remove failures stay explicit without
   }
 
   const removeFailure = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     localStorageRemoveFails: true,
   });
   try {
@@ -2186,7 +2341,7 @@ test("raw preserved draft remains visible and blocks fresh capture while map bin
     activeMapRevisionId: "temporarily-unavailable-revision",
   });
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     captureDraftSerialized: opaqueSerialized,
   });
   try {
@@ -2203,7 +2358,7 @@ test("raw preserved draft remains visible and blocks fresh capture while map bin
 
 test("late Resume URL refresh cannot install a draft after its immutable map binding changes", async () => {
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
     registrationFailsOnSide: "BACK",
   });
@@ -2223,7 +2378,7 @@ test("late Resume URL refresh cannot install a draft after its immutable map bin
   let started = 0;
   const releases: Array<() => void> = [];
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
     captureDraftSerialized: serialized,
     preparedImageRequestBarrier: async () => {
@@ -2268,7 +2423,7 @@ test("late Resume URL refresh cannot install a draft after its immutable map bin
 
 test("explicit geometry-only recovery round-trips across every current map binding status", async () => {
   const seed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-status-old", scope: "FAMILY", name: "Old map" },
     registrationFailsOnSide: "BACK",
   });
@@ -2304,7 +2459,7 @@ test("explicit geometry-only recovery round-trips across every current map bindi
   ];
   for (const candidate of cases) {
     const harness = await mountWorkspace({
-      proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+      proposeGeometry: async () => geometryResponse(),
       activeMap: candidate.activeMap,
       mapBindingStatus: candidate.mapBindingStatus,
       mapLookupFailed: candidate.mapBindingStatus === "LOOKUP_FAILED",
@@ -2366,7 +2521,7 @@ test("explicit geometry-only recovery round-trips across every current map bindi
 
       if (candidate.name === "loaded-new-revision-success") {
         const later = await mountWorkspace({
-          proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+          proposeGeometry: async () => geometryResponse(),
           activeMap: { revisionId: "family-revision-status-later", scope: "FAMILY", name: "Later map" },
           captureDraftSerialized: harness.getCaptureDraftSerialized()!,
         });
@@ -3045,7 +3200,7 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
 test("first of two rescues serializes, parses, reloads the remaining side, and preserves explicit abandon", async () => {
   const activeMap = { revisionId: "family-revision-two-rescues", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const first = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     registrationNeedsRescueOnBoth: true,
   });
@@ -3090,7 +3245,7 @@ test("first of two rescues serializes, parses, reloads the remaining side, and p
   }
 
   const resumed = await mountWorkspace({
-    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    proposeGeometry: async () => geometryResponse(),
     activeMap,
     captureDraftSerialized: serialized,
   });
@@ -3304,6 +3459,59 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
     );
     assert.equal(harness.bundles.length, 2);
     assert.equal(buttonByText(harness.container, "Retry save"), undefined);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("expired Color receipt recovery reruns only the exact side and mode while every sibling byte stays retained", async () => {
+  let saveCalls = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap: { revisionId: "family-revision-color-expiry", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    onSave: async () => {
+      saveCalls += 1;
+      return saveCalls === 1 ? {
+        saved: false,
+        message: "FRONT PRINTED_FRAME color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only FRONT PRINTED_FRAME.",
+        colorGeometryReceiptExpired: { side: "FRONT", mode: "PRINTED_FRAME" },
+      } : { saved: true };
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Expired Color Geometry receipt recovery"]')), "Exact receipt recovery did not render");
+    assert.equal(saveCalls, 1);
+    assert.match(harness.container.textContent ?? "", /FRONT · PRINTED FRAME/);
+    const before = structuredClone(harness.bundles[0]);
+    const exactButton = buttonByText(harness.container, "Rerun and reconfirm only FRONT PRINTED_FRAME");
+    assert.ok(exactButton);
+    await act(async () => fire(exactButton, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Exact recovery did not return to Back centering");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry save")), "Exact recovery did not return to retryable save");
+    assert.deepEqual(harness.getColorRecoveryRequests().map(({ side, mode }) => ({ side, mode })), [
+      { side: "FRONT", mode: "PRINTED_FRAME" },
+    ]);
+    await act(async () => fire(buttonByText(harness.container, "Retry save")!, "click"));
+    await waitFor(() => saveCalls === 2, "Recovered capture did not retry save");
+    const after = harness.bundles[1];
+    assert.deepEqual(after.front.sourceCorners, before.front.sourceCorners);
+    assert.deepEqual(after.front.centeringQuad, before.front.centeringQuad);
+    assert.deepEqual(after.back, before.back, "completed Back side and both of its receipts must remain byte-identical");
+    assert.deepEqual(after.front.colorGeometryEvidence?.[0], before.front.colorGeometryEvidence?.[0], "nonexpired Front physical receipt must remain byte-identical");
+    assert.notEqual(after.front.colorGeometryEvidence?.[1].serverReceipt, before.front.colorGeometryEvidence?.[1].serverReceipt);
+    assert.deepEqual(after.front.colorGeometryEvidence?.[1].confirmedQuad, before.front.colorGeometryEvidence?.[1].confirmedQuad);
   } finally {
     await harness.cleanup();
   }

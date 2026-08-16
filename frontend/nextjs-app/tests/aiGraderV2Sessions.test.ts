@@ -43,6 +43,7 @@ import {
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
   sanitizeSpeedsterPreparePayload,
+  sanitizeSpeedsterColorGeometryPayload,
   parseSpeedsterRegistrationFailure,
   assertSpeedsterRegistrationCandidateAuthority,
   selectSpeedsterRegistrationLessonCandidates,
@@ -507,6 +508,60 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   });
 });
 
+test("targeted color recovery is read-only and binds the exact original plus preserved physical quad", async () => {
+  const fixture = mapBindingFixture();
+  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4/front.jpg`;
+  const deps = {
+    async findOwnedCapture() { return null; },
+    async findOwnedMapSession() { return fixture.session; },
+    async presignRead(storageKey: string) { return `https://server-read.example/${storageKey}`; },
+    async hashMapEvidence(storageKey: string) { return mapBindingSha(storageKey); },
+  };
+  const physical = await speedsterServiceBody("color-geometry", {
+    sessionId: fixture.sessionId,
+    side: "FRONT",
+    sourceImageStorageKey,
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    corners: mapBindingQuad,
+  }, "admin-1", deps);
+  assert.deepEqual(physical, {
+    imageUrl: `https://server-read.example/${sourceImageStorageKey}`,
+    matColor: "BLACK",
+    mode: "PHYSICAL_OUTER",
+    colorGeometryAuthorityBinding: {
+      sessionId: fixture.sessionId,
+      side: "FRONT",
+      mode: "PHYSICAL_OUTER",
+      sourceImageStorageKey,
+      sourceImageSha256: mapBindingSha(sourceImageStorageKey),
+      matColor: "BLACK",
+      physicalQuadSha256: null,
+    },
+  });
+  const printed = await speedsterServiceBody("color-geometry", {
+    sessionId: fixture.sessionId,
+    side: "FRONT",
+    sourceImageStorageKey,
+    mode: "PRINTED_FRAME",
+    matColor: "BLACK",
+    corners: mapBindingQuad,
+  }, "admin-1", deps);
+  assert.equal(printed.imageUrl, `https://server-read.example/${sourceImageStorageKey}`);
+  assert.deepEqual(printed.corners, mapBindingQuad);
+  assert.equal(printed.outputUploads, undefined, "targeted recovery must not write or plan prepared artifacts");
+  assert.deepEqual((printed.colorGeometryAuthorityBinding as Record<string, unknown>).physicalQuadSha256, speedsterPhysicalQuadHash(mapBindingQuad));
+
+  const accepted = colorResult("PRINTED_FRAME", "BLACK");
+  assert.deepEqual(sanitizeSpeedsterColorGeometryPayload({ colorGeometry: accepted }, {
+    mode: "PRINTED_FRAME",
+    matColor: "BLACK",
+  }), { colorGeometry: accepted });
+  assert.throws(() => sanitizeSpeedsterColorGeometryPayload({
+    colorGeometry: colorResult("PHYSICAL_OUTER", "BLACK"),
+  }, { mode: "PRINTED_FRAME", matColor: "BLACK" }), /proposal identity is malformed/i);
+});
+
 test("image proxy deadline rejects a non-cooperative late response body", async () => {
   let aborted = false;
   const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => ({
@@ -560,7 +615,7 @@ test("map-registration uses the same server deadline and late completion cannot 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(lateBodyCompleted, true, "the test upstream deliberately ignores abort and completes late");
   const source = readFileSync(fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/image/[action].ts", import.meta.url)), "utf8");
-  assert.match(source, /action === "geometry" \|\| action === "map-registration"/);
+  assert.match(source, /action === "geometry" \|\| action === "color-geometry" \|\| action === "map-registration"/);
   assert.ok(source.indexOf("fetchSpeedsterImageUpstream") < source.indexOf("persistSpeedsterRegistrationLesson({"));
 });
 
@@ -1101,6 +1156,10 @@ test("one expired color receipt identifies exact side and mode without consuming
     JSON.stringify(result.state.body),
     /FRONT PRINTED_FRAME color geometry receipt expired.*completed sibling and nonexpired mode remains preserved.*rerun and reconfirm only FRONT PRINTED_FRAME/i,
   );
+  assert.deepEqual(result.state.body, {
+    message: "FRONT PRINTED_FRAME color geometry receipt expired. Every completed sibling and nonexpired mode remains preserved. Explicitly rerun and reconfirm only FRONT PRINTED_FRAME.",
+    colorGeometryReceiptExpired: { side: "FRONT", mode: "PRINTED_FRAME" },
+  });
   assert.deepEqual(checked, ["FRONT:PHYSICAL_OUTER", "FRONT:PRINTED_FRAME"]);
   assert.equal(updates, 0, "no capture or evidence row may persist after one exact-mode expiry");
   assert.equal(JSON.stringify(fixture.capture), before, "all browser-held sibling and nonexpired evidence remains byte-identical");
