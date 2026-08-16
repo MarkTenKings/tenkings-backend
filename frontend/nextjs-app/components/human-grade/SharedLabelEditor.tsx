@@ -18,6 +18,7 @@ type SharedLabelEditorProps = {
   primaryActionLabel?: string;
   subgradeAriaLabel?: string;
   lockCardType?: boolean;
+  requirePokemonLayoutType?: boolean;
   onFirstInteraction?: () => void;
 };
 
@@ -42,6 +43,7 @@ export default function SharedLabelEditor({
   primaryActionLabel,
   subgradeAriaLabel = "Calculated grade and human subgrades",
   lockCardType = false,
+  requirePokemonLayoutType = false,
   onFirstInteraction,
 }: SharedLabelEditorProps) {
   const isHuman = mode === "HUMAN";
@@ -99,6 +101,22 @@ export default function SharedLabelEditor({
               />
             </label>
             <div className="metadata-fields">
+              {!isHuman && requirePokemonLayoutType && value.cardType === "POKEMON" ? (
+                <label>
+                  <span>Layout Type</span>
+                  <select
+                    aria-label="Pokémon layout type"
+                    required
+                    value={value.layoutType}
+                    onChange={(event) => onChange("layoutType", event.target.value)}
+                  >
+                    <option value="">SELECT LAYOUT</option>
+                    <option value="POKEMON">POKÉMON</option>
+                    <option value="TRAINER">TRAINER</option>
+                    <option value="ENERGY">ENERGY</option>
+                  </select>
+                </label>
+              ) : null}
               <label>
                 <span>Year</span>
                 <input value={value.year} onChange={(event) => onChange("year", event.target.value)} placeholder="YEAR" />

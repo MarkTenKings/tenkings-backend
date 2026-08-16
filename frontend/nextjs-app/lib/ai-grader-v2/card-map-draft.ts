@@ -5,6 +5,7 @@ import {
   speedsterDefaultFilterAuthority,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
+  speedsterLegacyFamilyCardTypeMapKey,
   SPEEDSTER_MAP_FILTER_PADDING_MM,
   type SpeedsterCardTypeMapKey,
   type SpeedsterFamilyCardTypeMapKey,
@@ -18,6 +19,7 @@ import {
 import type { SpeedsterCardProfile, SpeedsterPoint, SpeedsterQuad } from "./contracts";
 import {
   canonicalizeSpeedsterSessionIdentity,
+  speedsterPokemonLayoutType,
   type SpeedsterSessionIdentity,
 } from "./identity";
 
@@ -364,6 +366,12 @@ function compareJson(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function identityWithoutLayout(identity: SpeedsterSessionIdentity) {
+  if (!("cardName" in identity)) return identity;
+  const { layoutType: _layoutType, ...legacyIdentity } = identity;
+  return legacyIdentity;
+}
+
 function compatibleSource(imported: ReturnType<typeof canonicalSource>, expected: CardMapDraftSource): CardMapDraftSource {
   if (imported.sessionId !== expected.sessionId) {
     throw new CardMapDraftValidationError("This draft belongs to a different source card session.");
@@ -372,7 +380,12 @@ function compatibleSource(imported: ReturnType<typeof canonicalSource>, expected
     throw new CardMapDraftValidationError("This draft belongs to a different card category.");
   }
   const expectedIdentity = canonicalizeSpeedsterSessionIdentity(expected.cardProfile, expected.identity);
-  if (!compareJson(imported.identity, expectedIdentity)) {
+  const importedLayoutType = speedsterPokemonLayoutType(imported.identity);
+  const expectedLayoutType = speedsterPokemonLayoutType(expectedIdentity);
+  if (importedLayoutType && importedLayoutType !== expectedLayoutType) {
+    throw new CardMapDraftValidationError("This draft contains a conflicting Pokémon layout authority.");
+  }
+  if (!compareJson(identityWithoutLayout(imported.identity), identityWithoutLayout(expectedIdentity))) {
     throw new CardMapDraftValidationError("This draft belongs to a different exact source identity.");
   }
   const merged = {} as Record<"front" | "back", DraftEvidenceSide>;
@@ -467,7 +480,9 @@ export function createCardMapDraft(input: Readonly<{
       cardProfile: input.source.cardProfile,
       identity,
       scopes: ["FAMILY", "EXACT"],
-      familyKey: speedsterFamilyCardTypeMapKey(input.source.cardProfile, identity),
+      familyKey: input.source.cardProfile === "POKEMON" && !speedsterPokemonLayoutType(identity)
+        ? speedsterLegacyFamilyCardTypeMapKey(input.source.cardProfile, identity)
+        : speedsterFamilyCardTypeMapKey(input.source.cardProfile, identity),
       exactKey: speedsterCardTypeMapKey(input.source.cardProfile, identity),
       provenance: {
         sourceSessionId: input.source.sessionId,

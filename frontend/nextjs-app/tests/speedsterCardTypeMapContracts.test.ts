@@ -81,6 +81,7 @@ test("subject and card number prevent unsafe shorter-key collisions", () => {
 test("Pokemon family keys omit card name and number while exact keys remain distinct", () => {
   const snorlax = {
     cardName: "Snorlax",
+    layoutType: "POKEMON",
     year: "2022 Pokemon",
     productSet: "Lost Origin",
     parallel: "Holo",
@@ -102,6 +103,19 @@ test("Pokemon family keys omit card name and number while exact keys remain dist
   );
   assert.equal(speedsterMapScopeForKey(speedsterFamilyCardTypeMapKey("POKEMON", snorlax)), "FAMILY");
   assert.equal(speedsterMapScopeForKey(speedsterCardTypeMapKey("POKEMON", snorlax)), "EXACT");
+  assert.deepEqual(speedsterFamilyCardTypeMapKey("POKEMON", snorlax), {
+    scope: "FAMILY",
+    keyVersion: "v2",
+    category: "POKEMON",
+    layoutType: "POKEMON",
+    year: "2022 pokemon",
+    productSet: "lost origin",
+    parallel: "holo",
+  });
+  assert.notDeepEqual(
+    speedsterFamilyCardTypeMapKey("POKEMON", snorlax),
+    speedsterFamilyCardTypeMapKey("POKEMON", { ...mewtwo, layoutType: "TRAINER" }),
+  );
 });
 
 test("Sports family keys omit player name and card number", () => {

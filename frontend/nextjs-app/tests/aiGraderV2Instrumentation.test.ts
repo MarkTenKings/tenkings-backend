@@ -636,6 +636,71 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
   assert.equal(mismatched.state.status, 400, "a retransmission cannot change the stable decision event identity");
 });
 
+test("map-authority abandonment is append-only, stable, and cannot fabricate registration failure", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  let insertResult = 1;
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return insertResult; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const eventId = "3c027b52-f0e8-4a97-bd0c-556a4d57d7f2";
+  const validDetails = {
+    mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
+    mapAuthorityOperationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    mapAuthorityDecisionId: eventId,
+    mapAppliedScope: "NONE",
+    obsoleteMapBindingStatus: "LOADED",
+    obsoleteMapRevisionId: "obsolete-family-revision-r9",
+    obsoleteMapScope: "FAMILY",
+    obsoleteMapName: "2023 MEW EN Reverse Holo",
+  };
+  const post = async (details: Record<string, unknown>, id = eventId) => {
+    const result = response();
+    await handler(request({
+      eventId: id,
+      eventType: "MAP_AUTHORITY_OPERATOR_DECISION",
+      clientStartedAt: "2026-08-09T12:00:18.000Z",
+      clientEndedAt: "2026-08-09T12:00:18.000Z",
+      details,
+    }), result.res);
+    return result.state;
+  };
+
+  const inserted = await post(validDetails);
+  assert.equal(inserted.status, 201);
+  assert.deepEqual(inserted.body, { ok: true, duplicate: false });
+  assert.deepEqual(events[0].details, validDetails);
+  assert.equal(events[0].eventKey, `session-12345678901234567890:client:${eventId}`);
+
+  insertResult = 0;
+  const duplicate = await post(validDetails);
+  assert.equal(duplicate.status, 200);
+  assert.deepEqual(duplicate.body, { ok: true, duplicate: true });
+
+  for (const [name, details, id] of [
+    ["fabricated failure", { ...validDetails, registrationFailedSides: ["BACK"], registrationFailures: [{ side: "BACK", source: "PROVIDER", code: "PROVIDER_HTTP_402", httpStatus: 402 }] }, eventId],
+    ["mismatched identity", validDetails, "4c027b52-f0e8-4a97-bd0c-556a4d57d7f2"],
+    ["loaded without revision", { ...validDetails, obsoleteMapRevisionId: undefined }, eventId],
+    ["nonloaded with revision", { ...validDetails, obsoleteMapBindingStatus: "NO_MAP" }, eventId],
+  ] as const) {
+    const rejected = await post(details as Record<string, unknown>, id);
+    assert.equal(rejected.status, 400, `${name} must fail closed`);
+  }
+
+  const noMapId = "5c027b52-f0e8-4a97-bd0c-556a4d57d7f2";
+  insertResult = 1;
+  const noMap = await post({
+    mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
+    mapAuthorityOperationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    mapAuthorityDecisionId: noMapId,
+    mapAppliedScope: "NONE",
+    obsoleteMapBindingStatus: "NO_MAP",
+  }, noMapId);
+  assert.equal(noMap.status, 201, "a factual nonloaded obsolete binding needs no invented revision");
+});
+
 test("client timing endpoint rejects secret-shaped payload fields", async () => {
   let inserts = 0;
   const handler = createSpeedsterInstrumentationHandler({

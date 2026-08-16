@@ -29,6 +29,7 @@ test("completed Speedster identity editor locks category, omits grade controls, 
       cardType: "SPORTS",
       playerName: "Nick Bosa",
       cardName: "",
+      layoutType: "",
       year: "2021",
       manufacturer: "Panini",
       productSet: "Obsidian",
@@ -51,8 +52,39 @@ test("completed Speedster identity editor locks category, omits grade controls, 
   assert.match(html, /<button[^>]*disabled=""[^>]*>Pokémon<\/button>/);
   assert.match(html, /value="Nick Bosa"/);
   assert.doesNotMatch(html, /aria-label="Centering"|type="number"/);
+  assert.doesNotMatch(html, /Pokémon layout type/);
   assert.doesNotMatch(html, /Continue to Photos/);
   const savingHtml = renderToStaticMarkup(React.createElement(SharedLabelEditor, { ...props, saving: true }));
   assert.match(savingHtml, />Saving…<\/button>/);
   assert.doesNotMatch(savingHtml, /Preparing…/);
+});
+
+test("new Pokemon Speedster identity editor exposes the authoritative layout selector", async () => {
+  const { default: SharedLabelEditor } = await editorModulePromise;
+  const html = renderToStaticMarkup(React.createElement(SharedLabelEditor, {
+    mode: "SPEEDSTER",
+    requirePokemonLayoutType: true,
+    value: {
+      cardType: "POKEMON",
+      playerName: "",
+      cardName: "Squirtle",
+      layoutType: "POKEMON",
+      year: "2023",
+      manufacturer: "",
+      productSet: "MEW EN",
+      parallel: "Reverse Holo",
+      insert: "",
+      cardNumber: "007/165",
+      centeringGrade: "",
+      cornersGrade: "",
+      edgesGrade: "",
+      surfaceGrade: "",
+    },
+    onChange() { return undefined; },
+    onSubmit() { return undefined; },
+  }));
+  assert.match(html, /aria-label="Pokémon layout type"/);
+  assert.match(html, /value="POKEMON" selected=""/);
+  assert.match(html, />TRAINER</);
+  assert.match(html, />ENERGY</);
 });

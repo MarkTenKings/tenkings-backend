@@ -11,6 +11,7 @@ import {
   SPEEDSTER_MAP_SCHEMA_VERSION_V2,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
+  speedsterLegacyFamilyCardTypeMapKey,
   type SpeedsterCardTypeMapSide,
 } from "../lib/ai-grader-v2/card-type-map-contracts";
 import {
@@ -20,6 +21,7 @@ import {
   loadEffectiveActiveSpeedsterMapRevision,
   loadExactActiveSpeedsterMapRevision,
   loadPinnedSpeedsterMapRevision,
+  loadScopedActiveSpeedsterMapRevision,
   listSpeedsterMappedSourceCards,
   normalizedSpeedsterMapRevisionPayload,
   parseSpeedsterMapSourceSession,
@@ -157,6 +159,32 @@ function captureRecord(workflowState: "CAPTURED" | "COMPLETED") {
   };
 }
 
+const legacyPokemonIdentity = {
+  cardName: "Squirtle",
+  year: "2023 Pokemon",
+  productSet: "MEW EN",
+  parallel: "Reverse Holo",
+  cardNumber: "007/165",
+} as const;
+
+function pokemonCaptureRecord(
+  workflowState: "CAPTURED" | "COMPLETED",
+  pokemonIdentity: Readonly<{
+    cardName: string;
+    year: string;
+    productSet: string;
+    parallel: string;
+    cardNumber: string;
+    layoutType?: "POKEMON" | "TRAINER" | "ENERGY";
+  }> = legacyPokemonIdentity,
+) {
+  return {
+    ...captureRecord(workflowState),
+    cardProfile: "POKEMON",
+    identity: pokemonIdentity,
+  };
+}
+
 function request(method: string, action: string, body?: unknown): NextApiRequest {
   return { method, body, query: { action: [action] }, headers: {} } as unknown as NextApiRequest;
 }
@@ -184,6 +212,8 @@ function recordingMapTransaction(seed?: Readonly<{
     mapRevisionId?: string | null;
     mapFilterDecisions: readonly Readonly<{ id: string }>[];
   }>;
+  sourceRecord?: ReturnType<typeof captureRecord> | ReturnType<typeof pokemonCaptureRecord>;
+  legacyAuthority?: Readonly<{ sourceSessionId: string; layoutType: "POKEMON" | "TRAINER" | "ENERGY"; selectedByAdminId: string; createdAt: Date }>;
 }>) {
   const operations: string[] = [];
   const writes = {
@@ -201,12 +231,15 @@ function recordingMapTransaction(seed?: Readonly<{
   let committedRevision: Record<string, unknown> | null = null;
   let committedSessionData: Record<string, unknown> | null = null;
   const currentSession = seed?.session ?? {
-    workflowState: "CAPTURED",
-    reviewedDefects: [],
-    gradeReport: {},
+    workflowState: seed?.sourceRecord?.workflowState ?? "CAPTURED",
+    reviewedDefects: seed?.sourceRecord?.reviewedDefects ?? [],
+    gradeReport: seed?.sourceRecord?.gradeReport ?? {},
     mapRevisionId: null,
     mapFilterDecisions: [],
   };
+  const sourceRecord = seed?.sourceRecord ?? captureRecord(
+    currentSession.workflowState === "COMPLETED" ? "COMPLETED" : "CAPTURED",
+  );
   let transactionCount = 0;
 
   const transaction: SpeedsterMapTransactionRunner = async (operation) => {
@@ -270,7 +303,11 @@ function recordingMapTransaction(seed?: Readonly<{
       aiGraderV2Session: {
         async findFirst() {
           operations.push("session.findWritable");
-          return structuredClone(currentSession);
+          return structuredClone({
+            ...sourceRecord,
+            ...currentSession,
+            legacyMapLayoutAuthority: seed?.legacyAuthority ?? null,
+          });
         },
         async updateMany(args: unknown) {
           operations.push("session.updateMany");
@@ -278,6 +315,10 @@ function recordingMapTransaction(seed?: Readonly<{
           workingSessionData = structuredClone((args as { data: Record<string, unknown> }).data);
           return { count: 1 };
         },
+      },
+      aiGraderV2LegacyMapLayoutAuthority: {
+        async findUnique() { return seed?.legacyAuthority ?? null; },
+        async create() { throw new Error("Unexpected legacy authority creation in recording harness"); },
       },
     };
     const tx = new Proxy(delegates, {
@@ -336,18 +377,42 @@ function dualMapTransaction(options: Readonly<{
   failScope?: "FAMILY" | "EXACT";
   corruptScope?: "FAMILY" | "EXACT";
   familyCurrent?: Readonly<{ id: string; version: number }>;
+  familyCardProfile?: "SPORTS" | "POKEMON";
+  initialMaps?: readonly Readonly<{
+    id: string;
+    matchKeyHash: string;
+    cardProfile: "SPORTS" | "POKEMON";
+    currentRevision: Readonly<{ id: string; version: number }>;
+  }>[];
+  initialAuthority?: Readonly<{ sourceSessionId: string; layoutType: "POKEMON" | "TRAINER" | "ENERGY"; selectedByAdminId: string }>;
+  sourceRecord?: ReturnType<typeof captureRecord> | ReturnType<typeof pokemonCaptureRecord>;
 }> = {}) {
   type MapRow = Record<string, unknown> & { id: string; matchKeyHash: string; currentRevision: { id: string; version: number } | null };
-  let committedMaps = new Map<string, MapRow>();
+  let committedMaps = new Map<string, MapRow>((options.initialMaps ?? []).map((map) => [
+    map.matchKeyHash,
+    {
+      ...map,
+      currentRevisionId: map.currentRevision.id,
+    },
+  ]));
   let committedRevisions = new Map<string, Record<string, unknown>>();
   let committedSession: Record<string, unknown> | null = null;
+  let committedAuthority: Record<string, unknown> | null = options.initialAuthority
+    ? { id: "legacy-layout-authority-1", ...options.initialAuthority, createdAt: new Date("2026-08-13T20:00:00.000Z") }
+    : null;
   let transactionCount = 0;
   let rolledBack = 0;
+  let previousTransaction = Promise.resolve();
   const transaction: SpeedsterMapTransactionRunner = async (operation) => {
+    const waitForPrevious = previousTransaction;
+    let releaseTransaction!: () => void;
+    previousTransaction = new Promise<void>((resolve) => { releaseTransaction = resolve; });
+    await waitForPrevious;
     transactionCount += 1;
     const maps = new Map([...committedMaps].map(([key, value]) => [key, structuredClone(value)]));
     const revisions = new Map([...committedRevisions].map(([key, value]) => [key, structuredClone(value)]));
     let session = committedSession ? structuredClone(committedSession) : null;
+    let authority = committedAuthority ? structuredClone(committedAuthority) : null;
     let mapSequence = maps.size;
     let revisionSequence = revisions.size;
     const scopeOf = (value: Record<string, unknown>) => (
@@ -358,10 +423,13 @@ function dualMapTransaction(options: Readonly<{
       async $executeRaw() { return 1; },
       aiGraderV2Session: {
         async findFirst() {
+          const sourceRecord = options.sourceRecord ?? captureRecord("COMPLETED");
           return {
-            workflowState: "CAPTURED",
-            reviewedDefects: [],
-            gradeReport: {},
+            ...sourceRecord,
+            legacyMapLayoutAuthority: authority,
+            workflowState: sourceRecord.workflowState,
+            reviewedDefects: sourceRecord.workflowState === "CAPTURED" ? [] : sourceRecord.reviewedDefects,
+            gradeReport: sourceRecord.workflowState === "CAPTURED" ? {} : sourceRecord.gradeReport,
             mapRevisionId: null,
             mapFilterDecisions: [],
           };
@@ -369,6 +437,19 @@ function dualMapTransaction(options: Readonly<{
         async updateMany(args: unknown) {
           session = structuredClone((args as { data: Record<string, unknown> }).data);
           return { count: 1 };
+        },
+      },
+      aiGraderV2LegacyMapLayoutAuthority: {
+        async findUnique() { return authority ? structuredClone(authority) : null; },
+        async create(args: unknown) {
+          const data = structuredClone((args as { data: Record<string, unknown> }).data);
+          if (authority) throw new Error("duplicate legacy source layout authority");
+          authority = {
+            id: "legacy-layout-authority-1",
+            ...data,
+            createdAt: new Date("2026-08-13T20:00:00.000Z"),
+          };
+          return structuredClone(authority);
         },
       },
       aiGraderV2CardTypeMap: {
@@ -379,7 +460,7 @@ function dualMapTransaction(options: Readonly<{
             found = {
               id: "existing-family-map",
               matchKeyHash: hash,
-              cardProfile: "SPORTS",
+              cardProfile: options.familyCardProfile ?? "SPORTS",
               currentRevisionId: options.familyCurrent.id,
               currentRevision: options.familyCurrent,
             };
@@ -440,9 +521,12 @@ function dualMapTransaction(options: Readonly<{
       committedMaps = maps;
       committedRevisions = revisions;
       committedSession = session;
+      committedAuthority = authority;
+      releaseTransaction();
       return result;
     } catch (error) {
       rolledBack += 1;
+      releaseTransaction();
       throw error;
     }
   };
@@ -452,6 +536,7 @@ function dualMapTransaction(options: Readonly<{
       maps: [...committedMaps.values()],
       revisions: [...committedRevisions.values()],
       session: committedSession,
+      authority: committedAuthority,
       transactionCount,
       rolledBack,
     }),
@@ -686,6 +771,91 @@ test("effective lookup never falls through from a malformed exact override to a 
   }), /hash verification failed/);
 });
 
+test("Pokemon V2 family lookup is layout-scoped while frozen exact keys remain byte-identical", async () => {
+  const pokemonIdentity = { ...legacyPokemonIdentity, layoutType: "POKEMON" as const };
+  const trainerIdentity = { ...legacyPokemonIdentity, cardName: "Bill's Transfer", cardNumber: "156/165", layoutType: "TRAINER" as const };
+  assert.equal(
+    JSON.stringify(speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity)),
+    JSON.stringify(speedsterCardTypeMapKey("POKEMON", pokemonIdentity)),
+  );
+  assert.notEqual(
+    speedsterMapMatchKeyHash(speedsterFamilyCardTypeMapKey("POKEMON", pokemonIdentity)),
+    speedsterMapMatchKeyHash(speedsterFamilyCardTypeMapKey("POKEMON", trainerIdentity)),
+  );
+
+  const familyKey = speedsterFamilyCardTypeMapKey("POKEMON", pokemonIdentity);
+  const familyRevision = record(payload({
+    mapId: "pokemon-family-map",
+    matchKeyHash: speedsterMapMatchKeyHash(familyKey),
+    matchKey: familyKey,
+    normalizedIdentity: familyKey,
+    displayIdentity: legacyPokemonIdentity,
+  }));
+  const familyRow = {
+    id: familyRevision.mapId,
+    matchKeyHash: familyRevision.matchKeyHash,
+    currentRevisionId: familyRevision.id,
+    currentRevision: familyRevision,
+  };
+  const pokemonSibling = { ...pokemonIdentity, cardName: "Bulbasaur", cardNumber: "001/165" };
+  const applied = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "POKEMON", identity: pokemonSibling }, {
+    async findActiveMap() { return null; },
+    async findActiveMaps() { return [familyRow]; },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(applied?.appliedScope, "FAMILY");
+  assert.match(applied?.appliedMapName ?? "", /POKEMON layout/);
+
+  const crossLayout = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "POKEMON", identity: trainerIdentity }, {
+    async findActiveMap() { return null; },
+    async findActiveMaps(hashes) {
+      assert.equal(hashes.includes(familyRevision.matchKeyHash), false);
+      return [];
+    },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(crossLayout, null);
+});
+
+test("legacy Pokemon identities query frozen EXACT only and historical family revisions remain hash-readable", async () => {
+  const expectedExactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity));
+  let requested: readonly string[] = [];
+  const applied = await loadEffectiveActiveSpeedsterMapRevision({ cardProfile: "POKEMON", identity: legacyPokemonIdentity }, {
+    async findActiveMap() { return null; },
+    async findActiveMaps(hashes) { requested = hashes; return []; },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(applied, null);
+  assert.deepEqual(requested, [expectedExactHash]);
+
+  let scopedLookups = 0;
+  const scoped = await loadScopedActiveSpeedsterMapRevision({
+    cardProfile: "POKEMON",
+    identity: legacyPokemonIdentity,
+    scope: "FAMILY",
+    sourceSessionId: SESSION_ID,
+  } as Parameters<typeof loadScopedActiveSpeedsterMapRevision>[0], {
+    async findActiveMap() { scopedLookups += 1; return null; },
+    async findPinnedRevision() { return null; },
+  });
+  assert.equal(scoped, null);
+  assert.equal(scopedLookups, 0, "a source-session hint cannot infer a legacy identity's layout");
+
+  const legacyFamilyKey = speedsterLegacyFamilyCardTypeMapKey("POKEMON", legacyPokemonIdentity);
+  const historical = record(payload({
+    mapId: "legacy-pokemon-family-map",
+    matchKeyHash: speedsterMapMatchKeyHash(legacyFamilyKey),
+    matchKey: legacyFamilyKey,
+    normalizedIdentity: legacyFamilyKey,
+    displayIdentity: legacyPokemonIdentity,
+  }));
+  assert.equal(validateSpeedsterLoadedMapRevision(historical).revisionHash, historical.revisionHash);
+  assert.throws(() => assertSpeedsterMapRevisionAppliesToIdentity(
+    validateSpeedsterLoadedMapRevision(historical),
+    { cardProfile: "POKEMON", identity: legacyPokemonIdentity },
+  ), /no layout authority/);
+});
+
 test("registered saved human boundaries drive unchanged current-copy borders, ratios, and centering grade", () => {
   const savedHumanBoundary = [
     { x: 0.1, y: 0.1 },
@@ -750,6 +920,142 @@ test("one authoring operation atomically creates independently verified FAMILY a
     const { revisionId: _revisionId, revisionHash, createdAt: _createdAt, ...hashPayload } = result.revision;
     assert.equal(revisionHash, speedsterMapRevisionHash(hashPayload));
   }
+});
+
+test("legacy completed Pokemon source can author append-only V2 family provenance without rewriting session identity", async () => {
+  const sourceRecord = pokemonCaptureRecord("COMPLETED");
+  const immutableBefore = JSON.stringify(sourceRecord);
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const legacyFamilyHash = speedsterMapMatchKeyHash(
+    speedsterLegacyFamilyCardTypeMapKey("POKEMON", legacyPokemonIdentity),
+  );
+  const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity));
+  const harness = dualMapTransaction({
+    sourceRecord,
+    initialMaps: [
+      {
+        id: "legacy-family-map",
+        matchKeyHash: legacyFamilyHash,
+        cardProfile: "POKEMON",
+        currentRevision: { id: "legacy-family-r8", version: 8 },
+      },
+      {
+        id: "frozen-exact-map",
+        matchKeyHash: exactHash,
+        cardProfile: "POKEMON",
+        currentRevision: { id: "frozen-exact-r8", version: 8 },
+      },
+    ],
+  });
+  const saved = await saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    familyLayoutType: "POKEMON",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  });
+  assert.equal(JSON.stringify(sourceRecord), immutableBefore);
+  assert.equal(harness.state().session, null);
+  assert.deepEqual(saved.family.revision.matchKey, {
+    scope: "FAMILY",
+    keyVersion: "v2",
+    category: "POKEMON",
+    layoutType: "POKEMON",
+    year: "2023 pokemon",
+    productSet: "mew en",
+    parallel: "reverse holo",
+  });
+  assert.deepEqual(saved.family.revision.displayIdentity, legacyPokemonIdentity);
+  assert.deepEqual(saved.exact.revision.matchKey, speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity));
+  assert.equal(saved.family.revision.version, 1);
+  assert.equal(saved.family.revision.supersedesRevisionId, null);
+  assert.equal(saved.exact.mapId, "frozen-exact-map");
+  assert.equal(saved.exact.revision.version, 9);
+  assert.equal(saved.exact.revision.supersedesRevisionId, "frozen-exact-r8");
+  const legacyMapAfter = harness.state().maps.find((map) => map.matchKeyHash === legacyFamilyHash);
+  assert.equal(legacyMapAfter?.currentRevisionId, "legacy-family-r8");
+});
+
+test("legacy completed Pokemon authoring abstains until a human layout choice is supplied", async () => {
+  const source = parseSpeedsterMapSourceSession(pokemonCaptureRecord("COMPLETED"));
+  const harness = dualMapTransaction();
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  }), /Choose POKEMON, TRAINER, or ENERGY/);
+  assert.equal(harness.state().transactionCount, 0);
+});
+
+test("concurrent opposite legacy layout selections produce one durable winner with no partial losing write", async () => {
+  const sourceRecord = pokemonCaptureRecord("COMPLETED");
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const harness = dualMapTransaction({ sourceRecord });
+  const evidenceEvents: string[] = [];
+  const save = (familyLayoutType: "POKEMON" | "TRAINER") => saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    familyLayoutType,
+    front: trainingSide,
+    back: trainingSide,
+    async hashEvidence(storageKey) {
+      evidenceEvents.push(`${familyLayoutType}:${storageKey}`);
+      return sha(storageKey);
+    },
+    transaction: harness.transaction,
+  });
+  const results = await Promise.allSettled([save("POKEMON"), save("TRAINER")]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+  assert.equal(evidenceEvents.length, 4, "both evidence pairs complete before their serialized map transactions");
+  assert.equal(harness.state().authority?.layoutType, "POKEMON");
+  assert.equal(harness.state().revisions.length, 2);
+  assert.equal(harness.state().maps.length, 2);
+  assert.equal(harness.state().rolledBack, 1);
+});
+
+test("completed source identity drift is rejected under row lock before authority or map writes", async () => {
+  const loadedRecord = pokemonCaptureRecord("COMPLETED");
+  const source = parseSpeedsterMapSourceSession(loadedRecord);
+  const changedRecord = pokemonCaptureRecord("COMPLETED", {
+    ...legacyPokemonIdentity,
+    cardName: "Bulbasaur",
+  });
+  const harness = dualMapTransaction({ sourceRecord: changedRecord });
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    familyLayoutType: "POKEMON",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  }), /identity or capture changed/);
+  assert.equal(harness.state().authority, null);
+  assert.equal(harness.state().revisions.length, 0);
+  assert.equal(harness.state().maps.length, 0);
+});
+
+test("Sports authoring rejects injected Pokemon layout authority before evidence or transaction", async () => {
+  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const harness = dualMapTransaction();
+  let evidenceReads = 0;
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    familyLayoutType: "POKEMON",
+    front: trainingSide,
+    back: trainingSide,
+    async hashEvidence(storageKey) { evidenceReads += 1; return sha(storageKey); },
+    transaction: harness.transaction,
+  }), /Sports Card Maps cannot carry/);
+  assert.equal(evidenceReads, 0);
+  assert.equal(harness.state().transactionCount, 0);
 });
 
 test("owner-authorized v2 authoring keeps replay pending and hashes both explicit authority revisions independently", async () => {
@@ -825,6 +1131,7 @@ test("dual authoring rolls back both maps when either revision create or persist
       maps: [],
       revisions: [],
       session: null,
+      authority: null,
       transactionCount: 1,
       rolledBack: 1,
     });
@@ -832,8 +1139,9 @@ test("dual authoring rolls back both maps when either revision create or persist
 });
 
 test("captured dual authoring pins both Front and Back registrations to the new EXACT revision", async () => {
-  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
-  const harness = dualMapTransaction();
+  const sourceRecord = captureRecord("CAPTURED");
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const harness = dualMapTransaction({ sourceRecord });
   const saved = await saveSpeedsterFamilyAndExactMapRevisions({
     source,
     authorAdminId: "admin-1",
@@ -870,8 +1178,9 @@ test("dual authoring recovers append-only from an invalid historical FAMILY poin
 });
 
 test("new-card save invokes one production transaction for revision, current pointer, and exact captured-session pin", async () => {
-  const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
-  const harness = recordingMapTransaction();
+  const sourceRecord = captureRecord("CAPTURED");
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const harness = recordingMapTransaction({ sourceRecord });
   const saved = await saveSpeedsterCardTypeMapRevision({
     source,
     authorAdminId: "admin-1",
@@ -938,7 +1247,7 @@ test("completed-card production save writes only map state and preserves authori
     memory: { id: "GLOBAL", state: { replayCursor: 777 } },
   };
   const before = sha(JSON.stringify(authority));
-  const harness = recordingMapTransaction();
+  const harness = recordingMapTransaction({ sourceRecord: authority.session });
   const saved = await saveSpeedsterCardTypeMapRevision({
     source: parseSpeedsterMapSourceSession(authority.session),
     authorAdminId: "admin-2",
@@ -951,6 +1260,8 @@ test("completed-card production save writes only map state and preserves authori
   assert.equal(harness.transactionCount(), 1);
   assert.deepEqual(harness.operations, [
     "transaction.begin",
+    "session.lock",
+    "session.findWritable",
     "map.lock",
     "map.findUnique",
     "map.create",
@@ -975,8 +1286,9 @@ test("completed-card production save writes only map state and preserves authori
 });
 
 test("family save omits subject identity from the key while retaining exact source provenance and imagery", async () => {
-  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
-  const harness = recordingMapTransaction();
+  const sourceRecord = captureRecord("COMPLETED");
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const harness = recordingMapTransaction({ sourceRecord });
   const saved = await saveSpeedsterCardTypeMapRevision({
     source,
     authorAdminId: "admin-1",
@@ -1047,6 +1359,92 @@ test("restore rejects revisions from another scope before opening a transaction"
   assert.equal(harness.transactionCount(), 0);
 });
 
+test("legacy source Family restore is V2-only, same-layout, and append-only under persisted authority", async () => {
+  const authority = {
+    sourceSessionId: SESSION_ID,
+    layoutType: "POKEMON" as const,
+    selectedByAdminId: "admin-1",
+    createdAt: new Date("2026-08-13T20:00:00.000Z"),
+  };
+  const sourceRecord = { ...pokemonCaptureRecord("COMPLETED"), legacyMapLayoutAuthority: authority };
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
+  const legacyKey = speedsterLegacyFamilyCardTypeMapKey("POKEMON", legacyPokemonIdentity);
+  const legacyTarget = record(payload({
+    mapId: "legacy-family-map",
+    matchKeyHash: speedsterMapMatchKeyHash(legacyKey),
+    matchKey: legacyKey,
+    normalizedIdentity: legacyKey,
+    displayIdentity: legacyPokemonIdentity,
+  }));
+  let transactions = 0;
+  await assert.rejects(restoreSpeedsterCardTypeMapRevision({
+    source,
+    scope: "FAMILY",
+    targetRevisionId: legacyTarget.id,
+    authorAdminId: "admin-1",
+    async transaction() { transactions += 1; throw new Error("not reached"); },
+    async findTargetRevision() { return legacyTarget; },
+  }), /historical-only/);
+  assert.equal(transactions, 0);
+
+  const trainerFamilyKey = speedsterFamilyCardTypeMapKey("POKEMON", {
+    ...legacyPokemonIdentity,
+    layoutType: "TRAINER",
+  });
+  const crossLayoutTarget = record(payload({
+    mapId: "pokemon-trainer-family-v2-map",
+    matchKeyHash: speedsterMapMatchKeyHash(trainerFamilyKey),
+    matchKey: trainerFamilyKey,
+    normalizedIdentity: trainerFamilyKey,
+    displayIdentity: { ...legacyPokemonIdentity, layoutType: "TRAINER" },
+    sourceSessionId: "legacy-trainer-source-session",
+  }));
+  await assert.rejects(restoreSpeedsterCardTypeMapRevision({
+    source,
+    scope: "FAMILY",
+    targetRevisionId: crossLayoutTarget.id,
+    authorAdminId: "admin-1",
+    async transaction() { transactions += 1; throw new Error("not reached"); },
+    async findTargetRevision() { return crossLayoutTarget; },
+  }), /different Pokémon layout/);
+  assert.equal(transactions, 0, "cross-layout rejection occurs before any transaction or map write");
+
+  const familyKey = speedsterFamilyCardTypeMapKey("POKEMON", { ...legacyPokemonIdentity, layoutType: "POKEMON" });
+  const target = record(payload({
+    mapId: "pokemon-family-v2-map",
+    matchKeyHash: speedsterMapMatchKeyHash(familyKey),
+    matchKey: familyKey,
+    normalizedIdentity: familyKey,
+    displayIdentity: legacyPokemonIdentity,
+    sourceSessionId: "legacy-sibling-source-session",
+  }));
+  const harness = recordingMapTransaction({
+    sourceRecord,
+    legacyAuthority: authority,
+    map: {
+      id: target.mapId,
+      matchKeyHash: target.matchKeyHash,
+      cardProfile: "POKEMON",
+      currentRevisionId: "pokemon-family-current-r2",
+      currentRevision: { id: "pokemon-family-current-r2", version: 2 },
+    },
+  });
+  const restored = await restoreSpeedsterCardTypeMapRevision({
+    source,
+    scope: "FAMILY",
+    targetRevisionId: target.id,
+    authorAdminId: "admin-1",
+    transaction: harness.transaction,
+    async findTargetRevision() { return target; },
+  });
+  assert.equal(restored.revision.version, 3);
+  assert.equal(restored.revision.supersedesRevisionId, "pokemon-family-current-r2");
+  assert.deepEqual(restored.revision.matchKey, familyKey);
+  assert.equal(restored.revision.sourceSessionId, "legacy-sibling-source-session",
+    "restore preserves the immutable target provenance while the acting source supplies matching layout authority");
+  assert.equal(target.version, 1, "the target revision remains immutable");
+});
+
 test("captured family restore keeps an active exact override and skips family registration", async () => {
   const source = parseSpeedsterMapSourceSession(captureRecord("CAPTURED"));
   const exact = record(payload({ mapId: "exact-map" }));
@@ -1096,9 +1494,10 @@ test("captured family restore keeps an active exact override and skips family re
 });
 
 test("promotion copies an exact immutable revision into family scope without discarding provenance or imagery", async () => {
-  const source = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
+  const sourceRecord = captureRecord("COMPLETED");
+  const source = parseSpeedsterMapSourceSession(sourceRecord);
   const exact = record();
-  const harness = recordingMapTransaction();
+  const harness = recordingMapTransaction({ sourceRecord });
   const promoted = await promoteSpeedsterExactMapRevisionToFamily({
     source,
     targetRevisionId: exact.id,
@@ -1122,6 +1521,71 @@ test("promotion copies an exact immutable revision into family scope without dis
     report: 0,
     memory: 0,
   });
+});
+
+test("legacy exact promotion requires persisted same-source authority and rejects cross-layout targets without writes", async () => {
+  const baseRecord = pokemonCaptureRecord("COMPLETED");
+  const sourceWithoutAuthority = parseSpeedsterMapSourceSession(baseRecord);
+  const exactKey = speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity);
+  const layoutlessExact = record(payload({
+    mapId: "pokemon-exact-map",
+    matchKeyHash: speedsterMapMatchKeyHash(exactKey),
+    matchKey: exactKey,
+    normalizedIdentity: exactKey,
+    displayIdentity: legacyPokemonIdentity,
+    sourceSessionId: SESSION_ID,
+  }));
+  let transactions = 0;
+  await assert.rejects(promoteSpeedsterExactMapRevisionToFamily({
+    source: sourceWithoutAuthority,
+    targetRevisionId: layoutlessExact.id,
+    authorAdminId: "admin-1",
+    async transaction() { transactions += 1; throw new Error("not reached"); },
+    async findTargetRevision() { return layoutlessExact; },
+  }), /no persisted layout authority/);
+  assert.equal(transactions, 0);
+
+  const authority = {
+    sourceSessionId: SESSION_ID,
+    layoutType: "POKEMON" as const,
+    selectedByAdminId: "admin-1",
+    createdAt: new Date("2026-08-13T20:00:00.000Z"),
+  };
+  const authoritativeRecord = { ...baseRecord, legacyMapLayoutAuthority: authority };
+  const authoritativeSource = parseSpeedsterMapSourceSession(authoritativeRecord);
+  const crossSourceLayoutless = record(payload({
+    mapId: "pokemon-exact-map",
+    matchKeyHash: speedsterMapMatchKeyHash(exactKey),
+    matchKey: exactKey,
+    normalizedIdentity: exactKey,
+    displayIdentity: legacyPokemonIdentity,
+    sourceSessionId: "different-legacy-source-session",
+  }));
+  await assert.rejects(promoteSpeedsterExactMapRevisionToFamily({
+    source: authoritativeSource,
+    targetRevisionId: crossSourceLayoutless.id,
+    authorAdminId: "admin-1",
+    async transaction() { transactions += 1; throw new Error("not reached"); },
+    async findTargetRevision() { return crossSourceLayoutless; },
+  }), /lacks same-source persisted layout authority/);
+  assert.equal(transactions, 0);
+
+  const conflicting = record(payload({
+    mapId: "pokemon-exact-map",
+    matchKeyHash: speedsterMapMatchKeyHash(exactKey),
+    matchKey: exactKey,
+    normalizedIdentity: exactKey,
+    displayIdentity: { ...legacyPokemonIdentity, layoutType: "TRAINER" },
+    sourceSessionId: SESSION_ID,
+  }));
+  await assert.rejects(promoteSpeedsterExactMapRevisionToFamily({
+    source: authoritativeSource,
+    targetRevisionId: conflicting.id,
+    authorAdminId: "admin-1",
+    async transaction() { transactions += 1; throw new Error("not reached"); },
+    async findTargetRevision() { return conflicting; },
+  }), /different Pokémon layout/);
+  assert.equal(transactions, 0);
 });
 
 test("captured exact-to-family promotion keeps the active exact override and skips family registration", async () => {
@@ -1398,6 +1862,7 @@ test("restore and promotion verify persisted immutable content before publishing
   const completedSource = parseSpeedsterMapSourceSession(captureRecord("COMPLETED"));
   const target = record();
   const restoreHarness = recordingMapTransaction({
+    sourceRecord: captureRecord("COMPLETED"),
     map: {
       id: target.mapId,
       matchKeyHash: target.matchKeyHash,
@@ -1417,7 +1882,10 @@ test("restore and promotion verify persisted immutable content before publishing
   assert.equal(restoreHarness.writes.currentPointer, 0);
   assert.equal((restoreHarness.committed().map as { currentRevisionId: string }).currentRevisionId, "revision-current");
 
-  const promotionHarness = recordingMapTransaction({ corruptPersistedRevision: true });
+  const promotionHarness = recordingMapTransaction({
+    corruptPersistedRevision: true,
+    sourceRecord: captureRecord("COMPLETED"),
+  });
   await assert.rejects(promoteSpeedsterExactMapRevisionToFamily({
     source: completedSource,
     targetRevisionId: target.id,
@@ -1521,6 +1989,7 @@ test("mapped-source library groups current Family and Exact maps without consult
   assert.equal(owned[0].sourceSessionId, SESSION_ID);
   assert.deepEqual(owned[0].identity, identity);
   assert.deepEqual(owned[0].revisions.map(({ scope }) => scope), ["EXACT", "FAMILY"]);
+  assert.deepEqual(owned[0].revisions.map(({ keyGeneration }) => keyGeneration), ["EXACT_FROZEN", "FAMILY_CURRENT"]);
   assert.equal(owned[0].revisions[0].revisionHash, exactRevision.revisionHash);
   assert.equal(owned[0].revisions[1].revisionHash, familyRevision.revisionHash);
 
@@ -1541,6 +2010,54 @@ test("mapped-source library groups current Family and Exact maps without consult
     },
   });
   assert.equal(shared.length, 1);
+});
+
+test("mapped-source library exposes legacy eligibility and deterministically prefers the live V2 Family revision", async () => {
+  const sourceSession = {
+    id: SESSION_ID,
+    createdByUserId: "admin-1",
+    cardProfile: "POKEMON",
+    workflowState: "COMPLETED",
+    identity: legacyPokemonIdentity,
+  };
+  const legacyKey = speedsterLegacyFamilyCardTypeMapKey("POKEMON", legacyPokemonIdentity);
+  const v2Key = speedsterFamilyCardTypeMapKey("POKEMON", { ...legacyPokemonIdentity, layoutType: "POKEMON" });
+  const revisionRow = (body: ReturnType<typeof record>) => ({ ...body, sourceSession });
+  const legacy = revisionRow(record(payload({
+    mapId: "legacy-family-map",
+    version: 99,
+    matchKeyHash: speedsterMapMatchKeyHash(legacyKey),
+    matchKey: legacyKey,
+    normalizedIdentity: legacyKey,
+    displayIdentity: legacyPokemonIdentity,
+  })));
+  const v2 = revisionRow(record(payload({
+    mapId: "v2-family-map",
+    version: 1,
+    matchKeyHash: speedsterMapMatchKeyHash(v2Key),
+    matchKey: v2Key,
+    normalizedIdentity: v2Key,
+    displayIdentity: legacyPokemonIdentity,
+  })));
+  const cards = await listSpeedsterMappedSourceCards("admin-1", {
+    async findCurrentMaps() {
+      return [legacy, v2].map((revision) => ({
+        id: revision.mapId,
+        matchKeyHash: revision.matchKeyHash,
+        currentRevisionId: revision.id,
+        currentRevision: revision,
+      }));
+    },
+  });
+  assert.equal(cards.length, 1);
+  assert.deepEqual(cards[0].revisions.map((revision) => ({
+    generation: revision.keyGeneration,
+    eligible: revision.runtimeEligible,
+    layoutType: revision.layoutType,
+  })), [
+    { generation: "FAMILY_V2", eligible: true, layoutType: "POKEMON" },
+    { generation: "FAMILY_LEGACY", eligible: false, layoutType: null },
+  ]);
 });
 
 test("mapped-source library fails closed when current source identity diverges from immutable revision provenance", async () => {
@@ -1707,6 +2224,47 @@ test("TRAIN editor coordinates are exposed only on their exact reference image a
     const body = result.state.body as { map: { editable: unknown } };
     assert.equal(Boolean(body.map.editable), expectedEditable);
   }
+});
+
+test("legacy authoring source reload uses only persisted layout authority for the normal V2 Family hash", async () => {
+  const sourceRecord = {
+    ...pokemonCaptureRecord("COMPLETED"),
+    legacyMapLayoutAuthority: {
+      layoutType: "POKEMON" as const,
+      selectedByAdminId: "admin-1",
+      createdAt: new Date("2026-08-13T20:00:00.000Z"),
+    },
+  };
+  const familyKey = speedsterFamilyCardTypeMapKey("POKEMON", {
+    ...legacyPokemonIdentity,
+    layoutType: "POKEMON",
+  });
+  const family = validateSpeedsterLoadedMapRevision(record(payload({
+    mapId: "pokemon-family-v2-map",
+    matchKeyHash: speedsterMapMatchKeyHash(familyKey),
+    matchKey: familyKey,
+    normalizedIdentity: familyKey,
+    displayIdentity: legacyPokemonIdentity,
+  })));
+  let lookupIdentity: unknown;
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() { return sourceRecord; },
+    async loadActiveMap(input) { lookupIdentity = input.identity; return family; },
+    async listRevisions() { return []; },
+    async saveDualRevisions() { throw new Error("not reached"); },
+    async restoreRevision() { throw new Error("not reached"); },
+    async sourceClientState(source) { return { sessionId: source.id } as never; },
+  });
+  const result = response();
+  await handler({
+    method: "GET",
+    query: { action: ["source"], sessionId: SESSION_ID, scope: "FAMILY" },
+    headers: {},
+  } as unknown as NextApiRequest, result.res);
+  assert.equal(result.state.status, 200);
+  assert.deepEqual(lookupIdentity, { ...legacyPokemonIdentity, layoutType: "POKEMON" });
+  assert.equal((result.state.body as { map: { revision: { revisionId: string } } }).map.revision.revisionId, family.revisionId);
 });
 
 test("map API current EFFECTIVE returns one server-selected family map with scope, name, and provenance", async () => {

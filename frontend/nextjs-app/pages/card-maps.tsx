@@ -18,13 +18,18 @@ import {
 import SharedLabelEditor from "../components/human-grade/SharedLabelEditor";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 import { useSession } from "../hooks/useSession";
-import {
-  SPEEDSTER_MAP_FILTER_POLICY_VERSION,
-} from "../lib/ai-grader-v2/card-type-map-contracts";
 import { toCardMapOperatorMessage } from "../lib/ai-grader-v2/card-map-copy";
 import {
+  readSpeedsterCaptureRegistrationDraftForCommittedSession,
+  removeSpeedsterCaptureRegistrationDraft,
+  speedsterCaptureDraftMatchesCommittedSession,
+  type SpeedsterCaptureRegistrationDraft,
+} from "../lib/ai-grader-v2/capture-registration-draft";
+import {
   SpeedsterIdentityValidationError,
+  canonicalizeNewSpeedsterSessionIdentity,
   canonicalizeSpeedsterSessionIdentity,
+  speedsterPokemonLayoutType,
   type SpeedsterSessionIdentity,
 } from "../lib/ai-grader-v2/identity";
 import { buildAdminHeaders } from "../lib/adminHeaders";
@@ -35,9 +40,22 @@ import {
 import styles from "../styles/CardMaps.module.css";
 
 type SpeedsterDraft = Readonly<{ id: string; cardProfile: "POKEMON" | "SPORTS" }>;
+type SpeedsterCommittedCaptureRecovery = Readonly<{
+  session: SpeedsterDraft & {
+    workflowState: "CAPTURED";
+    identity: unknown;
+    capture: unknown;
+    mapRevisionId?: string | null;
+    mapRegistration?: unknown;
+  };
+  browserDraft: SpeedsterCaptureRegistrationDraft;
+}>;
 
 type MappedCardRevision = Readonly<{
   scope: "FAMILY" | "EXACT";
+  keyGeneration: "EXACT_FROZEN" | "FAMILY_CURRENT" | "FAMILY_LEGACY" | "FAMILY_V2";
+  layoutType: "POKEMON" | "TRAINER" | "ENERGY" | null;
+  runtimeEligible: boolean;
   mapId: string;
   revisionId: string;
   version: number;
@@ -66,7 +84,7 @@ type MappedCardLibraryState = Readonly<{
 const EMPTY_MAPPED_SOURCE_CARDS: readonly MappedSourceCard[] = [];
 
 function printedIdentity(value: HumanGradeLabelEditorValue) {
-  return canonicalizeSpeedsterSessionIdentity(
+  return canonicalizeNewSpeedsterSessionIdentity(
     value.cardType,
     value.cardType === "SPORTS"
       ? {
@@ -80,6 +98,7 @@ function printedIdentity(value: HumanGradeLabelEditorValue) {
         }
       : {
           cardName: value.cardName,
+          layoutType: value.layoutType,
           year: value.year,
           productSet: value.productSet,
           parallel: value.parallel,
@@ -100,27 +119,41 @@ function mappedCardName(card: MappedSourceCard) {
       : "Mapped source card";
 }
 
+function mappedCardPokemonLayout(card: MappedSourceCard) {
+  if (card.cardProfile !== "POKEMON") return null;
+  const identityLayout = speedsterPokemonLayoutType(card.identity);
+  return identityLayout ?? card.revisions.find((revision) => (
+    revision.scope === "FAMILY" && revision.runtimeEligible && revision.layoutType
+  ))?.layoutType ?? null;
+}
+
 function mappedCardIdentity(card: MappedSourceCard) {
   const identity = card.identity;
   return card.cardProfile === "SPORTS" && "playerName" in identity
     ? [identity.year, identity.manufacturer, identity.productSet, identity.insert, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]
         .filter(Boolean).join(" · ")
     : card.cardProfile === "POKEMON" && "cardName" in identity
-      ? [identity.year, "Pokémon", identity.productSet, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]
+      ? [identity.year, "Pokémon", mappedCardPokemonLayout(card), identity.productSet, identity.parallel, identity.cardNumber ? `#${identity.cardNumber}` : null]
           .filter(Boolean).join(" · ")
       : "Identity unavailable";
 }
 
 function mappedCardSearchText(card: MappedSourceCard) {
-  return [card.cardProfile, mappedCardName(card), mappedCardIdentity(card)]
+  return [card.cardProfile, mappedCardName(card), mappedCardIdentity(card), ...card.revisions.flatMap((revision) => [
+    revision.scope,
+    revision.keyGeneration,
+    revision.layoutType,
+    revision.runtimeEligible ? "runtime eligible" : "historical only not runtime eligible",
+  ])]
     .join(" ")
     .toLocaleLowerCase("en-US");
 }
 
 function familyApplicability(identity: Pick<HumanGradeLabelEditorValue,
-  "cardType" | "year" | "manufacturer" | "productSet" | "insert" | "parallel">) {
+  "cardType" | "layoutType" | "year" | "manufacturer" | "productSet" | "insert" | "parallel">) {
   const familyFields = [
     identity.year,
+    identity.cardType === "POKEMON" ? identity.layoutType : null,
     identity.cardType === "SPORTS" ? identity.manufacturer : null,
     identity.productSet,
     identity.cardType === "SPORTS" ? identity.insert : null,
@@ -158,6 +191,7 @@ export default function CardMapsPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<SpeedsterSessionIdentity | null>(null);
   const [map, setMap] = useState<SpeedsterTrainMapState | null>(null);
+  const [captureMapLookupFailed, setCaptureMapLookupFailed] = useState(false);
   const [source, setSource] = useState<SpeedsterTrainSource | null>(null);
   const [mappedCardLibrary, setMappedCardLibrary] = useState<MappedCardLibraryState>({
     ownerAuthKey: null,
@@ -169,11 +203,17 @@ export default function CardMapsPage() {
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("One completed authoring save creates both the Family and Exact Source maps.");
   const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [captureDraftCleanupFailure, setCaptureDraftCleanupFailure] = useState<Readonly<{
+    sessionId: string;
+    message: string;
+  }> | null>(null);
+  const [committedCaptureRecovery, setCommittedCaptureRecovery] = useState<SpeedsterCommittedCaptureRecovery | null>(null);
   const identitySectionRef = useRef<HTMLElement>(null);
   const captureSaveInFlight = useRef(false);
   const mappedCardsRequestGeneration = useRef(0);
   const mappedCardsAbortController = useRef<AbortController | null>(null);
   const sessionId = typeof router.query.sessionId === "string" ? router.query.sessionId : null;
+  const captureDraftId = typeof router.query.captureDraftId === "string" ? router.query.captureDraftId : null;
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
@@ -308,6 +348,99 @@ export default function CardMapsPage() {
     return () => { active = false; };
   }, [isAdmin, session?.token, sessionId]);
 
+  useEffect(() => {
+    if (!router.isReady || sessionId || !captureDraftId || !session?.token || !isAdmin || draft || source) return;
+    let cancelled = false;
+    void (async () => {
+      setWorking(true);
+      setWorkflowError(null);
+      setMessage("Loading the preserved Card Maps capture session. Resume remains an explicit choice.");
+      try {
+        const sessionResponse = await fetch(
+          `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(captureDraftId)}`,
+          { headers: buildAdminHeaders(session.token!), cache: "no-store" },
+        );
+        const sessionPayload = await sessionResponse.json().catch(() => ({})) as {
+          session?: SpeedsterDraft & {
+            workflowState?: string;
+            identity?: unknown;
+            capture?: unknown;
+            mapRevisionId?: string | null;
+            mapRegistration?: unknown;
+          };
+          message?: string;
+        };
+        if (!sessionResponse.ok || !sessionPayload.session) {
+          throw new Error(sessionPayload.message ?? "Preserved Card Maps capture session could not be loaded.");
+        }
+        const committed = sessionPayload.session.workflowState === "CAPTURED";
+        if (sessionPayload.session.workflowState !== "DRAFT" && !committed) {
+          throw new Error("The preserved Card Maps session is neither DRAFT nor a reconcilable CAPTURED session. No browser draft was deleted.");
+        }
+        let committedBrowserDraft: SpeedsterCaptureRegistrationDraft | null = null;
+        if (committed) {
+          committedBrowserDraft = readSpeedsterCaptureRegistrationDraftForCommittedSession(window.localStorage, {
+            surface: "CARD_MAPS",
+            sessionId: captureDraftId,
+            cardProfile: sessionPayload.session.cardProfile,
+          });
+          if (!committedBrowserDraft
+            || !speedsterCaptureDraftMatchesCommittedSession(committedBrowserDraft, sessionPayload.session)) {
+            throw new Error("The server reports CAPTURED, but its exact capture/map binding does not match the preserved Card Maps browser draft. Nothing was cleared or resumed; inspect the conflicting evidence.");
+          }
+        }
+        const restoredIdentity = canonicalizeSpeedsterSessionIdentity(
+          sessionPayload.session.cardProfile,
+          sessionPayload.session.identity,
+        );
+        let restoredMap: SpeedsterTrainMapState;
+        let restoredMapLookupFailed = false;
+        try {
+          const mapResponse = await fetch(
+            `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(captureDraftId)}&scope=EFFECTIVE`,
+            { headers: buildAdminHeaders(session.token!), cache: "no-store" },
+          );
+          const mapPayload = await mapResponse.json().catch(() => ({})) as {
+            map?: SpeedsterTrainMapState;
+            message?: string;
+          };
+          if (!mapResponse.ok || !mapPayload.map) {
+            throw new Error(mapPayload.message ?? "The Card Map binding for this preserved draft is unavailable.");
+          }
+          restoredMap = mapPayload.map;
+        } catch {
+          restoredMapLookupFailed = true;
+          restoredMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
+        }
+        if (cancelled) return;
+        setDraft(sessionPayload.session);
+        setDraftIdentity(restoredIdentity);
+        setMap(restoredMap);
+        setCaptureMapLookupFailed(restoredMapLookupFailed);
+        if (committed && committedBrowserDraft) {
+          setCommittedCaptureRecovery({
+            session: sessionPayload.session as SpeedsterCommittedCaptureRecovery["session"],
+            browserDraft: committedBrowserDraft,
+          });
+          setMessage("Server save is verified as committed and exactly matches the preserved Card Maps Front/Back capture and map binding. Choose Continue to authoring or keep the browser draft; nothing was cleared automatically.");
+        } else setMessage(restoredMapLookupFailed
+          ? "Preserved Card Maps capture loaded, but Card Map lookup failed. Resume remains strict and explicit; no map authority was guessed."
+          : "Preserved Card Maps capture loaded. Choose Resume or Discard; nothing was applied automatically.");
+      } catch (error) {
+        if (!cancelled) {
+          const failure = toCardMapOperatorMessage(
+            error instanceof Error ? error.message : "Preserved Card Maps capture could not be loaded.",
+          );
+          setWorkflowError(failure);
+          setMessage(failure);
+        }
+      } finally {
+        if (!cancelled) setWorking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [captureDraftId, draft, isAdmin, router.isReady, session?.token, sessionId, source]);
+
   const updateIdentity = (field: keyof HumanGradeLabelEditorValue, value: string) => {
     setIdentity((current) => field === "cardType"
       ? {
@@ -315,6 +448,7 @@ export default function CardMapsPage() {
           cardType: value as HumanGradeLabelEditorValue["cardType"],
           playerName: "",
           cardName: "",
+          layoutType: "",
           manufacturer: "",
           insert: "",
         }
@@ -366,6 +500,11 @@ export default function CardMapsPage() {
       setDraft(payload.session);
       setDraftIdentity(exactIdentity);
       setMap(mapPayload.map);
+      void router.replace(
+        { pathname: "/card-maps", query: { captureDraftId: payload.session.id }, hash: "new-card-map" },
+        undefined,
+        { shallow: true },
+      );
       setMessage(`${mapAction(mapPayload.map)} · Add this card's exact Front and Back source images; the final save creates both maps.`);
     } catch (error) {
       if (error instanceof SpeedsterIdentityValidationError) setFieldErrors(error.fields);
@@ -379,7 +518,10 @@ export default function CardMapsPage() {
     }
   };
 
-  const saveCapture = async (bundle: SpeedsterCaptureBundle): Promise<SpeedsterCaptureSaveResult> => {
+  const saveCapture = async (
+    bundle: SpeedsterCaptureBundle,
+    clearPreservedBrowserDraft: () => boolean = () => true,
+  ): Promise<SpeedsterCaptureSaveResult> => {
     if (!session?.token || !draft || !draftIdentity) {
       return { saved: false, message: "CARD MAP source cannot save without its active draft identity." };
     }
@@ -402,6 +544,15 @@ export default function CardMapsPage() {
       centeringBorders: side.centeringBorders,
     });
     try {
+      const frontRegistration = bundle.front.mapRegistration;
+      const backRegistration = bundle.back.mapRegistration;
+      const submittedRegistration = Boolean(frontRegistration && backRegistration);
+      const exactFilterPolicyVersion = map?.status === "LOADED"
+        ? map.revision?.filterPolicyVersion
+        : null;
+      if (submittedRegistration && !exactFilterPolicyVersion) {
+        throw new Error("CARD MAP source registration cannot save without the immutable loaded revision filter policy.");
+      }
       const response = await fetch(`/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}`, {
         method: "PATCH",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
@@ -412,13 +563,13 @@ export default function CardMapsPage() {
             front: compactSide(bundle.front),
             back: compactSide(bundle.back),
           },
-          ...(bundle.front.mapRegistration && bundle.back.mapRegistration ? {
+          ...(submittedRegistration ? {
             mapBinding: {
-              revisionId: bundle.front.mapRegistration.mapRevisionId,
-              filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+              revisionId: frontRegistration!.mapRevisionId,
+              filterPolicyVersion: exactFilterPolicyVersion,
               registration: {
-                front: bundle.front.mapRegistration,
-                back: bundle.back.mapRegistration,
+                front: frontRegistration!,
+                back: backRegistration!,
               },
             },
           } : {}),
@@ -426,6 +577,8 @@ export default function CardMapsPage() {
       });
       const payload = await response.json().catch(() => ({})) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "CARD MAP source could not be saved.");
+      clearPreservedBrowserDraft();
+      void router.replace({ pathname: "/card-maps", hash: "new-card-map" }, undefined, { shallow: true });
       const localSource: SpeedsterTrainSource = {
         sessionId: draft.id,
         cardProfile: draft.cardProfile,
@@ -475,6 +628,46 @@ export default function CardMapsPage() {
       setWorking(false);
     }
   };
+
+  const continueCommittedCardMapCapture = useCallback(async () => {
+    if (!committedCaptureRecovery || !session?.token || working) return;
+    setWorking(true);
+    setWorkflowError(null);
+    setMessage("Loading the exact server-saved Card Map source before clearing the obsolete browser draft.");
+    try {
+      const response = await fetch(
+        `/api/admin/ai-grader-v2/maps/source?sessionId=${encodeURIComponent(committedCaptureRecovery.session.id)}&scope=EXACT`,
+        { headers: buildAdminHeaders(session.token), cache: "no-store" },
+      );
+      const payload = await response.json().catch(() => ({})) as {
+        source?: SpeedsterTrainSource;
+        map?: SpeedsterTrainMapState;
+        message?: string;
+      };
+      if (!response.ok || !payload.source) {
+        throw new Error(payload.message ?? "The committed Card Map source could not be loaded.");
+      }
+      setSource(payload.source);
+      if (payload.map) setMap(payload.map);
+      try {
+        removeSpeedsterCaptureRegistrationDraft(window.localStorage, committedCaptureRecovery.session.id);
+      } catch {
+        const failure = "Committed Card Maps capture resumed, but the obsolete browser draft could not be cleared. Use the visible Retry cleanup action.";
+        setCaptureDraftCleanupFailure({ sessionId: committedCaptureRecovery.session.id, message: failure });
+      }
+      setCommittedCaptureRecovery(null);
+      void router.replace({ pathname: "/card-maps", hash: "new-card-map" }, undefined, { shallow: true });
+      setMessage("Verified committed Front + Back source loaded. Continue dual Family + Exact authoring; no capture was repeated.");
+    } catch (error) {
+      const failure = toCardMapOperatorMessage(
+        `${error instanceof Error ? error.message : "Committed Card Maps capture could not continue."} The preserved browser draft remains intact.`,
+      );
+      setWorkflowError(failure);
+      setMessage(failure);
+    } finally {
+      setWorking(false);
+    }
+  }, [committedCaptureRecovery, router, session?.token, working]);
 
   const reportCaptureInstrumentation = useCallback((event: SpeedsterCaptureInstrumentationEvent) => {
     const token = session?.token;
@@ -535,11 +728,51 @@ export default function CardMapsPage() {
             <p>Author Front and Back once. Saving atomically creates a Family Card Map for matching cards and an Exact Source Map for this card.</p>
             <p className={styles.cardMapsStatus} role="status" aria-live="polite">{message}</p>
             <div className={styles.cardMapsActions}>
-              <button className={styles.cardMapsCta} type="button" onClick={focusNewCard}>CREATE CARD MAP</button>
+              {!captureDraftId ? (
+                <button className={styles.cardMapsCta} type="button" onClick={focusNewCard}>CREATE CARD MAP</button>
+              ) : null}
               {!sessionId ? <a href="#existing-card-maps">VIEW EXISTING MAPS</a> : null}
             </div>
           </div>
         </section>
+
+        {captureDraftCleanupFailure ? (
+          <section className={styles.mapState} role="alert">
+            <strong>BROWSER DRAFT CLEANUP REQUIRED</strong>
+            <span>{captureDraftCleanupFailure.message}</span>
+            <button type="button" onClick={() => {
+              try {
+                removeSpeedsterCaptureRegistrationDraft(window.localStorage, captureDraftCleanupFailure.sessionId);
+                setCaptureDraftCleanupFailure(null);
+                setWorkflowError(null);
+                setMessage("The obsolete browser Card Maps capture draft was cleared explicitly.");
+              } catch {
+                setWorkflowError("The obsolete browser capture draft still could not be cleared. Server-saved work is intact; retry this cleanup action.");
+              }
+            }}>RETRY CLEARING BROWSER DRAFT</button>
+          </section>
+        ) : null}
+
+        {committedCaptureRecovery ? (
+          <section className={styles.mapState} role="alert">
+            <strong>CAPTURE SAVE COMMITTED · EXPLICIT RECONCILIATION</strong>
+            <span>The server Front + Back source exactly matches the preserved browser capture and map binding. Nothing was recaptured or cleared automatically.</span>
+            <button type="button" disabled={working} onClick={() => void continueCommittedCardMapCapture()}>
+              {working ? "LOADING COMMITTED SOURCE…" : "CONTINUE TO MAP AUTHORING"}
+            </button>
+            <button type="button" disabled={working} onClick={() => {
+              setMessage("Committed Card Maps capture remains verified. The preserved browser draft was kept by explicit operator choice.");
+            }}>KEEP BROWSER DRAFT FOR NOW</button>
+          </section>
+        ) : null}
+
+        {captureDraftId && !draft && !committedCaptureRecovery ? (
+          <section className={styles.mapState} role="alert">
+            <strong>CARD MAP CAPTURE RECOVERY BLOCKED</strong>
+            <span>{workflowError ?? message} The browser draft remains intact. Fresh map capture and authoring are unavailable on this recovery URL.</span>
+            <Link href="/card-maps">LEAVE RECOVERY AND START FROM THE BASE ROUTE</Link>
+          </section>
+        ) : null}
 
         {!sessionId ? (
           <section id="existing-card-maps" className={styles.libraryPanel} aria-labelledby="existing-card-maps-heading">
@@ -596,13 +829,24 @@ export default function CardMapsPage() {
                     <p>{mappedCardIdentity(card)}</p>
                     <div className={styles.libraryRevisions} aria-label="Current Card Map revisions">
                       {(["FAMILY", "EXACT"] as const).map((scope) => {
-                        const revision = card.revisions.find((candidate) => candidate.scope === scope);
+                        const revision = card.revisions.find((candidate) => (
+                          candidate.scope === scope && candidate.runtimeEligible
+                        ));
                         return (
                           <span key={scope}>
-                            {revision ? `${scope} r${revision.version}` : `${scope} · NOT CURRENT FROM THIS SOURCE`}
+                            {revision
+                              ? `${scope} r${revision.version}${revision.layoutType ? ` · ${revision.layoutType}` : ""}`
+                              : `${scope} · NOT CURRENT FROM THIS SOURCE`}
                           </span>
                         );
                       })}
+                      {card.revisions.filter((revision) => !revision.runtimeEligible).map((revision) => (
+                        <span key={`${revision.keyGeneration}:${revision.revisionId}`}>
+                          {revision.keyGeneration === "FAMILY_LEGACY"
+                            ? `FAMILY LEGACY r${revision.version} · HISTORICAL ONLY · NOT RUNTIME ELIGIBLE`
+                            : `${revision.scope} r${revision.version} · HISTORICAL ONLY · NOT RUNTIME ELIGIBLE`}
+                        </span>
+                      ))}
                     </div>
                     <div className={styles.libraryCardFooter}>
                       <time dateTime={card.lastMappedAt}>
@@ -631,6 +875,9 @@ export default function CardMapsPage() {
                 ...source.identity,
                 playerName: "playerName" in source.identity ? source.identity.playerName : "",
                 cardName: "cardName" in source.identity ? source.identity.cardName : "",
+                layoutType: source.cardProfile === "POKEMON"
+                  ? speedsterPokemonLayoutType(source.identity) ?? source.familyLayoutType ?? ""
+                  : "",
                 manufacturer: "manufacturer" in source.identity ? source.identity.manufacturer : "",
                 insert: "insert" in source.identity ? source.identity.insert ?? "" : "",
                 parallel: source.identity.parallel ?? "",
@@ -644,7 +891,7 @@ export default function CardMapsPage() {
               </div>
             ) : null}
           </section>
-        ) : (
+        ) : !captureDraftId || draft ? (
           <section
             id="new-card-map"
             ref={identitySectionRef}
@@ -662,6 +909,7 @@ export default function CardMapsPage() {
               <>
                 <SharedLabelEditor
                   mode="SPEEDSTER"
+                  requirePokemonLayoutType
                   value={identity}
                   onChange={updateIdentity}
                   onSubmit={createDraft}
@@ -681,17 +929,27 @@ export default function CardMapsPage() {
               </div>
             ) : null}
           </section>
-        )}
+        ) : null}
 
-        {!sessionId && draft && map && !source ? (
+        {!sessionId && draft && map && !source && !committedCaptureRecovery ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
+            draftSurface="CARD_MAPS"
             activeMapRevisionId={map.revision?.revisionId ?? null}
             activeMapScope={map.status === "LOADED" ? map.scope ?? null : null}
             activeMapName={map.status === "LOADED" ? map.name ?? null : null}
+            mapBindingStatus={map.status === "LOADED" ? "LOADED"
+              : map.status === "INTEGRITY_ERROR" ? "INTEGRITY_ERROR"
+                : captureMapLookupFailed ? "LOOKUP_FAILED" : "NO_MAP"}
+            mapLookupFailed={captureMapLookupFailed}
             onReady={saveCapture}
+            onDraftCleanupFailure={(failure) => {
+              setCaptureDraftCleanupFailure({ sessionId: draft.id, message: failure });
+              setWorkflowError(failure);
+              setMessage(failure);
+            }}
             onInstrumentationEvent={reportCaptureInstrumentation}
           />
         ) : null}

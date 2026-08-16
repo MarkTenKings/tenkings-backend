@@ -4,7 +4,7 @@ import { z } from "zod";
 import { SPEEDSTER_RULE_VERSION } from "../../../../../lib/ai-grader-v2/contracts";
 import {
   SpeedsterIdentityValidationError,
-  canonicalizeSpeedsterSessionIdentity,
+  canonicalizeNewSpeedsterSessionIdentity,
 } from "../../../../../lib/ai-grader-v2/identity";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
@@ -59,7 +59,7 @@ export function createAiGraderV2SessionsHandler(deps: Dependencies = dependencie
       }
       let identity;
       try {
-        identity = canonicalizeSpeedsterSessionIdentity(parsed.data.cardProfile, parsed.data.identity);
+        identity = canonicalizeNewSpeedsterSessionIdentity(parsed.data.cardProfile, parsed.data.identity);
       } catch (error) {
         if (error instanceof SpeedsterIdentityValidationError) {
           return res.status(400).json({ message: error.message, fields: error.fields });

@@ -132,6 +132,7 @@ const authoritativeIdentity = (session: CompletedSession) => {
       }
     : {
         cardName: identityText(identity.cardName),
+        layoutType: identityText(identity.layoutType),
         year: identityText(identity.year),
         productSet: identityText(identity.productSet),
         parallel: identityText(identity.parallel),
@@ -309,6 +310,14 @@ export function createCompletedCardHandler(deps: Dependencies = dependencies) {
             return res.status(400).json({ message: error.message, fields: error.fields });
           }
           throw error;
+        }
+        const storedIdentity = identityRecord(session.identity);
+        const storedLayoutType = identityText(storedIdentity.layoutType);
+        const submittedLayoutType = "cardName" in identity ? identity.layoutType ?? null : null;
+        if (storedLayoutType !== submittedLayoutType) {
+          return res.status(409).json({
+            message: "Completed Pokémon layout type is immutable and must match the stored identity.",
+          });
         }
         await deps.correctIdentity(session.id, identity, adminSession.user.id);
         deps.logAdminAction({

@@ -172,6 +172,7 @@ export default function HumanGradePage() {
     setSelectedSheetId(sheetId);
     setForm({
       cardType: label.cardType,
+      layoutType: "",
       playerName: label.playerName ?? "",
       cardName: label.cardName ?? "",
       year: label.year,

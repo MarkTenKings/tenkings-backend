@@ -3467,6 +3467,12 @@ enum HumanGradeCardType {
   POKEMON
 }
 
+enum AiGraderV2PokemonLayoutType {
+  POKEMON
+  TRAINER
+  ENERGY
+}
+
 enum HumanGradeLabelSheetStatus {
   OPEN
   READY
@@ -3594,8 +3600,20 @@ model AiGraderV2Session {
   mapFilterDecisions AiGraderV2MapFilterDecision[]
   instrumentationEvents AiGraderV2InstrumentationEvent[]
   mapRegistrationLessons AiGraderV2MapRegistrationLesson[] @relation("MapRegistrationLessonEvidenceSession")
+  legacyMapLayoutAuthority AiGraderV2LegacyMapLayoutAuthority?
 
   @@index([mapRevisionId])
+}
+
+model AiGraderV2LegacyMapLayoutAuthority {
+  id                String   @id @default(cuid())
+  sourceSessionId   String   @unique
+  sourceSession     AiGraderV2Session @relation(fields: [sourceSessionId], references: [id], onDelete: Restrict)
+  layoutType        AiGraderV2PokemonLayoutType
+  selectedByAdminId String
+  createdAt         DateTime @default(now())
+
+  @@index([layoutType, createdAt])
 }
 
 model AiGraderV2InstrumentationEvent {

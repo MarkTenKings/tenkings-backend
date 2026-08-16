@@ -16,6 +16,20 @@ import {
   SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
 } from "../../lib/ai-grader-v2/prepared-image-urls";
 import {
+  SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+  readSpeedsterCaptureRegistrationDraft,
+  readSpeedsterCaptureRegistrationDraftForCommittedSession,
+  removeSpeedsterCaptureRegistrationDraft,
+  speedsterCaptureDraftExpiredRegistrationSides,
+  speedsterCaptureRegistrationDraftStorageKey,
+  writeSpeedsterCaptureRegistrationDraft,
+  type SpeedsterCaptureDraftCorrectedAnchor,
+  type SpeedsterCaptureDraftMapBindingStatus,
+  type SpeedsterCaptureDraftSide,
+  type SpeedsterCaptureDraftSurface,
+  type SpeedsterCaptureRegistrationDraft,
+} from "../../lib/ai-grader-v2/capture-registration-draft";
+import {
   speedsterImageService,
   SpeedsterMapRegistrationError,
   SpeedsterMapRegistrationRequestError,
@@ -38,6 +52,31 @@ import { MapRegistrationRescue } from "./MapRegistrationRescue";
 import styles from "./CaptureWorkspace.module.css";
 
 type Stage = "PHOTOS" | "FRONT_GEOMETRY" | "BACK_GEOMETRY" | "MAP_REGISTRATION_INTERRUPTED" | "MAP_REGISTRATION_RESCUE" | "FRONT_CENTERING" | "BACK_CENTERING" | "READY";
+
+const captureDraftBindingKey = (input: Readonly<{
+  surface: SpeedsterCaptureDraftSurface;
+  sessionId: string;
+  cardProfile: SpeedsterCardProfile;
+  mapBindingStatus: SpeedsterCaptureDraftMapBindingStatus;
+  activeMapRevisionId: string | null;
+  activeMapScope: SpeedsterMapScope | null;
+}>) => JSON.stringify([
+  input.surface,
+  input.sessionId,
+  input.cardProfile,
+  input.mapBindingStatus,
+  input.activeMapRevisionId,
+  input.activeMapScope,
+]);
+
+const captureDraftBindingLabel = (draft: SpeedsterCaptureRegistrationDraft) => {
+  if (draft.mapBindingStatus === "LOADED") {
+    return `${draft.activeMapScope} · ${draft.activeMapName ?? "Card Map"}`;
+  }
+  if (draft.mapBindingStatus === "LOOKUP_FAILED") return "Card Map lookup failed · no map authority applied";
+  if (draft.mapBindingStatus === "INTEGRITY_ERROR") return "Card Map integrity error · no map authority applied";
+  return "No applicable Card Map · manual geometry";
+};
 
 export type SpeedsterPreparedSide = {
   side: SpeedsterCardSide;
@@ -94,11 +133,17 @@ type CaptureWorkspaceProps = {
   token: string;
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
+  draftSurface?: SpeedsterCaptureDraftSurface;
   activeMapRevisionId?: string | null;
   activeMapScope?: SpeedsterMapScope | null;
   activeMapName?: string | null;
+  mapBindingStatus?: SpeedsterCaptureDraftMapBindingStatus;
   mapLookupFailed?: boolean;
-  onReady: (bundle: SpeedsterCaptureBundle) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
+  onReady: (
+    bundle: SpeedsterCaptureBundle,
+    clearPreservedBrowserDraft: () => boolean,
+  ) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
+  onDraftCleanupFailure?: (message: string) => void;
   onInstrumentationEvent: (event: SpeedsterCaptureInstrumentationEvent) => void | boolean | Promise<void | boolean>;
   imageRequestTimeoutMs?: number;
   decisionAuditConfirmationTimeoutMs?: number;
@@ -111,7 +156,7 @@ export type SpeedsterCaptureSaveResult = Readonly<{
 
 export type SpeedsterCaptureInstrumentationEvent = Readonly<{
   eventId?: string;
-  eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED" | "MAP_REGISTRATION_OPERATOR_DECISION";
+  eventType: "PHOTOS_READY" | "GEOMETRY_PROPOSED" | "GEOMETRY_CONFIRMED" | "CENTERING_CONFIRMED" | "MAP_REGISTRATION_OPERATOR_DECISION" | "MAP_AUTHORITY_OPERATOR_DECISION";
   startedAtMs: number;
   endedAtMs: number;
   details?: Readonly<{
@@ -123,6 +168,13 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
     mapRevisionId?: string;
     mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
     registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
+    mapAuthorityDecision?: "ABANDON_OBSOLETE_MAP_AUTHORITY";
+    mapAuthorityOperationId?: string;
+    mapAuthorityDecisionId?: string;
+    obsoleteMapBindingStatus?: SpeedsterCaptureDraftMapBindingStatus;
+    obsoleteMapRevisionId?: string;
+    obsoleteMapScope?: SpeedsterMapScope;
+    obsoleteMapName?: string;
     registrationErrorSource?: SpeedsterMapRegistrationRequestFailure["source"] | "HUMAN_CORRECTION";
     registrationErrorCode?: string;
     registrationHttpStatus?: number;
@@ -185,6 +237,7 @@ type RegistrationInterruptionState = Readonly<{
   attemptNumbers: Partial<Record<SpeedsterCardSide, number>>;
   decisionIds: Readonly<{
     continue: string;
+    abandonObsoleteMap: string;
     retry: Partial<Record<SpeedsterCardSide, string>>;
   }>;
 }>;
@@ -312,6 +365,37 @@ function withMapRegistration(value: SideState, registration: SpeedsterMapRegistr
   };
 }
 
+function durableCaptureSide(value: SideState): SpeedsterCaptureDraftSide | null {
+  if (!value.rectifiedStorageKey || !value.inspectionStorageKey || !value.inspectionFrame
+    || !value.transform || !value.viewStorageKeys || !value.proposedCentering || !value.detectedBorders) return null;
+  return {
+    originalStorageKey: value.originalStorageKey,
+    corners: value.corners,
+    automaticGeometry: value.automaticGeometry,
+    geometryDiagnostic: value.geometryDiagnostic,
+    rectifiedStorageKey: value.rectifiedStorageKey,
+    inspectionStorageKey: value.inspectionStorageKey,
+    inspectionFrame: value.inspectionFrame,
+    transform: value.transform,
+    viewStorageKeys: value.viewStorageKeys,
+    proposedCentering: value.proposedCentering,
+    detectedBorders: value.detectedBorders,
+    ...(value.centering ? { centering: value.centering } : {}),
+    ...(value.mapRegistration ? { mapRegistration: value.mapRegistration } : {}),
+  };
+}
+
+function restoredCaptureSide(value: SpeedsterCaptureDraftSide, rectifiedUrl: string): SideState {
+  return {
+    ...value,
+    sourceUrl: "",
+    rectifiedUrl,
+    rectifiedImageRevision: 0,
+    inspectionUrl: "",
+    views: { NORMALIZED: "", MICRO_DEFECT: "", DIRECTIONAL: "" },
+  };
+}
+
 function registrationInterruptionFrom(error: unknown): RegistrationInterruption {
   if (error instanceof SpeedsterMapRegistrationRequestError) {
     return { message: error.message, failure: error.failure };
@@ -348,6 +432,7 @@ function registrationDecisionIds(
 ): RegistrationInterruptionState["decisionIds"] {
   return {
     continue: crypto.randomUUID(),
+    abandonObsoleteMap: crypto.randomUUID(),
     retry: {
       ...(interruptions.FRONT ? { FRONT: crypto.randomUUID() } : {}),
       ...(interruptions.BACK ? { BACK: crypto.randomUUID() } : {}),
@@ -359,15 +444,20 @@ export function CaptureWorkspace({
   token,
   sessionId,
   cardProfile,
+  draftSurface = "AI_GRADER",
   activeMapRevisionId = null,
   activeMapScope = null,
   activeMapName = null,
+  mapBindingStatus: requestedMapBindingStatus,
   mapLookupFailed = false,
   onReady,
+  onDraftCleanupFailure,
   onInstrumentationEvent,
   imageRequestTimeoutMs,
   decisionAuditConfirmationTimeoutMs = SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS,
 }: CaptureWorkspaceProps) {
+  const mapBindingStatus: SpeedsterCaptureDraftMapBindingStatus = requestedMapBindingStatus
+    ?? (activeMapRevisionId && activeMapScope ? "LOADED" : mapLookupFailed ? "LOOKUP_FAILED" : "NO_MAP");
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [iphonePairingUrl, setIphonePairingUrl] = useState<string>();
@@ -384,6 +474,14 @@ export function CaptureWorkspace({
   const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
   const [registrationRescue, setRegistrationRescue] = useState<RegistrationRescueState | null>(null);
   const [registrationInterruption, setRegistrationInterruption] = useState<RegistrationInterruptionState | null>(null);
+  const [correctedAnchorDrafts, setCorrectedAnchorDrafts] = useState<Partial<
+    Record<SpeedsterCardSide, readonly SpeedsterCaptureDraftCorrectedAnchor[]>
+  >>({});
+  const [pendingCaptureDraft, setPendingCaptureDraft] = useState<SpeedsterCaptureRegistrationDraft | null>(null);
+  const [mapMismatchedCaptureDraft, setMapMismatchedCaptureDraft] = useState<SpeedsterCaptureRegistrationDraft | null>(null);
+  const [captureDraftHydratedSessionId, setCaptureDraftHydratedSessionId] = useState<string | null>(null);
+  const [invalidCaptureDraftPresent, setInvalidCaptureDraftPresent] = useState(false);
+  const [captureDraftError, setCaptureDraftError] = useState<string | null>(null);
   const [preparedImageRefresh, setPreparedImageRefresh] = useState(EMPTY_PREPARED_IMAGE_REFRESH);
   const geometryAttempt = useRef(0);
   const activeImageRequest = useRef<AbortController | null>(null);
@@ -392,6 +490,7 @@ export function CaptureWorkspace({
   const stageStartedAt = useRef(Date.now());
   const frontGeometryTiming = useRef<{ startedAtMs: number; endedAtMs: number } | null>(null);
   const mapRegistrationFailed = useRef(false);
+  const mapAuthorityAbandoned = useRef(false);
   const registrationFailureSides = useRef<Partial<Record<SpeedsterCardSide, true>>>({});
   const captureActionInFlight = useRef(false);
   const registrationActionInFlight = useRef(false);
@@ -400,10 +499,25 @@ export function CaptureWorkspace({
   const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Promise<string>>>>({});
   const preparedImageAutomaticRetryUsed = useRef<Partial<Record<SpeedsterCardSide, boolean>>>({});
   const currentSessionId = useRef(sessionId);
+  const captureDraftCreatedAtMs = useRef<number | null>(null);
+  const captureDraftDecisionIds = useRef<RegistrationInterruptionState["decisionIds"] | null>(null);
+  const registrationRecordedAtMs = useRef<Partial<Record<SpeedsterCardSide, number>>>({});
+  const captureDraftBindingGeneration = useRef(0);
+  const captureWorkspaceMounted = useRef(true);
+  const currentCaptureDraftBinding = useRef("");
 
   currentSessionId.current = sessionId;
+  currentCaptureDraftBinding.current = captureDraftBindingKey({
+    surface: draftSurface,
+    sessionId,
+    cardProfile,
+    mapBindingStatus,
+    activeMapRevisionId,
+    activeMapScope,
+  });
 
   useEffect(() => {
+    captureDraftBindingGeneration.current += 1;
     activeImageRequest.current?.abort();
     activeImageRequest.current = null;
     iphoneVersion.current = 0;
@@ -412,6 +526,7 @@ export function CaptureWorkspace({
     stageStartedAt.current = Date.now();
     frontGeometryTiming.current = null;
     mapRegistrationFailed.current = false;
+    mapAuthorityAbandoned.current = false;
     registrationFailureSides.current = {};
     captureActionInFlight.current = false;
     registrationActionInFlight.current = false;
@@ -429,15 +544,66 @@ export function CaptureWorkspace({
     setCaptureSaveFailed(false);
     setRegistrationRescue(null);
     setRegistrationInterruption(null);
+    setCorrectedAnchorDrafts({});
+    setPendingCaptureDraft(null);
+    setMapMismatchedCaptureDraft(null);
+    setCaptureDraftHydratedSessionId(null);
+    setInvalidCaptureDraftPresent(false);
+    setCaptureDraftError(null);
     setPreparedImageRefresh(EMPTY_PREPARED_IMAGE_REFRESH);
     preparedImageRefreshInFlight.current = {};
     preparedImageAutomaticRetryUsed.current = {};
-  }, [sessionId]);
+    captureDraftCreatedAtMs.current = null;
+    captureDraftDecisionIds.current = null;
+    registrationRecordedAtMs.current = {};
+    if (typeof window !== "undefined") {
+      try {
+        const storageKey = speedsterCaptureRegistrationDraftStorageKey(sessionId);
+        const rawDraft = window.localStorage.getItem(storageKey);
+        if (rawDraft) {
+          const restored = readSpeedsterCaptureRegistrationDraft(window.localStorage, {
+            surface: draftSurface,
+            sessionId,
+            cardProfile,
+            mapBindingStatus,
+            activeMapRevisionId,
+            activeMapScope,
+          });
+          if (restored) {
+            captureDraftCreatedAtMs.current = restored.createdAtMs;
+            setPendingCaptureDraft(restored);
+            setMessage("A preserved capture draft is available. Choose Resume or Discard; nothing has been applied or retried.");
+          } else {
+            const selfBound = readSpeedsterCaptureRegistrationDraftForCommittedSession(window.localStorage, {
+              surface: draftSurface,
+              sessionId,
+              cardProfile,
+            });
+            if (selfBound) {
+              setMapMismatchedCaptureDraft(selfBound);
+              setCaptureDraftError("The preserved draft belongs to a different Card Map revision or lookup state. Its old map authority was not applied. Choose whether to preserve the photos and geometry while explicitly abandoning every old registration receipt, or discard the draft.");
+            } else {
+              setInvalidCaptureDraftPresent(true);
+              setCaptureDraftError("A preserved capture draft exists but failed strict session validation. Fresh capture is blocked; the draft remains stored until you explicitly discard it.");
+            }
+          }
+        }
+      } catch {
+        setInvalidCaptureDraftPresent(true);
+        setCaptureDraftError("The preserved capture draft could not be read. No draft was deleted or resumed.");
+      }
+    }
+    setCaptureDraftHydratedSessionId(sessionId);
+  }, [activeMapRevisionId, activeMapScope, cardProfile, draftSurface, mapBindingStatus, sessionId]);
 
-  useEffect(() => () => {
-    activeImageRequest.current?.abort();
-    activeImageRequest.current = null;
-    currentRegistrationOperationId.current = null;
+  useEffect(() => {
+    captureWorkspaceMounted.current = true;
+    return () => {
+      captureWorkspaceMounted.current = false;
+      activeImageRequest.current?.abort();
+      activeImageRequest.current = null;
+      currentRegistrationOperationId.current = null;
+    };
   }, []);
 
   const refreshPreparedImage = useCallback((side: SpeedsterCardSide) => {
@@ -513,6 +679,330 @@ export function CaptureWorkspace({
     }) : current);
   }, []);
 
+  const discardPreservedCaptureDraft = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      removeSpeedsterCaptureRegistrationDraft(window.localStorage, sessionId);
+      setPendingCaptureDraft(null);
+      setMapMismatchedCaptureDraft(null);
+      setInvalidCaptureDraftPresent(false);
+      setCaptureDraftError(null);
+      captureDraftCreatedAtMs.current = null;
+      setMessage("Preserved capture draft discarded by explicit operator choice. Add front + back photos to start again.");
+    } catch {
+      setCaptureDraftError("The preserved capture draft could not be discarded. It remains stored; no work was resumed or changed.");
+    }
+  }, [sessionId]);
+
+  const resumeGeometryWithoutObsoleteMap = useCallback(async () => {
+    const draft = mapMismatchedCaptureDraft;
+    if (!draft || working) return;
+    const originatingSessionId = sessionId;
+    setWorking(true);
+    setCaptureDraftError(null);
+    setMessage("Refreshing prepared images before preserving geometry without the obsolete Card Map authority.");
+    try {
+      const [frontUrl, backUrl] = await Promise.all([
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT" }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK" }),
+      ]);
+      if (!captureWorkspaceMounted.current || currentSessionId.current !== originatingSessionId) return;
+      const decisionId = draft.decisionIds.abandonObsoleteMap;
+      const operationId = draft.operationId;
+      const surfaceAuditWarning = (failure: "UNAVAILABLE" | "FAILED" | "TIMED_OUT") => {
+        if (!captureWorkspaceMounted.current || currentSessionId.current !== originatingSessionId) return;
+        setAuditReconciliationNotices((current) => {
+          const noticeId = `map-authority-decision:${operationId}:${decisionId}`;
+          if (current.some((candidate) => candidate.noticeId === noticeId)) return current;
+          const explanation = failure === "UNAVAILABLE"
+            ? "reporter is unavailable"
+            : failure === "TIMED_OUT"
+              ? `write was not confirmed within ${decisionAuditConfirmationTimeoutMs} ms`
+              : "write failed";
+          return [...current, {
+            noticeId,
+            message: `Map-authority decision audit ${explanation} for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`,
+          }];
+        });
+      };
+      if (!onInstrumentationEvent) {
+        surfaceAuditWarning("UNAVAILABLE");
+      } else {
+        const atMs = Date.now();
+        let result: void | boolean | Promise<void | boolean>;
+        try {
+          result = onInstrumentationEvent({
+            eventId: decisionId,
+            eventType: "MAP_AUTHORITY_OPERATOR_DECISION",
+            startedAtMs: atMs,
+            endedAtMs: atMs,
+            details: {
+              mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
+              mapAuthorityOperationId: operationId,
+              mapAuthorityDecisionId: decisionId,
+              mapAppliedScope: "NONE",
+              obsoleteMapBindingStatus: draft.mapBindingStatus,
+              ...(draft.activeMapRevisionId ? { obsoleteMapRevisionId: draft.activeMapRevisionId } : {}),
+              ...(draft.activeMapScope ? { obsoleteMapScope: draft.activeMapScope } : {}),
+              ...(draft.activeMapName ? { obsoleteMapName: draft.activeMapName } : {}),
+            },
+          });
+        } catch {
+          surfaceAuditWarning("FAILED");
+          result = undefined;
+        }
+        if (result !== undefined) {
+          void settleSpeedsterRegistrationDecisionAuditConfirmation(
+            result,
+            decisionAuditConfirmationTimeoutMs,
+          ).then((outcome) => {
+            if (outcome !== "CONFIRMED") surfaceAuditWarning(outcome === "TIMED_OUT" ? "TIMED_OUT" : "FAILED");
+          });
+        }
+      }
+      const stripRegistration = (side: SpeedsterCaptureDraftSide): SpeedsterCaptureDraftSide => {
+        const { mapRegistration: _mapRegistration, ...withoutRegistration } = side;
+        return withoutRegistration;
+      };
+      const frontDraft = stripRegistration(draft.front);
+      const backDraft = stripRegistration(draft.back);
+      setFront(restoredCaptureSide(frontDraft, frontUrl));
+      setBack(restoredCaptureSide(backDraft, backUrl));
+      setCornerShape(draft.cornerShape);
+      setRegistrationInterruption(null);
+      setRegistrationRescue(null);
+      setCorrectedAnchorDrafts({});
+      registrationRecordedAtMs.current = {};
+      registrationFailureSides.current = {};
+      mapRegistrationFailed.current = false;
+      mapAuthorityAbandoned.current = true;
+      currentRegistrationOperationId.current = crypto.randomUUID();
+      captureDraftDecisionIds.current = {
+        continue: crypto.randomUUID(),
+        abandonObsoleteMap: crypto.randomUUID(),
+        retry: {},
+      };
+      captureDraftCreatedAtMs.current = draft.createdAtMs;
+      const bothCentered = Boolean(frontDraft.centering && backDraft.centering);
+      setCaptureSaveFailed(bothCentered);
+      setStage(frontDraft.centering ? "BACK_CENTERING" : "FRONT_CENTERING");
+      setMapRegistrationNotice("Obsolete Card Map authority explicitly abandoned. Front + Back photos, physical geometry, and centering were preserved; no old receipt or current map was applied.");
+      setMapMismatchedCaptureDraft(null);
+      setPendingCaptureDraft(null);
+      setInvalidCaptureDraftPresent(false);
+      setMessage(bothCentered
+        ? "Geometry recovered without Card Map authority. Confirm Retry save to preserve the verified Front + Back capture manually."
+        : "Geometry recovered without Card Map authority. Continue the remaining centering review; no registration was reused.");
+    } catch (error) {
+      setCaptureDraftError(`${error instanceof Error ? error.message : "Prepared images could not be refreshed."} The original draft remains intact; no map authority or geometry was changed.`);
+    } finally {
+      if (captureWorkspaceMounted.current && currentSessionId.current === originatingSessionId) setWorking(false);
+    }
+  }, [decisionAuditConfirmationTimeoutMs, mapMismatchedCaptureDraft, onInstrumentationEvent, sessionId, token, working]);
+
+  const resumePreservedCaptureDraft = useCallback(async () => {
+    const draft = pendingCaptureDraft;
+    if (!draft || working) return;
+    const originatingSessionId = sessionId;
+    const originatingGeneration = captureDraftBindingGeneration.current;
+    const originatingBinding = captureDraftBindingKey({
+      surface: draft.surface,
+      sessionId: draft.sessionId,
+      cardProfile: draft.cardProfile,
+      mapBindingStatus: draft.mapBindingStatus,
+      activeMapRevisionId: draft.activeMapRevisionId,
+      activeMapScope: draft.activeMapScope,
+    });
+    if (originatingBinding !== currentCaptureDraftBinding.current) {
+      setCaptureDraftError("The capture binding changed before Resume. The preserved draft remains intact; review the current session and map before choosing again.");
+      return;
+    }
+    setWorking(true);
+    setCaptureDraftError(null);
+    setMessage("Refreshing prepared Front + Back images before resuming the preserved draft.");
+    try {
+      const [frontUrl, backUrl] = await Promise.all([
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT" }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK" }),
+      ]);
+      if (!captureWorkspaceMounted.current
+        || captureDraftBindingGeneration.current !== originatingGeneration
+        || currentCaptureDraftBinding.current !== originatingBinding
+        || currentSessionId.current !== originatingSessionId) return;
+      let frontDraft = draft.front;
+      let backDraft = draft.back;
+      let stage: Stage = draft.stage;
+      let interruption: RegistrationInterruptionState | null = null;
+      let rescue: RegistrationRescueState | null = null;
+      const expiredRegistrationSides = new Set(speedsterCaptureDraftExpiredRegistrationSides(draft));
+      const restoredRegistrationRecordedAtMs = { ...draft.registrationRecordedAtMs };
+      if (expiredRegistrationSides.size > 0) {
+        const interruptions: RegistrationInterruptionState["interruptions"] = { ...draft.interruptions };
+        const provisional = { ...draft.provisional };
+        const retry: Partial<Record<SpeedsterCardSide, string>> = { ...draft.decisionIds.retry };
+        for (const side of (["FRONT", "BACK"] as const)) {
+          const candidate = provisional[side] ?? (side === "FRONT" ? frontDraft.mapRegistration : backDraft.mapRegistration);
+          if (!candidate || !expiredRegistrationSides.has(side)) continue;
+          interruptions[side] = {
+            message: `The preserved ${side.toLowerCase()} registration receipt is older than 24 hours. Re-register this side or explicitly continue without Card Map.`,
+            failure: {
+              version: "speedster-map-registration-error-v1",
+              source: "CLIENT_PROTOCOL",
+              code: "DRAFT_REGISTRATION_RECEIPT_EXPIRED",
+              httpStatus: null,
+              retryable: false,
+              requestId: null,
+            },
+          };
+          delete provisional[side];
+          delete restoredRegistrationRecordedAtMs[side];
+          retry[side] = crypto.randomUUID();
+          if (side === "FRONT") {
+            const { mapRegistration: _mapRegistration, ...withoutRegistration } = frontDraft;
+            frontDraft = withoutRegistration;
+          } else {
+            const { mapRegistration: _mapRegistration, ...withoutRegistration } = backDraft;
+            backDraft = withoutRegistration;
+          }
+        }
+        interruption = {
+          interruptions,
+          failures: draft.failures,
+          failureRequestIds: draft.failureRequestIds,
+          provisional,
+          operationId: draft.operationId,
+          attemptNumbers: draft.attemptNumbers,
+          decisionIds: {
+            continue: draft.decisionIds.continue,
+            abandonObsoleteMap: draft.decisionIds.abandonObsoleteMap,
+            retry,
+          },
+        };
+        stage = "MAP_REGISTRATION_INTERRUPTED";
+        setCaptureDraftError("The draft was resumed, but one or more registration receipts expired. No map was applied. Re-register every listed side or explicitly Continue without Card Map.");
+      } else if (draft.stage === "MAP_REGISTRATION_INTERRUPTED") {
+        interruption = {
+          interruptions: draft.interruptions,
+          failures: draft.failures,
+          failureRequestIds: draft.failureRequestIds,
+          provisional: draft.provisional,
+          operationId: draft.operationId,
+          attemptNumbers: draft.attemptNumbers,
+          decisionIds: draft.decisionIds,
+        };
+      } else if (draft.stage === "MAP_REGISTRATION_RESCUE") {
+        rescue = {
+          failures: draft.failures,
+          failureRequestIds: draft.failureRequestIds,
+          provisional: draft.provisional,
+          attemptIds: draft.attemptIds,
+          operationId: draft.operationId,
+          attemptNumbers: draft.attemptNumbers,
+          continueDecisionId: draft.decisionIds.continue,
+        };
+      }
+      setFront(restoredCaptureSide(frontDraft, frontUrl));
+      setBack(restoredCaptureSide(backDraft, backUrl));
+      setCornerShape(draft.cornerShape);
+      setRegistrationInterruption(interruption);
+      setRegistrationRescue(rescue);
+      setCorrectedAnchorDrafts(draft.correctedAnchors);
+      setCaptureSaveFailed(draft.captureSavePendingRetry);
+      registrationRecordedAtMs.current = restoredRegistrationRecordedAtMs;
+      setStage(stage);
+      currentRegistrationOperationId.current = draft.operationId;
+      captureDraftDecisionIds.current = draft.decisionIds;
+      registrationFailureSides.current = draft.registrationFailureSides;
+      mapRegistrationFailed.current = draft.mapRegistrationFailed;
+      mapAuthorityAbandoned.current = draft.mapAuthorityAbandoned;
+      setMapRegistrationNotice(draft.notice);
+      setPendingCaptureDraft(null);
+      setMessage(stage === "MAP_REGISTRATION_INTERRUPTED"
+        ? "Preserved draft resumed. Resolve every listed side or explicitly continue without Card Map."
+        : stage === "MAP_REGISTRATION_RESCUE"
+          ? "Preserved anchor-rescue draft resumed. Confirm the retained handle positions when ready."
+          : "Preserved prepared-card draft resumed. Confirm the printed-border geometry.");
+    } catch (error) {
+      if (captureWorkspaceMounted.current
+        && captureDraftBindingGeneration.current === originatingGeneration
+        && currentCaptureDraftBinding.current === originatingBinding
+        && currentSessionId.current === originatingSessionId) {
+        setCaptureDraftError(`${error instanceof Error ? error.message : "Prepared images could not be refreshed."} The preserved draft remains intact; retry Resume or explicitly Discard.`);
+        setMessage("Preserved draft was not resumed because its prepared images are unavailable.");
+      }
+    } finally {
+      if (captureWorkspaceMounted.current
+        && captureDraftBindingGeneration.current === originatingGeneration
+        && currentCaptureDraftBinding.current === originatingBinding
+        && currentSessionId.current === originatingSessionId) setWorking(false);
+    }
+  }, [pendingCaptureDraft, sessionId, token, working]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || pendingCaptureDraft
+      || !front || !back || ![
+        "MAP_REGISTRATION_INTERRUPTED", "MAP_REGISTRATION_RESCUE", "FRONT_CENTERING", "BACK_CENTERING",
+      ].includes(stage)) return;
+    const durableFront = durableCaptureSide(front);
+    const durableBack = durableCaptureSide(back);
+    const operationId = currentRegistrationOperationId.current;
+    if (!durableFront || !durableBack || !operationId) return;
+    const stableDecisionIds = registrationInterruption?.decisionIds
+      ?? captureDraftDecisionIds.current
+      ?? { continue: crypto.randomUUID(), abandonObsoleteMap: crypto.randomUUID(), retry: {} };
+    captureDraftDecisionIds.current = stableDecisionIds;
+    const now = Date.now();
+    const createdAtMs = captureDraftCreatedAtMs.current ?? now;
+    captureDraftCreatedAtMs.current = createdAtMs;
+    const draft: SpeedsterCaptureRegistrationDraft = {
+      version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+      createdAtMs,
+      updatedAtMs: now,
+      surface: draftSurface,
+      sessionId,
+      cardProfile,
+      mapBindingStatus,
+      activeMapRevisionId,
+      activeMapScope,
+      activeMapName,
+      cornerShape,
+      stage: stage as SpeedsterCaptureRegistrationDraft["stage"],
+      front: durableFront,
+      back: durableBack,
+      interruptions: registrationInterruption?.interruptions ?? {},
+      failures: registrationInterruption?.failures ?? registrationRescue?.failures ?? {},
+      failureRequestIds: registrationInterruption?.failureRequestIds ?? registrationRescue?.failureRequestIds ?? {},
+      provisional: registrationInterruption?.provisional ?? registrationRescue?.provisional ?? {
+        ...(front.mapRegistration ? { FRONT: front.mapRegistration } : {}),
+        ...(back.mapRegistration ? { BACK: back.mapRegistration } : {}),
+      },
+      registrationRecordedAtMs: registrationRecordedAtMs.current,
+      attemptIds: registrationRescue?.attemptIds ?? {},
+      operationId,
+      attemptNumbers: registrationInterruption?.attemptNumbers ?? registrationRescue?.attemptNumbers ?? {},
+      decisionIds: registrationInterruption?.decisionIds ?? {
+        continue: registrationRescue?.continueDecisionId ?? stableDecisionIds.continue,
+        abandonObsoleteMap: stableDecisionIds.abandonObsoleteMap,
+        retry: {},
+      },
+      correctedAnchors: correctedAnchorDrafts,
+      registrationFailureSides: registrationFailureSides.current,
+      mapRegistrationFailed: mapRegistrationFailed.current,
+      mapAuthorityAbandoned: mapAuthorityAbandoned.current,
+      captureSavePendingRetry: captureSaveFailed,
+      notice: mapRegistrationNotice,
+    };
+    try {
+      writeSpeedsterCaptureRegistrationDraft(window.localStorage, draft);
+    } catch (error) {
+      setCaptureDraftError(`${error instanceof Error ? error.message : "The capture draft could not be preserved."} Current in-memory work is unchanged; do not reload until this is resolved.`);
+    }
+  }, [
+    activeMapName, activeMapRevisionId, activeMapScope, back, cardProfile, cornerShape,
+    correctedAnchorDrafts, draftSurface, front, mapRegistrationNotice, mapBindingStatus,
+    captureSaveFailed, pendingCaptureDraft, registrationInterruption, registrationRescue, sessionId, stage,
+  ]);
+
   useEffect(() => {
     if (!frontPhoto || !backPhoto || photosReadyRecorded.current) return;
     photosReadyRecorded.current = true;
@@ -528,7 +1018,8 @@ export function CaptureWorkspace({
   }, [backPhoto, frontPhoto, onInstrumentationEvent]);
 
   useEffect(() => {
-    if (stage !== "PHOTOS" || working) return;
+    if (stage !== "PHOTOS" || working || captureDraftHydratedSessionId !== sessionId
+      || pendingCaptureDraft || mapMismatchedCaptureDraft || invalidCaptureDraftPresent) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -588,10 +1079,12 @@ export function CaptureWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [sessionId, stage, token, working]);
+  }, [captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, sessionId, stage, token, working]);
 
   const beginGeometry = async () => {
-    if (!frontPhoto || !backPhoto || working || captureActionInFlight.current) return;
+    if (!frontPhoto || !backPhoto || working || captureActionInFlight.current
+      || captureDraftHydratedSessionId !== sessionId || pendingCaptureDraft
+      || mapMismatchedCaptureDraft || invalidCaptureDraftPresent) return;
     captureActionInFlight.current = true;
     const attemptId = geometryAttempt.current + 1;
     const startedAtMs = Date.now();
@@ -688,6 +1181,7 @@ export function CaptureWorkspace({
     failureSides?: Partial<Record<SpeedsterCardSide, true>>;
     notice?: string | null;
   }>) => {
+    currentRegistrationOperationId.current ??= crypto.randomUUID();
     const failureSides = input.failureSides ?? {};
     const hasFailure = Boolean(failureSides.FRONT || failureSides.BACK);
     const hasBothRegistrations = Boolean(input.provisional.FRONT && input.provisional.BACK);
@@ -713,10 +1207,12 @@ export function CaptureWorkspace({
     setBack(finalBack);
     setRegistrationInterruption(null);
     setRegistrationRescue(null);
+    setCorrectedAnchorDrafts({});
     setStage("FRONT_CENTERING");
     stageStartedAt.current = endedAtMs;
     registrationFailureSides.current = failureSides;
     mapRegistrationFailed.current = hasFailure;
+    if (!hasBothRegistrations) registrationRecordedAtMs.current = {};
     if (input.notice !== undefined) setMapRegistrationNotice(input.notice);
     const detail = (
       side: SpeedsterCardSide,
@@ -851,7 +1347,12 @@ export function CaptureWorkspace({
           side: candidate,
           currentPhysicalQuad,
           orchestration,
-        }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+        }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }).then((registration) => {
+          if (activeImageRequest.current === controller && currentSessionId.current === sessionId) {
+            registrationRecordedAtMs.current[candidate] = Date.now();
+          }
+          return registration;
+        });
         const initialResults = await Promise.allSettled([
           registerSide("FRONT", front.corners, {
             operationId,
@@ -1140,6 +1641,7 @@ export function CaptureWorkspace({
         },
       }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
       if (activeImageRequest.current !== controller) return;
+      registrationRecordedAtMs.current[side] = Date.now();
       surfaceRegistrationAuditWarning(registrationInterruption.operationId, [registration]);
       const interruptions = { ...registrationInterruption.interruptions };
       delete interruptions[side];
@@ -1293,18 +1795,26 @@ export function CaptureWorkspace({
         },
       }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
       if (activeImageRequest.current !== controller) return;
+      registrationRecordedAtMs.current[side] = Date.now();
       surfaceRegistrationAuditWarning(registrationRescue.operationId, [registration]);
       const failures = { ...registrationRescue.failures };
       const failureRequestIds = { ...registrationRescue.failureRequestIds };
+      const attemptIds = { ...registrationRescue.attemptIds };
       delete failures[side];
       delete failureRequestIds[side];
+      delete attemptIds[side];
+      setCorrectedAnchorDrafts((current) => {
+        const next = { ...current };
+        delete next[side];
+        return next;
+      });
       const provisional = { ...registrationRescue.provisional, [side]: registration };
       if (failures.FRONT || failures.BACK) {
         setRegistrationRescue({
           failures,
           failureRequestIds,
           provisional,
-          attemptIds: registrationRescue.attemptIds,
+          attemptIds,
           operationId: registrationRescue.operationId,
           attemptNumbers,
           continueDecisionId: registrationRescue.continueDecisionId,
@@ -1388,11 +1898,85 @@ export function CaptureWorkspace({
       front: toPreparedSide("FRONT", front),
       back: toPreparedSide("BACK", finalBack),
     };
+    const durableFront = durableCaptureSide(front);
+    const durableBack = durableCaptureSide(finalBack);
+    const operationId = currentRegistrationOperationId.current ?? crypto.randomUUID();
+    currentRegistrationOperationId.current = operationId;
+    const stableDecisionIds = captureDraftDecisionIds.current ?? {
+      continue: crypto.randomUUID(),
+      abandonObsoleteMap: crypto.randomUUID(),
+      retry: {},
+    };
+    captureDraftDecisionIds.current = stableDecisionIds;
+    if (!durableFront || !durableBack || typeof window === "undefined") {
+      setCaptureSaveFailed(true);
+      setWorkflowError("The complete Front + Back capture could not be preserved before save. No server save was attempted; retry without redrawing.");
+      setMessage("Final capture draft preservation failed before the save request.");
+      return;
+    }
+    const now = Date.now();
+    const createdAtMs = captureDraftCreatedAtMs.current ?? now;
+    captureDraftCreatedAtMs.current = createdAtMs;
+    try {
+      writeSpeedsterCaptureRegistrationDraft(window.localStorage, {
+        version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+        createdAtMs,
+        updatedAtMs: now,
+        surface: draftSurface,
+        sessionId,
+        cardProfile,
+        mapBindingStatus,
+        activeMapRevisionId,
+        activeMapScope,
+        activeMapName,
+        cornerShape,
+        stage: "BACK_CENTERING",
+        front: durableFront,
+        back: durableBack,
+        interruptions: {},
+        failures: {},
+        failureRequestIds: {},
+        provisional: {
+          ...(front.mapRegistration ? { FRONT: front.mapRegistration } : {}),
+          ...(finalBack.mapRegistration ? { BACK: finalBack.mapRegistration } : {}),
+        },
+        registrationRecordedAtMs: registrationRecordedAtMs.current,
+        attemptIds: {},
+        operationId,
+        attemptNumbers: {},
+        decisionIds: stableDecisionIds,
+        correctedAnchors: {},
+        registrationFailureSides: registrationFailureSides.current,
+        mapRegistrationFailed: mapRegistrationFailed.current,
+        mapAuthorityAbandoned: mapAuthorityAbandoned.current,
+        captureSavePendingRetry: true,
+        notice: mapRegistrationNotice,
+      });
+    } catch (error) {
+      setCaptureSaveFailed(true);
+      setWorkflowError(`${error instanceof Error ? error.message : "The final capture draft could not be preserved."} No server save was attempted; retry without redrawing.`);
+      setMessage("Final capture draft preservation failed before the save request.");
+      return;
+    }
     readyDispatched.current = true;
-    setCaptureSaveFailed(false);
+    setCaptureSaveFailed(true);
     setStage("READY");
     setMessage("Saving the locked Front + Back geometry.");
-    const saveResult = await onReady(bundle);
+    let browserDraftCleanupAttempted = false;
+    const clearPreservedBrowserDraft = () => {
+      browserDraftCleanupAttempted = true;
+      if (typeof window === "undefined") return true;
+      try {
+        removeSpeedsterCaptureRegistrationDraft(window.localStorage, sessionId);
+        captureDraftCreatedAtMs.current = null;
+        return true;
+      } catch {
+        const cleanupFailure = "Capture saved successfully, but the obsolete browser draft could not be cleared. Use the visible retry action before reusing this session URL.";
+        onDraftCleanupFailure?.(cleanupFailure);
+        return false;
+      }
+    };
+    const saveResult = await onReady(bundle, clearPreservedBrowserDraft);
     if (saveResult && !saveResult.saved) {
       readyDispatched.current = false;
       setCaptureSaveFailed(true);
@@ -1401,6 +1985,7 @@ export function CaptureWorkspace({
       setMessage("Save did not finish. Front + Back photos and geometry are preserved; retry when ready.");
       return;
     }
+    if (!browserDraftCleanupAttempted) clearPreservedBrowserDraft();
     setMessage("Geometry locked. The card is ready for defect detection.");
   };
 
@@ -1459,6 +2044,7 @@ export function CaptureWorkspace({
 
       {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
 
+      {captureDraftError ? <p role="alert" className={styles.errorBanner}>{captureDraftError}</p> : null}
       {auditReconciliationNotices.map((notice) => (
         <p
           key={notice.noticeId}
@@ -1470,7 +2056,52 @@ export function CaptureWorkspace({
         </p>
       ))}
 
-      {stage === "PHOTOS" ? (
+      {mapMismatchedCaptureDraft ? (
+        <section className={styles.registrationInterruption} aria-label="Preserved capture draft Card Map mismatch">
+          <header>
+            <span>CAPTURE DRAFT · CARD MAP CHANGED · EXPLICIT CHOICE</span>
+            <h2>Keep the physical capture work without reusing obsolete map authority.</h2>
+          </header>
+          <p>
+            The old revision, receipts, projected zones, and registration decisions will be stripped only if you choose geometry recovery.
+            Front + Back storage evidence, corners, transforms, and completed centering remain preserved.
+          </p>
+          <div className={styles.interruptionActions}>
+            <button type="button" onClick={() => void resumeGeometryWithoutObsoleteMap()} disabled={working}>
+              {working ? "Refreshing prepared images…" : "Resume geometry without old Card Map"}
+            </button>
+            <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
+              Discard preserved draft
+            </button>
+          </div>
+        </section>
+      ) : pendingCaptureDraft ? (
+        <section className={styles.registrationInterruption} aria-label="Preserved capture draft">
+          <header>
+            <span>CAPTURE DRAFT · EXPLICIT CHOICE</span>
+            <h2>Prepared Front + Back work is preserved from this session.</h2>
+          </header>
+          <p>
+            Saved {new Date(pendingCaptureDraft.updatedAtMs).toLocaleString()} for {captureDraftBindingLabel(pendingCaptureDraft)}.
+            {" "}Nothing has been applied, retried, or discarded.
+          </p>
+          <div className={styles.interruptionActions}>
+            <button type="button" onClick={() => void resumePreservedCaptureDraft()} disabled={working}>
+              {working ? "Refreshing prepared images…" : "Resume preserved draft"}
+            </button>
+            <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
+              Discard preserved draft
+            </button>
+          </div>
+        </section>
+      ) : invalidCaptureDraftPresent && stage === "PHOTOS" ? (
+          <button type="button" onClick={discardPreservedCaptureDraft} disabled={working}>
+            Discard invalid preserved draft
+          </button>
+        ) : null}
+
+      {stage === "PHOTOS" && captureDraftHydratedSessionId === sessionId
+        && !pendingCaptureDraft && !mapMismatchedCaptureDraft && !invalidCaptureDraftPresent ? (
         <div className={styles.photos}>
           <PhotoUploadPair
             front={frontPhoto}
@@ -1594,7 +2225,12 @@ export function CaptureWorkspace({
             imageRefreshError={preparedImageRefresh[rescueSide].error}
             imageRefreshing={preparedImageRefresh[rescueSide].refreshing}
             failure={registrationRescue.failures[rescueSide]!}
+            initialCorrectedAnchors={correctedAnchorDrafts[rescueSide]}
             disabled={working}
+            onDraftChange={(anchors) => setCorrectedAnchorDrafts((current) => ({
+              ...current,
+              [rescueSide]: anchors,
+            }))}
             onConfirm={(anchors) => confirmRegistrationRescue(rescueSide, anchors)}
             onContinueManual={() => {
               if (registrationActionInFlight.current) return;

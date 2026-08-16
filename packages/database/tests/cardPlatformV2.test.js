@@ -956,6 +956,50 @@ test("completed identity correction rejects unsupported keys and non-text fields
   assert.equal(writes.length, 0);
 });
 
+test("completed Pokemon identity correction cannot downgrade or change stored layout authority", async () => {
+  const session = {
+    id: "speedster-session-layout-v2",
+    cardProfile: "POKEMON",
+    workflowState: "COMPLETED",
+    identity: {
+      cardName: "Squirtle",
+      layoutType: "POKEMON",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "Reverse Holo",
+      cardNumber: "007/165",
+    },
+    collectibleCardV2: null,
+  };
+  const writes = [];
+  let downstreamLocks = 0;
+  const tx = {
+    async $queryRaw() { downstreamLocks += 1; return [{ id: session.id }]; },
+    aiGraderV2Session: {
+      async findUnique() { return session; },
+      async update(input) { writes.push(input); },
+    },
+  };
+  const base = {
+    cardName: "Squirtle corrected",
+    year: "2023",
+    productSet: "MEW EN",
+    parallel: "Reverse Holo",
+    cardNumber: "007/165",
+  };
+  await assert.rejects(
+    correctCompletedSpeedsterIdentity(tx, session.id, base, "admin-1"),
+    /layout type is immutable/i,
+  );
+  await assert.rejects(
+    correctCompletedSpeedsterIdentity(tx, session.id, { ...base, layoutType: "TRAINER" }, "admin-1"),
+    /layout type is immutable/i,
+  );
+  assert.equal(downstreamLocks, 2, "each rejected attempt stops after the session lock");
+  assert.equal(writes.length, 0);
+  assert.equal(session.identity.layoutType, "POKEMON");
+});
+
 test("approved identity executable pins every owner-approved certificate/session binding and safety gate", async () => {
   const moduleUrl = pathToFileURL(join(__dirname, "../scripts/correctApprovedSpeedsterIdentities.mjs")).href;
   const source = readFileSync(join(__dirname, "../scripts/correctApprovedSpeedsterIdentities.mjs"), "utf8");

@@ -1,6 +1,6 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-last_verified_at: 2026-08-05
+last_verified_at: 2026-08-15
 owner: Mark
 
 ## Rules
@@ -18,6 +18,19 @@ owner: Mark
 - Any release that requires server-authoritative Card Map registration receipts must provision dedicated, server-only `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY` and `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID` values in the Vercel Production environment before activation.
 - The receipt key must be a new random secret used only for registration receipts; never reuse the Card Format Authority key or expose this key to a browser, local capture helper, RunPod worker, log, or committed file.
 - Record only the key ID and successful presence/format check in `docs/handoffs/SESSION_LOG.md`; never print or record the secret. Missing or invalid authority fails registration closed.
+
+## Speedster Pokémon Layout Key V2 Cutover Gate
+
+- Phase 0 no longer blocks candidate reconstruction. Read-only evidence proves completed card `TKH-001259` pinned FAMILY r9 `cmssbc8fi0002jfswkc7ra2rl`; its Front used human correction. Mark's ongoing Production grading continues independently and must never wait for this release. This evidence is not deploy approval.
+- Mark's Aug 13 dual save created intended rescue FAMILY r9 and paired EXACT r5 `cmssbc8hf0004jfswua36k5bf` atomically from identical Front/Back map bodies. The exact-first editor therefore exposes content-equivalent geometry even though the two revisions have different authority metadata and hashes. FAMILY r8 remains immutable history. See `docs/context/SPEEDSTER_LAYOUT_KEY_V2_ADDENDUM_2026-08-15.md`.
+- No migration or web cutover begins without Mark's separate explicit approval for this exact Phase 1 candidate. Deploy phases remain one at a time even though candidate reconstruction and review proceed in parallel.
+- Before approval, run a read-only inventory for every non-completed session that is pinned to a legacy Pokémon FAMILY revision or has persisted filter decisions derived from one. Stop if any row exists; record exact counts and obtain an explicit owner disposition. Never rewrite those sessions or decisions automatically.
+- Run a read-only identity preflight across existing sessions. Any present `layoutType` must be exactly `POKEMON`, `TRAINER`, or `ENERGY`, and it may appear only on a Pokémon identity. Historical Pokémon identities with no layout remain valid and must remain byte-unchanged.
+- Validate the exact final commit through the contained, loopback-only disposable PostgreSQL full migration chain. Require the new constraint/table/index/foreign-key/append-only-trigger catalog, unchanged pre-existing identity bytes, valid and invalid layout fixtures, UPDATE/DELETE rejection, one-authority-per-source rejection, rollback cleanup, a second migration deploy that is an explicit no-op, and an unchanged migration ledger. Preserve the validator artifact/output in the deployment evidence.
+- Quiesce Speedster before cutover: prohibit new captures, Card Map save/restore/promotion, and completed-identity correction; drain every old web request and verify no old instance can still accept traffic. Apply the additive migration, deploy the reviewed web commit, and then reopen Speedster only after exact-source/version and signed-in read-only checks pass.
+- The safety boundary is the first V2 identity or legacy-source layout-authority write. After that boundary, an old web instance is not a valid rollback target because it does not enforce layout-scoped FAMILY authority. Roll forward with the reviewed V2 runtime; do not route traffic back to old instances.
+- A legacy source's first layout selection is irreversible and has no edit/correction path. The operator must verify the physical card layout before saving. If the selection is wrong, stop and obtain owner direction; never mutate or delete the authority row, rewrite the completed session, or guess another layout from image content.
+- Postflight must prove: legacy Pokémon FAMILY revisions remain historical-only; legacy identities without authority resolve EXACT only; an authority-bearing legacy source reloads the normal same-layout V2 FAMILY hash; a new Pokémon sibling resolves only a same-layout V2 FAMILY; and a Trainer/Energy sibling cannot resolve a Pokémon-layout FAMILY. These checks are read-only until the owner separately authorizes the deliberate Squirtle re-save.
 
 ## Workstation Deploy Flow
 ```bash

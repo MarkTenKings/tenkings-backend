@@ -310,6 +310,73 @@ test("missing-map creation state is neutral while boundary and composed Front/Ba
   }
 });
 
+test("legacy Pokémon layout choice is enabled before first save, then irreversibly locked with success evidence", async () => {
+  const legacyPokemonSource: SpeedsterTrainSource = {
+    ...source,
+    cardProfile: "POKEMON",
+    identity: {
+      cardName: "Squirtle",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: "007/165",
+    },
+  };
+  const harness = await mount(loadedMap(), { body: { maps: dualSaveResult() }, status: 201 }, legacyPokemonSource);
+  try {
+    const selector = harness.container.querySelector<HTMLSelectElement>('[aria-label="Family map layout type"]');
+    assert.ok(selector);
+    assert.equal(selector.disabled, false);
+    assert.equal(selector.value, "");
+    await act(async () => {
+      Simulate.change(selector, { target: { value: "TRAINER" } } as unknown as Parameters<typeof Simulate.change>[1]);
+    });
+    assert.equal(selector.value, "TRAINER");
+    const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
+    assert.ok(save);
+    assert.equal(save.disabled, false);
+    await act(async () => fire(save, "click"));
+    await waitFor(() => harness.savedMaps.length === 1, "Legacy Pokémon dual save did not settle");
+    assert.equal(selector.disabled, true);
+    assert.equal(selector.value, "TRAINER");
+    assert.match(harness.container.textContent ?? "", /FAMILY \+ EXACT MAPS SAVED ATOMICALLY/);
+    assert.match(harness.container.textContent ?? "", /committed by this successful atomic save/);
+    const body = JSON.parse(String(harness.requests[0].init?.body));
+    assert.equal(body.familyLayoutType, "TRAINER");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("locked Pokémon layout renders immutable authority provenance", async () => {
+  const authoritativeSource: SpeedsterTrainSource = {
+    ...source,
+    cardProfile: "POKEMON",
+    identity: {
+      cardName: "Squirtle",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "REVERSE HOLO",
+      cardNumber: "007/165",
+    },
+    familyLayoutType: "POKEMON",
+    familyLayoutAuthority: {
+      source: "LEGACY_SOURCE_AUTHORITY",
+      selectedByAdminId: "admin-layout-owner-1",
+      createdAt: "2026-08-13T20:00:00.000Z",
+    },
+  };
+  const harness = await mount(loadedMap(), undefined, authoritativeSource);
+  try {
+    const selector = harness.container.querySelector<HTMLSelectElement>('[aria-label="Family map layout type"]');
+    assert.equal(selector?.disabled, true);
+    assert.equal(selector?.value, "POKEMON");
+    assert.match(harness.container.textContent ?? "", /LEGACY_SOURCE_AUTHORITY · selected by admin-layout-owner-1 · 2026-08-13T20:00:00.000Z/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("hash-invalid prior map stays out of the editing baseline while draft recovery remains available", async () => {
   const harness = await mount({
     status: "INTEGRITY_ERROR",
@@ -422,7 +489,7 @@ test("one save creates both complete maps and family guidance remains nonblockin
     assert.match(copy, /Shared frame\/layout landmarks remain safe, including at the top or bottom/);
     assert.match(copy, /V2 PADDED FILTERING · OWNER-AUTHORIZED/);
     assert.match(copy, /50-card replay remains inconclusive—not passed/);
-    assert.match(copy, /Prior v1 revisions remain unchanged and restorable/);
+    assert.match(copy, /Prior eligible v1 Exact and Sports revisions remain unchanged and restorable; legacy Pokémon FAMILY revisions remain historical-only and non-restorable/);
     assert.doesNotMatch(copy, /Saving this v2 policy is blocked/);
     const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
     assert.ok(save);
@@ -663,6 +730,19 @@ test("recovered Squirtle legacy draft imports every ordered point and round-trip
   assert.equal(imported.sides.front.zones.every((zone) => zone.filterAuthority), true);
   const reimported = parseCardMapDraft(serializeCardMapDraft(imported), squirtleSource);
   assert.deepEqual(reimported, imported);
+  const selectedSource = {
+    ...squirtleSource,
+    identity: { ...squirtleSource.identity, layoutType: "POKEMON" as const },
+  };
+  const rebound = parseCardMapDraft(recoveredText, selectedSource);
+  assert.equal("cardName" in rebound.source.identity ? rebound.source.identity.layoutType : null, "POKEMON");
+  assert.equal("keyVersion" in rebound.source.familyKey ? rebound.source.familyKey.keyVersion : null, "v2");
+  const conflicting = JSON.parse(serializeCardMapDraft(rebound));
+  conflicting.source.identity.layoutType = "TRAINER";
+  assert.throws(
+    () => parseCardMapDraft(JSON.stringify(conflicting), selectedSource),
+    /conflicting Pokémon layout authority/,
+  );
   assert.deepEqual(cardMapDraftEditableSide(imported.sides.front).zones[0], {
     id: "front-zone-1",
     label: "Card Name",
