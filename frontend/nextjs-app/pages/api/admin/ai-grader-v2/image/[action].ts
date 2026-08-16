@@ -37,9 +37,87 @@ import {
   type SpeedsterMapRegistrationFailure,
 } from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
 import { issueSpeedsterMapRegistrationReceipt } from "../../../../../lib/server/speedsterMapRegistrationAuthority";
+import {
+  insertSpeedsterInstrumentationEvents,
+  speedsterMapRegistrationAttemptEvent,
+  type SpeedsterMapRegistrationAttemptOutcome,
+} from "../../../../../lib/server/aiGraderV2Instrumentation";
 
 const ACTIONS = new Set(["geometry", "prepare", "trace-proposal", "map-registration"]);
 export const SPEEDSTER_IMAGE_UPSTREAM_TIMEOUT_MS = 55_000;
+export const SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION = "speedster-map-registration-error-v1" as const;
+export const SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER = "X-Speedster-Map-Registration-Audit" as const;
+
+type SpeedsterMapRegistrationErrorSource =
+  | "PROVIDER_GATEWAY"
+  | "PROVIDER"
+  | "PROVIDER_NETWORK"
+  | "TEN_KINGS_API";
+
+export function speedsterMapRegistrationErrorEnvelope(input: Readonly<{
+  source: SpeedsterMapRegistrationErrorSource;
+  code: string;
+  httpStatus: number | null;
+  retryable: boolean;
+  requestId: string;
+}>) {
+  return {
+    version: SPEEDSTER_MAP_REGISTRATION_ERROR_VERSION,
+    source: input.source,
+    code: input.code,
+    httpStatus: input.httpStatus,
+    retryable: input.retryable,
+    requestId: input.requestId,
+  };
+}
+
+export function classifySpeedsterMapRegistrationUpstreamFailure(input: Readonly<{
+  status: number;
+  mode: "AUTOMATIC" | "HUMAN_RESCUE";
+  requestId: string;
+}>) {
+  const gateway = input.status === 502 || input.status === 503;
+  const source = gateway ? "PROVIDER_GATEWAY" as const : "PROVIDER" as const;
+  const code = gateway ? `PROVIDER_GATEWAY_HTTP_${input.status}` : `PROVIDER_HTTP_${input.status}`;
+  const retryable = input.mode === "AUTOMATIC" && gateway;
+  return {
+    source,
+    code,
+    retryable,
+    ...(input.status === 402 ? {
+      message: `CARD MAP provider rejected the request (HTTP 402) (request ${input.requestId}). No map was applied.`,
+    } : {}),
+    registrationError: speedsterMapRegistrationErrorEnvelope({
+      source,
+      code,
+      httpStatus: input.status,
+      retryable,
+      requestId: input.requestId,
+    }),
+  };
+}
+
+export function speedsterMapRegistrationAuditFailureSignal(requestId: string) {
+  return {
+    headerValue: "write-failed" as const,
+    responseFields: {
+      registrationAuditWarning: {
+        status: "WRITE_FAILED" as const,
+        requestId,
+      },
+    },
+  };
+}
+
+export function speedsterMapRegistrationTimeoutEnvelope(requestId: string) {
+  return speedsterMapRegistrationErrorEnvelope({
+    source: "PROVIDER",
+    code: "PROVIDER_TIMEOUT",
+    httpStatus: 504,
+    retryable: false,
+    requestId,
+  });
+}
 
 export class SpeedsterImageUpstreamTimeoutError extends Error {
   constructor(readonly action: string, readonly timeoutMs: number) {
@@ -151,6 +229,29 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function parseSpeedsterMapRegistrationOrchestration(value: unknown) {
+  if (!isRecord(value)
+    || Object.keys(value).sort().join("\0") !== [
+      "attemptNumber",
+      "operationId",
+      "successfulSiblingPreservedAtAttemptStart",
+      "trigger",
+    ].join("\0")
+    || typeof value.operationId !== "string" || !UUID.test(value.operationId)
+    || !Number.isSafeInteger(value.attemptNumber) || (value.attemptNumber as number) < 1 || (value.attemptNumber as number) > 50
+    || !["INITIAL", "AUTOMATIC_RETRY", "MANUAL_RETRY", "HUMAN_RESCUE"].includes(String(value.trigger))
+    || typeof value.successfulSiblingPreservedAtAttemptStart !== "boolean") {
+    throw new Error("Speedster map registration orchestration metadata is invalid.");
+  }
+  return {
+    operationId: value.operationId,
+    attemptNumber: value.attemptNumber as number,
+    trigger: value.trigger as "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE",
+    successfulSiblingPreservedAtAttemptStart: value.successfulSiblingPreservedAtAttemptStart,
+  };
+}
 
 export function sanitizeSpeedsterGeometryPayload(payload: unknown): unknown {
   if (!isRecord(payload)) return payload;
@@ -638,16 +739,67 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const requestTraceId = randomUUID();
+  const requestStartedAtMs = Date.now();
+  const requestedAction = Array.isArray(req.query.action) ? req.query.action[0] : req.query.action;
+  const requestedSide = req.body?.side === "FRONT" || req.body?.side === "BACK" ? req.body.side : null;
+  const requestedSessionId = typeof req.body?.sessionId === "string" ? req.body.sessionId.trim() : "";
+  const requestedMode = req.body?.rescue === true ? "HUMAN_RESCUE" as const : "AUTOMATIC" as const;
+  let registrationContext: Readonly<{
+    sessionId: string;
+    createdByUserId: string;
+    side: "FRONT" | "BACK";
+    mode: "AUTOMATIC" | "HUMAN_RESCUE";
+    operationId: string;
+    attemptNumber: number;
+    trigger: "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE";
+    mapRevisionId: string;
+    currentInspectionSha256: string;
+    currentPhysicalQuadSha256: string;
+    successfulSiblingPreservedAtAttemptStart: boolean;
+  }> | null = null;
+  let registrationUpstreamStarted = false;
+  let registrationUpstreamCompleted = false;
+  let registrationAuditWarning: Readonly<{
+    status: "WRITE_FAILED";
+    requestId: string;
+  }> | null = null;
+  const registrationAuditResponseFields = () => registrationAuditWarning
+    ? { registrationAuditWarning }
+    : {};
+  const recordRegistrationAttempt = async (result: SpeedsterMapRegistrationAttemptOutcome) => {
+    if (!registrationContext) return;
+    try {
+      await insertSpeedsterInstrumentationEvents(prisma, [speedsterMapRegistrationAttemptEvent({
+        ...registrationContext,
+        requestId: requestTraceId,
+        durationMs: Date.now() - requestStartedAtMs,
+        result,
+      })]);
+      res.setHeader(SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER, "recorded");
+    } catch {
+      const signal = speedsterMapRegistrationAuditFailureSignal(requestTraceId);
+      registrationAuditWarning = signal.responseFields.registrationAuditWarning;
+      res.setHeader(SPEEDSTER_MAP_REGISTRATION_AUDIT_HEADER, signal.headerValue);
+      console.warn(JSON.stringify({
+        event: "SPEEDSTER_MAP_REGISTRATION_ATTEMPT_INSTRUMENTATION_FAILED",
+        requestId: requestTraceId,
+        side: registrationContext.side,
+        operationId: registrationContext.operationId,
+        attemptNumber: registrationContext.attemptNumber,
+        outcome: result.outcome,
+        ...(result.outcome === "SUCCEEDED"
+          ? { mapRevisionId: result.mapRevisionId }
+          : { errorCode: result.code, httpStatus: result.httpStatus }),
+      }));
+    }
+  };
   res.setHeader("X-Request-ID", requestTraceId);
   try {
     const admin = await requireAdminSession(req);
-    const action = Array.isArray(req.query.action) ? req.query.action[0] : req.query.action;
+    const action = requestedAction;
     if (!action || !ACTIONS.has(action)) {
       return res.status(404).json({ message: "Unknown Speedster image action" });
     }
-
-    const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
-    if (!serviceUrl) throw new Error("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
 
     const serviceRequestBody = await speedsterServiceBody(
       action,
@@ -656,6 +808,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       traceEvidenceDependencies,
       action === "trace-proposal" ? requestTraceId : undefined,
     ) as Record<string, unknown>;
+    if (action === "map-registration" && requestedSide && requestedSessionId) {
+      const orchestration = parseSpeedsterMapRegistrationOrchestration(req.body?.orchestration);
+      if ((requestedMode === "HUMAN_RESCUE") !== (orchestration.trigger === "HUMAN_RESCUE")
+        || (orchestration.trigger === "INITIAL" && (
+          orchestration.attemptNumber !== 1
+          || orchestration.successfulSiblingPreservedAtAttemptStart
+        ))
+        || (orchestration.trigger !== "INITIAL" && orchestration.attemptNumber < 2)) {
+        throw new Error("Speedster map registration orchestration sequence is invalid.");
+      }
+      const mapRevisionId = typeof serviceRequestBody.mapRevisionId === "string" ? serviceRequestBody.mapRevisionId : "";
+      const currentInspectionSha256 = typeof serviceRequestBody.currentInspectionSha256 === "string"
+        ? serviceRequestBody.currentInspectionSha256
+        : "";
+      const currentPhysicalQuadSha256 = typeof serviceRequestBody.currentPhysicalQuadSha256 === "string"
+        ? serviceRequestBody.currentPhysicalQuadSha256
+        : "";
+      if (!mapRevisionId || mapRevisionId.length > 100
+        || !SHA256_HEX.test(currentInspectionSha256)
+        || !SHA256_HEX.test(currentPhysicalQuadSha256)) {
+        throw new Error("Speedster map registration instrumentation evidence is invalid.");
+      }
+      registrationContext = {
+        sessionId: requestedSessionId,
+        createdByUserId: admin.user.id,
+        side: requestedSide,
+        mode: requestedMode,
+        ...orchestration,
+        mapRevisionId,
+        currentInspectionSha256,
+        currentPhysicalQuadSha256,
+      };
+    }
+    const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
+    if (!serviceUrl) throw new Error("AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
     const lessonEvidenceStorageKey = typeof serviceRequestBody.lessonEvidenceStorageKey === "string"
       ? serviceRequestBody.lessonEvidenceStorageKey
       : undefined;
@@ -680,7 +867,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       headers: speedsterServiceHeaders(),
       body: JSON.stringify(upstreamServiceRequestBody),
     };
-    const { response, payload } = action === "geometry" || action === "map-registration"
+    if (action === "map-registration") registrationUpstreamStarted = true;
+    const upstreamResult = action === "geometry" || action === "map-registration"
       ? await fetchSpeedsterImageUpstream({ ...upstreamInput, action })
       : await (async () => {
           const response = await fetch(upstreamInput.url, {
@@ -690,6 +878,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
           return { response, payload: await response.json().catch(() => ({})) };
         })();
+    if (action === "map-registration") registrationUpstreamCompleted = true;
+    const { response, payload } = upstreamResult;
     if (action === "trace-proposal" && !response.ok) {
       return res.status(response.status).json(
         sanitizeSpeedsterTraceProposalFailure(payload, requestTraceId),
@@ -699,19 +889,64 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         const detail = isRecord(payload) ? payload.detail : null;
         const registrationFailure = parseSpeedsterRegistrationFailure(detail);
+        await recordRegistrationAttempt({
+          outcome: "HUMAN_CORRECTION_REQUIRED",
+          source: "PROVIDER",
+          code: "HUMAN_CORRECTION_REQUIRED",
+          httpStatus: 422,
+          retryEligible: false,
+        });
         return res.status(422).json({
           message: `CARD MAP registration needs human anchor correction on ${registrationFailure.bestCandidate.anchors.filter((anchor) => anchor.status !== "TRACKED").length || "one or more"} anchors (request ${requestTraceId}).`,
           requestId: requestTraceId,
           registrationFailure,
+          ...registrationAuditResponseFields(),
         });
       } catch {
+        await recordRegistrationAttempt({
+          outcome: "FAILED",
+          source: "TEN_KINGS_API",
+          code: "MALFORMED_PROVIDER_FAILURE_DIAGNOSTICS",
+          httpStatus: 502,
+          retryEligible: false,
+        });
         return res.status(502).json({
           message: `CARD MAP registration returned invalid failure diagnostics (request ${requestTraceId}). No map was applied.`,
           requestId: requestTraceId,
+          registrationError: speedsterMapRegistrationErrorEnvelope({
+            source: "TEN_KINGS_API",
+            code: "MALFORMED_PROVIDER_FAILURE_DIAGNOSTICS",
+            httpStatus: 502,
+            retryable: false,
+            requestId: requestTraceId,
+          }),
+          ...registrationAuditResponseFields(),
         });
       }
     }
     if (!response.ok) {
+      if (action === "map-registration") {
+        const classification = classifySpeedsterMapRegistrationUpstreamFailure({
+          status: response.status,
+          mode: requestedMode,
+          requestId: requestTraceId,
+        });
+        await recordRegistrationAttempt({
+          outcome: "FAILED",
+          source: classification.source,
+          code: classification.code,
+          httpStatus: response.status,
+          retryEligible: classification.retryable,
+        });
+        const sanitized = classification.message
+          ? { message: classification.message, requestId: requestTraceId }
+          : sanitizeSpeedsterImageFailure(payload, action, requestTraceId);
+        return res.status(response.status).json({
+          ...sanitized,
+          registrationError: classification.registrationError,
+          ...registrationAuditResponseFields(),
+        });
+      }
       return res.status(response.status).json(
         sanitizeSpeedsterImageFailure(payload, action, requestTraceId),
       );
@@ -806,6 +1041,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           registration,
         }),
       };
+      await recordRegistrationAttempt({
+        outcome: "SUCCEEDED",
+        mapRevisionId: registration.mapRevisionId,
+      });
+      safePayload = { ...safePayload, ...registrationAuditResponseFields() };
     }
     return res.status(response.status).json(safePayload);
   } catch (error) {
@@ -816,12 +1056,61 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         timeoutMs: error.timeoutMs,
         requestId: requestTraceId,
       }));
+      if (requestedAction === "map-registration") {
+        await recordRegistrationAttempt({
+          outcome: "FAILED",
+          source: "PROVIDER",
+          code: "PROVIDER_TIMEOUT",
+          httpStatus: 504,
+          retryEligible: false,
+        });
+      }
       return res.status(504).json({
         message: `Speedster ${error.action} service did not respond in time. Your photos and current geometry are preserved; retry this step.`,
         requestId: requestTraceId,
+        ...(requestedAction === "map-registration" ? {
+          registrationError: speedsterMapRegistrationTimeoutEnvelope(requestTraceId),
+          ...registrationAuditResponseFields(),
+        } : {}),
       });
     }
     const mapped = toErrorResponse(error);
+    if (requestedAction === "map-registration") {
+      const providerNetwork = registrationUpstreamStarted
+        && !registrationUpstreamCompleted
+        && error instanceof TypeError;
+      const source = providerNetwork ? "PROVIDER_NETWORK" as const : "TEN_KINGS_API" as const;
+      const code = providerNetwork
+        ? "NETWORK_NO_HTTP_RESPONSE"
+        : mapped.status === 401 || mapped.status === 403
+          ? "TEN_KINGS_AUTHORIZATION_REJECTED"
+          : registrationUpstreamCompleted
+            ? "TEN_KINGS_REGISTRATION_VALIDATION_FAILED"
+            : "TEN_KINGS_REGISTRATION_REQUEST_REJECTED";
+      const status = providerNetwork ? 502 : mapped.status;
+      const retryable = requestedMode === "AUTOMATIC" && providerNetwork;
+      await recordRegistrationAttempt({
+        outcome: "FAILED",
+        source,
+        code,
+        httpStatus: status,
+        retryEligible: retryable,
+      });
+      return res.status(status).json({
+        message: providerNetwork
+          ? `CARD MAP registration received no HTTP response from the provider (request ${requestTraceId}). No map was applied.`
+          : mapped.message,
+        requestId: requestTraceId,
+        registrationError: speedsterMapRegistrationErrorEnvelope({
+          source,
+          code,
+          httpStatus: status,
+          retryable,
+          requestId: requestTraceId,
+        }),
+        ...registrationAuditResponseFields(),
+      });
+    }
     return res.status(mapped.status).json({ message: mapped.message, requestId: requestTraceId });
   }
 }

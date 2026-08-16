@@ -165,7 +165,7 @@ export function MapRegistrationRescue({
       {error ? <p role="alert" className={styles.error}>{error}</p> : null}
       <div className={styles.actions}>
         <button type="button" className={styles.manual} onClick={onContinueManual} disabled={disabled || !imageReady}>
-          Continue with normal human review
+          Continue without Card Map
         </button>
         <button
           type="button"

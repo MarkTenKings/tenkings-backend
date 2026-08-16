@@ -83,6 +83,14 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   mapName?: string;
   mapRevisionId?: string;
   mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
+  registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
+  registrationErrorSource?: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API" | "CLIENT_NETWORK" | "CLIENT_PROTOCOL" | "HUMAN_CORRECTION";
+  registrationErrorCode?: string;
+  registrationHttpStatus?: number;
+  registrationRequestId?: string;
+  registrationFailedSides?: readonly ("FRONT" | "BACK")[];
+  registrationOperationId?: string;
+  registrationDecisionId?: string;
   findingCount?: number;
   filteredCount?: number;
   retryCount?: number;
@@ -141,6 +149,7 @@ export default function AiGraderV2AdminPage() {
   }, []);
 
   const recordInstrumentation = useCallback((input: {
+    eventId?: string;
     sessionId: string;
     eventType:
       | "FIRST_SPEEDSTER_INTERACTION"
@@ -149,6 +158,7 @@ export default function AiGraderV2AdminPage() {
       | "GEOMETRY_PROPOSED"
       | "GEOMETRY_CONFIRMED"
       | "CENTERING_CONFIRMED"
+      | "MAP_REGISTRATION_OPERATOR_DECISION"
       | "CAPTURE_SAVED"
       | "SAM_MEMORY_COMPLETED"
       | "REVIEW_RENDERED"
@@ -163,14 +173,14 @@ export default function AiGraderV2AdminPage() {
     endedAtMs: number;
     details?: SpeedsterClientInstrumentationDetails;
   }) => {
-    if (!session?.token) return;
-    void fetch(
+    if (!session?.token) return false;
+    return fetch(
       `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(input.sessionId)}/instrumentation`,
       {
         method: "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
         body: JSON.stringify({
-          eventId: crypto.randomUUID(),
+          eventId: input.eventId ?? crypto.randomUUID(),
           eventType: input.eventType,
           clientStartedAt: new Date(input.startedAtMs).toISOString(),
           clientEndedAt: new Date(input.endedAtMs).toISOString(),
@@ -178,12 +188,12 @@ export default function AiGraderV2AdminPage() {
         }),
         keepalive: true,
       },
-    ).catch(() => undefined);
+    ).then((response) => response.ok).catch(() => false);
   }, [session?.token]);
 
   const recordCaptureInstrumentation = useCallback((event: SpeedsterCaptureInstrumentationEvent) => {
-    if (!draft) return;
-    recordInstrumentation({ sessionId: draft.id, ...event });
+    if (!draft) return false;
+    return recordInstrumentation({ sessionId: draft.id, ...event });
   }, [draft, recordInstrumentation]);
   const refreshReviewImages = useMemo(() => {
     if (!session?.token || !draft?.id) return null;

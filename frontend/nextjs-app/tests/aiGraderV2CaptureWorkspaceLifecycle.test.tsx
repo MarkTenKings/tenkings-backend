@@ -18,7 +18,7 @@ const QRCode = require("qrcode") as { toCanvas: (...args: unknown[]) => Promise<
 const originalQrToCanvas = QRCode.toCanvas;
 QRCode.toCanvas = async () => {};
 
-const { CaptureWorkspace, SpeedsterAppliedMapBadge } = require(
+const { CaptureWorkspace, SpeedsterAppliedMapBadge, isAutomaticSpeedsterMapRegistrationRetryEligible } = require(
   "../components/ai-grader-v2/CaptureWorkspace",
 ) as typeof import("../components/ai-grader-v2/CaptureWorkspace");
 type SpeedsterCaptureInstrumentationEvent = import(
@@ -27,7 +27,7 @@ type SpeedsterCaptureInstrumentationEvent = import(
 const { SpeedsterTrainWorkspace } = require(
   "../components/ai-grader-v2/SpeedsterTrainWorkspace",
 ) as typeof import("../components/ai-grader-v2/SpeedsterTrainWorkspace");
-const { speedsterImageService, runSpeedsterImageRequest } = require(
+const { speedsterImageService, runSpeedsterImageRequest, SpeedsterMapRegistrationRequestError } = require(
   "../lib/ai-grader-v2/image-service",
 ) as typeof import("../lib/ai-grader-v2/image-service");
 
@@ -66,7 +66,13 @@ type Harness = {
   root: Root;
   getPollCount: () => number;
   getRegistrationCount: () => number;
+  getRegistrationCountForSide: (side: "FRONT" | "BACK") => number;
   getRescueAttemptIds: () => readonly string[];
+  getRegistrationOrchestrations: () => readonly Readonly<{
+    side: "FRONT" | "BACK";
+    rescue: boolean;
+    orchestration: import("../lib/ai-grader-v2/image-service").SpeedsterMapRegistrationOrchestration;
+  }>[];
   getPreparedImageRefreshCount: (side: "FRONT" | "BACK") => number;
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
@@ -86,7 +92,19 @@ async function mountWorkspace(input: {
   preparedImageRefreshFails?: boolean;
   preparedImageRefreshFailures?: number;
   registrationNeverSettlesOnSide?: "FRONT" | "BACK";
-  onRegistrationRequest?: (side: "FRONT" | "BACK") => void | Promise<void>;
+  registrationHttpFailure?: Readonly<{
+    side: "FRONT" | "BACK";
+    status: number;
+    count: number;
+    source: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API";
+    code: string;
+    retryable: boolean;
+    message: string;
+  }>;
+  registrationNetworkFailure?: Readonly<{ side: "FRONT" | "BACK"; count: number }>;
+  registrationAuditFailsOnSide?: "FRONT" | "BACK";
+  instrumentationFails?: boolean;
+  onRegistrationRequest?: (side: "FRONT" | "BACK", sideAttempt: number) => void | Promise<void>;
   mapLookupFailed?: boolean;
   imageRequestTimeoutMs?: number;
   onSave?: (
@@ -144,10 +162,18 @@ async function mountWorkspace(input: {
 
   let pollCount = 0;
   let registrationCount = 0;
+  const registrationCountBySide = { FRONT: 0, BACK: 0 };
   const preparedImageRefreshCount = { FRONT: 0, BACK: 0 };
   const rescueAttemptIds: string[] = [];
+  const registrationOrchestrations: Array<Readonly<{
+    side: "FRONT" | "BACK";
+    rescue: boolean;
+    orchestration: import("../lib/ai-grader-v2/image-service").SpeedsterMapRegistrationOrchestration;
+  }>> = [];
   let remainingRescueFailures = input.rescueFailures ?? 0;
   let remainingPreparedImageRefreshFailures = input.preparedImageRefreshFailures ?? 0;
+  let remainingRegistrationHttpFailures = input.registrationHttpFailure?.count ?? 0;
+  let remainingRegistrationNetworkFailures = input.registrationNetworkFailure?.count ?? 0;
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     if (url === "/api/admin/ai-grader-v2/iphone-capture" && init?.method === "POST") {
@@ -197,14 +223,57 @@ async function mountWorkspace(input: {
         side: "FRONT" | "BACK";
         rescue?: boolean;
         rescueAttemptId?: string;
+        orchestration: import("../lib/ai-grader-v2/image-service").SpeedsterMapRegistrationOrchestration;
       };
+      registrationCountBySide[body.side] += 1;
+      registrationOrchestrations.push({
+        side: body.side,
+        rescue: body.rescue === true,
+        orchestration: body.orchestration,
+      });
+      const registrationAuditWarning = input.registrationAuditFailsOnSide === body.side
+        ? { status: "WRITE_FAILED", requestId: `audit-request-${body.side.toLowerCase()}` }
+        : undefined;
       if (body.rescue && body.rescueAttemptId) rescueAttemptIds.push(body.rescueAttemptId);
-      await input.onRegistrationRequest?.(body.side);
+      await input.onRegistrationRequest?.(body.side, registrationCountBySide[body.side]);
       if (input.registrationNeverSettlesOnSide === body.side) {
         return new Promise<Response>(() => {});
       }
       if (input.registrationFails || input.registrationFailsOnSide === body.side) {
-        return jsonResponse({ message: "Registration unsafe" }, 409);
+        return jsonResponse({
+          message: "Registration unsafe",
+          requestId: "registration-request-409",
+          registrationError: {
+            version: "speedster-map-registration-error-v1",
+            source: "PROVIDER",
+            code: "PROVIDER_HTTP_409",
+            httpStatus: 409,
+            retryable: false,
+            requestId: "registration-request-409",
+          },
+          ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
+        }, 409);
+      }
+      if (!body.rescue && input.registrationNetworkFailure?.side === body.side && remainingRegistrationNetworkFailures > 0) {
+        remainingRegistrationNetworkFailures -= 1;
+        throw new TypeError("fetch failed");
+      }
+      if (!body.rescue && input.registrationHttpFailure?.side === body.side && remainingRegistrationHttpFailures > 0) {
+        remainingRegistrationHttpFailures -= 1;
+        const failure = input.registrationHttpFailure;
+        return jsonResponse({
+          message: failure.message,
+          requestId: `registration-request-${failure.status}`,
+          registrationError: {
+            version: "speedster-map-registration-error-v1",
+            source: failure.source,
+            code: failure.code,
+            httpStatus: failure.status,
+            retryable: failure.retryable,
+            requestId: `registration-request-${failure.status}`,
+          },
+          ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
+        }, failure.status);
       }
       if (!body.rescue && input.registrationNeedsRescueOnSide === body.side) {
         return jsonResponse({
@@ -249,6 +318,7 @@ async function mountWorkspace(input: {
               maxReprojectionErrorPx: 2.1,
             },
           },
+          ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
         }, 422);
       }
       if (body.rescue && remainingRescueFailures > 0) {
@@ -276,6 +346,7 @@ async function mountWorkspace(input: {
             medianReprojectionErrorPx: 0, maxReprojectionErrorPx: 0,
           },
         } : {}),
+        ...(registrationAuditWarning ? { registrationAuditWarning } : {}),
       });
     }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
@@ -301,7 +372,10 @@ async function mountWorkspace(input: {
         bundles.push(bundle);
         return input.onSave?.(bundle) ?? { saved: true };
       }}
-      onInstrumentationEvent={(event) => events.push(event)}
+      onInstrumentationEvent={(event) => {
+        events.push(event);
+        return input.instrumentationFails ? false : true;
+      }}
     />
   );
   await act(async () => {
@@ -317,7 +391,9 @@ async function mountWorkspace(input: {
     root,
     getPollCount: () => pollCount,
     getRegistrationCount: () => registrationCount,
+    getRegistrationCountForSide: (side) => registrationCountBySide[side],
     getRescueAttemptIds: () => rescueAttemptIds,
+    getRegistrationOrchestrations: () => registrationOrchestrations,
     getPreparedImageRefreshCount: (side) => preparedImageRefreshCount[side],
     events,
     bundles,
@@ -400,6 +476,42 @@ test("image-service failures retain the safe server request ID for support", asy
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("automatic registration retry allowlist excludes every ambiguous HTTP and local failure", () => {
+  const eligible = [
+    { source: "PROVIDER_GATEWAY", code: "PROVIDER_GATEWAY_HTTP_502", httpStatus: 502 },
+    { source: "PROVIDER_GATEWAY", code: "PROVIDER_GATEWAY_HTTP_503", httpStatus: 503 },
+    { source: "PROVIDER_NETWORK", code: "NETWORK_NO_HTTP_RESPONSE", httpStatus: 502 },
+    { source: "CLIENT_NETWORK", code: "NETWORK_NO_HTTP_RESPONSE", httpStatus: null },
+  ] as const;
+  for (const failure of eligible) {
+    assert.equal(isAutomaticSpeedsterMapRegistrationRetryEligible(new SpeedsterMapRegistrationRequestError("retry", {
+      version: "speedster-map-registration-error-v1",
+      ...failure,
+      retryable: true,
+      requestId: null,
+    })), true);
+  }
+  for (const status of [402, 408, 429, 500, 504]) {
+    assert.equal(isAutomaticSpeedsterMapRegistrationRetryEligible(new SpeedsterMapRegistrationRequestError("stop", {
+      version: "speedster-map-registration-error-v1",
+      source: "PROVIDER",
+      code: `PROVIDER_HTTP_${status}`,
+      httpStatus: status,
+      retryable: true,
+      requestId: null,
+    })), false);
+  }
+  assert.equal(isAutomaticSpeedsterMapRegistrationRetryEligible(new Error("local timeout")), false);
+  assert.equal(isAutomaticSpeedsterMapRegistrationRetryEligible(new SpeedsterMapRegistrationRequestError("bad receipt", {
+    version: "speedster-map-registration-error-v1",
+    source: "TEN_KINGS_API",
+    code: "TEN_KINGS_REGISTRATION_VALIDATION_FAILED",
+    httpStatus: 500,
+    retryable: true,
+    requestId: null,
+  })), false);
 });
 
 function fire(element: Element, type: string, init: MouseEventInit & { pointerId?: number } = {}) {
@@ -796,7 +908,7 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
   }
 });
 
-test("Front registration success plus Back failure rolls both sides back to manual with no binding", async () => {
+test("Front success plus Back failure preserves truth until explicit Continue without Card Map", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
     activeMap: { revisionId: "exact-revision-9", scope: "EXACT", name: "Snorlax #TG10" },
@@ -809,14 +921,22 @@ test("Front registration success plus Back failure rolls both sides back to manu
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     assert.equal(harness.getRegistrationCount(), 0);
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => (harness.container.textContent ?? "").includes("No map will be applied; continuing with normal human review"), "Safe manual fallback did not render");
-    assert.equal(harness.container.querySelector('[role="alert"]'), null);
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Explicit registration interruption did not render");
+    assert.ok(buttonByText(harness.container, "Retry failed side"));
+    assert.ok(buttonByText(harness.container, "Continue without Card Map"));
+    assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null, "Registration failure must not silently advance");
     assert.equal(harness.getRegistrationCount(), 2);
+    assert.equal(harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED").length, 0);
+    await act(async () => {
+      const continueButton = buttonByText(harness.container, "Continue without Card Map")!;
+      fire(continueButton, "click");
+      fire(continueButton, "click");
+    });
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Explicit manual choice did not continue");
     const geometryEvents = harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED");
     assert.deepEqual(geometryEvents[0]?.details, {
       side: "FRONT",
       mapAppliedScope: "NONE",
-      mapFailureCode: "REGISTRATION_FAILED",
     });
     assert.deepEqual(geometryEvents[1]?.details, {
       side: "BACK",
@@ -835,9 +955,207 @@ test("Front registration success plus Back failure rolls both sides back to manu
     assert.equal(harness.bundles[0].back.mapRegistration, undefined);
     const centeringEvents = harness.events.filter((candidate) => candidate.eventType === "CENTERING_CONFIRMED");
     assert.deepEqual(centeringEvents.map((event) => event.details), [
-      { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+      { side: "FRONT", mapAppliedScope: "NONE" },
       { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
     ]);
+    const decisions = harness.events.filter((candidate) => candidate.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
+    assert.equal(decisions.length, 1, "Synchronous guard must record one explicit operator choice");
+    assert.deepEqual(decisions[0]?.details?.registrationFailedSides, ["BACK"]);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("HTTP 402 stays factual, retains request evidence, and never automatically retries", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-402", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 402,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      retryable: false,
+      message: "CARD MAP provider rejected the request (HTTP 402) (request registration-request-402). No map was applied.",
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => {
+      const continueButton = buttonByText(harness.container, "Continue")!;
+      fire(continueButton, "click");
+      fire(continueButton, "click");
+    });
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "402 interruption did not render");
+    assert.match(harness.container.textContent ?? "", /provider rejected the request \(HTTP 402\)/);
+    assert.match(harness.container.textContent ?? "", /Request registration-request-402/);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "402 must never auto-retry");
+    assert.equal(harness.getRegistrationCount(), 2, "Synchronous guard must block duplicate Back confirmation");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("one provider-gateway 503 visibly retries only the failed side and retains the successful sibling", async () => {
+  let releaseRetry: (() => void) | undefined;
+  const retryHeld = new Promise<void>((resolve) => { releaseRetry = resolve; });
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-503", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 503,
+      count: 1,
+      source: "PROVIDER_GATEWAY",
+      code: "PROVIDER_GATEWAY_HTTP_503",
+      retryable: true,
+      message: "CARD MAP registration gateway returned HTTP 503 (request registration-request-503).",
+    },
+    onRegistrationRequest: async (side, sideAttempt) => {
+      if (side === "BACK" && sideAttempt === 2) await retryHeld;
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => harness.getRegistrationCountForSide("BACK") === 2, "Back automatic retry did not start");
+    assert.match(harness.container.textContent ?? "", /Visible automatic retry 1\/1 for back/i);
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 1, "Successful Front must never be rerun");
+    await act(async () => releaseRetry?.());
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Successful bounded retry did not apply both sides");
+    assert.equal(harness.getRegistrationCount(), 3);
+    const attempts = harness.getRegistrationOrchestrations();
+    assert.equal(attempts.length, 3);
+    assert.equal(attempts[0].orchestration.operationId, attempts[1].orchestration.operationId);
+    assert.equal(attempts[1].orchestration.operationId, attempts[2].orchestration.operationId);
+    assert.deepEqual(attempts.map((attempt) => ({
+      side: attempt.side,
+      attemptNumber: attempt.orchestration.attemptNumber,
+      trigger: attempt.orchestration.trigger,
+      successfulSiblingPreservedAtAttemptStart: attempt.orchestration.successfulSiblingPreservedAtAttemptStart,
+    })), [
+      { side: "FRONT", attemptNumber: 1, trigger: "INITIAL", successfulSiblingPreservedAtAttemptStart: false },
+      { side: "BACK", attemptNumber: 1, trigger: "INITIAL", successfulSiblingPreservedAtAttemptStart: false },
+      { side: "BACK", attemptNumber: 2, trigger: "AUTOMATIC_RETRY", successfulSiblingPreservedAtAttemptStart: true },
+    ]);
+    assert.deepEqual(
+      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details?.mapAppliedScope),
+      ["FAMILY", "FAMILY"],
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("attempt-audit write failure is visible without converting a successful registration into failure", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-audit-warning", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationAuditFailsOnSide: "BACK",
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Successful registration was incorrectly blocked by audit failure");
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /attempt audit write failed/i);
+    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /audit-request-back/);
+    assert.match(harness.container.textContent ?? "", /applied to Front \+ Back/);
+    await waitFor(() => harness.getPreparedImageRefreshCount("FRONT") >= 1, "Front prepared image did not refresh");
+    await loadPreparedImage(harness.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Back prepared image did not refresh");
+    await loadPreparedImage(harness.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    assert.equal(harness.bundles.length, 1);
+    assert.doesNotMatch(JSON.stringify(harness.bundles[0]), /registrationAuditWarning/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("operator Retry failed side makes one manual request and applies only after both sides validate", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-manual-retry", scope: "EXACT", name: "Squirtle #007" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 409,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_409",
+      retryable: false,
+      message: "CARD MAP provider rejected the registration state (request registration-request-409).",
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Retry failed side")), "Manual retry choice did not render");
+    await act(async () => {
+      const retryButton = buttonByText(harness.container, "Retry failed side")!;
+      fire(retryButton, "click");
+      fire(retryButton, "click");
+    });
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Manual failed-side retry did not complete");
+    assert.equal(harness.getRegistrationCountForSide("FRONT"), 1);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 2, "Synchronous guard must permit exactly one manual retry");
+    const decisions = harness.events.filter((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
+    assert.equal(decisions.length, 1);
+    assert.equal(decisions[0]?.details?.registrationDecision, "RETRY_FAILED_SIDE");
+    assert.deepEqual(decisions[0]?.details?.registrationFailedSides, ["BACK"]);
+    assert.equal(decisions[0]?.eventId, decisions[0]?.details?.registrationDecisionId);
+    const attempts = harness.getRegistrationOrchestrations();
+    assert.equal(attempts[0].orchestration.operationId, attempts[2].orchestration.operationId);
+    assert.deepEqual(attempts[2], {
+      side: "BACK",
+      rescue: false,
+      orchestration: {
+        operationId: attempts[0].orchestration.operationId,
+        attemptNumber: 2,
+        trigger: "MANUAL_RETRY",
+        successfulSiblingPreservedAtAttemptStart: true,
+      },
+    });
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("operator-decision audit failure remains visible while Continue without Card Map proceeds", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-decision-audit", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    instrumentationFails: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Audit failure incorrectly blocked the operator choice");
+    await waitFor(() => /Operator-decision audit write failed/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""), "Audit-write failure was not visible");
+    assert.match(harness.container.textContent ?? "", /was not applied by operator choice/);
+    const decision = harness.events.find((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
+    assert.equal(decision?.eventId, decision?.details?.registrationDecisionId);
+    assert.equal(decision?.details?.registrationOperationId, harness.getRegistrationOrchestrations()[0].orchestration.operationId);
   } finally {
     await harness.cleanup();
   }
@@ -974,6 +1292,16 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
       harness.getRescueAttemptIds()[1],
       "A lost-response retry must reuse the exact rescue attempt identity",
     );
+    const attempts = harness.getRegistrationOrchestrations();
+    assert.equal(new Set(attempts.map((attempt) => attempt.orchestration.operationId)).size, 1);
+    assert.deepEqual(attempts.filter((attempt) => attempt.rescue).map((attempt) => ({
+      attemptNumber: attempt.orchestration.attemptNumber,
+      trigger: attempt.orchestration.trigger,
+      successfulSiblingPreservedAtAttemptStart: attempt.orchestration.successfulSiblingPreservedAtAttemptStart,
+    })), [
+      { attemptNumber: 2, trigger: "HUMAN_RESCUE", successfulSiblingPreservedAtAttemptStart: true },
+      { attemptNumber: 3, trigger: "HUMAN_RESCUE", successfulSiblingPreservedAtAttemptStart: true },
+    ]);
 
     await loadPreparedImage(harness.container, "front rectified trading card");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
@@ -1013,7 +1341,7 @@ test("global registration failure explains four-anchor confirmation and accepts 
   }
 });
 
-test("one non-cooperative registration timeout applies neither side and continues manual review", async () => {
+test("one non-cooperative registration timeout stops for explicit choice without automatic retry", async () => {
   const harness = await mountWorkspace({
     imageRequestTimeoutMs: 10,
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
@@ -1027,14 +1355,17 @@ test("one non-cooperative registration timeout applies neither side and continue
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(
-      () => (harness.container.textContent ?? "").includes("No map will be applied; continuing with normal human review"),
-      "Registration timeout did not safely continue in manual review",
+      () => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')),
+      "Registration timeout did not stop for explicit operator choice",
     );
     assert.equal(harness.getRegistrationCount(), 2);
+    assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "Local timeout must never automatically retry");
+    await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Prepared-image refresh must remain active during interruption");
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
     assert.deepEqual(
       harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details),
       [
-        { side: "FRONT", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
+        { side: "FRONT", mapAppliedScope: "NONE" },
         { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
       ],
     );

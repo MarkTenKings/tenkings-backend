@@ -16,6 +16,7 @@ const eventType = z.enum([
   "GEOMETRY_PROPOSED",
   "GEOMETRY_CONFIRMED",
   "CENTERING_CONFIRMED",
+  "MAP_REGISTRATION_OPERATOR_DECISION",
   "CAPTURE_SAVED",
   "SAM_MEMORY_COMPLETED",
   "REVIEW_RENDERED",
@@ -40,6 +41,24 @@ const details = z.object({
   mapName: z.string().trim().min(1).max(1024).optional(),
   mapRevisionId: z.string().trim().min(1).max(80).optional(),
   mapFailureCode: z.enum(["LOOKUP_FAILED", "REGISTRATION_FAILED"]).optional(),
+  registrationDecision: z.enum(["RETRY_FAILED_SIDE", "CONTINUE_WITHOUT_CARD_MAP"]).optional(),
+  registrationErrorSource: z.enum([
+    "PROVIDER_GATEWAY",
+    "PROVIDER",
+    "PROVIDER_NETWORK",
+    "TEN_KINGS_API",
+    "CLIENT_NETWORK",
+    "CLIENT_PROTOCOL",
+    "HUMAN_CORRECTION",
+  ]).optional(),
+  registrationErrorCode: z.string().trim().min(3).max(80).regex(/^[A-Z0-9_:-]+$/).optional(),
+  registrationHttpStatus: z.number().int().min(100).max(599).optional(),
+  registrationRequestId: z.string().trim().min(8).max(80).regex(/^[A-Za-z0-9-]+$/).optional(),
+  registrationFailedSides: z.array(z.enum(["FRONT", "BACK"])).min(1).max(2).refine(
+    (sides) => new Set(sides).size === sides.length,
+  ).optional(),
+  registrationOperationId: z.string().uuid().optional(),
+  registrationDecisionId: z.string().uuid().optional(),
   findingCount: z.number().int().min(0).max(2048).optional(),
   filteredCount: z.number().int().min(0).max(2048).optional(),
   retryCount: z.number().int().min(0).max(1).optional(),
@@ -55,7 +74,19 @@ const bodySchema = z.object({
   clientStartedAt: z.string().datetime({ offset: true }),
   clientEndedAt: z.string().datetime({ offset: true }),
   details: details.optional(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.eventType !== "MAP_REGISTRATION_OPERATOR_DECISION") return;
+  if (!value.details?.registrationDecision
+    || !value.details.registrationOperationId
+    || !value.details.registrationDecisionId
+    || !value.details.registrationFailedSides
+    || value.eventId !== value.details.registrationDecisionId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Registration decisions require stable matching operation and decision identity.",
+    });
+  }
+});
 
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;

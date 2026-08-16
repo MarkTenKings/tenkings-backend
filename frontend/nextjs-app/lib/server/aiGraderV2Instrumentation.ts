@@ -348,6 +348,65 @@ export function speedsterServerTimingEvent(input: {
   };
 }
 
+export type SpeedsterMapRegistrationAttemptOutcome =
+  | Readonly<{
+      outcome: "SUCCEEDED";
+      mapRevisionId: string;
+    }>
+  | Readonly<{
+      outcome: "HUMAN_CORRECTION_REQUIRED" | "FAILED";
+      source: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API";
+      code: string;
+      httpStatus: number | null;
+      retryEligible: boolean;
+    }>;
+
+export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
+  sessionId: string;
+  createdByUserId: string;
+  requestId: string;
+  operationId: string;
+  attemptNumber: number;
+  trigger: "INITIAL" | "AUTOMATIC_RETRY" | "MANUAL_RETRY" | "HUMAN_RESCUE";
+  mapRevisionId: string;
+  currentInspectionSha256: string;
+  currentPhysicalQuadSha256: string;
+  successfulSiblingPreservedAtAttemptStart: boolean;
+  side: "FRONT" | "BACK";
+  mode: "AUTOMATIC" | "HUMAN_RESCUE";
+  durationMs: number;
+  result: SpeedsterMapRegistrationAttemptOutcome;
+}>): SpeedsterInstrumentationEvent {
+  return speedsterServerTimingEvent({
+    eventKey: `${input.sessionId}:map-registration:${input.operationId}:${input.side.toLowerCase()}:${input.attemptNumber}`,
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    eventType: "MAP_REGISTRATION_ATTEMPT",
+    durationMs: input.durationMs,
+    details: {
+      side: input.side,
+      mode: input.mode,
+      operationId: input.operationId,
+      attemptNumber: input.attemptNumber,
+      trigger: input.trigger,
+      requestId: input.requestId,
+      mapRevisionId: input.mapRevisionId,
+      currentInspectionSha256: input.currentInspectionSha256,
+      currentPhysicalQuadSha256: input.currentPhysicalQuadSha256,
+      successfulSiblingPreservedAtAttemptStart: input.successfulSiblingPreservedAtAttemptStart,
+      outcome: input.result.outcome,
+      ...(input.result.outcome === "SUCCEEDED"
+        ? { observedMapRevisionId: input.result.mapRevisionId }
+        : {
+            errorSource: input.result.source,
+            errorCode: input.result.code,
+            httpStatus: input.result.httpStatus,
+            retryEligible: input.result.retryEligible,
+          }),
+    },
+  });
+}
+
 export async function insertSpeedsterInstrumentationEvents(
   writer: SpeedsterInstrumentationWriter,
   events: readonly SpeedsterInstrumentationEvent[],

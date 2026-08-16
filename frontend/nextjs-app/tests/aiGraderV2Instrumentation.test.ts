@@ -12,6 +12,7 @@ import {
   speedsterFindingActionEvents,
   speedsterFindingFinalEvents,
   speedsterFindingProposalEvents,
+  speedsterMapRegistrationAttemptEvent,
   type SpeedsterInstrumentationEvent,
 } from "../lib/server/aiGraderV2Instrumentation";
 import { createSpeedsterInstrumentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation";
@@ -222,6 +223,82 @@ test("card-map telemetry records trusted family scope, key, revision, and proven
   assert.doesNotMatch(JSON.stringify(event.details), /storageKey|imageUrl|imageBase64/);
 });
 
+test("server-authored registration attempt telemetry keeps successful and failed sides truthful", () => {
+  const succeeded = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    side: "FRONT",
+    mode: "AUTOMATIC",
+    durationMs: 451.4,
+    result: { outcome: "SUCCEEDED", mapRevisionId: "revision-123456789012345" },
+  });
+  const failed = speedsterMapRegistrationAttemptEvent({
+    sessionId: "session-12345678901234567890",
+    createdByUserId: "admin-1",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "d".repeat(64),
+    currentPhysicalQuadSha256: "e".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    side: "BACK",
+    mode: "AUTOMATIC",
+    durationMs: 1334.2,
+    result: {
+      outcome: "FAILED",
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      httpStatus: 402,
+      retryEligible: false,
+    },
+  });
+
+  assert.equal(succeeded.eventKey, "session-12345678901234567890:map-registration:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:front:1");
+  assert.equal(failed.eventKey, "session-12345678901234567890:map-registration:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:back:1");
+  assert.deepEqual(succeeded.details, {
+    side: "FRONT",
+    mode: "AUTOMATIC",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    requestId: "11111111-1111-4111-8111-111111111111",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "b".repeat(64),
+    currentPhysicalQuadSha256: "c".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    outcome: "SUCCEEDED",
+    observedMapRevisionId: "revision-123456789012345",
+  });
+  assert.doesNotMatch(JSON.stringify(succeeded.details), /FAILED|errorCode|REGISTRATION_FAILED/);
+  assert.deepEqual(failed.details, {
+    side: "BACK",
+    mode: "AUTOMATIC",
+    operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    attemptNumber: 1,
+    trigger: "INITIAL",
+    requestId: "22222222-2222-4222-8222-222222222222",
+    mapRevisionId: "revision-123456789012345",
+    currentInspectionSha256: "d".repeat(64),
+    currentPhysicalQuadSha256: "e".repeat(64),
+    successfulSiblingPreservedAtAttemptStart: false,
+    outcome: "FAILED",
+    errorSource: "PROVIDER",
+    errorCode: "PROVIDER_HTTP_402",
+    httpStatus: 402,
+    retryEligible: false,
+  });
+});
+
 function request(body: unknown): NextApiRequest {
   return {
     method: "POST",
@@ -357,6 +434,63 @@ test("geometry timing records a map registration failure as manual without priva
     mapAppliedScope: "NONE",
     mapFailureCode: "REGISTRATION_FAILED",
   });
+});
+
+test("client timing endpoint accepts only sanitized explicit registration decisions", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: {
+      side: "BACK",
+      registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+      registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+      registrationFailedSides: ["BACK"],
+      registrationErrorSource: "PROVIDER",
+      registrationErrorCode: "PROVIDER_HTTP_402",
+      registrationHttpStatus: 402,
+      registrationRequestId: "registration-request-402",
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.deepEqual(events[0].details, {
+    side: "BACK",
+    registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+    registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    registrationFailedSides: ["BACK"],
+    registrationErrorSource: "PROVIDER",
+    registrationErrorCode: "PROVIDER_HTTP_402",
+    registrationHttpStatus: 402,
+    registrationRequestId: "registration-request-402",
+  });
+
+  const mismatched = response();
+  await handler(request({
+    eventId: "2c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: {
+      registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
+      registrationOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      registrationDecisionId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+      registrationFailedSides: ["BACK"],
+    },
+  }), mismatched.res);
+  assert.equal(mismatched.state.status, 400, "a retransmission cannot change the stable decision event identity");
 });
 
 test("client timing endpoint rejects secret-shaped payload fields", async () => {
