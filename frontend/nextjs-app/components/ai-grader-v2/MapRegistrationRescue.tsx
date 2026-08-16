@@ -16,8 +16,10 @@ export function MapRegistrationRescue({
   imageRefreshError = null,
   imageRefreshing = false,
   failure,
+  initialCorrectedAnchors,
   disabled,
   onConfirm,
+  onDraftChange,
   onContinueManual,
   onImageError,
   onImageReady,
@@ -29,8 +31,10 @@ export function MapRegistrationRescue({
   imageRefreshError?: string | null;
   imageRefreshing?: boolean;
   failure: SpeedsterMapRegistrationFailure;
+  initialCorrectedAnchors?: readonly CorrectedAnchor[];
   disabled: boolean;
   onConfirm: (anchors: readonly CorrectedAnchor[]) => Promise<void>;
+  onDraftChange?: (anchors: readonly CorrectedAnchor[]) => void;
   onContinueManual: () => void;
   onImageError?: () => void;
   onImageReady?: () => void;
@@ -44,15 +48,23 @@ export function MapRegistrationRescue({
   const imageIdentity = `${imageRevision}:${imageUrl}`;
   const imageReady = loadedImageIdentity === imageIdentity && !imageRefreshError;
   const [anchors, setAnchors] = useState<readonly CorrectedAnchor[]>(() => (
-    failure.bestCandidate.anchors.map((anchor) => ({
-      anchorId: anchor.anchorId,
-      point: {
-        // Failed/off-card proposals remain unmodified in diagnostics; only the
-        // interactive handle is clamped to the visible physical card.
-        x: clampUnit(anchor.trackedPoint?.x ?? anchor.expectedPoint.x),
-        y: clampUnit(anchor.trackedPoint?.y ?? anchor.expectedPoint.y),
-      },
-    }))
+    initialCorrectedAnchors
+    && initialCorrectedAnchors.length === failure.bestCandidate.anchors.length
+    && initialCorrectedAnchors.every((anchor, index) => (
+      anchor.anchorId === failure.bestCandidate.anchors[index]?.anchorId
+      && Number.isFinite(anchor.point.x) && anchor.point.x >= 0 && anchor.point.x <= 1
+      && Number.isFinite(anchor.point.y) && anchor.point.y >= 0 && anchor.point.y <= 1
+    ))
+      ? initialCorrectedAnchors
+      : failure.bestCandidate.anchors.map((anchor) => ({
+        anchorId: anchor.anchorId,
+        point: {
+          // Failed/off-card proposals remain unmodified in diagnostics; only the
+          // interactive handle is clamped to the visible physical card.
+          x: clampUnit(anchor.trackedPoint?.x ?? anchor.expectedPoint.x),
+          y: clampUnit(anchor.trackedPoint?.y ?? anchor.expectedPoint.y),
+        },
+      }))
   ));
   const diagnostics = useMemo(() => new Map(
     failure.bestCandidate.anchors.map((anchor) => [anchor.anchorId, anchor]),
@@ -68,9 +80,11 @@ export function MapRegistrationRescue({
       x: clampUnit((clientX - bounds.left) / bounds.width),
       y: clampUnit((clientY - bounds.top) / bounds.height),
     };
-    setAnchors((current) => current.map((anchor) => (
+    const next = anchors.map((anchor) => (
       anchor.anchorId === dragging ? { ...anchor, point } : anchor
-    )));
+    ));
+    setAnchors(next);
+    onDraftChange?.(next);
   };
 
   return (

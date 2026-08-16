@@ -14,12 +14,14 @@ import {
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_REGISTRATION_VERSION_V2,
   canonicalSpeedsterMapKeyJson,
+  isSpeedsterPokemonFamilyKeyV2,
   isSpeedsterNondegenerateAnchorSet,
   isSpeedsterMapZoneV2,
   isSpeedsterSimplePolygon,
   isSpeedsterStrictConvexPolygon,
   speedsterCardTypeMapKey,
   speedsterFamilyCardTypeMapKey,
+  speedsterLegacyFamilyCardTypeMapKey,
   speedsterMapScopeForKey,
   type SpeedsterCardTypeMapSide,
   type SpeedsterMapAnchor,
@@ -42,6 +44,8 @@ import type {
 } from "../ai-grader-v2/contracts";
 import {
   canonicalizeSpeedsterSessionIdentity,
+  speedsterPokemonLayoutType,
+  type SpeedsterPokemonLayoutType,
   type SpeedsterSessionIdentity,
 } from "../ai-grader-v2/identity";
 import {
@@ -111,6 +115,11 @@ export type SpeedsterMapSourceSession = Readonly<{
   cardProfile: SpeedsterCardProfile;
   workflowState: string;
   identity: SpeedsterSessionIdentity;
+  legacyLayoutAuthority: Readonly<{
+    layoutType: SpeedsterPokemonLayoutType;
+    selectedByAdminId: string;
+    createdAt: Date;
+  }> | null;
   cornerShape: "SQUARE" | "ROUNDED_3_18_MM";
   front: SpeedsterMapSourceSide;
   back: SpeedsterMapSourceSide;
@@ -203,6 +212,9 @@ type CurrentMappedCardRecord = Readonly<{
 
 export type SpeedsterMappedCardRevisionSummary = Readonly<{
   scope: SpeedsterMapScope;
+  keyGeneration: "EXACT_FROZEN" | "FAMILY_CURRENT" | "FAMILY_LEGACY" | "FAMILY_V2";
+  layoutType: SpeedsterPokemonLayoutType | null;
+  runtimeEligible: boolean;
   mapId: string;
   revisionId: string;
   version: number;
@@ -903,10 +915,13 @@ function parseMapKey(value: unknown, label: string): SpeedsterMapMatchKey {
           productSet: value.productSet,
           parallel: value.parallel,
           cardNumber: null,
+          ...(value.keyVersion === "v2" ? { layoutType: value.layoutType } : {}),
         };
     let parsed: SpeedsterMapMatchKey;
     try {
-      parsed = speedsterFamilyCardTypeMapKey(value.category, familyIdentity as SpeedsterSessionIdentity);
+      parsed = value.category === "POKEMON" && value.keyVersion !== "v2"
+        ? speedsterLegacyFamilyCardTypeMapKey(value.category, familyIdentity as SpeedsterSessionIdentity)
+        : speedsterFamilyCardTypeMapKey(value.category, familyIdentity as SpeedsterSessionIdentity);
     } catch {
       throw new SpeedsterMapIntegrityError(`${label} contains an invalid category-aware family identity.`);
     }
@@ -1124,6 +1139,126 @@ function speedsterMapKeyForScope(
     : speedsterCardTypeMapKey(cardProfile, identity);
 }
 
+function pokemonFamilyAuthoringIdentity(
+  source: Pick<SpeedsterMapSourceSession, "cardProfile" | "identity" | "legacyLayoutAuthority">,
+  selectedLayoutType?: SpeedsterPokemonLayoutType,
+): SpeedsterSessionIdentity {
+  if (source.cardProfile !== "POKEMON") {
+    if (selectedLayoutType) {
+      throw new SpeedsterMapIntegrityError("Sports Card Maps cannot carry a Pokémon layout type.", {
+        stage: "VALIDATION",
+        scope: "FAMILY",
+        field: "layoutType",
+      });
+    }
+    return source.identity;
+  }
+  if (!("cardName" in source.identity)) {
+    throw new SpeedsterMapIntegrityError("Pokémon Card Map source identity is category-incompatible.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  const storedLayoutType = speedsterPokemonLayoutType(source.identity);
+  const legacyAuthorizedLayoutType = source.legacyLayoutAuthority?.layoutType;
+  if (storedLayoutType && selectedLayoutType && storedLayoutType !== selectedLayoutType) {
+    throw new SpeedsterMapIntegrityError("Selected layout type conflicts with the source card identity.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  if (legacyAuthorizedLayoutType && selectedLayoutType && legacyAuthorizedLayoutType !== selectedLayoutType) {
+    throw new SpeedsterMapIntegrityError("Selected layout type conflicts with this legacy source's saved layout authority.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  const layoutType = storedLayoutType ?? legacyAuthorizedLayoutType ?? selectedLayoutType;
+  if (!layoutType) {
+    throw new SpeedsterMapIntegrityError("Choose POKEMON, TRAINER, or ENERGY before saving a V2 Family Card Map.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  return { ...source.identity, layoutType };
+}
+
+function pokemonFamilyRestoreIdentity(
+  source: SpeedsterMapSourceSession,
+  target: SpeedsterLoadedMapRevision,
+): SpeedsterSessionIdentity {
+  if (source.cardProfile !== "POKEMON" || !("cardName" in source.identity)) return source.identity;
+  if (!isSpeedsterPokemonFamilyKeyV2(target.matchKey)) {
+    throw new SpeedsterMapIntegrityError("Legacy Pokémon Family maps are historical-only and cannot be restored.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  const sourceLayoutType = speedsterPokemonLayoutType(source.identity)
+    ?? source.legacyLayoutAuthority?.layoutType;
+  if (!sourceLayoutType) {
+    throw new SpeedsterMapIntegrityError("Legacy source has no persisted layout authority for Family revision transfer.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  if (target.matchKey.layoutType !== sourceLayoutType) {
+    throw new SpeedsterMapIntegrityError("Target revision belongs to a different Pokémon layout.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  const targetDisplayLayoutType = speedsterPokemonLayoutType(target.displayIdentity);
+  if (targetDisplayLayoutType && targetDisplayLayoutType !== sourceLayoutType) {
+    throw new SpeedsterMapIntegrityError("Target revision belongs to a different Pokémon layout.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  return { ...source.identity, layoutType: sourceLayoutType };
+}
+
+function pokemonFamilyPromotionIdentity(
+  source: SpeedsterMapSourceSession,
+  target: SpeedsterLoadedMapRevision,
+): SpeedsterSessionIdentity {
+  if (source.cardProfile !== "POKEMON" || !("cardName" in source.identity)) return source.identity;
+  const sourceLayoutType = speedsterPokemonLayoutType(source.identity);
+  const authorityLayoutType = source.legacyLayoutAuthority?.layoutType;
+  const layoutType = sourceLayoutType ?? authorityLayoutType;
+  if (!layoutType) {
+    throw new SpeedsterMapIntegrityError("Legacy source has no persisted layout authority for Family revision transfer.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  const targetDisplayLayoutType = speedsterPokemonLayoutType(target.displayIdentity);
+  if (targetDisplayLayoutType && targetDisplayLayoutType !== layoutType) {
+    throw new SpeedsterMapIntegrityError("Target revision belongs to a different Pokémon layout.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  if (!targetDisplayLayoutType && (!authorityLayoutType || target.sourceSessionId !== source.id)) {
+    throw new SpeedsterMapIntegrityError("Layoutless target revision lacks same-source persisted layout authority.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+  return { ...source.identity, layoutType };
+}
+
 export function speedsterMapDisplayName(
   scope: SpeedsterMapScope,
   cardProfile: SpeedsterCardProfile,
@@ -1140,7 +1275,12 @@ export function speedsterMapDisplayName(
           .join(" · ");
   }
   if (cardProfile === "POKEMON" && "cardName" in canonical) {
-    const family = [canonical.year, canonical.productSet, canonical.parallel]
+    const family = [
+      canonical.year,
+      canonical.layoutType ? `${canonical.layoutType} layout` : null,
+      canonical.productSet,
+      canonical.parallel,
+    ]
       .filter((value): value is string => Boolean(value));
     return scope === "FAMILY"
       ? family.join(" · ")
@@ -1163,6 +1303,34 @@ function validateActiveMap(
     throw new SpeedsterMapIntegrityError(`${label} card-type map active-revision relationship is invalid.`);
   }
   return validateSpeedsterLoadedMapRevision(map.currentRevision, { matchKeyHash });
+}
+
+function assertHistoricalRevisionSourceIdentity(
+  revision: SpeedsterLoadedMapRevision,
+  cardProfile: SpeedsterCardProfile,
+  identity: SpeedsterSessionIdentity,
+) {
+  if (
+    speedsterMapScopeForKey(revision.matchKey) === "FAMILY"
+    && revision.matchKey.category === "POKEMON"
+    && !isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+  ) {
+    const expected = speedsterLegacyFamilyCardTypeMapKey(cardProfile, identity);
+    if (canonicalSpeedsterMapKeyJson(expected) !== canonicalSpeedsterMapKeyJson(revision.matchKey)) {
+      throw new SpeedsterMapIntegrityError("Historical family map does not match its immutable source identity.");
+    }
+    return;
+  }
+  const applicabilityIdentity = isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+    && cardProfile === "POKEMON"
+    && !speedsterPokemonLayoutType(identity)
+    && "cardName" in identity
+    ? { ...identity, layoutType: revision.matchKey.layoutType }
+    : identity;
+  assertSpeedsterMapRevisionAppliesToIdentity(revision, {
+    cardProfile,
+    identity: applicabilityIdentity,
+  });
 }
 
 export async function listSpeedsterMappedSourceCards(
@@ -1207,10 +1375,7 @@ export async function listSpeedsterMappedSourceCards(
     } catch {
       throw new SpeedsterMapIntegrityError("Card Map library source identity is malformed.");
     }
-    assertSpeedsterMapRevisionAppliesToIdentity(revision, {
-      cardProfile: source.cardProfile,
-      identity,
-    });
+    assertHistoricalRevisionSourceIdentity(revision, source.cardProfile, identity);
     if (!isDeepStrictEqual(revision.displayIdentity, identity)) {
       throw new SpeedsterMapIntegrityError("Card Map library source identity does not match immutable revision provenance.");
     }
@@ -1226,6 +1391,19 @@ export async function listSpeedsterMappedSourceCards(
     existing.lastMappedAt = existing.lastMappedAt > createdAt ? existing.lastMappedAt : createdAt;
     existing.revisions.push({
       scope: speedsterMapScopeForKey(revision.matchKey),
+      keyGeneration: speedsterMapScopeForKey(revision.matchKey) === "EXACT"
+        ? "EXACT_FROZEN"
+        : revision.matchKey.category === "SPORTS"
+          ? "FAMILY_CURRENT"
+          : isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+            ? "FAMILY_V2"
+            : "FAMILY_LEGACY",
+      layoutType: isSpeedsterPokemonFamilyKeyV2(revision.matchKey) ? revision.matchKey.layoutType : null,
+      runtimeEligible: !(
+        speedsterMapScopeForKey(revision.matchKey) === "FAMILY"
+        && revision.matchKey.category === "POKEMON"
+        && !isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+      ),
       mapId: revision.mapId,
       revisionId: revision.revisionId,
       version: revision.version,
@@ -1241,7 +1419,10 @@ export async function listSpeedsterMappedSourceCards(
     .map((card) => ({
       ...card,
       revisions: card.revisions.sort((left, right) => (
-        left.scope.localeCompare(right.scope) || right.version - left.version
+        left.scope.localeCompare(right.scope)
+        || Number(right.runtimeEligible) - Number(left.runtimeEligible)
+        || right.version - left.version
+        || left.revisionId.localeCompare(right.revisionId)
       )),
     }))
     .sort((left, right) => right.lastMappedAt.localeCompare(left.lastMappedAt));
@@ -1255,6 +1436,7 @@ export async function loadScopedActiveSpeedsterMapRevision(
   }>,
   deps: SpeedsterMapLookupDependencies = defaultLookupDependencies,
 ): Promise<SpeedsterLoadedMapRevision | null> {
+  if (input.scope === "FAMILY" && input.cardProfile === "POKEMON" && !speedsterPokemonLayoutType(input.identity)) return null;
   const matchKeyHash = speedsterMapMatchKeyHash(
     speedsterMapKeyForScope(input.scope, input.cardProfile, input.identity),
   );
@@ -1274,21 +1456,29 @@ export async function loadEffectiveActiveSpeedsterMapRevision(
   deps: SpeedsterMapLookupDependencies = defaultLookupDependencies,
 ): Promise<SpeedsterAppliedMapRevision | null> {
   const exactHash = speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.cardProfile, input.identity));
-  const familyHash = speedsterMapMatchKeyHash(speedsterFamilyCardTypeMapKey(input.cardProfile, input.identity));
+  const familyKey = input.cardProfile === "POKEMON" && !speedsterPokemonLayoutType(input.identity)
+    ? null
+    : speedsterFamilyCardTypeMapKey(input.cardProfile, input.identity);
+  const familyHash = familyKey ? speedsterMapMatchKeyHash(familyKey) : null;
+  const requestedHashes = familyHash ? [exactHash, familyHash] : [exactHash];
   const maps = deps.findActiveMaps
-    ? await deps.findActiveMaps([exactHash, familyHash])
-    : (await Promise.all([deps.findActiveMap(exactHash), deps.findActiveMap(familyHash)]))
+    ? await deps.findActiveMaps(requestedHashes)
+    : (await Promise.all(requestedHashes.map((hash) => deps.findActiveMap(hash))))
         .filter((map): map is ActiveMapRecord => Boolean(map));
   const exact = maps.find((map) => map.matchKeyHash === exactHash);
-  const family = maps.find((map) => map.matchKeyHash === familyHash);
+  const family = familyHash ? maps.find((map) => map.matchKeyHash === familyHash) : undefined;
   const scope: SpeedsterMapScope | null = exact ? "EXACT" : family ? "FAMILY" : null;
   const selected = exact ?? family;
   if (!scope || !selected) return null;
-  const revision = validateActiveMap(selected, scope === "EXACT" ? exactHash : familyHash, scope === "EXACT" ? "Exact" : "Family");
+  const revision = validateActiveMap(selected, scope === "EXACT" ? exactHash : familyHash!, scope === "EXACT" ? "Exact" : "Family");
   return {
     revision,
     appliedScope: scope,
-    appliedMapName: speedsterMapDisplayName(scope, input.cardProfile, revision.displayIdentity),
+    appliedMapName: speedsterMapDisplayName(
+      scope,
+      input.cardProfile,
+      scope === "FAMILY" ? input.identity : revision.displayIdentity,
+    ),
     sourceProvenance: {
       sourceSessionId: revision.sourceSessionId,
       sourceIdentity: revision.displayIdentity,
@@ -1303,6 +1493,13 @@ export function assertSpeedsterMapRevisionAppliesToIdentity(
   const scope = speedsterMapScopeForKey(revision.matchKey);
   if (revision.matchKey.category !== input.cardProfile) {
     throw new SpeedsterMapIntegrityError("Pinned map category does not match the session identity.");
+  }
+  if (
+    scope === "FAMILY"
+    && revision.matchKey.category === "POKEMON"
+    && !isSpeedsterPokemonFamilyKeyV2(revision.matchKey)
+  ) {
+    throw new SpeedsterMapIntegrityError("Legacy Pokémon Family map has no layout authority and cannot run.");
   }
   const expected = speedsterMapKeyForScope(scope, input.cardProfile, input.identity);
   if (canonicalSpeedsterMapKeyJson(expected) !== canonicalSpeedsterMapKeyJson(revision.matchKey)) {
@@ -1401,6 +1598,7 @@ export function parseSpeedsterMapSourceSession(record: Readonly<{
   workflowState: string;
   identity: unknown;
   capture: unknown;
+  legacyMapLayoutAuthority?: unknown;
 }>): SpeedsterMapSourceSession {
   if (record.cardProfile !== "SPORTS" && record.cardProfile !== "POKEMON") {
     throw new SpeedsterMapIntegrityError("TRAIN source category is unsupported.");
@@ -1415,12 +1613,28 @@ export function parseSpeedsterMapSourceSession(record: Readonly<{
   if (!capture || (capture.cornerShape !== "SQUARE" && capture.cornerShape !== "ROUNDED_3_18_MM")) {
     throw new SpeedsterMapIntegrityError("TRAIN source physical-card geometry is missing.");
   }
+  const rawAuthority = isRecord(record.legacyMapLayoutAuthority) ? record.legacyMapLayoutAuthority : null;
+  const authorityLayoutType = rawAuthority?.layoutType;
+  const legacyLayoutAuthority: SpeedsterMapSourceSession["legacyLayoutAuthority"] = rawAuthority ? {
+    layoutType: authorityLayoutType === "POKEMON" || authorityLayoutType === "TRAINER" || authorityLayoutType === "ENERGY"
+      ? authorityLayoutType
+      : (() => { throw new SpeedsterMapIntegrityError("Legacy source layout authority is malformed."); })(),
+    selectedByAdminId: nonEmptyText(rawAuthority.selectedByAdminId, "Legacy layout authority admin", 120),
+    createdAt: rawAuthority.createdAt instanceof Date
+      ? rawAuthority.createdAt
+      : (() => { throw new SpeedsterMapIntegrityError("Legacy source layout authority time is malformed."); })(),
+  } : null;
+  const identityLayoutType = speedsterPokemonLayoutType(identity);
+  if (legacyLayoutAuthority && (record.cardProfile !== "POKEMON" || identityLayoutType)) {
+    throw new SpeedsterMapIntegrityError("Legacy layout authority is incompatible with the source identity.");
+  }
   return {
     id: record.id,
     createdByUserId: record.createdByUserId,
     cardProfile: record.cardProfile,
     workflowState: record.workflowState,
     identity,
+    legacyLayoutAuthority,
     cornerShape: capture.cornerShape,
     front: parseSourceSide(capture.front, "FRONT", record.createdByUserId, record.id),
     back: parseSourceSide(capture.back, "BACK", record.createdByUserId, record.id),
@@ -1567,11 +1781,57 @@ function requestedMapContract(front: SpeedsterMapTrainingSideInput, back: Speeds
 type SpeedsterMapWriteTransaction = Pick<
   Prisma.TransactionClient,
   "$executeRaw" | "$queryRaw" | "aiGraderV2CardTypeMap" | "aiGraderV2CardTypeMapRevision" | "aiGraderV2Session"
+    | "aiGraderV2LegacyMapLayoutAuthority"
 >;
 
 export type SpeedsterMapTransactionRunner = <Result>(
   operation: (tx: SpeedsterMapWriteTransaction) => Promise<Result>,
 ) => Promise<Result>;
+
+async function assertOrCreateLegacySourceLayoutAuthority(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  layoutType: SpeedsterPokemonLayoutType,
+  selectedByAdminId: string,
+) {
+  if (source.cardProfile !== "POKEMON" || speedsterPokemonLayoutType(source.identity)) return;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-legacy-layout:${source.id}`}, 0))`;
+  const existing = await tx.aiGraderV2LegacyMapLayoutAuthority.findUnique({
+    where: { sourceSessionId: source.id },
+  });
+  if (existing) {
+    if (existing.layoutType !== layoutType) {
+      throw new SpeedsterMapIntegrityError("This legacy source is permanently bound to a different layout type.", {
+        stage: "TRANSACTION",
+        scope: "FAMILY",
+        field: "layoutType",
+      });
+    }
+    return;
+  }
+  await tx.aiGraderV2LegacyMapLayoutAuthority.create({
+    data: { sourceSessionId: source.id, layoutType, selectedByAdminId },
+  });
+}
+
+async function assertLegacySourceLayoutAuthority(
+  tx: SpeedsterMapWriteTransaction,
+  source: SpeedsterMapSourceSession,
+  layoutType: SpeedsterPokemonLayoutType,
+) {
+  if (source.cardProfile !== "POKEMON" || speedsterPokemonLayoutType(source.identity)) return;
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-legacy-layout:${source.id}`}, 0))`;
+  const existing = await tx.aiGraderV2LegacyMapLayoutAuthority.findUnique({
+    where: { sourceSessionId: source.id },
+  });
+  if (!existing || existing.layoutType !== layoutType) {
+    throw new SpeedsterMapIntegrityError("Legacy source has no matching persisted layout authority.", {
+      stage: "TRANSACTION",
+      scope: "FAMILY",
+      field: "layoutType",
+    });
+  }
+}
 
 async function createOrLoadLockedMap(
   tx: SpeedsterMapWriteTransaction,
@@ -1682,11 +1942,10 @@ async function createVerifiedRevision(
   return loaded;
 }
 
-async function assertCapturedTrainSourceIsUninitialized(
+async function assertTrainSourceSnapshotIsCurrent(
   tx: SpeedsterMapWriteTransaction,
   source: SpeedsterMapSourceSession,
 ) {
-  if (source.workflowState !== "CAPTURED") return null;
   await tx.$queryRaw`
     SELECT "id"
     FROM "AiGraderV2Session"
@@ -1696,16 +1955,33 @@ async function assertCapturedTrainSourceIsUninitialized(
   const current = await tx.aiGraderV2Session.findFirst({
     where: { id: source.id, createdByUserId: source.createdByUserId },
     select: {
+      id: true,
+      createdByUserId: true,
+      cardProfile: true,
       workflowState: true,
+      identity: true,
+      capture: true,
+      legacyMapLayoutAuthority: {
+        select: { layoutType: true, selectedByAdminId: true, createdAt: true },
+      },
       reviewedDefects: true,
       gradeReport: true,
       mapRevisionId: true,
       mapFilterDecisions: { take: 1, select: { id: true } },
     },
   });
+  if (!current) {
+    throw new SpeedsterMapIntegrityError("Card Map source changed after it was loaded.", { stage: "TRANSACTION" });
+  }
+  const persistedSource = parseSpeedsterMapSourceSession(current);
+  if (!isDeepStrictEqual(persistedSource, source)) {
+    throw new SpeedsterMapIntegrityError("Card Map source identity or capture changed after it was loaded.", {
+      stage: "TRANSACTION",
+    });
+  }
+  if (source.workflowState !== "CAPTURED") return null;
   if (
-    !current
-    || current.workflowState !== "CAPTURED"
+    current.workflowState !== "CAPTURED"
     || !Array.isArray(current.reviewedDefects)
     || current.reviewedDefects.length !== 0
     || !isRecord(current.gradeReport)
@@ -1940,7 +2216,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertTrainSourceSnapshotIsCurrent(tx, input.source);
     const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
@@ -2017,6 +2293,7 @@ export async function saveSpeedsterCardTypeMapRevision(input: Readonly<{
 export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   source: SpeedsterMapSourceSession;
   authorAdminId: string;
+  familyLayoutType?: SpeedsterPokemonLayoutType;
   front: SpeedsterMapTrainingSideInput;
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
@@ -2024,7 +2301,8 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   v2ActivationGate?: SpeedsterMapFilterV2ActivationGate;
 }>): Promise<SpeedsterMapDualSaveResult> {
   const exactKey = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
-  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const familyIdentity = pokemonFamilyAuthoringIdentity(input.source, input.familyLayoutType);
+  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, familyIdentity);
   const exactMatchKeyHash = speedsterMapMatchKeyHash(exactKey);
   const familyMatchKeyHash = speedsterMapMatchKeyHash(familyKey);
   const hashEvidence = input.hashEvidence ?? hashSpeedsterMapStorageEvidence;
@@ -2057,7 +2335,19 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   ));
 
   return transaction(async (tx) => {
-    await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    await assertTrainSourceSnapshotIsCurrent(tx, input.source);
+    if (input.source.cardProfile === "POKEMON") {
+      const familyLayoutType = speedsterPokemonLayoutType(familyIdentity);
+      if (!familyLayoutType) {
+        throw new SpeedsterMapIntegrityError("Pokémon V2 Family Card Map layout authority is missing.");
+      }
+      await assertOrCreateLegacySourceLayoutAuthority(
+        tx,
+        input.source,
+        familyLayoutType,
+        input.authorAdminId,
+      );
+    }
     const familyMap = await createOrLoadLockedMap(tx, {
       cardProfile: input.source.cardProfile,
       matchKeyHash: familyMatchKeyHash,
@@ -2151,14 +2441,34 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
   findTargetRevision?: SpeedsterMapLookupDependencies["findPinnedRevision"];
 }>): Promise<SpeedsterMapSaveResult> {
   const scope = input.scope ?? "EXACT";
-  const key = speedsterMapKeyForScope(scope, input.source.cardProfile, input.source.identity);
-  const matchKeyHash = speedsterMapMatchKeyHash(key);
   const revisionId = randomUUID();
   const target = await (input.findTargetRevision ?? defaultLookupDependencies.findPinnedRevision)(input.targetRevisionId);
-  if (!target || target.matchKeyHash !== matchKeyHash) {
+  if (!target) {
     throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
   }
-  const validated = validateSpeedsterLoadedMapRevision(target, { matchKeyHash });
+  const validated = validateSpeedsterLoadedMapRevision(target);
+  if (speedsterMapScopeForKey(validated.matchKey) !== scope) {
+    throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
+  }
+  let key: SpeedsterMapMatchKey;
+  if (scope === "EXACT") {
+    key = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  } else if (input.source.cardProfile === "POKEMON") {
+    if (!isSpeedsterPokemonFamilyKeyV2(validated.matchKey)) {
+      throw new SpeedsterMapIntegrityError("Legacy Pokémon Family maps are historical-only and cannot be restored.");
+    }
+    const familyIdentity = pokemonFamilyRestoreIdentity(input.source, validated);
+    key = speedsterFamilyCardTypeMapKey(input.source.cardProfile, familyIdentity);
+  } else {
+    key = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  }
+  const matchKeyHash = speedsterMapMatchKeyHash(key);
+  if (
+    target.matchKeyHash !== matchKeyHash
+    || canonicalSpeedsterMapKeyJson(validated.matchKey) !== canonicalSpeedsterMapKeyJson(key)
+  ) {
+    throw new SpeedsterMapIntegrityError("Restore target is not a revision of this scoped card-type map.");
+  }
   const exactOverrideWasActive = scope === "FAMILY" && input.source.workflowState === "CAPTURED"
     ? Boolean((await (input.findActiveMap ?? defaultLookupDependencies.findActiveMap)(
         speedsterMapMatchKeyHash(speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity)),
@@ -2176,7 +2486,14 @@ export async function restoreSpeedsterCardTypeMapRevision(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertTrainSourceSnapshotIsCurrent(tx, input.source);
+    if (scope === "FAMILY" && input.source.cardProfile === "POKEMON") {
+      const layoutType = isSpeedsterPokemonFamilyKeyV2(validated.matchKey)
+        ? validated.matchKey.layoutType
+        : null;
+      if (!layoutType) throw new SpeedsterMapIntegrityError("Family restore layout authority is missing.");
+      await assertLegacySourceLayoutAuthority(tx, input.source, layoutType);
+    }
     const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, scope);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     const map = await tx.aiGraderV2CardTypeMap.findUnique({
@@ -2258,7 +2575,8 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
     cardProfile: input.source.cardProfile,
     identity: input.source.identity,
   });
-  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, input.source.identity);
+  const familyIdentity = pokemonFamilyPromotionIdentity(input.source, validated);
+  const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, familyIdentity);
   const matchKeyHash = speedsterMapMatchKeyHash(familyKey);
   const revisionId = randomUUID();
   const exactOverrideWasActive = input.source.workflowState === "CAPTURED"
@@ -2278,7 +2596,12 @@ export async function promoteSpeedsterExactMapRevisionToFamily(input: Readonly<{
     prisma.$transaction((tx) => operation(tx), { isolationLevel: "Serializable" })
   ));
   const created = await transaction(async (tx) => {
-    const capturedState = await assertCapturedTrainSourceIsUninitialized(tx, input.source);
+    const capturedState = await assertTrainSourceSnapshotIsCurrent(tx, input.source);
+    if (input.source.cardProfile === "POKEMON") {
+      const layoutType = speedsterPokemonLayoutType(familyIdentity);
+      if (!layoutType) throw new SpeedsterMapIntegrityError("Family promotion layout authority is missing.");
+      await assertLegacySourceLayoutAuthority(tx, input.source, layoutType);
+    }
     const exactOverrideRevisionId = await capturedExactOverrideRevisionId(tx, input.source, "FAMILY");
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`speedster-map:${matchKeyHash}`}, 0))`;
     let map = await tx.aiGraderV2CardTypeMap.findUnique({
@@ -2391,6 +2714,14 @@ export async function speedsterMapSourceClientState(
     sessionId: source.id,
     cardProfile: source.cardProfile,
     identity: source.identity,
+    familyLayoutType: speedsterPokemonLayoutType(source.identity) ?? source.legacyLayoutAuthority?.layoutType ?? null,
+    familyLayoutAuthority: source.legacyLayoutAuthority ? {
+      source: "LEGACY_SOURCE_AUTHORITY" as const,
+      selectedByAdminId: source.legacyLayoutAuthority.selectedByAdminId,
+      createdAt: source.legacyLayoutAuthority.createdAt.toISOString(),
+    } : speedsterPokemonLayoutType(source.identity) ? {
+      source: "SESSION_IDENTITY" as const,
+    } : null,
     cornerShape: source.cornerShape,
     front: side(source.front, frontRectifiedUrl, frontInspectionSha256),
     back: side(source.back, backRectifiedUrl, backInspectionSha256),

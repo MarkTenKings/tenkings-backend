@@ -18,6 +18,7 @@ const eventType = z.enum([
   "GEOMETRY_CONFIRMED",
   "CENTERING_CONFIRMED",
   "MAP_REGISTRATION_OPERATOR_DECISION",
+  "MAP_AUTHORITY_OPERATOR_DECISION",
   "CAPTURE_SAVED",
   "SAM_MEMORY_COMPLETED",
   "REVIEW_RENDERED",
@@ -43,6 +44,13 @@ const details = z.object({
   mapRevisionId: z.string().trim().min(1).max(80).optional(),
   mapFailureCode: z.enum(["LOOKUP_FAILED", "REGISTRATION_FAILED"]).optional(),
   registrationDecision: z.enum(["RETRY_FAILED_SIDE", "CONTINUE_WITHOUT_CARD_MAP"]).optional(),
+  mapAuthorityDecision: z.literal("ABANDON_OBSOLETE_MAP_AUTHORITY").optional(),
+  mapAuthorityOperationId: z.string().uuid().optional(),
+  mapAuthorityDecisionId: z.string().uuid().optional(),
+  obsoleteMapBindingStatus: z.enum(["LOADED", "NO_MAP", "LOOKUP_FAILED", "INTEGRITY_ERROR"]).optional(),
+  obsoleteMapRevisionId: z.string().trim().min(1).max(80).optional(),
+  obsoleteMapScope: z.enum(["EXACT", "FAMILY"]).optional(),
+  obsoleteMapName: z.string().trim().min(1).max(1024).optional(),
   registrationErrorSource: z.enum([
     "PROVIDER_GATEWAY",
     "PROVIDER",
@@ -88,19 +96,45 @@ const bodySchema = z.object({
   clientEndedAt: z.string().datetime({ offset: true }),
   details: details.optional(),
 }).strict().superRefine((value, context) => {
-  if (value.eventType !== "MAP_REGISTRATION_OPERATOR_DECISION") return;
-  if (!value.details?.registrationDecision
-    || !value.details.registrationOperationId
-    || !value.details.registrationDecisionId
-    || !value.details.registrationFailedSides
-    || !value.details.registrationFailures
-    || value.details.registrationFailedSides.join("\0")
-      !== value.details.registrationFailures.map(({ side }) => side).join("\0")
-    || value.eventId !== value.details.registrationDecisionId) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Registration decisions require stable matching operation and decision identity.",
-    });
+  if (value.eventType === "MAP_REGISTRATION_OPERATOR_DECISION") {
+    if (!value.details?.registrationDecision
+      || !value.details.registrationOperationId
+      || !value.details.registrationDecisionId
+      || !value.details.registrationFailedSides
+      || !value.details.registrationFailures
+      || value.details.registrationFailedSides.join("\0")
+        !== value.details.registrationFailures.map(({ side }) => side).join("\0")
+      || value.eventId !== value.details.registrationDecisionId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Registration decisions require stable matching operation and decision identity.",
+      });
+    }
+    return;
+  }
+  if (value.eventType === "MAP_AUTHORITY_OPERATOR_DECISION") {
+    const details = value.details;
+    const loadedObsoleteMap = details?.obsoleteMapBindingStatus === "LOADED";
+    if (details?.mapAuthorityDecision !== "ABANDON_OBSOLETE_MAP_AUTHORITY"
+      || !details.mapAuthorityOperationId
+      || !details.mapAuthorityDecisionId
+      || value.eventId !== details.mapAuthorityDecisionId
+      || details.mapAppliedScope !== "NONE"
+      || !details.obsoleteMapBindingStatus
+      || (loadedObsoleteMap
+        ? (!details.obsoleteMapRevisionId || !details.obsoleteMapScope)
+        : Boolean(details.obsoleteMapRevisionId || details.obsoleteMapScope))
+      || details.registrationDecision !== undefined
+      || details.registrationOperationId !== undefined
+      || details.registrationDecisionId !== undefined
+      || details.registrationFailedSides !== undefined
+      || details.registrationFailures !== undefined
+      || details.mapFailureCode !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Map-authority decisions require stable identity, exact obsolete binding, and no fabricated registration failure.",
+      });
+    }
   }
 });
 
@@ -118,7 +152,10 @@ const dependencies: Dependencies = {
     select: { id: true },
   }),
   insertEvents: async (events) => {
-    if (events.length === 1 && events[0].eventType === "MAP_REGISTRATION_OPERATOR_DECISION") {
+    if (events.length === 1 && [
+      "MAP_REGISTRATION_OPERATOR_DECISION",
+      "MAP_AUTHORITY_OPERATOR_DECISION",
+    ].includes(events[0].eventType)) {
       return insertSpeedsterInstrumentationEventWithConflictDetection(prisma, events[0]);
     }
     return insertSpeedsterInstrumentationEvents(prisma, events);

@@ -23,6 +23,7 @@ export type HumanGradeLabelEditorValue = {
   cardType: HumanGradeCardType;
   playerName: string;
   cardName: string;
+  layoutType: "" | "POKEMON" | "TRAINER" | "ENERGY";
   year: string;
   manufacturer: string;
   productSet: string;
@@ -39,6 +40,7 @@ export const EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE: HumanGradeLabelEditorValue = 
   cardType: "SPORTS",
   playerName: "",
   cardName: "",
+  layoutType: "",
   year: "",
   manufacturer: "",
   productSet: "",

@@ -296,6 +296,63 @@ test("identity save rejects grade injection and does not call the correction wri
   assert.equal(corrections, 0);
 });
 
+test("completed Pokemon identity correction preserves locked layout authority", async () => {
+  const pokemonCompleted = {
+    ...completed,
+    cardProfile: "POKEMON",
+    identity: {
+      cardName: "Squirtle",
+      layoutType: "POKEMON",
+      year: "2023",
+      productSet: "MEW EN",
+      parallel: "Reverse Holo",
+      cardNumber: "007/165",
+    },
+  };
+  const pokemonLabel = {
+    ...speedsterLabel,
+    cardType: "POKEMON" as const,
+    playerName: null,
+    cardName: "Squirtle",
+  };
+  const writes: unknown[] = [];
+  const handler = createCompletedCardHandler({
+    ...cardActions,
+    requireAdminSession: admin,
+    async findSession() { return pokemonCompleted; },
+    async findLabel() { return pokemonLabel; },
+    async updateSlabKey() { throw new Error("not used"); },
+    async correctIdentity(_sessionId, identity) { writes.push(identity); },
+    async presignUpload() { throw new Error("not used"); },
+    async presignRead(key) { return `https://read.example/${key}`; },
+    storageReady: () => false,
+  });
+  for (const layoutType of [undefined, "TRAINER"] as const) {
+    const rejected = response();
+    await handler(request("POST", {
+      action: "UPDATE_IDENTITY",
+      identity: {
+        cardName: "Squirtle",
+        ...(layoutType ? { layoutType } : {}),
+        year: "2023",
+        productSet: "MEW EN",
+        parallel: "Reverse Holo",
+        cardNumber: "007/165",
+      },
+    }), rejected.res);
+    assert.equal(rejected.state.status, 409);
+  }
+  assert.equal(writes.length, 0);
+
+  const accepted = response();
+  await handler(request("POST", {
+    action: "UPDATE_IDENTITY",
+    identity: { ...pokemonCompleted.identity, cardName: "Squirtle corrected" },
+  }), accepted.res);
+  assert.equal(accepted.state.status, 200);
+  assert.equal((writes[0] as { layoutType: string }).layoutType, "POKEMON");
+});
+
 test("identity save fails closed on a missing linked label without repairing or creating one", async () => {
   let corrections = 0;
   const handler = createCompletedCardHandler({

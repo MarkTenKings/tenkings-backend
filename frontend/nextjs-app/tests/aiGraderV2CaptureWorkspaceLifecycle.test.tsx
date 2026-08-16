@@ -42,6 +42,12 @@ const {
 } = require(
   "../lib/ai-grader-v2/image-service",
 ) as typeof import("../lib/ai-grader-v2/image-service");
+const {
+  parseSpeedsterCaptureRegistrationDraft,
+  speedsterCaptureDraftMatchesCommittedSession,
+} = require(
+  "../lib/ai-grader-v2/capture-registration-draft",
+) as typeof import("../lib/ai-grader-v2/capture-registration-draft");
 
 type GeometryResponse = Awaited<ReturnType<typeof speedsterImageService.proposeGeometry>>;
 
@@ -86,24 +92,35 @@ type Harness = {
     orchestration: import("../lib/ai-grader-v2/image-service").SpeedsterMapRegistrationOrchestration;
   }>[];
   getPreparedImageRefreshCount: (side: "FRONT" | "BACK") => number;
+  getCaptureDraftSerialized: () => string | null;
+  draftCleanupFailures: string[];
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
   rerenderSession: (sessionId: string) => Promise<void>;
+  rerenderActiveMap: (activeMap: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string }) => Promise<void>;
   cleanup: () => Promise<void>;
 };
 
 async function mountWorkspace(input: {
   proposeGeometry: typeof speedsterImageService.proposeGeometry;
+  draftSurface?: "AI_GRADER" | "CARD_MAPS";
   refreshedUrls?: boolean;
   activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
+  mapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
   registrationNeedsRescueOnSide?: "FRONT" | "BACK";
+  registrationNeedsRescueOnBoth?: boolean;
   registrationMalformed422OnSide?: "FRONT" | "BACK";
   registrationGlobalGateFailure?: boolean;
   rescueFailures?: number;
   preparedImageRefreshFails?: boolean;
   preparedImageRefreshFailures?: number;
+  preparedImageRequestBarrier?: (side: "FRONT" | "BACK") => Promise<void>;
+  captureDraftSerialized?: string;
+  localStorageGetFails?: boolean;
+  localStorageSetFails?: boolean;
+  localStorageRemoveFails?: boolean;
   registrationNeverSettlesOnSide?: "FRONT" | "BACK";
   registrationHttpFailure?: Readonly<{
     side: "FRONT" | "BACK";
@@ -167,6 +184,26 @@ async function mountWorkspace(input: {
     MouseEvent: { configurable: true, value: dom.window.MouseEvent },
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  if (input.captureDraftSerialized) {
+    dom.window.localStorage.setItem(
+      "tenkings:speedster:capture-registration-draft:v1:speedster-session-lifecycle-test",
+      input.captureDraftSerialized,
+    );
+  }
+  const storage = dom.window.localStorage;
+  const storageGetItem = storage.getItem.bind(storage);
+  const storageSetItem = storage.setItem.bind(storage);
+  const storageRemoveItem = storage.removeItem.bind(storage);
+  const storagePrototype = Object.getPrototypeOf(storage) as Storage;
+  if (input.localStorageGetFails) {
+    Object.defineProperty(storagePrototype, "getItem", { configurable: true, value: () => { throw new Error("localStorage get failed"); } });
+  }
+  if (input.localStorageSetFails) {
+    Object.defineProperty(storagePrototype, "setItem", { configurable: true, value: () => { throw new Error("localStorage set failed"); } });
+  }
+  if (input.localStorageRemoveFails) {
+    Object.defineProperty(storagePrototype, "removeItem", { configurable: true, value: () => { throw new Error("localStorage remove failed"); } });
+  }
 
   Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
     configurable: true,
@@ -224,6 +261,7 @@ async function mountWorkspace(input: {
     if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/prepared-image?side=")) {
       const side = url.endsWith("side=FRONT") ? "FRONT" : "BACK";
       preparedImageRefreshCount[side] += 1;
+      await input.preparedImageRequestBarrier?.(side);
       if (input.preparedImageRefreshFails || remainingPreparedImageRefreshFailures > 0) {
         remainingPreparedImageRefreshFailures = Math.max(0, remainingPreparedImageRefreshFailures - 1);
         return jsonResponse({ message: `The ${side.toLowerCase()} prepared card image is not ready.` }, 409);
@@ -312,7 +350,7 @@ async function mountWorkspace(input: {
           registrationFailure: {},
         }, 422);
       }
-      if (!body.rescue && input.registrationNeedsRescueOnSide === body.side) {
+      if (!body.rescue && (input.registrationNeedsRescueOnBoth || input.registrationNeedsRescueOnSide === body.side)) {
         return jsonResponse({
           message: "CARD MAP registration needs human anchor correction.",
           requestId: "registration-request-1",
@@ -380,11 +418,12 @@ async function mountWorkspace(input: {
         currentPhysicalQuadSha256: "a".repeat(64),
         currentInspectionSha256: "b".repeat(64),
         homography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
-        anchors: body.rescue ? validQuad.map((point, index) => ({
+        anchors: validQuad.map((point, index) => ({
           anchorId: `a${index + 1}`, expectedPoint: point, locatedPoint: point, score: 1,
-        })) : [],
+        })),
         projectedDesignBoundary: { kind: "QUAD", points: validQuad },
-        projectedZones: [],
+        projectedZones: [{ id: "name", label: "Card name", semanticType: "PRINT_TEXT", polygon: validQuad }],
+        serverReceipt: `server-signed-${body.side.toLowerCase()}-${"d".repeat(64)}`,
         ...(body.rescue ? {
           candidateProvenance: { candidateId: "lesson-1", source: "HUMAN_CORRECTION", lessonId: "lesson-1" },
           acceptance: {
@@ -406,27 +445,36 @@ async function mountWorkspace(input: {
   const root = createRoot(container);
   const events: SpeedsterCaptureInstrumentationEvent[] = [];
   const bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[] = [];
+  const draftCleanupFailures: string[] = [];
+  let activeMap = input.activeMap;
   const renderSession = (sessionId: string) => (
     <CaptureWorkspace
       token="admin-token"
       sessionId={sessionId}
       cardProfile="POKEMON"
-      activeMapRevisionId={input.activeMap?.revisionId}
-      activeMapScope={input.activeMap?.scope}
-      activeMapName={input.activeMap?.name}
+      draftSurface={input.draftSurface}
+      activeMapRevisionId={activeMap?.revisionId}
+      activeMapScope={activeMap?.scope}
+      activeMapName={activeMap?.name}
+      mapBindingStatus={input.mapBindingStatus}
       mapLookupFailed={input.mapLookupFailed}
       imageRequestTimeoutMs={input.imageRequestTimeoutMs}
       decisionAuditConfirmationTimeoutMs={input.decisionAuditConfirmationTimeoutMs}
-      onReady={(bundle) => {
+      onReady={async (bundle, clearPreservedBrowserDraft) => {
         bundles.push(bundle);
-        return input.onSave?.(bundle) ?? { saved: true };
+        const result = await (input.onSave?.(bundle) ?? { saved: true });
+        if (result.saved) clearPreservedBrowserDraft();
+        return result;
       }}
+      onDraftCleanupFailure={(failure) => draftCleanupFailures.push(failure)}
       onInstrumentationEvent={input.omitInstrumentationReporter ? undefined as never : (event) => {
         events.push(event);
-        if (event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION" && input.decisionInstrumentationThrows) {
+        if (["MAP_REGISTRATION_OPERATOR_DECISION", "MAP_AUTHORITY_OPERATOR_DECISION"].includes(event.eventType)
+          && input.decisionInstrumentationThrows) {
           throw new Error("decision instrumentation threw synchronously");
         }
-        if (event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION" && input.decisionInstrumentationResult) {
+        if (["MAP_REGISTRATION_OPERATOR_DECISION", "MAP_AUTHORITY_OPERATOR_DECISION"].includes(event.eventType)
+          && input.decisionInstrumentationResult) {
           return input.decisionInstrumentationResult;
         }
         return input.instrumentationFails ? false : true;
@@ -437,8 +485,14 @@ async function mountWorkspace(input: {
     root.render(renderSession("speedster-session-lifecycle-test"));
   });
   await waitFor(
-    () => Boolean(buttonByText(container, "Set geometry")),
-    "The capture pair did not become ready",
+    () => input.captureDraftSerialized || input.localStorageGetFails
+      ? Boolean(container.querySelector('[aria-label="Preserved capture draft"]')
+        || container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]')
+        || buttonByText(container, "Discard invalid preserved draft"))
+      : Boolean(buttonByText(container, "Set geometry")),
+    input.captureDraftSerialized || input.localStorageGetFails
+      ? "The preserved capture draft failure did not become explicit"
+      : "The capture pair did not become ready",
   );
 
   return {
@@ -450,6 +504,10 @@ async function mountWorkspace(input: {
     getRescueAttemptIds: () => rescueAttemptIds,
     getRegistrationOrchestrations: () => registrationOrchestrations,
     getPreparedImageRefreshCount: (side) => preparedImageRefreshCount[side],
+    getCaptureDraftSerialized: () => storageGetItem(
+      "tenkings:speedster:capture-registration-draft:v1:speedster-session-lifecycle-test",
+    ),
+    draftCleanupFailures,
     events,
     bundles,
     rerenderSession: async (nextSessionId) => {
@@ -459,8 +517,23 @@ async function mountWorkspace(input: {
         "The replacement session capture pair did not become ready",
       );
     },
+    rerenderActiveMap: async (nextActiveMap) => {
+      activeMap = nextActiveMap;
+      await act(async () => root.render(renderSession("speedster-session-lifecycle-test")));
+      await waitFor(
+        () => Boolean(buttonByText(container, "Discard invalid preserved draft")
+          || container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]')
+          || container.querySelector('[aria-label="Preserved capture draft"]')),
+        "The changed map binding did not resolve the preserved draft explicitly",
+      );
+    },
     cleanup: async () => {
       await act(async () => root.unmount());
+      Object.defineProperties(storagePrototype, {
+        getItem: { configurable: true, value: storageGetItem },
+        setItem: { configurable: true, value: storageSetItem },
+        removeItem: { configurable: true, value: storageRemoveItem },
+      });
       speedsterImageService.proposeGeometry = originalProposeGeometry;
       QRCode.toCanvas = originalQrToCanvas;
       dom.window.close();
@@ -1179,6 +1252,477 @@ test("HTTP 402 stays factual, retains request evidence, and never automatically 
   }
 });
 
+test("reload offers explicit Resume, refreshes URLs, preserves Front success, and clears only after successful save", async () => {
+  const first = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 402,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_402",
+      retryable: false,
+      message: "CARD MAP provider rejected the request (HTTP 402). No map was applied.",
+    },
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(first.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="Card Map registration interruption"]')), "Interruption did not render");
+    await waitFor(() => Boolean(first.getCaptureDraftSerialized()), "Interrupted registration draft was not preserved");
+    serialized = first.getCaptureDraftSerialized()!;
+    assert.doesNotMatch(serialized, /https:\/\/|admin-token|readUrl|data:image/);
+  } finally {
+    await first.cleanup();
+  }
+
+  const resumed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-resume", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    captureDraftSerialized: serialized,
+  });
+  try {
+    assert.equal(resumed.getPollCount(), 0, "Reload must not begin a new photo flow before explicit choice");
+    assert.equal(resumed.getRegistrationCount(), 0, "Reload must not silently re-register either side");
+    assert.ok(buttonByText(resumed.container, "Resume preserved draft"));
+    assert.ok(buttonByText(resumed.container, "Discard preserved draft"));
+
+    await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="Card Map registration interruption"]')), "Resumed interruption did not render");
+    assert.ok(resumed.getPreparedImageRefreshCount("FRONT") >= 1);
+    assert.ok(resumed.getPreparedImageRefreshCount("BACK") >= 1);
+    assert.equal(resumed.getRegistrationCount(), 0, "Resume must preserve both recorded attempts without retrying");
+    assert.match(resumed.container.textContent ?? "", /provider rejected the request \(HTTP 402\)/);
+
+    await act(async () => fire(buttonByText(resumed.container, "Retry failed side")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="front centering geometry"]')), "Back-only retry did not advance to retained-map centering");
+    assert.equal(resumed.getRegistrationCountForSide("FRONT"), 0, "Successful Front registration must never be rerun");
+    assert.equal(resumed.getRegistrationCountForSide("BACK"), 1, "Only the explicitly selected failed side may retry");
+    assert.match(resumed.container.textContent ?? "", /FAMILY · 2023 MEW EN Reverse Holo applied to Front \+ Back/);
+
+    await loadPreparedImage(resumed.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(resumed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open after resume");
+    await loadPreparedImage(resumed.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(resumed.container, "Continue")!, "click"));
+    assert.equal(resumed.bundles.length, 1);
+    assert.equal(resumed.getCaptureDraftSerialized(), null, "Successful capture persistence must clear the obsolete browser draft");
+  } finally {
+    await resumed.cleanup();
+  }
+});
+
+test("mounted expiry invalidates only the old side and preserves the fresh sibling receipt", async () => {
+  const activeMap = { revisionId: "family-revision-mixed-age", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap,
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Successful map registration draft was not stored");
+    const stored = JSON.parse(seed.getCaptureDraftSerialized()!);
+    const now = Date.now();
+    stored.updatedAtMs = now;
+    stored.registrationRecordedAtMs.FRONT = now - (24 * 60 * 60 * 1000) - 1;
+    stored.registrationRecordedAtMs.BACK = now;
+    serialized = JSON.stringify(stored);
+  } finally {
+    await seed.cleanup();
+  }
+
+  const resumed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap,
+    captureDraftSerialized: serialized,
+  });
+  try {
+    await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="Card Map registration interruption"]')), "Expired-side interruption did not render");
+    assert.match(resumed.container.textContent ?? "", /front registration receipt is older than 24 hours/i);
+    assert.equal(resumed.getRegistrationCount(), 0);
+    await act(async () => fire(buttonByText(resumed.container, "Retry failed side")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="front centering geometry"]')), "Front-only receipt retry did not restore the map");
+    assert.equal(resumed.getRegistrationCountForSide("FRONT"), 1);
+    assert.equal(resumed.getRegistrationCountForSide("BACK"), 0, "Fresh Back receipt must not be rerun");
+  } finally {
+    await resumed.cleanup();
+  }
+});
+
+test("Card Maps new-source centering persists and resumes with an explicit NO_MAP binding", async () => {
+  const first = await mountWorkspace({
+    draftSurface: "CARD_MAPS",
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(first.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="front centering geometry"]')), "No-map Front centering did not open");
+    await waitFor(() => Boolean(first.getCaptureDraftSerialized()), "No-map Card Maps draft was not preserved");
+    serialized = first.getCaptureDraftSerialized()!;
+    const stored = JSON.parse(serialized);
+    assert.equal(stored.surface, "CARD_MAPS");
+    assert.equal(stored.mapBindingStatus, "NO_MAP");
+    assert.equal(stored.activeMapRevisionId, null);
+    assert.equal(stored.activeMapScope, null);
+  } finally {
+    await first.cleanup();
+  }
+
+  const resumed = await mountWorkspace({
+    draftSurface: "CARD_MAPS",
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    captureDraftSerialized: serialized,
+  });
+  try {
+    assert.equal(resumed.getPollCount(), 0);
+    assert.ok(buttonByText(resumed.container, "Resume preserved draft"));
+    assert.match(resumed.container.textContent ?? "", /No applicable Card Map · manual geometry/);
+    assert.doesNotMatch(resumed.container.textContent ?? "", /for null/);
+    await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="front centering geometry"]')), "NO_MAP Card Maps draft did not resume to centering");
+    assert.equal(resumed.getRegistrationCount(), 0);
+  } finally {
+    await resumed.cleanup();
+  }
+});
+
+test("explicit Discard removes only the current preserved draft and starts no work before selection", async () => {
+  const seedSource = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    registrationFailsOnSide: "BACK",
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(seedSource.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seedSource.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seedSource.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seedSource.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seedSource.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seedSource.getCaptureDraftSerialized()), "Draft seed was not written");
+    serialized = seedSource.getCaptureDraftSerialized()!;
+  } finally {
+    await seedSource.cleanup();
+  }
+
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-discard", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    captureDraftSerialized: serialized,
+  });
+  try {
+    assert.equal(harness.getPollCount(), 0);
+    assert.equal(harness.getRegistrationCount(), 0);
+    await act(async () => fire(buttonByText(harness.container, "Discard preserved draft")!, "click"));
+    assert.equal(harness.getCaptureDraftSerialized(), null);
+    assert.equal(harness.container.querySelector('[aria-label="Preserved capture draft"]'), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh photo flow did not become available after explicit discard");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("invalid preserved draft blocks fresh work and cannot be overwritten before explicit Discard", async () => {
+  const invalidSerialized = JSON.stringify({ version: "tampered-draft", adminToken: "must-remain-auditable" });
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-invalid", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
+    captureDraftSerialized: invalidSerialized,
+  });
+  try {
+    assert.equal(harness.getPollCount(), 0, "Invalid draft resolution must precede any fresh photo flow");
+    assert.equal(buttonByText(harness.container, "Set geometry"), undefined);
+    assert.equal(harness.getCaptureDraftSerialized(), invalidSerialized, "Invalid evidence must not be overwritten silently");
+    assert.match(harness.container.textContent ?? "", /failed strict session validation/i);
+
+    await act(async () => fire(buttonByText(harness.container, "Discard invalid preserved draft")!, "click"));
+    assert.equal(harness.getCaptureDraftSerialized(), null);
+    await waitFor(() => Boolean(buttonByText(harness.container, "Set geometry")), "Fresh flow did not start after explicit invalid-draft discard");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("localStorage get, set, and post-save remove failures stay explicit without losing in-memory work", async () => {
+  const getFailure = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    localStorageGetFails: true,
+  });
+  try {
+    assert.match(getFailure.container.textContent ?? "", /preserved capture draft could not be read/i);
+    assert.ok(buttonByText(getFailure.container, "Discard invalid preserved draft"));
+    assert.equal(buttonByText(getFailure.container, "Set geometry"), undefined);
+  } finally {
+    await getFailure.cleanup();
+  }
+
+  const setFailure = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    localStorageSetFails: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(setFailure.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(setFailure.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(setFailure.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(setFailure.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(setFailure.container, "Continue")!, "click"));
+    await waitFor(() => /localStorage set failed|could not be preserved/i.test(setFailure.container.textContent ?? ""),
+      "Draft set failure was not visible");
+    assert.ok(setFailure.container.querySelector('[aria-label="front centering geometry"]'), "Set failure must retain active centering work");
+  } finally {
+    await setFailure.cleanup();
+  }
+
+  const removeFailure = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    localStorageRemoveFails: true,
+  });
+  try {
+    await act(async () => fire(buttonByText(removeFailure.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(removeFailure.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(removeFailure.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(removeFailure.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(removeFailure.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(removeFailure.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await loadPreparedImage(removeFailure.container, "front rectified trading card");
+    await act(async () => fire(buttonByText(removeFailure.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(removeFailure.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+    await loadPreparedImage(removeFailure.container, "back rectified trading card");
+    await act(async () => fire(buttonByText(removeFailure.container, "Continue")!, "click"));
+    await waitFor(() => removeFailure.bundles.length === 1, "Capture save did not settle");
+    assert.equal(removeFailure.draftCleanupFailures.length, 1);
+    assert.match(removeFailure.draftCleanupFailures[0], /saved successfully.*obsolete browser draft could not be cleared/i);
+    assert.ok(removeFailure.getCaptureDraftSerialized(), "Failed removal must leave the obsolete draft recoverable for explicit retry");
+  } finally {
+    await removeFailure.cleanup();
+  }
+});
+
+test("raw preserved draft remains visible and blocks fresh capture while map binding is unavailable", async () => {
+  const opaqueSerialized = JSON.stringify({
+    version: "speedster-capture-registration-draft-v1",
+    sessionId: "speedster-session-lifecycle-test",
+    activeMapRevisionId: "temporarily-unavailable-revision",
+  });
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    captureDraftSerialized: opaqueSerialized,
+  });
+  try {
+    assert.equal(harness.getPollCount(), 0);
+    assert.equal(buttonByText(harness.container, "Set geometry"), undefined);
+    assert.equal(buttonByText(harness.container, "Resume preserved draft"), undefined);
+    assert.ok(buttonByText(harness.container, "Discard invalid preserved draft"));
+    assert.match(harness.container.textContent ?? "", /failed strict session validation/i);
+    assert.equal(harness.getCaptureDraftSerialized(), opaqueSerialized, "Unknown-binding draft must not be parsed, changed, or deleted");
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("late Resume URL refresh cannot install a draft after its immutable map binding changes", async () => {
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
+    registrationFailsOnSide: "BACK",
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Race-test draft was not written");
+    serialized = seed.getCaptureDraftSerialized()!;
+  } finally {
+    await seed.cleanup();
+  }
+
+  let started = 0;
+  const releases: Array<() => void> = [];
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-race-old", scope: "FAMILY", name: "Old map" },
+    captureDraftSerialized: serialized,
+    preparedImageRequestBarrier: async () => {
+      started += 1;
+      if (started <= 2) await new Promise<void>((resolve) => releases.push(resolve));
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => started === 2, "Resume did not begin both bounded prepared-image refreshes");
+    await harness.rerenderActiveMap({ revisionId: "family-revision-race-new", scope: "FAMILY", name: "New map" });
+    await act(async () => {
+      releases.forEach((release) => release());
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.ok(buttonByText(harness.container, "Resume geometry without old Card Map"));
+    assert.equal(harness.container.querySelector('[aria-label="Card Map registration interruption"]'), null);
+    assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.equal(harness.getPollCount(), 0, "Map mismatch must block all background photo polling until explicit choice");
+    assert.equal(harness.getRegistrationCount(), 0);
+    assert.equal(harness.getCaptureDraftSerialized(), serialized, "Binding-raced draft must remain byte-identical for explicit resolution");
+
+    await act(async () => fire(buttonByText(harness.container, "Resume geometry without old Card Map")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
+      "Explicit geometry-only recovery did not preserve centering work");
+    await waitFor(() => {
+      const recovered = harness.getCaptureDraftSerialized();
+      return Boolean(recovered && JSON.parse(recovered).mapAuthorityAbandoned === true);
+    }, "Recovered geometry was not rewritten with explicit non-authoritative provenance");
+    const recovered = JSON.parse(harness.getCaptureDraftSerialized()!);
+    assert.deepEqual(recovered.provisional, {});
+    assert.equal(recovered.front.mapRegistration, undefined);
+    assert.equal(recovered.back.mapRegistration, undefined);
+    assert.deepEqual(recovered.registrationFailureSides, {}, "Map drift must not invent per-side registration failures");
+    assert.equal(recovered.mapRegistrationFailed, false);
+    assert.equal(harness.getRegistrationCount(), 0, "Neither obsolete nor current Card Map may register during geometry recovery");
+  } finally {
+    releases.forEach((release) => release());
+    await harness.cleanup();
+  }
+});
+
+test("explicit geometry-only recovery round-trips across every current map binding status", async () => {
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "family-revision-status-old", scope: "FAMILY", name: "Old map" },
+    registrationFailsOnSide: "BACK",
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Status-drift seed was not written");
+    serialized = seed.getCaptureDraftSerialized()!;
+  } finally {
+    await seed.cleanup();
+  }
+
+  const cases = [
+    {
+      name: "loaded-new-revision-success",
+      activeMap: { revisionId: "family-revision-status-new", scope: "FAMILY" as const, name: "New map" },
+      mapBindingStatus: "LOADED" as const,
+    },
+    { name: "no-map-unavailable", activeMap: undefined, mapBindingStatus: "NO_MAP" as const, omitInstrumentationReporter: true },
+    { name: "lookup-failed-throw", activeMap: undefined, mapBindingStatus: "LOOKUP_FAILED" as const, decisionInstrumentationThrows: true },
+    { name: "integrity-error-false", activeMap: undefined, mapBindingStatus: "INTEGRITY_ERROR" as const, instrumentationFails: true },
+    {
+      name: "no-map-timeout",
+      activeMap: undefined,
+      mapBindingStatus: "NO_MAP" as const,
+      decisionInstrumentationResult: new Promise<boolean>(() => {}),
+      decisionAuditConfirmationTimeoutMs: 10,
+    },
+  ];
+  for (const candidate of cases) {
+    const harness = await mountWorkspace({
+      proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+      activeMap: candidate.activeMap,
+      mapBindingStatus: candidate.mapBindingStatus,
+      mapLookupFailed: candidate.mapBindingStatus === "LOOKUP_FAILED",
+      captureDraftSerialized: serialized,
+      omitInstrumentationReporter: candidate.omitInstrumentationReporter,
+      decisionInstrumentationThrows: candidate.decisionInstrumentationThrows,
+      instrumentationFails: candidate.instrumentationFails,
+      decisionInstrumentationResult: candidate.decisionInstrumentationResult,
+      decisionAuditConfirmationTimeoutMs: candidate.decisionAuditConfirmationTimeoutMs,
+    });
+    try {
+      assert.ok(buttonByText(harness.container, "Resume geometry without old Card Map"), `${candidate.name}: choice missing`);
+      assert.equal(harness.getPollCount(), 0, `${candidate.name}: photo polling started before choice`);
+      assert.equal(harness.getRegistrationCount(), 0, `${candidate.name}: registration started before choice`);
+      assert.equal(harness.getCaptureDraftSerialized(), serialized, `${candidate.name}: raw draft changed before choice`);
+      await act(async () => fire(buttonByText(harness.container, "Resume geometry without old Card Map")!, "click"));
+      await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
+        `${candidate.name}: geometry recovery did not resume`);
+      await waitFor(() => {
+        const raw = harness.getCaptureDraftSerialized();
+        return Boolean(raw && JSON.parse(raw).mapAuthorityAbandoned === true);
+      }, `${candidate.name}: explicit abandon provenance was not persisted`);
+      const recovered = JSON.parse(harness.getCaptureDraftSerialized()!);
+      assert.equal(recovered.mapBindingStatus, candidate.mapBindingStatus);
+      assert.equal(recovered.activeMapRevisionId, candidate.activeMap?.revisionId ?? null);
+      assert.deepEqual(recovered.provisional, {});
+      assert.deepEqual(recovered.registrationFailureSides, {});
+      assert.equal(recovered.mapRegistrationFailed, false);
+      assert.equal(recovered.mapAuthorityAbandoned, true);
+      const original = JSON.parse(serialized);
+      const decisions = harness.events.filter((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION");
+      assert.equal(decisions.length, candidate.omitInstrumentationReporter ? 0 : 1,
+        `${candidate.name}: reporter availability determines whether the explicit decision can be emitted`);
+      if (decisions[0]) {
+        assert.equal(decisions[0].eventId, original.decisionIds.abandonObsoleteMap);
+        assert.deepEqual(decisions[0].details, {
+          mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
+          mapAuthorityOperationId: original.operationId,
+          mapAuthorityDecisionId: original.decisionIds.abandonObsoleteMap,
+          mapAppliedScope: "NONE",
+          obsoleteMapBindingStatus: "LOADED",
+          obsoleteMapRevisionId: "family-revision-status-old",
+          obsoleteMapScope: "FAMILY",
+          obsoleteMapName: "Old map",
+        });
+      }
+      assert.notEqual(recovered.decisionIds.abandonObsoleteMap, original.decisionIds.abandonObsoleteMap,
+        `${candidate.name}: transformed draft must rotate the next immutable decision identity`);
+      assert.equal(harness.events.some((event) => event.details?.mapFailureCode === "REGISTRATION_FAILED"), false,
+        `${candidate.name}: map drift must not fabricate REGISTRATION_FAILED`);
+      if (candidate.omitInstrumentationReporter) assert.match(harness.container.textContent ?? "", /audit reporter is unavailable/i);
+      if (candidate.decisionInstrumentationThrows || candidate.instrumentationFails) {
+        await waitFor(() => /audit write failed/i.test(harness.container.textContent ?? ""), `${candidate.name}: audit failure was not visible`);
+      }
+      if (candidate.decisionInstrumentationResult) {
+        await waitFor(() => /not confirmed within 10 ms/i.test(harness.container.textContent ?? ""), `${candidate.name}: audit timeout was not visible`);
+      }
+      assert.equal(harness.getRegistrationCount(), 0, `${candidate.name}: map authority was silently reused`);
+
+      if (candidate.name === "loaded-new-revision-success") {
+        const later = await mountWorkspace({
+          proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+          activeMap: { revisionId: "family-revision-status-later", scope: "FAMILY", name: "Later map" },
+          captureDraftSerialized: harness.getCaptureDraftSerialized()!,
+        });
+        try {
+          await act(async () => fire(buttonByText(later.container, "Resume geometry without old Card Map")!, "click"));
+          await waitFor(() => later.events.some((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION"),
+            "Later drift did not emit its rotated immutable decision");
+          const laterDecision = later.events.find((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION")!;
+          assert.equal(laterDecision.eventId, recovered.decisionIds.abandonObsoleteMap);
+          assert.notEqual(laterDecision.eventId, original.decisionIds.abandonObsoleteMap);
+        } finally {
+          await later.cleanup();
+        }
+      }
+    } finally {
+      await harness.cleanup();
+    }
+  }
+});
+
 test("actual HTTP 402 with claimed retryable 503 evidence fails visibly as CLIENT_PROTOCOL", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
@@ -1834,6 +2378,85 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
   }
 });
 
+test("first of two rescues serializes, parses, reloads the remaining side, and preserves explicit abandon", async () => {
+  const activeMap = { revisionId: "family-revision-two-rescues", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
+  const first = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap,
+    registrationNeedsRescueOnBoth: true,
+  });
+  let serialized: string;
+  try {
+    await act(async () => fire(buttonByText(first.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(first.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="FRONT Card Map anchor rescue"]')), "Front rescue did not open first");
+    const rescueImage = await loadPreparedImage(first.container, "front current card");
+    const failedHandle = first.container.querySelector('[aria-label="Move anchor 1, out_of_card"]') as HTMLButtonElement | null;
+    assert.ok(failedHandle && rescueImage.parentElement);
+    Object.defineProperty(rescueImage, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 }),
+    });
+    await act(async () => {
+      fire(failedHandle, "pointerdown", { pointerId: 45, clientX: 0, clientY: 60 });
+      fire(rescueImage.parentElement!, "pointermove", { pointerId: 45, clientX: 400, clientY: 300 });
+      fire(rescueImage.parentElement!, "pointerup", { pointerId: 45, clientX: 400, clientY: 300 });
+    });
+    await act(async () => fire(buttonByText(first.container, "Confirm corrected anchors")!, "click"));
+    await waitFor(() => Boolean(first.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Back rescue did not remain after Front success");
+    await waitFor(() => Boolean(first.getCaptureDraftSerialized()), "Remaining Back rescue was not serialized");
+    serialized = first.getCaptureDraftSerialized()!;
+    const parsed = parseSpeedsterCaptureRegistrationDraft(serialized, {
+      surface: "AI_GRADER",
+      sessionId: "speedster-session-lifecycle-test",
+      cardProfile: "POKEMON",
+      mapBindingStatus: "LOADED",
+      activeMapRevisionId: activeMap.revisionId,
+      activeMapScope: activeMap.scope,
+    });
+    assert.ok(parsed);
+    assert.deepEqual(Object.keys(parsed.failures), ["BACK"]);
+    assert.deepEqual(Object.keys(parsed.attemptIds), ["BACK"]);
+    assert.ok(parsed.provisional.FRONT);
+  } finally {
+    await first.cleanup();
+  }
+
+  const resumed = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap,
+    captureDraftSerialized: serialized,
+  });
+  try {
+    await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Remaining Back rescue did not reload");
+    assert.equal(resumed.getRegistrationCount(), 0, "Reload must not silently repeat the successful Front rescue");
+    await loadPreparedImage(resumed.container, "back current card");
+    await act(async () => fire(buttonByText(resumed.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="front centering geometry"]')), "Explicit rescue abandonment did not reach centering");
+    await waitFor(() => {
+      const saved = resumed.getCaptureDraftSerialized();
+      return Boolean(saved && JSON.parse(saved).stage === "FRONT_CENTERING");
+    }, "Explicit-abandon centering draft was not serialized");
+    const parsed = parseSpeedsterCaptureRegistrationDraft(resumed.getCaptureDraftSerialized()!, {
+      surface: "AI_GRADER",
+      sessionId: "speedster-session-lifecycle-test",
+      cardProfile: "POKEMON",
+      mapBindingStatus: "LOADED",
+      activeMapRevisionId: activeMap.revisionId,
+      activeMapScope: activeMap.scope,
+    });
+    assert.ok(parsed);
+    assert.deepEqual(parsed.registrationFailureSides, { BACK: true });
+    assert.equal(parsed.mapRegistrationFailed, true);
+  } finally {
+    await resumed.cleanup();
+  }
+});
+
 test("global registration failure explains four-anchor confirmation and accepts unchanged credible proposals", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
@@ -1894,16 +2517,21 @@ test("one non-cooperative registration timeout stops for explicit choice without
 
 test("failed final capture save exposes Retry and resubmits one byte-identical bundle", async () => {
   const submitted: string[] = [];
+  let draftAtFirstSaveStart: string | null = null;
+  let resolveFirstSave: ((result: { saved: false; message: string }) => void) | null = null;
+  const firstSave = new Promise<{ saved: false; message: string }>((resolve) => { resolveFirstSave = resolve; });
   let saveCalls = 0;
+  const activeMap = { revisionId: "family-revision-final-save-retry", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
-    onSave: async (bundle) => {
+    activeMap,
+    onSave: (bundle) => {
       saveCalls += 1;
       submitted.push(JSON.stringify(bundle));
-      await Promise.resolve();
-      return saveCalls === 1
-        ? { saved: false, message: "Transient capture save failure" }
-        : { saved: true };
+      if (saveCalls === 1) draftAtFirstSaveStart = window.localStorage.getItem(
+        "tenkings:speedster:capture-registration-draft:v1:speedster-session-lifecycle-test",
+      );
+      return saveCalls === 1 ? firstSave : { saved: true };
     },
   });
   try {
@@ -1932,6 +2560,45 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
       fire(backOverlay, "pointerup", { pointerId: 13, clientX: 127, clientY: 266.7 });
     });
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(() => saveCalls === 1, "The first final save did not begin");
+    assert.ok(draftAtFirstSaveStart, "The final browser draft must exist before onReady begins");
+    const preSaveDraft = parseSpeedsterCaptureRegistrationDraft(draftAtFirstSaveStart, {
+      surface: "AI_GRADER",
+      sessionId: "speedster-session-lifecycle-test",
+      cardProfile: "POKEMON",
+      mapBindingStatus: "LOADED",
+      activeMapRevisionId: activeMap.revisionId,
+      activeMapScope: activeMap.scope,
+    });
+    assert.ok(preSaveDraft);
+    const compactSide = (side: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle["front"]) => ({
+      originalStorageKey: side.originalStorageKey,
+      rectifiedStorageKey: side.rectifiedStorageKey,
+      inspectionStorageKey: side.inspectionStorageKey,
+      inspectionFrame: side.inspectionFrame,
+      viewStorageKeys: side.viewStorageKeys,
+      sourceCorners: side.sourceCorners,
+      transform: side.transform,
+      centeringQuad: side.centeringQuad,
+      centeringBorders: side.centeringBorders,
+    });
+    const submittedBundle = harness.bundles[0];
+    assert.equal(speedsterCaptureDraftMatchesCommittedSession(preSaveDraft, {
+      workflowState: "CAPTURED",
+      capture: {
+        cornerShape: submittedBundle.cornerShape,
+        front: compactSide(submittedBundle.front),
+        back: compactSide(submittedBundle.back),
+      },
+      mapRevisionId: activeMap.revisionId,
+      mapRegistration: {
+        front: Object.fromEntries(Object.entries(submittedBundle.front.mapRegistration!).filter(([key]) => key !== "serverReceipt")),
+        back: Object.fromEntries(Object.entries(submittedBundle.back.mapRegistration!).filter(([key]) => key !== "serverReceipt")),
+      },
+    }), true, "The unsettled pre-request draft must exactly reconcile with the would-be committed server capture");
+    assert.equal(preSaveDraft.captureSavePendingRetry, true);
+    assert.ok(preSaveDraft.front.centering && preSaveDraft.back.centering);
+    await act(async () => resolveFirstSave?.({ saved: false, message: "Transient capture save failure" }));
     await waitFor(
       () => /Transient capture save failure/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
       "Failed save did not return to preserved Back centering",
@@ -1944,6 +2611,18 @@ test("failed final capture save exposes Retry and resubmits one byte-identical b
       "127",
       "Retry must remount the human-adjusted Back centering point",
     );
+    await waitFor(() => Boolean(harness.getCaptureDraftSerialized()), "Failed active-map save did not retain a durable draft");
+    const retainedDraft = parseSpeedsterCaptureRegistrationDraft(harness.getCaptureDraftSerialized()!, {
+      surface: "AI_GRADER",
+      sessionId: "speedster-session-lifecycle-test",
+      cardProfile: "POKEMON",
+      mapBindingStatus: "LOADED",
+      activeMapRevisionId: activeMap.revisionId,
+      activeMapScope: activeMap.scope,
+    });
+    assert.ok(retainedDraft, "Failed final save must leave a strictly parseable active-map draft");
+    assert.equal(retainedDraft.stage, "BACK_CENTERING");
+    assert.ok(retainedDraft.front.mapRegistration && retainedDraft.back.mapRegistration);
 
     const retry = buttonByText(harness.container, "Retry save");
     assert.ok(retry);

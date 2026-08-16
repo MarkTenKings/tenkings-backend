@@ -37,6 +37,7 @@ export type CompletedSpeedsterIdentityInput = {
   parallel?: string | null;
   insert?: string | null;
   cardNumber?: string | null;
+  layoutType?: "POKEMON" | "TRAINER" | "ENERGY" | null;
   cardType?: "SPORTS" | "POKEMON";
 };
 
@@ -49,6 +50,7 @@ const SPEEDSTER_IDENTITY_KEYS = new Set([
   "parallel",
   "insert",
   "cardNumber",
+  "layoutType",
   "cardType",
 ]);
 
@@ -980,6 +982,13 @@ export function normalizeCompletedSpeedsterIdentity(
   if (value.cardType !== undefined && value.cardType !== category) {
     throw new Error("Completed Speedster identity cardType does not match its authoritative session category");
   }
+  if (category === "SPORTS" && text(value.layoutType)) {
+    throw new Error("Sports identity cannot carry a Pokémon layout type");
+  }
+  const layoutType = text(value.layoutType);
+  if (layoutType && layoutType !== "POKEMON" && layoutType !== "TRAINER" && layoutType !== "ENERGY") {
+    throw new Error("Completed Speedster identity has an invalid Pokémon layout type");
+  }
   const trimmed = Object.fromEntries(Object.entries(value).map(([key, nested]) => [
     key,
     typeof nested === "string" ? nested.trim() : nested,
@@ -1056,6 +1065,12 @@ export async function correctCompletedSpeedsterIdentity(
   }
   if (session.cardProfile !== "SPORTS" && session.cardProfile !== "POKEMON") {
     throw new Error("Completed Speedster session has an unsupported card category");
+  }
+  const storedIdentity = session.identity && typeof session.identity === "object" && !Array.isArray(session.identity)
+    ? session.identity as Record<string, unknown>
+    : {};
+  if (text(storedIdentity.layoutType) !== text(nextIdentity.layoutType)) {
+    throw new Error("Completed Pokémon layout type is immutable");
   }
   const normalized = normalizeCompletedSpeedsterIdentity(session.cardProfile, nextIdentity);
   await tx.$queryRaw<Array<{ id: string }>>`

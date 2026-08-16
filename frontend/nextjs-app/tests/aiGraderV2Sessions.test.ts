@@ -593,6 +593,7 @@ test("POST creates one compact draft with server-owned rule and creator identity
       cardProfile: "POKEMON",
       identity: {
         cardName: "  Charizard  ",
+        layoutType: "POKEMON",
         year: "1999",
         productSet: "Base Set",
         parallel: "Holo",
@@ -608,6 +609,7 @@ test("POST creates one compact draft with server-owned rule and creator identity
   assert.equal(saved?.ruleVersion, SPEEDSTER_RULE_VERSION);
   assert.deepEqual(saved?.identity, {
     cardName: "Charizard",
+    layoutType: "POKEMON",
     year: "1999",
     productSet: "Base Set",
     parallel: "Holo",

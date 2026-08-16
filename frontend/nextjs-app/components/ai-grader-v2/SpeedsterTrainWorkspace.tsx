@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type {
   SpeedsterMapDesignBoundary,
+  SpeedsterMapFilterPolicyVersion,
   SpeedsterMapScope,
   SpeedsterMapZone,
   SpeedsterMapZoneContentType,
@@ -29,7 +30,11 @@ import {
   snapSpeedsterPoint,
   type SpeedsterGradientMap,
 } from "../../lib/ai-grader-v2/gradient-snap";
-import type { SpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
+import {
+  speedsterPokemonLayoutType,
+  type SpeedsterPokemonLayoutType,
+  type SpeedsterSessionIdentity,
+} from "../../lib/ai-grader-v2/identity";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import {
   cardMapDraftEditableSide,
@@ -67,7 +72,7 @@ export type SpeedsterTrainMapState = Readonly<{
     revisionHash: string;
     displayIdentity: SpeedsterSessionIdentity;
     mapSchemaVersion: string;
-    filterPolicyVersion: string;
+    filterPolicyVersion: SpeedsterMapFilterPolicyVersion;
     createdAt: string;
     sourceProvenance?: Readonly<{
       sourceSessionId: string;
@@ -90,6 +95,12 @@ export type SpeedsterTrainSource = Readonly<{
   sessionId: string;
   cardProfile: SpeedsterCardProfile;
   identity: SpeedsterSessionIdentity;
+  familyLayoutType?: SpeedsterPokemonLayoutType | null;
+  familyLayoutAuthority?: Readonly<{
+    source: "SESSION_IDENTITY" | "LEGACY_SOURCE_AUTHORITY";
+    selectedByAdminId?: string;
+    createdAt?: string;
+  }> | null;
   front: Readonly<{
     rectifiedUrl: string;
     centeringQuad: SpeedsterQuad;
@@ -324,6 +335,7 @@ function familyMapName(identity: SpeedsterSessionIdentity) {
   return [
     identity.year,
     "manufacturer" in identity ? "Sports" : "Pokémon",
+    "cardName" in identity ? identity.layoutType ? `${identity.layoutType} layout` : null : null,
     "manufacturer" in identity ? identity.manufacturer : null,
     identity.productSet,
     "insert" in identity ? identity.insert : null,
@@ -414,6 +426,10 @@ export function SpeedsterTrainWorkspace({
   const [saveSuccess, setSaveSuccess] = useState<SpeedsterDualMapSaveResult | null>(null);
   const [recoverableSnapshot, setRecoverableSnapshot] = useState<string | null>(null);
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [familyLayoutType, setFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | "">(
+    speedsterPokemonLayoutType(source.identity) ?? source.familyLayoutType ?? "",
+  );
+  const [savedFamilyLayoutType, setSavedFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | null>(null);
   const [message, setMessage] = useState(
     map.status === "LOADED"
       ? map.editable
@@ -434,9 +450,15 @@ export function SpeedsterTrainWorkspace({
     FRONT: sideReadiness(frontEditor),
     BACK: sideReadiness(backEditor),
   }), [backEditor, frontEditor]);
-  const ready = readiness.FRONT.ready && readiness.BACK.ready;
+  const familyIdentity = useMemo<SpeedsterSessionIdentity>(() => (
+    source.cardProfile === "POKEMON" && "cardName" in source.identity && familyLayoutType
+      ? { ...source.identity, layoutType: familyLayoutType }
+      : source.identity
+  ), [familyLayoutType, source.cardProfile, source.identity]);
+  const ready = readiness.FRONT.ready && readiness.BACK.ready
+    && (source.cardProfile !== "POKEMON" || Boolean(familyLayoutType));
   const baselineScope = map.scope ?? null;
-  const familyName = familyMapName(source.identity);
+  const familyName = familyMapName(familyIdentity);
   const exactName = exactMapName(source.identity);
   const safetyWarnings = useMemo(() => (
     familySafetyWarnings(frontEditor, backEditor)
@@ -444,7 +466,7 @@ export function SpeedsterTrainWorkspace({
   const recovery = useMemo(() => {
     try {
       const draft = createCardMapDraft({
-        source,
+        source: { ...source, identity: familyIdentity },
         front: recoverySide(frontEditor.map),
         back: recoverySide(backEditor.map),
       });
@@ -456,7 +478,7 @@ export function SpeedsterTrainWorkspace({
         error: error instanceof Error ? error.message : "Card Map draft could not be prepared for recovery.",
       };
     }
-  }, [backEditor.map, frontEditor.map, source]);
+  }, [backEditor.map, familyIdentity, frontEditor.map, source]);
   const recoveryCurrent = Boolean(recovery.serialized && recovery.serialized === recoverableSnapshot);
 
   const editorFor = (candidate: SpeedsterCardSide) => candidate === "FRONT" ? frontEditor : backEditor;
@@ -774,6 +796,7 @@ export function SpeedsterTrainWorkspace({
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           sessionId: source.sessionId,
+          ...(source.cardProfile === "POKEMON" ? { familyLayoutType } : {}),
           front: frontEditor.map,
           back: backEditor.map,
         }),
@@ -791,6 +814,9 @@ export function SpeedsterTrainWorkspace({
         return;
       }
       setSaveSuccess(payload.maps);
+      if (source.cardProfile === "POKEMON" && familyLayoutType) {
+        setSavedFamilyLayoutType(familyLayoutType);
+      }
       setMessage(
         `Saved Family r${payload.maps.family.version} and Exact r${payload.maps.exact.version}. Both are active and complete; they never merge.`,
       );
@@ -855,7 +881,7 @@ export function SpeedsterTrainWorkspace({
     setRecoveryError(null);
     try {
       if (file.size > 2_000_000) throw new Error("Card Map draft file exceeds the 2 MB recovery limit.");
-      const imported = parseCardMapDraft(await file.text(), source);
+      const imported = parseCardMapDraft(await file.text(), { ...source, identity: familyIdentity });
       setFrontEditor(editorFromDraft(imported.sides.front));
       setBackEditor(editorFromDraft(imported.sides.back));
       setUndoBySide({ FRONT: [], BACK: [] });
@@ -985,9 +1011,55 @@ export function SpeedsterTrainWorkspace({
         <p>The same human-authored Front/Back geometry starts both maps. Exact replaces Family when it applies; maps never merge. Use one shared frame or layout landmark in each quadrant so the Family map registers matching sibling cards safely.</p>
       </section>
 
+      {source.cardProfile === "POKEMON" ? (
+        <section className={styles.familyWarning} aria-label="Pokémon family layout authority">
+          <strong>HUMAN-AUTHORITATIVE V2 FAMILY LAYOUT</strong>
+          <label>
+            Layout type
+            <select
+              aria-label="Family map layout type"
+              value={familyLayoutType}
+              onChange={(event) => {
+                setFamilyLayoutType(event.target.value as SpeedsterPokemonLayoutType | "");
+                setSaveSuccess(null);
+                setSaveFailure(null);
+              }}
+              disabled={Boolean(speedsterPokemonLayoutType(source.identity) || source.familyLayoutType || savedFamilyLayoutType)}
+              required
+            >
+              <option value="">SELECT LAYOUT</option>
+              <option value="POKEMON">POKÉMON</option>
+              <option value="TRAINER">TRAINER</option>
+              <option value="ENERGY">ENERGY</option>
+            </select>
+          </label>
+          <p>
+            This human selection is written into the V2 Family match key and immutable revision provenance.
+            {speedsterPokemonLayoutType(source.identity)
+              ? " It is locked to this new source session's authoritative identity."
+              : source.familyLayoutType
+                ? " It is locked to this legacy source's immutable layout-authority record; the completed session is unchanged."
+                : savedFamilyLayoutType
+                  ? " This successful save locked the selection in the legacy source's immutable layout-authority record; the completed session remains unchanged."
+                : " This first selection will be locked in an immutable legacy-source authority record; the completed session is not rewritten."}
+          </p>
+          {source.familyLayoutAuthority ? (
+            <p>
+              Authority provenance · {source.familyLayoutAuthority.source === "SESSION_IDENTITY"
+                ? "SESSION_IDENTITY · immutable captured identity"
+                : `LEGACY_SOURCE_AUTHORITY · selected by ${source.familyLayoutAuthority.selectedByAdminId ?? "unknown admin"} · ${source.familyLayoutAuthority.createdAt
+                  ? new Date(source.familyLayoutAuthority.createdAt).toISOString()
+                  : "timestamp unavailable"}`}
+            </p>
+          ) : savedFamilyLayoutType ? (
+            <p>Authority provenance · LEGACY_SOURCE_AUTHORITY · committed by this successful atomic save.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <aside className={styles.familyWarning} role="status">
         <strong>V2 PADDED FILTERING · OWNER-AUTHORIZED</strong>
-        <p>Saving creates new immutable Family and Exact v2 revisions with explicit per-zone filter authority and fixed 0.6 mm physical-card padding while retaining strict full-contour containment. The 50-card replay remains inconclusive—not passed—and activation is proceeding under the owner&apos;s 2026-08-12 waiver with sole-grader review and the removed-findings audit as the safety net. Prior v1 revisions remain unchanged and restorable.</p>
+        <p>Saving creates new immutable Family and Exact v2 revisions with explicit per-zone filter authority and fixed 0.6 mm physical-card padding while retaining strict full-contour containment. The 50-card replay remains inconclusive—not passed—and activation is proceeding under the owner&apos;s 2026-08-12 waiver with sole-grader review and the removed-findings audit as the safety net. Prior eligible v1 Exact and Sports revisions remain unchanged and restorable; legacy Pokémon FAMILY revisions remain historical-only and non-restorable.</p>
       </aside>
 
       {map.status === "INTEGRITY_ERROR" ? (

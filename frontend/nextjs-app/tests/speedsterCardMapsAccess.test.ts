@@ -44,8 +44,9 @@ test("new CARD MAP creation reuses the exact session, map, capture, and immutabl
   assert.match(cardMapsPage, /fetch\("\/api\/admin\/ai-grader-v2\/sessions"/);
   assert.match(cardMapsPage, /maps\/current\?sessionId=/);
   assert.match(cardMapsPage, /workflowState: "CAPTURED"/);
-  assert.match(cardMapsPage, /revisionId: bundle\.front\.mapRegistration\.mapRevisionId/);
-  assert.match(cardMapsPage, /filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION/);
+  assert.match(cardMapsPage, /revisionId: frontRegistration!\.mapRevisionId/);
+  assert.match(cardMapsPage, /exactFilterPolicyVersion = map\?\.status === "LOADED"[\s\S]*?map\.revision\?\.filterPolicyVersion/);
+  assert.match(cardMapsPage, /filterPolicyVersion: exactFilterPolicyVersion/);
   assert.match(cardMapsPage, /<CaptureWorkspace/);
   assert.match(cardMapsPage, /const reportCaptureInstrumentation = useCallback/);
   assert.match(cardMapsPage, /sessions\/\$\{encodeURIComponent\(sourceSessionId\)\}\/instrumentation/);
@@ -55,11 +56,12 @@ test("new CARD MAP creation reuses the exact session, map, capture, and immutabl
   assert.match(cardMapsPage, /Saving creates both:/);
   assert.doesNotMatch(cardMapsPage, /type="radio"|card-map-scope|ScopeSelector|EXACT OVERRIDE/);
   assert.doesNotMatch(cardMapsPage, /initializeReview|review-action|SAM 3/);
-  assert.doesNotMatch(cardMapsPage, /"[^"\n]*TRAIN[^"\n]*"/);
+  assert.doesNotMatch(cardMapsPage, /"[^"\n]*\bTRAIN\b[^"\n]*"/);
 });
 
 test("completed CARD MAP mode prefers exact then family baseline and keeps a local identity-correction link", () => {
-  assert.equal(cardMapsPage.match(/maps\/source\?sessionId=/g)?.length, 2);
+  assert.equal(cardMapsPage.match(/maps\/source\?sessionId=/g)?.length, 3,
+    "completed Exact/Family loading plus committed-capture reconciliation each use the owned source endpoint");
   assert.match(cardMapsPage, /loadSource\("EXACT"\)/);
   assert.match(cardMapsPage, /loadSource\("FAMILY"\)/);
   assert.match(cardMapsPage, /encodeURIComponent\(sessionId\)/);

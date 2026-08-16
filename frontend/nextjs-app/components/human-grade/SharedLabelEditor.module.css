@@ -136,7 +136,8 @@
   clip: rect(0 0 0 0);
 }
 
-.root :global(.label-composer input) {
+.root :global(.label-composer input),
+.root :global(.label-composer select) {
   width: 100%;
   min-width: 0;
   border: 0;
@@ -149,7 +150,8 @@
   text-transform: uppercase;
 }
 
-.root :global(.label-composer input:focus) {
+.root :global(.label-composer input:focus),
+.root :global(.label-composer select:focus) {
   border-color: #168a45;
   box-shadow: 0 2px 0 #168a45;
 }
@@ -174,6 +176,7 @@
 }
 
 .root :global(.metadata-fields input),
+.root :global(.metadata-fields select),
 .root :global(.descriptor-fields input),
 .root :global(.card-number-field input) {
   font-family: Arial, sans-serif;

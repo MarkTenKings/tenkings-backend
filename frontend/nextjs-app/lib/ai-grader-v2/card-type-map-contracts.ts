@@ -4,7 +4,11 @@ import type {
   SpeedsterQuad,
   SpeedsterReviewFinding,
 } from "./contracts";
-import type { SpeedsterSessionIdentity } from "./identity";
+import {
+  speedsterPokemonLayoutType,
+  type SpeedsterPokemonLayoutType,
+  type SpeedsterSessionIdentity,
+} from "./identity";
 
 export const SPEEDSTER_MAP_SCHEMA_VERSION = "speedster-card-type-map-v1" as const;
 export const SPEEDSTER_MAP_SCHEMA_VERSION_V2 = "speedster-card-type-map-v2" as const;
@@ -17,6 +21,7 @@ export const SPEEDSTER_MAP_FILTER_RULE_ID = "human-zone-full-contour-containment
 export const SPEEDSTER_MAP_FILTER_RULE_ID_V2 = "human-authorized-padded-zone-full-contour-v2" as const;
 export const SPEEDSTER_MAP_ZONE_OVERLAP_METHOD = "candidate-contour-segment-containment-v1" as const;
 export const SPEEDSTER_MAP_FILTER_PADDING_MM = 0.6 as const;
+export const SPEEDSTER_POKEMON_FAMILY_KEY_VERSION_V2 = "v2" as const;
 
 export type SpeedsterMapSchemaVersion =
   | typeof SPEEDSTER_MAP_SCHEMA_VERSION
@@ -52,7 +57,7 @@ export type SpeedsterCardTypeMapKey = Readonly<{
   cardNumber: string | null;
 }>;
 
-export type SpeedsterFamilyCardTypeMapKey = Readonly<{
+export type SpeedsterLegacyFamilyCardTypeMapKey = Readonly<{
   scope: "FAMILY";
   category: "SPORTS";
   year: string;
@@ -67,6 +72,20 @@ export type SpeedsterFamilyCardTypeMapKey = Readonly<{
   productSet: string;
   parallel: string | null;
 }>;
+
+export type SpeedsterPokemonFamilyCardTypeMapKeyV2 = Readonly<{
+  scope: "FAMILY";
+  keyVersion: typeof SPEEDSTER_POKEMON_FAMILY_KEY_VERSION_V2;
+  category: "POKEMON";
+  layoutType: SpeedsterPokemonLayoutType;
+  year: string;
+  productSet: string;
+  parallel: string | null;
+}>;
+
+export type SpeedsterFamilyCardTypeMapKey =
+  | SpeedsterLegacyFamilyCardTypeMapKey
+  | SpeedsterPokemonFamilyCardTypeMapKeyV2;
 
 export type SpeedsterMapMatchKey = SpeedsterCardTypeMapKey | SpeedsterFamilyCardTypeMapKey;
 
@@ -435,6 +454,43 @@ export function speedsterFamilyCardTypeMapKey(
     };
   }
   if (!("cardName" in identity)) throw new Error("Pokemon family map identity is category-incompatible.");
+  const layoutType = speedsterPokemonLayoutType(identity);
+  if (!layoutType) throw new Error("Pokemon V2 family map identity is missing layoutType.");
+  return {
+    scope: "FAMILY",
+    keyVersion: SPEEDSTER_POKEMON_FAMILY_KEY_VERSION_V2,
+    category,
+    layoutType,
+    year: required(identity.year, "year"),
+    productSet: required(identity.productSet, "productSet"),
+    parallel: optional(identity.parallel),
+  };
+}
+
+/** Historical parser only. Runtime lookup and new authoring must not call this. */
+export function speedsterLegacyFamilyCardTypeMapKey(
+  category: "SPORTS" | "POKEMON",
+  identity: SpeedsterSessionIdentity,
+): SpeedsterLegacyFamilyCardTypeMapKey {
+  const required = (value: string | null | undefined, field: string) => {
+    const normalized = normalizeSpeedsterMapKeyText(value);
+    if (!normalized) throw new Error(`Speedster legacy family map key is missing ${field}.`);
+    return normalized;
+  };
+  const optional = (value: string | null | undefined) => normalizeSpeedsterMapKeyText(value);
+  if (category === "SPORTS") {
+    if (!("playerName" in identity)) throw new Error("Sports family map identity is category-incompatible.");
+    return {
+      scope: "FAMILY",
+      category,
+      year: required(identity.year, "year"),
+      manufacturer: required(identity.manufacturer, "manufacturer"),
+      productSet: required(identity.productSet, "productSet"),
+      insert: optional(identity.insert),
+      parallel: optional(identity.parallel),
+    };
+  }
+  if (!("cardName" in identity)) throw new Error("Pokemon family map identity is category-incompatible.");
   return {
     scope: "FAMILY",
     category,
@@ -442,6 +498,15 @@ export function speedsterFamilyCardTypeMapKey(
     productSet: required(identity.productSet, "productSet"),
     parallel: optional(identity.parallel),
   };
+}
+
+export function isSpeedsterPokemonFamilyKeyV2(
+  key: SpeedsterMapMatchKey,
+): key is SpeedsterPokemonFamilyCardTypeMapKeyV2 {
+  return speedsterMapScopeForKey(key) === "FAMILY"
+    && key.category === "POKEMON"
+    && "keyVersion" in key
+    && key.keyVersion === SPEEDSTER_POKEMON_FAMILY_KEY_VERSION_V2;
 }
 
 export function speedsterMapScopeForKey(key: SpeedsterMapMatchKey): SpeedsterMapScope {

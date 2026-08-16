@@ -24,6 +24,7 @@ type CardWorkspace = {
   authoritativeIdentity: {
     playerName?: string | null;
     cardName?: string | null;
+    layoutType?: "POKEMON" | "TRAINER" | "ENERGY" | null;
     year: string | null;
     manufacturer?: string | null;
     productSet: string | null;
@@ -62,6 +63,7 @@ function identityEditorValue(card: CardWorkspace): HumanGradeLabelEditorValue {
     cardType: card.cardProfile,
     playerName: card.authoritativeIdentity.playerName ?? "",
     cardName: card.authoritativeIdentity.cardName ?? "",
+    layoutType: card.authoritativeIdentity.layoutType ?? "",
     year: card.authoritativeIdentity.year ?? "",
     manufacturer: card.authoritativeIdentity.manufacturer ?? "",
     productSet: card.authoritativeIdentity.productSet ?? "",
@@ -232,6 +234,7 @@ export default function CompletedSpeedsterCardPage() {
             }
           : {
               cardName: identityForm.cardName,
+              ...(identityForm.layoutType ? { layoutType: identityForm.layoutType } : {}),
               year: identityForm.year,
               productSet: identityForm.productSet,
               parallel: identityForm.parallel,
@@ -295,6 +298,7 @@ export default function CompletedSpeedsterCardPage() {
               <h2>{card.authoritativeIdentity.playerName ?? card.authoritativeIdentity.cardName ?? "Identity incomplete"}</h2>
               <p>{[
                 card.authoritativeIdentity.year,
+                card.authoritativeIdentity.layoutType ? `${card.authoritativeIdentity.layoutType} layout` : null,
                 card.authoritativeIdentity.manufacturer,
                 card.authoritativeIdentity.productSet,
                 card.authoritativeIdentity.parallel,

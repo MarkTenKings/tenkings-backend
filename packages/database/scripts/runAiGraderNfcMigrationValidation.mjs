@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, copyFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -19,6 +20,7 @@ const TARGET_MIGRATIONS = [
   "20260718150000_ai_grader_design_reference_v1",
   "20260721183000_ai_grader_calibration_activation_registry",
   "20260813120000_speedster_map_registration_lessons",
+  "20260813200000_speedster_pokemon_layout_key_v2",
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
@@ -26,6 +28,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDir, "../../..");
 const composeFile = resolve(repositoryRoot, "docker-compose.ai-grader-nfc-migration-validation.yml");
 const migrationsDir = resolve(repositoryRoot, "packages/database/prisma/migrations");
+const prismaSchema = resolve(repositoryRoot, "packages/database/prisma/schema.prisma");
 const absentSql = resolve(scriptDir, "validateAiGraderNfcSchemaAbsent.sql");
 const appliedSql = resolve(scriptDir, "validateAiGraderNfcMigration.sql");
 const mathematicalCalibrationSnapshotSql = resolve(
@@ -40,6 +43,7 @@ const speedsterMapRegistrationLessonSql = resolve(
   scriptDir,
   "validateSpeedsterMapRegistrationLesson.sql",
 );
+const speedsterLayoutKeyV2Sql = resolve(scriptDir, "validateSpeedsterLayoutKeyV2.sql");
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
 const advisoryLockValidationScript = resolve(
@@ -68,6 +72,7 @@ for (const requiredPath of [
   mathematicalCalibrationSnapshotSql,
   calibrationActivationRegistrySql,
   speedsterMapRegistrationLessonSql,
+  speedsterLayoutKeyV2Sql,
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
@@ -215,13 +220,32 @@ function localPublishedPort() {
   return port;
 }
 
+function legacySessionSnapshot() {
+  return queryScalar(
+    `SELECT count(*)::text || ':' || md5(string_agg(
+       concat_ws(E'\\x1f', "id", ctid::text, xmin::text,
+         encode(convert_to("identity"::text, 'UTF8'), 'hex'), row_to_json(session_row)::text),
+       E'\\x1e' ORDER BY "id"))
+       FROM "AiGraderV2Session" session_row
+      WHERE "id" LIKE 'speedster-layout-v2-upgrade-fixture-%'`,
+    "snapshotting pre-existing Speedster identity rows",
+  );
+}
+
 const migrationCount = readdirSync(migrationsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(resolve(migrationsDir, entry.name, "migration.sql")))
   .length;
 if (migrationCount < 1) fail("No Prisma migrations were found.");
 
 let cleanupRequired = false;
+let upgradeSchemaRoot;
 const cleanupPlan = createDisposableCleanupPlan(composeArgs);
+function cleanupUpgradeSchema() {
+  if (!upgradeSchemaRoot) return;
+  const exactUpgradeSchemaRoot = upgradeSchemaRoot;
+  upgradeSchemaRoot = undefined;
+  rmSync(exactUpgradeSchemaRoot, { recursive: true, force: true });
+}
 function cleanup() {
   if (!cleanupRequired) return;
   const cleanupArgs = cleanupPlan.claim();
@@ -233,11 +257,19 @@ function cleanup() {
 
 for (const [signal, exitCode] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.once(signal, () => {
+    let cleanupFailure = false;
+    try {
+      cleanupUpgradeSchema();
+    } catch {
+      cleanupFailure = true;
+    }
     try {
       cleanup();
-    } finally {
-      process.exit(exitCode);
+    } catch {
+      cleanupFailure = true;
     }
+    if (cleanupFailure) console.error("[nfc-migration-validation] Signal cleanup was incomplete.");
+    process.exit(exitCode);
   });
 }
 
@@ -260,6 +292,26 @@ try {
     TEN_KINGS_V2_DISPOSABLE_VALIDATION: "1",
   };
 
+  upgradeSchemaRoot = mkdtempSync(resolve(tmpdir(), "tenkings-layout-v2-upgrade-"));
+  const upgradePrismaDir = resolve(upgradeSchemaRoot, "prisma");
+  const upgradeMigrationsDir = resolve(upgradePrismaDir, "migrations");
+  const upgradeSchema = resolve(upgradePrismaDir, "schema.prisma");
+  mkdirSync(upgradeMigrationsDir, { recursive: true });
+  copyFileSync(prismaSchema, upgradeSchema);
+  copyFileSync(resolve(migrationsDir, "migration_lock.toml"), resolve(upgradeMigrationsDir, "migration_lock.toml"));
+  let copiedPreLayoutMigrationCount = 0;
+  for (const entry of readdirSync(migrationsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name >= "20260813200000_speedster_pokemon_layout_key_v2") continue;
+    cpSync(resolve(migrationsDir, entry.name), resolve(upgradeMigrationsDir, entry.name), { recursive: true });
+    copiedPreLayoutMigrationCount += 1;
+  }
+  if (copiedPreLayoutMigrationCount !== migrationCount - 1) {
+    fail(
+      `The isolated pre-Layout-V2 tree must contain exactly ${migrationCount - 1} migrations; ` +
+      `copied ${copiedPreLayoutMigrationCount}.`,
+    );
+  }
+
   run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "validate", "--schema", "prisma/schema.prisma"], {
     env: databaseEnv,
     label: "validating the Prisma schema against disposable configuration",
@@ -267,6 +319,10 @@ try {
   run(pnpm, ["--filter", "@tenkings/database", "generate"], {
     env: databaseEnv,
     label: "generating the disposable Prisma client",
+  });
+  run(pnpm, ["--filter", "@tenkings/shared", "build"], {
+    env: databaseEnv,
+    label: "building the shared package required by database lifecycle validation",
   });
   run(pnpm, ["--filter", "@tenkings/database", "build"], {
     env: databaseEnv,
@@ -288,10 +344,83 @@ try {
   if (!absentRuntimeResult.includes("AI_GRADER_NFC_SCHEMA_ABSENT_RUNTIME_VALIDATION_PASS")) {
     fail("The pre-deploy NFC schema readiness probe did not reach its PASS marker.");
   }
-  run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"], {
+  run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
     env: databaseEnv,
-    label: "deploying the full Prisma migration chain to the empty database",
+    label: "deploying the isolated pre-Layout-V2 migration chain",
   });
+  const preLayoutLedgerCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
+    "proving the pre-Layout-V2 migration ledger count",
+  );
+  if (preLayoutLedgerCount !== String(migrationCount - 1)) {
+    fail(`Expected ${migrationCount - 1} clean pre-Layout-V2 migration rows; found ${preLayoutLedgerCount}.`);
+  }
+  const prematureLayoutMigrationCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "migration_name" = '20260813200000_speedster_pokemon_layout_key_v2'`,
+    "proving Layout Key V2 is absent before the staged upgrade",
+  );
+  if (prematureLayoutMigrationCount !== "0") fail("Layout Key V2 was present before the staged upgrade.");
+  run(docker, psqlArgs("--command", `
+    INSERT INTO "AiGraderV2Session" (
+      "id", "createdByUserId", "cardProfile", "workflowState", "ruleVersion",
+      "identity", "capture", "reviewedDefects", "gradeReport", "updatedAt"
+    ) VALUES
+      ('speedster-layout-v2-upgrade-fixture-layoutless', 'layout-v2-upgrade-admin', 'POKEMON', 'CAPTURED', 'speedster-v2',
+       '{"category":"POKEMON","year":"2023","productSet":"MEW EN","parallel":"REVERSE HOLO","cardName":"LEGACY","cardNumber":"001/165"}'::jsonb,
+       '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '2026-08-13T20:00:00.000Z'::timestamptz),
+      ('speedster-layout-v2-upgrade-fixture-explicit', 'layout-v2-upgrade-admin', 'POKEMON', 'CAPTURED', 'speedster-v2',
+       '{"category":"POKEMON","layoutType":"TRAINER","year":"2023","productSet":"MEW EN","parallel":"REVERSE HOLO","cardName":"TRAINER","cardNumber":"100/165"}'::jsonb,
+       '{}'::jsonb, '[]'::jsonb, '{}'::jsonb, '2026-08-13T20:00:00.000Z'::timestamptz)
+  `), { label: "inserting pre-Layout-V2 historical identity fixtures" });
+  const preLayoutV2Snapshot = legacySessionSnapshot();
+  cpSync(
+    resolve(migrationsDir, "20260813200000_speedster_pokemon_layout_key_v2"),
+    resolve(upgradeMigrationsDir, "20260813200000_speedster_pokemon_layout_key_v2"),
+    { recursive: true },
+  );
+  run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
+    env: databaseEnv,
+    label: "deploying Layout Key V2 over pre-existing historical identity rows",
+  });
+  const postLayoutLedgerCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
+    "proving the post-Layout-V2 migration ledger count",
+  );
+  if (postLayoutLedgerCount !== String(migrationCount)) {
+    fail(`Expected ${migrationCount} clean post-Layout-V2 migration rows; found ${postLayoutLedgerCount}.`);
+  }
+  const cleanLayoutMigrationCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "migration_name" = '20260813200000_speedster_pokemon_layout_key_v2'
+        AND "finished_at" IS NOT NULL
+        AND "rolled_back_at" IS NULL`,
+    "proving exactly one clean Layout Key V2 ledger row",
+  );
+  if (cleanLayoutMigrationCount !== "1") fail("Layout Key V2 must have exactly one clean ledger row.");
+  const postLayoutV2Snapshot = legacySessionSnapshot();
+  if (postLayoutV2Snapshot !== preLayoutV2Snapshot) {
+    fail("Layout Key V2 changed a pre-existing Speedster session row, identity byte representation, ctid, or xmin.");
+  }
+  run(docker, psqlArgs("--command", `
+    DELETE FROM "AiGraderV2Session"
+     WHERE "id" LIKE 'speedster-layout-v2-upgrade-fixture-%'
+  `), { label: "removing isolated Layout V2 upgrade fixtures" });
+  const remainingUpgradeFixtureCount = queryScalar(
+    `SELECT count(*) FROM "AiGraderV2Session"
+      WHERE "id" LIKE 'speedster-layout-v2-upgrade-fixture-%'`,
+    "proving isolated Layout V2 upgrade fixtures were removed",
+  );
+  if (remainingUpgradeFixtureCount !== "0") fail("Layout V2 upgrade fixtures were not fully removed.");
+  const repositoryTreeReconciliation = run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"], {
+    env: databaseEnv,
+    label: "reconciling the fully migrated database with the repository migration tree",
+  });
+  if (!/No pending migrations to apply/i.test(repositoryTreeReconciliation)) {
+    fail("Repository migration-tree reconciliation was not an explicit no-op.");
+  }
 
   const firstLedger = migrationLedgerSnapshot(migrationCount);
   const appliedResult = runSqlFile(appliedSql, "verifying NFC catalog objects, constraints, and database lifecycle behavior");
@@ -318,6 +447,13 @@ try {
   );
   if (!speedsterMapRegistrationLessonResult.includes("SPEEDSTER_MAP_REGISTRATION_LESSON_VALIDATION_PASS")) {
     fail("The Speedster registration-lesson SQL validation did not reach its PASS marker.");
+  }
+  const speedsterLayoutKeyV2Result = runSqlFile(
+    speedsterLayoutKeyV2Sql,
+    "verifying Layout Key V2 catalog, identities, one-time authority, revision immutability, and rollback",
+  );
+  if (!speedsterLayoutKeyV2Result.includes("SPEEDSTER_LAYOUT_KEY_V2_VALIDATION_PASS")) {
+    fail("The Layout Key V2 SQL validation did not reach its PASS marker.");
   }
   const readyRuntimeResult = run(
     process.execPath,
@@ -396,6 +532,12 @@ try {
   primaryError = error;
 } finally {
   try {
+    cleanupUpgradeSchema();
+  } catch (upgradeSchemaCleanupError) {
+    if (!primaryError) primaryError = upgradeSchemaCleanupError;
+    else console.error("[nfc-migration-validation] Temporary schema cleanup also failed.");
+  }
+  try {
     cleanup();
   } catch (cleanupError) {
     if (!primaryError) primaryError = cleanupError;
@@ -408,6 +550,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, and Card Platform V2 catalog, constraint, lifecycle, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

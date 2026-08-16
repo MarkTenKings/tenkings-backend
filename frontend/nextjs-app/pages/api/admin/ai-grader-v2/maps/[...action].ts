@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import type { SpeedsterCardProfile } from "../../../../../lib/ai-grader-v2/contracts";
 import {
+  isSpeedsterPokemonFamilyKeyV2,
   speedsterMapScopeForKey,
   type SpeedsterMapScope,
 } from "../../../../../lib/ai-grader-v2/card-type-map-contracts";
@@ -99,6 +100,7 @@ const sideSchema = z.object({
 }).strict();
 const saveSchema = z.object({
   sessionId: sessionIdSchema,
+  familyLayoutType: z.enum(["POKEMON", "TRAINER", "ENERGY"]).optional(),
   front: sideSchema,
   back: sideSchema,
 }).strict();
@@ -122,6 +124,7 @@ type SourceRecord = Readonly<{
   reviewedDefects: unknown;
   gradeReport: unknown;
   mapFilterDecisions: readonly Readonly<{ id: string }>[];
+  legacyMapLayoutAuthority?: unknown;
 }>;
 
 type Dependencies = Readonly<{
@@ -141,6 +144,7 @@ type Dependencies = Readonly<{
   saveDualRevisions: (input: Readonly<{
     source: SpeedsterMapSourceSession;
     authorAdminId: string;
+    familyLayoutType?: "POKEMON" | "TRAINER" | "ENERGY";
     front: SpeedsterMapTrainingSideInput;
     back: SpeedsterMapTrainingSideInput;
   }>) => Promise<SpeedsterMapDualSaveResult>;
@@ -178,6 +182,9 @@ const dependencies: Dependencies = {
       reviewedDefects: true,
       gradeReport: true,
       mapFilterDecisions: { take: 1, select: { id: true } },
+      legacyMapLayoutAuthority: {
+        select: { layoutType: true, selectedByAdminId: true, createdAt: true },
+      },
     },
   }),
   loadActiveMap: loadScopedActiveSpeedsterMapRevision,
@@ -296,7 +303,12 @@ function dualSaveSummary(
   saved: SpeedsterMapSaveResult,
   source: SpeedsterMapSourceSession,
 ) {
-  const name = speedsterMapDisplayName(scope, source.cardProfile, source.identity);
+  const displayIdentity = scope === "FAMILY"
+    && isSpeedsterPokemonFamilyKeyV2(saved.revision.matchKey)
+    && "cardName" in source.identity
+    ? { ...source.identity, layoutType: saved.revision.matchKey.layoutType }
+    : source.identity;
+  const name = speedsterMapDisplayName(scope, source.cardProfile, displayIdentity);
   return {
     scope,
     applicability: scope === "FAMILY" ? `All ${name} cards` : `This exact source card — ${name}`,
@@ -376,6 +388,16 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         } catch {
           throw new SpeedsterMapIntegrityError("TRAIN source identity is malformed.");
         }
+        const source = action === "source" ? parseSpeedsterMapSourceSession(record) : null;
+        if (source && source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
+          return res.status(409).json({ message: "TRAIN requires saved Front and Back physical geometry." });
+        }
+        const lookupIdentity = scope === "FAMILY"
+          && record.cardProfile === "POKEMON"
+          && source?.legacyLayoutAuthority
+          && "cardName" in identity
+          ? { ...identity, layoutType: source.legacyLayoutAuthority.layoutType }
+          : identity;
         if (scope === "EFFECTIVE" && !deps.loadEffectiveMap) {
           throw new SpeedsterMapIntegrityError("Effective card map lookup is unavailable.");
         }
@@ -384,7 +406,11 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         try {
           revision = scope === "EFFECTIVE"
             ? (await deps.loadEffectiveMap!({ cardProfile: record.cardProfile, identity }))?.revision ?? null
-            : await deps.loadActiveMap({ cardProfile: record.cardProfile, identity, scope });
+            : await deps.loadActiveMap({
+                cardProfile: record.cardProfile,
+                identity: lookupIdentity,
+                scope,
+              });
         } catch (error) {
           if (action === "source" && scope !== "EFFECTIVE" && error instanceof SpeedsterMapIntegrityError) {
             authoringIntegrityError = error;
@@ -401,10 +427,7 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
           res.setHeader("Cache-Control", "no-store");
           return res.status(200).json({ map: await mapState(revision, deps, undefined, requestedMap) });
         }
-        const source = parseSpeedsterMapSourceSession(record);
-        if (source.workflowState !== "CAPTURED" && source.workflowState !== "COMPLETED") {
-          return res.status(409).json({ message: "TRAIN requires saved Front and Back physical geometry." });
-        }
+        if (!source) throw new SpeedsterMapIntegrityError("TRAIN source is unavailable.");
         res.setHeader("Cache-Control", "no-store");
         return res.status(200).json({
           source: await deps.sourceClientState(source),
@@ -437,6 +460,7 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
         const saved = await deps.saveDualRevisions({
           source,
           authorAdminId: admin.user.id,
+          ...(parsed.data.familyLayoutType ? { familyLayoutType: parsed.data.familyLayoutType } : {}),
           front: parsed.data.front as SpeedsterMapTrainingSideInput,
           back: parsed.data.back as SpeedsterMapTrainingSideInput,
         });

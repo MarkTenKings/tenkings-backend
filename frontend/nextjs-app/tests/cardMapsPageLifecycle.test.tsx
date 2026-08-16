@@ -5,6 +5,13 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import {
+  SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+  parseSpeedsterCaptureRegistrationDraft,
+  speedsterCaptureDraftMatchesCommittedSession,
+  speedsterCaptureRegistrationDraftStorageKey,
+  type SpeedsterCaptureRegistrationDraft,
+} from "../lib/ai-grader-v2/capture-registration-draft";
 
 const require = createRequire(import.meta.url);
 (globalThis as typeof globalThis & { React: typeof React }).React = React;
@@ -39,8 +46,10 @@ function stubModule(specifier: string, exports: unknown) {
 stubModule("../hooks/useSession", { useSession: () => sessionState });
 stubModule("next/router", {
   useRouter: () => ({
+    isReady: true,
     query: routerQuery,
     async push(url: string) { routerPushes.push(url); return true; },
+    async replace() { return true; },
   }),
 });
 stubModule("../components/AppShell", {
@@ -76,7 +85,7 @@ stubModule("../components/human-grade/SharedLabelEditor", {
           />
         </label>
       ))}
-      {Object.entries(props.fieldErrors).map(([field, error]) => <span key={field}>{error}</span>)}
+      {Object.entries(props.fieldErrors ?? {}).map(([field, error]) => <span key={field}>{error}</span>)}
       <button type="submit">{props.primaryActionLabel}</button>
     </form>
   ),
@@ -97,7 +106,7 @@ const captureBundle = {
     originalStorageKey: "front-original",
     rectifiedStorageKey: "front-rectified",
     inspectionStorageKey: "front-inspection",
-    inspectionFrame: { width: 1200, height: 1600 },
+    inspectionFrame: { width: 1200, height: 1600, cardBounds: { x: 0, y: 0, width: 1200, height: 1600 } },
     viewStorageKeys: { NORMALIZED: "front-normalized", MICRO_DEFECT: "front-micro", DIRECTIONAL: "front-directional" },
     sourceCorners: quad,
     transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
@@ -110,7 +119,7 @@ const captureBundle = {
     originalStorageKey: "back-original",
     rectifiedStorageKey: "back-rectified",
     inspectionStorageKey: "back-inspection",
-    inspectionFrame: { width: 1200, height: 1600 },
+    inspectionFrame: { width: 1200, height: 1600, cardBounds: { x: 0, y: 0, width: 1200, height: 1600 } },
     viewStorageKeys: { NORMALIZED: "back-normalized", MICRO_DEFECT: "back-micro", DIRECTIONAL: "back-directional" },
     sourceCorners: quad,
     transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
@@ -137,6 +146,10 @@ stubModule("../components/ai-grader-v2/CaptureWorkspace", {
       }}>{saving ? "SAVING CAPTURE" : failed ? "RETRY CAPTURE SAVE" : "COMPLETE FRONT + BACK"}</button>
     );
   },
+  SpeedsterAppliedMapBadge: () => <div>APPLIED MAP BADGE</div>,
+});
+stubModule("../components/ai-grader-v2/ReviewWorkspace", {
+  ReviewWorkspace: () => <div data-testid="reconciled-review-workspace">RECONCILED REVIEW WORKSPACE</div>,
 });
 stubModule("../components/ai-grader-v2/SpeedsterTrainWorkspace", {
   SpeedsterTrainWorkspace: ({ source, initialMap }: {
@@ -148,6 +161,7 @@ stubModule("../components/ai-grader-v2/SpeedsterTrainWorkspace", {
 });
 
 const { default: CardMapsPage } = require("../pages/card-maps") as typeof import("../pages/card-maps");
+const { default: AiGraderV2AdminPage } = require("../pages/admin/ai-grader-v2") as typeof import("../pages/admin/ai-grader-v2");
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -177,6 +191,8 @@ async function mountPage(input: {
   token?: string;
   mappedCards?: readonly unknown[];
   mappedCardsFetchImpl?: typeof fetch;
+  initialLocalStorage?: Readonly<Record<string, string>>;
+  renderPage?: () => React.ReactElement;
   fetchImpl: typeof fetch;
 }): Promise<MountedPage> {
   routerQuery = input.query ?? {};
@@ -225,9 +241,13 @@ async function mountPage(input: {
     detachEvent: { configurable: true, value() {} },
   });
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  for (const [key, value] of Object.entries(input.initialLocalStorage ?? {})) {
+    dom.window.localStorage.setItem(key, value);
+  }
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const root = createRoot(container);
-  await act(async () => { root.render(<CardMapsPage />); });
+  const renderPage = () => input.renderPage?.() ?? <CardMapsPage />;
+  await act(async () => { root.render(renderPage()); });
   return {
     container,
     root,
@@ -239,7 +259,7 @@ async function mountPage(input: {
         loading: false,
         async ensureSession() {},
       };
-      await act(async () => { root.render(<CardMapsPage />); });
+      await act(async () => { root.render(renderPage()); });
     },
     cleanup: async () => {
       await act(async () => root.unmount());
@@ -275,6 +295,84 @@ function mappedPokemonCard(sourceSessionId: string, cardName: string) {
   } as const;
 }
 
+function committedNoMapDraft(
+  sessionId: string,
+  surface: SpeedsterCaptureRegistrationDraft["surface"] = "CARD_MAPS",
+): SpeedsterCaptureRegistrationDraft {
+  const side = (cardSide: "FRONT" | "BACK") => ({
+    originalStorageKey: `${cardSide.toLowerCase()}-original`,
+    corners: quad,
+    automaticGeometry: true,
+    geometryDiagnostic: { sessionId, attemptId: 1, side: cardSide, durationMs: 10, corners: "present" as const },
+    rectifiedStorageKey: `${cardSide.toLowerCase()}-rectified`,
+    inspectionStorageKey: `${cardSide.toLowerCase()}-inspection`,
+    inspectionFrame: { width: 1200, height: 1600, cardBounds: { x: 0, y: 0, width: 1200, height: 1600 } },
+    transform: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    viewStorageKeys: {
+      NORMALIZED: `${cardSide.toLowerCase()}-normalized`,
+      MICRO_DEFECT: `${cardSide.toLowerCase()}-micro`,
+      DIRECTIONAL: `${cardSide.toLowerCase()}-directional`,
+    },
+    proposedCentering: quad,
+    detectedBorders: ["top", "right", "bottom", "left"] as const,
+    centering: {
+      side: cardSide,
+      innerQuad: quad,
+      borders: { topMm: 1, rightMm: 1, bottomMm: 1, leftMm: 1 },
+    },
+  });
+  return {
+    version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+    createdAtMs: Date.now() - 100,
+    updatedAtMs: Date.now(),
+    surface,
+    sessionId,
+    cardProfile: "SPORTS",
+    mapBindingStatus: "NO_MAP",
+    activeMapRevisionId: null,
+    activeMapScope: null,
+    activeMapName: null,
+    cornerShape: "ROUNDED_3_18_MM",
+    stage: "BACK_CENTERING",
+    front: side("FRONT"),
+    back: side("BACK"),
+    interruptions: {},
+    failures: {},
+    failureRequestIds: {},
+    provisional: {},
+    registrationRecordedAtMs: {},
+    attemptIds: {},
+    operationId: "00000000-0000-4000-8000-000000000101",
+    attemptNumbers: {},
+    decisionIds: {
+      continue: "00000000-0000-4000-8000-000000000102",
+      abandonObsoleteMap: "00000000-0000-4000-8000-000000000103",
+      retry: {},
+    },
+    correctedAnchors: {},
+    registrationFailureSides: {},
+    mapRegistrationFailed: false,
+    mapAuthorityAbandoned: false,
+    captureSavePendingRetry: true,
+    notice: null,
+  };
+}
+
+function persistedCaptureForDraft(draft: SpeedsterCaptureRegistrationDraft) {
+  const side = (value: SpeedsterCaptureRegistrationDraft["front"]) => ({
+    originalStorageKey: value.originalStorageKey,
+    rectifiedStorageKey: value.rectifiedStorageKey,
+    inspectionStorageKey: value.inspectionStorageKey,
+    inspectionFrame: value.inspectionFrame,
+    viewStorageKeys: value.viewStorageKeys,
+    sourceCorners: value.corners,
+    transform: value.transform,
+    centeringQuad: value.centering!.innerQuad,
+    centeringBorders: value.centering!.borders,
+  });
+  return { cornerShape: draft.cornerShape, front: side(draft.front), back: side(draft.back) };
+}
+
 function buttonByText(container: HTMLElement, text: string) {
   return Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes(text));
 }
@@ -308,6 +406,9 @@ test("Card Maps owns a searchable list containing only saved mapped source cards
       revisions: [
         {
           scope: "EXACT",
+          keyGeneration: "EXACT_FROZEN",
+          layoutType: null,
+          runtimeEligible: true,
           mapId: "exact-map",
           revisionId: "exact-r3",
           version: 3,
@@ -318,6 +419,22 @@ test("Card Maps owns a searchable list containing only saved mapped source cards
         },
         {
           scope: "FAMILY",
+          keyGeneration: "FAMILY_LEGACY",
+          layoutType: null,
+          runtimeEligible: false,
+          mapId: "legacy-family-map",
+          revisionId: "legacy-family-r99",
+          version: 99,
+          revisionHash: "c".repeat(64),
+          mapSchemaVersion: "speedster-card-type-map-v2",
+          filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          createdAt: "2026-08-12T19:40:31.392Z",
+        },
+        {
+          scope: "FAMILY",
+          keyGeneration: "FAMILY_V2",
+          layoutType: "POKEMON",
+          runtimeEligible: true,
           mapId: "family-map",
           revisionId: "family-r7",
           version: 7,
@@ -334,9 +451,10 @@ test("Card Maps owns a searchable list containing only saved mapped source cards
     await waitFor(() => page.container.textContent?.includes("SQUIRTLE") ?? false, "Mapped source card list did not load");
     assert.match(page.container.textContent ?? "", /EXISTING CARD MAPS/);
     assert.match(page.container.textContent ?? "", /1 of 1 mapped source card/);
-    assert.match(page.container.textContent ?? "", /2023 · Pokémon · MEW EN · REVERSE HOLO · #007\/165/);
+    assert.match(page.container.textContent ?? "", /2023 · Pokémon · POKEMON · MEW EN · REVERSE HOLO · #007\/165/);
     assert.match(page.container.textContent ?? "", /EXACT r3/);
-    assert.match(page.container.textContent ?? "", /FAMILY r7/);
+    assert.match(page.container.textContent ?? "", /FAMILY r7 · POKEMON/);
+    assert.match(page.container.textContent ?? "", /FAMILY LEGACY r99 · HISTORICAL ONLY · NOT RUNTIME ELIGIBLE/);
     const edit = Array.from(page.container.querySelectorAll("a")).find((link) => link.textContent === "EDIT CARD MAP");
     assert.equal(edit?.getAttribute("href"), `/card-maps?sessionId=${encodeURIComponent(sourceSessionId)}`);
 
@@ -346,6 +464,112 @@ test("Card Maps owns a searchable list containing only saved mapped source cards
 
     await changeInput(page.container, "Search existing Card Maps", "reverse holo");
     assert.match(page.container.textContent ?? "", /SQUIRTLE/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("mapped legacy sources expose and search authoritative TRAINER and ENERGY family layouts", async () => {
+  const mappedLayoutCard = (sourceSessionId: string, cardName: string, layoutType: "TRAINER" | "ENERGY") => ({
+    ...mappedPokemonCard(sourceSessionId, cardName),
+    revisions: [{
+      scope: "FAMILY" as const,
+      keyGeneration: "FAMILY_V2" as const,
+      layoutType,
+      runtimeEligible: true,
+      mapId: `${layoutType.toLowerCase()}-family-map`,
+      revisionId: `${layoutType.toLowerCase()}-family-r1`,
+      version: 1,
+      revisionHash: (layoutType === "TRAINER" ? "d" : "e").repeat(64),
+      mapSchemaVersion: "speedster-card-type-map-v2",
+      filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+      createdAt: "2026-08-13T20:00:00.000Z",
+    }],
+  });
+  const page = await mountPage({
+    mappedCards: [
+      mappedLayoutCard("trainer-layout-source", "BILL'S TRANSFER", "TRAINER"),
+      mappedLayoutCard("energy-layout-source", "BASIC FIRE ENERGY", "ENERGY"),
+    ],
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("BILL'S TRANSFER") ?? false, "Layout cards did not load");
+    assert.match(page.container.textContent ?? "", /Pokémon · TRAINER/);
+    assert.match(page.container.textContent ?? "", /Pokémon · ENERGY/);
+    await changeInput(page.container, "Search existing Card Maps", "trainer");
+    assert.match(page.container.textContent ?? "", /BILL'S TRANSFER/);
+    assert.doesNotMatch(page.container.textContent ?? "", /BASIC FIRE ENERGY/);
+    await changeInput(page.container, "Search existing Card Maps", "energy");
+    assert.doesNotMatch(page.container.textContent ?? "", /BILL'S TRANSFER/);
+    assert.match(page.container.textContent ?? "", /BASIC FIRE ENERGY/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("Sports FAMILY_CURRENT is never labeled or searched as legacy Pokémon history", async () => {
+  const sportsCard = {
+    sourceSessionId: "sports-current-family-source",
+    cardProfile: "SPORTS",
+    workflowState: "CAPTURED",
+    identity: {
+      playerName: "Ken Griffey Jr.",
+      year: "1997",
+      manufacturer: "Upper Deck",
+      productSet: "SPx",
+      insert: "Base",
+      parallel: "Gold",
+      cardNumber: "1",
+    },
+    lastMappedAt: "2026-08-15T20:00:00.000Z",
+    revisions: [{
+      scope: "FAMILY",
+      keyGeneration: "FAMILY_CURRENT",
+      layoutType: null,
+      runtimeEligible: true,
+      mapId: "sports-family-map",
+      revisionId: "sports-family-r4",
+      version: 4,
+      revisionHash: "f".repeat(64),
+      mapSchemaVersion: "speedster-card-type-map-v2",
+      filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+      createdAt: "2026-08-15T20:00:00.000Z",
+    }],
+  } as const;
+  const legacyPokemonCard = {
+    ...mappedPokemonCard("pokemon-legacy-family-source", "CHARMANDER"),
+    revisions: [{
+      scope: "FAMILY",
+      keyGeneration: "FAMILY_LEGACY",
+      layoutType: null,
+      runtimeEligible: false,
+      mapId: "pokemon-legacy-family-map",
+      revisionId: "pokemon-legacy-family-r9",
+      version: 9,
+      revisionHash: "9".repeat(64),
+      mapSchemaVersion: "speedster-card-type-map-v2",
+      filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+      createdAt: "2026-08-15T20:00:00.000Z",
+    }],
+  } as const;
+  const page = await mountPage({
+    mappedCards: [sportsCard, legacyPokemonCard],
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("Ken Griffey Jr.") ?? false, "Sports card did not load");
+    assert.match(page.container.textContent ?? "", /FAMILY r4/);
+    assert.match(page.container.textContent ?? "", /FAMILY LEGACY r9 · HISTORICAL ONLY · NOT RUNTIME ELIGIBLE/);
+
+    await changeInput(page.container, "Search existing Card Maps", "legacy");
+    assert.match(page.container.textContent ?? "", /CHARMANDER/);
+    assert.doesNotMatch(page.container.textContent ?? "", /Ken Griffey Jr\./);
+
+    await changeInput(page.container, "Search existing Card Maps", "family_current");
+    assert.match(page.container.textContent ?? "", /Ken Griffey Jr\./);
+    assert.doesNotMatch(page.container.textContent ?? "", /CHARMANDER/);
+    assert.doesNotMatch(page.container.textContent ?? "", /FAMILY LEGACY/);
   } finally {
     await page.cleanup();
   }
@@ -436,13 +660,318 @@ test("blank new-card identity shows exact field errors without making a request"
   }
 });
 
+test("historical layoutless Pokémon DRAFT recovery mounts for missing, integrity-error, and failed map lookups", async () => {
+  const cases = [
+    {
+      name: "missing",
+      response: jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } }),
+      message: /Preserved Card Maps capture loaded/,
+    },
+    {
+      name: "integrity",
+      response: jsonResponse({ map: {
+        status: "INTEGRITY_ERROR",
+        scope: "FAMILY",
+        name: "2023 Pokémon MEW EN Reverse Holo",
+        revision: null,
+        revisions: [],
+        editable: null,
+        integrity: { code: "CARD_MAP_INTEGRITY_FAILURE", message: "Hash mismatch" },
+      } }),
+      message: /Preserved Card Maps capture loaded/,
+    },
+    {
+      name: "lookup-failed",
+      response: jsonResponse({ message: "Map service unavailable" }, 503),
+      message: /Card Map lookup failed/,
+    },
+  ] as const;
+  for (const candidate of cases) {
+    const sessionId = `legacy-layoutless-draft-${candidate.name}`;
+    const page = await mountPage({
+      query: { captureDraftId: sessionId },
+      fetchImpl: async (request) => {
+        const url = String(request);
+        if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}`) {
+          return jsonResponse({ session: {
+            id: sessionId,
+            cardProfile: "POKEMON",
+            workflowState: "DRAFT",
+            identity: {
+              cardName: "Squirtle",
+              year: "2023",
+              productSet: "MEW EN",
+              parallel: "REVERSE HOLO",
+              cardNumber: "007/165",
+            },
+          } });
+        }
+        if (url === `/api/admin/ai-grader-v2/maps/current?sessionId=${sessionId}&scope=EFFECTIVE`) {
+          return candidate.response.clone();
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      },
+    });
+    try {
+      await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")),
+        `${candidate.name} historical DRAFT did not mount the capture workspace`);
+      assert.match(page.container.textContent ?? "", candidate.message);
+    } finally {
+      await page.cleanup();
+    }
+  }
+});
+
+test("Card Maps explicitly reconciles an exactly committed capture after a lost save response", async () => {
+  const sessionId = "card-maps-committed-ack-loss";
+  const browserDraft = committedNoMapDraft(sessionId);
+  const storageKey = speedsterCaptureRegistrationDraftStorageKey(sessionId);
+  const rawBrowserDraft = JSON.stringify(browserDraft);
+  const requests: string[] = [];
+  const missingMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
+  const parsedBrowserDraft = parseSpeedsterCaptureRegistrationDraft(JSON.stringify(browserDraft), {
+    surface: "CARD_MAPS",
+    sessionId,
+    cardProfile: "SPORTS",
+    mapBindingStatus: "NO_MAP",
+    activeMapRevisionId: null,
+    activeMapScope: null,
+  });
+  assert.ok(parsedBrowserDraft, "Card Maps committed fixture must satisfy the strict browser-draft contract");
+  assert.equal(speedsterCaptureDraftMatchesCommittedSession(parsedBrowserDraft, {
+    workflowState: "CAPTURED",
+    capture: persistedCaptureForDraft(browserDraft),
+    mapRevisionId: null,
+    mapRegistration: null,
+  }), true, "Card Maps committed fixture must exactly match server persistence");
+  const page = await mountPage({
+    query: { captureDraftId: sessionId },
+    initialLocalStorage: { [storageKey]: rawBrowserDraft },
+    fetchImpl: async (request) => {
+      const url = String(request);
+      requests.push(url);
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}`) {
+        return jsonResponse({ session: {
+          id: sessionId,
+          cardProfile: "SPORTS",
+          workflowState: "CAPTURED",
+          identity: { playerName: "Ken Griffey Jr.", year: "1997", manufacturer: "Upper Deck", productSet: "SPx" },
+          capture: persistedCaptureForDraft(browserDraft),
+          mapRevisionId: null,
+          mapRegistration: null,
+        } });
+      }
+      if (url === `/api/admin/ai-grader-v2/maps/current?sessionId=${sessionId}&scope=EFFECTIVE`) {
+        return jsonResponse({ map: missingMap });
+      }
+      if (url === `/api/admin/ai-grader-v2/maps/source?sessionId=${sessionId}&scope=EXACT`) {
+        return jsonResponse({
+          map: missingMap,
+          source: {
+            sessionId,
+            cardProfile: "SPORTS",
+            identity: { playerName: "Ken Griffey Jr.", year: "1997", manufacturer: "Upper Deck", productSet: "SPx" },
+            front: { rectifiedUrl: "front", centeringQuad: quad },
+            back: { rectifiedUrl: "back", centeringQuad: quad },
+          },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+  try {
+    await waitFor(() => requests.includes(`/api/admin/ai-grader-v2/maps/current?sessionId=${sessionId}&scope=EFFECTIVE`),
+      "Committed capture reconciliation did not finish its read-only map lookup");
+    assert.match(page.container.textContent ?? "", /CAPTURE SAVE COMMITTED · EXPLICIT RECONCILIATION/);
+    assert.match(page.container.textContent ?? "", /server Front \+ Back source exactly matches/i);
+    assert.ok(window.localStorage.getItem(storageKey), "Committed match must not clear browser evidence before choice");
+    assert.equal(requests.filter((url) => url.includes(`/sessions/${sessionId}`)).length, 1, "Reconciliation must not retry PATCH");
+
+    await act(async () => buttonByText(page.container, "KEEP BROWSER DRAFT FOR NOW")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    assert.ok(window.localStorage.getItem(storageKey), "Keep choice must retain the browser draft");
+
+    await act(async () => buttonByText(page.container, "CONTINUE TO MAP AUTHORING")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(page.container.querySelector('[data-testid="card-map-workspace"]')), "Committed source did not continue to authoring");
+    assert.equal(window.localStorage.getItem(storageKey), null, "Explicit continuation must clear only the verified obsolete browser draft");
+    assert.equal(requests.some((url) => url.includes(`/sessions/${sessionId}`) && url !== `/api/admin/ai-grader-v2/sessions/${sessionId}`), false);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("Card Maps preserves a committed browser draft when server capture evidence conflicts", async () => {
+  const sessionId = "card-maps-committed-conflict";
+  const browserDraft = committedNoMapDraft(sessionId);
+  const storageKey = speedsterCaptureRegistrationDraftStorageKey(sessionId);
+  const rawBrowserDraft = JSON.stringify(browserDraft);
+  const conflictingCapture = persistedCaptureForDraft(browserDraft);
+  conflictingCapture.front.originalStorageKey = "different-server-front";
+  const page = await mountPage({
+    query: { captureDraftId: sessionId },
+    initialLocalStorage: { [storageKey]: rawBrowserDraft },
+    fetchImpl: async (request) => {
+      const url = String(request);
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}`) {
+        return jsonResponse({ session: {
+          id: sessionId,
+          cardProfile: "SPORTS",
+          workflowState: "CAPTURED",
+          identity: { playerName: "Ken Griffey Jr.", year: "1997", manufacturer: "Upper Deck", productSet: "SPx" },
+          capture: conflictingCapture,
+          mapRevisionId: null,
+          mapRegistration: null,
+        } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    },
+  });
+  try {
+    await waitFor(() => /does not match the preserved Card Maps browser draft/i.test(page.container.textContent ?? ""),
+      "Committed capture conflict did not fail visibly");
+    assert.equal(buttonByText(page.container, "CONTINUE TO MAP AUTHORING"), undefined);
+    assert.equal(window.localStorage.getItem(storageKey), rawBrowserDraft, "Conflict must preserve browser evidence byte-for-byte");
+    assert.equal(page.container.querySelector('[aria-label="identity editor"]'), null, "Recovery conflict must hide fresh identity authoring");
+    assert.equal(buttonByText(page.container, "CREATE CARD MAP"), undefined, "Recovery conflict must hide the hero create CTA");
+    assert.equal(buttonByText(page.container, "COMPLETE FRONT + BACK"), undefined, "Recovery conflict must not mount fresh capture");
+    assert.equal(page.container.querySelector('[data-testid="card-map-workspace"]'), null);
+    assert.doesNotMatch(page.container.textContent ?? "", /NEW CARD MAP/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("AI Grader explicitly reconciles an exactly committed capture using signed review authority", async () => {
+  const sessionId = "ai-grader-committed-ack-loss";
+  const browserDraft = committedNoMapDraft(sessionId, "AI_GRADER");
+  const storageKey = speedsterCaptureRegistrationDraftStorageKey(sessionId);
+  const rawBrowserDraft = JSON.stringify(browserDraft);
+  const requests: Array<{ url: string; method: string }> = [];
+  const draftPresenceAtSignedImageLoads: boolean[] = [];
+  const reviewUrls = Object.fromEntries((["FRONT", "BACK"] as const).map((side) => [side, {
+    master: `${side.toLowerCase()}-master-url`,
+    views: {
+      ORIGINAL: `${side.toLowerCase()}-original-url`,
+      NORMALIZED: `${side.toLowerCase()}-normalized-url`,
+      MICRO_DEFECT: `${side.toLowerCase()}-micro-url`,
+      DIRECTIONAL: `${side.toLowerCase()}-directional-url`,
+    },
+  }]));
+  const parsedBrowserDraft = parseSpeedsterCaptureRegistrationDraft(JSON.stringify(browserDraft), {
+    surface: "AI_GRADER",
+    sessionId,
+    cardProfile: "SPORTS",
+    mapBindingStatus: "NO_MAP",
+    activeMapRevisionId: null,
+    activeMapScope: null,
+  });
+  assert.ok(parsedBrowserDraft, "AI Grader committed fixture must satisfy the strict browser-draft contract");
+  assert.equal(speedsterCaptureDraftMatchesCommittedSession(parsedBrowserDraft, {
+    workflowState: "CAPTURED",
+    capture: persistedCaptureForDraft(browserDraft),
+    mapRevisionId: null,
+    mapRegistration: null,
+  }), true, "AI Grader committed fixture must exactly match server persistence");
+  const page = await mountPage({
+    query: { captureDraftId: sessionId },
+    initialLocalStorage: { [storageKey]: rawBrowserDraft },
+    renderPage: () => <AiGraderV2AdminPage />,
+    fetchImpl: async (request, init) => {
+      const url = String(request);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method });
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}` && method === "GET") {
+        return jsonResponse({ session: {
+          id: sessionId,
+          cardProfile: "SPORTS",
+          workflowState: "CAPTURED",
+          capture: persistedCaptureForDraft(browserDraft),
+          mapRevisionId: null,
+          mapRegistration: null,
+        } });
+      }
+      if (url === `/api/admin/ai-grader-v2/maps/current?sessionId=${sessionId}&scope=EFFECTIVE`) {
+        return jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } });
+      }
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}/review-images`) {
+        draftPresenceAtSignedImageLoads.push(Boolean(window.localStorage.getItem(storageKey)));
+        return jsonResponse({ urls: reviewUrls });
+      }
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}/review-action`) {
+        return jsonResponse({ reviewedDefects: [], detectorAttempts: [] });
+      }
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}/instrumentation`) return jsonResponse({});
+      throw new Error(`Unexpected fetch: ${method} ${url}`);
+    },
+  });
+  try {
+    await waitFor(() => Boolean(buttonByText(page.container, "CONTINUE TO REVIEW")), "AI Grader reconciliation did not render");
+    assert.ok(window.localStorage.getItem(storageKey), "AI Grader must not clear a matching draft before explicit choice");
+    assert.equal(requests.some(({ method }) => method === "PATCH"), false, "Reload reconciliation must not retry capture PATCH");
+
+    await act(async () => buttonByText(page.container, "KEEP BROWSER DRAFT FOR NOW")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    assert.ok(window.localStorage.getItem(storageKey));
+
+    await act(async () => buttonByText(page.container, "CONTINUE TO REVIEW")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(page.container.querySelector('[data-testid="reconciled-review-workspace"]')),
+      "AI Grader did not continue the committed capture into review");
+    assert.equal(draftPresenceAtSignedImageLoads[0], true, "Signed review authority must load before browser-draft cleanup");
+    assert.equal(window.localStorage.getItem(storageKey), null);
+    assert.equal(requests.some(({ method }) => method === "PATCH"), false);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("AI Grader preserves committed browser evidence when exact capture reconciliation conflicts", async () => {
+  const sessionId = "ai-grader-committed-conflict";
+  const browserDraft = committedNoMapDraft(sessionId, "AI_GRADER");
+  const storageKey = speedsterCaptureRegistrationDraftStorageKey(sessionId);
+  const rawBrowserDraft = JSON.stringify(browserDraft);
+  const conflictingCapture = persistedCaptureForDraft(browserDraft);
+  conflictingCapture.back.inspectionStorageKey = "different-server-back";
+  const page = await mountPage({
+    query: { captureDraftId: sessionId },
+    initialLocalStorage: { [storageKey]: rawBrowserDraft },
+    renderPage: () => <AiGraderV2AdminPage />,
+    fetchImpl: async (request, init) => {
+      const url = String(request);
+      if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}` && (init?.method ?? "GET") === "GET") {
+        return jsonResponse({ session: {
+          id: sessionId,
+          cardProfile: "SPORTS",
+          workflowState: "CAPTURED",
+          capture: conflictingCapture,
+          mapRevisionId: null,
+          mapRegistration: null,
+        } });
+      }
+      throw new Error(`Unexpected fetch: ${String(init?.method ?? "GET")} ${url}`);
+    },
+  });
+  try {
+    await waitFor(() => /does not match the preserved browser draft/i.test(page.container.textContent ?? ""),
+      "AI Grader committed conflict did not fail visibly");
+    assert.equal(buttonByText(page.container, "CONTINUE TO REVIEW"), undefined);
+    assert.equal(window.localStorage.getItem(storageKey), rawBrowserDraft, "AI Grader conflict must preserve the exact browser draft");
+    assert.equal(page.container.querySelector('[aria-label="identity editor"]'), null, "AI recovery conflict must hide fresh identity authoring");
+    assert.equal(buttonByText(page.container, "COMPLETE FRONT + BACK"), undefined, "AI recovery conflict must not mount fresh capture");
+  } finally {
+    await page.cleanup();
+  }
+});
+
 test("new authoring shows both dynamic identities and uses one effective baseline lookup", async () => {
   const requests: Array<{ url: string; init?: RequestInit }> = [];
   const loadedMap = {
     status: "LOADED",
     scope: "FAMILY",
     name: "1997 Upper Deck SPx",
-    revision: { revisionId: "revision-7", version: 7, revisionHash: "abcdef1234567890" },
+    revision: {
+      revisionId: "revision-7",
+      version: 7,
+      revisionHash: "abcdef1234567890",
+      filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+    },
     revisions: [],
     editable: null,
   };
@@ -496,6 +1025,7 @@ test("new authoring shows both dynamic identities and uses one effective baselin
     const body = JSON.parse(String(patch.init?.body));
     assert.equal(body.workflowState, "CAPTURED");
     assert.equal(body.mapBinding.revisionId, "revision-7");
+    assert.equal(body.mapBinding.filterPolicyVersion, "speedster-map-filter-authority-padding-v2");
     assert.equal(body.mapBinding.registration.front.mapRevisionId, "revision-7");
     assert.equal(body.mapBinding.registration.back.mapRevisionId, "revision-7");
     assert.equal(body.capture.front.originalStorageKey, "front-original");
@@ -515,7 +1045,19 @@ test("new Card Map capture save failure retains the exact bundle and retries onc
         return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
       }
       if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
-        return jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } });
+        return jsonResponse({ map: {
+          status: "LOADED",
+          scope: "FAMILY",
+          name: "1997 Upper Deck SPx",
+          revision: {
+            revisionId: "revision-7",
+            version: 7,
+            revisionHash: "abcdef1234567890",
+            filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          },
+          revisions: [],
+          editable: null,
+        } });
       }
       if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session") {
         patchCalls += 1;

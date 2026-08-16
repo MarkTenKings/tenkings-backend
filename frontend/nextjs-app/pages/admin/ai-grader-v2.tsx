@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import AppShell from "../../components/AppShell";
@@ -24,7 +25,13 @@ import {
   EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE,
   type HumanGradeLabelEditorValue,
 } from "../../lib/humanGrade";
-import { canonicalizeSpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
+import { canonicalizeNewSpeedsterSessionIdentity } from "../../lib/ai-grader-v2/identity";
+import {
+  readSpeedsterCaptureRegistrationDraftForCommittedSession,
+  removeSpeedsterCaptureRegistrationDraft,
+  speedsterCaptureDraftMatchesCommittedSession,
+  type SpeedsterCaptureRegistrationDraft,
+} from "../../lib/ai-grader-v2/capture-registration-draft";
 import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
@@ -58,6 +65,15 @@ import {
 import styles from "../../styles/AiGraderV2Admin.module.css";
 
 type SpeedsterDraft = { id: string; cardProfile: "POKEMON" | "SPORTS" };
+type SpeedsterCommittedCaptureRecovery = Readonly<{
+  session: SpeedsterDraft & {
+    workflowState: "CAPTURED";
+    capture: unknown;
+    mapRevisionId?: string | null;
+    mapRegistration?: unknown;
+  };
+  browserDraft: SpeedsterCaptureRegistrationDraft;
+}>;
 type SpeedsterReviewRemeasurementResult =
   | Readonly<{ applied: true }>
   | Readonly<{ applied: false; message: string }>;
@@ -84,6 +100,13 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   mapRevisionId?: string;
   mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
   registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
+  mapAuthorityDecision?: "ABANDON_OBSOLETE_MAP_AUTHORITY";
+  mapAuthorityOperationId?: string;
+  mapAuthorityDecisionId?: string;
+  obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
+  obsoleteMapRevisionId?: string;
+  obsoleteMapScope?: "EXACT" | "FAMILY";
+  obsoleteMapName?: string;
   registrationErrorSource?: "PROVIDER_GATEWAY" | "PROVIDER" | "PROVIDER_NETWORK" | "TEN_KINGS_API" | "CLIENT_NETWORK" | "CLIENT_PROTOCOL" | "HUMAN_CORRECTION";
   registrationErrorCode?: string;
   registrationHttpStatus?: number;
@@ -109,6 +132,7 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
 }>;
 
 export default function AiGraderV2AdminPage() {
+  const router = useRouter();
   const { session, loading, ensureSession } = useSession();
   const [identity, setIdentity] = useState<HumanGradeLabelEditorValue>(EMPTY_HUMAN_GRADE_LABEL_EDITOR_VALUE);
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
@@ -122,10 +146,23 @@ export default function AiGraderV2AdminPage() {
   const [initializeFailed, setInitializeFailed] = useState(false);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("Enter the exact information that belongs on the Ten Kings label.");
+  const [captureDraftCleanupFailure, setCaptureDraftCleanupFailure] = useState<Readonly<{
+    sessionId: string;
+    message: string;
+  }> | null>(null);
+  const [committedCaptureRecovery, setCommittedCaptureRecovery] = useState<SpeedsterCommittedCaptureRecovery | null>(null);
+  const [reconciledMapDisplay, setReconciledMapDisplay] = useState<Readonly<{
+    revisionId: string | null;
+    scope: "EXACT" | "FAMILY" | null;
+    name: string | null;
+  }> | null>(null);
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone],
   );
+  const captureDraftId = typeof router.query.captureDraftId === "string"
+    ? router.query.captureDraftId
+    : null;
   const review = useMemo(
     () => capture ? calculateSpeedsterReview(capture, defects ?? []) : null,
     [capture, defects],
@@ -155,6 +192,86 @@ export default function AiGraderV2AdminPage() {
     return cycleStartedAt.current;
   }, []);
 
+  useEffect(() => {
+    if (!router.isReady || !captureDraftId || !session?.token || !isAdmin || draft || capture) return;
+    let cancelled = false;
+    void (async () => {
+      setWorking(true);
+      setMessage("Loading the preserved capture session. Resume remains an explicit choice.");
+      try {
+        const sessionResponse = await fetch(
+          `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(captureDraftId)}`,
+          { headers: buildAdminHeaders(session.token!), cache: "no-store" },
+        );
+        const sessionPayload = await sessionResponse.json().catch(() => ({})) as {
+          session?: SpeedsterDraft & {
+            workflowState?: string;
+            capture?: unknown;
+            mapRevisionId?: string | null;
+            mapRegistration?: unknown;
+          };
+          message?: string;
+        };
+        if (!sessionResponse.ok || !sessionPayload.session) {
+          throw new Error(sessionPayload.message ?? "Preserved capture session could not be loaded.");
+        }
+        const committed = sessionPayload.session.workflowState === "CAPTURED";
+        if (sessionPayload.session.workflowState !== "DRAFT" && !committed) {
+          throw new Error("The preserved capture session is neither DRAFT nor a reconcilable CAPTURED session. No browser draft was deleted.");
+        }
+        let committedBrowserDraft: SpeedsterCaptureRegistrationDraft | null = null;
+        if (committed) {
+          committedBrowserDraft = readSpeedsterCaptureRegistrationDraftForCommittedSession(window.localStorage, {
+            surface: "AI_GRADER",
+            sessionId: captureDraftId,
+            cardProfile: sessionPayload.session.cardProfile,
+          });
+          if (!committedBrowserDraft
+            || !speedsterCaptureDraftMatchesCommittedSession(committedBrowserDraft, sessionPayload.session)) {
+            throw new Error("The server reports CAPTURED, but its exact capture/map binding does not match the preserved browser draft. Nothing was cleared or resumed; inspect the conflicting evidence.");
+          }
+        }
+        let restoredMap: SpeedsterTrainMapState;
+        let restoredMapLookupFailed = false;
+        try {
+          const mapResponse = await fetch(
+            `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(captureDraftId)}&scope=EFFECTIVE`,
+            { headers: buildAdminHeaders(session.token!), cache: "no-store" },
+          );
+          const mapPayload = await mapResponse.json().catch(() => ({})) as {
+            map?: SpeedsterTrainMapState;
+            message?: string;
+          };
+          if (!mapResponse.ok || !mapPayload.map) {
+            throw new Error(mapPayload.message ?? "The Card Map binding for this preserved draft is unavailable.");
+          }
+          restoredMap = mapPayload.map;
+        } catch {
+          restoredMapLookupFailed = true;
+          restoredMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
+        }
+        if (cancelled) return;
+        setDraft(sessionPayload.session);
+        setMapState(restoredMap);
+        setMapLookupFailed(restoredMapLookupFailed);
+        if (committed && committedBrowserDraft) {
+          setCommittedCaptureRecovery({
+            session: sessionPayload.session as SpeedsterCommittedCaptureRecovery["session"],
+            browserDraft: committedBrowserDraft,
+          });
+          setMessage("Server save is verified as committed and exactly matches the preserved Front/Back capture and map binding. Choose Continue to review or keep the browser draft; nothing was cleared automatically.");
+        } else setMessage(restoredMapLookupFailed
+          ? "Preserved capture session loaded, but Card Map lookup failed. The browser draft remains bound to that failure state; choose Resume only if it validates, or explicitly Discard."
+          : "Preserved capture session loaded. Choose Resume or Discard in the capture workspace; nothing was applied automatically.");
+      } catch (error) {
+        if (!cancelled) setMessage(error instanceof Error ? error.message : "Preserved capture session could not be loaded.");
+      } finally {
+        if (!cancelled) setWorking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [capture, captureDraftId, draft, isAdmin, router.isReady, session?.token]);
+
   const recordInstrumentation = useCallback((input: {
     eventId?: string;
     sessionId: string;
@@ -166,6 +283,7 @@ export default function AiGraderV2AdminPage() {
       | "GEOMETRY_CONFIRMED"
       | "CENTERING_CONFIRMED"
       | "MAP_REGISTRATION_OPERATOR_DECISION"
+      | "MAP_AUTHORITY_OPERATOR_DECISION"
       | "CAPTURE_SAVED"
       | "SAM_MEMORY_COMPLETED"
       | "REVIEW_RENDERED"
@@ -283,6 +401,7 @@ export default function AiGraderV2AdminPage() {
           cardType: value as HumanGradeLabelEditorValue["cardType"],
           playerName: "",
           cardName: "",
+          layoutType: "",
           manufacturer: "",
           insert: "",
         }
@@ -296,7 +415,7 @@ export default function AiGraderV2AdminPage() {
     setWorking(true);
     setMessage("Creating the Speedster card.");
     try {
-      const printedIdentity = canonicalizeSpeedsterSessionIdentity(
+      const printedIdentity = canonicalizeNewSpeedsterSessionIdentity(
         identity.cardType,
         identity.cardType === "SPORTS"
           ? {
@@ -310,6 +429,7 @@ export default function AiGraderV2AdminPage() {
             }
           : {
               cardName: identity.cardName,
+              layoutType: identity.layoutType,
               year: identity.year,
               productSet: identity.productSet,
               parallel: identity.parallel,
@@ -327,6 +447,11 @@ export default function AiGraderV2AdminPage() {
       };
       if (!response.ok || !payload.session) throw new Error(payload.message ?? "Speedster card could not be created.");
       setDraft(payload.session);
+      void router.replace(
+        { pathname: "/admin/ai-grader-v2", query: { captureDraftId: payload.session.id } },
+        undefined,
+        { shallow: true },
+      );
       const endedAtMs = Date.now();
       recordInstrumentation({
         sessionId: payload.session.id,
@@ -426,7 +551,81 @@ export default function AiGraderV2AdminPage() {
       : "SAM 3 sequential FRONT and BACK scan complete. Review the measured card map.");
   }, [draft, recordInstrumentation, session?.token]);
 
-  const saveCapture = async (bundle: SpeedsterCaptureBundle): Promise<SpeedsterCaptureSaveResult> => {
+  const continueCommittedCapture = useCallback(async () => {
+    if (!committedCaptureRecovery || !session?.token || working) return;
+    setWorking(true);
+    setMessage("Loading signed review images for the already committed capture.");
+    try {
+      const urls = await fetchSpeedsterReviewImageUrls({
+        token: session.token,
+        sessionId: committedCaptureRecovery.session.id,
+      });
+      const toPreparedSide = (side: "FRONT" | "BACK") => {
+        const preserved = side === "FRONT"
+          ? committedCaptureRecovery.browserDraft.front
+          : committedCaptureRecovery.browserDraft.back;
+        if (!preserved.centering) throw new Error(`The preserved ${side} centering result is unavailable.`);
+        return {
+          side,
+          originalStorageKey: preserved.originalStorageKey,
+          sourceUrl: urls[side].views.ORIGINAL,
+          sourceCorners: preserved.corners,
+          rectifiedUrl: urls[side].master,
+          rectifiedStorageKey: preserved.rectifiedStorageKey,
+          inspectionUrl: urls[side].master,
+          inspectionStorageKey: preserved.inspectionStorageKey,
+          inspectionFrame: preserved.inspectionFrame,
+          transform: preserved.transform,
+          views: {
+            NORMALIZED: urls[side].views.NORMALIZED,
+            MICRO_DEFECT: urls[side].views.MICRO_DEFECT,
+            DIRECTIONAL: urls[side].views.DIRECTIONAL,
+          },
+          viewStorageKeys: preserved.viewStorageKeys,
+          centeringQuad: preserved.centering.innerQuad,
+          centeringBorders: preserved.centering.borders,
+          ...(preserved.mapRegistration ? { mapRegistration: preserved.mapRegistration } : {}),
+        };
+      };
+      const bundle: SpeedsterCaptureBundle = {
+        sessionId: committedCaptureRecovery.session.id,
+        cardProfile: committedCaptureRecovery.session.cardProfile,
+        cornerShape: committedCaptureRecovery.browserDraft.cornerShape,
+        front: toPreparedSide("FRONT"),
+        back: toPreparedSide("BACK"),
+      };
+      setReviewImageUrls(urls);
+      setCapture(bundle);
+      setReconciledMapDisplay({
+        revisionId: committedCaptureRecovery.session.mapRevisionId ?? null,
+        scope: committedCaptureRecovery.browserDraft.activeMapScope,
+        name: committedCaptureRecovery.browserDraft.activeMapName,
+      });
+      try {
+        removeSpeedsterCaptureRegistrationDraft(window.localStorage, committedCaptureRecovery.session.id);
+      } catch {
+        const failure = "Committed capture resumed, but the obsolete browser draft could not be cleared. Use the visible Retry cleanup action.";
+        setCaptureDraftCleanupFailure({ sessionId: committedCaptureRecovery.session.id, message: failure });
+      }
+      setCommittedCaptureRecovery(null);
+      void router.replace("/admin/ai-grader-v2", undefined, { shallow: true });
+      try {
+        await initializeReview();
+      } catch (error) {
+        setInitializeFailed(true);
+        setMessage(error instanceof Error ? error.message : "Speedster detector state could not be initialized.");
+      }
+    } catch (error) {
+      setMessage(`${error instanceof Error ? error.message : "Committed capture could not continue."} The preserved browser draft remains intact.`);
+    } finally {
+      setWorking(false);
+    }
+  }, [committedCaptureRecovery, initializeReview, router, session?.token, working]);
+
+  const saveCapture = async (
+    bundle: SpeedsterCaptureBundle,
+    clearPreservedBrowserDraft: () => boolean = () => true,
+  ): Promise<SpeedsterCaptureSaveResult> => {
     if (!session?.token || !draft) return { saved: false, message: "Card geometry cannot save without its active draft." };
     if (captureSaveInFlight.current) return { saved: false, message: "Card geometry save is already in progress." };
     captureSaveInFlight.current = true;
@@ -445,6 +644,15 @@ export default function AiGraderV2AdminPage() {
       centeringBorders: side.centeringBorders,
     });
     try {
+      const frontRegistration = bundle.front.mapRegistration;
+      const backRegistration = bundle.back.mapRegistration;
+      const submittedRegistration = Boolean(frontRegistration && backRegistration);
+      const exactFilterPolicyVersion = mapState?.status === "LOADED"
+        ? mapState.revision?.filterPolicyVersion
+        : null;
+      if (submittedRegistration && !exactFilterPolicyVersion) {
+        throw new Error("Card geometry registration cannot save without the immutable loaded revision filter policy.");
+      }
       const response = await fetch(`/api/admin/ai-grader-v2/sessions/${encodeURIComponent(draft.id)}`, {
         method: "PATCH",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
@@ -455,15 +663,13 @@ export default function AiGraderV2AdminPage() {
             front: compactSide(bundle.front),
             back: compactSide(bundle.back),
           },
-          ...(bundle.front.mapRegistration && bundle.back.mapRegistration ? {
+          ...(submittedRegistration ? {
             mapBinding: {
-              revisionId: bundle.front.mapRegistration.mapRevisionId,
-              filterPolicyVersion: mapState?.status === "LOADED"
-                ? mapState.revision?.filterPolicyVersion ?? "speedster-map-filter-containment-v1"
-                : "speedster-map-filter-containment-v1",
+              revisionId: frontRegistration!.mapRevisionId,
+              filterPolicyVersion: exactFilterPolicyVersion,
               registration: {
-                front: bundle.front.mapRegistration,
-                back: bundle.back.mapRegistration,
+                front: frontRegistration!,
+                back: backRegistration!,
               },
             },
           } : {}),
@@ -471,6 +677,8 @@ export default function AiGraderV2AdminPage() {
       });
       const payload = (await response.json().catch(() => ({}))) as { message?: string };
       if (!response.ok) throw new Error(payload.message ?? "Card geometry could not be saved.");
+      clearPreservedBrowserDraft();
+      void router.replace("/admin/ai-grader-v2", undefined, { shallow: true });
       setCapture(bundle);
       recordInstrumentation({
         sessionId: draft.id,
@@ -722,9 +930,49 @@ export default function AiGraderV2AdminPage() {
           </nav>
         </header>
 
-        {!draft ? (
+        {captureDraftCleanupFailure ? (
+          <section className={styles.statusPanel} role="alert">
+            <span>BROWSER DRAFT CLEANUP REQUIRED</span>
+            <p>{captureDraftCleanupFailure.message}</p>
+            <button type="button" onClick={() => {
+              try {
+                removeSpeedsterCaptureRegistrationDraft(window.localStorage, captureDraftCleanupFailure.sessionId);
+                setCaptureDraftCleanupFailure(null);
+                setMessage("The obsolete browser capture draft was cleared explicitly.");
+              } catch {
+                setMessage("The obsolete browser capture draft still could not be cleared. Server-saved work is intact; retry this cleanup action.");
+              }
+            }}>RETRY CLEARING BROWSER DRAFT</button>
+          </section>
+        ) : null}
+
+        {committedCaptureRecovery ? (
+          <section className={styles.statusPanel} role="alert">
+            <span>CAPTURE SAVE COMMITTED · EXPLICIT RECONCILIATION</span>
+            <h2>The server Front + Back capture exactly matches the preserved browser draft.</h2>
+            <p>The prior response was not received. No recapture or server overwrite is needed, and the browser draft has not been cleared.</p>
+            <button type="button" disabled={working} onClick={() => void continueCommittedCapture()}>
+              {working ? "LOADING COMMITTED CAPTURE…" : "CONTINUE TO REVIEW"}
+            </button>
+            <button type="button" disabled={working} onClick={() => {
+              setMessage("Committed capture remains verified. The preserved browser draft was kept by explicit operator choice.");
+            }}>KEEP BROWSER DRAFT FOR NOW</button>
+          </section>
+        ) : null}
+
+        {captureDraftId && !draft && !committedCaptureRecovery ? (
+          <section className={styles.statusPanel} role="alert">
+            <span>CAPTURE RECOVERY BLOCKED</span>
+            <h2>The preserved capture did not reconcile with committed server evidence.</h2>
+            <p>{message} The browser draft remains intact. Fresh capture is unavailable on this recovery URL.</p>
+            <Link href="/admin/ai-grader-v2">LEAVE RECOVERY AND START FROM THE BASE ROUTE</Link>
+          </section>
+        ) : null}
+
+        {!draft && !captureDraftId ? (
           <SharedLabelEditor
             mode="SPEEDSTER"
+            requirePokemonLayoutType
             value={identity}
             onChange={updateIdentity}
             onSubmit={(event) => void createDraft(event)}
@@ -736,35 +984,55 @@ export default function AiGraderV2AdminPage() {
 
         {draft && mapState && !capture ? (
           <section className={styles.statusPanel}>
-            <span>{mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP` : "NO CARD MAP · MANUAL"}</span>
+            <span>{mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP`
+              : mapLookupFailed ? "CARD MAP LOOKUP FAILED"
+                : mapState.status === "INTEGRITY_ERROR" ? "CARD MAP INTEGRITY ERROR"
+                  : "NO CARD MAP · MANUAL"}</span>
             <h2>{mapState.status === "LOADED"
               ? mapState.name || `Loaded revision ${mapState.revision?.version}`
-              : "Normal human review"}</h2>
+              : mapLookupFailed ? "Preserved draft requires explicit review"
+                : mapState.status === "INTEGRITY_ERROR" ? "Preserved draft is integrity-bound"
+                  : "Normal human review"}</h2>
             <p>{mapState.status === "LOADED"
               ? `r${mapState.revision?.version} · ${mapState.revision?.revisionHash.slice(0, 12)} · This selected map will register to the card's physical geometry.`
-              : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
+              : mapLookupFailed
+                ? "Map authority was not guessed. Strict draft validation may offer Resume; otherwise fresh capture stays blocked until explicit Discard."
+                : mapState.status === "INTEGRITY_ERROR"
+                  ? "The invalid map was not applied. The preserved browser draft remains auditable and requires an explicit Resume or Discard choice."
+                  : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
           </section>
         ) : null}
 
         {capture && mapState ? (
           <SpeedsterAppliedMapBadge
             capture={capture}
-            selectedRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
-            scope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
-            name={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
+            selectedRevisionId={reconciledMapDisplay?.revisionId
+              ?? (mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null)}
+            scope={reconciledMapDisplay?.scope
+              ?? (mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null)}
+            name={reconciledMapDisplay?.name
+              ?? (mapState.status === "LOADED" ? mapState.name ?? "Card map" : null)}
           />
         ) : null}
 
-        {draft && !capture && mapState ? (
+        {draft && !capture && mapState && !committedCaptureRecovery ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
+            draftSurface="AI_GRADER"
             activeMapRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
             activeMapScope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
             activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
+            mapBindingStatus={mapState.status === "LOADED" ? "LOADED"
+              : mapState.status === "INTEGRITY_ERROR" ? "INTEGRITY_ERROR"
+                : mapLookupFailed ? "LOOKUP_FAILED" : "NO_MAP"}
             mapLookupFailed={mapLookupFailed}
             onReady={saveCapture}
+            onDraftCleanupFailure={(failure) => {
+              setCaptureDraftCleanupFailure({ sessionId: draft.id, message: failure });
+              setMessage(failure);
+            }}
             onInstrumentationEvent={recordCaptureInstrumentation}
           />
         ) : null}

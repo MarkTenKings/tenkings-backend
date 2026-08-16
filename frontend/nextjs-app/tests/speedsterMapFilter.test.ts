@@ -639,8 +639,8 @@ test("a pinned revision for a different exact card key fails visibly before dete
 });
 
 test("a pinned family revision applies across card names within the same Card Type", async () => {
-  const initial = initializeSession(true);
-  const sourceIdentity = { ...identity, cardName: "Snorlax", cardNumber: "143/196" };
+  const initial = { ...initializeSession(true), identity: { ...identity, layoutType: "POKEMON" as const } };
+  const sourceIdentity = { ...identity, cardName: "Snorlax", cardNumber: "143/196", layoutType: "POKEMON" as const };
   const familyKey = speedsterFamilyCardTypeMapKey("POKEMON", sourceIdentity);
   const familyMap: SpeedsterPinnedMapFilterInput = {
     ...map,
