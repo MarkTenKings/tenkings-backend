@@ -159,6 +159,24 @@ function captureRecord(workflowState: "CAPTURED" | "COMPLETED") {
   };
 }
 
+function versionedCaptureRecord() {
+  const source = structuredClone(captureRecord("COMPLETED"));
+  const generation = "recapture-00000000-0000-4000-8000-000000000007";
+  for (const side of ["front", "back"] as const) {
+    const value = source.capture[side];
+    value.originalStorageKey = `ai-grader-v2/admin-1/${SESSION_ID}/original/${generation}/${side}.jpg`;
+    const prefix = `ai-grader-v2/admin-1/${SESSION_ID}/prepared/${side}/${generation}`;
+    value.rectifiedStorageKey = `${prefix}/rectified.webp`;
+    value.inspectionStorageKey = `${prefix}/inspection.webp`;
+    value.viewStorageKeys = {
+      NORMALIZED: `${prefix}/normalized.webp`,
+      MICRO_DEFECT: `${prefix}/micro_defect.webp`,
+      DIRECTIONAL: `${prefix}/directional.webp`,
+    };
+  }
+  return source;
+}
+
 const legacyPokemonIdentity = {
   cardName: "Squirtle",
   year: "2023 Pokemon",
@@ -920,6 +938,17 @@ test("one authoring operation atomically creates independently verified FAMILY a
     const { revisionId: _revisionId, revisionHash, createdAt: _createdAt, ...hashPayload } = result.revision;
     assert.equal(revisionHash, speedsterMapRevisionHash(hashPayload));
   }
+});
+
+test("map source parser accepts exact versioned bundles and rejects a mixed original/prepared generation", () => {
+  const versioned = versionedCaptureRecord();
+  const parsed = parseSpeedsterMapSourceSession(versioned);
+  assert.match(parsed.front.originalStorageKey, /\/original\/recapture-00000000-0000-4000-8000-000000000007\/front\.jpg$/);
+  assert.match(parsed.front.inspectionStorageKey, /\/prepared\/front\/recapture-00000000-0000-4000-8000-000000000007\/inspection\.webp$/);
+
+  const mixed = versionedCaptureRecord();
+  mixed.capture.front.inspectionStorageKey = `ai-grader-v2/admin-1/${SESSION_ID}/prepared/front/inspection.webp`;
+  assert.throws(() => parseSpeedsterMapSourceSession(mixed), /source images are not bound|generations do not match/i);
 });
 
 test("legacy completed Pokemon source can author append-only V2 family provenance without rewriting session identity", async () => {

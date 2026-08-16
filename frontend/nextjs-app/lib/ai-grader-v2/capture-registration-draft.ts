@@ -127,7 +127,9 @@ export type SpeedsterCaptureRegistrationDraftV1 = SpeedsterCaptureRegistrationDr
 export type SpeedsterCaptureRegistrationDraftV2 = SpeedsterCaptureRegistrationDraftFields<
   typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
   SpeedsterCaptureDraftSideV2
->;
+> & Readonly<{
+  recaptureSide?: SpeedsterCardSide;
+}>;
 
 export type SpeedsterCaptureRegistrationDraft =
   | SpeedsterCaptureRegistrationDraftV1
@@ -496,7 +498,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     "captureSavePendingRetry", "failures", "front", "interruptions", "mapAuthorityAbandoned", "mapBindingStatus", "mapRegistrationFailed", "notice", "operationId",
     "createdAtMs", "provisional", "registrationFailureSides", "registrationRecordedAtMs", "sessionId", "stage", "surface",
     "updatedAtMs", "version",
-  ])) return null;
+  ], ["recaptureSide"])) return null;
   if ((value.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION
       && value.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2)
     || value.surface !== binding.surface || value.sessionId !== binding.sessionId
@@ -516,6 +518,8 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || (value.cornerShape !== "SQUARE" && value.cornerShape !== "ROUNDED_3_18_MM")
     || typeof value.mapRegistrationFailed !== "boolean" || typeof value.mapAuthorityAbandoned !== "boolean"
     || typeof value.captureSavePendingRetry !== "boolean"
+    || (value.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION && value.recaptureSide !== undefined)
+    || (value.recaptureSide !== undefined && value.recaptureSide !== "FRONT" && value.recaptureSide !== "BACK")
     || (value.notice !== null && !text(value.notice, 1000))
     || typeof value.operationId !== "string" || !UUID.test(value.operationId)) return null;
   const revisionId = typeof value.activeMapRevisionId === "string" ? value.activeMapRevisionId : "";
@@ -549,6 +553,38 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
   const retryDecisionSides = SIDES.filter((side) => retry[side]);
   const recordedFailureSides = SIDES.filter((side) => registrationFailureSides[side]);
   const centeringStage = value.stage === "FRONT_CENTERING" || value.stage === "BACK_CENTERING";
+  const recaptureSide = value.recaptureSide === "FRONT" || value.recaptureSide === "BACK"
+    ? value.recaptureSide
+    : null;
+  const recaptureIsCoherent = !recaptureSide || (() => {
+    if (version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2
+      || value.mapBindingStatus !== "LOADED"
+      || (value.stage !== "MAP_REGISTRATION_INTERRUPTED" && value.stage !== "MAP_REGISTRATION_RESCUE")) return false;
+    const target = recaptureSide === "FRONT" ? front : back;
+    const registrations = {
+      FRONT: provisional.FRONT ?? front.mapRegistration,
+      BACK: provisional.BACK ?? back.mapRegistration,
+    };
+    const unresolvedSides = SIDES.filter((candidate) => interruptions[candidate] || failures[candidate]);
+    const sideName = recaptureSide.toLowerCase();
+    const exactRecaptureGeneration = "recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}";
+    const originalGeneration = new RegExp(`/original/(${exactRecaptureGeneration})/${sideName}\\.(?:jpg|png|webp)$`, "i")
+      .exec(target.originalStorageKey)?.[1]?.toLowerCase();
+    const preparedGenerations = [
+      [target.rectifiedStorageKey, "rectified"],
+      [target.inspectionStorageKey, "inspection"],
+      [target.viewStorageKeys.NORMALIZED, "normalized"],
+      [target.viewStorageKeys.MICRO_DEFECT, "micro_defect"],
+      [target.viewStorageKeys.DIRECTIONAL, "directional"],
+    ].map(([storageKey, artifact]) => (
+      new RegExp(`/prepared/${sideName}/(${exactRecaptureGeneration})/${artifact}\\.webp$`, "i")
+        .exec(storageKey)?.[1]?.toLowerCase()
+    ));
+    return unresolvedSides.length > 0
+      && SIDES.every((candidate) => unresolvedSides.includes(candidate) !== Boolean(registrations[candidate]))
+      && Boolean(originalGeneration)
+      && preparedGenerations.every((generation) => generation === originalGeneration);
+  })();
   const loadedCenteringRegistrationIsCoherent = registeredSides.length === 2
     ? recordedFailureSides.length === 0 && value.mapRegistrationFailed === false && value.mapAuthorityAbandoned === false
     : registeredSides.length === 0 && (
@@ -573,6 +609,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || (value.stage === "BACK_CENTERING" && (!front.centering
     || (value.captureSavePendingRetry ? !back.centering : Boolean(back.centering))))
     || (value.stage !== "BACK_CENTERING" && value.captureSavePendingRetry)
+    || !recaptureIsCoherent
     || (value.mapBindingStatus !== "LOADED" && (unresolved || registeredSides.length > 0
       || value.stage === "MAP_REGISTRATION_INTERRUPTED" || value.stage === "MAP_REGISTRATION_RESCUE"))
     || (value.mapAuthorityAbandoned && (registeredSides.length > 0 || unresolved
@@ -618,6 +655,9 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     mapAuthorityAbandoned: value.mapAuthorityAbandoned,
     captureSavePendingRetry: value.captureSavePendingRetry,
     notice: value.notice as string | null,
+    ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 && value.recaptureSide
+      ? { recaptureSide: value.recaptureSide as SpeedsterCardSide }
+      : {}),
   } as SpeedsterCaptureRegistrationDraft;
 }
 

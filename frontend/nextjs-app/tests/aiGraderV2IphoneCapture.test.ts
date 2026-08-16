@@ -179,7 +179,7 @@ test("admin polling returns only its active draft pair", async () => {
   assert.equal(crossAdmin.state.status, 404);
 });
 
-test("ready-pair resolution uses versioned objects and falls back only to a complete legacy pair", async () => {
+test("ready-pair resolution uses exact versioned objects and requires an explicit exact-version legacy choice", async () => {
   const versionedFront = speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 4);
   const versionedBack = speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 4);
   const versioned = await resolveSpeedsterIphoneReadyPair({
@@ -192,10 +192,21 @@ test("ready-pair resolution uses versioned objects and falls back only to a comp
 
   const legacyFront = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT");
   const legacyBack = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "BACK");
+  await assert.rejects(resolveSpeedsterIphoneReadyPair({
+    userId: "admin-1",
+    sessionId,
+    readyVersion: 3,
+    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
+  }), (error: unknown) => {
+    assert.match(error instanceof Error ? error.message : "", /Explicit operator confirmation/);
+    assert.equal((error as { readyVersion?: number }).readyVersion, 3);
+    return true;
+  });
   const legacy = await resolveSpeedsterIphoneReadyPair({
     userId: "admin-1",
     sessionId,
     readyVersion: 3,
+    acceptedLegacyReadyVersion: 3,
     storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
   });
   assert.deepEqual(legacy, { front: legacyFront, back: legacyBack, storageGeneration: "LEGACY" });
@@ -203,9 +214,65 @@ test("ready-pair resolution uses versioned objects and falls back only to a comp
   await assert.rejects(resolveSpeedsterIphoneReadyPair({
     userId: "admin-1",
     sessionId,
+    readyVersion: 3,
+    acceptedLegacyReadyVersion: 2,
+    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
+  }), /Explicit operator confirmation/);
+
+  await assert.rejects(resolveSpeedsterIphoneReadyPair({
+    userId: "admin-1",
+    sessionId,
     readyVersion: 5,
     storageObjectExists: async (key) => key.endsWith("/iphone-v5/front.jpg"),
   }), /versioned iPhone capture pair is incomplete/);
+});
+
+test("admin polling discloses a complete legacy pair without signing until the exact ready version is accepted", async () => {
+  let signCalls = 0;
+  const legacyFront = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT");
+  const legacyBack = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "BACK");
+  const handler = createAiGraderV2AdminIphoneCaptureHandler({
+    requireAdminSession: async () => ({ user: { id: "admin-1" } }),
+    findSession: async (id) => ({ id, createdByUserId: "admin-1", workflowState: "DRAFT" }),
+    findDevice: async () => ({
+      id: "device-12345678901234567890",
+      createdByUserId: "admin-1",
+      activeSessionId: sessionId,
+      uploadVersion: 7,
+      readyVersion: 7,
+    }),
+    createDevice: async () => { throw new Error("not used"); },
+    activateDevice: async () => { throw new Error("not used"); },
+    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
+    presignReadUrl: async (key) => {
+      signCalls += 1;
+      return `read:${key}`;
+    },
+  });
+
+  const disclosed = response();
+  await handler(request("GET", undefined, { sessionId }), disclosed.res);
+  assert.equal(disclosed.state.status, 409);
+  assert.deepEqual(disclosed.state.body, {
+    message: "A complete legacy iPhone pair exists for ready version 7. Explicit operator confirmation is required before it can be selected.",
+    readyVersion: 7,
+    legacyPairAvailable: true,
+    storageGeneration: "LEGACY",
+  });
+  assert.equal(signCalls, 0);
+
+  const wrong = response();
+  await handler(request("GET", undefined, { sessionId, acceptLegacyReadyVersion: "6" }), wrong.res);
+  assert.equal(wrong.state.status, 409);
+  assert.equal(signCalls, 0);
+
+  const accepted = response();
+  await handler(request("GET", undefined, { sessionId, acceptLegacyReadyVersion: "7" }), accepted.res);
+  assert.equal(accepted.state.status, 200);
+  assert.equal(accepted.state.body.storageGeneration, "LEGACY");
+  assert.equal(accepted.state.body.front.storageKey, legacyFront);
+  assert.equal(accepted.state.body.back.storageKey, legacyBack);
+  assert.equal(signCalls, 2);
 });
 
 test("Shortcut PLAN and COMPLETE publish a new non-overwriting object pair per uploadVersion", async () => {

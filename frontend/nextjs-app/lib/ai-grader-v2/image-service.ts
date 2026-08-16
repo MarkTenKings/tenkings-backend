@@ -314,7 +314,7 @@ export type SpeedsterColorGeometryResponse = {
 };
 
 type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
-type ArtifactPlan = { storageKey: string; uploadUrl: string; readUrl: string };
+type ArtifactPlan = { storageKey: string; readUrl: string };
 export type SpeedsterPreparedOutputPlan = Readonly<Record<PreparedArtifact, ArtifactPlan>>;
 
 export const SPEEDSTER_IMAGE_REQUEST_TIMEOUT_MS = 65_000;
@@ -543,7 +543,6 @@ export const speedsterImageService = {
       sourceImageStorageKey: string;
     }>,
     corners: SpeedsterQuad,
-    outputPlan: SpeedsterPreparedOutputPlan,
     matColor: SpeedsterMatColor,
     options?: SpeedsterImageRequestOptions,
   ) {
@@ -552,13 +551,6 @@ export const speedsterImageService = {
       ...binding,
       corners,
       matColor,
-      outputUploads: {
-        rectified: outputPlan.RECTIFIED.uploadUrl,
-        inspection: outputPlan.INSPECTION.uploadUrl,
-        normalized: outputPlan.NORMALIZED.uploadUrl,
-        microDefect: outputPlan.MICRO_DEFECT.uploadUrl,
-        directional: outputPlan.DIRECTIONAL.uploadUrl,
-      },
     }, options);
   },
   recoverColorGeometry(
@@ -599,6 +591,8 @@ export const speedsterImageService = {
       sessionId: string;
       side: SpeedsterCardSide;
       currentPhysicalQuad: SpeedsterQuad;
+      currentOriginalStorageKey: string;
+      currentInspectionStorageKey: string;
       orchestration: SpeedsterMapRegistrationOrchestration;
     },
     options: SpeedsterImageRequestOptions = {},
@@ -616,6 +610,8 @@ export const speedsterImageService = {
       sessionId: string;
       side: SpeedsterCardSide;
       currentPhysicalQuad: SpeedsterQuad;
+      currentOriginalStorageKey: string;
+      currentInspectionStorageKey: string;
       rescueAttemptId: string;
       automaticFailure: SpeedsterMapRegistrationFailure;
       correctedAnchors: readonly Readonly<{ anchorId: string; point: { x: number; y: number } }>[];
@@ -637,6 +633,7 @@ export async function uploadSpeedsterOriginal(input: {
   sessionId: string;
   side: SpeedsterCardSide;
   file: File;
+  targetedRecapture?: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ storageKey: string; readUrl: string }> {
@@ -653,6 +650,7 @@ export async function uploadSpeedsterOriginal(input: {
       side: input.side,
       kind: "ORIGINAL",
       contentType: input.file.type,
+      ...(input.targetedRecapture ? { targetedRecapture: true } : {}),
     }),
   }, `${input.side.toLowerCase()} upload planning`, input);
   if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl || !plan.readUrl) {
@@ -674,6 +672,7 @@ export async function planSpeedsterPreparedOutputs(input: {
   token: string;
   sessionId: string;
   side: SpeedsterCardSide;
+  sourceImageStorageKey: string;
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<SpeedsterPreparedOutputPlan> {
@@ -683,7 +682,12 @@ export async function planSpeedsterPreparedOutputs(input: {
   }>("/api/admin/ai-grader-v2/upload-plan", {
     method: "POST",
     headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ sessionId: input.sessionId, side: input.side, kind: "PREPARED" }),
+    body: JSON.stringify({
+      sessionId: input.sessionId,
+      side: input.side,
+      kind: "PREPARED",
+      sourceImageStorageKey: input.sourceImageStorageKey,
+    }),
   }, `${input.side.toLowerCase()} output planning`, input);
   if (!response.ok || !payload.outputs) {
     throw new Error(toCardMapOperatorMessage(payload.message ?? "Speedster output storage could not be prepared."));

@@ -76,6 +76,7 @@ export async function resolveSpeedsterIphoneReadyPair(input: Readonly<{
   userId: string;
   sessionId: string;
   readyVersion: number;
+  acceptedLegacyReadyVersion?: number;
   storageObjectExists: (storageKey: string) => Promise<boolean>;
 }>) {
   const versioned = {
@@ -105,7 +106,30 @@ export async function resolveSpeedsterIphoneReadyPair(input: Readonly<{
       statusCode: 409,
     });
   }
+  if (input.acceptedLegacyReadyVersion !== input.readyVersion) {
+    throw new SpeedsterLegacyIphonePairRequiresChoiceError(input.readyVersion);
+  }
   return { ...legacy, storageGeneration: "LEGACY" as const };
+}
+
+export class SpeedsterLegacyIphonePairRequiresChoiceError extends Error {
+  readonly statusCode = 409;
+  readonly legacyPairAvailable = true;
+
+  constructor(readonly readyVersion: number) {
+    super(`A complete legacy iPhone pair exists for ready version ${readyVersion}. Explicit operator confirmation is required before it can be selected.`);
+    this.name = "SpeedsterLegacyIphonePairRequiresChoiceError";
+  }
+}
+
+function acceptedLegacyReadyVersion(req: NextApiRequest): number | undefined | null {
+  const raw = Array.isArray(req.query.acceptLegacyReadyVersion)
+    ? req.query.acceptLegacyReadyVersion[0]
+    : req.query.acceptLegacyReadyVersion;
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "string" || !/^[1-9][0-9]*$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : null;
 }
 
 function validDraft(session: SessionRecord | null, userId: string) {
@@ -153,10 +177,15 @@ export function createAiGraderV2AdminIphoneCaptureHandler(deps: Dependencies = d
       if (!device || device.activeSessionId !== activeSessionId || device.readyVersion < 1) {
         return res.status(200).json({ readyVersion: 0 });
       }
+      const acceptedLegacyVersion = acceptedLegacyReadyVersion(req);
+      if (acceptedLegacyVersion === null) {
+        return res.status(400).json({ message: "Invalid accepted legacy iPhone ready version" });
+      }
       const readyPair = await resolveSpeedsterIphoneReadyPair({
         userId: admin.user.id,
         sessionId: activeSessionId,
         readyVersion: device.readyVersion,
+        ...(acceptedLegacyVersion === undefined ? {} : { acceptedLegacyReadyVersion: acceptedLegacyVersion }),
         storageObjectExists: deps.storageObjectExists,
       });
       const frontStorageKey = readyPair.front;
@@ -172,6 +201,14 @@ export function createAiGraderV2AdminIphoneCaptureHandler(deps: Dependencies = d
         back: { storageKey: backStorageKey, readUrl: backReadUrl },
       });
     } catch (error) {
+      if (error instanceof SpeedsterLegacyIphonePairRequiresChoiceError) {
+        return res.status(error.statusCode).json({
+          message: error.message,
+          readyVersion: error.readyVersion,
+          legacyPairAvailable: error.legacyPairAvailable,
+          storageGeneration: "LEGACY",
+        });
+      }
       const mapped = toErrorResponse(error);
       return res.status(mapped.status).json({ message: mapped.message });
     }

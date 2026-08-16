@@ -203,6 +203,11 @@ async function mountWorkspace(input: {
   preparedImageRefreshFails?: boolean;
   preparedImageRefreshFailures?: number;
   preparedImageRequestBarrier?: (side: "FRONT" | "BACK") => Promise<void>;
+  preparedImageFetch?: (input: Readonly<{
+    side: "FRONT" | "BACK";
+    storageKey: string;
+    requestNumber: number;
+  }>) => Response | undefined | Promise<Response | undefined>;
   captureDraftSerialized?: string;
   localStorageGetFails?: boolean;
   localStorageSetFails?: boolean;
@@ -237,7 +242,7 @@ async function mountWorkspace(input: {
   imageRequestTimeoutMs?: number;
   decisionAuditConfirmationTimeoutMs?: number;
   autoConfirmMats?: boolean;
-  iphonePollFetch?: (pollCount: number) => Response | undefined | Promise<Response | undefined>;
+  iphonePollFetch?: (pollCount: number, url: string) => Response | undefined | Promise<Response | undefined>;
   iphoneStorageGeneration?: "VERSIONED" | "LEGACY";
   scoreFetch?: (request: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   prepareFetch?: (input: Readonly<{
@@ -358,7 +363,7 @@ async function mountWorkspace(input: {
     }
     if (url.startsWith("/api/admin/ai-grader-v2/iphone-capture?")) {
       pollCount += 1;
-      const customResponse = await input.iphonePollFetch?.(pollCount);
+      const customResponse = await input.iphonePollFetch?.(pollCount, url);
       if (customResponse) return customResponse;
       const suffix = input.refreshedUrls && pollCount > 1 ? "refreshed" : "original";
       return jsonResponse({
@@ -378,19 +383,30 @@ async function mountWorkspace(input: {
       const body = JSON.parse(String(init?.body)) as {
         side: "FRONT" | "BACK";
         kind: "ORIGINAL" | "PREPARED";
+        targetedRecapture?: boolean;
+        sourceImageStorageKey?: string;
       };
       if (body.kind === "ORIGINAL") {
         originalUploadPlanCount[body.side] += 1;
+        const storageKey = body.targetedRecapture
+          ? `ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/${body.side.toLowerCase()}.jpg`
+          : `ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/${body.side.toLowerCase()}.jpg`;
         return jsonResponse({
-          storageKey: `${body.side.toLowerCase()}-recaptured.jpg`,
-          uploadUrl: `https://upload.example.test/${body.side.toLowerCase()}-recaptured.jpg`,
-          readUrl: `https://read.example.test/${body.side.toLowerCase()}-recaptured.jpg`,
+          storageKey,
+          uploadUrl: `https://upload.example.test/${encodeURIComponent(storageKey)}`,
+          readUrl: `https://read.example.test/${encodeURIComponent(storageKey)}`,
         });
       }
       preparedUploadPlanCount[body.side] += 1;
+      const generation = /\/original\/(iphone-v[1-9][0-9]*|recapture-[a-f0-9-]+)\//i
+        .exec(body.sourceImageStorageKey ?? "")?.[1]?.toLowerCase();
+      const preparedPrefix = `ai-grader-v2/admin-1/speedster-session-lifecycle-test/prepared/${body.side.toLowerCase()}${generation ? `/${generation}` : ""}`;
       const outputs = Object.fromEntries(["RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"].map((kind) => [
         kind,
-        { storageKey: `${kind}.webp`, uploadUrl: `https://upload.example.test/${kind}`, readUrl: `https://read.example.test/${kind}` },
+        {
+          storageKey: `${preparedPrefix}/${kind.toLowerCase()}.webp`,
+          readUrl: `https://read.example.test/${encodeURIComponent(`${preparedPrefix}/${kind.toLowerCase()}.webp`)}`,
+        },
       ]));
       return jsonResponse({ outputs });
     }
@@ -398,8 +414,16 @@ async function mountWorkspace(input: {
       return new Response(null, { status: 200 });
     }
     if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/prepared-image?side=")) {
-      const side = url.endsWith("side=FRONT") ? "FRONT" : "BACK";
+      const parsedUrl = new URL(url, "https://collect.tenkings.co");
+      const side = parsedUrl.searchParams.get("side") === "FRONT" ? "FRONT" : "BACK";
+      const storageKey = parsedUrl.searchParams.get("storageKey") ?? "";
       preparedImageRefreshCount[side] += 1;
+      const customResponse = await input.preparedImageFetch?.({
+        side,
+        storageKey,
+        requestNumber: preparedImageRefreshCount[side],
+      });
+      if (customResponse) return customResponse;
       await input.preparedImageRequestBarrier?.(side);
       if (input.preparedImageRefreshFails || remainingPreparedImageRefreshFailures > 0) {
         remainingPreparedImageRefreshFailures = Math.max(0, remainingPreparedImageRefreshFailures - 1);
@@ -665,8 +689,9 @@ async function mountWorkspace(input: {
     }
     if (input.autoConfirmMats === false) {
       await waitFor(
-        () => Boolean(buttonByText(container, "Confirm both mats to continue")),
-        "The unconfirmed capture pair did not become ready",
+        () => Boolean(buttonByText(container, "Confirm both mats to continue")
+          || container.querySelector('[aria-label="Legacy iPhone pair explicit choice"]')),
+        "The unconfirmed capture pair or explicit legacy choice did not become ready",
       );
       return;
     }
@@ -947,16 +972,44 @@ async function prepareBothSidesAndReachFrontCentering(harness: Harness) {
   );
 }
 
-test("legacy iPhone compatibility is disclosed and a later polling failure stays visible without erasing photos", async () => {
+test("legacy iPhone pair requires an exact mounted operator choice and a later polling failure cannot erase it", async () => {
   const harness = await mountWorkspace({
     autoConfirmMats: false,
-    iphoneStorageGeneration: "LEGACY",
-    iphonePollFetch: (pollCount) => pollCount === 2
-      ? jsonResponse({ message: "The versioned iPhone capture pair is incomplete. No photo was selected." }, 409)
-      : undefined,
+    iphonePollFetch: (pollCount, url) => {
+      const accepted = new URL(url, "https://collect.tenkings.co").searchParams.get("acceptLegacyReadyVersion");
+      if (accepted !== "4") return jsonResponse({
+        message: "A complete legacy iPhone pair exists for ready version 4. Explicit operator confirmation is required before it can be selected.",
+        readyVersion: 4,
+        legacyPairAvailable: true,
+        storageGeneration: "LEGACY",
+      }, 409);
+      if (pollCount > 2) {
+        return jsonResponse({ message: "The versioned iPhone capture pair is incomplete. No photo was selected." }, 409);
+      }
+      return jsonResponse({
+        readyVersion: 4,
+        storageGeneration: "LEGACY",
+        front: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+          readUrl: "https://images.example.test/front-legacy.jpg",
+        },
+        back: {
+          storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/back.jpg",
+          readUrl: "https://images.example.test/back-legacy.jpg",
+        },
+      });
+    },
     proposeGeometry: async () => geometryResponse(),
   });
   try {
+    assert.match(harness.container.textContent ?? "", /Nothing has been selected/i);
+    assert.equal(harness.container.querySelector('img[alt="front card preview"]'), null);
+    assert.equal(harness.container.querySelector('img[alt="back card preview"]'), null);
+    const choose = buttonByText(harness.container, "Use legacy pair for ready version 4");
+    assert.ok(choose);
+    await act(async () => fire(choose, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('img[alt="front card preview"]')),
+      "Explicitly accepted legacy Front was not installed");
     assert.match(harness.container.textContent ?? "", /Legacy iPhone front \+ back pair received and disclosed/i);
     assert.ok(harness.container.querySelector('img[alt="front card preview"]'));
     assert.ok(harness.container.querySelector('img[alt="back card preview"]'));
@@ -968,6 +1021,33 @@ test("legacy iPhone compatibility is disclosed and a later polling failure stays
     assert.match(harness.container.textContent ?? "", /Existing photos and operator work are preserved; the status check will retry/i);
     assert.ok(harness.container.querySelector('img[alt="front card preview"]'));
     assert.ok(harness.container.querySelector('img[alt="back card preview"]'));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("unsolicited HTTP 200 legacy pair is not installed without matching local exact-version acceptance", async () => {
+  const harness = await mountWorkspace({
+    autoConfirmMats: false,
+    iphonePollFetch: () => jsonResponse({
+      readyVersion: 9,
+      storageGeneration: "LEGACY",
+      front: {
+        storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+        readUrl: "https://images.example.test/unsolicited-front.jpg",
+      },
+      back: {
+        storageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/back.jpg",
+        readUrl: "https://images.example.test/unsolicited-back.jpg",
+      },
+    }),
+    proposeGeometry: async () => geometryResponse(),
+  });
+  try {
+    assert.equal(harness.container.querySelector('img[alt="front card preview"]'), null);
+    assert.equal(harness.container.querySelector('img[alt="back card preview"]'), null);
+    assert.ok(buttonByText(harness.container, "Use legacy pair for ready version 9"));
+    assert.match(harness.container.textContent ?? "", /this client has not explicitly accepted that exact version.*Nothing was selected/i);
   } finally {
     await harness.cleanup();
   }
@@ -1203,7 +1283,7 @@ test("Front targeted mat recapture preserves the complete Back side through the 
       [
         { sessionId: "speedster-session-lifecycle-test", side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg", matColor: "BLACK" },
         { sessionId: "speedster-session-lifecycle-test", side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg", matColor: "WHITE" },
-        { sessionId: "speedster-session-lifecycle-test", side: "FRONT", sourceImageStorageKey: "front-recaptured.jpg", matColor: "WHITE" },
+        { sessionId: "speedster-session-lifecycle-test", side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg", matColor: "WHITE" },
       ],
       "The rerun must bind only the replacement Front and preserve the successful Back",
     );
@@ -1220,7 +1300,7 @@ test("Front targeted mat recapture preserves the complete Back side through the 
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => harness.bundles.length === 1, "Recaptured pair was not assembled");
 
-    assert.equal(harness.bundles[0].front.originalStorageKey, "front-recaptured.jpg");
+    assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg");
     assert.equal(harness.bundles[0].back.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg");
     assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].matColor, "WHITE");
     assert.equal(
@@ -1339,6 +1419,16 @@ test("Front targeted recapture exposes repeated registration interruption and ma
     assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "The retained sibling must not be registered again");
     assert.deepEqual(harness.getRegistrationResultsForSide("BACK"), [retainedBackRegistration]);
     assert.equal(harness.bundles.length, 0);
+    await waitFor(() => {
+      const value = harness.getCaptureDraftSerialized();
+      return Boolean(value && JSON.parse(value).recaptureSide === "FRONT");
+    }, "Targeted interruption draft was not durably written");
+    const interruptedDraft = JSON.parse(harness.getCaptureDraftSerialized()!);
+    assert.equal(interruptedDraft.registrationRecordedAtMs.FRONT, undefined,
+      "The replaced Front's old successful timestamp must be cleared before its retry succeeds");
+    assert.equal(typeof interruptedDraft.registrationRecordedAtMs.BACK, "number",
+      "The retained Back registration timestamp must remain exact");
+    const geometryEventCountBeforeRetry = harness.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED").length;
 
     await act(async () => fire(buttonByText(harness.container, "FRONT: Retry failed side")!, "click"));
     await waitFor(
@@ -1347,6 +1437,18 @@ test("Front targeted recapture exposes repeated registration interruption and ma
     );
     assert.equal(harness.getRegistrationCountForSide("FRONT"), 4);
     assert.equal(harness.getRegistrationCountForSide("BACK"), 1);
+    await waitFor(() => {
+      const value = harness.getCaptureDraftSerialized();
+      return Boolean(value && typeof JSON.parse(value).registrationRecordedAtMs.FRONT === "number");
+    }, "Successful replacement Front registration timestamp was not durably restamped");
+    const geometryAfterRetry = harness.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED");
+    assert.equal(geometryAfterRetry.length, geometryEventCountBeforeRetry + 1);
+    assert.deepEqual(geometryAfterRetry.at(-1)?.details, {
+      side: "FRONT",
+      mapAppliedScope: "FAMILY",
+      mapName: "Targeted retry map",
+      mapRevisionId: "map-targeted-retry",
+    }, "Only the freshly registered Front may be instrumented; retained Back must never be relabeled failed");
     assert.deepEqual(
       harness.getRegistrationOrchestrations().filter(({ side }) => side === "FRONT").map(({ orchestration }) => ({
         attemptNumber: orchestration.attemptNumber,
@@ -1368,7 +1470,7 @@ test("Front targeted recapture exposes repeated registration interruption and ma
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => harness.bundles.length === 1, "Targeted retry flow did not assemble its final bundle");
     assert.deepEqual(harness.bundles[0].back.mapRegistration, retainedBackRegistration);
-    assert.equal(harness.bundles[0].front.originalStorageKey, "front-recaptured.jpg");
+    assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/front.jpg");
   } finally {
     await harness.cleanup();
     if (createObjectUrlDescriptor) {
@@ -1376,6 +1478,294 @@ test("Front targeted recapture exposes repeated registration interruption and ma
     } else {
       Reflect.deleteProperty(URL, "createObjectURL");
     }
+  }
+});
+
+test("late prepared-image success or failure for an old key cannot replace or poison the recaptured key", async () => {
+  for (const staleOutcome of ["SUCCESS", "FAILURE"] as const) {
+    const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: () => `blob:https://collect.tenkings.co/front-refresh-race-${staleOutcome.toLowerCase()}`,
+    });
+    const pending: Array<{
+      storageKey: string;
+      resolve: (response: Response) => void;
+    }> = [];
+    let frontGeometryCalls = 0;
+    const harness = await mountWorkspace({
+      activeMap: { revisionId: `map-refresh-race-${staleOutcome.toLowerCase()}`, scope: "FAMILY", name: "Refresh race map" },
+      proposeGeometry: async (_token, input) => {
+        if (input.side === "FRONT") {
+          frontGeometryCalls += 1;
+          if (frontGeometryCalls === 1) return advisoryGeometryResponse("BLACK", "WHITE");
+        }
+        return geometryResponse();
+      },
+      preparedImageFetch: async ({ side, storageKey }) => {
+        if (side === "BACK") return jsonResponse({ side, imageUrl: "https://read.example.test/back-race.webp" });
+        return new Promise<Response>((resolve) => pending.push({ storageKey, resolve }));
+      },
+    });
+    try {
+      await prepareBothSidesAndReachFrontCentering(harness);
+      await waitFor(() => pending.length === 1, "Old Front prepared-key refresh did not start");
+      const oldKey = pending[0].storageKey;
+      await act(async () => fire(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+      const frontInput = harness.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+      assert.ok(frontInput);
+      Object.defineProperty(frontInput, "files", {
+        configurable: true,
+        value: [{ name: "front-refresh-race.jpg", type: "image/jpeg" } as File],
+      });
+      await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
+      await act(async () => fire(buttonByText(harness.container, "Set Front geometry")!, "click"));
+      await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Replacement Front geometry did not open");
+      await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+      await waitFor(() => pending.length === 2, "Replacement Front prepared-key refresh did not start");
+      const newKey = pending[1].storageKey;
+      assert.notEqual(newKey, oldKey);
+      assert.match(newKey, /\/recapture-00000000-0000-4000-8000-000000000007\/rectified\.webp$/);
+
+      await act(async () => pending[1].resolve(jsonResponse({
+        side: "FRONT",
+        imageUrl: "https://read.example.test/front-current-key.webp",
+      })));
+      await waitFor(() => harness.container.querySelector<HTMLImageElement>('img[alt="front rectified trading card"]')?.src
+        === "https://read.example.test/front-current-key.webp", "Current Front key did not install");
+
+      await act(async () => pending[0].resolve(staleOutcome === "SUCCESS"
+        ? jsonResponse({ side: "FRONT", imageUrl: "https://read.example.test/front-stale-key.webp" })
+        : jsonResponse({ message: "Old prepared key failed after recapture." }, 503)));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      assert.equal(
+        harness.container.querySelector<HTMLImageElement>('img[alt="front rectified trading card"]')?.src,
+        "https://read.example.test/front-current-key.webp",
+      );
+      assert.doesNotMatch(harness.container.textContent ?? "", /Old prepared key failed|anchor corrections are preserved/i);
+    } finally {
+      await harness.cleanup();
+      if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+      else Reflect.deleteProperty(URL, "createObjectURL");
+    }
+  }
+});
+
+test("targeted recapture remains available with no map but stays locked after an explicit loaded-map abandonment", async () => {
+  const noMap = await mountWorkspace({
+    proposeGeometry: async (_token, input) => input.side === "FRONT"
+      ? advisoryGeometryResponse("BLACK", "WHITE")
+      : geometryResponse(),
+  });
+  try {
+    await prepareBothSidesAndReachFrontCentering(noMap);
+    await waitFor(() => Boolean(buttonByText(noMap.container, "Change Front mat / recapture Front — WHITE")),
+      "No-map target recapture should remain explicitly available");
+    await act(async () => fire(buttonByText(noMap.container, "Change Front mat / recapture Front — WHITE")!, "click"));
+    assert.ok(buttonByText(noMap.container, "Add replacement Front photo to continue"));
+    assert.match(noMap.container.textContent ?? "", /completed sibling side is retained/i);
+  } finally {
+    await noMap.cleanup();
+  }
+
+  const abandoned = await mountWorkspace({
+    activeMap: { revisionId: "map-explicitly-abandoned", scope: "FAMILY", name: "Abandoned map" },
+    registrationFailsOnSide: "BACK",
+    proposeGeometry: async (_token, input) => input.side === "FRONT"
+      ? advisoryGeometryResponse("BLACK", "WHITE")
+      : geometryResponse(),
+  });
+  try {
+    await act(async () => fire(buttonByText(abandoned.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(buttonByText(abandoned.container, "Continue without Card Map")), "Explicit abandon choice did not render");
+    await act(async () => fire(buttonByText(abandoned.container, "Continue without Card Map")!, "click"));
+    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front centering geometry"]')), "Manual Front centering did not open");
+    assert.equal(buttonByText(abandoned.container, "Change Front mat / recapture Front — WHITE"), undefined);
+    assert.match(abandoned.container.textContent ?? "", /One-side mat recapture is locked because the loaded Card Map was explicitly left unapplied/i);
+    assert.equal(abandoned.getOriginalUploadPlanCount("FRONT"), 0);
+    assert.equal(abandoned.getOriginalUploadPlanCount("BACK"), 0);
+  } finally {
+    await abandoned.cleanup();
+  }
+});
+
+test("Front and Back crashes after replacement PUT preserve the last complete draft without overwriting evidence", async () => {
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/crash-after-put",
+  });
+  try {
+    for (const target of ["FRONT", "BACK"] as const) {
+      let targetGeometryCalls = 0;
+      let replacementGeometryStarted = false;
+      const map = { revisionId: `map-put-crash-${target.toLowerCase()}`, scope: "FAMILY" as const, name: `${target} PUT crash map` };
+      const seed = await mountWorkspace({
+        activeMap: map,
+        proposeGeometry: async (_token, input) => {
+          if (input.side !== target) return geometryResponse();
+          targetGeometryCalls += 1;
+          if (targetGeometryCalls === 1) return advisoryGeometryResponse(
+            target === "FRONT" ? "BLACK" : "WHITE",
+            target === "FRONT" ? "WHITE" : "MAGENTA",
+          );
+          replacementGeometryStarted = true;
+          return new Promise<GeometryResponse>(() => {});
+        },
+      });
+      let preservedBeforeRecapture: string;
+      try {
+        await prepareBothSidesAndReachFrontCentering(seed);
+        if (target === "BACK") {
+          await loadPreparedImage(seed.container, "front rectified trading card");
+          await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+          await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+        }
+        await waitFor(() => {
+          const serialized = seed.getCaptureDraftSerialized();
+          return Boolean(serialized && JSON.parse(serialized).stage === `${target}_CENTERING`);
+        }, `Last complete ${target} draft was not written`);
+        preservedBeforeRecapture = seed.getCaptureDraftSerialized()!;
+        const change = buttonByText(seed.container, target === "FRONT"
+          ? "Change Front mat / recapture Front — WHITE"
+          : "Change Back mat / recapture Back — MAGENTA");
+        assert.ok(change);
+        await act(async () => fire(change, "click"));
+        const unlocked = seed.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+        assert.ok(unlocked);
+        Object.defineProperty(unlocked, "files", {
+          configurable: true,
+          value: [{ name: `${target.toLowerCase()}-put-crash.jpg`, type: "image/jpeg" } as File],
+        });
+        await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
+        await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
+        await waitFor(() => replacementGeometryStarted, `${target} replacement geometry did not start after its successful upload PUT`);
+        assert.equal(seed.getOriginalUploadPlanCount(target), 1);
+        assert.equal(seed.getCaptureDraftSerialized(), preservedBeforeRecapture,
+          "A crash after PUT must leave the last complete draft byte-for-byte intact; the versioned replacement object is not silently adopted");
+      } finally {
+        await seed.cleanup();
+      }
+
+      const resumed = await mountWorkspace({
+        activeMap: map,
+        captureDraftSerialized: preservedBeforeRecapture!,
+        proposeGeometry: async () => geometryResponse(),
+      });
+      try {
+        assert.ok(resumed.container.querySelector('[aria-label="Preserved capture draft"]'));
+        assert.doesNotMatch(resumed.getCaptureDraftSerialized()!, /recapture-00000000-0000-4000-8000-000000000007/);
+        await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+        await waitFor(() => Boolean(resumed.container.querySelector(`[aria-label="${target.toLowerCase()} centering geometry"]`)),
+          `${target} last complete draft did not resume after a crash boundary`);
+        assert.equal(resumed.getOriginalUploadPlanCount("FRONT") + resumed.getOriginalUploadPlanCount("BACK"), 0);
+        assert.equal(resumed.getPrepareCount("FRONT") + resumed.getPrepareCount("BACK"), 0);
+      } finally {
+        await resumed.cleanup();
+      }
+    }
+  } finally {
+    if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    else Reflect.deleteProperty(URL, "createObjectURL");
+  }
+});
+
+test("Front and Back replacement registration interruptions reload with exact target and retained sibling authority", async () => {
+  const createObjectUrlDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: () => "blob:https://collect.tenkings.co/crash-after-registration",
+  });
+  try {
+    for (const target of ["FRONT", "BACK"] as const) {
+      let targetGeometryCalls = 0;
+      const map = { revisionId: `map-registration-crash-${target.toLowerCase()}`, scope: "FAMILY" as const, name: `${target} registration crash map` };
+      const seed = await mountWorkspace({
+        activeMap: map,
+        proposeGeometry: async (_token, input) => {
+          if (input.side === target) {
+            targetGeometryCalls += 1;
+            if (targetGeometryCalls === 1) return advisoryGeometryResponse(
+              target === "FRONT" ? "BLACK" : "WHITE",
+              target === "FRONT" ? "WHITE" : "MAGENTA",
+            );
+          }
+          return geometryResponse();
+        },
+        onRegistrationRequest: (side, sideAttempt) => {
+          if (side === target && (sideAttempt === 2 || sideAttempt === 3)) throw new TypeError("fetch failed");
+        },
+      });
+      let interruptedSerialized: string;
+      try {
+        await prepareBothSidesAndReachFrontCentering(seed);
+        if (target === "BACK") {
+          await loadPreparedImage(seed.container, "front rectified trading card");
+          await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+          await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back centering geometry"]')), "Back centering did not open");
+        }
+        const change = buttonByText(seed.container, target === "FRONT"
+          ? "Change Front mat / recapture Front — WHITE"
+          : "Change Back mat / recapture Back — MAGENTA");
+        assert.ok(change);
+        await act(async () => fire(change, "click"));
+        const unlocked = seed.container.querySelector<HTMLInputElement>('input[type="file"]:not([disabled])');
+        assert.ok(unlocked);
+        Object.defineProperty(unlocked, "files", {
+          configurable: true,
+          value: [{ name: `${target.toLowerCase()}-registration-crash.jpg`, type: "image/jpeg" } as File],
+        });
+        await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
+        await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
+        await waitFor(() => Boolean(seed.container.querySelector(`[aria-label="${target.toLowerCase()} card geometry"]`)), "Replacement geometry did not open");
+        await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+        await waitFor(() => Boolean(buttonByText(seed.container, `${target}: Retry failed side`)), "Target interruption did not become explicit");
+        await waitFor(() => {
+          const serialized = seed.getCaptureDraftSerialized();
+          return Boolean(serialized && JSON.parse(serialized).recaptureSide === target);
+        }, "Exact targeted recovery draft was not written");
+        interruptedSerialized = seed.getCaptureDraftSerialized()!;
+        const interrupted = JSON.parse(interruptedSerialized);
+        assert.match(interrupted[target.toLowerCase()].originalStorageKey, new RegExp(`/recapture-00000000-0000-4000-8000-000000000007/${target.toLowerCase()}\\.jpg$`));
+        assert.equal(interrupted.registrationRecordedAtMs[target], undefined);
+        const sibling = target === "FRONT" ? "BACK" : "FRONT";
+        assert.equal(typeof interrupted.registrationRecordedAtMs[sibling], "number");
+      } finally {
+        await seed.cleanup();
+      }
+
+      const resumed = await mountWorkspace({
+        activeMap: map,
+        captureDraftSerialized: interruptedSerialized!,
+        proposeGeometry: async () => geometryResponse(),
+      });
+      try {
+        await act(async () => fire(buttonByText(resumed.container, "Resume preserved draft")!, "click"));
+        await waitFor(() => Boolean(buttonByText(resumed.container, `${target}: Retry failed side`)),
+          `${target} targeted interruption did not survive reload`);
+        assert.equal(resumed.getRegistrationCount(), 0, "Reload must not silently retry either side");
+        assert.equal(resumed.getOriginalUploadPlanCount("FRONT") + resumed.getOriginalUploadPlanCount("BACK"), 0);
+        await act(async () => fire(buttonByText(resumed.container, `${target}: Retry failed side`)!, "click"));
+        await waitFor(() => Boolean(resumed.container.querySelector(`[aria-label="${target.toLowerCase()} centering geometry"]`)),
+          `${target} explicit retry did not return to exact target centering`);
+        assert.equal(resumed.getRegistrationCountForSide(target), 1);
+        assert.equal(resumed.getRegistrationCountForSide(target === "FRONT" ? "BACK" : "FRONT"), 0);
+        assert.deepEqual(
+          resumed.events.filter(({ eventType }) => eventType === "GEOMETRY_CONFIRMED").map(({ details }) => details?.side),
+          [target],
+          "Only freshly touched registration sides may be instrumented after reload",
+        );
+      } finally {
+        await resumed.cleanup();
+      }
+    }
+  } finally {
+    if (createObjectUrlDescriptor) Object.defineProperty(URL, "createObjectURL", createObjectUrlDescriptor);
+    else Reflect.deleteProperty(URL, "createObjectURL");
   }
 });
 
@@ -1513,11 +1903,11 @@ test("Back targeted mat recapture preserves the complete Front side through the 
       [
         { side: "FRONT", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg", matColor: "BLACK" },
         { side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/back.jpg", matColor: "WHITE" },
-        { side: "BACK", sourceImageStorageKey: "back-recaptured.jpg", matColor: "MAGENTA" },
+        { side: "BACK", sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/back.jpg", matColor: "MAGENTA" },
       ],
     );
     assert.equal(harness.bundles[0].front.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/iphone-v1/front.jpg");
-    assert.equal(harness.bundles[0].back.originalStorageKey, "back-recaptured.jpg");
+    assert.equal(harness.bundles[0].back.originalStorageKey, "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/recapture-00000000-0000-4000-8000-000000000007/back.jpg");
     assert.equal(harness.bundles[0].front.colorGeometryEvidence![0].serverReceipt, "front-black-attempt-1");
     assert.equal(harness.bundles[0].front.colorGeometryEvidence![1].serverReceipt, "test-printed-black-receipt");
     assert.equal(harness.bundles[0].back.colorGeometryEvidence![0].serverReceipt, "back-magenta-attempt-2");

@@ -18,11 +18,12 @@ export async function fetchSpeedsterPreparedRectifiedImageUrl(input: {
   token: string;
   sessionId: string;
   side: SpeedsterCardSide;
+  storageKey: string;
   fetcher?: PreparedImageFetch;
 }): Promise<string> {
   const fetcher = input.fetcher ?? fetch;
   const response = await fetcher(
-    `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(input.sessionId)}/prepared-image?side=${input.side}`,
+    `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(input.sessionId)}/prepared-image?side=${input.side}&storageKey=${encodeURIComponent(input.storageKey)}`,
     {
       method: "GET",
       headers: buildAdminHeaders(input.token),

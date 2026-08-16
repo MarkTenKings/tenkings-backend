@@ -44,6 +44,8 @@ const defect: SpeedsterMeasuredDefect = {
 const capture = {
   cornerShape: "SQUARE",
   front: {
+    originalStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/original/front.jpg",
+    rectifiedStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/front/rectified.webp",
     inspectionStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/front/inspection.webp",
     inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
     viewStorageKeys: {
@@ -54,6 +56,8 @@ const capture = {
     centeringBorders: { leftMm: 10, rightMm: 10, topMm: 10, bottomMm: 10 },
   },
   back: {
+    originalStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/original/back.jpg",
+    rectifiedStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/back/rectified.webp",
     inspectionStorageKey: "ai-grader-v2/admin-1/session-12345678901234567890/prepared/back/inspection.webp",
     inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
     viewStorageKeys: {
@@ -65,15 +69,39 @@ const capture = {
   },
 };
 
-function session(reviewedDefects: readonly unknown[] = [defect]): SpeedsterReviewActionSession {
+function session(
+  reviewedDefects: readonly unknown[] = [defect],
+  captureEvidence: unknown = capture,
+): SpeedsterReviewActionSession {
   return {
     id: "session-12345678901234567890",
     createdByUserId: "admin-1",
     workflowState: "CAPTURED",
-    capture,
+    capture: captureEvidence,
     reviewedDefects,
     gradeReport: { detectorVersion: "sam3-server-owned" },
     updatedAt: new Date("2026-08-05T00:00:00.000Z"),
+  };
+}
+
+function versionedCapture() {
+  const frontGeneration = "recapture-00000000-0000-4000-8000-000000000007";
+  const backGeneration = "iphone-v4";
+  const side = (name: "front" | "back", generation: string) => ({
+    ...capture[name],
+    originalStorageKey: `ai-grader-v2/admin-1/session-12345678901234567890/original/${generation}/${name}.jpg`,
+    rectifiedStorageKey: `ai-grader-v2/admin-1/session-12345678901234567890/prepared/${name}/${generation}/rectified.webp`,
+    inspectionStorageKey: `ai-grader-v2/admin-1/session-12345678901234567890/prepared/${name}/${generation}/inspection.webp`,
+    viewStorageKeys: {
+      NORMALIZED: `ai-grader-v2/admin-1/session-12345678901234567890/prepared/${name}/${generation}/normalized.webp`,
+      MICRO_DEFECT: `ai-grader-v2/admin-1/session-12345678901234567890/prepared/${name}/${generation}/micro_defect.webp`,
+      DIRECTIONAL: `ai-grader-v2/admin-1/session-12345678901234567890/prepared/${name}/${generation}/directional.webp`,
+    },
+  });
+  return {
+    cornerShape: capture.cornerShape,
+    front: side("front", frontGeneration),
+    back: side("back", backGeneration),
   };
 }
 
@@ -129,6 +157,51 @@ test("one server-owned REMOVE measures once, persists grade+findings atomically,
   assert.equal(saved?.reviewedDefects[0].reviewResult, "REMOVED");
   assert.equal(JSON.stringify(result).includes("finalTrace"), false);
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
+});
+
+test("review actions retain exact versioned recapture and iPhone evidence paths", async () => {
+  const exactCapture = versionedCapture();
+  const signed: string[] = [];
+  const result = await applySpeedsterReviewAction({
+    sessionId: session().id,
+    createdByUserId: "admin-1",
+    action: { type: "REMOVE", defectIds: [defect.id] },
+  }, {
+    async loadOwnedSession() { return session([defect], exactCapture); },
+    async persistReviewIfRevision() {},
+    async presignRead(storageKey) {
+      signed.push(storageKey);
+      return `https://fresh.example/${encodeURIComponent(storageKey)}`;
+    },
+    async learningBankForDetect() { return {}; },
+    async detect() { throw new Error("must not detect"); },
+    async measure(body) {
+      assert.match(body.evidenceView.imageUrl, /recapture-00000000-0000-4000-8000-000000000007/);
+      return { defects: [] };
+    },
+  });
+
+  assert.deepEqual(signed, [exactCapture.front.inspectionStorageKey]);
+  assert.equal(result.reviewedDefects[0].reviewResult, "REMOVED");
+});
+
+test("review actions reject mixed original/prepared generations before signing or measurement", async () => {
+  const mixed = versionedCapture();
+  mixed.back.originalStorageKey = mixed.back.originalStorageKey.replace("iphone-v4", "iphone-v3");
+  let externalCalls = 0;
+  await assert.rejects(applySpeedsterReviewAction({
+    sessionId: session().id,
+    createdByUserId: "admin-1",
+    action: { type: "REMOVE", defectIds: [defect.id] },
+  }, {
+    async loadOwnedSession() { return session([defect], mixed); },
+    async persistReviewIfRevision() { externalCalls += 1; },
+    async presignRead() { externalCalls += 1; return "https://fresh.example/should-not-sign"; },
+    async learningBankForDetect() { externalCalls += 1; return {}; },
+    async detect() { externalCalls += 1; return {}; },
+    async measure() { externalCalls += 1; return { defects: [] }; },
+  }), /persisted inspection evidence is not owned/);
+  assert.equal(externalCalls, 0);
 });
 
 test("instrumentation failure is fail-open only after authoritative review persistence", async () => {

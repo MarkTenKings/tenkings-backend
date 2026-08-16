@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import type { SpeedsterCardSide } from "../../../../../../lib/ai-grader-v2/contracts";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import { headStorageObject, presignReadUrl } from "../../../../../../lib/server/storage";
+import { isAuthorizedSpeedsterRectifiedStorageKey } from "../../../../../../lib/server/aiGraderV2IphoneCapture";
 
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
@@ -31,11 +32,13 @@ const sideFrom = (req: NextApiRequest): SpeedsterCardSide | null => {
   return value === "FRONT" || value === "BACK" ? value : null;
 };
 
-const preparedRectifiedStorageKey = (
-  createdByUserId: string,
-  sessionId: string,
-  side: SpeedsterCardSide,
-) => `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}/rectified.webp`;
+function storageObjectNotFound(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; $metadata?: { httpStatusCode?: unknown } };
+  return candidate.$metadata?.httpStatusCode === 404
+    || candidate.name === "NotFound"
+    || candidate.name === "NoSuchKey";
+}
 
 export function createSpeedsterPreparedImageHandler(deps: Dependencies = dependencies) {
   return async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -49,17 +52,29 @@ export function createSpeedsterPreparedImageHandler(deps: Dependencies = depende
       const admin = await deps.requireAdminSession(req);
       const sessionId = sessionIdFrom(req);
       const side = sideFrom(req);
+      const requestedStorageKey = Array.isArray(req.query.storageKey)
+        ? req.query.storageKey[0]
+        : req.query.storageKey;
       if (!sessionId) return res.status(400).json({ message: "Invalid Speedster session ID" });
       if (!side) return res.status(400).json({ message: "Card side must be FRONT or BACK" });
+      if (typeof requestedStorageKey !== "string" || !isAuthorizedSpeedsterRectifiedStorageKey({
+        storageKey: requestedStorageKey,
+        userId: admin.user.id,
+        sessionId,
+        side,
+      })) return res.status(400).json({ message: "Prepared image storage key is invalid" });
       const session = await deps.findOwnedSession(sessionId, admin.user.id);
       if (!session) return res.status(404).json({ message: "Speedster session not found" });
 
-      const storageKey = preparedRectifiedStorageKey(admin.user.id, session.id, side);
+      const storageKey = requestedStorageKey;
       let object: Awaited<ReturnType<Dependencies["headPreparedObject"]>>;
       try {
         object = await deps.headPreparedObject(storageKey);
-      } catch {
-        return res.status(409).json({ message: `The ${side.toLowerCase()} prepared card image is not ready.` });
+      } catch (error) {
+        if (storageObjectNotFound(error)) {
+          return res.status(409).json({ message: `The ${side.toLowerCase()} prepared card image is not ready.` });
+        }
+        throw error;
       }
       const contentType = object.contentType?.split(";", 1)[0]?.trim().toLowerCase();
       if (!Number.isFinite(object.byteSize) || (object.byteSize ?? 0) <= 0 || (contentType && contentType !== "image/webp")) {

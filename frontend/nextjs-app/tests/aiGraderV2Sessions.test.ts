@@ -487,16 +487,39 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
     sourceImageStorageKey,
     matColor: "WHITE",
     corners: mapBindingQuad,
-    outputUploads: { rectified: "https://upload.example/rectified" },
   }, "admin-1", {
     async findOwnedCapture() { return null; },
     async findOwnedMapSession() { return fixture.session; },
     async presignRead(storageKey) { return `https://server-read.example/${storageKey}`; },
+    async presignUpload(storageKey) { return `https://server-upload.example/${storageKey}`; },
     async hashMapEvidence(storageKey) { return mapBindingSha(storageKey); },
   });
   assert.equal(body.imageUrl, `https://server-read.example/${sourceImageStorageKey}`);
   assert.equal(body.sessionId, undefined);
   assert.deepEqual(body.corners, mapBindingQuad);
+  assert.deepEqual(body.outputUploads, {
+    rectified: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/rectified.webp`,
+    inspection: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/inspection.webp`,
+    normalized: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/normalized.webp`,
+    microDefect: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/micro_defect.webp`,
+    directional: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/directional.webp`,
+  });
+  let hostilePresigns = 0;
+  await assert.rejects(() => speedsterServiceBody("prepare", {
+    sessionId: fixture.sessionId,
+    side: "BACK",
+    sourceImageStorageKey,
+    matColor: "WHITE",
+    corners: mapBindingQuad,
+    outputUploads: { rectified: "https://browser-controlled.example/old-put" },
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async findOwnedMapSession() { return fixture.session; },
+    async presignRead() { hostilePresigns += 1; return "unexpected"; },
+    async presignUpload() { hostilePresigns += 1; return "unexpected"; },
+    async hashMapEvidence() { hostilePresigns += 1; return mapBindingSha(sourceImageStorageKey); },
+  }), /Browser-selected.*destinations are not accepted/);
+  assert.equal(hostilePresigns, 0);
   assert.deepEqual(body.colorGeometryAuthorityBinding, {
     sessionId: fixture.sessionId,
     side: "BACK",
@@ -1800,7 +1823,8 @@ test("review CAS is short, serializable, and compares the exact persisted update
 test("upload planning binds the requested session to the existing admin identity", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const source = readFileSync(`${root}/pages/api/admin/ai-grader-v2/upload-plan.ts`, "utf8");
-  assert.match(source, /where: \{ id: sessionId, createdByUserId: admin\.user\.id \}/);
+  assert.match(source, /where: \{ id: sessionId, createdByUserId \}/);
+  assert.match(source, /findOwnedSession\(sessionId, admin\.user\.id\)/);
   assert.match(source, /if \(!session\) return res\.status\(404\)/);
   assert.match(source, /"RECTIFIED", "INSPECTION", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"/);
 });
@@ -1848,16 +1872,23 @@ test("map registration uses the effective family revision for projected boundary
       }],
     },
   };
+  const recaptureGeneration = "recapture-00000000-0000-4000-8000-000000000007";
+  const currentOriginalStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/${recaptureGeneration}/front.jpg`;
+  const currentInspectionStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/prepared/front/${recaptureGeneration}/inspection.webp`;
+  const hashed: string[] = [];
   const body = await speedsterServiceBody("map-registration", {
     sessionId: fixture.sessionId,
     side: "FRONT",
     currentPhysicalQuad: mapBindingQuad,
+    currentOriginalStorageKey,
+    currentInspectionStorageKey,
   }, "admin-1", {
     async findOwnedCapture() { return null; },
     async presignRead(storageKey) { return `https://signed.invalid/${storageKey}`; },
     async findOwnedMapSession() { return fixture.session; },
     async loadActiveMap() { return selected as never; },
     async hashMapEvidence(storageKey) {
+      hashed.push(storageKey);
       return storageKey === "private/card-maps/family/front.webp"
         ? referenceSha256
         : mapBindingSha(storageKey);
@@ -1877,6 +1908,8 @@ test("map registration uses the effective family revision for projected boundary
   }) as Record<string, unknown>;
 
   assert.equal(body.mapRevisionId, fixture.binding.revisionId);
+  assert.equal((body.currentImage as { imageUrl: string }).imageUrl, `https://signed.invalid/${currentInspectionStorageKey}`);
+  assert.ok(hashed.includes(currentInspectionStorageKey), "Exact versioned inspection must be hashed before registration");
   assert.deepEqual(body.designBoundary, { kind: "QUAD", points: mapBindingQuad });
   assert.equal((body.anchors as unknown[]).length, 4);
   assert.deepEqual(body.lessonCandidates, [{
@@ -1889,6 +1922,45 @@ test("map registration uses the effective family revision for projected boundary
     })),
     sourceHomography: [1, 0, 0, 0, 1, 0, 0, 0, 1],
   }]);
+
+  const invalidPairs = [
+    {
+      label: "mixed generations",
+      original: currentOriginalStorageKey,
+      inspection: `ai-grader-v2/admin-1/${fixture.sessionId}/prepared/front/inspection.webp`,
+    },
+    {
+      label: "cross-side prepared evidence",
+      original: currentOriginalStorageKey,
+      inspection: `ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${recaptureGeneration}/inspection.webp`,
+    },
+    {
+      label: "cross-session prepared evidence",
+      original: currentOriginalStorageKey,
+      inspection: `ai-grader-v2/admin-1/speedster-other-session-12345/prepared/front/${recaptureGeneration}/inspection.webp`,
+    },
+  ];
+  for (const invalidPair of invalidPairs) {
+    let authorityCalls = 0;
+    await assert.rejects(() => speedsterServiceBody("map-registration", {
+      sessionId: fixture.sessionId,
+      side: "FRONT",
+      currentPhysicalQuad: mapBindingQuad,
+      currentOriginalStorageKey: invalidPair.original,
+      currentInspectionStorageKey: invalidPair.inspection,
+    }, "admin-1", {
+      async findOwnedCapture() { authorityCalls += 1; return null; },
+      async presignRead() { authorityCalls += 1; return "unexpected"; },
+      async findOwnedMapSession() { authorityCalls += 1; return fixture.session; },
+      async loadActiveMap() { authorityCalls += 1; return selected as never; },
+      async hashMapEvidence() { authorityCalls += 1; return referenceSha256; },
+    }), /map registration request is invalid/i, invalidPair.label);
+    assert.equal(
+      authorityCalls,
+      0,
+      `${invalidPair.label} must fail before lookup, hashing, signing, or upstream authority`,
+    );
+  }
 });
 
 test("rescue rejects active-revision drift before snapshot or upstream authority can be prepared", async () => {
@@ -1942,6 +2014,8 @@ test("rescue rejects active-revision drift before snapshot or upstream authority
     sessionId: fixture.sessionId,
     side: "FRONT",
     currentPhysicalQuad: mapBindingQuad,
+    currentOriginalStorageKey: `ai-grader-v2/admin-1/${fixture.sessionId}/original/front.jpg`,
+    currentInspectionStorageKey: currentKey,
     rescue: true,
     rescueAttemptId: "rescue-drift-1",
     automaticFailure: failure,
@@ -2190,6 +2264,8 @@ test("map registration never retries another scope after the selected revision f
     sessionId: fixture.sessionId,
     side: "FRONT",
     currentPhysicalQuad: mapBindingQuad,
+    currentOriginalStorageKey: `ai-grader-v2/admin-1/${fixture.sessionId}/original/front.jpg`,
+    currentInspectionStorageKey: `ai-grader-v2/admin-1/${fixture.sessionId}/prepared/front/inspection.webp`,
   }, "admin-1", {
     async findOwnedCapture() { return null; },
     async presignRead() { presignCalls += 1; return "https://signed.invalid/not-reached"; },
@@ -2220,6 +2296,7 @@ test("trace proposal authorizes a persisted non-ORIGINAL source view and supplie
         capture: {
           cornerShape: "SQUARE",
           front: {
+            rectifiedStorageKey: `${prefix}/rectified.webp`,
             inspectionStorageKey: `${prefix}/inspection.webp`,
             inspectionFrame: { width: 1350, height: 1858, cardBounds: { x: 40, y: 40, width: 1270, height: 1778 } },
             viewStorageKeys: {

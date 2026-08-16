@@ -63,8 +63,16 @@ import {
 } from "./aiGraderV2DetectTransport";
 import { HttpError } from "./adminSessionAuthority";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
+import {
+  isAuthorizedSpeedsterOriginalStorageKey,
+  isAuthorizedSpeedsterPreparedStorageKeys,
+  speedsterOriginalStorageGeneration,
+  speedsterPreparedStorageGenerationForRectified,
+} from "./aiGraderV2IphoneCapture";
 
 type PersistedCaptureSide = {
+  originalStorageKey: string;
+  rectifiedStorageKey: string;
   inspectionStorageKey: string;
   inspectionFrame: SpeedsterInspectionFrame;
   centeringBorders: SpeedsterCenteringBorders;
@@ -249,19 +257,41 @@ function captureAuthority(value: unknown, sessionId: string, createdByUserId: st
     ) {
       throw new Error("Speedster persisted capture is incomplete.");
     }
-    const prefix = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${name.toLowerCase()}`;
-    const expected = {
-      inspectionStorageKey: `${prefix}/inspection.webp`,
-      NORMALIZED: `${prefix}/normalized.webp`,
-      MICRO_DEFECT: `${prefix}/micro_defect.webp`,
-      DIRECTIONAL: `${prefix}/directional.webp`,
-    } as const;
-    if (
-      candidate.inspectionStorageKey !== expected.inspectionStorageKey ||
-      candidate.viewStorageKeys.NORMALIZED !== expected.NORMALIZED ||
-      candidate.viewStorageKeys.MICRO_DEFECT !== expected.MICRO_DEFECT ||
-      candidate.viewStorageKeys.DIRECTIONAL !== expected.DIRECTIONAL
-    ) {
+    if (typeof candidate.originalStorageKey !== "string"
+      || typeof candidate.rectifiedStorageKey !== "string"
+      || typeof candidate.inspectionStorageKey !== "string"
+      || typeof candidate.viewStorageKeys.NORMALIZED !== "string"
+      || typeof candidate.viewStorageKeys.MICRO_DEFECT !== "string"
+      || typeof candidate.viewStorageKeys.DIRECTIONAL !== "string"
+      || !isAuthorizedSpeedsterOriginalStorageKey({
+        storageKey: candidate.originalStorageKey,
+        userId: createdByUserId,
+        sessionId,
+        side: name,
+      })
+      || !isAuthorizedSpeedsterPreparedStorageKeys({
+        userId: createdByUserId,
+        sessionId,
+        side: name,
+        rectifiedStorageKey: candidate.rectifiedStorageKey,
+        inspectionStorageKey: candidate.inspectionStorageKey,
+        viewStorageKeys: {
+          NORMALIZED: candidate.viewStorageKeys.NORMALIZED,
+          MICRO_DEFECT: candidate.viewStorageKeys.MICRO_DEFECT,
+          DIRECTIONAL: candidate.viewStorageKeys.DIRECTIONAL,
+        },
+      })
+      || speedsterOriginalStorageGeneration({
+        storageKey: candidate.originalStorageKey,
+        userId: createdByUserId,
+        sessionId,
+        side: name,
+      }) !== speedsterPreparedStorageGenerationForRectified({
+        storageKey: candidate.rectifiedStorageKey,
+        userId: createdByUserId,
+        sessionId,
+        side: name,
+      })) {
       throw new Error("Speedster persisted inspection evidence is not owned by this session.");
     }
     return candidate as unknown as PersistedCaptureSide;

@@ -53,7 +53,12 @@ import {
   openStorageObjectRead,
   presignReadUrl,
 } from "./storage";
-import { isAuthorizedSpeedsterOriginalStorageKey } from "./aiGraderV2IphoneCapture";
+import {
+  isAuthorizedSpeedsterOriginalStorageKey,
+  isAuthorizedSpeedsterPreparedStorageKeys,
+  speedsterOriginalStorageGeneration,
+  speedsterPreparedStorageGenerationForRectified,
+} from "./aiGraderV2IphoneCapture";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_MAP_LABEL_LENGTH = 80;
@@ -1535,30 +1540,46 @@ function parseSourceSide(
   sessionId: string,
 ): SpeedsterMapSourceSide {
   if (!isRecord(value)) throw new SpeedsterMapIntegrityError(`${side} capture evidence is missing.`);
-  const expectedPreparedPrefix = `ai-grader-v2/${userId}/${sessionId}/prepared/${side.toLowerCase()}`;
   const originalStorageKey = nonEmptyText(value.originalStorageKey, `${side} original key`, 500);
   const rectifiedStorageKey = nonEmptyText(value.rectifiedStorageKey, `${side} rectified key`, 500);
   const inspectionStorageKey = nonEmptyText(value.inspectionStorageKey, `${side} inspection key`, 500);
+  const viewStorageKeys = isRecord(value.viewStorageKeys) ? {
+    NORMALIZED: nonEmptyText(value.viewStorageKeys.NORMALIZED, `${side} normalized key`, 500),
+    MICRO_DEFECT: nonEmptyText(value.viewStorageKeys.MICRO_DEFECT, `${side} micro-defect key`, 500),
+    DIRECTIONAL: nonEmptyText(value.viewStorageKeys.DIRECTIONAL, `${side} directional key`, 500),
+  } : null;
   if (
     !isAuthorizedSpeedsterOriginalStorageKey({
       storageKey: originalStorageKey,
       userId,
       sessionId,
       side,
-    }) ||
-    rectifiedStorageKey !== `${expectedPreparedPrefix}/rectified.webp` ||
-    inspectionStorageKey !== `${expectedPreparedPrefix}/inspection.webp`
+    }) || !viewStorageKeys || !isAuthorizedSpeedsterPreparedStorageKeys({
+      userId,
+      sessionId,
+      side,
+      rectifiedStorageKey,
+      inspectionStorageKey,
+      viewStorageKeys,
+    })
   ) {
     throw new SpeedsterMapIntegrityError(`${side} source images are not bound to this Speedster session.`);
   }
-  const viewStorageKeys = isRecord(value.viewStorageKeys) ? value.viewStorageKeys : null;
-  const expectedViews = {
-    NORMALIZED: `${expectedPreparedPrefix}/normalized.webp`,
-    MICRO_DEFECT: `${expectedPreparedPrefix}/micro_defect.webp`,
-    DIRECTIONAL: `${expectedPreparedPrefix}/directional.webp`,
-  } as const;
-  if (!viewStorageKeys || Object.entries(expectedViews).some(([view, key]) => viewStorageKeys[view] !== key)) {
-    throw new SpeedsterMapIntegrityError(`${side} prepared views are not bound to this Speedster session.`);
+  const originalGeneration = speedsterOriginalStorageGeneration({
+    storageKey: originalStorageKey,
+    userId,
+    sessionId,
+    side,
+  });
+  const preparedGeneration = speedsterPreparedStorageGenerationForRectified({
+    storageKey: rectifiedStorageKey,
+    userId,
+    sessionId,
+    side,
+  });
+  if (originalGeneration === undefined || preparedGeneration === undefined
+    || originalGeneration !== preparedGeneration) {
+    throw new SpeedsterMapIntegrityError(`${side} original and prepared image generations do not match.`);
   }
   const frame = isRecord(value.inspectionFrame) ? value.inspectionFrame : null;
   const bounds = frame && isRecord(frame.cardBounds) ? frame.cardBounds : null;
@@ -1593,7 +1614,7 @@ function parseSourceSide(
       cardBounds: { x: 40, y: 40, width: 1270, height: 1778 },
     },
     transform,
-    viewStorageKeys: expectedViews,
+    viewStorageKeys,
   };
 }
 

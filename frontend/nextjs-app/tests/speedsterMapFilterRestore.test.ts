@@ -47,6 +47,8 @@ const finding = {
 const capture = {
   cornerShape: "SQUARE",
   front: {
+    originalStorageKey: `ai-grader-v2/admin-1/${sessionId}/original/front.jpg`,
+    rectifiedStorageKey: `ai-grader-v2/admin-1/${sessionId}/prepared/front/rectified.webp`,
     inspectionStorageKey: `ai-grader-v2/admin-1/${sessionId}/prepared/front/inspection.webp`,
     inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
     viewStorageKeys: {
@@ -57,6 +59,8 @@ const capture = {
     centeringBorders: { leftMm: 10, rightMm: 10, topMm: 10, bottomMm: 10 },
   },
   back: {
+    originalStorageKey: `ai-grader-v2/admin-1/${sessionId}/original/back.jpg`,
+    rectifiedStorageKey: `ai-grader-v2/admin-1/${sessionId}/prepared/back/rectified.webp`,
     inspectionStorageKey: `ai-grader-v2/admin-1/${sessionId}/prepared/back/inspection.webp`,
     inspectionFrame: { width: 1270, height: 1778, cardBounds: { x: 0, y: 0, width: 1270, height: 1778 } },
     viewStorageKeys: {

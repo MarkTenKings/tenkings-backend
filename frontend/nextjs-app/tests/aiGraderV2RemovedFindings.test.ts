@@ -82,9 +82,11 @@ const filterDecision = {
   },
 };
 
-function expectedKeys(side: "FRONT" | "BACK") {
-  const prefix = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}`;
+function expectedKeys(side: "FRONT" | "BACK", generation?: string) {
+  const base = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}`;
+  const prefix = generation ? `${base}/${generation}` : base;
   return {
+    rectifiedStorageKey: `${prefix}/rectified.webp`,
     inspectionStorageKey: `${prefix}/inspection.webp`,
     viewStorageKeys: {
       NORMALIZED: `${prefix}/normalized.webp`,
@@ -215,6 +217,43 @@ test("card detail exposes only saved removals with Memory provenance and signed 
   assert.equal(filtered.mapRevisionId, filterDecision.mapRevisionId);
   assert.equal(filtered.zoneLabel, "Printed artwork");
   assert.equal(filtered.restore.restored, false);
+});
+
+test("removed-findings signs exact versioned evidence and rejects a mixed prepared generation", async () => {
+  const generation = "recapture-00000000-0000-4000-8000-000000000007";
+  const versioned = {
+    ...completed,
+    capture: {
+      cornerShape: "SQUARE",
+      front: expectedKeys("FRONT", generation),
+      back: expectedKeys("BACK", generation),
+    },
+  };
+  const signed: string[] = [];
+  const handler = createRemovedFindingsAuditHandler({
+    ...dependencies(),
+    async findSession() { return versioned as never; },
+    async presignRead(key) { signed.push(key); return `read:${key}`; },
+  });
+  const result = response();
+  await handler(request({ sessionId }), result.res);
+  assert.equal(result.state.status, 200);
+  assert.equal((result.state.body as { evidence: { status: string } }).evidence.status, "AVAILABLE");
+  assert.equal(signed.length, 8);
+  assert.ok(signed.every((key) => key.includes(`/${generation}/`)));
+
+  const mixed = structuredClone(versioned);
+  mixed.capture.back.viewStorageKeys.DIRECTIONAL = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/back/directional.webp`;
+  let mixedSigns = 0;
+  const rejecting = createRemovedFindingsAuditHandler({
+    ...dependencies(),
+    async findSession() { return mixed as never; },
+    async presignRead() { mixedSigns += 1; return "unexpected"; },
+  });
+  const rejected = response();
+  await rejecting(request({ sessionId }), rejected.res);
+  assert.equal((rejected.state.body as { evidence: { status: string } }).evidence.status, "UNAVAILABLE");
+  assert.equal(mixedSigns, 0);
 });
 
 test("removed-findings inventory remains admin-only and GET-only while the screen exposes the separate restore route", async () => {

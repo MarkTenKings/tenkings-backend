@@ -508,6 +508,8 @@ export function CaptureWorkspace({
   });
   const [recaptureSide, setRecaptureSide] = useState<SpeedsterCardSide | null>(null);
   const [iphonePairingUrl, setIphonePairingUrl] = useState<string>();
+  const [legacyIphonePairChoiceRequired, setLegacyIphonePairChoiceRequired] = useState<number | null>(null);
+  const [acceptedLegacyIphoneReadyVersion, setAcceptedLegacyIphoneReadyVersion] = useState<number | null>(null);
   const iphoneVersion = useRef(0);
   const [front, setFront] = useState<SideState | null>(null);
   const [back, setBack] = useState<SideState | null>(null);
@@ -547,7 +549,10 @@ export function CaptureWorkspace({
   const registrationActionInFlight = useRef(false);
   const currentRegistrationOperationId = useRef<string | null>(null);
   const readyDispatched = useRef(false);
-  const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Promise<string>>>>({});
+  const preparedImageRefreshInFlight = useRef<Partial<Record<SpeedsterCardSide, Readonly<{
+    storageKey: string;
+    promise: Promise<string>;
+  }>>>>({});
   const preparedImageAutomaticRetryUsed = useRef<Partial<Record<SpeedsterCardSide, boolean>>>({});
   const currentSessionId = useRef(sessionId);
   const captureDraftCreatedAtMs = useRef<number | null>(null);
@@ -588,6 +593,8 @@ export function CaptureWorkspace({
     setMatColors({ FRONT: "BLACK", BACK: "WHITE" });
     setMatConfirmations({ FRONT: false, BACK: false });
     setRecaptureSide(null);
+    setLegacyIphonePairChoiceRequired(null);
+    setAcceptedLegacyIphoneReadyVersion(null);
     setFront(null);
     setBack(null);
     setStage("PHOTOS");
@@ -706,6 +713,10 @@ export function CaptureWorkspace({
     recommendedMat: SpeedsterMatColor | null,
   ) => {
     if (working || captureActionInFlight.current || registrationActionInFlight.current) return;
+    if (activeMapRevisionId && (!front?.mapRegistration || !back?.mapRegistration)) {
+      setWorkflowError("One-side mat recapture is unavailable because the loaded Card Map was explicitly left unapplied. Existing decision provenance and completed geometry remain preserved; continue with human centering or start a fresh capture by explicit choice.");
+      return;
+    }
     activeImageRequest.current?.abort();
     activeImageRequest.current = null;
     geometryAttempt.current += 1;
@@ -716,9 +727,12 @@ export function CaptureWorkspace({
     setMatConfirmations((current) => ({ ...current, [side]: Boolean(recommendedMat) }));
     side === "FRONT" ? setFront(null) : setBack(null);
     setRecaptureSide(side);
+    setLegacyIphonePairChoiceRequired(null);
+    setAcceptedLegacyIphoneReadyVersion(null);
     setRegistrationRescue(null);
     setRegistrationInterruption(null);
     currentRegistrationOperationId.current = null;
+    delete registrationRecordedAtMs.current[side];
     setMapRegistrationNotice(null);
     setWorkflowError(null);
     setCaptureSaveFailed(false);
@@ -734,18 +748,19 @@ export function CaptureWorkspace({
     setMessage(`${side === "FRONT" ? "Front" : "Back"} mat change selected. Recapture only that side; its prior original and dependent geometry were cleared. The completed sibling side is retained.`);
   };
 
-  const refreshPreparedImage = useCallback((side: SpeedsterCardSide) => {
+  const refreshPreparedImage = useCallback((side: SpeedsterCardSide, storageKey: string) => {
     const existing = preparedImageRefreshInFlight.current[side];
-    if (existing) return existing;
+    if (existing?.storageKey === storageKey) return existing.promise;
     const requestSessionId = sessionId;
     setPreparedImageRefresh((current) => ({
       ...current,
       [side]: { ...current[side], refreshing: true, error: null },
     }));
-    const request = fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side })
+    const request = fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side, storageKey })
       .then((imageUrl) => {
-        if (currentSessionId.current !== requestSessionId) return imageUrl;
-        const install = (current: SideState | null) => current ? {
+        if (currentSessionId.current !== requestSessionId
+          || preparedImageRefreshInFlight.current[side]?.promise !== request) return imageUrl;
+        const install = (current: SideState | null) => current?.rectifiedStorageKey === storageKey ? {
           ...current,
           rectifiedUrl: imageUrl,
           rectifiedImageRevision: (current.rectifiedImageRevision ?? 0) + 1,
@@ -758,7 +773,8 @@ export function CaptureWorkspace({
         return imageUrl;
       })
       .catch((error) => {
-        if (currentSessionId.current === requestSessionId) {
+        if (currentSessionId.current === requestSessionId
+          && preparedImageRefreshInFlight.current[side]?.promise === request) {
           const detail = error instanceof Error ? error.message : `The ${side.toLowerCase()} card image could not be refreshed.`;
           setPreparedImageRefresh((current) => ({
             ...current,
@@ -771,15 +787,15 @@ export function CaptureWorkspace({
         throw error;
       })
       .finally(() => {
-        if (preparedImageRefreshInFlight.current[side] === request) {
+        if (preparedImageRefreshInFlight.current[side]?.promise === request) {
           delete preparedImageRefreshInFlight.current[side];
         }
       });
-    preparedImageRefreshInFlight.current[side] = request;
+    preparedImageRefreshInFlight.current[side] = { storageKey, promise: request };
     return request;
   }, [sessionId, token]);
 
-  const handlePreparedImageError = useCallback((side: SpeedsterCardSide) => {
+  const handlePreparedImageError = useCallback((side: SpeedsterCardSide, storageKey?: string) => {
     if (preparedImageAutomaticRetryUsed.current[side]) {
       setPreparedImageRefresh((current) => ({
         ...current,
@@ -790,14 +806,28 @@ export function CaptureWorkspace({
       }));
       return;
     }
+    if (!storageKey) {
+      setPreparedImageRefresh((current) => ({
+        ...current,
+        [side]: {
+          refreshing: false,
+          error: `The exact ${side.toLowerCase()} prepared image key is unavailable. Your geometry and anchor corrections are preserved.`,
+        },
+      }));
+      return;
+    }
     preparedImageAutomaticRetryUsed.current[side] = true;
-    void refreshPreparedImage(side).catch(() => undefined);
+    void refreshPreparedImage(side, storageKey).catch(() => undefined);
   }, [refreshPreparedImage]);
 
-  const retryPreparedImage = useCallback((side: SpeedsterCardSide) => {
+  const retryPreparedImage = useCallback((side: SpeedsterCardSide, storageKey?: string) => {
     preparedImageAutomaticRetryUsed.current[side] = false;
-    void refreshPreparedImage(side).catch(() => undefined);
-  }, [refreshPreparedImage]);
+    if (!storageKey) {
+      handlePreparedImageError(side, storageKey);
+      return;
+    }
+    void refreshPreparedImage(side, storageKey).catch(() => undefined);
+  }, [handlePreparedImageError, refreshPreparedImage]);
 
   const markPreparedImageReady = useCallback((side: SpeedsterCardSide) => {
     preparedImageAutomaticRetryUsed.current[side] = false;
@@ -962,8 +992,8 @@ export function CaptureWorkspace({
     setMessage("Refreshing prepared images before preserving geometry without the obsolete Card Map authority.");
     try {
       const [frontUrl, backUrl] = await Promise.all([
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT" }),
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK" }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT", storageKey: draft.front.rectifiedStorageKey }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK", storageKey: draft.back.rectifiedStorageKey }),
       ]);
       if (!captureWorkspaceMounted.current || currentSessionId.current !== originatingSessionId) return;
       const decisionId = draft.decisionIds.abandonObsoleteMap;
@@ -1085,8 +1115,8 @@ export function CaptureWorkspace({
     setMessage("Refreshing prepared Front + Back images before resuming the preserved draft.");
     try {
       const [frontUrl, backUrl] = await Promise.all([
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT" }),
-        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK" }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "FRONT", storageKey: draft.front.rectifiedStorageKey }),
+        fetchSpeedsterPreparedRectifiedImageUrl({ token, sessionId, side: "BACK", storageKey: draft.back.rectifiedStorageKey }),
       ]);
       if (!captureWorkspaceMounted.current
         || captureDraftBindingGeneration.current !== originatingGeneration
@@ -1169,6 +1199,9 @@ export function CaptureWorkspace({
       setCornerShape(draft.cornerShape);
       setRegistrationInterruption(interruption);
       setRegistrationRescue(rescue);
+      setRecaptureSide(draft.version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_CURRENT_VERSION
+        ? draft.recaptureSide ?? null
+        : null);
       setCorrectedAnchorDrafts(draft.correctedAnchors);
       setCaptureSaveFailed(draft.captureSavePendingRetry);
       registrationRecordedAtMs.current = restoredRegistrationRecordedAtMs;
@@ -1254,6 +1287,7 @@ export function CaptureWorkspace({
       mapAuthorityAbandoned: mapAuthorityAbandoned.current,
       captureSavePendingRetry: captureSaveFailed,
       notice: mapRegistrationNotice,
+      ...(recaptureSide ? { recaptureSide } : {}),
     };
     try {
       writeSpeedsterCaptureRegistrationDraft(window.localStorage, draft);
@@ -1263,7 +1297,7 @@ export function CaptureWorkspace({
   }, [
     activeMapName, activeMapRevisionId, activeMapScope, back, cardProfile, cornerShape,
     correctedAnchorDrafts, draftSurface, front, mapRegistrationNotice, mapBindingStatus,
-    captureSaveFailed, pendingCaptureDraft, registrationInterruption, registrationRescue, sessionId, stage,
+    captureSaveFailed, pendingCaptureDraft, recaptureSide, registrationInterruption, registrationRescue, sessionId, stage,
   ]);
 
   useEffect(() => {
@@ -1292,18 +1326,36 @@ export function CaptureWorkspace({
     const poll = async () => {
       try {
         const response = await fetch(
-          `/api/admin/ai-grader-v2/iphone-capture?sessionId=${encodeURIComponent(sessionId)}`,
+          `/api/admin/ai-grader-v2/iphone-capture?sessionId=${encodeURIComponent(sessionId)}${acceptedLegacyIphoneReadyVersion === null
+            ? ""
+            : `&acceptLegacyReadyVersion=${acceptedLegacyIphoneReadyVersion}`}`,
           { headers: buildAdminHeaders(token), cache: "no-store" },
         );
         const payload = (await response.json().catch(() => ({}))) as {
           readyVersion?: number;
           storageGeneration?: "VERSIONED" | "LEGACY";
+          legacyPairAvailable?: boolean;
           front?: { storageKey: string; readUrl: string };
           back?: { storageKey: string; readUrl: string };
           message?: string;
         };
         if (!response.ok) {
+          if (response.status === 409 && payload.storageGeneration === "LEGACY"
+            && payload.legacyPairAvailable === true && Number.isSafeInteger(payload.readyVersion)
+            && (payload.readyVersion ?? 0) > 0) {
+            setLegacyIphonePairChoiceRequired(payload.readyVersion!);
+            setMessage(`${payload.message ?? "A legacy iPhone pair is available."} Nothing was selected. Choose explicitly whether to use that exact pair.`);
+            return;
+          }
           throw new Error(payload.message ?? "iPhone capture status check failed.");
+        }
+        if (payload.storageGeneration === "LEGACY" && payload.readyVersion
+          && acceptedLegacyIphoneReadyVersion !== payload.readyVersion) {
+          if (!stopped) {
+            setLegacyIphonePairChoiceRequired(payload.readyVersion);
+            setMessage(`A legacy iPhone pair was disclosed for ready version ${payload.readyVersion}, but this client has not explicitly accepted that exact version. Nothing was selected.`);
+          }
+          return;
         }
         if (
           !stopped
@@ -1313,6 +1365,7 @@ export function CaptureWorkspace({
           && payload.back
         ) {
           iphoneVersion.current = payload.readyVersion;
+          setLegacyIphonePairChoiceRequired(null);
           if (recaptureSide === "FRONT") {
             setFrontPhoto({ kind: "IPHONE", ...payload.front, captureVersion: payload.readyVersion });
             setMessage("Fresh Front received. The retained Back remains unchanged; confirm the Front mat, then rerun Front geometry.");
@@ -1363,7 +1416,7 @@ export function CaptureWorkspace({
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, [captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, recaptureSide, sessionId, stage, token, working]);
+  }, [acceptedLegacyIphoneReadyVersion, captureDraftHydratedSessionId, invalidCaptureDraftPresent, mapMismatchedCaptureDraft, pendingCaptureDraft, recaptureSide, sessionId, stage, token, working]);
 
   const beginGeometry = async () => {
     if (!frontPhoto || !backPhoto || !matConfirmations.FRONT || !matConfirmations.BACK
@@ -1385,7 +1438,15 @@ export function CaptureWorkspace({
     try {
       const uploadPhoto = async (side: SpeedsterCardSide, photo: SpeedsterOriginalPhoto) => photo.kind === "IPHONE"
         ? photo
-        : uploadSpeedsterOriginal({ token, sessionId, side, file: photo.file, signal: controller.signal, timeoutMs: imageRequestTimeoutMs });
+        : uploadSpeedsterOriginal({
+            token,
+            sessionId,
+            side,
+            file: photo.file,
+            ...(recaptureSide ? { targetedRecapture: true } : {}),
+            signal: controller.signal,
+            timeoutMs: imageRequestTimeoutMs,
+          });
       const requestGeometry = async (side: SpeedsterCardSide, imageUrl: string, storageKey: string) => {
         const startedAt = Date.now();
         try {
@@ -1618,6 +1679,7 @@ export function CaptureWorkspace({
         token,
         sessionId,
         side,
+        sourceImageStorageKey: current.originalStorageKey,
         signal: controller.signal,
         timeoutMs: imageRequestTimeoutMs,
       });
@@ -1630,7 +1692,6 @@ export function CaptureWorkspace({
           sourceImageStorageKey: current.originalStorageKey,
         },
         current.corners,
-        outputPlan,
         current.matColor,
         { signal: controller.signal, timeoutMs: imageRequestTimeoutMs },
       );
@@ -1680,6 +1741,8 @@ export function CaptureWorkspace({
               sessionId,
               side,
               currentPhysicalQuad: current.corners,
+              currentOriginalStorageKey: next.originalStorageKey,
+              currentInspectionStorageKey: next.inspectionStorageKey!,
               orchestration: {
                 operationId,
                 attemptNumber,
@@ -1710,6 +1773,7 @@ export function CaptureWorkspace({
             if (targetRegistration.mapRevisionId !== activeMapRevisionId) {
               throw new Error("The selected CARD MAP changed while the replacement side was being registered.");
             }
+            registrationRecordedAtMs.current[side] = Date.now();
           } else {
             const targetState = { ...next, mapRegistration: undefined };
             side === "FRONT" ? setFront(targetState) : setBack(targetState);
@@ -1789,11 +1853,14 @@ export function CaptureWorkspace({
         const registerSide = (
           candidate: SpeedsterCardSide,
           currentPhysicalQuad: SpeedsterQuad,
+          currentInspectionStorageKey: string,
           orchestration: SpeedsterMapRegistrationOrchestration,
         ) => speedsterImageService.registerMap(token, {
           sessionId,
           side: candidate,
           currentPhysicalQuad,
+          currentOriginalStorageKey: candidate === "FRONT" ? front.originalStorageKey : next.originalStorageKey,
+          currentInspectionStorageKey,
           orchestration,
         }, { signal: controller.signal, timeoutMs: imageRequestTimeoutMs }).then((registration) => {
           if (activeImageRequest.current === controller && currentSessionId.current === sessionId) {
@@ -1802,13 +1869,13 @@ export function CaptureWorkspace({
           return registration;
         });
         const initialResults = await Promise.allSettled([
-          registerSide("FRONT", front.corners, {
+          registerSide("FRONT", front.corners, front.inspectionStorageKey!, {
             operationId,
             attemptNumber: 1,
             trigger: "INITIAL",
             successfulSiblingPreservedAtAttemptStart: false,
           }),
-          registerSide("BACK", current.corners, {
+          registerSide("BACK", current.corners, next.inspectionStorageKey!, {
             operationId,
             attemptNumber: 1,
             trigger: "INITIAL",
@@ -1839,12 +1906,17 @@ export function CaptureWorkspace({
           const retried = await Promise.allSettled(retrySides.map((candidate) => {
             attemptNumbers[candidate] = 2;
             const sibling = candidate === "FRONT" ? initialResults[1] : initialResults[0];
-            return registerSide(candidate, candidate === "FRONT" ? front.corners : current.corners, {
+            return registerSide(
+              candidate,
+              candidate === "FRONT" ? front.corners : current.corners,
+              candidate === "FRONT" ? front.inspectionStorageKey! : next.inspectionStorageKey!,
+              {
               operationId,
               attemptNumber: 2,
               trigger: "AUTOMATIC_RETRY",
               successfulSiblingPreservedAtAttemptStart: sibling.status === "fulfilled",
-            });
+              },
+            );
           }));
           auditResults.push(...retried);
           retrySides.forEach((candidate, index) => {
@@ -1967,6 +2039,7 @@ export function CaptureWorkspace({
   const finishRegistrationRescue = (
     provisional: RegistrationRescueState["provisional"],
     failed: boolean,
+    exactAttemptNumbers: Partial<Record<SpeedsterCardSide, number>> = registrationRescue?.attemptNumbers ?? {},
   ) => {
     if (!front || !back) return;
     const failedSides: Partial<Record<SpeedsterCardSide, true>> = failed ? {
@@ -1974,6 +2047,9 @@ export function CaptureWorkspace({
       ...(registrationRescue?.failures.BACK ? { BACK: true as const } : {}),
     } : {};
     const abandonedSides = (["FRONT", "BACK"] as const).filter((side) => failedSides[side]);
+    const touchedSides = (["FRONT", "BACK"] as const).filter((side) => (
+      exactAttemptNumbers[side] !== undefined || failedSides[side]
+    ));
     finishMapRegistrationFlow({
       frontState: front,
       backState: back,
@@ -1984,7 +2060,7 @@ export function CaptureWorkspace({
         : `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was human-corrected, server-validated, and is ready for Front + Back application.`,
       ...(recaptureSide ? {
         resumeCenteringSide: recaptureSide,
-        instrumentationSides: [recaptureSide],
+        instrumentationSides: touchedSides,
         instrumentationStartedAtMs: stageStartedAt.current,
       } : {}),
     });
@@ -2082,10 +2158,14 @@ export function CaptureWorkspace({
     setWorkflowError(null);
     setMessage(`Retrying only the failed ${side.toLowerCase()} Card Map registration. Completed sibling work remains provisional.`);
     try {
+      const sideState = side === "FRONT" ? front : back;
+      if (!sideState.inspectionStorageKey) throw new Error(`The prepared ${side.toLowerCase()} inspection image is unavailable.`);
       const registration = await speedsterImageService.registerMap(token, {
         sessionId,
         side,
         currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
+        currentOriginalStorageKey: sideState.originalStorageKey,
+        currentInspectionStorageKey: sideState.inspectionStorageKey,
         orchestration: {
           operationId: registrationInterruption.operationId,
           attemptNumber,
@@ -2136,7 +2216,9 @@ export function CaptureWorkspace({
           notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} applied to Front + Back after the operator retry.`,
           ...(recaptureSide ? {
             resumeCenteringSide: recaptureSide,
-            instrumentationSides: [recaptureSide],
+            instrumentationSides: (["FRONT", "BACK"] as const).filter((candidate) => (
+              attemptNumbers[candidate] !== undefined || nextState.failures[candidate]
+            )),
             instrumentationStartedAtMs: stageStartedAt.current,
           } : {}),
         });
@@ -2220,7 +2302,9 @@ export function CaptureWorkspace({
       notice: `${activeMapScope ?? "EXACT"} · ${activeMapName ?? "Card map"} was not applied by operator choice. ${failedSides.join(" + ")} unresolved Card Map work was explicitly abandoned; continuing with normal human review.`,
       ...(recaptureSide ? {
         resumeCenteringSide: recaptureSide,
-        instrumentationSides: [recaptureSide],
+        instrumentationSides: (["FRONT", "BACK"] as const).filter((side) => (
+          registrationInterruption.attemptNumbers[side] !== undefined || failedSides.includes(side)
+        )),
         instrumentationStartedAtMs: stageStartedAt.current,
       } : {}),
     });
@@ -2243,10 +2327,14 @@ export function CaptureWorkspace({
     setWorkflowError(null);
     setMessage(`Validating and saving the corrected ${side.toLowerCase()} anchors.`);
     try {
+      const sideState = side === "FRONT" ? front : back;
+      if (!sideState.inspectionStorageKey) throw new Error(`The prepared ${side.toLowerCase()} inspection image is unavailable.`);
       const registration = await speedsterImageService.rescueMapRegistration(token, {
         sessionId,
         side,
         currentPhysicalQuad: side === "FRONT" ? front.corners : back.corners,
+        currentOriginalStorageKey: sideState.originalStorageKey,
+        currentInspectionStorageKey: sideState.inspectionStorageKey,
         rescueAttemptId: registrationRescue.attemptIds[side]!,
         automaticFailure: failure,
         correctedAnchors,
@@ -2284,7 +2372,7 @@ export function CaptureWorkspace({
         });
         setMessage("That side is saved. Correct the remaining side; neither map side is applied yet.");
       } else {
-        finishRegistrationRescue(provisional, false);
+        finishRegistrationRescue(provisional, false, attemptNumbers);
       }
     } catch (error) {
       if (activeImageRequest.current !== controller) return;
@@ -2497,17 +2585,22 @@ export function CaptureWorkspace({
   const activeSide = stage.startsWith("FRONT") ? "FRONT" : "BACK";
   const activeCentering = stage === "FRONT_CENTERING" ? front : stage === "BACK_CENTERING" ? back : null;
   const activePreparedImageSide = interruptionSide ?? rescueSide ?? (activeCentering ? activeSide : null);
+  const activePreparedImageStorageKey = activePreparedImageSide === "FRONT"
+    ? front?.rectifiedStorageKey
+    : activePreparedImageSide === "BACK"
+      ? back?.rectifiedStorageKey
+      : undefined;
 
   useEffect(() => {
-    if (!activePreparedImageSide || captureSaveFailed) return;
-    void refreshPreparedImage(activePreparedImageSide).catch(() => undefined);
+    if (!activePreparedImageSide || !activePreparedImageStorageKey || captureSaveFailed) return;
+    void refreshPreparedImage(activePreparedImageSide, activePreparedImageStorageKey).catch(() => undefined);
     const timer = window.setInterval(
-      () => void refreshPreparedImage(activePreparedImageSide).catch(() => undefined),
+      () => void refreshPreparedImage(activePreparedImageSide, activePreparedImageStorageKey).catch(() => undefined),
       SPEEDSTER_PREPARED_IMAGE_REFRESH_INTERVAL_MS,
     );
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void refreshPreparedImage(activePreparedImageSide).catch(() => undefined);
+        void refreshPreparedImage(activePreparedImageSide, activePreparedImageStorageKey).catch(() => undefined);
       }
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
@@ -2515,7 +2608,7 @@ export function CaptureWorkspace({
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activePreparedImageSide, captureSaveFailed, refreshPreparedImage]);
+  }, [activePreparedImageSide, activePreparedImageStorageKey, captureSaveFailed, refreshPreparedImage]);
 
   return (
     <section className={styles.workspace}>
@@ -2659,6 +2752,26 @@ export function CaptureWorkspace({
             allowSwap={!recaptureSide}
             disabled={working}
           />
+          {legacyIphonePairChoiceRequired !== null ? (
+            <section className={styles.registrationInterruption} aria-label="Legacy iPhone pair explicit choice">
+              <strong>LEGACY IPHONE PAIR · EXPLICIT CHOICE</strong>
+              <p>
+                A complete fixed-key legacy Front + Back pair is available for ready version {legacyIphonePairChoiceRequired}.
+                Nothing has been selected. Use it only if this exact ready version is the pair you intend to grade.
+              </p>
+              <button
+                type="button"
+                disabled={working}
+                onClick={() => {
+                  setAcceptedLegacyIphoneReadyVersion(legacyIphonePairChoiceRequired);
+                  setLegacyIphonePairChoiceRequired(null);
+                  setMessage(`Explicitly loading legacy iPhone Front + Back for ready version ${legacyIphonePairChoiceRequired}.`);
+                }}
+              >
+                Use legacy pair for ready version {legacyIphonePairChoiceRequired}
+              </button>
+            </section>
+          ) : null}
           {recaptureSide ? (
             <p role="note">
               Targeted mat recapture uses only the unlocked local file slot. The paired iPhone Shortcut always captures Front + Back, so it is unavailable here and cannot replace the retained sibling evidence.
@@ -2796,9 +2909,9 @@ export function CaptureWorkspace({
               );
               finishRegistrationRescue(registrationRescue.provisional, true);
             }}
-            onImageError={() => handlePreparedImageError(rescueSide)}
+            onImageError={() => handlePreparedImageError(rescueSide, (rescueSide === "FRONT" ? front : back)?.rectifiedStorageKey)}
             onImageReady={() => markPreparedImageReady(rescueSide)}
-            onRetryImage={() => retryPreparedImage(rescueSide)}
+            onRetryImage={() => retryPreparedImage(rescueSide, (rescueSide === "FRONT" ? front : back)?.rectifiedStorageKey)}
           />
         </>
       ) : null}
@@ -2826,7 +2939,12 @@ export function CaptureWorkspace({
         <ColorGeometryStatus
           proposal={activeCentering.physicalColorGeometry}
           side={activeSide}
-          onChangeMatRecapture={changeMatAndRecapture}
+          onChangeMatRecapture={!activeMapRevisionId || (front?.mapRegistration && back?.mapRegistration)
+            ? changeMatAndRecapture
+            : undefined}
+          recaptureLockedReason={activeMapRevisionId && (!front?.mapRegistration || !back?.mapRegistration)
+            ? "One-side mat recapture is locked because the loaded Card Map was explicitly left unapplied. That decision and all completed geometry remain preserved; continue with human centering."
+            : undefined}
           disabled={working}
         />
         {activeCentering.printedColorGeometry ? <ColorGeometryStatus proposal={activeCentering.printedColorGeometry} /> : null}
@@ -2842,9 +2960,9 @@ export function CaptureWorkspace({
           onContinue={(result) => void confirmCentering(result)}
           disabled={readyDispatched.current || Boolean(colorGeometryRecoveryTarget)}
           continueLabel={captureSaveFailed && activeSide === "BACK" ? "Retry save" : "Continue"}
-          onImageError={() => handlePreparedImageError(activeSide)}
+          onImageError={() => handlePreparedImageError(activeSide, activeCentering.rectifiedStorageKey)}
           onImageReady={() => markPreparedImageReady(activeSide)}
-          onRetryImage={() => retryPreparedImage(activeSide)}
+          onRetryImage={() => retryPreparedImage(activeSide, activeCentering.rectifiedStorageKey)}
         />
         </>
       ) : null}
@@ -2918,11 +3036,13 @@ function ColorGeometryStatus({
   proposal,
   side,
   onChangeMatRecapture,
+  recaptureLockedReason,
   disabled = false,
 }: Readonly<{
   proposal: SpeedsterColorGeometryProposal;
   side?: SpeedsterCardSide;
   onChangeMatRecapture?: (side: SpeedsterCardSide, recommendedMat: SpeedsterMatColor | null) => void;
+  recaptureLockedReason?: string;
   disabled?: boolean;
 }>) {
   const accepted = proposal.outcome === "ACCEPTED";
@@ -2934,7 +3054,7 @@ function ColorGeometryStatus({
         {proposal.advisory ? ` — ${proposal.advisory.message}` : " — Draft requires human confirmation."}
       </span>
       {proposal.mode === "PHYSICAL_OUTER" && proposal.advisory && !onChangeMatRecapture ? (
-        <span>One-side mat recapture unlocks after both sides are prepared and registered so completed sibling evidence can be retained.</span>
+        <span>{recaptureLockedReason ?? "One-side mat recapture unlocks after both sides are prepared and registered so completed sibling evidence can be retained."}</span>
       ) : null}
       {canRecapture ? (
         <button

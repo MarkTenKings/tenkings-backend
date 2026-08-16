@@ -20,6 +20,7 @@ import {
 } from "../../../../lib/ai-grader-v2/review-findings";
 import { SPEEDSTER_REVIEW_VIEW_TYPES } from "../../../../lib/ai-grader-v2/review-image-urls";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { isAuthorizedSpeedsterPreparedStorageKeys } from "../../../../lib/server/aiGraderV2IphoneCapture";
 import { presignReadUrl } from "../../../../lib/server/storage";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
@@ -357,34 +358,38 @@ function filterFindingProjection(decision: AuditFilterDecision) {
   };
 }
 
-function expectedStorageKeys(createdByUserId: string, sessionId: string, side: SpeedsterCardSide) {
-  const prefix = `ai-grader-v2/${createdByUserId}/${sessionId}/prepared/${side.toLowerCase()}`;
-  return {
-    ORIGINAL: `${prefix}/inspection.webp`,
-    NORMALIZED: `${prefix}/normalized.webp`,
-    MICRO_DEFECT: `${prefix}/micro_defect.webp`,
-    DIRECTIONAL: `${prefix}/directional.webp`,
-  } as const;
-}
-
 function safeCaptureSide(
   session: AuditSession,
   side: SpeedsterCardSide,
 ): { frame: SpeedsterInspectionFrame; keys: Record<SpeedsterViewType, string> } | null {
   if (!isRecord(session.capture)) return null;
   const persisted = session.capture[side.toLowerCase()];
-  if (!isRecord(persisted) || !isRecord(persisted.viewStorageKeys)) return null;
+  if (!isRecord(persisted) || !isRecord(persisted.viewStorageKeys)
+    || typeof persisted.rectifiedStorageKey !== "string"
+    || typeof persisted.inspectionStorageKey !== "string"
+    || typeof persisted.viewStorageKeys.NORMALIZED !== "string"
+    || typeof persisted.viewStorageKeys.MICRO_DEFECT !== "string"
+    || typeof persisted.viewStorageKeys.DIRECTIONAL !== "string") return null;
   const frame = parseSpeedsterInspectionFrame(persisted.inspectionFrame);
   if (!frame) return null;
-  const expected = expectedStorageKeys(session.createdByUserId, session.id, side);
-  const actual = {
-    ORIGINAL: persisted.inspectionStorageKey,
+  const viewStorageKeys = {
     NORMALIZED: persisted.viewStorageKeys.NORMALIZED,
     MICRO_DEFECT: persisted.viewStorageKeys.MICRO_DEFECT,
     DIRECTIONAL: persisted.viewStorageKeys.DIRECTIONAL,
   };
-  if (SPEEDSTER_REVIEW_VIEW_TYPES.some((view) => actual[view] !== expected[view])) return null;
-  return { frame, keys: expected };
+  if (!isAuthorizedSpeedsterPreparedStorageKeys({
+    userId: session.createdByUserId,
+    sessionId: session.id,
+    side,
+    rectifiedStorageKey: persisted.rectifiedStorageKey,
+    inspectionStorageKey: persisted.inspectionStorageKey,
+    viewStorageKeys,
+  })) return null;
+  const actual = {
+    ORIGINAL: persisted.inspectionStorageKey,
+    ...viewStorageKeys,
+  };
+  return { frame, keys: actual };
 }
 
 async function signedEvidence(session: AuditSession, presignRead: Dependencies["presignRead"]) {

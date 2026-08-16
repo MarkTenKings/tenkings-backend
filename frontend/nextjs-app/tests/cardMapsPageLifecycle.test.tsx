@@ -98,6 +98,27 @@ const quad = [
   { x: 0.1, y: 0.9 },
 ] as const;
 
+const colorGeometryEvidence = (side: "FRONT" | "BACK") => ([
+  {
+    side,
+    sourceImageStorageKey: `${side.toLowerCase()}-original`,
+    mode: "PHYSICAL_OUTER",
+    matColor: side === "FRONT" ? "BLACK" : "WHITE",
+    result: { marker: `${side.toLowerCase()}-physical-result` },
+    serverReceipt: `${side.toLowerCase()}-physical-receipt`,
+    confirmedQuad: quad,
+  },
+  {
+    side,
+    sourceImageStorageKey: `${side.toLowerCase()}-original`,
+    mode: "PRINTED_FRAME",
+    matColor: side === "FRONT" ? "BLACK" : "WHITE",
+    result: { marker: `${side.toLowerCase()}-printed-result` },
+    serverReceipt: `${side.toLowerCase()}-printed-receipt`,
+    confirmedQuad: quad,
+  },
+] as const);
+
 const captureBundle = {
   sessionId: "new-card-map-session",
   cardProfile: "SPORTS",
@@ -114,6 +135,7 @@ const captureBundle = {
     centeringBorders: { top: 0.1, right: 0.1, bottom: 0.1, left: 0.1 },
     rectifiedUrl: "https://images.example.test/front.png",
     mapRegistration: { mapRevisionId: "revision-7", sourcePhysicalQuadSha256: "front-hash" },
+    colorGeometryEvidence: colorGeometryEvidence("FRONT"),
   },
   back: {
     originalStorageKey: "back-original",
@@ -127,23 +149,41 @@ const captureBundle = {
     centeringBorders: { top: 0.1, right: 0.1, bottom: 0.1, left: 0.1 },
     rectifiedUrl: "https://images.example.test/back.png",
     mapRegistration: { mapRevisionId: "revision-7", sourcePhysicalQuadSha256: "back-hash" },
+    colorGeometryEvidence: colorGeometryEvidence("BACK"),
   },
 };
 
 stubModule("../components/ai-grader-v2/CaptureWorkspace", {
   CaptureWorkspace: ({ onReady }: {
-    onReady: (bundle: typeof captureBundle) => Promise<{ saved: boolean; message?: string }> | { saved: boolean; message?: string };
+    onReady: (bundle: typeof captureBundle) => Promise<{
+      saved: boolean;
+      message?: string;
+      colorGeometryReceiptExpired?: { side: "FRONT" | "BACK"; mode: "PHYSICAL_OUTER" | "PRINTED_FRAME" };
+    }> | {
+      saved: boolean;
+      message?: string;
+      colorGeometryReceiptExpired?: { side: "FRONT" | "BACK"; mode: "PHYSICAL_OUTER" | "PRINTED_FRAME" };
+    };
   }) => {
     const [failed, setFailed] = React.useState(false);
+    const [recovery, setRecovery] = React.useState<string | null>(null);
     const [saving, setSaving] = React.useState(false);
     return (
-      <button type="button" disabled={saving} onClick={() => {
-        if (saving) return;
-        setSaving(true);
-        void Promise.resolve(onReady(captureBundle))
-          .then((result) => setFailed(!result.saved))
-          .finally(() => setSaving(false));
-      }}>{saving ? "SAVING CAPTURE" : failed ? "RETRY CAPTURE SAVE" : "COMPLETE FRONT + BACK"}</button>
+      <>
+        <button type="button" disabled={saving} onClick={() => {
+          if (saving) return;
+          setSaving(true);
+          void Promise.resolve(onReady(captureBundle))
+            .then((result) => {
+              setFailed(!result.saved);
+              setRecovery(result.colorGeometryReceiptExpired
+                ? `${result.colorGeometryReceiptExpired.side} ${result.colorGeometryReceiptExpired.mode}`
+                : null);
+            })
+            .finally(() => setSaving(false));
+        }}>{saving ? "SAVING CAPTURE" : failed ? "RETRY CAPTURE SAVE" : "COMPLETE FRONT + BACK"}</button>
+        {recovery ? <span>EXACT COLOR RECOVERY · {recovery}</span> : null}
+      </>
     );
   },
   SpeedsterAppliedMapBadge: () => <div>APPLIED MAP BADGE</div>,
@@ -1030,6 +1070,73 @@ test("new authoring shows both dynamic identities and uses one effective baselin
     assert.equal(body.mapBinding.registration.back.mapRevisionId, "revision-7");
     assert.equal(body.capture.front.originalStorageKey, "front-original");
     assert.equal(body.capture.back.originalStorageKey, "back-original");
+    assert.deepEqual(body.capture.front.colorGeometryEvidence, captureBundle.front.colorGeometryEvidence);
+    assert.deepEqual(body.capture.back.colorGeometryEvidence, captureBundle.back.colorGeometryEvidence);
+    assert.deepEqual(
+      [
+        ...body.capture.front.colorGeometryEvidence,
+        ...body.capture.back.colorGeometryEvidence,
+      ].map((entry) => `${entry.side}:${entry.mode}:${entry.serverReceipt}`),
+      [
+        "FRONT:PHYSICAL_OUTER:front-physical-receipt",
+        "FRONT:PRINTED_FRAME:front-printed-receipt",
+        "BACK:PHYSICAL_OUTER:back-physical-receipt",
+        "BACK:PRINTED_FRAME:back-printed-receipt",
+      ],
+      "Card Maps must carry all four exact signed Color Geometry records across the save wire",
+    );
+  } finally {
+    await page.cleanup();
+  }
+});
+
+test("Card Maps forwards exact Color Geometry receipt expiry to visible mode-specific recovery", async () => {
+  let patchCalls = 0;
+  const page = await mountPage({
+    fetchImpl: async (request, init) => {
+      const url = String(request);
+      if (url === "/api/admin/ai-grader-v2/sessions") {
+        return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
+      }
+      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
+        return jsonResponse({ map: {
+          status: "LOADED",
+          scope: "FAMILY",
+          name: "1997 Upper Deck SPx",
+          revision: {
+            revisionId: "revision-7",
+            version: 7,
+            revisionHash: "abcdef1234567890",
+            filterPolicyVersion: "speedster-map-filter-authority-padding-v2",
+          },
+          revisions: [],
+          editable: null,
+        } });
+      }
+      if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session" && init?.method === "PATCH") {
+        patchCalls += 1;
+        return jsonResponse({
+          message: "Back printed Color Geometry receipt expired.",
+          colorGeometryReceiptExpired: { side: "BACK", mode: "PRINTED_FRAME" },
+        }, 409);
+      }
+      throw new Error(`Unexpected fetch: ${String(init?.method ?? "GET")} ${url}`);
+    },
+  });
+  try {
+    await changeInput(page.container, "playerName", "Ken Griffey Jr.");
+    await changeInput(page.container, "year", "1997");
+    await changeInput(page.container, "manufacturer", "Upper Deck");
+    await changeInput(page.container, "productSet", "SPx");
+    await act(async () => buttonByText(page.container, "CONTINUE TO FRONT + BACK")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")), "Capture workspace did not open");
+
+    await act(async () => buttonByText(page.container, "COMPLETE FRONT + BACK")?.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
+    await waitFor(() => /EXACT COLOR RECOVERY · BACK PRINTED_FRAME/.test(page.container.textContent ?? ""),
+      "Card Maps did not forward exact side/mode receipt recovery");
+    assert.equal(patchCalls, 1);
+    assert.ok(buttonByText(page.container, "RETRY CAPTURE SAVE"));
+    assert.equal(page.container.querySelector('[data-testid="card-map-workspace"]'), null);
   } finally {
     await page.cleanup();
   }
