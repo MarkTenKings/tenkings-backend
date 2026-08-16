@@ -2,10 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
+  isAuthorizedSpeedsterOriginalStorageKey,
+  legacySpeedsterOriginalStorageKey,
   speedsterIphonePairingUrl,
   speedsterIphoneStorageKey,
 } from "../lib/server/aiGraderV2IphoneCapture";
-import { createAiGraderV2AdminIphoneCaptureHandler } from "../pages/api/admin/ai-grader-v2/iphone-capture";
+import {
+  createAiGraderV2AdminIphoneCaptureHandler,
+  resolveSpeedsterIphoneReadyPair,
+} from "../pages/api/admin/ai-grader-v2/iphone-capture";
 import { createAiGraderV2IphoneCaptureHandler } from "../pages/api/ai-grader-v2/iphone-capture";
 
 function request(method: string, body?: unknown, query: Record<string, string> = {}): NextApiRequest {
@@ -34,15 +39,30 @@ function response() {
 
 const sessionId = "speedster-session-123456789";
 
-test("iPhone capture keys reuse the existing original-image path", () => {
+test("iPhone capture keys are upload-versioned while exact legacy/local keys remain authorized", () => {
   assert.equal(
-    speedsterIphoneStorageKey("admin-1", sessionId, "FRONT"),
-    `ai-grader-v2/admin-1/${sessionId}/original/front.jpg`,
+    speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7),
+    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7/front.jpg`,
   );
   assert.equal(
-    speedsterIphoneStorageKey("admin-1", sessionId, "BACK"),
-    `ai-grader-v2/admin-1/${sessionId}/original/back.jpg`,
+    speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7),
+    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7/back.jpg`,
   );
+  assert.equal(legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT"),
+    `ai-grader-v2/admin-1/${sessionId}/original/front.jpg`);
+  assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
+    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7),
+    userId: "admin-1", sessionId, side: "FRONT",
+  }), true);
+  assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
+    storageKey: legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT", "webp"),
+    userId: "admin-1", sessionId, side: "FRONT",
+  }), true);
+  assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
+    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7),
+    userId: "admin-1", sessionId, side: "FRONT",
+  }), false);
+  assert.throws(() => speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 0), /positive integer/);
   assert.equal(
     speedsterIphonePairingUrl("device-12345678901234567890"),
     "shortcuts://run-shortcut?name=Ten%20Kings%20Speedster%20Capture&input=text&text=device-12345678901234567890",
@@ -72,6 +92,7 @@ test("admin activation keeps one device and preserves a ready capture on reload"
       activations += 1;
       return device;
     },
+    storageObjectExists: async () => true,
     presignReadUrl: async (key) => `read:${key}`,
   });
 
@@ -110,6 +131,7 @@ test("switching drafts resets only that admin device", async () => {
         readyVersion: 0,
       };
     },
+    storageObjectExists: async () => true,
     presignReadUrl: async (key) => `read:${key}`,
   });
   const { state, res } = response();
@@ -133,6 +155,7 @@ test("admin polling returns only its active draft pair", async () => {
     }),
     createDevice: async () => { throw new Error("not used"); },
     activateDevice: async () => { throw new Error("not used"); },
+    storageObjectExists: async () => true,
     presignReadUrl: async (key: string) => `read:${key}`,
   };
   const allowed = createAiGraderV2AdminIphoneCaptureHandler({
@@ -151,12 +174,41 @@ test("admin polling returns only its active draft pair", async () => {
 
   assert.equal(ok.state.status, 200);
   assert.equal(ok.state.body.readyVersion, 4);
-  assert.match(ok.state.body.front.storageKey, /\/admin-1\/.*\/original\/front\.jpg$/);
+  assert.match(ok.state.body.front.storageKey, /\/admin-1\/.*\/original\/iphone-v4\/front\.jpg$/);
   assert.equal(ok.state.cache, "no-store");
   assert.equal(crossAdmin.state.status, 404);
 });
 
-test("Shortcut PLAN and COMPLETE publish an overwriteable photo pair", async () => {
+test("ready-pair resolution uses versioned objects and falls back only to a complete legacy pair", async () => {
+  const versionedFront = speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 4);
+  const versionedBack = speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 4);
+  const versioned = await resolveSpeedsterIphoneReadyPair({
+    userId: "admin-1",
+    sessionId,
+    readyVersion: 4,
+    storageObjectExists: async (key) => key === versionedFront || key === versionedBack,
+  });
+  assert.deepEqual(versioned, { front: versionedFront, back: versionedBack, storageGeneration: "VERSIONED" });
+
+  const legacyFront = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT");
+  const legacyBack = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "BACK");
+  const legacy = await resolveSpeedsterIphoneReadyPair({
+    userId: "admin-1",
+    sessionId,
+    readyVersion: 3,
+    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
+  });
+  assert.deepEqual(legacy, { front: legacyFront, back: legacyBack, storageGeneration: "LEGACY" });
+
+  await assert.rejects(resolveSpeedsterIphoneReadyPair({
+    userId: "admin-1",
+    sessionId,
+    readyVersion: 5,
+    storageObjectExists: async (key) => key.endsWith("/iphone-v5/front.jpg"),
+  }), /versioned iPhone capture pair is incomplete/);
+});
+
+test("Shortcut PLAN and COMPLETE publish a new non-overwriting object pair per uploadVersion", async () => {
   let version = 0;
   let readyVersion = 0;
   const signed: string[] = [];
@@ -192,14 +244,16 @@ test("Shortcut PLAN and COMPLETE publish an overwriteable photo pair", async () 
   assert.equal(first.state.status, 200);
   assert.equal(first.state.body.contentType, "image/jpeg");
   assert.equal(first.state.body.uploadVersion, 1);
-  assert.match(first.state.body.frontUploadUrl, /original\/front\.jpg$/);
-  assert.match(first.state.body.backUploadUrl, /original\/back\.jpg$/);
+  assert.match(first.state.body.frontUploadUrl, /original\/iphone-v1\/front\.jpg$/);
+  assert.match(first.state.body.backUploadUrl, /original\/iphone-v1\/back\.jpg$/);
   assert.equal("front" in first.state.body, false);
   assert.equal("back" in first.state.body, false);
   assert.equal(complete.state.body.readyVersion, 1);
   assert.equal(resend.state.body.uploadVersion, 2);
-  assert.equal(resend.state.body.frontUploadUrl, first.state.body.frontUploadUrl);
-  assert.equal(resend.state.body.backUploadUrl, first.state.body.backUploadUrl);
+  assert.match(resend.state.body.frontUploadUrl, /original\/iphone-v2\/front\.jpg$/);
+  assert.match(resend.state.body.backUploadUrl, /original\/iphone-v2\/back\.jpg$/);
+  assert.notEqual(resend.state.body.frontUploadUrl, first.state.body.frontUploadUrl);
+  assert.notEqual(resend.state.body.backUploadUrl, first.state.body.backUploadUrl);
   assert.equal(signed.length, 4);
 });
 

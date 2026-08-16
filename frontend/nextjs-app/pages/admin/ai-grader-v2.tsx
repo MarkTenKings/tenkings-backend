@@ -584,6 +584,28 @@ export default function AiGraderV2AdminPage() {
           viewStorageKeys: preserved.viewStorageKeys,
           centeringQuad: preserved.centering.innerQuad,
           centeringBorders: preserved.centering.borders,
+          ...("matColor" in preserved ? {
+            colorGeometryEvidence: [
+              {
+                side,
+                sourceImageStorageKey: preserved.originalStorageKey,
+                mode: "PHYSICAL_OUTER" as const,
+                matColor: preserved.matColor,
+                result: preserved.physicalColorGeometry,
+                serverReceipt: preserved.physicalColorGeometryReceipt,
+                confirmedQuad: preserved.corners,
+              },
+              {
+                side,
+                sourceImageStorageKey: preserved.originalStorageKey,
+                mode: "PRINTED_FRAME" as const,
+                matColor: preserved.matColor,
+                result: preserved.printedColorGeometry,
+                serverReceipt: preserved.printedColorGeometryReceipt,
+                confirmedQuad: preserved.centering.innerQuad,
+              },
+            ] as const,
+          } : {}),
           ...(preserved.mapRegistration ? { mapRegistration: preserved.mapRegistration } : {}),
         };
       };
@@ -632,6 +654,14 @@ export default function AiGraderV2AdminPage() {
     const startedAtMs = Date.now();
     setWorking(true);
     setMessage("Saving the locked card geometry.");
+    if (!bundle.front.colorGeometryEvidence || !bundle.back.colorGeometryEvidence) {
+      captureSaveInFlight.current = false;
+      setWorking(false);
+      return {
+        saved: false,
+        message: "Color Geometry evidence is incomplete. Existing photos and confirmed geometry remain preserved; explicitly recover the missing side and mode before save.",
+      };
+    }
     const compactSide = (side: SpeedsterCaptureBundle["front"]) => ({
       originalStorageKey: side.originalStorageKey,
       rectifiedStorageKey: side.rectifiedStorageKey,
@@ -642,6 +672,7 @@ export default function AiGraderV2AdminPage() {
       transform: side.transform,
       centeringQuad: side.centeringQuad,
       centeringBorders: side.centeringBorders,
+      colorGeometryEvidence: side.colorGeometryEvidence!,
     });
     try {
       const frontRegistration = bundle.front.mapRegistration;

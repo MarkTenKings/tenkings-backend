@@ -13,6 +13,8 @@ const ACK = "--ack-disposable-local-postgres";
 const SERVICE = "ai-grader-nfc-validation-postgres";
 const DB_USER = "tenkings_nfc_validation";
 const DB_NAME = "tenkings_ai_grader_nfc_validation";
+const SPEEDSTER_LAYOUT_V2_MIGRATION = "20260813200000_speedster_pokemon_layout_key_v2";
+const SPEEDSTER_COLOR_GEOMETRY_MIGRATION = "20260816100000_speedster_color_geometry_evidence";
 const TARGET_MIGRATIONS = [
   "20260712160000_ai_grader_nfc_static_url_v1",
   "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
@@ -20,7 +22,8 @@ const TARGET_MIGRATIONS = [
   "20260718150000_ai_grader_design_reference_v1",
   "20260721183000_ai_grader_calibration_activation_registry",
   "20260813120000_speedster_map_registration_lessons",
-  "20260813200000_speedster_pokemon_layout_key_v2",
+  SPEEDSTER_LAYOUT_V2_MIGRATION,
+  SPEEDSTER_COLOR_GEOMETRY_MIGRATION,
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
@@ -44,6 +47,7 @@ const speedsterMapRegistrationLessonSql = resolve(
   "validateSpeedsterMapRegistrationLesson.sql",
 );
 const speedsterLayoutKeyV2Sql = resolve(scriptDir, "validateSpeedsterLayoutKeyV2.sql");
+const speedsterColorGeometryEvidenceSql = resolve(scriptDir, "validateSpeedsterColorGeometryEvidence.sql");
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
 const advisoryLockValidationScript = resolve(
@@ -73,6 +77,7 @@ for (const requiredPath of [
   calibrationActivationRegistrySql,
   speedsterMapRegistrationLessonSql,
   speedsterLayoutKeyV2Sql,
+  speedsterColorGeometryEvidenceSql,
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
@@ -232,10 +237,20 @@ function legacySessionSnapshot() {
   );
 }
 
-const migrationCount = readdirSync(migrationsDir, { withFileTypes: true })
+const migrationNames = readdirSync(migrationsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && existsSync(resolve(migrationsDir, entry.name, "migration.sql")))
-  .length;
+  .map((entry) => entry.name)
+  .sort();
+const migrationCount = migrationNames.length;
 if (migrationCount < 1) fail("No Prisma migrations were found.");
+const preLayoutMigrationNames = migrationNames.filter((name) => name < SPEEDSTER_LAYOUT_V2_MIGRATION);
+const postLayoutMigrationNames = migrationNames.filter((name) => name > SPEEDSTER_LAYOUT_V2_MIGRATION);
+if (!migrationNames.includes(SPEEDSTER_LAYOUT_V2_MIGRATION)) {
+  fail("The Layout Key V2 migration is missing from the repository tree.");
+}
+if (!postLayoutMigrationNames.includes(SPEEDSTER_COLOR_GEOMETRY_MIGRATION)) {
+  fail("The Color Geometry migration must remain ordered after Layout Key V2.");
+}
 
 let cleanupRequired = false;
 let upgradeSchemaRoot;
@@ -299,17 +314,8 @@ try {
   mkdirSync(upgradeMigrationsDir, { recursive: true });
   copyFileSync(prismaSchema, upgradeSchema);
   copyFileSync(resolve(migrationsDir, "migration_lock.toml"), resolve(upgradeMigrationsDir, "migration_lock.toml"));
-  let copiedPreLayoutMigrationCount = 0;
-  for (const entry of readdirSync(migrationsDir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name >= "20260813200000_speedster_pokemon_layout_key_v2") continue;
-    cpSync(resolve(migrationsDir, entry.name), resolve(upgradeMigrationsDir, entry.name), { recursive: true });
-    copiedPreLayoutMigrationCount += 1;
-  }
-  if (copiedPreLayoutMigrationCount !== migrationCount - 1) {
-    fail(
-      `The isolated pre-Layout-V2 tree must contain exactly ${migrationCount - 1} migrations; ` +
-      `copied ${copiedPreLayoutMigrationCount}.`,
-    );
+  for (const migrationName of preLayoutMigrationNames) {
+    cpSync(resolve(migrationsDir, migrationName), resolve(upgradeMigrationsDir, migrationName), { recursive: true });
   }
 
   run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "validate", "--schema", "prisma/schema.prisma"], {
@@ -353,8 +359,8 @@ try {
       WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
     "proving the pre-Layout-V2 migration ledger count",
   );
-  if (preLayoutLedgerCount !== String(migrationCount - 1)) {
-    fail(`Expected ${migrationCount - 1} clean pre-Layout-V2 migration rows; found ${preLayoutLedgerCount}.`);
+  if (preLayoutLedgerCount !== String(preLayoutMigrationNames.length)) {
+    fail(`Expected ${preLayoutMigrationNames.length} clean pre-Layout-V2 migration rows; found ${preLayoutLedgerCount}.`);
   }
   const prematureLayoutMigrationCount = queryScalar(
     `SELECT count(*) FROM "_prisma_migrations"
@@ -376,8 +382,8 @@ try {
   `), { label: "inserting pre-Layout-V2 historical identity fixtures" });
   const preLayoutV2Snapshot = legacySessionSnapshot();
   cpSync(
-    resolve(migrationsDir, "20260813200000_speedster_pokemon_layout_key_v2"),
-    resolve(upgradeMigrationsDir, "20260813200000_speedster_pokemon_layout_key_v2"),
+    resolve(migrationsDir, SPEEDSTER_LAYOUT_V2_MIGRATION),
+    resolve(upgradeMigrationsDir, SPEEDSTER_LAYOUT_V2_MIGRATION),
     { recursive: true },
   );
   run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
@@ -389,8 +395,8 @@ try {
       WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
     "proving the post-Layout-V2 migration ledger count",
   );
-  if (postLayoutLedgerCount !== String(migrationCount)) {
-    fail(`Expected ${migrationCount} clean post-Layout-V2 migration rows; found ${postLayoutLedgerCount}.`);
+  if (postLayoutLedgerCount !== String(preLayoutMigrationNames.length + 1)) {
+    fail(`Expected ${preLayoutMigrationNames.length + 1} clean rows immediately after Layout Key V2; found ${postLayoutLedgerCount}.`);
   }
   const cleanLayoutMigrationCount = queryScalar(
     `SELECT count(*) FROM "_prisma_migrations"
@@ -414,6 +420,31 @@ try {
     "proving isolated Layout V2 upgrade fixtures were removed",
   );
   if (remainingUpgradeFixtureCount !== "0") fail("Layout V2 upgrade fixtures were not fully removed.");
+  for (const migrationName of postLayoutMigrationNames) {
+    cpSync(resolve(migrationsDir, migrationName), resolve(upgradeMigrationsDir, migrationName), { recursive: true });
+  }
+  run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", upgradeSchema], {
+    env: databaseEnv,
+    label: "deploying all ordered post-Layout-V2 migrations",
+  });
+  const finalStagedLedgerCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL`,
+    "proving the complete staged migration ledger count",
+  );
+  if (finalStagedLedgerCount !== String(migrationCount)) {
+    fail(`Expected ${migrationCount} clean rows after all post-Layout-V2 migrations; found ${finalStagedLedgerCount}.`);
+  }
+  const cleanColorGeometryMigrationCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "migration_name" = '${SPEEDSTER_COLOR_GEOMETRY_MIGRATION}'
+        AND "finished_at" IS NOT NULL
+        AND "rolled_back_at" IS NULL`,
+    "proving exactly one clean Color Geometry ledger row after Layout Key V2",
+  );
+  if (cleanColorGeometryMigrationCount !== "1") {
+    fail("Color Geometry must have exactly one clean ledger row after Layout Key V2.");
+  }
   const repositoryTreeReconciliation = run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"], {
     env: databaseEnv,
     label: "reconciling the fully migrated database with the repository migration tree",
@@ -454,6 +485,13 @@ try {
   );
   if (!speedsterLayoutKeyV2Result.includes("SPEEDSTER_LAYOUT_KEY_V2_VALIDATION_PASS")) {
     fail("The Layout Key V2 SQL validation did not reach its PASS marker.");
+  }
+  const speedsterColorGeometryResult = runSqlFile(
+    speedsterColorGeometryEvidenceSql,
+    "verifying Speedster Color Geometry constraints, outcomes, append-only behavior, and fixture rollback",
+  );
+  if (!speedsterColorGeometryResult.includes("SPEEDSTER_COLOR_GEOMETRY_EVIDENCE_VALIDATION_PASS")) {
+    fail("The Speedster Color Geometry SQL validation did not reach its PASS marker.");
   }
   const readyRuntimeResult = run(
     process.execPath,
@@ -550,6 +588,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry evidence, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

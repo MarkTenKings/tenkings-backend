@@ -53,6 +53,7 @@ import {
   openStorageObjectRead,
   presignReadUrl,
 } from "./storage";
+import { isAuthorizedSpeedsterOriginalStorageKey } from "./aiGraderV2IphoneCapture";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_MAP_LABEL_LENGTH = 80;
@@ -1539,7 +1540,12 @@ function parseSourceSide(
   const rectifiedStorageKey = nonEmptyText(value.rectifiedStorageKey, `${side} rectified key`, 500);
   const inspectionStorageKey = nonEmptyText(value.inspectionStorageKey, `${side} inspection key`, 500);
   if (
-    !originalStorageKey.startsWith(`ai-grader-v2/${userId}/${sessionId}/original/${side.toLowerCase()}.`) ||
+    !isAuthorizedSpeedsterOriginalStorageKey({
+      storageKey: originalStorageKey,
+      userId,
+      sessionId,
+      side,
+    }) ||
     rectifiedStorageKey !== `${expectedPreparedPrefix}/rectified.webp` ||
     inspectionStorageKey !== `${expectedPreparedPrefix}/inspection.webp`
   ) {

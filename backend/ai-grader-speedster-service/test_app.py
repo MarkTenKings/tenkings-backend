@@ -6,7 +6,18 @@ from unittest.mock import patch
 import cv2
 import numpy as np
 
-from app import PreparedUploads, Point, TARGET_HEIGHT, TARGET_WIDTH, rectify, reveal_views
+from app import (
+    GeometryRequest,
+    PrepareRequest,
+    PreparedUploads,
+    Point,
+    TARGET_HEIGHT,
+    TARGET_WIDTH,
+    geometry,
+    prepare_image,
+    rectify,
+    reveal_views,
+)
 from card_geometry import (
     INSPECTION_HEIGHT,
     INSPECTION_MARGIN_PX,
@@ -216,6 +227,19 @@ class SpeedsterGeometryTest(unittest.TestCase):
             directional="directional",
         )
         self.assertEqual(expanded.inspection, "inspection")
+        self.assertIsNone(GeometryRequest(imageBase64="legacy").matColor)
+        self.assertIsNone(
+            PrepareRequest(
+                imageBase64="legacy",
+                corners=[
+                    Point(x=0, y=0),
+                    Point(x=1, y=0),
+                    Point(x=1, y=1),
+                    Point(x=0, y=1),
+                ],
+                outputUploads=legacy,
+            ).matColor
+        )
 
     def test_proposes_and_rectifies_four_card_corners(self):
         image = np.zeros((1600, 1200, 3), dtype=np.uint8)
@@ -237,6 +261,141 @@ class SpeedsterGeometryTest(unittest.TestCase):
         views = reveal_views(rectified)
         self.assertEqual(len(views), 3)
         self.assertTrue(all(view.shape[:2] == (TARGET_HEIGHT, TARGET_WIDTH) for view in views))
+
+    def test_nonaccepted_color_outer_preserves_the_legacy_geometry_proposal(self):
+        image = np.zeros((900, 700, 3), dtype=np.uint8)
+        legacy = np.array(
+            [[100, 100], [600, 100], [600, 800], [100, 800]], dtype=np.float32
+        )
+        with patch("app.load_image", return_value=image), patch(
+            "app.detect_card_quad", return_value=legacy
+        ) as legacy_detector:
+            result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
+
+        self.assertEqual(result["colorGeometry"]["outcome"], "INSUFFICIENT_EVIDENCE")
+        self.assertEqual(
+            [(point.x, point.y) for point in result["corners"]],
+            [(100 / 700, 100 / 900), (600 / 700, 100 / 900), (600 / 700, 800 / 900), (100 / 700, 800 / 900)],
+        )
+        legacy_detector.assert_called_once_with(image)
+
+    def test_color_outer_exception_abstains_and_returns_exact_legacy_geometry(self):
+        image = np.zeros((900, 700, 3), dtype=np.uint8)
+        legacy = np.array(
+            [[101, 102], [603, 104], [605, 806], [107, 808]], dtype=np.float32
+        )
+        with patch("app.load_image", return_value=image), patch(
+            "app.propose_physical_outer", side_effect=RuntimeError("color-only fault")
+        ), patch("app.detect_card_quad", return_value=legacy) as legacy_detector:
+            result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
+
+        self.assertEqual(result["colorGeometry"]["outcome"], "ABSTAIN")
+        self.assertIsNone(result["colorGeometry"]["proposal"])
+        self.assertEqual(
+            result["colorGeometry"]["advisory"],
+            {
+                "code": "COLOR_ENGINE_ERROR",
+                "recommendedMat": None,
+                "message": "Color geometry could not evaluate this image. The unchanged legacy proposal remains active.",
+            },
+        )
+        self.assertTrue(
+            all(
+                evidence["sampleCount"] == 0
+                and evidence["candidateCount"] == 0
+                and evidence["supportFraction"] == 0
+                for evidence in result["colorGeometry"]["sideEvidence"].values()
+            )
+        )
+        self.assertEqual(
+            [(point.x, point.y) for point in result["corners"]],
+            [(x / 700, y / 900) for x, y in legacy],
+        )
+        legacy_detector.assert_called_once_with(image)
+
+    def test_nonaccepted_color_frame_preserves_the_legacy_centering_proposal(self):
+        image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 150, dtype=np.uint8)
+        legacy = np.array(
+            [[110, 140], [1159, 140], [1159, 1637], [110, 1637]], dtype=np.float32
+        )
+        request = PrepareRequest(
+            imageBase64="fixture",
+            matColor="MAGENTA",
+            corners=[
+                Point(x=0, y=0),
+                Point(x=1, y=0),
+                Point(x=1, y=1),
+                Point(x=0, y=1),
+            ],
+            outputUploads=PreparedUploads(
+                rectified="rectified",
+                normalized="normalized",
+                microDefect="micro",
+                directional="directional",
+            ),
+        )
+        with patch("app.load_image", return_value=image), patch(
+            "app.rectify", return_value=(image, np.eye(3, dtype=np.float32))
+        ), patch(
+            "app.printed_border_quad", return_value=(legacy, ["top", "right", "bottom", "left"], {})
+        ) as legacy_detector, patch("app.upload_webp"):
+            result = prepare_image(request)
+
+        self.assertEqual(result["colorGeometry"]["outcome"], "NOT_APPLICABLE")
+        self.assertEqual(
+            [(point.x, point.y) for point in result["borders"]],
+            [(110 / TARGET_WIDTH, 140 / TARGET_HEIGHT), (1159 / TARGET_WIDTH, 140 / TARGET_HEIGHT), (1159 / TARGET_WIDTH, 1637 / TARGET_HEIGHT), (110 / TARGET_WIDTH, 1637 / TARGET_HEIGHT)],
+        )
+        legacy_detector.assert_called_once_with(image)
+
+    def test_color_frame_exception_abstains_and_returns_exact_legacy_centering(self):
+        image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 150, dtype=np.uint8)
+        legacy = np.array(
+            [[111, 142], [1157, 143], [1158, 1634], [112, 1635]], dtype=np.float32
+        )
+        detected = ["top", "bottom"]
+        request = PrepareRequest(
+            imageBase64="fixture",
+            matColor="MAGENTA",
+            corners=[
+                Point(x=0, y=0),
+                Point(x=1, y=0),
+                Point(x=1, y=1),
+                Point(x=0, y=1),
+            ],
+            outputUploads=PreparedUploads(
+                rectified="rectified",
+                normalized="normalized",
+                microDefect="micro",
+                directional="directional",
+            ),
+        )
+        with patch("app.load_image", return_value=image), patch(
+            "app.rectify", return_value=(image, np.eye(3, dtype=np.float32))
+        ), patch(
+            "app.propose_printed_frame", side_effect=RuntimeError("color-only fault")
+        ), patch(
+            "app.printed_border_quad", return_value=(legacy, detected, {"legacy": True})
+        ) as legacy_detector, patch("app.upload_webp"):
+            result = prepare_image(request)
+
+        self.assertEqual(result["colorGeometry"]["outcome"], "ABSTAIN")
+        self.assertIsNone(result["colorGeometry"]["proposal"])
+        self.assertEqual(result["colorGeometry"]["advisory"]["code"], "COLOR_ENGINE_ERROR")
+        self.assertTrue(
+            all(
+                evidence["sampleCount"] == 0
+                and evidence["candidateCount"] == 0
+                and evidence["supportFraction"] == 0
+                for evidence in result["colorGeometry"]["sideEvidence"].values()
+            )
+        )
+        self.assertEqual(
+            [(point.x, point.y) for point in result["borders"]],
+            [(x / TARGET_WIDTH, y / TARGET_HEIGHT) for x, y in legacy],
+        )
+        self.assertEqual(result["detectedBorders"], detected)
+        legacy_detector.assert_called_once_with(image)
 
     def test_proposes_design_border_geometry(self):
         image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 225, dtype=np.uint8)

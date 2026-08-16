@@ -9,9 +9,10 @@ import { SPEEDSTER_TRACE_PIXEL_COUNT, encodeSpeedsterTraceRleV1 } from "../lib/a
 import { HttpError } from "../lib/server/adminSessionAuthority";
 import { createAiGraderV2SessionsHandler } from "../pages/api/admin/ai-grader-v2/sessions";
 import {
-  createAiGraderV2SessionHandler,
+  createAiGraderV2SessionHandler as createAiGraderV2SessionHandlerBase,
   validateSpeedsterSubmittedMapBinding,
 } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]";
+import type { SpeedsterColorGeometryProposal } from "../lib/ai-grader-v2/color-geometry";
 import {
   SPEEDSTER_MAP_FILTER_POLICY_VERSION,
   SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
@@ -32,10 +33,16 @@ import {
   verifySpeedsterMapRegistrationReceipt,
 } from "../lib/server/speedsterMapRegistrationAuthority";
 import {
+  issueSpeedsterColorGeometryReceipt,
+  SpeedsterColorGeometryReceiptExpiredError,
+  verifySpeedsterColorGeometryReceipt,
+} from "../lib/server/speedsterColorGeometryAuthority";
+import {
   fetchSpeedsterImageUpstream,
   sanitizeSpeedsterImageFailure,
   sanitizeSpeedsterTraceProposalFailure,
   sanitizeSpeedsterGeometryPayload,
+  sanitizeSpeedsterPreparePayload,
   parseSpeedsterRegistrationFailure,
   assertSpeedsterRegistrationCandidateAuthority,
   selectSpeedsterRegistrationLessonCandidates,
@@ -106,13 +113,80 @@ const registrationReceiptEnv = {
 } as unknown as NodeJS.ProcessEnv;
 process.env.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY = registrationReceiptEnv.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY;
 process.env.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID = registrationReceiptEnv.SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID;
+const colorReceiptEnv = {
+  SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY: "test_speedster_color_geometry_authority_secret_0123456789",
+  SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY_ID: "test-speedster-color-key-v1",
+} as unknown as NodeJS.ProcessEnv;
+
+function createAiGraderV2SessionHandler(
+  deps: NonNullable<Parameters<typeof createAiGraderV2SessionHandlerBase>[0]>,
+) {
+  return createAiGraderV2SessionHandlerBase({
+    ...deps,
+    hashEvidence: deps.hashEvidence ?? (async (storageKey: string) => mapBindingSha(storageKey)),
+    verifyColorGeometryReceipt: deps.verifyColorGeometryReceipt ?? ((receipt, binding) => (
+      verifySpeedsterColorGeometryReceipt(receipt, binding, { env: colorReceiptEnv })
+    )),
+  });
+}
+
+const colorResult = (
+  mode: "PHYSICAL_OUTER" | "PRINTED_FRAME",
+  matColor: "BLACK" | "WHITE",
+): SpeedsterColorGeometryProposal => ({
+  version: "speedster-color-geometry-proposal-v1",
+  engineVersion: "speedster-color-geometry-v1",
+  authority: "PROPOSER_ONLY",
+  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+  mode,
+  outcome: "ACCEPTED",
+  matColor,
+  proposal: mapBindingQuad,
+  contrastFloorDeltaE: mode === "PHYSICAL_OUTER" ? 18 : 12,
+  minimumSideSupport: mode === "PHYSICAL_OUTER" ? 0.7 : 0.55,
+  sideEvidence: Object.fromEntries(["top", "right", "bottom", "left"].map((side) => [side, {
+    medianContrastDeltaE: 30,
+    medianLightnessContrast: 30,
+    supportFraction: 0.8,
+    sampleCount: 33,
+    candidateCount: 1,
+    ambiguous: false,
+  }])) as SpeedsterColorGeometryProposal["sideEvidence"],
+  ambiguity: { candidateCount: 1, runnerUpScoreRatio: null, ambiguous: false },
+  advisory: null,
+});
 
 function mapBindingFixture() {
   const sessionId = "speedster-map-binding-0001";
   const side = (name: "front" | "back") => {
     const prefix = `ai-grader-v2/admin-1/${sessionId}/prepared/${name}`;
+    const sideName = name === "front" ? "FRONT" as const : "BACK" as const;
+    const matColor = name === "front" ? "BLACK" as const : "WHITE" as const;
+    const originalStorageKey = `ai-grader-v2/admin-1/${sessionId}/original/${name}.jpg`;
+    const evidence = (mode: "PHYSICAL_OUTER" | "PRINTED_FRAME") => {
+      const result = colorResult(mode, matColor);
+      return {
+        side: sideName,
+        sourceImageStorageKey: originalStorageKey,
+        mode,
+        matColor,
+        result,
+        serverReceipt: issueSpeedsterColorGeometryReceipt({
+          operatorAdminId: "admin-1",
+          sessionId,
+          side: sideName,
+          mode,
+          sourceImageStorageKey: originalStorageKey,
+          sourceImageSha256: mapBindingSha(originalStorageKey),
+          matColor,
+          physicalQuadSha256: mode === "PRINTED_FRAME" ? speedsterPhysicalQuadHash(mapBindingQuad) : null,
+          result,
+        }, { env: colorReceiptEnv }),
+        confirmedQuad: mapBindingQuad,
+      };
+    };
     return {
-      originalStorageKey: `ai-grader-v2/admin-1/${sessionId}/original/${name}.jpg`,
+      originalStorageKey,
       rectifiedStorageKey: `${prefix}/rectified.webp`,
       inspectionStorageKey: `${prefix}/inspection.webp`,
       sourceCorners: mapBindingQuad,
@@ -125,6 +199,7 @@ function mapBindingFixture() {
         MICRO_DEFECT: `${prefix}/micro_defect.webp`,
         DIRECTIONAL: `${prefix}/directional.webp`,
       },
+      colorGeometryEvidence: [evidence("PHYSICAL_OUTER"), evidence("PRINTED_FRAME")],
     };
   };
   const capture = { cornerShape: "ROUNDED_3_18_MM", front: side("front"), back: side("back") };
@@ -361,6 +436,74 @@ test("geometry proxy clamps automatic handles to the reachable image boundary", 
       { x: 0.9, y: 0.9 },
       { x: 0, y: 1 },
     ],
+  });
+});
+
+test("proxy rejects accepted color authority when returned geometry differs from its proposal", () => {
+  const differentQuad = [
+    ...mapBindingQuad.slice(0, 3),
+    { x: 0.2, y: 0.9 },
+  ];
+  const physical = colorResult("PHYSICAL_OUTER", "BLACK");
+  const printed = colorResult("PRINTED_FRAME", "WHITE");
+  assert.deepEqual(sanitizeSpeedsterGeometryPayload({
+    corners: mapBindingQuad,
+    colorGeometry: physical,
+  }, { mode: "PHYSICAL_OUTER", matColor: "BLACK" }), {
+    corners: mapBindingQuad,
+    colorGeometry: physical,
+  });
+  assert.throws(
+    () => sanitizeSpeedsterGeometryPayload({
+      corners: differentQuad,
+      colorGeometry: physical,
+    }, { mode: "PHYSICAL_OUTER", matColor: "BLACK" }),
+    /does not match its accepted color proposal/,
+  );
+  assert.deepEqual(sanitizeSpeedsterPreparePayload({
+    borders: mapBindingQuad,
+    colorGeometry: printed,
+  }, { matColor: "WHITE" }), {
+    borders: mapBindingQuad,
+    colorGeometry: printed,
+  });
+  assert.throws(
+    () => sanitizeSpeedsterPreparePayload({
+      borders: differentQuad,
+      colorGeometry: printed,
+    }, { matColor: "WHITE" }),
+    /does not match its accepted color proposal/,
+  );
+});
+
+test("color geometry proxy replaces browser URLs and binds exact image bytes plus rectification quad", async () => {
+  const fixture = mapBindingFixture();
+  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4/back.jpg`;
+  const body = await speedsterServiceBody("prepare", {
+    sessionId: fixture.sessionId,
+    side: "BACK",
+    imageUrl: "https://browser-controlled.example/ignore.jpg",
+    sourceImageStorageKey,
+    matColor: "WHITE",
+    corners: mapBindingQuad,
+    outputUploads: { rectified: "https://upload.example/rectified" },
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async findOwnedMapSession() { return fixture.session; },
+    async presignRead(storageKey) { return `https://server-read.example/${storageKey}`; },
+    async hashMapEvidence(storageKey) { return mapBindingSha(storageKey); },
+  });
+  assert.equal(body.imageUrl, `https://server-read.example/${sourceImageStorageKey}`);
+  assert.equal(body.sessionId, undefined);
+  assert.deepEqual(body.corners, mapBindingQuad);
+  assert.deepEqual(body.colorGeometryAuthorityBinding, {
+    sessionId: fixture.sessionId,
+    side: "BACK",
+    mode: "PRINTED_FRAME",
+    sourceImageStorageKey,
+    sourceImageSha256: mapBindingSha(sourceImageStorageKey),
+    matColor: "WHITE",
+    physicalQuadSha256: speedsterPhysicalQuadHash(mapBindingQuad),
   });
 });
 
@@ -848,6 +991,7 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   };
   const hashedKeys: string[] = [];
   const saves: Record<string, unknown>[] = [];
+  let savedColorRows: readonly Record<string, unknown>[] = [];
   let events: readonly { eventType: string; details?: unknown }[] = [];
   const handler = createAiGraderV2SessionHandler({
     requireAdminSession: admin,
@@ -861,8 +1005,9 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
         },
       });
     },
-    async updateSession(_id, _createdByUserId, data) {
+    async updateSession(_id, _createdByUserId, data, colorRows) {
       saves.push(data as unknown as Record<string, unknown>);
+      savedColorRows = colorRows as readonly Record<string, unknown>[];
       return { ...fixture.session, ...data };
     },
     async recordInstrumentation(input) { events = input; },
@@ -880,10 +1025,85 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   ].sort());
   assert.equal(saves[0]?.mapRevisionId, fixture.binding.revisionId);
   assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
-  assert.deepEqual(saves[0]?.capture, fixture.capture, "capture persistence is rebuilt from validated canonical fields");
+  const canonicalCapture = structuredClone(fixture.capture);
+  delete (canonicalCapture.front as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
+  delete (canonicalCapture.back as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
+  assert.deepEqual(saves[0]?.capture, canonicalCapture, "capture persistence is rebuilt from validated canonical fields");
+  assert.equal(savedColorRows.length, 4, "all accepted/fallback outcomes are persisted side by side");
+  assert.deepEqual(savedColorRows.map(({ side, mode }) => `${side}:${mode}`).sort(), [
+    "BACK:PHYSICAL_OUTER", "BACK:PRINTED_FRAME", "FRONT:PHYSICAL_OUTER", "FRONT:PRINTED_FRAME",
+  ]);
   assert.equal(JSON.stringify(saves[0]).includes("serverReceipt"), false, "opaque authority is never persisted");
   assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
   assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"EXACT"/);
+});
+
+test("capture persistence verifies both signed color proposals and rejects tamper or cross-side replay", async () => {
+  const fixture = mapBindingFixture();
+  const attempts = [
+    (() => {
+      const capture = structuredClone(fixture.capture);
+      (capture.front.colorGeometryEvidence[0].result as { minimumSideSupport: number }).minimumSideSupport = 0.71;
+      return capture;
+    })(),
+    (() => {
+      const capture = structuredClone(fixture.capture);
+      capture.front.colorGeometryEvidence[0].serverReceipt = capture.back.colorGeometryEvidence[0].serverReceipt;
+      return capture;
+    })(),
+    (() => {
+      const capture = structuredClone(fixture.capture);
+      capture.back.colorGeometryEvidence[1].serverReceipt = "";
+      return capture;
+    })(),
+  ];
+  for (const capture of attempts) {
+    let updates = 0;
+    const handler = createAiGraderV2SessionHandler({
+      requireAdminSession: admin,
+      async findSession() { return fixture.session; },
+      async validateMapBinding() { return { appliedMap: null, selectedMap: null }; },
+      async updateSession() { updates += 1; return fixture.session; },
+    });
+    const result = response();
+    await handler(request("PATCH", { workflowState: "CAPTURED", capture }, fixture.sessionId), result.res);
+    assert.equal(result.state.status, 409);
+    assert.match(JSON.stringify(result.state.body), /server proposal authority/);
+    assert.equal(updates, 0);
+  }
+});
+
+test("one expired color receipt identifies exact side and mode without consuming sibling evidence", async () => {
+  const fixture = mapBindingFixture();
+  const before = JSON.stringify(fixture.capture);
+  const checked: string[] = [];
+  let updates = 0;
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding() { return { appliedMap: null, selectedMap: null }; },
+    verifyColorGeometryReceipt(receipt, binding) {
+      checked.push(`${binding.side}:${binding.mode}`);
+      if (binding.side === "FRONT" && binding.mode === "PRINTED_FRAME") {
+        throw new SpeedsterColorGeometryReceiptExpiredError();
+      }
+      verifySpeedsterColorGeometryReceipt(receipt, binding, { env: colorReceiptEnv });
+    },
+    async updateSession() { updates += 1; return fixture.session; },
+  });
+  const result = response();
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+  }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 409);
+  assert.match(
+    JSON.stringify(result.state.body),
+    /FRONT PRINTED_FRAME color geometry receipt expired.*completed sibling and nonexpired mode remains preserved.*rerun and reconfirm only FRONT PRINTED_FRAME/i,
+  );
+  assert.deepEqual(checked, ["FRONT:PHYSICAL_OUTER", "FRONT:PRINTED_FRAME"]);
+  assert.equal(updates, 0, "no capture or evidence row may persist after one exact-mode expiry");
+  assert.equal(JSON.stringify(fixture.capture), before, "all browser-held sibling and nonexpired evidence remains byte-identical");
 });
 
 test("v2 capture accepts exact server receipts and rejects browser-fabricated or altered automatic authority", async () => {
@@ -1334,7 +1554,7 @@ test("capture PATCH rejects either side when registration physical geometry is f
     }, fixture.sessionId), result.res);
     assert.equal(result.state.status, 409, side);
     assert.equal(updateCalls, 0, side);
-    assert.match(JSON.stringify(result.state.body), /does not match the submitted physical geometry/);
+    assert.match(JSON.stringify(result.state.body), /does not match (?:the submitted physical geometry|the exact human-confirmed capture geometry)/);
   }
 });
 

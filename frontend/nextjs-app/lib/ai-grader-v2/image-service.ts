@@ -11,6 +11,7 @@ import type {
   SpeedsterMapRegistration,
   SpeedsterMapRegistrationFailure,
 } from "./card-type-map-contracts";
+import type { SpeedsterColorGeometryProposal, SpeedsterMatColor } from "./color-geometry";
 
 type ImageAction = "geometry" | "prepare" | "trace-proposal" | "map-registration";
 
@@ -290,6 +291,8 @@ export type SpeedsterGeometryResponse = {
   width: number;
   height: number;
   corners: SpeedsterQuad | null;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
 };
 
 export type SpeedsterPrepareResponse = {
@@ -299,6 +302,8 @@ export type SpeedsterPrepareResponse = {
   borders: SpeedsterQuad;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   inspectionFrame: SpeedsterInspectionFrame;
+  colorGeometry: SpeedsterColorGeometryProposal;
+  colorGeometryReceipt: string;
 };
 
 type PreparedArtifact = "RECTIFIED" | "INSPECTION" | "NORMALIZED" | "MICRO_DEFECT" | "DIRECTIONAL";
@@ -509,19 +514,37 @@ async function postImageAction<T>(
 }
 
 export const speedsterImageService = {
-  proposeGeometry(token: string, imageUrl: string, options: SpeedsterImageRequestOptions = {}) {
-    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { imageUrl }, options);
+  proposeGeometry(
+    token: string,
+    input: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      imageUrl: string;
+      sourceImageStorageKey: string;
+      matColor: SpeedsterMatColor;
+    }>,
+    options: SpeedsterImageRequestOptions = {},
+  ) {
+    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { ...input }, options);
   },
   prepare(
     token: string,
     imageUrl: string,
+    binding: Readonly<{
+      sessionId: string;
+      side: SpeedsterCardSide;
+      sourceImageStorageKey: string;
+    }>,
     corners: SpeedsterQuad,
     outputPlan: SpeedsterPreparedOutputPlan,
+    matColor: SpeedsterMatColor,
     options?: SpeedsterImageRequestOptions,
   ) {
     return postImageAction<SpeedsterPrepareResponse>(token, "prepare", {
       imageUrl,
+      ...binding,
       corners,
+      matColor,
       outputUploads: {
         rectified: outputPlan.RECTIFIED.uploadUrl,
         inspection: outputPlan.INSPECTION.uploadUrl,

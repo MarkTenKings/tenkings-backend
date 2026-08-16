@@ -3601,6 +3601,7 @@ model AiGraderV2Session {
   instrumentationEvents AiGraderV2InstrumentationEvent[]
   mapRegistrationLessons AiGraderV2MapRegistrationLesson[] @relation("MapRegistrationLessonEvidenceSession")
   legacyMapLayoutAuthority AiGraderV2LegacyMapLayoutAuthority?
+  colorGeometryEvidence AiGraderV2ColorGeometryEvidence[]
 
   @@index([mapRevisionId])
 }
@@ -3614,6 +3615,30 @@ model AiGraderV2LegacyMapLayoutAuthority {
   createdAt         DateTime @default(now())
 
   @@index([layoutType, createdAt])
+}
+
+model AiGraderV2ColorGeometryEvidence {
+  id                    String   @id @default(cuid())
+  sessionId             String
+  session               AiGraderV2Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  createdByUserId       String
+  side                  String
+  mode                  String
+  matColor              String
+  outcome               String
+  engineVersion         String
+  policyProvenance      String
+  sourceImageStorageKey String
+  sourceImageSha256     String
+  proposal              Json?    @db.JsonB
+  confirmedQuad         Json     @db.JsonB
+  diagnostics           Json     @db.JsonB
+  proposalChanged       Boolean?
+  createdAt             DateTime @default(now())
+
+  @@unique([sessionId, side, mode])
+  @@index([createdByUserId, createdAt])
+  @@index([side, matColor, outcome, createdAt])
 }
 
 model AiGraderV2InstrumentationEvent {

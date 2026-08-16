@@ -11,8 +11,15 @@ import {
 import { sanitizeSpeedsterUnitQuad } from "./geometry";
 import { parseSpeedsterInspectionFrame, type SpeedsterInspectionFrame } from "./inspection-frame";
 import type { SpeedsterCenteringBorders } from "./scoring";
+import {
+  parseSpeedsterColorGeometryProposal,
+  type SpeedsterColorGeometryProposal,
+  type SpeedsterMatColor,
+} from "./color-geometry";
 
 export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION = "speedster-capture-registration-draft-v1" as const;
+export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 = "speedster-capture-registration-draft-v2" as const;
+export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_CURRENT_VERSION = SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2;
 export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_MAX_BYTES = 512 * 1024;
 export const SPEEDSTER_CAPTURE_REGISTRATION_RECEIPT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_FUTURE_SKEW_MS = 5 * 60 * 1000;
@@ -30,7 +37,7 @@ export type SpeedsterCaptureDraftCorrectedAnchor = Readonly<{
   point: SpeedsterPoint;
 }>;
 
-export type SpeedsterCaptureDraftSide = Readonly<{
+type SpeedsterCaptureDraftSideBase = Readonly<{
   originalStorageKey: string;
   corners: SpeedsterQuad;
   automaticGeometry: boolean;
@@ -56,13 +63,28 @@ export type SpeedsterCaptureDraftSide = Readonly<{
   mapRegistration?: SpeedsterMapRegistration;
 }>;
 
+export type SpeedsterCaptureDraftSideV1 = SpeedsterCaptureDraftSideBase;
+
+export type SpeedsterCaptureDraftSideV2 = SpeedsterCaptureDraftSideBase & Readonly<{
+  matColor: SpeedsterMatColor;
+  physicalColorGeometry: SpeedsterColorGeometryProposal;
+  physicalColorGeometryReceipt: string;
+  printedColorGeometry: SpeedsterColorGeometryProposal;
+  printedColorGeometryReceipt: string;
+}>;
+
+export type SpeedsterCaptureDraftSide = SpeedsterCaptureDraftSideV1 | SpeedsterCaptureDraftSideV2;
+
 export type SpeedsterCaptureDraftInterruption = Readonly<{
   message: string;
   failure: SpeedsterMapRegistrationRequestFailure;
 }>;
 
-export type SpeedsterCaptureRegistrationDraft = Readonly<{
-  version: typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION;
+type SpeedsterCaptureRegistrationDraftFields<
+  TVersion extends typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION | typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
+  TSide extends SpeedsterCaptureDraftSide,
+> = Readonly<{
+  version: TVersion;
   createdAtMs: number;
   updatedAtMs: number;
   surface: SpeedsterCaptureDraftSurface;
@@ -74,8 +96,8 @@ export type SpeedsterCaptureRegistrationDraft = Readonly<{
   activeMapName: string | null;
   cornerShape: "SQUARE" | "ROUNDED_3_18_MM";
   stage: SpeedsterCaptureDurableStage;
-  front: SpeedsterCaptureDraftSide;
-  back: SpeedsterCaptureDraftSide;
+  front: TSide;
+  back: TSide;
   interruptions: Partial<Record<SpeedsterCardSide, SpeedsterCaptureDraftInterruption>>;
   failures: Partial<Record<SpeedsterCardSide, SpeedsterMapRegistrationFailure>>;
   failureRequestIds: Partial<Record<SpeedsterCardSide, string>>;
@@ -96,6 +118,20 @@ export type SpeedsterCaptureRegistrationDraft = Readonly<{
   captureSavePendingRetry: boolean;
   notice: string | null;
 }>;
+
+export type SpeedsterCaptureRegistrationDraftV1 = SpeedsterCaptureRegistrationDraftFields<
+  typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+  SpeedsterCaptureDraftSideV1
+>;
+
+export type SpeedsterCaptureRegistrationDraftV2 = SpeedsterCaptureRegistrationDraftFields<
+  typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
+  SpeedsterCaptureDraftSideV2
+>;
+
+export type SpeedsterCaptureRegistrationDraft =
+  | SpeedsterCaptureRegistrationDraftV1
+  | SpeedsterCaptureRegistrationDraftV2;
 
 type DraftBinding = Readonly<{
   surface: SpeedsterCaptureDraftSurface;
@@ -355,12 +391,24 @@ function correctedAnchorMap(
   return parsed;
 }
 
-function sideState(value: unknown, side: SpeedsterCardSide, sessionId: string, revisionId: string): SpeedsterCaptureDraftSide | null {
-  if (!isRecord(value) || !hasExactKeys(value, [
+function sideState(
+  value: unknown,
+  side: SpeedsterCardSide,
+  sessionId: string,
+  revisionId: string,
+  version: typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION | typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2,
+): SpeedsterCaptureDraftSide | null {
+  const colorKeys = [
+    "matColor", "physicalColorGeometry", "physicalColorGeometryReceipt",
+    "printedColorGeometry", "printedColorGeometryReceipt",
+  ] as const;
+  const requiredKeys = [
     "automaticGeometry", "corners", "detectedBorders", "geometryDiagnostic", "inspectionFrame",
     "inspectionStorageKey", "originalStorageKey", "proposedCentering", "rectifiedStorageKey",
     "transform", "viewStorageKeys",
-  ], ["centering", "mapRegistration"])) return null;
+    ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? colorKeys : []),
+  ];
+  if (!isRecord(value) || !hasExactKeys(value, requiredKeys, ["centering", "mapRegistration"])) return null;
   const corners = quad(value.corners);
   const proposedCentering = quad(value.proposedCentering);
   const inspectionFrame = parseSpeedsterInspectionFrame(value.inspectionFrame);
@@ -379,6 +427,34 @@ function sideState(value: unknown, side: SpeedsterCardSide, sessionId: string, r
     || !["present", "null", "unavailable"].includes(String(value.geometryDiagnostic.corners))) return null;
   const mapRegistration = value.mapRegistration === undefined ? undefined : registration(value.mapRegistration, side, revisionId);
   if (value.mapRegistration !== undefined && !mapRegistration) return null;
+  let colorFields: Pick<SpeedsterCaptureDraftSideV2,
+    "matColor" | "physicalColorGeometry" | "physicalColorGeometryReceipt"
+    | "printedColorGeometry" | "printedColorGeometryReceipt"> | undefined;
+  if (version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2) {
+    const matColor = value.matColor === "BLACK" || value.matColor === "WHITE" || value.matColor === "MAGENTA"
+      ? value.matColor
+      : null;
+    const physicalReceipt = text(value.physicalColorGeometryReceipt, 8192, 20);
+    const printedReceipt = text(value.printedColorGeometryReceipt, 8192, 20);
+    if (!matColor || !physicalReceipt || !printedReceipt) return null;
+    try {
+      colorFields = {
+        matColor,
+        physicalColorGeometry: parseSpeedsterColorGeometryProposal(value.physicalColorGeometry, {
+          mode: "PHYSICAL_OUTER",
+          matColor,
+        }),
+        physicalColorGeometryReceipt: physicalReceipt,
+        printedColorGeometry: parseSpeedsterColorGeometryProposal(value.printedColorGeometry, {
+          mode: "PRINTED_FRAME",
+          matColor,
+        }),
+        printedColorGeometryReceipt: printedReceipt,
+      };
+    } catch {
+      return null;
+    }
+  }
   let centering: SpeedsterCaptureDraftSide["centering"];
   if (value.centering !== undefined) {
     if (!isRecord(value.centering) || !hasExactKeys(value.centering, ["borders", "innerQuad", "side"])
@@ -400,6 +476,7 @@ function sideState(value: unknown, side: SpeedsterCardSide, sessionId: string, r
     viewStorageKeys: value.viewStorageKeys as SpeedsterCaptureDraftSide["viewStorageKeys"],
     proposedCentering,
     detectedBorders: value.detectedBorders as SpeedsterCaptureDraftSide["detectedBorders"],
+    ...(colorFields ?? {}),
     ...(centering ? { centering } : {}),
     ...(mapRegistration ? { mapRegistration } : {}),
   };
@@ -420,7 +497,8 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     "createdAtMs", "provisional", "registrationFailureSides", "registrationRecordedAtMs", "sessionId", "stage", "surface",
     "updatedAtMs", "version",
   ])) return null;
-  if (value.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION
+  if ((value.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION
+      && value.version !== SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2)
     || value.surface !== binding.surface || value.sessionId !== binding.sessionId
     || value.cardProfile !== binding.cardProfile || value.mapBindingStatus !== binding.mapBindingStatus
     || value.activeMapRevisionId !== binding.activeMapRevisionId || value.activeMapScope !== binding.activeMapScope
@@ -441,8 +519,10 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || (value.notice !== null && !text(value.notice, 1000))
     || typeof value.operationId !== "string" || !UUID.test(value.operationId)) return null;
   const revisionId = typeof value.activeMapRevisionId === "string" ? value.activeMapRevisionId : "";
-  const front = sideState(value.front, "FRONT", binding.sessionId, revisionId);
-  const back = sideState(value.back, "BACK", binding.sessionId, revisionId);
+  const version = value.version as typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION
+    | typeof SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2;
+  const front = sideState(value.front, "FRONT", binding.sessionId, revisionId, version);
+  const back = sideState(value.back, "BACK", binding.sessionId, revisionId, version);
   const interruptions = interruptionMap(value.interruptions);
   const failures = failureMap(value.failures, revisionId);
   const failureRequestIds = stringMap(value.failureRequestIds);
@@ -505,7 +585,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || registeredSides.some((side) => registrationRecordedAtMs[side] === undefined)
     || SIDES.some((side) => registrationRecordedAtMs[side] !== undefined && !registeredSides.includes(side))) return null;
   return {
-    version: SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION,
+    version,
     createdAtMs: value.createdAtMs as number,
     updatedAtMs: value.updatedAtMs as number,
     surface: binding.surface,
@@ -538,7 +618,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     mapAuthorityAbandoned: value.mapAuthorityAbandoned,
     captureSavePendingRetry: value.captureSavePendingRetry,
     notice: value.notice as string | null,
-  };
+  } as SpeedsterCaptureRegistrationDraft;
 }
 
 export function readSpeedsterCaptureRegistrationDraft(storage: Storage, binding: DraftBinding) {
