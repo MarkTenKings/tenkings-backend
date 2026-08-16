@@ -18,7 +18,13 @@ const QRCode = require("qrcode") as { toCanvas: (...args: unknown[]) => Promise<
 const originalQrToCanvas = QRCode.toCanvas;
 QRCode.toCanvas = async () => {};
 
-const { CaptureWorkspace, SpeedsterAppliedMapBadge, isAutomaticSpeedsterMapRegistrationRetryEligible } = require(
+const {
+  CaptureWorkspace,
+  SpeedsterAppliedMapBadge,
+  isAutomaticSpeedsterMapRegistrationRetryEligible,
+  isCurrentSpeedsterRegistrationDecisionAudit,
+  settleSpeedsterRegistrationDecisionAuditConfirmation,
+} = require(
   "../components/ai-grader-v2/CaptureWorkspace",
 ) as typeof import("../components/ai-grader-v2/CaptureWorkspace");
 type SpeedsterCaptureInstrumentationEvent = import(
@@ -120,6 +126,7 @@ async function mountWorkspace(input: {
   onRegistrationRequest?: (side: "FRONT" | "BACK", sideAttempt: number) => void | Promise<void>;
   mapLookupFailed?: boolean;
   imageRequestTimeoutMs?: number;
+  decisionAuditConfirmationTimeoutMs?: number;
   onSave?: (
     bundle: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle,
   ) => import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult | Promise<import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureSaveResult>;
@@ -399,6 +406,7 @@ async function mountWorkspace(input: {
       activeMapName={input.activeMap?.name}
       mapLookupFailed={input.mapLookupFailed}
       imageRequestTimeoutMs={input.imageRequestTimeoutMs}
+      decisionAuditConfirmationTimeoutMs={input.decisionAuditConfirmationTimeoutMs}
       onReady={(bundle) => {
         bundles.push(bundle);
         return input.onSave?.(bundle) ?? { saved: true };
@@ -1347,6 +1355,128 @@ test("operator Retry failed side makes one manual request and applies only after
   }
 });
 
+async function reachInterruptedRegistration(harness: Harness) {
+  await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+  await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+  await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+  await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+  await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+  await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+}
+
+test("decision-audit confirmation classifies timely results and rejects stale session or operation", async () => {
+  assert.equal(await settleSpeedsterRegistrationDecisionAuditConfirmation(true, 50), "CONFIRMED");
+  assert.equal(await settleSpeedsterRegistrationDecisionAuditConfirmation(undefined, 50), "CONFIRMED");
+  assert.equal(await settleSpeedsterRegistrationDecisionAuditConfirmation(false, 50), "WRITE_FAILED");
+  assert.equal(
+    await settleSpeedsterRegistrationDecisionAuditConfirmation(Promise.reject(new Error("audit rejected")), 50),
+    "WRITE_FAILED",
+  );
+  assert.equal(isCurrentSpeedsterRegistrationDecisionAudit({
+    currentSessionId: "session-a",
+    currentOperationId: "operation-a",
+    originatingSessionId: "session-a",
+    originatingOperationId: "operation-a",
+  }), true);
+  assert.equal(isCurrentSpeedsterRegistrationDecisionAudit({
+    currentSessionId: "session-b",
+    currentOperationId: "operation-a",
+    originatingSessionId: "session-a",
+    originatingOperationId: "operation-a",
+  }), false);
+  assert.equal(isCurrentSpeedsterRegistrationDecisionAudit({
+    currentSessionId: "session-a",
+    currentOperationId: "operation-b",
+    originatingSessionId: "session-a",
+    originatingOperationId: "operation-a",
+  }), false);
+});
+
+test("never-settling decision reporter times out visibly without delaying Continue", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-audit-timeout", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    decisionInstrumentationResult: new Promise<boolean>(() => undefined),
+    decisionAuditConfirmationTimeoutMs: 50,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    assert.ok(
+      harness.container.querySelector('[aria-label="front centering geometry"]'),
+      "the operator choice must proceed without awaiting audit confirmation",
+    );
+    await waitFor(
+      () => /audit write was not confirmed within 50 ms/i.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
+      "Never-settling decision audit did not produce a bounded visible warning",
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("late decision rejection is handled and cannot replace the timeout warning", async () => {
+  let rejectDecision: ((reason?: unknown) => void) | undefined;
+  const decisionResult = new Promise<boolean>((_resolve, reject) => { rejectDecision = reject; });
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+  process.on("unhandledRejection", onUnhandled);
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-late-audit-reject", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    decisionInstrumentationResult: decisionResult,
+    decisionAuditConfirmationTimeoutMs: 20,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    await waitFor(
+      () => /audit write was not confirmed within 20 ms/i.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
+      "Decision audit timeout warning did not render",
+    );
+    const timeoutWarning = harness.container.querySelector('[role="alert"]')?.textContent;
+    await act(async () => {
+      rejectDecision?.(new Error("late audit rejection"));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    });
+    assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, timeoutWarning);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    await harness.cleanup();
+  }
+});
+
+test("timely rejected decision reporter is visible without delaying Continue", async () => {
+  let rejectDecision: ((reason?: unknown) => void) | undefined;
+  const decisionResult = new Promise<boolean>((_resolve, reject) => { rejectDecision = reject; });
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-audit-reject", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    decisionInstrumentationResult: decisionResult,
+    decisionAuditConfirmationTimeoutMs: 100,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => {
+      fire(buttonByText(harness.container, "Continue without Card Map")!, "click");
+      rejectDecision?.(new Error("audit rejected"));
+      await Promise.resolve();
+    });
+    assert.ok(harness.container.querySelector('[aria-label="front centering geometry"]'));
+    await waitFor(
+      () => /Operator-decision audit write failed/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
+      "Timely rejected decision audit was not visible",
+    );
+    assert.doesNotMatch(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /not confirmed/i);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
 test("operator-decision audit failure remains visible while Continue without Card Map proceeds", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
@@ -1395,7 +1525,7 @@ test("missing decision reporter is visible and never blocks the selected action"
   }
 });
 
-test("late decision-audit failure cannot write a warning into a replacement session", async () => {
+test("decision-audit deadline and late failure cannot warn a replacement session", async () => {
   let resolveDecision: ((saved: boolean) => void) | undefined;
   const decisionResult = new Promise<boolean>((resolve) => { resolveDecision = resolve; });
   const harness = await mountWorkspace({
@@ -1403,21 +1533,18 @@ test("late decision-audit failure cannot write a warning into a replacement sess
     activeMap: { revisionId: "exact-revision-late-audit", scope: "EXACT", name: "Squirtle #007" },
     registrationFailsOnSide: "BACK",
     decisionInstrumentationResult: decisionResult,
+    decisionAuditConfirmationTimeoutMs: 100,
   });
   try {
-    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+    await reachInterruptedRegistration(harness);
     await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
     await harness.rerenderSession("speedster-session-replacement-audit");
     await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 110));
       resolveDecision?.(false);
       await Promise.resolve();
     });
-    assert.doesNotMatch(harness.container.textContent ?? "", /Operator-decision audit write failed/);
+    assert.doesNotMatch(harness.container.textContent ?? "", /Operator-decision audit write failed|audit write was not confirmed/);
   } finally {
     await harness.cleanup();
   }

@@ -101,6 +101,7 @@ type CaptureWorkspaceProps = {
   onReady: (bundle: SpeedsterCaptureBundle) => Promise<SpeedsterCaptureSaveResult> | SpeedsterCaptureSaveResult;
   onInstrumentationEvent: (event: SpeedsterCaptureInstrumentationEvent) => void | boolean | Promise<void | boolean>;
   imageRequestTimeoutMs?: number;
+  decisionAuditConfirmationTimeoutMs?: number;
 };
 
 export type SpeedsterCaptureSaveResult = Readonly<{
@@ -204,6 +205,36 @@ const EMPTY_PREPARED_IMAGE_REFRESH: Readonly<Record<SpeedsterCardSide, PreparedI
   FRONT: { refreshing: false, error: null },
   BACK: { refreshing: false, error: null },
 };
+
+// Confirmation only: operator work proceeds immediately; two seconds bounds silent audit uncertainty.
+export const SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS = 2_000;
+
+export async function settleSpeedsterRegistrationDecisionAuditConfirmation(
+  reporterResult: void | boolean | Promise<void | boolean>,
+  waitMs = SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS,
+): Promise<"CONFIRMED" | "WRITE_FAILED" | "TIMED_OUT"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const tracked = Promise.resolve(reporterResult).then(
+    (saved) => saved === false ? "WRITE_FAILED" as const : "CONFIRMED" as const,
+    () => "WRITE_FAILED" as const,
+  );
+  const deadline = new Promise<"TIMED_OUT">((resolve) => {
+    timer = setTimeout(() => resolve("TIMED_OUT"), Math.max(0, waitMs));
+  });
+  const result = await Promise.race([tracked, deadline]);
+  if (timer) clearTimeout(timer);
+  return result;
+}
+
+export function isCurrentSpeedsterRegistrationDecisionAudit(input: Readonly<{
+  currentSessionId: string;
+  currentOperationId: string | null;
+  originatingSessionId: string;
+  originatingOperationId: string;
+}>) {
+  return input.currentSessionId === input.originatingSessionId
+    && input.currentOperationId === input.originatingOperationId;
+}
 
 type RegistrationFailureEvidence = NonNullable<
   NonNullable<SpeedsterCaptureInstrumentationEvent["details"]>["registrationFailures"]
@@ -330,6 +361,7 @@ export function CaptureWorkspace({
   onReady,
   onInstrumentationEvent,
   imageRequestTimeoutMs,
+  decisionAuditConfirmationTimeoutMs = SPEEDSTER_REGISTRATION_DECISION_AUDIT_CONFIRMATION_TIMEOUT_MS,
 }: CaptureWorkspaceProps) {
   const [frontPhoto, setFrontPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<SpeedsterOriginalPhoto | null>(null);
@@ -398,6 +430,7 @@ export function CaptureWorkspace({
   useEffect(() => () => {
     activeImageRequest.current?.abort();
     activeImageRequest.current = null;
+    currentRegistrationOperationId.current = null;
   }, []);
 
   const refreshPreparedImage = useCallback((side: SpeedsterCardSide) => {
@@ -993,41 +1026,56 @@ export function CaptureWorkspace({
       setWorkflowError(`Operator-decision audit reporter is unavailable for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
       return;
     }
-    const result = onInstrumentationEvent?.({
-      eventId: decisionId,
-      eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
-      startedAtMs: atMs,
-      endedAtMs: atMs,
-      details: {
-        registrationDecision: decision,
-        registrationOperationId: operationId,
-        registrationDecisionId: decisionId,
-        registrationFailedSides: failedSides,
-        registrationFailures: failureEvidence,
-        ...(failedSides.length === 1 ? { side: failedSides[0] } : {}),
-        ...(failureEvidence[0] ? {
-          registrationErrorSource: failureEvidence[0].source,
-          registrationErrorCode: failureEvidence[0].code,
-          ...(failureEvidence[0].httpStatus !== null
-            ? { registrationHttpStatus: failureEvidence[0].httpStatus }
-            : {}),
-          ...(failureEvidence[0].requestId
-            ? { registrationRequestId: failureEvidence[0].requestId }
-            : {}),
-        } : {}),
-      },
-    });
-    void Promise.resolve(result).then((saved) => {
-      if (saved === false
-        && currentSessionId.current === originatingSessionId
-        && currentRegistrationOperationId.current === operationId) {
+    let result: void | boolean | Promise<void | boolean>;
+    try {
+      result = onInstrumentationEvent({
+        eventId: decisionId,
+        eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+        startedAtMs: atMs,
+        endedAtMs: atMs,
+        details: {
+          registrationDecision: decision,
+          registrationOperationId: operationId,
+          registrationDecisionId: decisionId,
+          registrationFailedSides: failedSides,
+          registrationFailures: failureEvidence,
+          ...(failedSides.length === 1 ? { side: failedSides[0] } : {}),
+          ...(failureEvidence[0] ? {
+            registrationErrorSource: failureEvidence[0].source,
+            registrationErrorCode: failureEvidence[0].code,
+            ...(failureEvidence[0].httpStatus !== null
+              ? { registrationHttpStatus: failureEvidence[0].httpStatus }
+              : {}),
+            ...(failureEvidence[0].requestId
+              ? { registrationRequestId: failureEvidence[0].requestId }
+              : {}),
+          } : {}),
+        },
+      });
+    } catch {
+      if (isCurrentSpeedsterRegistrationDecisionAudit({
+        currentSessionId: currentSessionId.current,
+        currentOperationId: currentRegistrationOperationId.current,
+        originatingSessionId,
+        originatingOperationId: operationId,
+      })) {
         setWorkflowError(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
       }
-    }, () => {
-      if (currentSessionId.current === originatingSessionId
-        && currentRegistrationOperationId.current === operationId) {
-        setWorkflowError(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
-      }
+      return;
+    }
+    void settleSpeedsterRegistrationDecisionAuditConfirmation(
+      result,
+      decisionAuditConfirmationTimeoutMs,
+    ).then((outcome) => {
+      if (outcome === "CONFIRMED" || !isCurrentSpeedsterRegistrationDecisionAudit({
+        currentSessionId: currentSessionId.current,
+        currentOperationId: currentRegistrationOperationId.current,
+        originatingSessionId,
+        originatingOperationId: operationId,
+      })) return;
+      setWorkflowError(outcome === "TIMED_OUT"
+        ? `Operator-decision audit write was not confirmed within ${decisionAuditConfirmationTimeoutMs} ms for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`
+        : `Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
     });
   };
 
