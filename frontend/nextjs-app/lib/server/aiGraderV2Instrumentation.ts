@@ -39,6 +39,10 @@ export type SpeedsterInstrumentationWriter = {
   $executeRaw: (query: Prisma.Sql) => Promise<number>;
 };
 
+export type SpeedsterConflictDetectingInstrumentationWriter = SpeedsterInstrumentationWriter & {
+  $queryRaw: <T = unknown>(query: Prisma.Sql) => Promise<T>;
+};
+
 export function speedsterCardMapApplicationEvent(input: {
   sessionId: string;
   createdByUserId: string;
@@ -419,13 +423,23 @@ export function speedsterMapRegistrationAttemptEvent(input: Readonly<{
   });
 }
 
+export class SpeedsterInstrumentationConflictError extends Error {
+  constructor(
+    readonly eventKey: string,
+    readonly reason: "CONFLICTING_PAYLOAD" | "MISSING_AFTER_CONFLICT",
+  ) {
+    super(`Immutable Speedster instrumentation conflict (${reason}) for event ${eventKey}.`);
+    this.name = "SpeedsterInstrumentationConflictError";
+  }
+}
+
 /**
- * Registration attempts and decisions use a conflict-detecting variant of the append-only insert.
- * An exact duplicate performs a no-op update. A different payload for the same key
- * deliberately violates the existing non-negative duration check and rolls back.
+ * Registration attempts and decisions use a conflict-detecting append-only insert.
+ * The first statement never updates an existing row. After an insert conflict, a
+ * separate READ COMMITTED statement verifies an exact duplicate without mutation.
  */
 export async function insertSpeedsterInstrumentationEventWithConflictDetection(
-  writer: SpeedsterInstrumentationWriter,
+  writer: SpeedsterConflictDetectingInstrumentationWriter,
   event: SpeedsterInstrumentationEvent,
 ) {
   const generatingExemplar = event.generatingExemplar === null || event.generatingExemplar === undefined
@@ -434,8 +448,8 @@ export async function insertSpeedsterInstrumentationEventWithConflictDetection(
   const details = event.details === null || event.details === undefined
     ? null
     : JSON.stringify(event.details);
-  return writer.$executeRaw(Prisma.sql`
-    INSERT INTO "AiGraderV2InstrumentationEvent" AS "existing" (
+  const inserted = await writer.$executeRaw(Prisma.sql`
+    INSERT INTO "AiGraderV2InstrumentationEvent" (
       "id", "eventKey", "sessionId", "cycleId", "createdByUserId", "category", "eventType",
       "findingId", "origin", "similarity", "generatingExemplar", "operatorAction",
       "clientStartedAt", "clientEndedAt", "durationMs", "details"
@@ -447,26 +461,42 @@ export async function insertSpeedsterInstrumentationEventWithConflictDetection(
       ${event.clientStartedAt ?? null}, ${event.clientEndedAt ?? null}, ${event.durationMs ?? null},
       ${details}::jsonb
     )
-    ON CONFLICT ("eventKey") DO UPDATE SET
-      "durationMs" = CASE WHEN
-        "existing"."sessionId" IS NOT DISTINCT FROM EXCLUDED."sessionId"
-        AND "existing"."cycleId" IS NOT DISTINCT FROM EXCLUDED."cycleId"
-        AND "existing"."createdByUserId" IS NOT DISTINCT FROM EXCLUDED."createdByUserId"
-        AND "existing"."category" IS NOT DISTINCT FROM EXCLUDED."category"
-        AND "existing"."eventType" IS NOT DISTINCT FROM EXCLUDED."eventType"
-        AND "existing"."findingId" IS NOT DISTINCT FROM EXCLUDED."findingId"
-        AND "existing"."origin" IS NOT DISTINCT FROM EXCLUDED."origin"
-        AND "existing"."similarity" IS NOT DISTINCT FROM EXCLUDED."similarity"
-        AND "existing"."generatingExemplar" IS NOT DISTINCT FROM EXCLUDED."generatingExemplar"
-        AND "existing"."operatorAction" IS NOT DISTINCT FROM EXCLUDED."operatorAction"
-        AND "existing"."clientStartedAt" IS NOT DISTINCT FROM EXCLUDED."clientStartedAt"
-        AND "existing"."clientEndedAt" IS NOT DISTINCT FROM EXCLUDED."clientEndedAt"
-        AND "existing"."durationMs" IS NOT DISTINCT FROM EXCLUDED."durationMs"
-        AND "existing"."details" IS NOT DISTINCT FROM EXCLUDED."details"
-      THEN "existing"."durationMs"
-      ELSE -1
-      END
+    ON CONFLICT ("eventKey") DO NOTHING
   `);
+  if (inserted === 1) return 1;
+  if (inserted !== 0) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "CONFLICTING_PAYLOAD");
+  }
+
+  const existing = await writer.$queryRaw<Array<{ exactMatch: boolean }>>(Prisma.sql`
+    SELECT (
+      "eventKey" IS NOT DISTINCT FROM ${event.eventKey}
+      AND "sessionId" IS NOT DISTINCT FROM ${event.sessionId}
+      AND "cycleId" IS NOT DISTINCT FROM ${event.sessionId}
+      AND "createdByUserId" IS NOT DISTINCT FROM ${event.createdByUserId}
+      AND "category" IS NOT DISTINCT FROM ${event.category}
+      AND "eventType" IS NOT DISTINCT FROM ${event.eventType}
+      AND "findingId" IS NOT DISTINCT FROM ${event.findingId ?? null}
+      AND "origin" IS NOT DISTINCT FROM ${event.origin ?? null}
+      AND "similarity" IS NOT DISTINCT FROM ${event.similarity ?? null}
+      AND "generatingExemplar" IS NOT DISTINCT FROM ${generatingExemplar}::jsonb
+      AND "operatorAction" IS NOT DISTINCT FROM ${event.operatorAction ?? null}
+      AND "clientStartedAt" IS NOT DISTINCT FROM ${event.clientStartedAt ?? null}
+      AND "clientEndedAt" IS NOT DISTINCT FROM ${event.clientEndedAt ?? null}
+      AND "durationMs" IS NOT DISTINCT FROM ${event.durationMs ?? null}
+      AND "details" IS NOT DISTINCT FROM ${details}::jsonb
+    ) AS "exactMatch"
+    FROM "AiGraderV2InstrumentationEvent"
+    WHERE "eventKey" = ${event.eventKey}
+    LIMIT 1
+  `);
+  if (existing.length === 0) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "MISSING_AFTER_CONFLICT");
+  }
+  if (existing.length !== 1 || existing[0].exactMatch !== true) {
+    throw new SpeedsterInstrumentationConflictError(event.eventKey, "CONFLICTING_PAYLOAD");
+  }
+  return 0;
 }
 
 export async function insertSpeedsterInstrumentationEvents(

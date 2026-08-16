@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import type { Prisma } from "@prisma/client";
 import type { NextApiRequest, NextApiResponse } from "next";
 
 import type { SpeedsterMeasuredDefect } from "../lib/ai-grader-v2/contracts";
@@ -14,6 +15,7 @@ import {
   speedsterFindingProposalEvents,
   speedsterMapRegistrationAttemptEvent,
   insertSpeedsterInstrumentationEventWithConflictDetection,
+  SpeedsterInstrumentationConflictError,
   type SpeedsterInstrumentationEvent,
 } from "../lib/server/aiGraderV2Instrumentation";
 import { createSpeedsterInstrumentationHandler } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation";
@@ -306,8 +308,9 @@ test("server-authored registration attempt telemetry keeps successful and failed
   });
 });
 
-test("strict attempt insert preserves exact duplicates and rejects conflicting payloads through the existing duration constraint", async () => {
-  let sql = "";
+test("strict attempt insert uses zero-update insert-or-read conflict detection", async () => {
+  let insertSql = "";
+  let readCount = 0;
   const event = speedsterMapRegistrationAttemptEvent({
     sessionId: "session-12345678901234567890",
     createdByUserId: "admin-1",
@@ -325,31 +328,66 @@ test("strict attempt insert preserves exact duplicates and rejects conflicting p
     durationMs: 451,
     result: { outcome: "SUCCEEDED", mapRevisionId: "revision-123456789012345" },
   });
-  await insertSpeedsterInstrumentationEventWithConflictDetection({
+  const inserted = await insertSpeedsterInstrumentationEventWithConflictDetection({
     async $executeRaw(query) {
-      sql = query.sql;
+      insertSql = query.sql;
       return 1;
     },
+    async $queryRaw<T>() {
+      readCount += 1;
+      return [] as unknown as T;
+    },
   }, event);
-  assert.match(sql, /ON CONFLICT \("eventKey"\) DO UPDATE/);
-  assert.match(sql, /THEN "existing"\."durationMs"\s+ELSE -1/);
+  assert.equal(inserted, 1);
+  assert.equal(readCount, 0, "a successful insert needs no duplicate read");
+  assert.match(insertSql, /ON CONFLICT \("eventKey"\) DO NOTHING/);
+  assert.doesNotMatch(insertSql, /\bDO UPDATE\b|\bUPDATE\b|\bDELETE\b/i);
+
+  let selectSql = "";
+  const duplicate = await insertSpeedsterInstrumentationEventWithConflictDetection({
+    async $executeRaw() { return 0; },
+    async $queryRaw<T>(query: Prisma.Sql) {
+      selectSql = query.sql;
+      return [{ exactMatch: true }] as unknown as T;
+    },
+  }, event);
+  assert.equal(duplicate, 0);
+  assert.match(selectSql, /FROM "AiGraderV2InstrumentationEvent"[\s\S]*WHERE "eventKey" =/);
+  assert.doesNotMatch(selectSql, /\bINSERT\b|\bUPDATE\b|\bDELETE\b/i);
   for (const column of [
-    "sessionId", "cycleId", "createdByUserId", "category", "eventType", "findingId", "origin",
+    "eventKey", "sessionId", "cycleId", "createdByUserId", "category", "eventType", "findingId", "origin",
     "similarity", "generatingExemplar", "operatorAction", "clientStartedAt", "clientEndedAt", "durationMs", "details",
-  ]) assert.match(sql, new RegExp(`"existing"\\."${column}" IS NOT DISTINCT FROM EXCLUDED\\."${column}"`));
+  ]) assert.match(selectSql, new RegExp(`"${column}" IS NOT DISTINCT FROM`));
+
+  await assert.rejects(
+    insertSpeedsterInstrumentationEventWithConflictDetection({
+      async $executeRaw() { return 0; },
+      async $queryRaw<T>() { return [{ exactMatch: false }] as unknown as T; },
+    }, event),
+    (error) => error instanceof SpeedsterInstrumentationConflictError
+      && error.reason === "CONFLICTING_PAYLOAD",
+  );
+  await assert.rejects(
+    insertSpeedsterInstrumentationEventWithConflictDetection({
+      async $executeRaw() { return 0; },
+      async $queryRaw<T>() { return [] as unknown as T; },
+    }, event),
+    (error) => error instanceof SpeedsterInstrumentationConflictError
+      && error.reason === "MISSING_AFTER_CONFLICT",
+  );
 
   const appRoot = fileURLToPath(new URL("..", import.meta.url));
-  const migration = readFileSync(
-    `${appRoot}/../../packages/database/prisma/migrations/20260810210000_speedster_instrumentation_events/migration.sql`,
-    "utf8",
-  );
-  assert.match(migration, /durationMs_check[\s\S]*"durationMs" >= 0/);
-  assert.match(sql, /ELSE -1/, "a conflicting duplicate must violate the deployed non-negative duration constraint");
   const endpointSource = readFileSync(
     `${appRoot}/pages/api/admin/ai-grader-v2/sessions/[sessionId]/instrumentation.ts`,
     "utf8",
   );
   assert.match(endpointSource, /MAP_REGISTRATION_OPERATOR_DECISION[\s\S]*insertSpeedsterInstrumentationEventWithConflictDetection/);
+  const liveValidatorSource = readFileSync(
+    `${appRoot}/scripts/validate-speedster-instrumentation-conflicts-postgres.ts`,
+    "utf8",
+  );
+  assert.match(liveValidatorSource, /ctid::text[\s\S]*xmin::text[\s\S]*rowHash/);
+  assert.match(liveValidatorSource, /Promise\.all[\s\S]*sort\(\), \[0, 1\]/);
 });
 
 function request(body: unknown): NextApiRequest {
@@ -491,10 +529,16 @@ test("geometry timing records a map registration failure as manual without priva
 
 test("client timing endpoint accepts only sanitized explicit registration decisions", async () => {
   let events: readonly SpeedsterInstrumentationEvent[] = [];
+  let insertResult = 1;
+  let insertFailure: Error | null = null;
   const handler = createSpeedsterInstrumentationHandler({
     async requireAdminSession() { return { user: { id: "admin-1" } }; },
     async findOwnedSession(sessionId) { return { id: sessionId }; },
-    async insertEvents(input) { events = input; return 1; },
+    async insertEvents(input) {
+      if (insertFailure) throw insertFailure;
+      events = input;
+      return insertResult;
+    },
     now: () => new Date("2026-08-09T12:01:00.000Z"),
   });
   const result = response();
@@ -525,6 +569,7 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
   }), result.res);
 
   assert.equal(result.state.status, 201);
+  assert.deepEqual(result.state.body, { ok: true, duplicate: false });
   assert.deepEqual(events[0].details, {
     side: "BACK",
     registrationDecision: "CONTINUE_WITHOUT_CARD_MAP",
@@ -543,6 +588,36 @@ test("client timing endpoint accepts only sanitized explicit registration decisi
     registrationHttpStatus: 402,
     registrationRequestId: "registration-request-402",
   });
+
+  insertResult = 0;
+  const duplicate = response();
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: events[0].details,
+  }), duplicate.res);
+  assert.equal(duplicate.state.status, 200);
+  assert.deepEqual(duplicate.state.body, { ok: true, duplicate: true });
+
+  insertFailure = new SpeedsterInstrumentationConflictError(
+    "session-12345678901234567890:client:1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    "CONFLICTING_PAYLOAD",
+  );
+  const conflict = response();
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7f2",
+    eventType: "MAP_REGISTRATION_OPERATOR_DECISION",
+    clientStartedAt: "2026-08-09T12:00:18.000Z",
+    clientEndedAt: "2026-08-09T12:00:18.000Z",
+    details: events[0].details,
+  }), conflict.res);
+  assert.equal(conflict.state.status, 500);
+  assert.match(
+    String((conflict.state.body as { message?: string }).message),
+    /Immutable Speedster instrumentation conflict \(CONFLICTING_PAYLOAD\)/,
+  );
 
   const mismatched = response();
   await handler(request({
