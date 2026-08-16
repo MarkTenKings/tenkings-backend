@@ -63,11 +63,15 @@ test("disposable Layout V2 fixture proves catalog, identities, immutable rows, r
   assert.match(runner, /preLayoutV2Snapshot/);
   assert.match(runner, /postLayoutV2Snapshot/);
   assert.match(runner, /identity byte representation, ctid, or xmin/);
-  assert.match(runner, /copiedPreLayoutMigrationCount !== migrationCount - 1/);
-  assert.match(runner, /preLayoutLedgerCount !== String\(migrationCount - 1\)/);
-  assert.match(runner, /postLayoutLedgerCount !== String\(migrationCount\)/);
+  assert.match(runner, /const preLayoutMigrationNames = migrationNames\.filter/);
+  assert.match(runner, /const postLayoutMigrationNames = migrationNames\.filter/);
+  assert.match(runner, /preLayoutLedgerCount !== String\(preLayoutMigrationNames\.length\)/);
+  assert.match(runner, /postLayoutLedgerCount !== String\(preLayoutMigrationNames\.length \+ 1\)/);
   assert.match(runner, /cleanLayoutMigrationCount !== "1"/);
   assert.match(runner, /remainingUpgradeFixtureCount !== "0"/);
+  assert.match(runner, /deploying all ordered post-Layout-V2 migrations/);
+  assert.match(runner, /finalStagedLedgerCount !== String\(migrationCount\)/);
+  assert.match(runner, /cleanColorGeometryMigrationCount !== "1"/);
   assert.match(runner, /reconciling the fully migrated database with the repository migration tree/);
   assert.match(runner, /\["--filter", "@tenkings\/shared", "build"\]/,
     "the disposable lifecycle rehearsal must build its runtime dependency itself");
