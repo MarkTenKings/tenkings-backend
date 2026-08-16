@@ -120,7 +120,13 @@ async function mountWorkspace(input: {
   }>;
   registrationNetworkFailure?: Readonly<{ side: "FRONT" | "BACK"; count: number }>;
   registrationAuditFailsOnSide?: "FRONT" | "BACK";
+  registrationAuditFailsOnSideAttempt?: Readonly<{
+    side: "FRONT" | "BACK";
+    sideAttempt: number;
+    requestId: string;
+  }>;
   instrumentationFails?: boolean;
+  decisionInstrumentationThrows?: boolean;
   decisionInstrumentationResult?: Promise<boolean>;
   omitInstrumentationReporter?: boolean;
   onRegistrationRequest?: (side: "FRONT" | "BACK", sideAttempt: number) => void | Promise<void>;
@@ -251,9 +257,13 @@ async function mountWorkspace(input: {
         rescue: body.rescue === true,
         orchestration: body.orchestration,
       });
+      const sideAttempt = registrationCountBySide[body.side];
+      const targetedAuditFailure = input.registrationAuditFailsOnSideAttempt;
       const registrationAuditWarning = input.registrationAuditFailsOnSide === body.side
         ? { status: "WRITE_FAILED", requestId: `audit-request-${body.side.toLowerCase()}` }
-        : undefined;
+        : targetedAuditFailure?.side === body.side && targetedAuditFailure.sideAttempt === sideAttempt
+          ? { status: "WRITE_FAILED", requestId: targetedAuditFailure.requestId }
+          : undefined;
       if (body.rescue && body.rescueAttemptId) rescueAttemptIds.push(body.rescueAttemptId);
       await input.onRegistrationRequest?.(body.side, registrationCountBySide[body.side]);
       if (input.registrationNeverSettlesOnSide === body.side) {
@@ -413,6 +423,9 @@ async function mountWorkspace(input: {
       }}
       onInstrumentationEvent={input.omitInstrumentationReporter ? undefined as never : (event) => {
         events.push(event);
+        if (event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION" && input.decisionInstrumentationThrows) {
+          throw new Error("decision instrumentation threw synchronously");
+        }
         if (event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION" && input.decisionInstrumentationResult) {
           return input.decisionInstrumentationResult;
         }
@@ -1363,6 +1376,122 @@ async function reachInterruptedRegistration(harness: Harness) {
   await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
   await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
 }
+
+function auditReconciliationNotices(container: HTMLElement) {
+  return Array.from(container.querySelectorAll<HTMLElement>("[data-audit-reconciliation-notice]"));
+}
+
+test("Retry preserves a synchronous decision-audit throw as a visible reconciliation notice", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-retry-audit-throw", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    decisionInstrumentationThrows: true,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => fire(buttonByText(harness.container, "Retry failed side")!, "click"));
+    await waitFor(() => harness.getRegistrationCountForSide("BACK") === 2, "Manual retry did not proceed");
+    await waitFor(
+      () => auditReconciliationNotices(harness.container).some((notice) => /Operator-decision audit write failed/.test(notice.textContent ?? "")),
+      "Synchronous decision-audit failure was cleared by Retry",
+    );
+    assert.equal(
+      harness.events.filter((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION").length,
+      1,
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("Retry preserves a missing decision reporter as a visible reconciliation notice", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-retry-no-reporter", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    omitInstrumentationReporter: true,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => fire(buttonByText(harness.container, "Retry failed side")!, "click"));
+    await waitFor(() => harness.getRegistrationCountForSide("BACK") === 2, "Manual retry did not proceed");
+    await waitFor(
+      () => auditReconciliationNotices(harness.container).some((notice) => /audit reporter is unavailable/i.test(notice.textContent ?? "")),
+      "Missing decision reporter warning was cleared by Retry",
+    );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("newer attempt-audit evidence coexists with the later decision-audit timeout", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-coexisting-audit", scope: "EXACT", name: "Squirtle #007" },
+    registrationHttpFailure: {
+      side: "BACK",
+      status: 409,
+      count: 1,
+      source: "PROVIDER",
+      code: "PROVIDER_HTTP_409",
+      retryable: false,
+      message: "CARD MAP provider rejected the registration state (request registration-request-409).",
+    },
+    registrationAuditFailsOnSideAttempt: {
+      side: "BACK",
+      sideAttempt: 2,
+      requestId: "audit-request-back-manual-retry",
+    },
+    decisionInstrumentationResult: new Promise<boolean>(() => undefined),
+    decisionAuditConfirmationTimeoutMs: 50,
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await act(async () => fire(buttonByText(harness.container, "Retry failed side")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Manual retry did not proceed");
+    await waitFor(
+      () => auditReconciliationNotices(harness.container).some((notice) => /audit-request-back-manual-retry/.test(notice.textContent ?? "")),
+      "Newer attempt-audit warning did not render",
+    );
+    await waitFor(
+      () => auditReconciliationNotices(harness.container).some((notice) => /audit write was not confirmed within 50 ms/i.test(notice.textContent ?? "")),
+      "Later decision-audit timeout did not render",
+    );
+    const notices = auditReconciliationNotices(harness.container);
+    assert.equal(notices.length, 2);
+    assert.ok(notices.some((notice) => /audit-request-back-manual-retry/.test(notice.textContent ?? "")));
+    assert.ok(notices.some((notice) => /not confirmed within 50 ms/i.test(notice.textContent ?? "")));
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("repeated receipt of the same attempt-audit warning does not create duplicate notice spam", async () => {
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({ width: 1200, height: 1600, corners: validQuad }),
+    activeMap: { revisionId: "exact-revision-deduped-audit", scope: "EXACT", name: "Squirtle #007" },
+    registrationFailsOnSide: "BACK",
+    registrationAuditFailsOnSide: "BACK",
+  });
+  try {
+    await reachInterruptedRegistration(harness);
+    await waitFor(() => auditReconciliationNotices(harness.container).length === 1, "Initial audit warning did not render");
+    for (const expectedBackAttempts of [2, 3]) {
+      await act(async () => fire(buttonByText(harness.container, "Retry failed side")!, "click"));
+      await waitFor(
+        () => harness.getRegistrationCountForSide("BACK") === expectedBackAttempts
+          && buttonByText(harness.container, "Retry failed side")?.disabled === false,
+        `Manual retry ${expectedBackAttempts - 1} did not finish`,
+      );
+    }
+    const notices = auditReconciliationNotices(harness.container);
+    assert.equal(notices.length, 1);
+    assert.match(notices[0]?.textContent ?? "", /audit-request-back/);
+  } finally {
+    await harness.cleanup();
+  }
+});
 
 test("decision-audit confirmation classifies timely results and rejects stale session or operation", async () => {
   assert.equal(await settleSpeedsterRegistrationDecisionAuditConfirmation(true, 50), "CONFIRMED");

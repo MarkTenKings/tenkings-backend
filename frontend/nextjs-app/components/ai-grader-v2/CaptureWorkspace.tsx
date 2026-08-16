@@ -240,6 +240,11 @@ type RegistrationFailureEvidence = NonNullable<
   NonNullable<SpeedsterCaptureInstrumentationEvent["details"]>["registrationFailures"]
 >[number];
 
+type AuditReconciliationNotice = Readonly<{
+  noticeId: string;
+  message: string;
+}>;
+
 function registrationFailureEvidence(
   interruptions: RegistrationInterruptionState["interruptions"],
   failures: RegistrationRescueState["failures"],
@@ -375,6 +380,7 @@ export function CaptureWorkspace({
   const [message, setMessage] = useState("Add one original image of each side.");
   const [mapRegistrationNotice, setMapRegistrationNotice] = useState<string | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [auditReconciliationNotices, setAuditReconciliationNotices] = useState<readonly AuditReconciliationNotice[]>([]);
   const [captureSaveFailed, setCaptureSaveFailed] = useState(false);
   const [registrationRescue, setRegistrationRescue] = useState<RegistrationRescueState | null>(null);
   const [registrationInterruption, setRegistrationInterruption] = useState<RegistrationInterruptionState | null>(null);
@@ -419,6 +425,7 @@ export function CaptureWorkspace({
     setWorking(false);
     setMapRegistrationNotice(null);
     setWorkflowError(null);
+    setAuditReconciliationNotices([]);
     setCaptureSaveFailed(false);
     setRegistrationRescue(null);
     setRegistrationInterruption(null);
@@ -740,14 +747,30 @@ export function CaptureWorkspace({
     setMessage("Confirm the printed-border geometry.");
   };
 
+  const appendAuditReconciliationNotice = (notice: AuditReconciliationNotice) => {
+    setAuditReconciliationNotices((current) => (
+      current.some(({ noticeId }) => noticeId === notice.noticeId)
+        ? current
+        : [...current, notice]
+    ));
+  };
+
   const surfaceRegistrationAuditWarning = (operationId: string, values: readonly unknown[]) => {
+    const originatingSessionId = sessionId;
     const requestIds = Array.from(new Set(values.flatMap((value) => {
       const warning = registrationAuditWarningFrom(value);
       return warning ? [warning.requestId] : [];
-    })));
-    if (requestIds.length > 0) {
-      setWorkflowError(`CARD MAP attempt audit write failed for request ${requestIds.join(" + ")}. The registration result and all operator work are preserved; retain operation ${operationId} for reconciliation.`);
-    }
+    }))).sort();
+    if (requestIds.length === 0 || !isCurrentSpeedsterRegistrationDecisionAudit({
+      currentSessionId: currentSessionId.current,
+      currentOperationId: currentRegistrationOperationId.current,
+      originatingSessionId,
+      originatingOperationId: operationId,
+    })) return;
+    requestIds.forEach((requestId) => appendAuditReconciliationNotice({
+      noticeId: `attempt:${operationId}:${requestId}`,
+      message: `CARD MAP attempt audit write failed for request ${requestId}. The registration result and all operator work are preserved; retain operation ${operationId} for reconciliation.`,
+    }));
   };
 
   const confirmGeometry = async (side: SpeedsterCardSide) => {
@@ -1022,8 +1045,20 @@ export function CaptureWorkspace({
     const originatingSessionId = sessionId;
     const failedSides = failureEvidence.map(({ side }) => side);
     const atMs = Date.now();
+    const surfaceDecisionAuditWarning = (message: string) => {
+      if (!isCurrentSpeedsterRegistrationDecisionAudit({
+        currentSessionId: currentSessionId.current,
+        currentOperationId: currentRegistrationOperationId.current,
+        originatingSessionId,
+        originatingOperationId: operationId,
+      })) return;
+      appendAuditReconciliationNotice({
+        noticeId: `decision:${operationId}:${decisionId}`,
+        message,
+      });
+    };
     if (!onInstrumentationEvent) {
-      setWorkflowError(`Operator-decision audit reporter is unavailable for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
+      surfaceDecisionAuditWarning(`Operator-decision audit reporter is unavailable for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
       return;
     }
     let result: void | boolean | Promise<void | boolean>;
@@ -1053,27 +1088,15 @@ export function CaptureWorkspace({
         },
       });
     } catch {
-      if (isCurrentSpeedsterRegistrationDecisionAudit({
-        currentSessionId: currentSessionId.current,
-        currentOperationId: currentRegistrationOperationId.current,
-        originatingSessionId,
-        originatingOperationId: operationId,
-      })) {
-        setWorkflowError(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
-      }
+      surfaceDecisionAuditWarning(`Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
       return;
     }
     void settleSpeedsterRegistrationDecisionAuditConfirmation(
       result,
       decisionAuditConfirmationTimeoutMs,
     ).then((outcome) => {
-      if (outcome === "CONFIRMED" || !isCurrentSpeedsterRegistrationDecisionAudit({
-        currentSessionId: currentSessionId.current,
-        currentOperationId: currentRegistrationOperationId.current,
-        originatingSessionId,
-        originatingOperationId: operationId,
-      })) return;
-      setWorkflowError(outcome === "TIMED_OUT"
+      if (outcome === "CONFIRMED") return;
+      surfaceDecisionAuditWarning(outcome === "TIMED_OUT"
         ? `Operator-decision audit write was not confirmed within ${decisionAuditConfirmationTimeoutMs} ms for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`
         : `Operator-decision audit write failed for ${decisionId}. Your work is preserved and the selected action continues; retain operation ${operationId} for reconciliation.`);
     });
@@ -1435,6 +1458,17 @@ export function CaptureWorkspace({
       ) : null}
 
       {workflowError ? <p role="alert" className={styles.errorBanner}>{workflowError}</p> : null}
+
+      {auditReconciliationNotices.map((notice) => (
+        <p
+          key={notice.noticeId}
+          role="alert"
+          data-audit-reconciliation-notice={notice.noticeId}
+          className={styles.errorBanner}
+        >
+          {notice.message}
+        </p>
+      ))}
 
       {stage === "PHOTOS" ? (
         <div className={styles.photos}>
