@@ -5,17 +5,15 @@ This runbook covers simulator-backed development and future appliance procedures
 ## Development validation
 
 ```bash
-pnpm install
-pnpm --filter @tenkings/vault-contracts test
-pnpm --filter @tenkings/vault-machine test
-pnpm --filter @tenkings/vault-kiosk test
-pnpm --filter @tenkings/vault-kiosk build
-pnpm --filter @tenkings/database generate
-pnpm --filter @tenkings/database build
-pnpm --filter @tenkings/nextjs-app build
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm install
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:validate-isolation
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:build
+env PATH=/opt/homebrew/opt/node@20/bin:/opt/homebrew/bin:/usr/bin:/bin pnpm vault:test
 ```
 
 Use only temporary local SQLite files and the deterministic mock adapters. Never point simulator tests at a provider, serial port, or production cloud.
+
+The service process must receive immutable `VAULT_APP_VERSION` and `VAULT_SOURCE_COMMIT` values from the verified installer/service wrapper. Browser input cannot supply or replace build provenance, and certification fails closed when the source commit is absent or `UNVERIFIED`.
 
 ## Safe startup sequence
 
@@ -27,6 +25,7 @@ Use only temporary local SQLite files and the deterministic mock adapters. Never
 6. Recover nonterminal sales/restocks from durable facts; query only the configured mock or separately qualified provider adapter.
 7. Never repeat an unknown payment or door command automatically.
 8. Start static UI/WebSocket only after state can be rendered safely. New checkout remains blocked until cloud freshness, config/tax, controller, payment adapter, storage, and clock policy are ready.
+9. Display the trusted build identity in service/certification state. Restock and certification may expose only one unobserved command at a time; require a terminal controller receipt and then a separate human observation before advancing.
 
 ## Backup and restore
 

@@ -35,6 +35,9 @@
     "variants:sports:run": "node scripts/variant-db/run-sports-live.js",
     "set-ops:batch-import": "node scripts/set-ops/batch-import.js",
     "set-ops:delete-all-except": "node scripts/set-ops/delete-sets-except.js",
+    "vault:build": "pnpm --filter @tenkings/vault-contracts build && pnpm --filter @tenkings/database generate && pnpm --filter @tenkings/database build && pnpm --filter @tenkings/vault-machine build && pnpm --filter @tenkings/vault-kiosk build",
+    "vault:test": "pnpm --filter @tenkings/vault-contracts test && pnpm --filter @tenkings/vault-machine test && pnpm --filter @tenkings/vault-kiosk test && pnpm --filter @tenkings/database build && pnpm --filter @tenkings/database exec node --test tests/vaultV1.test.js && pnpm --filter @tenkings/nextjs-app exec tsx --test tests/vaultV1Cloud.test.ts",
+    "vault:validate-isolation": "node scripts/validate-vault-v1-isolation.mjs",
     "vercel:build": "bash scripts/vercel-build.sh",
     "packs:mint": "node scripts/mint-pack-inventory.js"
   }
