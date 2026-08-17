@@ -3865,3 +3865,704 @@ model AiGraderV2MapFilterRestoreEvent {
 
   @@index([restoredAt])
 }
+
+// Ten Kings Vault V1 is an isolated physical-door vending domain. It deliberately
+// has no relation to PackDefinition, PackInstance, Item, wallet, or Card Platform V2.
+enum VaultMode {
+  PRODUCTION
+  CERTIFICATION
+}
+
+enum VaultRole {
+  RESTOCKER
+  TECHNICIAN
+  ADMIN
+}
+
+enum VaultMachineStatus {
+  PROVISIONING
+  ENROLLED
+  ACTIVE
+  SERVICE
+  DISABLED
+  DECOMMISSIONED
+}
+
+enum VaultCredentialStatus {
+  PENDING
+  ACTIVE
+  ROTATED
+  REVOKED
+}
+
+enum VaultEnrollmentStatus {
+  PENDING_APPROVAL
+  APPROVED
+  CONSUMED
+  EXPIRED
+  REVOKED
+}
+
+enum VaultProductCategory {
+  SPORTS
+  POKEMON
+}
+
+enum VaultDoorState {
+  EMPTY
+  AVAILABLE
+  RESERVED
+  COMMITTED_SOLD
+  SERVICE_HOLD
+  DISABLED
+  EXCEPTION
+}
+
+enum VaultConfigStatus {
+  DRAFT
+  VALIDATED
+  PUBLISHED
+  SUPERSEDED
+  REVOKED
+}
+
+enum VaultSaleState {
+  CART_ACTIVE
+  CHECKOUT_REVALIDATING
+  RESERVED
+  PAYMENT_REQUESTED
+  PAYMENT_AUTHORIZED
+  FULFILLMENT_COMMITTED
+  OPEN_COMMAND_PENDING
+  OPEN_COMMAND_TERMINAL
+  VEND_RESULT_PENDING
+  SETTLEMENT_PENDING
+  SETTLED
+  COMPLETED
+  PAYMENT_DECLINED
+  PAYMENT_CANCELLED
+  PAYMENT_UNKNOWN
+  RECONCILIATION_REQUIRED
+  SUPPORT_REQUIRED
+}
+
+enum VaultPaymentState {
+  NOT_REQUESTED
+  REQUESTED
+  AUTHORIZED
+  DECLINED
+  CANCELLED
+  UNKNOWN
+  VEND_RESULT_PENDING
+  SETTLEMENT_PENDING
+  SETTLED
+  RECONCILIATION_REQUIRED
+}
+
+enum VaultSettlementState {
+  NOT_STARTED
+  PENDING
+  SETTLED
+  VOIDED
+  REFUNDED
+  UNKNOWN
+  RECONCILIATION_REQUIRED
+}
+
+enum VaultFulfillmentState {
+  NOT_COMMITTED
+  COMMITTED
+  COMMANDS_PENDING
+  COMMANDS_TERMINAL
+  RETRIEVAL_ACTIVE
+  CUSTOMER_DONE
+  SUPPORT_REQUIRED
+}
+
+enum VaultCommandState {
+  NOT_COMMITTED
+  COMMAND_INTENT_RECORDED
+  ACCEPTED
+  SENT_UNKNOWN
+  REJECTED
+  TIMEOUT
+  OUTPUT_RELEASED
+}
+
+enum VaultRestockSessionState {
+  ACTIVE
+  REVIEW_REQUIRED
+  FINALIZED
+  CANCELLED
+  EXCEPTION
+}
+
+enum VaultRestockItemState {
+  UNREVIEWED
+  FILLED
+  LEFT_EMPTY
+  EXCEPTION
+}
+
+enum VaultStaffGrantStatus {
+  ACTIVE
+  SUSPENDED
+  EXPIRED
+  REVOKED
+}
+
+enum VaultHealthState {
+  READY
+  DEGRADED_CLOUD
+  DEGRADED_SYNC
+  BLOCKED_CONFIG
+  BLOCKED_TAX
+  BLOCKED_NAYAX
+  BLOCKED_CONTROLLER
+  BLOCKED_STORAGE
+  BLOCKED_CLOCK
+  SERVICE_LOCKED
+  RECOVERY_REQUIRED
+}
+
+enum VaultCertificationStatus {
+  DRAFT
+  ACTIVE
+  REVIEW_REQUIRED
+  PASSED
+  FAILED
+  CRITICAL_STOP
+  INVALIDATED
+}
+
+enum VaultCertificationEvidenceClass {
+  AUTOMATED
+  OFFICIAL_SDK
+  BENCH
+  FULL_MACHINE
+  FIELD
+}
+
+enum VaultCertificationOutcome {
+  PASS
+  FAIL
+  CRITICAL
+}
+
+enum VaultSupportCaseType {
+  PAYMENT_UNKNOWN
+  PAYMENT_RECONCILIATION
+  DOOR_COMMAND
+  RETRIEVAL
+  RESTOCK
+  CERTIFICATION
+  MACHINE_HEALTH
+  OTHER
+}
+
+enum VaultSupportCaseStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+}
+
+enum VaultAuditOutcome {
+  SUCCESS
+  DENIED
+  FAILURE
+}
+
+model VaultMachine {
+  id                       String                      @id @default(uuid())
+  slug                     String                      @unique
+  serialNumber             String                      @unique
+  displayName              String
+  locationLabel            String?
+  status                   VaultMachineStatus          @default(PROVISIONING)
+  timezone                 String
+  city                     String
+  state                    String
+  taxRateBasisPoints       Int
+  taxCalculationVersion    String                      @default("half-up-subtotal-bps-v1")
+  supportPageUrl           String?
+  supportEmail             String?
+  supportTextNumber        String?
+  supportPhoneNumber       String?
+  supportHours             String?
+  serviceStartedAt         DateTime?
+  serviceEndedAt           DateTime?
+  currentCredentialVersion Int                         @default(0)
+  lastEventSequence        BigInt                      @default(0)
+  lastHeartbeatAt          DateTime?
+  lastCloudObservedAt      DateTime?
+  health                   VaultHealthState            @default(BLOCKED_CONFIG)
+  readinessReasons         Json?                       @db.JsonB
+  appVersion               String?
+  localSchemaVersion       Int?
+  activeConfigVersion      Int?
+  activeConfigDigest       String?
+  availableDoorCount       Int                         @default(0)
+  outboxPendingCount       Int                         @default(0)
+  serviceLocked            Boolean                     @default(false)
+  activeConfigId           String?                     @unique
+  pendingConfigId          String?                     @unique
+  activeConfig             VaultConfigVersion?         @relation("VaultMachineActiveConfig", fields: [activeConfigId], references: [id], onDelete: Restrict)
+  pendingConfig            VaultConfigVersion?         @relation("VaultMachinePendingConfig", fields: [pendingConfigId], references: [id], onDelete: Restrict)
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
+  configs                  VaultConfigVersion[]        @relation("VaultMachineConfigs")
+  doors                    VaultDoor[]
+  sales                    VaultSale[]
+  events                   VaultMachineEvent[]
+  restockSessions          VaultRestockSession[]
+  staffAccess              VaultStaffMachineAccess[]
+  enrollmentTokens         VaultEnrollmentToken[]
+  credentials              VaultMachineCredential[]
+  certificationSessions    VaultCertificationSession[]
+  supportCases             VaultSupportCase[]
+  auditEvents              VaultAdminAuditEvent[]
+
+  @@index([status, health])
+  @@index([lastHeartbeatAt])
+}
+
+model VaultProduct {
+  id                   String               @id @default(uuid())
+  slug                 String               @unique
+  name                 String
+  photoUrl             String
+  description          String
+  priceCents           Int
+  category             VaultProductCategory
+  taxClass             String
+  active               Boolean              @default(true)
+  createdByAdminId     String
+  deactivatedByAdminId String?
+  deactivatedAt        DateTime?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  activeDoors          VaultDoor[]          @relation("VaultDoorActiveProduct")
+  plannedDoors         VaultDoor[]          @relation("VaultDoorPlannedProduct")
+
+  @@index([active, category, priceCents])
+}
+
+model VaultDoor {
+  id                String             @id @default(uuid())
+  machineId         String
+  machine           VaultMachine       @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  doorId            String
+  controllerChannel Int
+  state             VaultDoorState     @default(EMPTY)
+  stateVersion      Int                @default(1)
+  activeProductId   String?
+  activeProduct     VaultProduct?      @relation("VaultDoorActiveProduct", fields: [activeProductId], references: [id], onDelete: Restrict)
+  plannedProductId  String?
+  plannedProduct    VaultProduct?      @relation("VaultDoorPlannedProduct", fields: [plannedProductId], references: [id], onDelete: Restrict)
+  owningSaleId      String?
+  owningSale        VaultSale?         @relation("VaultDoorOwningSale", fields: [owningSaleId], references: [id], onDelete: Restrict)
+  owningRestockId   String?
+  owningRestock     VaultRestockSession? @relation("VaultDoorOwningRestock", fields: [owningRestockId], references: [id], onDelete: Restrict)
+  lastEventId       String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  saleItems         VaultSaleItem[]
+  restockItems      VaultRestockItem[]
+
+  @@unique([machineId, doorId])
+  @@unique([machineId, controllerChannel])
+  @@index([machineId, state, activeProductId])
+}
+
+model VaultConfigVersion {
+  id                    String                      @id @default(uuid())
+  machineId             String
+  machine               VaultMachine                @relation("VaultMachineConfigs", fields: [machineId], references: [id], onDelete: Restrict)
+  version               Int
+  schemaVersion         Int                         @default(1)
+  status                VaultConfigStatus           @default(DRAFT)
+  canonicalPayload      Json                        @db.JsonB
+  digest                String
+  signingKeyId          String?
+  signingAlgorithm      String?
+  detachedSignature     String?
+  minimumAppVersion     String
+  createdByAdminId      String
+  validatedByAdminId    String?
+  publishedByAdminId    String?
+  validationSummary     Json?                       @db.JsonB
+  impactSummary         Json?                       @db.JsonB
+  createdAt             DateTime                    @default(now())
+  validatedAt           DateTime?
+  publishedAt           DateTime?
+  expiresAt             DateTime
+  activeForMachine      VaultMachine?               @relation("VaultMachineActiveConfig")
+  pendingForMachine     VaultMachine?               @relation("VaultMachinePendingConfig")
+  sales                 VaultSale[]
+  restockSessions       VaultRestockSession[]
+  certificationSessions VaultCertificationSession[]
+
+  @@unique([machineId, version])
+  @@unique([machineId, digest])
+  @@index([machineId, status, createdAt])
+}
+
+model VaultSale {
+  id                       String                @id @default(uuid())
+  machineId                String
+  machine                  VaultMachine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  localTransactionId       String
+  supportReference         String
+  mode                     VaultMode
+  state                    VaultSaleState
+  stateVersion             Int                   @default(1)
+  paymentState             VaultPaymentState
+  settlementState          VaultSettlementState  @default(NOT_STARTED)
+  fulfillmentState         VaultFulfillmentState @default(NOT_COMMITTED)
+  configVersionId          String
+  configVersion            VaultConfigVersion    @relation(fields: [configVersionId], references: [id], onDelete: Restrict)
+  configVersionNumber      Int
+  configDigest             String
+  machineTimezone          String
+  taxCity                  String
+  taxState                 String
+  taxRateBasisPoints       Int
+  taxCalculationVersion    String
+  subtotalCents            Int
+  taxCents                 Int
+  totalCents               Int
+  currency                 String                @default("USD")
+  itemCount                Int
+  providerName             String?
+  providerSessionId        String?
+  providerTransactionId    String?
+  providerCallbackSequence Int?
+  providerEvidence         Json?                 @db.JsonB
+  authorizationObservedAt  DateTime?
+  vendResultObservedAt     DateTime?
+  settlementObservedAt     DateTime?
+  cancelledAt              DateTime?
+  reconciliationRequiredAt DateTime?
+  reconciliationResolvedAt DateTime?
+  groupRetryConsumedAt     DateTime?
+  customerDoneAt           DateTime?
+  recoveredAt              DateTime?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  items                    VaultSaleItem[]
+  supportCases             VaultSupportCase[]
+  ownedDoors               VaultDoor[]           @relation("VaultDoorOwningSale")
+
+  @@unique([machineId, localTransactionId])
+  @@unique([machineId, supportReference])
+  @@unique([machineId, providerSessionId])
+  @@unique([machineId, providerTransactionId])
+  @@index([machineId, mode, createdAt])
+  @@index([paymentState, settlementState, createdAt])
+  @@index([state, createdAt])
+}
+
+model VaultSaleItem {
+  id                  String                @id @default(uuid())
+  saleId              String
+  sale                VaultSale             @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  lineId              String
+  doorRecordId        String
+  door                VaultDoor             @relation(fields: [doorRecordId], references: [id], onDelete: Restrict)
+  doorId              String
+  productIdSnapshot   String
+  productNameSnapshot String
+  photoUrlSnapshot    String
+  descriptionSnapshot String
+  categorySnapshot    VaultProductCategory
+  priceCentsSnapshot  Int
+  taxClassSnapshot    String
+  controllerChannelSnapshot Int
+  mappingVersionSnapshot String
+  taxRateBasisPoints  Int
+  taxCentsSnapshot    Int
+  allocationState     VaultDoorState
+  fulfillmentState    VaultFulfillmentState
+  initialCommandId    String?               @unique
+  initialCommandState VaultCommandState     @default(NOT_COMMITTED)
+  retryCommandId      String?               @unique
+  retryCommandState   VaultCommandState     @default(NOT_COMMITTED)
+  retryUsedAt         DateTime?
+  supportReason       String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+
+  @@unique([saleId, lineId])
+  @@unique([saleId, doorId])
+  @@index([doorRecordId, createdAt])
+}
+
+model VaultMachineEvent {
+  id             String       @id @default(uuid())
+  machineId      String
+  machine        VaultMachine @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  eventId        String
+  sequence       BigInt
+  schemaVersion  Int
+  type           String
+  mode           VaultMode
+  correlationId  String?
+  causationId    String?
+  occurredAt     DateTime
+  receivedAt     DateTime     @default(now())
+  payload        Json         @db.JsonB
+  payloadDigest  String
+  quarantinedAt  DateTime?
+  quarantineCode String?
+
+  @@unique([machineId, eventId])
+  @@unique([machineId, sequence])
+  @@index([machineId, receivedAt])
+  @@index([type, occurredAt])
+}
+
+model VaultRestockSession {
+  id                       String                   @id @default(uuid())
+  machineId                String
+  machine                  VaultMachine             @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  localSessionId           String
+  state                    VaultRestockSessionState @default(ACTIVE)
+  actorUserId              String?
+  actorRole                VaultRole?
+  actorGrantVersion        Int?
+  configVersionId          String
+  configVersion            VaultConfigVersion       @relation(fields: [configVersionId], references: [id], onDelete: Restrict)
+  expectedDoorCount        Int
+  filledCount              Int                      @default(0)
+  leftEmptyCount           Int                      @default(0)
+  exceptionCount           Int                      @default(0)
+  shortageSummary          Json?                    @db.JsonB
+  physicalCloseConfirmedAt DateTime?
+  startedAt                DateTime                 @default(now())
+  finalizedAt              DateTime?
+  updatedAt                DateTime                 @updatedAt
+  items                    VaultRestockItem[]
+  ownedDoors               VaultDoor[]              @relation("VaultDoorOwningRestock")
+
+  @@unique([machineId, localSessionId])
+  @@index([machineId, state, startedAt])
+}
+
+model VaultRestockItem {
+  id               String                @id @default(uuid())
+  restockSessionId String
+  restockSession   VaultRestockSession   @relation(fields: [restockSessionId], references: [id], onDelete: Restrict)
+  doorRecordId     String
+  door             VaultDoor             @relation(fields: [doorRecordId], references: [id], onDelete: Restrict)
+  doorId           String
+  plannedProductId String?
+  state            VaultRestockItemState @default(UNREVIEWED)
+  commandId        String?               @unique
+  commandState     VaultCommandState     @default(NOT_COMMITTED)
+  evidence         Json?                 @db.JsonB
+  reviewedAt       DateTime?
+  updatedAt        DateTime              @updatedAt
+  createdAt        DateTime              @default(now())
+
+  @@unique([restockSessionId, doorId])
+  @@index([doorRecordId, state])
+}
+
+model VaultStaffMachineAccess {
+  id                 String                @id @default(uuid())
+  grantId            String
+  machineId          String
+  machine            VaultMachine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  userId             String
+  role               VaultRole
+  status             VaultStaffGrantStatus @default(ACTIVE)
+  grantVersion       Int
+  verifierVersion    Int
+  verifierHash       String
+  verifierAlgorithm  String
+  verifierParameters Json                  @db.JsonB
+  validFrom          DateTime
+  expiresAt          DateTime
+  revokedAt          DateTime?
+  revokedByAdminId   String?
+  createdByAdminId   String
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([machineId, userId, grantVersion])
+  @@unique([machineId, grantVersion])
+  @@index([machineId, grantId, grantVersion])
+  @@index([machineId, status, grantVersion])
+  @@index([userId, status])
+}
+
+model VaultEnrollmentToken {
+  id                String                @id @default(uuid())
+  machineId         String
+  machine           VaultMachine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  tokenHash         String                @unique
+  status            VaultEnrollmentStatus @default(PENDING_APPROVAL)
+  createdByAdminId  String
+  approvedByAdminId String?
+  approvedAt        DateTime?
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  revokedAt         DateTime?
+  createdAt         DateTime              @default(now())
+
+  @@index([machineId, status, expiresAt])
+}
+
+model VaultMachineCredential {
+  id               String                @id @default(uuid())
+  machineId        String
+  machine          VaultMachine          @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  version          Int
+  credentialHash   String                @unique
+  status           VaultCredentialStatus @default(PENDING)
+  createdByAdminId String?
+  activatedAt      DateTime?
+  lastUsedAt       DateTime?
+  rotatedAt        DateTime?
+  revokedAt        DateTime?
+  revokedByAdminId String?
+  revocationReason String?
+  createdAt        DateTime              @default(now())
+
+  @@unique([machineId, version])
+  @@index([machineId, status])
+}
+
+model VaultCertificationSession {
+  id                   String                       @id @default(uuid())
+  machineId            String
+  machine              VaultMachine                 @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  localSessionId       String?
+  status               VaultCertificationStatus     @default(DRAFT)
+  configVersionId      String
+  configVersion        VaultConfigVersion           @relation(fields: [configVersionId], references: [id], onDelete: Restrict)
+  appBuild             String?
+  sourceCommit         String
+  localSchemaVersion   Int?
+  contractVersion      Int
+  nayaxAdapterVersion  String?
+  nayaxSdkVersion      String?
+  nayaxFlowConfig      Json?                        @db.JsonB
+  controllerIdentity   Json?                        @db.JsonB
+  hardwareIdentity     Json?                        @db.JsonB
+  evidenceSummary      Json?                        @db.JsonB
+  unresolvedDeviations Json?                        @db.JsonB
+  startedByUserId      String?
+  approvedByUserId     String?
+  approvedByRole       VaultRole?
+  startedAt            DateTime                     @default(now())
+  completedAt          DateTime?
+  approvedAt           DateTime?
+  invalidatedAt        DateTime?
+  invalidationReason   String?
+  retainUntil          DateTime?
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+  evidence             VaultCertificationEvidence[]
+  certificate          VaultCertificate?
+
+  @@unique([machineId, localSessionId])
+  @@index([machineId, status, createdAt])
+  @@index([retainUntil])
+}
+
+model VaultCertificationEvidence {
+  id                 String                          @id @default(uuid())
+  certificationId    String
+  certification      VaultCertificationSession       @relation(fields: [certificationId], references: [id], onDelete: Restrict)
+  evidenceId         String
+  doorId             String?
+  evidenceClass      VaultCertificationEvidenceClass?
+  outcome            VaultCertificationOutcome
+  expectedDoorIds    Json                            @db.JsonB
+  observedDoorIds    Json                            @db.JsonB
+  notes              String
+  artifactDigest     String?
+  artifactStorageKey String?
+  metadata           Json?                           @db.JsonB
+  observedAt         DateTime
+  retainUntil        DateTime?
+  createdAt          DateTime                        @default(now())
+
+  @@unique([certificationId, evidenceId])
+  @@index([certificationId, outcome, observedAt])
+  @@index([retainUntil])
+}
+
+model VaultCertificate {
+  id                 String                    @id @default(uuid())
+  certificationId    String                    @unique
+  certification      VaultCertificationSession @relation(fields: [certificationId], references: [id], onDelete: Restrict)
+  schemaVersion      Int
+  certificatePayload Json                      @db.JsonB
+  digest             String                    @unique
+  signingKeyId       String
+  signingAlgorithm   String
+  detachedSignature  String
+  approvedByUserId   String
+  approvedByRole     VaultRole
+  issuedAt           DateTime
+  invalidatedAt      DateTime?
+  invalidationReason String?
+  retainUntil        DateTime?
+  createdAt          DateTime                  @default(now())
+
+  @@index([retainUntil])
+}
+
+model VaultSupportCase {
+  id                     String                 @id @default(uuid())
+  machineId              String
+  machine                VaultMachine           @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  saleId                 String?
+  sale                   VaultSale?             @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  shortReference         String
+  type                   VaultSupportCaseType
+  status                 VaultSupportCaseStatus @default(OPEN)
+  affectedDoorIds        Json                   @db.JsonB
+  customerSafeSummary    String?
+  internalSummary        String?
+  reconciliationSnapshot Json?                  @db.JsonB
+  financialResolution    Json?                  @db.JsonB
+  openedAt               DateTime               @default(now())
+  assignedAdminId        String?
+  resolvedByAdminId      String?
+  resolvedAt             DateTime?
+  closedAt               DateTime?
+  resolutionReason       String?
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+
+  @@unique([machineId, shortReference])
+  @@index([status, type, openedAt])
+  @@index([saleId])
+}
+
+model VaultAdminAuditEvent {
+  id            String            @id @default(uuid())
+  machineId     String?
+  machine       VaultMachine?     @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  actorAdminId  String?
+  actorRole     VaultRole?
+  action        String
+  outcome       VaultAuditOutcome
+  reason        String?
+  targetType    String?
+  targetId      String?
+  requestId     String?
+  ipAddress     String?
+  userAgent     String?
+  payloadDigest String?
+  metadata      Json?             @db.JsonB
+  createdAt     DateTime          @default(now())
+
+  @@index([machineId, createdAt])
+  @@index([actorAdminId, createdAt])
+  @@index([action, outcome, createdAt])
+}

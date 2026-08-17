@@ -29,6 +29,29 @@ export {
   SetApprovalDecision,
   SetSeedJobStatus,
   SetAuditStatus,
+  VaultMode,
+  VaultRole,
+  VaultMachineStatus,
+  VaultCredentialStatus,
+  VaultEnrollmentStatus,
+  VaultProductCategory,
+  VaultDoorState,
+  VaultConfigStatus,
+  VaultSaleState,
+  VaultPaymentState,
+  VaultSettlementState,
+  VaultFulfillmentState,
+  VaultCommandState,
+  VaultRestockSessionState,
+  VaultRestockItemState,
+  VaultStaffGrantStatus,
+  VaultHealthState,
+  VaultCertificationStatus,
+  VaultCertificationEvidenceClass,
+  VaultCertificationOutcome,
+  VaultSupportCaseType,
+  VaultSupportCaseStatus,
+  VaultAuditOutcome,
 } from "@prisma/client";
 
 export * from "./bytebotLiteJobs";
@@ -43,3 +66,4 @@ export * from "./aiGraderNfcService";
 export * from "./aiGraderNfcSchemaReadiness";
 export * from "./aiGraderDesignReferenceService";
 export * from "./cardPlatformV2";
+export * from "./vaultV1";

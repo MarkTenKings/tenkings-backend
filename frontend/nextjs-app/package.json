@@ -28,6 +28,7 @@
     "@tenkings/database": "workspace:*",
     "@tenkings/ebay-sold-comps-v2": "workspace:*",
     "@tenkings/shared": "workspace:*",
+    "@tenkings/vault-contracts": "workspace:*",
     "@types/pdfkit": "^0.17.3",
     "@vercel/og": "^0.11.1",
     "adm-zip": "^0.5.12",

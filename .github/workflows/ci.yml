@@ -22,6 +22,24 @@ jobs:
       - run: pnpm --filter @tenkings/database generate
       - run: pnpm --filter @tenkings/* run --if-present build
 
+  vault-v1:
+    name: Vault V1 Contracts, Simulation & UI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install
+      - run: pnpm vault:validate-isolation
+      - run: pnpm vault:build
+      - run: pnpm vault:test
+
   disposable-postgres-migration-chain:
     name: Disposable PostgreSQL Migration Chain
     runs-on: ubuntu-latest
