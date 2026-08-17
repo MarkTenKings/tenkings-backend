@@ -101,6 +101,7 @@ const sideSchema = z.object({
 const saveSchema = z.object({
   sessionId: sessionIdSchema,
   familyLayoutType: z.enum(["POKEMON", "TRAINER", "ENERGY"]).optional(),
+  familyYear: z.string().trim().min(1).max(24).optional(),
   front: sideSchema,
   back: sideSchema,
 }).strict();
@@ -145,6 +146,7 @@ type Dependencies = Readonly<{
     source: SpeedsterMapSourceSession;
     authorAdminId: string;
     familyLayoutType?: "POKEMON" | "TRAINER" | "ENERGY";
+    familyYear?: string;
     front: SpeedsterMapTrainingSideInput;
     back: SpeedsterMapTrainingSideInput;
   }>) => Promise<SpeedsterMapDualSaveResult>;
@@ -306,7 +308,11 @@ function dualSaveSummary(
   const displayIdentity = scope === "FAMILY"
     && isSpeedsterPokemonFamilyKeyV2(saved.revision.matchKey)
     && "cardName" in source.identity
-    ? { ...source.identity, layoutType: saved.revision.matchKey.layoutType }
+    ? {
+        ...source.identity,
+        year: saved.revision.matchKey.year,
+        layoutType: saved.revision.matchKey.layoutType,
+      }
     : source.identity;
   const name = speedsterMapDisplayName(scope, source.cardProfile, displayIdentity);
   return {
@@ -457,10 +463,27 @@ export function createSpeedsterCardTypeMapHandler(deps: Dependencies = dependenc
           code: "CARD_MAP_SOURCE_NOT_FOUND",
           diagnostics: { stage: "SOURCE" },
         });
+        if (source.cardProfile === "POKEMON"
+          && (!parsed.data.familyLayoutType || !parsed.data.familyYear)) {
+          return res.status(400).json({
+            message: "Pokémon Card Map authoring requires an explicit Family layout and canonical Family year.",
+            code: "CARD_MAP_INVALID_REQUEST",
+            diagnostics: { stage: "VALIDATION", scope: "FAMILY" },
+          });
+        }
+        if (source.cardProfile === "SPORTS"
+          && (parsed.data.familyLayoutType || parsed.data.familyYear)) {
+          return res.status(400).json({
+            message: "Sports Card Map authoring cannot carry Pokémon Family authority fields.",
+            code: "CARD_MAP_INVALID_REQUEST",
+            diagnostics: { stage: "VALIDATION", scope: "FAMILY" },
+          });
+        }
         const saved = await deps.saveDualRevisions({
           source,
           authorAdminId: admin.user.id,
           ...(parsed.data.familyLayoutType ? { familyLayoutType: parsed.data.familyLayoutType } : {}),
+          ...(parsed.data.familyYear ? { familyYear: parsed.data.familyYear } : {}),
           front: parsed.data.front as SpeedsterMapTrainingSideInput,
           back: parsed.data.back as SpeedsterMapTrainingSideInput,
         });

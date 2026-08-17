@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   parseSpeedsterColorGeometryProposal,
   speedsterColorCenteringDraft,
+  speedsterColorPhysicalDraft,
   type SpeedsterColorGeometryProposal,
 } from "../lib/ai-grader-v2/color-geometry";
 import {
@@ -94,7 +95,7 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
     sideEvidence: Object.fromEntries(Object.entries(proposal.sideEvidence).map(([side, evidence]) => [side, {
       ...evidence,
       medianLightnessContrast: 20,
-    }])),
+    }])) as SpeedsterColorGeometryProposal["sideEvidence"],
     ambiguity: { candidateCount: 2, runnerUpScoreRatio: 0.9199, ambiguous: false },
   } as const;
   assert.equal(parseSpeedsterColorGeometryProposal(acceptedPhysicalBlack).outcome, "ACCEPTED");
@@ -263,7 +264,7 @@ test("deterministic engine-error abstention parses and receives exact server rec
   verifySpeedsterColorGeometryReceipt(receipt, engineErrorBinding, { now: 2_000_001, env: receiptEnv });
 });
 
-test("all four visible outcomes retain exact evidence while only ACCEPTED can seed a draft", () => {
+test("all four visible outcomes retain exact evidence while only ACCEPTED can seed its matching draft", () => {
   const manual = [
     { x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.8, y: 0.8 }, { x: 0.2, y: 0.8 },
   ] as const;
@@ -297,6 +298,16 @@ test("all four visible outcomes retain exact evidence while only ACCEPTED can se
       outcome === "ACCEPTED" ? quad : manual,
       `${outcome} must not silently replace human geometry`,
     );
+    assert.deepEqual(
+      speedsterColorPhysicalDraft({
+        ...parsed,
+        mode: "PHYSICAL_OUTER",
+        contrastFloorDeltaE: 18,
+        minimumSideSupport: 0.7,
+      }, manual),
+      outcome === "ACCEPTED" ? quad : manual,
+      `${outcome} must not silently replace physical geometry`,
+    );
     if (outcome !== "ACCEPTED") {
       assert.throws(
         () => parseSpeedsterColorGeometryProposal({ ...result, proposal: quad }),
@@ -311,9 +322,10 @@ test("all four visible outcomes retain exact evidence while only ACCEPTED can se
     contrastFloorDeltaE: 18,
     minimumSideSupport: 0.7,
   }, manual), manual, "physical color geometry never owns a centering draft");
+  assert.deepEqual(speedsterColorPhysicalDraft(proposal, manual), manual, "printed color geometry never owns a physical draft");
 });
 
-test("color is permitted to seed only CenteringAssist and never map registration/zones/filter inputs", () => {
+test("color is permitted to seed only the matching editable geometry assist and never map registration/zones/filter inputs", () => {
   assert.deepEqual(speedsterColorCenteringDraft(proposal, [
     { x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.8, y: 0.8 }, { x: 0.2, y: 0.8 },
   ]), quad);
@@ -322,6 +334,24 @@ test("color is permitted to seed only CenteringAssist and never map registration
     { x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.8, y: 0.8 }, { x: 0.2, y: 0.8 },
   ] as const;
   assert.deepEqual(speedsterColorCenteringDraft(fallback, manual), manual);
+  assert.deepEqual(speedsterColorPhysicalDraft({
+    ...proposal,
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    contrastFloorDeltaE: 18,
+    minimumSideSupport: 0.7,
+    sideEvidence: Object.fromEntries(Object.entries(proposal.sideEvidence).map(([side, evidence]) => [side, {
+      ...evidence,
+      medianLightnessContrast: 20,
+    }])) as SpeedsterColorGeometryProposal["sideEvidence"],
+  }, manual), quad);
+  assert.deepEqual(speedsterColorPhysicalDraft({
+    ...fallback,
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    contrastFloorDeltaE: 18,
+    minimumSideSupport: 0.7,
+  }, manual), manual);
 
   const service = readFileSync(new URL("../lib/ai-grader-v2/image-service.ts", import.meta.url), "utf8");
   const registerStart = service.indexOf("  registerMap(");

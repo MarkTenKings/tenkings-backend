@@ -1148,13 +1148,14 @@ function speedsterMapKeyForScope(
 function pokemonFamilyAuthoringIdentity(
   source: Pick<SpeedsterMapSourceSession, "cardProfile" | "identity" | "legacyLayoutAuthority">,
   selectedLayoutType?: SpeedsterPokemonLayoutType,
+  selectedFamilyYear?: string,
 ): SpeedsterSessionIdentity {
   if (source.cardProfile !== "POKEMON") {
-    if (selectedLayoutType) {
-      throw new SpeedsterMapIntegrityError("Sports Card Maps cannot carry a Pokémon layout type.", {
+    if (selectedLayoutType || selectedFamilyYear) {
+      throw new SpeedsterMapIntegrityError("Sports Card Maps cannot carry Pokémon Family authority fields.", {
         stage: "VALIDATION",
         scope: "FAMILY",
-        field: "layoutType",
+        field: selectedLayoutType ? "layoutType" : "year",
       });
     }
     return source.identity;
@@ -1190,7 +1191,15 @@ function pokemonFamilyAuthoringIdentity(
       field: "layoutType",
     });
   }
-  return { ...source.identity, layoutType };
+  const familyYear = selectedFamilyYear?.normalize("NFKC").trim();
+  if (!familyYear || familyYear.length > 24) {
+    throw new SpeedsterMapIntegrityError("Enter the explicit canonical Pokémon Family year before saving.", {
+      stage: "VALIDATION",
+      scope: "FAMILY",
+      field: "year",
+    });
+  }
+  return { ...source.identity, year: familyYear, layoutType };
 }
 
 function pokemonFamilyRestoreIdentity(
@@ -2321,6 +2330,7 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   source: SpeedsterMapSourceSession;
   authorAdminId: string;
   familyLayoutType?: SpeedsterPokemonLayoutType;
+  familyYear?: string;
   front: SpeedsterMapTrainingSideInput;
   back: SpeedsterMapTrainingSideInput;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
@@ -2328,7 +2338,11 @@ export async function saveSpeedsterFamilyAndExactMapRevisions(input: Readonly<{
   v2ActivationGate?: SpeedsterMapFilterV2ActivationGate;
 }>): Promise<SpeedsterMapDualSaveResult> {
   const exactKey = speedsterCardTypeMapKey(input.source.cardProfile, input.source.identity);
-  const familyIdentity = pokemonFamilyAuthoringIdentity(input.source, input.familyLayoutType);
+  const familyIdentity = pokemonFamilyAuthoringIdentity(
+    input.source,
+    input.familyLayoutType,
+    input.familyYear,
+  );
   const familyKey = speedsterFamilyCardTypeMapKey(input.source.cardProfile, familyIdentity);
   const exactMatchKeyHash = speedsterMapMatchKeyHash(exactKey);
   const familyMatchKeyHash = speedsterMapMatchKeyHash(familyKey);

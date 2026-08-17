@@ -33,6 +33,7 @@ import {
 } from "../../lib/ai-grader-v2/capture-registration-draft";
 import {
   speedsterColorCenteringDraft,
+  speedsterColorPhysicalDraft,
   type SpeedsterColorGeometryCaptureEvidence,
   type SpeedsterColorGeometryProposal,
   type SpeedsterMatColor,
@@ -1490,16 +1491,20 @@ export function CaptureWorkspace({
         side: SpeedsterCardSide,
         uploaded: Readonly<{ storageKey: string; readUrl: string }>,
         result: Awaited<ReturnType<typeof requestGeometry>>,
-      ): SideState => ({
-        originalStorageKey: uploaded.storageKey,
-        sourceUrl: uploaded.readUrl,
-        corners: result.corners ?? manualStartQuad(result.geometry.width, result.geometry.height),
-        automaticGeometry: result.corners !== null,
-        geometryDiagnostic: result.diagnostic,
-        matColor: matColors[side],
-        physicalColorGeometry: result.geometry.colorGeometry,
-        physicalColorGeometryReceipt: result.geometry.colorGeometryReceipt,
-      });
+      ): SideState => {
+        const fallbackDraft = result.corners ?? manualStartQuad(result.geometry.width, result.geometry.height);
+        const corners = speedsterColorPhysicalDraft(result.geometry.colorGeometry, fallbackDraft);
+        return {
+          originalStorageKey: uploaded.storageKey,
+          sourceUrl: uploaded.readUrl,
+          corners,
+          automaticGeometry: result.corners !== null || corners !== fallbackDraft,
+          geometryDiagnostic: result.diagnostic,
+          matColor: matColors[side],
+          physicalColorGeometry: result.geometry.colorGeometry,
+          physicalColorGeometryReceipt: result.geometry.colorGeometryReceipt,
+        };
+      };
       if (recaptureSide) {
         const retainedSibling = recaptureSide === "FRONT" ? back : front;
         if (!retainedSibling) {
