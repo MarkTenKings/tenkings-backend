@@ -429,6 +429,7 @@ export function SpeedsterTrainWorkspace({
   const [familyLayoutType, setFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | "">(
     speedsterPokemonLayoutType(source.identity) ?? source.familyLayoutType ?? "",
   );
+  const [familyYear, setFamilyYear] = useState(source.identity.year);
   const [savedFamilyLayoutType, setSavedFamilyLayoutType] = useState<SpeedsterPokemonLayoutType | null>(null);
   const [message, setMessage] = useState(
     map.status === "LOADED"
@@ -452,11 +453,11 @@ export function SpeedsterTrainWorkspace({
   }), [backEditor, frontEditor]);
   const familyIdentity = useMemo<SpeedsterSessionIdentity>(() => (
     source.cardProfile === "POKEMON" && "cardName" in source.identity && familyLayoutType
-      ? { ...source.identity, layoutType: familyLayoutType }
+      ? { ...source.identity, year: familyYear.trim(), layoutType: familyLayoutType }
       : source.identity
-  ), [familyLayoutType, source.cardProfile, source.identity]);
+  ), [familyLayoutType, familyYear, source.cardProfile, source.identity]);
   const ready = readiness.FRONT.ready && readiness.BACK.ready
-    && (source.cardProfile !== "POKEMON" || Boolean(familyLayoutType));
+    && (source.cardProfile !== "POKEMON" || Boolean(familyLayoutType && familyYear.trim()));
   const baselineScope = map.scope ?? null;
   const familyName = familyMapName(familyIdentity);
   const exactName = exactMapName(source.identity);
@@ -796,7 +797,10 @@ export function SpeedsterTrainWorkspace({
         headers: buildAdminHeaders(token, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           sessionId: source.sessionId,
-          ...(source.cardProfile === "POKEMON" ? { familyLayoutType } : {}),
+          ...(source.cardProfile === "POKEMON" ? {
+            familyLayoutType,
+            familyYear: familyYear.trim(),
+          } : {}),
           front: frontEditor.map,
           back: backEditor.map,
         }),
@@ -1033,6 +1037,25 @@ export function SpeedsterTrainWorkspace({
               <option value="ENERGY">ENERGY</option>
             </select>
           </label>
+          <label>
+            Canonical Family year
+            <input
+              aria-label="Canonical Family map year"
+              value={familyYear}
+              onChange={(event) => {
+                setFamilyYear(event.target.value);
+                setSaveSuccess(null);
+                setSaveFailure(null);
+              }}
+              maxLength={24}
+              disabled={working}
+              required
+            />
+          </label>
+          <p>
+            Review the year used by matching sibling cards. The immutable exact source year remains
+            {" "}<code>{source.identity.year}</code>; no suffix is stripped or inferred automatically.
+          </p>
           <p>
             This human selection is written into the V2 Family match key and immutable revision provenance.
             {speedsterPokemonLayoutType(source.identity)

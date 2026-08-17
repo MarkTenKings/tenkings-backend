@@ -209,7 +209,17 @@ export function speedsterQuadsDiffer(first: SpeedsterQuad, second: SpeedsterQuad
   ));
 }
 
-/** The sole approved integration: an accepted printed frame may seed CenteringAssist. */
+/** An accepted physical outline may seed the first editable GeometryAssist draft. */
+export function speedsterColorPhysicalDraft(
+  color: SpeedsterColorGeometryProposal,
+  unchangedManualDraft: SpeedsterQuad,
+): SpeedsterQuad {
+  return color.mode === "PHYSICAL_OUTER" && color.outcome === "ACCEPTED" && color.proposal
+    ? color.proposal
+    : unchangedManualDraft;
+}
+
+/** An accepted printed frame may seed the first editable CenteringAssist draft. */
 export function speedsterColorCenteringDraft(
   color: SpeedsterColorGeometryProposal,
   unchangedManualDraft: SpeedsterQuad,
