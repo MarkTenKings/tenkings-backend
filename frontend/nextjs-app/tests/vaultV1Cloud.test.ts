@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { NextApiRequest } from "next";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   SIMULATOR_DOOR_MAPPING,
@@ -314,12 +314,18 @@ test("support and sales DTOs never expose provider evidence or provider identifi
 test("cloud handlers statically preserve exact-digest cache identity, atomic projection and lifecycle controls", () => {
   const apiRoot = join(process.cwd(), "pages/api/vault/v1");
   const configSource = readFileSync(join(apiRoot, "machines/[machineId]/config.ts"), "utf8");
-  const eventSource = readFileSync(join(apiRoot, "machines/[machineId]/events:batch.ts"), "utf8");
+  const actionSource = readFileSync(join(apiRoot, "machines/[machineId]/[...action].ts"), "utf8");
+  const eventSource = readFileSync(join(process.cwd(), "lib/server/vaultV1/machineActions.ts"), "utf8");
   const enrollmentSource = readFileSync(join(apiRoot, "machines/enroll/complete.ts"), "utf8");
   const adminSource = readFileSync(join(apiRoot, "admin/[...path].ts"), "utf8");
+  assert.equal(existsSync(join(apiRoot, "machines/[machineId]/events:batch.ts")), false);
+  assert.equal(existsSync(join(apiRoot, "machines/[machineId]/staff-grants:pull.ts")), false);
+  assert.match(actionSource, /handleVaultMachineAction/);
+  assert.match(eventSource, /action === "events:batch"/);
+  assert.match(eventSource, /action === "staff-grants:pull"/);
   assert.doesNotMatch(configSource, /knownVersion\s*===\s*config\.version/);
   assert.match(configSource, /knownDigest\s*===\s*config\.digest/);
-  assert.match(eventSource, /projectVaultMachineEvent\(tx, typedEvent\)[\s\S]*lastEventSequence/);
+  assert.match(eventSource, /projectEvent\(tx, typedEvent\)[\s\S]*lastEventSequence/);
   assert.match(eventSource, /CONTIGUOUS_PREFIX_BLOCKED/);
   assert.match(enrollmentSource, /MACHINE_ENROLLMENT_DISABLED/);
   assert.match(enrollmentSource, /writeVaultAdminAudit\(\{ req, tx/);

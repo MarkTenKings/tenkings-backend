@@ -56,8 +56,8 @@ export function requireVaultContract(req: NextApiRequest): void {
 
 export function requireVaultJson(req: NextApiRequest, maximumBytes: number): void {
   requireVaultContract(req);
-  const contentType = String(req.headers["content-type"] ?? "").toLowerCase();
-  if (!contentType.startsWith("application/json")) {
+  const contentType = String(req.headers["content-type"] ?? "").split(";", 1)[0]?.trim().toLowerCase();
+  if (contentType !== "application/json") {
     throw new VaultApiError(415, "UNSUPPORTED_CONTENT_TYPE", "Content-Type must be application/json");
   }
   const length = Number(req.headers["content-length"] ?? 0);

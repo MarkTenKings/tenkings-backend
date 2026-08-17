@@ -38,7 +38,7 @@ All enrolled-machine routes require the unique machine credential. The server ha
 - `GET /api/vault/v1/machines/{machineId}/config`
 - `POST /api/vault/v1/machines/{machineId}/events:batch`
 - `POST /api/vault/v1/machines/{machineId}/heartbeat`
-- `POST /api/vault/v1/machines/{machineId}/staff-grants:pull`
+- `GET /api/vault/v1/machines/{machineId}/staff-grants:pull?afterGrantVersion={version}`
 
 Event batches are bounded and strictly typed by event name. Ingest owns a machine-scoped lock, accepts only the next contiguous sequence prefix, and stops at the first gap or conflict. A duplicate event with the same digest is success; the same ID with a different digest is quarantined and rejected. Partial acceptance does not advance or delete rejected local evidence. Accepted facts project transactionally into cloud sales/items, commands, restocks, certification evidence, support cases, and fleet health without becoming physical authority.
 

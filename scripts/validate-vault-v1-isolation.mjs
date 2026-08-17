@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 
 const root = resolve(import.meta.dirname, "..");
 const sourceRootEntries = [
@@ -235,6 +236,68 @@ function scanCloudHardwareAuthority(text, file) {
   return findings;
 }
 
+const windowsReservedBasenames = /^(?:CON|PRN|AUX|NUL|CLOCK\$|CONIN\$|CONOUT\$|COM[1-9¹²³]|LPT[1-9¹²³])$/i;
+const windowsInvalidCharacters = /[<>:"\\|?*\u0000-\u001f]/u;
+
+function scanWindowsCheckoutPaths(paths) {
+  const findings = [];
+  const caseInsensitivePaths = new Map();
+  for (const file of paths) {
+    const components = file.split("/");
+    for (const component of components) {
+      if (!component || component === "." || component === "..") {
+        addFinding(findings, { code: "WINDOWS_INVALID_PATH_COMPONENT", file, line: 1 });
+        continue;
+      }
+      if (windowsInvalidCharacters.test(component)) {
+        addFinding(findings, { code: "WINDOWS_INVALID_PATH_CHARACTER", file, line: 1 });
+      }
+      if (/[. ]$/.test(component)) {
+        addFinding(findings, { code: "WINDOWS_TRAILING_PERIOD_OR_SPACE", file, line: 1 });
+      }
+      const basenameWithoutExtension = (component.split(".", 1)[0] ?? component).replace(/[. ]+$/u, "");
+      if (windowsReservedBasenames.test(basenameWithoutExtension)) {
+        addFinding(findings, { code: "WINDOWS_RESERVED_FILENAME", file, line: 1 });
+      }
+      if (component.length > 255) {
+        addFinding(findings, { code: "WINDOWS_PATH_COMPONENT_TOO_LONG", file, line: 1 });
+      }
+    }
+    if (file.length > 240) {
+      addFinding(findings, { code: "WINDOWS_RELATIVE_PATH_TOO_LONG", file, line: 1 });
+    }
+    const windowsIdentity = file.toLocaleLowerCase("en-US");
+    const prior = caseInsensitivePaths.get(windowsIdentity);
+    if (prior && prior !== file) {
+      addFinding(findings, { code: "WINDOWS_CASE_INSENSITIVE_PATH_COLLISION", file: prior, line: 1 });
+      addFinding(findings, { code: "WINDOWS_CASE_INSENSITIVE_PATH_COLLISION", file, line: 1 });
+    } else {
+      caseInsensitivePaths.set(windowsIdentity, file);
+    }
+  }
+  return findings;
+}
+
+function currentCheckoutPaths() {
+  const result = spawnSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ls-files failed: ${String(result.stderr).trim()}`);
+  }
+  return result.stdout.split("\0").filter((file) => {
+    if (!file) return false;
+    try {
+      lstatSync(join(root, file));
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function runSelfTests() {
   const forbiddenModels = fallbackForbiddenModels;
   let assertions = 0;
@@ -268,6 +331,19 @@ function runSelfTests() {
   expectCode("cloud hardware call", scanCloudHardwareAuthority(`await controller.sendOpenCommand(command);`, "route.ts"), "CLOUD_HARDWARE_AUTHORITY");
   expectCode("cloud hardware endpoint", scanCloudHardwareAuthority(`await fetch("http://machine/api/open-door");`, "route.ts"), "CLOUD_HARDWARE_AUTHORITY");
   expectClean("safe cloud door planning", scanCloudHardwareAuthority(`const boundary = "NO REMOTE UNLOCK"; await prisma.vaultDoor.update({ data: { plannedProductId } });`, "route.ts"));
+  expectCode("Windows-invalid colon", scanWindowsCheckoutPaths(["frontend/pages/events:batch.ts"]), "WINDOWS_INVALID_PATH_CHARACTER");
+  expectCode("Windows-invalid control character", scanWindowsCheckoutPaths(["frontend/pages/bad\u0001name.ts"]), "WINDOWS_INVALID_PATH_CHARACTER");
+  expectCode("Windows trailing period", scanWindowsCheckoutPaths(["frontend/pages/route."]), "WINDOWS_TRAILING_PERIOD_OR_SPACE");
+  expectCode("Windows trailing space", scanWindowsCheckoutPaths(["frontend/pages/route.ts "]), "WINDOWS_TRAILING_PERIOD_OR_SPACE");
+  expectCode("Windows reserved basename", scanWindowsCheckoutPaths(["frontend/pages/CON.ts"]), "WINDOWS_RESERVED_FILENAME");
+  expectCode("Windows reserved numbered device", scanWindowsCheckoutPaths(["frontend/pages/lpt9.route.ts"]), "WINDOWS_RESERVED_FILENAME");
+  expectCode("Windows overlong component", scanWindowsCheckoutPaths([`frontend/${"x".repeat(256)}.ts`]), "WINDOWS_PATH_COMPONENT_TOO_LONG");
+  expectCode("Windows overlong relative path", scanWindowsCheckoutPaths([`${"nested/".repeat(35)}route.ts`]), "WINDOWS_RELATIVE_PATH_TOO_LONG");
+  expectCode("Windows case-insensitive collision", scanWindowsCheckoutPaths(["frontend/Vault.ts", "frontend/vault.ts"]), "WINDOWS_CASE_INSENSITIVE_PATH_COLLISION");
+  expectClean("Windows-safe catch-all routes", scanWindowsCheckoutPaths([
+    "frontend/nextjs-app/pages/api/vault/v1/machines/[machineId]/[...action].ts",
+    "frontend/nextjs-app/lib/server/vaultV1/machineActions.ts",
+  ]));
   assertions += 1;
   if (!sourceRootEntries.includes("frontend/nextjs-app/pages/admin/vault.tsx")) throw new Error("admin Vault TSX scan root is missing");
   return assertions;
@@ -283,6 +359,13 @@ if (process.argv.includes("--self-test")) {
   }
 } else {
   const findings = [];
+  let checkoutPaths = [];
+  try {
+    checkoutPaths = currentCheckoutPaths();
+    for (const finding of scanWindowsCheckoutPaths(checkoutPaths)) addFinding(findings, finding);
+  } catch {
+    addFinding(findings, { code: "WINDOWS_PATH_ENUMERATION_FAILED", file: ".", line: 1 });
+  }
   const schemaText = existsSync(prismaSchemaPath) ? readFileSync(prismaSchemaPath, "utf8") : "";
   const forbiddenModels = forbiddenModelsFromSchema(schemaText);
   for (const path of sourceRoots.flatMap(filesAt)) {
@@ -322,6 +405,7 @@ if (process.argv.includes("--self-test")) {
   } else {
     process.stdout.write(`${JSON.stringify({
       ok: true,
+      windowsCheckoutPathsValidated: checkoutPaths.length,
       scannedRoots: sourceRootEntries,
       prismaSchema: relative(root, prismaSchemaPath),
       vaultMigrations: vaultMigrationPaths.map((path) => relative(root, path)),
