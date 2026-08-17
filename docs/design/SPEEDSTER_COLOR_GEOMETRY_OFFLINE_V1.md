@@ -27,6 +27,7 @@ Targeted recapture is local-upload-only. Browser iPhone activation and polling a
 - Offline suggested defaults are Front black and Back white. They are never recorded as operator selections until the operator explicitly confirms them. Magenta is the high-chroma fallback when both neutral mats are weak.
 - Use stable diffuse lighting and keep the entire card separated from the photo frame on all four sides.
 - A selected-mat/perimeter mismatch returns `ABSTAIN`.
+- A selected-mat physical proposal must prove photographed-mat ownership outside and non-mat card material inside all four edges. A color-owned rectangle below `0.50` source-frame area returns `ABSTAIN` because a card border matching the mat can otherwise make an inner printed rectangle appear to be the outer cut. This is a proposer-only, fail-closed offline capture-envelope estimate; small or strongly angled captures fall back to manual handles.
 - A dark edge on a black mat returns `ABSTAIN` with `Switch to WHITE`, even when chroma creates a large total Delta-E. This conservative guard stays until owner-approved live calibration exists.
 
 ## Deterministic evidence policy
@@ -37,7 +38,7 @@ Policy provenance: `OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED`.
 
 Offline-estimate floors:
 
-- `PHYSICAL_OUTER`: Delta-E 18 and 0.70 minimum support on every side.
+- `PHYSICAL_OUTER`: Delta-E 18, 0.70 minimum selected-mat-outside/card-inside support on every side, and `0.50` minimum source-frame coverage.
 - `PRINTED_FRAME`: Delta-E 12 and 0.55 minimum support on every side.
 
 No result is `ACCEPTED` unless all four sides meet the relevant floor and no ambiguity guard fires. Outcomes are exactly:
