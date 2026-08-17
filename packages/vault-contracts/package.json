@@ -1,0 +1,18 @@
+{
+  "name": "@tenkings/vault-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "pnpm run build && node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.12",
+    "typescript": "5.5.4"
+  }
+}
