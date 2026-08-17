@@ -316,7 +316,7 @@ test("legacy Pokémon layout choice is enabled before first save, then irreversi
     cardProfile: "POKEMON",
     identity: {
       cardName: "Squirtle",
-      year: "2023",
+      year: "2023 POKEMON",
       productSet: "MEW EN",
       parallel: "REVERSE HOLO",
       cardNumber: "007/165",
@@ -328,10 +328,16 @@ test("legacy Pokémon layout choice is enabled before first save, then irreversi
     assert.ok(selector);
     assert.equal(selector.disabled, false);
     assert.equal(selector.value, "");
+    const familyYear = harness.container.querySelector<HTMLInputElement>('[aria-label="Canonical Family map year"]');
+    assert.ok(familyYear);
+    assert.equal(familyYear.value, "2023 POKEMON");
+    assert.match(harness.container.textContent ?? "", /immutable exact source year remains 2023 POKEMON/i);
     await act(async () => {
       Simulate.change(selector, { target: { value: "TRAINER" } } as unknown as Parameters<typeof Simulate.change>[1]);
+      Simulate.change(familyYear, { target: { value: "2023" } } as unknown as Parameters<typeof Simulate.change>[1]);
     });
     assert.equal(selector.value, "TRAINER");
+    assert.equal(familyYear.value, "2023");
     const save = buttonByText(harness.container, "SAVE FAMILY + EXACT MAPS");
     assert.ok(save);
     assert.equal(save.disabled, false);
@@ -343,6 +349,7 @@ test("legacy Pokémon layout choice is enabled before first save, then irreversi
     assert.match(harness.container.textContent ?? "", /committed by this successful atomic save/);
     const body = JSON.parse(String(harness.requests[0].init?.body));
     assert.equal(body.familyLayoutType, "TRAINER");
+    assert.equal(body.familyYear, "2023");
   } finally {
     await harness.cleanup();
   }

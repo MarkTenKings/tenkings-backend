@@ -980,6 +980,7 @@ test("legacy completed Pokemon source can author append-only V2 family provenanc
     source,
     authorAdminId: "admin-1",
     familyLayoutType: "POKEMON",
+    familyYear: "2023",
     front: trainingSide,
     back: trainingSide,
     hashEvidence: async (storageKey) => sha(storageKey),
@@ -992,10 +993,14 @@ test("legacy completed Pokemon source can author append-only V2 family provenanc
     keyVersion: "v2",
     category: "POKEMON",
     layoutType: "POKEMON",
-    year: "2023 pokemon",
+    year: "2023",
     productSet: "mew en",
     parallel: "reverse holo",
   });
+  assert.equal(
+    saved.family.revision.matchKeyHash,
+    "8407aec412942be480a347b3452da0785e10a69ee2961b4d2b47ac2b00505d61",
+  );
   assert.deepEqual(saved.family.revision.displayIdentity, legacyPokemonIdentity);
   assert.deepEqual(saved.exact.revision.matchKey, speedsterCardTypeMapKey("POKEMON", legacyPokemonIdentity));
   assert.equal(saved.family.revision.version, 1);
@@ -1021,6 +1026,21 @@ test("legacy completed Pokemon authoring abstains until a human layout choice is
   assert.equal(harness.state().transactionCount, 0);
 });
 
+test("Pokemon authoring requires an explicit Family year and never derives it from the exact source year", async () => {
+  const source = parseSpeedsterMapSourceSession(pokemonCaptureRecord("COMPLETED"));
+  const harness = dualMapTransaction();
+  await assert.rejects(saveSpeedsterFamilyAndExactMapRevisions({
+    source,
+    authorAdminId: "admin-1",
+    familyLayoutType: "POKEMON",
+    front: trainingSide,
+    back: trainingSide,
+    hashEvidence: async (storageKey) => sha(storageKey),
+    transaction: harness.transaction,
+  }), /explicit canonical Pokémon Family year/);
+  assert.equal(harness.state().transactionCount, 0);
+});
+
 test("concurrent opposite legacy layout selections produce one durable winner with no partial losing write", async () => {
   const sourceRecord = pokemonCaptureRecord("COMPLETED");
   const source = parseSpeedsterMapSourceSession(sourceRecord);
@@ -1030,6 +1050,7 @@ test("concurrent opposite legacy layout selections produce one durable winner wi
     source,
     authorAdminId: "admin-1",
     familyLayoutType,
+    familyYear: "2023",
     front: trainingSide,
     back: trainingSide,
     async hashEvidence(storageKey) {
@@ -1060,6 +1081,7 @@ test("completed source identity drift is rejected under row lock before authorit
     source,
     authorAdminId: "admin-1",
     familyLayoutType: "POKEMON",
+    familyYear: "2023",
     front: trainingSide,
     back: trainingSide,
     hashEvidence: async (storageKey) => sha(storageKey),
@@ -2370,6 +2392,44 @@ test("map API rejects creation-time scope choice and EFFECTIVE source editing", 
   } as unknown as NextApiRequest, rejected.res);
   assert.equal(rejected.state.status, 400);
   assert.match(JSON.stringify(rejected.state.body), /read-only/);
+});
+
+test("map API requires and forwards explicit Pokémon Family year authority", async () => {
+  const savedInputs: Array<{ familyLayoutType?: string; familyYear?: string }> = [];
+  const handler = createSpeedsterCardTypeMapHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findSourceSession() { return pokemonCaptureRecord("COMPLETED"); },
+    async loadActiveMap() { return null; },
+    async listRevisions() { return []; },
+    async saveDualRevisions(input) {
+      savedInputs.push(input);
+      throw new SpeedsterMapIntegrityError("stop after authority capture", { stage: "VALIDATION" });
+    },
+    async restoreRevision() { throw new Error("not reached"); },
+    async sourceClientState() { throw new Error("not reached"); },
+  });
+  const missing = response();
+  await handler(request("POST", "save", {
+    sessionId: SESSION_ID,
+    familyLayoutType: "POKEMON",
+    front: trainingSide,
+    back: trainingSide,
+  }), missing.res);
+  assert.equal(missing.state.status, 400);
+  assert.equal(savedInputs.length, 0);
+  assert.match(JSON.stringify(missing.state.body), /canonical Family year/);
+
+  const explicit = response();
+  await handler(request("POST", "save", {
+    sessionId: SESSION_ID,
+    familyLayoutType: "POKEMON",
+    familyYear: " 2023 ",
+    front: trainingSide,
+    back: trainingSide,
+  }), explicit.res);
+  assert.equal(explicit.state.status, 409);
+  assert.equal(savedInputs[0]?.familyLayoutType, "POKEMON");
+  assert.equal(savedInputs[0]?.familyYear, "2023");
 });
 
 test("map API returns both revision identities and actionable bounded save diagnostics", async () => {

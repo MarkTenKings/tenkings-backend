@@ -58,7 +58,10 @@ const validQuad = [
   { x: 0.1, y: 0.9 },
 ] as const;
 
-const colorProposal = (mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", proposal: typeof validQuad | null = validQuad) => ({
+const colorProposal = (
+  mode: "PHYSICAL_OUTER" | "PRINTED_FRAME",
+  proposal: GeometryResponse["colorGeometry"]["proposal"] = validQuad,
+) => ({
   version: "speedster-color-geometry-proposal-v1" as const,
   engineVersion: "speedster-color-geometry-v1" as const,
   authority: "PROPOSER_ONLY" as const,
@@ -1135,6 +1138,35 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
     await harness.cleanup();
     Date.now = originalDateNow;
     console.info = originalConsoleInfo;
+  }
+});
+
+test("accepted physical Color geometry seeds the first editable physical quad before human confirmation", async () => {
+  const physicalColorQuad = [
+    { x: 0.15, y: 0.2 },
+    { x: 0.85, y: 0.2 },
+    { x: 0.85, y: 0.8 },
+    { x: 0.15, y: 0.8 },
+  ] as const;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({
+      ...geometryResponse(validQuad),
+      colorGeometry: colorProposal("PHYSICAL_OUTER", physicalColorQuad),
+    }),
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Accepted physical Color proposal did not reach editable Front geometry",
+    );
+    const topLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
+    assert.equal(topLeft?.querySelector("circle")?.getAttribute("cx"), "150");
+    assert.equal(topLeft?.querySelector("circle")?.getAttribute("cy"), "200");
+    assert.match(harness.container.textContent ?? "", /COLOR PHYSICAL OUTER · ACCEPTED.*Draft requires human confirmation/is);
+    assert.ok(buttonByText(harness.container, "Continue"), "Human confirmation must remain mandatory");
+  } finally {
+    await harness.cleanup();
   }
 });
 
