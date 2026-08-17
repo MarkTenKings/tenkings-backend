@@ -56,6 +56,14 @@ export const VaultHeartbeatSchema = z.object({
   outboxPendingCount: z.number().int().nonnegative(),
   serviceLocked: z.boolean(),
   observedAt: z.string().datetime(),
+}).superRefine((heartbeat, context) => {
+  if ((heartbeat.configVersion === null) !== (heartbeat.configDigest === null)) {
+    context.addIssue({
+      code: "custom",
+      message: "configVersion and configDigest must both be null or both be present",
+      path: [heartbeat.configVersion === null ? "configVersion" : "configDigest"],
+    });
+  }
 });
 
 export const VaultStaffGrantSchema = z.object({

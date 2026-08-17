@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { VaultDoorIdSchema } from "./doors";
+import { VAULT_ALLOWED_PRICE_CENTS, type VaultPermission, type VaultRole, type VaultSaleState } from "./domain-core";
+
+export * from "./domain-core";
 
 export const VaultModeSchema = z.enum(["PRODUCTION", "CERTIFICATION"]);
-export type VaultMode = z.infer<typeof VaultModeSchema>;
 export const VaultRoleSchema = z.enum(["RESTOCKER", "TECHNICIAN", "ADMIN"]);
-export type VaultRole = z.infer<typeof VaultRoleSchema>;
 export const VaultProductCategorySchema = z.enum(["SPORTS", "POKEMON"]);
-export const VAULT_ALLOWED_PRICE_CENTS = [2500, 5000, 10000, 25000] as const;
 
 export const VaultDoorStateSchema = z.enum([
   "EMPTY",
@@ -17,7 +17,6 @@ export const VaultDoorStateSchema = z.enum([
   "DISABLED",
   "EXCEPTION",
 ]);
-export type VaultDoorState = z.infer<typeof VaultDoorStateSchema>;
 
 export const VaultPaymentStateSchema = z.enum([
   "NOT_REQUESTED",
@@ -31,7 +30,6 @@ export const VaultPaymentStateSchema = z.enum([
   "SETTLED",
   "RECONCILIATION_REQUIRED",
 ]);
-export type VaultPaymentState = z.infer<typeof VaultPaymentStateSchema>;
 
 export const VaultCommandStateSchema = z.enum([
   "NOT_COMMITTED",
@@ -42,7 +40,6 @@ export const VaultCommandStateSchema = z.enum([
   "TIMEOUT",
   "OUTPUT_RELEASED",
 ]);
-export type VaultCommandState = z.infer<typeof VaultCommandStateSchema>;
 
 export const VaultSaleStateSchema = z.enum([
   "CART_ACTIVE",
@@ -63,10 +60,8 @@ export const VaultSaleStateSchema = z.enum([
   "RECONCILIATION_REQUIRED",
   "SUPPORT_REQUIRED",
 ]);
-export type VaultSaleState = z.infer<typeof VaultSaleStateSchema>;
 
 export const VaultRestockItemStateSchema = z.enum(["UNREVIEWED", "FILLED", "LEFT_EMPTY", "EXCEPTION"]);
-export type VaultRestockItemState = z.infer<typeof VaultRestockItemStateSchema>;
 export const VaultHealthStateSchema = z.enum([
   "READY",
   "DEGRADED_CLOUD",
@@ -80,7 +75,6 @@ export const VaultHealthStateSchema = z.enum([
   "SERVICE_LOCKED",
   "RECOVERY_REQUIRED",
 ]);
-export type VaultHealthState = z.infer<typeof VaultHealthStateSchema>;
 
 export const VaultPublicStateSchema = z.enum([
   "BOOTING", "UPDATING", "NO_VALID_CACHED_CONFIG", "CLOSED", "MAINTENANCE", "ATTRACT",
@@ -121,17 +115,6 @@ export const VaultPermissionSchema = z.enum([
   "SUPPORT_CONFIG_MANAGE", "DOOR_PLAN_MANAGE", "STAFF_MANAGE", "FINANCIAL_RESOLVE",
   "ENROLLMENT_MANAGE", "CONFIG_PUBLISH",
 ]);
-export type VaultPermission = z.infer<typeof VaultPermissionSchema>;
-
-const ROLE_PERMISSIONS: Record<VaultRole, ReadonlySet<VaultPermission>> = {
-  RESTOCKER: new Set(["RESTOCK_RUN"]),
-  TECHNICIAN: new Set(["RESTOCK_RUN", "SERVICE_LOCK", "DIAGNOSTICS_VIEW", "DOOR_TEST", "SOFTWARE_RECOVERY", "CERTIFICATION_COLLECT", "CERTIFICATION_APPROVE"]),
-  ADMIN: new Set(VaultPermissionSchema.options),
-};
-
-export function roleMay(role: VaultRole, permission: VaultPermission): boolean {
-  return ROLE_PERMISSIONS[role].has(permission);
-}
 
 export const VaultSaleItemSnapshotSchema = z.object({
   lineId: z.string().uuid(),

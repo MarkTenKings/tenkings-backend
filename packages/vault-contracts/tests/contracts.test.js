@@ -48,8 +48,79 @@ test("config digest and Ed25519 verification use canonical payload", () => {
   assert.equal(vault.verifySignedConfig(config, publicKey.export({ type: "spki", format: "pem" })), false);
 });
 
-test("redaction removes nested credentials and payment fields", () => {
-  assert.deepEqual(vault.redactVaultValue({ ok: 1, nested: { bearerToken: "abc", cvv: "123" } }), { ok: 1, nested: { bearerToken: "[REDACTED]", cvv: "[REDACTED]" } });
+test("redaction removes credentials, verifiers, cookies, sessions and bank-number-like fields", () => {
+  const input = {
+    ok: 1,
+    accountStatus: "active",
+    companyName: "Ten Kings",
+    nested: {
+      bearerToken: "bearer-value",
+      cvv: "123",
+      verifierHash: "derived-verifier",
+      pin_verifier: "pin-verifier",
+      cookie: "vault_session=secret",
+      setCookie: "vault_session=secret; HttpOnly",
+      providerSessionId: "provider-session-secret",
+      session_identifier: "local-session-secret",
+      restockSessionId: "00000000-0000-4000-8000-000000000030",
+      certificationSessionId: "00000000-0000-4000-8000-000000000031",
+      bankAccount: "000123456789",
+      accountNumberLast4: "6789",
+      routing_number: "110000000",
+      iban: "GB82WEST12345698765432",
+      cardNumber: "4111111111111111",
+      cardholderName: "PRIVATE CUSTOMER",
+    },
+  };
+  assert.deepEqual(vault.redactVaultValue(input), {
+    ok: 1,
+    accountStatus: "active",
+    companyName: "Ten Kings",
+    nested: {
+      bearerToken: "[REDACTED]",
+      cvv: "[REDACTED]",
+      verifierHash: "[REDACTED]",
+      pin_verifier: "[REDACTED]",
+      cookie: "[REDACTED]",
+      setCookie: "[REDACTED]",
+      providerSessionId: "[REDACTED]",
+      session_identifier: "[REDACTED]",
+      restockSessionId: "00000000-0000-4000-8000-000000000030",
+      certificationSessionId: "00000000-0000-4000-8000-000000000031",
+      bankAccount: "[REDACTED]",
+      accountNumberLast4: "[REDACTED]",
+      routing_number: "[REDACTED]",
+      iban: "[REDACTED]",
+      cardNumber: "[REDACTED]",
+      cardholderName: "[REDACTED]",
+    },
+  });
+  assert.equal(input.nested.verifierHash, "derived-verifier");
+});
+
+test("redaction terminates on cycles/depth and never serializes opaque object values", () => {
+  const circular = { label: "safe" };
+  circular.self = circular;
+  circular.items = [circular, { sessionId: "nested-secret" }];
+  const redactedCircular = vault.redactVaultValue(circular);
+  assert.equal(redactedCircular.label, "safe");
+  assert.equal(redactedCircular.self, "[REDACTED]");
+  assert.deepEqual(redactedCircular.items, ["[REDACTED]", { sessionId: "[REDACTED]" }]);
+
+  const deep = { level: 0 };
+  let cursor = deep;
+  for (let level = 1; level <= 20; level += 1) {
+    cursor.next = { level, value: level === 20 ? "must-not-escape" : "safe" };
+    cursor = cursor.next;
+  }
+  const serialized = JSON.stringify(vault.redactVaultValue(deep));
+  assert.doesNotMatch(serialized, /must-not-escape/);
+  assert.match(serialized, /\[REDACTED\]/);
+  assert.deepEqual(vault.redactVaultValue({ opaque: new Map([["secret", "must-not-escape"]]), date: new Date(0), callback: () => "must-not-escape" }), {
+    opaque: "[REDACTED]",
+    date: "[REDACTED]",
+    callback: "[REDACTED]",
+  });
 });
 
 test("certification scheduler deterministically selects the least-tested door", () => {
