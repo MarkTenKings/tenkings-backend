@@ -264,7 +264,18 @@ class SpeedsterGeometryTest(unittest.TestCase):
         self.assertEqual(len(views), 3)
         self.assertTrue(all(view.shape[:2] == (TARGET_HEIGHT, TARGET_WIDTH) for view in views))
 
-    def test_nonaccepted_color_outer_preserves_the_legacy_geometry_proposal(self):
+    def test_nonaccepted_color_outer_fails_closed_without_legacy_inner_contour(self):
+        image = np.zeros((900, 700, 3), dtype=np.uint8)
+        with patch("app.load_image", return_value=image), patch(
+            "app.detect_card_quad"
+        ) as legacy_detector:
+            result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
+
+        self.assertEqual(result["colorGeometry"]["outcome"], "INSUFFICIENT_EVIDENCE")
+        self.assertIsNone(result["corners"])
+        legacy_detector.assert_not_called()
+
+    def test_no_mat_rolling_compatibility_preserves_legacy_geometry_proposal(self):
         image = np.zeros((900, 700, 3), dtype=np.uint8)
         legacy = np.array(
             [[100, 100], [600, 100], [600, 800], [100, 800]], dtype=np.float32
@@ -272,23 +283,20 @@ class SpeedsterGeometryTest(unittest.TestCase):
         with patch("app.load_image", return_value=image), patch(
             "app.detect_card_quad", return_value=legacy
         ) as legacy_detector:
-            result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
+            result = geometry(GeometryRequest(imageBase64="fixture"))
 
-        self.assertEqual(result["colorGeometry"]["outcome"], "INSUFFICIENT_EVIDENCE")
+        self.assertIsNone(result["colorGeometry"])
         self.assertEqual(
             [(point.x, point.y) for point in result["corners"]],
             [(100 / 700, 100 / 900), (600 / 700, 100 / 900), (600 / 700, 800 / 900), (100 / 700, 800 / 900)],
         )
         legacy_detector.assert_called_once_with(image)
 
-    def test_color_outer_exception_abstains_and_returns_exact_legacy_geometry(self):
+    def test_color_outer_exception_abstains_and_fails_closed_to_manual_geometry(self):
         image = np.zeros((900, 700, 3), dtype=np.uint8)
-        legacy = np.array(
-            [[101, 102], [603, 104], [605, 806], [107, 808]], dtype=np.float32
-        )
         with patch("app.load_image", return_value=image), patch(
             "app.propose_physical_outer", side_effect=RuntimeError("color-only fault")
-        ), patch("app.detect_card_quad", return_value=legacy) as legacy_detector:
+        ), patch("app.detect_card_quad") as legacy_detector:
             result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
 
         self.assertEqual(result["colorGeometry"]["outcome"], "ABSTAIN")
@@ -298,7 +306,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
             {
                 "code": "COLOR_ENGINE_ERROR",
                 "recommendedMat": None,
-                "message": "Color geometry could not evaluate this image. The unchanged legacy proposal remains active.",
+                "message": "Color geometry could not evaluate this image. Place the physical-card handles manually.",
             },
         )
         self.assertTrue(
@@ -309,11 +317,8 @@ class SpeedsterGeometryTest(unittest.TestCase):
                 for evidence in result["colorGeometry"]["sideEvidence"].values()
             )
         )
-        self.assertEqual(
-            [(point.x, point.y) for point in result["corners"]],
-            [(x / 700, y / 900) for x, y in legacy],
-        )
-        legacy_detector.assert_called_once_with(image)
+        self.assertIsNone(result["corners"])
+        legacy_detector.assert_not_called()
 
     def test_targeted_color_recovery_reads_only_and_never_uploads_prepared_artifacts(self):
         image = np.full((900, 700, 3), 30, dtype=np.uint8)

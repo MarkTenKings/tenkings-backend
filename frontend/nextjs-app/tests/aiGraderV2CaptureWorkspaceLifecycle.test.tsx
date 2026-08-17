@@ -1141,7 +1141,7 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
   }
 });
 
-test("accepted physical Color geometry seeds the first editable physical quad before human confirmation", async () => {
+test("API-compatible accepted physical Color geometry seeds the first editable physical quad before human confirmation", async () => {
   const physicalColorQuad = [
     { x: 0.15, y: 0.2 },
     { x: 0.85, y: 0.2 },
@@ -1149,10 +1149,7 @@ test("accepted physical Color geometry seeds the first editable physical quad be
     { x: 0.15, y: 0.8 },
   ] as const;
   const harness = await mountWorkspace({
-    proposeGeometry: async () => ({
-      ...geometryResponse(validQuad),
-      colorGeometry: colorProposal("PHYSICAL_OUTER", physicalColorQuad),
-    }),
+    proposeGeometry: async () => geometryResponse(physicalColorQuad),
   });
   try {
     await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
