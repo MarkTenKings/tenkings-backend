@@ -229,6 +229,160 @@ test("reload preserves an unresolved registration blocker for the same exact rev
   assert.equal((result.state.body as { authority: SpeedsterMapAuthorityEvent }).authority.status, "REGISTRATION_BLOCKED");
 });
 
+test("explicit human review persists after lookup or registration failure and preserves failure evidence", async () => {
+  for (const prior of [
+    {
+      attemptId: "attempt-lookup-failed",
+      recordedAt: "2026-08-18T11:00:00.000Z",
+      status: "LOOKUP_FAILED",
+      failureCode: "CARD_MAP_LOOKUP_TRANSPORT_FAILED",
+      message: "Lookup failed.",
+      revision: null,
+      registrationOperationId: null,
+      registrationFailures: [],
+    },
+    {
+      attemptId: "attempt-registration-blocked",
+      recordedAt: "2026-08-18T11:00:00.000Z",
+      status: "REGISTRATION_BLOCKED",
+      failureCode: "CARD_MAP_REGISTRATION_BLOCKED",
+      message: "Registration failed.",
+      revision: {
+        revisionId: REVISION_ID,
+        revisionHash: REVISION_HASH,
+        version: 7,
+        scope: "EXACT",
+        name: "Nick Bosa",
+      },
+      registrationOperationId: "operation-blocked",
+      registrationFailures: [{
+        side: "BACK",
+        source: "PROVIDER_GATEWAY",
+        code: "PROVIDER_GATEWAY_HTTP_502",
+        httpStatus: 502,
+      }],
+    },
+  ] satisfies SpeedsterMapAuthorityEvent[]) {
+    const harness = dependencies({
+      capture: {
+        mapAuthority: {
+          version: "speedster-map-authority-evidence-v1",
+          current: prior,
+          history: [prior],
+        },
+      },
+    });
+    const result = response();
+    await createSpeedsterMapAuthorityHandler(harness.deps)(request({
+      action: "CONTINUE_WITHOUT_MAP",
+      decisionId: "0d654ba6-1df3-47a0-9f30-8f0a4e719201",
+    }), result.res);
+    assert.equal(result.state.status, 200);
+    assert.equal(harness.persisted.length, 1);
+    assert.equal(harness.persisted[0].status, "HUMAN_REVIEW_WITHOUT_MAP");
+    assert.equal(harness.persisted[0].failureCode, prior.failureCode);
+    assert.deepEqual(harness.persisted[0].revision, prior.revision);
+    assert.deepEqual(harness.persisted[0].registrationFailures, prior.registrationFailures);
+    assert.equal(harness.persisted[0].operatorDecisionId, "0d654ba6-1df3-47a0-9f30-8f0a4e719201");
+    assert.equal((result.state.body as { map: { status: string } }).map.status, "MISSING");
+  }
+});
+
+test("human review cannot bypass integrity errors and reload does not undo an existing decision", async () => {
+  const integrity: SpeedsterMapAuthorityEvent = {
+    attemptId: "attempt-integrity",
+    recordedAt: "2026-08-18T11:00:00.000Z",
+    status: "INTEGRITY_ERROR",
+    failureCode: "CARD_MAP_INTEGRITY_FAILURE",
+    message: "Integrity failure.",
+    revision: null,
+    registrationOperationId: null,
+    registrationFailures: [],
+  };
+  const blocked = dependencies({
+    capture: { mapAuthority: { version: "speedster-map-authority-evidence-v1", current: integrity, history: [integrity] } },
+  });
+  const blockedResult = response();
+  await createSpeedsterMapAuthorityHandler(blocked.deps)(request({
+    action: "CONTINUE_WITHOUT_MAP",
+    decisionId: "0d654ba6-1df3-47a0-9f30-8f0a4e719202",
+  }), blockedResult.res);
+  assert.equal(blockedResult.state.status, 409);
+  assert.equal(blocked.persisted.length, 0);
+
+  const human: SpeedsterMapAuthorityEvent = {
+    ...integrity,
+    status: "HUMAN_REVIEW_WITHOUT_MAP",
+    operatorDecisionId: "0d654ba6-1df3-47a0-9f30-8f0a4e719203",
+  };
+  let lookups = 0;
+  const reload = dependencies({
+    capture: { mapAuthority: { version: "speedster-map-authority-evidence-v1", current: human, history: [integrity, human] } },
+    load: async () => { lookups += 1; return selectedMap(); },
+  });
+  const reloadResult = response();
+  await createSpeedsterMapAuthorityHandler(reload.deps)(request({ action: "RESOLVE_LOOKUP" }), reloadResult.res);
+  assert.equal(reloadResult.state.status, 200);
+  assert.equal(lookups, 0);
+  assert.equal(reload.persisted.length, 0);
+  assert.equal((reloadResult.state.body as { authority: SpeedsterMapAuthorityEvent }).authority.status, "HUMAN_REVIEW_WITHOUT_MAP");
+
+  const staleRegistrationResult = response();
+  await createSpeedsterMapAuthorityHandler(reload.deps)(request({
+    action: "BLOCK_REGISTRATION",
+    mapRevisionId: REVISION_ID,
+    mapRevisionHash: REVISION_HASH,
+    mapScope: "EXACT",
+    operationId: "stale-registration-operation",
+    failures: [{ side: "BACK", source: "PROVIDER_GATEWAY", code: "PROVIDER_GATEWAY_HTTP_502", httpStatus: 502 }],
+  }), staleRegistrationResult.res);
+  assert.equal(staleRegistrationResult.state.status, 409);
+  assert.equal(lookups, 0);
+  assert.equal(reload.persisted.length, 0, "a stale registration request cannot overwrite the operator decision");
+});
+
+test("human-review continuation retries are idempotent only for the exact operator decision", async () => {
+  const decisionId = "0d654ba6-1df3-47a0-9f30-8f0a4e719204";
+  const human: SpeedsterMapAuthorityEvent = {
+    attemptId: "attempt-human-review",
+    recordedAt: "2026-08-18T11:00:00.000Z",
+    status: "HUMAN_REVIEW_WITHOUT_MAP",
+    failureCode: "CARD_MAP_LOOKUP_TRANSPORT_FAILED",
+    message: "Human review was explicitly selected.",
+    revision: null,
+    registrationOperationId: null,
+    registrationFailures: [],
+    operatorDecisionId: decisionId,
+  };
+  const capture = {
+    mapAuthority: {
+      version: "speedster-map-authority-evidence-v1",
+      current: human,
+      history: [human],
+    },
+  };
+
+  const replay = dependencies({ capture });
+  const replayResult = response();
+  await createSpeedsterMapAuthorityHandler(replay.deps)(request({
+    action: "CONTINUE_WITHOUT_MAP",
+    decisionId,
+  }), replayResult.res);
+  assert.equal(replayResult.state.status, 200);
+  assert.equal(replay.persisted.length, 0);
+  assert.equal((replayResult.state.body as { authority: SpeedsterMapAuthorityEvent }).authority, human);
+  assert.equal((replayResult.state.body as { map: { status: string } }).map.status, "MISSING");
+
+  const conflicting = dependencies({ capture });
+  const conflictingResult = response();
+  await createSpeedsterMapAuthorityHandler(conflicting.deps)(request({
+    action: "CONTINUE_WITHOUT_MAP",
+    decisionId: "0d654ba6-1df3-47a0-9f30-8f0a4e719205",
+  }), conflictingResult.res);
+  assert.equal(conflictingResult.state.status, 409);
+  assert.equal(conflicting.persisted.length, 0);
+});
+
 test("Production persistence compare-and-swaps the exact draft revision before replacing capture JSON", () => {
   const route = readFileSync(
     fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/sessions/[sessionId]/map-authority.ts", import.meta.url)),
@@ -238,12 +392,14 @@ test("Production persistence compare-and-swaps the exact draft revision before r
   assert.match(route, /if \(updated\.count !== 1\) return null/);
 });
 
-test("AI Grader UI keeps reload lookup failures blocked and exposes only Retry", () => {
+test("AI Grader UI keeps failures visible and exposes a separate durable human-review decision", () => {
   const page = readFileSync(fileURLToPath(new URL("../pages/admin/ai-grader-v2.tsx", import.meta.url)), "utf8");
   const capture = readFileSync(fileURLToPath(new URL("../components/ai-grader-v2/CaptureWorkspace.tsx", import.meta.url)), "utf8");
   assert.match(page, /!mapAuthorityBlock && !committedCaptureRecovery/);
   assert.match(page, /RETRY CARD MAP AUTHORITY/);
   assert.match(page, /No photos, geometry, or mapless capture can begin while this blocker is active/);
-  assert.doesNotMatch(capture, /Continue without Card Map/);
+  assert.match(page, /CONTINUE WITHOUT CARD MAP · HUMAN REVIEW/);
+  assert.match(capture, /CONTINUE WITHOUT CARD MAP · HUMAN REVIEW/);
+  assert.match(capture, /CONTINUE_WITHOUT_MAP/);
   assert.doesNotMatch(capture, /resumeGeometryWithoutObsoleteMap/);
 });

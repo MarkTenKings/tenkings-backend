@@ -33,9 +33,12 @@ import {
   verifySpeedsterRegistrationLessonReferenceAuthority,
 } from "../../../../../lib/server/speedsterMapRegistrationLessons";
 import {
+  SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
   parseSpeedsterColorGeometryProposal,
   speedsterQuadsDiffer,
+  type SpeedsterColorGeometryEngineVersion,
   type SpeedsterColorGeometryMode,
+  type SpeedsterColorGeometryPolicyProvenance,
 } from "../../../../../lib/ai-grader-v2/color-geometry";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 import {
@@ -44,6 +47,7 @@ import {
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
 import {
   appendSpeedsterMapAuthorityEvidence,
+  speedsterMapAuthorityEvidenceFromCapture,
   type SpeedsterMapAuthorityEvent,
 } from "../../../../../lib/ai-grader-v2/map-authority";
 
@@ -67,6 +71,7 @@ type PersistedSession = {
   publicReportSlug?: string | null;
   workflowState?: string;
   reviewedDefects?: unknown;
+  updatedAt?: Date;
   [key: string]: unknown;
 };
 
@@ -85,8 +90,8 @@ type ColorGeometryEvidenceRow = Readonly<{
   mode: SpeedsterColorGeometryMode;
   matColor: "BLACK" | "WHITE" | "MAGENTA";
   outcome: "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
-  engineVersion: "speedster-color-geometry-v1";
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  engineVersion: SpeedsterColorGeometryEngineVersion;
+  policyProvenance: SpeedsterColorGeometryPolicyProvenance;
   sourceImageStorageKey: string;
   sourceImageSha256: string;
   proposal?: Prisma.InputJsonValue;
@@ -115,7 +120,7 @@ type MapBindingValidationResult = Pick<
 > & Readonly<{
   appliedMap?: SpeedsterAppliedMapRevision | null;
   selectedMap?: SpeedsterAppliedMapRevision | null;
-  mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+  mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
 }>;
 
 type MapBindingValidationDependencies = Readonly<{
@@ -157,6 +162,19 @@ export async function validateSpeedsterSubmittedMapBinding(
     identity: session.identity,
     capture,
   });
+  const authority = speedsterMapAuthorityEvidenceFromCapture(session.capture)?.current;
+  if (authority?.status === "HUMAN_REVIEW_WITHOUT_MAP") {
+    if (binding) {
+      throw new SpeedsterMapIntegrityError(
+        "This capture explicitly continued without a Card Map, but a map binding was submitted.",
+      );
+    }
+    return {
+      appliedMap: null,
+      selectedMap: null,
+      mapFailureCode: "MAP_AUTHORITY_HUMAN_REVIEW",
+    };
+  }
   let selectedMap: SpeedsterAppliedMapRevision | null;
   try {
     selectedMap = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
@@ -171,15 +189,13 @@ export async function validateSpeedsterSubmittedMapBinding(
   }
   if (!binding) {
     throw new SpeedsterMapIntegrityError(
-      "An eligible Card Map exists, but validated Front + Back registration was not submitted. Mapless capture is blocked.",
+      "An eligible Card Map exists, but validated Front + Back registration was not submitted. Retry registration or explicitly record human review without the map.",
     );
   }
   const revision = selectedMap.revision;
   if (revision.revisionId !== binding.revisionId) {
     throw new SpeedsterMapIntegrityError("Speedster map binding does not match the active revision.");
   }
-  // The loader has always supplied this field, but retaining the v1 default
-  // here keeps legacy/test callers from becoming a new capture blocker.
   const revisionFilterPolicyVersion = revision.filterPolicyVersion
     ?? SPEEDSTER_MAP_FILTER_POLICY_VERSION;
   if (revisionFilterPolicyVersion !== binding.filterPolicyVersion) {
@@ -293,6 +309,7 @@ type Dependencies = {
     createdByUserId: string,
     data: UpdateSessionData,
     colorGeometryEvidence: readonly ColorGeometryEvidenceRow[],
+    expectedUpdatedAt: Date | undefined,
   ) => Promise<PersistedSession | null>;
   hashEvidence?: typeof hashSpeedsterMapStorageEvidence;
   verifyColorGeometryReceipt?: typeof verifySpeedsterColorGeometryReceipt;
@@ -302,7 +319,7 @@ type Dependencies = {
   > & Readonly<{
     appliedMap?: SpeedsterAppliedMapRevision | null;
     selectedMap?: SpeedsterAppliedMapRevision | null;
-    mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+    mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
   }>>;
   recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
 };
@@ -310,9 +327,12 @@ type Dependencies = {
 const dependencies: Dependencies = {
   requireAdminSession,
   findSession: (id, createdByUserId) => prisma.aiGraderV2Session.findFirst({ where: { id, createdByUserId } }),
-  updateSession: (id, createdByUserId, data, colorGeometryEvidence) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+  updateSession: (id, createdByUserId, data, colorGeometryEvidence, expectedUpdatedAt) => prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    if (!(expectedUpdatedAt instanceof Date)) {
+      throw new Error("Speedster draft revision evidence is unavailable; capture was not changed.");
+    }
     const updated = await tx.aiGraderV2Session.updateMany({
-      where: { id, createdByUserId, workflowState: "DRAFT" },
+      where: { id, createdByUserId, workflowState: "DRAFT", updatedAt: expectedUpdatedAt },
       data,
     });
     if (updated.count !== 1) return null;
@@ -417,6 +437,9 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
         });
       } catch {
         throw new SpeedsterMapIntegrityError(`${side} ${mode} server proposal authority is invalid.`);
+      }
+      if (result.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
+        throw new SpeedsterMapIntegrityError(`${side} ${mode} came from the retired Color Geometry engine. Recover this preserved work through the current engine before saving.`);
       }
       const serverReceipt = typeof submitted.serverReceipt === "string" ? submitted.serverReceipt : "";
       if (!serverReceipt) {
@@ -534,26 +557,43 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       const finalMapAuthority: SpeedsterMapAuthorityEvent = {
         attemptId: randomUUID(),
         recordedAt: new Date().toISOString(),
-        status: appliedMap ? "APPLIED" : "NO_MAP",
-        failureCode: null,
+        status: appliedMap
+          ? "APPLIED"
+          : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+            ? "HUMAN_REVIEW_WITHOUT_MAP"
+            : "NO_MAP",
+        failureCode: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.failureCode ?? null
+          : null,
         message: appliedMap
           ? `Capture committed with validated Front + Back registration for immutable revision ${appliedMap.revision.revisionId}.`
-          : "Capture committed after the authoritative server lookup confirmed NO_MAP.",
+          : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+            ? "Capture committed through the operator's durable human-review-without-map decision; the original failure remains in authority history."
+            : "Capture committed after the authoritative server lookup confirmed NO_MAP.",
         revision: appliedMap ? {
           revisionId: appliedMap.revision.revisionId,
           revisionHash: appliedMap.revision.revisionHash,
           version: appliedMap.revision.version,
           scope: appliedMap.appliedScope,
           name: appliedMap.appliedMapName,
-        } : null,
-        registrationOperationId: null,
-        registrationFailures: [],
+        } : mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.revision ?? null
+          : null,
+        registrationOperationId: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.registrationOperationId ?? null
+          : null,
+        registrationFailures: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.registrationFailures ?? []
+          : [],
+        operatorDecisionId: mapFailureCode === "MAP_AUTHORITY_HUMAN_REVIEW"
+          ? speedsterMapAuthorityEvidenceFromCapture(existing.capture)?.current.operatorDecisionId ?? null
+          : null,
       };
       const session = await deps.updateSession(sessionId, admin.user.id, {
         workflowState: "CAPTURED",
         capture: canonicalSpeedsterCapture(canonicalSource, existing.capture, finalMapAuthority),
         ...mapBinding,
-      }, colorGeometryEvidence);
+      }, colorGeometryEvidence, existing.updatedAt);
       if (!session) {
         return res.status(409).json({ message: "Speedster capture state changed before it could be saved" });
       }

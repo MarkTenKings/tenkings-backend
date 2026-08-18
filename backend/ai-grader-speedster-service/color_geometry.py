@@ -1,7 +1,8 @@
 """Deterministic, proposer-only color geometry for Speedster capture.
 
-This module never accepts geometry on behalf of an operator.  It either supplies
-a four-side-supported draft or an honest non-accepted outcome with an advisory.
+This module never accepts geometry on behalf of an operator. It supplies the
+best complete four-corner draft the current engine found, or an honest
+non-accepted outcome when no complete outline exists.
 """
 
 from __future__ import annotations
@@ -15,8 +16,8 @@ import numpy as np
 from card_geometry import GRID_HEIGHT, GRID_WIDTH, PX_PER_MM, ranked_card_quads
 
 
-ENGINE_VERSION = "speedster-color-geometry-v1"
-POLICY_PROVENANCE = "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED"
+ENGINE_VERSION = "speedster-color-geometry-v2"
+POLICY_PROVENANCE = "OWNER_APPROVED_VISIBLE_OUTLINE_V2"
 AUTHORITY = "PROPOSER_ONLY"
 MODES = ("PHYSICAL_OUTER", "PRINTED_FRAME")
 OUTCOMES = ("ACCEPTED", "INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ABSTAIN")
@@ -29,12 +30,6 @@ PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO = 0.92
 PHYSICAL_SAMPLE_MAT_FRACTION = 0.60
 PHYSICAL_MAT_REFERENCE_MIN_DELTA_E = 8.0
 PHYSICAL_MAT_REFERENCE_MAX_DELTA_E = 18.0
-# The preserved 3024x4032 capture fixtures put reviewed physical outers at
-# 0.5771 (Back) and 0.6618 (Front) frame coverage. Their strongest known inner
-# runner is 0.4611, so the offline proposer must abstain below this conservative
-# capture-envelope floor instead of mistaking a matching-color card border for
-# selected mat outside an inner printed rectangle.
-PHYSICAL_MINIMUM_FRAME_COVERAGE = 0.50
 PRINTED_FRAME_CONTRAST_FLOOR_DELTA_E = 12.0
 PRINTED_FRAME_MINIMUM_SIDE_SUPPORT = 0.55
 PRINTED_FRAME_AMBIGUOUS_RUNNER_UP_RATIO = 0.90
@@ -66,14 +61,6 @@ def _empty_side() -> dict:
 
 def _advisory(code: str, recommended_mat: Optional[str], message: str) -> dict:
     return {"code": code, "recommendedMat": recommended_mat, "message": message}
-
-
-def _alternate_mat(mat_color: str) -> str:
-    return {
-        "BLACK": "WHITE",
-        "WHITE": "MAGENTA",
-        "MAGENTA": "WHITE",
-    }[mat_color]
 
 
 def _result(
@@ -126,7 +113,7 @@ def engine_error_result(mode: str, mat_color: str) -> dict:
     message = (
         "Color geometry could not evaluate this image. Place the physical-card handles manually."
         if mode == "PHYSICAL_OUTER"
-        else "Color geometry could not evaluate this image. The unchanged legacy proposal remains active."
+        else "Color geometry could not evaluate this image. Place the four printed-frame corners manually."
     )
     return _result(
         mode,
@@ -261,317 +248,53 @@ def _quad_side_evidence(
     return evidence
 
 
-def _quad_frame_coverage(image: np.ndarray, quad: np.ndarray) -> float:
-    frame_area = float(image.shape[0] * image.shape[1])
-    if frame_area <= 0:
-        return 0.0
-    return float(abs(cv2.contourArea(np.asarray(quad, dtype=np.float32))) / frame_area)
-
-
-def _physical_rejected_gates(
-    sides: dict,
-    frame_coverage: float,
-    mat_color: str,
-    *,
-    runner_up_ratio: Optional[float] = None,
-    ambiguous: bool = False,
-) -> list[dict]:
-    """Describe every current v1 acceptance gate missed by one candidate.
-
-    These diagnostics do not participate in candidate ranking or acceptance.
-    They only make an already-rejected candidate inspectable by the operator.
-    """
-    gates = []
-    side_metrics = (
-        (
-            "medianContrastDeltaE",
-            PHYSICAL_CONTRAST_FLOOR_DELTA_E,
-            "SIDE_MEDIAN_CONTRAST_BELOW_FLOOR",
-        ),
-        (
-            "supportFraction",
-            PHYSICAL_MINIMUM_SIDE_SUPPORT,
-            "SIDE_SUPPORT_BELOW_FLOOR",
-        ),
-        (
-            "outsideMatSupportFraction",
-            PHYSICAL_MINIMUM_SIDE_SUPPORT,
-            "SIDE_OUTSIDE_MAT_SUPPORT_BELOW_FLOOR",
-        ),
-        (
-            "insideNonMatSupportFraction",
-            PHYSICAL_MINIMUM_SIDE_SUPPORT,
-            "SIDE_INSIDE_NON_MAT_SUPPORT_BELOW_FLOOR",
-        ),
-    )
-    for side_name in SIDE_NAMES:
-        evidence = sides[side_name]
-        for metric, threshold, code in side_metrics:
-            observed = float(evidence.get(metric, 0.0))
-            if observed < threshold:
-                gates.append({
-                    "code": code,
-                    "side": side_name,
-                    "metric": metric,
-                    "observed": observed,
-                    "threshold": threshold,
-                    "comparison": "GTE",
-                })
-        if mat_color == "BLACK":
-            lightness = float(evidence.get("medianLightnessContrast", 0.0))
-            if lightness < 20.0:
-                gates.append({
-                    "code": "DARK_EDGE_LIGHTNESS_AMBIGUOUS",
-                    "side": side_name,
-                    "metric": "medianLightnessContrast",
-                    "observed": lightness,
-                    "threshold": 20.0,
-                    "comparison": "GTE",
-                })
-    if frame_coverage < PHYSICAL_MINIMUM_FRAME_COVERAGE:
-        gates.append({
-            "code": "FRAME_COVERAGE_BELOW_FLOOR",
-            "side": None,
-            "metric": "frameCoverage",
-            "observed": round(float(frame_coverage), 6),
-            "threshold": PHYSICAL_MINIMUM_FRAME_COVERAGE,
-            "comparison": "GTE",
-        })
-    if ambiguous and runner_up_ratio is not None:
-        gates.append({
-            "code": "RUNNER_UP_AMBIGUOUS",
-            "side": None,
-            "metric": "runnerUpScoreRatio",
-            "observed": float(runner_up_ratio),
-            "threshold": PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO,
-            "comparison": "LT",
-        })
-    return gates
-
-
-def _physical_diagnostic_candidate(
-    evaluated: list[tuple],
-    candidate: tuple,
-    mat_color: str,
-    *,
-    runner_up_ratio: Optional[float] = None,
-    ambiguous: bool = False,
-) -> dict:
-    score, quad, sides, frame_coverage = candidate
-    rank = next(index for index, item in enumerate(evaluated, start=1) if item is candidate)
-    return {
-        "version": "speedster-color-geometry-diagnostic-candidate-v1",
-        "authority": "HUMAN_DRAFT_ONLY",
-        "quad": quad,
-        "rank": rank,
-        "contourScore": round(float(score), 6),
-        "frameCoverage": round(float(frame_coverage), 6),
-        "rejectedGates": _physical_rejected_gates(
-            sides,
-            frame_coverage,
-            mat_color,
-            runner_up_ratio=runner_up_ratio,
-            ambiguous=ambiguous,
-        ),
-    }
-
-
 def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
     if mat_color not in MAT_COLORS:
         raise ValueError("matColor must be BLACK, WHITE, or MAGENTA")
-    mat_ownership, mat_support = _mat_ownership_mask(image, mat_color)
-    if mat_support < 0.55:
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            advisory=_advisory(
-                "VERIFY_SELECTED_MAT",
-                None,
-                f"Only {mat_support:.0%} of the photo perimeter supports the selected {mat_color} mat.",
-            ),
-        )
-
     candidates = ranked_card_quads(image, limit=4)
     if not candidates:
-        recommended = _alternate_mat(mat_color)
         return _result(
             "PHYSICAL_OUTER",
             mat_color,
             "INSUFFICIENT_EVIDENCE",
             advisory=_advisory(
-                "SWITCH_MAT",
-                recommended,
-                "No complete physical-card candidate has four usable sides. Switch mats or place the handles manually.",
+                "NO_PHYSICAL_OUTLINE",
+                None,
+                "The current outline detector found no complete four-corner outline. Place the four corners manually.",
             ),
         )
 
+    mat_ownership, _mat_support = _mat_ownership_mask(image, mat_color)
     contrast_lab = _cie_lab(cv2.GaussianBlur(image, (5, 5), 0))
     evaluated = [
         (
             score,
             quad,
             _quad_side_evidence(image, quad, mat_ownership, contrast_lab),
-            _quad_frame_coverage(image, quad),
         )
         for score, quad in candidates
     ]
-    color_owned = [
-        candidate
-        for candidate in evaluated
-        if all(
-            side["outsideMatSupportFraction"] >= PHYSICAL_MINIMUM_SIDE_SUPPORT
-            and side["insideNonMatSupportFraction"] >= PHYSICAL_MINIMUM_SIDE_SUPPORT
-            and side["supportFraction"] >= PHYSICAL_MINIMUM_SIDE_SUPPORT
-            for side in candidate[2].values()
-        )
-    ]
-    mat_owned = [
-        candidate
-        for candidate in color_owned
-        if candidate[3] >= PHYSICAL_MINIMUM_FRAME_COVERAGE
-    ]
-
-    strongest_candidate = color_owned[0] if color_owned else evaluated[0]
-    strongest_sides = strongest_candidate[2]
-    if not mat_owned:
-        for side in strongest_sides.values():
-            # This response carries evidence for one diagnostic candidate.
-            # Other raw rectangles failed mat ownership and are not ambiguity
-            # candidates under the physical-boundary policy.
-            side["candidateCount"] = 1
-        dark_edge_on_black = mat_color == "BLACK" and any(
-            side.get("medianLightnessContrast", 0.0) < 20.0
-            for side in strongest_sides.values()
-        )
-        scale_collision = bool(color_owned) and not dark_edge_on_black
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            sides=strongest_sides,
-            candidate_count=1,
-            advisory=_advisory(
-                (
-                    "DARK_EDGE_ON_BLACK"
-                    if dark_edge_on_black
-                    else "PHYSICAL_BOUNDARY_SCALE_AMBIGUOUS"
-                    if scale_collision
-                    else "PHYSICAL_BOUNDARY_NOT_ON_SELECTED_MAT"
-                ),
-                "WHITE" if dark_edge_on_black else None if scale_collision else _alternate_mat(mat_color),
-                (
-                    "A dark card edge is lightness-ambiguous on the black mat even when chroma differs. Switch to WHITE or place the handles manually."
-                    if dark_edge_on_black
-                    else "The color-supported rectangle is too small for the reviewed capture envelope and may be an inner printed boundary. Place the handles manually."
-                    if scale_collision
-                    else "Visible rectangular transitions are not supported by the selected mat outside all four sides. Switch mats or place the handles manually."
-                ),
-            ),
-            diagnostic_candidate=_physical_diagnostic_candidate(
-                evaluated,
-                strongest_candidate,
-                mat_color,
-            ),
-        )
-
-    best_score, best_quad, sides, _best_coverage = mat_owned[0]
-    # Conservative owner rule: until live calibration exists, chroma alone is
-    # not enough to accept a dark Back on a black mat. Only the best candidate
-    # already proven to be mat-owned can trigger this global abstention.
-    dark_edge_on_black = mat_color == "BLACK" and any(
-        side.get("medianLightnessContrast", 0.0) < 20.0
-        for side in sides.values()
-    )
-    if dark_edge_on_black:
-        for side in sides.values():
-            side["candidateCount"] = 1
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            sides=sides,
-            candidate_count=1,
-            advisory=_advisory(
-                "DARK_EDGE_ON_BLACK",
-                "WHITE",
-                "A dark card edge is lightness-ambiguous on the black mat even when chroma differs. Switch to WHITE or place the handles manually.",
-            ),
-            diagnostic_candidate=_physical_diagnostic_candidate(
-                evaluated,
-                mat_owned[0],
-                mat_color,
-            ),
-        )
+    best_score, best_quad, sides = evaluated[0]
 
     runner_ratio = None
     ambiguous = False
-    if len(mat_owned) > 1 and best_score > 0:
+    if len(evaluated) > 1 and best_score > 0:
         runner_ratio, ambiguous = _canonical_ambiguity(
-            float(mat_owned[1][0] / best_score),
+            float(evaluated[1][0] / best_score),
             PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO,
         )
     for side in sides.values():
-        side["candidateCount"] = len(mat_owned)
+        side["candidateCount"] = len(evaluated)
         side["ambiguous"] = ambiguous
-
-    if ambiguous:
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "ABSTAIN",
-            sides=sides,
-            candidate_count=len(mat_owned),
-            runner_up_ratio=runner_ratio,
-            ambiguous=True,
-            advisory=_advisory(
-                "AMBIGUOUS_BOUNDARY",
-                _alternate_mat(mat_color),
-                "More than one physical boundary is similarly plausible. Switch mats or place the handles manually.",
-            ),
-            diagnostic_candidate=_physical_diagnostic_candidate(
-                evaluated,
-                mat_owned[0],
-                mat_color,
-                runner_up_ratio=runner_ratio,
-                ambiguous=True,
-            ),
-        )
-
-    supported = all(
-        side["medianContrastDeltaE"] >= PHYSICAL_CONTRAST_FLOOR_DELTA_E
-        and side["supportFraction"] >= PHYSICAL_MINIMUM_SIDE_SUPPORT
-        for side in sides.values()
-    )
-    if not supported:
-        recommended = _alternate_mat(mat_color)
-        return _result(
-            "PHYSICAL_OUTER",
-            mat_color,
-            "INSUFFICIENT_EVIDENCE",
-            sides=sides,
-            candidate_count=len(mat_owned),
-            runner_up_ratio=runner_ratio,
-            advisory=_advisory(
-                "SWITCH_MAT",
-                recommended,
-                "At least one physical edge is below the offline-estimate contrast/support floor. Switch mats or place the handles manually.",
-            ),
-            diagnostic_candidate=_physical_diagnostic_candidate(
-                evaluated,
-                mat_owned[0],
-                mat_color,
-                runner_up_ratio=runner_ratio,
-            ),
-        )
     return _result(
         "PHYSICAL_OUTER",
         mat_color,
         "ACCEPTED",
         proposal=best_quad,
         sides=sides,
-        candidate_count=len(mat_owned),
+        candidate_count=len(evaluated),
         runner_up_ratio=runner_ratio,
+        ambiguous=ambiguous,
     )
 
 

@@ -303,7 +303,7 @@ export type SpeedsterPrepareResponse = {
   width: number;
   height: number;
   transform: readonly number[];
-  borders: SpeedsterQuad;
+  borders: SpeedsterQuad | null;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   inspectionFrame: SpeedsterInspectionFrame;
   colorGeometry: SpeedsterColorGeometryProposal;

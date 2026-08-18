@@ -623,7 +623,7 @@ test("durable stages reject impossible centering order and missing interruption 
   authorityAbandoned.mapRegistrationFailed = false;
   authorityAbandoned.mapAuthorityAbandoned = true;
   assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(authorityAbandoned), binding()), null,
-    "loaded-map authority cannot be abandoned for mapless centering");
+    "a loaded-map draft cannot claim human review without preserved registration-failure evidence");
   authorityAbandoned.provisional.FRONT = mutableClone(interrupted.provisional.FRONT!);
   authorityAbandoned.front.mapRegistration = mutableClone(interrupted.front.mapRegistration!);
   authorityAbandoned.registrationRecordedAtMs.FRONT = authorityAbandoned.updatedAtMs - 1;
@@ -645,8 +645,8 @@ test("durable stages reject impossible centering order and missing interruption 
   };
   assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding));
   nonLoaded.mapAuthorityAbandoned = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding),
-    "explicitly abandoned old map authority remains durable when current lookup has no map");
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(nonLoaded), noMapBinding), null,
+    "NO_MAP is a server fact and cannot masquerade as an explicit human-review decision");
   nonLoaded.mapAuthorityAbandoned = false;
   nonLoaded.registrationFailureSides = { BACK: true };
   nonLoaded.mapRegistrationFailed = true;

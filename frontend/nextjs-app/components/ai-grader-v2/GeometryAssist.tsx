@@ -255,7 +255,7 @@ export function GeometryAssist({
   };
 
   const placementCopy = placement === "AUTO_ACCEPTED"
-    ? "AUTO-ACCEPTED PROPOSAL"
+    ? "CURRENT ENGINE OUTLINE · REVIEW REQUIRED"
     : placement === "DIAGNOSTIC_DRAFT"
       ? "REJECTED DIAGNOSTIC · HUMAN REVIEW ONLY"
       : placement === "HUMAN_EDITED"
@@ -275,7 +275,7 @@ export function GeometryAssist({
           <h2>Set the four corners.</h2>
         </div>
         <p>{placement === "AUTO_ACCEPTED"
-          ? "A supported physical-card proposal is shown. Check every edge before confirming."
+          ? "The current engine found and displayed all four corners. Check every edge before confirming."
           : placement === "DIAGNOSTIC_DRAFT"
             ? "The best contour failed automatic checks. It is not authoritative; inspect and edit every side."
             : proposedQuad

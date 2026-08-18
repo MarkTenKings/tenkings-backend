@@ -560,6 +560,9 @@ function validatedDetectorSideResult(
     defects = parseSpeedsterReviewFindings(rawResult.defects);
     detectorEvidence = parseSpeedsterDetectorEvidence(rawResult.detectorEvidence);
     assertSpeedsterDetectorEvidenceBindsFindings(detectorEvidence, defects);
+    if (detectorEvidence.memoryDecisions.some(({ policy }) => policy === "LEGACY_MEMORY_V1")) {
+      throw new Error("Legacy Memory evidence cannot enter a current grade.");
+    }
     if (rawResult.detectorIdentity !== undefined && rawResult.detectorIdentity !== null) {
       detectorIdentity = parseSpeedsterDetectorIdentityV1(rawResult.detectorIdentity);
     }

@@ -108,7 +108,7 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   registrationDecision?: "RETRY_FAILED_SIDE";
   mapAuthorityOperationId?: string;
   mapAuthorityDecisionId?: string;
-  obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
+  obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "HUMAN_REVIEW_WITHOUT_MAP";
   obsoleteMapRevisionId?: string;
   obsoleteMapScope?: "EXACT" | "FAMILY";
   obsoleteMapName?: string;
@@ -143,6 +143,7 @@ export default function AiGraderV2AdminPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
   const [mapLookupFailed, setMapLookupFailed] = useState(false);
+  const [mapHumanReviewWithoutMap, setMapHumanReviewWithoutMap] = useState(false);
   const [mapAuthorityBlock, setMapAuthorityBlock] = useState<SpeedsterMapAuthorityBlock | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
@@ -192,6 +193,11 @@ export default function AiGraderV2AdminPage() {
   const nextReadyRecorded = useRef(false);
   const reviewRenderedRecorded = useRef(false);
   const captureSaveInFlight = useRef(false);
+  const mapHumanReviewDecision = useRef<Readonly<{
+    sessionId: string;
+    blockerAttemptId: string | null;
+    decisionId: string;
+  }> | null>(null);
 
   const beginCycle = useCallback(() => {
     if (cycleStartedAt.current === null) cycleStartedAt.current = Date.now();
@@ -204,7 +210,7 @@ export default function AiGraderV2AdminPage() {
     let payload: {
       map?: SpeedsterTrainMapState;
       authority?: {
-        status?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED";
+        status?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED" | "HUMAN_REVIEW_WITHOUT_MAP";
         message?: string;
         attemptId?: string;
       };
@@ -234,6 +240,7 @@ export default function AiGraderV2AdminPage() {
       const message = `${detail} Capture remains blocked and all preserved work is unchanged; retry the exact lookup.`;
       setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
       setMapLookupFailed(true);
+      setMapHumanReviewWithoutMap(false);
       setMapAuthorityBlock({ status: "LOOKUP_FAILED", message });
       setMessage(message);
       return false;
@@ -249,20 +256,68 @@ export default function AiGraderV2AdminPage() {
         ?? "Card Map authority could not be resolved. Capture remains blocked.";
       setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
       setMapLookupFailed(status === "LOOKUP_FAILED");
+      setMapHumanReviewWithoutMap(false);
       setMapAuthorityBlock({ status, message, ...(payload.authority?.attemptId ? { attemptId: payload.authority.attemptId } : {}) });
       setMessage(message);
       return false;
     }
     setMapState(payload.map);
     setMapLookupFailed(false);
+    setMapHumanReviewWithoutMap(payload.authority?.status === "HUMAN_REVIEW_WITHOUT_MAP");
     setMapAuthorityBlock(null);
-    setMessage(payload.authority?.status === "REGISTRATION_BLOCKED"
-      ? "The durable Card Map registration blocker was reloaded. Resume the preserved work or start the same exact revision again; mapless continuation remains unavailable."
+    setMessage(payload.authority?.status === "HUMAN_REVIEW_WITHOUT_MAP"
+      ? "Human review without a Card Map is durably authorized. The original lookup or registration failure remains recorded."
+      : payload.authority?.status === "REGISTRATION_BLOCKED"
+      ? "The durable Card Map registration blocker was reloaded. Resume the preserved work, retry the same exact revision, or explicitly choose recorded human review without a map."
       : payload.map.status === "LOADED"
         ? `${payload.map.scope ?? "EXACT"} CARD MAP · ${payload.map.name ?? "Card map"} · revision ${payload.map.revision?.version} loaded.`
       : "No eligible Exact or Family CARD MAP exists. Human review is authorized by the durable NO_MAP resolution; nothing was guessed.");
     return true;
   }, [session?.token]);
+
+  const continueWithoutMap = useCallback(async (sessionId: string) => {
+    if (!session?.token) throw new Error("Card Map authority cannot change without an authenticated admin session.");
+    const blockerAttemptId = mapAuthorityBlock?.attemptId ?? null;
+    if (mapHumanReviewDecision.current?.sessionId !== sessionId
+      || mapHumanReviewDecision.current.blockerAttemptId !== blockerAttemptId) {
+      mapHumanReviewDecision.current = {
+        sessionId,
+        blockerAttemptId,
+        decisionId: crypto.randomUUID(),
+      };
+    }
+    const decisionId = mapHumanReviewDecision.current.decisionId;
+    const { response, payload } = await runSpeedsterImageRequest(
+      "Card Map human-review decision",
+      {},
+      async (signal) => {
+        const response = await fetch(
+          `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+          {
+            method: "POST",
+            headers: buildAdminHeaders(session.token!, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ action: "CONTINUE_WITHOUT_MAP", decisionId }),
+            cache: "no-store",
+            signal,
+          },
+        );
+        const payload = await response.json().catch(() => ({})) as {
+          authority?: { status?: string; message?: string };
+          map?: SpeedsterTrainMapState;
+          message?: string;
+        };
+        return { response, payload };
+      },
+    );
+    if (!response.ok || payload.authority?.status !== "HUMAN_REVIEW_WITHOUT_MAP" || !payload.map) {
+      throw new Error(payload.message ?? payload.authority?.message ?? "Human-review continuation was not recorded.");
+    }
+    setMapState(payload.map);
+    setMapLookupFailed(false);
+    setMapHumanReviewWithoutMap(true);
+    setMapAuthorityBlock(null);
+    setMessage("Human review without a Card Map is now durably recorded. No map, fallback map, or guessed zones will be applied.");
+  }, [mapAuthorityBlock?.attemptId, session?.token]);
 
   useEffect(() => {
     if (!router.isReady || !captureDraftId || !session?.token || !isAdmin || draft || capture) return;
@@ -1101,12 +1156,26 @@ export default function AiGraderV2AdminPage() {
                   ? "The invalid map was not applied. The preserved browser draft remains auditable and requires an explicit Resume or Discard choice."
                   : "The authoritative lookup recorded NO_MAP. No fuzzy, nearby, or fallback map was guessed."}</p>
             {mapAuthorityBlock ? (
-              <button type="button" disabled={working} onClick={() => {
-                setWorking(true);
-                void resolveMapAuthority(draft.id).finally(() => setWorking(false));
-              }}>
-                {working ? "RETRYING EXACT CARD MAP AUTHORITY…" : "RETRY CARD MAP AUTHORITY"}
-              </button>
+              <>
+                <button type="button" disabled={working} onClick={() => {
+                  setWorking(true);
+                  void resolveMapAuthority(draft.id).finally(() => setWorking(false));
+                }}>
+                  {working ? "RETRYING EXACT CARD MAP AUTHORITY…" : "RETRY CARD MAP AUTHORITY"}
+                </button>
+                {mapAuthorityBlock.status !== "INTEGRITY_ERROR" && mapAuthorityBlock.attemptId ? (
+                  <button type="button" disabled={working} onClick={() => {
+                    setWorking(true);
+                    void continueWithoutMap(draft.id)
+                      .catch((error) => setMessage(error instanceof Error ? error.message : "Human-review continuation was not recorded."))
+                      .finally(() => setWorking(false));
+                  }}>
+                    CONTINUE WITHOUT CARD MAP · HUMAN REVIEW
+                  </button>
+                ) : mapAuthorityBlock.status !== "INTEGRITY_ERROR" ? (
+                  <p>The server has not yet confirmed a durable Card Map failure. Retry authority first; human-review continuation becomes available after that evidence is recorded.</p>
+                ) : null}
+              </>
             ) : null}
           </section>
         ) : null}
@@ -1135,6 +1204,7 @@ export default function AiGraderV2AdminPage() {
             activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
             mapBindingStatus={mapState.status === "LOADED" ? "LOADED"
               : mapState.status === "INTEGRITY_ERROR" ? "INTEGRITY_ERROR"
+                : mapHumanReviewWithoutMap ? "HUMAN_REVIEW_WITHOUT_MAP"
                 : mapLookupFailed ? "LOOKUP_FAILED" : "NO_MAP"}
             mapLookupFailed={mapLookupFailed}
             onReady={saveCapture}

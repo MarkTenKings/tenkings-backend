@@ -18,7 +18,7 @@ export function ColorGeometryScoreboard({ score }: Readonly<{ score: SpeedsterCo
         COLOR RUNNING SCORE · AGREEMENT {percentage(score.proposalAgreementRate)} · FIRST-DRAFT YIELD {percentage(score.firstDraftYieldRate)} · COVERAGE {percentage(score.proposalCoverageRate)}
       </summary>
       <div className={styles.colorScoreBody}>
-        <p>{score.acceptedUnchanged} accepted unchanged · {score.correctedAccepted} corrected · {score.manualFallbacks} manual fallbacks</p>
+        <p>{score.acceptedUnchanged} accepted unchanged · {score.correctedAccepted} corrected · {score.manualFallbacks} manual placements</p>
         <table>
           <thead><tr><th>Side / mat</th><th>Agreement</th><th>Coverage</th><th>Fallback</th></tr></thead>
           <tbody>{score.breakdown.map((row) => (

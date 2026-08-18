@@ -58,7 +58,7 @@ export function speedsterCardMapApplicationEvent(input: {
   createdByUserId: string;
   applied: SpeedsterAppliedMapRevision | null;
   selected: SpeedsterAppliedMapRevision | null;
-  failureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | null;
+  failureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
 }): SpeedsterInstrumentationEvent {
   const map = input.applied ?? input.selected;
   return {

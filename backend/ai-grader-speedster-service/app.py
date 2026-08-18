@@ -20,7 +20,6 @@ from card_geometry import (
     PX_PER_MM,
     boundary_subtracted_anomaly_mask,
     detector_material_mask,
-    printed_border_quad,
     MapRegistrationFailure,
     MAP_REGISTRATION_ALGORITHM_VERSION,
     register_map_design,
@@ -122,7 +121,7 @@ class PrepareResponse(BaseModel):
     width: int
     height: int
     transform: List[float]
-    borders: List[Point]
+    borders: Optional[List[Point]]
     detectedBorders: List[str]
     inspectionFrame: dict
     colorGeometry: Optional[dict] = None
@@ -642,9 +641,8 @@ def prepare_image(request: PrepareRequest):
             borders = color_geometry["proposal"]
             detected_borders = ["top", "right", "bottom", "left"]
         else:
-            # Deliberately preserve today's default/manual proposal on every
-            # non-accepted color outcome.
-            borders, detected_borders, _ = printed_border_quad(rectified)
+            borders = None
+            detected_borders = []
         if request.outputUploads.inspection:
             height, width = image.shape[:2]
             source = np.array(
@@ -695,7 +693,11 @@ def prepare_image(request: PrepareRequest):
         "width": TARGET_WIDTH,
         "height": TARGET_HEIGHT,
         "transform": transform.reshape(-1).tolist(),
-        "borders": normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT),
+        "borders": (
+            normalized_points(borders, TARGET_WIDTH, TARGET_HEIGHT)
+            if borders is not None
+            else None
+        ),
         "detectedBorders": detected_borders,
         "inspectionFrame": frame,
         "colorGeometry": serialize_proposal(color_geometry, TARGET_WIDTH, TARGET_HEIGHT) if color_geometry else None,

@@ -43,6 +43,7 @@ import {
   type SpeedsterMapRegistrationAttemptOutcome,
 } from "../../../../../lib/server/aiGraderV2Instrumentation";
 import {
+  SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
   parseSpeedsterColorGeometryProposal,
   type SpeedsterColorGeometryMode,
   type SpeedsterMatColor,
@@ -296,15 +297,11 @@ export function parseSpeedsterMapRegistrationOrchestration(value: unknown) {
 export function resolveSpeedsterMapRegistrationOrchestration(
   value: unknown,
   mode: "AUTOMATIC" | "HUMAN_RESCUE",
-  requestId: string,
+  _requestId: string,
 ) {
-  if (value === undefined) return {
-    operationId: requestId,
-    attemptNumber: mode === "HUMAN_RESCUE" ? 2 : 1,
-    trigger: mode === "HUMAN_RESCUE" ? "HUMAN_RESCUE" as const : "INITIAL" as const,
-    successfulSiblingPreservedAtAttemptStart: false,
-    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY" as const,
-  };
+  if (value === undefined) {
+    throw new Error("This Speedster client is stale. Refresh the page before current-engine Card Map registration; no compatibility geometry was synthesized.");
+  }
   const orchestration = parseSpeedsterMapRegistrationOrchestration(value);
   if ((mode === "HUMAN_RESCUE") !== (orchestration.trigger === "HUMAN_RESCUE")
     || (orchestration.trigger === "INITIAL" && (
@@ -331,6 +328,9 @@ export function sanitizeSpeedsterGeometryPayload(
   }
   if (!expected) return { ...payload, corners };
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
+  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
+    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
+  }
   if ((colorGeometry.outcome === "ACCEPTED") !== Boolean(corners)) {
     throw new Error("Speedster physical geometry corners contradict the Color outcome authority.");
   }
@@ -350,15 +350,21 @@ export function sanitizeSpeedsterPreparePayload(
   expected: Readonly<{ matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
-  const borders = sanitizeSpeedsterUnitQuad(payload.borders);
-  if (!borders) throw new Error("Speedster prepare returned malformed centering geometry.");
+  const borders = payload.borders === null ? null : sanitizeSpeedsterUnitQuad(payload.borders);
+  if (payload.borders !== null && !borders) throw new Error("Speedster prepare returned malformed centering geometry.");
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, {
     mode: "PRINTED_FRAME",
     matColor: expected.matColor,
   });
+  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
+    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
+  }
   if (colorGeometry.outcome === "ACCEPTED"
     && JSON.stringify(borders) !== JSON.stringify(colorGeometry.proposal)) {
     throw new Error("Speedster centering geometry does not match its accepted color proposal.");
+  }
+  if (colorGeometry.outcome !== "ACCEPTED" && borders !== null) {
+    throw new Error("Speedster prepare returned hidden centering fallback geometry.");
   }
   return {
     ...payload,
@@ -372,9 +378,13 @@ export function sanitizeSpeedsterColorGeometryPayload(
   expected: Readonly<{ mode: SpeedsterColorGeometryMode; matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
+  const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
+  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
+    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
+  }
   return {
     ...payload,
-    colorGeometry: parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected),
+    colorGeometry,
   };
 }
 

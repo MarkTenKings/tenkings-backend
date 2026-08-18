@@ -732,6 +732,36 @@ test("no map leaves the existing result/persist shape unchanged and does not inv
   ]);
 });
 
+test("current review initialization rejects legacy Memory evidence instead of grading it", async () => {
+  const initial = initializeSession(false);
+  let persisted = false;
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId,
+    createdByUserId: "admin-1",
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { persisted = true; },
+    async presignRead(key) { return `https://local.invalid/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect(body) {
+      const response = detectorResponse([body.side === "FRONT" ? inside : outside]);
+      return {
+        ...response,
+        detectorEvidence: {
+          ...response.detectorEvidence,
+          memoryDecisions: response.detectorEvidence.memoryDecisions.map((decision) => ({
+            ...decision,
+            policy: "LEGACY_MEMORY_V1",
+          })),
+        },
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  }), /detector response or evidence is malformed/i);
+  assert.equal(persisted, false);
+});
+
 test("invalid pinned map is a controlled initialization failure with no persistence", async () => {
   const initial = initializeSession(true);
   let persisted = false;

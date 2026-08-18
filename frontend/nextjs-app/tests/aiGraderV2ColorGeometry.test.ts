@@ -104,7 +104,7 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
       ...acceptedPhysicalBlack,
       sideEvidence: proposal.sideEvidence,
     }),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
   );
   assert.throws(
     () => parseSpeedsterColorGeometryProposal({
@@ -114,7 +114,7 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
         top: { ...acceptedPhysicalBlack.sideEvidence.top, medianLightnessContrast: 19.999 },
       },
     }),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
   );
   assert.throws(
     () => issueSpeedsterColorGeometryReceipt({
@@ -125,7 +125,7 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
       physicalQuadSha256: null,
       result: { ...acceptedPhysicalBlack, sideEvidence: proposal.sideEvidence },
     }, { now: 1_000_000, env: receiptEnv }),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
     "A dark-on-black result that Python would abstain cannot receive server signing authority",
   );
   assert.throws(
@@ -138,15 +138,15 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
   );
   assert.throws(
     () => parseSpeedsterColorGeometryProposal(withTop({ medianContrastDeltaE: 11.99 })),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
   );
   assert.throws(
     () => parseSpeedsterColorGeometryProposal(withTop({ supportFraction: 0.549 })),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
   );
   assert.throws(
     () => parseSpeedsterColorGeometryProposal(withTop({ ambiguous: true })),
-    /fixed v1 acceptance policy/,
+    /declared engine policy/,
   );
   assert.throws(
     () => parseSpeedsterColorGeometryProposal({
@@ -183,6 +183,28 @@ test("accepted color result must satisfy the exact fixed v1 four-side policy", (
     }),
     /ambiguity evidence contradicts/,
   );
+});
+
+test("current physical outline remains accepted when mat percentages and contrast are weak", () => {
+  const visibleOutline: SpeedsterColorGeometryProposal = {
+    ...proposal,
+    engineVersion: "speedster-color-geometry-v2",
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    contrastFloorDeltaE: 18,
+    minimumSideSupport: 0.7,
+    sideEvidence: Object.fromEntries(Object.entries(proposal.sideEvidence).map(([side, evidence], index) => [side, {
+      ...evidence,
+      medianContrastDeltaE: index === 0 ? 0.1 : 2,
+      medianLightnessContrast: index === 0 ? 0 : 3,
+      supportFraction: index === 0 ? 0 : 0.12,
+      candidateCount: 2,
+      ambiguous: true,
+    }])) as SpeedsterColorGeometryProposal["sideEvidence"],
+    ambiguity: { candidateCount: 2, runnerUpScoreRatio: 0.999, ambiguous: true },
+  };
+  assert.deepEqual(parseSpeedsterColorGeometryProposal(visibleOutline), visibleOutline);
 });
 
 test("color receipt rejects result tampering and cross-session/side/image/physical-quad replay", () => {
@@ -244,7 +266,7 @@ test("deterministic engine-error abstention parses and receives exact server rec
     advisory: {
       code: "COLOR_ENGINE_ERROR",
       recommendedMat: null,
-      message: "Color geometry could not evaluate this image. The unchanged legacy proposal remains active.",
+      message: "Color geometry could not evaluate this image. Place the four physical corners manually.",
     },
   };
   const parsed = parseSpeedsterColorGeometryProposal(engineError, {

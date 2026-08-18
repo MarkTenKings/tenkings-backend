@@ -30,10 +30,9 @@ from card_geometry import (
     boundary_subtracted_anomaly_mask,
     defect_candidates,
     detector_material_mask,
-    detect_card_quad,
     find_printed_border_offsets,
     material_distance_from_cut,
-    printed_border_quad,
+    ranked_card_quads,
     warp_to_card_map,
     warp_to_inspection_map,
 )
@@ -252,8 +251,9 @@ class SpeedsterGeometryTest(unittest.TestCase):
         )
         cv2.fillConvexPoly(image, expected, (245, 245, 245))
 
-        corners = detect_card_quad(image)
-        self.assertIsNotNone(corners)
+        candidates = ranked_card_quads(image, limit=1)
+        self.assertEqual(len(candidates), 1)
+        corners = candidates[0][1]
         np.testing.assert_allclose(corners, expected, atol=5)
 
         normalized = [Point(x=float(x / 1200), y=float(y / 1600)) for x, y in corners]
@@ -349,11 +349,8 @@ class SpeedsterGeometryTest(unittest.TestCase):
         self.assertEqual(abstained["colorGeometry"]["advisory"]["code"], "COLOR_ENGINE_ERROR")
         upload.assert_not_called()
 
-    def test_nonaccepted_color_frame_preserves_the_legacy_centering_proposal(self):
+    def test_nonaccepted_color_frame_returns_no_invented_centering_proposal(self):
         image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 150, dtype=np.uint8)
-        legacy = np.array(
-            [[110, 140], [1159, 140], [1159, 1637], [110, 1637]], dtype=np.float32
-        )
         request = PrepareRequest(
             imageBase64="fixture",
             matColor="MAGENTA",
@@ -372,24 +369,15 @@ class SpeedsterGeometryTest(unittest.TestCase):
         )
         with patch("app.load_image", return_value=image), patch(
             "app.rectify", return_value=(image, np.eye(3, dtype=np.float32))
-        ), patch(
-            "app.printed_border_quad", return_value=(legacy, ["top", "right", "bottom", "left"], {})
-        ) as legacy_detector, patch("app.upload_webp"):
+        ), patch("app.upload_webp"):
             result = prepare_image(request)
 
         self.assertEqual(result["colorGeometry"]["outcome"], "NOT_APPLICABLE")
-        self.assertEqual(
-            [(point.x, point.y) for point in result["borders"]],
-            [(110 / TARGET_WIDTH, 140 / TARGET_HEIGHT), (1159 / TARGET_WIDTH, 140 / TARGET_HEIGHT), (1159 / TARGET_WIDTH, 1637 / TARGET_HEIGHT), (110 / TARGET_WIDTH, 1637 / TARGET_HEIGHT)],
-        )
-        legacy_detector.assert_called_once_with(image)
+        self.assertIsNone(result["borders"])
+        self.assertEqual(result["detectedBorders"], [])
 
-    def test_color_frame_exception_abstains_and_returns_exact_legacy_centering(self):
+    def test_color_frame_exception_abstains_without_any_centering_substitution(self):
         image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 150, dtype=np.uint8)
-        legacy = np.array(
-            [[111, 142], [1157, 143], [1158, 1634], [112, 1635]], dtype=np.float32
-        )
-        detected = ["top", "bottom"]
         request = PrepareRequest(
             imageBase64="fixture",
             matColor="MAGENTA",
@@ -410,9 +398,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
             "app.rectify", return_value=(image, np.eye(3, dtype=np.float32))
         ), patch(
             "app.propose_printed_frame", side_effect=RuntimeError("color-only fault")
-        ), patch(
-            "app.printed_border_quad", return_value=(legacy, detected, {"legacy": True})
-        ) as legacy_detector, patch("app.upload_webp"):
+        ), patch("app.upload_webp"):
             result = prepare_image(request)
 
         self.assertEqual(result["colorGeometry"]["outcome"], "ABSTAIN")
@@ -426,22 +412,8 @@ class SpeedsterGeometryTest(unittest.TestCase):
                 for evidence in result["colorGeometry"]["sideEvidence"].values()
             )
         )
-        self.assertEqual(
-            [(point.x, point.y) for point in result["borders"]],
-            [(x / TARGET_WIDTH, y / TARGET_HEIGHT) for x, y in legacy],
-        )
-        self.assertEqual(result["detectedBorders"], detected)
-        legacy_detector.assert_called_once_with(image)
-
-    def test_proposes_design_border_geometry(self):
-        image = np.full((TARGET_HEIGHT, TARGET_WIDTH, 3), 225, dtype=np.uint8)
-        expected = np.array([[115, 145], [1154, 145], [1154, 1632], [115, 1632]])
-        cv2.rectangle(image, (115, 145), (1154, 1632), (15, 15, 15), 10)
-
-        borders, detected, offsets = printed_border_quad(image)
-        np.testing.assert_allclose(borders, expected, atol=7)
-        self.assertEqual(detected, ["top", "right", "bottom", "left"])
-        self.assertTrue(all(offsets[side] is not None for side in detected))
+        self.assertIsNone(result["borders"])
+        self.assertEqual(result["detectedBorders"], [])
 
     def test_inspection_map_keeps_the_canonical_card_and_two_mm_context(self):
         image = np.full((1900, 1500, 3), (20, 80, 140), dtype=np.uint8)
@@ -486,7 +458,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
 
     def test_returns_none_instead_of_calling_the_photo_frame_a_card(self):
         image = np.full((900, 700, 3), 120, dtype=np.uint8)
-        self.assertIsNone(detect_card_quad(image))
+        self.assertEqual(ranked_card_quads(image, limit=1), [])
 
     def test_searches_visual_and_material_contours_separately_with_retr_list(self):
         image = np.full((900, 700, 3), 120, dtype=np.uint8)
@@ -513,7 +485,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
         )
 
         with patch("card_geometry._candidate_contours", return_value=[frame_touching]):
-            self.assertIsNone(detect_card_quad(image))
+            self.assertEqual(ranked_card_quads(image, limit=1), [])
 
     def test_returns_none_for_a_clipped_card_at_the_photo_boundary(self):
         image = np.zeros((1600, 1200, 3), dtype=np.uint8)
@@ -522,7 +494,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
         )
         cv2.fillConvexPoly(image, clipped, (245, 245, 245))
 
-        self.assertIsNone(detect_card_quad(image))
+        self.assertEqual(ranked_card_quads(image, limit=1), [])
 
     def test_real_cubone_quads_stay_within_the_derived_corner_tolerance(self):
         canonical = np.array(
@@ -544,8 +516,9 @@ class SpeedsterGeometryTest(unittest.TestCase):
                 self.assertIsNotNone(image)
 
                 expected = fixture["expected"]
-                actual = detect_card_quad(image)
-                self.assertIsNotNone(actual)
+                candidates = ranked_card_quads(image, limit=1)
+                self.assertEqual(len(candidates), 1)
+                actual = candidates[0][1]
 
                 expected_to_canonical = cv2.getPerspectiveTransform(
                     expected, canonical
