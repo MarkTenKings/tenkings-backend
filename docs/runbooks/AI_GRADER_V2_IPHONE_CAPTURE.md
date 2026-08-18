@@ -2,7 +2,7 @@
 
 ## Result
 
-The mounted iPhone uses the native Camera app. One Shortcut sends the newest Front and Back photos to one tiny Cloudflare Worker. The Worker reuses the existing Speedster PLAN, direct Spaces uploads, and COMPLETE contract. It stores no state or secrets.
+The mounted iPhone uses the native Camera app. One Shortcut sends the newest Front and Back photos to one tiny Cloudflare Worker. The Worker computes each exact file's SHA-256 and byte size, submits that manifest to Speedster PLAN, performs the two private checksum-bound Spaces PUTs, and submits the unchanged manifest to COMPLETE. COMPLETE verifies both stored objects before publishing readiness. The Worker stores no state or secrets.
 
 ## Worker
 
@@ -15,6 +15,8 @@ npx wrangler deploy --config workers/speedster-iphone-capture/wrangler.toml
 ```
 
 Use Cloudflare Workers Paid so native multipart parsing is not constrained by the Free plan CPU allowance. No Worker secret, storage binding, queue, retry system, custom domain, or streaming parser is needed.
+
+The Vercel API migration and Worker source are one protocol release. Apply `20260818191500_speedster_iphone_capture_integrity_manifest` before serving the new API, then deploy the exact reviewed Worker immediately with the matching web release. Do not deploy either half against the old counterpart. The API must return exact `frontUploadHeaders` and `backUploadHeaders` containing `Content-Type`, `x-amz-acl: private`, and `x-amz-checksum-sha256`; the Worker must send those headers unchanged.
 
 ## One-time Shortcut
 
@@ -47,11 +49,11 @@ Running the Shortcut again replaces only that grader's current draft photos. The
 
 ## Acceptance cleanup
 
-A real Front/Back pair and one complete Production grading flow passed on 2026-08-02. The flat PLAN contract is now authoritative. The current PhotoRoom report release removes the obsolete nested `front` and `back` PLAN objects while preserving `uploadVersion`, `contentType`, `frontUploadUrl`, and `backUploadUrl`.
+A real Front/Back pair and one complete Production grading flow passed on 2026-08-02 under the historical flat contract. As of the 2026-08-18 hardening release, PLAN and COMPLETE both require exact nested `front` and `back` manifest objects with `byteSize` and lowercase `checksumSha256`. PLAN returns `uploadVersion`, both upload URLs, and the exact required per-side headers; COMPLETE publishes `readyVersion` only after both objects match the stored plan.
 
 The remaining device-local cleanup can happen independently when the operator confirms those setup aids are no longer needed:
 
 1. Delete the old iPhone Shortcut and its saved pairing file.
 2. Remove the old QR pairing UI and replace its one-time setup role with the smallest copy-device-ID control needed for additional admin graders.
 
-Keep the existing PLAN/COMPLETE endpoint, capture-device row, stable Spaces keys, admin polling, and shared geometry/grading path. Those are the working core, not baggage.
+Keep the existing PLAN/COMPLETE endpoint, capture-device row, admin polling, and shared geometry/grading path. New Spaces keys are upload-versioned and content-addressed; never restore mutable stable keys or HEAD-only readiness checks.
