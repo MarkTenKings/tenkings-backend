@@ -169,14 +169,14 @@ jobs:
           cosign sign --yes "${SPEEDSTER_IMAGE_NAME}@${digest}"
           cosign attest --yes --type spdxjson \
             --predicate speedster-sbom.spdx.json "${SPEEDSTER_IMAGE_NAME}@${digest}"
-          cosign verify \
+          timeout 120s cosign verify \
             --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${SPEEDSTER_IMAGE_NAME}@${digest}"
-          cosign verify-attestation --type spdxjson \
+            "${SPEEDSTER_IMAGE_NAME}@${digest}" > /dev/null
+          timeout 120s cosign verify-attestation --type spdxjson \
             --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
             --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            "${SPEEDSTER_IMAGE_NAME}@${digest}"
+            "${SPEEDSTER_IMAGE_NAME}@${digest}" > /dev/null
       - name: Retain GitHub build provenance for the tested digest
         if: github.event_name == 'push'
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
