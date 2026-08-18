@@ -112,13 +112,15 @@ jobs:
       - name: Build the exact candidate image
         shell: bash
         run: |
-          image_name="ghcr.io/${IMAGE_REPOSITORY}/ai-grader-speedster-service"
+          image_name="ghcr.io/${IMAGE_REPOSITORY}-speedster-v2"
           image="${image_name}:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "SPEEDSTER_IMAGE_NAME=$image_name" >> "$GITHUB_ENV"
           echo "SPEEDSTER_IMAGE=$image" >> "$GITHUB_ENV"
           docker build \
             --file backend/ai-grader-speedster-service/Dockerfile \
             --tag "$image" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
             --build-arg "SPEEDSTER_SOURCE_REPOSITORY=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --build-arg "SPEEDSTER_SOURCE_COMMIT_SHA=${GITHUB_SHA}" \
