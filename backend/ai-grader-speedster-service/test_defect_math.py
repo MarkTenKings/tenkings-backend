@@ -301,16 +301,25 @@ class DefectMathTests(unittest.TestCase):
         self.assertEqual(
             memory["findingProvenance"]["primaryProposalId"], "FRONT:0"
         )
+        self.assertTrue(
+            np.array_equal(memory["canonicalMask"], baseline["canonicalMask"])
+        )
         self.assertEqual(
             {
                 key: value
                 for key, value in memory.items()
-                if key not in {"origin", "memoryProposal", "findingProvenance"}
+                if key
+                not in {
+                    "origin",
+                    "memoryProposal",
+                    "findingProvenance",
+                    "canonicalMask",
+                }
             },
             {
                 key: value
                 for key, value in baseline.items()
-                if key != "findingProvenance"
+                if key not in {"findingProvenance", "canonicalMask"}
             },
         )
 

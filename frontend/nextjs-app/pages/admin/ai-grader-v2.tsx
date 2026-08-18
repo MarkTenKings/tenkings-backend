@@ -38,8 +38,7 @@ import type {
   SpeedsterDefectType,
   SpeedsterReviewFinding,
 } from "../../lib/ai-grader-v2/contracts";
-import { toCardMapOperatorMessage } from "../../lib/ai-grader-v2/card-map-copy";
-import { speedsterImageService } from "../../lib/ai-grader-v2/image-service";
+import { runSpeedsterImageRequest, speedsterImageService } from "../../lib/ai-grader-v2/image-service";
 import {
   SPEEDSTER_REVIEW_IMAGE_REFRESH_INTERVAL_MS,
   createCoalescedReviewImageRefresh,
@@ -89,6 +88,11 @@ type SpeedsterCompletion = {
     harvest: { admittedLessons: number; skippedLessons: number };
   };
 };
+type SpeedsterMapAuthorityBlock = Readonly<{
+  status: "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED";
+  message: string;
+  attemptId?: string;
+}>;
 type SpeedsterClientInstrumentationDetails = Readonly<{
   side?: "FRONT" | "BACK";
   findingIds?: readonly string[];
@@ -101,8 +105,7 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   mapName?: string;
   mapRevisionId?: string;
   mapFailureCode?: "LOOKUP_FAILED" | "REGISTRATION_FAILED";
-  registrationDecision?: "RETRY_FAILED_SIDE" | "CONTINUE_WITHOUT_CARD_MAP";
-  mapAuthorityDecision?: "ABANDON_OBSOLETE_MAP_AUTHORITY";
+  registrationDecision?: "RETRY_FAILED_SIDE";
   mapAuthorityOperationId?: string;
   mapAuthorityDecisionId?: string;
   obsoleteMapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
@@ -140,6 +143,7 @@ export default function AiGraderV2AdminPage() {
   const [draft, setDraft] = useState<SpeedsterDraft | null>(null);
   const [mapState, setMapState] = useState<SpeedsterTrainMapState | null>(null);
   const [mapLookupFailed, setMapLookupFailed] = useState(false);
+  const [mapAuthorityBlock, setMapAuthorityBlock] = useState<SpeedsterMapAuthorityBlock | null>(null);
   const [capture, setCapture] = useState<SpeedsterCaptureBundle | null>(null);
   const [defects, setDefects] = useState<SpeedsterReviewFinding[] | null>(null);
   const [lastRemovedDefectIds, setLastRemovedDefectIds] = useState<string[]>([]);
@@ -194,6 +198,72 @@ export default function AiGraderV2AdminPage() {
     return cycleStartedAt.current;
   }, []);
 
+  const resolveMapAuthority = useCallback(async (sessionId: string) => {
+    if (!session?.token) throw new Error("Card Map authority cannot resolve without an authenticated admin session.");
+    let response: Response;
+    let payload: {
+      map?: SpeedsterTrainMapState;
+      authority?: {
+        status?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED";
+        message?: string;
+        attemptId?: string;
+      };
+      message?: string;
+    };
+    try {
+      ({ response, payload } = await runSpeedsterImageRequest(
+        "Card Map authority lookup",
+        {},
+        async (signal) => {
+          const response = await fetch(
+            `/api/admin/ai-grader-v2/sessions/${encodeURIComponent(sessionId)}/map-authority`,
+            {
+              method: "POST",
+              headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+              body: JSON.stringify({ action: "RESOLVE_LOOKUP" }),
+              cache: "no-store",
+              signal,
+            },
+          );
+          const payload = await response.json().catch(() => ({}));
+          return { response, payload };
+        },
+      ));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Card Map authority could not reach Ten Kings.";
+      const message = `${detail} Capture remains blocked and all preserved work is unchanged; retry the exact lookup.`;
+      setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setMapLookupFailed(true);
+      setMapAuthorityBlock({ status: "LOOKUP_FAILED", message });
+      setMessage(message);
+      return false;
+    }
+    if (!response.ok || !payload.map) {
+      const status = payload.authority?.status === "INTEGRITY_ERROR"
+        ? "INTEGRITY_ERROR" as const
+        : payload.authority?.status === "REGISTRATION_BLOCKED"
+          ? "REGISTRATION_BLOCKED" as const
+          : "LOOKUP_FAILED" as const;
+      const message = payload.authority?.message
+        ?? payload.message
+        ?? "Card Map authority could not be resolved. Capture remains blocked.";
+      setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
+      setMapLookupFailed(status === "LOOKUP_FAILED");
+      setMapAuthorityBlock({ status, message, ...(payload.authority?.attemptId ? { attemptId: payload.authority.attemptId } : {}) });
+      setMessage(message);
+      return false;
+    }
+    setMapState(payload.map);
+    setMapLookupFailed(false);
+    setMapAuthorityBlock(null);
+    setMessage(payload.authority?.status === "REGISTRATION_BLOCKED"
+      ? "The durable Card Map registration blocker was reloaded. Resume the preserved work or start the same exact revision again; mapless continuation remains unavailable."
+      : payload.map.status === "LOADED"
+        ? `${payload.map.scope ?? "EXACT"} CARD MAP · ${payload.map.name ?? "Card map"} · revision ${payload.map.revision?.version} loaded.`
+      : "No eligible Exact or Family CARD MAP exists. Human review is authorized by the durable NO_MAP resolution; nothing was guessed.");
+    return true;
+  }, [session?.token]);
+
   useEffect(() => {
     if (!router.isReady || !captureDraftId || !session?.token || !isAdmin || draft || capture) return;
     let cancelled = false;
@@ -233,9 +303,10 @@ export default function AiGraderV2AdminPage() {
             throw new Error("The server reports CAPTURED, but its exact capture/map binding does not match the preserved browser draft. Nothing was cleared or resumed; inspect the conflicting evidence.");
           }
         }
-        let restoredMap: SpeedsterTrainMapState;
-        let restoredMapLookupFailed = false;
-        try {
+        if (cancelled) return;
+        setDraft(sessionPayload.session);
+        let authorityResolved = false;
+        if (committed) {
           const mapResponse = await fetch(
             `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(captureDraftId)}&scope=EFFECTIVE`,
             { headers: buildAdminHeaders(session.token!), cache: "no-store" },
@@ -245,26 +316,25 @@ export default function AiGraderV2AdminPage() {
             message?: string;
           };
           if (!mapResponse.ok || !mapPayload.map) {
-            throw new Error(mapPayload.message ?? "The Card Map binding for this preserved draft is unavailable.");
+            throw new Error(mapPayload.message ?? "The committed Card Map binding could not be reconciled.");
           }
-          restoredMap = mapPayload.map;
-        } catch {
-          restoredMapLookupFailed = true;
-          restoredMap = { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null };
+          setMapState(mapPayload.map);
+          setMapLookupFailed(false);
+          setMapAuthorityBlock(null);
+          authorityResolved = true;
+        } else {
+          authorityResolved = await resolveMapAuthority(captureDraftId);
         }
         if (cancelled) return;
-        setDraft(sessionPayload.session);
-        setMapState(restoredMap);
-        setMapLookupFailed(restoredMapLookupFailed);
         if (committed && committedBrowserDraft) {
           setCommittedCaptureRecovery({
             session: sessionPayload.session as SpeedsterCommittedCaptureRecovery["session"],
             browserDraft: committedBrowserDraft,
           });
           setMessage("Server save is verified as committed and exactly matches the preserved Front/Back capture and map binding. Choose Continue to review or keep the browser draft; nothing was cleared automatically.");
-        } else setMessage(restoredMapLookupFailed
-          ? "Preserved capture session loaded, but Card Map lookup failed. The browser draft remains bound to that failure state; choose Resume only if it validates, or explicitly Discard."
-          : "Preserved capture session loaded. Choose Resume or Discard in the capture workspace; nothing was applied automatically.");
+        } else if (authorityResolved) {
+          setMessage("Preserved capture session and durable Card Map authority loaded. Choose Resume or Discard in the capture workspace; nothing was applied automatically.");
+        }
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "Preserved capture session could not be loaded.");
       } finally {
@@ -272,7 +342,7 @@ export default function AiGraderV2AdminPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [capture, captureDraftId, draft, isAdmin, router.isReady, session?.token]);
+  }, [capture, captureDraftId, draft, isAdmin, resolveMapAuthority, router.isReady, session?.token]);
 
   const recordInstrumentation = useCallback((input: {
     eventId?: string;
@@ -469,33 +539,7 @@ export default function AiGraderV2AdminPage() {
         endedAtMs,
         details: { startBasis: "FIRST_SPEEDSTER_INTERACTION", lowerBound: true, outcome: "SUCCEEDED" },
       });
-      const mapResponse = await fetch(
-        `/api/admin/ai-grader-v2/maps/current?sessionId=${encodeURIComponent(payload.session.id)}&scope=EFFECTIVE`,
-        { headers: buildAdminHeaders(session.token), cache: "no-store" },
-      );
-      const mapPayload = (await mapResponse.json().catch(() => ({}))) as {
-        map?: SpeedsterTrainMapState;
-        message?: string;
-      };
-      if (!mapResponse.ok || !mapPayload.map) {
-        const failure = toCardMapOperatorMessage(mapPayload.message ?? "CARD MAP lookup failed.");
-        setMapState({ status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null });
-        setMapLookupFailed(true);
-        recordInstrumentation({
-          sessionId: payload.session.id,
-          eventType: "WORKFLOW_ERROR",
-          startedAtMs: endedAtMs,
-          endedAtMs: Date.now(),
-          details: { errorCode: "CARD_MAP_LOOKUP_FAILED", mapAppliedScope: "NONE" },
-        });
-        setMessage(`${failure} Continuing with normal human review; no map will be applied.`);
-        return;
-      }
-      setMapState(mapPayload.map);
-      setMapLookupFailed(false);
-      setMessage(mapPayload.map.status === "LOADED"
-        ? `${mapPayload.map.scope ?? "EXACT"} CARD MAP · ${mapPayload.map.name ?? "Card map"} · revision ${mapPayload.map.revision?.version} loaded.`
-        : "No applicable CARD MAP exists. Normal human review will apply; nothing will be guessed.");
+      await resolveMapAuthority(payload.session.id);
     } catch (error) {
       const failure = error instanceof Error ? error.message : "Speedster card could not be created.";
       setMessage(failure);
@@ -1039,23 +1083,31 @@ export default function AiGraderV2AdminPage() {
         ) : null}
 
         {draft && mapState && !capture ? (
-          <section className={styles.statusPanel}>
-            <span>{mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP`
-              : mapLookupFailed ? "CARD MAP LOOKUP FAILED"
-                : mapState.status === "INTEGRITY_ERROR" ? "CARD MAP INTEGRITY ERROR"
+          <section className={styles.statusPanel} role={mapAuthorityBlock ? "alert" : undefined}>
+            <span>{mapAuthorityBlock?.status === "INTEGRITY_ERROR" ? "CARD MAP INTEGRITY BLOCKED"
+              : mapAuthorityBlock ? "CARD MAP LOOKUP BLOCKED"
+                : mapState.status === "LOADED" ? `${mapState.scope ?? "EXACT"} CARD MAP`
                   : "NO CARD MAP · MANUAL"}</span>
             <h2>{mapState.status === "LOADED"
               ? mapState.name || `Loaded revision ${mapState.revision?.version}`
-              : mapLookupFailed ? "Preserved draft requires explicit review"
+              : mapAuthorityBlock ? "Capture is stopped until authority resolves"
                 : mapState.status === "INTEGRITY_ERROR" ? "Preserved draft is integrity-bound"
                   : "Normal human review"}</h2>
-            <p>{mapState.status === "LOADED"
+            <p>{mapAuthorityBlock
+              ? `${mapAuthorityBlock.message} No photos, geometry, or mapless capture can begin while this blocker is active.`
+              : mapState.status === "LOADED"
               ? `r${mapState.revision?.version} · ${mapState.revision?.revisionHash.slice(0, 12)} · This selected map will register to the card's physical geometry.`
-              : mapLookupFailed
-                ? "Map authority was not guessed. Strict draft validation may offer Resume; otherwise fresh capture stays blocked until explicit Discard."
-                : mapState.status === "INTEGRITY_ERROR"
+              : mapState.status === "INTEGRITY_ERROR"
                   ? "The invalid map was not applied. The preserved browser draft remains auditable and requires an explicit Resume or Discard choice."
-                  : "No fuzzy, nearby, or fallback map will be guessed. Existing Speedster review remains unchanged."}</p>
+                  : "The authoritative lookup recorded NO_MAP. No fuzzy, nearby, or fallback map was guessed."}</p>
+            {mapAuthorityBlock ? (
+              <button type="button" disabled={working} onClick={() => {
+                setWorking(true);
+                void resolveMapAuthority(draft.id).finally(() => setWorking(false));
+              }}>
+                {working ? "RETRYING EXACT CARD MAP AUTHORITY…" : "RETRY CARD MAP AUTHORITY"}
+              </button>
+            ) : null}
           </section>
         ) : null}
 
@@ -1071,13 +1123,14 @@ export default function AiGraderV2AdminPage() {
           />
         ) : null}
 
-        {draft && !capture && mapState && !committedCaptureRecovery ? (
+        {draft && !capture && mapState && !mapAuthorityBlock && !committedCaptureRecovery ? (
           <CaptureWorkspace
             token={session.token}
             sessionId={draft.id}
             cardProfile={draft.cardProfile}
             draftSurface="AI_GRADER"
             activeMapRevisionId={mapState.status === "LOADED" ? mapState.revision?.revisionId ?? null : null}
+            activeMapRevisionHash={mapState.status === "LOADED" ? mapState.revision?.revisionHash ?? null : null}
             activeMapScope={mapState.status === "LOADED" ? mapState.scope ?? "EXACT" : null}
             activeMapName={mapState.status === "LOADED" ? mapState.name ?? "Card map" : null}
             mapBindingStatus={mapState.status === "LOADED" ? "LOADED"

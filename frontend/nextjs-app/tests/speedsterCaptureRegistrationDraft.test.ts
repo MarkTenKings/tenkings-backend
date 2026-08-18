@@ -615,14 +615,15 @@ test("durable stages reject impossible centering order and missing interruption 
   abandoned.registrationRecordedAtMs = {};
   abandoned.registrationFailureSides = { BACK: true };
   abandoned.mapRegistrationFailed = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(abandoned), binding()));
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(abandoned), binding()), null,
+    "a loaded-map registration failure cannot resume in centering without exact map authority");
 
   const authorityAbandoned = mutableClone(abandoned);
   authorityAbandoned.registrationFailureSides = {};
   authorityAbandoned.mapRegistrationFailed = false;
   authorityAbandoned.mapAuthorityAbandoned = true;
-  assert.ok(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(authorityAbandoned), binding()),
-    "explicit map-authority abandonment is distinct from a registration attempt failure");
+  assert.equal(parseSpeedsterCaptureRegistrationDraft(JSON.stringify(authorityAbandoned), binding()), null,
+    "loaded-map authority cannot be abandoned for mapless centering");
   authorityAbandoned.provisional.FRONT = mutableClone(interrupted.provisional.FRONT!);
   authorityAbandoned.front.mapRegistration = mutableClone(interrupted.front.mapRegistration!);
   authorityAbandoned.registrationRecordedAtMs.FRONT = authorityAbandoned.updatedAtMs - 1;

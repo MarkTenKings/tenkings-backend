@@ -12,7 +12,8 @@ function exactRecaptureAttemptId(value: string) {
 }
 
 function exactPreparedStorageGeneration(value: string) {
-  if (/^iphone-v[1-9][0-9]*$/.test(value)) return value;
+  if (/^iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}$/.test(value)) return value;
+  if (/^sha256-[a-f0-9]{64}$/.test(value)) return value;
   if (/^recapture-/.test(value)) return `recapture-${exactRecaptureAttemptId(value.slice("recapture-".length))}`;
   throw new Error("Speedster prepared storage generation is invalid.");
 }
@@ -22,11 +23,29 @@ export function speedsterIphoneStorageKey(
   sessionId: string,
   side: SpeedsterCardSide,
   uploadVersion: number,
+  checksumSha256: string,
 ) {
   if (!Number.isSafeInteger(uploadVersion) || uploadVersion < 1) {
     throw new Error("Speedster iPhone upload version must be a positive integer.");
   }
-  return `ai-grader-v2/${userId}/${sessionId}/original/iphone-v${uploadVersion}/${side.toLowerCase()}.jpg`;
+  const checksum = exactSha256(checksumSha256);
+  return `ai-grader-v2/${userId}/${sessionId}/original/iphone-v${uploadVersion}-sha256-${checksum}/${side.toLowerCase()}.jpg`;
+}
+
+function exactSha256(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) throw new Error("Speedster SHA-256 must be exactly 64 hexadecimal characters.");
+  return normalized;
+}
+
+export function speedsterContentAddressedOriginalStorageKey(
+  userId: string,
+  sessionId: string,
+  side: SpeedsterCardSide,
+  checksumSha256: string,
+  extension: "jpg" | "png" | "webp",
+) {
+  return `ai-grader-v2/${userId}/${sessionId}/original/sha256-${exactSha256(checksumSha256)}/${side.toLowerCase()}.${extension}`;
 }
 
 export function legacySpeedsterOriginalStorageKey(
@@ -78,7 +97,7 @@ export function speedsterOriginalStorageGeneration(input: Readonly<{
   const suffix = input.storageKey.slice(prefix.length);
   const side = input.side.toLowerCase();
   if (new RegExp(`^${side}\\.(?:jpg|png|webp)$`).test(suffix)) return null;
-  const versioned = new RegExp(`^(iphone-v[1-9][0-9]*|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})/${side}\\.(?:jpg|png|webp)$`, "i").exec(suffix);
+  const versioned = new RegExp(`^(iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}|sha256-[a-f0-9]{64}|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})/${side}\\.(?:jpg|png|webp)$`, "i").exec(suffix);
   return versioned?.[1]?.toLowerCase();
 }
 
@@ -92,7 +111,7 @@ export function speedsterPreparedStorageGenerationForRectified(input: Readonly<{
   if (!input.storageKey.startsWith(`${base}/`)) return undefined;
   const suffix = input.storageKey.slice(base.length + 1);
   if (suffix === "rectified.webp") return null;
-  const versioned = /^(iphone-v[1-9][0-9]*|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/rectified\.webp$/i.exec(suffix);
+  const versioned = /^(iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}|sha256-[a-f0-9]{64}|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/rectified\.webp$/i.exec(suffix);
   return versioned?.[1]?.toLowerCase();
 }
 
@@ -114,7 +133,7 @@ export function isAuthorizedSpeedsterInspectionStorageKey(input: Readonly<{
   const base = `ai-grader-v2/${input.userId}/${input.sessionId}/prepared/${input.side.toLowerCase()}`;
   if (!input.storageKey.startsWith(`${base}/`)) return false;
   const suffix = input.storageKey.slice(base.length + 1);
-  return /^(?:(?:iphone-v[1-9][0-9]*|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/)?inspection\.webp$/i.test(suffix);
+  return /^(?:(?:iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}|sha256-[a-f0-9]{64}|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/)?inspection\.webp$/i.test(suffix);
 }
 
 export function speedsterPreparedStorageGenerationForInspection(input: Readonly<{
@@ -127,7 +146,7 @@ export function speedsterPreparedStorageGenerationForInspection(input: Readonly<
   if (!input.storageKey.startsWith(`${base}/`)) return undefined;
   const suffix = input.storageKey.slice(base.length + 1);
   if (suffix === "inspection.webp") return null;
-  const versioned = /^(iphone-v[1-9][0-9]*|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/inspection\.webp$/i.exec(suffix);
+  const versioned = /^(iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}|sha256-[a-f0-9]{64}|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/inspection\.webp$/i.exec(suffix);
   return versioned?.[1]?.toLowerCase();
 }
 
@@ -143,7 +162,7 @@ export function isAuthorizedSpeedsterPreparedStorageKeys(input: Readonly<{
   const suffix = input.rectifiedStorageKey.startsWith(`${base}/`)
     ? input.rectifiedStorageKey.slice(base.length + 1)
     : "";
-  const match = /^(?:(iphone-v[1-9][0-9]*|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/)?rectified\.webp$/i.exec(suffix);
+  const match = /^(?:(iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}|sha256-[a-f0-9]{64}|recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\/)?rectified\.webp$/i.exec(suffix);
   if (!match) return false;
   const prefix = match[1] ? `${base}/${match[1].toLowerCase()}` : base;
   return input.inspectionStorageKey === `${prefix}/inspection.webp`
@@ -165,7 +184,8 @@ export function isAuthorizedSpeedsterOriginalStorageKey(input: Readonly<{
   return suffix === `${side}.jpg`
     || suffix === `${side}.png`
     || suffix === `${side}.webp`
-    || new RegExp(`^iphone-v[1-9][0-9]*/${side}\\.jpg$`).test(suffix)
+    || new RegExp(`^iphone-v[1-9][0-9]*-sha256-[a-f0-9]{64}/${side}\\.jpg$`).test(suffix)
+    || new RegExp(`^sha256-[a-f0-9]{64}/${side}\\.(?:jpg|png|webp)$`).test(suffix)
     || new RegExp(`^recapture-[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/${side}\\.(?:jpg|png|webp)$`, "i").test(suffix);
 }
 

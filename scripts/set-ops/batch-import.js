@@ -49,7 +49,7 @@ Required environment:
   SET_OPS_API_BASE_URL     Base admin URL. Example: https://collect.tenkings.co
   One auth option:
     SET_OPS_BEARER_TOKEN   Admin bearer token
-    SET_OPS_OPERATOR_KEY   Operator key header (or OPERATOR_API_KEY / NEXT_PUBLIC_OPERATOR_KEY)
+    SET_OPS_OPERATOR_KEY   Server-only operator key header (or OPERATOR_API_KEY)
 
 Manifest columns (CSV) or fields (JSON):
   setId,setCsv,parallelCsv,setSourceUrl,parallelSourceUrl
@@ -255,7 +255,7 @@ async function ensureParentDir(targetPath) {
 function buildAuthHeaders() {
   const bearerToken = process.env.SET_OPS_BEARER_TOKEN || "";
   const operatorKey =
-    process.env.SET_OPS_OPERATOR_KEY || process.env.OPERATOR_API_KEY || process.env.NEXT_PUBLIC_OPERATOR_KEY || "";
+    process.env.SET_OPS_OPERATOR_KEY || process.env.OPERATOR_API_KEY || "";
   const headers = {
     Accept: "application/json",
   };
@@ -269,7 +269,7 @@ function buildAuthHeaders() {
 
   if (!headers.Authorization && !headers["X-Operator-Key"]) {
     throw new Error(
-      "Missing auth. Set SET_OPS_BEARER_TOKEN or SET_OPS_OPERATOR_KEY (or OPERATOR_API_KEY / NEXT_PUBLIC_OPERATOR_KEY)."
+      "Missing auth. Set SET_OPS_BEARER_TOKEN or server-only SET_OPS_OPERATOR_KEY (or OPERATOR_API_KEY)."
     );
   }
 

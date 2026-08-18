@@ -388,6 +388,7 @@ test("strict attempt insert uses zero-update insert-or-read conflict detection",
   );
   assert.match(liveValidatorSource, /ctid::text[\s\S]*xmin::text[\s\S]*rowHash/);
   assert.match(liveValidatorSource, /Promise\.all[\s\S]*sort\(\), \[0, 1\]/);
+  assert.doesNotMatch(liveValidatorSource, /aiGraderV2InstrumentationEvent\.delete/);
 });
 
 function request(body: unknown): NextApiRequest {

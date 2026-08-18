@@ -9,6 +9,10 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin
 import { useSession } from "../../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../../lib/adminHeaders";
 import {
+  sha256BrowserBlob,
+  uploadAiGraderArtifactDirectly,
+} from "../../../../lib/aiGraderDirectUpload";
+import {
   SpeedsterIdentityValidationError,
   canonicalizeSpeedsterSessionIdentity,
 } from "../../../../lib/ai-grader-v2/identity";
@@ -153,19 +157,55 @@ export default function CompletedSpeedsterCardPage() {
     setMessage(`Uploading ${SIDE_LABEL[side].toLowerCase()} slab photo.`);
     try {
       const contentType = file.type === "image/png" || file.type === "image/webp" ? file.type : "image/jpeg";
+      const checksumSha256 = await sha256BrowserBlob(file);
       const planResponse = await fetch(`/api/admin/ai-grader-v2/completed/${encodeURIComponent(sessionId)}`, {
         method: "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ action: "SLAB_PLAN", side, contentType }),
+        body: JSON.stringify({
+          action: "SLAB_PLAN",
+          side,
+          contentType,
+          byteSize: file.size,
+          checksumSha256,
+        }),
       });
-      const plan = await planResponse.json().catch(() => ({})) as { storageKey?: string; uploadUrl?: string; message?: string };
-      if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl) throw new Error(plan.message ?? "Slab upload could not start.");
-      const upload = await fetch(plan.uploadUrl, { method: "PUT", headers: { "Content-Type": contentType }, body: file });
-      if (!upload.ok) throw new Error("Slab photo could not be uploaded.");
+      const plan = await planResponse.json().catch(() => ({})) as {
+        storageKey?: string;
+        uploadUrl?: string;
+        uploadMethod?: string;
+        uploadHeaders?: Record<string, string>;
+        byteSize?: number;
+        checksumSha256?: string;
+        message?: string;
+      };
+      if (!planResponse.ok
+        || !plan.storageKey
+        || !plan.uploadUrl
+        || plan.uploadMethod !== "PUT"
+        || plan.byteSize !== file.size
+        || plan.checksumSha256 !== checksumSha256) {
+        throw new Error(plan.message ?? "Slab upload could not start.");
+      }
+      await uploadAiGraderArtifactDirectly({
+        purpose: "speedster-slab-photo",
+        uploadUrl: plan.uploadUrl,
+        uploadMethod: plan.uploadMethod,
+        uploadHeaders: plan.uploadHeaders,
+        contentType,
+        checksumSha256,
+        body: file,
+      });
       const completeResponse = await fetch(`/api/admin/ai-grader-v2/completed/${encodeURIComponent(sessionId)}`, {
         method: "POST",
         headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ action: "SLAB_COMPLETE", side, storageKey: plan.storageKey }),
+        body: JSON.stringify({
+          action: "SLAB_COMPLETE",
+          side,
+          storageKey: plan.storageKey,
+          contentType,
+          byteSize: file.size,
+          checksumSha256,
+        }),
       });
       const complete = await completeResponse.json().catch(() => ({})) as { card?: CardWorkspace; message?: string };
       if (!completeResponse.ok || !complete.card) throw new Error(complete.message ?? "Slab photo could not be attached.");

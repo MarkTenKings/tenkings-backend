@@ -7,6 +7,7 @@ import type {
   SpeedsterReviewFinding,
 } from "../ai-grader-v2/contracts";
 import type { SpeedsterFilterDecisionEvidence } from "../ai-grader-v2/card-type-map-contracts";
+import type { SpeedsterDetectorEvidenceV1 } from "../ai-grader-v2/detector-evidence";
 import { speedsterFindingRegions } from "../ai-grader-v2/review-findings";
 import type { SpeedsterAppliedMapRevision } from "./speedsterCardTypeMaps";
 
@@ -22,7 +23,16 @@ export type SpeedsterInstrumentationEvent = Readonly<{
   eventKey: string;
   sessionId: string;
   createdByUserId: string;
-  category: "CLIENT_TIMING" | "SERVER_TIMING" | "FINDING_PROVENANCE" | "FINDING_ACTION" | "FILTER_ACTION" | "MAP_APPLICATION";
+  category:
+    | "CLIENT_TIMING"
+    | "SERVER_TIMING"
+    | "FINDING_PROVENANCE"
+    | "FINDING_ACTION"
+    | "FILTER_ACTION"
+    | "MAP_APPLICATION"
+    | "DETECTOR_EVIDENCE"
+    | "MEMORY_DECISION"
+    | "DETECTOR_CHECKPOINT";
   eventType: string;
   findingId?: string | null;
   origin?: SpeedsterDefectOrigin | null;
@@ -199,6 +209,59 @@ export function speedsterFindingProposalEvents(input: {
     startedAt: input.startedAt,
     endedAt: input.endedAt,
   }));
+}
+
+export function speedsterDetectorEvidenceEvents(input: {
+  sessionId: string;
+  createdByUserId: string;
+  operationId: string;
+  requestTraceId: string;
+  detectorVersion: string;
+  evidence: SpeedsterDetectorEvidenceV1;
+}): SpeedsterInstrumentationEvent[] {
+  const rawById = new Map(input.evidence.rawCandidates.map((candidate) => [candidate.candidateId, candidate]));
+  return [
+    ...input.evidence.rawCandidates.map((candidate): SpeedsterInstrumentationEvent => ({
+      eventKey: `${input.sessionId}:raw-detector-candidate:${input.operationId}:${candidate.candidateId}`,
+      sessionId: input.sessionId,
+      createdByUserId: input.createdByUserId,
+      category: "DETECTOR_EVIDENCE",
+      eventType: "RAW_DETECTOR_CANDIDATE_PRESERVED",
+      origin: candidate.origin,
+      similarity: candidate.memoryProposal?.similarity ?? null,
+      generatingExemplar: candidate.memoryProposal
+        ? candidate.memoryProposal as Prisma.InputJsonValue
+        : null,
+      details: {
+        requestTraceId: input.requestTraceId,
+        detectorVersion: input.detectorVersion,
+        candidate: candidate as unknown as Prisma.InputJsonValue,
+      },
+    })),
+    ...input.evidence.memoryDecisions.map((decision): SpeedsterInstrumentationEvent => {
+      const candidate = rawById.get(decision.candidateId);
+      if (!candidate) throw new Error("Speedster Memory decision lost its raw candidate authority.");
+      return {
+        eventKey: `${input.sessionId}:memory-decision:${input.operationId}:${decision.candidateId}`,
+        sessionId: input.sessionId,
+        createdByUserId: input.createdByUserId,
+        category: "MEMORY_DECISION",
+        eventType: "MEMORY_CANDIDATE_DISPOSITION_RECORDED",
+        origin: candidate.origin,
+        similarity: candidate.memoryProposal?.similarity ?? null,
+        generatingExemplar: candidate.memoryProposal
+          ? candidate.memoryProposal as Prisma.InputJsonValue
+          : null,
+        details: {
+          requestTraceId: input.requestTraceId,
+          detectorVersion: input.detectorVersion,
+          rawCandidateId: decision.candidateId,
+          rawMaskSha256: candidate.canonicalMask.sha256,
+          decision: decision as unknown as Prisma.InputJsonValue,
+        },
+      };
+    }),
+  ];
 }
 
 export function speedsterFindingActionEvents(input: {

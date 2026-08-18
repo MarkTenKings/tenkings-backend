@@ -294,6 +294,8 @@ function appliedMapFixture(
     revision: {
       mapId: "map-12345678901234567890",
       revisionId: fixture.binding.revisionId,
+      version: 1,
+      revisionHash: mapBindingSha(fixture.binding.revisionId),
       matchKeyHash: mapBindingSha(JSON.stringify(matchKey)),
       matchKey,
       mapSchemaVersion: schemaVersion === "V2"
@@ -418,8 +420,8 @@ const receiptVerifierAt = (now: number) => (
   input: Parameters<typeof verifySpeedsterMapRegistrationReceipt>[0]
 ) => verifySpeedsterMapRegistrationReceipt({ ...input, now, env: registrationReceiptEnv });
 
-test("geometry proxy clamps automatic handles to the reachable image boundary", () => {
-  assert.deepEqual(sanitizeSpeedsterGeometryPayload({
+test("geometry proxy rejects automatic handles outside the exact source boundary", () => {
+  assert.throws(() => sanitizeSpeedsterGeometryPayload({
     width: 1200,
     height: 1600,
     corners: [
@@ -428,16 +430,7 @@ test("geometry proxy clamps automatic handles to the reachable image boundary", 
       { x: 0.9, y: 0.9 },
       { x: -0.3, y: 1.4 },
     ],
-  }), {
-    width: 1200,
-    height: 1600,
-    corners: [
-      { x: 0.1, y: 0.1 },
-      { x: 0.9, y: 0.1 },
-      { x: 0.9, y: 0.9 },
-      { x: 0, y: 1 },
-    ],
-  });
+  }), /invalid perimeter quad/);
 });
 
 test("proxy rejects accepted color authority when returned geometry differs from its proposal", () => {
@@ -461,6 +454,15 @@ test("proxy rejects accepted color authority when returned geometry differs from
     }, { mode: "PHYSICAL_OUTER", matColor: "BLACK" }),
     /does not match its accepted color proposal/,
   );
+  for (const outcome of ["INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ABSTAIN"] as const) {
+    assert.throws(
+      () => sanitizeSpeedsterGeometryPayload({
+        corners: mapBindingQuad,
+        colorGeometry: { ...physical, outcome, proposal: null },
+      }, { mode: "PHYSICAL_OUTER", matColor: "BLACK" }),
+      /corners contradict the Color outcome authority/,
+    );
+  }
   assert.deepEqual(sanitizeSpeedsterPreparePayload({
     borders: mapBindingQuad,
     colorGeometry: printed,
@@ -479,7 +481,8 @@ test("proxy rejects accepted color authority when returned geometry differs from
 
 test("color geometry proxy replaces browser URLs and binds exact image bytes plus rectification quad", async () => {
   const fixture = mapBindingFixture();
-  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4/back.jpg`;
+  const sourceGeneration = `iphone-v4-sha256-${"1".repeat(64)}`;
+  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/${sourceGeneration}/back.jpg`;
   const body = await speedsterServiceBody("prepare", {
     sessionId: fixture.sessionId,
     side: "BACK",
@@ -498,11 +501,11 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
   assert.equal(body.sessionId, undefined);
   assert.deepEqual(body.corners, mapBindingQuad);
   assert.deepEqual(body.outputUploads, {
-    rectified: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/rectified.webp`,
-    inspection: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/inspection.webp`,
-    normalized: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/normalized.webp`,
-    microDefect: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/micro_defect.webp`,
-    directional: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/iphone-v4/directional.webp`,
+    rectified: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/rectified.webp`,
+    inspection: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/inspection.webp`,
+    normalized: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/normalized.webp`,
+    microDefect: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/micro_defect.webp`,
+    directional: `https://server-upload.example/ai-grader-v2/admin-1/${fixture.sessionId}/prepared/back/${sourceGeneration}/directional.webp`,
   });
   let hostilePresigns = 0;
   await assert.rejects(() => speedsterServiceBody("prepare", {
@@ -533,7 +536,7 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
 
 test("targeted color recovery is read-only and binds the exact original plus preserved physical quad", async () => {
   const fixture = mapBindingFixture();
-  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4/front.jpg`;
+  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4-sha256-${"2".repeat(64)}/front.jpg`;
   const deps = {
     async findOwnedCapture() { return null; },
     async findOwnedMapSession() { return fixture.session; },
@@ -1106,7 +1109,24 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   const canonicalCapture = structuredClone(fixture.capture);
   delete (canonicalCapture.front as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
   delete (canonicalCapture.back as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
-  assert.deepEqual(saves[0]?.capture, canonicalCapture, "capture persistence is rebuilt from validated canonical fields");
+  const savedCapture = saves[0]?.capture as typeof canonicalCapture & {
+    mapAuthority?: {
+      current?: {
+        status?: string;
+        revision?: { revisionId?: string; revisionHash?: string; version?: number; scope?: string };
+      };
+    };
+  };
+  const { mapAuthority, ...savedCanonicalCapture } = savedCapture;
+  assert.deepEqual(savedCanonicalCapture, canonicalCapture, "capture persistence is rebuilt from validated canonical fields");
+  assert.deepEqual(mapAuthority?.current?.revision, {
+    revisionId: fixture.binding.revisionId,
+    revisionHash: mapBindingSha(fixture.binding.revisionId),
+    version: 1,
+    scope: "EXACT",
+    name: "2021 Panini Obsidian Orange · Nick Bosa #12",
+  }, "capture persistence binds the exact immutable applied revision");
+  assert.equal(mapAuthority?.current?.status, "APPLIED");
   assert.equal(savedColorRows.length, 4, "all accepted/fallback outcomes are persisted side by side");
   assert.deepEqual(savedColorRows.map(({ side, mode }) => `${side}:${mode}`).sort(), [
     "BACK:PHYSICAL_OUTER", "BACK:PRINTED_FRAME", "FRONT:PHYSICAL_OUTER", "FRONT:PRINTED_FRAME",
@@ -1485,7 +1505,7 @@ test("capture PATCH accepts a rescue-style signed enriched V2 FAMILY registratio
   assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"FAMILY"/);
 });
 
-test("capture PATCH safely uses normal human review when selected-map registration is omitted", async () => {
+test("capture PATCH blocks when selected-map registration is omitted", async () => {
   const fixture = mapBindingFixture();
   const saves: Record<string, unknown>[] = [];
   let events: readonly { eventType: string; details?: unknown }[] = [];
@@ -1510,15 +1530,13 @@ test("capture PATCH safely uses normal human review when selected-map registrati
     workflowState: "CAPTURED",
     capture: fixture.capture,
   }, fixture.sessionId), result.res);
-  assert.equal(result.state.status, 200);
-  assert.equal(saves.length, 1);
-  assert.equal(saves[0].mapRevisionId, undefined);
-  assert.equal(events[0]?.eventType, "CARD_MAP_NOT_APPLIED");
-  assert.match(JSON.stringify(events[0]?.details), /NORMAL_HUMAN_REVIEW/);
-  assert.match(JSON.stringify(events[0]?.details), /MAP_REGISTRATION_NOT_APPLIED/);
+  assert.equal(result.state.status, 409);
+  assert.equal(saves.length, 0);
+  assert.equal(events.length, 0);
+  assert.match(JSON.stringify(result.state.body), /Mapless capture is blocked/);
 });
 
-test("capture PATCH falls back to normal human review when effective map lookup fails before binding", async () => {
+test("capture PATCH blocks when effective map lookup fails before binding", async () => {
   const fixture = mapBindingFixture();
   let events: readonly { eventType: string; details?: unknown }[] = [];
   const handler = createAiGraderV2SessionHandler({
@@ -1542,10 +1560,9 @@ test("capture PATCH falls back to normal human review when effective map lookup 
     capture: fixture.capture,
   }, fixture.sessionId), result.res);
 
-  assert.equal(result.state.status, 200);
-  assert.equal(events[0]?.eventType, "CARD_MAP_NOT_APPLIED");
-  assert.match(JSON.stringify(events[0]?.details), /MAP_LOOKUP_INTEGRITY_FAILED/);
-  assert.doesNotMatch(JSON.stringify(events[0]?.details), /effective lookup unavailable/);
+  assert.equal(result.state.status, 500);
+  assert.equal(events.length, 0);
+  assert.match(JSON.stringify(result.state.body), /effective lookup unavailable/);
 });
 
 test("capture PATCH never ignores an integrity failure after a map binding is submitted", async () => {
@@ -1818,6 +1835,27 @@ test("review CAS is short, serializable, and compares the exact persisted update
   const casStart = route.indexOf("persistReviewIfRevision:");
   const casEnd = route.indexOf("},\n};", casStart);
   assert.doesNotMatch(route.slice(casStart, casEnd), /presignRead|fetch\(|\/measure|\/detect/);
+  const evidenceInsert = route.indexOf(
+    "insertSpeedsterInstrumentationEvents(tx, data.detectorEvidenceEvents)",
+    casStart,
+  );
+  const reviewUpdate = route.indexOf("tx.aiGraderV2Session.updateMany", casStart);
+  const filterDecisionInsert = route.indexOf("tx.aiGraderV2MapFilterDecision.createMany", casStart);
+  assert.ok(evidenceInsert > casStart);
+  assert.ok(evidenceInsert < reviewUpdate);
+  assert.ok(evidenceInsert < filterDecisionInsert);
+  assert.match(route, /inserted !== data\.detectorEvidenceEvents\.length/);
+});
+
+test("review presents the exact detector mask as authority before any contour projection", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const viewer = readFileSync(
+    `${root}/components/ai-grader-v2/DefectEvidenceViewer.tsx`,
+    "utf8",
+  );
+  assert.match(viewer, /active\?\.finalTrace \?\? active\?\.detectorMask/);
+  assert.match(viewer, /resolvedTrace \?\? defect\.detectorMask/);
+  assert.match(viewer, /<ExactTraceOverlay trace=\{activeTrace\}/);
 });
 
 test("upload planning binds the requested session to the existing admin identity", () => {

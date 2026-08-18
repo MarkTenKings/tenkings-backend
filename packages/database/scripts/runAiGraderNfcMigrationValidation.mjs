@@ -15,6 +15,7 @@ const DB_USER = "tenkings_nfc_validation";
 const DB_NAME = "tenkings_ai_grader_nfc_validation";
 const SPEEDSTER_LAYOUT_V2_MIGRATION = "20260813200000_speedster_pokemon_layout_key_v2";
 const SPEEDSTER_COLOR_GEOMETRY_MIGRATION = "20260816100000_speedster_color_geometry_evidence";
+const SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION = "20260818153000_speedster_audit_evidence_append_only";
 const TARGET_MIGRATIONS = [
   "20260712160000_ai_grader_nfc_static_url_v1",
   "20260716225000_ai_grader_nfc_feiju_f8215_chip_type",
@@ -24,6 +25,7 @@ const TARGET_MIGRATIONS = [
   "20260813120000_speedster_map_registration_lessons",
   SPEEDSTER_LAYOUT_V2_MIGRATION,
   SPEEDSTER_COLOR_GEOMETRY_MIGRATION,
+  SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION,
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
 
@@ -48,6 +50,10 @@ const speedsterMapRegistrationLessonSql = resolve(
 );
 const speedsterLayoutKeyV2Sql = resolve(scriptDir, "validateSpeedsterLayoutKeyV2.sql");
 const speedsterColorGeometryEvidenceSql = resolve(scriptDir, "validateSpeedsterColorGeometryEvidence.sql");
+const speedsterAuditEvidenceImmutabilitySql = resolve(
+  scriptDir,
+  "validateSpeedsterAuditEvidenceImmutability.sql",
+);
 const serviceValidationScript = resolve(scriptDir, "validateAiGraderNfcServiceAgainstPostgres.mjs");
 const readinessValidationScript = resolve(scriptDir, "validateAiGraderNfcSchemaReadinessAgainstPostgres.mjs");
 const advisoryLockValidationScript = resolve(
@@ -78,6 +84,7 @@ for (const requiredPath of [
   speedsterMapRegistrationLessonSql,
   speedsterLayoutKeyV2Sql,
   speedsterColorGeometryEvidenceSql,
+  speedsterAuditEvidenceImmutabilitySql,
   serviceValidationScript,
   readinessValidationScript,
   advisoryLockValidationScript,
@@ -250,6 +257,9 @@ if (!migrationNames.includes(SPEEDSTER_LAYOUT_V2_MIGRATION)) {
 }
 if (!postLayoutMigrationNames.includes(SPEEDSTER_COLOR_GEOMETRY_MIGRATION)) {
   fail("The Color Geometry migration must remain ordered after Layout Key V2.");
+}
+if (!postLayoutMigrationNames.includes(SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION)) {
+  fail("The Speedster audit immutability migration must remain ordered after Layout Key V2.");
 }
 
 let cleanupRequired = false;
@@ -493,6 +503,13 @@ try {
   if (!speedsterColorGeometryResult.includes("SPEEDSTER_COLOR_GEOMETRY_EVIDENCE_VALIDATION_PASS")) {
     fail("The Speedster Color Geometry SQL validation did not reach its PASS marker.");
   }
+  const speedsterAuditImmutabilityResult = runSqlFile(
+    speedsterAuditEvidenceImmutabilitySql,
+    "verifying Speedster instrumentation, Map Filter decision, and restore evidence immutability",
+  );
+  if (!speedsterAuditImmutabilityResult.includes("SPEEDSTER_AUDIT_EVIDENCE_IMMUTABILITY_VALIDATION_PASS")) {
+    fail("The Speedster audit evidence immutability SQL validation did not reach its PASS marker.");
+  }
   const readyRuntimeResult = run(
     process.execPath,
     [readinessValidationScript, "--expect=ready"],
@@ -588,6 +605,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry evidence, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry evidence, Speedster audit evidence immutability, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }

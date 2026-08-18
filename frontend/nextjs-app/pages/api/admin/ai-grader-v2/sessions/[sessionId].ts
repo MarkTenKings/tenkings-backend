@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
@@ -41,6 +42,10 @@ import {
   SpeedsterColorGeometryReceiptExpiredError,
   verifySpeedsterColorGeometryReceipt,
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
+import {
+  appendSpeedsterMapAuthorityEvidence,
+  type SpeedsterMapAuthorityEvent,
+} from "../../../../../lib/ai-grader-v2/map-authority";
 
 const jsonObject = z.record(z.string(), z.unknown());
 const patchSchema = z
@@ -156,12 +161,7 @@ export async function validateSpeedsterSubmittedMapBinding(
   try {
     selectedMap = await deps.loadActiveMap({ cardProfile: source.cardProfile, identity: source.identity });
   } catch (error) {
-    if (binding) throw error;
-    return {
-      appliedMap: null,
-      selectedMap: null,
-      mapFailureCode: "MAP_LOOKUP_INTEGRITY_FAILED",
-    };
+    throw error;
   }
   if (!selectedMap) {
     if (binding) {
@@ -170,11 +170,9 @@ export async function validateSpeedsterSubmittedMapBinding(
     return { appliedMap: null, selectedMap: null };
   }
   if (!binding) {
-    return {
-      appliedMap: null,
-      selectedMap,
-      mapFailureCode: "MAP_REGISTRATION_NOT_APPLIED",
-    };
+    throw new SpeedsterMapIntegrityError(
+      "An eligible Card Map exists, but validated Front + Back registration was not submitted. Mapless capture is blocked.",
+    );
   }
   const revision = selectedMap.revision;
   if (revision.revisionId !== binding.revisionId) {
@@ -342,7 +340,11 @@ function safeSessionResponse(session: PersistedSession): PersistedSession {
   };
 }
 
-function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.InputJsonValue {
+function canonicalSpeedsterCapture(
+  source: SpeedsterMapSourceSession,
+  priorCapture: unknown,
+  finalAuthority: SpeedsterMapAuthorityEvent,
+): Prisma.InputJsonValue {
   const side = (value: SpeedsterMapSourceSession["front"]) => ({
     originalStorageKey: value.originalStorageKey,
     rectifiedStorageKey: value.rectifiedStorageKey,
@@ -354,10 +356,12 @@ function canonicalSpeedsterCapture(source: SpeedsterMapSourceSession): Prisma.In
     transform: value.transform,
     viewStorageKeys: value.viewStorageKeys,
   });
+  const authorityCapture = appendSpeedsterMapAuthorityEvidence(priorCapture, finalAuthority);
   return {
     cornerShape: source.cornerShape,
     front: side(source.front),
     back: side(source.back),
+    mapAuthority: authorityCapture.mapAuthority,
   } as Prisma.InputJsonValue;
 }
 
@@ -527,9 +531,27 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         mapFailureCode = null,
         ...mapBinding
       } = validatedMapBinding;
+      const finalMapAuthority: SpeedsterMapAuthorityEvent = {
+        attemptId: randomUUID(),
+        recordedAt: new Date().toISOString(),
+        status: appliedMap ? "APPLIED" : "NO_MAP",
+        failureCode: null,
+        message: appliedMap
+          ? `Capture committed with validated Front + Back registration for immutable revision ${appliedMap.revision.revisionId}.`
+          : "Capture committed after the authoritative server lookup confirmed NO_MAP.",
+        revision: appliedMap ? {
+          revisionId: appliedMap.revision.revisionId,
+          revisionHash: appliedMap.revision.revisionHash,
+          version: appliedMap.revision.version,
+          scope: appliedMap.appliedScope,
+          name: appliedMap.appliedMapName,
+        } : null,
+        registrationOperationId: null,
+        registrationFailures: [],
+      };
       const session = await deps.updateSession(sessionId, admin.user.id, {
         workflowState: "CAPTURED",
-        capture: canonicalSpeedsterCapture(canonicalSource),
+        capture: canonicalSpeedsterCapture(canonicalSource, existing.capture, finalMapAuthority),
         ...mapBinding,
       }, colorGeometryEvidence);
       if (!session) {

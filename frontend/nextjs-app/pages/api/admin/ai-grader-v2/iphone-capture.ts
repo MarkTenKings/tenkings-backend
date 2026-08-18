@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import {
@@ -24,7 +25,30 @@ type DeviceRecord = {
   activeSessionId: string | null;
   uploadVersion: number;
   readyVersion: number;
+  uploadManifest?: unknown;
+  readyManifest?: unknown;
 };
+
+type CaptureManifest = {
+  front: { byteSize: number; checksumSha256: string };
+  back: { byteSize: number; checksumSha256: string };
+};
+
+function captureManifest(value: unknown): CaptureManifest | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const side = (entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const item = entry as Record<string, unknown>;
+    return Number.isSafeInteger(item.byteSize) && (item.byteSize as number) > 0
+      && typeof item.checksumSha256 === "string" && /^[a-f0-9]{64}$/.test(item.checksumSha256)
+      ? { byteSize: item.byteSize as number, checksumSha256: item.checksumSha256 }
+      : null;
+  };
+  const front = side(candidate.front);
+  const back = side(candidate.back);
+  return front && back ? { front, back } : null;
+}
 
 type Dependencies = {
   requireAdminSession: (req: NextApiRequest) => Promise<{ user: { id: string } }>;
@@ -58,7 +82,13 @@ const dependencies: Dependencies = {
   }),
   activateDevice: (id, activeSessionId) => prisma.aiGraderV2CaptureDevice.update({
     where: { id },
-    data: { activeSessionId, uploadVersion: 0, readyVersion: 0 },
+    data: {
+      activeSessionId,
+      uploadVersion: 0,
+      readyVersion: 0,
+      uploadManifest: Prisma.DbNull,
+      readyManifest: Prisma.DbNull,
+    },
   }),
   storageObjectExists: async (storageKey) => {
     try {
@@ -76,12 +106,17 @@ export async function resolveSpeedsterIphoneReadyPair(input: Readonly<{
   userId: string;
   sessionId: string;
   readyVersion: number;
+  readyManifest?: unknown;
   acceptedLegacyReadyVersion?: number;
   storageObjectExists: (storageKey: string) => Promise<boolean>;
 }>) {
-  const versioned = {
-    front: speedsterIphoneStorageKey(input.userId, input.sessionId, "FRONT", input.readyVersion),
-    back: speedsterIphoneStorageKey(input.userId, input.sessionId, "BACK", input.readyVersion),
+  const manifest = captureManifest(input.readyManifest);
+  const versioned = manifest ? {
+    front: speedsterIphoneStorageKey(input.userId, input.sessionId, "FRONT", input.readyVersion, manifest.front.checksumSha256),
+    back: speedsterIphoneStorageKey(input.userId, input.sessionId, "BACK", input.readyVersion, manifest.back.checksumSha256),
+  } : {
+    front: `ai-grader-v2/${input.userId}/${input.sessionId}/original/iphone-v${input.readyVersion}/front.jpg`,
+    back: `ai-grader-v2/${input.userId}/${input.sessionId}/original/iphone-v${input.readyVersion}/back.jpg`,
   };
   const versionedExists = await Promise.all([
     input.storageObjectExists(versioned.front),
@@ -185,6 +220,7 @@ export function createAiGraderV2AdminIphoneCaptureHandler(deps: Dependencies = d
         userId: admin.user.id,
         sessionId: activeSessionId,
         readyVersion: device.readyVersion,
+        readyManifest: device.readyManifest,
         ...(acceptedLegacyVersion === undefined ? {} : { acceptedLegacyReadyVersion: acceptedLegacyVersion }),
         storageObjectExists: deps.storageObjectExists,
       });

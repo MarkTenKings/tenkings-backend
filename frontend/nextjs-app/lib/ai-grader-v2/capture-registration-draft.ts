@@ -586,11 +586,9 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
       && preparedGenerations.every((generation) => generation === originalGeneration);
   })();
   const loadedCenteringRegistrationIsCoherent = registeredSides.length === 2
-    ? recordedFailureSides.length === 0 && value.mapRegistrationFailed === false && value.mapAuthorityAbandoned === false
-    : registeredSides.length === 0 && (
-      (recordedFailureSides.length > 0 && value.mapRegistrationFailed === true && value.mapAuthorityAbandoned === false)
-      || (recordedFailureSides.length === 0 && value.mapRegistrationFailed === false && value.mapAuthorityAbandoned === true)
-    );
+    && recordedFailureSides.length === 0
+    && value.mapRegistrationFailed === false
+    && value.mapAuthorityAbandoned === false;
   if ((value.stage === "MAP_REGISTRATION_INTERRUPTED" && !(interruptions.FRONT || interruptions.BACK))
     || (value.stage === "MAP_REGISTRATION_RESCUE" && !(failures.FRONT || failures.BACK))
     || (value.stage === "MAP_REGISTRATION_INTERRUPTED"
@@ -612,8 +610,7 @@ export function parseSpeedsterCaptureRegistrationDraft(serialized: string, bindi
     || !recaptureIsCoherent
     || (value.mapBindingStatus !== "LOADED" && (unresolved || registeredSides.length > 0
       || value.stage === "MAP_REGISTRATION_INTERRUPTED" || value.stage === "MAP_REGISTRATION_RESCUE"))
-    || (value.mapAuthorityAbandoned && (registeredSides.length > 0 || unresolved
-      || recordedFailureSides.length > 0 || value.mapRegistrationFailed))
+    || (value.mapBindingStatus === "LOADED" && value.mapAuthorityAbandoned)
     || (centeringStage && value.mapBindingStatus === "LOADED" && !loadedCenteringRegistrationIsCoherent)
     || (centeringStage && value.mapBindingStatus !== "LOADED"
       && (recordedFailureSides.length > 0 || value.mapRegistrationFailed))

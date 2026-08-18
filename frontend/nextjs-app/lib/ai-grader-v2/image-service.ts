@@ -1,4 +1,8 @@
 import { buildAdminHeaders } from "../adminHeaders";
+import {
+  sha256BrowserBlob,
+  uploadAiGraderArtifactDirectly,
+} from "../aiGraderDirectUpload";
 import { toCardMapOperatorMessage } from "./card-map-copy";
 import type {
   SpeedsterCardSide,
@@ -363,15 +367,6 @@ export async function runSpeedsterImageRequest<T>(
   }
 }
 
-async function fetchSpeedsterImageResponse(
-  input: RequestInfo | URL,
-  init: RequestInit,
-  action: string,
-  options: SpeedsterImageRequestOptions = {},
-) {
-  return runSpeedsterImageRequest(action, options, (signal) => fetch(input, { ...init, signal }));
-}
-
 async function fetchSpeedsterImageJson<T>(
   input: RequestInfo | URL,
   init: RequestInit,
@@ -637,10 +632,14 @@ export async function uploadSpeedsterOriginal(input: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<{ storageKey: string; readUrl: string }> {
+  const checksumSha256 = await sha256BrowserBlob(input.file);
   const { response: planResponse, payload: plan } = await fetchSpeedsterImageJson<{
     storageKey?: string;
     uploadUrl?: string;
-    readUrl?: string;
+    uploadMethod?: string;
+    uploadHeaders?: Record<string, string>;
+    checksumSha256?: string;
+    byteSize?: number;
     message?: string;
   }>("/api/admin/ai-grader-v2/upload-plan", {
     method: "POST",
@@ -650,22 +649,58 @@ export async function uploadSpeedsterOriginal(input: {
       side: input.side,
       kind: "ORIGINAL",
       contentType: input.file.type,
+      checksumSha256,
+      byteSize: input.file.size,
       ...(input.targetedRecapture ? { targetedRecapture: true } : {}),
     }),
   }, `${input.side.toLowerCase()} upload planning`, input);
-  if (!planResponse.ok || !plan.storageKey || !plan.uploadUrl || !plan.readUrl) {
+  if (!planResponse.ok
+    || !plan.storageKey
+    || !plan.uploadUrl
+    || plan.uploadMethod !== "PUT"
+    || plan.checksumSha256 !== checksumSha256
+    || plan.byteSize !== input.file.size) {
     throw new Error(toCardMapOperatorMessage(plan.message ?? "Speedster upload could not be prepared."));
   }
 
-  const uploadResponse = await fetchSpeedsterImageResponse(plan.uploadUrl, {
-    method: "PUT",
-    mode: "cors",
-    credentials: "omit",
-    headers: { "Content-Type": input.file.type },
-    body: input.file,
-  }, `${input.side.toLowerCase()} original upload`, input);
-  if (!uploadResponse.ok) throw new Error(`Speedster upload failed (HTTP ${uploadResponse.status}).`);
-  return { storageKey: plan.storageKey, readUrl: plan.readUrl };
+  await runSpeedsterImageRequest(
+    `${input.side.toLowerCase()} original upload`,
+    input,
+    (signal) => uploadAiGraderArtifactDirectly({
+      purpose: "speedster-original",
+      uploadUrl: plan.uploadUrl as string,
+      uploadMethod: plan.uploadMethod,
+      uploadHeaders: plan.uploadHeaders,
+      contentType: input.file.type,
+      checksumSha256,
+      body: input.file,
+      signal,
+    }),
+  );
+
+  const { response: verifyResponse, payload: verified } = await fetchSpeedsterImageJson<{
+    storageKey?: string;
+    readUrl?: string;
+    message?: string;
+  }>("/api/admin/ai-grader-v2/upload-plan", {
+    method: "POST",
+    headers: buildAdminHeaders(input.token, { "Content-Type": "application/json" }),
+    body: JSON.stringify({
+      sessionId: input.sessionId,
+      side: input.side,
+      kind: "ORIGINAL_VERIFY",
+      contentType: input.file.type,
+      storageKey: plan.storageKey,
+      checksumSha256,
+      byteSize: input.file.size,
+    }),
+  }, `${input.side.toLowerCase()} upload verification`, input);
+  if (!verifyResponse.ok || verified.storageKey !== plan.storageKey || !verified.readUrl) {
+    throw new Error(toCardMapOperatorMessage(
+      verified.message ?? "Speedster upload could not be verified.",
+    ));
+  }
+  return { storageKey: plan.storageKey, readUrl: verified.readUrl };
 }
 
 export async function planSpeedsterPreparedOutputs(input: {

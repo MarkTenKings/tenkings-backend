@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import worker, { handleCapture } from "../src/index.mjs";
 
 const API = "https://collect.tenkings.co/api/ai-grader-v2/iphone-capture";
 const DEVICE_ID = "device-12345678901234567890";
+const FRONT = { byteSize: 5, checksumSha256: createHash("sha256").update("front").digest("hex") };
+const BACK = { byteSize: 4, checksumSha256: createHash("sha256").update("back").digest("hex") };
+const uploadHeaders = (checksumSha256) => ({
+  "Content-Type": "image/jpeg",
+  "x-amz-acl": "private",
+  "x-amz-checksum-sha256": Buffer.from(checksumSha256, "hex").toString("base64"),
+});
 
 function captureRequest() {
   const form = new FormData();
@@ -23,6 +31,8 @@ test("relays one photo pair through PLAN, parallel PUTs, and COMPLETE", async ()
         uploadVersion: 7,
         frontUploadUrl: "https://spaces.example/front",
         backUploadUrl: "https://spaces.example/back",
+        frontUploadHeaders: uploadHeaders(FRONT.checksumSha256),
+        backUploadHeaders: uploadHeaders(BACK.checksumSha256),
       });
     }
     if (String(url).startsWith("https://spaces.example/")) return new Response(null, { status: 200 });
@@ -34,13 +44,15 @@ test("relays one photo pair through PLAN, parallel PUTs, and COMPLETE", async ()
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { readyVersion: 7 });
   assert.equal(calls.length, 4);
-  assert.deepEqual(JSON.parse(calls[0].body), { action: "PLAN", deviceId: DEVICE_ID });
+  assert.deepEqual(JSON.parse(calls[0].body), { action: "PLAN", deviceId: DEVICE_ID, front: FRONT, back: BACK });
   assert.equal(calls[1].method, "PUT");
   assert.equal(calls[2].method, "PUT");
   assert.deepEqual(JSON.parse(calls[3].body), {
     action: "COMPLETE",
     deviceId: DEVICE_ID,
     uploadVersion: 7,
+    front: FRONT,
+    back: BACK,
   });
 });
 
@@ -76,6 +88,8 @@ test("returns PLAN and COMPLETE failures honestly", async () => {
         uploadVersion: 8,
         frontUploadUrl: "https://spaces.example/front",
         backUploadUrl: "https://spaces.example/back",
+        frontUploadHeaders: uploadHeaders(FRONT.checksumSha256),
+        backUploadHeaders: uploadHeaders(BACK.checksumSha256),
       });
     }
     if (String(url).startsWith("https://spaces.example/")) return new Response(null, { status: 200 });
@@ -97,6 +111,8 @@ test("does not mark a pair complete when either upload fails", async () => {
         uploadVersion: 9,
         frontUploadUrl: "https://spaces.example/front",
         backUploadUrl: "https://spaces.example/back",
+        frontUploadHeaders: uploadHeaders(FRONT.checksumSha256),
+        backUploadHeaders: uploadHeaders(BACK.checksumSha256),
       });
     }
     if (url === "https://spaces.example/front") return new Response(null, { status: 500 });

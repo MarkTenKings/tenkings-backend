@@ -28,6 +28,7 @@ const REVIEW_RESULTS = new Set<SpeedsterReviewResult>([
 ]);
 const ORIGINS = new Set(["DETECTOR", "MEMORY", "SMART_MARK"]);
 const INSTRUMENTATION_PROPOSAL_ID = /^(FRONT|BACK):\d+$/;
+const RAW_CANDIDATE_ID = /^raw-[a-f0-9]{24}$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -104,6 +105,9 @@ function parseCommon(value: Record<string, unknown>) {
       if (
         !isRecord(contributor) || typeof contributor.proposalId !== "string" ||
         !INSTRUMENTATION_PROPOSAL_ID.test(contributor.proposalId) ||
+        (contributor.rawCandidateId !== undefined && (
+          typeof contributor.rawCandidateId !== "string" || !RAW_CANDIDATE_ID.test(contributor.rawCandidateId)
+        )) ||
         typeof contributor.origin !== "string" || !ORIGINS.has(contributor.origin) ||
         typeof contributor.sourceViewId !== "string" || !contributor.sourceViewId ||
         typeof contributor.defectType !== "string" || !DEFECT_TYPES.has(contributor.defectType as SpeedsterDefectType) ||
@@ -135,7 +139,13 @@ function parseCommon(value: Record<string, unknown>) {
       throw new Error("Speedster finding instrumentation primary contributor is missing.");
     }
   }
-  return value as unknown as SpeedsterReviewFinding;
+  const detectorMask = value.detectorMask === undefined
+    ? undefined
+    : parseSpeedsterTraceRleV1(value.detectorMask);
+  return {
+    ...value,
+    ...(detectorMask ? { detectorMask } : {}),
+  } as unknown as SpeedsterReviewFinding;
 }
 
 export function parseSpeedsterReviewFindings(value: unknown): SpeedsterReviewFinding[] {
@@ -150,6 +160,7 @@ export function parseSpeedsterReviewFindings(value: unknown): SpeedsterReviewFin
       }
       if (
         "zone" in entry || "canonicalContour" in entry || "measurement" in entry ||
+        "detectorMask" in entry ||
         !Array.isArray(entry.measurementRegions)
       ) {
         throw new Error("Speedster trace source must own only measurement-region children.");
@@ -174,11 +185,21 @@ export function parseSpeedsterReviewFindings(value: unknown): SpeedsterReviewFin
     if (typeof entry.zone !== "string" || !ZONES.has(entry.zone as SpeedsterConditionZone)) {
       throw new Error("Speedster legacy finding zone is malformed.");
     }
+    const measurement = parseMeasurement(entry.measurement);
+    if (common.detectorMask) {
+      const foregroundPixels = common.detectorMask.runs.reduce(
+        (total, run, index) => total + (index % 2 === 1 ? run : 0),
+        0,
+      );
+      if (measurement.pixelCount !== foregroundPixels) {
+        throw new Error("Speedster detector measurement does not match its canonical mask pixels.");
+      }
+    }
     return {
       ...common,
       zone: entry.zone as SpeedsterConditionZone,
       canonicalContour: parseContour(entry.canonicalContour),
-      measurement: parseMeasurement(entry.measurement),
+      measurement,
     } as SpeedsterMeasuredDefect;
   });
 }

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import cv2
 import numpy as np
+from pydantic import ValidationError
 
 from app import (
     ColorGeometryRequest,
@@ -213,7 +214,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
         self.assertLessEqual(core_width * core_height, core_area_bound)
         self.assertTrue(np.any(strongest_core & rim_region))
 
-    def test_prepare_upload_contract_keeps_backend_first_rollout_compatible(self):
+    def test_geometry_and_prepare_require_explicit_mat_authority(self):
         legacy = PreparedUploads(
             rectified="rectified",
             normalized="normalized",
@@ -229,8 +230,9 @@ class SpeedsterGeometryTest(unittest.TestCase):
             directional="directional",
         )
         self.assertEqual(expanded.inspection, "inspection")
-        self.assertIsNone(GeometryRequest(imageBase64="legacy").matColor)
-        self.assertIsNone(
+        with self.assertRaises(ValidationError):
+            GeometryRequest(imageBase64="legacy")
+        with self.assertRaises(ValidationError):
             PrepareRequest(
                 imageBase64="legacy",
                 corners=[
@@ -240,8 +242,7 @@ class SpeedsterGeometryTest(unittest.TestCase):
                     Point(x=0, y=1),
                 ],
                 outputUploads=legacy,
-            ).matColor
-        )
+            )
 
     def test_proposes_and_rectifies_four_card_corners(self):
         image = np.zeros((1600, 1200, 3), dtype=np.uint8)
@@ -266,37 +267,17 @@ class SpeedsterGeometryTest(unittest.TestCase):
 
     def test_nonaccepted_color_outer_fails_closed_without_legacy_inner_contour(self):
         image = np.zeros((900, 700, 3), dtype=np.uint8)
-        with patch("app.load_image", return_value=image), patch(
-            "app.detect_card_quad"
-        ) as legacy_detector:
+        with patch("app.load_image", return_value=image):
             result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
 
         self.assertEqual(result["colorGeometry"]["outcome"], "INSUFFICIENT_EVIDENCE")
         self.assertIsNone(result["corners"])
-        legacy_detector.assert_not_called()
-
-    def test_no_mat_rolling_compatibility_preserves_legacy_geometry_proposal(self):
-        image = np.zeros((900, 700, 3), dtype=np.uint8)
-        legacy = np.array(
-            [[100, 100], [600, 100], [600, 800], [100, 800]], dtype=np.float32
-        )
-        with patch("app.load_image", return_value=image), patch(
-            "app.detect_card_quad", return_value=legacy
-        ) as legacy_detector:
-            result = geometry(GeometryRequest(imageBase64="fixture"))
-
-        self.assertIsNone(result["colorGeometry"])
-        self.assertEqual(
-            [(point.x, point.y) for point in result["corners"]],
-            [(100 / 700, 100 / 900), (600 / 700, 100 / 900), (600 / 700, 800 / 900), (100 / 700, 800 / 900)],
-        )
-        legacy_detector.assert_called_once_with(image)
 
     def test_color_outer_exception_abstains_and_fails_closed_to_manual_geometry(self):
         image = np.zeros((900, 700, 3), dtype=np.uint8)
         with patch("app.load_image", return_value=image), patch(
             "app.propose_physical_outer", side_effect=RuntimeError("color-only fault")
-        ), patch("app.detect_card_quad") as legacy_detector:
+        ):
             result = geometry(GeometryRequest(imageBase64="fixture", matColor="BLACK"))
 
         self.assertEqual(result["colorGeometry"]["outcome"], "ABSTAIN")
@@ -318,7 +299,6 @@ class SpeedsterGeometryTest(unittest.TestCase):
             )
         )
         self.assertIsNone(result["corners"])
-        legacy_detector.assert_not_called()
 
     def test_targeted_color_recovery_reads_only_and_never_uploads_prepared_artifacts(self):
         image = np.full((900, 700, 3), 30, dtype=np.uint8)
@@ -481,6 +461,28 @@ class SpeedsterGeometryTest(unittest.TestCase):
         np.testing.assert_allclose(card, rectified, atol=1)
         self.assertGreater(float(card.mean()), 220)
         self.assertLess(float(inspection[:INSPECTION_MARGIN_PX].mean()), 120)
+
+    def test_rectification_rejects_crossed_concave_collapsed_and_out_of_bounds_quads(self):
+        image = np.full((1000, 800, 3), 120, dtype=np.uint8)
+        invalid_pixel_quads = [
+            np.array([[80, 80], [720, 80], [160, 920], [640, 920]], dtype=np.float32),
+            np.array([[80, 80], [720, 80], [480, 920], [400, 260]], dtype=np.float32),
+            np.array([[80, 80], [720, 80], [720, 80.0001], [80, 80.0001]], dtype=np.float32),
+        ]
+        for corners in invalid_pixel_quads:
+            with self.subTest(corners=corners.tolist()):
+                with self.assertRaisesRegex(ValueError, "non-collapsed convex perimeter"):
+                    warp_to_card_map(image, corners)
+                with self.assertRaisesRegex(ValueError, "non-collapsed convex perimeter"):
+                    warp_to_inspection_map(image, corners)
+
+        with self.assertRaisesRegex(ValueError, "inside the exact source image"):
+            rectify(image, [
+                Point(x=-0.1, y=0.1),
+                Point(x=0.9, y=0.1),
+                Point(x=0.9, y=0.9),
+                Point(x=0.1, y=0.9),
+            ])
 
     def test_returns_none_instead_of_calling_the_photo_frame_a_card(self):
         image = np.full((900, 700, 3), 120, dtype=np.uint8)

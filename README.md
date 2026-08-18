@@ -25,9 +25,9 @@
    npm run dev --workspace @tenkings/nextjs-app
    ```
 
-For wallet adjustments through the operator console, set a shared key:
+For wallet adjustments through the operator console, keep the shared key server-only:
 1. Add `OPERATOR_API_KEY=your-operator-secret` to `backend/wallet-service/.env.local` (and `.env.docker` for compose).
-2. Mirror the same value as `NEXT_PUBLIC_OPERATOR_KEY` in `frontend/nextjs-app/.env.local`.
+2. Add the same `OPERATOR_API_KEY` to the frontend server runtime only; the signed-in browser calls the authenticated frontend proxy and never receives this secret.
 3. Restart the services so both ends pick up the configuration.
 
 ### Service Ports (direct dev runs)

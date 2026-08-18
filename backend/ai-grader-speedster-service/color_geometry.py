@@ -87,6 +87,7 @@ def _result(
     runner_up_ratio: Optional[float] = None,
     ambiguous: bool = False,
     advisory: Optional[dict] = None,
+    diagnostic_candidate: Optional[dict] = None,
 ) -> dict:
     if mode not in MODES or outcome not in OUTCOMES or mat_color not in MAT_COLORS:
         raise ValueError("Color geometry result contains an unsupported enum value")
@@ -116,6 +117,7 @@ def _result(
             "ambiguous": ambiguous,
         },
         "advisory": advisory,
+        "diagnosticCandidate": diagnostic_candidate,
     }
 
 
@@ -266,6 +268,114 @@ def _quad_frame_coverage(image: np.ndarray, quad: np.ndarray) -> float:
     return float(abs(cv2.contourArea(np.asarray(quad, dtype=np.float32))) / frame_area)
 
 
+def _physical_rejected_gates(
+    sides: dict,
+    frame_coverage: float,
+    mat_color: str,
+    *,
+    runner_up_ratio: Optional[float] = None,
+    ambiguous: bool = False,
+) -> list[dict]:
+    """Describe every current v1 acceptance gate missed by one candidate.
+
+    These diagnostics do not participate in candidate ranking or acceptance.
+    They only make an already-rejected candidate inspectable by the operator.
+    """
+    gates = []
+    side_metrics = (
+        (
+            "medianContrastDeltaE",
+            PHYSICAL_CONTRAST_FLOOR_DELTA_E,
+            "SIDE_MEDIAN_CONTRAST_BELOW_FLOOR",
+        ),
+        (
+            "supportFraction",
+            PHYSICAL_MINIMUM_SIDE_SUPPORT,
+            "SIDE_SUPPORT_BELOW_FLOOR",
+        ),
+        (
+            "outsideMatSupportFraction",
+            PHYSICAL_MINIMUM_SIDE_SUPPORT,
+            "SIDE_OUTSIDE_MAT_SUPPORT_BELOW_FLOOR",
+        ),
+        (
+            "insideNonMatSupportFraction",
+            PHYSICAL_MINIMUM_SIDE_SUPPORT,
+            "SIDE_INSIDE_NON_MAT_SUPPORT_BELOW_FLOOR",
+        ),
+    )
+    for side_name in SIDE_NAMES:
+        evidence = sides[side_name]
+        for metric, threshold, code in side_metrics:
+            observed = float(evidence.get(metric, 0.0))
+            if observed < threshold:
+                gates.append({
+                    "code": code,
+                    "side": side_name,
+                    "metric": metric,
+                    "observed": observed,
+                    "threshold": threshold,
+                    "comparison": "GTE",
+                })
+        if mat_color == "BLACK":
+            lightness = float(evidence.get("medianLightnessContrast", 0.0))
+            if lightness < 20.0:
+                gates.append({
+                    "code": "DARK_EDGE_LIGHTNESS_AMBIGUOUS",
+                    "side": side_name,
+                    "metric": "medianLightnessContrast",
+                    "observed": lightness,
+                    "threshold": 20.0,
+                    "comparison": "GTE",
+                })
+    if frame_coverage < PHYSICAL_MINIMUM_FRAME_COVERAGE:
+        gates.append({
+            "code": "FRAME_COVERAGE_BELOW_FLOOR",
+            "side": None,
+            "metric": "frameCoverage",
+            "observed": round(float(frame_coverage), 6),
+            "threshold": PHYSICAL_MINIMUM_FRAME_COVERAGE,
+            "comparison": "GTE",
+        })
+    if ambiguous and runner_up_ratio is not None:
+        gates.append({
+            "code": "RUNNER_UP_AMBIGUOUS",
+            "side": None,
+            "metric": "runnerUpScoreRatio",
+            "observed": float(runner_up_ratio),
+            "threshold": PHYSICAL_AMBIGUOUS_RUNNER_UP_RATIO,
+            "comparison": "LT",
+        })
+    return gates
+
+
+def _physical_diagnostic_candidate(
+    evaluated: list[tuple],
+    candidate: tuple,
+    mat_color: str,
+    *,
+    runner_up_ratio: Optional[float] = None,
+    ambiguous: bool = False,
+) -> dict:
+    score, quad, sides, frame_coverage = candidate
+    rank = next(index for index, item in enumerate(evaluated, start=1) if item is candidate)
+    return {
+        "version": "speedster-color-geometry-diagnostic-candidate-v1",
+        "authority": "HUMAN_DRAFT_ONLY",
+        "quad": quad,
+        "rank": rank,
+        "contourScore": round(float(score), 6),
+        "frameCoverage": round(float(frame_coverage), 6),
+        "rejectedGates": _physical_rejected_gates(
+            sides,
+            frame_coverage,
+            mat_color,
+            runner_up_ratio=runner_up_ratio,
+            ambiguous=ambiguous,
+        ),
+    }
+
+
 def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
     if mat_color not in MAT_COLORS:
         raise ValueError("matColor must be BLACK, WHITE, or MAGENTA")
@@ -322,7 +432,8 @@ def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
         if candidate[3] >= PHYSICAL_MINIMUM_FRAME_COVERAGE
     ]
 
-    strongest_sides = (color_owned[0] if color_owned else evaluated[0])[2]
+    strongest_candidate = color_owned[0] if color_owned else evaluated[0]
+    strongest_sides = strongest_candidate[2]
     if not mat_owned:
         for side in strongest_sides.values():
             # This response carries evidence for one diagnostic candidate.
@@ -357,6 +468,11 @@ def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
                     else "Visible rectangular transitions are not supported by the selected mat outside all four sides. Switch mats or place the handles manually."
                 ),
             ),
+            diagnostic_candidate=_physical_diagnostic_candidate(
+                evaluated,
+                strongest_candidate,
+                mat_color,
+            ),
         )
 
     best_score, best_quad, sides, _best_coverage = mat_owned[0]
@@ -380,6 +496,11 @@ def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
                 "DARK_EDGE_ON_BLACK",
                 "WHITE",
                 "A dark card edge is lightness-ambiguous on the black mat even when chroma differs. Switch to WHITE or place the handles manually.",
+            ),
+            diagnostic_candidate=_physical_diagnostic_candidate(
+                evaluated,
+                mat_owned[0],
+                mat_color,
             ),
         )
 
@@ -408,6 +529,13 @@ def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
                 _alternate_mat(mat_color),
                 "More than one physical boundary is similarly plausible. Switch mats or place the handles manually.",
             ),
+            diagnostic_candidate=_physical_diagnostic_candidate(
+                evaluated,
+                mat_owned[0],
+                mat_color,
+                runner_up_ratio=runner_ratio,
+                ambiguous=True,
+            ),
         )
 
     supported = all(
@@ -428,6 +556,12 @@ def propose_physical_outer(image: np.ndarray, mat_color: str) -> dict:
                 "SWITCH_MAT",
                 recommended,
                 "At least one physical edge is below the offline-estimate contrast/support floor. Switch mats or place the handles manually.",
+            ),
+            diagnostic_candidate=_physical_diagnostic_candidate(
+                evaluated,
+                mat_owned[0],
+                mat_color,
+                runner_up_ratio=runner_ratio,
             ),
         )
     return _result(
@@ -613,4 +747,13 @@ def serialize_proposal(result: dict, width: int, height: int) -> dict:
         if proposal is not None
         else None
     )
+    diagnostic_candidate = result.get("diagnosticCandidate")
+    if diagnostic_candidate is not None:
+        serialized["diagnosticCandidate"] = {
+            **diagnostic_candidate,
+            "quad": [
+                {"x": float(point[0] / width), "y": float(point[1] / height)}
+                for point in np.asarray(diagnostic_candidate["quad"])
+            ],
+        }
     return serialized

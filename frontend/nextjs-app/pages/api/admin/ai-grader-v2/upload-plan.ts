@@ -2,9 +2,18 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { getStorageMode, headStorageObject, presignReadUrl, presignUploadUrl } from "../../../../lib/server/storage";
+import {
+  AI_GRADER_STORAGE_MAX_OBJECT_BYTES,
+  getStorageMode,
+  headStorageObject,
+  presignPrivateSpeedsterUploadUrl,
+  presignReadUrl,
+  sha256HexToBase64,
+  verifyStorageObjectIntegrity,
+} from "../../../../lib/server/storage";
 import {
   isAuthorizedSpeedsterOriginalStorageKey,
+  speedsterContentAddressedOriginalStorageKey,
   speedsterPreparedStorageKeys,
   speedsterRecaptureOriginalStorageKey,
   speedsterOriginalStorageGeneration,
@@ -16,6 +25,7 @@ const EXTENSIONS: Readonly<Record<string, string>> = {
   "image/png": "png",
   "image/webp": "webp",
 };
+const SHA256 = /^[a-f0-9]{64}$/;
 
 function storageObjectNotFound(error: unknown) {
   if (!error || typeof error !== "object") return false;
@@ -32,9 +42,10 @@ type Dependencies = Readonly<{
     workflowState: string;
   } | null>;
   storageReady: () => boolean;
-  presignUpload: typeof presignUploadUrl;
+  presignUpload: (storageKey: string, contentType: string, checksumSha256?: string) => Promise<string>;
   presignRead: typeof presignReadUrl;
   headObject: typeof headStorageObject;
+  verifyObject: typeof verifyStorageObjectIntegrity;
   randomUuid: () => string;
 }>;
 
@@ -45,9 +56,15 @@ const dependencies: Dependencies = {
     select: { id: true, workflowState: true },
   }),
   storageReady: () => getStorageMode() === "s3",
-  presignUpload: presignUploadUrl,
+  presignUpload: (storageKey, contentType, checksumSha256) => presignPrivateSpeedsterUploadUrl({
+    storageKey,
+    contentType,
+    ...(checksumSha256 ? { checksumSha256 } : {}),
+    requireAclHeader: true,
+  }),
   presignRead: presignReadUrl,
   headObject: headStorageObject,
+  verifyObject: verifyStorageObjectIntegrity,
   randomUuid: randomUUID,
 };
 
@@ -60,13 +77,27 @@ export function createSpeedsterUploadPlanHandler(deps: Dependencies = dependenci
 
   try {
     const admin = await deps.requireAdminSession(req);
-    const { sessionId, side, kind, contentType, targetedRecapture, sourceImageStorageKey } = req.body as {
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    const {
+      sessionId,
+      side,
+      kind,
+      contentType,
+      targetedRecapture,
+      sourceImageStorageKey,
+      storageKey: requestedStorageKey,
+      checksumSha256: requestedChecksumSha256,
+      byteSize: requestedByteSize,
+    } = req.body as {
       sessionId?: string;
       side?: string;
       kind?: string;
       contentType?: string;
       targetedRecapture?: boolean;
       sourceImageStorageKey?: string;
+      storageKey?: string;
+      checksumSha256?: string;
+      byteSize?: number;
     };
     if (!sessionId || !SESSION_ID.test(sessionId)) {
       return res.status(400).json({ message: "Invalid Speedster session ID" });
@@ -122,6 +153,36 @@ export function createSpeedsterUploadPlanHandler(deps: Dependencies = dependenci
       return res.status(200).json({ outputs: Object.fromEntries(entries) });
     }
 
+    if (kind === "ORIGINAL_VERIFY") {
+      const checksumSha256 = String(requestedChecksumSha256 ?? "").trim().toLowerCase();
+      if (!contentType || !EXTENSIONS[contentType]
+        || !SHA256.test(checksumSha256)
+        || !Number.isSafeInteger(requestedByteSize)
+        || (requestedByteSize ?? 0) < 1
+        || (requestedByteSize ?? 0) > AI_GRADER_STORAGE_MAX_OBJECT_BYTES
+        || !requestedStorageKey
+        || !isAuthorizedSpeedsterOriginalStorageKey({
+          storageKey: requestedStorageKey,
+          userId: admin.user.id,
+          sessionId,
+          side,
+        })) {
+        return res.status(400).json({ message: "Invalid Speedster original verification request" });
+      }
+      const integrity = await deps.verifyObject({
+        storageKey: requestedStorageKey,
+        expectedByteSize: requestedByteSize as number,
+        expectedChecksumSha256: checksumSha256,
+      });
+      if (!integrity.ok || integrity.contentType?.trim().toLowerCase() !== contentType.toLowerCase()) {
+        return res.status(409).json({ message: "Speedster original upload did not match its exact plan" });
+      }
+      return res.status(200).json({
+        storageKey: requestedStorageKey,
+        readUrl: await deps.presignRead(requestedStorageKey),
+      });
+    }
+
     if (kind !== "ORIGINAL") {
       return res.status(400).json({ message: "Unknown Speedster upload kind" });
     }
@@ -129,17 +190,37 @@ export function createSpeedsterUploadPlanHandler(deps: Dependencies = dependenci
     if (!contentType || !extension) {
       return res.status(400).json({ message: "Speedster accepts JPEG, PNG, or WebP images" });
     }
+    const checksumSha256 = String(requestedChecksumSha256 ?? "").trim().toLowerCase();
+    if (!SHA256.test(checksumSha256)
+      || !Number.isSafeInteger(requestedByteSize)
+      || (requestedByteSize ?? 0) < 1
+      || (requestedByteSize ?? 0) > AI_GRADER_STORAGE_MAX_OBJECT_BYTES) {
+      return res.status(400).json({ message: "Speedster upload requires exact byte size and SHA-256" });
+    }
 
     if (targetedRecapture !== undefined && targetedRecapture !== true) {
       return res.status(400).json({ message: "Invalid Speedster targeted recapture flag" });
     }
     const storageKey = targetedRecapture
       ? speedsterRecaptureOriginalStorageKey(admin.user.id, sessionId, side, deps.randomUuid(), extension as "jpg" | "png" | "webp")
-      : `ai-grader-v2/${admin.user.id}/${sessionId}/original/${side.toLowerCase()}.${extension}`;
+      : speedsterContentAddressedOriginalStorageKey(
+          admin.user.id,
+          sessionId,
+          side,
+          checksumSha256,
+          extension as "jpg" | "png" | "webp",
+        );
     return res.status(200).json({
       storageKey,
-      uploadUrl: await deps.presignUpload(storageKey, contentType),
-      readUrl: await deps.presignRead(storageKey),
+      uploadUrl: await deps.presignUpload(storageKey, contentType, checksumSha256),
+      uploadMethod: "PUT",
+      uploadHeaders: {
+        "Content-Type": contentType,
+        "x-amz-acl": "private",
+        "x-amz-checksum-sha256": sha256HexToBase64(checksumSha256),
+      },
+      byteSize: requestedByteSize,
+      checksumSha256,
     });
   } catch (error) {
     const mapped = toErrorResponse(error);

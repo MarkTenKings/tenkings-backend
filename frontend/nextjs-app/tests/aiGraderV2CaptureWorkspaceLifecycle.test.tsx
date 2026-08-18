@@ -18,6 +18,11 @@ const QRCode = require("qrcode") as { toCanvas: (...args: unknown[]) => Promise<
 const originalQrToCanvas = QRCode.toCanvas;
 QRCode.toCanvas = async () => {};
 
+function jpegTestFile(name: string): File {
+  const blob = new Blob([`speedster-test-image:${name}`], { type: "image/jpeg" });
+  return Object.assign(blob, { name, lastModified: 0 }) as File;
+}
+
 const {
   CaptureWorkspace,
   SpeedsterAppliedMapBadge,
@@ -84,7 +89,7 @@ const colorProposal = (
   advisory: proposal ? null : { code: "SWITCH_MAT", recommendedMat: "WHITE" as const, message: "Switch mats." },
 });
 
-const geometryResponse = (corners: typeof validQuad | null = validQuad): GeometryResponse => ({
+const geometryResponse = (corners: GeometryResponse["corners"] = validQuad): GeometryResponse => ({
   width: 1200,
   height: 1600,
   corners,
@@ -103,6 +108,32 @@ const advisoryGeometryResponse = (
       ...fallback.colorGeometry,
       matColor,
       advisory: { code: "SWITCH_MAT", recommendedMat, message: `Switch to ${recommendedMat}.` },
+    },
+  };
+};
+
+const diagnosticGeometryResponse = (): GeometryResponse => {
+  const fallback = geometryResponse(null);
+  return {
+    ...fallback,
+    colorGeometry: {
+      ...fallback.colorGeometry,
+      diagnosticCandidate: {
+        version: "speedster-color-geometry-diagnostic-candidate-v1",
+        authority: "HUMAN_DRAFT_ONLY",
+        quad: validQuad,
+        rank: 1,
+        contourScore: 987.5,
+        frameCoverage: 0.41,
+        rejectedGates: [{
+          code: "FRAME_COVERAGE_BELOW_FLOOR",
+          side: null,
+          metric: "frameCoverage",
+          observed: 0.41,
+          threshold: 0.5,
+          comparison: "GTE",
+        }],
+      },
     },
   };
 };
@@ -185,7 +216,7 @@ type Harness = {
   events: SpeedsterCaptureInstrumentationEvent[];
   bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[];
   rerenderSession: (sessionId: string) => Promise<void>;
-  rerenderActiveMap: (activeMap: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string }) => Promise<void>;
+  rerenderActiveMap: (activeMap: { revisionId: string; revisionHash?: string; scope: "EXACT" | "FAMILY"; name: string }) => Promise<void>;
   rerenderAuthority: (sessionId: string, token: string) => Promise<void>;
   cleanup: () => Promise<void>;
 };
@@ -194,7 +225,7 @@ async function mountWorkspace(input: {
   proposeGeometry: typeof speedsterImageService.proposeGeometry;
   draftSurface?: "AI_GRADER" | "CARD_MAPS";
   refreshedUrls?: boolean;
-  activeMap?: { revisionId: string; scope: "EXACT" | "FAMILY"; name: string };
+  activeMap?: { revisionId: string; revisionHash?: string; scope: "EXACT" | "FAMILY"; name: string };
   mapBindingStatus?: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR";
   registrationFails?: boolean;
   registrationFailsOnSide?: "FRONT" | "BACK";
@@ -211,6 +242,11 @@ async function mountWorkspace(input: {
     storageKey: string;
     requestNumber: number;
   }>) => Response | undefined | Promise<Response | undefined>;
+  originalImageFetch?: (input: Readonly<{
+    side: "FRONT" | "BACK";
+    storageKey: string;
+    signal: AbortSignal | null | undefined;
+  }>) => Promise<Response>;
   captureDraftSerialized?: string;
   localStorageGetFails?: boolean;
   localStorageSetFails?: boolean;
@@ -248,6 +284,7 @@ async function mountWorkspace(input: {
   iphonePollFetch?: (pollCount: number, url: string) => Response | undefined | Promise<Response | undefined>;
   iphoneStorageGeneration?: "VERSIONED" | "LEGACY";
   scoreFetch?: (request: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  geometryImagesStartVisible?: boolean;
   prepareFetch?: (input: Readonly<{
     side: "FRONT" | "BACK";
     matColor: "BLACK" | "WHITE" | "MAGENTA";
@@ -329,7 +366,15 @@ async function mountWorkspace(input: {
     releasePointerCapture: { configurable: true, value() {} },
     hasPointerCapture: { configurable: true, value: () => true },
   });
-
+  if (input.geometryImagesStartVisible !== false) {
+    Object.defineProperty(dom.window, "requestAnimationFrame", {
+      configurable: true,
+      value: (callback: FrameRequestCallback) => {
+        callback(Date.now());
+        return 1;
+      },
+    });
+  }
   let pollCount = 0;
   let iphoneActivationCount = 0;
   const originalUploadPlanCount = { FRONT: 0, BACK: 0 };
@@ -385,9 +430,12 @@ async function mountWorkspace(input: {
     if (url === "/api/admin/ai-grader-v2/upload-plan") {
       const body = JSON.parse(String(init?.body)) as {
         side: "FRONT" | "BACK";
-        kind: "ORIGINAL" | "PREPARED";
+        kind: "ORIGINAL" | "ORIGINAL_VERIFY" | "PREPARED";
         targetedRecapture?: boolean;
         sourceImageStorageKey?: string;
+        storageKey?: string;
+        checksumSha256?: string;
+        byteSize?: number;
       };
       if (body.kind === "ORIGINAL") {
         originalUploadPlanCount[body.side] += 1;
@@ -397,7 +445,20 @@ async function mountWorkspace(input: {
         return jsonResponse({
           storageKey,
           uploadUrl: `https://upload.example.test/${encodeURIComponent(storageKey)}`,
-          readUrl: `https://read.example.test/${encodeURIComponent(storageKey)}`,
+          uploadMethod: "PUT",
+          uploadHeaders: {
+            "Content-Type": "image/jpeg",
+            "x-amz-acl": "private",
+            "x-amz-checksum-sha256": Buffer.from(body.checksumSha256 ?? "", "hex").toString("base64"),
+          },
+          checksumSha256: body.checksumSha256,
+          byteSize: body.byteSize,
+        });
+      }
+      if (body.kind === "ORIGINAL_VERIFY") {
+        return jsonResponse({
+          storageKey: body.storageKey,
+          readUrl: `https://read.example.test/${encodeURIComponent(body.storageKey ?? "")}`,
         });
       }
       preparedUploadPlanCount[body.side] += 1;
@@ -415,6 +476,19 @@ async function mountWorkspace(input: {
     }
     if (url.startsWith("https://upload.example.test/") && init?.method === "PUT") {
       return new Response(null, { status: 200 });
+    }
+    if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/original-image?side=")) {
+      const parsedUrl = new URL(url, "https://collect.tenkings.co");
+      const side = parsedUrl.searchParams.get("side") === "FRONT" ? "FRONT" : "BACK";
+      const storageKey = parsedUrl.searchParams.get("storageKey") ?? "";
+      if (input.originalImageFetch) {
+        return input.originalImageFetch({ side, storageKey, signal: init?.signal });
+      }
+      return jsonResponse({
+        side,
+        storageKey,
+        imageUrl: `https://read.example.test/${encodeURIComponent(storageKey)}?refreshed=1`,
+      });
     }
     if (url.includes("/api/admin/ai-grader-v2/sessions/") && url.includes("/prepared-image?side=")) {
       const parsedUrl = new URL(url, "https://collect.tenkings.co");
@@ -625,6 +699,9 @@ async function mountWorkspace(input: {
       registrationResultsBySide[body.side].push(registrationResult);
       return jsonResponse(registrationResult);
     }
+    if (url.endsWith("/map-authority")) {
+      return jsonResponse({ authority: { status: "REGISTRATION_BLOCKED" } });
+    }
     throw new Error(`Unexpected fetch in lifecycle test: ${url}`);
   };
 
@@ -638,6 +715,22 @@ async function mountWorkspace(input: {
     };
   };
   const container = dom.window.document.getElementById("root") as HTMLElement;
+  const geometryImageObserver = input.geometryImagesStartVisible === false
+    ? null
+    : new dom.window.MutationObserver(() => {
+      for (const image of container.querySelectorAll<HTMLImageElement>('img[alt="front trading card"], img[alt="back trading card"]')) {
+        if (image.dataset.lifecycleLoaded === "true") continue;
+        image.dataset.lifecycleLoaded = "true";
+        Object.defineProperties(image, {
+          complete: { configurable: true, value: true },
+          naturalWidth: { configurable: true, value: 1200 },
+          naturalHeight: { configurable: true, value: 1600 },
+        });
+        giveImageRenderedArea(image);
+        image.dispatchEvent(new dom.window.Event("load", { bubbles: true }));
+      }
+    });
+  geometryImageObserver?.observe(container, { childList: true, subtree: true });
   const root = createRoot(container);
   const events: SpeedsterCaptureInstrumentationEvent[] = [];
   const bundles: import("../components/ai-grader-v2/CaptureWorkspace").SpeedsterCaptureBundle[] = [];
@@ -650,6 +743,7 @@ async function mountWorkspace(input: {
       cardProfile="POKEMON"
       draftSurface={input.draftSurface}
       activeMapRevisionId={activeMap?.revisionId}
+      activeMapRevisionHash={activeMap?.revisionHash ?? (activeMap ? "a".repeat(64) : undefined)}
       activeMapScope={activeMap?.scope}
       activeMapName={activeMap?.name}
       mapBindingStatus={input.mapBindingStatus}
@@ -752,6 +846,7 @@ async function mountWorkspace(input: {
       );
     },
     cleanup: async () => {
+      geometryImageObserver?.disconnect();
       await act(async () => root.unmount());
       Object.defineProperties(storagePrototype, {
         getItem: { configurable: true, value: storageGetItem },
@@ -957,17 +1052,40 @@ async function loadPreparedImage(container: HTMLElement, alt: string) {
   return image;
 }
 
+async function placeManualGeometryIfNeeded(container: HTMLElement) {
+  await waitFor(() => {
+    const button = buttonByText(container, "Continue");
+    const manualReady = /MANUAL FOUR-CORNER MODE/.test(container.textContent ?? "")
+      && !/Waiting for the exact source image to be visibly rendered/.test(container.textContent ?? "");
+    return Boolean(button && !button.disabled) || manualReady;
+  }, "Geometry did not become visibly confirmable or enter visible manual four-corner mode");
+  const continueButton = buttonByText(container, "Continue");
+  if (continueButton && !continueButton.disabled) return;
+  const overlay = container.querySelector<SVGSVGElement>('svg[aria-label="Adjustable card corner geometry"]');
+  assert.ok(overlay, "Manual geometry overlay did not render");
+  Object.defineProperty(overlay, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 }),
+  });
+  for (const [clientX, clientY] of [[100, 100], [900, 100], [900, 900], [100, 900]]) {
+    await act(async () => fire(overlay, "pointerdown", { button: 0, clientX, clientY }));
+  }
+  await waitFor(() => buttonByText(container, "Continue")?.disabled === false, "Four manual points did not create a confirmable human quad");
+}
+
 async function prepareBothSidesAndReachFrontCentering(harness: Harness) {
   await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
   await waitFor(
     () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
     "Front geometry did not open",
   );
+  await placeManualGeometryIfNeeded(harness.container);
   await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
   await waitFor(
     () => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')),
     "Back geometry did not open",
   );
+  await placeManualGeometryIfNeeded(harness.container);
   await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
   await waitFor(
     () => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
@@ -1086,6 +1204,7 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
   Date.now = () => now;
   console.info = (line) => diagnostics.push(String(line));
   const harness = await mountWorkspace({
+    geometryImagesStartVisible: false,
     proposeGeometry: async () => new Promise<GeometryResponse>((resolve) => pending.push(resolve)),
   });
 
@@ -1108,9 +1227,9 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
 
     const overlay = harness.container.querySelector<SVGSVGElement>('[aria-label="Adjustable card corner geometry"]');
     const topLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
-    const continueButton = buttonByText(harness.container, "Continue");
-    assert.ok(overlay && topLeft && continueButton);
-    assert.equal(continueButton.disabled, false);
+    const blockedButton = buttonByText(harness.container, "Source image unavailable");
+    assert.ok(overlay && topLeft && blockedButton);
+    assert.equal(blockedButton.disabled, true, "Geometry confirmation must wait for a visibly rendered exact source");
     Object.defineProperty(overlay, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 }),
@@ -1131,6 +1250,7 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
     giveImageRenderedArea(image);
     await act(async () => image.dispatchEvent(new window.Event("load", { bubbles: true })));
     await waitFor(() => diagnostics.length === 1, "Loaded-image diagnostic was not emitted after paint");
+    assert.equal(buttonByText(harness.container, "Continue")?.disabled, false);
     assert.match(diagnostics[0], /"durationMs":5000/);
     assert.match(diagnostics[0], /"corners":"present"/);
     assert.match(diagnostics[0], /"imageLoadOutcome":"loaded"/);
@@ -1161,17 +1281,21 @@ test("API-compatible accepted physical Color geometry seeds the first editable p
     assert.equal(topLeft?.querySelector("circle")?.getAttribute("cx"), "150");
     assert.equal(topLeft?.querySelector("circle")?.getAttribute("cy"), "200");
     assert.match(harness.container.textContent ?? "", /COLOR PHYSICAL OUTER · ACCEPTED.*Draft requires human confirmation/is);
-    assert.ok(buttonByText(harness.container, "Continue"), "Human confirmation must remain mandatory");
+    await waitFor(
+      () => buttonByText(harness.container, "Continue")?.disabled === false,
+      "Visible accepted Color geometry did not reach human confirmation",
+    );
   } finally {
     await harness.cleanup();
   }
 });
 
-test("loaded image with no rendered area stays non-blocking and visibly diagnosed", async () => {
+test("loaded image with no rendered area blocks confirmation and offers exact-source recovery", async () => {
   const originalConsoleInfo = console.info;
   const diagnostics: string[] = [];
   console.info = (line) => diagnostics.push(String(line));
   const harness = await mountWorkspace({
+    geometryImagesStartVisible: false,
     proposeGeometry: async () => geometryResponse(),
   });
   try {
@@ -1195,9 +1319,8 @@ test("loaded image with no rendered area stays non-blocking and visibly diagnose
     );
 
     assert.ok(harness.container.querySelector('[aria-label="front card geometry"]'));
-    for (const button of harness.container.querySelectorAll("button")) {
-      assert.equal(button.disabled, false);
-    }
+    assert.equal(buttonByText(harness.container, "Source image unavailable")?.disabled, true);
+    assert.equal(buttonByText(harness.container, "Refresh exact source image")?.disabled, false);
     assert.equal(diagnostics.length, 1);
     assert.match(diagnostics[0], /"imageLoadOutcome":"render-error"/);
   } finally {
@@ -1206,7 +1329,7 @@ test("loaded image with no rendered area stays non-blocking and visibly diagnose
   }
 });
 
-test("null corners mount manual draggable geometry instead of trapping the card at Photos", async () => {
+test("null corners mount empty four-click manual geometry without inventing a rectangle", async () => {
   let call = 0;
   const harness = await mountWorkspace({
     proposeGeometry: async () => {
@@ -1223,9 +1346,91 @@ test("null corners mount manual draggable geometry instead of trapping the card 
       "Null geometry did not advance to manual Set Geometry",
     );
     assert.match(harness.container.textContent ?? "", /1\/2 physical cards found/);
-    assert.match(harness.container.textContent ?? "", /Set the four physical corners/);
+    assert.match(harness.container.textContent ?? "", /Click the physical corners in order/);
+    assert.match(harness.container.textContent ?? "", /MANUAL FOUR-CORNER MODE/);
+    assert.equal(harness.container.querySelectorAll("[aria-label='Top left'], [aria-label='Top right'], [aria-label='Bottom right'], [aria-label='Bottom left']").length, 0);
+    await waitFor(
+      () => buttonByText(harness.container, "Place 4 corners")?.disabled === true,
+      "Visible manual mode did not expose its blocked four-corner action",
+    );
+    await placeManualGeometryIfNeeded(harness.container);
     assert.equal(harness.container.querySelectorAll("[aria-label='Top left'], [aria-label='Top right'], [aria-label='Bottom right'], [aria-label='Bottom left']").length, 4);
+    assert.match(harness.container.textContent ?? "", /HUMAN-AUTHORED DRAFT/);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("rejected Color evidence renders as a labelled diagnostic draft with failed gates", async () => {
+  let call = 0;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => {
+      call += 1;
+      return call === 1 ? diagnosticGeometryResponse() : geometryResponse();
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Diagnostic geometry did not render",
+    );
+    await placeManualGeometryIfNeeded(harness.container);
+    assert.match(harness.container.textContent ?? "", /REJECTED DIAGNOSTIC · HUMAN REVIEW ONLY/);
+    assert.match(harness.container.textContent ?? "", /frameCoverage: 0.4100; requires ≥ 0.5000/);
+    assert.equal(harness.container.querySelectorAll("[aria-label='Top left'], [aria-label='Top right'], [aria-label='Bottom right'], [aria-label='Bottom left']").length, 4);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("non-accepted Color evidence carrying top-level corners never gains automatic authority", async () => {
+  const inconsistent = geometryResponse();
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({
+      ...inconsistent,
+      colorGeometry: {
+        ...inconsistent.colorGeometry,
+        outcome: "ABSTAIN",
+        proposal: null,
+      },
+    }),
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => /corners contradict the Color outcome authority/i.test(harness.container.textContent ?? ""),
+      "Contradictory Color geometry did not fail visibly",
+    );
+    assert.equal(harness.container.querySelector('[aria-label="front card geometry"]'), null);
+    assert.equal(harness.getPrepareCount("FRONT") + harness.getPrepareCount("BACK"), 0);
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("a stalled exact-source refresh releases geometry controls with visible retry and unchanged handles", async () => {
+  const suppliedSignals: AbortSignal[] = [];
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    imageRequestTimeoutMs: 10,
+    originalImageFetch: async ({ signal }) => {
+      if (signal) suppliedSignals.push(signal);
+      return new Promise(() => {});
+    },
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
+    await waitFor(
+      () => /exact source refresh timed out.*geometry are preserved/i.test(harness.container.textContent ?? ""),
+      "Stalled exact-source refresh did not release to explicit recovery",
+    );
+    assert.equal(suppliedSignals[0]?.aborted, true);
     assert.equal(buttonByText(harness.container, "Continue")?.disabled, false);
+    assert.equal(harness.container.querySelectorAll("[aria-label='Top left'], [aria-label='Top right'], [aria-label='Bottom right'], [aria-label='Bottom left']").length, 4);
+    assert.equal(harness.getPrepareCount("FRONT"), 0);
   } finally {
     await harness.cleanup();
   }
@@ -1295,7 +1500,7 @@ test("Front targeted mat recapture preserves the complete Back side through the 
     assert.equal(backInput.disabled, true, "The retained Back original cannot be replaced during a Front-only rerun");
     Object.defineProperty(frontInput, "files", {
       configurable: true,
-      value: [{ name: "front-white.jpg", type: "image/jpeg" } as File],
+      value: [jpegTestFile("front-white.jpg")],
     });
     await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
     await waitFor(() => Boolean(buttonByText(harness.container, "Set Front geometry")), "Fresh Front did not restore readiness");
@@ -1427,7 +1632,7 @@ test("Front targeted recapture exposes repeated registration interruption and ma
     assert.equal(backInput.disabled, true);
     Object.defineProperty(frontInput, "files", {
       configurable: true,
-      value: [{ name: "front-white-retry.jpg", type: "image/jpeg" } as File],
+      value: [jpegTestFile("front-white-retry.jpg")],
     });
     await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
     await waitFor(() => Boolean(buttonByText(harness.container, "Set Front geometry")), "Replacement Front did not become ready");
@@ -1545,7 +1750,7 @@ test("late prepared-image success or failure for an old key cannot replace or po
       assert.ok(frontInput);
       Object.defineProperty(frontInput, "files", {
         configurable: true,
-        value: [{ name: "front-refresh-race.jpg", type: "image/jpeg" } as File],
+        value: [jpegTestFile("front-refresh-race.jpg")],
       });
       await act(async () => frontInput.dispatchEvent(new window.Event("change", { bubbles: true })));
       await act(async () => fire(buttonByText(harness.container, "Set Front geometry")!, "click"));
@@ -1580,7 +1785,7 @@ test("late prepared-image success or failure for an old key cannot replace or po
   }
 });
 
-test("targeted recapture remains available with no map but stays locked after an explicit loaded-map abandonment", async () => {
+test("targeted recapture remains available with no map but a loaded-map failure stays blocked", async () => {
   const noMap = await mountWorkspace({
     proposeGeometry: async (_token, input) => input.side === "FRONT"
       ? advisoryGeometryResponse("BLACK", "WHITE")
@@ -1607,14 +1812,18 @@ test("targeted recapture remains available with no map but stays locked after an
   try {
     await act(async () => fire(buttonByText(abandoned.container, "Set geometry")!, "click"));
     await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await placeManualGeometryIfNeeded(abandoned.container);
     await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
     await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
     await act(async () => fire(buttonByText(abandoned.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(buttonByText(abandoned.container, "Continue without Card Map")), "Explicit abandon choice did not render");
-    await act(async () => fire(buttonByText(abandoned.container, "Continue without Card Map")!, "click"));
-    await waitFor(() => Boolean(abandoned.container.querySelector('[aria-label="front centering geometry"]')), "Manual Front centering did not open");
+    await waitFor(
+      () => Boolean(abandoned.container.querySelector('[aria-label="Card Map registration interruption"]')),
+      "Loaded-map registration blocker did not render",
+    );
+    assert.equal(buttonByText(abandoned.container, "Continue without Card Map"), undefined);
+    assert.equal(abandoned.container.querySelector('[aria-label="front centering geometry"]'), null);
     assert.equal(buttonByText(abandoned.container, "Change Front mat / recapture Front — WHITE"), undefined);
-    assert.match(abandoned.container.textContent ?? "", /One-side mat recapture is locked because the loaded Card Map was explicitly left unapplied/i);
+    assert.match(abandoned.container.textContent ?? "", /Mapless continuation is not allowed/i);
     assert.equal(abandoned.getOriginalUploadPlanCount("FRONT"), 0);
     assert.equal(abandoned.getOriginalUploadPlanCount("BACK"), 0);
   } finally {
@@ -1668,7 +1877,7 @@ test("Front and Back crashes after replacement PUT preserve the last complete dr
         assert.ok(unlocked);
         Object.defineProperty(unlocked, "files", {
           configurable: true,
-          value: [{ name: `${target.toLowerCase()}-put-crash.jpg`, type: "image/jpeg" } as File],
+          value: [jpegTestFile(`${target.toLowerCase()}-put-crash.jpg`)],
         });
         await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
         await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
@@ -1746,7 +1955,7 @@ test("Front and Back replacement registration interruptions reload with exact ta
         assert.ok(unlocked);
         Object.defineProperty(unlocked, "files", {
           configurable: true,
-          value: [{ name: `${target.toLowerCase()}-registration-crash.jpg`, type: "image/jpeg" } as File],
+          value: [jpegTestFile(`${target.toLowerCase()}-registration-crash.jpg`)],
         });
         await act(async () => unlocked.dispatchEvent(new window.Event("change", { bubbles: true })));
         await act(async () => fire(buttonByText(seed.container, `Set ${target === "FRONT" ? "Front" : "Back"} geometry`)!, "click"));
@@ -1820,6 +2029,7 @@ test("in-flight prepare exposes no mat-reset action and a stale response cannot 
     assert.equal(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE"), undefined,
       "Mat recapture is offered only after both sides are prepared and registered");
     assert.match(harness.container.textContent ?? "", /One-side mat recapture unlocks after both sides are prepared and registered/i);
+    await placeManualGeometryIfNeeded(harness.container);
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(resolvePrepare), "Front prepare request did not start");
     assert.equal(buttonByText(harness.container, "Change Front mat / recapture Front — WHITE"), undefined,
@@ -1911,7 +2121,7 @@ test("Back targeted mat recapture preserves the complete Front side through the 
 
     Object.defineProperty(backInput, "files", {
       configurable: true,
-      value: [{ name: "back-magenta.jpg", type: "image/jpeg" } as File],
+      value: [jpegTestFile("back-magenta.jpg")],
     });
     await act(async () => backInput.dispatchEvent(new window.Event("change", { bubbles: true })));
     await waitFor(() => Boolean(buttonByText(harness.container, "Set Back geometry")), "Fresh Back did not restore readiness");
@@ -1981,11 +2191,12 @@ test("Back targeted mat recapture preserves the complete Front side through the 
   }
 });
 
-test("image load failure stays visible while geometry and every control remain active", async () => {
+test("image load failure stays visible, blocks confirmation, and offers exact-source recovery", async () => {
   const originalConsoleInfo = console.info;
   const diagnostics: string[] = [];
   console.info = (line) => diagnostics.push(String(line));
   const harness = await mountWorkspace({
+    geometryImagesStartVisible: false,
     proposeGeometry: async () => geometryResponse(),
   });
   try {
@@ -2002,12 +2213,11 @@ test("image load failure stays visible while geometry and every control remain a
 
     const alert = harness.container.querySelector('[role="alert"]');
     assert.match(alert?.textContent ?? "", /failed to load/);
-    assert.match(alert?.textContent ?? "", /Manual corner controls remain available/);
+    assert.match(alert?.textContent ?? "", /confirmation remains blocked until the exact source is visible/);
     assert.ok(harness.container.querySelector('[aria-label="front card geometry"]'));
-    for (const button of harness.container.querySelectorAll("button")) {
-      assert.equal(button.disabled, false);
-    }
     assert.ok(harness.container.querySelector('[aria-label="Adjustable card corner geometry"]'));
+    assert.equal(buttonByText(harness.container, "Source image unavailable")?.disabled, true);
+    assert.equal(buttonByText(harness.container, "Refresh exact source image")?.disabled, false);
     assert.equal(diagnostics.length, 1);
     assert.match(diagnostics[0], /"imageLoadOutcome":"load-error"/);
   } finally {
@@ -2211,7 +2421,7 @@ test("resolved FAMILY map applies only after both sides succeed and remains visi
   }
 });
 
-test("Front success plus Back failure preserves truth until explicit Continue without Card Map", async () => {
+test("Front success plus Back failure preserves truth and blocks mapless continuation", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-9", scope: "EXACT", name: "Snorlax #TG10" },
@@ -2226,50 +2436,22 @@ test("Front success plus Back failure preserves truth until explicit Continue wi
     await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
     await waitFor(() => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')), "Explicit registration interruption did not render");
     assert.ok(buttonByText(harness.container, "Retry failed side"));
-    assert.ok(buttonByText(harness.container, "Continue without Card Map"));
+    assert.equal(buttonByText(harness.container, "Continue without Card Map"), undefined);
+    assert.match(harness.container.textContent ?? "", /Mapless continuation is not allowed/i);
     assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null, "Registration failure must not silently advance");
     assert.equal(harness.getRegistrationCount(), 2);
     assert.equal(harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED").length, 0);
-    await act(async () => {
-      const continueButton = buttonByText(harness.container, "Continue without Card Map")!;
-      fire(continueButton, "click");
-      fire(continueButton, "click");
-    });
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Explicit manual choice did not continue");
-    const geometryEvents = harness.events.filter((candidate) => candidate.eventType === "GEOMETRY_CONFIRMED");
-    assert.deepEqual(geometryEvents[0]?.details, {
-      side: "FRONT",
-      mapAppliedScope: "NONE",
-    });
-    assert.deepEqual(geometryEvents[1]?.details, {
-      side: "BACK",
-      mapAppliedScope: "NONE",
-      mapFailureCode: "REGISTRATION_FAILED",
-    });
-
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Manual Front centering did not open");
-    await loadPreparedImage(harness.container, "front rectified trading card");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back centering geometry"]')), "Manual Back centering did not open");
-    await loadPreparedImage(harness.container, "back rectified trading card");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    assert.equal(harness.bundles.length, 1);
-    assert.equal(harness.bundles[0].front.mapRegistration, undefined);
-    assert.equal(harness.bundles[0].back.mapRegistration, undefined);
-    const centeringEvents = harness.events.filter((candidate) => candidate.eventType === "CENTERING_CONFIRMED");
-    assert.deepEqual(centeringEvents.map((event) => event.details), [
-      { side: "FRONT", mapAppliedScope: "NONE" },
-      { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
-    ]);
-    const decisions = harness.events.filter((candidate) => candidate.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
-    assert.equal(decisions.length, 1, "Synchronous guard must record one explicit operator choice");
-    assert.deepEqual(decisions[0]?.details?.registrationFailedSides, ["BACK"]);
+    assert.equal(harness.bundles.length, 0);
+    assert.equal(
+      harness.events.filter((candidate) => candidate.eventType === "MAP_REGISTRATION_OPERATOR_DECISION").length,
+      0,
+    );
   } finally {
     await harness.cleanup();
   }
 });
 
-test("two unresolved sides disclose complete evidence, expose side-specific retries, and audit full abandonment", async () => {
+test("two unresolved sides disclose complete evidence and expose only side-specific retries", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-two-failures", scope: "FAMILY", name: "2023 MEW EN Reverse Holo" },
@@ -2288,21 +2470,10 @@ test("two unresolved sides disclose complete evidence, expose side-specific retr
     assert.match(text, /BACKPROVIDER_HTTP_409HTTP 409Request registration-request-409/);
     assert.ok(buttonByText(harness.container, "FRONT: Retry failed side"));
     assert.ok(buttonByText(harness.container, "BACK: Retry failed side"));
-    assert.match(text, /abandons all unresolved sides: FRONT \+ BACK/);
-
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Explicit two-side abandonment did not proceed");
-    assert.match(harness.container.textContent ?? "", /FRONT \+ BACK unresolved Card Map work was explicitly abandoned/);
-    const decision = harness.events.find((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
-    assert.deepEqual(decision?.details?.registrationFailedSides, ["FRONT", "BACK"]);
-    assert.deepEqual(decision?.details?.registrationFailures, [
-      { side: "FRONT", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409, requestId: "registration-request-409" },
-      { side: "BACK", source: "PROVIDER", code: "PROVIDER_HTTP_409", httpStatus: 409, requestId: "registration-request-409" },
-    ]);
-    assert.deepEqual(
-      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details?.mapFailureCode),
-      ["REGISTRATION_FAILED", "REGISTRATION_FAILED"],
-    );
+    assert.match(text, /Mapless continuation is not allowed/);
+    assert.equal(buttonByText(harness.container, "Continue without Card Map"), undefined);
+    assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.equal(harness.events.some((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION"), false);
   } finally {
     await harness.cleanup();
   }
@@ -2589,6 +2760,51 @@ test("mounted expiry invalidates only the old side and preserves the fresh sibli
   }
 });
 
+test("a matched loaded-map draft with abandoned authority cannot resume mapless", async () => {
+  const activeMap = { revisionId: "family-revision-abandoned", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
+  const seed = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+  });
+  let abandonedSerialized: string;
+  try {
+    await act(async () => fire(buttonByText(seed.container, "Set geometry")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
+    await act(async () => fire(buttonByText(seed.container, "Continue")!, "click"));
+    await waitFor(() => Boolean(seed.container.querySelector('[aria-label="front centering geometry"]')), "Front centering did not open");
+    await waitFor(() => Boolean(seed.getCaptureDraftSerialized()), "Loaded-map draft was not preserved");
+    const abandoned = JSON.parse(seed.getCaptureDraftSerialized()!) as Record<string, any>;
+    delete abandoned.front.mapRegistration;
+    delete abandoned.back.mapRegistration;
+    abandoned.provisional = {};
+    abandoned.registrationRecordedAtMs = {};
+    abandoned.registrationFailureSides = {};
+    abandoned.mapRegistrationFailed = false;
+    abandoned.mapAuthorityAbandoned = true;
+    abandonedSerialized = JSON.stringify(abandoned);
+  } finally {
+    await seed.cleanup();
+  }
+
+  const resumed = await mountWorkspace({
+    proposeGeometry: async () => geometryResponse(),
+    activeMap,
+    captureDraftSerialized: abandonedSerialized,
+  });
+  try {
+    assert.ok(buttonByText(resumed.container, "Discard invalid preserved draft"));
+    assert.equal(buttonByText(resumed.container, "Resume preserved draft"), undefined);
+    assert.equal(resumed.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.equal(resumed.getPollCount(), 0);
+    assert.equal(resumed.getRegistrationCount(), 0);
+    assert.equal(resumed.getCaptureDraftSerialized(), abandonedSerialized, "Rejected legacy bytes must remain unchanged until explicit discard");
+  } finally {
+    await resumed.cleanup();
+  }
+});
+
 test("Card Maps new-source centering persists and resumes with an explicit NO_MAP binding", async () => {
   const first = await mountWorkspace({
     draftSurface: "CARD_MAPS",
@@ -2813,34 +3029,24 @@ test("late Resume URL refresh cannot install a draft after its immutable map bin
       releases.forEach((release) => release());
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
-    assert.ok(buttonByText(harness.container, "Resume geometry without old Card Map"));
+    assert.ok(harness.container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]'));
+    assert.ok(buttonByText(harness.container, "Discard preserved draft"));
+    assert.equal(buttonByText(harness.container, "Resume geometry without old Card Map"), undefined);
+    assert.match(harness.container.textContent ?? "", /No mapless recovery is available/i);
     assert.equal(harness.container.querySelector('[aria-label="Card Map registration interruption"]'), null);
     assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
     assert.equal(harness.getPollCount(), 0, "Map mismatch must block all background photo polling until explicit choice");
     assert.equal(harness.getRegistrationCount(), 0);
     assert.equal(harness.getCaptureDraftSerialized(), serialized, "Binding-raced draft must remain byte-identical for explicit resolution");
 
-    await act(async () => fire(buttonByText(harness.container, "Resume geometry without old Card Map")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
-      "Explicit geometry-only recovery did not preserve centering work");
-    await waitFor(() => {
-      const recovered = harness.getCaptureDraftSerialized();
-      return Boolean(recovered && JSON.parse(recovered).mapAuthorityAbandoned === true);
-    }, "Recovered geometry was not rewritten with explicit non-authoritative provenance");
-    const recovered = JSON.parse(harness.getCaptureDraftSerialized()!);
-    assert.deepEqual(recovered.provisional, {});
-    assert.equal(recovered.front.mapRegistration, undefined);
-    assert.equal(recovered.back.mapRegistration, undefined);
-    assert.deepEqual(recovered.registrationFailureSides, {}, "Map drift must not invent per-side registration failures");
-    assert.equal(recovered.mapRegistrationFailed, false);
-    assert.equal(harness.getRegistrationCount(), 0, "Neither obsolete nor current Card Map may register during geometry recovery");
+    assert.equal(harness.getRegistrationCount(), 0, "Neither obsolete nor current Card Map may register while recovery is blocked");
   } finally {
     releases.forEach((release) => release());
     await harness.cleanup();
   }
 });
 
-test("explicit geometry-only recovery round-trips across every current map binding status", async () => {
+test("obsolete map-bound recovery stays blocked across every current map binding status", async () => {
   const seed = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "family-revision-status-old", scope: "FAMILY", name: "Old map" },
@@ -2890,71 +3096,15 @@ test("explicit geometry-only recovery round-trips across every current map bindi
       decisionAuditConfirmationTimeoutMs: candidate.decisionAuditConfirmationTimeoutMs,
     });
     try {
-      assert.ok(buttonByText(harness.container, "Resume geometry without old Card Map"), `${candidate.name}: choice missing`);
+      assert.ok(harness.container.querySelector('[aria-label="Preserved capture draft Card Map mismatch"]'), `${candidate.name}: blocker missing`);
+      assert.ok(buttonByText(harness.container, "Discard preserved draft"), `${candidate.name}: discard action missing`);
+      assert.equal(buttonByText(harness.container, "Resume geometry without old Card Map"), undefined);
+      assert.match(harness.container.textContent ?? "", /No mapless recovery is available/i);
       assert.equal(harness.getPollCount(), 0, `${candidate.name}: photo polling started before choice`);
       assert.equal(harness.getRegistrationCount(), 0, `${candidate.name}: registration started before choice`);
       assert.equal(harness.getCaptureDraftSerialized(), serialized, `${candidate.name}: raw draft changed before choice`);
-      await act(async () => fire(buttonByText(harness.container, "Resume geometry without old Card Map")!, "click"));
-      await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')),
-        `${candidate.name}: geometry recovery did not resume`);
-      await waitFor(() => {
-        const raw = harness.getCaptureDraftSerialized();
-        return Boolean(raw && JSON.parse(raw).mapAuthorityAbandoned === true);
-      }, `${candidate.name}: explicit abandon provenance was not persisted`);
-      const recovered = JSON.parse(harness.getCaptureDraftSerialized()!);
-      assert.equal(recovered.mapBindingStatus, candidate.mapBindingStatus);
-      assert.equal(recovered.activeMapRevisionId, candidate.activeMap?.revisionId ?? null);
-      assert.deepEqual(recovered.provisional, {});
-      assert.deepEqual(recovered.registrationFailureSides, {});
-      assert.equal(recovered.mapRegistrationFailed, false);
-      assert.equal(recovered.mapAuthorityAbandoned, true);
-      const original = JSON.parse(serialized);
-      const decisions = harness.events.filter((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION");
-      assert.equal(decisions.length, candidate.omitInstrumentationReporter ? 0 : 1,
-        `${candidate.name}: reporter availability determines whether the explicit decision can be emitted`);
-      if (decisions[0]) {
-        assert.equal(decisions[0].eventId, original.decisionIds.abandonObsoleteMap);
-        assert.deepEqual(decisions[0].details, {
-          mapAuthorityDecision: "ABANDON_OBSOLETE_MAP_AUTHORITY",
-          mapAuthorityOperationId: original.operationId,
-          mapAuthorityDecisionId: original.decisionIds.abandonObsoleteMap,
-          mapAppliedScope: "NONE",
-          obsoleteMapBindingStatus: "LOADED",
-          obsoleteMapRevisionId: "family-revision-status-old",
-          obsoleteMapScope: "FAMILY",
-          obsoleteMapName: "Old map",
-        });
-      }
-      assert.notEqual(recovered.decisionIds.abandonObsoleteMap, original.decisionIds.abandonObsoleteMap,
-        `${candidate.name}: transformed draft must rotate the next immutable decision identity`);
-      assert.equal(harness.events.some((event) => event.details?.mapFailureCode === "REGISTRATION_FAILED"), false,
-        `${candidate.name}: map drift must not fabricate REGISTRATION_FAILED`);
-      if (candidate.omitInstrumentationReporter) assert.match(harness.container.textContent ?? "", /audit reporter is unavailable/i);
-      if (candidate.decisionInstrumentationThrows || candidate.instrumentationFails) {
-        await waitFor(() => /audit write failed/i.test(harness.container.textContent ?? ""), `${candidate.name}: audit failure was not visible`);
-      }
-      if (candidate.decisionInstrumentationResult) {
-        await waitFor(() => /not confirmed within 10 ms/i.test(harness.container.textContent ?? ""), `${candidate.name}: audit timeout was not visible`);
-      }
-      assert.equal(harness.getRegistrationCount(), 0, `${candidate.name}: map authority was silently reused`);
-
-      if (candidate.name === "loaded-new-revision-success") {
-        const later = await mountWorkspace({
-          proposeGeometry: async () => geometryResponse(),
-          activeMap: { revisionId: "family-revision-status-later", scope: "FAMILY", name: "Later map" },
-          captureDraftSerialized: harness.getCaptureDraftSerialized()!,
-        });
-        try {
-          await act(async () => fire(buttonByText(later.container, "Resume geometry without old Card Map")!, "click"));
-          await waitFor(() => later.events.some((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION"),
-            "Later drift did not emit its rotated immutable decision");
-          const laterDecision = later.events.find((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION")!;
-          assert.equal(laterDecision.eventId, recovered.decisionIds.abandonObsoleteMap);
-          assert.notEqual(laterDecision.eventId, original.decisionIds.abandonObsoleteMap);
-        } finally {
-          await later.cleanup();
-        }
-      }
+      assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
+      assert.equal(harness.events.some((event) => event.eventType === "MAP_AUTHORITY_OPERATOR_DECISION"), false);
     } finally {
       await harness.cleanup();
     }
@@ -3156,7 +3306,11 @@ async function reachInterruptedRegistration(harness: Harness) {
   await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
   await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
   await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-  await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
+  await waitFor(
+    () => Boolean(harness.container.querySelector('[aria-label="Card Map registration interruption"]')),
+    "Registration blocker did not render",
+  );
+  assert.equal(buttonByText(harness.container, "Continue without Card Map"), undefined);
 }
 
 function auditReconciliationNotices(container: HTMLElement) {
@@ -3303,7 +3457,17 @@ test("decision-audit confirmation classifies timely results and rejects stale se
   }), false);
 });
 
-test("never-settling decision reporter times out visibly without delaying Continue", async () => {
+function assertMaplessContinuationBlocked(harness: Harness) {
+  assert.equal(buttonByText(harness.container, "Continue without Card Map"), undefined);
+  assert.equal(harness.container.querySelector('[aria-label="front centering geometry"]'), null);
+  assert.match(harness.container.textContent ?? "", /Mapless continuation is not allowed/i);
+  assert.equal(
+    harness.events.some((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION"),
+    false,
+  );
+}
+
+test("never-settling decision reporter is not invoked by the retry-only registration blocker", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-audit-timeout", scope: "EXACT", name: "Squirtle #007" },
@@ -3313,26 +3477,16 @@ test("never-settling decision reporter times out visibly without delaying Contin
   });
   try {
     await reachInterruptedRegistration(harness);
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    assert.ok(
-      harness.container.querySelector('[aria-label="front centering geometry"]'),
-      "the operator choice must proceed without awaiting audit confirmation",
-    );
-    await waitFor(
-      () => /audit write was not confirmed within 50 ms/i.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
-      "Never-settling decision audit did not produce a bounded visible warning",
-    );
+    assertMaplessContinuationBlocked(harness);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 60)));
+    assert.doesNotMatch(harness.container.textContent ?? "", /audit write was not confirmed/i);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("late decision rejection is handled and cannot replace the timeout warning", async () => {
-  let rejectDecision: ((reason?: unknown) => void) | undefined;
-  const decisionResult = new Promise<boolean>((_resolve, reject) => { rejectDecision = reject; });
-  const unhandled: unknown[] = [];
-  const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
-  process.on("unhandledRejection", onUnhandled);
+test("a blocked mapless path does not start a decision-audit timeout", async () => {
+  const decisionResult = new Promise<boolean>(() => undefined);
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-late-audit-reject", scope: "EXACT", name: "Squirtle #007" },
@@ -3342,27 +3496,16 @@ test("late decision rejection is handled and cannot replace the timeout warning"
   });
   try {
     await reachInterruptedRegistration(harness);
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    await waitFor(
-      () => /audit write was not confirmed within 20 ms/i.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
-      "Decision audit timeout warning did not render",
-    );
-    const timeoutWarning = harness.container.querySelector('[role="alert"]')?.textContent;
-    await act(async () => {
-      rejectDecision?.(new Error("late audit rejection"));
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    });
-    assert.equal(harness.container.querySelector('[role="alert"]')?.textContent, timeoutWarning);
-    assert.deepEqual(unhandled, []);
+    assertMaplessContinuationBlocked(harness);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 25)));
+    assert.doesNotMatch(harness.container.textContent ?? "", /audit write was not confirmed/i);
   } finally {
-    process.off("unhandledRejection", onUnhandled);
     await harness.cleanup();
   }
 });
 
-test("timely rejected decision reporter is visible without delaying Continue", async () => {
-  let rejectDecision: ((reason?: unknown) => void) | undefined;
-  const decisionResult = new Promise<boolean>((_resolve, reject) => { rejectDecision = reject; });
+test("a blocked mapless path does not emit a rejected decision audit", async () => {
+  const decisionResult = Promise.resolve(false);
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-audit-reject", scope: "EXACT", name: "Squirtle #007" },
@@ -3372,23 +3515,14 @@ test("timely rejected decision reporter is visible without delaying Continue", a
   });
   try {
     await reachInterruptedRegistration(harness);
-    await act(async () => {
-      fire(buttonByText(harness.container, "Continue without Card Map")!, "click");
-      rejectDecision?.(new Error("audit rejected"));
-      await Promise.resolve();
-    });
-    assert.ok(harness.container.querySelector('[aria-label="front centering geometry"]'));
-    await waitFor(
-      () => /Operator-decision audit write failed/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""),
-      "Timely rejected decision audit was not visible",
-    );
-    assert.doesNotMatch(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /not confirmed/i);
+    assertMaplessContinuationBlocked(harness);
+    assert.doesNotMatch(harness.container.textContent ?? "", /Operator-decision audit write failed/);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("operator-decision audit failure remains visible while Continue without Card Map proceeds", async () => {
+test("instrumentation failure cannot bypass the retry-only registration blocker", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-decision-audit", scope: "EXACT", name: "Squirtle #007" },
@@ -3396,25 +3530,14 @@ test("operator-decision audit failure remains visible while Continue without Car
     instrumentationFails: true,
   });
   try {
-    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Audit failure incorrectly blocked the operator choice");
-    await waitFor(() => /Operator-decision audit write failed/.test(harness.container.querySelector('[role="alert"]')?.textContent ?? ""), "Audit-write failure was not visible");
-    assert.match(harness.container.textContent ?? "", /was not applied by operator choice/);
-    const decision = harness.events.find((event) => event.eventType === "MAP_REGISTRATION_OPERATOR_DECISION");
-    assert.equal(decision?.eventId, decision?.details?.registrationDecisionId);
-    assert.equal(decision?.details?.registrationOperationId, harness.getRegistrationOrchestrations()[0].orchestration.operationId);
+    await reachInterruptedRegistration(harness);
+    assertMaplessContinuationBlocked(harness);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("missing decision reporter is visible and never blocks the selected action", async () => {
+test("a missing decision reporter cannot bypass the retry-only registration blocker", async () => {
   const harness = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
     activeMap: { revisionId: "exact-revision-no-reporter", scope: "EXACT", name: "Squirtle #007" },
@@ -3422,21 +3545,14 @@ test("missing decision reporter is visible and never blocks the selected action"
     omitInstrumentationReporter: true,
   });
   try {
-    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')), "Front geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="back card geometry"]')), "Back geometry did not open");
-    await act(async () => fire(buttonByText(harness.container, "Continue")!, "click"));
-    await waitFor(() => Boolean(buttonByText(harness.container, "Continue without Card Map")), "Explicit continue choice did not render");
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    await waitFor(() => Boolean(harness.container.querySelector('[aria-label="front centering geometry"]')), "Missing reporter incorrectly blocked the choice");
-    assert.match(harness.container.querySelector('[role="alert"]')?.textContent ?? "", /audit reporter is unavailable/i);
+    await reachInterruptedRegistration(harness);
+    assertMaplessContinuationBlocked(harness);
   } finally {
     await harness.cleanup();
   }
 });
 
-test("decision-audit deadline and late failure cannot warn a replacement session", async () => {
+test("blocked mapless work cannot leak a decision-audit warning into a replacement session", async () => {
   let resolveDecision: ((saved: boolean) => void) | undefined;
   const decisionResult = new Promise<boolean>((resolve) => { resolveDecision = resolve; });
   const harness = await mountWorkspace({
@@ -3448,7 +3564,7 @@ test("decision-audit deadline and late failure cannot warn a replacement session
   });
   try {
     await reachInterruptedRegistration(harness);
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
+    assertMaplessContinuationBlocked(harness);
     await harness.rerenderSession("speedster-session-replacement-audit");
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 110));
@@ -3616,7 +3732,7 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
   }
 });
 
-test("first of two rescues serializes, parses, reloads the remaining side, and preserves explicit abandon", async () => {
+test("first of two rescues serializes, parses, and reloads the remaining retry-only blocker", async () => {
   const activeMap = { revisionId: "family-revision-two-rescues", scope: "FAMILY" as const, name: "2023 MEW EN Reverse Holo" };
   const first = await mountWorkspace({
     proposeGeometry: async () => geometryResponse(),
@@ -3673,12 +3789,9 @@ test("first of two rescues serializes, parses, reloads the remaining side, and p
     await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="BACK Card Map anchor rescue"]')), "Remaining Back rescue did not reload");
     assert.equal(resumed.getRegistrationCount(), 0, "Reload must not silently repeat the successful Front rescue");
     await loadPreparedImage(resumed.container, "back current card");
-    await act(async () => fire(buttonByText(resumed.container, "Continue without Card Map")!, "click"));
-    await waitFor(() => Boolean(resumed.container.querySelector('[aria-label="front centering geometry"]')), "Explicit rescue abandonment did not reach centering");
-    await waitFor(() => {
-      const saved = resumed.getCaptureDraftSerialized();
-      return Boolean(saved && JSON.parse(saved).stage === "FRONT_CENTERING");
-    }, "Explicit-abandon centering draft was not serialized");
+    assert.equal(buttonByText(resumed.container, "Continue without Card Map"), undefined);
+    assert.equal(resumed.container.querySelector('[aria-label="front centering geometry"]'), null);
+    assert.match(resumed.container.textContent ?? "", /Unresolved human-correction sides/i);
     const parsed = parseSpeedsterCaptureRegistrationDraft(resumed.getCaptureDraftSerialized()!, {
       surface: "AI_GRADER",
       sessionId: "speedster-session-lifecycle-test",
@@ -3688,8 +3801,10 @@ test("first of two rescues serializes, parses, reloads the remaining side, and p
       activeMapScope: activeMap.scope,
     });
     assert.ok(parsed);
-    assert.deepEqual(parsed.registrationFailureSides, { BACK: true });
-    assert.equal(parsed.mapRegistrationFailed, true);
+    assert.deepEqual(Object.keys(parsed.failures), ["BACK"]);
+    assert.ok(parsed.provisional.FRONT);
+    assert.deepEqual(parsed.registrationFailureSides, {});
+    assert.equal(parsed.mapRegistrationFailed, false);
   } finally {
     await resumed.cleanup();
   }
@@ -3720,7 +3835,7 @@ test("global registration failure explains four-anchor confirmation and accepts 
   }
 });
 
-test("one non-cooperative registration timeout stops for explicit choice without automatic retry", async () => {
+test("one non-cooperative registration timeout stops at a retry-only blocker without automatic retry", async () => {
   const harness = await mountWorkspace({
     imageRequestTimeoutMs: 10,
     proposeGeometry: async () => geometryResponse(),
@@ -3740,14 +3855,8 @@ test("one non-cooperative registration timeout stops for explicit choice without
     assert.equal(harness.getRegistrationCount(), 2);
     assert.equal(harness.getRegistrationCountForSide("BACK"), 1, "Local timeout must never automatically retry");
     await waitFor(() => harness.getPreparedImageRefreshCount("BACK") >= 1, "Prepared-image refresh must remain active during interruption");
-    await act(async () => fire(buttonByText(harness.container, "Continue without Card Map")!, "click"));
-    assert.deepEqual(
-      harness.events.filter((event) => event.eventType === "GEOMETRY_CONFIRMED").map((event) => event.details),
-      [
-        { side: "FRONT", mapAppliedScope: "NONE" },
-        { side: "BACK", mapAppliedScope: "NONE", mapFailureCode: "REGISTRATION_FAILED" },
-      ],
-    );
+    assertMaplessContinuationBlocked(harness);
+    assert.equal(harness.events.some((event) => event.eventType === "GEOMETRY_CONFIRMED"), false);
   } finally {
     await harness.cleanup();
   }
