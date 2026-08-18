@@ -14,6 +14,7 @@ from color_geometry import (
     _canonical_ambiguity,
     propose_physical_outer,
     propose_printed_frame,
+    serialize_proposal,
 )
 
 
@@ -54,6 +55,7 @@ class SpeedsterColorGeometryTest(unittest.TestCase):
             and evidence["insideNonMatSupportFraction"] >= result["minimumSideSupport"]
             for evidence in result["sideEvidence"].values()
         ))
+        self.assertIsNone(result["diagnosticCandidate"])
         self.assertNotIn("AUTOMATIC_COLOR_FRAME", repr(result))
 
     def test_inner_printed_boundary_cannot_outrank_mat_owned_physical_outer(self):
@@ -77,6 +79,7 @@ class SpeedsterColorGeometryTest(unittest.TestCase):
         np.testing.assert_allclose(result["proposal"], outer)
         self.assertEqual(result["ambiguity"]["candidateCount"], 1)
         self.assertIsNone(result["ambiguity"]["runnerUpScoreRatio"])
+        self.assertIsNone(result["diagnosticCandidate"])
         self.assertTrue(all(
             evidence["outsideMatSupportFraction"] >= result["minimumSideSupport"]
             and evidence["insideNonMatSupportFraction"] >= result["minimumSideSupport"]
@@ -125,6 +128,22 @@ class SpeedsterColorGeometryTest(unittest.TestCase):
         self.assertIsNone(result["advisory"]["recommendedMat"])
         self.assertEqual(result["ambiguity"]["candidateCount"], 1)
         self.assertIsNone(result["ambiguity"]["runnerUpScoreRatio"])
+        diagnostic = result["diagnosticCandidate"]
+        self.assertEqual(diagnostic["authority"], "HUMAN_DRAFT_ONLY")
+        self.assertEqual(diagnostic["rank"], 1)
+        self.assertTrue(any(
+            gate["code"] == "FRAME_COVERAGE_BELOW_FLOOR"
+            and gate["comparison"] == "GTE"
+            and gate["threshold"] == 0.5
+            for gate in diagnostic["rejectedGates"]
+        ))
+        serialized = serialize_proposal(result, image.shape[1], image.shape[0])
+        self.assertEqual(len(serialized["diagnosticCandidate"]["quad"]), 4)
+        self.assertTrue(all(
+            0.0 <= point[axis] <= 1.0
+            for point in serialized["diagnosticCandidate"]["quad"]
+            for axis in ("x", "y")
+        ))
 
     def test_black_card_border_matching_black_mat_abstains_on_inner_rectangle(self):
         image = np.full((900, 700, 3), (15, 15, 15), dtype=np.uint8)
@@ -152,6 +171,7 @@ class SpeedsterColorGeometryTest(unittest.TestCase):
         self.assertEqual(result["outcome"], "ABSTAIN")
         self.assertEqual(result["advisory"]["code"], "VERIFY_SELECTED_MAT")
         self.assertIsNone(result["proposal"])
+        self.assertIsNone(result["diagnosticCandidate"])
 
     def test_switch_mat_advisory_never_recommends_the_selected_magenta_mat(self):
         image = np.full((900, 700, 3), (255, 0, 255), dtype=np.uint8)

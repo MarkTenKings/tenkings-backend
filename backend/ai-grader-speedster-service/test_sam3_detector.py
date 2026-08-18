@@ -3,9 +3,11 @@ import asyncio
 import inspect
 import json
 import logging
+import os
+import tempfile
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import cv2
 import numpy as np
@@ -29,11 +31,16 @@ from defect_math import (
 from sam3_detector import (
     DETECTOR_VERSION,
     LOGGER,
+    SAM3_CHECKPOINT_REVISION,
+    SAM3_CHECKPOINT_SHA256,
     SAM3_REPOSITORY_COMMIT,
     Sam3ImageProcessor,
     _cap_memory_candidates_per_side,
     _smart_mark_prompt_inputs,
     _to_speedster_defects,
+    _release_identity_inputs,
+    _runtime_detector_identity,
+    _verified_checkpoint_path,
     detect_views,
     feature_fingerprint,
     learning_adjustment,
@@ -46,9 +53,62 @@ from sam_memory_v2 import (
     prepare_bank_v2,
 )
 from trace_rle import encode_trace_rle
+from trace_rle import decode_trace_rle
 
 
 SAM_UNIT = [1 / np.sqrt(32)] * 32
+
+
+def test_detector_identity():
+    return {
+        "version": "speedster-detector-identity-v1",
+        "detectorVersion": DETECTOR_VERSION,
+        "source": {
+            "repository": "https://github.com/ten-kings/example",
+            "commitSha": "a" * 40,
+            "treeSha": "b" * 40,
+        },
+        "runtime": {
+            "ociDigest": "sha256:" + "c" * 64,
+            "ociDigestProvenance": "DEPLOYMENT_INJECTED",
+            "ociImageReference": "ghcr.io/ten-kings/speedster:test",
+            "buildId": "test-build",
+            "buildIdentityProvenance": "OCI_IMAGE_ENV",
+            "platform": "linux/amd64",
+            "pythonVersion": "3.12.4",
+            "frameworkVersion": f"sam3@{SAM3_REPOSITORY_COMMIT}",
+            "torchVersion": "2.7.1",
+            "cudaVersion": "12.8",
+            "cudnnVersion": "91002",
+            "accelerator": "NVIDIA-L4",
+            "gpuName": "NVIDIA-L4",
+            "gpuCapability": "8.9",
+            "gpuCount": 1,
+        },
+        "model": {
+            "name": "sam3-speedster",
+            "repository": "facebook/sam3",
+            "revision": "d" * 40,
+            "checkpointSha256": "e" * 64,
+            "sourceCommitSha": SAM3_REPOSITORY_COMMIT,
+        },
+        "policy": {
+            "detectorVersion": DETECTOR_VERSION,
+            "promptVersion": "sam3-box-and-smart-mark-point-v1",
+            "fusionVersion": "speedster-side-wide-memory-cap-v2",
+            "measurementVersion": "speedster-exact-canonical-mask-v1",
+            "memoryVersion": "sam-memory-v2",
+        },
+        "determinism": {
+            "deterministicAlgorithms": True,
+            "cudnnDeterministic": True,
+            "cudnnBenchmark": False,
+            "allowTf32": False,
+            "evalMode": True,
+            "compile": False,
+            "autocastDtype": "bfloat16",
+        },
+    }
 
 
 def v2_exemplar(
@@ -108,6 +168,9 @@ class FakeMaskProcessor:
     def __init__(self):
         self.calls = []
 
+    def detector_identity(self):
+        return test_detector_identity()
+
     def scan(
         self,
         image,
@@ -117,6 +180,7 @@ class FakeMaskProcessor:
         source_view_id=None,
         session_id=None,
         trace_id=None,
+        candidate_evidence=None,
     ):
         self.calls.append((image.shape, candidates, learning_bank, allowed_mask))
         mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
@@ -475,6 +539,113 @@ class Sam3DetectorTests(unittest.TestCase):
             module_source,
         )
 
+    def test_checkpoint_download_requires_an_immutable_revision_and_verifies_bytes(self):
+        payload = b"exact-speedster-checkpoint"
+        with tempfile.NamedTemporaryFile() as checkpoint:
+            checkpoint.write(payload)
+            checkpoint.flush()
+            download = Mock(return_value=checkpoint.name)
+            with patch.dict(os.environ, {
+                "SAM3_CHECKPOINT_REVISION": SAM3_CHECKPOINT_REVISION,
+                "SAM3_CHECKPOINT_SHA256": SAM3_CHECKPOINT_SHA256,
+            }, clear=False), patch(
+                "sam3_detector._sha256_file", return_value=SAM3_CHECKPOINT_SHA256
+            ):
+                path, revision, actual_sha256 = _verified_checkpoint_path(
+                    download
+                )
+
+        self.assertEqual(path, checkpoint.name)
+        self.assertEqual(revision, SAM3_CHECKPOINT_REVISION)
+        self.assertEqual(actual_sha256, SAM3_CHECKPOINT_SHA256)
+        download.assert_called_once_with(
+            repo_id="facebook/sam3",
+            filename="sam3.pt",
+            revision=SAM3_CHECKPOINT_REVISION,
+            token=True,
+        )
+
+    def test_checkpoint_startup_fails_closed_for_mutable_revision_or_hash_mismatch(self):
+        with patch.dict(os.environ, {
+            "SAM3_CHECKPOINT_REVISION": "main",
+            "SAM3_CHECKPOINT_SHA256": SAM3_CHECKPOINT_SHA256,
+        }, clear=False):
+            with self.assertRaisesRegex(RuntimeError, "approved immutable revision"):
+                _verified_checkpoint_path(Mock())
+
+        with tempfile.NamedTemporaryFile() as checkpoint:
+            checkpoint.write(b"wrong-checkpoint")
+            checkpoint.flush()
+            with patch.dict(os.environ, {
+                "SAM3_CHECKPOINT_REVISION": SAM3_CHECKPOINT_REVISION,
+                "SAM3_CHECKPOINT_SHA256": SAM3_CHECKPOINT_SHA256,
+            }, clear=False):
+                with self.assertRaisesRegex(RuntimeError, "SHA-256 mismatch"):
+                    _verified_checkpoint_path(Mock(return_value=checkpoint.name))
+
+    def test_release_identity_requires_exact_build_and_oci_inputs(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "SPEEDSTER_SOURCE_COMMIT_SHA"):
+                _release_identity_inputs()
+
+        release_environment = {
+            "SPEEDSTER_SOURCE_COMMIT_SHA": "a" * 40,
+            "SPEEDSTER_SOURCE_TREE_SHA": "b" * 40,
+            "SPEEDSTER_OCI_IMAGE_DIGEST": "sha256:" + "c" * 64,
+            "SPEEDSTER_SOURCE_REPOSITORY": "https://github.com/ten-kings/example",
+            "SPEEDSTER_BUILD_ID": "github-run-123-1",
+            "SPEEDSTER_OCI_IMAGE_REFERENCE": "ghcr.io/ten-kings/speedster:test",
+        }
+        with patch.dict(os.environ, release_environment, clear=True):
+            self.assertEqual(
+                _release_identity_inputs()["ociDigest"],
+                release_environment["SPEEDSTER_OCI_IMAGE_DIGEST"],
+            )
+
+    def test_runtime_identity_exposes_model_build_gpu_and_determinism_contract(self):
+        fake_torch = SimpleNamespace(
+            __version__="2.7.1+cu126",
+            version=SimpleNamespace(cuda="12.6"),
+            cuda=SimpleNamespace(
+                is_available=lambda: True,
+                current_device=lambda: 0,
+                get_device_properties=lambda _device: SimpleNamespace(
+                    name="NVIDIA L4"
+                ),
+                get_device_capability=lambda _device: (8, 9),
+                device_count=lambda: 1,
+            ),
+            backends=SimpleNamespace(
+                cudnn=SimpleNamespace(version=lambda: 91002)
+            ),
+        )
+        determinism = test_detector_identity()["determinism"]
+        release = {
+            "sourceRepository": "https://github.com/ten-kings/example",
+            "sourceCommit": "a" * 40,
+            "sourceTree": "b" * 40,
+            "ociDigest": "sha256:" + "c" * 64,
+            "imageReference": "ghcr.io/ten-kings/speedster:test",
+            "buildId": "github-run-123-1",
+        }
+
+        identity = _runtime_detector_identity(
+            fake_torch,
+            SAM3_CHECKPOINT_REVISION,
+            SAM3_CHECKPOINT_SHA256,
+            determinism,
+            release,
+        )
+
+        self.assertEqual(identity["source"]["commitSha"], "a" * 40)
+        self.assertEqual(identity["model"]["revision"], SAM3_CHECKPOINT_REVISION)
+        self.assertEqual(identity["model"]["checkpointSha256"], SAM3_CHECKPOINT_SHA256)
+        self.assertEqual(identity["runtime"]["torchVersion"], "2.7.1+cu126")
+        self.assertEqual(identity["runtime"]["cudaVersion"], "12.6")
+        self.assertEqual(identity["runtime"]["cudnnVersion"], "91002")
+        self.assertEqual(identity["runtime"]["gpuCapability"], "8.9")
+        self.assertEqual(identity["determinism"], determinism)
+
     def test_sam_memory_decision_logger_emits_info_diagnostics(self):
         self.assertEqual(LOGGER.level, logging.INFO)
 
@@ -486,12 +657,18 @@ class Sam3DetectorTests(unittest.TestCase):
             def load(self):
                 self.calls += 1
 
+            def detector_identity(self):
+                return test_detector_identity()
+
         loader = FakeLoader()
 
         async def start_and_stop():
-            with patch("app.get_processor", return_value=loader):
+            with patch("app.get_processor", return_value=loader), patch(
+                "app.get_detector_identity", side_effect=loader.detector_identity
+            ):
                 async with lifespan(None):
                     self.assertEqual(health()["detectorVersion"], DETECTOR_VERSION)
+                    self.assertEqual(health()["detectorIdentity"], test_detector_identity())
                     self.assertEqual(ping(), health())
 
         asyncio.run(start_and_stop())
@@ -788,6 +965,7 @@ class Sam3DetectorTests(unittest.TestCase):
             )
 
         self.assertEqual(result["detectorVersion"], DETECTOR_VERSION)
+        self.assertEqual(result["detectorIdentity"], test_detector_identity())
         self.assertEqual(len(processor.calls), 2)
         self.assertTrue(
             all(shape == (GRID_HEIGHT, GRID_WIDTH, 3) for shape, _, _, _ in processor.calls)
@@ -854,6 +1032,43 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(len(defects), 1)
         self.assertGreaterEqual(len(defects[0]["canonicalContour"]), 3)
         self.assertEqual(defects[0]["measurement"]["areaMm2"], 0.02)
+        self.assertEqual(defects[0]["measurement"]["pixelCount"], 8)
+        np.testing.assert_array_equal(decode_trace_rle(defects[0]["detectorMask"]), mask)
+
+    def test_disconnected_detector_components_keep_one_exact_measurement_and_filter_authority(self):
+        mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
+        mask[500:510, 300:310] = 1
+        mask[500:505, 900:905] = 1
+        proposal = {
+            "canonicalMask": mask,
+            "sourceViewId": "FRONT:ORIGINAL",
+            "defectType": "VISIBLE_WHITENING",
+            "confidence": 0.8,
+        }
+
+        defects = _to_speedster_defects(
+            measure_defects([proposal], "SQUARE"),
+            "FRONT",
+            "UNREVIEWED",
+        )
+
+        self.assertEqual(len(defects), 1)
+        self.assertEqual(defects[0]["measurement"]["pixelCount"], 125)
+        np.testing.assert_array_equal(
+            decode_trace_rle(defects[0]["detectorMask"]), mask
+        )
+
+        replayed = measure_marks(
+            [],
+            "FRONT",
+            "SQUARE",
+            findings=defects,
+        )["defects"]
+        self.assertEqual(len(replayed), 1)
+        self.assertEqual(replayed[0]["measurement"]["pixelCount"], 125)
+        np.testing.assert_array_equal(
+            decode_trace_rle(replayed[0]["detectorMask"]), mask
+        )
 
     def test_smart_mark_crossing_zones_has_one_stable_source_with_disjoint_regions(self):
         source_mask = np.zeros((GRID_HEIGHT, GRID_WIDTH), dtype=np.uint8)
@@ -1330,6 +1545,11 @@ class Sam3DetectorTests(unittest.TestCase):
             "defectType": "VISIBLE_WHITENING",
         }]
 
+        evidence = {
+            "version": "speedster-detector-evidence-v1",
+            "rawCandidates": [],
+            "memoryDecisions": [],
+        }
         with self.assertLogs("sam3_detector", level="INFO") as captured:
             candidates = processor.scan(
                 np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
@@ -1338,6 +1558,7 @@ class Sam3DetectorTests(unittest.TestCase):
                 source_view_id="FRONT:ORIGINAL",
                 session_id="current-session",
                 trace_id="request-trace",
+                candidate_evidence=evidence,
             )
 
         self.assertEqual(candidates, [])
@@ -1349,6 +1570,59 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(diagnostic["traceId"], "request-trace")
         self.assertEqual(diagnostic["sourceViewId"], "ORIGINAL")
         self.assertEqual(diagnostic["negativeMatchSessionId"], "removed-text")
+        self.assertEqual(len(evidence["rawCandidates"]), 1)
+        self.assertEqual(len(evidence["memoryDecisions"]), 1)
+        self.assertEqual(evidence["rawCandidates"][0]["evidenceOrdinal"], 0)
+        self.assertEqual(
+            evidence["rawCandidates"][0]["candidateId"],
+            evidence["memoryDecisions"][0]["candidateId"],
+        )
+        self.assertEqual(
+            evidence["memoryDecisions"][0]["disposition"],
+            "VETOED_BY_MEMORY",
+        )
+
+    def test_sub_threshold_adjustment_preserves_raw_candidate_and_separate_disposition(self):
+        fake = FakeOfficialImageProcessor()
+        fake.scores = FakeTensor(np.array([0.52], dtype=np.float32))
+        processor = Sam3ImageProcessor()
+        processor._processor = fake
+        localized = [{
+            "box": (450, 500, 100, 100),
+            "coreBox": (470, 520, 60, 60),
+            "coreMask": np.ones((60, 60), dtype=bool),
+            "defectType": "VISIBLE_WHITENING",
+        }]
+        evidence = {
+            "version": "speedster-detector-evidence-v1",
+            "rawCandidates": [],
+            "memoryDecisions": [],
+        }
+
+        candidates = processor.scan(
+            np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+            localized,
+            {
+                "version": 1,
+                "types": {
+                    "VISIBLE_WHITENING": {
+                        "negative": {"count": 1, "sum": SAM_UNIT},
+                    },
+                },
+            },
+            source_view_id="FRONT:ORIGINAL",
+            candidate_evidence=evidence,
+        )
+
+        self.assertEqual(candidates, [])
+        self.assertEqual(len(evidence["rawCandidates"]), 1)
+        decision = evidence["memoryDecisions"][0]
+        self.assertEqual(decision["policy"], "LEGACY_MEMORY_V1")
+        self.assertAlmostEqual(decision["adjustedConfidence"], 0.46, places=5)
+        self.assertEqual(
+            decision["disposition"],
+            "SUPPRESSED_BELOW_COLLECTION_THRESHOLD",
+        )
 
     def test_v2_positive_protection_keeps_surviving_measurements_identical(self):
         localized = [{

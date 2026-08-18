@@ -90,6 +90,26 @@
   gap: 9px;
 }
 
+.colorDiagnostic {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  color: #ffe4cf;
+  background: #2f120b;
+  border: 1px solid #ff9b6670;
+  border-radius: 8px;
+}
+
+.colorDiagnostic strong {
+  color: #ffad82;
+  letter-spacing: .06em;
+}
+
+.colorDiagnostic ul {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
 .colorRecapture {
   width: fit-content;
   padding: 7px 11px;

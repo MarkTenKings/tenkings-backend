@@ -3,6 +3,25 @@
 last_verified_at: 2026-08-15
 owner: Mark
 
+## Capability-Scoped Operator Authority
+- Static operator authority is not an admin-session substitute. General admin routes accept only ordinary signed-in bearer sessions.
+- The only current static capability is `OPERATOR_API_CAPABILITIES=set-ops:batch-import`, accepted only by the five Set Ops batch CLI dependencies: set lookup, ingestion creation, draft build, draft read, and approval.
+- Configure server-only `OPERATOR_API_KEY` (32–512 characters) and one exact `OPERATOR_USER_ID` that still resolves to an admin. Do not expose the key in browser configuration. Prefer `SET_OPS_BEARER_TOKEN` for interactive/human operation.
+
+## Speedster Detector Checkpoint Authority Gate
+- Before enabling Speedster detection, configure `AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_KEY_ID`, a random `AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET` of at least 32 characters, and `AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1=true`.
+- During key rotation, `AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON` must be a JSON object mapping retained key IDs to secrets of at least 32 characters; use `{}` when no old key is retained. `AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS` must match the reviewed request budget (repository default `55000`).
+- Missing or malformed authority must fail before storage reads, Memory loading, or a detector request. Production proof must exercise that fail-closed path and then record a successful Front/Back run whose signed checkpoint receipts and detector release identities validate under the deployed configuration.
+
+## Speedster Exact-Artifact Release Gate
+- The release workflow must pass Install & Build, the protected Speedster frontend/adversarial suite, and the complete disposable PostgreSQL chain before publishing the Speedster image. Never deploy a PR-only image or an image from a skipped/failed dependency.
+- Use the run-specific tag only to locate the artifact. Record and deploy `ghcr.io/marktenkings/tenkings-backend/ai-grader-speedster-service@sha256:<digest>`. Verify its keyless cosign signature, SPDX attestation, and GitHub provenance against `.github/workflows/ci.yml@refs/heads/main` before provider mutation.
+- RunPod must receive that same digest as both the deployed image reference and `SPEEDSTER_OCI_IMAGE_DIGEST`. Preserve `HF_TOKEN`; startup must fetch official `facebook/sam3` revision `3c879f39826c281e95690f02c7821c4de09afae7` and verify checkpoint SHA-256 `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e` before readiness.
+- Before changing RunPod, require zero jobs in progress and zero jobs waiting, record the prior exact digest, and change no GPU, capacity, port, scaling, secret, or unrelated setting. Afterward, require identical complete `/health` release/model identity on at least two workers plus repeated known-corpus `/detect` success without deterministic-operation errors. Provider "ready" alone is insufficient.
+- Apply migrations `20260818153000_speedster_audit_evidence_append_only` and `20260818191500_speedster_iphone_capture_integrity_manifest` before serving the new capture protocol. Release the Vercel iPhone API and Cloudflare iPhone worker together because PLAN/COMPLETE now require byte-size/checksum manifests and private checksum headers.
+- The normal order is: quiescence/read-only baseline; pre-deploy log entry; configure new server-only web authority; one exact migration-bearing web deploy; verify the ledger and triggers; return `RUN_DB_MIGRATIONS=false`; publish/verify the main-branch image; zero-queue RunPod digest rollout; multi-worker health/detect proof; signed-in natural-card acceptance.
+- Rollback boundary: before a new capture manifest or detector checkpoint is written, the prior exact Vercel deployment and prior RunPod digest may be restored independently. After new content-addressed capture/checkpoint evidence exists, roll forward with the reviewed runtime. Never roll back the additive audit triggers, delete manifests/checkpoints, route identity-required web traffic to an identity-incapable detector, or rewrite completed evidence.
+
 ## Rules
 - Always print branch + HEAD before deploy
 - Always confirm remote parity before restart/migrate

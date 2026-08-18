@@ -25,6 +25,13 @@ import {
   type SpeedsterReviewActionSession,
 } from "../lib/server/aiGraderV2ReviewAction";
 import { calculateSpeedsterReview } from "../lib/ai-grader-v2/review";
+import {
+  SPEEDSTER_TRACE_HEIGHT,
+  SPEEDSTER_TRACE_PIXEL_COUNT,
+  SPEEDSTER_TRACE_WIDTH,
+  encodeSpeedsterTraceRleV1,
+} from "../lib/ai-grader-v2/trace-codec";
+import { rasterizeSpeedsterCanonicalContour } from "../lib/ai-grader-v2/trace-editor";
 
 const sessionId = "session-12345678901234567890";
 const identity = {
@@ -175,6 +182,83 @@ test("the frozen full-contour rule splits Detector/Memory candidates and Smart-M
   assert.equal(JSON.stringify(decision).includes("canonicalContour"), true);
   assert.equal(result.filteredDecisions[1].finding.origin, "MEMORY");
   assert.equal(result.filteredDecisions[1].ruleInputs.findingOrigin, "MEMORY");
+});
+
+test("canonical detector mask keeps disconnected inside/outside components in review", () => {
+  const pixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  const paint = (left: number, top: number, width: number, height: number) => {
+    for (let y = top; y < top + height; y += 1) {
+      pixels.fill(1, y * SPEEDSTER_TRACE_WIDTH + left, y * SPEEDSTER_TRACE_WIDTH + left + width);
+    }
+  };
+  paint(250, 400, 10, 10);
+  paint(900, 400, 5, 5);
+  const detectorMask = encodeSpeedsterTraceRleV1(pixels);
+  const disconnected: SpeedsterMeasuredDefect = {
+    ...inside,
+    id: "FRONT:disconnected:SURFACE",
+    // Deliberately represents only the first component: the exact mask, not
+    // this compatibility contour, must own the filter decision.
+    canonicalContour: [
+      { x: 0.19, y: 0.22 },
+      { x: 0.21, y: 0.22 },
+      { x: 0.21, y: 0.24 },
+    ],
+    detectorMask,
+    measurement: { ...measurement, pixelCount: 125 },
+  };
+
+  const result = splitSpeedsterMapFilteredCandidates({
+    findings: [disconnected, smartMark],
+    cardIdentity: identity,
+    detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    map,
+  });
+
+  assert.deepEqual(result.activeFindings.map(({ id }) => id), [disconnected.id, smartMark.id]);
+  assert.equal(result.filteredDecisions.length, 0);
+  const diagnostic = speedsterBestAuthorizedMapZoneDiagnostic(
+    disconnected,
+    (map.registration as { front: ReturnType<typeof registrationSide> }).front.projectedZones,
+  );
+  assert.equal(diagnostic?.overlap.method, "candidate-canonical-mask-pixel-containment-v1");
+  assert.equal(diagnostic?.overlap.fullyContained, false);
+  assert.equal(diagnostic?.overlap.ratio, 0.8);
+  assert.equal(detectorMask.height, SPEEDSTER_TRACE_HEIGHT);
+});
+
+test("canonical detector mask allows boundary contact but any outside pixel prevents filtering", () => {
+  const findingWithPixels = (id: string, coordinates: readonly (readonly [number, number])[]) => {
+    const pixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+    for (const [x, y] of coordinates) pixels[y * SPEEDSTER_TRACE_WIDTH + x] = 1;
+    return {
+      ...inside,
+      id,
+      detectorMask: encodeSpeedsterTraceRleV1(pixels),
+      measurement: { ...measurement, pixelCount: coordinates.length },
+    } satisfies SpeedsterMeasuredDefect;
+  };
+  const boundaryX = Math.floor(0.5 * (SPEEDSTER_TRACE_WIDTH - 1));
+  const boundaryY = Math.floor(0.5 * (SPEEDSTER_TRACE_HEIGHT - 1));
+  const contact = findingWithPixels("FRONT:mask-boundary:SURFACE", [
+    [boundaryX, boundaryY],
+    [boundaryX - 1, boundaryY - 1],
+  ]);
+  const partial = findingWithPixels("FRONT:mask-partial:SURFACE", [
+    [boundaryX - 1, boundaryY - 1],
+    [boundaryX + 2, boundaryY],
+  ]);
+
+  const result = splitSpeedsterMapFilteredCandidates({
+    findings: [contact, partial],
+    cardIdentity: identity,
+    detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    map,
+  });
+
+  assert.deepEqual(result.filteredDecisions.map(({ finding }) => finding.id), [contact.id]);
+  assert.deepEqual(result.activeFindings.map(({ id }) => id), [partial.id]);
+  assert.equal(result.filteredDecisions[0].zoneOverlap.method, "candidate-canonical-mask-pixel-containment-v1");
 });
 
 test("v2 separates content from filter authority and applies physical padding without weakening full-contour safety", () => {
@@ -463,23 +547,73 @@ function initializeSession(withMap: boolean): SpeedsterReviewActionSession {
   };
 }
 
-test("INITIALIZE shares one Memory object across sequential detectors, then atomically persists the filtered split", async () => {
-  const initial = initializeSession(true);
-  const instrumentedInside = {
-    ...inside,
-    findingProvenance: {
-      version: "speedster-finding-provenance-v1" as const,
-      primaryProposalId: "FRONT:0",
-      contributors: [{
-        proposalId: "FRONT:0",
-        origin: "DETECTOR" as const,
-        sourceViewId: inside.sourceViewId,
-        defectType: inside.defectType,
-        confidence: inside.confidence,
-        rankingConfidence: inside.confidence,
-      }],
+function detectorResponse(findings: readonly SpeedsterMeasuredDefect[]) {
+  const authoritative = findings.map((finding, index) => {
+    const candidateId = `raw-${finding.side === "FRONT" ? "a" : "b"}${index.toString(16).padStart(23, "0")}`;
+    const pixels = rasterizeSpeedsterCanonicalContour(finding.canonicalContour);
+    const detectorMask = encodeSpeedsterTraceRleV1(pixels);
+    const pixelCount = pixels.reduce((total, pixel) => total + pixel, 0);
+    return {
+      finding: {
+        ...finding,
+        detectorMask,
+        measurement: { ...finding.measurement, pixelCount },
+        findingProvenance: {
+          version: "speedster-finding-provenance-v1" as const,
+          primaryProposalId: `${finding.side}:${index}`,
+          contributors: [{
+            proposalId: `${finding.side}:${index}`,
+            rawCandidateId: candidateId,
+            origin: finding.origin ?? "DETECTOR",
+            sourceViewId: finding.sourceViewId,
+            defectType: finding.defectType,
+            confidence: finding.confidence,
+            rankingConfidence: finding.confidence,
+            ...(finding.memoryProposal ? { memoryProposal: finding.memoryProposal } : {}),
+          }],
+        },
+      },
+      candidate: {
+        version: "speedster-raw-detector-candidate-v1",
+        candidateId,
+        evidenceOrdinal: index,
+        sourceViewId: finding.sourceViewId,
+        promptIndex: index,
+        maskIndex: 0,
+        promptBox: [1, 2, 3, 4],
+        defectType: finding.defectType,
+        origin: finding.origin ?? "DETECTOR",
+        rawConfidence: finding.confidence,
+        featureFingerprint: null,
+        canonicalMask: detectorMask,
+        ...(finding.memoryProposal ? { memoryProposal: finding.memoryProposal } : {}),
+      },
+      decision: {
+        version: "speedster-memory-decision-evidence-v1",
+        candidateId,
+        policy: "SAM_MEMORY_V2",
+        action: "retained",
+        adjustment: 0,
+        adjustedConfidence: finding.confidence,
+        collectionThreshold: 0.5,
+        disposition: "RETAINED_FOR_MEASUREMENT",
+        diagnostic: { action: "retained", bankVersion: 2 },
+      },
+    };
+  });
+  return {
+    detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
+    defects: authoritative.map(({ finding }) => finding),
+    detectorEvidence: {
+      version: "speedster-detector-evidence-v1",
+      rawCandidates: authoritative.map(({ candidate }) => candidate),
+      memoryDecisions: authoritative.map(({ decision }) => decision),
     },
   };
+}
+
+test("INITIALIZE shares one Memory object across sequential detectors, then atomically persists the filtered split", async () => {
+  const initial = initializeSession(true);
   const sharedLearningBank = { version: "GLOBAL" };
   let learningBankCalls = 0;
   const detectorLearningBanks: unknown[] = [];
@@ -519,10 +653,7 @@ test("INITIALIZE shares one Memory object across sequential detectors, then atom
         backStartedWhileFrontPending = !frontSettled;
       }
       detectorReturns += 1;
-      return {
-        detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
-        defects: body.side === "FRONT" ? [instrumentedInside] : [outside],
-      };
+      return detectorResponse(body.side === "FRONT" ? [inside] : [outside]);
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
@@ -577,7 +708,17 @@ test("no map leaves the existing result/persist shape unchanged and does not inv
     async persistReviewIfRevision(_identity, _updatedAt, data) { persisted = data; },
     async presignRead(key) { return `https://local.invalid/${key}`; },
     async learningBankForDetect() { return {}; },
-    async detect() { return { detectorVersion: "unchanged-pre-map-version", defects: [] }; },
+    async detect() {
+      return {
+        detectorVersion: "unchanged-pre-map-version",
+        defects: [],
+        detectorEvidence: {
+          version: "speedster-detector-evidence-v1",
+          rawCandidates: [],
+          memoryDecisions: [],
+        },
+      };
+    },
     async measure() { throw new Error("must not measure"); },
   });
   assert.equal(mapLoads, 0);
@@ -671,6 +812,11 @@ test("a pinned family revision applies across card names within the same Card Ty
       return {
         detectorVersion: SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION,
         defects: [],
+        detectorEvidence: {
+          version: "speedster-detector-evidence-v1",
+          rawCandidates: [],
+          memoryDecisions: [],
+        },
       };
     },
     async measure() { throw new Error("must not measure"); },

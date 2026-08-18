@@ -44,18 +44,13 @@ test("canonical points validate and clamp to the physical card", () => {
   );
 });
 
-test("automatic geometry stays reachable inside the source image", () => {
-  assert.deepEqual(sanitizeSpeedsterUnitQuad([
+test("physical geometry rejects out-of-bounds, crossed, concave, and collapsed evidence without clamping", () => {
+  assert.equal(sanitizeSpeedsterUnitQuad([
     { x: -0.04, y: 0.08 },
     { x: 0.94, y: 0.07 },
     { x: 1.06, y: 0.95 },
     { x: -0.18, y: 1.37 },
-  ]), [
-    { x: 0, y: 0.08 },
-    { x: 0.94, y: 0.07 },
-    { x: 1, y: 0.95 },
-    { x: 0, y: 1 },
-  ]);
+  ]), null);
   assert.equal(sanitizeSpeedsterUnitQuad([{ x: 0, y: 0 }]), null);
   assert.equal(sanitizeSpeedsterUnitQuad([
     { x: 0, y: 0 },
@@ -63,6 +58,35 @@ test("automatic geometry stays reachable inside the source image", () => {
     { x: 1, y: 1 },
     { x: Number.NaN, y: 1 },
   ]), null);
+  assert.equal(sanitizeSpeedsterUnitQuad([
+    { x: 0.1, y: 0.1 },
+    { x: 0.9, y: 0.1 },
+    { x: 0.2, y: 0.9 },
+    { x: 0.8, y: 0.9 },
+  ]), null);
+  assert.equal(sanitizeSpeedsterUnitQuad([
+    { x: 0.1, y: 0.1 },
+    { x: 0.9, y: 0.1 },
+    { x: 0.6, y: 0.9 },
+    { x: 0.5, y: 0.3 },
+  ]), null);
+  assert.equal(sanitizeSpeedsterUnitQuad([
+    { x: 0.1, y: 0.1 },
+    { x: 0.9, y: 0.1 },
+    { x: 0.9, y: 0.105 },
+    { x: 0.1, y: 0.105 },
+  ]), null);
+  assert.deepEqual(sanitizeSpeedsterUnitQuad([
+    { x: 0.1, y: 0.1 },
+    { x: 0.9, y: 0.08 },
+    { x: 0.88, y: 0.92 },
+    { x: 0.12, y: 0.9 },
+  ]), [
+    { x: 0.1, y: 0.1 },
+    { x: 0.9, y: 0.08 },
+    { x: 0.88, y: 0.92 },
+    { x: 0.12, y: 0.9 },
+  ]);
 });
 
 test("the four corner scoring zones are fixed 5 mm squares", () => {

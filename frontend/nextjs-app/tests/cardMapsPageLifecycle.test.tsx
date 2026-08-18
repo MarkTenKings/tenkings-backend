@@ -230,6 +230,7 @@ async function mountPage(input: {
   userId?: string;
   token?: string;
   mappedCards?: readonly unknown[];
+  mappedIncidents?: readonly unknown[];
   mappedCardsFetchImpl?: typeof fetch;
   initialLocalStorage?: Readonly<Record<string, string>>;
   renderPage?: () => React.ReactElement;
@@ -268,7 +269,7 @@ async function mountPage(input: {
       configurable: true,
       value: (request: RequestInfo | URL, init?: RequestInit) => String(request) === "/api/admin/ai-grader-v2/maps/list"
         ? input.mappedCardsFetchImpl?.(request, init)
-          ?? Promise.resolve(jsonResponse({ cards: input.mappedCards ?? [] }))
+          ?? Promise.resolve(jsonResponse({ cards: input.mappedCards ?? [], incidents: input.mappedIncidents ?? [] }))
         : input.fetchImpl(request, init),
     },
   });
@@ -509,6 +510,28 @@ test("Card Maps owns a searchable list containing only saved mapped source cards
   }
 });
 
+test("mapped library keeps valid cards visible while invalid rows are visibly quarantined", async () => {
+  const page = await mountPage({
+    mappedCards: [mappedPokemonCard("valid-map-source", "SQUIRTLE")],
+    mappedIncidents: [{
+      mapId: "invalid-map-1",
+      currentRevisionId: "invalid-revision-1",
+      code: "CARD_MAP_INTEGRITY_FAILURE",
+      message: "Card Map revision hash verification failed.",
+    }],
+    fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
+  });
+  try {
+    await waitFor(() => page.container.textContent?.includes("SQUIRTLE") ?? false, "Valid map row did not remain visible");
+    assert.match(page.container.textContent ?? "", /1 CARD MAP ROW QUARANTINED/);
+    assert.match(page.container.textContent ?? "", /invalid-map-1/);
+    assert.match(page.container.textContent ?? "", /invalid-revision-1/);
+    assert.match(page.container.textContent ?? "", /hash verification failed/);
+  } finally {
+    await page.cleanup();
+  }
+});
+
 test("mapped legacy sources expose and search authoritative TRAINER and ENERGY family layouts", async () => {
   const mappedLayoutCard = (sourceSessionId: string, cardName: string, layoutType: "TRAINER" | "ENERGY") => ({
     ...mappedPokemonCard(sourceSessionId, cardName),
@@ -624,7 +647,7 @@ test("switching admins immediately clears the prior creator's mapped rows while 
     mappedCardsFetchImpl: async () => {
       calls += 1;
       return calls === 1
-        ? jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")] })
+        ? jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")], incidents: [] })
         : adminB.promise;
     },
     fetchImpl: async (request) => { throw new Error(`Unexpected fetch: ${String(request)}`); },
@@ -635,7 +658,7 @@ test("switching admins immediately clears the prior creator's mapped rows while 
     assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
     assert.match(page.container.textContent ?? "", /Loading saved Card Maps/);
 
-    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")] }));
+    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")], incidents: [] }));
     await waitFor(() => page.container.textContent?.includes("BULBASAUR") ?? false, "Admin B list did not load");
     assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
   } finally {
@@ -661,10 +684,10 @@ test("a late prior-admin mapped-list response cannot overwrite the current admin
     await page.updateSession({ token: "admin-b-token", userId: "card-maps-admin-2" });
     await waitFor(() => calls === 2, "Admin B request did not start");
 
-    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")] }));
+    adminB.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-b-source-session", "BULBASAUR")], incidents: [] }));
     await waitFor(() => page.container.textContent?.includes("BULBASAUR") ?? false, "Admin B list did not load");
 
-    adminA.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")] }));
+    adminA.resolve(jsonResponse({ cards: [mappedPokemonCard("admin-a-source-session", "SQUIRTLE")], incidents: [] }));
     await act(async () => { await adminA.promise; await Promise.resolve(); });
     assert.match(page.container.textContent ?? "", /BULBASAUR/);
     assert.doesNotMatch(page.container.textContent ?? "", /SQUIRTLE/);
@@ -700,30 +723,28 @@ test("blank new-card identity shows exact field errors without making a request"
   }
 });
 
-test("historical layoutless Pokémon DRAFT recovery mounts for missing, integrity-error, and failed map lookups", async () => {
+test("historical layoutless Pokémon DRAFT recovery mounts only for durable NO_MAP and blocks failed authority", async () => {
   const cases = [
     {
       name: "missing",
-      response: jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } }),
-      message: /Preserved Card Maps capture loaded/,
+      response: jsonResponse({
+        authority: { status: "NO_MAP", message: "No eligible map exists." },
+        map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null },
+      }),
+      message: /Preserved Card Maps capture and durable authority loaded/,
+      mounts: true,
     },
     {
       name: "integrity",
-      response: jsonResponse({ map: {
-        status: "INTEGRITY_ERROR",
-        scope: "FAMILY",
-        name: "2023 Pokémon MEW EN Reverse Holo",
-        revision: null,
-        revisions: [],
-        editable: null,
-        integrity: { code: "CARD_MAP_INTEGRITY_FAILURE", message: "Hash mismatch" },
-      } }),
-      message: /Preserved Card Maps capture loaded/,
+      response: jsonResponse({ authority: { status: "INTEGRITY_ERROR", message: "Hash mismatch" }, message: "Hash mismatch" }, 409),
+      message: /Hash mismatch/,
+      mounts: false,
     },
     {
       name: "lookup-failed",
-      response: jsonResponse({ message: "Map service unavailable" }, 503),
-      message: /Card Map lookup failed/,
+      response: jsonResponse({ authority: { status: "LOOKUP_FAILED", message: "Map service unavailable" }, message: "Map service unavailable" }, 503),
+      message: /Map service unavailable/,
+      mounts: false,
     },
   ] as const;
   for (const candidate of cases) {
@@ -746,16 +767,19 @@ test("historical layoutless Pokémon DRAFT recovery mounts for missing, integrit
             },
           } });
         }
-        if (url === `/api/admin/ai-grader-v2/maps/current?sessionId=${sessionId}&scope=EFFECTIVE`) {
+        if (url === `/api/admin/ai-grader-v2/sessions/${sessionId}/map-authority`) {
           return candidate.response.clone();
         }
         throw new Error(`Unexpected fetch: ${url}`);
       },
     });
     try {
-      await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")),
-        `${candidate.name} historical DRAFT did not mount the capture workspace`);
+      await waitFor(() => candidate.mounts
+        ? Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK"))
+        : Boolean(buttonByText(page.container, "RETRY CARD MAP AUTHORITY")),
+      `${candidate.name} historical DRAFT did not resolve to the expected authority UI`);
       assert.match(page.container.textContent ?? "", candidate.message);
+      assert.equal(Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")), candidate.mounts);
     } finally {
       await page.cleanup();
     }
@@ -1022,8 +1046,8 @@ test("new authoring shows both dynamic identities and uses one effective baselin
       if (url === "/api/admin/ai-grader-v2/sessions") {
         return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
       }
-      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
-        return jsonResponse({ map: loadedMap });
+      if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session/map-authority") {
+        return jsonResponse({ authority: { status: "LOADED" }, map: loadedMap });
       }
       if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session") return jsonResponse({});
       if (url === "/api/admin/ai-grader-v2/maps/source?sessionId=new-card-map-session&scope=EXACT") {
@@ -1098,8 +1122,8 @@ test("Card Maps forwards exact Color Geometry receipt expiry to visible mode-spe
       if (url === "/api/admin/ai-grader-v2/sessions") {
         return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
       }
-      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
-        return jsonResponse({ map: {
+      if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session/map-authority") {
+        return jsonResponse({ authority: { status: "LOADED" }, map: {
           status: "LOADED",
           scope: "FAMILY",
           name: "1997 Upper Deck SPx",
@@ -1151,8 +1175,8 @@ test("new Card Map capture save failure retains the exact bundle and retries onc
       if (url === "/api/admin/ai-grader-v2/sessions") {
         return jsonResponse({ session: { id: "new-card-map-session", cardProfile: "SPORTS" } }, 201);
       }
-      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=new-card-map-session&scope=EFFECTIVE") {
-        return jsonResponse({ map: {
+      if (url === "/api/admin/ai-grader-v2/sessions/new-card-map-session/map-authority") {
+        return jsonResponse({ authority: { status: "LOADED" }, map: {
           status: "LOADED",
           scope: "FAMILY",
           name: "1997 Upper Deck SPx",
@@ -1222,8 +1246,11 @@ test("UI exposes no family-versus-exact creation choice", async () => {
       if (url === "/api/admin/ai-grader-v2/sessions") {
         return jsonResponse({ session: { id: "exact-map-session", cardProfile: "SPORTS" } }, 201);
       }
-      if (url === "/api/admin/ai-grader-v2/maps/current?sessionId=exact-map-session&scope=EFFECTIVE") {
-        return jsonResponse({ map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null } });
+      if (url === "/api/admin/ai-grader-v2/sessions/exact-map-session/map-authority") {
+        return jsonResponse({
+          authority: { status: "NO_MAP" },
+          map: { status: "MISSING", scope: null, name: "", revision: null, revisions: [], editable: null },
+        });
       }
       throw new Error(`Unexpected fetch: ${url}`);
     },
@@ -1239,7 +1266,7 @@ test("UI exposes no family-versus-exact creation choice", async () => {
     assert.ok(submit);
     await act(async () => submit.dispatchEvent(new window.MouseEvent("click", { bubbles: true })));
     await waitFor(() => Boolean(buttonByText(page.container, "COMPLETE FRONT + BACK")), "Dual-map capture workspace did not open");
-    assert.equal(requests[1], "/api/admin/ai-grader-v2/maps/current?sessionId=exact-map-session&scope=EFFECTIVE");
+    assert.equal(requests[1], "/api/admin/ai-grader-v2/sessions/exact-map-session/map-authority");
   } finally {
     await page.cleanup();
   }

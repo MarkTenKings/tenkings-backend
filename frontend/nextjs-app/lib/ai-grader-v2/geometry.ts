@@ -4,6 +4,7 @@ import type {
   SpeedsterPoint,
   SpeedsterQuad,
 } from "./contracts";
+import { isSpeedsterStrictConvexPolygon } from "./card-type-map-contracts";
 
 export const SPEEDSTER_CARD_WIDTH_MM = 63.5;
 export const SPEEDSTER_CARD_HEIGHT_MM = 88.9;
@@ -56,10 +57,6 @@ function requireFinitePoint(point: SpeedsterPoint): void {
   }
 }
 
-function clampUnitCoordinate(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
-
 export function sanitizeSpeedsterUnitQuad(value: unknown): SpeedsterQuad | null {
   if (!Array.isArray(value) || value.length !== 4) return null;
 
@@ -71,17 +68,27 @@ export function sanitizeSpeedsterUnitQuad(value: unknown): SpeedsterQuad | null 
       || typeof candidate.y !== "number"
       || !Number.isFinite(candidate.x)
       || !Number.isFinite(candidate.y)
+      || candidate.x < 0
+      || candidate.x > 1
+      || candidate.y < 0
+      || candidate.y > 1
     ) {
       return null;
     }
-    return {
-      x: clampUnitCoordinate(candidate.x),
-      y: clampUnitCoordinate(candidate.y),
-    };
+    return { x: candidate.x, y: candidate.y };
   });
   const [topLeft, topRight, bottomRight, bottomLeft] = points;
   if (!topLeft || !topRight || !bottomRight || !bottomLeft) return null;
-  return [topLeft, topRight, bottomRight, bottomLeft];
+  const quad: SpeedsterQuad = [topLeft, topRight, bottomRight, bottomLeft];
+  const signedDoubleArea = quad.reduce((area, point, index) => {
+    const next = quad[(index + 1) % quad.length];
+    return area + point.x * next.y - point.y * next.x;
+  }, 0);
+  if (!(topLeft.y < bottomLeft.y && topRight.y < bottomRight.y
+    && topLeft.x < topRight.x && bottomLeft.x < bottomRight.x)
+    || signedDoubleArea <= 0.02
+    || !isSpeedsterStrictConvexPolygon(quad)) return null;
+  return quad;
 }
 
 function requirePositiveDisplaySize(widthPx: number, heightPx: number): void {

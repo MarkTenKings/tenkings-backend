@@ -10,6 +10,11 @@ import type {
   SpeedsterTraceProvenance,
 } from "../ai-grader-v2/contracts";
 import { isSpeedsterSourceMeasuredDefect } from "../ai-grader-v2/contracts";
+import {
+  assertSpeedsterDetectorEvidenceBindsFindings,
+  parseSpeedsterDetectorEvidence,
+  type SpeedsterDetectorEvidenceV1,
+} from "../ai-grader-v2/detector-evidence";
 import type { SpeedsterInspectionFrame } from "../ai-grader-v2/inspection-frame";
 import {
   canonicalizeSpeedsterSessionIdentity,
@@ -48,6 +53,7 @@ import { encodeSpeedsterTraceRleV1, type SpeedsterTraceRleV1 } from "../ai-grade
 import { clipSpeedsterTraceToMaterial } from "../ai-grader-v2/trace-editor";
 import {
   speedsterFilterRemovedEvents,
+  speedsterDetectorEvidenceEvents,
   speedsterFindingActionEvents,
   speedsterFindingProposalEvents,
   speedsterServerTimingEvent,
@@ -61,6 +67,17 @@ import {
   SpeedsterDetectUpstreamError,
   type SpeedsterDetectWorkerIdentity,
 } from "./aiGraderV2DetectTransport";
+import {
+  SPEEDSTER_DETECTION_SIDE_CHECKPOINT_VERSION,
+  parseSpeedsterDetectorIdentityV1,
+  speedsterDetectionOperationId,
+  speedsterDetectionSha256,
+  type SpeedsterDetectionAssetBinding,
+  type SpeedsterDetectionSideBinding,
+  type SpeedsterDetectionSideCheckpoint,
+  type SpeedsterDetectorIdentityV1,
+  type UnsignedSpeedsterDetectionSideCheckpoint,
+} from "./speedsterDetectionSideCheckpoint";
 import { HttpError } from "./adminSessionAuthority";
 import { assertSpeedsterMapRevisionAppliesToIdentity } from "./speedsterCardTypeMaps";
 import {
@@ -145,6 +162,14 @@ type DetectBody = {
   learningBank: unknown;
 };
 
+export type SpeedsterDetectionCheckpointLookup = Readonly<{
+  sessionId: string;
+  createdByUserId: string;
+  sessionRevision: string;
+  captureBindingSha256: string;
+  operationId: string;
+}>;
+
 export type SpeedsterDetectorAttemptEvidence = Readonly<{
   side: SpeedsterCardSide;
   requestTraceId: string;
@@ -159,6 +184,7 @@ export type SpeedsterDetectorAttemptEvidence = Readonly<{
 }>;
 
 export type SpeedsterReviewActionDependencies = {
+  assertDetectionRuntimeAuthority?: () => void;
   loadOwnedSession: (
     identity: { sessionId: string; createdByUserId: string },
   ) => Promise<SpeedsterReviewActionSession | null>;
@@ -169,6 +195,14 @@ export type SpeedsterReviewActionDependencies = {
       reviewedDefects: readonly unknown[];
       gradeReport: unknown;
       filterDecisions?: readonly SpeedsterFilterDecisionEvidence[];
+      detectorEvidenceEvents?: readonly SpeedsterInstrumentationEvent[];
+      detectionPair?: Readonly<{
+        operationId: string;
+        captureBindingSha256: string;
+        memorySnapshotSha256: string;
+        frontReceiptHmacSha256: string;
+        backReceiptHmacSha256: string;
+      }>;
     },
   ) => Promise<void>;
   loadPinnedMapFilter?: (
@@ -176,9 +210,22 @@ export type SpeedsterReviewActionDependencies = {
   ) => Promise<SpeedsterPinnedMapFilterInput>;
   presignRead: (storageKey: string, expiresInSeconds: number) => Promise<string>;
   learningBankForDetect: () => Promise<unknown>;
-  detect: (body: DetectBody) => Promise<unknown>;
+  detect: (
+    body: DetectBody,
+    request?: Readonly<{ signal: AbortSignal; deadlineMs: number }>,
+  ) => Promise<unknown>;
   measure: (body: MeasureBody) => Promise<{ defects: unknown }>;
   recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
+  hashDetectionEvidence?: (storageKey: string) => Promise<string>;
+  loadDetectionSideCheckpoints?: (
+    lookup: SpeedsterDetectionCheckpointLookup,
+  ) => Promise<Partial<Record<SpeedsterCardSide, SpeedsterDetectionSideCheckpoint>>>;
+  persistDetectionSideCheckpoint?: (
+    checkpoint: UnsignedSpeedsterDetectionSideCheckpoint,
+  ) => Promise<SpeedsterDetectionSideCheckpoint>;
+  detectionDeadlineMs?: number;
+  requireDetectorIdentityV1?: boolean;
+  now?: () => number;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -495,11 +542,74 @@ function reconcileMeasurementResponse(input: {
   return measured;
 }
 
+function validatedDetectorSideResult(
+  side: SpeedsterCardSide,
+  rawResult: unknown,
+  requireDetectorIdentityV1: boolean,
+) {
+  if (
+    !isRecord(rawResult) || typeof rawResult.detectorVersion !== "string" ||
+    !rawResult.detectorVersion.trim() || !Array.isArray(rawResult.defects)
+  ) {
+    throw new HttpError(502, "Speedster detector response is missing its version.");
+  }
+  let defects: SpeedsterReviewFinding[];
+  let detectorEvidence: SpeedsterDetectorEvidenceV1;
+  let detectorIdentity: SpeedsterDetectorIdentityV1 | null = null;
+  try {
+    defects = parseSpeedsterReviewFindings(rawResult.defects);
+    detectorEvidence = parseSpeedsterDetectorEvidence(rawResult.detectorEvidence);
+    assertSpeedsterDetectorEvidenceBindsFindings(detectorEvidence, defects);
+    if (rawResult.detectorIdentity !== undefined && rawResult.detectorIdentity !== null) {
+      detectorIdentity = parseSpeedsterDetectorIdentityV1(rawResult.detectorIdentity);
+    }
+  } catch {
+    throw new HttpError(502, `Speedster ${side} detector response or evidence is malformed.`);
+  }
+  if (requireDetectorIdentityV1 && detectorIdentity === null) {
+    throw new HttpError(502, `Speedster ${side} detector response lacks required release/model identity.`);
+  }
+  if (detectorIdentity && detectorIdentity.detectorVersion !== rawResult.detectorVersion) {
+    throw new HttpError(502, `Speedster ${side} detector response has mismatched release/model identity.`);
+  }
+  if (defects.some((finding) => finding.side !== side)) {
+    throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
+  }
+  if (defects.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
+    throw new HttpError(502, `Speedster ${side} detector response contains reviewed trace authority.`);
+  }
+  const measuredDefects = defects as SpeedsterMeasuredDefect[];
+  if (
+    new Set(measuredDefects.map((finding) =>
+      speedsterCanonicalDetectorFindingId(side, finding))).size !== measuredDefects.length
+  ) {
+    throw new HttpError(502, `Speedster ${side} detector response contains a duplicate finding ID.`);
+  }
+  return {
+    detectorVersion: rawResult.detectorVersion,
+    detectorIdentity,
+    detectorEvidence,
+    defects: measuredDefects,
+    instrumentation: safeDetectorTiming(rawResult.instrumentation),
+  };
+}
+
 async function serverOwnedInitialization(
   input: SpeedsterReviewActionInput,
   capture: PersistedCapture,
+  sessionRevision: Date,
   deps: SpeedsterReviewActionDependencies,
 ) {
+  deps.assertDetectionRuntimeAuthority?.();
+  const recoveryDependencies = [
+    deps.hashDetectionEvidence,
+    deps.loadDetectionSideCheckpoints,
+    deps.persistDetectionSideCheckpoint,
+  ];
+  const recoveryEnabled = recoveryDependencies.every(Boolean);
+  if (!recoveryEnabled && recoveryDependencies.some(Boolean)) {
+    throw new Error("Speedster per-side detection recovery dependencies are incomplete.");
+  }
   const preparedSide = async (side: SpeedsterCardSide) => {
     const persisted = side === "FRONT" ? capture.front : capture.back;
     const entries = [
@@ -512,6 +622,29 @@ async function serverOwnedInitialization(
       id: `${side}:${view}`,
       imageUrl: await deps.presignRead(storageKey, 60 * 10),
     })));
+    let binding: SpeedsterDetectionSideBinding | null = null;
+    if (recoveryEnabled) {
+      const assetInputs: readonly Omit<SpeedsterDetectionAssetBinding, "sha256">[] = [
+        { role: "SOURCE_ORIGINAL", storageKey: persisted.originalStorageKey },
+        { role: "RECTIFIED", storageKey: persisted.rectifiedStorageKey },
+        { role: "INSPECTION", storageKey: persisted.inspectionStorageKey },
+        { role: "NORMALIZED", storageKey: persisted.viewStorageKeys.NORMALIZED },
+        { role: "MICRO_DEFECT", storageKey: persisted.viewStorageKeys.MICRO_DEFECT },
+        { role: "DIRECTIONAL", storageKey: persisted.viewStorageKeys.DIRECTIONAL },
+      ];
+      const assets = await Promise.all(assetInputs.map(async (asset) => ({
+        ...asset,
+        sha256: await deps.hashDetectionEvidence!(asset.storageKey),
+      })));
+      if (assets.some(({ sha256 }) => !/^[a-f0-9]{64}$/.test(sha256))) {
+        throw new Error(`Speedster ${side} detection source hash is invalid.`);
+      }
+      binding = {
+        side,
+        assets,
+        bindingSha256: speedsterDetectionSha256({ side, assets }),
+      };
+    }
     return {
       side,
       rectifiedUrl: views[0].imageUrl,
@@ -521,29 +654,92 @@ async function serverOwnedInitialization(
         MICRO_DEFECT: views[2].imageUrl,
         DIRECTIONAL: views[3].imageUrl,
       },
+      binding,
     };
   };
-  const learningStartedAt = Date.now();
-  const [front, back, learning] = await Promise.all([
+  const now = deps.now ?? Date.now;
+  const [front, back] = await Promise.all([
     preparedSide("FRONT"),
     preparedSide("BACK"),
-    deps.learningBankForDetect().then((bank) => ({
-      bank,
-      durationMs: Date.now() - learningStartedAt,
-    })),
   ]);
-  const learningBank = learning.bank;
+  const sessionRevisionIso = sessionRevision.toISOString();
+  const captureBindingSha256 = speedsterDetectionSha256({
+    cornerShape: capture.cornerShape,
+    front: front.binding,
+    back: back.binding,
+  });
+  const operationId = recoveryEnabled
+    ? speedsterDetectionOperationId({
+        sessionId: input.sessionId,
+        sessionRevision: sessionRevisionIso,
+        captureBindingSha256,
+      })
+    : randomUUID().replaceAll("-", "").slice(0, 24);
+  const checkpointLookup: SpeedsterDetectionCheckpointLookup = {
+    sessionId: input.sessionId,
+    createdByUserId: input.createdByUserId,
+    sessionRevision: sessionRevisionIso,
+    captureBindingSha256,
+    operationId,
+  };
+  const recoveredSides = recoveryEnabled
+    ? await deps.loadDetectionSideCheckpoints!(checkpointLookup)
+    : {};
+  const recoveredSnapshots = Object.values(recoveredSides).map((checkpoint) => checkpoint?.memorySnapshot);
+  const recoveredMemoryHashes = new Set(Object.values(recoveredSides)
+    .map((checkpoint) => checkpoint?.memorySnapshotSha256)
+    .filter((value): value is string => Boolean(value)));
+  if (recoveredMemoryHashes.size > 1) {
+    throw new HttpError(409, "Speedster saved Front/Back detector work has incompatible Memory authority.");
+  }
+  const learningStartedAt = now();
+  const learningBank = recoveredSnapshots[0] ?? await deps.learningBankForDetect();
+  const learning = {
+    bank: learningBank,
+    durationMs: recoveredSnapshots.length > 0 ? 0 : boundedDuration(now() - learningStartedAt),
+  };
+  const memorySnapshotSha256 = speedsterDetectionSha256(learningBank);
+  if (recoveredMemoryHashes.size === 1 && !recoveredMemoryHashes.has(memorySnapshotSha256)) {
+    throw new HttpError(409, "Speedster saved detector work does not match its Memory snapshot.");
+  }
   const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
-  const operationId = randomUUID().replaceAll("-", "").slice(0, 12);
+  const detectorIdentities: Partial<Record<SpeedsterCardSide, SpeedsterDetectorIdentityV1 | null>> = {};
   const attemptEvidence: SpeedsterDetectorAttemptEvidence[] = [];
+  const durableDetectorEvidenceEvents: SpeedsterInstrumentationEvent[] = [];
   const attemptEvents = () => attemptEvidence.map((attempt) => speedsterServerTimingEvent({
-    eventKey: `${input.sessionId}:server:detect-attempt:${operationId}:${attempt.side}:${attempt.attemptNumber}`,
+    eventKey: `${input.sessionId}:server:detect-attempt:${attempt.requestTraceId}`,
     sessionId: input.sessionId,
     createdByUserId: input.createdByUserId,
     eventType: "DETECTOR_SIDE_ATTEMPT",
     durationMs: attempt.serverDurationMs,
     details: attempt as unknown as Prisma.InputJsonValue,
   }));
+  const deadlineMs = deps.detectionDeadlineMs ?? 55_000;
+  if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 120_000) {
+    throw new Error("Speedster detector deadline must be between 1 millisecond and 120 seconds.");
+  }
+  const detectBeforeDeadline = async (body: DetectBody) => {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const deadline = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new HttpError(
+            504,
+            `Speedster ${body.side} detector deadline elapsed before a response was accepted.`,
+          ));
+        }, deadlineMs);
+      });
+      return await Promise.race([
+        deps.detect(body, { signal: controller.signal, deadlineMs }),
+        deadline,
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      controller.abort();
+    }
+  };
 
   const terminalFailure = (
     side: SpeedsterCardSide,
@@ -582,42 +778,65 @@ async function serverOwnedInitialization(
           sessionId: input.sessionId,
           learningBank,
         };
+        const prepared = request.side === "FRONT" ? front : back;
+        const recovered = recoveredSides[request.side];
+        if (recovered) {
+          if (
+            recovered.sessionId !== input.sessionId
+            || recovered.createdByUserId !== input.createdByUserId
+            || recovered.sessionRevision !== sessionRevisionIso
+            || recovered.operationId !== operationId
+            || recovered.captureBindingSha256 !== captureBindingSha256
+            || recovered.side !== request.side
+            || !prepared.binding
+            || !isDeepStrictEqual(recovered.sideBinding, prepared.binding)
+            || recovered.memorySnapshotSha256 !== memorySnapshotSha256
+            || !isDeepStrictEqual(recovered.memorySnapshot, learningBank)
+            || recovered.resultSha256 !== speedsterDetectionSha256(recovered.result)
+          ) {
+            throw new HttpError(409, `Speedster saved ${request.side} detector work does not match current authority.`);
+          }
+          const restored = validatedDetectorSideResult(
+            request.side,
+            recovered.result,
+            deps.requireDetectorIdentityV1 === true,
+          );
+          if (
+            recovered.detectorVersion !== restored.detectorVersion
+            || !isDeepStrictEqual(recovered.detectorIdentity, restored.detectorIdentity)
+          ) {
+            throw new HttpError(409, `Speedster saved ${request.side} detector release identity changed.`);
+          }
+          if (restored.instrumentation) detectorTimings[request.side] = restored.instrumentation;
+          detectorIdentities[request.side] = restored.detectorIdentity;
+          durableDetectorEvidenceEvents.push(...speedsterDetectorEvidenceEvents({
+            sessionId: input.sessionId,
+            createdByUserId: input.createdByUserId,
+            operationId,
+            requestTraceId: recovered.requestTraceId,
+            detectorVersion: restored.detectorVersion,
+            evidence: restored.detectorEvidence,
+          }));
+          return { detectorVersion: restored.detectorVersion, defects: restored.defects };
+        }
+        const requestNonce = randomUUID().replaceAll("-", "").slice(0, 12);
         for (const attemptNumber of [1, 2] as const) {
-          const requestTraceId = `${input.sessionId}:${request.side}:detect:${operationId}:a${attemptNumber}`;
-          const attemptStartedAt = Date.now();
+          const requestOperation = recoveryEnabled ? `${operationId}:${requestNonce}` : operationId;
+          const requestTraceId = `${input.sessionId}:${request.side}:detect:${requestOperation}:a${attemptNumber}`;
+          const attemptStartedAt = now();
           let rawResult: unknown;
           let rawResolved = false;
           try {
-            rawResult = await deps.detect({ ...baseBody, requestTraceId });
+            rawResult = await detectBeforeDeadline({ ...baseBody, requestTraceId });
             rawResolved = true;
-            if (
-              !isRecord(rawResult) || typeof rawResult.detectorVersion !== "string" ||
-              !rawResult.detectorVersion.trim() || !Array.isArray(rawResult.defects)
-            ) {
-              throw new HttpError(502, "Speedster detector response is missing its version.");
-            }
-            let defects: SpeedsterReviewFinding[];
-            try {
-              defects = parseSpeedsterReviewFindings(rawResult.defects);
-            } catch {
-              throw new HttpError(502, `Speedster ${request.side} detector response is malformed.`);
-            }
-            if (defects.some((finding) => finding.side !== request.side)) {
-              throw new HttpError(502, "Speedster detector response contains a finding on the wrong side.");
-            }
-            if (defects.some((finding) => finding.finalTrace || finding.reviewResult !== "UNREVIEWED")) {
-              throw new HttpError(502, `Speedster ${request.side} detector response contains reviewed trace authority.`);
-            }
-            const measuredDefects = defects as SpeedsterMeasuredDefect[];
-            if (
-              new Set(measuredDefects.map((finding) =>
-                speedsterCanonicalDetectorFindingId(request.side, finding))).size !== measuredDefects.length
-            ) {
-              throw new HttpError(502, `Speedster ${request.side} detector response contains a duplicate finding ID.`);
-            }
-            const timing = safeDetectorTiming(rawResult.instrumentation);
+            const accepted = validatedDetectorSideResult(
+              request.side,
+              rawResult,
+              deps.requireDetectorIdentityV1 === true,
+            );
+            const timing = accepted.instrumentation;
             const transport = speedsterDetectTransportEvidence(rawResult);
-            const serverDurationMs = boundedDuration(Date.now() - attemptStartedAt);
+            const serverDurationMs = boundedDuration(now() - attemptStartedAt);
             attemptEvidence.push({
               side: request.side,
               requestTraceId,
@@ -633,12 +852,62 @@ async function serverOwnedInitialization(
                 : null,
             });
             if (timing) detectorTimings[request.side] = timing;
+            detectorIdentities[request.side] = accepted.detectorIdentity;
+            const durableResult = {
+              detectorVersion: accepted.detectorVersion,
+              defects: accepted.defects,
+              detectorEvidence: accepted.detectorEvidence,
+              ...(accepted.detectorIdentity ? { detectorIdentity: accepted.detectorIdentity } : {}),
+              ...(timing ? { instrumentation: timing } : {}),
+            };
+            if (recoveryEnabled) {
+              if (!prepared.binding) throw new Error("Speedster detection side binding is unavailable.");
+              const unsigned: UnsignedSpeedsterDetectionSideCheckpoint = {
+                version: SPEEDSTER_DETECTION_SIDE_CHECKPOINT_VERSION,
+                sessionId: input.sessionId,
+                createdByUserId: input.createdByUserId,
+                sessionRevision: sessionRevisionIso,
+                operationId,
+                captureBindingSha256,
+                side: request.side,
+                sideBinding: prepared.binding,
+                memorySnapshot: learningBank,
+                memorySnapshotSha256,
+                detectorVersion: accepted.detectorVersion,
+                detectorIdentity: accepted.detectorIdentity,
+                detectorIdentitySha256: accepted.detectorIdentity
+                  ? speedsterDetectionSha256(accepted.detectorIdentity)
+                  : null,
+                requestTraceId,
+                result: durableResult,
+                resultSha256: speedsterDetectionSha256(durableResult),
+                createdAt: new Date(now()).toISOString(),
+              };
+              const persisted = await deps.persistDetectionSideCheckpoint!(unsigned);
+              if (
+                persisted.operationId !== operationId || persisted.side !== request.side
+                || persisted.resultSha256 !== unsigned.resultSha256
+                || persisted.captureBindingSha256 !== captureBindingSha256
+                || persisted.memorySnapshotSha256 !== memorySnapshotSha256
+              ) {
+                throw new HttpError(409, `Speedster ${request.side} detector checkpoint did not preserve exact authority.`);
+              }
+              recoveredSides[request.side] = persisted;
+            }
+            durableDetectorEvidenceEvents.push(...speedsterDetectorEvidenceEvents({
+              sessionId: input.sessionId,
+              createdByUserId: input.createdByUserId,
+              operationId,
+              requestTraceId,
+              detectorVersion: accepted.detectorVersion,
+              evidence: accepted.detectorEvidence,
+            }));
             return {
-              detectorVersion: rawResult.detectorVersion,
-              defects: measuredDefects,
+              detectorVersion: accepted.detectorVersion,
+              defects: accepted.defects,
             };
           } catch (error) {
-            const serverDurationMs = boundedDuration(Date.now() - attemptStartedAt);
+            const serverDurationMs = boundedDuration(now() - attemptStartedAt);
             const transport = rawResolved ? speedsterDetectTransportEvidence(rawResult) : null;
             const upstreamFailure = error instanceof SpeedsterDetectUpstreamError ? error : null;
             const timing = rawResolved && isRecord(rawResult)
@@ -679,6 +948,13 @@ async function serverOwnedInitialization(
     });
     if (!scanned.detectorVersion.trim()) {
       throw new HttpError(502, "Speedster detector version could not be established.");
+    }
+    if (
+      (detectorIdentities.FRONT === null) !== (detectorIdentities.BACK === null)
+      || (detectorIdentities.FRONT && detectorIdentities.BACK
+        && !isDeepStrictEqual(detectorIdentities.FRONT, detectorIdentities.BACK))
+    ) {
+      throw new HttpError(409, "Front and Back Speedster detector release/model identities do not match.");
     }
     try {
       initialized = parseSpeedsterReviewFindings(scanned.defects);
@@ -721,8 +997,16 @@ async function serverOwnedInitialization(
   return {
     initialized,
     detectorVersion: scanned.detectorVersion,
+    detectorEvidenceEvents: durableDetectorEvidenceEvents,
     instrumentationEvents,
     attemptEvidence,
+    detectionPair: recoveryEnabled ? {
+      operationId,
+      captureBindingSha256,
+      memorySnapshotSha256,
+      frontReceiptHmacSha256: recoveredSides.FRONT!.receipt.hmacSha256,
+      backReceiptHmacSha256: recoveredSides.BACK!.receipt.hmacSha256,
+    } : undefined,
   };
 }
 
@@ -870,7 +1154,7 @@ export async function applySpeedsterReviewAction(
       }
       return resultPayload(before, review.defects, gradeReport);
     }
-    const detected = await serverOwnedInitialization(input, capture, deps);
+    const detected = await serverOwnedInitialization(input, capture, session.updatedAt, deps);
     const detectorAttemptEvents = detected.instrumentationEvents.filter(
       ({ eventType }) => eventType === "DETECTOR_SIDE_ATTEMPT",
     );
@@ -941,6 +1225,10 @@ export async function applySpeedsterReviewAction(
         reviewedDefects: review.defects.map(stripSpeedsterFindingInstrumentation),
         gradeReport,
         ...(filterDecisions ? { filterDecisions } : {}),
+        ...(detected.detectorEvidenceEvents.length > 0
+          ? { detectorEvidenceEvents: detected.detectorEvidenceEvents }
+          : {}),
+        ...(detected.detectionPair ? { detectionPair: detected.detectionPair } : {}),
       });
       await recordInstrumentationFailOpen(deps, session.id, instrumentationEvents);
       return resultPayload(before, review.defects, gradeReport, detected.attemptEvidence);

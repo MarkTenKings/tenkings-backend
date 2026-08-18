@@ -29,7 +29,16 @@ import {
   type SpeedsterLearningDetectClient,
 } from "../../../../../../lib/server/aiGraderV2LearningBank";
 import { loadPinnedSpeedsterMapRevision } from "../../../../../../lib/server/speedsterCardTypeMaps";
-import { insertSpeedsterInstrumentationEvents } from "../../../../../../lib/server/aiGraderV2Instrumentation";
+import { hashSpeedsterMapStorageEvidence } from "../../../../../../lib/server/speedsterCardTypeMaps";
+import {
+  insertSpeedsterInstrumentationEvents,
+  insertSpeedsterInstrumentationEventWithConflictDetection,
+} from "../../../../../../lib/server/aiGraderV2Instrumentation";
+import {
+  parseSpeedsterDetectionSideCheckpoint,
+  sealSpeedsterDetectionSideCheckpoint,
+  speedsterDetectionSideCheckpointEvent,
+} from "../../../../../../lib/server/speedsterDetectionSideCheckpoint";
 
 const SESSION_ID = /^[a-z0-9-]{20,40}$/i;
 const FINDING_ID = z.string().trim().min(1).max(180);
@@ -152,6 +161,7 @@ export async function fetchSpeedsterDetectUpstream(
     headers: Record<string, string>;
     fetchImpl?: SpeedsterDetectFetch;
     now?: () => number;
+    signal?: AbortSignal;
   },
 ) {
   const now = options.now ?? Date.now;
@@ -160,6 +170,7 @@ export async function fetchSpeedsterDetectUpstream(
     method: "POST",
     headers: options.headers,
     body: JSON.stringify(body),
+    signal: options.signal,
   });
   const payload = await response.json().catch(() => ({}));
   const upstreamDurationMs = boundedDuration(now() - startedAt);
@@ -184,7 +195,53 @@ export async function fetchSpeedsterDetectUpstream(
   };
 }
 
+function detectionReceiptAuthority(env: NodeJS.ProcessEnv = process.env) {
+  const keyId = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_KEY_ID?.trim() ?? "";
+  const secret = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET?.trim() ?? "";
+  if (!keyId || keyId.length > 80 || secret.length < 32) {
+    throw new Error("Speedster detection side receipt authority is not configured.");
+  }
+  return { keyId, secret };
+}
+
+export function assertSpeedsterDetectionRuntimeAuthority(env: NodeJS.ProcessEnv = process.env) {
+  detectionReceiptAuthority(env);
+  if (env.AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1?.trim().toLowerCase() !== "true") {
+    throw new Error("AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1 must be explicitly true.");
+  }
+  const previousJson = env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON?.trim();
+  if (!previousJson) return;
+  let previous: unknown;
+  try {
+    previous = JSON.parse(previousJson);
+  } catch {
+    throw new Error("Speedster detection previous receipt-key configuration is malformed.");
+  }
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)
+    || Object.entries(previous).some(([keyId, secret]) => !keyId.trim() || keyId.length > 80
+      || typeof secret !== "string" || secret.trim().length < 32)) {
+    throw new Error("Speedster detection previous receipt-key configuration is malformed.");
+  }
+}
+
+function detectionReceiptSecret(keyId: string): string | null {
+  const current = detectionReceiptAuthority();
+  if (keyId === current.keyId) return current.secret;
+  const previousJson = process.env.AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON?.trim();
+  if (!previousJson) return null;
+  let previous: unknown;
+  try {
+    previous = JSON.parse(previousJson);
+  } catch {
+    throw new Error("Speedster detection previous receipt-key configuration is malformed.");
+  }
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) return null;
+  const candidate = (previous as Record<string, unknown>)[keyId];
+  return typeof candidate === "string" && candidate.trim().length >= 32 ? candidate.trim() : null;
+}
+
 const dependencies: HandlerDependencies = {
+  assertDetectionRuntimeAuthority: assertSpeedsterDetectionRuntimeAuthority,
   requireAdminSession,
   findOwnedTraces: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
@@ -221,12 +278,53 @@ const dependencies: HandlerDependencies = {
     prisma as unknown as SpeedsterLearningDetectClient,
     (error) => console.error("[Speedster] SAM Memory catch-up failed before server detect:", error),
   ),
-  async detect(body) {
+  hashDetectionEvidence: hashSpeedsterMapStorageEvidence,
+  async loadDetectionSideCheckpoints(lookup) {
+    const rows = await prisma.aiGraderV2InstrumentationEvent.findMany({
+      where: {
+        sessionId: lookup.sessionId,
+        createdByUserId: lookup.createdByUserId,
+        category: "DETECTOR_CHECKPOINT",
+        eventType: "DETECTOR_SIDE_RESULT_PRESERVED",
+      },
+      orderBy: { createdAt: "asc" },
+      select: { details: true },
+    });
+    const sides: Partial<Record<"FRONT" | "BACK", ReturnType<typeof parseSpeedsterDetectionSideCheckpoint>>> = {};
+    for (const row of rows) {
+      const checkpoint = parseSpeedsterDetectionSideCheckpoint(row.details, detectionReceiptSecret);
+      if (
+        checkpoint.sessionRevision !== lookup.sessionRevision
+        || checkpoint.captureBindingSha256 !== lookup.captureBindingSha256
+        || checkpoint.operationId !== lookup.operationId
+      ) continue;
+      if (sides[checkpoint.side]) {
+        throw new HttpError(409, `Speedster ${checkpoint.side} detector checkpoint is duplicated.`);
+      }
+      sides[checkpoint.side] = checkpoint;
+    }
+    return sides;
+  },
+  async persistDetectionSideCheckpoint(unsigned) {
+    const checkpoint = sealSpeedsterDetectionSideCheckpoint(unsigned, detectionReceiptAuthority());
+    await insertSpeedsterInstrumentationEventWithConflictDetection(
+      prisma,
+      speedsterDetectionSideCheckpointEvent(checkpoint),
+    );
+    return checkpoint;
+  },
+  detectionDeadlineMs: (() => {
+    const raw = Number(process.env.AI_GRADER_SPEEDSTER_DETECT_DEADLINE_MS ?? 55_000);
+    return Number.isSafeInteger(raw) ? Math.max(1_000, Math.min(120_000, raw)) : 55_000;
+  })(),
+  requireDetectorIdentityV1: true,
+  async detect(body, request) {
     const serviceUrl = process.env.AI_GRADER_SPEEDSTER_SERVICE_URL?.replace(/\/$/, "");
     if (!serviceUrl) throw new HttpError(503, "AI_GRADER_SPEEDSTER_SERVICE_URL is not configured");
     return fetchSpeedsterDetectUpstream(body, {
       serviceUrl,
       headers: serviceHeaders(),
+      signal: request?.signal,
     });
   },
   async measure(body) {
@@ -274,6 +372,47 @@ const dependencies: HandlerDependencies = {
           || decision.filterPolicyVersion !== current.mapFilterPolicyVersion)
       ) {
         throw new HttpError(409, "Speedster pinned map state changed before filter decisions could be saved");
+      }
+    }
+    if (data.detectorEvidenceEvents?.length) {
+      const inserted = await insertSpeedsterInstrumentationEvents(tx, data.detectorEvidenceEvents);
+      if (inserted !== data.detectorEvidenceEvents.length) {
+        throw new HttpError(409, "Speedster detector evidence was not preserved exactly");
+      }
+    }
+    if (data.detectionPair) {
+      const eventKeys = (["FRONT", "BACK"] as const).map((side) => (
+        `${identity.sessionId}:detection-side:${data.detectionPair!.operationId}:${side}`
+      ));
+      const rows = await tx.aiGraderV2InstrumentationEvent.findMany({
+        where: { eventKey: { in: eventKeys } },
+        select: { details: true },
+      });
+      if (rows.length !== 2) {
+        throw new HttpError(409, "Speedster Front/Back detector checkpoints are incomplete.");
+      }
+      const checkpoints = rows.map((row) => (
+        parseSpeedsterDetectionSideCheckpoint(row.details, detectionReceiptSecret)
+      ));
+      const front = checkpoints.find(({ side }) => side === "FRONT");
+      const back = checkpoints.find(({ side }) => side === "BACK");
+      if (
+        !front || !back
+        || front.sessionId !== identity.sessionId || back.sessionId !== identity.sessionId
+        || front.createdByUserId !== identity.createdByUserId
+        || back.createdByUserId !== identity.createdByUserId
+        || front.sessionRevision !== expectedUpdatedAt.toISOString()
+        || back.sessionRevision !== expectedUpdatedAt.toISOString()
+        || front.captureBindingSha256 !== data.detectionPair.captureBindingSha256
+        || back.captureBindingSha256 !== data.detectionPair.captureBindingSha256
+        || front.memorySnapshotSha256 !== data.detectionPair.memorySnapshotSha256
+        || back.memorySnapshotSha256 !== data.detectionPair.memorySnapshotSha256
+        || front.detectorVersion !== back.detectorVersion
+        || front.detectorIdentitySha256 !== back.detectorIdentitySha256
+        || front.receipt.hmacSha256 !== data.detectionPair.frontReceiptHmacSha256
+        || back.receipt.hmacSha256 !== data.detectionPair.backReceiptHmacSha256
+      ) {
+        throw new HttpError(409, "Speedster Front/Back detector checkpoints are incompatible.");
       }
     }
     const updated = await tx.aiGraderV2Session.updateMany({

@@ -79,6 +79,25 @@ test("shared AI Grader upload adapter rejects missing, tampered, or duplicate si
   }
 });
 
+test("Speedster direct uploads reject any plan that is not explicitly private", async () => {
+  for (const purpose of ["speedster-original", "speedster-slab-photo"] as AiGraderDirectUploadPurpose[]) {
+    let fetchCalls = 0;
+    await assert.rejects(uploadAiGraderArtifactDirectly({
+      purpose,
+      uploadUrl: "https://storage.example.invalid/private-object?signed=redacted",
+      uploadMethod: "PUT",
+      uploadHeaders: signedUploadHeaders(),
+      contentType: "image/png",
+      checksumSha256: plannedChecksum,
+      body: new Uint8Array([1]),
+    }, async () => {
+      fetchCalls += 1;
+      return new Response(null, { status: 200 });
+    }), (error) => error instanceof AiGraderDirectUploadError && error.code === "invalid_plan");
+    assert.equal(fetchCalls, 0);
+  }
+});
+
 test("shared AI Grader upload adapter emits fixed redacted network, HTTP, and plan errors", async () => {
   const secretUrl = "https://storage.example.invalid/private-key?token=secret-sentinel";
   await assert.rejects(

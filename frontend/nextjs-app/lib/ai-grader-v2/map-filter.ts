@@ -16,6 +16,7 @@ import {
   SPEEDSTER_MAP_REGISTRATION_VERSION,
   SPEEDSTER_MAP_REGISTRATION_VERSION_V2,
   SPEEDSTER_MAP_ZONE_OVERLAP_METHOD,
+  SPEEDSTER_MAP_ZONE_MASK_OVERLAP_METHOD,
   isSpeedsterMapZoneV2,
   isSpeedsterNondegenerateAnchorSet,
   isSpeedsterSimplePolygon,
@@ -24,6 +25,7 @@ import {
 import { SPEEDSTER_LEARNING_COMPATIBLE_DETECTOR_VERSION } from "./detector-version";
 import type { SpeedsterSessionIdentity } from "./identity";
 import { speedsterFindingRegions } from "./review-findings";
+import { speedsterTraceRleV1Spans } from "./trace-codec";
 import type { SpeedsterLoadedMapRevision } from "../server/speedsterCardTypeMaps";
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -408,6 +410,34 @@ export function speedsterMapZoneOverlap(
   finding: SpeedsterReviewFinding,
   candidateZone: SpeedsterMapZone,
 ) {
+  if (finding.detectorMask) {
+    const paddingMm = isSpeedsterMapZoneV2(candidateZone) ? candidateZone.filterPaddingMm : 0;
+    const physicalPolygon = paddingMm > 0 ? candidateZone.polygon.map(physicalPoint) : null;
+    let totalPixels = 0;
+    let coveredPixels = 0;
+    for (const span of speedsterTraceRleV1Spans(finding.detectorMask)) {
+      for (let x = span.x; x < span.x + span.width; x += 1) {
+        totalPixels += 1;
+        const normalized = {
+          x: x / (finding.detectorMask.width - 1),
+          y: span.y / (finding.detectorMask.height - 1),
+        };
+        const covered = paddingMm > 0 && physicalPolygon
+          ? pointDistanceMmToPolygon(physicalPoint(normalized), physicalPolygon)
+            <= paddingMm + BUFFER_CONTAINMENT_EPSILON_MM
+          : pointInPolygon(normalized, candidateZone.polygon);
+        if (covered) coveredPixels += 1;
+      }
+    }
+    return {
+      method: SPEEDSTER_MAP_ZONE_MASK_OVERLAP_METHOD,
+      maskSha256: finding.detectorMask.sha256,
+      coveredPixels,
+      totalPixels,
+      ratio: totalPixels === 0 ? 0 : coveredPixels / totalPixels,
+      fullyContained: totalPixels > 0 && coveredPixels === totalPixels,
+    } as const;
+  }
   const contours = speedsterFindingRegions(finding).map(({ canonicalContour }) => canonicalContour);
   const vertices = contours.flat();
   const paddingMm = isSpeedsterMapZoneV2(candidateZone) ? candidateZone.filterPaddingMm : 0;

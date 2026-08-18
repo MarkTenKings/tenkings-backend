@@ -20,7 +20,6 @@ export function MapRegistrationRescue({
   disabled,
   onConfirm,
   onDraftChange,
-  onContinueManual,
   onImageError,
   onImageReady,
   onRetryImage,
@@ -35,7 +34,6 @@ export function MapRegistrationRescue({
   disabled: boolean;
   onConfirm: (anchors: readonly CorrectedAnchor[]) => Promise<void>;
   onDraftChange?: (anchors: readonly CorrectedAnchor[]) => void;
-  onContinueManual: () => void;
   onImageError?: () => void;
   onImageReady?: () => void;
   onRetryImage?: () => void;
@@ -178,9 +176,6 @@ export function MapRegistrationRescue({
       </div>
       {error ? <p role="alert" className={styles.error}>{error}</p> : null}
       <div className={styles.actions}>
-        <button type="button" className={styles.manual} onClick={onContinueManual} disabled={disabled || !imageReady}>
-          Continue without Card Map
-        </button>
         <button
           type="button"
           onClick={() => {

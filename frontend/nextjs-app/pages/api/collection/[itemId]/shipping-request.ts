@@ -22,7 +22,7 @@ const packServiceBase = trimTrailingSlash(
   process.env.PACK_SERVICE_URL ?? process.env.NEXT_PUBLIC_PACK_SERVICE_URL ?? "http://localhost:8183"
 );
 
-const operatorKey = process.env.OPERATOR_API_KEY ?? process.env.NEXT_PUBLIC_OPERATOR_KEY;
+const operatorKey = process.env.OPERATOR_API_KEY;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {

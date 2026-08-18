@@ -673,6 +673,76 @@ export type PrivateDesignReferencePresignDependencies = {
   sign?: typeof getSignedUrl;
 };
 
+export type PrivateSpeedsterPresignDependencies = {
+  client?: S3Client;
+  bucket?: string;
+  sign?: typeof getSignedUrl;
+};
+
+const SPEEDSTER_PRIVATE_CONTENT_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+/**
+ * Speedster originals, prepared views, and slab photos are private evidence.
+ * Their ACL never inherits the general product-asset ACL configuration.
+ */
+export function createPrivateSpeedsterUploadCommand(input: {
+  storageKey: string;
+  contentType: string;
+  checksumSha256?: string;
+}, bucket = s3Bucket) {
+  if (!bucket) throw new Error("CARD_STORAGE_BUCKET must be configured for private Speedster uploads.");
+  const storageKey = normalizeStorageKeyCandidate(input.storageKey);
+  if (
+    !storageKey
+    || storageKey !== input.storageKey
+    || storageKey.length > 500
+    || !storageKey.startsWith("ai-grader-v2/")
+    || storageKey.includes("..")
+    || !/^ai-grader-v2\/[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(storageKey)
+  ) {
+    throw new Error("Private Speedster upload key is outside its controlled prefix.");
+  }
+  if (!SPEEDSTER_PRIVATE_CONTENT_TYPES.has(input.contentType)) {
+    throw new Error("Private Speedster upload type must be JPEG, PNG, or WebP.");
+  }
+  return new PutObjectCommand({
+    Bucket: bucket,
+    Key: storageKey,
+    ContentType: input.contentType,
+    ACL: "private",
+    ChecksumSHA256: input.checksumSha256
+      ? sha256HexToBase64(input.checksumSha256)
+      : undefined,
+  });
+}
+
+export async function presignPrivateSpeedsterUploadUrl(
+  input: {
+    storageKey: string;
+    contentType: string;
+    checksumSha256?: string;
+    requireAclHeader?: boolean;
+  },
+  dependencies: PrivateSpeedsterPresignDependencies = {},
+) {
+  const client = dependencies.client ?? getS3Client();
+  const command = createPrivateSpeedsterUploadCommand(
+    input,
+    dependencies.bucket ?? s3Bucket,
+  );
+  const unhoistableHeaders = new Set<string>();
+  if (input.requireAclHeader) unhoistableHeaders.add("x-amz-acl");
+  if (input.checksumSha256) unhoistableHeaders.add("x-amz-checksum-sha256");
+  return (dependencies.sign ?? getSignedUrl)(client as any, command as any, {
+    expiresIn: 60 * 10,
+    unhoistableHeaders: unhoistableHeaders.size ? unhoistableHeaders : undefined,
+  });
+}
+
 export function createPrivateDesignReferenceUploadCommand(input: {
   storageKey: string;
   contentType: "image/png" | "image/jpeg";

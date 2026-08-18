@@ -11,14 +11,16 @@ jobs:
     name: Install & Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          node-version: 22
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
           cache: "pnpm"
       - run: corepack enable
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/database generate
       - run: pnpm --filter @tenkings/* run --if-present build
 
@@ -29,18 +31,157 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          node-version: 22
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
           cache: "pnpm"
       - run: corepack enable
-      - run: pnpm install
+      - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @tenkings/shared build
       - run: pnpm --filter @tenkings/database generate
       - name: Complete disposable migration chain and second-deploy no-op
         run: pnpm --filter @tenkings/database validate:nfc:migration:disposable -- --ack-disposable-local-postgres
+
+  speedster-frontend-tests:
+    name: Protected Speedster Frontend & Adversarial Tests
+    runs-on: ubuntu-latest
+    needs: quality
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: "pnpm"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @tenkings/database generate
+      - name: Run all Speedster frontend, authority, recovery, and adversarial tests
+        run: >-
+          pnpm --filter @tenkings/nextjs-app exec sh -c
+          'tsx --test tests/aiGraderV2*.test.ts tests/aiGraderV2*.test.tsx
+          tests/speedster*.test.ts tests/speedster*.test.tsx'
+
+  speedster-tested-release-image:
+    name: Test, Publish & Attest Exact Speedster OCI
+    runs-on: ubuntu-latest
+    needs:
+      - quality
+      - disposable-postgres-migration-chain
+      - speedster-frontend-tests
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      PYTHON_BASE_IMAGE: "python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
+      SAM3_CHECKPOINT_REVISION: "3c879f39826c281e95690f02c7821c4de09afae7"
+      SAM3_CHECKPOINT_SHA256: "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate immutable release inputs
+        shell: bash
+        run: |
+          if [[ ! "$PYTHON_BASE_IMAGE" =~ ^python@sha256:[a-f0-9]{64}$ ]]; then
+            echo "SPEEDSTER_PYTHON_BASE_IMAGE must be python@sha256:<64 lowercase hex>." >&2
+            exit 1
+          fi
+          if [[ ! "$SAM3_CHECKPOINT_REVISION" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "SAM3_CHECKPOINT_REVISION must be the approved immutable Hugging Face commit." >&2
+            exit 1
+          fi
+          if [[ ! "$SAM3_CHECKPOINT_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo "SAM3_CHECKPOINT_SHA256 must bind the approved sam3.pt bytes." >&2
+            exit 1
+          fi
+      - name: Resolve source and image identity
+        shell: bash
+        run: |
+          echo "IMAGE_REPOSITORY=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SOURCE_TREE_SHA=$(git rev-parse HEAD^{tree})" >> "$GITHUB_ENV"
+          echo "SPEEDSTER_BUILD_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_ENV"
+      - name: Build the exact candidate image
+        shell: bash
+        run: |
+          image_name="ghcr.io/${IMAGE_REPOSITORY}/ai-grader-speedster-service"
+          image="${image_name}:${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "SPEEDSTER_IMAGE_NAME=$image_name" >> "$GITHUB_ENV"
+          echo "SPEEDSTER_IMAGE=$image" >> "$GITHUB_ENV"
+          docker build \
+            --file backend/ai-grader-speedster-service/Dockerfile \
+            --tag "$image" \
+            --build-arg "PYTHON_BASE_IMAGE=$PYTHON_BASE_IMAGE" \
+            --build-arg "SPEEDSTER_SOURCE_REPOSITORY=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --build-arg "SPEEDSTER_SOURCE_COMMIT_SHA=${GITHUB_SHA}" \
+            --build-arg "SPEEDSTER_SOURCE_TREE_SHA=${SOURCE_TREE_SHA}" \
+            --build-arg "SPEEDSTER_BUILD_ID=${SPEEDSTER_BUILD_ID}" \
+            --build-arg "SPEEDSTER_OCI_IMAGE_REFERENCE=$image" \
+            --build-arg "SAM3_CHECKPOINT_REVISION=$SAM3_CHECKPOINT_REVISION" \
+            --build-arg "SAM3_CHECKPOINT_SHA256=$SAM3_CHECKPOINT_SHA256" \
+            backend/ai-grader-speedster-service
+      - name: Run full Speedster service suite in the exact image
+        run: >-
+          docker run --rm --entrypoint python "$SPEEDSTER_IMAGE"
+          -m unittest discover -v -s /app -p 'test_*.py'
+      - name: Generate SBOM from the tested image
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: ${{ env.SPEEDSTER_IMAGE }}
+          format: spdx-json
+          output-file: speedster-sbom.spdx.json
+          artifact-name: speedster-sbom-${{ github.sha }}.spdx.json
+      - name: Login to GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install cosign
+        if: github.event_name == 'push'
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Push, identify, sign, and attest the tested image
+        id: publish-speedster-image
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          docker push "$SPEEDSTER_IMAGE"
+          digest="$(docker buildx imagetools inspect "$SPEEDSTER_IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "Pushed image did not resolve an immutable OCI digest." >&2
+            exit 1
+          fi
+          echo "SPEEDSTER_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          printf '### Exact Speedster release image\n\n`%s@%s`\n' \
+            "$SPEEDSTER_IMAGE_NAME" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          cosign sign --yes "${SPEEDSTER_IMAGE_NAME}@${digest}"
+          cosign attest --yes --type spdxjson \
+            --predicate speedster-sbom.spdx.json "${SPEEDSTER_IMAGE_NAME}@${digest}"
+          cosign verify \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${SPEEDSTER_IMAGE_NAME}@${digest}"
+          cosign verify-attestation --type spdxjson \
+            --certificate-identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${SPEEDSTER_IMAGE_NAME}@${digest}"
+      - name: Retain GitHub build provenance for the tested digest
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ${{ env.SPEEDSTER_IMAGE_NAME }}
+          subject-digest: ${{ env.SPEEDSTER_IMAGE_DIGEST }}
+          push-to-registry: true
 
   docker-images:
     name: Build Docker Images
@@ -70,11 +211,11 @@ jobs:
           - name: frontend
             dockerfile: frontend/nextjs-app/Dockerfile
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -82,13 +223,14 @@ jobs:
       - name: Normalize image repository
         run: echo "IMAGE_REPOSITORY=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Build and push ${{ matrix.name }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: ${{ github.event_name == 'push' }}
-          provenance: false
+          provenance: mode=max
+          sbom: true
           tags: |
             ghcr.io/${{ env.IMAGE_REPOSITORY }}/${{ matrix.name }}:latest
             ghcr.io/${{ env.IMAGE_REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}

@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { presignReadUrl, presignUploadUrl } from "../../../../../lib/server/storage";
+import { presignPrivateSpeedsterUploadUrl, presignReadUrl } from "../../../../../lib/server/storage";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 import {
   parseSpeedsterReviewFindings,
@@ -246,7 +246,10 @@ const traceEvidenceDependencies: TraceEvidenceDependencies = {
     select: { capture: true, reviewedDefects: true },
   }),
   presignRead: presignReadUrl,
-  presignUpload: presignUploadUrl,
+  presignUpload: (storageKey, contentType) => presignPrivateSpeedsterUploadUrl({
+    storageKey,
+    contentType,
+  }),
   findOwnedMapSession: (sessionId, createdByUserId) => prisma.aiGraderV2Session.findFirst({
     where: { id: sessionId, createdByUserId },
     select: {
@@ -319,9 +322,18 @@ export function sanitizeSpeedsterGeometryPayload(
   expected?: Readonly<{ mode: SpeedsterColorGeometryMode; matColor: SpeedsterMatColor }>,
 ): unknown {
   if (!isRecord(payload)) return payload;
-  const corners = sanitizeSpeedsterUnitQuad(payload.corners);
+  if (!Object.prototype.hasOwnProperty.call(payload, "corners")) {
+    throw new Error("Speedster physical geometry omitted its corner authority.");
+  }
+  const corners = payload.corners === null ? null : sanitizeSpeedsterUnitQuad(payload.corners);
+  if (payload.corners !== null && !corners) {
+    throw new Error("Speedster physical geometry returned an invalid perimeter quad.");
+  }
   if (!expected) return { ...payload, corners };
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
+  if ((colorGeometry.outcome === "ACCEPTED") !== Boolean(corners)) {
+    throw new Error("Speedster physical geometry corners contradict the Color outcome authority.");
+  }
   if (colorGeometry.outcome === "ACCEPTED"
     && JSON.stringify(corners) !== JSON.stringify(colorGeometry.proposal)) {
     throw new Error("Speedster physical geometry does not match its accepted color proposal.");

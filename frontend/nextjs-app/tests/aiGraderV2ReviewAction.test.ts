@@ -17,7 +17,17 @@ import {
   speedsterDetectTransportEvidence,
   SpeedsterDetectUpstreamError,
 } from "../lib/server/aiGraderV2DetectTransport";
-import { fetchSpeedsterDetectUpstream } from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action";
+import {
+  assertSpeedsterDetectionRuntimeAuthority,
+  fetchSpeedsterDetectUpstream,
+} from "../pages/api/admin/ai-grader-v2/sessions/[sessionId]/review-action";
+import {
+  parseSpeedsterDetectorIdentityV1,
+  sealSpeedsterDetectionSideCheckpoint,
+  speedsterDetectionSha256,
+  type SpeedsterDetectionSideCheckpoint,
+  type UnsignedSpeedsterDetectionSideCheckpoint,
+} from "../lib/server/speedsterDetectionSideCheckpoint";
 
 const measurement = {
   widthMm: 1,
@@ -86,7 +96,7 @@ function session(
 
 function versionedCapture() {
   const frontGeneration = "recapture-00000000-0000-4000-8000-000000000007";
-  const backGeneration = "iphone-v4";
+  const backGeneration = `iphone-v4-sha256-${"b".repeat(64)}`;
   const side = (name: "front" | "back", generation: string) => ({
     ...capture[name],
     originalStorageKey: `ai-grader-v2/admin-1/session-12345678901234567890/original/${generation}/${name}.jpg`,
@@ -102,6 +112,177 @@ function versionedCapture() {
     cornerShape: capture.cornerShape,
     front: side("front", frontGeneration),
     back: side("back", backGeneration),
+  };
+}
+
+function detectorEvidence(side: "FRONT" | "BACK") {
+  const pixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  pixels[side === "FRONT" ? 100 : 200] = 1;
+  const candidateId = `raw-${side === "FRONT" ? "a" : "b"}${"0".repeat(23)}`;
+  return {
+    version: "speedster-detector-evidence-v1",
+    rawCandidates: [{
+      version: "speedster-raw-detector-candidate-v1",
+      candidateId,
+      evidenceOrdinal: 0,
+      sourceViewId: `${side}:ORIGINAL`,
+      promptIndex: 0,
+      maskIndex: 0,
+      promptBox: [1, 2, 3, 4],
+      defectType: "VISIBLE_WHITENING",
+      origin: "DETECTOR",
+      rawConfidence: 0.9,
+      featureFingerprint: null,
+      canonicalMask: encodeSpeedsterTraceRleV1(pixels),
+    }],
+    memoryDecisions: [{
+      version: "speedster-memory-decision-evidence-v1",
+      candidateId,
+      policy: "SAM_MEMORY_V2",
+      action: "vetoed",
+      adjustment: -0.06,
+      adjustedConfidence: 0.84,
+      collectionThreshold: 0.5,
+      disposition: "VETOED_BY_MEMORY",
+      diagnostic: { action: "vetoed", bankVersion: 2 },
+    }],
+  };
+}
+
+function emptyDetectorEvidence() {
+  return {
+    version: "speedster-detector-evidence-v1",
+    rawCandidates: [],
+    memoryDecisions: [],
+  };
+}
+
+function detectorIdentity(detectorVersion = "same-release") {
+  return {
+    version: "speedster-detector-identity-v1",
+    detectorVersion,
+    source: {
+      repository: "https://github.com/ten-kings/example",
+      commitSha: "a".repeat(40),
+      treeSha: "d".repeat(40),
+    },
+    runtime: {
+      ociDigest: `sha256:${"b".repeat(64)}`,
+      ociDigestProvenance: "DEPLOYMENT_INJECTED",
+      ociImageReference: "ghcr.io/ten-kings/speedster:test",
+      buildId: "github-run-123-1",
+      buildIdentityProvenance: "OCI_IMAGE_ENV",
+      platform: "linux/amd64",
+      pythonVersion: "3.12.4",
+      frameworkVersion: "sam3@96914d2425f90a64f45ca977c2b5165418099543",
+      torchVersion: "2.7.1",
+      cudaVersion: "12.8",
+      cudnnVersion: "91002",
+      accelerator: "NVIDIA-L4",
+      gpuName: "NVIDIA-L4",
+      gpuCapability: "8.9",
+      gpuCount: 1,
+    },
+    model: {
+      name: "sam3-speedster",
+      repository: "facebook/sam3",
+      revision: "e".repeat(40),
+      checkpointSha256: "c".repeat(64),
+      sourceCommitSha: "96914d2425f90a64f45ca977c2b5165418099543",
+    },
+    policy: {
+      detectorVersion: "detector-policy-v1",
+      promptVersion: "prompt-policy-v1",
+      fusionVersion: "fusion-policy-v1",
+      measurementVersion: "measurement-policy-v1",
+      memoryVersion: "sam-memory-v2",
+    },
+    determinism: {
+      deterministicAlgorithms: true,
+      cudnnDeterministic: true,
+      cudnnBenchmark: false,
+      allowTf32: false,
+      evalMode: true,
+      compile: false,
+      autocastDtype: "bfloat16",
+    },
+  } as const;
+}
+
+function durableSideCheckpointHarness() {
+  const authority = { keyId: "test-key-v1", secret: "test-secret-".repeat(8) };
+  const sides: Partial<Record<"FRONT" | "BACK", SpeedsterDetectionSideCheckpoint>> = {};
+  let throwAfterPersistSide: "FRONT" | "BACK" | null = null;
+  return {
+    sides,
+    throwAfterPersist(side: "FRONT" | "BACK" | null) {
+      throwAfterPersistSide = side;
+    },
+    dependencies: {
+      async hashDetectionEvidence(storageKey: string) {
+        return speedsterDetectionSha256({ storageKey });
+      },
+      async loadDetectionSideCheckpoints(lookup: {
+        sessionRevision: string;
+        captureBindingSha256: string;
+        operationId: string;
+      }) {
+        return Object.fromEntries(Object.entries(sides).filter(([, checkpoint]) => (
+          checkpoint?.sessionRevision === lookup.sessionRevision
+          && checkpoint.captureBindingSha256 === lookup.captureBindingSha256
+          && checkpoint.operationId === lookup.operationId
+        ))) as Partial<Record<"FRONT" | "BACK", SpeedsterDetectionSideCheckpoint>>;
+      },
+      async persistDetectionSideCheckpoint(unsigned: UnsignedSpeedsterDetectionSideCheckpoint) {
+        const checkpoint = sealSpeedsterDetectionSideCheckpoint(unsigned, authority);
+        const existing = sides[checkpoint.side];
+        if (existing && existing.resultSha256 !== checkpoint.resultSha256) {
+          throw new Error("late conflicting detector result rejected");
+        }
+        sides[checkpoint.side] = existing ?? checkpoint;
+        if (throwAfterPersistSide === checkpoint.side) {
+          throwAfterPersistSide = null;
+          throw new Error("database response was lost after durable side insert");
+        }
+        return sides[checkpoint.side]!;
+      },
+    },
+  };
+}
+
+function retainedDetectorEvidence(
+  side: "FRONT" | "BACK",
+  candidateId: string,
+  defectType: SpeedsterMeasuredDefect["defectType"],
+  canonicalMask: ReturnType<typeof encodeSpeedsterTraceRleV1>,
+) {
+  return {
+    version: "speedster-detector-evidence-v1",
+    rawCandidates: [{
+      version: "speedster-raw-detector-candidate-v1",
+      candidateId,
+      evidenceOrdinal: 0,
+      sourceViewId: `${side}:ORIGINAL`,
+      promptIndex: 0,
+      maskIndex: 0,
+      promptBox: [1, 2, 3, 4],
+      defectType,
+      origin: "DETECTOR",
+      rawConfidence: 0.9,
+      featureFingerprint: null,
+      canonicalMask,
+    }],
+    memoryDecisions: [{
+      version: "speedster-memory-decision-evidence-v1",
+      candidateId,
+      policy: "SAM_MEMORY_V2",
+      action: "retained",
+      adjustment: 0,
+      adjustedConfidence: 0.9,
+      collectionThreshold: 0.5,
+      disposition: "RETAINED_FOR_MEASUREMENT",
+      diagnostic: { action: "retained", bankVersion: 2 },
+    }],
   };
 }
 
@@ -346,7 +527,11 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
       detectorBodies.push(body);
       assert.equal(body.learningBank, learningBank);
       detectorReturns += 1;
-      return { detectorVersion: "sam3-server-owned", defects: [] };
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
+      };
     },
     async measure() { throw new Error("INITIALIZE must not measure"); },
   };
@@ -375,24 +560,149 @@ test("INITIALIZE owns both detector calls and accepts no browser detector payloa
     learningBank,
   })));
   for (const body of detectorBodies) {
-    assert.match(body.requestTraceId, new RegExp(`^${initial.id}:${body.side}:detect:[a-f0-9]{12}:a1$`));
+    assert.match(body.requestTraceId, new RegExp(`^${initial.id}:${body.side}:detect:[a-f0-9]{24}:a1$`));
   }
   const initializedPersisted = persisted as unknown as { gradeReport: { detectorVersion?: string } };
   assert.equal(initializedPersisted.gradeReport.detectorVersion, "sam3-server-owned");
   assert.equal(result.gradeReport.detectorVersion, "sam3-server-owned");
 });
 
+test("INITIALIZE fails configuration preflight before storage, Memory, or detector calls", async () => {
+  let externalCalls = 0;
+  const initial = session([]);
+  initial.gradeReport = {};
+  await assert.rejects(applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: "admin-1",
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { externalCalls += 1; },
+    assertDetectionRuntimeAuthority() { throw new Error("receipt authority missing"); },
+    async presignRead() { externalCalls += 1; return "unused"; },
+    async learningBankForDetect() { externalCalls += 1; return {}; },
+    async detect() { externalCalls += 1; return {}; },
+    async measure() { externalCalls += 1; return { defects: [] }; },
+  }), /receipt authority missing/);
+  assert.equal(externalCalls, 0);
+});
+
+test("detector authority requires current HMAC, explicit identity gate, and valid prior keys", () => {
+  const valid: NodeJS.ProcessEnv = {
+    NODE_ENV: "test",
+    AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_KEY_ID: "receipt-key-2026-08",
+    AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET: "s".repeat(32),
+    AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1: "true",
+    AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON: JSON.stringify({ old: "o".repeat(32) }),
+  };
+  assert.doesNotThrow(() => assertSpeedsterDetectionRuntimeAuthority(valid));
+  assert.throws(() => assertSpeedsterDetectionRuntimeAuthority({
+    ...valid,
+    AI_GRADER_SPEEDSTER_REQUIRE_DETECTOR_IDENTITY_V1: "false",
+  }), /must be explicitly true/);
+  assert.throws(() => assertSpeedsterDetectionRuntimeAuthority({
+    ...valid,
+    AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_HMAC_SECRET: "short",
+  }), /not configured/);
+  assert.throws(() => assertSpeedsterDetectionRuntimeAuthority({
+    ...valid,
+    AI_GRADER_SPEEDSTER_DETECTION_RECEIPT_PREVIOUS_KEYS_JSON: "not-json",
+  }), /malformed/);
+});
+
+test("INITIALIZE sends every raw candidate and separate Memory disposition through the fail-closed CAS", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let durableEvents: readonly { category: string; eventType: string; details?: unknown }[] = [];
+  let telemetryEvents: readonly { category: string }[] = [];
+
+  await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision(_identity, _revision, data) {
+      durableEvents = data.detectorEvidenceEvents ?? [];
+    },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect(body) {
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        detectorEvidence: detectorEvidence(body.side),
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { telemetryEvents = events; },
+  });
+
+  assert.equal(durableEvents.length, 4);
+  assert.equal(durableEvents.filter(({ category, eventType }) => (
+    category === "DETECTOR_EVIDENCE" && eventType === "RAW_DETECTOR_CANDIDATE_PRESERVED"
+  )).length, 2);
+  assert.equal(durableEvents.filter(({ category, eventType }) => (
+    category === "MEMORY_DECISION" && eventType === "MEMORY_CANDIDATE_DISPOSITION_RECORDED"
+  )).length, 2);
+  assert.equal(JSON.stringify(durableEvents).includes("canonicalMask"), true);
+  assert.equal(telemetryEvents.some(({ category }) => category === "DETECTOR_EVIDENCE"), false);
+  assert.equal(telemetryEvents.some(({ category }) => category === "MEMORY_DECISION"), false);
+});
+
+test("raw detector evidence persistence failure aborts initialization instead of falling through telemetry", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let telemetryCandidateEvidence = false;
+
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision(_identity, _revision, data) {
+      assert.equal(data.detectorEvidenceEvents?.length, 4);
+      throw new Error("detector evidence transaction failed");
+    },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect(body) {
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        detectorEvidence: detectorEvidence(body.side),
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) {
+      telemetryCandidateEvidence = events.some(({ category }) => (
+        category === "DETECTOR_EVIDENCE" || category === "MEMORY_DECISION"
+      ));
+    },
+  }), /detector evidence transaction failed/);
+
+  assert.equal(telemetryCandidateEvidence, false);
+});
+
 test("INITIALIZE records detector fusion provenance without changing authoritative grading payloads", async () => {
   const initial = session([]);
   initial.gradeReport = {};
+  const detectorPixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  detectorPixels[100] = 1;
+  const detectorMask = encodeSpeedsterTraceRleV1(detectorPixels);
+  const rawCandidateId = `raw-c${"0".repeat(23)}`;
   const instrumented = {
     ...defect,
+    detectorMask,
+    measurement: { ...measurement, pixelCount: 1 },
     reviewResult: "UNREVIEWED" as const,
     findingProvenance: {
       version: "speedster-finding-provenance-v1" as const,
       primaryProposalId: "FRONT:0",
       contributors: [{
         proposalId: "FRONT:0",
+        rawCandidateId,
         origin: "DETECTOR" as const,
         sourceViewId: "FRONT:ORIGINAL",
         defectType: defect.defectType,
@@ -420,6 +730,12 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
       return body.side === "FRONT" ? {
         detectorVersion: "sam3-server-owned",
         defects: [instrumented],
+        detectorEvidence: retainedDetectorEvidence(
+          "FRONT",
+          rawCandidateId,
+          instrumented.defectType,
+          detectorMask,
+        ),
         instrumentation: {
           version: "speedster-service-timing-v1",
           side: "FRONT",
@@ -430,6 +746,7 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
       } : {
         detectorVersion: "sam3-server-owned",
         defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
         instrumentation: {
           version: "speedster-service-timing-v1",
           side: "BACK",
@@ -452,7 +769,7 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
   assert.equal(sideCompletions.length, 2);
   assert.deepEqual(sideCompletions.map(({ durationMs, details }) => {
     const timing = details as { side: string; requestTraceId: string };
-    return [timing.side, timing.requestTraceId.replace(/:[a-f0-9]{12}:a1$/, ":TRACE:a1"), durationMs];
+    return [timing.side, timing.requestTraceId.replace(/:[a-f0-9]{24}:a1$/, ":TRACE:a1"), durationMs];
   }), [
     ["FRONT", `${initial.id}:FRONT:detect:TRACE:a1`, 13],
     ["BACK", `${initial.id}:BACK:detect:TRACE:a1`, 27],
@@ -478,7 +795,11 @@ test("exact INITIALIZE retry returns the coherently initialized state without a 
     async learningBankForDetect() { return {}; },
     async detect() {
       detectCalls += 1;
-      return { detectorVersion: "sam3-server-owned", defects: [] };
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
+      };
     },
     async measure() { throw new Error("must not measure"); },
   };
@@ -671,7 +992,11 @@ test("an INITIALIZE CAS conflict does not trigger another detector pass and reco
     async learningBankForDetect() { return {}; },
     async detect() {
       detectCalls += 1;
-      return { detectorVersion: "sam3-server-owned", defects: [] };
+      return {
+        detectorVersion: "sam3-server-owned",
+        defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
+      };
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
@@ -702,7 +1027,11 @@ for (const failedSide of ["FRONT", "BACK"] as const) {
       async detect(body) {
         detectCalls += 1;
         if (body.side === failedSide) throw new Error(`${failedSide} detector failed`);
-        return { detectorVersion: "sam3-server-owned", defects: [] };
+        return {
+          detectorVersion: "sam3-server-owned",
+          defects: [],
+          detectorEvidence: emptyDetectorEvidence(),
+        };
       },
       async measure() { throw new Error("must not measure"); },
     }), new RegExp(`${failedSide}.*request ID`, "i"));
@@ -710,6 +1039,205 @@ for (const failedSide of ["FRONT", "BACK"] as const) {
     assert.equal(persistCalls, 0);
   });
 }
+
+for (const terminalBackStatus of [400, 503] as const) {
+  test(`durable Front survives terminal Back HTTP ${terminalBackStatus} and reload invokes Back only`, async () => {
+    const initial = session([]);
+    initial.gradeReport = {};
+    const checkpoint = durableSideCheckpointHarness();
+    const calls: Array<{ side: "FRONT" | "BACK"; learningBank: unknown }> = [];
+    let failBack = true;
+    let learningCalls = 0;
+    let promoted = 0;
+    const deps: SpeedsterReviewActionDependencies = {
+      ...checkpoint.dependencies,
+      async loadOwnedSession() { return initial; },
+      async persistReviewIfRevision(_identity, _revision, data) {
+        promoted += 1;
+        assert.equal(data.detectionPair?.frontReceiptHmacSha256, checkpoint.sides.FRONT?.receipt.hmacSha256);
+        assert.equal(data.detectionPair?.backReceiptHmacSha256, checkpoint.sides.BACK?.receipt.hmacSha256);
+      },
+      async presignRead(key) { return `https://fresh.example/${key}`; },
+      async learningBankForDetect() {
+        learningCalls += 1;
+        return { version: "memory-snapshot-v2", cursor: 41 };
+      },
+      requireDetectorIdentityV1: true,
+      async detect(body) {
+        calls.push({ side: body.side, learningBank: body.learningBank });
+        if (body.side === "BACK" && failBack) {
+          failBack = false;
+          throw upstreamFailure(body, terminalBackStatus);
+        }
+        return {
+          detectorVersion: "same-release",
+          detectorIdentity: detectorIdentity(),
+          detectorEvidence: emptyDetectorEvidence(),
+          defects: [],
+        };
+      },
+      async measure() { throw new Error("must not measure"); },
+    };
+
+    await assert.rejects(() => applySpeedsterReviewAction({
+      sessionId: initial.id,
+      createdByUserId: initial.createdByUserId,
+      action: { type: "INITIALIZE" },
+    }, deps), new RegExp(`BACK.*HTTP ${terminalBackStatus}`));
+    const exactFront = checkpoint.sides.FRONT;
+    assert.ok(exactFront);
+    assert.equal(checkpoint.sides.BACK, undefined);
+    assert.equal(promoted, 0);
+
+    await applySpeedsterReviewAction({
+      sessionId: initial.id,
+      createdByUserId: initial.createdByUserId,
+      action: { type: "INITIALIZE" },
+    }, deps);
+    assert.deepEqual(calls.map(({ side }) => side), ["FRONT", "BACK", "BACK"]);
+    assert.equal(checkpoint.sides.FRONT, exactFront, "reload must reuse the exact persisted Front envelope");
+    assert.equal(learningCalls, 1, "reload must reuse the exact persisted Memory snapshot");
+    assert.deepEqual(calls[2]?.learningBank, calls[0]?.learningBank);
+    assert.equal(promoted, 1);
+  });
+}
+
+test("durable Front survives a terminal Back deadline and a late Back response cannot overwrite recovery", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const checkpoint = durableSideCheckpointHarness();
+  const calls: Array<"FRONT" | "BACK"> = [];
+  let releaseLateBack!: (value: unknown) => void;
+  let firstBack = true;
+  const lateBack = new Promise<unknown>((resolve) => { releaseLateBack = resolve; });
+  const deps: SpeedsterReviewActionDependencies = {
+    ...checkpoint.dependencies,
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() {},
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return { version: "memory-snapshot-v2", cursor: 42 }; },
+    detectionDeadlineMs: 5,
+    requireDetectorIdentityV1: true,
+    async detect(body) {
+      calls.push(body.side);
+      if (body.side === "BACK" && firstBack) {
+        firstBack = false;
+        return lateBack;
+      }
+      return {
+        detectorVersion: "same-release",
+        detectorIdentity: detectorIdentity(),
+        detectorEvidence: emptyDetectorEvidence(),
+        defects: [],
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  };
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, deps), /BACK.*deadline elapsed/i);
+  const exactFront = checkpoint.sides.FRONT;
+  assert.ok(exactFront);
+
+  await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, deps);
+  const exactBack = checkpoint.sides.BACK;
+  assert.ok(exactBack);
+  releaseLateBack({
+    detectorVersion: "late-conflicting-release",
+    detectorIdentity: detectorIdentity("late-conflicting-release"),
+    detectorEvidence: emptyDetectorEvidence(),
+    defects: [],
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls, ["FRONT", "BACK", "BACK"]);
+  assert.equal(checkpoint.sides.FRONT, exactFront);
+  assert.equal(checkpoint.sides.BACK, exactBack, "late timed-out response must not reach persistence");
+});
+
+test("response loss after the durable Front insert reloads exact Front and invokes Back only", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const checkpoint = durableSideCheckpointHarness();
+  checkpoint.throwAfterPersist("FRONT");
+  const calls: Array<"FRONT" | "BACK"> = [];
+  const deps: SpeedsterReviewActionDependencies = {
+    ...checkpoint.dependencies,
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() {},
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return { version: "memory-snapshot-v2", cursor: 43 }; },
+    requireDetectorIdentityV1: true,
+    async detect(body) {
+      calls.push(body.side);
+      return {
+        detectorVersion: "same-release",
+        detectorIdentity: detectorIdentity(),
+        detectorEvidence: emptyDetectorEvidence(),
+        defects: [],
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  };
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, deps), /FRONT.*request ID/i);
+  const exactFront = checkpoint.sides.FRONT;
+  assert.ok(exactFront);
+
+  await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, deps);
+  assert.deepEqual(calls, ["FRONT", "BACK"]);
+  assert.equal(checkpoint.sides.FRONT, exactFront);
+});
+
+test("detector identity parser requires exact build, checkpoint, GPU, policy, and determinism fields", () => {
+  const exact = detectorIdentity();
+  assert.deepEqual(parseSpeedsterDetectorIdentityV1(exact), exact);
+  const missingDeterminism = { ...exact, determinism: undefined };
+  assert.throws(
+    () => parseSpeedsterDetectorIdentityV1(missingDeterminism),
+    /malformed or incomplete/,
+  );
+  const noGpu = { ...exact, runtime: { ...exact.runtime, gpuCount: 0 } };
+  assert.throws(
+    () => parseSpeedsterDetectorIdentityV1(noGpu),
+    /malformed or incomplete/,
+  );
+});
+
+test("active detector-identity contract rejects a missing identity before side persistence", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const checkpoint = durableSideCheckpointHarness();
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    ...checkpoint.dependencies,
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { throw new Error("must not promote"); },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return { version: "memory-snapshot-v2" }; },
+    requireDetectorIdentityV1: true,
+    async detect(body) {
+      return { detectorVersion: "same-release", detectorEvidence: emptyDetectorEvidence(), defects: [], side: body.side };
+    },
+    async measure() { throw new Error("must not measure"); },
+  }), /FRONT.*lacks required release\/model identity/i);
+  assert.deepEqual(checkpoint.sides, {});
+});
 
 function upstreamFailure(
   body: { side: "FRONT" | "BACK"; requestTraceId: string },
@@ -745,7 +1273,11 @@ test("an exact RunPod HTTP 502 retries only the failed Back side once with byte-
       if (body.side === "BACK" && bodies.filter(({ side }) => side === "BACK").length === 1) {
         throw upstreamFailure(body, 502, "worker-back-1");
       }
-      return { detectorVersion: "same-release", defects: [] };
+      return {
+        detectorVersion: "same-release",
+        defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
+      };
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { instrumentation = events; },
@@ -756,8 +1288,8 @@ test("an exact RunPod HTTP 502 retries only the failed Back side once with byte-
   const withoutTrace = ({ requestTraceId: _requestTraceId, ...body }: typeof backFirst) => body;
   assert.deepEqual(withoutTrace(backRetry), withoutTrace(backFirst));
   assert.notEqual(backRetry.requestTraceId, backFirst.requestTraceId);
-  assert.match(backFirst.requestTraceId, /:BACK:detect:[a-f0-9]{12}:a1$/);
-  assert.match(backRetry.requestTraceId, /:BACK:detect:[a-f0-9]{12}:a2$/);
+  assert.match(backFirst.requestTraceId, /:BACK:detect:[a-f0-9]{24}:a1$/);
+  assert.match(backRetry.requestTraceId, /:BACK:detect:[a-f0-9]{24}:a2$/);
   assert.equal(persisted, 1);
   const detectorAttempts = result.detectorAttempts;
   assert.ok(detectorAttempts);
@@ -796,7 +1328,11 @@ test("two exact RunPod HTTP 502 responses stop after one retry with side/request
     async detect(body) {
       bodies.push(body);
       if (body.side === "BACK") throw upstreamFailure(body, 502);
-      return { detectorVersion: "same-release", defects: [] };
+      return {
+        detectorVersion: "same-release",
+        defects: [],
+        detectorEvidence: emptyDetectorEvidence(),
+      };
     },
     async measure() { throw new Error("must not measure"); },
     async recordInstrumentation(events) { recorded = events; },
@@ -1020,7 +1556,10 @@ test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicat
       async learningBankForDetect() { return {}; },
       async detect(body) {
         detectCalls += 1;
-        return variant.detect(body);
+        const result = await variant.detect(body);
+        return result && typeof result === "object" && !Array.isArray(result)
+          ? { ...result, detectorEvidence: emptyDetectorEvidence() }
+          : result;
       },
       async measure() { throw new Error("must not measure"); },
     }), /detector|side|version|duplicate/i, variant.name);
@@ -1031,6 +1570,25 @@ test("INITIALIZE rejects malformed, wrong-side, version-mismatched, and duplicat
     );
     assert.equal(persisted, false, variant.name);
   }
+});
+
+test("INITIALIZE rejects a detector response that silently omits raw candidate evidence", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let persisted = false;
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { persisted = true; },
+    async presignRead(key: string) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return {}; },
+    async detect() { return { detectorVersion: "same-v", defects: [] }; },
+    async measure() { throw new Error("must not measure"); },
+  }), /response or evidence is malformed/i);
+  assert.equal(persisted, false);
 });
 
 test("REMOVE/UNDO uses only a server-private prior result marker and rejects repeated invalid transitions", async () => {

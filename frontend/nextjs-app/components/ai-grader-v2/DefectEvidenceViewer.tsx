@@ -15,6 +15,7 @@ import { speedsterFindingRegions } from "../../lib/ai-grader-v2/review-findings"
 import {
   isSpeedsterMapZoneV2,
   type SpeedsterMapRegistration,
+  type SpeedsterMapZoneOverlap,
 } from "../../lib/ai-grader-v2/card-type-map-contracts";
 import { speedsterBestAuthorizedMapZoneDiagnostic } from "../../lib/ai-grader-v2/map-filter";
 import {
@@ -153,6 +154,20 @@ function findingMarker(
     canonicalContourToInspection(region.canonicalContour, inspectionFrame)));
 }
 
+function mapOverlapCounts(overlap: SpeedsterMapZoneOverlap) {
+  return "totalPixels" in overlap
+    ? {
+        covered: overlap.coveredPixels,
+        total: overlap.totalPixels,
+        unit: "canonical-mask pixels",
+      }
+    : {
+        covered: overlap.coveredVertices,
+        total: overlap.totalVertices,
+        unit: "contour vertices",
+      };
+}
+
 function ExactTraceOverlay({
   trace,
   inspectionFrame,
@@ -273,7 +288,7 @@ export function DefectEvidenceViewer({
     if (!active || !mapRegistration || mapRegistration.side !== side) return null;
     return speedsterBestAuthorizedMapZoneDiagnostic(active, mapRegistration.projectedZones);
   }, [active, mapRegistration, side]);
-  const activeTrace = active?.finalTrace ?? (
+  const activeTrace = active?.finalTrace ?? active?.detectorMask ?? (
     active && hydratedTrace?.findingId === active.id && hydratedTrace.trace.sha256 === active.traceSha256
       ? hydratedTrace.trace
       : undefined
@@ -595,7 +610,11 @@ export function DefectEvidenceViewer({
               const inspectionContours = speedsterFindingRegions(defect).map((region) =>
                 canonicalContourToInspection(region.canonicalContour, inspectionFrame));
               const resolvedTrace = defect.id === activeId ? activeTrace : undefined;
-              const marker = findingMarker(defect, inspectionFrame, resolvedTrace);
+              const marker = findingMarker(
+                defect,
+                inspectionFrame,
+                resolvedTrace ?? defect.detectorMask,
+              );
               const similarity = memorySimilarity(defect);
               const activeClass = batchSelectedIds.has(defect.id)
                 ? styles.batchSelected
@@ -809,11 +828,14 @@ export function DefectEvidenceViewer({
             {activeMapDiagnostic ? (
               <>
                 <strong>{activeMapDiagnostic.zone.label}</strong>
-                <p>{active.origin === "SMART_MARK"
-                  ? `Retained: Smart Marks always remain, including inside this zone (${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside).`
-                  : activeMapDiagnostic.overlap.fullyContained
-                  ? `Filtered: ${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside; every contour segment stayed inside.`
-                  : `Retained: ${activeMapDiagnostic.overlap.coveredVertices}/${activeMapDiagnostic.overlap.totalVertices} contour vertices inside; ${activeMapDiagnostic.overlap.totalVertices - activeMapDiagnostic.overlap.coveredVertices} outside or a contour segment crossed outside.`}</p>
+                <p>{(() => {
+                  const counts = mapOverlapCounts(activeMapDiagnostic.overlap);
+                  return active.origin === "SMART_MARK"
+                    ? `Retained: Smart Marks always remain, including inside this zone (${counts.covered}/${counts.total} ${counts.unit} inside).`
+                    : activeMapDiagnostic.overlap.fullyContained
+                    ? `Filtered: ${counts.covered}/${counts.total} ${counts.unit} inside; all authoritative evidence stayed inside.`
+                    : `Retained: ${counts.covered}/${counts.total} ${counts.unit} inside; ${counts.total - counts.covered} outside or the authority boundary crossed outside.`;
+                })()}</p>
                 <small>{isSpeedsterMapZoneV2(activeMapDiagnostic.zone)
                   ? `v2 · filter ${activeMapDiagnostic.zone.filterAuthority ? "ON" : "OFF"} · ${activeMapDiagnostic.zone.filterPaddingMm} mm padding`
                   : "v1 · strict full-contour containment · no padding"}</small>

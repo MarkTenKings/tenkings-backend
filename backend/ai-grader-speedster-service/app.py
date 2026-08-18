@@ -19,7 +19,6 @@ from card_geometry import (
     INSPECTION_WIDTH,
     PX_PER_MM,
     boundary_subtracted_anomaly_mask,
-    detect_card_quad,
     detector_material_mask,
     printed_border_quad,
     MapRegistrationFailure,
@@ -35,7 +34,13 @@ from color_geometry import (
     serialize_proposal,
 )
 from defect_math import GRID_HEIGHT, GRID_WIDTH
-from sam3_detector import DETECTOR_VERSION, detect_views, get_processor, measure_marks
+from sam3_detector import (
+    DETECTOR_VERSION,
+    detect_views,
+    get_detector_identity,
+    get_processor,
+    measure_marks,
+)
 from trace_rle import decode_trace_rle, encode_trace_rle
 
 
@@ -69,9 +74,7 @@ class ImageInput(BaseModel):
 
 
 class GeometryRequest(ImageInput):
-    # Optional only for a backend-first rolling release. The authenticated web
-    # path requires it before color authority is issued.
-    matColor: Optional[str] = None
+    matColor: str
 
 
 class Point(BaseModel):
@@ -112,8 +115,7 @@ class PreparedUploads(BaseModel):
 
 class PrepareRequest(RectifyRequest):
     outputUploads: PreparedUploads
-    # Optional only for compatibility with the previously deployed web client.
-    matColor: Optional[str] = None
+    matColor: str
 
 
 class PrepareResponse(BaseModel):
@@ -492,6 +494,11 @@ def normalized_points(points: np.ndarray, width: int, height: int) -> List[Point
 
 
 def rectify(image: np.ndarray, corners: List[Point]):
+    if len(corners) != 4:
+        raise ValueError("Physical card geometry requires exactly four perimeter points")
+    normalized = np.array([[point.x, point.y] for point in corners], dtype=np.float64)
+    if not np.all(np.isfinite(normalized)) or np.any(normalized < 0) or np.any(normalized > 1):
+        raise ValueError("Physical card geometry must remain inside the exact source image")
     height, width = image.shape[:2]
     source = np.array(
         [[point.x * width, point.y * height] for point in corners],
@@ -537,7 +544,11 @@ def upload_webp(upload_url: str, image: np.ndarray):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "detectorVersion": DETECTOR_VERSION}
+    return {
+        "ok": True,
+        "detectorVersion": DETECTOR_VERSION,
+        "detectorIdentity": get_detector_identity(),
+    }
 
 
 @app.get("/ping")
@@ -553,24 +564,16 @@ def geometry(request: GeometryRequest):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     height, width = image.shape[:2]
-    color_geometry = None
-    if request.matColor is not None:
-        try:
-            color_geometry = propose_physical_outer(image, request.matColor)
-        except Exception as error:
-            LOGGER.warning(
-                "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
-                type(error).__name__,
-            )
-            color_geometry = engine_error_result("PHYSICAL_OUTER", request.matColor)
+    try:
+        color_geometry = propose_physical_outer(image, request.matColor)
+    except Exception as error:
+        LOGGER.warning(
+            "color_geometry_failed mode=PHYSICAL_OUTER errorType=%s",
+            type(error).__name__,
+        )
+        color_geometry = engine_error_result("PHYSICAL_OUTER", request.matColor)
     if color_geometry and color_geometry["outcome"] == "ACCEPTED":
         corners = color_geometry["proposal"]
-    elif request.matColor is None:
-        # Rolling-release compatibility for the legacy client that supplied no
-        # selected mat. Once a mat is present, only its four-side ownership
-        # evidence may propose physical corners; otherwise fail closed to the
-        # operator's manual quad instead of reusing a possible inner contour.
-        corners = detect_card_quad(image)
     else:
         corners = None
     return {
@@ -627,16 +630,14 @@ def prepare_image(request: PrepareRequest):
     try:
         image = load_image(request.imageUrl, request.imageBase64)
         rectified, transform = rectify(image, request.corners)
-        color_geometry = None
-        if request.matColor is not None:
-            try:
-                color_geometry = propose_printed_frame(rectified, request.matColor)
-            except Exception as error:
-                LOGGER.warning(
-                    "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
-                    type(error).__name__,
-                )
-                color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
+        try:
+            color_geometry = propose_printed_frame(rectified, request.matColor)
+        except Exception as error:
+            LOGGER.warning(
+                "color_geometry_failed mode=PRINTED_FRAME errorType=%s",
+                type(error).__name__,
+            )
+            color_geometry = engine_error_result("PRINTED_FRAME", request.matColor)
         if color_geometry and color_geometry["outcome"] == "ACCEPTED":
             borders = color_geometry["proposal"]
             detected_borders = ["top", "right", "bottom", "left"]

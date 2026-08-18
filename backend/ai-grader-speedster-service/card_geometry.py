@@ -268,6 +268,28 @@ def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
     return candidates[0][1] if candidates else None
 
 
+def validated_card_quad(corners: np.ndarray) -> np.ndarray:
+    """Reject malformed perimeter evidence instead of asking OpenCV to guess a transform."""
+    quad = np.asarray(corners, dtype=np.float32)
+    if quad.shape != (4, 2) or not np.all(np.isfinite(quad)):
+        raise ValueError("Physical card geometry must contain four finite perimeter points")
+    top_left, top_right, bottom_right, bottom_left = quad
+    signed_double_area = float(
+        np.dot(quad[:, 0], np.roll(quad[:, 1], -1))
+        - np.dot(quad[:, 1], np.roll(quad[:, 0], -1))
+    )
+    if (
+        not (top_left[1] < bottom_left[1] and top_right[1] < bottom_right[1])
+        or not (top_left[0] < top_right[0] and bottom_left[0] < bottom_right[0])
+        or signed_double_area <= 1.0
+        or not cv2.isContourConvex(quad)
+    ):
+        raise ValueError(
+            "Physical card geometry must be a non-collapsed convex perimeter in top-left, top-right, bottom-right, bottom-left order"
+        )
+    return quad
+
+
 def warp_to_card_map(
     image: np.ndarray, corners: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -280,9 +302,7 @@ def warp_to_card_map(
         ],
         dtype=np.float32,
     )
-    transform = cv2.getPerspectiveTransform(
-        np.asarray(corners, dtype=np.float32), destination
-    )
+    transform = cv2.getPerspectiveTransform(validated_card_quad(corners), destination)
     rectified = cv2.warpPerspective(image, transform, (GRID_WIDTH, GRID_HEIGHT))
     return rectified, transform
 
@@ -301,9 +321,7 @@ def warp_to_inspection_map(
         ],
         dtype=np.float32,
     )
-    transform = cv2.getPerspectiveTransform(
-        np.asarray(corners, dtype=np.float32), destination
-    )
+    transform = cv2.getPerspectiveTransform(validated_card_quad(corners), destination)
     inspection = cv2.warpPerspective(
         image, transform, (INSPECTION_WIDTH, INSPECTION_HEIGHT)
     )

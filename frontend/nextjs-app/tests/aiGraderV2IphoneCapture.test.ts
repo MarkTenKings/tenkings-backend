@@ -38,20 +38,26 @@ function response() {
 }
 
 const sessionId = "speedster-session-123456789";
+const FRONT_CHECKSUM = "a".repeat(64);
+const BACK_CHECKSUM = "b".repeat(64);
+const manifest = {
+  front: { byteSize: 101, checksumSha256: FRONT_CHECKSUM },
+  back: { byteSize: 102, checksumSha256: BACK_CHECKSUM },
+};
 
 test("iPhone capture keys are upload-versioned while exact legacy/local keys remain authorized", () => {
   assert.equal(
-    speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7),
-    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7/front.jpg`,
+    speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7, FRONT_CHECKSUM),
+    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7-sha256-${FRONT_CHECKSUM}/front.jpg`,
   );
   assert.equal(
-    speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7),
-    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7/back.jpg`,
+    speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7, BACK_CHECKSUM),
+    `ai-grader-v2/admin-1/${sessionId}/original/iphone-v7-sha256-${BACK_CHECKSUM}/back.jpg`,
   );
   assert.equal(legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT"),
     `ai-grader-v2/admin-1/${sessionId}/original/front.jpg`);
   assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
-    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7),
+    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 7, FRONT_CHECKSUM),
     userId: "admin-1", sessionId, side: "FRONT",
   }), true);
   assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
@@ -59,10 +65,10 @@ test("iPhone capture keys are upload-versioned while exact legacy/local keys rem
     userId: "admin-1", sessionId, side: "FRONT",
   }), true);
   assert.equal(isAuthorizedSpeedsterOriginalStorageKey({
-    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7),
+    storageKey: speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 7, BACK_CHECKSUM),
     userId: "admin-1", sessionId, side: "FRONT",
   }), false);
-  assert.throws(() => speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 0), /positive integer/);
+  assert.throws(() => speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 0, FRONT_CHECKSUM), /positive integer/);
   assert.equal(
     speedsterIphonePairingUrl("device-12345678901234567890"),
     "shortcuts://run-shortcut?name=Ten%20Kings%20Speedster%20Capture&input=text&text=device-12345678901234567890",
@@ -152,6 +158,7 @@ test("admin polling returns only its active draft pair", async () => {
       activeSessionId: sessionId,
       uploadVersion: 4,
       readyVersion: 4,
+      readyManifest: manifest,
     }),
     createDevice: async () => { throw new Error("not used"); },
     activateDevice: async () => { throw new Error("not used"); },
@@ -174,18 +181,19 @@ test("admin polling returns only its active draft pair", async () => {
 
   assert.equal(ok.state.status, 200);
   assert.equal(ok.state.body.readyVersion, 4);
-  assert.match(ok.state.body.front.storageKey, /\/admin-1\/.*\/original\/iphone-v4\/front\.jpg$/);
+  assert.match(ok.state.body.front.storageKey, new RegExp(`/original/iphone-v4-sha256-${FRONT_CHECKSUM}/front\\.jpg$`));
   assert.equal(ok.state.cache, "no-store");
   assert.equal(crossAdmin.state.status, 404);
 });
 
 test("ready-pair resolution uses exact versioned objects and requires an explicit exact-version legacy choice", async () => {
-  const versionedFront = speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 4);
-  const versionedBack = speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 4);
+  const versionedFront = speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 4, FRONT_CHECKSUM);
+  const versionedBack = speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 4, BACK_CHECKSUM);
   const versioned = await resolveSpeedsterIphoneReadyPair({
     userId: "admin-1",
     sessionId,
     readyVersion: 4,
+    readyManifest: manifest,
     storageObjectExists: async (key) => key === versionedFront || key === versionedBack,
   });
   assert.deepEqual(versioned, { front: versionedFront, back: versionedBack, storageGeneration: "VERSIONED" });
@@ -281,44 +289,62 @@ test("Shortcut PLAN and COMPLETE publish a new non-overwriting object pair per u
   const signed: string[] = [];
   const handler = createAiGraderV2IphoneCaptureHandler({
     storageReady: () => true,
-    beginUpload: async () => ({
+    beginUpload: async (_deviceId, requestedManifest) => {
+      assert.deepEqual(requestedManifest, manifest);
+      return {
       userId: "admin-1",
       sessionId,
       uploadVersion: ++version,
-    }),
-    completeUpload: async (_deviceId, requestedVersion) => {
+      };
+    },
+    findPlannedUpload: async (_deviceId, requestedVersion, requestedManifest) => (
+      requestedVersion === version && requestedManifest.front.checksumSha256 === FRONT_CHECKSUM
+        ? { userId: "admin-1", sessionId, uploadVersion: requestedVersion }
+        : null
+    ),
+    completeUpload: async (_deviceId, requestedVersion, requestedManifest) => {
+      assert.deepEqual(requestedManifest, manifest);
       if (requestedVersion !== version) return null;
       readyVersion = requestedVersion;
       return readyVersion;
     },
-    presignUploadUrl: async (key, contentType) => {
-      signed.push(`${contentType}:${key}`);
-      return `upload:${key}`;
+    presignUploadUrl: async ({ storageKey, checksumSha256 }) => {
+      signed.push(`${checksumSha256}:${storageKey}`);
+      return `upload:${storageKey}`;
     },
+    verifyObject: async ({ storageKey, expectedByteSize, expectedChecksumSha256 }) => ({
+      ok: true,
+      byteSize: expectedByteSize,
+      contentType: "image/jpeg",
+      checksumSha256: expectedChecksumSha256,
+      checksumSource: "server_stream",
+      storageKey,
+    }),
   });
 
   const first = response();
-  await handler(request("POST", { action: "PLAN", deviceId: "device-12345678901234567890" }), first.res);
+  await handler(request("POST", { action: "PLAN", deviceId: "device-12345678901234567890", ...manifest }), first.res);
   const complete = response();
   await handler(request("POST", {
     action: "COMPLETE",
     deviceId: "device-12345678901234567890",
     uploadVersion: first.state.body.uploadVersion,
+    ...manifest,
   }), complete.res);
   const resend = response();
-  await handler(request("POST", { action: "PLAN", deviceId: "device-12345678901234567890" }), resend.res);
+  await handler(request("POST", { action: "PLAN", deviceId: "device-12345678901234567890", ...manifest }), resend.res);
 
   assert.equal(first.state.status, 200);
   assert.equal(first.state.body.contentType, "image/jpeg");
   assert.equal(first.state.body.uploadVersion, 1);
-  assert.match(first.state.body.frontUploadUrl, /original\/iphone-v1\/front\.jpg$/);
-  assert.match(first.state.body.backUploadUrl, /original\/iphone-v1\/back\.jpg$/);
+  assert.match(first.state.body.frontUploadUrl, new RegExp(`original/iphone-v1-sha256-${FRONT_CHECKSUM}/front\\.jpg$`));
+  assert.match(first.state.body.backUploadUrl, new RegExp(`original/iphone-v1-sha256-${BACK_CHECKSUM}/back\\.jpg$`));
   assert.equal("front" in first.state.body, false);
   assert.equal("back" in first.state.body, false);
   assert.equal(complete.state.body.readyVersion, 1);
   assert.equal(resend.state.body.uploadVersion, 2);
-  assert.match(resend.state.body.frontUploadUrl, /original\/iphone-v2\/front\.jpg$/);
-  assert.match(resend.state.body.backUploadUrl, /original\/iphone-v2\/back\.jpg$/);
+  assert.match(resend.state.body.frontUploadUrl, new RegExp(`original/iphone-v2-sha256-${FRONT_CHECKSUM}/front\\.jpg$`));
+  assert.match(resend.state.body.backUploadUrl, new RegExp(`original/iphone-v2-sha256-${BACK_CHECKSUM}/back\\.jpg$`));
   assert.notEqual(resend.state.body.frontUploadUrl, first.state.body.frontUploadUrl);
   assert.notEqual(resend.state.body.backUploadUrl, first.state.body.backUploadUrl);
   assert.equal(signed.length, 4);
@@ -332,8 +358,10 @@ test("Shortcut endpoint accepts instructions, never image bytes", async () => {
       beginCalls += 1;
       return null;
     },
+    findPlannedUpload: async () => null,
     completeUpload: async () => null,
     presignUploadUrl: async () => "unused",
+    verifyObject: async () => { throw new Error("unused"); },
   });
   const { state, res } = response();
 
@@ -345,4 +373,55 @@ test("Shortcut endpoint accepts instructions, never image bytes", async () => {
 
   assert.equal(state.status, 400);
   assert.equal(beginCalls, 0);
+});
+
+test("Shortcut COMPLETE never publishes readiness for a stale manifest or mismatched object", async () => {
+  let verifyCalls = 0;
+  let completeCalls = 0;
+  const base = {
+    storageReady: () => true,
+    beginUpload: async () => null,
+    completeUpload: async () => { completeCalls += 1; return 1; },
+    presignUploadUrl: async () => "unused",
+  };
+  const staleHandler = createAiGraderV2IphoneCaptureHandler({
+    ...base,
+    findPlannedUpload: async () => null,
+    verifyObject: async () => { verifyCalls += 1; throw new Error("must not verify stale plan"); },
+  });
+  const stale = response();
+  await staleHandler(request("POST", {
+    action: "COMPLETE",
+    deviceId: "device-12345678901234567890",
+    uploadVersion: 1,
+    ...manifest,
+  }), stale.res);
+  assert.equal(stale.state.status, 409);
+  assert.equal(verifyCalls, 0);
+  assert.equal(completeCalls, 0);
+
+  const mismatchHandler = createAiGraderV2IphoneCaptureHandler({
+    ...base,
+    findPlannedUpload: async (_id, uploadVersion) => ({ userId: "admin-1", sessionId, uploadVersion }),
+    verifyObject: async ({ storageKey, expectedByteSize, expectedChecksumSha256 }) => {
+      verifyCalls += 1;
+      return {
+        ok: !storageKey.endsWith("back.jpg"),
+        byteSize: expectedByteSize,
+        contentType: "image/jpeg",
+        checksumSha256: expectedChecksumSha256,
+        checksumSource: "server_stream" as const,
+      };
+    },
+  });
+  const mismatch = response();
+  await mismatchHandler(request("POST", {
+    action: "COMPLETE",
+    deviceId: "device-12345678901234567890",
+    uploadVersion: 1,
+    ...manifest,
+  }), mismatch.res);
+  assert.equal(mismatch.state.status, 409);
+  assert.equal(verifyCalls, 2);
+  assert.equal(completeCalls, 0);
 });
