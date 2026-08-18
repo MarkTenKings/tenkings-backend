@@ -39,8 +39,15 @@ test("Speedster release artifacts are pinned, signed, attested, and verified by 
     assert.match(releaseJob, new RegExp(`${action}@[a-f0-9]{40}`));
   }
   assert.match(releaseJob, /cosign sign --yes "\$\{SPEEDSTER_IMAGE_NAME\}@\$\{digest\}"/);
-  assert.match(releaseJob, /cosign verify [\s\S]*"\$\{SPEEDSTER_IMAGE_NAME\}@\$\{digest\}"/);
-  assert.match(releaseJob, /cosign verify-attestation --type spdxjson/);
+  assert.match(
+    releaseJob,
+    /timeout 120s cosign verify [\s\S]*"\$\{SPEEDSTER_IMAGE_NAME\}@\$\{digest\}" > \/dev\/null/,
+  );
+  assert.match(releaseJob, /timeout 120s cosign verify-attestation --type spdxjson/);
+  assert.match(
+    releaseJob,
+    /cosign verify-attestation[\s\S]*"\$\{SPEEDSTER_IMAGE_NAME\}@\$\{digest\}" > \/dev\/null/,
+  );
   assert.match(releaseJob, /subject-digest: \$\{\{ env\.SPEEDSTER_IMAGE_DIGEST \}\}/);
   assert.match(dockerfile, /^ARG PYTHON_BASE_IMAGE=python@sha256:[a-f0-9]{64}$/m);
   assert.match(dockerfile, /^ARG SAM3_CHECKPOINT_REVISION=[a-f0-9]{40}$/m);
