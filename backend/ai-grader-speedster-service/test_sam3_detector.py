@@ -741,7 +741,40 @@ class Sam3DetectorTests(unittest.TestCase):
                 detect(request)
 
         self.assertEqual(raised.exception.status_code, 500)
-        self.assertEqual(raised.exception.detail, "RuntimeError: live mismatch")
+        detail = raised.exception.detail
+        self.assertEqual(detail["version"], "speedster-detect-failure-v1")
+        self.assertEqual(detail["code"], "SPEEDSTER_DETECT_FAILED")
+        self.assertEqual(detail["stage"], "DETECTOR_EXECUTION")
+        self.assertEqual(detail["side"], "FRONT")
+        self.assertEqual(detail["exceptionType"], "RuntimeError")
+        self.assertEqual(detail["message"], "live mismatch")
+        self.assertEqual(detail["stackTruncated"], False)
+        self.assertTrue(detail["stack"])
+        self.assertEqual(detail["stack"][-1]["function"], "_execute_mock_call")
+
+    def test_detect_endpoint_classifies_image_load_and_redacts_private_urls(self):
+        request = DetectRequest(
+            side="FRONT",
+            cornerShape="SQUARE",
+            requestTraceId="session-123:FRONT:detect:payload:a1",
+            views=[{"id": "FRONT:ORIGINAL", "imageUrl": "https://signed.invalid/front"}],
+        )
+
+        with patch(
+            "app.load_image",
+            side_effect=RuntimeError("download https://signed.invalid/front?token=private failed"),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                detect(request)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        detail = raised.exception.detail
+        self.assertEqual(detail["stage"], "IMAGE_LOAD")
+        self.assertEqual(detail["viewId"], "FRONT:ORIGINAL")
+        self.assertEqual(detail["requestTraceId"], request.requestTraceId)
+        self.assertIn("[redacted-url]", detail["message"])
+        self.assertNotIn("signed.invalid", json.dumps(detail))
+        self.assertNotIn("token=private", json.dumps(detail))
 
     def test_measure_endpoint_uses_the_same_zone_measurement_engine(self):
         result = measure(

@@ -90,7 +90,7 @@ export function MapRegistrationRescue({
       <header>
         <span>CARD MAP · HUMAN ANCHOR RESCUE</span>
         <h2>{side === "FRONT" ? "Front" : "Back"} registration needs correction.</h2>
-        <p>Drag each numbered handle onto the same printed landmark shown by its expected marker. Nothing applies until the server validates both sides.</p>
+        <p>These are Card Map registration anchors on internal printed landmarks—not the physical card corners you already confirmed. Drag each numbered handle onto the same landmark shown by its expected marker. Nothing applies until the server validates both sides.</p>
       </header>
       <div className={styles.globalFailure} role="status">
         <strong>{failure.failureCode.replaceAll("_", " ")}</strong>
@@ -170,7 +170,7 @@ export function MapRegistrationRescue({
       <div className={styles.diagnostics}>
         {failure.bestCandidate.anchors.map((anchor, index) => (
           <span key={anchor.anchorId} data-status={anchor.status}>
-            {index + 1} · {anchor.status.replaceAll("_", " ")} · {Math.round(anchor.score * 100)}%
+            {index + 1} · {anchor.status.replaceAll("_", " ")} · {Math.round(anchor.score * 100)}% · {failure.bestCandidate.perAnchorInlierCounts[index]} of {failure.bestCandidate.perAnchorFeatureCounts[index]} features supported the transform
           </span>
         ))}
       </div>

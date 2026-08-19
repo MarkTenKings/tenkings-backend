@@ -3640,6 +3640,8 @@ test("Back registration rescue keeps Front provisional, preserves failed-save ha
     assert.match(harness.container.textContent ?? "", /neither side is applied yet/i);
     assert.match(harness.container.textContent ?? "", /LOW ANCHOR CONFIDENCE/i);
     assert.match(harness.container.textContent ?? "", /One anchor is low confidence/i);
+    assert.match(harness.container.textContent ?? "", /not the physical card corners you already confirmed/i);
+    assert.match(harness.container.textContent ?? "", /1 of 4 features supported the transform/i);
     const failedHandle = harness.container.querySelector('[aria-label="Move anchor 1, out_of_card"]') as HTMLButtonElement | null;
     assert.ok(failedHandle, "Failed anchor must be draggable and visibly identified");
     const rescueImage = harness.container.querySelector('img[alt="back current card"]') as HTMLImageElement | null;

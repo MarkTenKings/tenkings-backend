@@ -1219,8 +1219,10 @@ export default function AiGraderV2AdminPage() {
         {capture && defects === null ? (
           <section className={styles.statusPanel}>
             <span>03 · SAM 3</span>
-            <h2>Scanning FRONT, then BACK.</h2>
-            <p>A successful side is retained while the next side runs. Every finding lands on one measured card map.</p>
+            <h2>{initializeFailed ? "Server scan failed." : "Scanning FRONT, then BACK."}</h2>
+            <p>{initializeFailed
+              ? "The scan stopped. Your capture, geometry, Card Map work, and any successful side checkpoint remain preserved."
+              : "A successful side is retained while the next side runs. Every finding lands on one measured card map."}</p>
             {initializeFailed ? (
               <button type="button" disabled={working} onClick={() => {
                 if (working) return;

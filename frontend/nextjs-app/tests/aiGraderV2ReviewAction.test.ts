@@ -15,6 +15,7 @@ import {
 import {
   SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
   speedsterDetectTransportEvidence,
+  SPEEDSTER_DETECT_FAILURE_VERSION,
   SpeedsterDetectUpstreamError,
 } from "../lib/server/aiGraderV2DetectTransport";
 import {
@@ -1243,6 +1244,7 @@ function upstreamFailure(
   body: { side: "FRONT" | "BACK"; requestTraceId: string },
   upstreamStatus: number,
   workerIdentity: string | null = null,
+  failureEvidence: ConstructorParameters<typeof SpeedsterDetectUpstreamError>[0]["failureEvidence"] = null,
 ) {
   return new SpeedsterDetectUpstreamError({
     side: body.side,
@@ -1250,6 +1252,7 @@ function upstreamFailure(
     upstreamStatus,
     workerIdentity,
     upstreamDurationMs: 7,
+    failureEvidence,
   });
 }
 
@@ -1368,6 +1371,64 @@ for (const status of [500, 503, 504] as const) {
   });
 }
 
+test("RunPod HTTP 500 preserves request-bound stage, exception, stack, and payload digests in the attempt ledger", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  let recorded: readonly { eventType: string; details?: unknown }[] = [];
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { throw new Error("must not persist review"); },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return { version: 2, exemplars: [] }; },
+    async detect(body) {
+      throw upstreamFailure(body, 500, "worker-front-evidence", {
+        version: SPEEDSTER_DETECT_FAILURE_VERSION,
+        code: "SPEEDSTER_DETECT_FAILED",
+        stage: "DETECTOR_EXECUTION",
+        side: body.side,
+        requestTraceId: body.requestTraceId,
+        exceptionType: "RuntimeError",
+        message: "CUDA kernel failed",
+        durationMs: 6119,
+        stack: [{ file: "/app/sam3_detector.py", line: 900, function: "scan_side" }],
+        stackTruncated: false,
+      });
+    },
+    async measure() { throw new Error("must not measure"); },
+    async recordInstrumentation(events) { recorded = events; },
+  }), /FRONT scan failed during DETECTOR_EXECUTION: RuntimeError: CUDA kernel failed.*HTTP 500/i);
+
+  const attempt = recorded.find(({ eventType }) => eventType === "DETECTOR_SIDE_ATTEMPT")?.details as {
+    failureEvidence: unknown;
+    requestPayloadSha256: string;
+    captureBindingSha256: string;
+    memorySnapshotSha256: string;
+  };
+  assert.match(
+    (attempt.failureEvidence as { requestTraceId: string }).requestTraceId,
+    /:FRONT:detect:[a-f0-9]{24}:a1$/,
+  );
+  assert.deepEqual(attempt.failureEvidence, {
+    version: SPEEDSTER_DETECT_FAILURE_VERSION,
+    code: "SPEEDSTER_DETECT_FAILED",
+    stage: "DETECTOR_EXECUTION",
+    side: "FRONT",
+    requestTraceId: (attempt.failureEvidence as { requestTraceId: string }).requestTraceId,
+    exceptionType: "RuntimeError",
+    message: "CUDA kernel failed",
+    durationMs: 6119,
+    stack: [{ file: "/app/sam3_detector.py", line: 900, function: "scan_side" }],
+    stackTruncated: false,
+  });
+  assert.match(attempt.requestPayloadSha256, /^[a-f0-9]{64}$/);
+  assert.match(attempt.captureBindingSha256, /^[a-f0-9]{64}$/);
+  assert.match(attempt.memorySnapshotSha256, /^[a-f0-9]{64}$/);
+});
+
 test("a detector network failure is never retried and exposes no raw private error", async () => {
   const initial = session([]);
   initial.gradeReport = {};
@@ -1414,7 +1475,18 @@ test("detect transport preserves the exact request body and exposes real upstrea
     async fetchImpl(input, init) {
       assert.equal(input, "https://runpod.invalid/detect");
       postedBody = String(init.body);
-      return new Response(JSON.stringify({ detail: "private worker detail" }), {
+      return new Response(JSON.stringify({ detail: {
+        version: SPEEDSTER_DETECT_FAILURE_VERSION,
+        code: "SPEEDSTER_DETECT_FAILED",
+        stage: "DETECTOR_EXECUTION",
+        side: "BACK",
+        requestTraceId: body.requestTraceId,
+        exceptionType: "RuntimeError",
+        message: "live mismatch",
+        durationMs: 19.4,
+        stack: [{ file: "/app/sam3_detector.py", line: 900, function: "scan_side" }],
+        stackTruncated: false,
+      } }), {
         status: 502,
         headers: { "content-type": "application/json", "x-runpod-worker-id": "worker-safe-17" },
       });
@@ -1427,10 +1499,53 @@ test("detect transport preserves the exact request body and exposes real upstrea
     assert.equal(failure.upstreamStatus, 502);
     assert.equal(failure.workerIdentity, "worker-safe-17");
     assert.equal(failure.upstreamDurationMs, 27);
-    assert.doesNotMatch(failure.message, /private worker detail/);
+    assert.deepEqual(failure.failureEvidence, {
+      version: SPEEDSTER_DETECT_FAILURE_VERSION,
+      code: "SPEEDSTER_DETECT_FAILED",
+      stage: "DETECTOR_EXECUTION",
+      side: "BACK",
+      requestTraceId: body.requestTraceId,
+      exceptionType: "RuntimeError",
+      message: "live mismatch",
+      durationMs: 19,
+      stack: [{ file: "/app/sam3_detector.py", line: 900, function: "scan_side" }],
+      stackTruncated: false,
+    });
     return true;
   });
   assert.deepEqual(JSON.parse(postedBody), body);
+});
+
+test("detect transport rejects unbound failure detail instead of attaching it to another request", async () => {
+  const body: Parameters<SpeedsterReviewActionDependencies["detect"]>[0] = {
+    side: "FRONT",
+    cornerShape: "SQUARE",
+    views: [{ id: "FRONT:ORIGINAL", imageUrl: "https://signed.invalid/front" }],
+    sessionId: "session-12345678901234567890",
+    requestTraceId: "session-12345678901234567890:FRONT:detect:abcdef123456:a1",
+    learningBank: {},
+  };
+  await assert.rejects(() => fetchSpeedsterDetectUpstream(body, {
+    serviceUrl: "https://runpod.invalid",
+    headers: { "Content-Type": "application/json" },
+    async fetchImpl() {
+      return new Response(JSON.stringify({ detail: {
+        version: SPEEDSTER_DETECT_FAILURE_VERSION,
+        code: "SPEEDSTER_DETECT_FAILED",
+        stage: "DETECTOR_EXECUTION",
+        side: "BACK",
+        requestTraceId: "another-request",
+        exceptionType: "RuntimeError",
+        message: "must not bind",
+        durationMs: 1,
+        stack: [],
+        stackTruncated: false,
+      } }), { status: 500 });
+    },
+  }), (error: unknown) => {
+    assert.equal((error as SpeedsterDetectUpstreamError).failureEvidence, null);
+    return true;
+  });
 });
 
 test("detect transport records successful status and an explicit unavailable worker identity", async () => {

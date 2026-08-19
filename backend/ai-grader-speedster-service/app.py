@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import traceback
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
@@ -471,6 +472,55 @@ def _trace_proposal_error_detail(error: Exception, request_trace_id: Optional[st
     return detail
 
 
+def _detect_failure_detail(
+    error: Exception,
+    request: DetectRequest,
+    stage: str,
+    duration_ms: float,
+    view_id: Optional[str],
+    status_code: int,
+):
+    message = re.sub(
+        r"https?://\S+",
+        "[redacted-url]",
+        str(error),
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(
+        r"\b(?:Bearer\s+)?(?:sk|sess|proj)-[A-Za-z0-9_-]{8,}\b",
+        "[redacted-credential]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    message = " ".join(message.split())[:300] or "Detector request failed without an exception message."
+    extracted = traceback.extract_tb(error.__traceback__)
+    frames = [
+        {
+            "file": frame.filename[-240:],
+            "line": int(frame.lineno),
+            "function": frame.name[:160],
+        }
+        for frame in extracted[-40:]
+    ]
+    return {
+        "version": "speedster-detect-failure-v1",
+        "code": (
+            "SPEEDSTER_DETECT_INVALID_INPUT"
+            if status_code == 400
+            else "SPEEDSTER_DETECT_FAILED"
+        ),
+        "stage": stage,
+        "side": request.side,
+        "requestTraceId": request.requestTraceId,
+        "exceptionType": type(error).__name__[:128],
+        "message": message,
+        "durationMs": round(duration_ms, 3),
+        "stack": frames,
+        "stackTruncated": len(extracted) > len(frames),
+        **({"viewId": view_id[:180]} if view_id else {}),
+    }
+
+
 def load_image(image_url: Optional[str], image_base64: Optional[str]) -> np.ndarray:
     if image_base64:
         encoded = image_base64.split(",", 1)[-1]
@@ -803,10 +853,13 @@ def map_registration(request: MapRegistrationRequest):
 @app.post("/detect")
 def detect(request: DetectRequest):
     request_started = time.perf_counter()
+    failure_stage = "IMAGE_LOAD"
+    failure_view_id = None
     try:
         views = []
         image_loads = []
         for view in request.views:
+            failure_view_id = view.id
             load_started = time.perf_counter()
             image = load_image(view.imageUrl, view.imageBase64)
             image_loads.append(
@@ -820,6 +873,8 @@ def detect(request: DetectRequest):
                 }
             )
             views.append((view.id, image))
+        failure_stage = "DETECTOR_EXECUTION"
+        failure_view_id = None
         detection_started = time.perf_counter()
         result = detect_views(
             views,
@@ -832,6 +887,7 @@ def detect(request: DetectRequest):
         detector_duration_ms = round(
             (time.perf_counter() - detection_started) * 1000, 3
         )
+        failure_stage = "RESPONSE_ASSEMBLY"
         instrumentation = {
             **result.get("instrumentation", {}),
             "version": "speedster-service-timing-v1",
@@ -851,20 +907,43 @@ def detect(request: DetectRequest):
             "speedster_detect_timing %s",
             json.dumps(instrumentation, separators=(",", ":"), sort_keys=True),
         )
+        # Validate the exact response while this request's stage and trace are
+        # still available. FastAPI's later serializer cannot otherwise attach
+        # deterministic failure evidence to this detector attempt.
+        json.dumps(result, allow_nan=False, separators=(",", ":"), sort_keys=True)
         return result
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    except Exception as error:
-        LOGGER.exception(
-            "speedster_detect_timing_failed side=%s requestTraceId=%s durationMs=%.3f",
-            request.side,
-            request.requestTraceId,
-            (time.perf_counter() - request_started) * 1000,
+        duration_ms = (time.perf_counter() - request_started) * 1000
+        detail = _detect_failure_detail(
+            error,
+            request,
+            failure_stage,
+            duration_ms,
+            failure_view_id,
+            400,
         )
-        raise HTTPException(
-            status_code=500,
-            detail=f"{type(error).__name__}: {error}",
-        ) from error
+        LOGGER.warning(
+            "speedster_detect_failed %s",
+            json.dumps(detail, separators=(",", ":"), sort_keys=True),
+        )
+        raise HTTPException(status_code=400, detail=detail) from error
+    except Exception as error:
+        duration_ms = (time.perf_counter() - request_started) * 1000
+        detail = _detect_failure_detail(
+            error,
+            request,
+            failure_stage,
+            duration_ms,
+            failure_view_id,
+            500,
+        )
+        # One structured line survives providers that discard multiline Python
+        # tracebacks. It contains no locals, image URLs, or credentials.
+        LOGGER.error(
+            "speedster_detect_failed %s",
+            json.dumps(detail, separators=(",", ":"), sort_keys=True),
+        )
+        raise HTTPException(status_code=500, detail=detail) from error
 
 
 def _validated_card_bounds(

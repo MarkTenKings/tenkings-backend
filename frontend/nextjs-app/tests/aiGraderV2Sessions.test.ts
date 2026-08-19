@@ -1880,6 +1880,8 @@ test("review changes use the one owned review-action route and never call client
   assert.match(action, /const \{ finalTrace, \.\.\.trace \} = action\.trace/);
   assert.match(action, /traceWire: encodeSpeedsterTraceBitmapWireV1/);
   assert.match(page, /Scanning FRONT, then BACK/);
+  assert.match(page, /initializeFailed \? "Server scan failed\." : "Scanning FRONT, then BACK\."/);
+  assert.match(page, /Your capture, geometry, Card Map work, and any successful side checkpoint remain preserved/);
   assert.match(page, /one automatic RunPod HTTP 502 retry/);
   assert.match(page, /retryRequestId/);
 

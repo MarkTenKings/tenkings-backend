@@ -65,6 +65,7 @@ import {
   SPEEDSTER_DETECT_WORKER_ID_UNAVAILABLE,
   speedsterDetectTransportEvidence,
   SpeedsterDetectUpstreamError,
+  type SpeedsterDetectFailureEvidence,
   type SpeedsterDetectWorkerIdentity,
 } from "./aiGraderV2DetectTransport";
 import {
@@ -181,6 +182,10 @@ export type SpeedsterDetectorAttemptEvidence = Readonly<{
   clientDurationMs: number;
   serverDurationMs: number;
   serviceDurationMs: number | null;
+  requestPayloadSha256: string;
+  captureBindingSha256: string;
+  memorySnapshotSha256: string;
+  failureEvidence: SpeedsterDetectFailureEvidence | null;
 }>;
 
 export type SpeedsterReviewActionDependencies = {
@@ -752,9 +757,13 @@ async function serverOwnedInitialization(
   ) => {
     if (error instanceof SpeedsterDetectUpstreamError) {
       const priorRetry = attemptNumber === 2 ? " after its one-time RunPod HTTP 502 retry" : "";
+      const failure = error.failureEvidence;
+      const exactFailure = failure
+        ? ` during ${failure.stage}: ${failure.exceptionType}: ${failure.message}`
+        : "";
       return new HttpError(
         error.upstreamStatus >= 500 ? 502 : 400,
-        `Speedster ${side} scan failed${priorRetry}: RunPod returned HTTP ${error.upstreamStatus} (request ID ${requestTraceId}).`,
+        `Speedster ${side} scan failed${priorRetry}${exactFailure}: RunPod returned HTTP ${error.upstreamStatus} (request ID ${requestTraceId}).`,
       );
     }
     if (error instanceof HttpError) {
@@ -826,11 +835,13 @@ async function serverOwnedInitialization(
         for (const attemptNumber of [1, 2] as const) {
           const requestOperation = recoveryEnabled ? `${operationId}:${requestNonce}` : operationId;
           const requestTraceId = `${input.sessionId}:${request.side}:detect:${requestOperation}:a${attemptNumber}`;
+          const detectBody = { ...baseBody, requestTraceId };
+          const requestPayloadSha256 = speedsterDetectionSha256(detectBody);
           const attemptStartedAt = now();
           let rawResult: unknown;
           let rawResolved = false;
           try {
-            rawResult = await detectBeforeDeadline({ ...baseBody, requestTraceId });
+            rawResult = await detectBeforeDeadline(detectBody);
             rawResolved = true;
             const accepted = validatedDetectorSideResult(
               request.side,
@@ -853,6 +864,10 @@ async function serverOwnedInitialization(
               serviceDurationMs: typeof timing?.serviceTotalMs === "number"
                 ? timing.serviceTotalMs
                 : null,
+              requestPayloadSha256,
+              captureBindingSha256,
+              memorySnapshotSha256,
+              failureEvidence: null,
             });
             if (timing) detectorTimings[request.side] = timing;
             detectorIdentities[request.side] = accepted.detectorIdentity;
@@ -935,6 +950,10 @@ async function serverOwnedInitialization(
               serviceDurationMs: typeof timing?.serviceTotalMs === "number"
                 ? timing.serviceTotalMs
                 : null,
+              requestPayloadSha256,
+              captureBindingSha256,
+              memorySnapshotSha256,
+              failureEvidence: upstreamFailure?.failureEvidence ?? null,
             });
             if (
               attemptNumber === 1
