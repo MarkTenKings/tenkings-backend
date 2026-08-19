@@ -15,6 +15,7 @@ const DB_USER = "tenkings_nfc_validation";
 const DB_NAME = "tenkings_ai_grader_nfc_validation";
 const SPEEDSTER_LAYOUT_V2_MIGRATION = "20260813200000_speedster_pokemon_layout_key_v2";
 const SPEEDSTER_COLOR_GEOMETRY_MIGRATION = "20260816100000_speedster_color_geometry_evidence";
+const SPEEDSTER_COLOR_GEOMETRY_V2_CONSTRAINT_MIGRATION = "20260819220000_speedster_color_geometry_v2_constraints";
 const SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION = "20260818153000_speedster_audit_evidence_append_only";
 const TARGET_MIGRATIONS = [
   "20260712160000_ai_grader_nfc_static_url_v1",
@@ -25,6 +26,7 @@ const TARGET_MIGRATIONS = [
   "20260813120000_speedster_map_registration_lessons",
   SPEEDSTER_LAYOUT_V2_MIGRATION,
   SPEEDSTER_COLOR_GEOMETRY_MIGRATION,
+  SPEEDSTER_COLOR_GEOMETRY_V2_CONSTRAINT_MIGRATION,
   SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION,
 ];
 const SENTINEL = "AI_GRADER_NFC_DISPOSABLE_VALIDATION";
@@ -258,6 +260,9 @@ if (!migrationNames.includes(SPEEDSTER_LAYOUT_V2_MIGRATION)) {
 if (!postLayoutMigrationNames.includes(SPEEDSTER_COLOR_GEOMETRY_MIGRATION)) {
   fail("The Color Geometry migration must remain ordered after Layout Key V2.");
 }
+if (!postLayoutMigrationNames.includes(SPEEDSTER_COLOR_GEOMETRY_V2_CONSTRAINT_MIGRATION)) {
+  fail("The Color Geometry v2 constraint migration must remain ordered after Layout Key V2.");
+}
 if (!postLayoutMigrationNames.includes(SPEEDSTER_AUDIT_IMMUTABILITY_MIGRATION)) {
   fail("The Speedster audit immutability migration must remain ordered after Layout Key V2.");
 }
@@ -455,6 +460,16 @@ try {
   if (cleanColorGeometryMigrationCount !== "1") {
     fail("Color Geometry must have exactly one clean ledger row after Layout Key V2.");
   }
+  const cleanColorGeometryV2ConstraintMigrationCount = queryScalar(
+    `SELECT count(*) FROM "_prisma_migrations"
+      WHERE "migration_name" = '${SPEEDSTER_COLOR_GEOMETRY_V2_CONSTRAINT_MIGRATION}'
+        AND "finished_at" IS NOT NULL
+        AND "rolled_back_at" IS NULL`,
+    "proving exactly one clean Color Geometry v2 constraint ledger row after Layout Key V2",
+  );
+  if (cleanColorGeometryV2ConstraintMigrationCount !== "1") {
+    fail("Color Geometry v2 constraints must have exactly one clean ledger row after Layout Key V2.");
+  }
   const repositoryTreeReconciliation = run(pnpm, ["--filter", "@tenkings/database", "exec", "prisma", "migrate", "deploy", "--schema", "prisma/schema.prisma"], {
     env: databaseEnv,
     label: "reconciling the fully migrated database with the repository migration tree",
@@ -605,6 +620,6 @@ if (primaryError) {
   process.exitCode = 1;
 } else {
   console.log(
-    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry evidence, Speedster audit evidence immutability, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
+    `[nfc-migration-validation] PASS: ${migrationCount} migrations, NFC plus Mathematical V1, Speedster registration lessons, Layout Key V2, Speedster Color Geometry v2 evidence constraints, Speedster audit evidence immutability, and Card Platform V2 catalog, constraint, lifecycle, immutability, rollback, concurrency, reactivation, and second-deploy no-op checks verified; disposable storage destroyed.`,
   );
 }
