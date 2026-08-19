@@ -17,18 +17,15 @@ from defect_math import (
 
 
 EXPECTED_ASPECT = CARD_WIDTH_MM / CARD_HEIGHT_MM
+ASPECT_RANK_SCALE = 0.08
+FILL_RANK_TARGET = 0.93
 WORKING_LONG_SIDE_PX = 1000
 PX_PER_MM = GRID_WIDTH / CARD_WIDTH_MM
 INSPECTION_MARGIN_MM = 2.0
 INSPECTION_MARGIN_PX = round(INSPECTION_MARGIN_MM * PX_PER_MM)
 INSPECTION_WIDTH = GRID_WIDTH + 2 * INSPECTION_MARGIN_PX
 INSPECTION_HEIGHT = GRID_HEIGHT + 2 * INSPECTION_MARGIN_PX
-DEFAULT_BORDER_MM = 5.0
 MAX_BORDER_SEARCH_MM = 12.0
-MIN_COMPONENT_AREA_FRACTION = 0.30
-MAX_COMPONENT_AREA_FRACTION = 0.97
-MIN_RECTANGULAR_FILL = 0.72
-MAX_ASPECT_ERROR = 0.06
 MIN_DEFECT_AREA_MM2 = 0.02
 MAX_CANDIDATE_AREA_MM2 = 8.0
 MAX_CANDIDATE_BOX_AREA_MM2 = 20.0
@@ -207,9 +204,13 @@ def _portraitize(corners: np.ndarray) -> np.ndarray:
 
 
 def ranked_card_quads(image: np.ndarray, limit: int = 4) -> list[tuple[float, np.ndarray]]:
-    """Return distinct physical-card candidates in deterministic score order."""
+    """Return distinct four-corner candidates in deterministic score order.
+
+    Area, aspect, and rectangular fill rank proposals; they never discard a
+    complete outline. The operator remains the authority for the displayed
+    best candidate.
+    """
     working, scale = _working_image(image)
-    frame_area = working.shape[0] * working.shape[1]
     candidates: list[tuple[float, np.ndarray]] = []
     for contour in _candidate_contours(working):
         x, y, width, height = cv2.boundingRect(contour)
@@ -221,11 +222,7 @@ def ranked_card_quads(image: np.ndarray, limit: int = 4) -> list[tuple[float, np
         ):
             continue
         area = float(cv2.contourArea(contour))
-        if not (
-            MIN_COMPONENT_AREA_FRACTION * frame_area
-            < area
-            < MAX_COMPONENT_AREA_FRACTION * frame_area
-        ):
+        if area <= 1.0:
             continue
         rectangle = cv2.minAreaRect(contour)
         width, height = rectangle[1]
@@ -234,12 +231,16 @@ def ranked_card_quads(image: np.ndarray, limit: int = 4) -> list[tuple[float, np
         aspect = min(width, height) / max(width, height)
         aspect_error = abs(aspect - EXPECTED_ASPECT)
         fill = area / (width * height)
-        if aspect_error > MAX_ASPECT_ERROR or fill < MIN_RECTANGULAR_FILL:
-            continue
+        # These values order complete candidates only. They never veto one.
+        # Keeping the established score shape preserves stable selection among
+        # near-duplicate contours while low-quality outlines remain available
+        # when they are the only complete result.
+        aspect_quality = max(0.01, 1.0 - aspect_error / ASPECT_RANK_SCALE)
+        fill_quality = max(0.01, min(1.0, fill / FILL_RANK_TARGET))
         score = (
             area
-            * (1.0 - aspect_error / MAX_ASPECT_ERROR)
-            * min(1.0, fill / 0.93)
+            * aspect_quality
+            * fill_quality
         )
         corners = _portraitize(_side_line_corners(contour, rectangle))
         corners = corners / scale if scale < 1.0 else corners
@@ -260,12 +261,6 @@ def ranked_card_quads(image: np.ndarray, limit: int = 4) -> list[tuple[float, np
         if len(distinct) >= max(1, limit):
             break
     return distinct
-
-
-def detect_card_quad(image: np.ndarray) -> Optional[np.ndarray]:
-    """Return the physical card quad or None; never substitute the photo frame."""
-    candidates = ranked_card_quads(image, limit=1)
-    return candidates[0][1] if candidates else None
 
 
 def validated_card_quad(corners: np.ndarray) -> np.ndarray:
@@ -432,26 +427,6 @@ def find_printed_border_offsets(image: np.ndarray) -> dict[str, Optional[float]]
         offsets[side] = _top_border_offset(gray)
         gray = np.ascontiguousarray(np.rot90(gray))
     return offsets
-
-
-def printed_border_quad(
-    image: np.ndarray,
-) -> tuple[np.ndarray, list[str], dict[str, Optional[float]]]:
-    offsets = find_printed_border_offsets(image)
-    resolved = {
-        side: value if value is not None else DEFAULT_BORDER_MM
-        for side, value in offsets.items()
-    }
-    left = resolved["left"] * PX_PER_MM
-    right = GRID_WIDTH - 1 - resolved["right"] * PX_PER_MM
-    top = resolved["top"] * PX_PER_MM
-    bottom = GRID_HEIGHT - 1 - resolved["bottom"] * PX_PER_MM
-    quad = np.array(
-        [[left, top], [right, top], [right, bottom], [left, bottom]],
-        dtype=np.float32,
-    )
-    detected = [side for side, value in offsets.items() if value is not None]
-    return quad, detected, offsets
 
 
 def _canonical_registration_image(image: np.ndarray) -> np.ndarray:

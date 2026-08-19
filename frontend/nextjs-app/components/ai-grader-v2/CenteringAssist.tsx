@@ -8,6 +8,7 @@ import type {
   SpeedsterPoint,
   SpeedsterQuad,
 } from "../../lib/ai-grader-v2/contracts";
+import { sanitizeSpeedsterUnitQuad } from "../../lib/ai-grader-v2/geometry";
 import {
   calculateCenteringBalance,
   measureSpeedsterCenteringBorders,
@@ -33,7 +34,7 @@ type CenteringAssistProps = {
   imageRefreshError?: string | null;
   imageRefreshing?: boolean;
   side: SpeedsterCardSide;
-  initialInnerQuad: SpeedsterQuad;
+  initialInnerQuad: SpeedsterQuad | null;
   detectedBorders: readonly ("top" | "right" | "bottom" | "left")[];
   onContinue: (result: CenteringAssistResult) => void;
   disabled?: boolean;
@@ -84,7 +85,9 @@ export function CenteringAssist({
   onImageReady,
   onRetryImage,
 }: CenteringAssistProps) {
-  const [innerQuad, setInnerQuad] = useState<SpeedsterQuad>(initialInnerQuad);
+  const [innerQuad, setInnerQuad] = useState<SpeedsterQuad | null>(initialInnerQuad);
+  const [manualPoints, setManualPoints] = useState<readonly SpeedsterPoint[]>([]);
+  const [manualError, setManualError] = useState<string | null>(null);
   const [loadedImageIdentity, setLoadedImageIdentity] = useState<string | null>(null);
   const failedImageIdentity = useRef<string | null>(null);
   const activeHandle = useRef<{ index: number; pointerId: number } | null>(null);
@@ -92,6 +95,7 @@ export function CenteringAssist({
   const imageIdentity = `${imageRevision}:${imageUrl}`;
   const imageReady = loadedImageIdentity === imageIdentity && !imageRefreshError;
   const measurements = useMemo(() => {
+    if (!innerQuad) return null;
     const borders = measureSpeedsterCenteringBorders(innerQuad);
     return {
       borders,
@@ -102,7 +106,7 @@ export function CenteringAssist({
 
   const moveHandle = (event: ReactPointerEvent<SVGSVGElement>) => {
     const active = activeHandle.current;
-    if (!active || active.pointerId !== event.pointerId) return;
+    if (!active || !innerQuad || active.pointerId !== event.pointerId) return;
 
     const bounds = event.currentTarget.getBoundingClientRect();
     const next = [...innerQuad] as [
@@ -123,6 +127,32 @@ export function CenteringAssist({
     setInnerQuad(next);
   };
 
+  const placeManualCorner = (event: ReactPointerEvent<SVGSVGElement>) => {
+    if (innerQuad || disabled || !imageReady || event.button !== 0) return;
+    const bounds = event.currentTarget.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    event.preventDefault();
+    const point = {
+      x: clampUnit((event.clientX - bounds.left) / bounds.width),
+      y: clampUnit((event.clientY - bounds.top) / bounds.height),
+    };
+    const next = [...manualPoints, point];
+    if (next.length < 4) {
+      setManualPoints(next);
+      setManualError(null);
+      return;
+    }
+    const quad = sanitizeSpeedsterUnitQuad(next);
+    if (!quad) {
+      setManualPoints([]);
+      setManualError("Those points do not form the printed frame in order. Start again: top left, top right, bottom right, bottom left.");
+      return;
+    }
+    setManualPoints([]);
+    setManualError(null);
+    setInnerQuad(quad);
+  };
+
   const endDrag = (event: ReactPointerEvent<SVGSVGElement>) => {
     if (activeHandle.current?.pointerId !== event.pointerId) return;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -138,7 +168,9 @@ export function CenteringAssist({
           <span className={styles.eyebrow}>{side} · CENTERING</span>
           <h2>Set the printed borders.</h2>
         </div>
-        <p>{detectedBorders.length === 4
+        <p>{innerQuad === null
+          ? `No current-engine printed frame was found. Click its corners in order: top left, top right, bottom right, bottom left. ${manualPoints.length}/4 placed.`
+          : detectedBorders.length === 4
           ? "All four printed borders found. Drag only if a marker needs adjustment."
           : `${detectedBorders.length}/4 printed borders found. Set missing sides; each drag snaps locally.`}</p>
       </header>
@@ -180,16 +212,23 @@ export function CenteringAssist({
               viewBox={`0 0 ${OVERLAY_WIDTH} ${OVERLAY_HEIGHT}`}
               preserveAspectRatio="none"
               aria-label="Adjustable printed-border geometry"
+              onPointerDown={placeManualCorner}
               onPointerMove={moveHandle}
               onPointerUp={endDrag}
               onPointerCancel={endDrag}
             >
-              <polygon
+              {innerQuad ? <polygon
                 className={styles.innerQuad}
                 points={innerQuad.map(overlayPoint).join(" ")}
                 vectorEffect="non-scaling-stroke"
-              />
-              {innerQuad.map((point, index) => {
+              /> : null}
+              {manualPoints.map((point, index) => (
+                <g key={`manual-${index}`}>
+                  <circle className={styles.manualPointRing} cx={point.x * OVERLAY_WIDTH} cy={point.y * OVERLAY_HEIGHT} r="18" vectorEffect="non-scaling-stroke" />
+                  <text className={styles.manualPointLabel} x={point.x * OVERLAY_WIDTH + 22} y={point.y * OVERLAY_HEIGHT - 18}>{index + 1}</text>
+                </g>
+              ))}
+              {innerQuad?.map((point, index) => {
                 const x = point.x * OVERLAY_WIDTH;
                 const y = point.y * OVERLAY_HEIGHT;
                 return (
@@ -213,7 +252,7 @@ export function CenteringAssist({
               })}
             </svg> : null}
 
-            {imageReady ? <><span className={`${styles.imageMetric} ${styles.topMetric}`}>
+            {imageReady && measurements ? <><span className={`${styles.imageMetric} ${styles.topMetric}`}>
               T {millimeters(measurements.borders.topMm)}
             </span>
             <span className={`${styles.imageMetric} ${styles.rightMetric}`}>
@@ -240,7 +279,7 @@ export function CenteringAssist({
         <aside className={styles.readout}>
           <div>
             <span className={styles.readoutLabel}>LIVE MEASUREMENTS</span>
-            <dl className={styles.measurementGrid}>
+            {measurements ? <><dl className={styles.measurementGrid}>
               <div><dt>Left</dt><dd>{millimeters(measurements.borders.leftMm)}</dd></div>
               <div><dt>Right</dt><dd>{millimeters(measurements.borders.rightMm)}</dd></div>
               <div><dt>Top</dt><dd>{millimeters(measurements.borders.topMm)}</dd></div>
@@ -256,16 +295,27 @@ export function CenteringAssist({
                 <span>TOP / BOTTOM</span>
                 <strong>{balance(measurements.vertical)}</strong>
               </div>
-            </div>
+            </div></> : <p role="status">Place all four printed-frame corners before measurements are calculated.</p>}
+            {manualError ? <p role="alert">{manualError}</p> : null}
+            {!innerQuad && manualPoints.length > 0 ? (
+              <button type="button" disabled={disabled} onClick={() => {
+                setManualPoints([]);
+                setManualError(null);
+              }}>
+                Restart corner placement
+              </button>
+            ) : null}
           </div>
 
           <button
             type="button"
             className={styles.continueButton}
-            disabled={disabled || !imageReady}
-            onClick={() => onContinue({ side, innerQuad, borders: measurements.borders })}
+            disabled={disabled || !imageReady || !innerQuad || !measurements}
+            onClick={() => {
+              if (innerQuad && measurements) onContinue({ side, innerQuad, borders: measurements.borders });
+            }}
           >
-            {disabled ? "Saving…" : !imageReady ? "Image required" : continueLabel} {imageReady && !disabled ? <span aria-hidden="true">→</span> : null}
+            {disabled ? "Saving…" : !imageReady ? "Image required" : !innerQuad ? "Place 4 corners" : continueLabel} {imageReady && innerQuad && !disabled ? <span aria-hidden="true">→</span> : null}
           </button>
         </aside>
       </div>

@@ -44,7 +44,15 @@ const blockRegistrationSchema = z.object({
   operationId: z.string().trim().min(1).max(180),
   failures: z.array(failureSchema).min(1).max(2),
 }).strict();
-const requestSchema = z.discriminatedUnion("action", [resolveSchema, blockRegistrationSchema]);
+const continueWithoutMapSchema = z.object({
+  action: z.literal("CONTINUE_WITHOUT_MAP"),
+  decisionId: z.string().uuid(),
+}).strict();
+const requestSchema = z.discriminatedUnion("action", [
+  resolveSchema,
+  blockRegistrationSchema,
+  continueWithoutMapSchema,
+]);
 
 type DraftSession = Readonly<{
   id: string;
@@ -163,6 +171,8 @@ function authorityEvent(input: Readonly<{
   selected?: SpeedsterAppliedMapRevision | null;
   operationId?: string | null;
   failures?: readonly SpeedsterMapAuthorityFailure[];
+  revision?: SpeedsterMapAuthorityEvent["revision"];
+  operatorDecisionId?: string | null;
 }>): SpeedsterMapAuthorityEvent {
   return {
     attemptId: input.attemptId,
@@ -170,9 +180,10 @@ function authorityEvent(input: Readonly<{
     status: input.status,
     failureCode: input.failureCode ?? null,
     message: input.message,
-    revision: input.selected ? revisionEvidence(input.selected) : null,
+    revision: input.selected ? revisionEvidence(input.selected) : input.revision ?? null,
     registrationOperationId: input.operationId ?? null,
     registrationFailures: input.failures ?? [],
+    operatorDecisionId: input.operatorDecisionId ?? null,
   };
 }
 
@@ -200,6 +211,46 @@ export function createSpeedsterMapAuthorityHandler(deps: Dependencies = dependen
       const identity = canonicalizeSpeedsterSessionIdentity(session.cardProfile, session.identity);
       const now = (deps.now ?? (() => new Date()))();
       const attemptId = (deps.randomId ?? randomUUID)();
+      const priorAuthority = speedsterMapAuthorityEvidenceFromCapture(session.capture)?.current;
+
+      if (parsed.data.action === "CONTINUE_WITHOUT_MAP") {
+        if (priorAuthority?.status === "HUMAN_REVIEW_WITHOUT_MAP") {
+          if (priorAuthority.operatorDecisionId === parsed.data.decisionId) {
+            return res.status(200).json({ authority: priorAuthority, map: clientMap(null) });
+          }
+          return res.status(409).json({
+            message: "Human review without a Card Map was already decided for this failure. Reload the preserved authority state instead of creating a second decision.",
+          });
+        }
+        if (priorAuthority?.status !== "LOOKUP_FAILED" && priorAuthority?.status !== "REGISTRATION_BLOCKED") {
+          return res.status(409).json({
+            message: "Human review without a Card Map is available only after a durably recorded lookup or registration failure.",
+          });
+        }
+        const event = authorityEvent({
+          now,
+          attemptId,
+          status: "HUMAN_REVIEW_WITHOUT_MAP",
+          failureCode: priorAuthority.failureCode,
+          message: "The operator explicitly continued through human review without applying a Card Map. The original Card Map failure remains in immutable authority history.",
+          revision: priorAuthority.revision,
+          operationId: priorAuthority.registrationOperationId,
+          failures: priorAuthority.registrationFailures,
+          operatorDecisionId: parsed.data.decisionId,
+        });
+        const persisted = await deps.persistEvidence(session, admin.user.id, event);
+        if (!persisted) return res.status(409).json({ message: "Card Map authority changed before the human-review decision could be recorded" });
+        return res.status(200).json({ authority: event, map: clientMap(null) });
+      }
+
+      if (parsed.data.action === "RESOLVE_LOOKUP" && priorAuthority?.status === "HUMAN_REVIEW_WITHOUT_MAP") {
+        return res.status(200).json({ authority: priorAuthority, map: clientMap(null) });
+      }
+      if (priorAuthority?.status === "HUMAN_REVIEW_WITHOUT_MAP") {
+        return res.status(409).json({
+          message: "Human review without a Card Map is already authoritative for this failure. A stale registration request cannot replace that operator decision.",
+        });
+      }
 
       let selected: SpeedsterAppliedMapRevision | null;
       try {
@@ -213,7 +264,7 @@ export function createSpeedsterMapAuthorityHandler(deps: Dependencies = dependen
           failureCode: integrity ? error.code : "CARD_MAP_LOOKUP_TRANSPORT_FAILED",
           message: integrity
             ? error.message
-            : "Card Map lookup could not reach its authoritative store. No mapless continuation is allowed.",
+            : "Card Map lookup could not reach its authoritative store. Retry, or explicitly continue through recorded human review without a map.",
         });
         const persisted = await deps.persistEvidence(session, admin.user.id, event);
         if (!persisted) return res.status(409).json({ message: "Card Map authority state changed before the blocker could be recorded" });
@@ -245,7 +296,7 @@ export function createSpeedsterMapAuthorityHandler(deps: Dependencies = dependen
           attemptId,
           status: "REGISTRATION_BLOCKED",
           failureCode: "CARD_MAP_REGISTRATION_BLOCKED",
-          message: "Card Map registration is blocked. Retry or correct every failed side; mapless continuation is not allowed.",
+          message: "Card Map registration is blocked. Retry or correct every failed side, or explicitly continue through recorded human review without applying the map.",
           selected,
           operationId: parsed.data.operationId,
           failures: parsed.data.failures,
@@ -255,7 +306,6 @@ export function createSpeedsterMapAuthorityHandler(deps: Dependencies = dependen
         return res.status(200).json({ authority: event });
       }
 
-      const priorAuthority = speedsterMapAuthorityEvidenceFromCapture(session.capture)?.current;
       if (priorAuthority?.status === "REGISTRATION_BLOCKED"
         && selected
         && priorAuthority.revision?.revisionId === selected.revision.revisionId

@@ -43,7 +43,6 @@ from sam3_detector import (
     _verified_checkpoint_path,
     detect_views,
     feature_fingerprint,
-    learning_adjustment,
     memory_proposal_candidates,
     measure_marks,
 )
@@ -742,7 +741,40 @@ class Sam3DetectorTests(unittest.TestCase):
                 detect(request)
 
         self.assertEqual(raised.exception.status_code, 500)
-        self.assertEqual(raised.exception.detail, "RuntimeError: live mismatch")
+        detail = raised.exception.detail
+        self.assertEqual(detail["version"], "speedster-detect-failure-v1")
+        self.assertEqual(detail["code"], "SPEEDSTER_DETECT_FAILED")
+        self.assertEqual(detail["stage"], "DETECTOR_EXECUTION")
+        self.assertEqual(detail["side"], "FRONT")
+        self.assertEqual(detail["exceptionType"], "RuntimeError")
+        self.assertEqual(detail["message"], "live mismatch")
+        self.assertEqual(detail["stackTruncated"], False)
+        self.assertTrue(detail["stack"])
+        self.assertEqual(detail["stack"][-1]["function"], "_execute_mock_call")
+
+    def test_detect_endpoint_classifies_image_load_and_redacts_private_urls(self):
+        request = DetectRequest(
+            side="FRONT",
+            cornerShape="SQUARE",
+            requestTraceId="session-123:FRONT:detect:payload:a1",
+            views=[{"id": "FRONT:ORIGINAL", "imageUrl": "https://signed.invalid/front"}],
+        )
+
+        with patch(
+            "app.load_image",
+            side_effect=RuntimeError("download https://signed.invalid/front?token=private failed"),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                detect(request)
+
+        self.assertEqual(raised.exception.status_code, 500)
+        detail = raised.exception.detail
+        self.assertEqual(detail["stage"], "IMAGE_LOAD")
+        self.assertEqual(detail["viewId"], "FRONT:ORIGINAL")
+        self.assertEqual(detail["requestTraceId"], request.requestTraceId)
+        self.assertIn("[redacted-url]", detail["message"])
+        self.assertNotIn("signed.invalid", json.dumps(detail))
+        self.assertNotIn("token=private", json.dumps(detail))
 
     def test_measure_endpoint_uses_the_same_zone_measurement_engine(self):
         result = measure(
@@ -781,6 +813,7 @@ class Sam3DetectorTests(unittest.TestCase):
             "detectedDefectType": "VISIBLE_WHITENING",
             "origin": "MEMORY",
             "confidence": 0.91,
+            "detectorMask": exact_trace(rectangle(20, 20, 23, 22)),
             "canonicalContour": rectangle(20, 20, 23, 22),
             "sourceViewId": "FRONT:ORIGINAL",
             "supportingViewIds": ["FRONT:MICRO_DEFECT"],
@@ -803,6 +836,11 @@ class Sam3DetectorTests(unittest.TestCase):
             "defectType": "VISIBLE_WHITENING",
             "origin": "SMART_MARK",
             "confidence": 1.0,
+            "finalTrace": exact_trace(rectangle(30, 20, 32, 22)),
+            "traceProvenance": trace_provenance(
+                exact_trace(rectangle(30, 20, 32, 22)),
+                "FRONT:ORIGINAL",
+            ),
             "canonicalContour": rectangle(30, 20, 32, 22),
             "sourceViewId": "FRONT:ORIGINAL",
             "supportingViewIds": [],
@@ -865,25 +903,35 @@ class Sam3DetectorTests(unittest.TestCase):
             findings=findings,
         )
 
+        def measurement_values(defect):
+            if "measurement" in defect:
+                return [defect["measurement"]]
+            return [region["measurement"] for region in defect["measurementRegions"]]
+
         baseline_damage = sum(
-            defect["measurement"]["weightedAreaMm2"]
+            measurement["weightedAreaMm2"]
             for defect in baseline["defects"]
+            for measurement in measurement_values(defect)
         )
         baseline_area = sum(
-            defect["measurement"]["areaMm2"] for defect in baseline["defects"]
+            measurement["areaMm2"]
+            for defect in baseline["defects"]
+            for measurement in measurement_values(defect)
         )
         for measured in (full, partial):
             self.assertEqual(
                 sum(
-                    defect["measurement"]["weightedAreaMm2"]
+                    measurement["weightedAreaMm2"]
                     for defect in measured["defects"]
+                    for measurement in measurement_values(defect)
                 ),
                 baseline_damage,
             )
             self.assertEqual(
                 sum(
-                    defect["measurement"]["areaMm2"]
+                    measurement["areaMm2"]
                     for defect in measured["defects"]
+                    for measurement in measurement_values(defect)
                 ),
                 baseline_area,
             )
@@ -899,7 +947,6 @@ class Sam3DetectorTests(unittest.TestCase):
         provenance_keys = {
             "id",
             "side",
-            "zone",
             "defectType",
             "detectedDefectType",
             "origin",
@@ -912,7 +959,7 @@ class Sam3DetectorTests(unittest.TestCase):
             "smartMarkLearning",
             "memoryProposal",
         }
-        for result in (full, shadowed):
+        for result in (full,):
             by_id = {defect["id"]: defect for defect in result["defects"]}
             for original in findings:
                 expected = {
@@ -925,26 +972,16 @@ class Sam3DetectorTests(unittest.TestCase):
                 }
                 self.assertEqual(actual, expected)
 
-        shadowed_by_id = {
-            defect["id"]: defect for defect in shadowed["defects"]
-        }
-        for original in findings:
-            self.assertEqual(
-                shadowed_by_id[original["id"]]["measurement"],
-                {
-                    "widthMm": 0.0,
-                    "heightMm": 0.0,
-                    "areaMm2": 0.0,
-                    "zonePercent": 0.0,
-                    "multiplier": (
-                        2.0
-                        if original["defectType"] == "LIFTING_DEFORMATION"
-                        else 1.0
-                    ),
-                    "weightedAreaMm2": 0.0,
-                    "subgradeEffect": 0.0,
-                },
-            )
+        shadowed_ids = {defect["id"] for defect in shadowed["defects"]}
+        self.assertNotIn(existing["id"], shadowed_ids)
+        self.assertIn(existing_smart["id"], shadowed_ids)
+        self.assertIn("FRONT:smart-winning", shadowed_ids)
+        shadowed_smart = next(
+            defect
+            for defect in shadowed["defects"]
+            if defect["id"] == existing_smart["id"]
+        )
+        self.assertEqual(shadowed_smart["measurementRegions"], [])
 
     def test_scans_each_view_and_returns_measured_speedster_defect(self):
         processor = FakeMaskProcessor()
@@ -1190,17 +1227,7 @@ class Sam3DetectorTests(unittest.TestCase):
         candidates = processor.scan(
             np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
             localized,
-            {
-                "version": 1,
-                "types": {
-                    "VISIBLE_WHITENING": {
-                        "positive": {
-                            "count": 1,
-                            "sum": [1 / np.sqrt(32)] * 32,
-                        },
-                    },
-                },
-            },
+            None,
         )
 
         self.assertEqual(len(candidates), 2)
@@ -1215,8 +1242,8 @@ class Sam3DetectorTests(unittest.TestCase):
         )
         self.assertTrue(all(len(candidate["featureFingerprint"]) == 32 for candidate in candidates))
         self.assertAlmostEqual(candidates[0]["confidence"], 0.84, places=3)
-        self.assertEqual(candidates[0]["learningAdjustment"], 0.06)
-        self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.9, places=3)
+        self.assertEqual(candidates[0]["learningAdjustment"], 0.0)
+        self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.84, places=3)
         self.assertEqual(candidates[1]["learningAdjustment"], 0.0)
         self.assertEqual(fake.scores.float_calls, 2)
 
@@ -1504,34 +1531,15 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(len(baseline_fake.prompts), 1)
         self.assertEqual(len(no_seed_fake.prompts), 1)
 
-    def test_cosine_learning_adds_only_the_tiny_matching_type_adjustment(self):
-        fingerprint = [1.0] + [0.0] * 31
-        positive = {
-            "version": 1,
-            "types": {
-                "VISIBLE_WHITENING": {
-                    "positive": {"count": 1, "sum": fingerprint},
-                }
-            },
-        }
-        negative = {
-            "version": 1,
-            "types": {
-                "VISIBLE_WHITENING": {
-                    "negative": {"count": 1, "sum": fingerprint},
-                }
-            },
-        }
-
-        self.assertEqual(
-            learning_adjustment(fingerprint, "VISIBLE_WHITENING", positive), 0.06
-        )
-        self.assertEqual(
-            learning_adjustment(fingerprint, "VISIBLE_WHITENING", negative), -0.06
-        )
-        self.assertEqual(
-            learning_adjustment(fingerprint, "LIGHT_SCRATCH_SCUFF", positive), 0.0
-        )
+    def test_legacy_memory_v1_is_rejected_instead_of_adjusting_current_detection(self):
+        processor = Sam3ImageProcessor()
+        processor._processor = FakeOfficialImageProcessor()
+        with self.assertRaisesRegex(ValueError, "Legacy or malformed Memory"):
+            processor.scan(
+                np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                [],
+                {"version": 1, "types": {}},
+            )
 
     def test_v2_strong_negative_veto_logs_one_compact_traceable_decision(self):
         fake = FakeOfficialImageProcessor()
@@ -1582,7 +1590,7 @@ class Sam3DetectorTests(unittest.TestCase):
             "VETOED_BY_MEMORY",
         )
 
-    def test_sub_threshold_adjustment_preserves_raw_candidate_and_separate_disposition(self):
+    def test_legacy_memory_v1_cannot_suppress_a_current_detector_candidate(self):
         fake = FakeOfficialImageProcessor()
         fake.scores = FakeTensor(np.array([0.52], dtype=np.float32))
         processor = Sam3ImageProcessor()
@@ -1599,30 +1607,16 @@ class Sam3DetectorTests(unittest.TestCase):
             "memoryDecisions": [],
         }
 
-        candidates = processor.scan(
-            np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
-            localized,
-            {
-                "version": 1,
-                "types": {
-                    "VISIBLE_WHITENING": {
-                        "negative": {"count": 1, "sum": SAM_UNIT},
-                    },
-                },
-            },
-            source_view_id="FRONT:ORIGINAL",
-            candidate_evidence=evidence,
-        )
-
-        self.assertEqual(candidates, [])
-        self.assertEqual(len(evidence["rawCandidates"]), 1)
-        decision = evidence["memoryDecisions"][0]
-        self.assertEqual(decision["policy"], "LEGACY_MEMORY_V1")
-        self.assertAlmostEqual(decision["adjustedConfidence"], 0.46, places=5)
-        self.assertEqual(
-            decision["disposition"],
-            "SUPPRESSED_BELOW_COLLECTION_THRESHOLD",
-        )
+        with self.assertRaisesRegex(ValueError, "Legacy or malformed Memory"):
+            processor.scan(
+                np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
+                localized,
+                {"version": 1, "types": {}},
+                source_view_id="FRONT:ORIGINAL",
+                candidate_evidence=evidence,
+            )
+        self.assertEqual(evidence["rawCandidates"], [])
+        self.assertEqual(evidence["memoryDecisions"], [])
 
     def test_v2_positive_protection_keeps_surviving_measurements_identical(self):
         localized = [{
@@ -1669,7 +1663,7 @@ class Sam3DetectorTests(unittest.TestCase):
         diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
         self.assertEqual(diagnostic["action"], "protected")
 
-    def test_malformed_v2_is_inert_and_does_not_block_detection(self):
+    def test_malformed_v2_fails_closed_instead_of_running_without_memory(self):
         fake = FakeOfficialImageProcessor()
         processor = Sam3ImageProcessor()
         processor._processor = fake
@@ -1682,21 +1676,13 @@ class Sam3DetectorTests(unittest.TestCase):
             "defectType": "VISIBLE_WHITENING",
         }]
 
-        with self.assertLogs("sam3_detector", level="INFO") as captured:
-            candidates = processor.scan(
+        with self.assertRaisesRegex(ValueError, "Legacy or malformed Memory"):
+            processor.scan(
                 np.zeros((GRID_HEIGHT, GRID_WIDTH, 3), dtype=np.uint8),
                 localized,
                 malformed,
                 source_view_id="FRONT:ORIGINAL",
             )
-
-        self.assertEqual(len(candidates), 1)
-        self.assertAlmostEqual(candidates[0]["confidence"], 0.84, places=3)
-        self.assertAlmostEqual(candidates[0]["rankingConfidence"], 0.84, places=3)
-        self.assertEqual(candidates[0]["learningAdjustment"], 0.0)
-        diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
-        self.assertEqual(diagnostic["bankStatus"], "malformed")
-        self.assertEqual(diagnostic["action"], "retained")
 
     def test_positive_evidence_cannot_change_the_pinned_sam_collection_threshold(self):
         source = inspect.getsource(Sam3ImageProcessor.load)

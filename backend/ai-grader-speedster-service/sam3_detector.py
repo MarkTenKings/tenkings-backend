@@ -60,7 +60,6 @@ MIN_SAM_AREA_MM2 = 0.02
 MAX_SAM_AREA_MM2 = 120.0
 PX_PER_MM = GRID_WIDTH / 63.5
 FINGERPRINT_SIZE = 32
-LEARNING_SCALE = 0.06
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 SMART_MARK_PROMPT_MAX_POSITIVE_POINTS = 16
@@ -643,44 +642,6 @@ def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
     ]
 
 
-def learning_adjustment(
-    fingerprint: Optional[list[float]], defect_type: str, learning_bank: Optional[dict]
-) -> float:
-    if fingerprint is None or not isinstance(learning_bank, dict):
-        return 0.0
-    types = learning_bank.get("types")
-    entry = types.get(defect_type) if isinstance(types, dict) else None
-    if not isinstance(entry, dict):
-        return 0.0
-
-    vector = np.asarray(fingerprint, dtype=np.float32)
-
-    def similarity(key: str) -> float:
-        prototype = entry.get(key)
-        if not isinstance(prototype, dict) or not prototype.get("count"):
-            return 0.0
-        values = prototype.get("sum")
-        if not isinstance(values, list) or len(values) != len(vector):
-            return 0.0
-        candidate = np.asarray(values, dtype=np.float32)
-        norm = float(np.linalg.norm(candidate))
-        if not np.isfinite(norm) or norm <= 0:
-            return 0.0
-        return max(0.0, float(np.dot(vector, candidate / norm)))
-
-    return round(
-        float(
-            np.clip(
-                LEARNING_SCALE
-                * (similarity("positive") - similarity("negative")),
-                -LEARNING_SCALE,
-                LEARNING_SCALE,
-            )
-        ),
-        6,
-    )
-
-
 class Sam3ImageProcessor:
     """Lazily loads one official SAM 3 model and reuses its image embedding."""
 
@@ -985,15 +946,9 @@ class Sam3ImageProcessor:
                     memory_action = diagnostic["action"]
                     memory_policy = "SAM_MEMORY_V2"
                 else:
-                    adjustment = learning_adjustment(
-                        fingerprint, candidate["defectType"], learning_bank
-                    )
+                    adjustment = 0.0
                     memory_action = "retained"
-                    memory_policy = (
-                        "LEGACY_MEMORY_V1"
-                        if isinstance(learning_bank, dict)
-                        else "NONE"
-                    )
+                    memory_policy = "NONE"
                 adjusted_confidence = float(
                     np.clip(raw_confidence + adjustment, 0, 1)
                 )
@@ -1091,6 +1046,10 @@ class Sam3ImageProcessor:
         if allowed_mask.shape != (image_height, image_width):
             raise ValueError("Detector material mask does not match the image")
         prepared_v2 = prepare_bank_v2(learning_bank)
+        if learning_bank is not None and (
+            prepared_v2 is None or prepared_v2.status != "calibrated"
+        ):
+            raise ValueError("Legacy or malformed Memory is not accepted by the current detector. Supply Memory V2 or no Memory.")
         rgb_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         with self._lock:
             processor = self.load()
@@ -1136,6 +1095,10 @@ class Sam3ImageProcessor:
         """Rank side-wide memory matches before at most three prompts per type."""
 
         prepared_v2 = prepare_bank_v2(learning_bank)
+        if learning_bank is not None and (
+            prepared_v2 is None or prepared_v2.status != "calibrated"
+        ):
+            raise ValueError("Legacy or malformed Memory is not accepted by the current detector. Supply Memory V2 or no Memory.")
         with self._lock:
             processor = self.load()
             with self._autocast():
@@ -1846,7 +1809,6 @@ def measure_marks(
 
     trace_findings = []
     detector_mask_findings = []
-    legacy_findings = []
     frozen_findings = []
     trace_errors = []
     for finding in findings or []:
@@ -1894,9 +1856,9 @@ def measure_marks(
                 }
             )
         elif finding.get("canonicalContour") is not None:
-            # Contour-era active findings remain dual-readable and participate
-            # in the same overlap pass. Published history never calls /measure.
-            legacy_findings.append(finding)
+            raise ValueError(
+                "Contour-only historical findings cannot enter a current grade. Rerun the current detector to create exact mask evidence."
+            )
 
     trace_sources = {finding["id"]: finding for finding, _mask in trace_findings}
     for mark, _mask in exact_marks:
@@ -1973,12 +1935,6 @@ def measure_marks(
         for finding, mask in detector_mask_findings
     ] + [
         {
-            **finding,
-            "confidence": float(finding["confidence"]),
-        }
-        for finding in legacy_findings
-    ] + [
-        {
             **{
                 key: value
                 for key, value in finding.items()
@@ -2031,23 +1987,6 @@ def measure_marks(
             )
         )
         appended_trace_ids.add(finding["id"])
-    for finding in legacy_findings:
-        if finding["id"] in measured_ids:
-            continue
-        defects.append(
-            {
-                **finding,
-                "measurement": {
-                    "widthMm": 0.0,
-                    "heightMm": 0.0,
-                    "areaMm2": 0.0,
-                    "zonePercent": 0.0,
-                    "multiplier": DEFECT_MULTIPLIERS[finding["defectType"]],
-                    "weightedAreaMm2": 0.0,
-                    "subgradeEffect": 0.0,
-                },
-            }
-        )
     defects.extend(frozen_findings)
     return {
         "defects": defects,

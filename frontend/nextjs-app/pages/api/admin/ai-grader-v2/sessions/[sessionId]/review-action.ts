@@ -13,6 +13,7 @@ import {
   boundedDuration,
   boundedWorkerIdentity,
   SPEEDSTER_DETECT_TRANSPORT_FIELD,
+  speedsterDetectFailureEvidence,
   SpeedsterDetectUpstreamError,
 } from "../../../../../../lib/server/aiGraderV2DetectTransport";
 import {
@@ -176,12 +177,17 @@ export async function fetchSpeedsterDetectUpstream(
   const upstreamDurationMs = boundedDuration(now() - startedAt);
   const workerIdentity = suppliedWorkerIdentity(response.headers, payload);
   if (!response.ok) {
+    const failureEvidence = speedsterDetectFailureEvidence(payload, {
+      side: body.side,
+      requestTraceId: body.requestTraceId,
+    });
     throw new SpeedsterDetectUpstreamError({
       side: body.side,
       requestTraceId: body.requestTraceId,
       upstreamStatus: response.status,
       workerIdentity,
       upstreamDurationMs,
+      failureEvidence,
     });
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;

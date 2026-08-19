@@ -136,9 +136,9 @@ const colorResult = (
   matColor: "BLACK" | "WHITE",
 ): SpeedsterColorGeometryProposal => ({
   version: "speedster-color-geometry-proposal-v1",
-  engineVersion: "speedster-color-geometry-v1",
+  engineVersion: "speedster-color-geometry-v2",
   authority: "PROPOSER_ONLY",
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+  policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
   mode,
   outcome: "ACCEPTED",
   matColor,
@@ -209,6 +209,7 @@ function mapBindingFixture() {
     createdByUserId: "admin-1",
     cardProfile: "SPORTS",
     workflowState: "DRAFT",
+    updatedAt: new Date("2026-08-18T12:00:00.000Z"),
     identity: {
       playerName: "Nick Bosa",
       year: "2021",
@@ -233,12 +234,7 @@ function mapBindingFixture() {
       score: 1,
     })),
     projectedDesignBoundary: { kind: "QUAD" as const, points: mapBindingQuad },
-    projectedZones: [{
-      id: "zone-1",
-      label: "Printed text",
-      semanticType: "PRINT_TEXT" as const,
-      polygon: mapBindingQuad,
-    }],
+    projectedZones: [mapBindingV2Zone],
   });
   const frontRegistration = registration("front");
   const backRegistration = registration("back");
@@ -257,7 +253,7 @@ function mapBindingFixture() {
     capture,
     binding: {
       revisionId: "map-revision-1",
-      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION,
+      filterPolicyVersion: SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2,
       registration: { front: authorize(frontRegistration), back: authorize(backRegistration) },
     },
   };
@@ -266,7 +262,7 @@ function mapBindingFixture() {
 function appliedMapFixture(
   fixture: ReturnType<typeof mapBindingFixture>,
   appliedScope: "EXACT" | "FAMILY" = "EXACT",
-  schemaVersion: "V1" | "V2" = "V1",
+  schemaVersion: "V1" | "V2" = "V2",
 ) {
   const identity = fixture.session.identity;
   const matchKey = appliedScope === "EXACT"
@@ -476,6 +472,18 @@ test("proxy rejects accepted color authority when returned geometry differs from
       colorGeometry: printed,
     }, { matColor: "WHITE" }),
     /does not match its accepted color proposal/,
+  );
+  const retiredPrinted = {
+    ...printed,
+    engineVersion: "speedster-color-geometry-v1",
+    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+  } as SpeedsterColorGeometryProposal;
+  assert.throws(
+    () => sanitizeSpeedsterPreparePayload({
+      borders: mapBindingQuad,
+      colorGeometry: retiredPrinted,
+    }, { matColor: "WHITE" }),
+    /retired Color Geometry engine.*no old-engine result was accepted/i,
   );
 });
 
@@ -777,18 +785,12 @@ test("registration attempt audit deadline is fail-open for a never-settling writ
   }
 });
 
-test("missing stale-client orchestration remains provider-compatible and is never mislabeled client-reported", () => {
-  assert.deepEqual(resolveSpeedsterMapRegistrationOrchestration(
+test("missing stale-client orchestration fails clearly instead of synthesizing compatibility metadata", () => {
+  assert.throws(() => resolveSpeedsterMapRegistrationOrchestration(
     undefined,
     "AUTOMATIC",
     "11111111-1111-4111-8111-111111111111",
-  ), {
-    operationId: "11111111-1111-4111-8111-111111111111",
-    attemptNumber: 1,
-    trigger: "INITIAL",
-    successfulSiblingPreservedAtAttemptStart: false,
-    orchestrationMetadataSource: "SERVER_STALE_CLIENT_COMPATIBILITY",
-  });
+  ), /stale.*Refresh.*no compatibility geometry was synthesized/i);
   assert.equal(resolveSpeedsterMapRegistrationOrchestration(
     {
       operationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1105,7 +1107,7 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
     fixture.capture.back.inspectionStorageKey,
   ].sort());
   assert.equal(saves[0]?.mapRevisionId, fixture.binding.revisionId);
-  assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION);
+  assert.equal(saves[0]?.mapFilterPolicyVersion, SPEEDSTER_MAP_FILTER_POLICY_VERSION_V2);
   const canonicalCapture = structuredClone(fixture.capture);
   delete (canonicalCapture.front as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
   delete (canonicalCapture.back as { colorGeometryEvidence?: unknown }).colorGeometryEvidence;
@@ -1533,7 +1535,7 @@ test("capture PATCH blocks when selected-map registration is omitted", async () 
   assert.equal(result.state.status, 409);
   assert.equal(saves.length, 0);
   assert.equal(events.length, 0);
-  assert.match(JSON.stringify(result.state.body), /Mapless capture is blocked/);
+  assert.match(JSON.stringify(result.state.body), /explicitly record human review without the map/);
 });
 
 test("capture PATCH blocks when effective map lookup fails before binding", async () => {
@@ -1618,6 +1620,104 @@ test("capture PATCH keeps the unchanged no-map path only after effective server 
   assert.equal(result.state.status, 200);
   assert.equal(validationCalls, 1);
   assert.equal(updateCalls, 1);
+});
+
+test("durable human review commits without a map, preserves the exact failure, and rejects a stale map binding", async () => {
+  const fixture = mapBindingFixture();
+  const failure = {
+    attemptId: "attempt-registration-failure",
+    recordedAt: "2026-08-18T11:55:00.000Z",
+    status: "REGISTRATION_BLOCKED" as const,
+    failureCode: "CARD_MAP_REGISTRATION_BLOCKED",
+    message: "Back registration failed.",
+    revision: {
+      revisionId: fixture.binding.revisionId,
+      revisionHash: mapBindingSha(fixture.binding.revisionId),
+      version: 1,
+      scope: "EXACT" as const,
+      name: "2021 Panini Obsidian Orange · Nick Bosa #12",
+    },
+    registrationOperationId: "operation-registration-failure",
+    registrationFailures: [{
+      side: "BACK" as const,
+      source: "PROVIDER_GATEWAY" as const,
+      code: "PROVIDER_GATEWAY_HTTP_502",
+      httpStatus: 502,
+      requestId: "request-registration-failure",
+    }],
+  };
+  const human = {
+    ...failure,
+    attemptId: "attempt-human-review",
+    recordedAt: "2026-08-18T11:56:00.000Z",
+    status: "HUMAN_REVIEW_WITHOUT_MAP" as const,
+    message: "Operator explicitly selected human review.",
+    operatorDecisionId: "0d654ba6-1df3-47a0-9f30-8f0a4e719206",
+  };
+  const serverSession = {
+    ...fixture.session,
+    capture: {
+      mapAuthority: {
+        version: "speedster-map-authority-evidence-v1",
+        current: human,
+        history: [failure, human],
+      },
+    },
+  };
+  let mapLookups = 0;
+  const validationDependencies = {
+    async loadActiveMap() { mapLookups += 1; return appliedMapFixture(fixture); },
+    async hashEvidence() { throw new Error("not reached"); },
+  };
+  const validated = await validateSpeedsterSubmittedMapBinding(
+    serverSession,
+    undefined,
+    fixture.capture,
+    validationDependencies,
+  );
+  assert.equal(validated.mapFailureCode, "MAP_AUTHORITY_HUMAN_REVIEW");
+  assert.equal(validated.appliedMap, null);
+  assert.equal(mapLookups, 0, "the durable decision must not silently retry or apply a map");
+  await assert.rejects(() => validateSpeedsterSubmittedMapBinding(
+    serverSession,
+    fixture.binding,
+    fixture.capture,
+    validationDependencies,
+  ), /explicitly continued without a Card Map.*map binding was submitted/i);
+
+  const saves: Record<string, unknown>[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return serverSession; },
+    async validateMapBinding(session, binding, capture) {
+      return validateSpeedsterSubmittedMapBinding(session, binding, capture, validationDependencies);
+    },
+    async updateSession(_id, _createdByUserId, data, _rows, expectedUpdatedAt) {
+      assert.equal(expectedUpdatedAt, fixture.session.updatedAt);
+      saves.push(data as unknown as Record<string, unknown>);
+      return { ...serverSession, ...data };
+    },
+  });
+  const result = response();
+  await handler(request("PATCH", {
+    workflowState: "CAPTURED",
+    capture: fixture.capture,
+  }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 200);
+  const saved = saves[0];
+  assert.ok(saved);
+  assert.equal(saved.mapRevisionId, undefined);
+  assert.equal(saved.mapRegistration, undefined);
+  const authority = (saved.capture as {
+    mapAuthority: {
+      current: typeof human;
+      history: readonly (typeof failure | typeof human)[];
+    };
+  }).mapAuthority;
+  assert.equal(authority.current.status, "HUMAN_REVIEW_WITHOUT_MAP");
+  assert.equal(authority.current.operatorDecisionId, human.operatorDecisionId);
+  assert.deepEqual(authority.current.registrationFailures, failure.registrationFailures);
+  assert.deepEqual(authority.history.slice(0, 2), [failure, human]);
 });
 
 test("capture PATCH rejects either side when registration physical geometry is from another submitted capture", async () => {
@@ -1780,6 +1880,8 @@ test("review changes use the one owned review-action route and never call client
   assert.match(action, /const \{ finalTrace, \.\.\.trace \} = action\.trace/);
   assert.match(action, /traceWire: encodeSpeedsterTraceBitmapWireV1/);
   assert.match(page, /Scanning FRONT, then BACK/);
+  assert.match(page, /initializeFailed \? "Server scan failed\." : "Scanning FRONT, then BACK\."/);
+  assert.match(page, /Your capture, geometry, Card Map work, and any successful side checkpoint remain preserved/);
   assert.match(page, /one automatic RunPod HTTP 502 retry/);
   assert.match(page, /retryRequestId/);
 
@@ -1845,6 +1947,16 @@ test("review CAS is short, serializable, and compares the exact persisted update
   assert.ok(evidenceInsert < reviewUpdate);
   assert.ok(evidenceInsert < filterDecisionInsert);
   assert.match(route, /inserted !== data\.detectorEvidenceEvents\.length/);
+});
+
+test("final capture persistence compares the exact draft revision before replacing authority evidence", () => {
+  const route = readFileSync(
+    fileURLToPath(new URL("../pages/api/admin/ai-grader-v2/sessions/[sessionId].ts", import.meta.url)),
+    "utf8",
+  );
+  assert.match(route, /updatedAt: expectedUpdatedAt/);
+  assert.match(route, /colorGeometryEvidence, existing\.updatedAt/);
+  assert.match(route, /if \(updated\.count !== 1\) return null/);
 });
 
 test("review presents the exact detector mask as authority before any contour projection", () => {
@@ -2148,7 +2260,13 @@ test("map registration failure diagnostics preserve off-card proposals but rejec
 test("server parser accepts validated v2 automatic and human registrations while legacy v1 stays compatible", () => {
   const fixture = mapBindingFixture();
   const { serverReceipt: _receipt, ...legacy } = fixture.binding.registration.front;
-  assert.equal(parseSpeedsterMapRegistration(legacy, {
+  const legacyOnly = {
+    ...legacy,
+    projectedZones: legacy.projectedZones.map(({ id, label, semanticType, polygon }) => ({
+      id, label, semanticType, polygon,
+    })),
+  };
+  assert.equal(parseSpeedsterMapRegistration(legacyOnly, {
     side: "FRONT", mapRevisionId: "map-revision-1",
   }).version, "opencv-human-anchor-registration-v1");
   const v2 = {
@@ -2168,7 +2286,12 @@ test("server parser accepts validated v2 automatic and human registrations while
       maxReprojectionErrorPx: 0,
     },
   };
-  const parsed = parseSpeedsterMapRegistration(v2, { side: "FRONT", mapRevisionId: "map-revision-1" });
+  const v2Expected = {
+    side: "FRONT" as const,
+    mapRevisionId: "map-revision-1",
+    zones: [mapBindingV2Zone],
+  };
+  const parsed = parseSpeedsterMapRegistration(v2, v2Expected);
   assert.equal(parsed.version, "opencv-redundant-ransac-registration-v2");
   assert.equal(parsed.acceptance?.mode, "HUMAN_CONFIRMED");
   assert.equal(parsed.candidateProvenance?.lessonId, "lesson-1");
@@ -2189,7 +2312,7 @@ test("server parser accepts validated v2 automatic and human registrations while
     },
   };
   assert.equal(parseSpeedsterMapRegistration(
-    automatic, { side: "FRONT", mapRevisionId: "map-revision-1" },
+    automatic, v2Expected,
   ).acceptance?.mode, "AUTOMATIC_RANSAC");
   assert.throws(() => parseSpeedsterMapRegistration({
     ...automatic,
@@ -2198,17 +2321,17 @@ test("server parser accepts validated v2 automatic and human registrations while
       inlierCount: 9,
       perAnchorInlierCounts: [2, 2, 2, 3],
     },
-  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /does not satisfy/);
+  }, v2Expected), /does not satisfy/);
   assert.throws(() => parseSpeedsterMapRegistration({
     ...v2,
     acceptance: { ...v2.acceptance, policyVersion: "client-policy" },
-  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /acceptance policy identity/);
+  }, v2Expected), /acceptance policy identity/);
   assert.throws(() => parseSpeedsterMapRegistration({
     ...automatic,
     anchors: automatic.anchors.map((anchor, index) => (
       index === 0 ? { ...anchor, score: 0.249 } : anchor
     )),
-  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /score is invalid/);
+  }, v2Expected), /score is invalid/);
   assert.throws(() => parseSpeedsterMapRegistration({
     ...automatic,
     homography: [-1, 0, 1, 0, 1, 0, 0, 0, 1],
@@ -2216,12 +2339,18 @@ test("server parser accepts validated v2 automatic and human registrations while
       ...anchor,
       locatedPoint: { x: 1 - anchor.expectedPoint.x, y: anchor.expectedPoint.y },
     })),
-  }, { side: "FRONT", mapRevisionId: "map-revision-1" }), /reverses or folds orientation/);
+  }, v2Expected), /reverses or folds orientation/);
 });
 
 test("server parser accepts only exact legacy or immutable-matching complete V2 projected-zone shapes", () => {
   const fixture = mapBindingFixture();
   const { serverReceipt: _receipt, ...legacy } = fixture.binding.registration.front;
+  const legacyOnly = {
+    ...legacy,
+    projectedZones: legacy.projectedZones.map(({ id, label, semanticType, polygon }) => ({
+      id, label, semanticType, polygon,
+    })),
+  };
   const rawV2 = v2Registration(legacy as typeof fixture.binding.registration.front);
   const expected = {
     side: "FRONT" as const,
@@ -2281,7 +2410,7 @@ test("server parser accepts only exact legacy or immutable-matching complete V2 
     semanticType: mapBindingV2Zone.semanticType,
     polygon: mapBindingV2Zone.polygon,
   };
-  assert.deepEqual(parseSpeedsterMapRegistration(legacy, {
+  assert.deepEqual(parseSpeedsterMapRegistration(legacyOnly, {
     side: "FRONT",
     mapRevisionId: fixture.binding.revisionId,
     zones: [expectedLegacyZone],

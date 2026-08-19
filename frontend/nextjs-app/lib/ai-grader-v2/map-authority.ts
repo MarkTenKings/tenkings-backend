@@ -30,12 +30,13 @@ type SpeedsterMapAuthorityRevision = Readonly<{
 export type SpeedsterMapAuthorityEvent = Readonly<{
   attemptId: string;
   recordedAt: string;
-  status: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED" | "APPLIED";
+  status: "LOADED" | "NO_MAP" | "LOOKUP_FAILED" | "INTEGRITY_ERROR" | "REGISTRATION_BLOCKED" | "HUMAN_REVIEW_WITHOUT_MAP" | "APPLIED";
   failureCode: string | null;
   message: string;
   revision: SpeedsterMapAuthorityRevision | null;
   registrationOperationId: string | null;
   registrationFailures: readonly SpeedsterMapAuthorityFailure[];
+  operatorDecisionId?: string | null;
 }>;
 
 export type SpeedsterMapAuthorityEvidence = Readonly<{

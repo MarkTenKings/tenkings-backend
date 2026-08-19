@@ -1,8 +1,16 @@
 import { sanitizeSpeedsterUnitQuad } from "./geometry";
 import type { SpeedsterCardSide, SpeedsterQuad } from "./contracts";
 
-export const SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION = "speedster-color-geometry-v1" as const;
+export const SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION = "speedster-color-geometry-v2" as const;
+export const SPEEDSTER_COLOR_GEOMETRY_LEGACY_ENGINE_VERSION = "speedster-color-geometry-v1" as const;
 export const SPEEDSTER_COLOR_GEOMETRY_AUTHORITY = "PROPOSER_ONLY" as const;
+
+export type SpeedsterColorGeometryEngineVersion =
+  | typeof SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION
+  | typeof SPEEDSTER_COLOR_GEOMETRY_LEGACY_ENGINE_VERSION;
+export type SpeedsterColorGeometryPolicyProvenance =
+  | "OWNER_APPROVED_VISIBLE_OUTLINE_V2"
+  | "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
 
 export type SpeedsterColorGeometryMode = "PHYSICAL_OUTER" | "PRINTED_FRAME";
 export type SpeedsterColorGeometryOutcome = "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
@@ -60,9 +68,9 @@ export type SpeedsterColorGeometryDiagnosticCandidate = Readonly<{
 
 export type SpeedsterColorGeometryProposal = Readonly<{
   version: "speedster-color-geometry-proposal-v1";
-  engineVersion: typeof SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION;
+  engineVersion: SpeedsterColorGeometryEngineVersion;
   authority: typeof SPEEDSTER_COLOR_GEOMETRY_AUTHORITY;
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  policyProvenance: SpeedsterColorGeometryPolicyProvenance;
   mode: SpeedsterColorGeometryMode;
   outcome: SpeedsterColorGeometryOutcome;
   matColor: SpeedsterMatColor;
@@ -114,11 +122,14 @@ export function parseSpeedsterColorGeometryProposal(
   expected?: Readonly<{ mode?: SpeedsterColorGeometryMode; matColor?: SpeedsterMatColor }>,
 ): SpeedsterColorGeometryProposal {
   const candidate = record(value);
+  const legacyIdentity = candidate?.engineVersion === SPEEDSTER_COLOR_GEOMETRY_LEGACY_ENGINE_VERSION
+    && candidate.policyProvenance === "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED";
+  const currentIdentity = candidate?.engineVersion === SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION
+    && candidate.policyProvenance === "OWNER_APPROVED_VISIBLE_OUTLINE_V2";
   if (!candidate
     || candidate.version !== "speedster-color-geometry-proposal-v1"
-    || candidate.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION
+    || (!legacyIdentity && !currentIdentity)
     || candidate.authority !== SPEEDSTER_COLOR_GEOMETRY_AUTHORITY
-    || candidate.policyProvenance !== "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED"
     || !["PHYSICAL_OUTER", "PRINTED_FRAME"].includes(String(candidate.mode))
     || !["ACCEPTED", "INSUFFICIENT_EVIDENCE", "NOT_APPLICABLE", "ABSTAIN"].includes(String(candidate.outcome))
     || !["BLACK", "WHITE", "MAGENTA"].includes(String(candidate.matColor))
@@ -248,31 +259,34 @@ export function parseSpeedsterColorGeometryProposal(
   } else if (candidate.diagnosticCandidate !== null && candidate.diagnosticCandidate !== undefined) {
     throw new Error("Color geometry diagnostic candidate is malformed.");
   }
-  if (candidate.outcome === "ACCEPTED" && (
+  const currentPhysicalOutline = currentIdentity && candidate.mode === "PHYSICAL_OUTER";
+  const acceptedEvidenceInvalid = candidate.outcome === "ACCEPTED" && (
     ambiguityCandidateCount < 1
-    || ambiguityValue.ambiguous
-    || ratioImpliesAmbiguity
     || advisoryValue !== null
-    || Object.values(sideEvidence).some((side) => (
-      side.sampleCount < 1
-      || side.candidateCount < 1
-      || side.medianContrastDeltaE < fixedPolicy.contrastFloorDeltaE
-      || side.supportFraction < fixedPolicy.minimumSideSupport
-      || side.ambiguous
-    ))
-    || candidate.mode === "PHYSICAL_OUTER" && candidate.matColor === "BLACK"
-      && Object.values(sideEvidence).some((side) => (
-        side.medianLightnessContrast === undefined
-        || side.medianLightnessContrast < 20
+    || Object.values(sideEvidence).some((side) => side.sampleCount < 1 || side.candidateCount < 1)
+    || !currentPhysicalOutline && (
+      ambiguityValue.ambiguous
+      || ratioImpliesAmbiguity
+      || Object.values(sideEvidence).some((side) => (
+        side.medianContrastDeltaE < fixedPolicy.contrastFloorDeltaE
+        || side.supportFraction < fixedPolicy.minimumSideSupport
+        || side.ambiguous
       ))
-  )) {
-    throw new Error("Accepted color geometry violates the fixed v1 acceptance policy.");
+      || legacyIdentity && candidate.mode === "PHYSICAL_OUTER" && candidate.matColor === "BLACK"
+        && Object.values(sideEvidence).some((side) => (
+          side.medianLightnessContrast === undefined
+          || side.medianLightnessContrast < 20
+        ))
+    )
+  );
+  if (acceptedEvidenceInvalid) {
+    throw new Error("Accepted color geometry violates its declared engine policy.");
   }
   return {
     version: "speedster-color-geometry-proposal-v1",
-    engineVersion: SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
+    engineVersion: candidate.engineVersion as SpeedsterColorGeometryEngineVersion,
     authority: SPEEDSTER_COLOR_GEOMETRY_AUTHORITY,
-    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
+    policyProvenance: candidate.policyProvenance as SpeedsterColorGeometryPolicyProvenance,
     mode: candidate.mode as SpeedsterColorGeometryMode,
     outcome: candidate.outcome as SpeedsterColorGeometryOutcome,
     matColor: candidate.matColor as SpeedsterMatColor,
@@ -327,8 +341,8 @@ export function speedsterColorPhysicalDraftState(
 /** An accepted printed frame may seed the first editable CenteringAssist draft. */
 export function speedsterColorCenteringDraft(
   color: SpeedsterColorGeometryProposal,
-  unchangedManualDraft: SpeedsterQuad,
-): SpeedsterQuad {
+  unchangedManualDraft: SpeedsterQuad | null,
+): SpeedsterQuad | null {
   return color.mode === "PRINTED_FRAME" && color.outcome === "ACCEPTED" && color.proposal
     ? color.proposal
     : unchangedManualDraft;

@@ -186,7 +186,7 @@ test("admin polling returns only its active draft pair", async () => {
   assert.equal(crossAdmin.state.status, 404);
 });
 
-test("ready-pair resolution uses exact versioned objects and requires an explicit exact-version legacy choice", async () => {
+test("ready-pair resolution uses exact versioned objects and never falls back to legacy fixed keys", async () => {
   const versionedFront = speedsterIphoneStorageKey("admin-1", sessionId, "FRONT", 4, FRONT_CHECKSUM);
   const versionedBack = speedsterIphoneStorageKey("admin-1", sessionId, "BACK", 4, BACK_CHECKSUM);
   const versioned = await resolveSpeedsterIphoneReadyPair({
@@ -206,26 +206,9 @@ test("ready-pair resolution uses exact versioned objects and requires an explici
     readyVersion: 3,
     storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
   }), (error: unknown) => {
-    assert.match(error instanceof Error ? error.message : "", /Explicit operator confirmation/);
-    assert.equal((error as { readyVersion?: number }).readyVersion, 3);
+    assert.match(error instanceof Error ? error.message : "", /cannot enter a new grade/);
     return true;
   });
-  const legacy = await resolveSpeedsterIphoneReadyPair({
-    userId: "admin-1",
-    sessionId,
-    readyVersion: 3,
-    acceptedLegacyReadyVersion: 3,
-    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
-  });
-  assert.deepEqual(legacy, { front: legacyFront, back: legacyBack, storageGeneration: "LEGACY" });
-
-  await assert.rejects(resolveSpeedsterIphoneReadyPair({
-    userId: "admin-1",
-    sessionId,
-    readyVersion: 3,
-    acceptedLegacyReadyVersion: 2,
-    storageObjectExists: async (key) => key === legacyFront || key === legacyBack,
-  }), /Explicit operator confirmation/);
 
   await assert.rejects(resolveSpeedsterIphoneReadyPair({
     userId: "admin-1",
@@ -235,7 +218,7 @@ test("ready-pair resolution uses exact versioned objects and requires an explici
   }), /versioned iPhone capture pair is incomplete/);
 });
 
-test("admin polling discloses a complete legacy pair without signing until the exact ready version is accepted", async () => {
+test("admin polling never signs a legacy pair for a new grade", async () => {
   let signCalls = 0;
   const legacyFront = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "FRONT");
   const legacyBack = legacySpeedsterOriginalStorageKey("admin-1", sessionId, "BACK");
@@ -262,10 +245,7 @@ test("admin polling discloses a complete legacy pair without signing until the e
   await handler(request("GET", undefined, { sessionId }), disclosed.res);
   assert.equal(disclosed.state.status, 409);
   assert.deepEqual(disclosed.state.body, {
-    message: "A complete legacy iPhone pair exists for ready version 7. Explicit operator confirmation is required before it can be selected.",
-    readyVersion: 7,
-    legacyPairAvailable: true,
-    storageGeneration: "LEGACY",
+    message: "This iPhone ready version has no complete current, versioned Front + Back pair. Legacy fixed-key photos remain historical evidence and cannot enter a new grade; capture a new pair.",
   });
   assert.equal(signCalls, 0);
 
@@ -274,13 +254,10 @@ test("admin polling discloses a complete legacy pair without signing until the e
   assert.equal(wrong.state.status, 409);
   assert.equal(signCalls, 0);
 
-  const accepted = response();
-  await handler(request("GET", undefined, { sessionId, acceptLegacyReadyVersion: "7" }), accepted.res);
-  assert.equal(accepted.state.status, 200);
-  assert.equal(accepted.state.body.storageGeneration, "LEGACY");
-  assert.equal(accepted.state.body.front.storageKey, legacyFront);
-  assert.equal(accepted.state.body.back.storageKey, legacyBack);
-  assert.equal(signCalls, 2);
+  const attemptedOverride = response();
+  await handler(request("GET", undefined, { sessionId, acceptLegacyReadyVersion: "7" }), attemptedOverride.res);
+  assert.equal(attemptedOverride.state.status, 409);
+  assert.equal(signCalls, 0);
 });
 
 test("Shortcut PLAN and COMPLETE publish a new non-overwriting object pair per uploadVersion", async () => {

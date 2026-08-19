@@ -333,7 +333,7 @@ class TraceMeasurementTests(unittest.TestCase):
             places=10,
         )
 
-    def test_legacy_cross_zone_ids_append_without_rewriting_existing_zone_suffix(self):
+    def test_exact_cross_zone_ids_append_without_rewriting_existing_zone_suffix(self):
         existing = {
             "id": "legacy:CORNERS",
             "side": "FRONT",
@@ -342,6 +342,7 @@ class TraceMeasurementTests(unittest.TestCase):
             "origin": "DETECTOR",
             "confidence": 0.8,
             "canonicalContour": contour_rectangle(80, 0, 120, 140),
+            "detectorMask": encode_trace_rle(trace_rectangle(80, 0, 120, 140)),
             "sourceViewId": "FRONT:ORIGINAL",
             "supportingViewIds": [],
             "reviewResult": "ACCEPTED",
@@ -354,7 +355,7 @@ class TraceMeasurementTests(unittest.TestCase):
             ["legacy:CORNERS", "legacy:CORNERS:EDGES", "legacy:CORNERS:SURFACE"],
         )
 
-    def test_explicit_null_final_trace_without_provenance_is_legacy_contour(self):
+    def test_explicit_null_final_trace_without_provenance_rejects_legacy_contour(self):
         legacy = {
             "id": "nullable-legacy:SURFACE",
             "side": "BACK",
@@ -368,13 +369,13 @@ class TraceMeasurementTests(unittest.TestCase):
             "finalTrace": None,
         }
 
-        measured = measure_marks([], "BACK", "SQUARE", findings=[legacy])
+        with self.assertRaisesRegex(
+            ValueError,
+            "Contour-only historical findings cannot enter a current grade",
+        ):
+            measure_marks([], "BACK", "SQUARE", findings=[legacy])
 
-        self.assertNotIn("traceErrors", measured)
-        self.assertEqual([finding["id"] for finding in measured["defects"]], [legacy["id"]])
-        self.assertGreater(measured["defects"][0]["measurement"]["areaMm2"], 0)
-
-    def test_exact_mark_overlapping_contour_finding_is_aggregated_once(self):
+    def test_exact_mark_overlapping_detector_mask_finding_is_aggregated_once(self):
         existing = {
             "id": "memory-contour:SURFACE",
             "side": "FRONT",
@@ -384,6 +385,7 @@ class TraceMeasurementTests(unittest.TestCase):
             "origin": "MEMORY",
             "confidence": 0.91,
             "canonicalContour": contour_rectangle(300, 500, 360, 560),
+            "detectorMask": encode_trace_rle(trace_rectangle(300, 500, 360, 560)),
             "sourceViewId": "FRONT:ORIGINAL",
             "supportingViewIds": [],
             "reviewResult": "TYPE_CORRECTED",
@@ -452,6 +454,7 @@ class TraceMeasurementTests(unittest.TestCase):
             "origin": "DETECTOR",
             "confidence": 0.8,
             "canonicalContour": contour_rectangle(300, 500, 330, 530),
+            "detectorMask": encode_trace_rle(trace_rectangle(300, 500, 330, 530)),
             "sourceViewId": "BACK:ORIGINAL",
             "supportingViewIds": [],
             "reviewResult": "ACCEPTED",
@@ -624,7 +627,7 @@ class TraceMeasurementTests(unittest.TestCase):
         ))
         self.assertEqual(explicit_null, {"defects": []})
 
-    def test_active_contour_finding_with_measurement_is_recomputed_with_provenance(self):
+    def test_active_detector_mask_finding_with_measurement_is_recomputed_with_provenance(self):
         active = {
             "id": "contour-active:SURFACE",
             "side": "BACK",
@@ -632,6 +635,7 @@ class TraceMeasurementTests(unittest.TestCase):
             "defectType": "FRAYING",
             "confidence": 0.81,
             "canonicalContour": contour_rectangle(300, 500, 340, 540),
+            "detectorMask": encode_trace_rle(trace_rectangle(300, 500, 340, 540)),
             "sourceViewId": "BACK:ORIGINAL",
             "supportingViewIds": [],
             "reviewResult": "ACCEPTED",
