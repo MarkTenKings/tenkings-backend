@@ -13,21 +13,23 @@ BEGIN
   END IF;
   SELECT count(*) INTO missing
     FROM (VALUES
-      ('AiGraderV2ColorGeometryEvidence_pkey'),
-      ('AiGraderV2ColorGeometryEvidence_side_check'),
-      ('AiGraderV2ColorGeometryEvidence_mode_check'),
-      ('AiGraderV2ColorGeometryEvidence_matColor_check'),
-      ('AiGraderV2ColorGeometryEvidence_outcome_check'),
-      ('AiGraderV2ColorGeometryEvidence_engineVersion_check'),
-      ('AiGraderV2ColorGeometryEvidence_policyProvenance_check'),
-      ('AiGraderV2ColorGeometryEvidence_sourceImageSha256_check'),
-      ('AiGraderV2ColorGeometryEvidence_proposal_consistency_check'),
-      ('AiGraderV2ColorGeometryEvidence_sessionId_fkey')
-    ) expected(name)
+      ('AiGraderV2ColorGeometryEvidence_pkey', true),
+      ('AiGraderV2ColorGeometryEvidence_side_check', true),
+      ('AiGraderV2ColorGeometryEvidence_mode_check', true),
+      ('AiGraderV2ColorGeometryEvidence_matColor_check', true),
+      ('AiGraderV2ColorGeometryEvidence_outcome_check', true),
+      -- These v2-only checks intentionally remain NOT VALID so immutable
+      -- historical v1 evidence can remain while every new row is checked.
+      ('AiGraderV2ColorGeometryEvidence_engineVersion_check', false),
+      ('AiGraderV2ColorGeometryEvidence_policyProvenance_check', false),
+      ('AiGraderV2ColorGeometryEvidence_sourceImageSha256_check', true),
+      ('AiGraderV2ColorGeometryEvidence_proposal_consistency_check', true),
+      ('AiGraderV2ColorGeometryEvidence_sessionId_fkey', true)
+    ) expected(name, validated)
     LEFT JOIN pg_constraint actual
       ON actual.conname = expected.name
      AND actual.conrelid = 'public."AiGraderV2ColorGeometryEvidence"'::regclass
-   WHERE actual.oid IS NULL OR NOT actual.convalidated;
+   WHERE actual.oid IS NULL OR actual.convalidated IS DISTINCT FROM expected.validated;
   IF missing <> 0 THEN RAISE EXCEPTION 'Color Geometry constraints missing: %', missing; END IF;
 
   IF NOT EXISTS (
@@ -42,10 +44,13 @@ BEGIN
   ) THEN RAISE EXCEPTION 'Color Geometry append-only trigger is missing'; END IF;
 
   IF (SELECT count(*) FROM "_prisma_migrations"
-      WHERE "migration_name" = '20260816100000_speedster_color_geometry_evidence'
+      WHERE "migration_name" IN (
+          '20260816100000_speedster_color_geometry_evidence',
+          '20260819220000_speedster_color_geometry_v2_constraints'
+        )
         AND "finished_at" IS NOT NULL AND "rolled_back_at" IS NULL
-        AND "logs" IS NULL AND "applied_steps_count" > 0) <> 1 THEN
-    RAISE EXCEPTION 'Color Geometry migration ledger entry is not one clean success';
+        AND "logs" IS NULL AND "applied_steps_count" > 0) <> 2 THEN
+    RAISE EXCEPTION 'Color Geometry migration ledger entries are not two clean successes';
   END IF;
 END
 $catalog$;
@@ -53,11 +58,17 @@ $catalog$;
 INSERT INTO "AiGraderV2Session" (
   "id", "createdByUserId", "cardProfile", "workflowState", "ruleVersion",
   "identity", "capture", "reviewedDefects", "gradeReport", "updatedAt"
-) VALUES (
-  'speedster-color-geometry-validation-session', 'validation-admin', 'POKEMON',
-  'CAPTURED', 'speedster-v2', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb,
-  clock_timestamp()
-);
+) VALUES
+  (
+    'speedster-color-geometry-validation-session', 'validation-admin', 'POKEMON',
+    'CAPTURED', 'speedster-v2', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb,
+    clock_timestamp()
+  ),
+  (
+    'speedster-color-geometry-retired-insert-validation-session', 'validation-admin', 'POKEMON',
+    'CAPTURED', 'speedster-v2', '{}'::jsonb, '{}'::jsonb, '[]'::jsonb, '{}'::jsonb,
+    clock_timestamp()
+  );
 
 INSERT INTO "AiGraderV2ColorGeometryEvidence" (
   "id", "sessionId", "createdByUserId", "side", "mode", "matColor", "outcome",
@@ -65,20 +76,20 @@ INSERT INTO "AiGraderV2ColorGeometryEvidence" (
   "proposal", "confirmedQuad", "diagnostics", "proposalChanged"
 ) VALUES
   ('color-front-physical', 'speedster-color-geometry-validation-session', 'validation-admin',
-   'FRONT', 'PHYSICAL_OUTER', 'BLACK', 'ACCEPTED', 'speedster-color-geometry-v1',
-   'OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED', 'front-original.jpg', repeat('a', 64),
+   'FRONT', 'PHYSICAL_OUTER', 'BLACK', 'ACCEPTED', 'speedster-color-geometry-v2',
+   'OWNER_APPROVED_VISIBLE_OUTLINE_V2', 'front-original.jpg', repeat('a', 64),
    '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '{}'::jsonb, false),
   ('color-front-printed', 'speedster-color-geometry-validation-session', 'validation-admin',
-   'FRONT', 'PRINTED_FRAME', 'WHITE', 'INSUFFICIENT_EVIDENCE', 'speedster-color-geometry-v1',
-   'OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED', 'front-original.jpg', repeat('a', 64),
+   'FRONT', 'PRINTED_FRAME', 'WHITE', 'INSUFFICIENT_EVIDENCE', 'speedster-color-geometry-v2',
+   'OWNER_APPROVED_VISIBLE_OUTLINE_V2', 'front-original.jpg', repeat('a', 64),
    NULL, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '{}'::jsonb, NULL),
   ('color-back-physical', 'speedster-color-geometry-validation-session', 'validation-admin',
-   'BACK', 'PHYSICAL_OUTER', 'MAGENTA', 'NOT_APPLICABLE', 'speedster-color-geometry-v1',
-   'OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED', 'back-original.jpg', repeat('b', 64),
+   'BACK', 'PHYSICAL_OUTER', 'MAGENTA', 'NOT_APPLICABLE', 'speedster-color-geometry-v2',
+   'OWNER_APPROVED_VISIBLE_OUTLINE_V2', 'back-original.jpg', repeat('b', 64),
    NULL, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '{}'::jsonb, NULL),
   ('color-back-printed', 'speedster-color-geometry-validation-session', 'validation-admin',
-   'BACK', 'PRINTED_FRAME', 'BLACK', 'ABSTAIN', 'speedster-color-geometry-v1',
-   'OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED', 'back-original.jpg', repeat('b', 64),
+   'BACK', 'PRINTED_FRAME', 'BLACK', 'ABSTAIN', 'speedster-color-geometry-v2',
+   'OWNER_APPROVED_VISIBLE_OUTLINE_V2', 'back-original.jpg', repeat('b', 64),
    NULL, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '{}'::jsonb, NULL);
 
 DO $behavior$
@@ -88,6 +99,42 @@ BEGIN
       WHERE "sessionId" = 'speedster-color-geometry-validation-session') <> 4 THEN
     RAISE EXCEPTION 'All four Color Geometry outcomes were not retained';
   END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO "AiGraderV2ColorGeometryEvidence" (
+      "id", "sessionId", "createdByUserId", "side", "mode", "matColor", "outcome",
+      "engineVersion", "policyProvenance", "sourceImageStorageKey", "sourceImageSha256",
+      "proposal", "confirmedQuad", "diagnostics", "proposalChanged"
+    ) VALUES (
+      'color-retired-engine', 'speedster-color-geometry-retired-insert-validation-session',
+      'validation-admin', 'FRONT', 'PHYSICAL_OUTER', 'BLACK', 'ACCEPTED',
+      'speedster-color-geometry-v1', 'OWNER_APPROVED_VISIBLE_OUTLINE_V2',
+      'front-original.jpg', repeat('c', 64),
+      '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb,
+      '{}'::jsonb, false
+    );
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Retired Color Geometry engine insert was accepted'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO "AiGraderV2ColorGeometryEvidence" (
+      "id", "sessionId", "createdByUserId", "side", "mode", "matColor", "outcome",
+      "engineVersion", "policyProvenance", "sourceImageStorageKey", "sourceImageSha256",
+      "proposal", "confirmedQuad", "diagnostics", "proposalChanged"
+    ) VALUES (
+      'color-retired-policy', 'speedster-color-geometry-retired-insert-validation-session',
+      'validation-admin', 'FRONT', 'PHYSICAL_OUTER', 'BLACK', 'ACCEPTED',
+      'speedster-color-geometry-v2', 'OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED',
+      'front-original.jpg', repeat('c', 64),
+      '[[0,0],[1,0],[1,1],[0,1]]'::jsonb, '[[0,0],[1,0],[1,1],[0,1]]'::jsonb,
+      '{}'::jsonb, false
+    );
+  EXCEPTION WHEN check_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'Retired Color Geometry policy insert was accepted'; END IF;
 
   rejected := false;
   BEGIN
@@ -137,7 +184,10 @@ DO $cleanup$
 BEGIN
   IF EXISTS (SELECT 1 FROM "AiGraderV2ColorGeometryEvidence" WHERE "id" LIKE 'color-%')
      OR EXISTS (SELECT 1 FROM "AiGraderV2Session"
-                WHERE "id" = 'speedster-color-geometry-validation-session') THEN
+                WHERE "id" IN (
+                  'speedster-color-geometry-validation-session',
+                  'speedster-color-geometry-retired-insert-validation-session'
+                )) THEN
     RAISE EXCEPTION 'Color Geometry validation fixtures survived rollback';
   END IF;
 END
