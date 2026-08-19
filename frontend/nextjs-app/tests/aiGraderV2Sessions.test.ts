@@ -477,13 +477,13 @@ test("proxy rejects accepted color authority when returned geometry differs from
     ...printed,
     engineVersion: "speedster-color-geometry-v1",
     policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED",
-  } as SpeedsterColorGeometryProposal;
+  };
   assert.throws(
     () => sanitizeSpeedsterPreparePayload({
       borders: mapBindingQuad,
       colorGeometry: retiredPrinted,
     }, { matColor: "WHITE" }),
-    /retired Color Geometry engine.*no old-engine result was accepted/i,
+    /proposal identity is malformed/i,
   );
 });
 

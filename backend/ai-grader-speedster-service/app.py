@@ -28,6 +28,8 @@ from card_geometry import (
     warp_to_inspection_map,
 )
 from color_geometry import (
+    ENGINE_VERSION as COLOR_GEOMETRY_ENGINE_VERSION,
+    POLICY_PROVENANCE as COLOR_GEOMETRY_POLICY_PROVENANCE,
     engine_error_result,
     propose_physical_outer,
     propose_printed_frame,
@@ -597,6 +599,8 @@ def health():
         "ok": True,
         "detectorVersion": DETECTOR_VERSION,
         "detectorIdentity": get_detector_identity(),
+        "colorGeometryEngineVersion": COLOR_GEOMETRY_ENGINE_VERSION,
+        "colorGeometryPolicyProvenance": COLOR_GEOMETRY_POLICY_PROVENANCE,
     }
 
 

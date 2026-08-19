@@ -68,9 +68,9 @@ const colorProposal = (
   proposal: GeometryResponse["colorGeometry"]["proposal"] = validQuad,
 ) => ({
   version: "speedster-color-geometry-proposal-v1" as const,
-  engineVersion: "speedster-color-geometry-v1" as const,
+  engineVersion: "speedster-color-geometry-v2" as const,
   authority: "PROPOSER_ONLY" as const,
-  policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+  policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2" as const,
   mode,
   outcome: proposal ? "ACCEPTED" as const : "INSUFFICIENT_EVIDENCE" as const,
   matColor: "BLACK" as const,
