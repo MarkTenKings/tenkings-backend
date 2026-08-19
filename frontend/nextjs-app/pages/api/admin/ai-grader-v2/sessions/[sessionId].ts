@@ -33,7 +33,6 @@ import {
   verifySpeedsterRegistrationLessonReferenceAuthority,
 } from "../../../../../lib/server/speedsterMapRegistrationLessons";
 import {
-  SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
   parseSpeedsterColorGeometryProposal,
   speedsterQuadsDiffer,
   type SpeedsterColorGeometryEngineVersion,
@@ -437,9 +436,6 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
         });
       } catch {
         throw new SpeedsterMapIntegrityError(`${side} ${mode} server proposal authority is invalid.`);
-      }
-      if (result.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
-        throw new SpeedsterMapIntegrityError(`${side} ${mode} came from the retired Color Geometry engine. Recover this preserved work through the current engine before saving.`);
       }
       const serverReceipt = typeof submitted.serverReceipt === "string" ? submitted.serverReceipt : "";
       if (!serverReceipt) {

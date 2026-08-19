@@ -211,9 +211,9 @@ function draft(sessionId = "session-a", createdAtMs = 1_000): SpeedsterCaptureRe
 function colorProposal(mode: "PHYSICAL_OUTER" | "PRINTED_FRAME", matColor: "BLACK" | "WHITE") {
   return {
     version: "speedster-color-geometry-proposal-v1" as const,
-    engineVersion: "speedster-color-geometry-v1" as const,
+    engineVersion: "speedster-color-geometry-v2" as const,
     authority: "PROPOSER_ONLY" as const,
-    policyProvenance: "OWNER_APPROVED_OFFLINE_ESTIMATE_V1_NOT_LIVE_CALIBRATED" as const,
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2" as const,
     mode,
     outcome: "ACCEPTED" as const,
     matColor,

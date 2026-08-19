@@ -1,6 +1,6 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-last_verified_at: 2026-08-15
+last_verified_at: 2026-08-18
 owner: Mark
 
 ## Capability-Scoped Operator Authority
@@ -15,12 +15,13 @@ owner: Mark
 
 ## Speedster Exact-Artifact Release Gate
 - The release workflow must pass Install & Build, the protected Speedster frontend/adversarial suite, and the complete disposable PostgreSQL chain before publishing the Speedster image. Never deploy a PR-only image or an image from a skipped/failed dependency.
-- Use the run-specific tag only to locate the artifact. Record and deploy `ghcr.io/marktenkings/tenkings-backend-speedster-v2@sha256:<digest>`. The dedicated package is created and repository-linked by the protected main workflow; legacy `tenkings-backend/ai-grader-speedster-service` images remain rollback artifacts only. Verify the new digest's keyless cosign signature, SPDX attestation, and GitHub provenance against `.github/workflows/ci.yml@refs/heads/main` before provider mutation.
+- Use the run-specific tag only to locate the artifact. Record and deploy `ghcr.io/marktenkings/tenkings-backend-speedster-v2@sha256:<digest>`. The dedicated package is created and repository-linked by the protected main workflow. Retired Color Geometry images are immutable historical audit evidence only; they must never be selected, deployed, or described as runtime rollback artifacts. Verify the new digest's keyless cosign signature, SPDX attestation, and GitHub provenance against `.github/workflows/ci.yml@refs/heads/main` before provider mutation.
 - RunPod must receive that same digest as both the deployed image reference and `SPEEDSTER_OCI_IMAGE_DIGEST`. Preserve `HF_TOKEN`; startup must fetch official `facebook/sam3` revision `3c879f39826c281e95690f02c7821c4de09afae7` and verify checkpoint SHA-256 `9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e` before readiness.
-- Before changing RunPod, require zero jobs in progress and zero jobs waiting, record the prior exact digest, and change no GPU, capacity, port, scaling, secret, or unrelated setting. Afterward, require identical complete `/health` release/model identity on at least two workers plus repeated known-corpus `/detect` success without deterministic-operation errors. Provider "ready" alone is insufficient.
+- Before changing RunPod, require zero jobs in progress and zero jobs waiting, record the prior exact digest for audit only, and change no GPU, capacity, port, scaling, secret, or unrelated setting. Afterward, require identical complete `/health` release/model identity on every serving worker, including `colorGeometryEngineVersion=speedster-color-geometry-v2` and `colorGeometryPolicyProvenance=OWNER_APPROVED_VISIBLE_OUTLINE_V2`, plus repeated known-corpus `/detect` success without deterministic-operation errors. Provider "ready" alone is insufficient.
 - Apply migrations `20260818153000_speedster_audit_evidence_append_only` and `20260818191500_speedster_iphone_capture_integrity_manifest` before serving the new capture protocol. Release the Vercel iPhone API and Cloudflare iPhone worker together because PLAN/COMPLETE now require byte-size/checksum manifests and private checksum headers.
-- The normal order is: quiescence/read-only baseline; pre-deploy log entry; configure new server-only web authority; one exact migration-bearing web deploy; verify the ledger and triggers; return `RUN_DB_MIGRATIONS=false`; publish/verify the main-branch image; zero-queue RunPod digest rollout; multi-worker health/detect proof; signed-in natural-card acceptance.
-- Rollback boundary: before a new capture manifest or detector checkpoint is written, the prior exact Vercel deployment and prior RunPod digest may be restored independently. After new content-addressed capture/checkpoint evidence exists, roll forward with the reviewed runtime. Never roll back the additive audit triggers, delete manifests/checkpoints, route identity-required web traffic to an identity-incapable detector, or rewrite completed evidence.
+- The normal order for a wire-compatible release is: quiescence/read-only baseline; pre-deploy log entry; publish/verify the main-branch image; zero-queue RunPod digest rollout; all-worker health/detect proof; configure new server-only web authority; one exact migration-bearing web deploy; verify the ledger and triggers; return `RUN_DB_MIGRATIONS=false`; signed-in natural-card acceptance.
+- An incompatible web/worker protocol release is never rolling. Close Speedster to new operator work, drain every old web request and RunPod job, deploy and prove the approved current RunPod image while traffic remains closed, deploy the matching web artifact, prove both exact identities, and only then reopen Speedster. Do not expose an old web to a new worker or a new web to an old worker even briefly.
+- Color Geometry recovery is roll-forward only. Never restore, reconnect, accept, parse, sign, or deploy a retired Color Geometry engine. Preserve historical artifacts and completed evidence unchanged for audit, but remove them from every selectable runtime path. Never roll back additive audit triggers, delete manifests/checkpoints, route current web traffic to a retired detector, or rewrite completed evidence.
 
 ## Rules
 - Always print branch + HEAD before deploy
@@ -35,7 +36,7 @@ owner: Mark
 
 ## Speedster Map Registration Receipt Gate
 - Any release that requires server-authoritative Card Map registration receipts must provision dedicated, server-only `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY` and `SPEEDSTER_MAP_REGISTRATION_RECEIPT_HMAC_KEY_ID` values in the Vercel Production environment before activation.
-- Any future release that explicitly activates the owner-directed, currently undeployed Color Geometry proposer must first provision dedicated, server-only `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY` and `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY_ID` values. Never reuse the Card Map receipt key. Its thresholds/results remain not-live-calibrated offline estimates, and this repository change does not authorize deployment, migration, or Production activation without separate explicit Phase 2 deploy approval.
+- The current Color Geometry proposer requires dedicated, server-only `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY` and `SPEEDSTER_COLOR_GEOMETRY_RECEIPT_HMAC_KEY_ID` values. Never reuse the Card Map receipt key. Only `speedster-color-geometry-v2` with provenance `OWNER_APPROVED_VISIBLE_OUTLINE_V2` may receive new-grade authority; retired engine evidence remains read-only history.
 - The receipt key must be a new random secret used only for registration receipts; never reuse the Card Format Authority key or expose this key to a browser, local capture helper, RunPod worker, log, or committed file.
 - Record only the key ID and successful presence/format check in `docs/handoffs/SESSION_LOG.md`; never print or record the secret. Missing or invalid authority fails registration closed.
 

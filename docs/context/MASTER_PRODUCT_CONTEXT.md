@@ -1,7 +1,7 @@
 # Ten Kings Master Product Context
 
-last_verified_at: 2026-08-11
-verified_by: Codex from current code, Production runtime/API/database evidence, and the owner-approved atomic FAMILY + EXACT Card Map correction, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
+last_verified_at: 2026-08-18
+verified_by: Codex from current code, Production runtime/API/database evidence, the owner-approved atomic FAMILY + EXACT Card Map correction, and the 2026-08-18 Color Geometry release-skew incident evidence, in addition to the retained protected-main and Mathematical Calibration V1 evidence below
 v2_blueprint_approved_at: 2026-08-06
 v2_blueprint_approved_by: Mark Thomas
 repo_root_workstation: C:\TenKings\repos\tenkings-rip-it-live
@@ -34,6 +34,8 @@ If docs conflict with evidence, update docs in the same session.
 - Do not duplicate the full blueprint into context or handoff files; link to the canonical document so there is only one editable copy.
 
 ## Product Summary
+
+- Color Geometry is forward-only on `speedster-color-geometry-v2`. Retired Color Geometry engine artifacts are historical audit evidence only: they cannot be parsed, signed, selected, deployed, or used as a runtime rollback. Any incompatible web/worker cutover requires a no-traffic maintenance gate and roll-forward repair to the approved current engine.
 Ten Kings is a hybrid physical-digital collectibles platform with:
 - Mystery packs and card-level QR identity (`tkp_...`, `tkc_...`)
 - Web + kiosk live rip workflows

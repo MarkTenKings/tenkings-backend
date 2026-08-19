@@ -43,7 +43,6 @@ import {
   type SpeedsterMapRegistrationAttemptOutcome,
 } from "../../../../../lib/server/aiGraderV2Instrumentation";
 import {
-  SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION,
   parseSpeedsterColorGeometryProposal,
   type SpeedsterColorGeometryMode,
   type SpeedsterMatColor,
@@ -328,9 +327,6 @@ export function sanitizeSpeedsterGeometryPayload(
   }
   if (!expected) return { ...payload, corners };
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
-  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
-    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
-  }
   if ((colorGeometry.outcome === "ACCEPTED") !== Boolean(corners)) {
     throw new Error("Speedster physical geometry corners contradict the Color outcome authority.");
   }
@@ -356,9 +352,6 @@ export function sanitizeSpeedsterPreparePayload(
     mode: "PRINTED_FRAME",
     matColor: expected.matColor,
   });
-  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
-    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
-  }
   if (colorGeometry.outcome === "ACCEPTED"
     && JSON.stringify(borders) !== JSON.stringify(colorGeometry.proposal)) {
     throw new Error("Speedster centering geometry does not match its accepted color proposal.");
@@ -379,9 +372,6 @@ export function sanitizeSpeedsterColorGeometryPayload(
 ): unknown {
   if (!isRecord(payload)) return payload;
   const colorGeometry = parseSpeedsterColorGeometryProposal(payload.colorGeometry, expected);
-  if (colorGeometry.engineVersion !== SPEEDSTER_COLOR_GEOMETRY_ENGINE_VERSION) {
-    throw new Error("The retired Color Geometry engine cannot enter a new grade. Refresh after the current service is live; no old-engine result was accepted.");
-  }
   return {
     ...payload,
     colorGeometry,

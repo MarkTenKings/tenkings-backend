@@ -668,6 +668,14 @@ class Sam3DetectorTests(unittest.TestCase):
                 async with lifespan(None):
                     self.assertEqual(health()["detectorVersion"], DETECTOR_VERSION)
                     self.assertEqual(health()["detectorIdentity"], test_detector_identity())
+                    self.assertEqual(
+                        health()["colorGeometryEngineVersion"],
+                        "speedster-color-geometry-v2",
+                    )
+                    self.assertEqual(
+                        health()["colorGeometryPolicyProvenance"],
+                        "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
+                    )
                     self.assertEqual(ping(), health())
 
         asyncio.run(start_and_stop())
