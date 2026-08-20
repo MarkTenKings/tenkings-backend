@@ -50,6 +50,7 @@ SAM3_REPOSITORY = "facebook/sam3"
 SAM3_CHECKPOINT = "sam3.pt"
 SAM3_CHECKPOINT_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
 SAM3_CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+CUBLAS_WORKSPACE_CONFIG = ":4096:8"
 DETECTOR_VERSION = f"sam3-local-box-inspection-2mm@{SAM3_REPOSITORY_COMMIT}"
 DETECTOR_IDENTITY_VERSION = "speedster-detector-identity-v1"
 DETECTOR_PROMPT_VERSION = "sam3-box-and-smart-mark-point-v1"
@@ -149,7 +150,18 @@ def _verified_checkpoint_path(download) -> tuple[str, str, str]:
     return checkpoint_path, revision, actual_sha256
 
 
-def _configure_determinism(torch) -> dict:
+def _validated_cublas_workspace_config() -> str:
+    value = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    if value != CUBLAS_WORKSPACE_CONFIG:
+        raise RuntimeError(
+            "CUBLAS_WORKSPACE_CONFIG must be exactly :4096:8 before Python/CUDA startup"
+        )
+    return value
+
+
+def _configure_determinism(torch, cublas_workspace_config: str) -> dict:
+    if cublas_workspace_config != CUBLAS_WORKSPACE_CONFIG:
+        raise RuntimeError("Unvalidated deterministic CuBLAS workspace configuration")
     torch.use_deterministic_algorithms(True)
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
@@ -168,6 +180,7 @@ def _configure_determinism(torch) -> dict:
         "evalMode": True,
         "compile": False,
         "autocastDtype": "bfloat16",
+        "cublasWorkspaceConfig": cublas_workspace_config,
     }
 
 
@@ -653,6 +666,7 @@ class Sam3ImageProcessor:
 
     def load(self):
         if self._processor is None:
+            cublas_workspace_config = _validated_cublas_workspace_config()
             import torch
             from huggingface_hub import hf_hub_download
             from sam3.model_builder import build_sam3_image_model
@@ -662,7 +676,7 @@ class Sam3ImageProcessor:
             checkpoint_path, checkpoint_revision, checkpoint_sha256 = (
                 _verified_checkpoint_path(hf_hub_download)
             )
-            determinism = _configure_determinism(torch)
+            determinism = _configure_determinism(torch, cublas_workspace_config)
             model = build_sam3_image_model(
                 checkpoint_path=checkpoint_path,
                 load_from_HF=False,

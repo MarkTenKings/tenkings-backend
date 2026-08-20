@@ -29,17 +29,20 @@ from defect_math import (
     measure_defects,
 )
 from sam3_detector import (
+    CUBLAS_WORKSPACE_CONFIG,
     DETECTOR_VERSION,
     LOGGER,
     SAM3_CHECKPOINT_REVISION,
     SAM3_CHECKPOINT_SHA256,
     SAM3_REPOSITORY_COMMIT,
     Sam3ImageProcessor,
+    _configure_determinism,
     _cap_memory_candidates_per_side,
     _smart_mark_prompt_inputs,
     _to_speedster_defects,
     _release_identity_inputs,
     _runtime_detector_identity,
+    _validated_cublas_workspace_config,
     _verified_checkpoint_path,
     detect_views,
     feature_fingerprint,
@@ -106,6 +109,7 @@ def test_detector_identity():
             "evalMode": True,
             "compile": False,
             "autocastDtype": "bfloat16",
+            "cublasWorkspaceConfig": CUBLAS_WORKSPACE_CONFIG,
         },
     }
 
@@ -601,6 +605,69 @@ class Sam3DetectorTests(unittest.TestCase):
                 release_environment["SPEEDSTER_OCI_IMAGE_DIGEST"],
             )
 
+    def test_cublas_workspace_config_accepts_only_the_image_pinned_value(self):
+        for invalid in (None, "", " ", ":16:8", "4096:8", ":4096:8 "):
+            environment = {} if invalid is None else {"CUBLAS_WORKSPACE_CONFIG": invalid}
+            with self.subTest(value=invalid), patch.dict(
+                os.environ, environment, clear=True
+            ):
+                with self.assertRaisesRegex(RuntimeError, "exactly :4096:8"):
+                    _validated_cublas_workspace_config()
+
+        with patch.dict(
+            os.environ,
+            {"CUBLAS_WORKSPACE_CONFIG": CUBLAS_WORKSPACE_CONFIG},
+            clear=True,
+        ):
+            self.assertEqual(
+                _validated_cublas_workspace_config(), CUBLAS_WORKSPACE_CONFIG
+            )
+
+    def test_detector_load_validates_cublas_before_importing_torch(self):
+        processor = Sam3ImageProcessor()
+        with patch(
+            "sam3_detector._validated_cublas_workspace_config",
+            side_effect=RuntimeError("invalid deterministic CuBLAS configuration"),
+        ), patch("builtins.__import__", wraps=__import__) as import_module:
+            with self.assertRaisesRegex(RuntimeError, "invalid deterministic CuBLAS"):
+                processor.load()
+        self.assertFalse(
+            any(call.args and call.args[0] == "torch" for call in import_module.mock_calls)
+        )
+
+    def test_determinism_configuration_reports_the_validated_cublas_contract(self):
+        enabled = []
+        fake_torch = SimpleNamespace(
+            use_deterministic_algorithms=lambda value: enabled.append(value),
+            are_deterministic_algorithms_enabled=lambda: bool(enabled[-1]),
+            backends=SimpleNamespace(
+                cudnn=SimpleNamespace(
+                    benchmark=True,
+                    deterministic=False,
+                    allow_tf32=True,
+                ),
+                cuda=SimpleNamespace(
+                    matmul=SimpleNamespace(allow_tf32=True),
+                ),
+            ),
+        )
+
+        determinism = _configure_determinism(
+            fake_torch, CUBLAS_WORKSPACE_CONFIG
+        )
+
+        self.assertEqual(enabled, [True])
+        self.assertTrue(determinism["deterministicAlgorithms"])
+        self.assertTrue(determinism["cudnnDeterministic"])
+        self.assertFalse(determinism["cudnnBenchmark"])
+        self.assertFalse(determinism["allowTf32"])
+        self.assertEqual(
+            determinism["cublasWorkspaceConfig"], CUBLAS_WORKSPACE_CONFIG
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Unvalidated deterministic CuBLAS"):
+            _configure_determinism(fake_torch, ":16:8")
+
     def test_runtime_identity_exposes_model_build_gpu_and_determinism_contract(self):
         fake_torch = SimpleNamespace(
             __version__="2.7.1+cu126",
@@ -644,6 +711,10 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(identity["runtime"]["cudnnVersion"], "91002")
         self.assertEqual(identity["runtime"]["gpuCapability"], "8.9")
         self.assertEqual(identity["determinism"], determinism)
+        self.assertEqual(
+            identity["determinism"]["cublasWorkspaceConfig"],
+            CUBLAS_WORKSPACE_CONFIG,
+        )
 
     def test_sam_memory_decision_logger_emits_info_diagnostics(self):
         self.assertEqual(LOGGER.level, logging.INFO)
