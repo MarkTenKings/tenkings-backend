@@ -86,6 +86,10 @@ jobs:
       PYTHON_BASE_IMAGE: "python@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a"
       SAM3_CHECKPOINT_REVISION: "3c879f39826c281e95690f02c7821c4de09afae7"
       SAM3_CHECKPOINT_SHA256: "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
+      SPEEDSTER_COMPILER_PACKAGE_VERSION: "14.2.0-19"
+      SPEEDSTER_LIBC_DEV_PACKAGE_VERSION: "2.41-12+deb13u3"
+      SPEEDSTER_COMPILER_VERSION: "14.2.0"
+      SPEEDSTER_COMPILER_TARGET: "x86_64-linux-gnu"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Validate immutable release inputs
@@ -103,6 +107,10 @@ jobs:
             echo "SAM3_CHECKPOINT_SHA256 must bind the approved sam3.pt bytes." >&2
             exit 1
           fi
+          [[ "$SPEEDSTER_COMPILER_PACKAGE_VERSION" == "14.2.0-19" ]]
+          [[ "$SPEEDSTER_LIBC_DEV_PACKAGE_VERSION" == "2.41-12+deb13u3" ]]
+          [[ "$SPEEDSTER_COMPILER_VERSION" == "14.2.0" ]]
+          [[ "$SPEEDSTER_COMPILER_TARGET" == "x86_64-linux-gnu" ]]
       - name: Resolve source and image identity
         shell: bash
         run: |
@@ -129,24 +137,39 @@ jobs:
             --build-arg "SPEEDSTER_OCI_IMAGE_REFERENCE=$image" \
             --build-arg "SAM3_CHECKPOINT_REVISION=$SAM3_CHECKPOINT_REVISION" \
             --build-arg "SAM3_CHECKPOINT_SHA256=$SAM3_CHECKPOINT_SHA256" \
+            --build-arg "SPEEDSTER_COMPILER_PACKAGE_VERSION=$SPEEDSTER_COMPILER_PACKAGE_VERSION" \
+            --build-arg "SPEEDSTER_LIBC_DEV_PACKAGE_VERSION=$SPEEDSTER_LIBC_DEV_PACKAGE_VERSION" \
+            --build-arg "SPEEDSTER_COMPILER_VERSION=$SPEEDSTER_COMPILER_VERSION" \
+            --build-arg "SPEEDSTER_COMPILER_TARGET=$SPEEDSTER_COMPILER_TARGET" \
             backend/ai-grader-speedster-service
       - name: Run full Speedster service suite in the exact image
         run: >-
-          docker run --rm --entrypoint python "$SPEEDSTER_IMAGE"
+          docker run --rm "$SPEEDSTER_IMAGE" python
           -m unittest discover -v -s /app -p 'test_*.py'
-      - name: Verify immutable deterministic CuBLAS image contract
+      - name: Verify immutable deterministic runtime contract
         shell: bash
         run: |
-          docker image inspect "$SPEEDSTER_IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}' \
-            | grep -Fx 'CUBLAS_WORKSPACE_CONFIG=:4096:8'
-          label="$(docker image inspect "$SPEEDSTER_IMAGE" \
-            --format '{{index .Config.Labels "io.tenkings.speedster.cublas-workspace-config"}}')"
-          if [[ "$label" != ":4096:8" ]]; then
-            echo "Speedster image is missing the exact deterministic CuBLAS OCI label." >&2
-            exit 1
-          fi
+          image_env="$(docker image inspect "$SPEEDSTER_IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}')"
+          grep -Fx 'CUBLAS_WORKSPACE_CONFIG=:4096:8' <<< "$image_env"
+          grep -Fx 'CC=/usr/bin/gcc-14' <<< "$image_env"
+          grep -Fx 'SPEEDSTER_COMPILER_PACKAGE_VERSION=14.2.0-19' <<< "$image_env"
+          grep -Fx 'SPEEDSTER_LIBC_DEV_PACKAGE_VERSION=2.41-12+deb13u3' <<< "$image_env"
+          grep -Fx 'SPEEDSTER_COMPILER_VERSION=14.2.0' <<< "$image_env"
+          grep -Fx 'SPEEDSTER_COMPILER_TARGET=x86_64-linux-gnu' <<< "$image_env"
+
+          labels="$(docker image inspect "$SPEEDSTER_IMAGE" --format '{{json .Config.Labels}}')"
+          python -c 'import json,sys; labels=json.loads(sys.argv[1]); expected={"io.tenkings.speedster.cublas-workspace-config":":4096:8","io.tenkings.speedster.compiler.cc":"/usr/bin/gcc-14","io.tenkings.speedster.compiler.package-version":"14.2.0-19","io.tenkings.speedster.compiler.libc-dev-package-version":"2.41-12+deb13u3","io.tenkings.speedster.compiler.version":"14.2.0","io.tenkings.speedster.compiler.target":"x86_64-linux-gnu"}; assert all(labels.get(key)==value for key,value in expected.items()), (labels,expected)' "$labels"
+
+          docker run --rm "$SPEEDSTER_IMAGE" --validate-only
+          gcc_package="$(docker run --rm "$SPEEDSTER_IMAGE" dpkg-query -W '-f=${Version}' gcc-14)"
+          libc_dev_package="$(docker run --rm "$SPEEDSTER_IMAGE" dpkg-query -W '-f=${Version}' libc6-dev)"
+          [[ "$gcc_package" == "14.2.0-19" ]]
+          [[ "$libc_dev_package" == "2.41-12+deb13u3" ]]
+          docker run --rm "$SPEEDSTER_IMAGE" python -m py_compile \
+            /app/gpu_determinism_probe.py /app/gpu_determinism_proof.py
+
           set +e
-          docker run --rm -e CUBLAS_WORKSPACE_CONFIG=:16:8 "$SPEEDSTER_IMAGE" \
+          docker run --rm -e CUBLAS_WORKSPACE_CONFIG=:16:8 "$SPEEDSTER_IMAGE" --validate-only \
             > cublas-invalid-startup.log 2>&1
           status=$?
           set -e
@@ -157,6 +180,19 @@ jobs:
           fi
           grep -Fx 'CUBLAS_WORKSPACE_CONFIG must be exactly :4096:8; refusing to start.' \
             cublas-invalid-startup.log
+
+          set +e
+          docker run --rm -e CC=/usr/bin/gcc "$SPEEDSTER_IMAGE" --validate-only \
+            > compiler-invalid-startup.log 2>&1
+          status=$?
+          set -e
+          cat compiler-invalid-startup.log
+          if [[ "$status" -ne 78 ]]; then
+            echo "Speedster image did not reject an overridden CC before Python startup." >&2
+            exit 1
+          fi
+          grep -Fx 'CC must be exactly /usr/bin/gcc-14; refusing to start.' \
+            compiler-invalid-startup.log
       - name: Generate SBOM from the tested image
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
