@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import re
+import subprocess
 import time
 from contextlib import nullcontext
 from copy import deepcopy
@@ -51,6 +52,12 @@ SAM3_CHECKPOINT = "sam3.pt"
 SAM3_CHECKPOINT_REVISION = "3c879f39826c281e95690f02c7821c4de09afae7"
 SAM3_CHECKPOINT_SHA256 = "9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd2f7c3cf8c9e"
 CUBLAS_WORKSPACE_CONFIG = ":4096:8"
+COMPILER_CONTRACT_VERSION = "speedster-host-compiler-v1"
+COMPILER_CC_PATH = "/usr/bin/gcc-14"
+COMPILER_PACKAGE_VERSION = "14.2.0-19"
+LIBC_DEV_PACKAGE_VERSION = "2.41-12+deb13u3"
+COMPILER_VERSION = "14.2.0"
+COMPILER_TARGET = "x86_64-linux-gnu"
 DETECTOR_VERSION = f"sam3-local-box-inspection-2mm@{SAM3_REPOSITORY_COMMIT}"
 DETECTOR_IDENTITY_VERSION = "speedster-detector-identity-v1"
 DETECTOR_PROMPT_VERSION = "sam3-box-and-smart-mark-point-v1"
@@ -159,6 +166,74 @@ def _validated_cublas_workspace_config() -> str:
     return value
 
 
+def _command_output(command: list[str]) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f"Runtime identity command failed: {command[0]}") from error
+    value = completed.stdout.strip()
+    if not value or len(value) > 120:
+        raise RuntimeError(f"Runtime identity command returned invalid output: {command[0]}")
+    return value
+
+
+def _validated_compiler_runtime() -> dict:
+    expected_environment = {
+        "CC": COMPILER_CC_PATH,
+        "SPEEDSTER_COMPILER_PACKAGE_VERSION": COMPILER_PACKAGE_VERSION,
+        "SPEEDSTER_LIBC_DEV_PACKAGE_VERSION": LIBC_DEV_PACKAGE_VERSION,
+        "SPEEDSTER_COMPILER_VERSION": COMPILER_VERSION,
+        "SPEEDSTER_COMPILER_TARGET": COMPILER_TARGET,
+    }
+    for name, expected in expected_environment.items():
+        if os.environ.get(name) != expected:
+            raise RuntimeError(
+                f"{name} does not match the immutable host compiler contract"
+            )
+    if not os.path.isfile(COMPILER_CC_PATH) or not os.access(
+        COMPILER_CC_PATH, os.X_OK
+    ):
+        raise RuntimeError(f"Configured compiler {COMPILER_CC_PATH} is not executable")
+
+    cc_version = _command_output([COMPILER_CC_PATH, "-dumpfullversion"])
+    cc_target = _command_output([COMPILER_CC_PATH, "-dumpmachine"])
+    cc_package = _command_output(
+        ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "gcc-14"]
+    )
+    libc_dev_package = _command_output(
+        ["/usr/bin/dpkg-query", "-W", "-f=${Version}", "libc6-dev"]
+    )
+    if cc_version != COMPILER_VERSION:
+        raise RuntimeError("Configured compiler version does not match the image contract")
+    if cc_target != COMPILER_TARGET:
+        raise RuntimeError("Configured compiler target does not match the image contract")
+    if cc_package != COMPILER_PACKAGE_VERSION:
+        raise RuntimeError("Configured compiler package does not match the image contract")
+    if libc_dev_package != LIBC_DEV_PACKAGE_VERSION:
+        raise RuntimeError(
+            "Configured libc development package does not match the image contract"
+        )
+
+    return {
+        "contractVersion": COMPILER_CONTRACT_VERSION,
+        "ccPath": COMPILER_CC_PATH,
+        "packageName": "gcc-14",
+        "packageVersion": COMPILER_PACKAGE_VERSION,
+        "libcDevPackageName": "libc6-dev",
+        "libcDevPackageVersion": LIBC_DEV_PACKAGE_VERSION,
+        "version": COMPILER_VERSION,
+        "target": COMPILER_TARGET,
+        "ccSha256": _sha256_file(COMPILER_CC_PATH),
+        "validation": "IMMUTABLE_IMAGE_STARTUP_AND_PRE_TORCH",
+    }
+
+
 def _configure_determinism(torch, cublas_workspace_config: str) -> dict:
     if cublas_workspace_config != CUBLAS_WORKSPACE_CONFIG:
         raise RuntimeError("Unvalidated deterministic CuBLAS workspace configuration")
@@ -203,6 +278,7 @@ def _runtime_detector_identity(
     checkpoint_sha256: str,
     determinism: dict,
     release: dict,
+    compiler: dict,
 ) -> dict:
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is unavailable; Speedster detector refuses to start")
@@ -234,6 +310,7 @@ def _runtime_detector_identity(
             "gpuName": str(device_properties.name),
             "gpuCapability": f"{capability[0]}.{capability[1]}",
             "gpuCount": int(torch.cuda.device_count()),
+            "compiler": deepcopy(compiler),
         },
         "model": {
             "name": "sam3-speedster",
@@ -667,6 +744,7 @@ class Sam3ImageProcessor:
     def load(self):
         if self._processor is None:
             cublas_workspace_config = _validated_cublas_workspace_config()
+            compiler_runtime = _validated_compiler_runtime()
             import torch
             from huggingface_hub import hf_hub_download
             from sam3.model_builder import build_sam3_image_model
@@ -696,6 +774,7 @@ class Sam3ImageProcessor:
                 checkpoint_sha256,
                 determinism,
                 release_identity,
+                compiler_runtime,
             )
         return self._processor
 

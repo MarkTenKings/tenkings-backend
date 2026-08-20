@@ -30,7 +30,13 @@ from defect_math import (
 )
 from sam3_detector import (
     CUBLAS_WORKSPACE_CONFIG,
+    COMPILER_CC_PATH,
+    COMPILER_CONTRACT_VERSION,
+    COMPILER_PACKAGE_VERSION,
+    COMPILER_TARGET,
+    COMPILER_VERSION,
     DETECTOR_VERSION,
+    LIBC_DEV_PACKAGE_VERSION,
     LOGGER,
     SAM3_CHECKPOINT_REVISION,
     SAM3_CHECKPOINT_SHA256,
@@ -43,6 +49,7 @@ from sam3_detector import (
     _release_identity_inputs,
     _runtime_detector_identity,
     _validated_cublas_workspace_config,
+    _validated_compiler_runtime,
     _verified_checkpoint_path,
     detect_views,
     feature_fingerprint,
@@ -86,6 +93,18 @@ def test_detector_identity():
             "gpuName": "NVIDIA-L4",
             "gpuCapability": "8.9",
             "gpuCount": 1,
+            "compiler": {
+                "contractVersion": COMPILER_CONTRACT_VERSION,
+                "ccPath": COMPILER_CC_PATH,
+                "packageName": "gcc-14",
+                "packageVersion": COMPILER_PACKAGE_VERSION,
+                "libcDevPackageName": "libc6-dev",
+                "libcDevPackageVersion": LIBC_DEV_PACKAGE_VERSION,
+                "version": COMPILER_VERSION,
+                "target": COMPILER_TARGET,
+                "ccSha256": "f" * 64,
+                "validation": "IMMUTABLE_IMAGE_STARTUP_AND_PRE_TORCH",
+            },
         },
         "model": {
             "name": "sam3-speedster",
@@ -635,6 +654,106 @@ class Sam3DetectorTests(unittest.TestCase):
             any(call.args and call.args[0] == "torch" for call in import_module.mock_calls)
         )
 
+    def test_compiler_runtime_accepts_only_the_pinned_executable_and_packages(self):
+        compiler_environment = {
+            "CC": COMPILER_CC_PATH,
+            "SPEEDSTER_COMPILER_PACKAGE_VERSION": COMPILER_PACKAGE_VERSION,
+            "SPEEDSTER_LIBC_DEV_PACKAGE_VERSION": LIBC_DEV_PACKAGE_VERSION,
+            "SPEEDSTER_COMPILER_VERSION": COMPILER_VERSION,
+            "SPEEDSTER_COMPILER_TARGET": COMPILER_TARGET,
+        }
+        command_outputs = {
+            (COMPILER_CC_PATH, "-dumpfullversion"): COMPILER_VERSION,
+            (COMPILER_CC_PATH, "-dumpmachine"): COMPILER_TARGET,
+            ("/usr/bin/dpkg-query", "-W", "-f=${Version}", "gcc-14"):
+                COMPILER_PACKAGE_VERSION,
+            ("/usr/bin/dpkg-query", "-W", "-f=${Version}", "libc6-dev"):
+                LIBC_DEV_PACKAGE_VERSION,
+        }
+        with patch.dict(os.environ, compiler_environment, clear=True), patch(
+            "sam3_detector.os.path.isfile", return_value=True
+        ), patch("sam3_detector.os.access", return_value=True), patch(
+            "sam3_detector._command_output",
+            side_effect=lambda command: command_outputs[tuple(command)],
+        ), patch("sam3_detector._sha256_file", return_value="f" * 64):
+            compiler = _validated_compiler_runtime()
+
+        self.assertEqual(compiler, test_detector_identity()["runtime"]["compiler"])
+
+        for name, invalid in (
+            ("CC", None),
+            ("CC", "gcc-14"),
+            ("CC", "/usr/bin/gcc"),
+            ("CC", f"{COMPILER_CC_PATH} "),
+            ("SPEEDSTER_COMPILER_PACKAGE_VERSION", "14.2.0-18"),
+            ("SPEEDSTER_LIBC_DEV_PACKAGE_VERSION", "2.41-12+deb13u2"),
+            ("SPEEDSTER_COMPILER_VERSION", "14.2.1"),
+            ("SPEEDSTER_COMPILER_TARGET", "aarch64-linux-gnu"),
+        ):
+            environment = dict(compiler_environment)
+            if invalid is None:
+                environment.pop(name)
+            else:
+                environment[name] = invalid
+            with self.subTest(name=name, value=invalid), patch.dict(
+                os.environ, environment, clear=True
+            ):
+                with self.assertRaisesRegex(RuntimeError, name):
+                    _validated_compiler_runtime()
+
+    def test_compiler_runtime_rejects_executable_and_observed_identity_drift(self):
+        compiler_environment = {
+            "CC": COMPILER_CC_PATH,
+            "SPEEDSTER_COMPILER_PACKAGE_VERSION": COMPILER_PACKAGE_VERSION,
+            "SPEEDSTER_LIBC_DEV_PACKAGE_VERSION": LIBC_DEV_PACKAGE_VERSION,
+            "SPEEDSTER_COMPILER_VERSION": COMPILER_VERSION,
+            "SPEEDSTER_COMPILER_TARGET": COMPILER_TARGET,
+        }
+        with patch.dict(os.environ, compiler_environment, clear=True), patch(
+            "sam3_detector.os.path.isfile", return_value=False
+        ):
+            with self.assertRaisesRegex(RuntimeError, "not executable"):
+                _validated_compiler_runtime()
+        with patch.dict(os.environ, compiler_environment, clear=True), patch(
+            "sam3_detector.os.path.isfile", return_value=True
+        ), patch("sam3_detector.os.access", return_value=False):
+            with self.assertRaisesRegex(RuntimeError, "not executable"):
+                _validated_compiler_runtime()
+
+        valid_outputs = [
+            COMPILER_VERSION,
+            COMPILER_TARGET,
+            COMPILER_PACKAGE_VERSION,
+            LIBC_DEV_PACKAGE_VERSION,
+        ]
+        for index, mismatch in enumerate(
+            ("14.2.1", "aarch64-linux-gnu", "14.2.0-18", "2.41-12+deb13u2")
+        ):
+            outputs = list(valid_outputs)
+            outputs[index] = mismatch
+            with self.subTest(index=index), patch.dict(
+                os.environ, compiler_environment, clear=True
+            ), patch("sam3_detector.os.path.isfile", return_value=True), patch(
+                "sam3_detector.os.access", return_value=True
+            ), patch("sam3_detector._command_output", side_effect=outputs):
+                with self.assertRaisesRegex(RuntimeError, "image contract"):
+                    _validated_compiler_runtime()
+
+    def test_detector_load_validates_compiler_before_importing_torch(self):
+        processor = Sam3ImageProcessor()
+        with patch(
+            "sam3_detector._validated_cublas_workspace_config",
+            return_value=CUBLAS_WORKSPACE_CONFIG,
+        ), patch(
+            "sam3_detector._validated_compiler_runtime",
+            side_effect=RuntimeError("invalid immutable host compiler"),
+        ), patch("builtins.__import__", wraps=__import__) as import_module:
+            with self.assertRaisesRegex(RuntimeError, "invalid immutable host compiler"):
+                processor.load()
+        self.assertFalse(
+            any(call.args and call.args[0] == "torch" for call in import_module.mock_calls)
+        )
+
     def test_determinism_configuration_reports_the_validated_cublas_contract(self):
         enabled = []
         fake_torch = SimpleNamespace(
@@ -686,6 +805,7 @@ class Sam3DetectorTests(unittest.TestCase):
             ),
         )
         determinism = test_detector_identity()["determinism"]
+        compiler = test_detector_identity()["runtime"]["compiler"]
         release = {
             "sourceRepository": "https://github.com/ten-kings/example",
             "sourceCommit": "a" * 40,
@@ -701,6 +821,7 @@ class Sam3DetectorTests(unittest.TestCase):
             SAM3_CHECKPOINT_SHA256,
             determinism,
             release,
+            compiler,
         )
 
         self.assertEqual(identity["source"]["commitSha"], "a" * 40)
@@ -710,6 +831,7 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(identity["runtime"]["cudaVersion"], "12.6")
         self.assertEqual(identity["runtime"]["cudnnVersion"], "91002")
         self.assertEqual(identity["runtime"]["gpuCapability"], "8.9")
+        self.assertEqual(identity["runtime"]["compiler"], compiler)
         self.assertEqual(identity["determinism"], determinism)
         self.assertEqual(
             identity["determinism"]["cublasWorkspaceConfig"],
