@@ -11,6 +11,7 @@ ARG SAM3_CHECKPOINT_SHA256=9999e2341ceef5e136daa386eecb55cb414446a00ac2b55eb2dfd
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    CUBLAS_WORKSPACE_CONFIG=:4096:8 \
     PORT=8080 \
     HF_HOME=/models/huggingface \
     HF_HUB_DISABLE_TELEMETRY=1 \
@@ -27,7 +28,8 @@ LABEL org.opencontainers.image.source=${SPEEDSTER_SOURCE_REPOSITORY} \
       org.opencontainers.image.version=${SPEEDSTER_BUILD_ID} \
       io.tenkings.speedster.source-tree=${SPEEDSTER_SOURCE_TREE_SHA} \
       io.tenkings.speedster.sam3-checkpoint-revision=${SAM3_CHECKPOINT_REVISION} \
-      io.tenkings.speedster.sam3-checkpoint-sha256=${SAM3_CHECKPOINT_SHA256}
+      io.tenkings.speedster.sam3-checkpoint-sha256=${SAM3_CHECKPOINT_SHA256} \
+      io.tenkings.speedster.cublas-workspace-config=":4096:8"
 
 WORKDIR /app
 COPY requirements.txt .
@@ -35,4 +37,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir pycocotools==2.0.11 psutil==7.2.2
 COPY . .
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT} --workers 1"]
+CMD ["sh", "-c", "if [ \"${CUBLAS_WORKSPACE_CONFIG}\" != ':4096:8' ]; then echo 'CUBLAS_WORKSPACE_CONFIG must be exactly :4096:8; refusing to start.' >&2; exit 78; fi; exec uvicorn app:app --host 0.0.0.0 --port ${PORT} --workers 1"]

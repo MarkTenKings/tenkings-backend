@@ -134,6 +134,29 @@ jobs:
         run: >-
           docker run --rm --entrypoint python "$SPEEDSTER_IMAGE"
           -m unittest discover -v -s /app -p 'test_*.py'
+      - name: Verify immutable deterministic CuBLAS image contract
+        shell: bash
+        run: |
+          docker image inspect "$SPEEDSTER_IMAGE" --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | grep -Fx 'CUBLAS_WORKSPACE_CONFIG=:4096:8'
+          label="$(docker image inspect "$SPEEDSTER_IMAGE" \
+            --format '{{index .Config.Labels "io.tenkings.speedster.cublas-workspace-config"}}')"
+          if [[ "$label" != ":4096:8" ]]; then
+            echo "Speedster image is missing the exact deterministic CuBLAS OCI label." >&2
+            exit 1
+          fi
+          set +e
+          docker run --rm -e CUBLAS_WORKSPACE_CONFIG=:16:8 "$SPEEDSTER_IMAGE" \
+            > cublas-invalid-startup.log 2>&1
+          status=$?
+          set -e
+          cat cublas-invalid-startup.log
+          if [[ "$status" -ne 78 ]]; then
+            echo "Speedster image did not reject an overridden CuBLAS configuration before Python startup." >&2
+            exit 1
+          fi
+          grep -Fx 'CUBLAS_WORKSPACE_CONFIG must be exactly :4096:8; refusing to start.' \
+            cublas-invalid-startup.log
       - name: Generate SBOM from the tested image
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
