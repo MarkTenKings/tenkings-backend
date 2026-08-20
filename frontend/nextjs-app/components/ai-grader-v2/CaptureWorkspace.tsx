@@ -38,6 +38,7 @@ import {
   type SpeedsterColorGeometryCaptureEvidence,
   type SpeedsterColorGeometryProposal,
   type SpeedsterMatColor,
+  type SpeedsterPhysicalGeometryLearning,
   type SpeedsterPhysicalGeometryPlacement,
 } from "../../lib/ai-grader-v2/color-geometry";
 import {
@@ -243,6 +244,7 @@ type SideState = {
   matColor: SpeedsterMatColor;
   physicalColorGeometry: SpeedsterColorGeometryProposal;
   physicalColorGeometryReceipt: string;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
   printedColorGeometry?: SpeedsterColorGeometryProposal;
   printedColorGeometryReceipt?: string;
 };
@@ -407,6 +409,7 @@ function durableCaptureSide(value: SideState): SpeedsterCaptureDraftSideV2 | nul
     matColor: value.matColor,
     physicalColorGeometry: value.physicalColorGeometry,
     physicalColorGeometryReceipt: value.physicalColorGeometryReceipt,
+    ...(value.physicalGeometryLearning ? { physicalGeometryLearning: value.physicalGeometryLearning } : {}),
     printedColorGeometry: value.printedColorGeometry,
     printedColorGeometryReceipt: value.printedColorGeometryReceipt,
     ...(value.centering ? { centering: value.centering } : {}),
@@ -418,7 +421,12 @@ function restoredCaptureSide(value: SpeedsterCaptureDraftSideV2, rectifiedUrl: s
   return {
     ...value,
     sourceUrl: "",
-    geometryPlacement: value.automaticGeometry ? "AUTO_ACCEPTED" : "HUMAN_EDITED",
+    geometryPlacement: value.physicalGeometryLearning?.usedLesson
+      && JSON.stringify(value.corners) === JSON.stringify(value.physicalGeometryLearning.usedLesson.suggestedQuad)
+      ? "LESSON_REUSED"
+      : value.automaticGeometry
+        ? "AUTO_ACCEPTED"
+        : "HUMAN_EDITED",
     rectifiedUrl,
     rectifiedImageRevision: 0,
     inspectionUrl: "",
@@ -1023,6 +1031,7 @@ export function CaptureWorkspace({
             ...current,
             physicalColorGeometry: recovered.colorGeometry,
             physicalColorGeometryReceipt: recovered.colorGeometryReceipt,
+            physicalGeometryLearning: undefined,
           }
         : {
             ...current,
@@ -1440,8 +1449,15 @@ export function CaptureWorkspace({
         result: Awaited<ReturnType<typeof requestGeometry>>,
       ): SideState => {
         const draft = speedsterColorPhysicalDraftState(result.geometry.colorGeometry);
-        const corners = result.corners ?? draft.quad;
-        const geometryPlacement = result.corners ? "AUTO_ACCEPTED" : draft.placement;
+        const learnedQuad = sanitizeSpeedsterUnitQuad(
+          result.geometry.physicalGeometryLearning?.usedLesson?.suggestedQuad,
+        );
+        const corners = learnedQuad ?? result.corners ?? draft.quad;
+        const geometryPlacement = learnedQuad
+          ? "LESSON_REUSED"
+          : result.corners
+            ? "AUTO_ACCEPTED"
+            : draft.placement;
         return {
           originalStorageKey: uploaded.storageKey,
           sourceUrl: uploaded.readUrl,
@@ -1452,6 +1468,9 @@ export function CaptureWorkspace({
           matColor: matColors[side],
           physicalColorGeometry: result.geometry.colorGeometry,
           physicalColorGeometryReceipt: result.geometry.colorGeometryReceipt,
+          ...(result.geometry.physicalGeometryLearning?.usedLesson
+            ? { physicalGeometryLearning: result.geometry.physicalGeometryLearning }
+            : {}),
         };
       };
       if (recaptureSide) {
@@ -2507,6 +2526,10 @@ export function CaptureWorkspace({
           result: value.physicalColorGeometry,
           serverReceipt: value.physicalColorGeometryReceipt,
           confirmedQuad: value.corners,
+          ...(value.physicalGeometryLearning?.usedLesson
+            && value.mapRegistration?.mapRevisionId === value.physicalGeometryLearning.activeMapRevisionId
+            ? { physicalGeometryLearning: value.physicalGeometryLearning }
+            : {}),
         },
         {
           side,

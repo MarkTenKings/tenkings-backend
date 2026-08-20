@@ -11,7 +11,31 @@ export type SpeedsterColorGeometryMode = "PHYSICAL_OUTER" | "PRINTED_FRAME";
 export type SpeedsterColorGeometryOutcome = "ACCEPTED" | "INSUFFICIENT_EVIDENCE" | "NOT_APPLICABLE" | "ABSTAIN";
 export type SpeedsterMatColor = "BLACK" | "WHITE" | "MAGENTA";
 export type SpeedsterColorGeometrySideName = "top" | "right" | "bottom" | "left";
-export type SpeedsterPhysicalGeometryPlacement = "AUTO_ACCEPTED" | "DIAGNOSTIC_DRAFT" | "MANUAL_EMPTY";
+export type SpeedsterPhysicalGeometryPlacement =
+  | "AUTO_ACCEPTED"
+  | "LESSON_REUSED"
+  | "DIAGNOSTIC_DRAFT"
+  | "MANUAL_EMPTY";
+
+export type SpeedsterPhysicalGeometryLearning = Readonly<{
+  version: "speedster-physical-geometry-learning-v1";
+  scanEventKey: string;
+  targetSessionId: string;
+  side: SpeedsterCardSide;
+  mapId: string;
+  activeMapRevisionId: string;
+  sourceImageSha256: string;
+  baseProposalSha256: string | null;
+  usedLesson: Readonly<{
+    lessonKey: string;
+    evidenceId: string;
+    sourceSessionId: string;
+    mapId: string;
+    mapRevisionId: string;
+    reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH";
+    suggestedQuad: SpeedsterQuad;
+  }> | null;
+}>;
 
 const SPEEDSTER_COLOR_GEOMETRY_POLICY = {
   PHYSICAL_OUTER: { contrastFloorDeltaE: 18, minimumSideSupport: 0.7, ambiguityRatio: 0.92 },
@@ -94,6 +118,7 @@ export type SpeedsterColorGeometryCaptureEvidence = Readonly<{
   result: SpeedsterColorGeometryProposal;
   serverReceipt: string;
   confirmedQuad: SpeedsterQuad;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
 }>;
 
 const record = (value: unknown): Record<string, unknown> | null => (
@@ -111,6 +136,81 @@ const integer = (value: unknown, maximum: number) => (
     ? value as number
     : null
 );
+const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+function boundedText(value: unknown, minimum = 1, maximum = 300): string | null {
+  return typeof value === "string" && value.length >= minimum && value.length <= maximum
+    ? value
+    : null;
+}
+
+export function parseSpeedsterPhysicalGeometryLearning(
+  value: unknown,
+  expected?: Readonly<{ targetSessionId?: string; side?: SpeedsterCardSide }>,
+): SpeedsterPhysicalGeometryLearning | null {
+  const candidate = record(value);
+  if (!candidate || Object.keys(candidate).sort().join("\0") !== [
+    "activeMapRevisionId", "baseProposalSha256", "mapId", "scanEventKey", "side",
+    "sourceImageSha256", "targetSessionId", "usedLesson", "version",
+  ].sort().join("\0")
+    || candidate.version !== "speedster-physical-geometry-learning-v1"
+    || (candidate.side !== "FRONT" && candidate.side !== "BACK")
+    || !boundedText(candidate.targetSessionId, 1, 100)
+    || !boundedText(candidate.mapId, 1, 100)
+    || !boundedText(candidate.activeMapRevisionId, 1, 100)
+    || !boundedText(candidate.scanEventKey, 20, 300)
+    || !String(candidate.scanEventKey).startsWith(`${candidate.targetSessionId}:physical-geometry-lessons:`)
+    || typeof candidate.sourceImageSha256 !== "string" || !SHA256_HEX.test(candidate.sourceImageSha256)
+    || candidate.baseProposalSha256 !== null
+      && (typeof candidate.baseProposalSha256 !== "string" || !SHA256_HEX.test(candidate.baseProposalSha256))
+    || expected?.targetSessionId && candidate.targetSessionId !== expected.targetSessionId
+    || expected?.side && candidate.side !== expected.side) return null;
+  if (candidate.usedLesson === null) {
+    return {
+      version: "speedster-physical-geometry-learning-v1",
+      scanEventKey: candidate.scanEventKey as string,
+      targetSessionId: candidate.targetSessionId as string,
+      side: candidate.side,
+      mapId: candidate.mapId as string,
+      activeMapRevisionId: candidate.activeMapRevisionId as string,
+      sourceImageSha256: candidate.sourceImageSha256,
+      baseProposalSha256: candidate.baseProposalSha256 as string | null,
+      usedLesson: null,
+    };
+  }
+  const used = record(candidate.usedLesson);
+  if (!used || Object.keys(used).sort().join("\0") !== [
+    "evidenceId", "lessonKey", "mapId", "mapRevisionId", "reasonCode",
+    "sourceSessionId", "suggestedQuad",
+  ].sort().join("\0")
+    || typeof used.lessonKey !== "string" || !SHA256_HEX.test(used.lessonKey)
+    || !boundedText(used.evidenceId, 1, 100)
+    || !boundedText(used.sourceSessionId, 1, 100)
+    || used.mapId !== candidate.mapId
+    || used.mapRevisionId !== candidate.activeMapRevisionId
+    || used.reasonCode !== "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH") return null;
+  const suggestedQuad = sanitizeSpeedsterUnitQuad(used.suggestedQuad);
+  if (!suggestedQuad) return null;
+  return {
+    version: "speedster-physical-geometry-learning-v1",
+    scanEventKey: candidate.scanEventKey as string,
+    targetSessionId: candidate.targetSessionId as string,
+    side: candidate.side,
+    mapId: candidate.mapId as string,
+    activeMapRevisionId: candidate.activeMapRevisionId as string,
+    sourceImageSha256: candidate.sourceImageSha256,
+    baseProposalSha256: candidate.baseProposalSha256 as string | null,
+    usedLesson: {
+      lessonKey: used.lessonKey,
+      evidenceId: used.evidenceId as string,
+      sourceSessionId: used.sourceSessionId as string,
+      mapId: used.mapId as string,
+      mapRevisionId: used.mapRevisionId as string,
+      reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH",
+      suggestedQuad,
+    },
+  };
+}
 
 export function parseSpeedsterColorGeometryProposal(
   value: unknown,

@@ -38,6 +38,10 @@ import {
   verifySpeedsterColorGeometryReceipt,
 } from "../lib/server/speedsterColorGeometryAuthority";
 import {
+  evaluateSpeedsterPhysicalGeometryLessons,
+  type SpeedsterPhysicalGeometryLessonRow,
+} from "../lib/server/speedsterPhysicalGeometryLessons";
+import {
   fetchSpeedsterImageUpstream,
   sanitizeSpeedsterImageFailure,
   sanitizeSpeedsterTraceProposalFailure,
@@ -539,6 +543,57 @@ test("color geometry proxy replaces browser URLs and binds exact image bytes plu
     sourceImageSha256: mapBindingSha(sourceImageStorageKey),
     matColor: "WHITE",
     physicalQuadSha256: speedsterPhysicalQuadHash(mapBindingQuad),
+  });
+});
+
+test("physical geometry privately loads only the current map's bounded correction roster", async () => {
+  const fixture = mapBindingFixture();
+  const sourceImageStorageKey = `ai-grader-v2/admin-1/${fixture.sessionId}/original/iphone-v4-sha256-${"3".repeat(64)}/back.jpg`;
+  const lesson = {
+    id: "physical-evidence-1",
+    sessionId: "completed-source-1",
+    mapId: "map-1",
+    mapRevisionId: "revision-2",
+    side: "BACK",
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    outcome: "ACCEPTED",
+    engineVersion: "speedster-color-geometry-v2",
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
+    sourceImageSha256: mapBindingSha(sourceImageStorageKey),
+    proposal: mapBindingQuad,
+    confirmedQuad: mapBindingQuad,
+    proposalChanged: true,
+    createdAt: new Date("2026-08-20T12:00:00.000Z"),
+  };
+  const body = await speedsterServiceBody("geometry", {
+    sessionId: fixture.sessionId,
+    side: "BACK",
+    imageUrl: "https://browser-controlled.example/ignore.jpg",
+    sourceImageStorageKey,
+    matColor: "BLACK",
+  }, "admin-1", {
+    async findOwnedCapture() { return null; },
+    async findOwnedMapSession() { return fixture.session; },
+    async presignRead(storageKey) { return `https://server-read.example/${storageKey}`; },
+    async hashMapEvidence(storageKey) { return mapBindingSha(storageKey); },
+    async loadActiveMap() {
+      return { revision: { mapId: "map-1", revisionId: "revision-2" } } as never;
+    },
+    async loadPhysicalGeometryLessons(input) {
+      assert.deepEqual(input, { createdByUserId: "admin-1", mapId: "map-1", side: "BACK" });
+      return [lesson];
+    },
+  });
+  assert.deepEqual(body.physicalGeometryLessonContext, {
+    targetSessionId: fixture.sessionId,
+    createdByUserId: "admin-1",
+    side: "BACK",
+    mapId: "map-1",
+    activeMapRevisionId: "revision-2",
+    matColor: "BLACK",
+    sourceImageSha256: mapBindingSha(sourceImageStorageKey),
+    rows: [lesson],
   });
 });
 
@@ -1136,6 +1191,92 @@ test("capture PATCH accepts an exact active-map registration bound to submitted 
   assert.equal(JSON.stringify(saves[0]).includes("serverReceipt"), false, "opaque authority is never persisted");
   assert.equal(events[0]?.eventType, "CARD_MAP_APPLIED");
   assert.match(JSON.stringify(events[0]?.details), /"appliedScope":"EXACT"/);
+});
+
+test("capture PATCH persists a tamper-checked join to the exact reused physical-outline lesson", async () => {
+  const fixture = mapBindingFixture();
+  const sourceConfirmed = [
+    { x: 0.08, y: 0.09 },
+    { x: 0.92, y: 0.09 },
+    { x: 0.91, y: 0.92 },
+    { x: 0.09, y: 0.91 },
+  ] as const;
+  const source: SpeedsterPhysicalGeometryLessonRow = {
+    id: "physical-evidence-1",
+    sessionId: "completed-source-session",
+    mapId: "map-1",
+    mapRevisionId: fixture.binding.revisionId,
+    side: "FRONT",
+    mode: "PHYSICAL_OUTER",
+    matColor: "BLACK",
+    outcome: "ACCEPTED",
+    engineVersion: "speedster-color-geometry-v2",
+    policyProvenance: "OWNER_APPROVED_VISIBLE_OUTLINE_V2",
+    sourceImageSha256: mapBindingSha(fixture.capture.front.originalStorageKey),
+    proposal: mapBindingQuad,
+    confirmedQuad: sourceConfirmed,
+    proposalChanged: true,
+    createdAt: new Date("2026-08-20T12:00:00.000Z"),
+  };
+  const evaluated = evaluateSpeedsterPhysicalGeometryLessons({
+    targetSessionId: fixture.sessionId,
+    createdByUserId: "admin-1",
+    side: "FRONT",
+    mapId: "map-1",
+    activeMapRevisionId: fixture.binding.revisionId,
+    matColor: "BLACK",
+    sourceImageSha256: source.sourceImageSha256,
+    currentProposal: colorResult("PHYSICAL_OUTER", "BLACK"),
+    rows: [source],
+  });
+  const capture = structuredClone(fixture.capture);
+  capture.front.colorGeometryEvidence[0] = {
+    ...capture.front.colorGeometryEvidence[0],
+    physicalGeometryLearning: evaluated.learning,
+  } as typeof capture.front.colorGeometryEvidence[number];
+  let savedColorRows: readonly Record<string, unknown>[] = [];
+  const handler = createAiGraderV2SessionHandler({
+    requireAdminSession: admin,
+    async findSession() { return fixture.session; },
+    async validateMapBinding() {
+      return { mapRevisionId: fixture.binding.revisionId };
+    },
+    async loadPhysicalLearningEvent(eventKey) {
+      assert.equal(eventKey, evaluated.event.eventKey);
+      return {
+        eventKey: evaluated.event.eventKey,
+        sessionId: evaluated.event.sessionId,
+        createdByUserId: evaluated.event.createdByUserId,
+        category: evaluated.event.category,
+        eventType: evaluated.event.eventType,
+        details: evaluated.event.details,
+      };
+    },
+    async loadPhysicalLearningEvidence(evidenceId) {
+      assert.equal(evidenceId, source.id);
+      return { ...source, createdByUserId: "admin-1", workflowState: "COMPLETED" };
+    },
+    async updateSession(_id, _createdByUserId, _data, colorRows) {
+      savedColorRows = colorRows as readonly Record<string, unknown>[];
+      return fixture.session;
+    },
+  });
+  const result = response();
+  await handler(request("PATCH", { workflowState: "CAPTURED", capture }, fixture.sessionId), result.res);
+  assert.equal(result.state.status, 200);
+  const frontPhysical = savedColorRows.find((entry) => entry.side === "FRONT" && entry.mode === "PHYSICAL_OUTER");
+  assert.deepEqual((frontPhysical?.diagnostics as { learning?: unknown }).learning, {
+    version: "speedster-physical-geometry-learning-v1",
+    scanEventKey: evaluated.event.eventKey,
+    lessonKey: evaluated.learning.usedLesson?.lessonKey,
+    sourceEvidenceId: source.id,
+    sourceSessionId: source.sessionId,
+    mapId: source.mapId,
+    mapRevisionId: source.mapRevisionId,
+    reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH",
+    suggestedQuadSha256: speedsterPhysicalQuadHash(sourceConfirmed),
+    lessonDraftChangedByOperator: true,
+  });
 });
 
 test("capture persistence verifies both signed color proposals and rejects tamper or cross-side replay", async () => {

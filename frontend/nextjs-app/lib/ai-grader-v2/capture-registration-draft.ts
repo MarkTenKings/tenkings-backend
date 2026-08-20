@@ -13,8 +13,10 @@ import { parseSpeedsterInspectionFrame, type SpeedsterInspectionFrame } from "./
 import type { SpeedsterCenteringBorders } from "./scoring";
 import {
   parseSpeedsterColorGeometryProposal,
+  parseSpeedsterPhysicalGeometryLearning,
   type SpeedsterColorGeometryProposal,
   type SpeedsterMatColor,
+  type SpeedsterPhysicalGeometryLearning,
 } from "./color-geometry";
 
 export const SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION = "speedster-capture-registration-draft-v1" as const;
@@ -69,6 +71,7 @@ export type SpeedsterCaptureDraftSideV2 = SpeedsterCaptureDraftSideBase & Readon
   matColor: SpeedsterMatColor;
   physicalColorGeometry: SpeedsterColorGeometryProposal;
   physicalColorGeometryReceipt: string;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
   printedColorGeometry: SpeedsterColorGeometryProposal;
   printedColorGeometryReceipt: string;
 }>;
@@ -410,7 +413,11 @@ function sideState(
     "transform", "viewStorageKeys",
     ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? colorKeys : []),
   ];
-  if (!isRecord(value) || !hasExactKeys(value, requiredKeys, ["centering", "mapRegistration"])) return null;
+  if (!isRecord(value) || !hasExactKeys(value, requiredKeys, [
+    "centering",
+    "mapRegistration",
+    ...(version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2 ? ["physicalGeometryLearning"] : []),
+  ])) return null;
   const corners = quad(value.corners);
   const proposedCentering = value.proposedCentering === null ? null : quad(value.proposedCentering);
   const inspectionFrame = parseSpeedsterInspectionFrame(value.inspectionFrame);
@@ -431,7 +438,7 @@ function sideState(
   if (value.mapRegistration !== undefined && !mapRegistration) return null;
   let colorFields: Pick<SpeedsterCaptureDraftSideV2,
     "matColor" | "physicalColorGeometry" | "physicalColorGeometryReceipt"
-    | "printedColorGeometry" | "printedColorGeometryReceipt"> | undefined;
+    | "printedColorGeometry" | "printedColorGeometryReceipt" | "physicalGeometryLearning"> | undefined;
   if (version === SPEEDSTER_CAPTURE_REGISTRATION_DRAFT_VERSION_V2) {
     const matColor = value.matColor === "BLACK" || value.matColor === "WHITE" || value.matColor === "MAGENTA"
       ? value.matColor
@@ -440,6 +447,14 @@ function sideState(
     const printedReceipt = text(value.printedColorGeometryReceipt, 8192, 20);
     if (!matColor || !physicalReceipt || !printedReceipt) return null;
     try {
+      const physicalGeometryLearning = value.physicalGeometryLearning === undefined
+        ? undefined
+        : parseSpeedsterPhysicalGeometryLearning(value.physicalGeometryLearning, {
+            targetSessionId: sessionId,
+            side,
+          }) ?? null;
+      if (physicalGeometryLearning === null || physicalGeometryLearning?.usedLesson === null
+        || (physicalGeometryLearning && physicalGeometryLearning.activeMapRevisionId !== revisionId)) return null;
       colorFields = {
         matColor,
         physicalColorGeometry: parseSpeedsterColorGeometryProposal(value.physicalColorGeometry, {
@@ -447,6 +462,7 @@ function sideState(
           matColor,
         }),
         physicalColorGeometryReceipt: physicalReceipt,
+        ...(physicalGeometryLearning ? { physicalGeometryLearning } : {}),
         printedColorGeometry: parseSpeedsterColorGeometryProposal(value.printedColorGeometry, {
           mode: "PRINTED_FRAME",
           matColor,
