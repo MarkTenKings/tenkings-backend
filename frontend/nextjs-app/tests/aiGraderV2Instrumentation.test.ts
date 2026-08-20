@@ -436,6 +436,43 @@ test("client timing endpoint authenticates ownership and accepts bounded cycle d
   assert.equal(events[0].category, "CLIENT_TIMING");
 });
 
+test("geometry proposal timing accepts parallel side-pipeline stage durations", async () => {
+  let events: readonly SpeedsterInstrumentationEvent[] = [];
+  const handler = createSpeedsterInstrumentationHandler({
+    async requireAdminSession() { return { user: { id: "admin-1" } }; },
+    async findOwnedSession(sessionId) { return { id: sessionId }; },
+    async insertEvents(input) { events = input; return 1; },
+    now: () => new Date("2026-08-09T12:01:00.000Z"),
+  });
+  const result = response();
+
+  await handler(request({
+    eventId: "1c027b52-f0e8-4a97-bd0c-556a4d57d7ed",
+    eventType: "GEOMETRY_PROPOSED",
+    clientStartedAt: "2026-08-09T12:00:00.000Z",
+    clientEndedAt: "2026-08-09T12:00:07.000Z",
+    details: {
+      automaticGeometryCount: 2,
+      geometryExecutionMode: "PARALLEL_SIDE_PIPELINES_V1",
+      frontUploadDurationMs: 1_000,
+      backUploadDurationMs: 1_500,
+      frontGeometryDurationMs: 5_000,
+      backGeometryDurationMs: 5_500,
+    },
+  }), result.res);
+
+  assert.equal(result.state.status, 201);
+  assert.equal(events[0].durationMs, 7_000);
+  assert.deepEqual(events[0].details, {
+    automaticGeometryCount: 2,
+    geometryExecutionMode: "PARALLEL_SIDE_PIPELINES_V1",
+    frontUploadDurationMs: 1_000,
+    backUploadDurationMs: 1_500,
+    frontGeometryDurationMs: 5_000,
+    backGeometryDurationMs: 5_500,
+  });
+});
+
 test("geometry timing records map-assisted scope and revision for before-vs-after reporting", async () => {
   let events: readonly SpeedsterInstrumentationEvent[] = [];
   const handler = createSpeedsterInstrumentationHandler({

@@ -186,6 +186,11 @@ export type SpeedsterCaptureInstrumentationEvent = Readonly<{
   details?: Readonly<{
     side?: SpeedsterCardSide;
     automaticGeometryCount?: number;
+    geometryExecutionMode?: "PARALLEL_SIDE_PIPELINES_V1";
+    frontUploadDurationMs?: number;
+    backUploadDurationMs?: number;
+    frontGeometryDurationMs?: number;
+    backGeometryDurationMs?: number;
     photoSource?: "IPHONE" | "LOCAL" | "MIXED";
     mapAppliedScope?: SpeedsterMapScope | "NONE";
     mapName?: string;
@@ -1471,11 +1476,24 @@ export function CaptureWorkspace({
         setMessage(`${recaptureSide === "FRONT" ? "Front" : "Back"} geometry was recomputed from the replacement image. The completed sibling side and its receipts/evidence remain retained.`);
         return;
       }
-      const uploadedFront = await uploadPhoto("FRONT", frontPhoto);
-      const frontResult = await requestGeometry("FRONT", uploadedFront.readUrl, uploadedFront.storageKey);
-      const uploadedBack = await uploadPhoto("BACK", backPhoto);
-      const backResult = await requestGeometry("BACK", uploadedBack.readUrl, uploadedBack.storageKey);
+      const runSidePipeline = async (side: SpeedsterCardSide, photo: SpeedsterOriginalPhoto) => {
+        const uploadStartedAtMs = Date.now();
+        const uploaded = await uploadPhoto(side, photo);
+        const uploadEndedAtMs = Date.now();
+        const result = await requestGeometry(side, uploaded.readUrl, uploaded.storageKey);
+        return {
+          uploaded,
+          result,
+          uploadDurationMs: uploadEndedAtMs - uploadStartedAtMs,
+        };
+      };
+      const [frontPipeline, backPipeline] = await Promise.all([
+        runSidePipeline("FRONT", frontPhoto),
+        runSidePipeline("BACK", backPhoto),
+      ]);
       if (activeImageRequest.current !== controller) return;
+      const { uploaded: uploadedFront, result: frontResult } = frontPipeline;
+      const { uploaded: uploadedBack, result: backResult } = backPipeline;
       setFront(toSideState("FRONT", uploadedFront, frontResult));
       setBack(toSideState("BACK", uploadedBack, backResult));
       setStage("FRONT_GEOMETRY");
@@ -1485,7 +1503,14 @@ export function CaptureWorkspace({
         eventType: "GEOMETRY_PROPOSED",
         startedAtMs,
         endedAtMs: Date.now(),
-        details: { automaticGeometryCount: automaticCount },
+        details: {
+          automaticGeometryCount: automaticCount,
+          geometryExecutionMode: "PARALLEL_SIDE_PIPELINES_V1",
+          frontUploadDurationMs: frontPipeline.uploadDurationMs,
+          backUploadDurationMs: backPipeline.uploadDurationMs,
+          frontGeometryDurationMs: frontResult.diagnostic.durationMs,
+          backGeometryDurationMs: backResult.diagnostic.durationMs,
+        },
       });
       setMessage(automaticCount === 2
         ? "Both physical cards found. Move only points that need correction."
