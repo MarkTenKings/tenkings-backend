@@ -87,6 +87,7 @@ type DefectEvidenceViewerProps = {
   defects: readonly SpeedsterReviewFinding[];
   mapRegistration?: SpeedsterMapRegistration;
   readOnly: boolean;
+  busy?: boolean;
   selectedDefectId?: string | null;
   onSelectedDefectChange?: (defectId: string) => void;
   onRemoveDefects?: (
@@ -232,6 +233,7 @@ export function DefectEvidenceViewer({
   defects,
   mapRegistration,
   readOnly,
+  busy = false,
   selectedDefectId,
   onSelectedDefectChange,
   onRemoveDefects,
@@ -468,6 +470,7 @@ export function DefectEvidenceViewer({
             {!readOnly ? (
               <button
                 type="button"
+                disabled={busy}
                 className={mode === "SELECT" ? styles.toolActive : undefined}
                 onClick={() => {
                   setTraceError("");
@@ -482,6 +485,7 @@ export function DefectEvidenceViewer({
             {!readOnly ? (
               <button
                 type="button"
+                disabled={busy}
                 className={mode === "SMART_MARK" ? styles.toolActive : undefined}
                 onClick={() => {
                   clearBatchSelection();
@@ -706,7 +710,7 @@ export function DefectEvidenceViewer({
               <button
                 className={styles.remove}
                 type="button"
-                disabled={batchRemovePending}
+                disabled={batchRemovePending || busy}
                 onClick={removeBatchSelection}
               >Remove {batchSelectedIds.size} selected</button>
             ) : null}
@@ -772,12 +776,13 @@ export function DefectEvidenceViewer({
                     <button
                       key={type}
                       type="button"
+                      disabled={busy}
                       className={type === active.defectType ? styles.selectedPill : undefined}
                       onClick={() => onDefectTypeChange?.(active.id, type)}
                     >{LABELS[type]}</button>
                   ))}
                 </div>
-                <button className={styles.remove} type="button" onClick={() => onRemoveDefects?.([active.id])}>Remove</button>
+                <button className={styles.remove} type="button" disabled={busy} onClick={() => onRemoveDefects?.([active.id])}>Remove</button>
               </div>
             ) : null}
           </>

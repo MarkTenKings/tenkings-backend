@@ -193,6 +193,7 @@ export default function AiGraderV2AdminPage() {
   const nextReadyRecorded = useRef(false);
   const reviewRenderedRecorded = useRef(false);
   const captureSaveInFlight = useRef(false);
+  const reviewMutationInFlight = useRef(false);
   const mapHumanReviewDecision = useRef<Readonly<{
     sessionId: string;
     blockerAttemptId: string | null;
@@ -865,10 +866,16 @@ export default function AiGraderV2AdminPage() {
     successMessage: string,
     fallbackErrorMessage: string,
   ): Promise<SpeedsterReviewRemeasurementResult> => {
-    if (!session?.token || !draft || !capture || !defects || working) {
+    if (!session?.token || !draft || !capture || !defects) {
       return { applied: false, message: fallbackErrorMessage };
     }
+    if (working || reviewMutationInFlight.current) {
+      const message = "The current review change is still saving. Wait for it to finish before the next action.";
+      setMessage(message);
+      return { applied: false, message };
+    }
     const startedAtMs = Date.now();
+    reviewMutationInFlight.current = true;
     setWorking(true);
     setMessage(pendingMessage);
     try {
@@ -922,6 +929,7 @@ export default function AiGraderV2AdminPage() {
       setMessage(failureMessage);
       return { applied: false, message: failureMessage };
     } finally {
+      reviewMutationInFlight.current = false;
       setWorking(false);
     }
   };
@@ -1010,8 +1018,13 @@ export default function AiGraderV2AdminPage() {
   };
 
   const completeGrade = async () => {
-    if (!session?.token || !draft || !review || working) return;
+    if (!session?.token || !draft || !review) return;
+    if (working || reviewMutationInFlight.current) {
+      setMessage("The current review change is still saving. Complete the grade after it finishes.");
+      return;
+    }
     const startedAtMs = Date.now();
+    reviewMutationInFlight.current = true;
     setWorking(true);
     recordInstrumentation({
       sessionId: draft.id,
@@ -1062,6 +1075,7 @@ export default function AiGraderV2AdminPage() {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Speedster grade could not be completed.");
     } finally {
+      reviewMutationInFlight.current = false;
       setWorking(false);
     }
   };
@@ -1253,6 +1267,7 @@ export default function AiGraderV2AdminPage() {
               ? { FRONT: capture.front.mapRegistration, BACK: capture.back.mapRegistration }
               : undefined}
             grade={review.grade}
+            busy={working}
             canUndo={lastRemovedDefectIds.length > 0}
             onRemoveDefects={async (defectIds) => {
               if (defectIds.length === 0 || defectIds.some((defectId) =>

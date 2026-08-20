@@ -78,6 +78,12 @@
   border-color: var(--bright);
 }
 
+.headerTools button:disabled,
+.pills button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
 .cardStage {
   position: relative;
   flex: none;

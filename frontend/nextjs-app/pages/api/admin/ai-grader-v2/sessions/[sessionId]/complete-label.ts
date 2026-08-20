@@ -31,7 +31,10 @@ import {
   type SpeedsterLearningHarvestReceiptV2,
 } from "../../../../../../lib/ai-grader-v2/learning-harvest-v2";
 import { speedsterHistoryFingerprintVersion } from "../../../../../../lib/ai-grader-v2/learning-articuno-dry-run-v2";
-import { parseSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
+import {
+  parsePersistedSpeedsterReviewFindings,
+  parseSpeedsterReviewFindings,
+} from "../../../../../../lib/ai-grader-v2/review-findings";
 import type { SpeedsterCenteringBorders } from "../../../../../../lib/ai-grader-v2/scoring";
 import {
   insertSpeedsterInstrumentationEvents,
@@ -129,7 +132,7 @@ function serverOwnedReview(session: CompletionSession) {
   if (!frontBorders || !backBorders || typeof persistedGrade?.detectorVersion !== "string") {
     throw new HttpError(409, "Speedster server-owned review state is incomplete");
   }
-  const defects = completeSpeedsterReview(parseSpeedsterReviewFindings(session.reviewedDefects));
+  const defects = completeSpeedsterReview(parsePersistedSpeedsterReviewFindings(session.reviewedDefects));
   const review = calculateSpeedsterReview({
     front: { centeringBorders: frontBorders as SpeedsterCenteringBorders },
     back: { centeringBorders: backBorders as SpeedsterCenteringBorders },
@@ -241,7 +244,7 @@ async function completeSession(input: CompletionInput): Promise<CompletionResult
     if (!session) throw new HttpError(404, "Speedster session not found");
 
     if (session.workflowState === "COMPLETED") {
-      completedFindings = parseSpeedsterReviewFindings(session.reviewedDefects);
+      completedFindings = parsePersistedSpeedsterReviewFindings(session.reviewedDefects);
       const existing = await tx.humanGradeLabel.findUnique({ where: { sourceSessionId: session.id } });
       if (!existing || !session.publicReportSlug) {
         throw new HttpError(409, "Completed Speedster session is missing its label identity");

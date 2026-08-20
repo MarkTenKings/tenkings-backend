@@ -5,6 +5,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import { presignPrivateSpeedsterUploadUrl, presignReadUrl } from "../../../../../lib/server/storage";
 import { sanitizeSpeedsterUnitQuad } from "../../../../../lib/ai-grader-v2/geometry";
 import {
+  parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
   stripSpeedsterFindingPrivateFields,
 } from "../../../../../lib/ai-grader-v2/review-findings";
@@ -945,7 +946,7 @@ export async function speedsterServiceBody(
     const persistedSide = capture && isRecord(capture[side.toLowerCase()])
       ? capture[side.toLowerCase()] as Record<string, unknown>
       : null;
-    const reviewedDefects = parseSpeedsterReviewFindings(owned.reviewedDefects ?? []);
+    const reviewedDefects = parsePersistedSpeedsterReviewFindings(owned.reviewedDefects ?? []);
     const findingId = proposal.findingId === null
       ? null
       : typeof proposal.findingId === "string" && proposal.findingId.trim()

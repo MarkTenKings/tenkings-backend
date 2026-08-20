@@ -33,10 +33,15 @@ test("review UI exposes one Select mode, one batch remove, and one batch Undo pa
   assert.match(viewer, />Select<\/button>/);
   assert.match(viewer, /speedsterSelectionIds/);
   assert.match(viewer, /Remove \{batchSelectedIds\.size\} selected/);
+  assert.match(viewer, /disabled=\{batchRemovePending \|\| busy\}/);
+  assert.match(viewer, /disabled=\{busy\}[^>]*onClick=\{\(\) => onRemoveDefects/);
   assert.match(viewer, /if \(mode === "SELECT"\) event\.stopPropagation\(\)/);
   assert.match(viewer, /onRemoveDefects\?\.\(\[active\.id\]\)/);
   assert.match(workspace, /onRemoveDefects/);
+  assert.match(workspace, /disabled=\{busy\} onClick=\{onComplete\}/);
   assert.match(page, /lastRemovedDefectIds/);
+  assert.match(page, /reviewMutationInFlight/);
+  assert.match(page, /busy=\{working\}/);
   assert.match(page, /type: "REMOVE", defectIds/);
   assert.match(page, /type: "UNDO", defectIds: lastRemovedDefectIds/);
   assert.match(route, /type: z\.literal\("REMOVE"\), defectIds: z\.array\(FINDING_ID\)\.min\(1\)/);

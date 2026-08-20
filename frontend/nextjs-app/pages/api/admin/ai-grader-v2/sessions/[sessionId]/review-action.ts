@@ -18,6 +18,7 @@ import {
 } from "../../../../../../lib/server/aiGraderV2DetectTransport";
 import {
   findSpeedsterPersistedTrace,
+  parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
 } from "../../../../../../lib/ai-grader-v2/review-findings";
 import {
@@ -492,7 +493,10 @@ export function createSpeedsterReviewActionHandler(deps: HandlerDependencies = d
         }
         const row = await deps.findOwnedTraces(sessionId, admin.user.id);
         if (!row) return res.status(404).json({ message: "Speedster session not found" });
-        const trace = findSpeedsterPersistedTrace(parseSpeedsterReviewFindings(row.reviewedDefects), findingId.trim());
+        const trace = findSpeedsterPersistedTrace(
+          parsePersistedSpeedsterReviewFindings(row.reviewedDefects),
+          findingId.trim(),
+        );
         if (!trace) return res.status(404).json({ message: "Speedster trace not found" });
         return res.status(200).json({
           traceWire: encodeSpeedsterTraceBitmapWireV1(decodeSpeedsterTraceRleV1(trace), trace.sha256),
