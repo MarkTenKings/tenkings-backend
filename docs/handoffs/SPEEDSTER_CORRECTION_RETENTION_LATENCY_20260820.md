@@ -98,6 +98,21 @@ The global calibrated v2 bank advanced immediately through completion 1430 (`tau
 - **Edited Memory-mask next-scan application: not observed.** No second-run proposal names either first-run edited lesson. This is not promoted to a failure claim because the changed Back inspection artifact and similarity/gating can legitimately prevent a match; it is an explicit evidence gap.
 - **Geometry learning: fail for this pair.** Geometry evidence is retained, but it is not a proposal-learning input.
 
+## Correction-type result matrix
+
+`N/A` means the exact pair did not exercise that claim; it is not silently converted into a pass.
+
+| Correction type | UI generated | Persisted | Harvested | Activated | Applied to second scan | Retained in final grade | Visible on completed card | Verdict / exact boundary |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Front physical outer | No edit in either run | Yes, proposal=confirmation | No correction to harvest | N/A | Same result, but no learning claim | Yes, capture/evidence and derived artifact | Not rendered as editable handles; derived report artifact retained | Stable, but human-correction learning not exercised |
+| Back physical outer | Yes, in both runs | Yes, both exact confirmed quads | No | No | **No**; second proposal repeated first proposal, not first correction | Yes, capture/evidence and second prepared artifact | Not rendered as editable handles; derived report artifact retained | **Learning fail at harvest/input boundary** |
+| Front printed frame | No edit in either run | Yes, proposal=confirmation | No correction to harvest | N/A | Same result, but no learning claim | Yes | Not separately rendered as handles | Human-correction learning not exercised |
+| Back printed frame | No edit in either run | Yes, proposal=confirmation | No correction to harvest | N/A | Proposal changed, but not from a learned correction | Yes | Not separately rendered as handles | Human-correction learning not exercised; variation is not learning |
+| First-run edited Memory masks | Yes, 2 | Yes, exact final trace/provenance/fingerprint hashes | Yes, 2 human-trace positives | Yes, immediate bank catch-up | Not observed by lesson ID | Yes, persisted active findings drive grade/report | Yes through the exact session report/trace path | Pass through activation; next-scan application evidence gap |
+| First-run Smart-Mark addition | Yes, 1 | Yes, exact final trace and three regions | Yes, 1 Smart-Mark positive | Yes, immediate bank catch-up | **Yes**, two exact Memory proposals at 0.938935 | Yes | Yes through exact session report/trace path | **Pass end to end** |
+| First-run removals | Yes, 21 | Yes, as Removed review state | Yes, 21 removed negatives | Yes, immediate bank catch-up | Negative influence not individually attributable in run 2 | Yes in immutable completion/audit state; excluded from score | No, intentionally filtered from public output | Pass retention/display contract; next-scan attribution gap |
+| Second-run Smart-Mark retype | Yes, FAINT_COLOR_VARIATION → VISIBLE_WHITENING | Yes, final `TYPE_CORRECTED` only | Yes, one Smart-Mark positive using final type | Yes, completion-1430 catch-up | N/A; no later exact scan audited | Yes, drives final grade/report | Yes through exact session report/trace path | Pass through activation; future application untested |
+
 ## Human-correction survival chain
 
 | Boundary | Evidence | Result |
