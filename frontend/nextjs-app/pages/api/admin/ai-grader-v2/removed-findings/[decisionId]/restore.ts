@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import type { NextApiRequest, NextApiResponse } from "next";
 
-import { parseSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
+import { parsePersistedSpeedsterReviewFindings } from "../../../../../../lib/ai-grader-v2/review-findings";
 import { requireAdminSession, toErrorResponse } from "../../../../../../lib/server/admin";
 import {
   remeasureSpeedsterFilteredFindingRestore,
@@ -181,7 +181,7 @@ const dependencies: Dependencies = {
     ) {
       throw new HttpError(409, "Speedster review state changed before the restore could be saved.");
     }
-    if (parseSpeedsterReviewFindings(current.reviewedDefects).some(({ id }) => id === input.decision.findingId)) {
+    if (parsePersistedSpeedsterReviewFindings(current.reviewedDefects).some(({ id }) => id === input.decision.findingId)) {
       throw new HttpError(409, "The filtered finding is already present in active review.");
     }
     const updated = await tx.aiGraderV2Session.updateMany({
@@ -248,7 +248,7 @@ const dependencies: Dependencies = {
     };
   }, { isolationLevel: "Serializable" }),
   recordInstrumentation: (input) => {
-    const [finding] = parseSpeedsterReviewFindings([input.decision.findingSnapshot]);
+    const [finding] = parsePersistedSpeedsterReviewFindings([input.decision.findingSnapshot]);
     return insertSpeedsterInstrumentationEvents(prisma, [speedsterFilterRestoredEvent({
       sessionId: input.decision.sessionId,
       createdByUserId: input.restoredByAdminId,

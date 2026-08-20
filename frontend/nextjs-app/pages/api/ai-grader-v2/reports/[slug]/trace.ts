@@ -3,7 +3,7 @@ import { prisma } from "@tenkings/database";
 
 import {
   findSpeedsterPersistedTrace,
-  parseSpeedsterReviewFindings,
+  parsePersistedSpeedsterReviewFindings,
 } from "../../../../../lib/ai-grader-v2/review-findings";
 import { encodeSpeedsterTraceBitmapWireV1 } from "../../../../../lib/ai-grader-v2/trace-bitmap-wire";
 import { decodeSpeedsterTraceRleV1 } from "../../../../../lib/ai-grader-v2/trace-codec";
@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (!session) return res.status(404).json({ message: "Speedster report not found" });
   try {
     const trace = findSpeedsterPersistedTrace(
-      parseSpeedsterReviewFindings(session.reviewedDefects),
+      parsePersistedSpeedsterReviewFindings(session.reviewedDefects),
       findingId,
     );
     if (!trace) return res.status(404).json({ message: "Speedster trace not found" });

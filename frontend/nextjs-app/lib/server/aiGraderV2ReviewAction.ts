@@ -30,6 +30,7 @@ import {
   type SpeedsterFilterDecisionEvidence,
 } from "../ai-grader-v2/card-type-map-contracts";
 import {
+  parsePersistedSpeedsterReviewFindings,
   parseSpeedsterReviewFindings,
   speedsterFindingRegions,
   speedsterTraceHashes,
@@ -1060,8 +1061,8 @@ export async function remeasureSpeedsterFilteredFindingRestore(input: {
     input.session.id,
     input.session.createdByUserId,
   );
-  const before = parseSpeedsterReviewFindings(input.session.reviewedDefects);
-  const [filteredFinding] = parseSpeedsterReviewFindings([input.findingSnapshot]);
+  const before = parsePersistedSpeedsterReviewFindings(input.session.reviewedDefects);
+  const [filteredFinding] = parsePersistedSpeedsterReviewFindings([input.findingSnapshot]);
   if (
     !filteredFinding
     || filteredFinding.reviewResult !== "UNREVIEWED"
@@ -1132,7 +1133,7 @@ export async function applySpeedsterReviewAction(
     throw new Error("Speedster persisted review revision is invalid.");
   }
   const capture = captureAuthority(session.capture, session.id, session.createdByUserId);
-  const before = parseSpeedsterReviewFindings(session.reviewedDefects);
+  const before = parsePersistedSpeedsterReviewFindings(session.reviewedDefects);
 
   if (input.action.type === "INITIALIZE") {
     let pinnedMap: SpeedsterPinnedMapFilterInput | null = null;

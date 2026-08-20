@@ -4,7 +4,7 @@ import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import {
-  parseSpeedsterReviewFindings,
+  parsePersistedSpeedsterReviewFindings,
   stripSpeedsterTraceBodies,
 } from "../../../../../lib/ai-grader-v2/review-findings";
 import {
@@ -354,7 +354,7 @@ function safeSessionResponse(session: PersistedSession): PersistedSession {
   return {
     ...session,
     reviewedDefects: stripSpeedsterTraceBodies(
-      parseSpeedsterReviewFindings(session.reviewedDefects),
+      parsePersistedSpeedsterReviewFindings(session.reviewedDefects),
     ),
   };
 }

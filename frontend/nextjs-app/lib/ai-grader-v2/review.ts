@@ -361,7 +361,7 @@ function preserveRemeasuredFinding(
 ): SpeedsterReviewFinding {
   if (isSpeedsterSourceMeasuredDefect(measured)) {
     const stablePrior = Object.fromEntries(Object.entries(prior).filter(([key]) =>
-      !["zone", "canonicalContour", "measurement"].includes(key)
+      !["zone", "canonicalContour", "measurement", "detectorMask"].includes(key)
       && (!replaceTraceFingerprint
         || !["featureFingerprint", "featureFingerprintTraceSha256"].includes(key))));
     return { ...measured, ...stablePrior, measurementRegions: measured.measurementRegions } as SpeedsterReviewFinding;

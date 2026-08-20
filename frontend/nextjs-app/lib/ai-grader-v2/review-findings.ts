@@ -204,6 +204,26 @@ export function parseSpeedsterReviewFindings(value: unknown): SpeedsterReviewFin
   });
 }
 
+export function parsePersistedSpeedsterReviewFindings(value: unknown): SpeedsterReviewFinding[] {
+  if (!Array.isArray(value)) return parseSpeedsterReviewFindings(value);
+  const normalized = value.map((entry) => {
+    if (
+      !isRecord(entry) || entry.detectorMask === undefined ||
+      (entry.finalTrace === undefined && entry.measurementRegions === undefined)
+    ) {
+      return entry;
+    }
+    const finalTrace = parseSpeedsterTraceRleV1(entry.finalTrace);
+    const detectorMask = parseSpeedsterTraceRleV1(entry.detectorMask);
+    if (finalTrace.sha256 !== detectorMask.sha256) {
+      throw new Error("Speedster persisted trace source has conflicting detector-mask authority.");
+    }
+    const { detectorMask: _redundantDetectorMask, ...sourceFinding } = entry;
+    return sourceFinding;
+  });
+  return parseSpeedsterReviewFindings(normalized);
+}
+
 export function speedsterFindingRegions(finding: SpeedsterReviewFinding) {
   return isSpeedsterSourceMeasuredDefect(finding)
     ? finding.measurementRegions
