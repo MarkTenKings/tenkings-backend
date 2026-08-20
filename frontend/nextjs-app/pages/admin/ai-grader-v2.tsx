@@ -100,6 +100,11 @@ type SpeedsterClientInstrumentationDetails = Readonly<{
   startBasis?: "FIRST_SPEEDSTER_INTERACTION";
   lowerBound?: boolean;
   automaticGeometryCount?: number;
+  geometryExecutionMode?: "PARALLEL_SIDE_PIPELINES_V1";
+  frontUploadDurationMs?: number;
+  backUploadDurationMs?: number;
+  frontGeometryDurationMs?: number;
+  backGeometryDurationMs?: number;
   photoSource?: "IPHONE" | "LOCAL" | "MIXED";
   mapAppliedScope?: "EXACT" | "FAMILY" | "NONE";
   mapName?: string;

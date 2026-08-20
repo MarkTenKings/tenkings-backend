@@ -1151,7 +1151,7 @@ test("mat labels are optional diagnostics and never block geometry", async () =>
   }
 });
 
-test("normal mounted grading flow reaches draggable Set Geometry after a simulated five-second response", async () => {
+test("normal mounted grading flow starts both side pipelines together and reaches draggable Set Geometry", async () => {
   const pending: Array<(value: GeometryResponse) => void> = [];
   let now = 10_000;
   const originalDateNow = Date.now;
@@ -1169,13 +1169,13 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
     assert.ok(setGeometry);
     await act(async () => fire(setGeometry, "click"));
     assert.match(setGeometry.textContent ?? "", /Preparing/);
-    await waitFor(() => pending.length === 1, "Front geometry request did not start");
+    await waitFor(() => pending.length === 2, "Front and Back geometry requests did not start together");
 
     now += 5_000;
-    await act(async () => pending[0](geometryResponse()));
-    await waitFor(() => pending.length === 2, "Back geometry request did not start");
-    now += 125;
-    await act(async () => pending[1](geometryResponse()));
+    await act(async () => {
+      pending[0](geometryResponse());
+      pending[1](geometryResponse());
+    });
     await waitFor(
       () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
       "Normal geometry did not reach the mounted Set Geometry screen",
@@ -1210,6 +1210,17 @@ test("normal mounted grading flow reaches draggable Set Geometry after a simulat
     assert.match(diagnostics[0], /"durationMs":5000/);
     assert.match(diagnostics[0], /"corners":"present"/);
     assert.match(diagnostics[0], /"imageLoadOutcome":"loaded"/);
+    const proposed = harness.events.find(({ eventType }) => eventType === "GEOMETRY_PROPOSED");
+    assert.ok(proposed);
+    assert.equal(proposed.endedAtMs - proposed.startedAtMs, 5_000);
+    assert.deepEqual(proposed.details, {
+      automaticGeometryCount: 2,
+      geometryExecutionMode: "PARALLEL_SIDE_PIPELINES_V1",
+      frontUploadDurationMs: 0,
+      backUploadDurationMs: 0,
+      frontGeometryDurationMs: 5_000,
+      backGeometryDurationMs: 5_000,
+    });
   } finally {
     await harness.cleanup();
     Date.now = originalDateNow;
@@ -2249,7 +2260,7 @@ test("geometry timeout preserves both iPhone originals and Retry completes the s
       () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
       "Retry did not advance to editable Front geometry",
     );
-    assert.equal(call, 3, "Retry must obtain fresh Front and Back geometry");
+    assert.equal(call, 4, "Both the failed attempt and Retry must obtain fresh Front and Back geometry");
     assert.equal(harness.container.querySelector('[role="alert"]'), null);
   } finally {
     await harness.cleanup();
