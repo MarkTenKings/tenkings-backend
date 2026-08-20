@@ -13,6 +13,7 @@ import { isSpeedsterSourceMeasuredDefect } from "../ai-grader-v2/contracts";
 import {
   assertSpeedsterDetectorEvidenceBindsFindings,
   parseSpeedsterDetectorEvidence,
+  SPEEDSTER_MEMORY_LESSON_VERDICT_MEMORY_VERSION,
   type SpeedsterDetectorEvidenceV1,
 } from "../ai-grader-v2/detector-evidence";
 import type { SpeedsterInspectionFrame } from "../ai-grader-v2/inspection-frame";
@@ -55,6 +56,7 @@ import { clipSpeedsterTraceToMaterial } from "../ai-grader-v2/trace-editor";
 import {
   speedsterFilterRemovedEvents,
   speedsterDetectorEvidenceEvents,
+  speedsterMemoryLessonScanVerdictsEvent,
   speedsterFindingActionEvents,
   speedsterFindingProposalEvents,
   speedsterServerTimingEvent,
@@ -565,6 +567,9 @@ function validatedDetectorSideResult(
   try {
     defects = parseSpeedsterReviewFindings(rawResult.defects);
     detectorEvidence = parseSpeedsterDetectorEvidence(rawResult.detectorEvidence);
+    if (detectorEvidence.lessonVerdicts && detectorEvidence.lessonVerdicts.side !== side) {
+      throw new Error("Lesson verdict evidence belongs to the wrong card side.");
+    }
     assertSpeedsterDetectorEvidenceBindsFindings(detectorEvidence, defects);
     if (detectorEvidence.memoryDecisions.some(({ policy }) => policy === "LEGACY_MEMORY_V1")) {
       throw new Error("Legacy Memory evidence cannot enter a current grade.");
@@ -713,6 +718,8 @@ async function serverOwnedInitialization(
   }
   const detectorTimings: Partial<Record<SpeedsterCardSide, Prisma.InputJsonObject>> = {};
   const detectorIdentities: Partial<Record<SpeedsterCardSide, SpeedsterDetectorIdentityV1 | null>> = {};
+  const detectorEvidenceBySide: Partial<Record<SpeedsterCardSide, SpeedsterDetectorEvidenceV1>> = {};
+  const requestTraceIdBySide: Partial<Record<SpeedsterCardSide, string>> = {};
   const attemptEvidence: SpeedsterDetectorAttemptEvidence[] = [];
   const durableDetectorEvidenceEvents: SpeedsterInstrumentationEvent[] = [];
   const attemptEvents = () => attemptEvidence.map((attempt) => speedsterServerTimingEvent({
@@ -822,6 +829,8 @@ async function serverOwnedInitialization(
           }
           if (restored.instrumentation) detectorTimings[request.side] = restored.instrumentation;
           detectorIdentities[request.side] = restored.detectorIdentity;
+          detectorEvidenceBySide[request.side] = restored.detectorEvidence;
+          requestTraceIdBySide[request.side] = recovered.requestTraceId;
           durableDetectorEvidenceEvents.push(...speedsterDetectorEvidenceEvents({
             sessionId: input.sessionId,
             createdByUserId: input.createdByUserId,
@@ -872,6 +881,8 @@ async function serverOwnedInitialization(
             });
             if (timing) detectorTimings[request.side] = timing;
             detectorIdentities[request.side] = accepted.detectorIdentity;
+            detectorEvidenceBySide[request.side] = accepted.detectorEvidence;
+            requestTraceIdBySide[request.side] = requestTraceId;
             const durableResult = {
               detectorVersion: accepted.detectorVersion,
               defects: accepted.defects,
@@ -978,6 +989,32 @@ async function serverOwnedInitialization(
         && !isDeepStrictEqual(detectorIdentities.FRONT, detectorIdentities.BACK))
     ) {
       throw new HttpError(409, "Front and Back Speedster detector release/model identities do not match.");
+    }
+    const detectorMemoryVersion = detectorIdentities.FRONT?.policy.memoryVersion;
+    if (detectorMemoryVersion === SPEEDSTER_MEMORY_LESSON_VERDICT_MEMORY_VERSION) {
+      const frontEvidence = detectorEvidenceBySide.FRONT;
+      const backEvidence = detectorEvidenceBySide.BACK;
+      const frontRequestTraceId = requestTraceIdBySide.FRONT;
+      const backRequestTraceId = requestTraceIdBySide.BACK;
+      if (!frontEvidence || !backEvidence || !frontRequestTraceId || !backRequestTraceId) {
+        throw new HttpError(502, "Speedster lesson verdict evidence is incomplete.");
+      }
+      try {
+        durableDetectorEvidenceEvents.push(speedsterMemoryLessonScanVerdictsEvent({
+          sessionId: input.sessionId,
+          createdByUserId: input.createdByUserId,
+          operationId,
+          memorySnapshotSha256,
+          detectorMemoryVersion,
+          memoryBank: learningBank,
+          sides: {
+            FRONT: { requestTraceId: frontRequestTraceId, evidence: frontEvidence },
+            BACK: { requestTraceId: backRequestTraceId, evidence: backEvidence },
+          },
+        }));
+      } catch {
+        throw new HttpError(502, "Speedster per-lesson Memory verdict coverage is malformed or incomplete.");
+      }
     }
     try {
       initialized = parseSpeedsterReviewFindings(scanned.defects);

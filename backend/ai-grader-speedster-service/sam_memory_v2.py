@@ -1,5 +1,6 @@
 """Bounded, veto-only SAM Memory V2 candidate decisions."""
 
+import hashlib
 from dataclasses import dataclass
 from datetime import datetime
 from math import isfinite, sqrt
@@ -48,6 +49,9 @@ PROVENANCE = {
 @dataclass(frozen=True)
 class PreparedExemplarV2:
     fingerprint: tuple[float, ...]
+    lesson_key: str
+    defect_type: str
+    polarity: str
     session_id: str
     provenance: str
     completion_order: int
@@ -123,6 +127,34 @@ def _inactive(status: str, fingerprint_version: object = None) -> PreparedBankV2
     )
 
 
+def _lesson_key_v2(
+    *,
+    session_id: str,
+    completion_order: int,
+    proposal_order: int,
+    lesson_order: int,
+    defect_type: str,
+    polarity: str,
+    provenance: str,
+    source_view_id: str,
+) -> str:
+    return hashlib.sha256(
+        "\0".join(
+            (
+                "speedster-memory-lesson-v1",
+                session_id,
+                str(completion_order),
+                str(proposal_order),
+                str(lesson_order),
+                defect_type,
+                polarity,
+                provenance,
+                source_view_id,
+            )
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
     """Read one V2 bank once. V1/non-V2 input returns None; unsafe V2 is inert."""
 
@@ -194,6 +226,18 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
         grouped.setdefault((defect_type, polarity, source_view), []).append(
             PreparedExemplarV2(
                 fingerprint=fingerprint,
+                lesson_key=_lesson_key_v2(
+                    session_id=session_id.strip(),
+                    completion_order=exemplar.get("completionOrder"),
+                    proposal_order=exemplar.get("proposalOrder"),
+                    lesson_order=exemplar.get("lessonOrder"),
+                    defect_type=defect_type,
+                    polarity=polarity,
+                    provenance=exemplar.get("provenance"),
+                    source_view_id=source_view,
+                ),
+                defect_type=defect_type,
+                polarity=polarity,
                 session_id=session_id.strip(),
                 provenance=exemplar.get("provenance"),
                 completion_order=exemplar.get("completionOrder"),
@@ -213,20 +257,76 @@ def prepare_bank_v2(value: object) -> Optional[PreparedBankV2]:
 
 
 def _maximum_similarity(
-    fingerprint: tuple[float, ...],
     exemplars: tuple[PreparedExemplarV2, ...],
-) -> tuple[Optional[float], Optional[str]]:
+    similarities: dict[str, float],
+) -> tuple[Optional[float], Optional[PreparedExemplarV2]]:
     best_similarity = None
-    best_session_id = None
+    best_exemplar = None
     for exemplar in exemplars:
-        similarity = max(
-            0.0,
-            sum(a * b for a, b in zip(fingerprint, exemplar.fingerprint)),
-        )
+        similarity = similarities[exemplar.lesson_key]
         if best_similarity is None or similarity > best_similarity:
             best_similarity = similarity
-            best_session_id = exemplar.session_id
-    return best_similarity, best_session_id
+            best_exemplar = exemplar
+    return best_similarity, best_exemplar
+
+
+def lesson_reference_v2(exemplar: PreparedExemplarV2) -> dict:
+    """Return the fingerprint-free, stable identity of one bank lesson."""
+
+    return {
+        "lessonKey": exemplar.lesson_key,
+        "sourceSessionId": exemplar.session_id,
+        "sourceCompletionOrder": exemplar.completion_order,
+        "proposalOrder": exemplar.proposal_order,
+        "lessonOrder": exemplar.lesson_order,
+        "defectType": exemplar.defect_type,
+        "polarity": exemplar.polarity,
+        "provenance": exemplar.provenance,
+        "sourceViewId": exemplar.source_view_id,
+    }
+
+
+def all_exemplars_v2(prepared: PreparedBankV2) -> tuple[PreparedExemplarV2, ...]:
+    """Return every parsed exemplar in deterministic lesson identity order."""
+
+    return tuple(
+        sorted(
+            (
+                exemplar
+                for entries in prepared.exemplars.values()
+                for exemplar in entries
+            ),
+            key=lambda exemplar: (
+                exemplar.completion_order,
+                exemplar.session_id,
+                exemplar.proposal_order,
+                exemplar.lesson_order,
+                exemplar.defect_type,
+                exemplar.polarity,
+                exemplar.source_view_id,
+                exemplar.provenance,
+            ),
+        )
+    )
+
+
+def _lesson_observation(
+    exemplar: PreparedExemplarV2,
+    *,
+    status: str,
+    reason_code: str,
+    similarity: Optional[float],
+) -> dict:
+    return {
+        "lessonKey": exemplar.lesson_key,
+        "status": status,
+        "reasonCode": reason_code,
+        "similarity": (
+            None
+            if similarity is None
+            else round(max(0.0, min(1.0, similarity)), 6)
+        ),
+    }
 
 
 def smart_mark_proposal_seeds_v2(
@@ -263,9 +363,34 @@ def decide_candidate_v2(
     source_view = normalize_source_view(source_view_id)
     candidate_fingerprint = _unit_fingerprint(fingerprint)
     positive_max = gentle_positive_max = negative_max = None
-    positive_session_id = gentle_positive_session_id = negative_session_id = None
+    positive_exemplar = gentle_positive_exemplar = negative_exemplar = None
+    lesson_observations = []
     adjustment = 0.0
     action = "retained"
+
+    if (
+        prepared.status == "calibrated"
+        and isinstance(defect_type, str)
+        and defect_type in DEFECT_TYPES
+        and source_view is not None
+        and candidate_fingerprint is None
+    ):
+        for exemplar in (
+            *prepared.exemplars.get(
+                (defect_type, "POSITIVE", source_view), ()
+            ),
+            *prepared.exemplars.get(
+                (defect_type, "NEGATIVE", source_view), ()
+            ),
+        ):
+            lesson_observations.append(
+                _lesson_observation(
+                    exemplar,
+                    status="SKIPPED",
+                    reason_code="CANDIDATE_FINGERPRINT_UNAVAILABLE",
+                    similarity=None,
+                )
+            )
 
     if (
         prepared.status == "calibrated"
@@ -277,21 +402,37 @@ def decide_candidate_v2(
         positive_exemplars = prepared.exemplars.get(
             (defect_type, "POSITIVE", source_view), ()
         )
-        gentle_positive_max, gentle_positive_session_id = _maximum_similarity(
-            candidate_fingerprint,
+        explicit_positive_exemplars = tuple(
+            exemplar
+            for exemplar in positive_exemplars
+            if exemplar.provenance != "UNTOUCHED_ACCEPTED_POSITIVE"
+        )
+        negative_exemplars = prepared.exemplars.get(
+            (defect_type, "NEGATIVE", source_view), ()
+        )
+        similarities = {
+            exemplar.lesson_key: max(
+                0.0,
+                sum(
+                    candidate_part * exemplar_part
+                    for candidate_part, exemplar_part in zip(
+                        candidate_fingerprint, exemplar.fingerprint
+                    )
+                ),
+            )
+            for exemplar in (*positive_exemplars, *negative_exemplars)
+        }
+        gentle_positive_max, gentle_positive_exemplar = _maximum_similarity(
             positive_exemplars,
+            similarities,
         )
-        positive_max, positive_session_id = _maximum_similarity(
-            candidate_fingerprint,
-            tuple(
-                exemplar
-                for exemplar in positive_exemplars
-                if exemplar.provenance != "UNTOUCHED_ACCEPTED_POSITIVE"
-            ),
+        positive_max, positive_exemplar = _maximum_similarity(
+            explicit_positive_exemplars,
+            similarities,
         )
-        negative_max, negative_session_id = _maximum_similarity(
-            candidate_fingerprint,
-            prepared.exemplars.get((defect_type, "NEGATIVE", source_view), ()),
+        negative_max, negative_exemplar = _maximum_similarity(
+            negative_exemplars,
+            similarities,
         )
         positive_value = positive_max or 0.0
         gentle_positive_value = gentle_positive_max or 0.0
@@ -312,6 +453,45 @@ def decide_candidate_v2(
         elif strong_negative:
             action = "protected"
 
+        for exemplar in (*positive_exemplars, *negative_exemplars):
+            similarity = similarities[exemplar.lesson_key]
+            used_reasons = []
+            if exemplar is gentle_positive_exemplar and similarity > 0:
+                used_reasons.append("CLASSIFIER_GENTLE_POSITIVE_MAX")
+            if exemplar is negative_exemplar and similarity > 0:
+                used_reasons.append("CLASSIFIER_NEGATIVE_MAX")
+            if exemplar is positive_exemplar and strong_negative:
+                used_reasons.append("CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK")
+                if action == "protected":
+                    used_reasons.append(
+                        "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION"
+                    )
+            if used_reasons:
+                lesson_observations.extend(
+                    _lesson_observation(
+                        exemplar,
+                        status="USED",
+                        reason_code=reason_code,
+                        similarity=similarity,
+                    )
+                    for reason_code in used_reasons
+                )
+            else:
+                reason_code = (
+                    "SELECTED_BUT_POLICY_BRANCH_INACTIVE"
+                    if exemplar is positive_exemplar
+                    or exemplar is negative_exemplar
+                    else "NOT_SELECTED_AS_MAX_EXEMPLAR"
+                )
+                lesson_observations.append(
+                    _lesson_observation(
+                        exemplar,
+                        status="REJECTED",
+                        reason_code=reason_code,
+                        similarity=similarity,
+                    )
+                )
+
     diagnostic = {
         "traceId": trace_id,
         "sessionId": session_id,
@@ -319,11 +499,34 @@ def decide_candidate_v2(
         "sourceViewId": source_view if source_view is not None else source_view_id,
         "rawConfidence": raw_confidence,
         "positiveMax": positive_max,
-        "positiveMatchSessionId": positive_session_id,
+        "positiveMatchSessionId": (
+            positive_exemplar.session_id if positive_exemplar is not None else None
+        ),
+        "positiveMatchLessonKey": (
+            lesson_reference_v2(positive_exemplar)["lessonKey"]
+            if positive_exemplar is not None
+            else None
+        ),
         "gentlePositiveMax": gentle_positive_max,
-        "gentlePositiveMatchSessionId": gentle_positive_session_id,
+        "gentlePositiveMatchSessionId": (
+            gentle_positive_exemplar.session_id
+            if gentle_positive_exemplar is not None
+            else None
+        ),
+        "gentlePositiveMatchLessonKey": (
+            lesson_reference_v2(gentle_positive_exemplar)["lessonKey"]
+            if gentle_positive_exemplar is not None
+            else None
+        ),
         "negativeMax": negative_max,
-        "negativeMatchSessionId": negative_session_id,
+        "negativeMatchSessionId": (
+            negative_exemplar.session_id if negative_exemplar is not None else None
+        ),
+        "negativeMatchLessonKey": (
+            lesson_reference_v2(negative_exemplar)["lessonKey"]
+            if negative_exemplar is not None
+            else None
+        ),
         "tau": prepared.tau,
         "margin": prepared.margin,
         "gentleAdjustment": adjustment,
@@ -336,4 +539,5 @@ def decide_candidate_v2(
         "veto": action == "vetoed",
         "adjustment": adjustment,
         "diagnostic": diagnostic,
+        "lessonObservations": lesson_observations,
     }

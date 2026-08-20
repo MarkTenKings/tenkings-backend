@@ -119,6 +119,9 @@ function parseCommon(value: Record<string, unknown>) {
       if (contributor.origin === "MEMORY") {
         if (
           !isRecord(memory) || typeof memory.lessonSessionId !== "string" || !memory.lessonSessionId ||
+          (memory.lessonKey !== undefined && (
+            typeof memory.lessonKey !== "string" || !/^[a-f0-9]{64}$/.test(memory.lessonKey)
+          )) ||
           !Number.isSafeInteger(memory.lessonCompletionOrder) || Number(memory.lessonCompletionOrder) < 1 ||
           !Number.isSafeInteger(memory.lessonProposalOrder) || Number(memory.lessonProposalOrder) < 0 ||
           !Number.isSafeInteger(memory.lessonOrder) || Number(memory.lessonOrder) < 0 ||

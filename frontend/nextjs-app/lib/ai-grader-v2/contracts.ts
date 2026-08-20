@@ -55,6 +55,7 @@ export type SpeedsterSmartMarkLearning = {
 };
 
 export type SpeedsterMemoryProposal = {
+  lessonKey?: string;
   lessonSessionId: string;
   lessonCompletionOrder: number;
   lessonProposalOrder: number;
