@@ -39,6 +39,7 @@ export type SpeedsterInstrumentationEvent = Readonly<{
     | "FINDING_ACTION"
     | "FILTER_ACTION"
     | "MAP_APPLICATION"
+    | "GEOMETRY_LEARNING"
     | "DETECTOR_EVIDENCE"
     | "MEMORY_DECISION"
     | "DETECTOR_CHECKPOINT";

@@ -45,6 +45,10 @@ import {
   verifySpeedsterColorGeometryReceipt,
 } from "../../../../../lib/server/speedsterColorGeometryAuthority";
 import {
+  verifySpeedsterPhysicalGeometryLearningCapture,
+  type SpeedsterPhysicalGeometryLessonRow,
+} from "../../../../../lib/server/speedsterPhysicalGeometryLessons";
+import {
   appendSpeedsterMapAuthorityEvidence,
   speedsterMapAuthorityEvidenceFromCapture,
   type SpeedsterMapAuthorityEvent,
@@ -320,6 +324,18 @@ type Dependencies = {
     selectedMap?: SpeedsterAppliedMapRevision | null;
     mapFailureCode?: "MAP_LOOKUP_INTEGRITY_FAILED" | "MAP_REGISTRATION_NOT_APPLIED" | "MAP_AUTHORITY_HUMAN_REVIEW" | null;
   }>>;
+  loadPhysicalLearningEvent?: (eventKey: string) => Promise<Readonly<{
+    eventKey: string;
+    sessionId: string;
+    createdByUserId: string;
+    category: string;
+    eventType: string;
+    details: unknown;
+  }> | null>;
+  loadPhysicalLearningEvidence?: (evidenceId: string) => Promise<(SpeedsterPhysicalGeometryLessonRow & Readonly<{
+    createdByUserId: string;
+    workflowState: string;
+  }>) | null>;
   recordInstrumentation?: (events: readonly SpeedsterInstrumentationEvent[]) => Promise<unknown>;
 };
 
@@ -341,6 +357,55 @@ const dependencies: Dependencies = {
   hashEvidence: hashSpeedsterMapStorageEvidence,
   verifyColorGeometryReceipt: verifySpeedsterColorGeometryReceipt,
   validateMapBinding: validateSpeedsterSubmittedMapBinding,
+  loadPhysicalLearningEvent: (eventKey) => prisma.aiGraderV2InstrumentationEvent.findUnique({
+    where: { eventKey },
+    select: {
+      eventKey: true,
+      sessionId: true,
+      createdByUserId: true,
+      category: true,
+      eventType: true,
+      details: true,
+    },
+  }),
+  loadPhysicalLearningEvidence: async (evidenceId) => {
+    const evidence = await prisma.aiGraderV2ColorGeometryEvidence.findUnique({
+      where: { id: evidenceId },
+      select: {
+        id: true,
+        sessionId: true,
+        createdByUserId: true,
+        side: true,
+        mode: true,
+        matColor: true,
+        outcome: true,
+        engineVersion: true,
+        policyProvenance: true,
+        sourceImageSha256: true,
+        proposal: true,
+        confirmedQuad: true,
+        proposalChanged: true,
+        createdAt: true,
+        session: {
+          select: {
+            workflowState: true,
+            mapRevisionId: true,
+            mapRevision: { select: { mapId: true } },
+          },
+        },
+      },
+    });
+    const mapRevisionId = evidence?.session.mapRevisionId;
+    const mapId = evidence?.session.mapRevision?.mapId;
+    if (!evidence || !mapRevisionId || !mapId) return null;
+    const { session, ...row } = evidence;
+    return {
+      ...row,
+      mapId,
+      mapRevisionId,
+      workflowState: session.workflowState,
+    };
+  },
   recordInstrumentation: (events) => insertSpeedsterInstrumentationEvents(prisma, events),
 };
 
@@ -401,6 +466,9 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
   source: SpeedsterMapSourceSession;
   hashEvidence: typeof hashSpeedsterMapStorageEvidence;
   verifyReceipt: typeof verifySpeedsterColorGeometryReceipt;
+  finalMapRevisionId?: string | null;
+  loadPhysicalLearningEvent?: NonNullable<Dependencies["loadPhysicalLearningEvent"]>;
+  loadPhysicalLearningEvidence?: NonNullable<Dependencies["loadPhysicalLearningEvidence"]>;
 }>): Promise<readonly ColorGeometryEvidenceRow[]> {
   const rows: ColorGeometryEvidenceRow[] = [];
   for (const side of ["FRONT", "BACK"] as const) {
@@ -469,6 +537,31 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
         expectedConfirmed,
         `${side} ${mode}`,
       );
+      if (mode === "PRINTED_FRAME" && submitted.physicalGeometryLearning !== undefined) {
+        throw new SpeedsterMapIntegrityError(`${side} printed geometry cannot claim physical-outline learning.`);
+      }
+      let learningDiagnostics: Awaited<ReturnType<typeof verifySpeedsterPhysicalGeometryLearningCapture>> | undefined;
+      if (mode === "PHYSICAL_OUTER" && submitted.physicalGeometryLearning !== undefined) {
+        if (!input.loadPhysicalLearningEvent || !input.loadPhysicalLearningEvidence) {
+          throw new SpeedsterMapIntegrityError(`${side} physical geometry learning authority is unavailable.`);
+        }
+        try {
+          learningDiagnostics = await verifySpeedsterPhysicalGeometryLearningCapture({
+            learning: submitted.physicalGeometryLearning,
+            targetSessionId: input.sessionId,
+            createdByUserId: input.createdByUserId,
+            side,
+            finalMapRevisionId: input.finalMapRevisionId ?? null,
+            sourceImageSha256,
+            currentProposal: result,
+            confirmedQuad,
+            loadEvent: input.loadPhysicalLearningEvent,
+            loadEvidence: input.loadPhysicalLearningEvidence,
+          });
+        } catch {
+          throw new SpeedsterMapIntegrityError(`${side} physical geometry learning authority is invalid.`);
+        }
+      }
       rows.push({
         sessionId: input.sessionId,
         createdByUserId: input.createdByUserId,
@@ -488,6 +581,7 @@ export async function parseSpeedsterColorGeometryCaptureRows(input: Readonly<{
           sideEvidence: result.sideEvidence,
           ambiguity: result.ambiguity,
           advisory: result.advisory,
+          ...(learningDiagnostics ? { learning: learningDiagnostics } : {}),
         } as unknown as Prisma.InputJsonValue,
         proposalChanged: result.proposal ? speedsterQuadsDiffer(result.proposal, confirmedQuad) : null,
       });
@@ -532,14 +626,6 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
       });
       const hashEvidence = deps.hashEvidence ?? hashSpeedsterMapStorageEvidence;
       const verifyColorGeometryReceipt = deps.verifyColorGeometryReceipt ?? verifySpeedsterColorGeometryReceipt;
-      const colorGeometryEvidence = await parseSpeedsterColorGeometryCaptureRows({
-        sessionId,
-        createdByUserId: admin.user.id,
-        rawCapture: parsed.data.capture,
-        source: canonicalSource,
-        hashEvidence,
-        verifyReceipt: verifyColorGeometryReceipt,
-      });
       const validatedMapBinding = await deps.validateMapBinding?.(existing, parsed.data.mapBinding, parsed.data.capture);
       if (!validatedMapBinding) {
         throw new Error("Speedster map binding validation is unavailable.");
@@ -550,6 +636,17 @@ export function createAiGraderV2SessionHandler(deps: Dependencies = dependencies
         mapFailureCode = null,
         ...mapBinding
       } = validatedMapBinding;
+      const colorGeometryEvidence = await parseSpeedsterColorGeometryCaptureRows({
+        sessionId,
+        createdByUserId: admin.user.id,
+        rawCapture: parsed.data.capture,
+        source: canonicalSource,
+        hashEvidence,
+        verifyReceipt: verifyColorGeometryReceipt,
+        finalMapRevisionId: mapBinding.mapRevisionId ?? null,
+        loadPhysicalLearningEvent: deps.loadPhysicalLearningEvent,
+        loadPhysicalLearningEvidence: deps.loadPhysicalLearningEvidence,
+      });
       const finalMapAuthority: SpeedsterMapAuthorityEvent = {
         attemptId: randomUUID(),
         recordedAt: new Date().toISOString(),

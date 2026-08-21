@@ -256,6 +256,8 @@ export function GeometryAssist({
 
   const placementCopy = placement === "AUTO_ACCEPTED"
     ? "CURRENT ENGINE OUTLINE · REVIEW REQUIRED"
+    : placement === "LESSON_REUSED"
+      ? "LEARNED HUMAN CORRECTION · REVIEW REQUIRED"
     : placement === "DIAGNOSTIC_DRAFT"
       ? "REJECTED DIAGNOSTIC · HUMAN REVIEW ONLY"
       : placement === "HUMAN_EDITED"
@@ -276,6 +278,8 @@ export function GeometryAssist({
         </div>
         <p>{placement === "AUTO_ACCEPTED"
           ? "The current engine found and displayed all four corners. Check every edge before confirming."
+          : placement === "LESSON_REUSED"
+            ? "This outline reuses an exact earlier correction for the same image and map. Check every edge before confirming."
           : placement === "DIAGNOSTIC_DRAFT"
             ? "The best contour failed automatic checks. It is not authoritative; inspect and edit every side."
             : proposedQuad

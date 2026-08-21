@@ -15,7 +15,12 @@ import type {
   SpeedsterMapRegistration,
   SpeedsterMapRegistrationFailure,
 } from "./card-type-map-contracts";
-import type { SpeedsterColorGeometryProposal, SpeedsterMatColor } from "./color-geometry";
+import {
+  parseSpeedsterPhysicalGeometryLearning,
+  type SpeedsterColorGeometryProposal,
+  type SpeedsterMatColor,
+  type SpeedsterPhysicalGeometryLearning,
+} from "./color-geometry";
 
 type ImageAction = "geometry" | "prepare" | "color-geometry" | "trace-proposal" | "map-registration";
 
@@ -297,6 +302,7 @@ export type SpeedsterGeometryResponse = {
   corners: SpeedsterQuad | null;
   colorGeometry: SpeedsterColorGeometryProposal;
   colorGeometryReceipt: string;
+  physicalGeometryLearning?: SpeedsterPhysicalGeometryLearning;
 };
 
 export type SpeedsterPrepareResponse = {
@@ -527,7 +533,20 @@ export const speedsterImageService = {
     }>,
     options: SpeedsterImageRequestOptions = {},
   ) {
-    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { ...input }, options);
+    return postImageAction<SpeedsterGeometryResponse>(token, "geometry", { ...input }, options)
+      .then((response) => {
+        const physicalGeometryLearning = response.physicalGeometryLearning === undefined
+          ? undefined
+          : parseSpeedsterPhysicalGeometryLearning(response.physicalGeometryLearning, {
+              targetSessionId: input.sessionId,
+              side: input.side,
+            }) ?? undefined;
+        const { physicalGeometryLearning: _untrustedPhysicalGeometryLearning, ...trustedResponse } = response;
+        return {
+          ...trustedResponse,
+          ...(physicalGeometryLearning ? { physicalGeometryLearning } : {}),
+        };
+      });
   },
   prepare(
     token: string,

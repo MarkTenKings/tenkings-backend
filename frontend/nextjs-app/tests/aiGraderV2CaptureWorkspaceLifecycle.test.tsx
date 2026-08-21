@@ -922,6 +922,50 @@ test("image-service failures retain the safe server request ID for support", asy
   }
 });
 
+test("image service keeps only a strict same-session physical-learning envelope", async () => {
+  const originalFetch = globalThis.fetch;
+  const learning = {
+    version: "speedster-physical-geometry-learning-v1" as const,
+    scanEventKey: "speedster-session-lifecycle-test:physical-geometry-lessons:ledger",
+    targetSessionId: "speedster-session-lifecycle-test",
+    side: "FRONT" as const,
+    mapId: "map-1",
+    activeMapRevisionId: "revision-2",
+    sourceImageSha256: "a".repeat(64),
+    baseProposalSha256: "b".repeat(64),
+    usedLesson: {
+      lessonKey: "c".repeat(64),
+      evidenceId: "evidence-1",
+      sourceSessionId: "source-session-1",
+      mapId: "map-1",
+      mapRevisionId: "revision-2",
+      reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH" as const,
+      suggestedQuad: validQuad,
+    },
+  };
+  const request = {
+    sessionId: "speedster-session-lifecycle-test",
+    side: "FRONT" as const,
+    imageUrl: "https://images.example.test/front.jpg",
+    sourceImageStorageKey: "ai-grader-v2/admin-1/speedster-session-lifecycle-test/original/front.jpg",
+    matColor: "BLACK" as const,
+  };
+  try {
+    globalThis.fetch = async () => jsonResponse({ ...geometryResponse(), physicalGeometryLearning: learning }, 200);
+    const accepted = await speedsterImageService.proposeGeometry("admin-token", request);
+    assert.deepEqual(accepted.physicalGeometryLearning, learning);
+
+    globalThis.fetch = async () => jsonResponse({
+      ...geometryResponse(),
+      physicalGeometryLearning: { ...learning, targetSessionId: "other-session" },
+    }, 200);
+    const stripped = await speedsterImageService.proposeGeometry("admin-token", request);
+    assert.equal(stripped.physicalGeometryLearning, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("automatic registration retry allowlist excludes every ambiguous HTTP and local failure", () => {
   const eligible = [
     { source: "PROVIDER_GATEWAY", code: "PROVIDER_GATEWAY_HTTP_502", httpStatus: 502 },
@@ -1252,6 +1296,63 @@ test("API-compatible accepted physical Color geometry seeds the first editable p
       () => buttonByText(harness.container, "Continue")?.disabled === false,
       "Visible accepted Color geometry did not reach human confirmation",
     );
+  } finally {
+    await harness.cleanup();
+  }
+});
+
+test("an audited exact lesson seeds a review-required human correction and a drag becomes human-authored", async () => {
+  const learnedQuad = [
+    { x: 0.18, y: 0.19 },
+    { x: 0.82, y: 0.19 },
+    { x: 0.82, y: 0.81 },
+    { x: 0.18, y: 0.81 },
+  ] as const;
+  const harness = await mountWorkspace({
+    proposeGeometry: async () => ({
+      ...geometryResponse(),
+      physicalGeometryLearning: {
+        version: "speedster-physical-geometry-learning-v1",
+        scanEventKey: "target-session:physical-geometry-lessons:ledger",
+        targetSessionId: "target-session",
+        side: "FRONT",
+        mapId: "map-1",
+        activeMapRevisionId: "revision-2",
+        sourceImageSha256: "a".repeat(64),
+        baseProposalSha256: "b".repeat(64),
+        usedLesson: {
+          lessonKey: "c".repeat(64),
+          evidenceId: "evidence-1",
+          sourceSessionId: "source-session-1",
+          mapId: "map-1",
+          mapRevisionId: "revision-2",
+          reasonCode: "EXACT_SOURCE_AND_BASE_PROPOSAL_MATCH",
+          suggestedQuad: learnedQuad,
+        },
+      },
+    }),
+  });
+  try {
+    await act(async () => fire(buttonByText(harness.container, "Set geometry")!, "click"));
+    await waitFor(
+      () => Boolean(harness.container.querySelector('[aria-label="front card geometry"]')),
+      "Learned physical correction did not reach editable Front geometry",
+    );
+    const overlay = harness.container.querySelector<SVGSVGElement>('[aria-label="Adjustable card corner geometry"]');
+    const topLeft = harness.container.querySelector<SVGGElement>('[aria-label="Top left"]');
+    assert.ok(overlay && topLeft);
+    assert.equal(topLeft.querySelector("circle")?.getAttribute("cx"), "180");
+    assert.equal(topLeft.querySelector("circle")?.getAttribute("cy"), "190");
+    assert.match(harness.container.textContent ?? "", /LEARNED HUMAN CORRECTION · REVIEW REQUIRED/);
+    Object.defineProperty(overlay, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, top: 0, right: 1000, bottom: 1000, width: 1000, height: 1000 }),
+    });
+    await act(async () => {
+      fire(topLeft, "pointerdown", { pointerId: 9, clientX: 180, clientY: 190 });
+      fire(overlay, "pointermove", { pointerId: 9, clientX: 210, clientY: 220 });
+    });
+    assert.match(harness.container.textContent ?? "", /HUMAN-AUTHORED DRAFT/);
   } finally {
     await harness.cleanup();
   }
