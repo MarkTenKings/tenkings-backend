@@ -7,6 +7,10 @@ import type { NextApiRequest, NextApiResponse } from "next";
 
 import type { SpeedsterMeasuredDefect } from "../lib/ai-grader-v2/contracts";
 import {
+  SPEEDSTER_TRACE_PIXEL_COUNT,
+  encodeSpeedsterTraceRleV1,
+} from "../lib/ai-grader-v2/trace-codec";
+import {
   speedsterCardMapApplicationEvent,
   speedsterFilterRemovedEvents,
   speedsterFilterRestoredEvent,
@@ -14,6 +18,9 @@ import {
   speedsterFindingFinalEvents,
   speedsterFindingProposalEvents,
   speedsterMapRegistrationAttemptEvent,
+  speedsterMemoryLessonKey,
+  speedsterMemoryLessonScanVerdictsEvent,
+  SPEEDSTER_MEMORY_LESSON_SCAN_LEDGER_MAX_BYTES,
   insertSpeedsterInstrumentationEventWithConflictDetection,
   SpeedsterInstrumentationConflictError,
   type SpeedsterInstrumentationEvent,
@@ -93,6 +100,463 @@ test("proposal telemetry preserves exact Memory provenance and measurement", () 
   assert.equal(details.after.contributors.length, 1);
   assert.equal(details.after.regions.length, 1);
   assert.equal(event.durationMs, 2_000);
+});
+
+test("one immutable scan ledger accounts for every frozen-bank lesson without fingerprints", () => {
+  const exemplar = {
+    defectType: "VISIBLE_WHITENING" as const,
+    polarity: "POSITIVE" as const,
+    sessionId: "source-session-1",
+    completedAt: "2026-08-20T12:00:00.000Z",
+    completionOrder: 7,
+    proposalOrder: 2,
+    lessonOrder: 0,
+    fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    provenance: "SMART_MARK_POSITIVE" as const,
+    sourceViewId: "ORIGINAL" as const,
+  };
+  const lessonKey = speedsterMemoryLessonKey(exemplar);
+  assert.equal(
+    lessonKey,
+    "7b97f37dd9968fbee11bb4bb53008e3b3d6679723e546d7dfce5e89904c7dc74",
+  );
+  const lesson = {
+    lessonKey,
+    sourceSessionId: exemplar.sessionId,
+    sourceCompletionOrder: exemplar.completionOrder,
+    proposalOrder: exemplar.proposalOrder,
+    lessonOrder: exemplar.lessonOrder,
+    defectType: exemplar.defectType,
+    polarity: exemplar.polarity,
+    provenance: exemplar.provenance,
+    sourceViewId: exemplar.sourceViewId,
+  };
+  const sideEvidence = (side: "FRONT" | "BACK", reasonCode: string) => ({
+    version: "speedster-detector-evidence-v1" as const,
+    rawCandidates: [],
+    memoryDecisions: [],
+    lessonVerdicts: {
+      version: "speedster-memory-lesson-side-verdicts-v1" as const,
+      side,
+      loadedLessonCount: 1,
+      verdicts: [{
+        lesson,
+        status: reasonCode === "NO_ELIGIBLE_RAW_CANDIDATE" ? "SKIPPED" as const : "REJECTED" as const,
+        reasonCode,
+        reasonCodes: [reasonCode],
+        observationCount: 1,
+        maxSimilarity: reasonCode === "NO_ELIGIBLE_RAW_CANDIDATE" ? null : 0.71,
+        candidateIds: [],
+      }],
+    },
+  });
+  const event = speedsterMemoryLessonScanVerdictsEvent({
+    sessionId: "target-session-1",
+    createdByUserId: "admin-1",
+    operationId: "a".repeat(24),
+    memorySnapshotSha256: "b".repeat(64),
+    detectorMemoryVersion: "sam-memory-v2-lesson-verdict-v1",
+    memoryBank: {
+      version: 2,
+      fingerprintVersion: "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+      capacityPerTypePolarity: 50,
+      calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+      replayCursor: {
+        completionOrder: 7,
+        sessionId: exemplar.sessionId,
+        sessionDigest: "c".repeat(64),
+      },
+      exemplars: [exemplar],
+    },
+    sides: {
+      FRONT: {
+        requestTraceId: "target-session-1:FRONT:detect:operation:a1",
+        evidence: sideEvidence("FRONT", "SMART_MARK_SIMILARITY_BELOW_THRESHOLD"),
+      },
+      BACK: {
+        requestTraceId: "target-session-1:BACK:detect:operation:a1",
+        evidence: sideEvidence("BACK", "NO_ELIGIBLE_RAW_CANDIDATE"),
+      },
+    },
+  });
+
+  assert.equal(event.eventType, "MEMORY_LESSON_SCAN_VERDICTS_RECORDED");
+  const details = event.details as unknown as {
+    loadedLessonCount: number;
+    totals: Record<string, number>;
+    reasonCatalog: Record<string, string>;
+    lessons: Array<{ overallStatus: string; overallReasonCodes: string[] }>;
+  };
+  assert.equal(details.loadedLessonCount, 1);
+  assert.deepEqual(details.totals, { USED: 0, REJECTED: 1, SKIPPED: 0 });
+  assert.equal(details.lessons[0].overallStatus, "REJECTED");
+  assert.match(
+    details.reasonCatalog[details.lessons[0].overallReasonCodes[0]],
+    /threshold/,
+  );
+  assert.equal(JSON.stringify(details).includes('"fingerprint":'), false);
+
+  assert.throws(() => speedsterMemoryLessonScanVerdictsEvent({
+    sessionId: "target-session-1",
+    createdByUserId: "admin-1",
+    operationId: "a".repeat(24),
+    memorySnapshotSha256: "b".repeat(64),
+    detectorMemoryVersion: "sam-memory-v2-lesson-verdict-v1",
+    memoryBank: { version: 2 },
+    sides: {
+      FRONT: { requestTraceId: "front", evidence: sideEvidence("FRONT", "NO_ELIGIBLE_RAW_CANDIDATE") },
+      BACK: { requestTraceId: "back", evidence: sideEvidence("BACK", "NO_ELIGIBLE_RAW_CANDIDATE") },
+    },
+  }), /valid frozen Memory V2 bank/);
+});
+
+test("scan ledger binds Smart Mark reuse to the exact retained Memory proposal", () => {
+  const exemplar = {
+    defectType: "VISIBLE_WHITENING" as const,
+    polarity: "POSITIVE" as const,
+    sessionId: "smart-mark-source",
+    completedAt: "2026-08-20T12:00:00.000Z",
+    completionOrder: 8,
+    proposalOrder: 3,
+    lessonOrder: 1,
+    fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    provenance: "SMART_MARK_POSITIVE" as const,
+    sourceViewId: "ORIGINAL" as const,
+  };
+  const lessonKey = speedsterMemoryLessonKey(exemplar);
+  const lesson = {
+    lessonKey,
+    sourceSessionId: exemplar.sessionId,
+    sourceCompletionOrder: exemplar.completionOrder,
+    proposalOrder: exemplar.proposalOrder,
+    lessonOrder: exemplar.lessonOrder,
+    defectType: exemplar.defectType,
+    polarity: exemplar.polarity,
+    provenance: exemplar.provenance,
+    sourceViewId: exemplar.sourceViewId,
+  };
+  const pixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  pixels[100] = 1;
+  const memoryBank = {
+    version: 2,
+    fingerprintVersion: "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+    capacityPerTypePolarity: 50,
+    calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+    replayCursor: {
+      completionOrder: 8,
+      sessionId: exemplar.sessionId,
+      sessionDigest: "c".repeat(64),
+    },
+    exemplars: [exemplar],
+  };
+  const sideEvidence = (side: "FRONT" | "BACK") => {
+    const candidateId = `raw-${side === "FRONT" ? "a" : "b"}${"0".repeat(23)}`;
+    return {
+      version: "speedster-detector-evidence-v1" as const,
+      rawCandidates: [{
+        version: "speedster-raw-detector-candidate-v1" as const,
+        candidateId,
+        evidenceOrdinal: 0,
+        sourceViewId: `${side}:ORIGINAL`,
+        promptIndex: 0,
+        maskIndex: 0,
+        promptBox: [1, 2, 3, 4] as [number, number, number, number],
+        defectType: exemplar.defectType,
+        origin: "MEMORY" as const,
+        rawConfidence: 0.91,
+        featureFingerprint: exemplar.fingerprint,
+        canonicalMask: encodeSpeedsterTraceRleV1(pixels),
+        memoryProposal: {
+          lessonKey,
+          lessonSessionId: exemplar.sessionId,
+          lessonCompletionOrder: exemplar.completionOrder,
+          lessonProposalOrder: exemplar.proposalOrder,
+          lessonOrder: exemplar.lessonOrder,
+          lessonSourceViewId: exemplar.sourceViewId,
+          similarity: 0.95,
+        },
+      }],
+      memoryDecisions: [{
+        version: "speedster-memory-decision-evidence-v1" as const,
+        candidateId,
+        policy: "SAM_MEMORY_V2" as const,
+        action: "retained" as const,
+        adjustment: 0,
+        adjustedConfidence: 0.91,
+        collectionThreshold: 0.5 as const,
+        disposition: "RETAINED_FOR_MEASUREMENT" as const,
+        diagnostic: { action: "retained", bankVersion: 2 },
+      }],
+      lessonVerdicts: {
+        version: "speedster-memory-lesson-side-verdicts-v1" as const,
+        side,
+        loadedLessonCount: 1,
+        verdicts: [{
+          lesson,
+          status: "USED" as const,
+          reasonCode: "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT",
+          reasonCodes: ["SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT"],
+          observationCount: 1,
+          maxSimilarity: 0.95,
+          candidateIds: [candidateId],
+        }],
+      },
+    };
+  };
+  const build = (front = sideEvidence("FRONT"), back = sideEvidence("BACK")) =>
+    speedsterMemoryLessonScanVerdictsEvent({
+      sessionId: "target-session-2",
+      createdByUserId: "admin-1",
+      operationId: "d".repeat(24),
+      memorySnapshotSha256: "e".repeat(64),
+      detectorMemoryVersion: "sam-memory-v2-lesson-verdict-v1",
+      memoryBank,
+      sides: {
+        FRONT: { requestTraceId: "front", evidence: front },
+        BACK: { requestTraceId: "back", evidence: back },
+      },
+    });
+
+  assert.equal(build().eventType, "MEMORY_LESSON_SCAN_VERDICTS_RECORDED");
+
+  const wrongKey = structuredClone(sideEvidence("FRONT"));
+  wrongKey.rawCandidates[0].memoryProposal.lessonKey = "f".repeat(64);
+  assert.throws(() => build(wrongKey), /frozen Smart Mark lesson/);
+
+  const wrongTuple = structuredClone(sideEvidence("FRONT"));
+  wrongTuple.rawCandidates[0].memoryProposal.lessonSessionId = "other-source";
+  assert.throws(() => build(wrongTuple), /frozen Smart Mark lesson/);
+
+  const wrongSide = structuredClone(sideEvidence("FRONT"));
+  wrongSide.rawCandidates[0].sourceViewId = "BACK:ORIGINAL";
+  assert.throws(() => build(wrongSide), /frozen Smart Mark lesson/);
+
+  const wrongOrigin = structuredClone(sideEvidence("FRONT"));
+  wrongOrigin.rawCandidates[0].origin = "DETECTOR" as never;
+  delete (wrongOrigin.rawCandidates[0] as { memoryProposal?: unknown }).memoryProposal;
+  assert.throws(() => build(wrongOrigin), /exact retained proposal evidence/);
+
+  const wrongDisposition = structuredClone(sideEvidence("FRONT"));
+  wrongDisposition.memoryDecisions[0].disposition =
+    "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE" as never;
+  assert.throws(() => build(wrongDisposition), /exact retained proposal evidence/);
+
+  const rejectedWithCandidateReferences = structuredClone(sideEvidence("FRONT"));
+  rejectedWithCandidateReferences.lessonVerdicts.verdicts[0].status = "REJECTED" as never;
+  rejectedWithCandidateReferences.lessonVerdicts.verdicts[0].reasonCode =
+    "SMART_MARK_PROMPT_VETOED";
+  rejectedWithCandidateReferences.lessonVerdicts.verdicts[0].reasonCodes =
+    ["SMART_MARK_PROMPT_VETOED"];
+  assert.throws(
+    () => build(rejectedWithCandidateReferences),
+    /lesson verdict is malformed/,
+  );
+});
+
+test("scan ledger accepts the bounded 256-candidate classifier-use ceiling", () => {
+  const exemplar = {
+    defectType: "VISIBLE_WHITENING" as const,
+    polarity: "POSITIVE" as const,
+    sessionId: "classifier-source",
+    completedAt: "2026-08-20T12:00:00.000Z",
+    completionOrder: 10,
+    proposalOrder: 0,
+    lessonOrder: 0,
+    fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    provenance: "SMART_MARK_POSITIVE" as const,
+    sourceViewId: "ORIGINAL" as const,
+  };
+  const lessonKey = speedsterMemoryLessonKey(exemplar);
+  const lesson = {
+    lessonKey,
+    sourceSessionId: exemplar.sessionId,
+    sourceCompletionOrder: exemplar.completionOrder,
+    proposalOrder: exemplar.proposalOrder,
+    lessonOrder: exemplar.lessonOrder,
+    defectType: exemplar.defectType,
+    polarity: exemplar.polarity,
+    provenance: exemplar.provenance,
+    sourceViewId: exemplar.sourceViewId,
+  };
+  const pixels = new Uint8Array(SPEEDSTER_TRACE_PIXEL_COUNT);
+  pixels[101] = 1;
+  const canonicalMask = encodeSpeedsterTraceRleV1(pixels);
+  const candidateIds = Array.from(
+    { length: 256 },
+    (_, index) => `raw-${index.toString(16).padStart(24, "0")}`,
+  );
+  const evidence = (side: "FRONT" | "BACK") => ({
+    version: "speedster-detector-evidence-v1" as const,
+    rawCandidates: candidateIds.map((candidateId, evidenceOrdinal) => ({
+      version: "speedster-raw-detector-candidate-v1" as const,
+      candidateId,
+      evidenceOrdinal,
+      sourceViewId: `${side}:ORIGINAL`,
+      promptIndex: evidenceOrdinal,
+      maskIndex: 0,
+      promptBox: [1, 2, 3, 4] as [number, number, number, number],
+      defectType: exemplar.defectType,
+      origin: "DETECTOR" as const,
+      rawConfidence: 0.91,
+      featureFingerprint: exemplar.fingerprint,
+      canonicalMask,
+    })),
+    memoryDecisions: candidateIds.map((candidateId) => ({
+      version: "speedster-memory-decision-evidence-v1" as const,
+      candidateId,
+      policy: "SAM_MEMORY_V2" as const,
+      action: "retained" as const,
+      adjustment: 0,
+      adjustedConfidence: 0.91,
+      collectionThreshold: 0.5 as const,
+      disposition: "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE" as const,
+      diagnostic: {
+        action: "retained",
+        gentlePositiveMatchLessonKey: lessonKey,
+      },
+    })),
+    lessonVerdicts: {
+      version: "speedster-memory-lesson-side-verdicts-v1" as const,
+      side,
+      loadedLessonCount: 1,
+      verdicts: [{
+        lesson,
+        status: "USED" as const,
+        reasonCode: "CLASSIFIER_GENTLE_POSITIVE_MAX",
+        reasonCodes: ["CLASSIFIER_GENTLE_POSITIVE_MAX"],
+        observationCount: 256,
+        maxSimilarity: 0.91,
+        candidateIds,
+      }],
+    },
+  });
+  const event = speedsterMemoryLessonScanVerdictsEvent({
+    sessionId: "target-session-used-cap",
+    createdByUserId: "admin-1",
+    operationId: "1".repeat(24),
+    memorySnapshotSha256: "2".repeat(64),
+    detectorMemoryVersion: "sam-memory-v2-lesson-verdict-v1",
+    memoryBank: {
+      version: 2,
+      fingerprintVersion: "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+      capacityPerTypePolarity: 50,
+      calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+      replayCursor: {
+        completionOrder: 10,
+        sessionId: exemplar.sessionId,
+        sessionDigest: "3".repeat(64),
+      },
+      exemplars: [exemplar],
+    },
+    sides: {
+      FRONT: { requestTraceId: "front", evidence: evidence("FRONT") },
+      BACK: { requestTraceId: "back", evidence: evidence("BACK") },
+    },
+  });
+
+  assert.equal(
+    (event.details as unknown as { totals: { USED: number } }).totals.USED,
+    1,
+  );
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(event.details), "utf8") <
+      SPEEDSTER_MEMORY_LESSON_SCAN_LEDGER_MAX_BYTES,
+  );
+});
+
+test("maximum-capacity lesson ledger stays below its one-megabyte storage budget", () => {
+  const defectTypes = [
+    "FAINT_COLOR_VARIATION",
+    "VISIBLE_WHITENING",
+    "FRAYING",
+    "CHIPPING_EXPOSED_STOCK",
+    "LIFTING_DEFORMATION",
+    "LIGHT_SCRATCH_SCUFF",
+    "VISIBLE_SCRATCH_PRINT_COATING_LOSS",
+    "DENT_MATERIAL_DAMAGE",
+    "PEELING_HEAVY_DAMAGE",
+  ] as const;
+  let completionOrder = 0;
+  const exemplars = defectTypes.flatMap((defectType) =>
+    (["POSITIVE", "NEGATIVE"] as const).flatMap((polarity) =>
+      Array.from({ length: 50 }, () => {
+        completionOrder += 1;
+        return {
+          defectType,
+          polarity,
+          sessionId: `source-${String(completionOrder).padStart(4, "0")}`,
+          completedAt: "2026-08-20T12:00:00.000Z",
+          completionOrder,
+          proposalOrder: 0,
+          lessonOrder: 0,
+          fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+          provenance: polarity === "POSITIVE"
+            ? "SMART_MARK_POSITIVE" as const
+            : "DETECTOR_REMOVED" as const,
+          sourceViewId: "ORIGINAL" as const,
+        };
+      }),
+    ),
+  );
+  const verdicts = exemplars.map((exemplar) => ({
+    lesson: {
+      lessonKey: speedsterMemoryLessonKey(exemplar),
+      sourceSessionId: exemplar.sessionId,
+      sourceCompletionOrder: exemplar.completionOrder,
+      proposalOrder: exemplar.proposalOrder,
+      lessonOrder: exemplar.lessonOrder,
+      defectType: exemplar.defectType,
+      polarity: exemplar.polarity,
+      provenance: exemplar.provenance,
+      sourceViewId: exemplar.sourceViewId,
+    },
+    status: "SKIPPED" as const,
+    reasonCode: "NO_ELIGIBLE_RAW_CANDIDATE",
+    reasonCodes: ["NO_ELIGIBLE_RAW_CANDIDATE"],
+    observationCount: 1,
+    maxSimilarity: null,
+    candidateIds: [],
+  }));
+  const evidence = (side: "FRONT" | "BACK") => ({
+    version: "speedster-detector-evidence-v1" as const,
+    rawCandidates: [],
+    memoryDecisions: [],
+    lessonVerdicts: {
+      version: "speedster-memory-lesson-side-verdicts-v1" as const,
+      side,
+      loadedLessonCount: verdicts.length,
+      verdicts,
+    },
+  });
+  const event = speedsterMemoryLessonScanVerdictsEvent({
+    sessionId: "target-session-at-capacity",
+    createdByUserId: "admin-1",
+    operationId: "f".repeat(24),
+    memorySnapshotSha256: "a".repeat(64),
+    detectorMemoryVersion: "sam-memory-v2-lesson-verdict-v1",
+    memoryBank: {
+      version: 2,
+      fingerprintVersion: "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+      capacityPerTypePolarity: 50,
+      calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+      replayCursor: {
+        completionOrder,
+        sessionId: exemplars.at(-1)!.sessionId,
+        sessionDigest: "b".repeat(64),
+      },
+      exemplars,
+    },
+    sides: {
+      FRONT: { requestTraceId: "front", evidence: evidence("FRONT") },
+      BACK: { requestTraceId: "back", evidence: evidence("BACK") },
+    },
+  });
+
+  assert.equal(verdicts.length, 900);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(event.details), "utf8") <
+      SPEEDSTER_MEMORY_LESSON_SCAN_LEDGER_MAX_BYTES,
+  );
 });
 
 test("review telemetry retains append-only operator history and final disposition", () => {

@@ -1,15 +1,28 @@
 import type {
+  SpeedsterCardSide,
   SpeedsterDefectOrigin,
   SpeedsterDefectType,
   SpeedsterMemoryProposal,
+  SpeedsterViewType,
 } from "./contracts";
 import { parseSpeedsterTraceRleV1, type SpeedsterTraceRleV1 } from "./trace-codec";
 
 export const SPEEDSTER_DETECTOR_EVIDENCE_VERSION = "speedster-detector-evidence-v1" as const;
 export const SPEEDSTER_RAW_CANDIDATE_VERSION = "speedster-raw-detector-candidate-v1" as const;
 export const SPEEDSTER_MEMORY_DECISION_EVIDENCE_VERSION = "speedster-memory-decision-evidence-v1" as const;
+export const SPEEDSTER_MEMORY_LESSON_SIDE_VERDICTS_VERSION =
+  "speedster-memory-lesson-side-verdicts-v1" as const;
+export const SPEEDSTER_MEMORY_LESSON_VERDICT_MEMORY_VERSION =
+  "sam-memory-v2-lesson-verdict-v1" as const;
+export const SPEEDSTER_MEMORY_LESSON_LEGACY_UNPROVEN_REASON =
+  "UNPROVEN_LEGACY_NO_LESSON_VERDICT" as const;
 
 const RAW_CANDIDATE_ID = /^raw-[a-f0-9]{24}$/;
+const SHA256 = /^[a-f0-9]{64}$/;
+const MAX_RAW_CANDIDATES_PER_SIDE = 256;
+const MAX_LESSON_OBSERVATIONS_PER_SIDE = 100_000;
+const MAX_LESSON_CANDIDATE_REFERENCES_PER_SIDE =
+  MAX_RAW_CANDIDATES_PER_SIDE * 4;
 const DEFECT_TYPES = new Set<SpeedsterDefectType>([
   "FAINT_COLOR_VARIATION",
   "VISIBLE_WHITENING",
@@ -30,6 +43,45 @@ const DISPOSITIONS = new Set([
   "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE",
   "SUPPRESSED_BY_SIDE_MEMORY_CAP",
   "RETAINED_FOR_MEASUREMENT",
+]);
+const USED_REASONS = new Set([
+  "CLASSIFIER_GENTLE_POSITIVE_MAX",
+  "CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK",
+  "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION",
+  "CLASSIFIER_NEGATIVE_MAX",
+  "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT",
+]);
+const REJECTED_REASONS = new Set([
+  "NOT_SELECTED_AS_MAX_EXEMPLAR",
+  "SELECTED_BUT_POLICY_BRANCH_INACTIVE",
+  "SMART_MARK_SIMILARITY_BELOW_THRESHOLD",
+  "SMART_MARK_COMPONENT_INVALID_GEOMETRY",
+  "SMART_MARK_COMPONENT_IOU_DEDUP",
+  "SMART_MARK_COMPONENT_TYPE_SIDE_CAP",
+  "SMART_MARK_PROMPT_NO_VALID_MASK",
+  "SMART_MARK_PROMPT_VETOED",
+  "SMART_MARK_PROMPT_BELOW_COLLECTION_THRESHOLD",
+  "SMART_MARK_PROMPT_LOWER_CONFIDENCE",
+  "SMART_MARK_PROMPT_SIDE_CAP",
+]);
+const SKIPPED_REASONS = new Set([
+  "SOURCE_VIEW_NOT_SCANNED",
+  "NO_ELIGIBLE_RAW_CANDIDATE",
+  "NO_ALLOWED_MATERIAL_CELLS",
+  "FEATURE_MAP_UNAVAILABLE",
+  "CANDIDATE_FINGERPRINT_UNAVAILABLE",
+]);
+const POLARITIES = new Set(["POSITIVE", "NEGATIVE"]);
+const PROVENANCE = new Set([
+  "DETECTOR_REMOVED",
+  "DETECTOR_RELABELED_NEGATIVE",
+  "DETECTOR_RELABELED_POSITIVE",
+  "HUMAN_TRACE_CORRECTION_POSITIVE",
+  "SMART_MARK_POSITIVE",
+  "UNTOUCHED_ACCEPTED_POSITIVE",
+]);
+const SOURCE_VIEWS = new Set<SpeedsterViewType>([
+  "ORIGINAL", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL",
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -73,22 +125,136 @@ export type SpeedsterMemoryDecisionEvidenceV1 = Readonly<{
   diagnostic?: Readonly<Record<string, unknown>>;
 }>;
 
+export type SpeedsterMemoryLessonReferenceV1 = Readonly<{
+  lessonKey: string;
+  sourceSessionId: string;
+  sourceCompletionOrder: number;
+  proposalOrder: number;
+  lessonOrder: number;
+  defectType: SpeedsterDefectType;
+  polarity: "POSITIVE" | "NEGATIVE";
+  provenance:
+    | "DETECTOR_REMOVED"
+    | "DETECTOR_RELABELED_NEGATIVE"
+    | "DETECTOR_RELABELED_POSITIVE"
+    | "HUMAN_TRACE_CORRECTION_POSITIVE"
+    | "SMART_MARK_POSITIVE"
+    | "UNTOUCHED_ACCEPTED_POSITIVE";
+  sourceViewId: SpeedsterViewType;
+}>;
+
+export type SpeedsterMemoryLessonSideVerdictV1 = Readonly<{
+  lesson: SpeedsterMemoryLessonReferenceV1;
+  status: "USED" | "REJECTED" | "SKIPPED";
+  reasonCode: string;
+  reasonCodes: readonly string[];
+  observationCount: number;
+  maxSimilarity: number | null;
+  candidateIds: readonly string[];
+}>;
+
+export type SpeedsterMemoryLessonSideVerdictsV1 = Readonly<{
+  version: typeof SPEEDSTER_MEMORY_LESSON_SIDE_VERDICTS_VERSION;
+  side: SpeedsterCardSide;
+  loadedLessonCount: number;
+  verdicts: readonly SpeedsterMemoryLessonSideVerdictV1[];
+}>;
+
 export type SpeedsterDetectorEvidenceV1 = Readonly<{
   version: typeof SPEEDSTER_DETECTOR_EVIDENCE_VERSION;
   rawCandidates: readonly SpeedsterRawDetectorCandidateEvidenceV1[];
   memoryDecisions: readonly SpeedsterMemoryDecisionEvidenceV1[];
+  lessonVerdicts?: SpeedsterMemoryLessonSideVerdictsV1;
 }>;
 
 function memoryProposal(value: unknown): SpeedsterMemoryProposal | undefined {
   if (value === undefined) return undefined;
   if (
     !isRecord(value) || typeof value.lessonSessionId !== "string" || !value.lessonSessionId ||
+    (value.lessonKey !== undefined && (
+      typeof value.lessonKey !== "string" || !SHA256.test(value.lessonKey)
+    )) ||
     !Number.isSafeInteger(value.lessonCompletionOrder) || Number(value.lessonCompletionOrder) < 1 ||
     !nonnegativeInteger(value.lessonProposalOrder) || !nonnegativeInteger(value.lessonOrder) ||
     typeof value.lessonSourceViewId !== "string" || !value.lessonSourceViewId ||
     !finiteUnit(value.similarity)
   ) throw new Error("Speedster raw candidate Memory proposal is malformed.");
   return value as unknown as SpeedsterMemoryProposal;
+}
+
+function lessonReference(value: unknown): SpeedsterMemoryLessonReferenceV1 {
+  if (
+    !isRecord(value) || typeof value.lessonKey !== "string" || !SHA256.test(value.lessonKey) ||
+    typeof value.sourceSessionId !== "string" || !value.sourceSessionId.trim() ||
+    !Number.isSafeInteger(value.sourceCompletionOrder) || Number(value.sourceCompletionOrder) < 1 ||
+    !nonnegativeInteger(value.proposalOrder) || !nonnegativeInteger(value.lessonOrder) ||
+    typeof value.defectType !== "string" || !DEFECT_TYPES.has(value.defectType as SpeedsterDefectType) ||
+    typeof value.polarity !== "string" || !POLARITIES.has(value.polarity) ||
+    typeof value.provenance !== "string" || !PROVENANCE.has(value.provenance) ||
+    typeof value.sourceViewId !== "string" || !SOURCE_VIEWS.has(value.sourceViewId as SpeedsterViewType)
+  ) throw new Error("Speedster Memory lesson reference is malformed.");
+  return value as unknown as SpeedsterMemoryLessonReferenceV1;
+}
+
+function lessonSideVerdict(value: unknown): SpeedsterMemoryLessonSideVerdictV1 {
+  if (!isRecord(value)) throw new Error("Speedster Memory lesson verdict is malformed.");
+  const lesson = lessonReference(value.lesson);
+  const reasons = value.status === "USED"
+    ? USED_REASONS
+    : value.status === "REJECTED"
+      ? REJECTED_REASONS
+      : value.status === "SKIPPED"
+        ? SKIPPED_REASONS
+        : null;
+  if (
+    !reasons || typeof value.reasonCode !== "string" || !reasons.has(value.reasonCode) ||
+    !Array.isArray(value.reasonCodes) || value.reasonCodes.length < 1 ||
+    value.reasonCodes.some((reason) => typeof reason !== "string" || !reasons.has(reason)) ||
+    new Set(value.reasonCodes).size !== value.reasonCodes.length ||
+    value.reasonCodes[0] !== value.reasonCode ||
+    !Number.isSafeInteger(value.observationCount) || Number(value.observationCount) < 1 ||
+    Number(value.observationCount) > MAX_LESSON_OBSERVATIONS_PER_SIDE ||
+    !(value.maxSimilarity === null || finiteUnit(value.maxSimilarity)) ||
+    !Array.isArray(value.candidateIds) ||
+    value.candidateIds.length > MAX_RAW_CANDIDATES_PER_SIDE ||
+    value.candidateIds.some((id) => typeof id !== "string" || !RAW_CANDIDATE_ID.test(id)) ||
+    new Set(value.candidateIds).size !== value.candidateIds.length ||
+    (value.status === "USED" && value.candidateIds.length < 1) ||
+    (value.status !== "USED" && value.candidateIds.length !== 0)
+  ) throw new Error("Speedster Memory lesson verdict is malformed.");
+  return {
+    lesson,
+    status: value.status as SpeedsterMemoryLessonSideVerdictV1["status"],
+    reasonCode: value.reasonCode,
+    reasonCodes: value.reasonCodes as string[],
+    observationCount: Number(value.observationCount),
+    maxSimilarity: value.maxSimilarity as number | null,
+    candidateIds: value.candidateIds as string[],
+  };
+}
+
+function lessonSideVerdicts(value: unknown): SpeedsterMemoryLessonSideVerdictsV1 | undefined {
+  if (value === undefined) return undefined;
+  if (
+    !isRecord(value) || value.version !== SPEEDSTER_MEMORY_LESSON_SIDE_VERDICTS_VERSION ||
+    (value.side !== "FRONT" && value.side !== "BACK") ||
+    !nonnegativeInteger(value.loadedLessonCount) || Number(value.loadedLessonCount) > 900 ||
+    !Array.isArray(value.verdicts) || value.verdicts.length !== value.loadedLessonCount
+  ) throw new Error("Speedster Memory lesson verdict envelope is malformed.");
+  const verdicts = value.verdicts.map(lessonSideVerdict);
+  if (
+    new Set(verdicts.map(({ lesson }) => lesson.lessonKey)).size !== verdicts.length ||
+    verdicts.reduce((count, verdict) => count + verdict.candidateIds.length, 0) >
+      MAX_LESSON_CANDIDATE_REFERENCES_PER_SIDE
+  ) {
+    throw new Error("Speedster Memory lesson verdicts are duplicated or exceed the candidate-reference budget.");
+  }
+  return {
+    version: SPEEDSTER_MEMORY_LESSON_SIDE_VERDICTS_VERSION,
+    side: value.side,
+    loadedLessonCount: Number(value.loadedLessonCount),
+    verdicts,
+  };
 }
 
 function rawCandidate(value: unknown): SpeedsterRawDetectorCandidateEvidenceV1 {
@@ -153,10 +319,13 @@ function memoryDecision(value: unknown): SpeedsterMemoryDecisionEvidenceV1 {
 export function parseSpeedsterDetectorEvidence(value: unknown): SpeedsterDetectorEvidenceV1 {
   if (
     !isRecord(value) || value.version !== SPEEDSTER_DETECTOR_EVIDENCE_VERSION ||
-    !Array.isArray(value.rawCandidates) || !Array.isArray(value.memoryDecisions)
+    !Array.isArray(value.rawCandidates) || !Array.isArray(value.memoryDecisions) ||
+    value.rawCandidates.length > MAX_RAW_CANDIDATES_PER_SIDE ||
+    value.memoryDecisions.length > MAX_RAW_CANDIDATES_PER_SIDE
   ) throw new Error("Speedster detector evidence envelope is malformed.");
   const rawCandidates = value.rawCandidates.map(rawCandidate);
   const memoryDecisions = value.memoryDecisions.map(memoryDecision);
+  const lessonVerdicts = lessonSideVerdicts(value.lessonVerdicts);
   const rawIds = rawCandidates.map(({ candidateId }) => candidateId);
   const decisionIds = memoryDecisions.map(({ candidateId }) => candidateId);
   if (
@@ -164,7 +333,16 @@ export function parseSpeedsterDetectorEvidence(value: unknown): SpeedsterDetecto
     new Set(rawIds).size !== rawIds.length || new Set(decisionIds).size !== decisionIds.length ||
     rawIds.length !== decisionIds.length || rawIds.some((id) => !decisionIds.includes(id))
   ) throw new Error("Every raw detector candidate requires one unique Memory disposition.");
-  return { version: SPEEDSTER_DETECTOR_EVIDENCE_VERSION, rawCandidates, memoryDecisions };
+  if (lessonVerdicts?.verdicts.some((verdict) =>
+    verdict.candidateIds.some((id) => !rawIds.includes(id)))) {
+    throw new Error("Speedster Memory lesson verdict references an unknown raw candidate.");
+  }
+  return {
+    version: SPEEDSTER_DETECTOR_EVIDENCE_VERSION,
+    rawCandidates,
+    memoryDecisions,
+    ...(lessonVerdicts ? { lessonVerdicts } : {}),
+  };
 }
 
 export function assertSpeedsterDetectorEvidenceBindsFindings(
@@ -188,7 +366,17 @@ export function assertSpeedsterDetectorEvidenceBindsFindings(
         !candidate || !decision || decision.disposition !== "RETAINED_FOR_MEASUREMENT" ||
         candidate.sourceViewId !== contributor.sourceViewId ||
         candidate.defectType !== contributor.defectType ||
-        candidate.origin !== contributor.origin
+        candidate.origin !== contributor.origin ||
+        (candidate.origin === "MEMORY" && (
+          !candidate.memoryProposal || !contributor.memoryProposal ||
+          candidate.memoryProposal.lessonKey !== contributor.memoryProposal.lessonKey ||
+          candidate.memoryProposal.lessonSessionId !== contributor.memoryProposal.lessonSessionId ||
+          candidate.memoryProposal.lessonCompletionOrder !== contributor.memoryProposal.lessonCompletionOrder ||
+          candidate.memoryProposal.lessonProposalOrder !== contributor.memoryProposal.lessonProposalOrder ||
+          candidate.memoryProposal.lessonOrder !== contributor.memoryProposal.lessonOrder ||
+          candidate.memoryProposal.lessonSourceViewId !== contributor.memoryProposal.lessonSourceViewId ||
+          candidate.memoryProposal.similarity !== contributor.memoryProposal.similarity
+        ))
       ) {
         throw new Error("Detector finding provenance is not bound to retained raw candidate evidence.");
       }

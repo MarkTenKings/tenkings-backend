@@ -29,6 +29,7 @@ import {
   type SpeedsterDetectionSideCheckpoint,
   type UnsignedSpeedsterDetectionSideCheckpoint,
 } from "../lib/server/speedsterDetectionSideCheckpoint";
+import { speedsterMemoryLessonKey } from "../lib/server/aiGraderV2Instrumentation";
 
 const measurement = {
   widthMm: 1,
@@ -158,7 +159,10 @@ function emptyDetectorEvidence() {
   };
 }
 
-function detectorIdentity(detectorVersion = "same-release") {
+function detectorIdentity(
+  detectorVersion = "same-release",
+  memoryVersion = "sam-memory-v2",
+) {
   return {
     version: "speedster-detector-identity-v1",
     detectorVersion,
@@ -196,7 +200,7 @@ function detectorIdentity(detectorVersion = "same-release") {
       promptVersion: "prompt-policy-v1",
       fusionVersion: "fusion-policy-v1",
       measurementVersion: "measurement-policy-v1",
-      memoryVersion: "sam-memory-v2",
+      memoryVersion,
     },
     determinism: {
       deterministicAlgorithms: true,
@@ -775,6 +779,130 @@ test("INITIALIZE records detector fusion provenance without changing authoritati
     ["FRONT", `${initial.id}:FRONT:detect:TRACE:a1`, 13],
     ["BACK", `${initial.id}:BACK:detect:TRACE:a1`, 27],
   ]);
+});
+
+test("telemetry-capable INITIALIZE atomically records one verdict for every frozen-bank lesson", async () => {
+  const initial = session([]);
+  initial.gradeReport = {};
+  const exemplar = {
+    defectType: "VISIBLE_WHITENING" as const,
+    polarity: "NEGATIVE" as const,
+    sessionId: "learning-source-session",
+    completedAt: "2026-08-20T12:00:00.000Z",
+    completionOrder: 9,
+    proposalOrder: 1,
+    lessonOrder: 0,
+    fingerprint: [1, ...Array.from({ length: 31 }, () => 0)],
+    provenance: "DETECTOR_REMOVED" as const,
+    sourceViewId: "ORIGINAL" as const,
+  };
+  const bank = {
+    version: 2,
+    fingerprintVersion: "sam3-fpn32-inspection-2mm@96914d2425f90a64f45ca977c2b5165418099543",
+    capacityPerTypePolarity: 50,
+    calibration: { status: "CALIBRATED", tau: 0.8, margin: 0.1 },
+    replayCursor: {
+      completionOrder: 9,
+      sessionId: exemplar.sessionId,
+      sessionDigest: "d".repeat(64),
+    },
+    exemplars: [exemplar],
+  };
+  const lesson = {
+    lessonKey: speedsterMemoryLessonKey(exemplar),
+    sourceSessionId: exemplar.sessionId,
+    sourceCompletionOrder: exemplar.completionOrder,
+    proposalOrder: exemplar.proposalOrder,
+    lessonOrder: exemplar.lessonOrder,
+    defectType: exemplar.defectType,
+    polarity: exemplar.polarity,
+    provenance: exemplar.provenance,
+    sourceViewId: exemplar.sourceViewId,
+  };
+  const evidence = (side: "FRONT" | "BACK") => ({
+    version: "speedster-detector-evidence-v1" as const,
+    rawCandidates: [],
+    memoryDecisions: [],
+    lessonVerdicts: {
+      version: "speedster-memory-lesson-side-verdicts-v1" as const,
+      side,
+      loadedLessonCount: 1,
+      verdicts: [{
+        lesson,
+        status: "SKIPPED" as const,
+        reasonCode: "NO_ELIGIBLE_RAW_CANDIDATE",
+        reasonCodes: ["NO_ELIGIBLE_RAW_CANDIDATE"],
+        observationCount: 1,
+        maxSimilarity: null,
+        candidateIds: [],
+      }],
+    },
+  });
+  let persistedEvidence: readonly { eventType: string; details?: unknown }[] = [];
+  let persistCalls = 0;
+
+  await applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    requireDetectorIdentityV1: true,
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision(_identity, _revision, data) {
+      persistCalls += 1;
+      persistedEvidence = data.detectorEvidenceEvents ?? [];
+    },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return bank; },
+    async detect(body) {
+      return {
+        detectorVersion: "same-release",
+        detectorIdentity: detectorIdentity(
+          "same-release",
+          "sam-memory-v2-lesson-verdict-v1",
+        ),
+        defects: [],
+        detectorEvidence: evidence(body.side),
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  });
+
+  assert.equal(persistCalls, 1);
+  assert.equal(persistedEvidence.length, 1);
+  assert.equal(persistedEvidence[0].eventType, "MEMORY_LESSON_SCAN_VERDICTS_RECORDED");
+  const details = persistedEvidence[0].details as {
+    loadedLessonCount: number;
+    totals: Record<string, number>;
+  };
+  assert.equal(details.loadedLessonCount, 1);
+  assert.deepEqual(details.totals, { USED: 0, REJECTED: 0, SKIPPED: 1 });
+
+  let malformedPersistCalls = 0;
+  await assert.rejects(() => applySpeedsterReviewAction({
+    sessionId: initial.id,
+    createdByUserId: initial.createdByUserId,
+    action: { type: "INITIALIZE" },
+  }, {
+    requireDetectorIdentityV1: true,
+    async loadOwnedSession() { return initial; },
+    async persistReviewIfRevision() { malformedPersistCalls += 1; },
+    async presignRead(key) { return `https://fresh.example/${key}`; },
+    async learningBankForDetect() { return bank; },
+    async detect(body) {
+      return {
+        detectorVersion: "same-release",
+        detectorIdentity: detectorIdentity(
+          "same-release",
+          "sam-memory-v2-lesson-verdict-v1",
+        ),
+        defects: [],
+        detectorEvidence: body.side === "FRONT" ? evidence("FRONT") : emptyDetectorEvidence(),
+      };
+    },
+    async measure() { throw new Error("must not measure"); },
+  }), /lesson verdict evidence|per-lesson Memory verdict/i);
+  assert.equal(malformedPersistCalls, 0);
 });
 
 test("exact INITIALIZE retry returns the coherently initialized state without a second detector pass", async () => {

@@ -39,7 +39,9 @@ from defect_math import (
 from sam_memory_v2 import (
     MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE,
     MEMORY_PROPOSAL_SIMILARITY_THRESHOLD,
+    all_exemplars_v2,
     decide_candidate_v2,
+    lesson_reference_v2,
     prepare_bank_v2,
     smart_mark_proposal_seeds_v2,
 )
@@ -63,7 +65,7 @@ DETECTOR_IDENTITY_VERSION = "speedster-detector-identity-v1"
 DETECTOR_PROMPT_VERSION = "sam3-box-and-smart-mark-point-v1"
 DETECTOR_FUSION_VERSION = "speedster-side-wide-memory-cap-v2"
 DETECTOR_MEASUREMENT_VERSION = "speedster-exact-canonical-mask-v1"
-DETECTOR_MEMORY_VERSION = "sam-memory-v2"
+DETECTOR_MEMORY_VERSION = "sam-memory-v2-lesson-verdict-v1"
 MIN_SAM_AREA_MM2 = 0.02
 MAX_SAM_AREA_MM2 = 120.0
 PX_PER_MM = GRID_WIDTH / 63.5
@@ -95,7 +97,135 @@ class MaskProcessor(Protocol):
 DETECTOR_EVIDENCE_VERSION = "speedster-detector-evidence-v1"
 RAW_CANDIDATE_VERSION = "speedster-raw-detector-candidate-v1"
 MEMORY_DECISION_EVIDENCE_VERSION = "speedster-memory-decision-evidence-v1"
+LESSON_VERDICTS_VERSION = "speedster-memory-lesson-side-verdicts-v1"
 COLLECTION_CONFIDENCE_THRESHOLD = 0.5
+
+_LESSON_STATUS_PRIORITY = {"SKIPPED": 0, "REJECTED": 1, "USED": 2}
+_LESSON_REASON_PRIORITY = {
+    "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT": 0,
+    "CLASSIFIER_EXPLICIT_POSITIVE_PROTECTION": 1,
+    "CLASSIFIER_NEGATIVE_MAX": 2,
+    "CLASSIFIER_GENTLE_POSITIVE_MAX": 3,
+    "CLASSIFIER_EXPLICIT_POSITIVE_MARGIN_CHECK": 4,
+    "SMART_MARK_PROMPT_SIDE_CAP": 10,
+    "SMART_MARK_PROMPT_LOWER_CONFIDENCE": 11,
+    "SMART_MARK_PROMPT_BELOW_COLLECTION_THRESHOLD": 12,
+    "SMART_MARK_PROMPT_VETOED": 13,
+    "SMART_MARK_PROMPT_NO_VALID_MASK": 14,
+    "SMART_MARK_COMPONENT_TYPE_SIDE_CAP": 15,
+    "SMART_MARK_COMPONENT_IOU_DEDUP": 16,
+    "SMART_MARK_COMPONENT_INVALID_GEOMETRY": 17,
+    "SMART_MARK_SIMILARITY_BELOW_THRESHOLD": 18,
+    "NOT_SELECTED_AS_MAX_EXEMPLAR": 19,
+    "SELECTED_BUT_POLICY_BRANCH_INACTIVE": 20,
+    "NO_ALLOWED_MATERIAL_CELLS": 30,
+    "FEATURE_MAP_UNAVAILABLE": 31,
+    "CANDIDATE_FINGERPRINT_UNAVAILABLE": 32,
+    "SOURCE_VIEW_NOT_SCANNED": 33,
+    "NO_ELIGIBLE_RAW_CANDIDATE": 34,
+}
+
+
+def _lesson_observation(
+    lesson_key: str,
+    status: str,
+    reason_code: str,
+    *,
+    similarity: Optional[float] = None,
+    candidate_id: Optional[str] = None,
+) -> dict:
+    return {
+        "lessonKey": lesson_key,
+        "status": status,
+        "reasonCode": reason_code,
+        "similarity": (
+            round(max(0.0, min(1.0, float(similarity))), 6)
+            if similarity is not None
+            else None
+        ),
+        "candidateId": candidate_id,
+    }
+
+
+def _record_lesson_observations(
+    candidate_evidence: Optional[dict], observations: list[dict]
+) -> None:
+    if candidate_evidence is not None:
+        candidate_evidence.setdefault("_lessonObservations", []).extend(observations)
+
+
+def _finalize_lesson_verdicts(
+    prepared_bank,
+    observations: list[dict],
+    *,
+    side: str,
+    scanned_source_views: set[str],
+) -> dict:
+    by_lesson = {}
+    for observation in observations:
+        by_lesson.setdefault(observation["lessonKey"], []).append(observation)
+    verdicts = []
+    for exemplar in all_exemplars_v2(prepared_bank):
+        lesson = lesson_reference_v2(exemplar)
+        recorded = by_lesson.get(lesson["lessonKey"], [])
+        if not recorded:
+            reason_code = (
+                "NO_ELIGIBLE_RAW_CANDIDATE"
+                if exemplar.source_view_id in scanned_source_views
+                else "SOURCE_VIEW_NOT_SCANNED"
+            )
+            recorded = [
+                _lesson_observation(
+                    lesson["lessonKey"], "SKIPPED", reason_code
+                )
+            ]
+        terminal_status = max(
+            (entry["status"] for entry in recorded),
+            key=lambda status: _LESSON_STATUS_PRIORITY[status],
+        )
+        terminal_reasons = sorted(
+            {
+                entry["reasonCode"]
+                for entry in recorded
+                if entry["status"] == terminal_status
+            },
+            key=lambda reason: (_LESSON_REASON_PRIORITY[reason], reason),
+        )
+        similarities = [
+            entry["similarity"]
+            for entry in recorded
+            if entry["status"] == terminal_status
+            and entry.get("similarity") is not None
+        ]
+        candidate_ids = (
+            sorted(
+                {
+                    entry["candidateId"]
+                    for entry in recorded
+                    if entry.get("candidateId") is not None
+                    and entry["status"] == terminal_status
+                }
+            )
+            if terminal_status == "USED"
+            else []
+        )
+        verdicts.append(
+            {
+                "lesson": lesson,
+                "status": terminal_status,
+                "reasonCode": terminal_reasons[0],
+                "reasonCodes": terminal_reasons,
+                "observationCount": len(recorded),
+                "maxSimilarity": max(similarities) if similarities else None,
+                "candidateIds": candidate_ids,
+            }
+        )
+    return {
+        "version": LESSON_VERDICTS_VERSION,
+        "side": side,
+        "loadedLessonCount": len(verdicts),
+        "verdicts": verdicts,
+    }
 
 _GIT_SHA = re.compile(r"^[a-f0-9]{40}$")
 _SHA256 = re.compile(r"^[a-f0-9]{64}$")
@@ -591,11 +721,22 @@ def memory_proposal_candidates(
     image_width: int,
     image_height: int,
     allowed_mask: np.ndarray,
+    lesson_observations: Optional[list[dict]] = None,
 ) -> list[dict]:
     """Find tight explicit-Smart-Mark matches without another model or embedding."""
 
+    seeds = smart_mark_proposal_seeds_v2(prepared_bank, source_view_id)
+    observations = lesson_observations if lesson_observations is not None else []
     compact = _compact_normalized_feature_map(feature_map)
     if compact is None:
+        observations.extend(
+            _lesson_observation(
+                lesson_reference_v2(seed)["lessonKey"],
+                "SKIPPED",
+                "FEATURE_MAP_UNAVAILABLE",
+            )
+            for _defect_type, seed in seeds
+        )
         return []
     feature_height, feature_width = compact.shape[1:]
     allowed_cells = cv2.resize(
@@ -603,13 +744,22 @@ def memory_proposal_candidates(
         (feature_width, feature_height),
         interpolation=cv2.INTER_AREA,
     ) > 0
+    if not np.any(allowed_cells):
+        observations.extend(
+            _lesson_observation(
+                lesson_reference_v2(seed)["lessonKey"],
+                "SKIPPED",
+                "NO_ALLOWED_MATERIAL_CELLS",
+            )
+            for _defect_type, seed in seeds
+        )
+        return []
     card_x, card_y, card_width, card_height = cv2.boundingRect(
         (np.asarray(allowed_mask) > 0).astype(np.uint8)
     )
     matches = []
-    for defect_type, seed in smart_mark_proposal_seeds_v2(
-        prepared_bank, source_view_id
-    ):
+    for defect_type, seed in seeds:
+        lesson_key = lesson_reference_v2(seed)["lessonKey"]
         similarity = np.tensordot(
             np.asarray(seed.fingerprint, dtype=np.float32),
             compact,
@@ -621,6 +771,20 @@ def memory_proposal_candidates(
             & allowed_cells
         ).astype(np.uint8)
         component_count, labels = cv2.connectedComponents(thresholded, connectivity=8)
+        if component_count == 1:
+            finite_allowed = similarity[np.isfinite(similarity) & allowed_cells]
+            observations.append(
+                _lesson_observation(
+                    lesson_key,
+                    "REJECTED",
+                    "SMART_MARK_SIMILARITY_BELOW_THRESHOLD",
+                    similarity=(
+                        float(np.max(finite_allowed))
+                        if finite_allowed.size > 0
+                        else None
+                    ),
+                )
+            )
         for label in range(1, component_count):
             component = labels == label
             geometry = _memory_component_candidate(
@@ -629,6 +793,14 @@ def memory_proposal_candidates(
                 image_height=image_height,
             )
             if geometry is None:
+                observations.append(
+                    _lesson_observation(
+                        lesson_key,
+                        "REJECTED",
+                        "SMART_MARK_COMPONENT_INVALID_GEOMETRY",
+                        similarity=float(np.max(similarity[component])),
+                    )
+                )
                 continue
             core_x, core_y, core_width, core_height = geometry["coreBox"]
             component_similarity = float(np.max(similarity[component]))
@@ -644,6 +816,7 @@ def memory_proposal_candidates(
                     "defectType": defect_type,
                     "origin": "MEMORY",
                     "memoryProposal": {
+                        "lessonKey": lesson_key,
                         "lessonSessionId": seed.session_id,
                         "lessonCompletionOrder": seed.completion_order,
                         "lessonProposalOrder": seed.proposal_order,
@@ -672,6 +845,15 @@ def memory_proposal_candidates(
         defect_type = candidate["defectType"]
         count = per_type.get(defect_type, 0)
         if count >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
+            proposal = candidate["memoryProposal"]
+            observations.append(
+                _lesson_observation(
+                    proposal["lessonKey"],
+                    "REJECTED",
+                    "SMART_MARK_COMPONENT_TYPE_SIDE_CAP",
+                    similarity=proposal["similarity"],
+                )
+            )
             continue
         if any(
             _box_iou(
@@ -681,6 +863,15 @@ def memory_proposal_candidates(
             >= 0.80
             for existing in admitted_by_type.get(defect_type, ())
         ):
+            proposal = candidate["memoryProposal"]
+            observations.append(
+                _lesson_observation(
+                    proposal["lessonKey"],
+                    "REJECTED",
+                    "SMART_MARK_COMPONENT_IOU_DEDUP",
+                    similarity=proposal["similarity"],
+                )
+            )
             continue
         per_type[defect_type] = count + 1
         admitted_by_type.setdefault(defect_type, []).append(candidate)
@@ -688,7 +879,11 @@ def memory_proposal_candidates(
     return admitted
 
 
-def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
+def _cap_memory_candidates_per_side(
+    candidates: list[dict],
+    *,
+    lesson_observations: Optional[list[dict]] = None,
+) -> list[dict]:
     """Keep the best three memory matches per type across every side view."""
 
     memory_indices_by_type = {}
@@ -720,10 +915,32 @@ def _cap_memory_candidates_per_side(candidates: list[dict]) -> list[dict]:
                     duplicate = True
                     break
             if duplicate:
+                if lesson_observations is not None:
+                    proposal = candidate["memoryProposal"]
+                    if isinstance(proposal.get("lessonKey"), str):
+                        lesson_observations.append(
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_COMPONENT_IOU_DEDUP",
+                                similarity=proposal["similarity"],
+                            )
+                        )
+                continue
+            if len(distinct) >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
+                if lesson_observations is not None:
+                    proposal = candidate["memoryProposal"]
+                    if isinstance(proposal.get("lessonKey"), str):
+                        lesson_observations.append(
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_COMPONENT_TYPE_SIDE_CAP",
+                                similarity=proposal["similarity"],
+                            )
+                        )
                 continue
             distinct.append(index)
-            if len(distinct) >= MEMORY_PROPOSAL_MAX_PER_TYPE_SIDE:
-                break
         admitted_indices.update(distinct)
     return [
         candidate
@@ -932,6 +1149,11 @@ class Sam3ImageProcessor:
     ) -> list[dict]:
         results = []
         for prompt_index, candidate in enumerate(candidates):
+            prompt_evidence_start = (
+                len(candidate_evidence["rawCandidates"])
+                if candidate_evidence is not None
+                else 0
+            )
             x, y, width, height = candidate["box"]
             processor.reset_all_prompts(state)
             output = processor.add_geometric_prompt(
@@ -1035,6 +1257,13 @@ class Sam3ImageProcessor:
                         ),
                     )
                     diagnostic = decision["diagnostic"]
+                    _record_lesson_observations(
+                        candidate_evidence,
+                        [
+                            {**observation, "candidateId": raw_candidate_id}
+                            for observation in decision["lessonObservations"]
+                        ],
+                    )
                     adjustment = decision["adjustment"]
                     memory_action = diagnostic["action"]
                     memory_policy = "SAM_MEMORY_V2"
@@ -1120,6 +1349,25 @@ class Sam3ImageProcessor:
                     )
             if best is not None:
                 results.append(best)
+            elif (
+                candidate_evidence is not None
+                and candidate.get("origin") == "MEMORY"
+                and len(candidate_evidence["rawCandidates"])
+                == prompt_evidence_start
+            ):
+                proposal = candidate["memoryProposal"]
+                if isinstance(proposal.get("lessonKey"), str):
+                    _record_lesson_observations(
+                        candidate_evidence,
+                        [
+                            _lesson_observation(
+                                proposal["lessonKey"],
+                                "REJECTED",
+                                "SMART_MARK_PROMPT_NO_VALID_MASK",
+                                similarity=proposal["similarity"],
+                            )
+                        ],
+                    )
         return results
 
     def scan(
@@ -1159,6 +1407,13 @@ class Sam3ImageProcessor:
                             image_width=image_width,
                             image_height=image_height,
                             allowed_mask=allowed_mask,
+                            lesson_observations=(
+                                candidate_evidence.setdefault(
+                                    "_lessonObservations", []
+                                )
+                                if candidate_evidence is not None
+                                else None
+                            ),
                         )
                     )
                 return self._scan_prompt_candidates(
@@ -1216,6 +1471,13 @@ class Sam3ImageProcessor:
                             image_width=image_width,
                             image_height=image_height,
                             allowed_mask=allowed_mask,
+                            lesson_observations=(
+                                candidate_evidence.setdefault(
+                                    "_lessonObservations", []
+                                )
+                                if candidate_evidence is not None
+                                else None
+                            ),
                         )
                         if prepared_v2 is not None
                         else []
@@ -1252,7 +1514,12 @@ class Sam3ImageProcessor:
                     )
 
                 selected_memory = _cap_memory_candidates_per_side(
-                    all_memory_candidates
+                    all_memory_candidates,
+                    lesson_observations=(
+                        candidate_evidence.setdefault("_lessonObservations", [])
+                        if candidate_evidence is not None
+                        else None
+                    ),
                 )
                 for view in prepared_views:
                     view_index = view["viewIndex"]
@@ -1611,10 +1878,12 @@ def detect_views(
 ) -> dict:
     detect_started = time.perf_counter()
     active_processor = processor or get_processor()
+    prepared_bank = prepare_bank_v2(learning_bank)
     candidate_evidence = {
         "version": DETECTOR_EVIDENCE_VERSION,
         "rawCandidates": [],
         "memoryDecisions": [],
+        "_lessonObservations": [],
     }
     prepared_views = []
     view_diagnostics = []
@@ -1691,6 +1960,54 @@ def detect_views(
             if decision["candidateId"] in retained_raw_candidate_ids
             else "SUPPRESSED_BY_SIDE_MEMORY_CAP"
         )
+    raw_candidates_by_id = {
+        candidate["candidateId"]: candidate
+        for candidate in candidate_evidence["rawCandidates"]
+    }
+    memory_disposition_reasons = {
+        "VETOED_BY_MEMORY": "SMART_MARK_PROMPT_VETOED",
+        "SUPPRESSED_BELOW_COLLECTION_THRESHOLD": (
+            "SMART_MARK_PROMPT_BELOW_COLLECTION_THRESHOLD"
+        ),
+        "NOT_SELECTED_LOWER_ADJUSTED_CONFIDENCE": (
+            "SMART_MARK_PROMPT_LOWER_CONFIDENCE"
+        ),
+        "SUPPRESSED_BY_SIDE_MEMORY_CAP": "SMART_MARK_PROMPT_SIDE_CAP",
+        "RETAINED_FOR_MEASUREMENT": (
+            "SMART_MARK_PROPOSAL_RETAINED_FOR_MEASUREMENT"
+        ),
+    }
+    for decision in candidate_evidence["memoryDecisions"]:
+        candidate = raw_candidates_by_id[decision["candidateId"]]
+        proposal = candidate.get("memoryProposal")
+        if not proposal or not isinstance(proposal.get("lessonKey"), str):
+            continue
+        status = (
+            "USED"
+            if decision["disposition"] == "RETAINED_FOR_MEASUREMENT"
+            else "REJECTED"
+        )
+        candidate_evidence["_lessonObservations"].append(
+            _lesson_observation(
+                proposal["lessonKey"],
+                status,
+                memory_disposition_reasons[decision["disposition"]],
+                similarity=proposal["similarity"],
+                candidate_id=decision["candidateId"],
+            )
+        )
+    if prepared_bank is not None and prepared_bank.status == "calibrated":
+        scanned_source_views = {
+            view_id.split(":", 1)[-1]
+            for view_id, _image in views
+        }
+        candidate_evidence["lessonVerdicts"] = _finalize_lesson_verdicts(
+            prepared_bank,
+            candidate_evidence["_lessonObservations"],
+            side=side,
+            scanned_source_views=scanned_source_views,
+        )
+    candidate_evidence.pop("_lessonObservations", None)
     for proposal_index, candidate in enumerate(capped_candidates):
         proposals.append(
             {

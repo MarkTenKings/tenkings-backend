@@ -44,6 +44,7 @@ from sam3_detector import (
     Sam3ImageProcessor,
     _configure_determinism,
     _cap_memory_candidates_per_side,
+    _finalize_lesson_verdicts,
     _smart_mark_prompt_inputs,
     _to_speedster_defects,
     _release_identity_inputs,
@@ -59,6 +60,7 @@ from sam3_detector import (
 from sam_memory_v2 import (
     CAPACITY_PER_TYPE_POLARITY,
     FINGERPRINT_VERSION,
+    lesson_reference_v2,
     prepare_bank_v2,
 )
 from trace_rle import encode_trace_rle
@@ -118,7 +120,7 @@ def test_detector_identity():
             "promptVersion": "sam3-box-and-smart-mark-point-v1",
             "fusionVersion": "speedster-side-wide-memory-cap-v2",
             "measurementVersion": "speedster-exact-canonical-mask-v1",
-            "memoryVersion": "sam-memory-v2",
+            "memoryVersion": "sam-memory-v2-lesson-verdict-v1",
         },
         "determinism": {
             "deterministicAlgorithms": True,
@@ -1520,8 +1522,10 @@ class Sam3DetectorTests(unittest.TestCase):
 
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["origin"], "MEMORY")
+        proposal = dict(matches[0]["memoryProposal"])
+        self.assertRegex(proposal.pop("lessonKey"), r"^[a-f0-9]{64}$")
         self.assertEqual(
-            matches[0]["memoryProposal"],
+            proposal,
             {
                 "lessonSessionId": "cubone-smart-mark",
                 "lessonCompletionOrder": 228,
@@ -1558,8 +1562,10 @@ class Sam3DetectorTests(unittest.TestCase):
 
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0]["origin"], "MEMORY")
+        proposal = dict(candidates[0]["memoryProposal"])
+        self.assertRegex(proposal.pop("lessonKey"), r"^[a-f0-9]{64}$")
         self.assertEqual(
-            candidates[0]["memoryProposal"],
+            proposal,
             {
                 "lessonSessionId": "cubone-smart-mark",
                 "lessonCompletionOrder": 228,
@@ -1572,6 +1578,80 @@ class Sam3DetectorTests(unittest.TestCase):
         diagnostic = json.loads(captured.records[0].getMessage().split(" ", 1)[1])
         self.assertEqual(diagnostic["proposalOrigin"], "MEMORY")
         self.assertEqual(diagnostic["memoryProposal"], candidates[0]["memoryProposal"])
+
+    def test_side_verdict_finalizer_accounts_for_every_bank_lesson_without_fingerprints(self):
+        prepared = prepare_bank_v2(
+            v2_bank(
+                v2_exemplar("NEGATIVE", "compared-negative"),
+                v2_exemplar(
+                    "POSITIVE",
+                    "unused-positive",
+                    provenance="DETECTOR_RELABELED_POSITIVE",
+                    defect_type="FRAYING",
+                ),
+            )
+        )
+        negative = prepared.exemplars[
+            ("VISIBLE_WHITENING", "NEGATIVE", "ORIGINAL")
+        ][0]
+        verdicts = _finalize_lesson_verdicts(
+            prepared,
+            [{
+                "lessonKey": lesson_reference_v2(negative)["lessonKey"],
+                "status": "USED",
+                "reasonCode": "CLASSIFIER_NEGATIVE_MAX",
+                "similarity": 0.97,
+                "candidateId": "raw-" + "a" * 24,
+            }],
+            side="FRONT",
+            scanned_source_views={"ORIGINAL", "NORMALIZED", "MICRO_DEFECT", "DIRECTIONAL"},
+        )
+
+        self.assertEqual(verdicts["loadedLessonCount"], 2)
+        self.assertEqual(
+            [verdict["status"] for verdict in verdicts["verdicts"]],
+            ["USED", "SKIPPED"],
+        )
+        self.assertEqual(
+            verdicts["verdicts"][1]["reasonCode"],
+            "NO_ELIGIBLE_RAW_CANDIDATE",
+        )
+        self.assertNotIn("fingerprint", json.dumps(verdicts))
+
+    def test_side_verdict_similarity_only_describes_the_terminal_status(self):
+        prepared = prepare_bank_v2(
+            v2_bank(v2_exemplar("NEGATIVE", "mixed-observations"))
+        )
+        lesson_key = lesson_reference_v2(
+            prepared.exemplars[
+                ("VISIBLE_WHITENING", "NEGATIVE", "ORIGINAL")
+            ][0]
+        )["lessonKey"]
+
+        verdicts = _finalize_lesson_verdicts(
+            prepared,
+            [
+                {
+                    "lessonKey": lesson_key,
+                    "status": "REJECTED",
+                    "reasonCode": "NOT_SELECTED_AS_MAX_EXEMPLAR",
+                    "similarity": 0.99,
+                    "candidateId": "raw-" + "a" * 24,
+                },
+                {
+                    "lessonKey": lesson_key,
+                    "status": "USED",
+                    "reasonCode": "CLASSIFIER_NEGATIVE_MAX",
+                    "similarity": 0.71,
+                    "candidateId": "raw-" + "b" * 24,
+                },
+            ],
+            side="FRONT",
+            scanned_source_views={"ORIGINAL"},
+        )
+
+        self.assertEqual(verdicts["verdicts"][0]["status"], "USED")
+        self.assertEqual(verdicts["verdicts"][0]["maxSimilarity"], 0.71)
 
     def test_dense_memory_search_ignores_non_smart_mark_positives(self):
         compact = np.zeros((32, 2, 2), dtype=np.float32)
