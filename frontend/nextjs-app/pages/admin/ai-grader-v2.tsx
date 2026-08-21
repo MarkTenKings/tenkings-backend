@@ -1100,6 +1100,7 @@ export default function AiGraderV2AdminPage() {
           <nav>
             <Link href="/card-maps">Card Maps</Link>
             <Link href="/admin/ai-grader-v2/completed">Completed cards</Link>
+            <Link href="/admin/ai-grader-v2/learning-blueprint">Learning Blueprint</Link>
             <Link href="/admin">Admin Home</Link>
           </nav>
         </header>
