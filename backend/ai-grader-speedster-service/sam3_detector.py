@@ -60,6 +60,10 @@ COMPILER_PACKAGE_VERSION = "14.2.0-19"
 LIBC_DEV_PACKAGE_VERSION = "2.41-12+deb13u3"
 COMPILER_VERSION = "14.2.0"
 COMPILER_TARGET = "x86_64-linux-gnu"
+GPU_POLICY_VERSION = "speedster-rtx4090-only-v1"
+GPU_REQUIRED_NAME = "NVIDIA GeForce RTX 4090"
+GPU_REQUIRED_CAPABILITY = (8, 9)
+GPU_REQUIRED_COUNT = 1
 DETECTOR_VERSION = f"sam3-local-box-inspection-2mm@{SAM3_REPOSITORY_COMMIT}"
 DETECTOR_IDENTITY_VERSION = "speedster-detector-identity-v1"
 DETECTOR_PROMPT_VERSION = "sam3-box-and-smart-mark-point-v1"
@@ -364,6 +368,55 @@ def _validated_compiler_runtime() -> dict:
     }
 
 
+def _validated_gpu_runtime(torch) -> dict:
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is unavailable; RTX 4090 policy refuses to start")
+
+    gpu_count = int(torch.cuda.device_count())
+    if gpu_count != GPU_REQUIRED_COUNT:
+        raise RuntimeError(
+            f"Observed {gpu_count} CUDA GPUs; RTX 4090 policy requires exactly "
+            f"{GPU_REQUIRED_COUNT}"
+        )
+
+    device = int(torch.cuda.current_device())
+    device_properties = torch.cuda.get_device_properties(device)
+    capability = tuple(int(value) for value in torch.cuda.get_device_capability(device))
+    gpu_name = str(device_properties.name)
+    if gpu_name != GPU_REQUIRED_NAME:
+        raise RuntimeError(
+            f"Observed unsupported GPU {gpu_name!r}; RTX 4090 policy refuses to start"
+        )
+    if capability != GPU_REQUIRED_CAPABILITY:
+        observed_capability = ".".join(str(value) for value in capability)
+        required_capability = ".".join(
+            str(value) for value in GPU_REQUIRED_CAPABILITY
+        )
+        raise RuntimeError(
+            "Observed RTX 4090 capability "
+            f"{observed_capability}; policy requires {required_capability}"
+        )
+
+    capability_text = f"{capability[0]}.{capability[1]}"
+    return {
+        "policyVersion": GPU_POLICY_VERSION,
+        "required": {
+            "gpuName": GPU_REQUIRED_NAME,
+            "gpuCapability": (
+                f"{GPU_REQUIRED_CAPABILITY[0]}.{GPU_REQUIRED_CAPABILITY[1]}"
+            ),
+            "gpuCount": GPU_REQUIRED_COUNT,
+        },
+        "observed": {
+            "gpuName": gpu_name,
+            "gpuCapability": capability_text,
+            "gpuCount": gpu_count,
+            "currentDevice": device,
+        },
+        "validation": "OBSERVED_CUDA_RUNTIME_BEFORE_MODEL_LOAD",
+    }
+
+
 def _configure_determinism(torch, cublas_workspace_config: str) -> dict:
     if cublas_workspace_config != CUBLAS_WORKSPACE_CONFIG:
         raise RuntimeError("Unvalidated deterministic CuBLAS workspace configuration")
@@ -409,13 +462,10 @@ def _runtime_detector_identity(
     determinism: dict,
     release: dict,
     compiler: dict,
+    gpu: dict,
 ) -> dict:
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is unavailable; Speedster detector refuses to start")
-    device = torch.cuda.current_device()
-    device_properties = torch.cuda.get_device_properties(device)
-    capability = torch.cuda.get_device_capability(device)
     cudnn_version = torch.backends.cudnn.version()
+    observed_gpu = gpu["observed"]
     return {
         "version": DETECTOR_IDENTITY_VERSION,
         "detectorVersion": DETECTOR_VERSION,
@@ -436,10 +486,11 @@ def _runtime_detector_identity(
             "torchVersion": str(torch.__version__),
             "cudaVersion": str(torch.version.cuda or "none"),
             "cudnnVersion": str(cudnn_version if cudnn_version is not None else "none"),
-            "accelerator": str(device_properties.name),
-            "gpuName": str(device_properties.name),
-            "gpuCapability": f"{capability[0]}.{capability[1]}",
-            "gpuCount": int(torch.cuda.device_count()),
+            "accelerator": observed_gpu["gpuName"],
+            "gpuName": observed_gpu["gpuName"],
+            "gpuCapability": observed_gpu["gpuCapability"],
+            "gpuCount": observed_gpu["gpuCount"],
+            "gpuPolicy": deepcopy(gpu),
             "compiler": deepcopy(compiler),
         },
         "model": {
@@ -963,6 +1014,8 @@ class Sam3ImageProcessor:
             cublas_workspace_config = _validated_cublas_workspace_config()
             compiler_runtime = _validated_compiler_runtime()
             import torch
+
+            gpu_runtime = _validated_gpu_runtime(torch)
             from huggingface_hub import hf_hub_download
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
@@ -992,6 +1045,7 @@ class Sam3ImageProcessor:
                 determinism,
                 release_identity,
                 compiler_runtime,
+                gpu_runtime,
             )
         return self._processor
 
