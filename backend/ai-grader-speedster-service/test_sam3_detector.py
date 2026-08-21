@@ -4,6 +4,7 @@ import inspect
 import json
 import logging
 import os
+import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -36,6 +37,10 @@ from sam3_detector import (
     COMPILER_TARGET,
     COMPILER_VERSION,
     DETECTOR_VERSION,
+    GPU_POLICY_VERSION,
+    GPU_REQUIRED_CAPABILITY,
+    GPU_REQUIRED_COUNT,
+    GPU_REQUIRED_NAME,
     LIBC_DEV_PACKAGE_VERSION,
     LOGGER,
     SAM3_CHECKPOINT_REVISION,
@@ -51,6 +56,7 @@ from sam3_detector import (
     _runtime_detector_identity,
     _validated_cublas_workspace_config,
     _validated_compiler_runtime,
+    _validated_gpu_runtime,
     _verified_checkpoint_path,
     detect_views,
     feature_fingerprint,
@@ -91,10 +97,25 @@ def test_detector_identity():
             "torchVersion": "2.7.1",
             "cudaVersion": "12.8",
             "cudnnVersion": "91002",
-            "accelerator": "NVIDIA-L4",
-            "gpuName": "NVIDIA-L4",
+            "accelerator": GPU_REQUIRED_NAME,
+            "gpuName": GPU_REQUIRED_NAME,
             "gpuCapability": "8.9",
             "gpuCount": 1,
+            "gpuPolicy": {
+                "policyVersion": GPU_POLICY_VERSION,
+                "required": {
+                    "gpuName": GPU_REQUIRED_NAME,
+                    "gpuCapability": "8.9",
+                    "gpuCount": GPU_REQUIRED_COUNT,
+                },
+                "observed": {
+                    "gpuName": GPU_REQUIRED_NAME,
+                    "gpuCapability": "8.9",
+                    "gpuCount": GPU_REQUIRED_COUNT,
+                    "currentDevice": 0,
+                },
+                "validation": "OBSERVED_CUDA_RUNTIME_BEFORE_MODEL_LOAD",
+            },
             "compiler": {
                 "contractVersion": COMPILER_CONTRACT_VERSION,
                 "ccPath": COMPILER_CC_PATH,
@@ -756,6 +777,98 @@ class Sam3DetectorTests(unittest.TestCase):
             any(call.args and call.args[0] == "torch" for call in import_module.mock_calls)
         )
 
+    def test_detector_load_validates_gpu_after_compiler_and_before_model_imports(self):
+        processor = Sam3ImageProcessor()
+        validations = []
+
+        def reject_gpu(_torch):
+            validations.append("gpu")
+            raise RuntimeError("unsupported observed GPU")
+
+        with patch(
+            "sam3_detector._validated_cublas_workspace_config",
+            side_effect=lambda: validations.append("cublas") or CUBLAS_WORKSPACE_CONFIG,
+        ), patch(
+            "sam3_detector._validated_compiler_runtime",
+            side_effect=lambda: validations.append("compiler") or {},
+        ), patch(
+            "sam3_detector._validated_gpu_runtime",
+            side_effect=reject_gpu,
+        ), patch.dict(
+            sys.modules,
+            {"torch": SimpleNamespace()},
+        ), patch("builtins.__import__", wraps=__import__) as import_module:
+            with self.assertRaisesRegex(RuntimeError, "unsupported observed GPU"):
+                processor.load()
+
+        self.assertEqual(validations, ["cublas", "compiler", "gpu"])
+        imported_names = [
+            call.args[0]
+            for call in import_module.mock_calls
+            if call.args and isinstance(call.args[0], str)
+        ]
+        self.assertIn("torch", imported_names)
+        self.assertNotIn("huggingface_hub", imported_names)
+        self.assertFalse(any(name.startswith("sam3.model") for name in imported_names))
+
+    @staticmethod
+    def _fake_torch_gpu(
+        *,
+        available=True,
+        count=1,
+        name=GPU_REQUIRED_NAME,
+        capability=(8, 9),
+    ):
+        return SimpleNamespace(
+            cuda=SimpleNamespace(
+                is_available=lambda: available,
+                device_count=lambda: count,
+                current_device=lambda: 0,
+                get_device_properties=lambda _device: SimpleNamespace(name=name),
+                get_device_capability=lambda _device: capability,
+            )
+        )
+
+    def test_gpu_runtime_accepts_exact_observed_rtx_4090_identity(self):
+        gpu = _validated_gpu_runtime(self._fake_torch_gpu())
+
+        self.assertEqual(gpu["policyVersion"], GPU_POLICY_VERSION)
+        self.assertEqual(gpu["required"]["gpuName"], GPU_REQUIRED_NAME)
+        self.assertEqual(gpu["required"]["gpuCapability"], "8.9")
+        self.assertEqual(gpu["required"]["gpuCount"], GPU_REQUIRED_COUNT)
+        self.assertEqual(gpu["observed"], {
+            "gpuName": GPU_REQUIRED_NAME,
+            "gpuCapability": "8.9",
+            "gpuCount": GPU_REQUIRED_COUNT,
+            "currentDevice": 0,
+        })
+        self.assertEqual(
+            gpu["validation"], "OBSERVED_CUDA_RUNTIME_BEFORE_MODEL_LOAD"
+        )
+
+    def test_gpu_runtime_rejects_missing_cuda_gpu(self):
+        with self.assertRaisesRegex(RuntimeError, "CUDA is unavailable"):
+            _validated_gpu_runtime(self._fake_torch_gpu(available=False, count=0))
+
+    def test_gpu_runtime_rejects_multiple_visible_gpus(self):
+        with self.assertRaisesRegex(RuntimeError, "requires exactly 1"):
+            _validated_gpu_runtime(self._fake_torch_gpu(count=2))
+
+    def test_gpu_runtime_rejects_a40(self):
+        with self.assertRaisesRegex(RuntimeError, "unsupported GPU.*A40"):
+            _validated_gpu_runtime(self._fake_torch_gpu(
+                name="NVIDIA A40",
+                capability=(8, 6),
+            ))
+
+    def test_gpu_runtime_rejects_non_4090_gpu_with_same_capability(self):
+        with self.assertRaisesRegex(RuntimeError, "unsupported GPU.*L4"):
+            _validated_gpu_runtime(self._fake_torch_gpu(name="NVIDIA L4"))
+
+    def test_gpu_runtime_rejects_wrong_capability_for_4090_name(self):
+        with self.assertRaisesRegex(RuntimeError, "policy requires 8.9"):
+            _validated_gpu_runtime(self._fake_torch_gpu(capability=(8, 6)))
+
     def test_determinism_configuration_reports_the_validated_cublas_contract(self):
         enabled = []
         fake_torch = SimpleNamespace(
@@ -797,7 +910,7 @@ class Sam3DetectorTests(unittest.TestCase):
                 is_available=lambda: True,
                 current_device=lambda: 0,
                 get_device_properties=lambda _device: SimpleNamespace(
-                    name="NVIDIA L4"
+                    name=GPU_REQUIRED_NAME
                 ),
                 get_device_capability=lambda _device: (8, 9),
                 device_count=lambda: 1,
@@ -816,6 +929,7 @@ class Sam3DetectorTests(unittest.TestCase):
             "imageReference": "ghcr.io/ten-kings/speedster:test",
             "buildId": "github-run-123-1",
         }
+        gpu = _validated_gpu_runtime(fake_torch)
 
         identity = _runtime_detector_identity(
             fake_torch,
@@ -824,6 +938,7 @@ class Sam3DetectorTests(unittest.TestCase):
             determinism,
             release,
             compiler,
+            gpu,
         )
 
         self.assertEqual(identity["source"]["commitSha"], "a" * 40)
@@ -833,6 +948,9 @@ class Sam3DetectorTests(unittest.TestCase):
         self.assertEqual(identity["runtime"]["cudaVersion"], "12.6")
         self.assertEqual(identity["runtime"]["cudnnVersion"], "91002")
         self.assertEqual(identity["runtime"]["gpuCapability"], "8.9")
+        self.assertEqual(identity["runtime"]["gpuName"], GPU_REQUIRED_NAME)
+        self.assertEqual(identity["runtime"]["gpuCount"], GPU_REQUIRED_COUNT)
+        self.assertEqual(identity["runtime"]["gpuPolicy"], gpu)
         self.assertEqual(identity["runtime"]["compiler"], compiler)
         self.assertEqual(identity["determinism"], determinism)
         self.assertEqual(
